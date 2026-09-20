@@ -1,5 +1,9 @@
 import {windComparisonHTML, windSummary} from "./TraverseWindPresentation";
-import {assembleTraverseReport, constantAirReportCases} from "./TraverseReport";
+import {assembleTraverseReport, constantAirReportCases, reportOverviewCandidates, reportSourceHTML} from "./TraverseReport";
+import {captureTraverseSource} from "./TraverseSource";
+import {explainTraverseTerms, TRAVERSE_TERM_CSS} from "./TraverseTerminology";
+import {AIR_MOTION_BASIS, airMotionRows, candidateAirMetrics, candidateWindDataset,
+    horizontalAirText, verticalAirText} from "./TraverseAirMotion";
 import {formatWind} from "./TraverseWind";
 import {showAngularSizeDialog} from "./AngularSizeDialog";
 import {assessExecutiveVerdict} from "./TraverseRanking";
@@ -103,7 +107,7 @@ import {
     terrainDependencyMismatch,
     terrainDependencyRecordsMatch,
 } from "./TraverseAnalysisCache";
-import {datasetWithConstantWind, datasetWithWindCorrection, solvedHorizontalWindAt} from "./TraverseWind";
+import {datasetWithConstantWind, solvedHorizontalWindAt} from "./TraverseWind";
 import {losErrorSeriesDeg, truthDiagnosticSeries} from "./TraverseDiagnosticSeries";
 import {familyBandSummary, gapDisclosure} from "./TraverseFamily";
 import {kinematicFamilyScreen, runTraverseBattery} from "./TraverseBattery";
@@ -138,7 +142,6 @@ export function dateAtDatasetFrame(dataset, f) {
 }
 
 
-const MS_TO_FPM = 60 / 0.3048;      // m/s -> feet per minute
 
 // --- Sky-object brightness / visibility model -------------------------------
 // An astronomical object only explains a sighting if it (a) points where the
@@ -279,7 +282,6 @@ const HEAT_STOPS = ["#10141c", "#0d366b", "#1c5cab", "#3987e5", "#86b6ef", "#cde
 // ---------------------------------------------------------------------------
 // Formatting helpers
 // ---------------------------------------------------------------------------
-const fpm0 = (ms) => (ms * MS_TO_FPM).toFixed(0);
 const ft0 = (m) => (m / 0.3048).toFixed(0);          // ENU-up meters -> feet
 const hdg3 = (deg) => `${String(Math.round(deg) % 360).padStart(3, "0")}°`;   // compass: 5 -> "005°"
 
@@ -2657,6 +2659,12 @@ async function runTraverseAnalysisWithCurrentAngles() {
                 {...kalmanFiltering, referenceCompared: !!truth?.usable}),
             inputFingerprint: `0x${fp.toString(16).padStart(8, "0")}`,
             situation: Sit.name ?? "unnamed sitch",
+            source: captureTraverseSource({sit: Sit, files: FileManager.list,
+                metadata: FileManager.loadedFilesMetadata,
+                tracks: Object.values(TrackManager.list).map(entry => entry.data),
+                cameraHeading: provenance.cameraHeading,
+                cameraTrack: NodeMan.get("cameraTrackSwitch", false)?.inputs?.[NodeMan.get("cameraTrackSwitch", false)?.choice]?.id,
+                videos: NodeMan.get("video", false)?.videos ?? []}),
             frames: {start: dataset.frame0, end: dataset.frame1, count: dataset.n},
             timing: {
                 sourceFps: Sit.fps,
@@ -3169,15 +3177,17 @@ function hypothesisStats(h, dataset = null, truthMaxG = null) {
     const stats = [
         // slant range over the clip, not an uncertainty interval — label it so
         ["Slant range (min–max)", `${nm1(m.range.min)}–${nm1(m.range.max)} NM`],
-        [h.params?.motionFrame === "ground" ? "Ground speed (mean / max)" : "3D air speed (mean / max)",
-            `${kt1(m.airSpeed.mean)} / ${kt1(m.airSpeed.max)} kt`],
+        ...airMotionRows(dataset, h),
         headingStatRow(m),
         ["Altitude (geodetic)", `${ft0(m.altitude.min)}–${ft0(m.altitude.max)} ft`],
-        ["Climb", `${fpm0(m.verticalSpeed.mean)} fpm`],
         ["Max g-Force", `${m.gLoad.max.toFixed(2)} g`
             + (Number.isFinite(truthMaxG) ? ` · Truth=${truthMaxG.toFixed(2)}g` : "")],
         [errLabel, losErr],
         ["LOS error explained", losResidualExplanation(h)],
+        ["Air speed basis", h.atInfinity ? "Not defined for a direction-only interpretation."
+            : AIR_MOTION_BASIS + (h.params?.motionFrame === "ground"
+                ? " This ground-frame fit does not determine wind; air speeds use the supplied wind."
+                : h.key === "lantern" ? " The balloon model assumes passive horizontal drift; near-zero horizontal air speed is imposed. Vertical rise or sink is modeled separately." : "")],
     ];
     if (h.windMode) {
         stats.push([h.windMode === "supplied" ? "Supplied wind" : "Fitted wind", windSummary(h.windSamples)]);
@@ -3185,7 +3195,8 @@ function hypothesisStats(h, dataset = null, truthMaxG = null) {
             const f = Math.floor((dataset.n - 1) / 2);
             stats.push(["Supplied wind reference", formatWind({u: dataset.W[f * 3] * dataset.fps, v: dataset.W[f * 3 + 1] * dataset.fps})]);
         }
-        if (h.windIdentifiability) stats.push(["Wind constraint", h.windIdentifiability]);
+        if (h.params.unconstrained) stats.push(["Wind constraint", "Wind is not determined by this method; displayed air speeds use the supplied wind."]);
+        else if (h.windIdentifiability) stats.push(["Wind constraint", h.windIdentifiability]);
         else stats.push(["Wind constraint", h.windMode === "fitted"
             ? "Conditional on this motion model and shared wind prior; uncertainty not established."
             : h.windMode === "corrected" ? "Conditioned on the supplied wind and stated uncertainty."
@@ -3194,18 +3205,14 @@ function hypothesisStats(h, dataset = null, truthMaxG = null) {
             stats.push(["Wind correction", `${(Math.hypot(h.params.windCorrectionE, h.params.windCorrectionN) / KNOTS_TO_MS).toFixed(1)} kt vector change; `
                 + `${(h.params.windCorrectionSigmaMS / KNOTS_TO_MS).toFixed(1)} kt assumed component scale`]);
         }
-        if (h.key === "lantern") {
-            stats.push(["Air speed basis", "3D air speed includes vertical rise or sink through the air. Horizontal motion follows the wind."]);
-            stats.push(["Horizontal air speed", `${kt1(m.horizontalAirSpeed.mean)} kt (passive drift assumed)`]);
-            stats.push(["Ground speed (mean / max)", `${kt1(m.groundSpeed.mean)} / ${kt1(m.groundSpeed.max)} kt`]);
-        }
         const selection = h.params.modelSelection;
         if (selection) stats.push(["Model selection", `${selection.selectedStage}; ${selection.freeParameterCount} free parameters. `
             + `${selection.fixedAssumptions}. Extensions must improve LOS error by at least `
             + `${selection.requiredImprovementDeg.toFixed(3)}° (practical tolerance, not statistical confidence). `
             + selection.alternatives.map(a => `${a.stage}: ${Number.isFinite(a.errDeg) ? a.errDeg.toFixed(5) + "°" : "unavailable"}${a.completed ? "" : " (unfinished)"}`).join("; ")]);
-        if (h.windSensitivity) stats.push(["Air speed under supplied wind", `${kt1(h.windSensitivity.mean)} kt mean; `
-            + `${kt1(h.windSensitivity.lo)}–${kt1(h.windSensitivity.hi)} kt across the assumed wind variation (not a confidence interval)`]);
+        const sensitivity = h.windSensitivity?.horizontalAirSpeed;
+        if (sensitivity) stats.push(["Horizontal air speed under supplied wind", `${kt1(sensitivity.mean)} kt mean; `
+            + `${kt1(sensitivity.lo)}–${kt1(sensitivity.hi)} kt across the assumed wind variation (not a confidence interval)`]);
     }
     // HOW ORDINARY IS THIS? Disclosure only — it does not move the ranking (see
     // TraverseMundaneness.js). Reported as the nearest real object class and how
@@ -3602,10 +3609,13 @@ function floorContext(err, floor) {
 
 // Method-specific prose: how the numbers were derived, and what constrains the
 // result / makes it (im)plausible. Returns {lead, derived, constraint}.
-function detailProse(h, r, ss) {
+function detailProse(h, r, ss, dataset) {
     const m = h.metricsFull;
     const p = h.params || {};
-    const g = m.gLoad.max, spdKt = toKt(m.airSpeed.mean);
+    const g = m.gLoad.max;
+    const air = candidateAirMetrics(dataset, h);
+    const motion = `${horizontalAirText(air?.horizontalAirSpeed?.mean)} mean horizontal air speed and `
+        + `${verticalAirText(air?.verticalAirSpeed?.mean)} mean vertical air speed`;
     const rMin = nm1(m.range.min), rMax = nm1(m.range.max);
     const err = Number.isFinite(h.errDeg) ? h.errDeg : Infinity;
     const onRay = err < 1e-3;
@@ -3629,36 +3639,35 @@ function detailProse(h, r, ss) {
     switch (h.key) {
         case "constAir":
             return {
-                lead: `An object holding a constant air speed of about ${kt1(p.airSpeed)} kt ` +
-                    `(achieved ${kt1(m.airSpeed.mean)} kt), starting near ${nm1(p.range)} NM.`,
+                lead: `A constant-air-speed candidate with ${motion}, starting near ${nm1(p.range)} NM.`,
                 derived: p.regime === "slow"
                     ? `The fast grid search (anchored on the Target Speed prior) and the slow-object ` +
                       `range profile were both solved, then re-scored on the same neutral smoothness ` +
                       `metric. The slow-drift valley won decisively (${(p.slowScore ?? 0).toFixed(2)} vs ` +
                       `${(p.fastScore ?? 0).toFixed(2)}, lower is better): the smoothest constant-air-speed ` +
-                      `explanation is ~${kt1(p.airSpeed)} kt near ${nm1(p.range)} NM, not anything near the ` +
+                      `explanation uses a ~${kt1(p.airSpeed)} kt 3D speed constraint near ${nm1(p.range)} NM, not anything near the ` +
                       `Target Speed prior.`
-                    : `A grid search over start range × air speed (15–650 kt, log-spaced) solves each ` +
+                    : `A grid search over start range × 3D air speed (15–650 kt, log-spaced) solves each ` +
                       `combination as the smoothest ray-following path that holds that air speed (wind ` +
                       `subtracted), scoring smoothness plus how well the speed could actually be held. ` +
-                      `The selected family representative is ${nm1(p.range)} NM @ ${kt1(p.airSpeed)} kt; ` +
+                      `The selected family representative uses ${nm1(p.range)} NM and a ${kt1(p.airSpeed)} kt speed constraint; ` +
                       `it is prior-selected when several cells score about equally.`,
                 constraint: onRay
                     ? `It sits on the sightlines by construction (0° error), so the LOS fit is automatic — ` +
-                      `plausibility rests on the implied motion: ${kt1(m.airSpeed.mean)} kt, up to ${g.toFixed(2)} g.`
+                      `plausibility rests on the implied motion: ${motion}, up to ${g.toFixed(2)} g.`
                     : `The displayed and applied snapshot follows the rays to ${err.toFixed(3)}° after smoothing.`,
             };
         case "constAlt":
             return {
                 lead: `An object holding a constant altitude of about ${ft0(m.altitude.mean ?? m.altitude.min)} ft, ` +
-                    `implying ${kt1(m.airSpeed.mean)} kt across ${rMin}–${rMax} NM.`,
+                    `implying ${motion} across ${rMin}–${rMax} NM.`,
                 derived: `The altitude that best rides the rays at constant height is found by a 1-D search: ` +
                     `for each candidate altitude the object is placed where each ray crosses that height, the ` +
                     `path is lightly smoothed (so sensor pointing jitter can't poison the correct altitude), and ` +
                     `the speed/heading smoothness plus the residual LOS miss are scored. Best altitude ≈ ` +
                     `${ft0(p.altZ)} ft.`,
                 constraint: onRay
-                    ? `On the sightlines by construction; the tell is the implied ${kt1(m.airSpeed.mean)} kt and ` +
+                    ? `On the sightlines by construction; the tell is the implied ${motion} and ` +
                       `${g.toFixed(2)} g.`
                     : `The displayed and applied snapshot misses the rays by ${err.toFixed(3)}° after smoothing.`,
             };
@@ -3671,8 +3680,7 @@ function detailProse(h, r, ss) {
                 ? `${ft0(p.bootstrapAltitudeP10)}–${ft0(p.bootstrapAltitudeP90)} ft`
                 : "unavailable";
             return {
-                lead: `A level target at about ${ft0(p.altZ)} ft, holding about `
-                    + `${kt1(p.medianSpeed)} kt horizontal speed while its heading changes.`,
+                lead: `A level target at about ${ft0(p.altZ)} ft, with ${motion} while its heading changes.`,
                 derived: `The solver intersects every sightline with candidate horizontal surfaces from the `
                     + `local ground to below the platform. It combines relative speed variation at several `
                     + `smoothing scales with the zero of the dominant altitude-dependent speed waveform. `
@@ -3694,8 +3702,8 @@ function detailProse(h, r, ss) {
             return {
                 lead: p.usedSpeedTarget
                     ? `The acceleration-minimizing path consistent with the rays at a soft speed target — ` +
-                      `${kt1(m.airSpeed.mean)} kt near ${rMin}–${rMax} NM, peaking at ${g.toFixed(2)} g.`
-                    : `The acceleration-minimizing path consistent with the rays — ${kt1(m.airSpeed.mean)} kt near ` +
+                      `${motion} near ${rMin}–${rMax} NM, peaking at ${g.toFixed(2)} g.`
+                    : `The acceleration-minimizing path consistent with the rays — ${motion} near ` +
                       `${rMin}–${rMax} NM, peaking at ${g.toFixed(2)} g. The smoothness-vs-range profile picked ` +
                       `the range on its own; no speed assumption was needed.`,
                 derived: p.usedSpeedTarget
@@ -3708,14 +3716,14 @@ function detailProse(h, r, ss) {
                       `(margin ${isFinite(p.decisiveness) ? p.decisiveness.toFixed(2) : "?"}), so the speed target ` +
                       `was not used.`,
                 constraint: `Follows the rays (residual ${err.toFixed(3)}° after light smoothing); plausibility ` +
-                    `is set by how gentle that best path is (${g.toFixed(2)} g max, speed std ` +
-                    `${kt1(m.airSpeed.std)} kt).`,
+                    `is set by how gentle that best path is (${g.toFixed(2)} g max, horizontal air speed std ` +
+                    `${horizontalAirText(air?.horizontalAirSpeed?.std)}).`,
             };
         case "aircraft": {
             return {
-                lead: `A fixed-wing aircraft on a near-straight course: ${kt1(p.tas)} kt horizontal airspeed at ` +
+                lead: `A fixed-wing aircraft on a near-straight course: ${motion} at ` +
                     `about ${nm1(p.range)} NM and ${ft0(m.altitude.min)}–${ft0(m.altitude.max)} ft, ` +
-                    `turning ${(p.turn ?? 0).toFixed(2)}°/s and climbing ${fpm0((p.climb ?? 0))} fpm. ` +
+                    `turning ${(p.turn ?? 0).toFixed(2)}°/s. ` +
                     `It reproduces the sightlines to ${err.toFixed(3)}°.`,
                 derived: `A constant-horizontal-airspeed flight model (range, heading, speed, turn rate, climb) is fit to the ` +
                     `sightlines by deterministically seeded differential-evolution restarts, then polished. ` +
@@ -3728,11 +3736,12 @@ function detailProse(h, r, ss) {
         }
         case "lantern": {
             if (p.modelSelection) return {
-                lead: `A drifting balloon at ${ft0(m.altitude.min)}–${ft0(m.altitude.max)} ft, with `
-                    + `${fpm0(m.verticalSpeed.mean)} fpm mean vertical motion and ${err.toFixed(5)}° sightline error.`,
+                lead: `${h.name.startsWith("Possible") ? "A possible sky lantern with a fitted rise-to-fall transition" : "A drifting balloon"} at ${ft0(m.altitude.min)}–${ft0(m.altitude.max)} ft, with `
+                    + `${motion} and ${err.toFixed(5)}° sightline error.`,
                 derived: `Selected ${p.modelSelection.selectedStage} model: ${p.modelSelection.fixedAssumptions}. `
                     + `The search starts with steady drift and only selects extra complexity for a material improvement. `
-                    + `Horizontal velocity equals the modeled wind; horizontal airspeed near zero is imposed, not independent evidence.`,
+                    + `Horizontal velocity equals the modeled wind; horizontal airspeed near zero is imposed, not independent evidence.`
+                    + (h.name.startsWith("Possible") ? " A rise-to-fall transition is compatible with lantern cooling, but does not identify the object." : ""),
                 constraint: screenContext("This passive-drift model") + ` Vertical rates are bounded to ±4 m/s. `
                     + `The wind is conditional on the selected dynamics. A practical residual tolerance controls complexity, `
                     + `not a calibrated statistical test. No reference-track positions participate in this selection.` + floorContext(err, p.errFloor),
@@ -3767,21 +3776,21 @@ function detailProse(h, r, ss) {
             const T = p.clipT ?? 0;
             const phaseTxt = p.tBurn === undefined ? "" :
                 p.tBurn <= 0
-                    ? ` The solved flame-out is ${(-p.tBurn).toFixed(0)} s before the clip — a lantern ` +
-                      `already in its slow cooling descent (terminal sink ${(p.vSink ?? 0).toFixed(1)} m/s).`
+                    ? ` The modeled buoyancy decay starts ${(-p.tBurn).toFixed(0)} s before the clip ` +
+                      `(terminal sink ${(p.vSink ?? 0).toFixed(1)} m/s).`
                     : p.tBurn >= T
-                        ? ` The flame burns for the whole clip — a lantern still rising at ` +
-                          `${(p.vRise ?? 0).toFixed(1)} m/s.`
-                        : ` The flame dies ${p.tBurn.toFixed(0)} s in: rise at ${(p.vRise ?? 0).toFixed(1)} m/s, ` +
-                          `then a cooling transition toward a ${(p.vSink ?? 0).toFixed(1)} m/s sink.`;
+                        ? ` The fitted rise lasts through the clip at ${(p.vRise ?? 0).toFixed(1)} m/s; ` +
+                          `the decay and descent are outside the observed window.`
+                        : ` The fitted buoyancy decay starts ${p.tBurn.toFixed(0)} s in: rise at ${(p.vRise ?? 0).toFixed(1)} m/s, ` +
+                          `then a transition toward a ${(p.vSink ?? 0).toFixed(1)} m/s sink.`;
             return {
-                lead: `A buoyant sky lantern / balloon drifting with the wind — ` +
-                    `${kt1(m.airSpeed.mean)} kt mean at ${ft0(m.altitude.min)}–${ft0(m.altitude.max)} ft, ` +
+                lead: `A buoyant object drifting with the wind — ` +
+                    `${motion} at ${ft0(m.altitude.min)}–${ft0(m.altitude.max)} ft, ` +
                     `reproducing the sightlines to ${err.toFixed(2)}°.`,
-                derived: `Wind-drift kinematics: the lantern's horizontal velocity IS the wind at its ` +
+                derived: `Wind-drift kinematics: the object's horizontal velocity equals the wind at its ` +
                     (h.windMode === "supplied" ? `altitude, held to the supplied wind series. Its vertical motion follows the `
                         : `altitude (solved ${windTxt}, shear ${shearTxt}), and its vertical motion follows the `) +
-                    `lantern life cycle (rise while lit, buoyancy decay after flame-out, terminal sink), ` +
+                    `rise/decay/sink profile, ` +
                     `fit to the sightlines by differential evolution.${temporalWind}${phaseTxt}`,
                 constraint: screenContext("This bounded drift parameterization") +
                     (h.windMode === "supplied"
@@ -3792,11 +3801,10 @@ function detailProse(h, r, ss) {
             };
         }
         case "quadcopter": {
-            const peakKt = isFinite(p.peakSpeed) ? kt1(p.peakSpeed) : "?";
             const closeTxt = p.closest ? ` Its speed and climb are closest to a ${p.closest}.` : "";
             return {
                 lead: `A quadcopter (multirotor drone) hovering and manoeuvring near the sensor — ` +
-                    `about ${nm1(p.range)} NM out, peaking near ${peakKt} kt, ` +
+                    `about ${nm1(p.range)} NM out, with ${motion}, ` +
                     `reproducing the sightlines to ${err.toFixed(2)}°.${closeTxt}`,
                 derived: `Hover-capable multirotor kinematics (air-relative horizontal speed, wide turn-rate ` +
                     `budget, bounded climb/descent, and ${h.windMode === "supplied" ? "supplied" : "fitted"} wind drift) are fit by differential evolution. ` +
@@ -3879,7 +3887,7 @@ function detailProse(h, r, ss) {
             if (p.saddleT0 === undefined) {
                 return {
                     lead: `The slowest object consistent with the sightlines — ~${nm1(p.range)} NM out at `
-                        + `${kt1(m.airSpeed.mean)} kt. The bearing rotates throughout the clip (no low-motion `
+                        + `${motion}. The bearing rotates throughout the clip (no low-motion `
                         + `window), so the sensor's own motion actively triangulates the range.`,
                     derived: `The path shown is the <b>minimum-speed</b> object that rides the rays: range along `
                         + `each sightline is solved to minimize total motion, so it stays on them by construction `
@@ -3889,13 +3897,12 @@ function detailProse(h, r, ss) {
                         + `saddle case, this geometry leaves little range ambiguity.`,
                 };
             }
-            const winSpeed = isFinite(p.windowAirMean) ? kt1(p.windowAirMean) : kt1(m.airSpeed.mean);
             const winG = isFinite(p.windowGMax) ? p.windowGMax : m.gLoad.max;
             return {
                 lead: `A slow or near-static object sitting where the sightlines move least — over `
                     + `${p.saddleT0.toFixed(1)}–${p.saddleT1.toFixed(1)} s the bearing barely changes, so most of `
                     + `the video's apparent motion is the sensor's own parallax. Here it sits ~${nm1(p.range)} NM out `
-                    + `at ${winSpeed} kt during that saddle window.`,
+                    + `with ${motion} across the full clip.`,
                 derived: `The LOS angular rate is tracked across the clip; it dips to ${p.minRateDegS.toFixed(2)}°/s `
                     + `in the saddle window versus a ${p.medRateDegS.toFixed(2)}°/s median. The path shown is then the `
                     + `<b>minimum-speed</b> object that rides the rays: range along each sightline is solved to minimize `
@@ -4190,10 +4197,10 @@ function buildDetailHTML(h, r, groupIndex, groupSize, category, ctx, tied = fals
     const compatibilityDetail = stats.find(([k]) => k === "Physical compatibility details")?.[1];
     const losDetail = stats.find(([k]) => k === "LOS error explained")?.[1];
     const statsHTML = stats.filter(([k]) => k !== "Physical compatibility details" && k !== "LOS error explained").map(([k, v, html]) =>
-        `<div class="tg-d-st${k === "Physical compatibility" ? " tg-st-wide" : ""}"><div class="tg-d-stk">${escapeHtml(k)}</div>` +
+        `<div class="tg-d-st${k === "Physical compatibility" || k === "Air speed basis" ? " tg-st-wide" : ""}"><div class="tg-d-stk">${escapeHtml(k)}</div>` +
         `<div class="tg-d-stv">${html ?? escapeHtml(v)}</div></div>`).join("");
 
-    const prose = detailProse(h, r, ss);
+    const prose = detailProse(h, r, ss, ctx.dataset);
     if (h.windMode) {
         const fmtWind = w => w && Number.isFinite(w.u) && Number.isFinite(w.v)
             ? `${kt1(Math.hypot(w.u, w.v))} kt from ${((Math.atan2(-w.u, -w.v) * 180 / Math.PI + 360) % 360).toFixed(0)}°`
@@ -4210,16 +4217,17 @@ function buildDetailHTML(h, r, groupIndex, groupSize, category, ctx, tied = fals
         ? " · co-leader: the ranking cannot order this against the other co-leading candidates; their tile order is presentation, not a finding"
         : "";
 
-    // per-frame diagnostics: g-force, speed, LOS error over the clip
+    // Per-frame acceleration, horizontal/vertical air speed and LOS error.
     const sc = hypothesisSeriesCharts(ctx.dataset, h, {truth: ctx.truth});
-    const seriesImage = (url, alt) => `<div class="tg-series-chart"><img src="${url}" ${sc.sizeAttrs} alt="${alt}">`
+    const seriesImage = (url, alt) => `<div class="tg-series-chart"><img src="${url}" ${sc.sizeAttrs} alt="${alt}" title="${alt}. Solid color: candidate; thin dashed color: truth under the same wind assumption. Gray: enlarged fine scale on the right-hand axis.">`
         + `<div class="tg-series-plot" style="${sc.plotStyle}" aria-hidden="true"><span class="tg-series-playhead"></span></div></div>`;
     const seriesHTML = sc ? `
         <h4 class="tg-d-h">Frame-by-frame behaviour</h4>
-        <p class="tg-d-p">Speeds include vertical motion. ${sc.hasTruth ? "Thin dashed lines show Truth. Truth air speed and acceleration use this interpretation’s wind; truth positions alone do not measure wind. " : ""}The grey fine-scale trace enlarges the first solid curve.</p>
+        <p class="tg-d-p">Horizontal air speed is blue; vertical air speed is green (+ up, − down). ${sc.hasTruth ? "Thin dashed lines show Truth, using the same wind assumption as the candidate for air speed. Truth positions alone do not measure wind. " : ""}The grey fine-scale trace enlarges the solid curve.</p>
         <div class="tg-d-series">
             ${seriesImage(sc.gURL, "Kinematic acceleration over the clip, expressed in g")}
-            ${seriesImage(sc.spdURL, "Speed over the clip")}
+            ${seriesImage(sc.horizontalSpeedURL, "Horizontal air speed over the clip in knots")}
+            ${seriesImage(sc.verticalSpeedURL, "Signed vertical air speed over the clip in feet per minute")}
             ${seriesImage(sc.errURL, "LOS fit error over the clip")}
         </div>` : "";
 
@@ -5542,6 +5550,7 @@ function showResultGallery(results, uiState = null, onEvidenceChange = null) {
             content.innerHTML = traverseComparisonHTML(buildTraverseComparison(
                 candidates[Number(selects[0].value)], candidates[Number(selects[1].value)], dataset,
                 {groundMode: results.manifest?.assumptions?.groundMode}));
+            explainTraverseTerms(content);
             content.scrollTop = 0;
         };
         selects.forEach(select => { select.addEventListener("change", render); });
@@ -5639,6 +5648,7 @@ function showResultGallery(results, uiState = null, onEvidenceChange = null) {
         const anchor = dContent.scrollTop > 0 ? chartsTop() : null;
         disposeDetailChart();
         dContent.innerHTML = buildDetailHTML(h, r, groupIndex, groupSize, category, ctx, tied, placements[i]);
+        explainTraverseTerms(dContent);
         const detailCanvas = dContent.querySelector("canvas[data-chart-role='detail']");
         if (detailCanvas) {
             detailChart = registerChart(new Chart3D(detailCanvas,
@@ -6044,11 +6054,11 @@ function showResultGallery(results, uiState = null, onEvidenceChange = null) {
             `<span class="tg-badge" style="background:${badge.color}">${escapeHtml(badge.label)}</span>`).join("");
         const stats = hypothesisStats(h, dataset, truthMaxG);
         const statHTML = ([k, v, html]) =>
-            `<div class="tg-st${k.startsWith("Physical compatibility") || k === "LOS error explained" ? " tg-st-wide" : ""}"><div class="tg-stk">${escapeHtml(k)}</div>` +
+            `<div class="tg-st${k.startsWith("Physical compatibility") || k === "LOS error explained" || k === "Air speed basis" ? " tg-st-wide" : ""}"><div class="tg-stk">${escapeHtml(k)}</div>` +
             `<div class="tg-stv">${html ?? escapeHtml(v)}</div></div>`;
         const primary = ([k]) => k.startsWith("Slant range") || k.includes("speed (mean")
             || k === "Mean LOS error" || k === "Mean LOS offset" || k === "Max g-Force"
-            || k === "Supplied wind" || k === "Fitted wind" || k === "Horizontal air speed"
+            || k === "Supplied wind" || k === "Fitted wind"
             || k === "Physical compatibility" || k === "Angular size" || k === "Angular-size fitting"
             || (useTruth && k === "Truth Δ (mean 3D)");
         const explanation = ([k]) => k === "LOS error explained" || k === "Physical compatibility details";
@@ -6152,6 +6162,10 @@ function showResultGallery(results, uiState = null, onEvidenceChange = null) {
     footer.appendChild(closeBtn);
     detailsCol.appendChild(footer);
 
+    const termStyle = document.createElement("style");
+    termStyle.textContent = TRAVERSE_TERM_CSS;
+    overlay.appendChild(termStyle);
+    explainTraverseTerms(overlay);
     document.body.appendChild(overlay);
     // Move focus into the dialog so keyboard users start inside it and Escape /
     // Tab act on the gallery, not the page behind it (TA-24).
@@ -6667,7 +6681,7 @@ function lineChart(o) {
     } else if (o.dualScale) {
         const {min, step} = o.dualScale;
         y0 = Math.min(0, Math.floor(yMin / step) * step);
-        y1 = Math.max(y0 + min, Math.ceil(yMax / step - 1e-9) * step);
+        y1 = Math.max(0, y0 + min, Math.ceil(yMax / step - 1e-9) * step);
         ticksY = niceTicks(y0, y1, 5);
         // Fine scale: the first series' own range plus a margin, widened
         // about its middle to at least min/100, and not below zero for data
@@ -6732,8 +6746,8 @@ function lineChart(o) {
     return chart.dataURL();
 }
 
-// The three per-frame diagnostic charts for one hypothesis — maneuvering
-// g-force, speed, and LOS fit error over the clip — rendered to PNG data
+// Four per-frame diagnostics — acceleration, horizontal and vertical air
+// speed, and LOS fit error over the clip — rendered to PNG data
 // URLs (the report's offline idiom; the gallery Details pane reuses them).
 // Returns null when the hypothesis has no track/series (e.g. a failed fit).
 function hypothesisSeriesCharts(dataset, h, o = {}) {
@@ -6741,11 +6755,13 @@ function hypothesisSeriesCharts(dataset, h, o = {}) {
     if (!h.track || !m || !m.series) return null;
     const {n, fps} = dataset;
     const groundOnly = h.params?.motionFrame === "ground";
-    const windDataset = groundOnly ? datasetWithConstantWind(dataset, 0, 0)
-        : h.windMode === "corrected" ? datasetWithWindCorrection(dataset, h.params.windCorrectionE, h.params.windCorrectionN)
-        : h.windMode === "fitted" ? datasetForSolvedModelWind(dataset, h.track, h.params, h.key)
-        : dataset;
+    const air = candidateAirMetrics(dataset, h);
+    if (!air) return null;
+    const windDataset = candidateWindDataset(dataset, h);
     const truth = truthDiagnosticSeries(windDataset, o.truth);
+    // Acceleration retains the fit's judging frame; both displayed air-speed
+    // components always use the candidate wind (supplied for ground fits).
+    const accelerationTruth = groundOnly ? truthDiagnosticSeries(datasetWithConstantWind(dataset, 0, 0), o.truth) : truth;
     // trim the velocity smoothing window's edge artifacts, downsample to a
     // plottable point count
     const trim = Math.min(9, n >> 3);
@@ -6796,17 +6812,17 @@ function hypothesisSeriesCharts(dataset, h, o = {}) {
     const gURL = lineChart({...base, title: "Kinematic acceleration", yLabel: "acceleration (g)",
         dualScale: {min: 2, step: 1},
         series: [{xs, ys: pick(m.series.gLoad), color, label: "g-force"},
-            ...(truth ? [truthLine(truth.gLoad, color)] : [])]});
+            ...(accelerationTruth ? [truthLine(accelerationTruth.gLoad, color)] : [])]});
 
-    const airColor = "#3987e5", groundColor = "#32b782";
-    const speedSeries = [
-        ...(!groundOnly ? [{xs, ys: pick(m.series.airSpeed, 1 / KNOTS_TO_MS), color: airColor, label: "air speed"}] : []),
-        {xs, ys: pick(m.series.groundSpeed, 1 / KNOTS_TO_MS), color: groundColor, label: "ground speed"},
-        ...(truth && !groundOnly ? [truthLine(truth.airSpeed, airColor, "Truth air", 1 / KNOTS_TO_MS)] : []),
-        ...(truth ? [truthLine(truth.groundSpeed, groundColor, "Truth ground", 1 / KNOTS_TO_MS)] : []),
-    ];
-    const spdURL = lineChart({...base, title: "Speed (3D)", yLabel: "kt",
-        dualScale: {min: 40, step: 10}, series: speedSeries});
+    const componentChart = (key, title, unit, color, scale, dualScale) => lineChart({
+        ...base, title, yLabel: unit, axisColor: color, dualScale,
+        series: [{xs, ys: pick(air.series[key], scale), color, label: "Candidate"},
+            ...(truth ? [truthLine(truth[key], color, "Truth", scale)] : [])],
+    });
+    const horizontalSpeedURL = componentChart("horizontalAirSpeed", "Horizontal air speed", "kt", "#3987e5",
+        1 / KNOTS_TO_MS, {min: 40, step: 10});
+    const verticalSpeedURL = componentChart("verticalAirSpeed", "Vertical air speed (+ up / − down)", "ft/min", "#32b782",
+        60 / 0.3048, {min: 1000, step: 500});
 
     // LOS error, with the flexible generic-fit residual as a reference line
     // on the physics fits that carry one
@@ -6828,7 +6844,7 @@ function hypothesisSeriesCharts(dataset, h, o = {}) {
     const {left, right, top, bottom} = base.margin;
     const plotStyle = `left:${100 * left / base.width}%;top:${100 * top / base.height}%;`
         + `width:${100 * (base.width - left - right) / base.width}%;height:${100 * (base.height - top - bottom) / base.height}%`;
-    return {gURL, spdURL, errURL, plotStyle, hasTruth: !!truth, sizeAttrs: `width="${base.width}" height="${base.height}"`};
+    return {gURL, horizontalSpeedURL, verticalSpeedURL, errURL, plotStyle, hasTruth: !!truth, sizeAttrs: `width="${base.width}" height="${base.height}"`};
 }
 
 function heatColor(tRaw) {
@@ -6866,7 +6882,7 @@ function sweepHeatmap(sweep, {label = "Constant air speed — supplied wind", sh
         width: 940, height: 560,
         margin: {left: 64, right: 118, top: 40, bottom: 48},
         title: label,
-        xLabel: "start range (NM)", yLabel: "requested air speed (kt, log scale)",
+        xLabel: "start range (NM)", yLabel: "3D speed constraint (kt, log scale)",
     });
     const selected = hypothesis?.params;
     const selectedX = Number.isFinite(selected?.range) ? toNM(selected.range) : null;
@@ -6973,7 +6989,7 @@ function planViewChart(dataset, tracks, opts = {}) {
     const rangeAt = (tr, f) => Math.hypot(
         tr[f * 3] - S[f * 3], tr[f * 3 + 1] - S[f * 3 + 1], tr[f * 3 + 2] - S[f * 3 + 2]);
     const rays = [];
-    for (let f = 0; f < n; f += 100) rays.push(f);
+    for (let f = 0; f < n; f += opts.rayStep ?? 100) rays.push(f);
     if (rays[rays.length - 1] !== n - 1) rays.push(n - 1);
 
     // bounds over everything drawn (in NM)
@@ -6984,8 +7000,8 @@ function planViewChart(dataset, tracks, opts = {}) {
         if (nn < nMin) nMin = nn;
         if (nn > nMax) nMax = nn;
     };
-    for (let f = 0; f < n; f++) grow(toNM(S[f * 3]), toNM(S[f * 3 + 1]));
-    for (const trk of tracks) {
+    if (!opts.focusTrack) for (let f = 0; f < n; f++) grow(toNM(S[f * 3]), toNM(S[f * 3 + 1]));
+    for (const trk of opts.focusTrack ? [{track: opts.focusTrack}] : tracks) {
         for (let f = 0; f < n; f++) grow(toNM(trk.track[f * 3]), toNM(trk.track[f * 3 + 1]));
     }
     const rayEnds = rays.map((f) => {
@@ -6994,20 +7010,21 @@ function planViewChart(dataset, tracks, opts = {}) {
         L *= 1.08;
         const e = toNM(S[f * 3] + D[f * 3] * L);
         const nn = toNM(S[f * 3 + 1] + D[f * 3 + 1] * L);
-        grow(e, nn);
+        if (!opts.focusTrack) grow(e, nn);
         return [e, nn];
     });
 
     // equal-aspect mapping
     const padF = 0.06;
     const cE = (eMin + eMax) / 2, cN = (nMin + nMax) / 2;
-    const spanE = (eMax - eMin) * (1 + padF * 2) || 1;
-    const spanN = (nMax - nMin) * (1 + padF * 2) || 1;
+    const minSpan = opts.focusTrack ? 0.05 : 1e-4;
+    const spanE = Math.max(eMax - eMin, minSpan) * (1 + padF * 2);
+    const spanN = Math.max(nMax - nMin, minSpan) * (1 + padF * 2);
     const scale = Math.min(chart.plotW / spanE, chart.plotH / spanN);
     const halfE = chart.plotW / scale / 2, halfN = chart.plotH / scale / 2;
     chart.setRange(cE - halfE, cE + halfE, cN - halfN, cN + halfN);
 
-    const nTicks = compact ? 5 : 9;
+    const nTicks = opts.tickCount ?? (compact ? 5 : 9);
     chart.axes({
         xTicks: niceTicks(chart.x0, chart.x1, nTicks),
         yTicks: niceTicks(chart.y0, chart.y1, nTicks),
@@ -7038,9 +7055,13 @@ function planViewChart(dataset, tracks, opts = {}) {
     };
     const [se, sn] = enOf(S);
     chart.polyline(se, sn, VIZ.sensor, {width: 2.5});
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(chart.m.left, chart.m.top, chart.plotW, chart.plotH);
+    ctx.clip();
     for (const trk of tracks) {
         const [te, tn] = enOf(trk.track);
-        chart.polyline(te, tn, trk.color, {width: 2});
+        chart.polyline(te, tn, trk.color, {width: trk.width ?? 2, dash: trk.dash});
         // start dot / end tick
         ctx.save();
         ctx.fillStyle = trk.color;
@@ -7061,10 +7082,11 @@ function planViewChart(dataset, tracks, opts = {}) {
     ctx.arc(chart.px(se[0]), chart.py(sn[0]), 4, 0, Math.PI * 2);
     ctx.fill();
     ctx.restore();
+    ctx.restore();
 
     if (opts.legend !== false) {
         chart.legend([
-            {color: VIZ.sensor, label: "sensor (jet) path", width: 2.5},
+            {color: VIZ.sensor, label: "Platform track", width: 2.5},
             {color: VIZ.ray, label: "lines of sight (every ~100 frames)", width: 1, alpha: 0.7},
             ...tracks.map((trk) => ({color: trk.color, label: trk.label})),
         ], "tl");
@@ -7203,7 +7225,7 @@ function buildReportHypothesisDetails(dataset, rankedHyps, ss, truthMaxG = null,
             + (tc.speed ? `Mean absolute ground-speed difference: ${kt1(tc.speed.meanAbsDiff)} kt. ` : "")
             + (tc.heading ? `Mean absolute heading difference: ${tc.heading.meanAbsDiff.toFixed(1)}°. ` : "")
             + `${tc.framesUsed} overlapping frames. These comparisons do not affect fitting or the primary ranking.</p>` : "";
-        const prose = detailProse(h, r, ss);
+        const prose = detailProse(h, r, ss, dataset);
         const spaceHTML = solutionSpaceHTML(h, ss);
         const badgesHTML = [tierBadge(r), ...coLeaderBadge(r), ...completenessBadges(r)].map((badge) =>
             `<span class="pill" style="background:${badge.color}">${escapeHtml(badge.label)}</span>`).join("");
@@ -7258,6 +7280,25 @@ function buildReportHTML(ctx) {
     const assessment = hypotheses.length ? assessExecutiveVerdict(hypotheses, {dataset, provenance}) : ctx.executiveAssessment;
     const physicalLeader = ranked.find(({category}) => category.key === "forward");
     const overallLeader = ranked[0];
+    const overviewCandidates = reportOverviewCandidates(ranked);
+    const colors = ["#3987e5", "#c98500", "#199e70", "#a68aec", "#cc6655", "#809932", "#aa78a6", "#597d94"];
+    const overviewTracks = overviewCandidates.map(({h}, i) => ({track: h.track, label: h.name,
+        color: colors[i % colors.length], width: i ? 1.6 : 3, dash: i >= colors.length ? [5, 3] : []}));
+    const best = overviewCandidates[0]?.h;
+    const overviewHTML = best ? (() => {
+        const chartOptions = {width: 470, height: 365, legend: false, tickCount: 5, rayStep: Math.max(1, Math.ceil(dataset.n / 12)),
+            margin: {left: 60, right: 16, top: 40, bottom: 48}};
+        const drawOrder = [...overviewTracks].reverse();
+        const overview = planViewChart(dataset, drawOrder, {...chartOptions, title: "Platform and leading paths"});
+        const closeup = planViewChart(dataset, drawOrder, {...chartOptions, title: "Zoom: leading path", focusTrack: best.track});
+        return `<figure class="opening-figure"><div class="overview-pair"><img src="${overview}" alt="Platform track, sightlines and leading candidate paths"><img src="${closeup}" alt="Plan view zoomed to ${esc(best.name)}"></div>`
+            + `<figcaption><strong>${overviewCandidates.length > 1 ? `${overviewCandidates.length} close leaders` : "Leading trajectory"} under the screening rules.</strong> Left: the platform track and candidate paths in their wider setting; gray rays show sampled lines of sight. Right: the same paths at the scale of ${link(best)}; other paths may leave this view. `
+            + `${overviewCandidates.length > 1 ? "Their screening order does not establish a unique winner; overlapping lines can hide one another. " : ""}`
+            + `Both views look down from above with equal east/north scales; altitude is not shown. Filled dots mark starts, open circles mark ends. Truth is excluded from this selection and figure.</figcaption></figure>`
+            + `<p class="sub"><span class="overview-swatch" style="border-color:${VIZ.sensor}"></span>Platform track</p>`
+            + `<ol class="overview-key">${overviewCandidates.map(({h}, i) => `<li><span class="overview-swatch" style="border-color:${overviewTracks[i].color}${i >= colors.length ? ";border-top-style:dashed" : ""}"></span>${link(h)}</li>`).join("")}</ol>`;
+    })() : "";
+    add("source-files", "Source files and video context", reportSourceHTML(manifest.source));
     const warnings = [
         provenance?.circular ? `Constructed sightlines: ${esc(provenance.reason)} This is a consistency check, not independent evidence.` : "",
         provenance?.rangeUnobservable ? "The sensor baseline does not determine range. Reported ranges depend on the motion assumptions." : "",
@@ -7292,10 +7333,11 @@ function buildReportHTML(ctx) {
     }
 
     const casCases = constantAirReportCases({hypotheses, sweep, sweepFreeWind});
-    const selectedTable = table(["Interpretation", "Selected start range", "Requested airspeed", "Actual mean 3D airspeed", "Selection"], casCases.map(c => {
+    const selectedTable = table(["Interpretation", "Selected start range", "Horizontal air speed (mean)", "Vertical air speed (mean)", "Selection"], casCases.map(c => {
         const h = c.hypothesis;
+        const air = h ? candidateAirMetrics(dataset, h) : null;
         return row([h ? link(h) : esc(c.label), h ? `${number(toNM(h.params.range))} NM` : "Unavailable",
-            h ? `${number(toKt(h.params.airSpeed), 1)} kt` : "—", h ? `${number(toKt(h.metricsFull?.airSpeed?.mean), 1)} kt` : "—",
+            horizontalAirText(air?.horizontalAirSpeed?.mean), verticalAirText(air?.verticalAirSpeed?.mean),
             h?.params.regime === "slow" ? "Slow-valley candidate replaced grid representative" : "Grid family representative"]);
     }));
     add("cas-searches", "Constant air speed: supplied versus fitted wind", `<p><strong>CAS/SW</strong> holds the supplied wind fixed. <strong>CAS/FW</strong> fits wind independently. Each heatmap below belongs to its own search; the green marker identifies the candidate actually reported in the gallery. A blue marker identifies a different grid representative, if one was replaced by the slow-valley candidate.</p>`
@@ -7303,8 +7345,8 @@ function buildReportHTML(ctx) {
             if (!c.sweep?.results?.length) return `<h3>${esc(c.label)}</h3><p>No search grid was retained for this variant. The selected candidate above is still reported; no heatmap is inferred from it.</p>`;
             const b = c.sweep.best;
             return `<h3>${esc(c.label)}</h3>` + figure(sweepHeatmap(c.sweep, c), c.label,
-                `<strong>${esc(c.short)} search.</strong> Grid representative: ${number(toNM(b.startDist))} NM at ${number(toKt(b.speed), 1)} kt requested airspeed. `
-                + `The plotted vertical coordinate is the requested speed used by the fit; actual mean speed is listed above. Any blank margin is outside the sampled grid. `
+                `<strong>${esc(c.short)} search.</strong> Grid representative: ${number(toNM(b.startDist))} NM at ${number(toKt(b.speed), 1)} kt requested speed constraint. `
+                + `The plotted vertical coordinate is the solver's 3D speed constraint; achieved horizontal and vertical air speeds are listed separately above. Any blank margin is outside the sampled grid. `
                 + `<span class="dark-only">Darker</span><span class="light-only">Lighter</span> means lower score. Scores include smoothness, speed fidelity, the target-speed prior${c.mode === "fitted" ? ", and the shared wind penalty" : ""}${dataset.angularSizeOptions?.fit ? ", plus enabled angular-size fitting costs" : ""}. `
                 + `Each chart has its own color scale; colors do not establish a cross-model likelihood.`);
         }).join("") + (!casCases.length ? "<p>No constant-air-speed search was run.</p>" : ""));
@@ -7320,9 +7362,11 @@ function buildReportHTML(ctx) {
         const charts = hypothesisSeriesCharts(dataset, c.hypothesis, {truth, width: 900, height: 310});
         if (!charts) return "";
         return `<h3>${esc(c.label)}</h3>` + figure(charts.gURL, `${c.short} acceleration`)
-            + figure(charts.spdURL, `${c.short} 3D speed`) + figure(charts.errURL, `${c.short} LOS residual`);
+            + figure(charts.horizontalSpeedURL, `${c.short} horizontal air speed`)
+            + figure(charts.verticalSpeedURL, `${c.short} signed vertical air speed`)
+            + figure(charts.errURL, `${c.short} LOS residual`);
     }).join("");
-    if (diagnostics) add("cas-diagnostics", "CAS candidate diagnostics", `<p>These are the actual selected gallery trajectories, including any slow-valley replacement. Speeds include vertical motion: airspeed is blue and ground speed green. Thin dashed lines show truth; air-relative truth diagnostics use the candidate's wind assumption. The gray trace uses the separate fine scale.</p>` + diagnostics);
+    if (diagnostics) add("cas-diagnostics", "CAS candidate diagnostics", `<p>These are the actual selected gallery trajectories, including any slow-valley replacement. Horizontal air speed is blue; vertical air speed is green (+ up, − down, in ft/min). Thin dashed lines show truth using the candidate's wind assumption for air speed. The gray trace uses the separate fine scale.</p>` + diagnostics);
 
     const profiles = [
         {rows: fastProfile, color: VIZ.fastObj, label: `Supplied wind, target ${number(toKt(speedTarget), 0)} kt`},
@@ -7349,7 +7393,7 @@ function buildReportHTML(ctx) {
     add("methods", "Methods and interpretation limits", `<p><strong>Constant air speed.</strong> A range/airspeed grid drives a smoothed range-spline solve. Selection includes smoothness, speed fidelity and a weak target-speed prior; fitted-wind searches retain the shared wind penalty. The near-best family tolerance is max(0.05, 15% of the best score), a heuristic rather than a confidence interval. A separate slow-valley comparison can replace the grid representative.</p>
         <p><strong>Minimum acceleration and range profiles.</strong> An acceleration-minimizing range spline follows the sightlines, with a soft speed target when used. Smoothing can move the final path off the rays; the resulting residual is reported. Minimum Speed instead minimizes air-relative speed. Allowing wind to vary changes both searches and does not make their inferred winds weather observations.</p>
         <p><strong>Fixed-wing aircraft.</strong> A forward trajectory with constant horizontal airspeed, evolving turn rate and constant climb is optimized using differential evolution and local polish. Supplied and fitted wind are separate searches; soft priors and hard search bounds remain part of the interpretation.</p>
-        <p><strong>Balloon.</strong> A passive horizontal wind tracer starts with steady drift and constant rise or sink. More complex wind and vertical-life-cycle models are retained only when they improve the fit sufficiently. Zero horizontal airspeed does not imply zero 3D airspeed during ascent.</p>
+        <p><strong>Balloon.</strong> A passive horizontal wind tracer starts with steady drift and constant rise or sink. More complex wind and vertical-life-cycle models are retained only when they improve the fit sufficiently. Horizontal air speed is near zero by construction; vertical air speed describes rise or sink through the air.</p>
         <p><strong>Other methods.</strong> Each candidate entry describes its own geometric, smoothing or physical model, constraints and optimizer completion. Candidate classes are not mutually exclusive probabilities.</p>
         <p><strong>Metrics and truth.</strong> Motion metrics use finite differences over about half a second, with acceleration differentiated again. Truth is excluded from fitting and primary ranking. Truth LOS error includes observation error; truth airspeed requires a wind assumption. Partial truth coverage is omitted from derivative comparisons.</p>
         <p><strong>Limits.</strong> Active bounds and incomplete searches qualify results. A close LOS fit is necessary but does not uniquely establish distance, wind, object identity or physical cause. Independent wind, range, size or other corroboration can distinguish otherwise compatible trajectories.</p>`);
@@ -7376,7 +7420,11 @@ function buildReportHTML(ctx) {
         <details class="manifest"><summary>Inspect complete run manifest</summary><pre>${esc(JSON.stringify(reportManifest, null, 2))}</pre></details>`);
     let version = "";
     try { version = process.env.BUILD_VERSION_STRING || ""; } catch (_) { /* optional */ }
-    return assembleTraverseReport({title: sitName, generated: new Date().toLocaleString(), version,
-        metaHTML: `<p class="sub">${dataset.n} frames · ${number((dataset.n - 1) / dataset.fps, 1)} s · ${hypotheses.filter(h => h.track).length} candidate trajectories. All results below refer to this frozen analysis run.</p>`,
-        summaryHTML, sections, manifest: reportManifest});
+    const source = manifest.source;
+    const primarySource = source?.files.find(f => f.primary) ?? source?.files[0];
+    return assembleTraverseReport({title: source?.title || sitName, generated: new Date().toLocaleString(), version,
+        metaHTML: `<p class="sub">${dataset.n} analysis samples · frames ${dataset.frame0 ?? 0}–${dataset.frame1 ?? dataset.n - 1} · ${number(dataset.fps, 3)} frames/s · ${number((dataset.n - 1) / dataset.fps, 1)} s · ${hypotheses.filter(h => h.track).length} candidate trajectories. Frozen analysis run.</p>`
+            + (primarySource ? `<p class="sub"><strong>Source path:</strong> <code>${esc(primarySource.relativePath || primarySource.name)}</code>${primarySource.relativePath ? "" : " (folder path not recorded)"}. <a href="#source-files">File details, columns and video context</a>.</p>`
+                + `<p class="sub">${esc(primarySource.type || "Track file")}${Number.isFinite(primarySource.bytes) ? ` · ${primarySource.bytes.toLocaleString("en-US")} bytes` : ""}${Number.isFinite(primarySource.rows) ? ` · ${primarySource.rows.toLocaleString("en-US")} source rows` : ""} · ${primarySource.columns.length} recorded columns · ${source.media.some(v => !v.isImage) ? "video loaded (see source context)" : "no video loaded"}.</p>` : ""),
+        overviewHTML, summaryHTML, sections, manifest: reportManifest});
 }

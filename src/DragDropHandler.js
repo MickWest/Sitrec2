@@ -618,7 +618,7 @@ class CDragDropHandler {
         return filesAreTrackImport(files);
     }
 
-    async uploadDroppedFile(droppedFile) {
+    async uploadDroppedFile(droppedFile, sourceDetails = {}) {
 
         EventManager.dispatchEvent("fileDropped", {})
 
@@ -629,6 +629,14 @@ class CDragDropHandler {
         }
 
         try {
+            FileManager.loadedFilesMetadata ??= {};
+            FileManager.loadedFilesMetadata[file.name] = {
+                ...FileManager.loadedFilesMetadata[file.name],
+                sourceFile: {name: droppedFile.name, size: droppedFile.size, type: droppedFile.type,
+                    lastModified: droppedFile.lastModified,
+                    relativePath: droppedFile.sourceRelativePath || droppedFile.webkitRelativePath || null,
+                    ...sourceDetails},
+            };
             return await this.importDroppedFile(file);
         } finally {
             // The claim only has to cover the window between settling on a name and

@@ -1,5 +1,6 @@
 /** Read-only, truth-free comparison of the existing candidate assessments. */
 import {KNOTS_TO_MS} from "./TraverseAnalysis";
+import {AIR_MOTION_BASIS, airMotionRows} from "./TraverseAirMotion";
 import {
     botScoreBreakdown, BROAD_SCREEN_LIMITS, FIT_SCALE_TIERS, fitScaleDeg,
     hypothesisFitKind, rankAllHypotheses, rankingDecision, rankingPlacementExplanation,
@@ -126,7 +127,9 @@ export function buildTraverseComparison(left, right, dataset, options) {
     const rows = (lists) => [...new Map(lists.flat().map(row => [row.key, row.label])).entries()]
         .map(([key, label]) => ({key, label, cells: lists.map(list => list.find(row => row.key === key)?.cell
             || cell("unknown", "Not assessed", "Physical path metrics unavailable"))}));
-    return {items, scores, delta, decision, explanation, gates: rows(gates), physical: rows(physical)};
+    const airMotion = rows(items.map(({h}) => airMotionRows(dataset, h).map(([label, value]) =>
+        ({key: label, label, cell: cell("neutral", value)}))));
+    return {items, scores, delta, decision, explanation, airMotion, gates: rows(gates), physical: rows(physical)};
 }
 
 function statusHTML(c) {
@@ -155,6 +158,8 @@ export function traverseComparisonHTML(comparison) {
         ? `${items.every(x => x.r.eligible) ? "Both pass all ranking gates. " : "Earlier ranking checks tie. "}${escape(delta >= 0 ? items[0].h.name : items[1].h.name)} has the lower BOT Score by ${number(Math.abs(delta))}. This is a heuristic tie-break.`
         : escape(explanation.text);
     return `<p class="tc-summary">${summary}</p>`
+        + `<h3>Air speed components</h3><p class="tc-note">${escape(AIR_MOTION_BASIS)}</p>`
+        + `<div class="tc-scroll"><table>${headers()}<tbody>${rowsHTML(comparison.airMotion)}</tbody></table></div>`
         + `<h3>BOT Score</h3><p class="tc-note">Lower is better. Weighted contributions add to the total. Difference = right − left; positive favors the left. The largest difference is highlighted.</p>`
         + `<div class="tc-scroll"><table>${headers('<th scope="col">Difference</th>')}<tbody>${scoreRows}`
         + `<tr class="tc-total"><th scope="row">Total BOT Score</th>${scores.map(s => `<td>${number(s?.total)}</td>`).join("")}<td>${signed(delta)}</td></tr></tbody></table></div>`

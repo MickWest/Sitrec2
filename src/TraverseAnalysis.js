@@ -245,6 +245,9 @@ export function trackMetrics(dataset, track, options = {}) {
         groundSpeed: stat(groundSpeed, lo, hi),
         airSpeed: stat(airSpeed, lo, hi),
         horizontalAirSpeed: stat(horizontalAirSpeed, lo, hi),
+        // Signed local Up component through the air, distinct from geodetic
+        // ground climb below. Supplied vertical wind is subtracted as well.
+        verticalAirSpeed: stat(airVZ, lo, hi),
         verticalSpeed: stat(verticalSpeed, lo, hi),
         gLoad: stat(gLoad, lo, hi),
         turnRate: turnRateStat,
@@ -252,7 +255,8 @@ export function trackMetrics(dataset, track, options = {}) {
         groundHeading: headingStats(groundHeading, lo, hi),
         altitude: stat(altitude, lo, hi),
         range: stat(range, lo, hi),
-        series: {groundSpeed, airSpeed, heading, groundHeading, verticalSpeed, gLoad, turnRate, altitude, range},
+        series: {groundSpeed, airSpeed, horizontalAirSpeed, verticalAirSpeed: airVZ,
+            heading, groundHeading, verticalSpeed, gLoad, turnRate, altitude, range},
         // Let annotations use exactly the samples used by the summary stats.
         sampleWindow: {lo, hi, frameOffset: 0},
     };
@@ -1929,6 +1933,8 @@ export function summarizeMetrics(m) {
     return {
         groundSpeed: pick(m.groundSpeed),
         airSpeed: pick(m.airSpeed),
+        horizontalAirSpeed: pick(m.horizontalAirSpeed),
+        verticalAirSpeed: pick(m.verticalAirSpeed),
         verticalSpeed: pick(m.verticalSpeed),
         gLoad: pick(m.gLoad),
         turnRate: pick(m.turnRate),

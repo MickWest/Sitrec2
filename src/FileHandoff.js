@@ -65,7 +65,8 @@ export async function putFileHandoff(files, meta = {}) {
     // means a browser that degrades File to Blob cannot silently lose it.
     await indexedDBManager.cacheData(KEY_PREFIX + id, {
         meta,
-        files: list.map((f) => ({name: f.name, type: f.type ?? "", blob: f.slice(0, f.size, f.type)})),
+        files: list.map((f) => ({name: f.name, type: f.type ?? "", lastModified: f.lastModified,
+            relativePath: f.sourceRelativePath || f.webkitRelativePath || null, blob: f.slice(0, f.size, f.type)})),
     }, HANDOFF_TTL_MS);
 
     return id;
@@ -90,6 +91,7 @@ export async function takeFileHandoff(id) {
     if (!rec || !Array.isArray(rec.files) || !rec.files.length) return null;
     return {
         meta: rec.meta ?? {},
-        files: rec.files.map((f) => new File([f.blob], f.name, {type: f.type || ""})),
+        files: rec.files.map((f) => Object.assign(new File([f.blob], f.name,
+            {type: f.type || "", lastModified: f.lastModified ?? 0}), {sourceRelativePath: f.relativePath || null})),
     };
 }

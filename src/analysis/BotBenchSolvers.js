@@ -112,7 +112,7 @@ export const SOLVERS = Object.freeze([
         note: "The slowest object consistent with the sightlines; read off the slow range profile."},
     {id: "aircraft", name: "Fixed-Wing Aircraft", shortName: "fixed_wing", group: "Object models", units: ["aircraft", "aircraftFreeWind"],
         note: "The fixed-wing model with supplied and fitted wind, differential evolution then polish."},
-    {id: "lantern", name: "Sky Lantern / Balloon", shortName: "balloon", group: "Object models", units: ["lantern", "lanternSuppliedWind", "lanternCorrectedWind"],
+    {id: "lantern", name: "Balloon", shortName: "balloon", group: "Object models", units: ["lantern", "lanternSuppliedWind", "lanternCorrectedWind"],
         note: "The wind-drift model with supplied and fitted wind, seeded from the Kalman smoother."},
     {id: "quadcopter", name: "Quadcopter", shortName: "quadcopter", group: "Object models", units: ["quadcopter", "quadcopterSuppliedWind"],
         note: "The multirotor envelope fit with supplied and fitted wind."},

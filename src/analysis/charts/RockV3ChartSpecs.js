@@ -2075,7 +2075,7 @@ export const FIGURES = [
         build: (rows) => figMixByClass(rows, {
             field: "r_topKey", key: "topCandidateByClass", labels: labelMapFrom(rows, "r_topKey", "r_topName"),
             title: `${datasetLabelOf(rows)}: which hypothesis the blind ranking puts first, by ${classAxisTitle(rows).toLowerCase()}`,
-            caption: "Each bar is every track of that class. Sky Lantern / Balloon and Quadcopter are object models; "
+            caption: "Each bar is every track of that class. Balloon and Quadcopter are object models; "
                 + "Polynomial LSQ, Constant Altitude and Saddle are curve fits that carry no object claim.",
         })},
     {key: "errorByLength", name: "Error by clip length", group: "Accuracy",
@@ -2124,7 +2124,7 @@ export const FIGURES = [
             labels: labelMapFrom(rows, "r_topKey", "r_topName"),
             title: `${datasetLabelOf(rows)}: which hypothesis the blind ranking puts first`,
             caption: "Each bar includes all tracks in its group. The bar shows the hypothesis family the ranking placed first without "
-                + "seeing truth. Sky Lantern / Balloon and Quadcopter are object models; Polynomial LSQ, Constant "
+                + "seeing truth. Balloon and Quadcopter are object models; Polynomial LSQ, Constant "
                 + "Altitude and Saddle are curve fits that carry no object claim.",
         })},
     {key: "rankingCost", name: "Cost of blind ranking", group: "Ranking",

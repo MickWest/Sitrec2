@@ -3252,7 +3252,10 @@ function loadStartupHandoffAfterSitchSetup() {
             // the tracks, so that is sufficient; anything that did would have
             // to watch for the nodes itself.
             for (const file of handoff.files) {
-                await DragDropHandler.uploadDroppedFile(file);
+                const sourceDetails = file === handoff.files[0] && handoff.meta?.relativePath
+                    ? {relativePath: handoff.meta.relativePath, pathBasis: "Folder selected in " + (handoff.meta.source || "source browser")}
+                    : {};
+                await DragDropHandler.uploadDroppedFile(file, sourceDetails);
             }
             // The notes describe the files, so they go in after them. The
             // panel is independent of the tracks, so it does not matter that

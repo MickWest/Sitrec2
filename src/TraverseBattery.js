@@ -332,7 +332,7 @@ export async function buildSolutionFamilies({
         };
         specs.push({
             id: "lantern|free",
-            label: "Sky Lantern / Balloon",
+            label: "Balloon",
             anchorM: lantern.params.solved.initialRange,
             anchorFit: balloonFamilyFit(lantern),
             modelLoM: rd.min, modelHiM: rd.max,
@@ -810,12 +810,12 @@ export async function runTraverseBattery({
             fit = await fitBalloon(physicsDS, dataset, {...physicsOpts, seedTrack: freeSeedTrack});
         } catch (e) {
             rethrowIfCancelled(e);
-            unitFailures.push({method: "Sky Lantern / Balloon (free wind)", error: (e && e.message) || "fit failed"});
+            unitFailures.push({method: "Balloon (free wind)", error: (e && e.message) || "fit failed"});
             fit = null;
         }
         throwIfCancelled();
-        if (!fit && !unitFailures.some((f) => f.method === "Sky Lantern / Balloon (free wind)")) {
-            unitFailures.push({method: "Sky Lantern / Balloon (free wind)", error: "fit returned no solution"});
+        if (!fit && !unitFailures.some((f) => f.method === "Balloon (free wind)")) {
+            unitFailures.push({method: "Balloon (free wind)", error: "fit returned no solution"});
         }
         return fit;
     }, () => !!freeSeedTrack);
@@ -1102,15 +1102,20 @@ export async function runTraverseBattery({
     for (const h of hypotheses) {
         if (!h.params?.unconstrained || !h.track) continue;
         const conditioned = trackMetrics(dataset, h.track);
-        h.windConditionalMetrics = {airSpeed: conditioned.airSpeed, horizontalAirSpeed: conditioned.horizontalAirSpeed};
+        h.windConditionalMetrics = {airSpeed: conditioned.airSpeed, horizontalAirSpeed: conditioned.horizontalAirSpeed,
+            verticalAirSpeed: conditioned.verticalAirSpeed};
         let lo = conditioned.airSpeed.mean, hi = lo;
+        let horizontalLo = conditioned.horizontalAirSpeed.mean, horizontalHi = horizontalLo;
         for (let a = 0; a < 8; a++) {
             const phi = a * Math.PI / 4;
             const m = trackMetrics(datasetWithWindCorrection(dataset,
                 windCorrectionSigmaMS * Math.cos(phi), windCorrectionSigmaMS * Math.sin(phi)), h.track);
             lo = Math.min(lo, m.airSpeed.mean); hi = Math.max(hi, m.airSpeed.mean);
+            horizontalLo = Math.min(horizontalLo, m.horizontalAirSpeed.mean);
+            horizontalHi = Math.max(horizontalHi, m.horizontalAirSpeed.mean);
         }
-        h.windSensitivity = {mean: conditioned.airSpeed.mean, lo, hi, sigmaMS: windCorrectionSigmaMS};
+        h.windSensitivity = {mean: conditioned.airSpeed.mean, lo, hi, sigmaMS: windCorrectionSigmaMS,
+            horizontalAirSpeed: {mean: conditioned.horizontalAirSpeed.mean, lo: horizontalLo, hi: horizontalHi}};
     }
     // Grade every hypothesis BEFORE anything reads them: the scene residual
     // scale and the platform-mirror record. The executive assessment below

@@ -1,5 +1,7 @@
 import {losErrorSeriesDeg, truthDiagnosticSeries} from "../src/TraverseDiagnosticSeries";
 import {datasetWithConstantWind} from "../src/TraverseWind";
+import {trackMetrics} from "../src/TraverseAnalysis";
+import {airMotionRows, candidateAirMetrics} from "../src/TraverseAirMotion";
 
 function risingBalloon() {
     const n = 120, fps = 10;
@@ -13,16 +15,53 @@ function risingBalloon() {
         truth: {usable: true, track, valid: new Uint8Array(n).fill(1)}};
 }
 
-test("a passively drifting balloon has vertical air speed and larger 3D ground speed", () => {
+test("a passively drifting balloon separates horizontal drift from vertical air speed", () => {
     const {dataset, truth} = risingBalloon();
     const series = truthDiagnosticSeries(dataset, truth);
-    expect(series.airSpeed[60]).toBeCloseTo(2.86, 8);
-    expect(series.groundSpeed[60]).toBeCloseTo(Math.hypot(-0.909, 1.959, 2.86), 8);
+    expect(series.horizontalAirSpeed[60]).toBeCloseTo(0, 8);
+    expect(series.verticalAirSpeed[60]).toBeCloseTo(2.86, 8);
     expect(series.gLoad[60]).toBeLessThan(1e-10);
     expect(series.losError[60]).toBeLessThan(1e-5);
     const differentWind = truthDiagnosticSeries(datasetWithConstantWind(dataset, 0, 5), truth);
-    expect(differentWind.airSpeed[60]).toBeCloseTo(Math.hypot(-0.909, 1.959 - 5, 2.86), 8);
-    expect(differentWind.groundSpeed[60]).toEqual(series.groundSpeed[60]);
+    expect(differentWind.horizontalAirSpeed[60]).toBeCloseTo(Math.hypot(-0.909, 1.959 - 5), 8);
+    expect(differentWind.verticalAirSpeed[60]).toEqual(series.verticalAirSpeed[60]);
+});
+
+test("vertical air speed subtracts vertical wind and preserves descending signs", () => {
+    const {dataset, truth} = risingBalloon();
+    for (let f = 0; f < dataset.n; f++) dataset.W[f * 3 + 2] = 4 / dataset.fps;
+    const metrics = trackMetrics(dataset, truth.track);
+    expect(metrics.verticalSpeed.mean).toBeGreaterThan(0); // ascending over the ground
+    expect(metrics.verticalAirSpeed.mean).toBeCloseTo(-1.14, 8); // descending through rising air
+    expect(metrics.series.verticalAirSpeed[60]).toBeCloseTo(-1.14, 8);
+    expect(truthDiagnosticSeries(dataset, truth).verticalAirSpeed[60]).toBeCloseTo(-1.14, 8);
+    expect(airMotionRows(dataset, {track: truth.track, metricsFull: metrics})[1][1]).toBe("-224 fpm / -224 to -224 fpm");
+});
+
+test("ground-frame and older cached results display the supplied-wind air components", () => {
+    const {dataset, truth} = risingBalloon();
+    const metricsFull = trackMetrics(datasetWithConstantWind(dataset, 0, 0), truth.track);
+    const groundFit = {track: truth.track, metricsFull, params: {motionFrame: "ground"}};
+    const air = candidateAirMetrics(dataset, groundFit);
+    expect(air.horizontalAirSpeed.mean).toBeCloseTo(0, 8);
+    expect(air.verticalAirSpeed.mean).toBeCloseTo(2.86, 8);
+    expect(metricsFull.horizontalAirSpeed.mean).toBeGreaterThan(2); // original fit left intact
+    const oldFit = {track: truth.track, metricsFull: {airSpeed: metricsFull.airSpeed, series: {}}};
+    expect(airMotionRows(dataset, oldFit)).toEqual(airMotionRows(dataset, groundFit));
+    expect(candidateAirMetrics(dataset, {...groundFit, atInfinity: true})).toBeNull();
+    expect(airMotionRows(null, {})).toEqual([
+        ["Horizontal air speed (mean / max)", "Unavailable"],
+        ["Vertical air speed (mean / range)", "Unavailable"],
+    ]);
+});
+
+test.each(["fitted", "corrected"])("component display uses the %s candidate wind", windMode => {
+    const {dataset, truth} = risingBalloon();
+    const h = {key: "lantern", windMode, track: truth.track,
+        params: {windE: 0, windN: 5, windCorrectionE: 0.909, windCorrectionN: 5 - 1.959}};
+    const air = candidateAirMetrics(dataset, h);
+    expect(air.horizontalAirSpeed.mean).toBeCloseTo(Math.hypot(-0.909, 1.959 - 5), 8);
+    expect(air.verticalAirSpeed.mean).toBeCloseTo(2.86, 8);
 });
 
 test("truth derivatives do not bridge gaps or turn held endpoints into motion evidence", () => {
@@ -31,10 +70,11 @@ test("truth derivatives do not bridge gaps or turn held endpoints into motion ev
     truth.valid.fill(0, 50, 70);
     truth.valid.fill(0, 110);
     const series = truthDiagnosticSeries(dataset, truth);
-    expect(series.airSpeed[30]).toBeCloseTo(2.86, 8);
-    expect(series.airSpeed[90]).toBeCloseTo(2.86, 8);
+    expect(series.verticalAirSpeed[30]).toBeCloseTo(2.86, 8);
+    expect(series.verticalAirSpeed[90]).toBeCloseTo(2.86, 8);
     for (const f of [0, 9, 10, 49, 50, 60, 70, 109, 110, 119]) {
-        expect(Number.isNaN(series.airSpeed[f])).toBe(true);
+        expect(Number.isNaN(series.horizontalAirSpeed[f])).toBe(true);
+        expect(Number.isNaN(series.verticalAirSpeed[f])).toBe(true);
         expect(Number.isNaN(series.gLoad[f])).toBe(true);
     }
     expect(Number.isNaN(series.losError[60])).toBe(true);

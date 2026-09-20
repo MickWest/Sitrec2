@@ -573,7 +573,9 @@ export class CTrackBrowser {
         const files = [];
         for (const entry of entries) {
             try {
-                files.push(await entry.getFile());
+                const file = await entry.getFile();
+                file.sourceRelativePath = entry.relativePath;
+                files.push(file);
             } catch (error) {
                 showError(error);
                 return [];

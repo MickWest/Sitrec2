@@ -372,6 +372,20 @@ export function physicsBoundSubtitle(base, active, inactive, unstable = []) {
     if (unstable.length) parts.push(`inward probe improved the fit: ${unstable.join(", ")}`);
     return parts.length ? `${base} — ${parts.join("; ")}` : base;
 }
+// A lifecycle parameterization alone is not evidence of a lantern. Only use
+// lantern wording when the fitted window actually includes appreciable ascent
+// and descent. This is a presentation hint, never an object identification.
+export function balloonDisplayName(solved, clipT, stage) {
+    if (stage && stage !== "lifecycle") return "Balloon";
+    const {vRise, vSink, tBurn, tauCool} = solved;
+    if (![vRise, vSink, tBurn, tauCool, clipT].every(Number.isFinite)
+        || vRise < 0.1 || vSink <= 0.1 || tBurn < 0 || tauCool <= 0) return "Balloon";
+    const crosses = tBurn + tauCool * Math.log((vRise + vSink) / vSink);
+    const endSpeed = -vSink + (vRise + vSink) * Math.exp(-(clipT - tBurn) / tauCool);
+    return crosses >= 1 && crosses <= clipT - 1 && endSpeed <= -0.1
+        ? "Possible sky lantern (rise then fall)" : "Balloon";
+}
+
 export function lanternHypothesis(fit, dataset, errFloor, {key, name, notes, windPolicy, windEvidenceRole}) {
     if (!fit || !fit.positions) {
         return {
@@ -384,6 +398,7 @@ export function lanternHypothesis(fit, dataset, errFloor, {key, name, notes, win
     const track = fit.positions;
     const range0 = Math.hypot(track[0] - S[0], track[1] - S[1], track[2] - S[2]);
     const solved = fit.params.solved || {};
+    name = balloonDisplayName(solved, (dataset.n - 1) / dataset.fps, fit.params.modelSelection?.selectedStage);
     const lanternMetrics = trackMetrics(
         fit.params.windMode === "corrected" ? datasetWithWindCorrection(dataset, solved.windE, solved.windN)
             : datasetForSolvedModelWind(dataset, track, solved, "lantern"), track);
@@ -475,7 +490,9 @@ export function lanternHypothesis(fit, dataset, errFloor, {key, name, notes, win
             priors: fit.params.priors,
             errFloor,
         },
-        notes,
+        notes: notes + (name.startsWith("Possible")
+            ? " The fitted rise-to-fall transition is consistent with lantern cooling, but does not identify the object as a lantern."
+            : " No lantern-specific rise-to-fall transition is established within this clip."),
     };
 }
 
@@ -920,10 +937,10 @@ export function buildHypotheses({dataset, sweep, ca, horizontalSpeed, plausible,
 
     // Both wind treatments use the same model, terrain checks and judges.
     if (has("lantern")) list.push(lanternHypothesis(lantern, dataset, errFloor, {
-        key: "lantern", name: "Sky Lantern / Balloon",
+        key: "lantern", name: "Balloon",
         windEvidenceRole: "free",
         windPolicy: "wind fitted by this model, no supplied wind input",
-        notes: "Wind-drift lantern kinematics (rise, buoyancy decay and terminal sink) fit to the sightlines.",
+        notes: "Passive balloon drift fit to the sightlines, with more complex wind or vertical motion selected only when needed.",
     }));
 
     // 5b. Quadcopter (multirotor drone) physics model — a hover-capable

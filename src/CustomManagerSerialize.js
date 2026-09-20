@@ -340,6 +340,10 @@ export const serializeMethods = {
                 } else if (file.isTLE && file.tleMerged) {
                     filesMetadata[id] = { dataType: file.dataType, tleAction: "merge" };
                 }
+                const sourceFile = FileManager.loadedFilesMetadata?.[id]?.sourceFile;
+                if (sourceFile && !file.skipSerialization) {
+                    filesMetadata[id] = {...filesMetadata[id], sourceFile: {...sourceFile}};
+                }
 
                 // Which Space-Track query produced a satellite set. The baked
                 // file records the elements but not the request, and its name

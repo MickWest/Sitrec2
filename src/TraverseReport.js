@@ -1,4 +1,5 @@
 // Report structure is independent of the scene and of chart rendering.
+import {explainTraverseHTML, traverseGlossaryHTML, TRAVERSE_TERM_CSS} from "./TraverseTerminology";
 export const reportEscape = value => String(value ?? "").replace(/[&<>"']/g,
     c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]));
 
@@ -11,8 +12,37 @@ export function constantAirReportCases({hypotheses = [], sweep, sweepFreeWind}) 
         .filter(c => c.sweep || c.hypothesis);
 }
 
-export function assembleTraverseReport({title, generated, metaHTML, summaryHTML, sections, manifest = {}, version = ""}) {
+export function reportOverviewCandidates(ranked) {
+    const paths = ranked.filter(({h}) => h.track?.length && !h.atInfinity);
+    if (!paths.length) return [];
+    return paths[0].r.coLeader ? paths.filter(({r}) => r.coLeader) : paths.slice(0, 1);
+}
+
+export function reportSourceHTML(source) {
     const esc = reportEscape;
+    if (!source?.files?.length) return "<p>No imported track source was recorded. This analysis uses the scene's configured tracks and sightlines.</p>";
+    return source.files.map(f => `<h3>${esc(f.name)}${f.primary ? " — primary observation source" : " — loaded track source"}</h3>`
+        + `<p><strong>Relative path:</strong> <code>${esc(f.relativePath || "Not recorded by the import")}</code>${f.pathBasis ? ` (${esc(f.pathBasis)})` : ""}.</p>`
+        + `<p><strong>File:</strong> ${esc(f.type || "Type not recorded")}${Number.isFinite(f.bytes) ? ` · ${f.bytes.toLocaleString("en-US")} bytes` : ""}`
+        + `${Number.isFinite(f.rows) ? ` · ${f.rows.toLocaleString("en-US")} data rows` : ""}`
+        + `${f.lastModified ? ` · last modified ${esc(new Date(f.lastModified).toISOString())}` : ""}.</p>`
+        + `<p><strong>Tracks in this file:</strong> ${f.trackNames.map(esc).join("; ") || "None recorded"}.</p>`
+        + `<p><strong>Video relationship:</strong> ${f.parentVideo ? `Extracted from ${esc(f.parentVideo)}.`
+            : source.media.some(v => !v.isImage) ? "Video is loaded in the scene; a derivation from that video is not recorded for this file."
+                : "No video is loaded and no parent video is recorded for this file."}</p>`
+        + `<p><strong>Columns present (${f.columns.length}):</strong> ${f.columns.length ? f.columns.map(c => `<code>${esc(c)}</code>`).join(", ") : "Column names are not available for this file format."}</p>`).join("")
+        + (source.media.length ? `<p><strong>Loaded media:</strong> ${source.media.map(v => `${esc(v.name)}${v.isImage ? " (image)" : " (video)"}${v.width && v.height ? `, ${v.width} × ${v.height}` : ""}${v.frames ? `, ${v.frames} frames` : ""}`).join("; ")}.</p>` : "");
+}
+
+export function assembleTraverseReport({title, generated, metaHTML, overviewHTML = "", summaryHTML, sections, manifest = {}, version = ""}) {
+    const esc = reportEscape;
+    const usedTerms = new Set();
+    metaHTML = explainTraverseHTML(metaHTML, usedTerms);
+    overviewHTML = explainTraverseHTML(overviewHTML, usedTerms);
+    summaryHTML = explainTraverseHTML(summaryHTML, usedTerms);
+    sections = sections.map(s => ({...s, html: explainTraverseHTML(s.html, usedTerms),
+        titleHTML: explainTraverseHTML(esc(s.title), usedTerms)}));
+    if (usedTerms.size) sections.push({id: "terminology", title: "Glossary — terms and units", html: traverseGlossaryHTML(usedTerms)});
     const filename = `Traverse-Analysis-${title.replace(/[^A-Za-z0-9._-]+/g, "_")}`;
     const json = JSON.stringify(manifest, null, 2).replace(/</g, "\\u003c");
     return `<!DOCTYPE html>
@@ -20,6 +50,7 @@ export function assembleTraverseReport({title, generated, metaHTML, summaryHTML,
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Traverse Analysis — ${esc(title)}</title>
 <style>
+${TRAVERSE_TERM_CSS}
 :root { color-scheme:dark; --page:#0d0f12; --text:#d8dce2; --heading:#e8eaed;
     --muted:#9ca5b2; --surface:#14161a; --line:#3c434c; --link:#72b3ff; }
 html.light { color-scheme:light; --page:#fff; --text:#23262a; --heading:#111;
@@ -42,6 +73,13 @@ button,.toolbar a { background:var(--surface); color:var(--text); border:1px sol
     border-radius:5px; padding:8px 12px; font:inherit; font-size:13px; cursor:pointer; text-decoration:none; }
 .summary { border-left:4px solid #3987e5; padding:4px 18px; margin:24px 0; background:var(--surface); }
 .summary h2 { margin-top:10px; }
+.overview-pair { display:flex; gap:10px; }
+.overview-pair img { width:calc(50% - 5px); min-width:0; align-self:start; }
+.overview-key { margin:8px 0; padding:0; list-style:none; font-size:12px; }
+.overview-key li { display:inline; margin-right:14px; }
+.overview-swatch { display:inline-block; width:24px; border-top:3px solid; margin-right:7px; vertical-align:middle; }
+code { overflow-wrap:anywhere; }
+@media screen and (max-width:600px) { .overview-pair { flex-direction:column; } .overview-pair img { width:100%; } }
 nav ol { padding-left:24px; }
 nav li { margin:5px 0; }
 .back { display:block; margin:12px 0; font-size:12px; }
@@ -120,13 +158,17 @@ footer { border-top:1px solid var(--line); margin-top:30px; padding-top:12px; }
 <a id="dl-report" download="${esc(filename)}.html" href="#">Download HTML</a>
 <a id="dl-manifest" download="${esc(filename)}-manifest.json" href="#">Download run data</a></div>
 <header><h1>Traverse Analysis — ${esc(title)}</h1>
-<p class="sub">Generated ${esc(generated)}${version ? ` · ${esc(version)}` : ""}</p>${metaHTML}</header>
+<p class="sub">Generated ${esc(generated)}${version ? ` · ${esc(version)}` : ""}</p>${metaHTML}
+</header>
+${overviewHTML ? `<section id="opening-overview" aria-label="Leading trajectory overview">${overviewHTML}</section>` : ""}
 <section class="summary" id="summary"><h2>Key findings</h2>${summaryHTML}</section>
+${usedTerms.size ? '<p class="sub">Hover the dotted terms for explanations, or read the <a href="#terminology">glossary of terms and units</a>.</p>' : ''}
 <nav id="contents" aria-label="Table of contents"><h2>Contents</h2><ol>
+${overviewHTML ? '<li><a href="#opening-overview">Leading trajectory overview</a></li>' : ''}
 <li><a href="#summary">Key findings</a></li>
-${sections.map(s => `<li><a href="#${esc(s.id)}">${esc(s.title)}</a></li>`).join("\n")}
+${sections.map(s => `<li><a href="#${esc(s.id)}">${s.titleHTML ?? esc(s.title)}</a></li>`).join("\n")}
 </ol></nav>
-${sections.map(s => `<section id="${esc(s.id)}"><h2>${esc(s.title)}</h2>${s.html}
+${sections.map(s => `<section id="${esc(s.id)}"><h2>${s.titleHTML ?? esc(s.title)}</h2>${s.html}
 <a class="back" href="#contents">Back to contents</a></section>`).join("\n")}
 <footer>Generated by Sitrec Traverse Analysis. This report contains the fitted results and comparison plots.
 The original source files and application version are needed to reproduce the analysis.</footer>

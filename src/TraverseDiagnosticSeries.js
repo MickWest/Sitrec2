@@ -19,7 +19,8 @@ export function losErrorSeriesDeg(dataset, track, valid = null) {
 
 export function truthDiagnosticSeries(dataset, truth) {
     if (!truth?.usable || !truth.track || truth.valid?.length < dataset.n || !truth.valid) return null;
-    const out = Object.fromEntries(["gLoad", "airSpeed", "groundSpeed"].map(k =>
+    const keys = ["gLoad", "horizontalAirSpeed", "verticalAirSpeed"];
+    const out = Object.fromEntries(keys.map(k =>
         [k, new Float64Array(dataset.n).fill(NaN)]));
     out.losError = losErrorSeriesDeg(dataset, truth.track, truth.valid);
     // Differentiate each contiguous valid run separately. Never turn held
@@ -34,7 +35,7 @@ export function truthDiagnosticSeries(dataset, truth) {
             const slice3 = a => a.slice(lo * 3, f * 3);
             const ds = {...dataset, n: f - lo, S: slice3(dataset.S), D: slice3(dataset.D), W: slice3(dataset.W)};
             const m = trackMetrics(ds, slice3(truth.track));
-            for (const key of ["gLoad", "airSpeed", "groundSpeed"]) {
+            for (const key of keys) {
                 for (let k = m.sampleWindow.lo; k < m.sampleWindow.hi; k++) out[key][lo + k] = m.series[key][k];
             }
         }
