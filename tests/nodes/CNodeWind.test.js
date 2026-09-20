@@ -16,14 +16,18 @@ import {CNodeManager} from "../../src/nodes/CNodeManager";
 import {CNodeArray} from "../../src/nodes/CNodeArray";
 import {CNodeWind} from "../../src/nodes/CNodeWind";
 import {MISB} from "../../src/MISBUtils";
+import {metersPerSecondFromKnots} from "../../src/utils";
 
 const BASE_MS = 1700000000000; // ms-epoch range passes normalizeWindTimestampMs unchanged
 
+// MISB ST 0601 tag 36 stores metres per second, while the sampler returns knots.
+// Fixtures are written in knots and converted here, so the expectations below
+// read in the node's own unit and the conversion stays pinned.
 function windRow(from, knots, timeMs) {
     const row = [];
     if (from !== null) {
         row[MISB.WindDirection] = from;
-        row[MISB.WindSpeed] = knots;
+        row[MISB.WindSpeed] = metersPerSecondFromKnots(knots);
     }
     if (timeMs !== undefined) row[MISB.UnixTimeStamp] = timeMs;
     return row;
@@ -90,6 +94,16 @@ describe("CNodeWind.trackWindAt", () => {
         const wind = makeWind([windRow(null), windRow(null)]);
         expect(wind.trackWindAt(0)).toBeNull();
         expect(wind.trackWindAt(99)).toBeNull();
+    });
+
+    test("tag 36 is read as metres per second and sampled as knots", () => {
+        // Built without the knots helper above, so the unit the tag carries is
+        // stated outright: 10 m/s is 19.44 kn, not 10 kn.
+        const row = [];
+        row[MISB.WindDirection] = 250;
+        row[MISB.WindSpeed] = 10;
+        const wind = makeWind([row, row]);
+        expect(wind.trackWindAt(0).knots).toBeCloseTo(19.438462, 5);
     });
 
     test("update() cascades on row changes only, not on every interpolated frame", () => {

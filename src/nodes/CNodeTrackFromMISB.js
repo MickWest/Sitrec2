@@ -356,7 +356,9 @@ export class CNodeTrackFromMISB extends CNodeTrack {
         )
 
         let validWindSpeed = this.patchColumn(misb, MISB.WindSpeed,
-            (n) => {return !isNaN(n) && n >= 0 && n < 400} // 400 knots is a bit much, but it's a reasonable limit
+            // Tag 36 is metres per second (ST 0601), so 400 is a very loose
+            // sanity filter for junk cells, not a physical wind limit.
+            (n) => {return !isNaN(n) && n >= 0 && n < 400}
         )
 
 

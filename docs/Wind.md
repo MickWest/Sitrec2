@@ -87,7 +87,7 @@ Available sources:
 | **Manual Soundings** | Soundings *you* dragged in (a UWYO `.csv`/`.txt` or an IGRA2 `.txt`). | When you want curated profiles instead of automatic nearest-station fetches. |
 | **open-meteo** | Per-track-point fetches from the Open-Meteo public API (no key, rate-limited). | Useful for one-off lookups; not great for filling a whole grid. |
 | **Manual** | A single uniform wind defined by **Target Wind From / Knots**. | Quick experiments, sitches without specific weather, or when the real data is missing/wrong. |
-| **Track: \<name\>** | If your sitch has a track file with embedded wind columns (MISB-formatted WindDirection / WindSpeed), each loaded track shows up as its own option. The wind value comes straight from the track row at the current frame. | Aircraft data files (e.g. military pod metadata) that already contain wind telemetry. If no track has those columns, no Track: entry appears. |
+| **Track: \<name\>** | If your sitch has a track file with embedded wind columns (MISB-formatted WindDirection / WindSpeed), each loaded track shows up as its own option. The wind value comes straight from the track row at the current frame. WindSpeed is read as metres per second, the MISB standard unit, and shown in knots. | Aircraft data files (e.g. military pod metadata) that already contain wind telemetry. If no track has those columns, no Track: entry appears. |
 
 #### Manual source vs. manual override
 
