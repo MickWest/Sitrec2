@@ -31,16 +31,24 @@ import {MONTE_CARLO_IDS, MONTE_CARLO_PRESETS, MONTE_CARLO_SEED, monteCarloName} 
  */
 export const BATTERY_UNITS = Object.freeze({
     constAir: {needs: []},
+    constAirFreeWind: {needs: []},
     profiles: {needs: ["constAir"]},
+    profilesFreeWind: {needs: ["constAirFreeWind"]},
     aircraft: {needs: ["constAir"]},
+    aircraftFreeWind: {needs: ["constAirFreeWind"]},
     constAlt: {needs: ["constAir"]},
+    constAltFreeWind: {needs: ["constAirFreeWind"]},
     horizontalSpeed: {needs: []},
     plausible: {needs: ["constAir"]},
+    plausibleFreeWind: {needs: ["constAirFreeWind"]},
     gfCV: {needs: []},
     gfCA: {needs: []},
     kalman: {needs: []},
     lantern: {needs: ["kalman"]},
+    lanternSuppliedWind: {needs: ["kalman"]},
+    lanternCorrectedWind: {needs: ["kalman"]},
     quadcopter: {needs: []},
+    quadcopterSuppliedWind: {needs: []},
     droneControl: {needs: ["kalman"]},
     families: {needs: ["constAir", "aircraft", "lantern", "quadcopter", "kalman"]},
     polySweep: {needs: []},
@@ -58,18 +66,26 @@ export const UNIT_ORDER = Object.freeze(Object.keys(BATTERY_UNITS));
  */
 export const UNIT_VERSIONS = Object.freeze({
     constAir: 1,
+    constAirFreeWind: 2,
     profiles: 1,
-    aircraft: 1,
+    profilesFreeWind: 2,
+    aircraft: 2,
+    aircraftFreeWind: 2,
     constAlt: 1,
+    constAltFreeWind: 2,
     horizontalSpeed: 1,
     plausible: 1,
+    plausibleFreeWind: 2,
     gfCV: 1,
     gfCA: 1,
     kalman: 1,
-    lantern: 1,
-    quadcopter: 2,
+    lantern: 3,
+    lanternSuppliedWind: 2,
+    lanternCorrectedWind: 1,
+    quadcopter: 3,
+    quadcopterSuppliedWind: 1,
     droneControl: 1,
-    families: 1,
+    families: 3,
     polySweep: 1,
     ...Object.fromEntries(MONTE_CARLO_IDS.map(id => [id, 1])),
 });
@@ -83,23 +99,23 @@ const POLY_ORDERS = [1, 2, 3, 4, 5];
  * is what the run's `solvers` option and the include filter carry.
  */
 export const SOLVERS = Object.freeze([
-    {id: "constAir", name: "Constant Air Speed", shortName: "const_air", group: "Sightline fits", units: ["constAir", "profiles"],
+    {id: "constAir", name: "Constant Air Speed", shortName: "const_air", group: "Sightline fits", units: ["constAir", "profiles", "constAirFreeWind", "profilesFreeWind"],
         note: "The smoothest ray-following path at a fixed air speed; needs the sweep and the slow range profile."},
-    {id: "constAlt", name: "Constant Altitude", shortName: "const_alt", group: "Sightline fits", units: ["constAlt"],
+    {id: "constAlt", name: "Constant Altitude", shortName: "const_alt", group: "Sightline fits", units: ["constAlt", "constAltFreeWind"],
         note: "Level flight at a fixed height."},
     {id: "horizontalSpeed", name: "Horizontal Speed Valley", shortName: "horiz_speed", group: "Sightline fits",
         units: ["horizontalSpeed"],
         note: "Speculative level-flight solver: combines multi-scale speed consistency, cancellation of the dominant altitude-dependent speed waveform, and block-bootstrap basin confidence while heading may change."},
-    {id: "plausible", name: "Minimum Acceleration", shortName: "min_accel", group: "Sightline fits", units: ["plausible"],
+    {id: "plausible", name: "Minimum Acceleration", shortName: "min_accel", group: "Sightline fits", units: ["plausible", "plausibleFreeWind"],
         note: "The acceleration-minimizing path at any range."},
-    {id: "saddle", name: "Minimum Speed", shortName: "min_speed", group: "Sightline fits", units: ["profiles"],
+    {id: "saddle", name: "Minimum Speed", shortName: "min_speed", group: "Sightline fits", units: ["profiles", "profilesFreeWind"],
         note: "The slowest object consistent with the sightlines; read off the slow range profile."},
-    {id: "aircraft", name: "Fixed-Wing Aircraft", shortName: "fixed_wing", group: "Object models", units: ["aircraft"],
-        note: "The fixed-wing model, differential evolution then polish. About a quarter of a file's time."},
-    {id: "lantern", name: "Sky Lantern / Balloon", shortName: "balloon", group: "Object models", units: ["lantern"],
-        note: "The wind-drift model with the wind inferred, seeded from the Kalman smoother. About a third of a file's time."},
-    {id: "quadcopter", name: "Quadcopter", shortName: "quadcopter", group: "Object models", units: ["quadcopter"],
-        note: "The free multirotor envelope fit."},
+    {id: "aircraft", name: "Fixed-Wing Aircraft", shortName: "fixed_wing", group: "Object models", units: ["aircraft", "aircraftFreeWind"],
+        note: "The fixed-wing model with supplied and fitted wind, differential evolution then polish."},
+    {id: "lantern", name: "Sky Lantern / Balloon", shortName: "balloon", group: "Object models", units: ["lantern", "lanternSuppliedWind", "lanternCorrectedWind"],
+        note: "The wind-drift model with supplied and fitted wind, seeded from the Kalman smoother."},
+    {id: "quadcopter", name: "Quadcopter", shortName: "quadcopter", group: "Object models", units: ["quadcopter", "quadcopterSuppliedWind"],
+        note: "The multirotor envelope fit with supplied and fitted wind."},
     {id: "droneControl", name: "Drone (flown inputs)", shortName: "flown_drone", group: "Object models", units: ["droneControl"],
         note: "A drone flown with a few held inputs, refined from the Kalman smoother seed."},
     {id: "ground", name: "Ground Object", shortName: "ground", group: "Geometry checks", units: [],
@@ -193,7 +209,7 @@ export function planUnits(ids, {solutionFamilies = false} = {}) {
  * The units whose fit changes under the GPU search option. Range bands start
  * from the GPU-supported object-model fits, so that unit changes with them.
  */
-export const GPU_SEARCH_UNITS = Object.freeze(["aircraft", "lantern", "quadcopter", "families"]);
+export const GPU_SEARCH_UNITS = Object.freeze(["aircraft", "aircraftFreeWind", "quadcopter", "families"]);
 
 /**
  * The run options one unit's fit depends on. Every unit searches inside the bracket

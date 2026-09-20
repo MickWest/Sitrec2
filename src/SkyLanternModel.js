@@ -79,6 +79,7 @@ function _solve3(M, b) {
 }
 
 export class SkyLanternModel extends PhysicsModel {
+    geodeticVerticalSpeed = true;
     // Smooth kinematics: big RK4 substeps are fine (the base 0.02 s default
     // exists for stiff drag models).
     maxDt = 0.25;
@@ -380,7 +381,7 @@ export class SkyLanternModel extends PhysicsModel {
         if (this.windPriorE !== null && this.windPriorN !== null) {
             const dE = params[1] - this.windPriorE;
             const dN = params[2] - this.windPriorN;
-            terms["wind toward measured"] = (dE * dE + dN * dN) / (this.windPriorSigma ** 2);
+            terms[this.windPriorLabel ?? "wind toward measured"] = (dE * dE + dN * dN) / (this.windPriorSigma ** 2);
         } else {
             const spd = Math.hypot(params[1], params[2]);
             terms["calm-wind preference"] = 0.5 * (spd / 10) ** 2;

@@ -45,6 +45,7 @@ const TURN_EFFORT_REF = 20;
 import {MULTIROTOR_LIMITS} from "./PhysicalEnvelopes";
 
 export class QuadcopterModel extends PhysicsModel {
+    geodeticVerticalSpeed = true;
     // Smooth kinematics: 1/30 s substeps are plenty (the 0.02 s base default is
     // for stiff drag models).
     maxDt = 1 / 30;
@@ -196,7 +197,7 @@ export class QuadcopterModel extends PhysicsModel {
         terms["sustained turning"] = this._turnEffortCost(params, T);
         terms["turn smoothness"] = 0.1 * (params[5] / 5) ** 2;
         if (this.windPriorE !== null && this.windPriorN !== null) {
-            terms["wind toward measured"] =
+            terms[this.windPriorLabel ?? "wind toward measured"] =
                 ((params[7] - this.windPriorE) / this.windPriorSigma) ** 2
                 + ((params[8] - this.windPriorN) / this.windPriorSigma) ** 2;
         } else {

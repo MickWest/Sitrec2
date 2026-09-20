@@ -32,6 +32,9 @@ function limitCell(value, limit, unit, digits, passed, strict = false) {
 // which also contains class-specific checks, wind context and truth context.
 export function comparisonGates({h, r}, {groundMode = null} = {}) {
     const m = h.metricsFull;
+    const screenSpeed = (h.windConditionalMetrics?.airSpeed ?? m?.airSpeed)?.max / KNOTS_TO_MS;
+    const speedReference = h.windConditionalMetrics ? "air, supplied wind"
+        : h.params?.motionFrame === "ground" ? "ground" : "air";
     const scale = fitScaleDeg(h);
     const losLimit = scale === null ? BROAD_SCREEN_LIMITS.losDeg : scale * FIT_SCALE_TIERS[0];
     const rejected = r.rank < 0 || !!h.groundMismatch;
@@ -60,9 +63,9 @@ export function comparisonGates({h, r}, {groundMode = null} = {}) {
         {key: "g", label: "Peak acceleration", cell: rejected ? notRun()
             : limitCell(m?.gLoad?.max, BROAD_SCREEN_LIMITS.peakG, "g", 2, m?.gLoad?.max <= BROAD_SCREEN_LIMITS.peakG)},
         {key: "speed", label: "Peak speed used by screen", cell: rejected ? notRun()
-            : {...limitCell(m?.airSpeed?.max / KNOTS_TO_MS, BROAD_SCREEN_LIMITS.speedKt, "kt", 1,
-                m?.airSpeed?.max / KNOTS_TO_MS <= BROAD_SCREEN_LIMITS.speedKt),
-                value: `${number(m?.airSpeed?.max / KNOTS_TO_MS, 1)} kt (${h.params?.motionFrame === "ground" ? "ground" : "air"})`}},
+            : {...limitCell(screenSpeed, BROAD_SCREEN_LIMITS.speedKt, "kt", 1,
+                screenSpeed <= BROAD_SCREEN_LIMITS.speedKt),
+                value: `${number(screenSpeed, 1)} kt (${speedReference})`}},
         {key: "mirror", label: "Platform acceleration match", cell: rejected ? notRun()
             : !platformMirrorAssessed(mirror)
                 ? cell("unknown", "Not assessed", platformMirrorExplanation(mirror))
@@ -91,7 +94,7 @@ function compatibilityCells(h, dataset) {
         const sizeConflict = checks.angularSize?.status === "conflict";
         const failed = c.total > 0 || c.motionRejected || sizeConflict;
         const details = [
-            `${c.speedBasis === "horizontal" ? "Horizontal " : ""}${h.params?.motionFrame === "ground" ? "Ground" : "Air"} speed: ${number(c.speedMinKt, 1)}–${number(c.speedMaxKt, 1)} kt (allowed ${c.cls.speedKt.map(v => number(v, 1)).join("–")} kt)`,
+            `${c.speedBasis === "horizontal" ? "Horizontal " : ""}${h.windConditionalMetrics ? "Air speed (supplied wind)" : h.params?.motionFrame === "ground" ? "Ground speed" : "Air speed"}: ${number(c.speedMinKt, 1)}–${number(c.speedMaxKt, 1)} kt (allowed ${c.cls.speedKt.map(v => number(v, 1)).join("–")} kt)`,
             `Peak: ${number(checks.gMax, 2)} g (≤ ${number(c.cls.gMax, 2)} g)`,
             c.impliedM ? `Size: ${c.impliedM.oneSided ? "≤ " : `${number(c.impliedM.lo, 2)}–`}${number(c.impliedM.hi, 2)} m (class ${c.cls.sizeM.join("–")} m; intervals must overlap)` : checks.sizeOff ? "Size not assessed: angular-size judging is off" : "Size unmeasured",
         ];

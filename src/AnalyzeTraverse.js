@@ -1,3 +1,5 @@
+import {windComparisonHTML, windSummary} from "./TraverseWindPresentation";
+import {formatWind} from "./TraverseWind";
 import {showAngularSizeDialog} from "./AngularSizeDialog";
 import {assessExecutiveVerdict} from "./TraverseRanking";
 import {angularSizeSummary, angularSizeFitSummary, angularSizeInventory} from "./AngularSize";
@@ -205,6 +207,7 @@ function sweepOverridesFromGUI() {
 // sweep per analysis); the cheap geometric fixed-point test defaults ON.
 export const analyzeTweaks = {
     windMode: "Sitch wind",
+    windCorrectionSigmaKt: 15,
     aoFixedPoint: true,
     aoKnownNow: false,
     aoKnownOther: false,
@@ -946,7 +949,7 @@ function rateBalloonWindEvidence(metrics, sourceClass, incomplete, meanRequired,
     if (sourceClass === "assumption") {
         return {rating: "inconclusive",
             why: "the loaded wind is a hand-set constant — an assumption, not a measurement — so "
-                + "agreement with it cannot support or weaken the balloon interpretation"};
+                + "agreement with it is not independent evidence for this interpretation"};
     }
     if (!metrics || metrics.comparable === false) {
         const got = metrics ? ` (${metrics.count} of ${metrics.total} samples usable)` : "";
@@ -994,8 +997,8 @@ function rateBalloonWindEvidence(metrics, sourceClass, incomplete, meanRequired,
     }
     return {rating: "tension",
         why: `the free fit requires ${requiredText}, while the loaded wind shows ${observedText} `
-            + `(vector RMSE ${rmseKt.toFixed(1)} kt) — tension with passive drift at the fitted `
-            + "altitude; this weakens the balloon interpretation but does not exclude it "
+            + `(vector RMSE ${rmseKt.toFixed(1)} kt) — tension with the wind required at the fitted `
+            + "altitude; this weakens this motion-model fit but does not exclude the object class "
             + "(other altitudes along the sightlines and wind representativeness remain uncertain)"};
 }
 
@@ -1038,7 +1041,7 @@ function windEvidenceBadges(h) {
 // are built. Attaches h.windEvidence to both balloon variants; never throws
 // into the caller (a wind problem must not abort the analysis).
 function attachBalloonWindEvidence(hypotheses, dataset, originLat, originLon, provenance = null) {
-    const balloons = (hypotheses || []).filter((h) => h.key === "lantern");
+    const balloons = (hypotheses || []).filter((h) => ["lantern", "aircraft", "quadcopter"].includes(h.key));
     if (!balloons.length) return;
     const latDeg = originLat * 180 / Math.PI;
     const lonDeg = originLon * 180 / Math.PI;
@@ -1095,7 +1098,7 @@ function attachBalloonWindEvidence(hypotheses, dataset, originLat, originLon, pr
             const x = t[f * 3], y = t[f * 3 + 1], z = t[f * 3 + 2];
             const altM = z + (x * x + y * y) / (2 * EARTH_RADIUS_M);
             sampleAlts.push(altM);
-            const req = solvedHorizontalWindAt(h.params, {modelKind: "lantern",
+            const req = solvedHorizontalWindAt(h.params, {modelKind: h.key,
                 normalizedTime: f / Math.max(1, n - 1), altitudeM: altM, referenceAltitudeM: h0});
             const latI = latDeg + (y / EARTH_RADIUS_M) * 180 / Math.PI;
             const lonI = lonDeg + (x / (EARTH_RADIUS_M * cosLat)) * 180 / Math.PI;
@@ -1113,7 +1116,7 @@ function attachBalloonWindEvidence(hypotheses, dataset, originLat, originLon, pr
         const metrics = compareWindVectorSeries(required, observed);
         const meanRequired = paired ? {u: sumReqU / paired, v: sumReqV / paired} : null;
         const meanObserved = paired ? {u: sumObsU / paired, v: sumObsV / paired} : null;
-        const incomplete = !!((h.boundPinned && h.boundPinned.length)
+        const incomplete = !!(h.params?.boundaryLimited || h.windSearchBounds?.length || (h.boundPinned && h.boundPinned.length)
             || (h.modelClamps && h.modelClamps.length)
             || (h.optimizerWarnings && h.optimizerWarnings.length));
         const rated = rateBalloonWindEvidence(metrics, sourceClass, incomplete, meanRequired, meanObserved);
@@ -1125,7 +1128,7 @@ function attachBalloonWindEvidence(hypotheses, dataset, originLat, originLon, pr
             rated.rating = "inconclusive";
             rated.why = "range (and so altitude) is not observable in this geometry — the fitted "
                 + "altitude reflects the model's own priors, so a wind comparison at that "
-                + "altitude cannot support or weaken the balloon interpretation";
+                + "altitude cannot support or weaken this interpretation";
         }
         // Evidence-quality caps: "supports" is the strongest word this feature
         // can say, so it is reserved for references that can actually bear the
@@ -1719,14 +1722,18 @@ export function addAnalyzeTweaks(traverseMenu) {
             "models test far more candidate solutions in less time. The final parameters, residuals and " +
             "tracks are still computed on the CPU at " +
             "full precision. Results can differ from a CPU run and between graphics cards. Uses the CPU " +
-            "search when this browser has no WebGPU.");
+            "search when this browser has no WebGPU. Balloon model selection and supplied-wind quadcopter fits use the CPU.");
     }
     const windMode = folder.add(analyzeTweaks, "windMode", ["Sitch wind", "Zero wind"]).name("Wind for analysis");
     if (windMode.tooltip) {
-        windMode.tooltip("Choose the shared wind used by ray-following metrics and the fixed-wing gallery fit, " +
-            "or ignore it and treat motion as ground-relative. Lantern and quadcopter models solve their own " +
-            "wind and are evaluated in that solved air mass. This does not change the sitch wind controls.");
+        windMode.tooltip("Choose the fixed input for each supplied-wind fit: the sitch wind or calm. " +
+            "Every wind-dependent fitter also runs with wind as a variable. Each candidate is judged in " +
+            "its own air mass. This does not change the sitch wind controls.");
     }
+    folder.add(analyzeTweaks, "windCorrectionSigmaKt", 0.1, 100, 0.1)
+        .name("Wind correction scale (kt)")
+        .tooltip("Assumed one-component uncertainty for the balloon's supplied-wind correction. " +
+            "15 kt is an analyst default, not measured weather uncertainty. Smaller values hold the wind closer to the input.");
     if (cbFixed.tooltip) {
         cbFixed.tooltip("Include the stationary-object interpretation: either a fixed point in space (sightlines " +
             "converge) or a fixed point in the sky at infinity like the Moon (parallel sightlines), whichever fits.");
@@ -1901,7 +1908,7 @@ function computeAnalysisFingerprint(losNode, capturedProvenance = null) {
         JSON.stringify(currentAngularSizeSettings(losNode, analysisFrames)?.observations ?? null),
         JSON.stringify(currentAngularSizeSettings(losNode, analysisFrames)?.options ?? null),
         analysisFrames.frame0, analysisFrames.frame1,
-        analyzeTweaks.windMode,
+        analyzeTweaks.windMode, analyzeTweaks.windCorrectionSigmaKt,
         ...windSeries,
         ...truthSeries,
         provenance.circular ? 1 : 0, provenance.losSource, provenance.cameraHeading,
@@ -2388,6 +2395,9 @@ async function runTraverseAnalysisWithCurrentAngles() {
         } catch (e) {
             dataset.groundLevelM = 0;
         }
+        dataset.windSource = analyzeTweaks.windMode === "Zero wind" ? "Calm wind assumed for supplied fits."
+            : `Supplied wind: ${analysisWindNode?.knots ?? 0} kt from ${analysisWindNode?.from ?? 0}°. `
+                + (analysisWindNode?.trackSource ? "Captured wind series from the loaded track." : "User-supplied wind; uncertainty is an input assumption.");
         const inputFiltering = captureLiveInputFiltering(losNode, analysisFrames);
         const outputFiltering = captureInputFiltering([
             {node: NodeMan.get("traverseSmoothedTrack", false), role: "Live traverse output", shallow: true},
@@ -2439,6 +2449,7 @@ async function runTraverseAnalysisWithCurrentAngles() {
             anchorDist, speedTarget,
             ranges, rangeIsDefault,
             fitRangeMin, fitRangeMax, caRangeMin, caRangeMax, plausRangeMin, plausRangeMax,
+            windCorrectionSigmaMS: analyzeTweaks.windCorrectionSigmaKt * KNOTS_TO_MS,
             solutionFamilies: analyzeTweaks.solutionFamilies,
             mcOrderSweep: analyzeTweaks.mcOrderSweep,
             mcGpuPresets: analyzeTweaks.mcGpuPreset === "All" ? MONTE_CARLO_IDS
@@ -2653,7 +2664,8 @@ async function runTraverseAnalysisWithCurrentAngles() {
                 speedTargetKt: speedTarget / KNOTS_TO_MS,
                 windMode: analyzeTweaks.windMode,
                 windSummary: windText,
-                fittedWindModels: ["Sky Lantern / Balloon", "Quadcopter"],
+                windCorrectionSigmaMS: analyzeTweaks.windCorrectionSigmaKt * KNOTS_TO_MS,
+                fittedWindModels: hypotheses.filter(h => h.windMode === "fitted").map(h => h.name),
                 groundMode: analyzeTweaks.groundMode,
                 truthTrack: truth ? truth.label : null,
                 constructedLOS: provenance.circular,
@@ -2674,6 +2686,7 @@ async function runTraverseAnalysisWithCurrentAngles() {
                 } : null,
             },
             searchBounds: {
+                fittedWind: battery.freeBounds,
                 userSpecified: !rangeIsDefault,
                 constantAirRangeM: [resolvedRanges[0], resolvedRanges[resolvedRanges.length - 1]],
                 constantAirSpeedMS: [sweep.speeds[0], sweep.speeds[sweep.speeds.length - 1]],
@@ -2712,6 +2725,9 @@ async function runTraverseAnalysisWithCurrentAngles() {
                     polishIterations: r.polishIterations,
                     polishStopReason: r.polishStopReason,
                 })),
+                aircraftFreeWindRuns: battery.aircraftFreeWind?.runs ?? [],
+                lanternSuppliedWind: battery.lanternSuppliedWind?.params?.optimizer ?? null,
+                quadcopterSuppliedWind: battery.quadSuppliedWind?.params?.optimizer ?? null,
                 lantern: lantern?.params?.optimizer ?? null,
                 quadcopter: quad?.params?.optimizer ?? null,
                 gpuSearchRequested: !!analyzeTweaks.gpuSearch,
@@ -3159,6 +3175,33 @@ function hypothesisStats(h, dataset = null, truthMaxG = null) {
         [errLabel, losErr],
         ["LOS error explained", losResidualExplanation(h)],
     ];
+    if (h.windMode) {
+        stats.push([h.windMode === "supplied" ? "Supplied wind" : "Required wind", windSummary(h.windSamples)]);
+        if (h.windMode !== "supplied" && dataset) {
+            const f = Math.floor((dataset.n - 1) / 2);
+            stats.push(["Supplied wind reference", formatWind({u: dataset.W[f * 3] * dataset.fps, v: dataset.W[f * 3 + 1] * dataset.fps})]);
+        }
+        if (h.windIdentifiability) stats.push(["Wind constraint", h.windIdentifiability]);
+        else stats.push(["Wind constraint", h.windMode === "fitted"
+            ? "Conditional on this motion model and shared wind prior; uncertainty not established."
+            : h.windMode === "corrected" ? "Conditioned on the supplied wind and stated uncertainty."
+                : "Held fixed as an input; not independent wind evidence."]);
+        if (h.params.windCorrectionSigmaMS) {
+            stats.push(["Wind correction", `${(Math.hypot(h.params.windCorrectionE, h.params.windCorrectionN) / KNOTS_TO_MS).toFixed(1)} kt vector change; `
+                + `${(h.params.windCorrectionSigmaMS / KNOTS_TO_MS).toFixed(1)} kt assumed component scale`]);
+        }
+        if (h.key === "lantern") {
+            stats.push(["Horizontal air speed", `${kt1(m.horizontalAirSpeed.mean)} kt (passive drift assumed)`]);
+            stats.push(["Ground speed (mean / max)", `${kt1(m.groundSpeed.mean)} / ${kt1(m.groundSpeed.max)} kt`]);
+        }
+        const selection = h.params.modelSelection;
+        if (selection) stats.push(["Model selection", `${selection.selectedStage}; ${selection.freeParameterCount} free parameters. `
+            + `${selection.fixedAssumptions}. Extensions must improve LOS error by at least `
+            + `${selection.requiredImprovementDeg.toFixed(3)}° (practical tolerance, not statistical confidence). `
+            + selection.alternatives.map(a => `${a.stage}: ${Number.isFinite(a.errDeg) ? a.errDeg.toFixed(5) + "°" : "unavailable"}${a.completed ? "" : " (unfinished)"}`).join("; ")]);
+        if (h.windSensitivity) stats.push(["Air speed under supplied wind", `${kt1(h.windSensitivity.mean)} kt mean; `
+            + `${kt1(h.windSensitivity.lo)}–${kt1(h.windSensitivity.hi)} kt across the assumed wind variation (not a confidence interval)`]);
+    }
     // HOW ORDINARY IS THIS? Disclosure only — it does not move the ranking (see
     // TraverseMundaneness.js). Reported as the nearest real object class and how
     // far outside its envelope this candidate sits, because "anomalous" without
@@ -3169,7 +3212,7 @@ function hypothesisStats(h, dataset = null, truthMaxG = null) {
     if (dataset?.angularSizeOptions?.fit || h.angularSizeFit?.requested) stats.push(["Angular-size fitting", angularSizeFitSummary(dataset, h)]);
     const mund = mundanenessCost(dataset, h);
     if (mund) {
-        const summary = mundanenessSummary(mund);
+        const summary = mundanenessSummary(mund) + (h.params?.unconstrained ? " Air-relative limits use the supplied wind assumption." : "");
         stats.push(["Physical compatibility", summary]);
         stats.push(["Physical compatibility details", physicalCompatibilityDetails(mund)]);
         // An upper bound has no measured lower end. This does not establish
@@ -3679,6 +3722,16 @@ function detailProse(h, r, ss) {
             };
         }
         case "lantern": {
+            if (p.modelSelection) return {
+                lead: `A drifting balloon at ${ft0(m.altitude.min)}–${ft0(m.altitude.max)} ft, with `
+                    + `${fpm0(m.verticalSpeed.mean)} fpm mean vertical motion and ${err.toFixed(5)}° sightline error.`,
+                derived: `Selected ${p.modelSelection.selectedStage} model: ${p.modelSelection.fixedAssumptions}. `
+                    + `The search starts with steady drift and only selects extra complexity for a material improvement. `
+                    + `Horizontal velocity equals the modeled wind; horizontal airspeed near zero is imposed, not independent evidence.`,
+                constraint: screenContext("This passive-drift model") + ` Vertical rates are bounded to ±4 m/s. `
+                    + `The wind is conditional on the selected dynamics. A practical residual tolerance controls complexity, `
+                    + `not a calibrated statistical test. No reference-track positions participate in this selection.` + floorContext(err, p.errFloor),
+            };
             // solved wind (at the initial altitude) in friendly units
             const windKt = p.windE !== undefined ? toKt(Math.hypot(p.windE, p.windN)) : NaN;
             const windFrom = p.windE !== undefined
@@ -3721,12 +3774,15 @@ function detailProse(h, r, ss) {
                     `${kt1(m.airSpeed.mean)} kt mean at ${ft0(m.altitude.min)}–${ft0(m.altitude.max)} ft, ` +
                     `reproducing the sightlines to ${err.toFixed(2)}°.`,
                 derived: `Wind-drift kinematics: the lantern's horizontal velocity IS the wind at its ` +
-                    `altitude (solved ${windTxt}, shear ${shearTxt}), and its vertical motion follows the ` +
+                    (h.windMode === "supplied" ? `altitude, held to the supplied wind series. Its vertical motion follows the `
+                        : `altitude (solved ${windTxt}, shear ${shearTxt}), and its vertical motion follows the `) +
                     `lantern life cycle (rise while lit, buoyancy decay after flame-out, terminal sink), ` +
                     `fit to the sightlines by differential evolution.${temporalWind}${phaseTxt}`,
                 constraint: screenContext("This bounded drift parameterization") +
-                    ` The hard model/search bounds limit initial wind components to ±20 m/s, clamp altitude shear to ` +
-                    `0.25–3×, and limit vertical rates to 4 m/s; this test does not exclude balloon models ` +
+                    (h.windMode === "supplied"
+                        ? ` The supplied wind is fixed; the fit limits vertical rates to 4 m/s. It does not exclude balloon models `
+                        : ` The model bounds initial wind components to ±40 m/s, clamps altitude shear to 0.25–3×, `
+                            + `and limits vertical rates to 4 m/s; this test does not exclude balloon models `) +
                     `outside those assumptions.` + inactiveBoundContext() + floorContext(err, p.errFloor),
             };
         }
@@ -3738,7 +3794,7 @@ function detailProse(h, r, ss) {
                     `about ${nm1(p.range)} NM out, peaking near ${peakKt} kt, ` +
                     `reproducing the sightlines to ${err.toFixed(2)}°.${closeTxt}`,
                 derived: `Hover-capable multirotor kinematics (air-relative horizontal speed, wide turn-rate ` +
-                    `budget, bounded climb/descent, and solved wind drift) are fit by differential evolution. ` +
+                    `budget, bounded climb/descent, and ${h.windMode === "supplied" ? "supplied" : "fitted"} wind drift) are fit by differential evolution. ` +
                     `The ${err.toFixed(2)}° residual is an in-sample mismatch for this generic model, not a ` +
                     `drone-identification probability.`,
                 constraint: screenContext("This bounded generic multirotor parameterization") +
@@ -4009,6 +4065,7 @@ const CHART_OVERLAY_BUTTONS_HTML =
 // reading — though measured winds are themselves only loosely representative
 // (a sonde can be 200+ mi and up to 12 h away).
 function windProfileComparisonHTML(h) {
+    if (h.windMode === "corrected") return `<p class="tg-d-p">Total wind along this track: ${escapeHtml(windSummary(h.windSamples))}. The correction is conditioned on the supplied series; no independent wind profile is inferred.</p>`;
     const p = h.params || {};
     if (!Number.isFinite(p.windE) || !Number.isFinite(p.windN) || !h.track) return "";
     const t = h.track;
@@ -4132,6 +4189,13 @@ function buildDetailHTML(h, r, groupIndex, groupSize, category, ctx, tied = fals
         `<div class="tg-d-stv">${html ?? escapeHtml(v)}</div></div>`).join("");
 
     const prose = detailProse(h, r, ss);
+    if (h.windMode) {
+        const fmtWind = w => w && Number.isFinite(w.u) && Number.isFinite(w.v)
+            ? `${kt1(Math.hypot(w.u, w.v))} kt from ${((Math.atan2(-w.u, -w.v) * 180 / Math.PI + 360) % 360).toFixed(0)}°`
+            : "unavailable";
+        prose.derived += ` Wind treatment: ${h.params.unconstrained ? "wind not determined" : h.windMode === "supplied" ? "supplied series held fixed" : h.windMode === "corrected" ? "supplied wind plus a correction with stated uncertainty" : "wind fitted independently of the supplied series"}.`;
+        if (h.windSamples) prose.derived += ` Start / midpoint / end: ${h.windSamples.map(fmtWind).join("; ")}.`;
+    }
     const spaceHTML = solutionSpaceHTML(h, ss);
     const badges = [tierBadge(r), ...coLeaderBadge(r), ...completenessBadges(r), ...windEvidenceBadges(h)];
     const badgesHTML = badges.map((badge) =>
@@ -5038,6 +5102,9 @@ function showResultGallery(results, uiState = null, onEvidenceChange = null) {
     const tilesHead = document.createElement("div");
     tilesHead.className = "tg-tiles-head";
     tilesCol.appendChild(tilesHead);
+    const windComparison = document.createElement("div");
+    windComparison.innerHTML = windComparisonHTML(hypotheses, dataset);
+    tilesCol.appendChild(windComparison);
     const grid = document.createElement("div");
     grid.className = "tg-grid";
     tilesCol.appendChild(grid);
@@ -5944,6 +6011,7 @@ function showResultGallery(results, uiState = null, onEvidenceChange = null) {
             `<div class="tg-stv">${html ?? escapeHtml(v)}</div></div>`;
         const primary = ([k]) => k.startsWith("Slant range") || k.includes("speed (mean")
             || k === "Mean LOS error" || k === "Mean LOS offset" || k === "Max g-Force"
+            || k === "Supplied wind" || k === "Required wind" || k === "Horizontal air speed"
             || k === "Physical compatibility" || k === "Angular size" || k === "Angular-size fitting"
             || (useTruth && k === "Truth Δ (mean 3D)");
         const explanation = ([k]) => k === "LOS error explained" || k === "Physical compatibility details";
@@ -6697,7 +6765,8 @@ function hypothesisSeriesCharts(dataset, h, o = {}) {
         dualScale: {min: 2, step: 1},
         series: [{xs, ys: pick(m.series.gLoad), color, label: "g-force"}]});
 
-    // speed: air speed always; ground speed too when the wind makes them differ
+    // Geometric fits without a wind estimate report ground speed.
+    const speedLabel = h.params?.motionFrame === "ground" ? "ground speed" : "air speed";
     const airKt = pick(m.series.airSpeed, 1 / KNOTS_TO_MS);
     const gndKt = pick(m.series.groundSpeed, 1 / KNOTS_TO_MS);
     let windMatters = false;
@@ -6709,7 +6778,7 @@ function hypothesisSeriesCharts(dataset, h, o = {}) {
         series: windMatters
             ? [{xs, ys: airKt, color, label: "air speed"},
                {xs, ys: gndKt, color, label: "ground speed", width: 1.5, dash: [6, 4]}]
-            : [{xs, ys: airKt, color, label: "air speed"}]});
+            : [{xs, ys: airKt, color, label: speedLabel}]});
 
     // LOS error, with the flexible generic-fit residual as a reference line
     // on the physics fits that carry one
@@ -7458,7 +7527,7 @@ function buildReportHTML(ctx) {
             <td>${index + 1}</td>
             <td>${escapeHtml(h.name)}</td>
             <td>${nm1(m.range.min)}–${nm1(m.range.max)}</td>
-            <td>${kt1(m.airSpeed.mean)}</td>
+            <td>${kt1(m.airSpeed.mean)}${h.params?.motionFrame === "ground" ? " ground" : " air"}</td>
             <td>${(Math.abs(m.altitude.mean) < 15.24 ? 0 : m.altitude.mean / 304.8).toFixed(1)}</td>
             <td>${fpm0(m.verticalSpeed.mean)}</td>
             <td>${m.gLoad.max.toFixed(2)}</td>
@@ -7801,6 +7870,7 @@ ${truth ? `<section id="ranking-with-truth">
 </section>` : ""}
 
 ${executiveHTML}
+${windComparisonHTML(hypotheses, dataset)}
 
 <section>
     <h2>Filtering and interpolation</h2>
@@ -7869,14 +7939,14 @@ ${provenance?.rangeUnobservable ? `<div class="warning" style="background:#4a151
     <div class="tablebox">
     <table class="comp">
         <thead><tr>
-            <th>Group</th><th>#</th><th>Interpretation</th><th>Range (NM)</th><th>Air spd (kt)</th><th>Alt (kft)</th>
+            <th>Group</th><th>#</th><th>Interpretation</th><th>Range (NM)</th><th>Speed (kt)</th><th>Alt (kft)</th>
             <th>Climb (fpm)</th><th>Max accel (g)</th><th>Raw LOS residual</th><th>Screen</th>
         </tr></thead>
         <tbody>${compRows}</tbody>
     </table>
     </div>
     <p class="sub">Same order as Ranking without truth above. Rows passing the broad screen are highlighted.
-    Alt and air speed are means;
+    Altitude and speed are means; speed states its air or ground reference;
     max accel is kinematic. Each candidate card above states the rank basis that actually controls its order,
     and explains its mean LOS error and available reference comparison.</p>
 </section>

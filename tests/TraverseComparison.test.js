@@ -18,6 +18,16 @@ function candidate(key, changes = {}) {
 }
 const item = h => ({h, r: plausibilityRating(h)});
 
+test("wind-undetermined geometry screens conditional airspeed consistently", () => {
+    const h = candidate("constAlt", {params: {motionFrame: "ground", unconstrained: true},
+        windConditionalMetrics: {airSpeed: {min: 690 * KNOTS_TO_MS, mean: 700 * KNOTS_TO_MS, max: 710 * KNOTS_TO_MS}}});
+    const judged = item(h);
+    expect(judged.r.kinematicRank).toBeLessThan(3);
+    const speed = comparisonGates(judged).find(g => g.key === "speed").cell;
+    expect(speed.status).toBe("fail");
+    expect(speed.value).toContain("710.0 kt (air, supplied wind)");
+});
+
 test("score contributions reconcile with ranking for every solver, including mirroring", () => {
     for (const key of ["quadcopter", "horizontalSpeed", "lantern", "gfCV", "constAlt"]) {
         const h = candidate(key, {platformMirror: {method: "acceleration-pattern-v2", assessable: true, scaleStable: true, temporalMatch: true, beta: 0.25, share: 0.75, snr: 4}});

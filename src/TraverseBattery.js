@@ -6,7 +6,7 @@ import {angularSizeFitEnabled, angularSizeFitSummary, angularSizeFitCost, angula
  *
  *   constant-air-speed sweep -> fast/slow range profiles -> fixed-wing fit ->
  *   constant-altitude -> horizontal constant-speed -> least-manoeuvring -> Kalman seed -> balloon (free wind,
- *   and optionally wind-pinned) -> quadcopter -> drone control inputs ->
+ *   and supplied wind) -> quadcopter -> drone control inputs ->
  *   range bands -> polynomial-order sweep -> satellite -> buildHypotheses ->
  *   executive verdict
  *
@@ -61,6 +61,7 @@ import {
     KNOTS_TO_MS,
     rangeProfile,
     sensorMotionStats,
+    trackMetrics,
     sweepConstAirSpeed,
 } from "./TraverseAnalysis";
 import {
@@ -74,8 +75,12 @@ import {
     fitPhysicsModel,
 } from "./LOSFitting";
 import {DroneControlModel, knotsForDuration} from "./DroneControlFit";
+import {fitBalloon, makeBalloonModel, balloonStageLocks} from "./BalloonFit";
+import {datasetWithWindCorrection, DEFAULT_WIND_CORRECTION_SIGMA_MS, WIND_PRIOR_SIGMA_MS} from "./TraverseWind";
 import {SkyLanternModel} from "./SkyLanternModel";
 import {QuadcopterModel} from "./QuadcopterModel";
+import {SuppliedWindModel} from "./SuppliedWindModel";
+import {datasetForSolvedModelWind} from "./TraverseHypotheses";
 import {assessExecutiveVerdict, hypothesisFitKind} from "./TraverseRanking";
 import {gradeHypotheses} from "./TraversePlatformMirror";
 import {buildRangeLadder, rangeConditionedFamily} from "./TraverseFamily";
@@ -86,6 +91,16 @@ import {fitMonteCarloGPU} from "./gpu/MonteCarloLOS";
 // Slow-object range-profile settings. Exported because the hypothesis builder
 // needs the SAME options the slow profile was computed with (it re-derives the
 // slow-regime track from them), and the report quotes them.
+function analysisQuadcopterModel() {
+    const model = new QuadcopterModel();
+    model.windPriorE = 0; model.windPriorN = 0; model.windPriorSigma = WIND_PRIOR_SIGMA_MS;
+    model.windPriorLabel = "shared wind prior";
+    const defs = model.getParameterDefs();
+    model.getParameterDefs = () => defs.map(d => ["windE", "windN"].includes(d.name)
+        ? {...d, min: -40, max: 40} : d);
+    return model;
+}
+
 export const SLOW_OPTS = Object.freeze({
     vTarget: 5 * KNOTS_TO_MS,
     vSigma: 20 * KNOTS_TO_MS,
@@ -140,9 +155,10 @@ export function allFinite(arr) {
 }
 
 /** Normalise a fitPhysicsModel result into what rangeConditionedFamily wants. */
-export function toFamilyFit(fit) {
+export function toFamilyFit(fit, dataset = null, kind = "lantern") {
     if (!fit || !fit.positions) return null;
-    return {track: fit.positions, errDeg: fit.params?.errDeg, solved: fit.params?.solved ?? null};
+    return {track: fit.positions, errDeg: fit.params?.errDeg, solved: fit.params?.solved ?? null,
+        ...(dataset ? {metrics: trackMetrics(datasetForSolvedModelWind(dataset, fit.positions, fit.params?.solved, kind), fit.positions)} : {})};
 }
 
 /**
@@ -304,56 +320,57 @@ export async function buildSolutionFamilies({
     // — the continuation march) or from cold (the basin probe).
     const specs = [];
 
+    const balloonFamilyFit = fit => toFamilyFit(fit, dataset, "lantern");
+    const quadFamilyFit = fit => toFamilyFit(fit, dataset, "quadcopter");
     if (lantern && Number.isFinite(lantern.params?.solved?.initialRange)) {
-        const defs = new SkyLanternModel().getParameterDefs();
+        const stage = lantern.params.modelSelection?.selectedStage ?? "lifecycle";
+        const defs = makeBalloonModel(stage, clipDurationSec).getParameterDefs();
         const rd = defs.find((d) => d.name === "initialRange");
         const makeModel = () => {
-            const m = new SkyLanternModel();
-            m.clipDuration = clipDurationSec;
-            if (seedTrack) m.seedFromTrack(seedTrack, physicsDS);
+            const m = makeBalloonModel(stage, clipDurationSec);
             return m;
         };
         specs.push({
             id: "lantern|free",
             label: "Sky Lantern / Balloon",
             anchorM: lantern.params.solved.initialRange,
-            anchorFit: toFamilyFit(lantern),
+            anchorFit: balloonFamilyFit(lantern),
             modelLoM: rd.min, modelHiM: rd.max,
             fitAt: async (rangeM, seed) => {
                 const m = makeModel();
                 const overrides = seed?.solved
                     ? {...seed.solved} : (seedTrack ? seededOverrides(m) : null);
-                return toFamilyFit(await fitPhysicsModel(physicsDS, new Set(), m, {
+                return balloonFamilyFit(await fitPhysicsModel(physicsDS, new Set(), m, {
                     ...physicsOpts, optimizer: "nm", maxIter: 600,
                     ...(overrides ? {paramOverrides: overrides} : {}),
-                    paramLocks: {initialRange: rangeM},
+                    paramLocks: {...balloonStageLocks(stage), initialRange: rangeM},
                 }));
             },
-            basinProbe: async (rangeM) => toFamilyFit(
+            basinProbe: async (rangeM) => balloonFamilyFit(
                 await fitPhysicsModel(physicsDS, new Set(), makeModel(), {
                     ...physicsOpts, dePop: 24, deGens: 40,
-                    paramLocks: {initialRange: rangeM},
+                    paramLocks: {...balloonStageLocks(stage), initialRange: rangeM},
                 })),
         });
     }
 
     if (quad && Number.isFinite(quad.params?.solved?.initialRange)) {
-        const defs = new QuadcopterModel().getParameterDefs();
+        const defs = analysisQuadcopterModel().getParameterDefs();
         const rd = defs.find((d) => d.name === "initialRange");
         specs.push({
-            id: "quadcopter|",
+            id: "quadcopter|free",
             label: "Quadcopter",
             anchorM: quad.params.solved.initialRange,
-            anchorFit: toFamilyFit(quad),
+            anchorFit: quadFamilyFit(quad),
             modelLoM: rd.min, modelHiM: rd.max,
-            fitAt: async (rangeM, seed) => toFamilyFit(
-                await fitPhysicsModel(physicsDS, new Set(), new QuadcopterModel(), {
+            fitAt: async (rangeM, seed) => quadFamilyFit(
+                await fitPhysicsModel(physicsDS, new Set(), analysisQuadcopterModel(), {
                     ...physicsOpts, optimizer: "nm", maxIter: 600, fitMaxDt: 0.5,
                     ...(seed?.solved ? {paramOverrides: {...seed.solved}} : {}),
                     paramLocks: {initialRange: rangeM},
                 })),
-            basinProbe: async (rangeM) => toFamilyFit(
-                await fitPhysicsModel(physicsDS, new Set(), new QuadcopterModel(), {
+            basinProbe: async (rangeM) => quadFamilyFit(
+                await fitPhysicsModel(physicsDS, new Set(), analysisQuadcopterModel(), {
                     ...physicsOpts, dePop: 24, deGens: 40, fitMaxDt: 0.5,
                     paramLocks: {initialRange: rangeM},
                 })),
@@ -373,7 +390,7 @@ export async function buildSolutionFamilies({
             return fit ? {track: fit.track, errDeg: fit.errDeg, solved: fit.params} : null;
         };
         specs.push({
-            id: "aircraft|",
+            id: "aircraft|externally-conditioned",
             label: "Fixed-Wing Aircraft",
             anchorM: aircraft.params.startDist,
             anchorFit: {track: aircraft.track, errDeg: aircraft.errDeg, solved: aircraft.params},
@@ -440,6 +457,7 @@ export async function runTraverseBattery({
 
     // Toggles (the analyzeTweaks subset the battery reads).
     solutionFamilies = false, mcOrderSweep = false,
+    windCorrectionSigmaMS = DEFAULT_WIND_CORRECTION_SIGMA_MS,
     // Independent blind-range GPU solvers, selected explicitly by the live UI.
     // BOTBench instead selects their individual units in its plan.
     mcGpuPresets = [], monteCarloData = null, directFitData = null,
@@ -474,6 +492,9 @@ export async function runTraverseBattery({
     // cached is null downstream, and the candidates that need it are absent.
     units = null,
 }) {
+    if (!(Number.isFinite(windCorrectionSigmaMS) && windCorrectionSigmaMS > 0)) {
+        throw new Error("Wind correction uncertainty must be a positive finite value in m/s");
+    }
     dataset.angularSizeFittedInput = dataset.angularSizeOptions?.fit
         ? {options: {...dataset.angularSizeOptions}, observations: dataset.angularSize ?? null} : null;
     if (angularSizeFitEnabled(dataset)) gpu = false; // CPU objectives include the optional size loss.
@@ -533,13 +554,18 @@ export async function runTraverseBattery({
     // range.
     provenance.linearFitConditioning = assessLinearFitConditioning(dataset);
 
+    const requestedBounds = {fitRangeMin, fitRangeMax, caRangeMin, caRangeMax, plausRangeMin, plausRangeMax};
     const sweep = await runUnit("constAir", () => sweepConstAirSpeed(dataset, {
         ranges,
         speedTarget,
         // Auto-expand the range bracket when the winner sits on a grid
         // edge (only when the user hasn't pinned an explicit band).
         expand: rangeIsDefault,
-        progress: at(0.00, 0.18, "Sweeping constant-air-speed grid..."),
+        progress: at(0.00, 0.09, "Sweeping constant-air-speed grid (supplied wind)..."),
+    }));
+    const sweepFreeWind = await runUnit("constAirFreeWind", () => sweepConstAirSpeed(dataset, {
+        ranges, speedTarget, fitWind: true, expand: rangeIsDefault,
+        progress: at(0.09, 0.09, "Sweeping constant-air-speed grid (fitted wind)..."),
     }));
     // Expansion is part of the search result, not a display-only detail.
     // Every downstream profile/model must inspect the same resolved bracket.
@@ -553,6 +579,13 @@ export async function runTraverseBattery({
     plausRangeMin = Math.min(plausRangeMin, resolvedRanges[0]);
     plausRangeMax = Math.max(plausRangeMax, resolvedRanges[resolvedRanges.length - 1]);
 
+    const freeRanges = sweepFreeWind?.ranges ?? ranges;
+    const freeBounds = {};
+    for (const prefix of ["fit", "ca", "plaus"]) {
+        freeBounds[`${prefix}RangeMin`] = Math.min(requestedBounds[`${prefix}RangeMin`], freeRanges[0]);
+        freeBounds[`${prefix}RangeMax`] = Math.max(requestedBounds[`${prefix}RangeMax`], freeRanges[freeRanges.length - 1]);
+    }
+
     const slowOpts = {...SLOW_OPTS};
     // The two range profiles are one unit: both are cheap, both read the
     // resolved bracket, and the report draws them together.
@@ -561,40 +594,55 @@ export async function runTraverseBattery({
             ranges: resolvedRanges,
             vTarget: speedTarget,
             vSigma: 60 * KNOTS_TO_MS,
-            progress: at(0.18, 0.12, "Range profile: fast object..."),
+            progress: at(0.18, 0.04, "Range profile: fast object..."),
         });
         const slowProfile = await rangeProfile(dataset, {
             ...slowOpts,
             ranges: resolvedRanges,
-            progress: at(0.30, 0.12, "Range profile: slow object..."),
+            progress: at(0.22, 0.04, "Range profile: slow object..."),
         });
         return {fastProfile, slowProfile};
     });
     const fastProfile = profiles?.fastProfile ?? null;
     const slowProfile = profiles?.slowProfile ?? null;
 
-    const aircraft = await runUnit("aircraft", async (unitFailures) => {
+    const profilesFreeWind = await runUnit("profilesFreeWind", async () => ({
+        slowProfile: await rangeProfile(dataset, {
+            ...slowOpts, fitWind: true, ranges: freeRanges,
+            progress: at(0.26, 0.04, "Range profile: slow object (fitted wind)..."),
+        }),
+    }));
+    const fitAircraftWind = (fitWind) => async (unitFailures) => {
         try {
             return await fitAircraft(dataset, {
+                fitWind,
                 tasTarget: speedTarget,
-                rangeMin: fitRangeMin, rangeMax: fitRangeMax,
+                rangeMin: fitWind ? freeBounds.fitRangeMin : fitRangeMin,
+                rangeMax: fitWind ? freeBounds.fitRangeMax : fitRangeMax,
                 runs: 3,
                 ...(gpu ? {gpu} : {}),
                 groundPrior,
                 shouldCancel: cancelled,
-                progress: at(0.42, 0.34, "Fitting fixed-wing aircraft model..."),
+                progress: at(fitWind ? 0.53 : 0.30, 0.23, `Fitting fixed-wing aircraft (${fitWind ? "fitted" : "supplied"} wind)...`),
             });
         } catch (e) {
             rethrowIfCancelled(e);
-            unitFailures.push({method: "Fixed-Wing Aircraft", error: (e && e.message) || "fit failed"});
+            unitFailures.push({method: `Fixed-Wing Aircraft (${fitWind ? "fitted" : "supplied"} wind)`, error: (e && e.message) || "fit failed"});
             return null;
         }
-    });
+    };
+    const aircraft = await runUnit("aircraft", fitAircraftWind(false));
+    const aircraftFreeWind = await runUnit("aircraftFreeWind", fitAircraftWind(true));
 
     // --- Extra interpretation fits for the hypothesis gallery ---------
     const ca = await runUnit("constAlt", async () => {
-        await at(0.76, 0.02, "Fitting constant-altitude path...")(0);
+        await at(0.76, 0.01, "Fitting constant-altitude path...")(0);
         return fitConstAltitude(dataset, {rangeMin: caRangeMin, rangeMax: caRangeMax});
+    });
+
+    const caFreeWind = await runUnit("constAltFreeWind", async () => {
+        await at(0.77, 0.01, "Fitting constant-altitude path (fitted wind)...")(0);
+        return fitConstAltitude(dataset, {rangeMin: freeBounds.caRangeMin, rangeMax: freeBounds.caRangeMax, fitWind: true});
     });
 
     const horizontalSpeed = await runUnit("horizontalSpeed", async (unitFailures) => {
@@ -608,7 +656,7 @@ export async function runTraverseBattery({
     });
 
     const plausible = await runUnit("plausible", async () => {
-        await at(0.79, 0.02, "Fitting least-maneuvering path...")(0);
+        await at(0.79, 0.01, "Fitting least-maneuvering path...")(0);
         return fitPlausibleBestRange(dataset, {
             vTarget: speedTarget,
             vSigma: 60 * KNOTS_TO_MS,
@@ -617,20 +665,22 @@ export async function runTraverseBattery({
         });
     });
 
-    // Wind input for the wind-tracer fits (Sky Lantern / Balloon and
-    // Quadcopter): sampled at the plausible track's mean altitude by the
-    // caller, because reaching a wind field is a scene operation. A wind
-    // tracer's drift SHOULD match the winds aloft, not slide slow to trade
-    // range against an invented calm (the coupled range/wind unobservable pair).
+    const plausibleFreeWind = await runUnit("plausibleFreeWind", async () => {
+        await at(0.80, 0.01, "Fitting minimum-acceleration path (fitted wind)...")(0);
+        return fitPlausibleBestRange(dataset, {
+            vTarget: speedTarget, vSigma: 60 * KNOTS_TO_MS,
+            rangeMin: freeBounds.plausRangeMin, rangeMax: freeBounds.plausRangeMax, fitWind: true,
+        });
+    });
+
+    // Optional reference metadata for reports. Fits consume dataset.W in the
+    // supplied branch; no external reference enters the free-wind branch.
     let windPrior = null;
     if (sampleWindPrior && plausible && plausible.track) {
         try {
             windPrior = sampleWindPrior({dataset, track: plausible.track, originLat, originLon}) ?? null;
         } catch (e) {
-            // A wind problem must degrade to "no wind-pinned hypothesis", never
-            // abort the whole analysis — the free-wind fit still runs.
-            console.warn("Wind sample for the balloon prior failed; "
-                + "continuing with the free-wind fit only:", e);
+            console.warn("Wind reference metadata unavailable; using the captured wind series:", e);
             windPrior = null;
         }
     }
@@ -752,26 +802,12 @@ export async function runTraverseBattery({
     const seedComplete = seedSource === "kalman" || !!(plausible && plausible.track);
     const seeded = (record) => { record.cacheable = seedComplete; return record; };
 
+    const freeSeedTrack = seedSource === "kalman" ? seedTrack : plausibleFreeWind?.track ?? null;
     const lantern = await runUnit("lantern", async (unitFailures) => {
-        await at(0.82, 0.05, "Fitting balloon model (free wind)...")(0);
+        await at(0.82, 0.025, "Fitting balloon model (fitted wind)...")(0);
         let fit = null;
         try {
-            // FREE reconstruction: fit wind + lift together with NO measured-wind
-            // input — "does a plausible balloon fit these sightlines?" — and yield
-            // the inferred wind + lift profile.
-            const freeModel = new SkyLanternModel();
-            // lets the model's wind vary across the clip in duration-invariant
-            // units (see SkyLanternModel._windAt)
-            freeModel.clipDuration = clipDurationSec;
-            // Seed the time-varying wind from the best geometric path so DE
-            // starts in the right basin instead of scattering in 12-D.
-            let freeOpts = physicsOpts;
-            if (seedTrack) {
-                freeModel.seedFromTrack(seedTrack, physicsDS);
-                const ov = seededOverrides(freeModel);
-                if (ov) freeOpts = {...physicsOpts, paramOverrides: ov};
-            }
-            fit = await fitPhysicsModel(physicsDS, new Set(), freeModel, gpu ? {...freeOpts, gpu} : freeOpts);
+            fit = await fitBalloon(physicsDS, dataset, {...physicsOpts, seedTrack: freeSeedTrack});
         } catch (e) {
             rethrowIfCancelled(e);
             unitFailures.push({method: "Sky Lantern / Balloon (free wind)", error: (e && e.message) || "fit failed"});
@@ -782,73 +818,52 @@ export async function runTraverseBattery({
             unitFailures.push({method: "Sky Lantern / Balloon (free wind)", error: "fit returned no solution"});
         }
         return fit;
-    });
-    if (fittedUnits.lantern) seeded(fittedUnits.lantern);
+    }, () => !!freeSeedTrack);
 
-    // "USING EXISTING WIND" reconstruction: a second balloon fit whose drift
-    // wind is softly pinned to the caller's wind (kept loose — even a real
-    // sounding is only loosely representative). The prior carries its
-    // provenance so the hypothesis can say whether that wind was measured or
-    // hand-set. Kept SEPARATE from the free fit so both modes coexist and the
-    // inferred-vs-existing wind comparison is available.
-    //
-    // Not a unit: it exists only where a scene supplies a wind, and the note it
-    // leaves when none did belongs to the balloon interpretation, so it is made
-    // whenever that interpretation is wanted.
-    let lanternMeasured = null;
-    if (!wanted("lantern")) {
-        // no balloon interpretation asked for; nothing to pin and nothing to note
-    } else if (windPrior) {
-        await at(0.87, 0.02,
-            `Fitting balloon model (${windPrior.measured ? "measured" : "sitch"} wind)...`)(0);
+    // The supplied variant consumes the dataset's complete wind series as a
+    // fixed input, including calm when that is the configured assumption.
+    // It is a cacheable fit unit in both live analysis and BOTBench.
+    const fitSuppliedWind = (makeModel, method, seed = false) => async (unitFailures) => {
+        await at(seed ? 0.845 : 0.91, seed ? 0.025 : 0.02, `Fitting ${method} (supplied wind)...`)(0);
         try {
-            const m = new SkyLanternModel();
-            m.clipDuration = clipDurationSec;
-            m.windPriorE = windPrior.E; m.windPriorN = windPrior.N;
-            let measuredOpts = physicsOpts;
-            if (seedTrack) {
-                m.seedFromTrack(seedTrack, physicsDS);
-                const ov = seededOverrides(m);
-                if (ov) measuredOpts = {...physicsOpts, paramOverrides: ov};
-            }
-            lanternMeasured = await fitPhysicsModel(physicsDS, new Set(), m,
-                gpu ? {...measuredOpts, gpu} : measuredOpts);
+            const model = makeModel();
+            model.clipDuration = clipDurationSec;
+            if (seed && seedTrack) model.seedFromTrack(seedTrack, physicsDS);
+            const fixed = new SuppliedWindModel(model, dataset);
+            const overrides = seed ? seededOverrides(model) : null;
+            const fit = await fitPhysicsModel(physicsDS, new Set(), fixed, {
+                ...physicsOpts,
+                ...(model instanceof QuadcopterModel ? {fitMaxDt: 0.5} : {}),
+                ...(overrides ? {paramOverrides: overrides} : {}),
+            });
+            throwIfCancelled();
+            if (!fit) unitFailures.push({method: `${method} (supplied wind)`, error: "fit returned no solution"});
+            return fit;
         } catch (e) {
             rethrowIfCancelled(e);
-            lanternMeasured = null;  // non-fatal — the free fit is the primary
+            unitFailures.push({method: `${method} (supplied wind)`, error: (e && e.message) || "fit failed"});
+            return null;
         }
-        throwIfCancelled();
-    } else {
-        // SAY THAT IT WAS NOT TESTED. This interpretation is conditioned on a
-        // wind the caller has to supply, and there is no honest substitute:
-        // "no wind given" is not evidence for calm, and a zero prior would pin
-        // the balloon to zero drift, which is a different claim entirely.
-        //
-        // What must not happen is the fit simply not appearing. A reader
-        // comparing two runs cannot tell "the balloon was tested against the
-        // winds aloft and did not survive" from "nobody ever asked", and those
-        // are opposite conclusions. Measured on a clean synthetic balloon clip,
-        // this fit recovered the truth EXACTLY (0 m, against 168 m for the
-        // free-wind fit) when the real wind was supplied — so its absence is a
-        // real gap in what was checked, not a formality.
-        //
-        // It is stated here rather than in each caller's own list of missing
-        // checks, because this line is the only one that knows whether a prior
-        // arrived. The bulk runner used to carry a blanket "measured wind is
-        // never available" entry; that was removed when this was added.
-        failures.push({
-            method: "Sky Lantern / Balloon (measured wind)",
-            error: "not tested — no wind was supplied to pin the drift to "
-                + "(load winds aloft, or set the sitch wind, to include it)",
-        });
-    }
+    };
+    const fitBalloonMode = mode => async unitFailures => {
+        try {
+            return await fitBalloon(physicsDS, dataset, {...physicsOpts, seedTrack, mode,
+                correctionSigmaMS: windCorrectionSigmaMS});
+        } catch (e) {
+            rethrowIfCancelled(e);
+            unitFailures.push({method: `Balloon (${mode} wind)`, error: e.message});
+            return null;
+        }
+    };
+    const lanternSuppliedWind = await runUnit("lanternSuppliedWind", fitBalloonMode("supplied"), () => seedComplete);
+    const lanternCorrectedWind = await runUnit("lanternCorrectedWind", fitBalloonMode("corrected"), () => seedComplete);
 
     // Quadcopter (multirotor drone) — hover-capable near-field object. Runs
     // the generic multirotor envelope; the hypothesis classifies the solved
     // trajectory to the nearest common model. May fail / be implausible for
     // far-field scenes (its range is capped at 20 km) — degrade gracefully.
     const quad = await runUnit("quadcopter", async (unitFailures) => {
-        await at(0.89, 0.04, "Fitting quadcopter (drone) model...")(0);
+        await at(0.87, 0.04, "Fitting quadcopter (fitted wind)...")(0);
         let fit = null;
         try {
             // Coarsen the SEARCH integration (fitMaxDt): the quadcopter's dynamics
@@ -859,7 +874,7 @@ export async function runTraverseBattery({
             // the whole analysis (TA-25). The final full-resolution trajectory still
             // integrates at the model's own maxDt.
             const quadOptions = {...physicsOpts, fitMaxDt: 0.5};
-            fit = await fitPhysicsModel(physicsDS, new Set(), new QuadcopterModel(),
+            fit = await fitPhysicsModel(physicsDS, new Set(), analysisQuadcopterModel(),
                 gpu ? {...quadOptions, gpu} : quadOptions);
         } catch (e) {
             rethrowIfCancelled(e);
@@ -872,6 +887,9 @@ export async function runTraverseBattery({
         }
         return fit;
     });
+
+    const quadSuppliedWind = await runUnit("quadcopterSuppliedWind",
+        fitSuppliedWind(() => new QuadcopterModel(), "Quadcopter"));
 
     // Drone as CONTROL INPUTS — the plausible-flight counterpart to the
     // free quadcopter above. Seeded from the best geometric path (Kalman
@@ -1041,11 +1059,25 @@ export async function runTraverseBattery({
     }
 
     const hypotheses = buildHypotheses({
-        dataset, sweep, ca, horizontalSpeed, plausible, aircraft, lantern, lanternMeasured, quad, satellite,
+        dataset, sweep, ca, horizontalSpeed, plausible, aircraft, lantern, quad, satellite,
         slowProfile, slowOpts,
         originLat, originLon,
         provenance, failures, windPrior, mcSweep, monteCarlo, droneCtl, kalman,
         constantVelocity, constantAcceleration,
+        windModes: {constAir: "supplied", constAlt: "supplied", plausible: "supplied", saddle: "supplied",
+            aircraft: "supplied", lantern: "fitted", quadcopter: "fitted"},
+        windFits: [
+            ...(wanted("constAirFreeWind") ? [{key: "constAir", field: "sweep", fit: sweepFreeWind, mode: "fitted",
+                overrides: {slowProfile: profilesFreeWind?.slowProfile}}] : []),
+            ...(wanted("profilesFreeWind") ? [{key: "saddle", field: "slowProfile", fit: profilesFreeWind?.slowProfile,
+                mode: "fitted", overrides: {slowOpts: {...slowOpts, fitWind: true}}}] : []),
+            ...(wanted("constAltFreeWind") ? [{key: "constAlt", field: "ca", fit: caFreeWind, mode: "fitted"}] : []),
+            ...(wanted("plausibleFreeWind") ? [{key: "plausible", field: "plausible", fit: plausibleFreeWind, mode: "fitted"}] : []),
+            ...(wanted("aircraftFreeWind") ? [{key: "aircraft", field: "aircraft", fit: aircraftFreeWind, mode: "fitted"}] : []),
+            ...(wanted("lanternSuppliedWind") ? [{key: "lantern", field: "lantern", fit: lanternSuppliedWind, mode: "supplied"}] : []),
+            ...(wanted("lanternCorrectedWind") ? [{key: "lantern", field: "lantern", fit: lanternCorrectedWind, mode: "corrected"}] : []),
+            ...(wanted("quadcopterSuppliedWind") ? [{key: "quadcopter", field: "quad", fit: quadSuppliedWind, mode: "supplied"}] : []),
+        ],
     });
 
     for (const h of hypotheses) h.angularSizeFit = {
@@ -1067,6 +1099,19 @@ export async function runTraverseBattery({
         }
     }
 
+    for (const h of hypotheses) {
+        if (!h.params?.unconstrained || !h.track) continue;
+        const conditioned = trackMetrics(dataset, h.track);
+        h.windConditionalMetrics = {airSpeed: conditioned.airSpeed, horizontalAirSpeed: conditioned.horizontalAirSpeed};
+        let lo = conditioned.airSpeed.mean, hi = lo;
+        for (let a = 0; a < 8; a++) {
+            const phi = a * Math.PI / 4;
+            const m = trackMetrics(datasetWithWindCorrection(dataset,
+                windCorrectionSigmaMS * Math.cos(phi), windCorrectionSigmaMS * Math.sin(phi)), h.track);
+            lo = Math.min(lo, m.airSpeed.mean); hi = Math.max(hi, m.airSpeed.mean);
+        }
+        h.windSensitivity = {mean: conditioned.airSpeed.mean, lo, hi, sigmaMS: windCorrectionSigmaMS};
+    }
     // Grade every hypothesis BEFORE anything reads them: the scene residual
     // scale and the platform-mirror record. The executive assessment below
     // consumes both (a candidate whose solved path is the camera's own must not
@@ -1098,10 +1143,10 @@ export async function runTraverseBattery({
     }
 
     return {
-        sweep, resolvedRanges, fastProfile, slowProfile, slowOpts,
+        sweep, sweepFreeWind, profilesFreeWind, caFreeWind, plausibleFreeWind, freeBounds, resolvedRanges, fastProfile, slowProfile, slowOpts,
         aircraft, ca, horizontalSpeed, plausible, constantVelocity, constantAcceleration,
         seedTrack, seedSource,
-        lantern, lanternMeasured, quad, droneCtl, kalman,
+        lantern, lanternSuppliedWind, lanternCorrectedWind, quad, quadSuppliedWind, aircraftFreeWind, droneCtl, kalman,
         families, mcSweep, polySweep, monteCarlo, missingGpuSolvers, satellite,
         hypotheses, executiveAssessment,
         failures, windPrior, groundPrior,

@@ -1,9 +1,10 @@
 /**
  * BOTBench's GPU search option, where there is no WebGPU (as here).
  *
- * The fits must run on the CPU exactly as a CPU run does, and the fixed-wing,
- * balloon, and quadcopter units must be marked not cacheable: stored under the GPU options, a CPU
+ * The fits must run on the CPU exactly as a CPU run does, and the fixed-wing
+ * and quadcopter units must be marked not cacheable: stored under the GPU options, a CPU
  * fit would later be served to a GPU run as though it were a GPU result.
+ * Balloon model selection is deliberately CPU-only and remains cacheable.
  *
  * @jest-environment jsdom
  */
@@ -57,7 +58,9 @@ describe("GPU search without WebGPU", () => {
         // Horizontal Speed Valley is deliberately CPU-only, so the GPU option
         // does not split or invalidate its cache unit.
         expect(gpu.units.horizontalSpeed.cacheable).toBe(true);
-        expect(gpu.units.lantern.cacheable).toBe(false);
+        expect(gpu.units.lantern.cacheable).toBe(true);
+        expect(gpu.units.lanternSuppliedWind.cacheable).toBe(true);
+        expect(gpu.units.lanternCorrectedWind.cacheable).toBe(true);
         expect(gpu.units.quadcopter.cacheable).toBe(false);
         expect(gpu.units.constAir.cacheable).toBe(true);
         expect(gpu.units.kalman.cacheable).toBe(true);
@@ -74,7 +77,9 @@ test("searchBackendOf names where the searches ran", () => {
     const quad = (backend) => ({params: {optimizer: {de: backend ? {backend} : {}}}});
     expect(searchBackendOf({aircraft: aircraft("webgpu"), lantern: lantern("webgpu"),
         quad: quad("webgpu")})).toBe("webgpu");
-    expect(searchBackendOf({aircraft: aircraft("webgpu"), lantern: lantern(null)})).toBe("mixed");
+    expect(searchBackendOf({aircraft: aircraft("webgpu"), lantern: lantern(null)})).toBe("webgpu");
+    expect(searchBackendOf({aircraft: aircraft("webgpu"), quad: quad(null)})).toBe("mixed");
+    expect(searchBackendOf({lantern: lantern(null)})).toBeNull();
     expect(searchBackendOf({horizontalSpeed: {backend: "webgpu"}})).toBeNull();
     expect(searchBackendOf({aircraft: aircraft(null)})).toBe("cpu");
     expect(searchBackendOf({})).toBeNull();

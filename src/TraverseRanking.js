@@ -448,7 +448,7 @@ export function plausibilityRating(h) {
     } else {
         const m = h?.metricsFull;
         const gMax = m?.gLoad?.max;
-        const speedMaxKt = m?.airSpeed?.max / KNOTS_TO_MS;
+        const speedMaxKt = (h.windConditionalMetrics?.airSpeed ?? m?.airSpeed)?.max / KNOTS_TO_MS;
         const err = effectiveErrDeg(h);
         const secondary = rankTieScore(h);
         if (![gMax, speedMaxKt, err, secondary].every(Number.isFinite)) {
@@ -577,6 +577,7 @@ export function plausibilityRating(h) {
         eligible: !boundaryLimited && !optimizerWarnings.length && result.rank >= 3,
         incomplete: boundaryLimited || optimizerWarnings.length > 0,
         boundaryLimited,
+        windBoundary: (h.windSearchBounds?.length ?? 0) > 0,
         activePins: pins,
         inactivePins: inactive,
         modelClamps,
@@ -1023,7 +1024,7 @@ function screeningLimitations({h, r}) {
     }
     if (r.kinematicRank != null && r.kinematicRank < 3) {
         if (h.metricsFull.gLoad.max > 1.5) parts.push(`peak acceleration ${h.metricsFull.gLoad.max.toFixed(2)} g exceeds 1.50 g`);
-        const kt = h.metricsFull.airSpeed.max / KNOTS_TO_MS;
+        const kt = (h.windConditionalMetrics?.airSpeed ?? h.metricsFull.airSpeed).max / KNOTS_TO_MS;
         if (kt > 650) parts.push(`peak air speed ${kt.toFixed(0)} kt exceeds 650 kt`);
     }
     if (r.mirrorRank != null && r.mirrorRank < 3) {
@@ -1364,7 +1365,7 @@ export function tierBadge(rating) {
 
 export function completenessBadges(rating) {
     const out = [];
-    if (rating.boundaryLimited) out.push({label: "Search incomplete", color: "#d9862f"});
+    if (rating.boundaryLimited) out.push({label: rating.windBoundary ? "Wind search edge" : "Search incomplete", color: "#d9862f"});
     if (rating.activePins?.length) out.push({label: "Model limit hit", color: "#d9862f"});
     if (rating.inactivePins?.length) out.push({label: "Unconstrained at bound", color: "#7b8490"});
     if (rating.modelClamps?.length) out.push({label: "Internal clamp reached", color: "#7b8490"});

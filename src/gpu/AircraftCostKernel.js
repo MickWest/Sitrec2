@@ -17,6 +17,8 @@
  * Measured against the f64 cost: <= 2e-6 relative near an optimum.
  */
 
+import {WIND_PRIOR_SIGMA_MS} from "../TraverseWind";
+
 export const AIRCRAFT_KERNEL_DIM = 6;
 
 // Default GPU search for fitAircraft: 8 independent instances x 1024 x 300
@@ -26,7 +28,7 @@ export const AIRCRAFT_KERNEL_DIM = 6;
 export const GPU_AIRCRAFT_BUDGET = Object.freeze({instances: 8, pop: 1024, gens: 300});
 const TABLE_STRIDE = 11;
 
-const WGSL = /* wgsl */ `
+function aircraftWGSL(freeWind) { return /* wgsl */ `
 const AC_DEG: f32 = 0.017453292519943295;
 fn acSq(x: f32) -> f32 { return x * x; }
 
@@ -48,8 +50,8 @@ fn cost(p: Params) -> f32 {
         let dPsi = (w0 * (tb - ta) + 0.5 * wd * (tb * tb - ta * ta)) * AC_DEG;
         let psiMid = h0 * AC_DEG + (w0 * ta + 0.5 * wd * ta * ta) * AC_DEG + 0.5 * dPsi;
         let dtB = tb - ta;
-        let vx = V * sin(psiMid);
-        let vy = V * cos(psiMid);
+        let vx = V * sin(psiMid)${freeWind ? " + p[6]" : ""};
+        let vy = V * cos(psiMid)${freeWind ? " + p[7]" : ""};
         let px = start.x + a.x;
         let py = start.y + a.y;
         a += vec3f(vx * dtB + ktable[o + 6u],
@@ -68,6 +70,7 @@ fn cost(p: Params) -> f32 {
         + acSq(w0 / kparams[9]) + acSq(wEnd / kparams[9])
         + acSq(climb / kparams[10])
         + acSq((V - kparams[11]) / kparams[12]);
+    ${freeWind ? `c += (p[6] * p[6] + p[7] * p[7]) / ${WIND_PRIOR_SIGMA_MS ** 2}.0;` : ""}
     if (kparams[14] > 0.5 || kparams[16] > 0.5) {
         let gh0 = start.z + (start.x * start.x + start.y * start.y) / (2.0 * earthR);
         if (kparams[14] > 0.5) { c += acSq((gh0 - kparams[15]) / kparams[18]); }
@@ -75,7 +78,7 @@ fn cost(p: Params) -> f32 {
     }
     return min(c, 3.0e38);
 }
-`;
+`; }
 
 /**
  * Build the kernel for one dataset and one set of fitAircraft objective settings.
@@ -86,7 +89,7 @@ fn cost(p: Params) -> f32 {
  *   T, errSigma, turnSigma, climbSigma, tasTarget, tasSigma, groundPrior, earthRadius
  */
 export function buildAircraftKernel({dataset, costFrames, cumW, T, errSigma, turnSigma, climbSigma,
-    tasTarget, tasSigma, groundPrior = null, earthRadius}) {
+    tasTarget, tasSigma, groundPrior = null, earthRadius, freeWind = false}) {
     const {S, D, fps} = dataset;
     const nc = costFrames.length - 1;
     const table = new Float32Array(Math.max(1, nc) * TABLE_STRIDE);
@@ -96,9 +99,9 @@ export function buildAircraftKernel({dataset, costFrames, cumW, T, errSigma, tur
         table[o + 1] = S[1] - S[b + 1];
         table[o + 2] = S[2] - S[b + 2];
         table[o + 3] = D[b]; table[o + 4] = D[b + 1]; table[o + 5] = D[b + 2];
-        table[o + 6] = cumW[b] - cumW[pb];
-        table[o + 7] = cumW[b + 1] - cumW[pb + 1];
-        table[o + 8] = cumW[b + 2] - cumW[pb + 2];
+        table[o + 6] = freeWind ? 0 : cumW[b] - cumW[pb];
+        table[o + 7] = freeWind ? 0 : cumW[b + 1] - cumW[pb + 1];
+        table[o + 8] = freeWind ? 0 : cumW[b + 2] - cumW[pb + 2];
         table[o + 9] = prevF / fps;
         table[o + 10] = f / fps;
     }
@@ -111,7 +114,8 @@ export function buildAircraftKernel({dataset, costFrames, cumW, T, errSigma, tur
         hasEnd ? 1 : 0, hasEnd ? groundPrior.endZ : 0,
         groundPrior ? (groundPrior.sigma ?? 40) : 40,
     ]);
-    return {key: "aircraft", dim: AIRCRAFT_KERNEL_DIM, wgsl: WGSL, params, table};
+    return {key: freeWind ? "aircraft-free-wind" : "aircraft", dim: freeWind ? 8 : AIRCRAFT_KERNEL_DIM,
+        wgsl: aircraftWGSL(freeWind), params, table};
 }
 
 /**
@@ -134,7 +138,8 @@ export function aircraftKernelCostF64(kernel, p) {
         const dPsi = (w0 * (tb - ta) + 0.5 * wd * (tb * tb - ta * ta)) * DEG;
         const psiMid = h0 * DEG + (w0 * ta + 0.5 * wd * ta * ta) * DEG + 0.5 * dPsi;
         const dtB = tb - ta;
-        const vx = V * Math.sin(psiMid), vy = V * Math.cos(psiMid);
+        const vx = V * Math.sin(psiMid) + (kernel.dim === 8 ? p[6] : 0);
+        const vy = V * Math.cos(psiMid) + (kernel.dim === 8 ? p[7] : 0);
         const px = start[0] + a[0], py = start[1] + a[1];
         a[0] += vx * dtB + tab[o + 6];
         a[1] += vy * dtB + tab[o + 7];
@@ -150,6 +155,7 @@ export function aircraftKernelCostF64(kernel, p) {
     const T = k[13];
     const wEnd = w0 + wd * T;
     let c = e / k[8] + (w0 / k[9]) ** 2 + (wEnd / k[9]) ** 2 + (climb / k[10]) ** 2 + ((V - k[11]) / k[12]) ** 2;
+    if (kernel.dim === 8) c += (p[6] ** 2 + p[7] ** 2) / WIND_PRIOR_SIGMA_MS ** 2;
     if (k[14] > 0.5 || k[16] > 0.5) {
         const gh0 = start[2] + (start[0] * start[0] + start[1] * start[1]) / (2 * earthR);
         if (k[14] > 0.5) c += ((gh0 - k[15]) / k[18]) ** 2;

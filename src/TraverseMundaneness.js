@@ -78,7 +78,7 @@ export function impliedDiameter(rangeM, thetaMaxDeg) {
  * Returns all class checks, motion diagnostics and unmeasured quantities.
  */
 export function physicalClassChecks(dataset, h) {
-    const m = h?.metricsFull;
+    const m = h?.metricsFull ? {...h.metricsFull, ...h.windConditionalMetrics} : null;
     if (!m || h.identity || h.atInfinity || h.nonPhysical || h.underground || h.groundMismatch) return null;
     const speedMinKt = (m.airSpeed?.min ?? m.airSpeed?.mean) / KNOTS_TO_MS;
     const speedMaxKt = (m.airSpeed?.max ?? m.airSpeed?.mean) / KNOTS_TO_MS;

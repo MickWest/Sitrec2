@@ -66,7 +66,7 @@ export function botBenchRangeLimits(record) {
 export function searchBackendOf(battery) {
     const used = [];
     if (battery?.aircraft) used.push(battery.aircraft.runs?.[0]?.de?.backend === "webgpu");
-    if (battery?.lantern) used.push(battery.lantern.params?.optimizer?.de?.backend === "webgpu");
+    if (battery?.aircraftFreeWind) used.push(battery.aircraftFreeWind.runs?.[0]?.de?.backend === "webgpu");
     if (battery?.quad) used.push(battery.quad.params?.optimizer?.de?.backend === "webgpu");
     for (const fit of Object.values(battery?.monteCarlo ?? {})) {
         if (fit) used.push(fit.params?.backend === "webgpu");
@@ -94,7 +94,7 @@ function markGpuFallbacksUncacheable(units) {
         }
     };
     check("aircraft", (fit) => fit.runs?.[0]?.de?.backend === "webgpu");
-    check("lantern", (fit) => fit.params?.optimizer?.de?.backend === "webgpu");
+    check("aircraftFreeWind", (fit) => fit.runs?.[0]?.de?.backend === "webgpu");
     check("quadcopter", (fit) => fit.params?.optimizer?.de?.backend === "webgpu");
     if (fellBack && units.families) units.families.cacheable = false;
 }
@@ -226,6 +226,7 @@ export async function fitBotBenchRecord(record, {
         caRangeMax: capM(Math.max(ranges[ranges.length - 1], 45 * METERS_PER_NM)),
         plausRangeMin: Math.min(0.5 * METERS_PER_NM, capM(0.5 * METERS_PER_NM)),
         plausRangeMax: capM(55 * METERS_PER_NM),
+        windCorrectionSigmaMS: record.meta?.windEstimate?.sigmaMS ?? undefined,
         solutionFamilies,
         mcOrderSweep,
         monteCarloData: record.losSamples ?? (record.meta?.maxRangeM > 0
@@ -283,6 +284,15 @@ export function cacheableBotBenchBattery(battery) {
         // represent, so if one of these ever stops being plain data the write
         // fails loudly instead of storing a lie.
         plausible: battery.plausible, lantern: battery.lantern, quad: battery.quad,
+        aircraftFreeWind: battery.aircraftFreeWind,
+        freeBounds: battery.freeBounds,
+        lanternSuppliedWind: battery.lanternSuppliedWind,
+        lanternCorrectedWind: battery.lanternCorrectedWind,
+        quadSuppliedWind: battery.quadSuppliedWind,
+        sweepFreeWind: battery.sweepFreeWind,
+        profilesFreeWind: battery.profilesFreeWind,
+        caFreeWind: battery.caFreeWind,
+        plausibleFreeWind: battery.plausibleFreeWind,
         constantVelocity: battery.constantVelocity,
         constantAcceleration: battery.constantAcceleration,
     };

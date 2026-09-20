@@ -70,6 +70,8 @@ export class PhysicsModel {
 export function integrateRK4(model, initialState, params, sampleTimes, {
     maxDt: maxDtOverride, checkDivergence = false,
 } = {}) {
+    if (model.integrate) return model.integrate(initialState, params, sampleTimes,
+        {maxDt: maxDtOverride, checkDivergence});
     const states = [];
     const state = initialState.slice();
     const n = state.length;

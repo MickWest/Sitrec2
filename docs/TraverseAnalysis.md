@@ -192,13 +192,53 @@ the fits are byte-identical to before.
 The analysis is engineered to be honest about what LOS-only data can and
 cannot determine:
 
+- **Paired wind fits**: every wind-dependent analysis method has a **supplied
+  wind** result and an independent wind treatment. This covers Fixed-Wing Aircraft,
+  Sky Lantern / Balloon, Quadcopter, Constant Air Speed, Constant Altitude,
+  Minimum Acceleration and Minimum Speed, in both live analysis and BOTBench.
+  Supplied wind is held fixed to the complete per-frame input series, including
+  calm if selected; it is not a soft constraint. The second run searches wind
+  without consuming that series when the objective can constrain it. Each result's air-relative metrics use its
+  own wind. Agreement from the supplied-wind result is not independent wind
+  evidence. Both candidates share their object class, so they do not count as
+  two independent explanations.
+  Free winds share ±40 m/s east/north search bounds and a 20 m/s component
+  regularization scale centered on calm. These are analysis assumptions, not
+  weather measurements or vehicle speed limits. Wind is conditional on the
+  motion model and is labelled **required wind**; no confidence interval is claimed.
+  The speed-based spline methods solve wind and range together. Constant
+  Altitude and pure-smoothness Minimum Acceleration cannot determine a constant
+  wind and now say **wind undetermined**. Their ground-frame paths are retained;
+  physical compatibility uses the supplied wind assumption. An eight-direction
+  perturbation of that wind shows airspeed sensitivity, not statistical uncertainty.
+  Wind that reaches a search edge is disclosed separately from vehicle limits.
+  Ground-frame geometric/control fits whose objective does not use wind retain
+  one trajectory.
+- **Balloon model selection**: analysis starts with constant horizontal drift
+  and a signed constant vertical speed (four free parameters including range).
+  If needed it tries linear wind change, a rise/cooling/descent lifecycle,
+  altitude shear, and quadratic wind change as separate alternatives. It never
+  fits time variation and altitude shear together. Among completed fits it
+  selects the fewest parameters within the larger of 0.002° or 10% of the best
+  mean LOS residual. This is a practical tolerance, not a statistical test.
+  Incomplete searches and all attempted alternatives remain in the diagnostics.
+  Range bands retain the selected model. Vertical speed is separate from
+  horizontal drift and horizontal air-relative speed in the results.
+- **Supplied wind plus correction**: balloon analysis also adds a constant
+  east/north correction to the complete supplied series, with a quadratic
+  penalty on the correction alone. *Wind correction scale* defaults to 15 kt
+  per component and is explicitly an analyst assumption, not measured weather
+  uncertainty. BOTBench can instead use its wind sidecar's `sigmaMS`.
+  The comparison table shows supplied, required, and corrected total winds
+  with their LOS errors. Available independent weather is evaluated along each
+  candidate's own locations and altitudes for balloon, aircraft and quadcopter.
 - **Deterministic global search**: the analysis injects seeds derived from the
   input/run into its stochastic searches and records optimizer metadata. This
   makes supported runs repeatable for the same code and inputs; it does not
   prove that a retained basin is the global optimum.
 - **GPU search**: *Traverse Analysis Tweaks → GPU search (WebGPU)* is enabled
-  by default. When the browser supports WebGPU, the fixed-wing, balloon and
-  quadcopter fits search on the graphics card. Many independent searches with large
+  by default. When the browser supports WebGPU, the fixed-wing and
+  quadcopter fits search on the graphics card when their kernel supports the wind treatment. Many independent searches with large
   populations run at once, and they test hundreds of times more candidate
   solutions than the normal search, in less time. The graphics card scores
   candidates in single precision. The best candidates are then refined on the
@@ -206,7 +246,7 @@ cannot determine:
   is computed there in double precision, as it is without this option. A larger
   search can find a better-fitting basin than the normal search, so results can
   differ from a CPU run, and they can differ slightly between graphics cards.
-  The drone-control fit still uses the CPU. Range bands use the selected model
+  The balloon model selection, drone-control fit and supplied-wind quadcopter fit use the CPU. Range bands use the selected model
   fits as their starting points. Without
   WebGPU, or if the graphics card reports an error, the analysis uses the normal
   search. The report's run audit records which search each fixed-wing run used.

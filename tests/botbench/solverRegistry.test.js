@@ -61,13 +61,13 @@ describe("the unit plan", () => {
     });
 
     test("a range-bounded fit pulls in the constant-air sweep it searches inside", () => {
-        expect(planUnits(["aircraft"])).toEqual(["constAir", "aircraft"]);
-        expect(planUnits(["saddle"])).toEqual(["constAir", "profiles"]);
-        expect(planUnits(["constAir"])).toEqual(["constAir", "profiles"]);
+        expect(planUnits(["aircraft"])).toEqual(["constAir", "constAirFreeWind", "aircraft", "aircraftFreeWind"]);
+        expect(planUnits(["saddle"])).toEqual(["constAir", "constAirFreeWind", "profiles", "profilesFreeWind"]);
+        expect(planUnits(["constAir"])).toEqual(["constAir", "constAirFreeWind", "profiles", "profilesFreeWind"]);
     });
 
     test("the seeded physics fits pull in the smoother, and the closed-form checks need nothing", () => {
-        expect(planUnits(["lantern"])).toEqual(["kalman", "lantern"]);
+        expect(planUnits(["lantern"])).toEqual(["kalman", "lantern", "lanternSuppliedWind", "lanternCorrectedWind"]);
         expect(planUnits(["droneControl"])).toEqual(["kalman", "droneControl"]);
         expect(planUnits(["ground", "fixedPoint"])).toEqual([]);
     });
@@ -84,7 +84,7 @@ describe("the unit plan", () => {
     });
 
     test("the plan is in battery order whatever the selection order", () => {
-        expect(planUnits(["gfPolyALS:3", "lantern", "constAlt"])).toEqual(["constAir", "constAlt", "kalman", "lantern", "polySweep"]);
+        expect(planUnits(["gfPolyALS:3", "lantern", "constAlt"])).toEqual(["constAir", "constAirFreeWind", "constAlt", "constAltFreeWind", "kalman", "lantern", "lanternSuppliedWind", "lanternCorrectedWind", "polySweep"]);
     });
 });
 
@@ -120,11 +120,11 @@ describe("options and keys", () => {
         // CPU runs keep exactly the records and keys stored before the option existed.
         expect(unitOptions("aircraft", cpu)).toEqual({anchorM: 37040});
         expect(selectionKey(null, cpu)).not.toMatch(/g=/);
-        for (const unit of ["aircraft", "lantern", "quadcopter", "families"]) {
+        for (const unit of ["aircraft", "quadcopter", "families"]) {
             expect(unitOptions(unit, gpu).gpuSearch).toBe(true);
             expect(sameOptions(unitOptions(unit, gpu), unitOptions(unit, cpu))).toBe(false);
         }
-        for (const unit of ["constAir", "profiles", "horizontalSpeed", "gfCV", "gfCA", "kalman", "droneControl", "polySweep"]) {
+        for (const unit of ["lantern", "lanternSuppliedWind", "lanternCorrectedWind", "constAir", "profiles", "horizontalSpeed", "gfCV", "gfCA", "kalman", "droneControl", "polySweep"]) {
             expect(sameOptions(unitOptions(unit, gpu), unitOptions(unit, cpu))).toBe(true);
         }
         expect(selectionKey(null, gpu)).toMatch(/\|g=1$/);

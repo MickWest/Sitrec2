@@ -1,3 +1,37 @@
+// Shared environmental assumptions, separate from vehicle performance limits.
+// Sigma is a regularization scale, not measured weather uncertainty.
+export const WIND_SEARCH_LIMIT_MS = 40;
+export const WIND_PRIOR_SIGMA_MS = 20;
+export const DEFAULT_WIND_CORRECTION_SIGMA_MS = 7.71666; // 15 kt, analyst assumption
+export const windPriorCost = (u, v) => (u * u + v * v) / WIND_PRIOR_SIGMA_MS ** 2;
+
+export function datasetWithWindCorrection(dataset, u, v) {
+    const W = Float64Array.from(dataset.W);
+    for (let f = 0; f < dataset.n; f++) {
+        W[f * 3] += u / dataset.fps;
+        W[f * 3 + 1] += v / dataset.fps;
+    }
+    return {...dataset, W};
+}
+
+export function formatWind(w) {
+    if (!w || !Number.isFinite(w.u) || !Number.isFinite(w.v)) return "Not determined";
+    const speed = Math.hypot(w.u, w.v) / 0.514444;
+    if (speed < 0.05) return "Calm";
+    const from = (Math.atan2(-w.u, -w.v) * 180 / Math.PI + 360) % 360;
+    return `${speed.toFixed(1)} kt from ${Math.round(from) % 360}°`;
+}
+
+/** Return a snapshot with constant east/north wind velocity, in m/s. */
+export function datasetWithConstantWind(dataset, windE, windN) {
+    const W = new Float64Array(dataset.n * 3);
+    for (let f = 0; f < dataset.n; f++) {
+        W[f * 3] = windE / dataset.fps;
+        W[f * 3 + 1] = windN / dataset.fps;
+    }
+    return {...dataset, W};
+}
+
 /**
  * Reconstruct the horizontal wind represented by a solved physics hypothesis.
  *

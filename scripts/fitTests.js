@@ -63,6 +63,7 @@ const FIT_SOURCES = [
     "src/PhysicsModel",
     "src/QuadcopterModel",
     "src/SkyLanternModel",
+    "src/SuppliedWindModel",
     "src/TrackExportMath",
     "src/Traverse",              // prefix: TraverseAnalysis, TraverseBattery, TraverseHypotheses, TraverseRanking, ...
     "src/VehicleModels",

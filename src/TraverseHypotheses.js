@@ -21,7 +21,7 @@
 import {
     METERS_PER_NM, KNOTS_TO_MS, EARTH_RADIUS_M, meanAngularError, trackMetrics,
     fitFixedPoint, fitFixedDirection, fitGroundPoint, fitGroundVehicle,
-    pickConstAirRegime, traverseMinSpeed, straightFlightScore, traversePlausible,
+    pickConstAirRegime, traverseMinSpeed, straightFlightScore, traversePlausible, datasetForFittedWind, SIGHTLINE_WIND_LIMIT,
 } from "./TraverseAnalysis";
 import {unpackTrackToECEF} from "./TraverseAnalysisData";
 import {fitConstantAcceleration, assessLinearFitConditioning} from "./LOSFitting";
@@ -29,7 +29,7 @@ import {classifyFixedWing, classifyQuadcopter} from "./VehicleModels";
 import {MULTIROTOR_LIMITS} from "./PhysicalEnvelopes";
 import {satelliteECEF, satelliteTrackENU, satelliteSunlit} from "./SatelliteSearch";
 import {localFitCompletionWarnings, settledButUnidentifiable} from "./TraverseRanking";
-import {solvedHorizontalWindAt} from "./TraverseWind";
+import {datasetWithWindCorrection, solvedHorizontalWindAt} from "./TraverseWind";
 import {monteCarloName} from "./MonteCarloLOS";
 
 export const UNDERGROUND_TOL = 40;
@@ -117,8 +117,8 @@ export function syncRangeProfile(dataset, ranges, options = {}) {
     const vSigma = options.vSigma ?? 50 * KNOTS_TO_MS;
     const scoreSpeedWeight = options.scoreSpeedWeight ?? 0;
     for (const startDist of ranges) {
-        const {track, lam} = traversePlausible(dataset, startDist, options);
-        const m = trackMetrics(dataset, track);
+        const {track, lam, wind} = traversePlausible(dataset, startDist, options);
+        const m = trackMetrics(datasetForFittedWind(dataset, {wind}), track);
         let score = straightFlightScore(m);
         if (vTarget !== null && scoreSpeedWeight > 0) {
             score += scoreSpeedWeight * ((m.airSpeed.mean - vTarget) / vSigma) ** 2;
@@ -177,7 +177,7 @@ export const ORDER_NAMES = {
     5: "quintic",
 };
 
-export function computeSaddle(dataset, slowProfile, slowOpts) {
+export function computeSaddle(dataset, slowProfile, slowOpts = {}) {
     const {n, fps} = dataset;
     if (!slowProfile || slowProfile.length < 3 || n < 4) return null;
 
@@ -245,7 +245,7 @@ export function computeSaddle(dataset, slowProfile, slowOpts) {
     //    would force outside the low-motion window. (Anchoring one range and
     //    minimizing maneuvering gave tens of kt here; minimizing speed gives
     //    the ~10 kt drift that actually matches these cases.)
-    const {track, lam} = traverseMinSpeed(dataset, {minDist: 120});
+    const {track, lam, wind} = traverseMinSpeed(dataset, {minDist: 120, fitWind: slowOpts.fitWind});
     let windowMetrics = null;
     if (genuineWindow) {
         const windowDataset = sliceAnalysisDataset(dataset, f0, f1);
@@ -254,7 +254,7 @@ export function computeSaddle(dataset, slowProfile, slowOpts) {
             const s = (f0 + f) * 3, d = f * 3;
             windowTrack[d] = track[s]; windowTrack[d + 1] = track[s + 1]; windowTrack[d + 2] = track[s + 2];
         }
-        windowMetrics = trackMetrics(windowDataset, windowTrack);
+        windowMetrics = trackMetrics(datasetForFittedWind(windowDataset, {wind}), windowTrack);
     }
     const errDeg = meanAngularError(dataset, track) * 180 / Math.PI;
     // headline range = the min-speed track's median slant range (lam = range on ray)
@@ -262,7 +262,7 @@ export function computeSaddle(dataset, slowProfile, slowOpts) {
     const medRange = lamSorted[Math.floor(lamSorted.length / 2)];
 
     return {
-        track, errDeg,
+        track, errDeg, wind,
         window: genuineWindow
             ? {f0, f1, fStar, t0: f0 / fps, t1: f1 / fps, minRateDegS: minRate, medRateDegS: medRate}
             : null,
@@ -384,12 +384,13 @@ export function lanternHypothesis(fit, dataset, errFloor, {key, name, notes, win
     const range0 = Math.hypot(track[0] - S[0], track[1] - S[1], track[2] - S[2]);
     const solved = fit.params.solved || {};
     const lanternMetrics = trackMetrics(
-        datasetForSolvedModelWind(dataset, track, solved, "lantern"), track);
+        fit.params.windMode === "corrected" ? datasetWithWindCorrection(dataset, solved.windE, solved.windN)
+            : datasetForSolvedModelWind(dataset, track, solved, "lantern"), track);
     // Side-aware bound pins: a pin at a natural ZERO (vRise/vSink lo bound =
     // "not rising/sinking") is physical for a becalmed balloon; only capability
     // MAX pins and range/wind extremes mean "the data wants more than a balloon".
     const lanSplit = splitBoundPins(fit.params.pinned,
-        (p) => (["initialRange", "windE", "windN", "shearPerM",
+        (p) => (["initialRange", "verticalSpeed", "windE", "windN", "shearPerM",
             "windDriftE", "windDriftN", "windCurveE", "windCurveN"].includes(p.name))
             || (["vRise", "vSink"].includes(p.name) && p.side === "hi"),
         (p) => p.name === "shearPerM" ? "windShear" : p.name);
@@ -429,7 +430,7 @@ export function lanternHypothesis(fit, dataset, errFloor, {key, name, notes, win
         : null;
     return {
         key, name,
-        subtitle: physicsBoundSubtitle("Bounded wind-drift/life-cycle model", lanPins, lanInactive, lanUnstable)
+        subtitle: physicsBoundSubtitle(fit.params.modelSelection ? `Balloon: ${fit.params.modelSelection.selectedStage} model` : "Bounded wind-drift/life-cycle model", lanPins, lanInactive, lanUnstable)
             + (lanClamps.length ? `; internal clamp reached: ${lanClamps.join(", ")}` : "")
             + (lanternLifecycleNote ? `; ${lanternLifecycleNote}` : ""),
         color: VIZ.slowObj,
@@ -454,6 +455,11 @@ export function lanternHypothesis(fit, dataset, errFloor, {key, name, notes, win
         ...(lanternLifecycleNote ? {identifiabilityNote: lanternLifecycleNote} : {}),
         params: {
             range: range0,
+            modelSelection: fit.params.modelSelection,
+            verticalSpeed: solved.verticalSpeed,
+            windCorrectionSigmaMS: fit.params.windCorrectionSigmaMS,
+            windCorrectionE: fit.params.windMode === "corrected" ? solved.windE : undefined,
+            windCorrectionN: fit.params.windMode === "corrected" ? solved.windN : undefined,
             windE: solved.windE, windN: solved.windN, shearPerM: solved.shearPerM,
             // Time-varying wind coefficients (linear + quadratic change in each
             // component across the clip), disclosed so the fit is reproducible
@@ -472,10 +478,11 @@ export function lanternHypothesis(fit, dataset, errFloor, {key, name, notes, win
     };
 }
 
-export function buildHypotheses({dataset, sweep, ca, horizontalSpeed, plausible, aircraft, lantern, lanternMeasured,
+export function buildHypotheses({dataset, sweep, ca, horizontalSpeed, plausible, aircraft, lantern,
     quad, satellite, slowProfile, slowOpts, originLat, originLon, provenance = null,
     failures = null, windPrior = null, mcSweep = null, monteCarlo = null, droneCtl = null,
     constantVelocity = null, constantAcceleration = null,
+    windFits = [], windModes = {},
     // The Kalman smoother fit the battery seeds the physics models from. It
     // becomes a candidate of its own only when `kalmanCandidate` is set: the live
     // analysis already reads that candidate off its Kalman method node, and a
@@ -600,7 +607,7 @@ export function buildHypotheses({dataset, sweep, ca, horizontalSpeed, plausible,
                 errDeg: slowPick.scored.errDeg,
                 searchBounds: boundaryPins.length ? boundaryPins : undefined,
                 params: {
-                    range: slowPick.row.startDist, airSpeed: slowPick.speed, errFloor,
+                    range: slowPick.row.startDist, airSpeed: slowPick.speed, errFloor, ...slowPick.wind,
                     regime: "slow",
                     slowScore: slowPick.scored.score, fastScore: slowPick.fastScore,
                     boundaryLimited: slowProfile.boundaryLimited ? 1 : 0,
@@ -625,7 +632,7 @@ export function buildHypotheses({dataset, sweep, ca, horizontalSpeed, plausible,
                 errDeg: fastScored.errDeg,
                 searchBounds: boundaryPins.length ? boundaryPins : undefined,
                 params: {
-                    range: sweep.best.startDist, airSpeed: sweep.best.speed, errFloor,
+                    range: sweep.best.startDist, airSpeed: sweep.best.speed, errFloor, ...regimePick.fast.wind,
                     familyRangeLo: sweep.familyBand?.rangeLo, familyRangeHi: sweep.familyBand?.rangeHi,
                     familySpeedLo: sweep.familyBand?.speedLo, familySpeedHi: sweep.familyBand?.speedHi,
                     familyCount: sweep.familyBand?.count,
@@ -660,9 +667,9 @@ export function buildHypotheses({dataset, sweep, ca, horizontalSpeed, plausible,
             subtitle: "Level flight at a fixed height",
             color: VIZ.constAlt,
             track,
-            metricsFull: trackMetrics(dataset, track),
+            metricsFull: trackMetrics(datasetForFittedWind(dataset, ca), track),
             errDeg: ca.errDeg ?? 0,
-            params: {range: ca.startDist, altZ: ca.altZ, errFloor,
+            params: {range: ca.startDist, altZ: ca.altZ, ...ca.wind, errFloor,
                 boundaryLimited: ca.boundaryLimited ? 1 : 0},
             notes: "Object held at a fixed geodetic altitude, following the sightlines to a small residual."
                 + (ca.boundaryLimited ? " The selected altitude reaches the search edge and is unresolved." : ""),
@@ -772,14 +779,14 @@ export function buildHypotheses({dataset, sweep, ca, horizontalSpeed, plausible,
                 : "Acceleration-minimizing path at any range (geometry-picked)",
             color: VIZ.fastObj,
             track,
-            metricsFull: trackMetrics(dataset, track),
+            metricsFull: trackMetrics(datasetForFittedWind(dataset, plausible), track),
             errDeg: meanAngularError(dataset, track) * 180 / Math.PI,
             searchBounds: plausible.boundaryLimited ? [
                 plausible.boundarySides?.lo ? "range (lower search edge)" : null,
                 plausible.boundarySides?.hi ? "range (upper search edge)" : null,
             ].filter(Boolean) : undefined,
             params: {
-                range: plausible.startDist,
+                range: plausible.startDist, ...plausible.wind,
                 usedSpeedTarget: plausible.usedSpeedTarget,
                 decisiveness: plausible.decisiveness,
                 boundaryLimited: plausible.boundaryLimited ? 1 : 0,
@@ -812,7 +819,7 @@ export function buildHypotheses({dataset, sweep, ca, horizontalSpeed, plausible,
     if (has("saddle")) {
         const saddle = computeSaddle(dataset, slowProfile, slowOpts);
         if (saddle) {
-            const m = trackMetrics(dataset, saddle.track);
+            const m = trackMetrics(datasetForFittedWind(dataset, saddle), saddle.track);
             const w = saddle.window, fam = saddle.family;
             // Window params/notes only when a GENUINE low-motion window exists
             // (w is null on a continuously rotating LOS — then the family band
@@ -839,7 +846,7 @@ export function buildHypotheses({dataset, sweep, ca, horizontalSpeed, plausible,
                 metricsFull: m,
                 errDeg: saddle.errDeg,
                 params: {
-                    range: fam.repM,
+                    range: fam.repM, ...saddle.wind,
                     ...windowParams,
                     familyLoM: fam.loM, familyHiM: fam.hiM, familyCount: fam.count, familyTotal: fam.total,
                     boundaryLimited: saddle.boundaryLimited ? 1 : 0,
@@ -859,12 +866,13 @@ export function buildHypotheses({dataset, sweep, ca, horizontalSpeed, plausible,
     // 4. Fixed-wing aircraft model — parametric fit with a small residual error.
     if (has("aircraft") && aircraft && aircraft.track) {
         const track = aircraft.track;
-        const aircraftMetrics = trackMetrics(dataset, track);
+        const aircraftMetrics = trackMetrics(
+            datasetForSolvedModelWind(dataset, track, aircraft.params, "aircraft"), track);
         // Only locally load-bearing bounds demote the model. Coordinates that
         // happen to sit at a bound in a flat/inactive direction are reported as
         // unresolved rather than misrepresented as capability violations.
         const fwSplit = splitBoundPins(aircraft.pinned,
-            (p) => ["startDist", "tas", "turnRate", "turnAccel", "climb"].includes(p.name));
+            (p) => ["startDist", "tas", "turnRate", "turnAccel", "climb", "windE", "windN"].includes(p.name));
         const fwPins = Array.from(fwSplit.active.values());
         const fwInactive = Array.from(fwSplit.inactive.values());
         const fwUnstable = Array.from(fwSplit.unstable.values());
@@ -893,6 +901,7 @@ export function buildHypotheses({dataset, sweep, ca, horizontalSpeed, plausible,
                 heading: aircraft.params.heading,
                 tas: aircraft.params.tas,
                 totalAirSpeed,
+                windE: aircraft.params.windE, windN: aircraft.params.windN,
                 turn: aircraft.params.turnRate,
                 climb: aircraft.params.climb,
                 closest: nearFW ? nearFW.name : null,
@@ -906,49 +915,13 @@ export function buildHypotheses({dataset, sweep, ca, horizontalSpeed, plausible,
         });
     }
 
-    // 5. balloon (Sky Lantern / Balloon) — TWO reconstructions from the same
-    //    wind-tracer model, the two ways of treating wind:
-    //      (a) FINDING the wind: fitted freely, no wind input at all;
-    //      (b) USING the existing wind: drift softly pinned to the sitch's wind.
-    //    Both keyed "lantern" so they share the forward-model group, apply path,
-    //    and prose. The pinned variant is named for its PROVENANCE — a measured
-    //    sounding/GFS profile and a hand-set constant are both usable, but they
-    //    are not equally good evidence, so the label says which one it was.
-    const windMeasured = windPrior ? windPrior.measured : false;
-    const pinnedWindLabel = windMeasured ? "measured wind" : "sitch wind";
+    // Both wind treatments use the same model, terrain checks and judges.
     if (has("lantern")) list.push(lanternHypothesis(lantern, dataset, errFloor, {
-        key: "lantern",
-        name: lanternMeasured ? "Sky Lantern / Balloon (free wind)" : "Sky Lantern / Balloon",
-        // The free fit's solved wind is the only balloon wind that can be
-        // INDEPENDENTLY checked against an external reference — see
-        // attachBalloonWindEvidence.
+        key: "lantern", name: "Sky Lantern / Balloon",
         windEvidenceRole: "free",
-        windPolicy: "free-diagnostic: wind fitted by this model, no wind input",
-        notes: "FREE reconstruction: wind-drift lantern kinematics (rise, buoyancy decay, terminal "
-            + "sink; altitude-sheared wind) fit to the sightlines with the wind INFERRED, not assumed. "
-            + "The inferred wind is what a plausible balloon here would require.",
+        windPolicy: "wind fitted by this model, no supplied wind input",
+        notes: "Wind-drift lantern kinematics (rise, buoyancy decay and terminal sink) fit to the sightlines.",
     }));
-    if (has("lantern") && lanternMeasured) {
-        const windDesc = windPrior && windPrior.statusText ? ` (${windPrior.statusText})` : "";
-        list.push(lanternHypothesis(lanternMeasured, dataset, errFloor, {
-            key: "lantern",
-            name: `Sky Lantern / Balloon (${pinnedWindLabel})`,
-            // This fit CONSUMED the wind reference, so its agreement with that
-            // wind is expected, not independent evidence.
-            windEvidenceRole: "externally-conditioned",
-            windPolicy: windMeasured
-                ? `measured-corrected: drift wind pinned loosely to the loaded ${windPrior.source} profile`
-                : "assumed-wind: drift wind pinned loosely to the hand-set sitch wind (an assumption, not a measurement)",
-            notes: windMeasured
-                ? "MEASURED-wind reconstruction: the same model with its drift wind softly anchored "
-                    + `to the loaded winds aloft${windDesc} (kept loose — a sonde can be 200+ mi and 12 h away). `
-                    + "Compare its residual and inferred profile against the free fit."
-                : "SITCH-wind reconstruction: the same model with its drift wind softly anchored to the "
-                    + `sitch's hand-set wind${windDesc}. That wind is an ASSUMPTION, not a measurement, so `
-                    + "treat this as \"what a balloon would look like IF the wind is as set\" — the free fit, "
-                    + "which infers the wind the sightlines actually require, is the stronger evidence.",
-        }));
-    }
 
     // 5b. Quadcopter (multirotor drone) physics model — a hover-capable
     //     near-field object. Its range is capped at 20 km, so far-field
@@ -1536,6 +1509,68 @@ export function buildHypotheses({dataset, sweep, ca, horizontalSpeed, plausible,
                 frame0: dataset.frame0 ?? 0,
             };
         }
+    }
+    // Keep the base key for object-class aggregation, with wind mode as the
+    // candidate identity. Each variant is rebuilt through these same checks.
+    for (const h of list) {
+        const mode = windModes[h.key];
+        if (!mode) continue;
+        h.windMode = mode;
+        h.windEvidenceRole = mode === "fitted" ? "free" : "externally-conditioned";
+        h.name += h.params.unconstrained ? " (wind undetermined)"
+            : mode === "corrected" ? " (supplied wind + correction)" : ` (${mode} wind)`;
+        if (h.params.unconstrained) {
+            h.params.motionFrame = "ground";
+            h.windIdentifiability = "Wind is not determined by this method; ground motion is shown.";
+        }
+        if (h.track) {
+            const altitude = (f) => h.track[f * 3 + 2]
+                + (h.track[f * 3] ** 2 + h.track[f * 3 + 1] ** 2) / (2 * EARTH_RADIUS_M);
+            h.windSamples = [0, Math.floor((dataset.n - 1) / 2), dataset.n - 1].map(f =>
+                mode !== "fitted"
+                    ? {u: dataset.W[f * 3] * dataset.fps + (h.params.windCorrectionE ?? 0),
+                        v: dataset.W[f * 3 + 1] * dataset.fps + (h.params.windCorrectionN ?? 0)}
+                    : solvedHorizontalWindAt(h.params, {modelKind: h.key,
+                        normalizedTime: f / Math.max(1, dataset.n - 1),
+                        altitudeM: altitude(f), referenceAltitudeM: altitude(0)}));
+        }
+        h.params.windPolicy = h.params.unconstrained ? "wind is not determined; ground motion is shown"
+            : mode === "corrected" ? "supplied series plus a constant correction penalized by the stated uncertainty"
+            : mode === "supplied"
+            ? "supplied wind held fixed throughout the fit; an input assumption, not independent wind evidence"
+            : "wind fitted as model parameters without consuming the supplied wind";
+        if (mode === "fitted" && ["constAir", "constAlt", "plausible", "saddle"].includes(h.key)) {
+            const pins = ["windE", "windN"].filter(k => Math.abs(h.params[k]) >= SIGHTLINE_WIND_LIMIT - 1e-6);
+            if (pins.length) {
+                h.windSearchBounds = pins.map(k => `${k} (wind search edge)`);
+                h.searchBounds = [...(h.searchBounds ?? []), ...h.windSearchBounds];
+                h.params.boundaryLimited = true;
+            }
+        }
+        // Wind search limits describe the environment search, not vehicle capability.
+        const windPins = (h.boundPinned ?? []).filter(pin => /wind|shear/i.test(pin));
+        if (windPins.length) {
+            h.windSearchBounds = [...(h.windSearchBounds ?? []), ...windPins];
+            h.searchBounds = [...(h.searchBounds ?? []), ...windPins];
+            h.boundPinned = h.boundPinned.filter(pin => !windPins.includes(pin));
+            h.params.boundaryLimited = true;
+        }
+        if (h.params.unconstrained) h.windSamples = null;
+        h.notes += mode === "supplied"
+            ? " The supplied per-frame wind is held fixed, including calm if configured."
+            : " Wind is fitted within the model's wind bounds and priors.";
+    }
+    for (const variant of windFits) {
+        if (!has(variant.key)) continue;
+        const candidates = buildHypotheses({...arguments[0],
+            ...variant.overrides,
+            [variant.field]: variant.fit,
+            dataset: variant.dataset ?? dataset,
+            include: new Set([variant.key]), extraHypotheses: null,
+            windFits: [], windModes: {[variant.key]: variant.mode},
+        });
+        const index = list.findIndex(h => h.key === variant.key);
+        list.splice(index < 0 ? list.length : index + 1, 0, ...candidates);
     }
     return list;
 }

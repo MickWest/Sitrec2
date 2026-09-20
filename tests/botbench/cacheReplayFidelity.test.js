@@ -283,8 +283,8 @@ describe("a row built from stored units equals a fresh one", () => {
         expect(diff(strip(fresh.results), strip(fromUnits.results), "results")).toBeNull();
     });
 
-    test("a schema-2 blob split into units gives the same row, with the cheap units refitted", () => {
-        expect(Object.keys(fromLegacy.units).sort()).toEqual(["constAlt", "droneControl", "gfCA", "gfCV", "horizontalSpeed", "kalman", "polySweep"]);
+    test("a schema-2 blob split into units gives the same row, with units absent from the old format refitted", () => {
+        expect(Object.keys(fromLegacy.units).sort()).toEqual(["aircraftFreeWind", "constAirFreeWind", "constAlt", "constAltFreeWind", "droneControl", "gfCA", "gfCV", "horizontalSpeed", "kalman", "lanternCorrectedWind", "lanternSuppliedWind", "plausibleFreeWind", "polySweep", "profilesFreeWind", "quadcopterSuppliedWind"]);
         expect(diff(fresh.row, fromLegacy.row, "row")).toBeNull();
         for (let i = 0; i < fresh.results.hypotheses.length; i++) {
             expect(diff(fresh.results.hypotheses[i], fromLegacy.results.hypotheses[i],
@@ -312,8 +312,8 @@ describe("a row built from stored units equals a fresh one", () => {
 
     test("a subset fitted from nothing fits only the units it needs", async () => {
         const out = await runBotBenchAnalysis(ingest(), {solvers: ["gfKalman", "quadcopter"]});
-        expect(Object.keys(out.units).sort()).toEqual(["kalman", "quadcopter"]);
-        expect(out.results.hypotheses.map((h) => h.key)).toEqual(["quadcopter", "gfKalman"]);
+        expect(Object.keys(out.units).sort()).toEqual(["kalman", "quadcopter", "quadcopterSuppliedWind"]);
+        expect(out.results.hypotheses.map((h) => h.key)).toEqual(["quadcopter", "quadcopter", "gfKalman"]);
         expect(diff(out.units.quadcopter.result, fresh.units.quadcopter.result, "quadcopter")).toBeNull();
     });
 });

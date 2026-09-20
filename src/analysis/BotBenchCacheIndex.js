@@ -42,7 +42,7 @@ import {PHYSICAL_ENVELOPE_REVISION} from "../PhysicalEnvelopes";
 
 // Bump when metrics, screening, ranking, or interpretation change. Fits keep
 // their independent unit versions; a sampled adoption cannot validate old rows.
-export const ROW_ASSESSMENT_REVISION = `5:${PHYSICAL_ENVELOPE_REVISION}`;
+export const ROW_ASSESSMENT_REVISION = `7:${PHYSICAL_ENVELOPE_REVISION}`;
 
 export const CACHE_SCHEMA = 3;
 export const CACHE_FILENAME = ".botbench-cache.json";

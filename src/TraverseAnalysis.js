@@ -43,6 +43,7 @@ import {metricSmoothingWindow, trajectorySmoothingSettings} from "./SmoothingPol
 import {gpuDifferentialEvolution, resolveGpuBudget} from "./gpu/GpuDifferentialEvolution";
 import {buildAircraftKernel, GPU_AIRCRAFT_BUDGET} from "./gpu/AircraftCostKernel";
 import {RollingAveragePolyEdge} from "./smoothing";
+import {windPriorCost, WIND_PRIOR_SIGMA_MS, datasetWithConstantWind} from "./TraverseWind";
 
 export const KNOTS_TO_MS = 0.514444;
 export const METERS_PER_NM = 1852;
@@ -814,9 +815,10 @@ export function fitConstAltitude(dataset, options = {}) {
         const {track, badFrames} = traverseConstAltitude(dataset, z);
         const smooth = smoothTrackBspline(track, n, smoothK, curvature);
         const errDeg = meanAngularError(dataset, smooth) * 180 / Math.PI;
-        const score = straightFlightScore(trackMetrics(dataset, smooth), badFrames)
+        const wind = options.fitWind ? fitScoringWind(dataset, smooth) : undefined;
+        const score = straightFlightScore(trackMetrics(datasetForFittedWind(dataset, {wind}), smooth), badFrames)
             + (errDeg / sigmaLOSDeg) ** 2 + sizeCost(smooth);
-        return {z, track, smooth, badFrames, errDeg, score};
+        return {z, track, smooth, badFrames, errDeg, score, ...(wind ? {wind} : {})};
     };
     let best = null;
     for (let i = 0; i < samples; i++) {
@@ -845,7 +847,8 @@ export function fitConstAltitude(dataset, options = {}) {
         errDeg: best.errDeg, score: best.score, badFrames: best.badFrames, failed,
         boundaryLimited: boundarySide !== null,
         boundarySide,
-        metrics: summarizeMetrics(trackMetrics(dataset, best.smooth)),
+        metrics: summarizeMetrics(trackMetrics(datasetForFittedWind(dataset, best), best.smooth)),
+        ...(best.wind ? {wind: best.wind} : {}),
     };
 }
 
@@ -1738,10 +1741,10 @@ export async function sweepConstAirSpeed(dataset, options = {}) {
                 // whole score surface below was read off an unfloored solve.
                 // This is a declared near-field prior: solutions closer than
                 // 120 m are pushed out, not forbidden (the penalty is soft).
-                const {track} = traversePlausible(ds, rangeList[ri],
-                    {vTarget: speedMs, vSigma, iters: 3, K: 25, minDist: 120, rangeFloor: true, [PLAUSIBLE_WORKSPACE]: workspace});
+                const {track, wind} = traversePlausible(ds, rangeList[ri],
+                    {fitWind: options.fitWind, vTarget: speedMs, vSigma, iters: 3, K: 25, minDist: 120, rangeFloor: true, [PLAUSIBLE_WORKSPACE]: workspace});
                 const sm = smoothTrackBspline(track, ds.n, smoothK, curvature);
-                const m = trackMetrics(ds, sm, {[TRACK_METRICS_WORKSPACE]: metricsWorkspace});
+                const m = trackMetrics(datasetForFittedWind(ds, {wind}), sm, {[TRACK_METRICS_WORKSPACE]: metricsWorkspace});
                 let score = straightFlightScore(m, 0) + sizeCost(sm);
                 if (speedTarget !== null) {
                     score += 0.2 * ((speedMs - speedTarget) / speedSigma) ** 2;
@@ -1751,6 +1754,7 @@ export async function sweepConstAirSpeed(dataset, options = {}) {
                 results.push({
                     startDist: rangeList[ri],
                     speed: speedMs,
+                    ...(wind ? {wind} : {}),
                     score,
                     badFrames: 0,
                     spdErr,
@@ -1856,6 +1860,7 @@ export async function sweepConstAirSpeed(dataset, options = {}) {
     results.sort((a, b) => a.startDist - b.startDist || a.speed - b.speed);
     return {
         ranges, speeds, results, best, bestRaw, sorted, familyBand, boundaryLimited,
+        ...(options.fitWind ? {fitWind: true} : {}),
         boundaryAxes: {
             range: rangeBoundaryLimited,
             speed: speedBoundaryLimited,
@@ -1874,8 +1879,8 @@ export function constAirSpeedTrack(dataset, startDist, speedMs, options = {}) {
     const {ds: d2, stride} = downsampleDataset(dataset, options.targetN ?? 2500);
     const vSigma = options.vSigma ?? 3 * KNOTS_TO_MS;
     // rangeFloor is what actually activates minDist (see sweepConstAirSpeed).
-    const {lam} = traversePlausible(d2, startDist,
-        {vTarget: speedMs, vSigma, iters: 3, K: 25, minDist: 120, rangeFloor: true});
+    const {lam, wind} = traversePlausible(d2, startDist,
+        {fitWind: options.fitWind, vTarget: speedMs, vSigma, iters: 3, K: 25, minDist: 120, rangeFloor: true});
     const {n, fps, S, D} = dataset;
     const raw = new Float64Array(n * 3);
     for (let f = 0; f < n; f++) {
@@ -1889,7 +1894,7 @@ export function constAirSpeedTrack(dataset, startDist, speedMs, options = {}) {
     }
     const {K: smoothK, curvature} = trajectorySmoothingSettings(n, fps);
     const track = smoothTrackBspline(raw, n, smoothK, curvature);
-    return {track, badFrames: 0};
+    return {track, badFrames: 0, ...(wind ? {wind} : {})};
 }
 
 function defaultRangeList(dataset) {
@@ -1989,6 +1994,52 @@ function speedBasis(B) {
     return rows;
 }
 
+// Constant horizontal wind bounds for the sightline fitters, in m/s.
+export const SIGHTLINE_WIND_LIMIT = 40;
+export function datasetForFittedWind(dataset, fit) {
+    return fit?.wind?.unconstrained ? datasetWithConstantWind(dataset, 0, 0)
+        : fit?.wind ? datasetWithConstantWind(dataset, fit.wind.windE, fit.wind.windN) : dataset;
+}
+
+// The final two coordinates are constant wind displacements per frame. Solve
+// their box-constrained least squares exactly by checking the nine active sets.
+// The unconstrained solve usually suffices; bounds never get silently clipped
+// while leaving the range coordinates inconsistent with the chosen wind.
+function solveWindNormalEquations(A, rhs, K, fps) {
+    const limit = SIGHTLINE_WIND_LIMIT / fps;
+    const initial = solveDense(A.map(row => row.slice()), rhs);
+    if (Math.abs(initial[K]) <= limit && Math.abs(initial[K + 1]) <= limit) return initial;
+    let best = null, bestCost = Infinity;
+    for (const e of [null, -limit, limit]) for (const n of [null, -limit, limit]) {
+        if (e === null && n === null) continue;
+        const matrix = A.map(row => row.slice()), b = rhs.slice();
+        for (const [index, value] of [[K, e], [K + 1, n]]) {
+            if (value === null) continue;
+            for (let i = 0; i < b.length; i++) {
+                if (i !== index) { b[i] -= matrix[i][index] * value; matrix[i][index] = 0; }
+            }
+            matrix[index].fill(0); matrix[index][index] = 1; b[index] = value;
+        }
+        const c = solveDense(matrix.map(row => row.slice()), b);
+        if (Math.abs(c[K]) > limit + 1e-9 || Math.abs(c[K + 1]) > limit + 1e-9) continue;
+        let cost = 0;
+        for (let i = 0; i < c.length; i++) {
+            cost -= 2 * rhs[i] * c[i];
+            for (let j = 0; j < c.length; j++) cost += c[i] * A[i][j] * c[j];
+        }
+        if (cost < bestCost) { best = c; bestCost = cost; }
+    }
+    if (!best) throw new Error("Wind-constrained range solve failed");
+    return best;
+}
+
+// Geometry and constant-wind acceleration do not determine atmospheric wind.
+// Use ground motion for the wind-independent comparison; never optimize a
+// reporting score by inventing a large constant air-mass velocity.
+function fitScoringWind() {
+    return {unconstrained: true};
+}
+
 /**
  * The smoothest LOS-riding trajectory that starts at range startDist.
  *
@@ -2022,13 +2073,19 @@ function speedBasis(B) {
  *
  * options: {K=25, vTarget (m/s|null), vSigma (m/s), wSpd=1, wClimb=0,
  *           iters=6, anchorFrame=0, accelStride=1, rangeFloor=false,
- *           minDist=120, smoothOutput=false, smoothSpacingSec=2}
+ *           minDist=120, smoothOutput=false, smoothSpacingSec=2, fitWind=false}
+ * fitWind solves bounded constant E/N wind alongside the speed-constrained
+ * range curve. Without a speed term, wind is reported as undetermined.
  * Returns {track, lam}.
  */
 export function traversePlausible(dataset, startDist, options = {}) {
-    const {n, fps, S, D, W} = dataset;
+    const {n, fps, S, D} = dataset;
+    const W = options.fitWind ? new Float64Array(n * 3) : dataset.W;
     const K = options.K ?? 25;
     const vTarget = options.vTarget ?? null;
+    const freeWind = options.fitWind && vTarget !== null;
+    const dim = K + (freeWind ? 2 : 0);
+    let windE = 0, windN = 0;
     const vSigma = options.vSigma ?? 50 * KNOTS_TO_MS;
     const wSpd = options.wSpd ?? 1;
     const wClimb = options.wClimb ?? 0;
@@ -2041,7 +2098,7 @@ export function traversePlausible(dataset, startDist, options = {}) {
 
     const B = bsplineBasis(n, K);
     const speedRows = vTarget !== null ? speedBasis(B) : null;
-    const speedWeights = new Float64Array(8);
+    const speedWeights = new Float64Array(freeWind ? 10 : 8);
     const accelScale = fps * fps / G_ACCEL / (hA * hA);
     const lam = new Float64Array(n).fill(startDist);
     let c = null;
@@ -2059,10 +2116,10 @@ export function traversePlausible(dataset, startDist, options = {}) {
     const workspace = options[PLAUSIBLE_WORKSPACE];
     let acceleration = workspace?.acceleration;
     if (acceleration && (acceleration.dataset !== dataset || acceleration.K !== K
-        || acceleration.hA !== hA || acceleration.fps !== fps)) acceleration = null;
+        || acceleration.hA !== hA || acceleration.fps !== fps || acceleration.dim !== dim)) acceleration = null;
     const maxIters = useFloor ? iters + 5 : iters;
-    const A = Array.from({length: K}, () => new Float64Array(K));
-    const rhs = new Float64Array(K);
+    const A = Array.from({length: dim}, () => new Float64Array(dim));
+    const rhs = new Float64Array(dim);
     for (let iter = 0; iter < maxIters; iter++) {
         for (const row of A) row.fill(0);
         rhs.fill(0);
@@ -2136,7 +2193,7 @@ export function traversePlausible(dataset, startDist, options = {}) {
             rhs.set(acceleration.rhs);
         } else {
             for (let r = hA; r <= n - 1 - hA; r++) stencil([r - hA, r, r + hA], [1, -2, 1], accelScale);
-            acceleration = {dataset, K, hA, fps, A: A.map(row => row.slice()), rhs: rhs.slice()};
+            acceleration = {dataset, K, hA, fps, dim, A: A.map(row => row.slice()), rhs: rhs.slice()};
             if (workspace) workspace.acceleration = acceleration;
         }
 
@@ -2152,8 +2209,8 @@ export function traversePlausible(dataset, startDist, options = {}) {
             // direction u: residual = u . v_air - vTarget/fps
             const wv = Math.sqrt(wSpd) * fps / vSigma;
             for (let f = 0; f < n - 1; f++) {
-                const a0 = S[(f + 1) * 3] + lam[f + 1] * D[(f + 1) * 3] - (S[f * 3] + lam[f] * D[f * 3]) - W[f * 3];
-                const a1 = S[(f + 1) * 3 + 1] + lam[f + 1] * D[(f + 1) * 3 + 1] - (S[f * 3 + 1] + lam[f] * D[f * 3 + 1]) - W[f * 3 + 1];
+                const a0 = S[(f + 1) * 3] + lam[f + 1] * D[(f + 1) * 3] - (S[f * 3] + lam[f] * D[f * 3]) - (freeWind ? windE : W[f * 3]);
+                const a1 = S[(f + 1) * 3 + 1] + lam[f + 1] * D[(f + 1) * 3 + 1] - (S[f * 3 + 1] + lam[f] * D[f * 3 + 1]) - (freeWind ? windN : W[f * 3 + 1]);
                 const a2 = S[(f + 1) * 3 + 2] + lam[f + 1] * D[(f + 1) * 3 + 2] - (S[f * 3 + 2] + lam[f] * D[f * 3 + 2]) - W[f * 3 + 2];
                 const al = Math.hypot(a0, a1, a2) || 1;
                 const u0 = a0 / al, u1 = a1 / al, u2 = a2 / al;
@@ -2168,7 +2225,8 @@ export function traversePlausible(dataset, startDist, options = {}) {
                 const dot0 = D[b] * u0 + D[b + 1] * u1 + D[b + 2] * u2;
                 const dot1 = D[next] * u0 + D[next + 1] * u1 + D[next + 2] * u2;
                 const row = speedRows[f];
-                const {cols, offset, previous, next: nextWeights} = row;
+                const {offset, previous, next: nextWeights} = row;
+                const cols = freeWind ? [...row.cols, K, K + 1] : row.cols;
                 // Keep the original zero-add and falsy reset, including signed
                 // zero, and combine overlapping columns in first-touch order.
                 for (let q = 0; q < 4; q++) speedWeights[q] = 0 + previous[q] * dot0;
@@ -2177,6 +2235,7 @@ export function traversePlausible(dataset, startDist, options = {}) {
                     const k = offset + q;
                     speedWeights[k] = (speedWeights[k] || 0) + nextWeights[q] * dot1;
                 }
+                if (freeWind) { speedWeights[cols.length - 2] = -u0; speedWeights[cols.length - 1] = -u1; }
                 for (let q = 0; q < cols.length; q++) speedWeights[q] *= wv;
                 const cTerm = constTerm * wv;
                 for (let a = 0; a < cols.length; a++) {
@@ -2215,8 +2274,13 @@ export function traversePlausible(dataset, startDist, options = {}) {
             }
         }
 
-        for (let k = 0; k < K; k++) A[k][k] += 1e-10 * (A[k][k] || 1);
-        c = solveDense(A, rhs);
+        for (let k = 0; k < dim; k++) A[k][k] += 1e-10 * (A[k][k] || 1);
+        if (freeWind) {
+            const precision = (n - 1) * (fps / WIND_PRIOR_SIGMA_MS) ** 2;
+            A[K][K] += precision; A[K + 1][K + 1] += precision;
+        }
+        c = freeWind ? solveWindNormalEquations(A, rhs, K, fps) : solveDense(A, rhs);
+        if (freeWind) { windE = c[K]; windN = c[K + 1]; }
         for (let f = 0; f < n; f++) {
             const [seg, w] = B[f];
             lam[f] = c[seg] * w[0] + c[seg + 1] * w[1] + c[seg + 2] * w[2] + c[seg + 3] * w[3];
@@ -2267,7 +2331,9 @@ export function traversePlausible(dataset, startDist, options = {}) {
             lam[f] = Math.hypot(track[f * 3] - S[f * 3], track[f * 3 + 1] - S[f * 3 + 1], track[f * 3 + 2] - S[f * 3 + 2]);
         }
     }
-    return {track, lam, floorActive};
+    const wind = options.fitWind
+        ? (freeWind ? {windE: windE * fps, windN: windN * fps} : fitScoringWind(dataset, track)) : undefined;
+    return {track, lam, floorActive, ...(wind ? {wind} : {})};
 }
 
 // Smoothing-spline fit: a low-order uniform cubic B-spline fit to a track
@@ -2346,12 +2412,17 @@ function smoothTrackBspline(pts, n, K, curvature = 0) {
  * motion is mostly the sensor's own parallax, so the slowest consistent object
  * is a near-static drifter — the Aguadilla / GoFast lantern answer.
  *
- * options: {K=30, minDist=120, floorIters=5, accelReg=0.15, smoothK}
+ * options: {K=30, minDist=120, floorIters=5, accelReg=0.15, smoothK, fitWind=false}
+ * fitWind adds bounded E/N wind coordinates to the same least-squares system.
  * Returns {track, lam} (lam = the smoothed track's slant range along each ray).
  */
 export function traverseMinSpeed(dataset, options = {}) {
-    const {n, fps, S, D, W} = dataset;
+    const {n, fps, S, D} = dataset;
+    const freeWind = options.fitWind === true;
+    const W = freeWind ? new Float64Array(n * 3) : dataset.W;
     const K = Math.max(4, Math.min(options.K ?? 30, n));
+    const dim = K + (freeWind ? 2 : 0);
+    let windE = 0, windN = 0;
     const minDist = options.minDist ?? 120;
     const floorIters = Math.max(1, options.floorIters ?? 5);
     const accelReg = options.accelReg ?? 0.15;   // tiny curvature ridge, position units
@@ -2387,7 +2458,7 @@ export function traverseMinSpeed(dataset, options = {}) {
         const spds = [];
         for (let f = 0; f < n - 1; f++) {
             const b = f * 3, d = (f + 1) * 3;
-            const vx = pos[d] - pos[b] - W[b], vy = pos[d + 1] - pos[b + 1] - W[b + 1], vz = pos[d + 2] - pos[b + 2] - W[b + 2];
+            const vx = pos[d] - pos[b] - (freeWind ? windE : W[b]), vy = pos[d + 1] - pos[b + 1] - (freeWind ? windN : W[b + 1]), vz = pos[d + 2] - pos[b + 2] - W[b + 2];
             const vl = Math.hypot(vx, vy, vz) || 1;
             u[b] = vx / vl; u[b + 1] = vy / vl; u[b + 2] = vz / vl;
             spds.push(vl * fps);
@@ -2405,8 +2476,8 @@ export function traverseMinSpeed(dataset, options = {}) {
 
     for (let iter = 0; iter < totalIters; iter++) {
         const A = [];
-        for (let k = 0; k < K; k++) A.push(new Float64Array(K));
-        const rhs = new Float64Array(K);
+        for (let k = 0; k < dim; k++) A.push(new Float64Array(dim));
+        const rhs = new Float64Array(dim);
         const addRow = (cols, weights, constTerm, w2 = 1) => {
             for (let i = 0; i < cols.length; i++) {
                 rhs[cols[i]] -= w2 * weights[i] * constTerm;
@@ -2414,7 +2485,7 @@ export function traverseMinSpeed(dataset, options = {}) {
             }
         };
         // add a least-squares row: sum_i cs[i] * X(frames[i])[comp], per component
-        const stencilRow = (frames, cs, sBase, w2) => {
+        const stencilRow = (frames, cs, sBase, w2, fitWindRow = false) => {
             for (let comp = 0; comp < 3; comp++) {
                 let constTerm = 0;
                 const colW = new Map();
@@ -2427,6 +2498,7 @@ export function traverseMinSpeed(dataset, options = {}) {
                         colW.set(k, (colW.get(k) || 0) + cs[i] * bf[1][q] * dc);
                     }
                 }
+                if (freeWind && fitWindRow && comp < 2) colW.set(K + comp, -1);
                 constTerm += sBase[comp];   // extra constant (e.g. -wind) per component
                 addRow([...colW.keys()], [...colW.values()], constTerm, w2);
             }
@@ -2434,7 +2506,7 @@ export function traverseMinSpeed(dataset, options = {}) {
 
         // minimum-air-speed rows: X(f+1) - X(f) - W(f)
         for (let f = 0; f < n - 1; f++) {
-            stencilRow([f, f + 1], [-1, 1], [-W[f * 3], -W[f * 3 + 1], -W[f * 3 + 2]], 1);
+            stencilRow([f, f + 1], [-1, 1], [-W[f * 3], -W[f * 3 + 1], -W[f * 3 + 2]], 1, true);
         }
         // light trajectory-curvature ridge (conditions null modes; too small to bias speed)
         if (accelReg > 0) {
@@ -2471,12 +2543,18 @@ export function traverseMinSpeed(dataset, options = {}) {
                         colW.set(k, (colW.get(k) || 0) + cs[i] * bf[1][q] * dDotU);
                     }
                 }
+                if (freeWind) { colW.set(K, -uf0); colW.set(K + 1, -uf1); }
                 addRow([...colW.keys()], [...colW.values()].map(v => v * w), constTerm * w);
             }
         }
 
-        for (let k = 0; k < K; k++) A[k][k] += 1e-9 * (A[k][k] || 1);
-        c = solveDense(A, rhs);
+        for (let k = 0; k < dim; k++) A[k][k] += 1e-9 * (A[k][k] || 1);
+        if (freeWind) {
+            const precision = (n - 1) / WIND_PRIOR_SIGMA_MS ** 2;
+            A[K][K] += precision; A[K + 1][K + 1] += precision;
+        }
+        c = freeWind ? solveWindNormalEquations(A, rhs, K, fps) : solveDense(A, rhs);
+        if (freeWind) { windE = c[K]; windN = c[K + 1]; }
         for (let f = 0; f < n; f++) {
             const bf = B[f];
             lam[f] = c[bf[0]] * bf[1][0] + c[bf[0] + 1] * bf[1][1] + c[bf[0] + 2] * bf[1][2] + c[bf[0] + 3] * bf[1][3];
@@ -2509,7 +2587,7 @@ export function traverseMinSpeed(dataset, options = {}) {
     for (let f = 0; f < n; f++) {
         lam[f] = Math.hypot(track[f * 3] - S[f * 3], track[f * 3 + 1] - S[f * 3 + 1], track[f * 3 + 2] - S[f * 3 + 2]);
     }
-    return {track, lam};
+    return {track, lam, ...(freeWind ? {wind: {windE: windE * fps, windN: windN * fps}} : {})};
 }
 
 /**
@@ -2526,14 +2604,15 @@ export async function rangeProfile(dataset, options = {}) {
     const scoreSpeedWeight = options.scoreSpeedWeight ?? 0;
     const out = [];
     for (let i = 0; i < ranges.length; i++) {
-        const {track, lam} = traversePlausible(dataset, ranges[i], options);
-        const m = trackMetrics(dataset, track);
+        const {track, lam, wind} = traversePlausible(dataset, ranges[i], options);
+        const m = trackMetrics(datasetForFittedWind(dataset, {wind}), track);
         let score = straightFlightScore(m) + sizeCost(track);
         if (vTarget !== null && scoreSpeedWeight > 0) {
             score += scoreSpeedWeight * ((m.airSpeed.mean - vTarget) / vSigma) ** 2;
         }
         const row = {
             startDist: ranges[i],
+            ...(wind ? {wind} : {}),
             endDist: lam[dataset.n - 1],
             minDist: Math.min(...lam),
             score,
@@ -2614,6 +2693,7 @@ export function fitPlausibleBestRange(dataset, options = {}) {
     const coarse = options.coarse ?? 18;
     const decisiveMargin = options.decisiveMargin ?? 0.5;
     const common = {
+        fitWind: options.fitWind,
         accelStride: Math.max(1, Math.round(dataset.fps / 2)),
         smoothOutput: true,
         smoothSpacingSec: 4,
@@ -2627,8 +2707,8 @@ export function fitPlausibleBestRange(dataset, options = {}) {
     const finalK = options.finalK ?? 25, finalIters = options.finalIters ?? 6;
 
     const scoreAt = (R, o) => {
-        const {track, floorActive} = traversePlausible(dataset, R, o);
-        return {R, score: straightFlightScore(trackMetrics(dataset, track)) + sizeCost(track), track, floorActive};
+        const {track, floorActive, wind} = traversePlausible(dataset, R, o);
+        return {R, score: straightFlightScore(trackMetrics(datasetForFittedWind(dataset, {wind}), track)) + sizeCost(track), track, floorActive, ...(wind ? {wind} : {})};
     };
 
     const coarseSweep = (o) => {
@@ -2838,7 +2918,7 @@ export function fitPlausibleBestRange(dataset, options = {}) {
     // recording the fallback.
     let speedSanityOverride = false;
     if (!usedSpeedTarget && vTarget) {
-        const mPure = trackMetrics(dataset, pureSweep.best.track);
+        const mPure = trackMetrics(datasetForFittedWind(dataset, pureSweep.best), pureSweep.best.track);
         if (mPure.airSpeed.mean > 2 * vTarget) {
             usedSpeedTarget = true;
             speedSanityOverride = true;
@@ -2897,9 +2977,10 @@ export function fitPlausibleBestRange(dataset, options = {}) {
     };
     return {
         track: finalSolve.track,
+        ...(finalSolve.wind ? {wind: finalSolve.wind} : {}),
         lam: finalSolve.lam,
         startDist: best.R,
-        score: straightFlightScore(trackMetrics(dataset, finalSolve.track)),
+        score: straightFlightScore(trackMetrics(datasetForFittedWind(dataset, finalSolve), finalSolve.track)),
         profile: orderedProfile,
         usedSpeedTarget,
         decisiveness,
@@ -2987,11 +3068,13 @@ function backSubstituteDense(M, x) {
  *          turnRate0 (deg/s), turnAccel (deg/s^2), climb (m/s)]
  * Constant horizontal airspeed through the air mass, heading integrates the (linearly varying)
  * turn rate, constant climb, position advected by the per-frame wind.
- * Returns Float64Array(n*3).
+ * Six parameters use dataset.W. Eight append constant windE/windN (m/s),
+ * replacing the supplied wind. Returns Float64Array(n*3).
  */
 export function simulateAircraft(dataset, params) {
     const {n, fps, S, D, W} = dataset;
-    const [R0, h0, V, w0, wd, climb] = params;
+    const [R0, h0, V, w0, wd, climb, windE, windN] = params;
+    const freeWind = params.length === 8;
     const track = new Float64Array(n * 3);
     let px = S[0] + D[0] * R0, py = S[1] + D[1] * R0, pz = S[2] + D[2] * R0;
     let psi = h0 * Math.PI / 180;
@@ -3003,11 +3086,13 @@ export function simulateAircraft(dataset, params) {
         const airVX = V * Math.sin(psi), airVY = V * Math.cos(psi);
         // W is a full local-horizontal ECEF displacement rotated into this
         // fixed ENU frame, so Wz already carries wind's curvature component.
-        // Correct only the model's air-relative horizontal velocity here.
-        pz += (climb - (px * airVX + py * airVY) / EARTH_RADIUS_M) * dt
-            + W[(f - 1) * 3 + 2];
-        px += airVX * dt + W[(f - 1) * 3];
-        py += airVY * dt + W[(f - 1) * 3 + 1];
+        // Correct only the air velocity in supplied mode. Free wind is defined
+        // in the local horizontal plane, so its curvature is included here.
+        pz += (climb - (px * (airVX + (freeWind ? windE : 0))
+            + py * (airVY + (freeWind ? windN : 0))) / EARTH_RADIUS_M) * dt
+            + (freeWind ? 0 : W[(f - 1) * 3 + 2]);
+        px += airVX * dt + (freeWind ? windE * dt : W[(f - 1) * 3]);
+        py += airVY * dt + (freeWind ? windN * dt : W[(f - 1) * 3 + 1]);
         track[f * 3] = px; track[f * 3 + 1] = py; track[f * 3 + 2] = pz;
     }
     return track;
@@ -3018,6 +3103,9 @@ export function simulateAircraft(dataset, params) {
 // fit quality. For the optimizer inner loop use aircraftCostErrDeg (strided,
 // O(n/stride)) instead.
 function aircraftAngErrDeg(dataset, params, stride) {
+    if (params.length === 8) {
+        return meanAngularError(dataset, simulateAircraft(dataset, params)) * 180 / Math.PI;
+    }
     const {n, S, D, fps, W} = dataset;
     const [R0, h0, V, w0, wd, climb] = params;
     let px = S[0] + D[0] * R0, py = S[1] + D[1] * R0, pz = S[2] + D[2] * R0;
@@ -3063,7 +3151,8 @@ export function cumulativeWind(dataset) {
 // forward Euler, and O(costFrames) instead of O(n)). cumW is cumulativeWind().
 export function aircraftCostErrDeg(dataset, params, costFrames, cumW, incumbent, errSigma, scoreError) {
     const {S, D, fps} = dataset;
-    const [R0, h0, V, w0, wd, climb] = params;
+    const [R0, h0, V, w0, wd, climb, windE, windN] = params;
+    const freeWind = params.length === 8;
     let px = S[0] + D[0] * R0, py = S[1] + D[1] * R0, pz = S[2] + D[2] * R0;
     let psi = h0 * Math.PI / 180;
     const dtF = 1 / fps;
@@ -3077,10 +3166,11 @@ export function aircraftCostErrDeg(dataset, params, costFrames, cumW, incumbent,
         const psiMid = psi + 0.5 * dPsi;
         const dtB = tb - ta;
         const airVX = V * Math.sin(psiMid), airVY = V * Math.cos(psiMid);
-        pz += (climb - (px * airVX + py * airVY) / EARTH_RADIUS_M) * dtB
-            + (cumW[f * 3 + 2] - cumW[prevF * 3 + 2]);
-        px += airVX * dtB + (cumW[f * 3] - cumW[prevF * 3]);
-        py += airVY * dtB + (cumW[f * 3 + 1] - cumW[prevF * 3 + 1]);
+        pz += (climb - (px * (airVX + (freeWind ? windE : 0))
+            + py * (airVY + (freeWind ? windN : 0))) / EARTH_RADIUS_M) * dtB
+            + (freeWind ? 0 : cumW[f * 3 + 2] - cumW[prevF * 3 + 2]);
+        px += airVX * dtB + (freeWind ? windE * dtB : cumW[f * 3] - cumW[prevF * 3]);
+        py += airVY * dtB + (freeWind ? windN * dtB : cumW[f * 3 + 1] - cumW[prevF * 3 + 1]);
         psi += dPsi;
         prevF = f;
         const b = f * 3;
@@ -3120,6 +3210,8 @@ export function aircraftCostErrDeg(dataset, params, costFrames, cumW, incumbent,
  *   runs, pop, gens      DE effort (defaults 3, 60, 150)
  *   progress(frac)       awaited on a wall-clock budget between evaluations
  *   shouldCancel()       checked between optimizer evaluations
+ *   fitWind              fit constant E/N wind (±40 m/s) instead of dataset.W;
+ *                        adds windE/windN to the returned parameters
  *   boundedCost          skip provably losing evaluations (default true);
  *                        false runs the full objective for comparison
  *   gpu                  true or {instances, pop, gens}: search on the GPU
@@ -3132,6 +3224,7 @@ export function aircraftCostErrDeg(dataset, params, costFrames, cumW, incumbent,
  *          cost, errDeg, track, metrics, runs: [per-run summaries]}
  */
 export async function fitAircraft(dataset, options = {}) {
+    const freeWind = options.fitWind === true;
     const sizeFit = angularSizeFitEnabled(dataset);
     const sizeCost = compileAngularSizeFit(dataset);
     const tasTarget = options.tasTarget ?? 380 * KNOTS_TO_MS;
@@ -3174,6 +3267,7 @@ export async function fitAircraft(dataset, options = {}) {
             (p[5] / climbSigma) ** 2 +
             ((p[2] - tasTarget) / tasSigma) ** 2
         );
+        if (freeWind) c += windPriorCost(p[6], p[7]);
         if (groundPrior) {
             const sig = groundPrior.sigma ?? 40;
             // Compare geodetic altitude h≈z+(x²+y²)/2R. Model `climb`
@@ -3207,6 +3301,12 @@ export async function fitAircraft(dataset, options = {}) {
     // stall-speed claim. A result at the floor is boundary-limited.
     const lo = [rangeMin, 0, 25 * KNOTS_TO_MS, -4, -0.3, -40];
     const hi = [rangeMax, 360, 700 * KNOTS_TO_MS, 4, 0.3, 40];
+    const polishScales = [200, 0.5, 2, 0.02, 0.002, 0.5];
+    if (freeWind) {
+        lo.push(-40, -40);
+        hi.push(40, 40);
+        polishScales.push(2, 2);
+    }
     const runs = [];
     // Each run reports progress inside its own [p0, p1] window so the bar is
     // MONOTONIC across the whole fit: the default runs share [0, 0.85] and
@@ -3249,7 +3349,7 @@ export async function fitAircraft(dataset, options = {}) {
         stage = "polish";
         stageEvaluations = 0;
         const pol = await patternSearchPolish(
-            cost, de.params, [200, 0.5, 2, 0.02, 0.002, 0.5],
+            cost, de.params, polishScales,
             {lo, hi, onEvaluation: optimizerPulse, boundedCost});
         if (pol.cancelled || (options.shouldCancel && options.shouldCancel())) {
             throw new Error("cancelled");
@@ -3280,7 +3380,7 @@ export async function fitAircraft(dataset, options = {}) {
         try {
             search = await gpuDifferentialEvolution({
                 kernel: buildAircraftKernel({dataset, costFrames, cumW, T, errSigma, turnSigma, climbSigma,
-                    tasTarget, tasSigma, groundPrior, earthRadius: EARTH_RADIUS_M}),
+                    tasTarget, tasSigma, groundPrior, earthRadius: EARTH_RADIUS_M, freeWind}),
                 instances: Array.from({length: budget.instances}, () => ({lo, hi})),
                 pop: budget.pop, gens: budget.gens, seed,
                 shouldCancel: options.shouldCancel,
@@ -3314,7 +3414,7 @@ export async function fitAircraft(dataset, options = {}) {
                     });
             };
             const pol = await patternSearchPolish(
-                cost, ranked[r].params, [200, 0.5, 2, 0.02, 0.002, 0.5],
+                cost, ranked[r].params, polishScales,
                 {lo, hi, onEvaluation: pulse, boundedCost});
             if (pol.cancelled || (options.shouldCancel && options.shouldCancel())) {
                 throw new Error("cancelled");
@@ -3390,13 +3490,15 @@ export async function fitAircraft(dataset, options = {}) {
             throw new Error("fixed-wing optimizer produced a non-finite trajectory");
         }
     }
-    const metrics = trackMetrics(dataset, track);
+    const metricDataset = freeWind ? datasetWithConstantWind(dataset, best.params[6], best.params[7]) : dataset;
+    const metrics = trackMetrics(metricDataset, track);
     const [R0, h0, V, w0, wd, climb] = best.params;
     // Diagnose coordinates near a search bound.  Heading is excluded because
     // its 0/360 bounds are circular and arbitrary.  A bound only counts as a
     // capability warning when an inward probe materially worsens the objective;
     // flat/inactive coordinates are retained as unresolved metadata.
     const pinNames = ["startDist", "heading", "tas", "turnRate", "turnAccel", "climb"];
+    if (freeWind) pinNames.push("windE", "windN");
     const pinned = assessBoundPins(best.params, lo, hi, pinNames, cost,
         {baseCost: best.cost, excludeIndices: [1]});
 
@@ -3413,6 +3515,7 @@ export async function fitAircraft(dataset, options = {}) {
     addPrior("end turn rate toward straight", (wEndBest / turnSigma) ** 2);
     addPrior("climb toward level", (best.params[5] / climbSigma) ** 2);
     addPrior("cruise-speed target", ((best.params[2] - tasTarget) / tasSigma) ** 2);
+    if (freeWind) addPrior("shared wind prior", windPriorCost(best.params[6], best.params[7]));
     if (groundPrior) {
         const sig = groundPrior.sigma ?? 40;
         const gx = gpS0[0] + best.params[0] * gpD0[0];
@@ -3444,6 +3547,7 @@ export async function fitAircraft(dataset, options = {}) {
             turnAccel: wd,
             climb,
             priors,
+            ...(freeWind ? {windE: best.params[6], windN: best.params[7]} : {}),
         },
         cost: best.cost,
         errDeg,
@@ -3456,6 +3560,7 @@ export async function fitAircraft(dataset, options = {}) {
             cost: r.cost,
             startDist: r.params[0], heading: ((r.params[1] % 360) + 360) % 360,
             tas: r.params[2], turnRate: r.params[3], turnAccel: r.params[4], climb: r.params[5],
+            ...(freeWind ? {windE: r.params[6], windN: r.params[7]} : {}),
             polishIterations: r.iterations, polishStopReason: r.stopReason,
             escalated: r.escalated === true,
             de: r.de,
@@ -3577,8 +3682,8 @@ export function pickConstAirRegime(dataset, sweep, slowProfile, opts = {}) {
     const margin = opts.margin ?? 0.8;
     const maxSlowSpeed = opts.maxSlowSpeed ?? SLOW_REGIME_MAX_SPEED_MS;
     const minContrast = opts.minContrast ?? SLOW_REGIME_MIN_CONTRAST;
-    const fastTrack = constAirSpeedTrack(dataset, sweep.best.startDist, sweep.best.speed).track;
-    const fast = {track: fastTrack, scored: neutralTrackScore(dataset, fastTrack)};
+    const fastFit = constAirSpeedTrack(dataset, sweep.best.startDist, sweep.best.speed, {fitWind: sweep.fitWind});
+    const fast = {...fastFit, scored: neutralTrackScore(datasetForFittedWind(dataset, fastFit), fastFit.track)};
     let slow = null, useSlow = false;
     if (slowProfile && slowProfile.length) {
         const row = slowProfile.reduce((a, b) => (b.score < a.score ? b : a));
@@ -3586,9 +3691,9 @@ export function pickConstAirRegime(dataset, sweep, slowProfile, opts = {}) {
         const contrast = slowValleyContrast(slowProfile);
         if (Number.isFinite(speed) && Number.isFinite(row.startDist)
             && speed > 0.1 && speed <= maxSlowSpeed && contrast >= minContrast) {
-            const slowTrack = constAirSpeedTrack(dataset, row.startDist, speed).track;
-            const scored = neutralTrackScore(dataset, slowTrack);
-            slow = {row, speed, track: slowTrack, scored, contrast};
+            const slowFit = constAirSpeedTrack(dataset, row.startDist, speed, {fitWind: sweep.fitWind});
+            const scored = neutralTrackScore(datasetForFittedWind(dataset, slowFit), slowFit.track);
+            slow = {row, speed, ...slowFit, scored, contrast};
             useSlow = slowRegimeWins(fast.scored.score, scored.score, margin);
         }
     }
