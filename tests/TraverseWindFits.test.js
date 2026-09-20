@@ -52,8 +52,16 @@ test("wind survives sweep, range, altitude and minimum-acceleration fits", async
     const sweep = await sweepConstAirSpeed(dataset, {fitWind: true, ranges: [1800, 2500, 3500], speeds: [5, 25]});
     expect(sweep.fitWind).toBe(true);
     expect(sweep.results.every(r => Number.isFinite(r.wind.windE))).toBe(true);
+    for (const row of sweep.results) {
+        expect(row.windCost).toBeCloseTo(windPriorCost(row.wind.windE, row.wind.windN), 10);
+        expect(row.score).toBeGreaterThanOrEqual(row.windCost);
+    }
     const profile = await rangeProfile(dataset, {fitWind: true, ranges: [1800, 2500, 3500], vTarget: 5, K: 12});
     expect(profile.every(r => Number.isFinite(r.wind.windN))).toBe(true);
+    for (const row of profile) {
+        expect(row.windCost).toBeCloseTo(windPriorCost(row.wind.windE, row.wind.windN), 10);
+        expect(row.score).toBeGreaterThanOrEqual(row.windCost);
+    }
     const ca = fitConstAltitude(dataset, {fitWind: true, rangeMin: 1500, rangeMax: 3500, samples: 4});
     const plausible = fitPlausibleBestRange(dataset, {fitWind: true, rangeMin: 1500, rangeMax: 3500, coarse: 4,
         searchK: 8, finalK: 12, searchIters: 2, finalIters: 3, vTarget: 20});
@@ -70,6 +78,17 @@ test("wind survives sweep, range, altitude and minimum-acceleration fits", async
             : datasetWithConstantWind(dataset, h.params.windE, h.params.windN);
         expect(h.metricsFull.airSpeed.mean).toBeCloseTo(trackMetrics(metricDataset, h.track).airSpeed.mean, 8);
     }
+});
+
+test("poor high-speed grid cells cannot enlarge the CAS equivalent-fit family", async () => {
+    const {dataset} = scene(60);
+    const options = {fitWind: true, ranges: [200, 800, 2500, 6000], speedTarget: 160};
+    const speeds = [5, 25, 50, 100, 160];
+    const base = await sweepConstAirSpeed(dataset, {...options, speeds});
+    const extended = await sweepConstAirSpeed(dataset, {...options, speeds: [...speeds, 300, 600, 1000, 2000, 4000]});
+    expect(extended.best).toEqual(base.best);
+    expect(extended.familyBand.count).toEqual(base.familyBand.count);
+    expect(extended.best.score - extended.bestRaw.score).toBeLessThanOrEqual(Math.max(0.05, extended.bestRaw.score * 0.15) + 1e-10);
 });
 
 test.each([SkyLanternModel, QuadcopterModel])("supplied %p wind is fixed and integrates every input interval", Model => {

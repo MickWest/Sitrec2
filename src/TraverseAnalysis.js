@@ -1688,6 +1688,12 @@ export function downsampleDataset(ds, targetN = 2500) {
         angularSize: remapAngularSize(ds.angularSize, Array.from({length: n2}, (_, i) => i * stride))}, stride};
 }
 
+// A heuristic tolerance in score units, not a confidence interval. Bad grid
+// cells must not widen this band and turn a poor fit into an equivalent one.
+function constAirFamilyMargin(bestScore) {
+    return Math.max(0.05, 0.15 * Math.abs(bestScore));
+}
+
 /**
  * Grid search over (start distance, air speed) for the constant-air-speed
  * traverse. Returns every combo scored, sorted best-first, plus the grid
@@ -1751,6 +1757,8 @@ export async function sweepConstAirSpeed(dataset, options = {}) {
                 }
                 const spdErr = Math.hypot(m.airSpeed.mean - speedMs, m.airSpeed.std);
                 score += (spdErr / spdFidSigma) ** 2;
+                const windCost = wind ? windPriorCost(wind.windE, wind.windN) : 0;
+                score += windCost;
                 results.push({
                     startDist: rangeList[ri],
                     speed: speedMs,
@@ -1758,6 +1766,7 @@ export async function sweepConstAirSpeed(dataset, options = {}) {
                     score,
                     badFrames: 0,
                     spdErr,
+                    windCost,
                     metrics: summarizeMetrics(m),
                 });
             }
@@ -1783,8 +1792,7 @@ export async function sweepConstAirSpeed(dataset, options = {}) {
         for (let ex = 0; ex < 2; ex++) {
             const sortedNow = results.slice().sort((a, b) => a.score - b.score);
             const bestNow = sortedNow[0];
-            const medNow = sortedNow[Math.floor(sortedNow.length / 2)].score;
-            const marginNow = Math.max(0.05, 0.15 * (medNow - bestNow.score));
+            const marginNow = constAirFamilyMargin(bestNow.score);
             const familyNow = sortedNow.filter((r) => r.score <= bestNow.score + marginNow);
             const lo = Math.min(...ranges), hi = Math.max(...ranges);
             // Expand when any currently supported family member reaches an
@@ -1824,8 +1832,7 @@ export async function sweepConstAirSpeed(dataset, options = {}) {
     // 24 kt -> 82 kt. Report the BAND, and pick a deterministic representative
     // from it: the member closest to the speed target (the user's stated
     // prior), tie-broken by lower range.
-    const med = sorted[Math.floor(sorted.length / 2)].score;
-    const margin = Math.max(0.05, 0.15 * (med - bestRaw.score));
+    const margin = constAirFamilyMargin(bestRaw.score);
     const family = sorted.filter((r) => r.score <= bestRaw.score + margin);
     let best = bestRaw;
     if (family.length > 1 && speedTarget !== null) {
@@ -1859,7 +1866,7 @@ export async function sweepConstAirSpeed(dataset, options = {}) {
     // expansion is descending), so restore canonical grid order before return.
     results.sort((a, b) => a.startDist - b.startDist || a.speed - b.speed);
     return {
-        ranges, speeds, results, best, bestRaw, sorted, familyBand, boundaryLimited,
+        ranges, speeds, results, best, bestRaw, sorted, familyBand, boundaryLimited, speedTarget,
         ...(options.fitWind ? {fitWind: true} : {}),
         boundaryAxes: {
             range: rangeBoundaryLimited,
@@ -2607,6 +2614,8 @@ export async function rangeProfile(dataset, options = {}) {
         const {track, lam, wind} = traversePlausible(dataset, ranges[i], options);
         const m = trackMetrics(datasetForFittedWind(dataset, {wind}), track);
         let score = straightFlightScore(m) + sizeCost(track);
+        const windCost = wind ? windPriorCost(wind.windE, wind.windN) : 0;
+        score += windCost;
         if (vTarget !== null && scoreSpeedWeight > 0) {
             score += scoreSpeedWeight * ((m.airSpeed.mean - vTarget) / vSigma) ** 2;
         }
@@ -2616,6 +2625,7 @@ export async function rangeProfile(dataset, options = {}) {
             endDist: lam[dataset.n - 1],
             minDist: Math.min(...lam),
             score,
+            windCost,
             metrics: summarizeMetrics(m),
         };
         if (options.keepTracks) row.track = track;
@@ -2708,7 +2718,9 @@ export function fitPlausibleBestRange(dataset, options = {}) {
 
     const scoreAt = (R, o) => {
         const {track, floorActive, wind} = traversePlausible(dataset, R, o);
-        return {R, score: straightFlightScore(trackMetrics(datasetForFittedWind(dataset, {wind}), track)) + sizeCost(track), track, floorActive, ...(wind ? {wind} : {})};
+        const windCost = wind ? windPriorCost(wind.windE, wind.windN) : 0;
+        return {R, score: straightFlightScore(trackMetrics(datasetForFittedWind(dataset, {wind}), track)) + sizeCost(track) + windCost,
+            track, floorActive, ...(wind ? {wind} : {})};
     };
 
     const coarseSweep = (o) => {
@@ -2980,7 +2992,8 @@ export function fitPlausibleBestRange(dataset, options = {}) {
         ...(finalSolve.wind ? {wind: finalSolve.wind} : {}),
         lam: finalSolve.lam,
         startDist: best.R,
-        score: straightFlightScore(trackMetrics(datasetForFittedWind(dataset, finalSolve), finalSolve.track)),
+        score: straightFlightScore(trackMetrics(datasetForFittedWind(dataset, finalSolve), finalSolve.track))
+            + (finalSolve.wind ? windPriorCost(finalSolve.wind.windE, finalSolve.wind.windN) : 0),
         profile: orderedProfile,
         usedSpeedTarget,
         decisiveness,
@@ -3684,6 +3697,7 @@ export function pickConstAirRegime(dataset, sweep, slowProfile, opts = {}) {
     const minContrast = opts.minContrast ?? SLOW_REGIME_MIN_CONTRAST;
     const fastFit = constAirSpeedTrack(dataset, sweep.best.startDist, sweep.best.speed, {fitWind: sweep.fitWind});
     const fast = {...fastFit, scored: neutralTrackScore(datasetForFittedWind(dataset, fastFit), fastFit.track)};
+    if (fastFit.wind) fast.scored.score += windPriorCost(fastFit.wind.windE, fastFit.wind.windN);
     let slow = null, useSlow = false;
     if (slowProfile && slowProfile.length) {
         const row = slowProfile.reduce((a, b) => (b.score < a.score ? b : a));
@@ -3693,6 +3707,7 @@ export function pickConstAirRegime(dataset, sweep, slowProfile, opts = {}) {
             && speed > 0.1 && speed <= maxSlowSpeed && contrast >= minContrast) {
             const slowFit = constAirSpeedTrack(dataset, row.startDist, speed, {fitWind: sweep.fitWind});
             const scored = neutralTrackScore(datasetForFittedWind(dataset, slowFit), slowFit.track);
+            if (slowFit.wind) scored.score += windPriorCost(slowFit.wind.windE, slowFit.wind.windN);
             slow = {row, speed, ...slowFit, scored, contrast};
             useSlow = slowRegimeWins(fast.scored.score, scored.score, margin);
         }

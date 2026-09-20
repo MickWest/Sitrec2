@@ -1,4 +1,5 @@
 import {windComparisonHTML, windSummary} from "./TraverseWindPresentation";
+import {assembleTraverseReport, constantAirReportCases} from "./TraverseReport";
 import {formatWind} from "./TraverseWind";
 import {showAngularSizeDialog} from "./AngularSizeDialog";
 import {assessExecutiveVerdict} from "./TraverseRanking";
@@ -102,7 +103,8 @@ import {
     terrainDependencyMismatch,
     terrainDependencyRecordsMatch,
 } from "./TraverseAnalysisCache";
-import {solvedHorizontalWindAt} from "./TraverseWind";
+import {datasetWithConstantWind, datasetWithWindCorrection, solvedHorizontalWindAt} from "./TraverseWind";
+import {losErrorSeriesDeg, truthDiagnosticSeries} from "./TraverseDiagnosticSeries";
 import {familyBandSummary, gapDisclosure} from "./TraverseFamily";
 import {kinematicFamilyScreen, runTraverseBattery} from "./TraverseBattery";
 import {
@@ -2087,10 +2089,11 @@ export function traverseReportSeries({dataset, sweep, resolvedRanges, hypotheses
     // demoted the sweep best.
     const bestTrav = constAirSpeedTrack(dataset, sweep.best.startDist, sweep.best.speed);
     const sweepBestMetrics = trackMetrics(dataset, bestTrav.track);
-    const constAirHyp = hypotheses.find((h) => h.key === "constAir" && h.track && h.metricsFull);
+    const constAirHyp = hypotheses.find((h) => h.key === "constAir"
+        && (!h.windMode || h.windMode === "supplied") && h.track && h.metricsFull);
     const constAirIsSlow = constAirHyp?.params?.regime === "slow";
-    const bestTrack = constAirIsSlow ? constAirHyp.track : bestTrav.track;
-    const bestMetrics = constAirIsSlow ? constAirHyp.metricsFull : sweepBestMetrics;
+    const bestTrack = constAirHyp?.track ?? bestTrav.track;
+    const bestMetrics = constAirHyp?.metricsFull ?? sweepBestMetrics;
     const constAirPick = constAirIsSlow ? {
         range: constAirHyp.params.range,
         airSpeed: constAirHyp.params.airSpeed,
@@ -2762,7 +2765,8 @@ async function runTraverseAnalysisWithCurrentAngles() {
         const buildHtml = () => buildReportHTML({
             sitName: Sit.name ?? "unnamed sitch",
             dataset, windText, speedTarget,
-            sweep, fastProfile, slowProfile, aircraft,
+            sweep, sweepFreeWind: battery.sweepFreeWind, profilesFreeWind: battery.profilesFreeWind,
+            aircraftFreeWind: battery.aircraftFreeWind, fastProfile, slowProfile, aircraft,
             bestTrack, bestMetrics, sweepBestMetrics, constAirPick,
             slowBestRow, slowTrack,
             closeLoM, closeHiM,
@@ -2779,7 +2783,7 @@ async function runTraverseAnalysisWithCurrentAngles() {
             // TraverseHandoff.consistentTrackCSVs — works on either.
             originLat, originLon,
             clipStartMs: GlobalDateTimeNode?.dateStart?.valueOf() ?? null,
-            dataset, sweep, fastProfile, slowProfile, aircraft,
+            dataset, sweep, sweepFreeWind: battery.sweepFreeWind, fastProfile, slowProfile, aircraft,
             best: sweep.best, bestMetrics, slowBestRow, hypotheses,
             families,
             truth,
@@ -3165,7 +3169,7 @@ function hypothesisStats(h, dataset = null, truthMaxG = null) {
     const stats = [
         // slant range over the clip, not an uncertainty interval — label it so
         ["Slant range (min–max)", `${nm1(m.range.min)}–${nm1(m.range.max)} NM`],
-        [h.params?.motionFrame === "ground" ? "Ground speed (mean / max)" : "Air speed (mean / max)",
+        [h.params?.motionFrame === "ground" ? "Ground speed (mean / max)" : "3D air speed (mean / max)",
             `${kt1(m.airSpeed.mean)} / ${kt1(m.airSpeed.max)} kt`],
         headingStatRow(m),
         ["Altitude (geodetic)", `${ft0(m.altitude.min)}–${ft0(m.altitude.max)} ft`],
@@ -3176,7 +3180,7 @@ function hypothesisStats(h, dataset = null, truthMaxG = null) {
         ["LOS error explained", losResidualExplanation(h)],
     ];
     if (h.windMode) {
-        stats.push([h.windMode === "supplied" ? "Supplied wind" : "Required wind", windSummary(h.windSamples)]);
+        stats.push([h.windMode === "supplied" ? "Supplied wind" : "Fitted wind", windSummary(h.windSamples)]);
         if (h.windMode !== "supplied" && dataset) {
             const f = Math.floor((dataset.n - 1) / 2);
             stats.push(["Supplied wind reference", formatWind({u: dataset.W[f * 3] * dataset.fps, v: dataset.W[f * 3 + 1] * dataset.fps})]);
@@ -3191,6 +3195,7 @@ function hypothesisStats(h, dataset = null, truthMaxG = null) {
                 + `${(h.params.windCorrectionSigmaMS / KNOTS_TO_MS).toFixed(1)} kt assumed component scale`]);
         }
         if (h.key === "lantern") {
+            stats.push(["Air speed basis", "3D air speed includes vertical rise or sink through the air. Horizontal motion follows the wind."]);
             stats.push(["Horizontal air speed", `${kt1(m.horizontalAirSpeed.mean)} kt (passive drift assumed)`]);
             stats.push(["Ground speed (mean / max)", `${kt1(m.groundSpeed.mean)} / ${kt1(m.groundSpeed.max)} kt`]);
         }
@@ -4206,11 +4211,12 @@ function buildDetailHTML(h, r, groupIndex, groupSize, category, ctx, tied = fals
         : "";
 
     // per-frame diagnostics: g-force, speed, LOS error over the clip
-    const sc = hypothesisSeriesCharts(ctx.dataset, h);
+    const sc = hypothesisSeriesCharts(ctx.dataset, h, {truth: ctx.truth});
     const seriesImage = (url, alt) => `<div class="tg-series-chart"><img src="${url}" ${sc.sizeAttrs} alt="${alt}">`
         + `<div class="tg-series-plot" style="${sc.plotStyle}" aria-hidden="true"><span class="tg-series-playhead"></span></div></div>`;
     const seriesHTML = sc ? `
         <h4 class="tg-d-h">Frame-by-frame behaviour</h4>
+        <p class="tg-d-p">Speeds include vertical motion. ${sc.hasTruth ? "Thin dashed lines show Truth. Truth air speed and acceleration use this interpretation’s wind; truth positions alone do not measure wind. " : ""}The grey fine-scale trace enlarges the first solid curve.</p>
         <div class="tg-d-series">
             ${seriesImage(sc.gURL, "Kinematic acceleration over the clip, expressed in g")}
             ${seriesImage(sc.spdURL, "Speed over the clip")}
@@ -4661,6 +4667,12 @@ function showResultGallery(results, uiState = null, onEvidenceChange = null) {
             if (fullscreenView) closeChartFullscreen();
             else if (comparisonView) closeComparison();
             else remove();
+        } else if ((e.key === "Enter" || e.key === " ")
+            && document.activeElement?.matches?.(".tg-wind-select")) {
+            // Wind cells are buttons; Space must activate them instead of the
+            // gallery timeline, and Enter must not expand a different chart.
+            e.preventDefault();
+            if (!e.repeat && !e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey) document.activeElement.click();
         } else if ((e.code === "Space" || e.key === " ") && !comparisonView
             && (!isTextEntry(document.activeElement) || document.activeElement?.matches?.(".tg-timeline-frame"))) {
             e.preventDefault();
@@ -4755,6 +4767,14 @@ function showResultGallery(results, uiState = null, onEvidenceChange = null) {
         .traverse-gallery-overlay a.tg-toggle { text-decoration:none; display:inline-block; line-height:normal; }
         .traverse-gallery-overlay .tg-toggle.on { background:rgba(57,135,229,0.24);
             border-color:#3987e5; color:#eef6ff; }
+        .traverse-gallery-overlay .tg-wind-select { display:block; width:100%; padding:0; margin:0;
+            border:0; border-radius:2px; background:transparent; color:inherit; font:inherit;
+            text-align:left; cursor:pointer; }
+        .traverse-gallery-overlay .wind-comparison td[data-wind-hypothesis],
+        .traverse-gallery-overlay .wind-comparison td[data-wind-key] { cursor:pointer; }
+        .traverse-gallery-overlay .wind-comparison td[data-wind-hypothesis]:hover,
+        .traverse-gallery-overlay .wind-comparison td[data-wind-key]:hover { background:rgba(57,135,229,0.16); }
+        .traverse-gallery-overlay .tg-wind-select:focus-visible { outline:2px solid #7fb0ee; outline-offset:3px; }
         .traverse-gallery-overlay .tc-panel { height:100%; min-height:0; display:flex; flex-direction:column;
             background:#10151b; border:1px solid #435269; border-radius:12px; color:#e0e6ef; overflow:hidden;
             width:100%; max-width:1200px; margin:24px auto; font-size:13px; height:calc(100% - 48px); }
@@ -5103,7 +5123,7 @@ function showResultGallery(results, uiState = null, onEvidenceChange = null) {
     tilesHead.className = "tg-tiles-head";
     tilesCol.appendChild(tilesHead);
     const windComparison = document.createElement("div");
-    windComparison.innerHTML = windComparisonHTML(hypotheses, dataset);
+    windComparison.innerHTML = windComparisonHTML(hypotheses, dataset, {interactive: true});
     tilesCol.appendChild(windComparison);
     const grid = document.createElement("div");
     grid.className = "tg-grid";
@@ -5580,7 +5600,7 @@ function showResultGallery(results, uiState = null, onEvidenceChange = null) {
     }
 
     // shared solution-space context for every Details pane
-    const ctx = {dataset, ss: analyzeSolutionSpace(results), useTruth, truthMaxG};
+    const ctx = {dataset, ss: analyzeSolutionSpace(results), useTruth, truthMaxG, truth: results.truth};
 
     if (tiles.length === 0) {
         const empty = document.createElement("div");
@@ -5661,6 +5681,23 @@ function showResultGallery(results, uiState = null, onEvidenceChange = null) {
             };
         }
     };
+
+    windComparison.addEventListener("click", (e) => {
+        const cell = e.target.closest("td[data-wind-hypothesis], td[data-wind-key]");
+        if (!cell || !windComparison.contains(cell)) return;
+        const h = cell.hasAttribute("data-wind-hypothesis")
+            ? hypotheses[Number(cell.dataset.windHypothesis)] : null;
+        const i = h ? tiles.findIndex(t => t.h === h)
+            : tiles.findIndex(t => t.h.key === cell.dataset.windKey);
+        if (i < 0) return;
+        // Select directly: goToTile also scrolls the left pane to the card.
+        // The wind table stays where the reader left it for further comparisons.
+        const scrollTop = tilesCol.scrollTop, scrollLeft = tilesCol.scrollLeft;
+        selectTile(i);
+        dContent.scrollTop = 0;
+        tilesCol.scrollTop = scrollTop;
+        tilesCol.scrollLeft = scrollLeft;
+    });
 
     // Layout model for the tile grid. Tiles can be SET ASIDE (the X button),
     // which moves them below a separator at the end rather than deleting them —
@@ -6011,7 +6048,7 @@ function showResultGallery(results, uiState = null, onEvidenceChange = null) {
             `<div class="tg-stv">${html ?? escapeHtml(v)}</div></div>`;
         const primary = ([k]) => k.startsWith("Slant range") || k.includes("speed (mean")
             || k === "Mean LOS error" || k === "Mean LOS offset" || k === "Max g-Force"
-            || k === "Supplied wind" || k === "Required wind" || k === "Horizontal air speed"
+            || k === "Supplied wind" || k === "Fitted wind" || k === "Horizontal air speed"
             || k === "Physical compatibility" || k === "Angular size" || k === "Angular-size fitting"
             || (useTruth && k === "Truth Δ (mean 3D)");
         const explanation = ([k]) => k === "LOS error explained" || k === "Physical compatibility details";
@@ -6508,15 +6545,16 @@ class CReportChart {
         ctx.restore();
     }
 
-    // One-row legend in the title row, right-aligned, clear of the plot:
+    // One-row legend above the plot, right-aligned; y can reserve a separate
+    // row below the title when more comparison curves need labels.
     // entries [{color, label, width, dash}]; each label takes its line's color.
-    headerLegend(entries) {
+    headerLegend(entries, y = 19) {
         const ctx = this.ctx;
         ctx.save();
         ctx.font = "11px system-ui, sans-serif";
         ctx.textAlign = "left";
         ctx.textBaseline = "middle";
-        const swatch = 16, gapIn = 5, gapOut = 12, y = 19;
+        const swatch = 16, gapIn = 5, gapOut = 12;
         const widths = entries.map((e) => swatch + gapIn + ctx.measureText(e.label).width);
         let x = this.w - 12 - widths.reduce((sum, w) => sum + w, 0) - gapOut * (entries.length - 1);
         entries.forEach((e, i) => {
@@ -6580,8 +6618,8 @@ const FINE_SCALE_MAX_FRACTION = 0.2;
  * dualScale: {min, step} (linear only). The left scale runs from 0 to the
  * data maximum rounded UP to a whole `step`, and never ends below `min`, so a
  * small value draws as a small line and similar charts share a scale. Its
- * tick numbers take the first series' color, and the legend goes in the
- * title row. The FIRST series is also drawn in grey behind, against the
+ * tick numbers take axisColor or the first series' color. The legend goes
+ * above the plot. The FIRST series is also drawn in grey behind, against the
  * right-hand "Fine" scale (grey numbers), fitted to that series alone, whose
  * span never shrinks below min/100 — so the detail stays visible without
  * enlarging numerical noise (a 1e-13 g wobble) to full height. The Fine scale
@@ -6665,13 +6703,13 @@ function lineChart(o) {
         xTicks: niceTicks(xMin, xMax, 8),
         yTicks: ticksY,
         yFmt: o.logY ? fmtLogTick : fmtNum,
-        yColor: o.dualScale && !o.logY ? o.series[0].color : undefined,
+        yColor: o.dualScale && !o.logY ? (o.axisColor ?? o.series[0].color) : undefined,
         right,
     });
     if (right) {
         // behind the main lines
         const s = o.series[0];
-        chart.polyline(s.xs, Array.from(s.ys, right.toY), FINE_SCALE_GREY, {width: 1.5});
+        chart.polyline(s.xs, Array.from(s.ys, right.toY), FINE_SCALE_GREY, {width: 0.75});
     }
     for (const s of o.series) {
         chart.polyline(s.xs, Array.from(s.ys, tf), s.color,
@@ -6685,28 +6723,13 @@ function lineChart(o) {
         // entry says which line uses the Fine scale
         chart.headerLegend([
             ...o.series.map((s) => ({color: s.color, label: s.label, width: s.width, dash: s.dash})),
-            ...(right ? [{color: FINE_SCALE_GREY, label: "Fine scale", width: 1.5}] : []),
-        ]);
+            ...(right ? [{color: FINE_SCALE_GREY, label: "Fine scale", width: 0.75}] : []),
+        ], o.legendY);
     } else if (o.series.length > 1 || (o.markers ?? []).length) {
         chart.legend(o.series.map((s) => ({color: s.color, label: s.label, width: s.width, dash: s.dash})),
             o.legendCorner ?? "tr");
     }
     return chart.dataURL();
-}
-
-// Per-frame LOS angular error (degrees) of a track against the sightlines.
-function losErrorSeriesDeg(dataset, track) {
-    const {n, S, D} = dataset;
-    const out = new Float64Array(n);
-    for (let f = 0; f < n; f++) {
-        const b = f * 3;
-        const rx = track[b] - S[b], ry = track[b + 1] - S[b + 1], rz = track[b + 2] - S[b + 2];
-        const rl = Math.hypot(rx, ry, rz);
-        if (rl < 1e-9) { out[f] = 180; continue; }
-        const dot = Math.min(1, Math.max(-1, (rx * D[b] + ry * D[b + 1] + rz * D[b + 2]) / rl));
-        out[f] = Math.acos(dot) * 180 / Math.PI;
-    }
-    return out;
 }
 
 // The three per-frame diagnostic charts for one hypothesis — maneuvering
@@ -6717,6 +6740,12 @@ function hypothesisSeriesCharts(dataset, h, o = {}) {
     const m = h.metricsFull;
     if (!h.track || !m || !m.series) return null;
     const {n, fps} = dataset;
+    const groundOnly = h.params?.motionFrame === "ground";
+    const windDataset = groundOnly ? datasetWithConstantWind(dataset, 0, 0)
+        : h.windMode === "corrected" ? datasetWithWindCorrection(dataset, h.params.windCorrectionE, h.params.windCorrectionN)
+        : h.windMode === "fitted" ? datasetForSolvedModelWind(dataset, h.track, h.params, h.key)
+        : dataset;
+    const truth = truthDiagnosticSeries(windDataset, o.truth);
     // trim the velocity smoothing window's edge artifacts, downsample to a
     // plottable point count
     const trim = Math.min(9, n >> 3);
@@ -6750,40 +6779,40 @@ function hypothesisSeriesCharts(dataset, h, o = {}) {
         return ys;
     };
     const base = {
-        width: o.width ?? 560, height: o.height ?? 230,
+        width: o.width ?? 560, height: o.height ?? 252,
+        legendY: 42, axisColor: h.color || VIZ.constAir,
         xLabel: "Time (s)", zeroBased: true,
         // Keep the playhead on the full clip clock, including the short blank
         // edges where derivative estimates were trimmed.
         xRange: [0, (n - 1) / fps],
         // right margin holds the Fine scale's tick labels (kept when a chart
         // has no Fine scale, so the stacked charts stay aligned)
-        margin: {left: 56, right: 46, top: 34, bottom: 40},
+        margin: {left: 56, right: 46, top: 56, bottom: 40},
     };
     const color = h.color || VIZ.constAir;
 
+    const truthLine = (ys, color, label = "Truth", scale = 1) =>
+        ({xs, ys: pick(ys, scale), color, label, width: 1, dash: [4, 3]});
     const gURL = lineChart({...base, title: "Kinematic acceleration", yLabel: "acceleration (g)",
         dualScale: {min: 2, step: 1},
-        series: [{xs, ys: pick(m.series.gLoad), color, label: "g-force"}]});
+        series: [{xs, ys: pick(m.series.gLoad), color, label: "g-force"},
+            ...(truth ? [truthLine(truth.gLoad, color)] : [])]});
 
-    // Geometric fits without a wind estimate report ground speed.
-    const speedLabel = h.params?.motionFrame === "ground" ? "ground speed" : "air speed";
-    const airKt = pick(m.series.airSpeed, 1 / KNOTS_TO_MS);
-    const gndKt = pick(m.series.groundSpeed, 1 / KNOTS_TO_MS);
-    let windMatters = false;
-    for (let i = 0; i < airKt.length; i++) {
-        if (Math.abs(airKt[i] - gndKt[i]) > 1) { windMatters = true; break; }
-    }
-    const spdURL = lineChart({...base, title: "Speed", yLabel: "kt",
-        dualScale: {min: 40, step: 10},
-        series: windMatters
-            ? [{xs, ys: airKt, color, label: "air speed"},
-               {xs, ys: gndKt, color, label: "ground speed", width: 1.5, dash: [6, 4]}]
-            : [{xs, ys: airKt, color, label: speedLabel}]});
+    const airColor = "#3987e5", groundColor = "#32b782";
+    const speedSeries = [
+        ...(!groundOnly ? [{xs, ys: pick(m.series.airSpeed, 1 / KNOTS_TO_MS), color: airColor, label: "air speed"}] : []),
+        {xs, ys: pick(m.series.groundSpeed, 1 / KNOTS_TO_MS), color: groundColor, label: "ground speed"},
+        ...(truth && !groundOnly ? [truthLine(truth.airSpeed, airColor, "Truth air", 1 / KNOTS_TO_MS)] : []),
+        ...(truth ? [truthLine(truth.groundSpeed, groundColor, "Truth ground", 1 / KNOTS_TO_MS)] : []),
+    ];
+    const spdURL = lineChart({...base, title: "Speed (3D)", yLabel: "kt",
+        dualScale: {min: 40, step: 10}, series: speedSeries});
 
     // LOS error, with the flexible generic-fit residual as a reference line
     // on the physics fits that carry one
     const errSeries = [{xs, ys: pick(losErrorSeriesDeg(dataset, h.track)),
-        color, label: "LOS error"}];
+        color, label: "LOS error"},
+        ...(truth ? [truthLine(truth.losError, color)] : [])];
     const floor = h.params && h.params.errFloor;
     if (isFinite(floor) && floor >= 0.02) {
         errSeries.push({xs: [xs[0], xs[xs.length - 1]], ys: [floor, floor],
@@ -6799,7 +6828,7 @@ function hypothesisSeriesCharts(dataset, h, o = {}) {
     const {left, right, top, bottom} = base.margin;
     const plotStyle = `left:${100 * left / base.width}%;top:${100 * top / base.height}%;`
         + `width:${100 * (base.width - left - right) / base.width}%;height:${100 * (base.height - top - bottom) / base.height}%`;
-    return {gURL, spdURL, errURL, plotStyle, sizeAttrs: `width="${base.width}" height="${base.height}"`};
+    return {gURL, spdURL, errURL, plotStyle, hasTruth: !!truth, sizeAttrs: `width="${base.width}" height="${base.height}"`};
 }
 
 function heatColor(tRaw) {
@@ -6817,7 +6846,7 @@ function heatColor(tRaw) {
  * Sweep-score heatmap (range NM x speed kt), log color scale (dark = good),
  * with the best point marked and a color scale bar.
  */
-function sweepHeatmap(sweep) {
+function sweepHeatmap(sweep, {label = "Constant air speed — supplied wind", short = "CAS/SW", hypothesis} = {}) {
     const xs = sweep.ranges.map(toNM);                       // NM
     const yl = sweep.speeds.map((v) => Math.log10(toKt(v))); // log10(kt)
     const nx = xs.length, ny = yl.length;
@@ -6836,10 +6865,18 @@ function sweepHeatmap(sweep) {
     const chart = new CReportChart({
         width: 940, height: 560,
         margin: {left: 64, right: 118, top: 40, bottom: 48},
-        title: "Constant-air-speed sweep: plausibility score over (start range, air speed)",
-        xLabel: "start range (NM)", yLabel: "air speed (kt, log scale)",
+        title: label,
+        xLabel: "start range (NM)", yLabel: "requested air speed (kt, log scale)",
     });
-    chart.setRange(xEdge(0, -1), xEdge(nx - 1, +1), yEdge(0, -1), yEdge(ny - 1, +1));
+    const selected = hypothesis?.params;
+    const selectedX = Number.isFinite(selected?.range) ? toNM(selected.range) : null;
+    const selectedY = selected?.airSpeed > 0 ? Math.log10(toKt(selected.airSpeed)) : null;
+    // A slow-valley candidate can lie below the sampled grid; show it in the
+    // unsampled margin rather than clipping it or inventing a scored cell.
+    chart.setRange(Math.min(xEdge(0, -1), selectedX ?? Infinity),
+        Math.max(xEdge(nx - 1, +1), selectedX ?? -Infinity),
+        Math.min(yEdge(0, -1), selectedY === null ? Infinity : selectedY - 0.05),
+        Math.max(yEdge(ny - 1, +1), selectedY === null ? -Infinity : selectedY + 0.05));
 
     let logMin = Infinity, logMax = -Infinity;
     const logScore = (s) => Math.log10(Math.max(s, 1e-3));
@@ -6867,8 +6904,13 @@ function sweepHeatmap(sweep) {
         yFmt: fmtLogTick,
         grid: false,
     });
-    chart.marker(toNM(sweep.best.startDist), Math.log10(toKt(sweep.best.speed)), VIZ.constAir,
-        `selected family representative: ${nm1(sweep.best.startDist)} NM @ ${kt1(sweep.best.speed)} kt`);
+    const same = selectedX !== null && selectedY !== null
+        && Math.abs(selected.range - sweep.best.startDist) < 0.01
+        && Math.abs(selected.airSpeed - sweep.best.speed) < 0.01;
+    if (!same) chart.marker(toNM(sweep.best.startDist), Math.log10(toKt(sweep.best.speed)), VIZ.constAir, "Grid representative");
+    if (selectedX !== null && selectedY !== null) {
+        chart.marker(selectedX, selectedY, VIZ.aircraft, `${short} reported candidate${same ? " = grid representative" : ""}`);
+    }
 
     // color scale bar (log): dark bottom = low score = plausible
     const bx = chart.w - chart.m.right + 34;
@@ -7150,39 +7192,25 @@ function hypothesisThumbnail(dataset, hyp) {
 // Report assembly
 // ---------------------------------------------------------------------------
 
-// lowest-score row of a profile within [loM, hiM] start range
-function bestRowInWindow(profile, loM, hiM) {
-    let best = null;
-    for (const r of profile) {
-        if (r.startDist >= loM - 1 && r.startDist <= hiM + 1) {
-            if (!best || r.score < best.score) best = r;
-        }
-    }
-    return best;
-}
-
-// contiguous region around the profile minimum with score <= factor * min
-function minRegion(profile, factor = 1.5) {
-    let bi = 0;
-    profile.forEach((r, i) => { if (r.score < profile[bi].score) bi = i; });
-    let lo = bi, hi = bi;
-    while (lo > 0 && profile[lo - 1].score <= profile[bi].score * factor) lo--;
-    while (hi < profile.length - 1 && profile[hi + 1].score <= profile[bi].score * factor) hi++;
-    return {best: profile[bi], loM: profile[lo].startDist, hiM: profile[hi].startDist};
-}
-
-function buildReportHypothesisDetails(dataset, rankedHyps, ss, truthMaxG = null) {
+function buildReportHypothesisDetails(dataset, rankedHyps, ss, truthMaxG = null, candidateId = () => "") {
     return rankedHyps.map(({h, r, tied, category, groupIndex, groupSize}) => {
+        if (!h.metricsFull) return `<article class="solution-detail" id="${candidateId(h)}"><h3>${escapeHtml(h.name)}</h3><p>${escapeHtml(h.notes || "No trajectory metrics are available for this candidate.")}</p></article>`;
         const statsHTML = hypothesisStats(h, dataset, truthMaxG).map(([k, v, html]) =>
             `<div class="st"><div class="stk">${escapeHtml(k)}</div>` +
             `<div class="stv">${html ?? escapeHtml(v)}</div></div>`).join("");
+        const tc = h.truthComparison;
+        const truthHTML = tc?.comparable ? `<h4>Comparison with truth</h4><p>Mean horizontal separation: ${escapeHtml(fmtSepMeters(tc.horizontal.mean))}; mean absolute altitude offset: ${escapeHtml(fmtSepMeters(tc.altitude.meanAbs))}. `
+            + (tc.speed ? `Mean absolute ground-speed difference: ${kt1(tc.speed.meanAbsDiff)} kt. ` : "")
+            + (tc.heading ? `Mean absolute heading difference: ${tc.heading.meanAbsDiff.toFixed(1)}°. ` : "")
+            + `${tc.framesUsed} overlapping frames. These comparisons do not affect fitting or the primary ranking.</p>` : "";
         const prose = detailProse(h, r, ss);
         const spaceHTML = solutionSpaceHTML(h, ss);
         const badgesHTML = [tierBadge(r), ...coLeaderBadge(r), ...completenessBadges(r)].map((badge) =>
             `<span class="pill" style="background:${badge.color}">${escapeHtml(badge.label)}</span>`).join("");
         const tieText = tied ? " · within the 0.05 display-score tie threshold" : "";
         return `
-        <article class="solution-detail">
+        <article class="solution-detail" id="${candidateId(h)}">
+            <div class="solution-overview">
             <div class="solution-head">
                 <div>
                     <h3>${escapeHtml(h.name)}</h3>
@@ -7191,8 +7219,11 @@ function buildReportHypothesisDetails(dataset, rankedHyps, ss, truthMaxG = null)
                 <span class="solution-pills">${badgesHTML}</span>
             </div>
             <div class="solution-order">#${groupIndex + 1} of ${groupSize} within ${escapeHtml(category.shortLabel)}${escapeHtml(tieText)}</div>
+            ${h.track ? `<figure><img src="${hypothesisThumbnail(dataset, h)}" alt="Plan view: ${escapeHtml(h.name)}"><figcaption>${escapeHtml(h.name)}. East is horizontal; North is vertical; both axes are in NM. Cyan is the sensor path; gray lines are sightlines.</figcaption></figure>` : ""}
+            </div>
             <div class="solution-metrics">${statsHTML}</div>
-            <p class="rank-basis"><strong>Rank basis without truth:</strong> ${rankingTextHTML(rankingExplanation(h, r, {useTruth: false}), h, r)}</p>
+            ${truthHTML}
+            <p class="rank-basis"><strong>Rank basis without truth:</strong> ${rankingTextHTML(rankingExplanation(h, r, {useTruth: false, scoreBreakdown: true}), h, r)}</p>
             <p class="solution-lead">${escapeHtml(prose.lead)}</p>
             <h4>How these numbers were derived</h4>
             <p>${prose.derived}</p>
@@ -7200,880 +7231,152 @@ function buildReportHypothesisDetails(dataset, rankedHyps, ss, truthMaxG = null)
             <p>${prose.constraint}</p>
             <h4>Where it sits in the solution space</h4>
             <p>${spaceHTML}</p>
+            <a class="back" href="#candidate-results">Back to candidate results</a>
         </article>`;
     }).join("");
 }
 
-// The report always presents the screening order first, even when hypotheses
-// carry truth comparisons. Keep the numeric reference out of this table.
-function buildScreeningSummaryHTML(rankedHyps) {
-    const rows = rankedHyps.map((item, i) => {
-        const {h, r, category} = item;
-        const peer = rankedHyps[i === 0 ? 1 : i - 1];
-        const why = rankingPlacementExplanation(item, peer, {useTruth: false, first: i === 0});
-        const angular = r.kind === "identity" || r.kind === "directional-geometry";
-        const score = Number.isFinite(r.secondaryScore)
-            ? `${r.secondaryScore.toFixed(3)}${angular ? "°" : ""}` : "—";
-        return `<tr${r.coLeader || i === 0 ? ' class="best"' : ""}>`
-            + `<td>${i + 1}</td><td>${escapeHtml(h.name)}${r.coLeader ? ' <span class="pill" style="background:#3c6d9e">Co-leader</span>' : ""}</td>`
-            + `<td>${escapeHtml(category.shortLabel)}</td>`
-            + `<td><span class="pill" style="background:${r.color}">${escapeHtml(r.label)}</span></td>`
-            + `<td>${r.incomplete ? "Incomplete" : "Complete"}</td>`
-            + `<td>${score}</td><td>${rankingTextHTML(why.text, h, r)}</td></tr>`;
-    }).join("");
-    return `<div class="tablebox"><table class="screeningtab">`
-        + `<thead><tr><th>#</th><th>Interpretation</th><th>Method group</th><th>Screen</th>`
-        + `<th>Search</th><th>Score</th><th>Why this order</th></tr></thead>`
-        + `<tbody>${rows}</tbody></table></div>`;
-}
-
-// Truth-mode comparison: completed methods first, then ranked by mean 3D
-// separation from the truth track, with the per-aspect deltas the rank bases cite.
-// Cross-group ordering is deliberate here — all methods are measured against
-// the same external reference with the same metric.
-function buildTruthSummaryHTML(rankedHyps, truth, dataset) {
-    // Report cards stay grouped for explanation, but this executive table is a
-    // genuinely cross-group comparison. Reapply the flat shared comparator so
-    // its completeness-before-truth order is preserved across category edges.
-    const globallyRanked = rankAllHypotheses(rankedHyps.map((item) => item.h), {useTruth: true, dataset});
-    const comparable = globallyRanked
-        .filter((item) => item.h.truthComparison?.comparable);
-    const notComparable = globallyRanked.filter((item) => !item.h.truthComparison?.comparable);
-
-    const rows = comparable.map(({h, r, category}, i) => {
-        const tc = h.truthComparison;
-        const altSide = Math.abs(tc.altitude.meanSigned) > 0.5 * tc.altitude.meanAbs
-            ? (tc.altitude.meanSigned > 0 ? " ↑" : " ↓") : "";
-        return `
-        <tr${i === 0 ? ' class="best"' : ""}>
-            <td>${i + 1}</td>
-            <td>${escapeHtml(h.name)}</td>
-            <td>${escapeHtml(category.shortLabel)}</td>
-            <td>${r.incomplete ? "Incomplete" : "Complete"}</td>
-            <td>${escapeHtml(fmtSepMeters(tc.sep3D.mean))}</td>
-            <td>${escapeHtml(fmtSepMeters(tc.sep3D.max))}</td>
-            <td>${escapeHtml(fmtSepMeters(tc.horizontal.mean))}</td>
-            <td>${escapeHtml(fmtSepMeters(tc.altitude.meanAbs))}${altSide}</td>
-            <td>${tc.speed ? (tc.speed.meanAbsDiff / KNOTS_TO_MS).toFixed(0) : "—"}</td>
-            <td>${tc.heading ? tc.heading.meanAbsDiff.toFixed(0) : "—"}</td>
-        </tr>`;
-    }).join("");
-
-    const notCompHTML = notComparable.length
-        ? `<p class="sub">Not comparable against the truth track: ${notComparable.map(({h}) =>
-            `${escapeHtml(h.name)} (${escapeHtml(h.truthComparison?.note || "no comparable reference")})`).join("; ")}.</p>`
-        : "";
-
-    return `
-    <h3>Closeness to the truth track "${escapeHtml(truth.label)}"</h3>
-    <div class="tablebox">
-    <table class="truthtab">
-        <thead><tr>
-            <th>#</th><th>Interpretation</th><th>Group</th><th>Search</th>
-            <th>Mean 3D sep</th><th>Max sep</th><th>Horiz offset</th>
-            <th>Alt Δ</th><th>Speed Δ (kt)</th><th>Heading Δ (°)</th>
-        </tr></thead>
-        <tbody>${rows}</tbody>
-    </table>
-    </div>
-    <p class="sub">All methods measured against the same reference over the analysis window. Completed fits are
-    ordered first by mean 3D separation, followed by incomplete searches (the cross-group truth metric is
-    external to every method's own
-    assumptions). Alt Δ arrows mark a consistent bias above (↑) or below (↓) the truth. Speed and heading
-    deltas use ~0.5 s smoothed motion; heading is only compared while both tracks are moving.</p>
-    ${notCompHTML}`;
-}
-
 function buildReportHTML(ctx) {
-    const {
-        sitName, dataset, windText, speedTarget,
-        sweep, fastProfile, slowProfile, aircraft,
-        bestTrack, bestMetrics, slowBestRow, slowTrack,
-        sweepBestMetrics = ctx.bestMetrics, constAirPick = null,
-        closeLoM, closeHiM, hypotheses, provenance, failures = [], manifest = {},
-        truth: _truth = null, terrainChangedDuringRun = false,
-        executiveAssessment: storedExecutiveAssessment = null,
-    } = ctx;
-    const executiveAssessment = hypotheses?.length
-        ? assessExecutiveVerdict(hypotheses, {dataset, provenance}) : storedExecutiveAssessment;
-    // A truth track with too little overlap does not drive ordering (TA-19):
-    // treat it as no-truth for the whole report so nothing claims truth-based
-    // order, and surface a note that it was selected but unusable.
-    const truthUnusableLabel = (_truth && !_truth.usable) ? _truth.label : null;
-    const truthUnusableFrames = (_truth && !_truth.usable) ? (_truth.validCount || 0) : 0;
-    const truth = (_truth && _truth.usable) ? _truth : null;
+    const {sitName, dataset, hypotheses = [], sweep, sweepFreeWind, fastProfile, slowProfile,
+        profilesFreeWind, aircraft, aircraftFreeWind, speedTarget, windText, provenance,
+        failures = [], manifest = {}, truth: reference, terrainChangedDuringRun} = ctx;
+    const esc = escapeHtml;
+    const truth = reference?.usable ? reference : null;
     const truthMetrics = truth ? trackMetricsForValidRun(dataset, truth.track, truth.valid) : null;
-    const truthMaxG = Number.isFinite(truthMetrics?.gLoad?.max) ? truthMetrics.gLoad.max : null;
-    const {n, fps, D} = dataset;
-    const globalFrame0 = dataset.frame0 ?? 0;
-    const globalFrame1 = dataset.frame1 ?? (globalFrame0 + n - 1);
-    const durationS = (n - 1) / fps;
-    const b = sweep.best;
-    const bRaw = sweep.bestRaw ?? b;
-    // THE FIXED-WING FIT CAN FAIL, and the report must still render.
-    // fitAircraft is wrapped in a try/catch that records a typed failure and
-    // leaves `aircraft` null; every use below then has to tolerate that.
-    // Previously they did not, so "Open Full Report" threw for any analysis
-    // whose aircraft fit failed — deterministically, with no way to read the
-    // other candidates. A bulk run meets this far more often than one
-    // interactive analysis does.
-    const ap = aircraft ? aircraft.params : null;
+    const truthMaxG = truthMetrics?.gLoad?.max;
+    const ranked = rankAllHypotheses(hypotheses, {useTruth: false, dataset});
+    const grouped = groupAndRankHypotheses(hypotheses, {useTruth: false, dataset});
+    const detailOrder = grouped.flatMap(g => g.items);
+    const id = h => `candidate-${hypotheses.indexOf(h) + 1}`;
+    const link = h => `<a href="#${id(h)}">${esc(h.name)}</a>`;
+    const number = (v, digits = 2) => Number.isFinite(v) ? v.toFixed(digits) : "—";
+    const table = (heads, rows) => `<div class="tablebox"><table><thead><tr>${heads.map(h => `<th>${esc(h)}</th>`).join("")}</tr></thead><tbody>${rows.join("")}</tbody></table></div>`;
+    const row = cells => `<tr>${cells.map(c => `<td>${c}</td>`).join("")}</tr>`;
+    const figure = (url, alt, caption = "") => `<figure><img src="${url}" alt="${esc(alt)}">${caption ? `<figcaption>${caption}</figcaption>` : ""}</figure>`;
+    const sections = [];
+    const add = (id, title, html) => sections.push({id, title, html});
+    const assessment = hypotheses.length ? assessExecutiveVerdict(hypotheses, {dataset, provenance}) : ctx.executiveAssessment;
+    const physicalLeader = ranked.find(({category}) => category.key === "forward");
+    const overallLeader = ranked[0];
+    const warnings = [
+        provenance?.circular ? `Constructed sightlines: ${esc(provenance.reason)} This is a consistency check, not independent evidence.` : "",
+        provenance?.rangeUnobservable ? "The sensor baseline does not determine range. Reported ranges depend on the motion assumptions." : "",
+        terrainChangedDuringRun ? "Terrain data changed during the run. Re-run after terrain settles if exact ground clearance matters." : "",
+        reference && !truth ? `The selected truth track has insufficient overlap (${reference.validCount ?? 0} frames); no truth ranking is shown.` : "",
+        failures.length ? `Unavailable checks: ${failures.map(f => `${esc(f.method)} (${esc(f.error)})`).join("; ")}.` : "",
+    ].filter(Boolean);
+    const summaryHTML = `<p><strong>${esc(assessment?.headline ?? "Candidate trajectories under the stated assumptions.")}</strong> ${esc(assessment?.detail ?? "")}</p>`
+        + (physicalLeader ? `<p><strong>Leading physical interpretation:</strong> ${link(physicalLeader.h)} — ${esc(physicalLeader.r.label.toLowerCase())}; mean LOS error ${esc(formatRawLosResidual(physicalLeader.h))}. Its category rank is a screening heuristic, not an object probability.</p>` : "")
+        + (overallLeader ? `<p><strong>First in the overall screening order:</strong> ${link(overallLeader.h)}; BOT / angular score ${number(overallLeader.r.secondaryScore, 3)}. <a href="#candidate-results">See all candidates and co-leaders</a>.</p>` : "")
+        + `<p><strong>Wind:</strong> supplied wind is ${esc(windText ?? "not recorded")}. Fitted wind depends on each motion model and its priors; it is not an independent weather measurement.</p>`
+        + (truth ? `<p><strong>Reference available:</strong> ${esc(truth.label)}. <a href="#truth-comparison">Compare against truth</a>; truth is excluded from fitting and the primary ranking.</p>` : "")
+        + warnings.map(w => `<p class="warning">${w}</p>`).join("");
 
-    // LOS az/el at first/last frame (ENU: az from North, clockwise)
-    const azOf = (f) => {
-        let az = Math.atan2(D[f * 3], D[f * 3 + 1]) * 180 / Math.PI;
-        if (az < 0) az += 360;
-        return az;
-    };
-    const elOf = (f) => Math.asin(Math.max(-1, Math.min(1, D[f * 3 + 2]))) * 180 / Math.PI;
+    add("candidate-results", "Candidate results — without truth", `<p>Screening order across all methods. Follow a candidate name for its measurements, derivation and constraints. Scores are heuristic; angular-only checks are not numerically comparable with trajectory scores.</p>`
+        + table(["#", "Candidate", "Screen", "Search", "BOT score / angular score", "Mean LOS error"], ranked.map(({h, r}, i) => row([
+            String(i + 1), link(h) + (r.coLeader ? "<br>Co-leader" : ""), esc(r.label), r.incomplete ? "Incomplete" : "Complete",
+            number(r.secondaryScore, 3) + (["identity", "directional-geometry"].includes(r.kind) ? "°" : ""), esc(formatRawLosResidual(h)),
+        ])))
+        + (assessment ? `<h3>Physical interpretations</h3>${assessment.classes.map(c => `<p><strong>${esc(c.label)}:</strong> ${esc(c.viable ? (c.supported ? "consistent, with independent support" : "consistent under the model assumptions") : c.blocker || "not tested")}${c.bestName ? `. Best candidate: ${esc(c.bestName)}` : ""}${c.windRating ? `. Wind evidence: ${esc(c.windRating)}` : ""}.</p>`).join("")}
+            <p class="sub">Not run: ${esc(assessment.notRun.join("; ") || "none")}. Not modeled: ${esc(assessment.notModelled.join("; "))}.</p>` : ""));
 
-    // ---- charts ----
-    const chartA = sweepHeatmap(sweep);
-
-    const profX = (p) => p.map((r) => toNM(r.startDist));
-    const profY = (p) => p.map((r) => r.score);
-    const fastBest = fastProfile.reduce((a2, b2) => (b2.score < a2.score ? b2 : a2));
-    const chartB = lineChart({
-        width: 940, height: 500, logY: true,
-        title: "Required maneuvering vs assumed start range (smoothest plausible trajectory)",
-        xLabel: "start range (NM)", yLabel: "score (lower = more plausible, log scale)",
-        series: [
-            {xs: profX(fastProfile), ys: profY(fastProfile), color: VIZ.fastObj,
-                label: `fast object (target ${kt1(speedTarget)} kt)`},
-            {xs: profX(slowProfile), ys: profY(slowProfile), color: VIZ.slowObj,
-                label: "slow object (target 5 kt)"},
-        ],
-        markers: [
-            {x: toNM(fastBest.startDist), y: fastBest.score, color: VIZ.fastObj,
-                label: `min @ ${nm1(fastBest.startDist)} NM`},
-            {x: toNM(slowBestRow.startDist), y: slowBestRow.score, color: VIZ.slowObj,
-                label: `min @ ${nm1(slowBestRow.startDist)} NM`},
-        ],
-    });
-
-    // time series: best const-air vs aircraft fit
-    const tSec = Array.from({length: n}, (_, f) => f / fps);
-    const bs = bestMetrics.series;
-    const as = aircraft ? aircraft.series : null;
-    const tsChart = (title, yLabel, yA, yB, transform = (v) => v) => lineChart({
-        width: 620, height: 340, title, xLabel: "time (s)", yLabel,
-        series: [
-            {xs: tSec, ys: Array.from(yA, transform), color: VIZ.constAir,
-                label: constAirPick ? "const air spd (slow valley)" : "const air spd (sweep best)"},
-            ...(yB ? [{xs: tSec, ys: Array.from(yB, transform), color: VIZ.aircraft,
-                label: "aircraft fit"}] : []),
-        ],
-    });
-    // `as` is null when the fixed-wing fit failed; tsChart omits the series.
-    const chartC1 = tsChart("Air speed", "air speed (kt)", bs.airSpeed, as?.airSpeed, toKt);
-    const chartC2 = tsChart("Kinematic acceleration", "acceleration (g)", bs.gLoad, as?.gLoad);
-    const chartC3 = tsChart("Turn rate", "turn rate (°/s)", bs.turnRate, as?.turnRate);
-
-    const chartD = planViewChart(dataset, [
-        {track: bestTrack, color: VIZ.constAir,
-            label: constAirPick
-                ? `const air spd (slow valley): ${nm1(constAirPick.range)} NM @ ${kt1(constAirPick.airSpeed)} kt`
-                : `const air spd: ${nm1(b.startDist)} NM @ ${kt1(b.speed)} kt`},
-        ...(aircraft ? [{track: aircraft.track, color: VIZ.aircraft,
-            label: `aircraft fit: ${nm1(ap.startDist)} NM, hdg ${ap.heading.toFixed(0)}°`}] : []),
-        {track: slowTrack, color: VIZ.slowObj,
-            label: `plausible slow object: ${nm1(slowBestRow.startDist)} NM`},
-        ...(truth ? [{track: truth.track, color: VIZ.truth,
-            label: `truth: ${truth.label}`}] : []),
-    ]);
-
-    // ---- executive summary ----
-    const fastRegion = minRegion(fastProfile);
-    const slowRegion = minRegion(slowProfile);
-    const cLo = closeLoM ?? 6 * METERS_PER_NM;
-    const cHi = closeHiM ?? 8 * METERS_PER_NM;
-    const closeFast = bestRowInWindow(fastProfile, cLo, cHi);
-    const closeSlow = bestRowInWindow(slowProfile, cLo, cHi);
-    const closeLabel = `${nm1(cLo)}–${nm1(cHi)} NM`;
-    const top = (sweep.sorted ?? sweep.results.slice().sort((a, b) => a.score - b.score)).slice(0, 10);
-    const topRangeLo = Math.min(...top.map((r) => r.startDist));
-    const topRangeHi = Math.max(...top.map((r) => r.startDist));
-    const topSpeedLo = Math.min(...top.map((r) => r.speed));
-    const topSpeedHi = Math.max(...top.map((r) => r.speed));
-
-    const closeRangeHTML = (closeFast && closeSlow) ? `
-        <p><strong>The cost of proximity (${closeLabel}):</strong>
-        Forcing the object to a start range of ${closeLabel}, even the most benign trajectory under the
-        fast-object target needs an air speed peaking at
-        <strong>${kt1(closeFast.metrics.airSpeed.max)} kt</strong>, with turn-rate spikes of
-        <strong>${statSpike(closeFast.metrics.turnRate).toFixed(2)} °/s</strong> and kinematic acceleration up to
-        <strong>${closeFast.metrics.gLoad.max.toFixed(2)} g</strong> (score ${closeFast.score.toFixed(2)}).
-        Under the slow-object hypothesis (soft target ~5 kt) the smoothest ${closeLabel} solution still requires
-        a peak air speed of <strong>${kt1(closeSlow.metrics.airSpeed.max)} kt</strong>, turn-rate spikes of
-        <strong>${statSpike(closeSlow.metrics.turnRate).toFixed(2)} °/s</strong>, and up to
-        <strong>${closeSlow.metrics.gLoad.max.toFixed(2)} g</strong> (score ${closeSlow.score.toFixed(2)}).
-        This quantifies what an object at that range would have to do to stay consistent with the
-        sightline data.</p>` : "";
-
-    const sweepEdges = [];
-    if (sweep.boundaryAxes?.range) {
-        const loR = Math.min(...sweep.ranges), hiR = Math.max(...sweep.ranges);
-        if (sweep.familyBand.rangeLo <= loR * 1.001) sweepEdges.push("lower range");
-        if (sweep.familyBand.rangeHi >= hiR * 0.999) sweepEdges.push("upper range");
+    add("wind-comparison", "Supplied and fitted wind", windComparisonHTML(hypotheses, dataset));
+    if (truth) {
+        const ordered = rankAllHypotheses(hypotheses, {useTruth: true, dataset}).filter(({h}) => h.truthComparison?.comparable);
+        add("truth-comparison", "Comparison with truth", `<p>The same paths, without refitting, compared with ${esc(truth.label)}. Complete fits precede incomplete searches; within each group, lower mean 3D separation is better. This does not change the primary ranking.</p>`
+            + table(["Candidate", "Search", "Mean 3D separation", "Maximum separation", "Mean speed difference"], ordered.map(({h, r}) => row([
+                link(h), r.incomplete ? "Incomplete" : "Complete", esc(fmtSepMeters(h.truthComparison.sep3D.mean)),
+                esc(fmtSepMeters(h.truthComparison.sep3D.max)), h.truthComparison.speed ? `${number(toKt(h.truthComparison.speed.meanAbsDiff))} kt` : "—",
+            ])))
+            + `<p class="sub">Speed differences are ground-relative and include vertical motion. Per-candidate details include horizontal and altitude offsets. The reference is a validation comparison, not an inference from the sightlines.</p>`);
     }
-    if (sweep.boundaryAxes?.speed) {
-        const loV = Math.min(...sweep.speeds), hiV = Math.max(...sweep.speeds);
-        if (sweep.familyBand.speedLo <= loV * 1.001) sweepEdges.push("lower speed");
-        if (sweep.familyBand.speedHi >= hiV * 0.999) sweepEdges.push("upper speed");
-    }
-    // The regime pick can demote the fast sweep representative: say so right
-    // where the sweep numbers appear, or the summary (fast NM/kt) and the
-    // candidate card (slow NM/kt) would silently disagree under one name.
-    const constAirDemotionHTML = constAirPick ? `
-        <p><strong>Demoted:</strong> this fast-sweep representative was outscored by the slow-drift range
-        valley. The reported <em>Constant Air Speed</em> candidate is
-        <strong>${nm1(constAirPick.range)} NM / ${kt1(constAirPick.airSpeed)} kt</strong>
-        (neutral score ${Number(constAirPick.slowScore ?? NaN).toFixed(2)} vs
-        ${Number(constAirPick.fastScore ?? NaN).toFixed(2)}, lower is better); the time-series and
-        plan-view charts show that selected slow representative.</p>` : "";
-    const sweepResultHTML = (sweep.boundaryLimited ? `
-        <p><strong>Constant-air-speed search incomplete at the ${escapeHtml(sweepEdges.join(" and ") || "tested")} boundary.</strong>
-        A family spanning <strong>${nm1(sweep.familyBand.rangeLo)}–${nm1(sweep.familyBand.rangeHi)} NM</strong> and
-        <strong>${kt1(sweep.familyBand.speedLo)}–${kt1(sweep.familyBand.speedHi)} kt</strong> scores similarly.
-        The displayed <strong>${nm1(b.startDist)} NM / ${kt1(b.speed)} kt</strong> member is a deterministic,
-        prior-selected representative; an edge value is a tested floor or ceiling, not an estimated optimum.
-        Its full-resolution track reaches ${sweepBestMetrics.gLoad.rms.toFixed(2)} g RMS and
-        ${sweepBestMetrics.gLoad.max.toFixed(2)} g maximum kinematic acceleration.</p>` : `
-        <p>The constant-air-speed grid search selects a family representative at a start range of
-        <strong>${nm1(b.startDist)} NM</strong> and <strong>${kt1(b.speed)} kt</strong> air speed
-        (grid score ${b.score.toFixed(2)}). Its full-resolution displayed track reaches
-        ${sweepBestMetrics.gLoad.rms.toFixed(2)} g RMS and
-        <strong>${sweepBestMetrics.gLoad.max.toFixed(2)} g</strong> maximum kinematic acceleration. The raw score minimum is
-        <strong>${nm1(bRaw.startDist)} NM / ${kt1(bRaw.speed)} kt</strong>
-        (score ${bRaw.score.toFixed(2)}). The ten lowest-score grid cells fall
-        between ${nm1(topRangeLo)}–${nm1(topRangeHi)} NM and ${kt1(topSpeedLo)}–${kt1(topSpeedHi)} kt.</p>`)
-        + constAirDemotionHTML;
 
-    const geometryHTML = `
-        <p>Over <strong>${n}</strong> frames (${globalFrame0}–${globalFrame1}, ${durationS.toFixed(1)} s) the sensor's line of sight swept
-        from azimuth ${azOf(0).toFixed(1)}° / elevation ${elOf(0).toFixed(1)}° to azimuth
-        ${azOf(n - 1).toFixed(1)}° / elevation ${elOf(n - 1).toFixed(1)}° (wind: ${escapeHtml(windText)}).</p>`;
+    const casCases = constantAirReportCases({hypotheses, sweep, sweepFreeWind});
+    const selectedTable = table(["Interpretation", "Selected start range", "Requested airspeed", "Actual mean 3D airspeed", "Selection"], casCases.map(c => {
+        const h = c.hypothesis;
+        return row([h ? link(h) : esc(c.label), h ? `${number(toNM(h.params.range))} NM` : "Unavailable",
+            h ? `${number(toKt(h.params.airSpeed), 1)} kt` : "—", h ? `${number(toKt(h.metricsFull?.airSpeed?.mean), 1)} kt` : "—",
+            h?.params.regime === "slow" ? "Slow-valley candidate replaced grid representative" : "Grid family representative"]);
+    }));
+    add("cas-searches", "Constant air speed: supplied versus fitted wind", `<p><strong>CAS/SW</strong> holds the supplied wind fixed. <strong>CAS/FW</strong> fits wind independently. Each heatmap below belongs to its own search; the green marker identifies the candidate actually reported in the gallery. A blue marker identifies a different grid representative, if one was replaced by the slow-valley candidate.</p>`
+        + selectedTable + casCases.map(c => {
+            if (!c.sweep?.results?.length) return `<h3>${esc(c.label)}</h3><p>No search grid was retained for this variant. The selected candidate above is still reported; no heatmap is inferred from it.</p>`;
+            const b = c.sweep.best;
+            return `<h3>${esc(c.label)}</h3>` + figure(sweepHeatmap(c.sweep, c), c.label,
+                `<strong>${esc(c.short)} search.</strong> Grid representative: ${number(toNM(b.startDist))} NM at ${number(toKt(b.speed), 1)} kt requested airspeed. `
+                + `The plotted vertical coordinate is the requested speed used by the fit; actual mean speed is listed above. Any blank margin is outside the sampled grid. `
+                + `<span class="dark-only">Darker</span><span class="light-only">Lighter</span> means lower score. Scores include smoothness, speed fidelity, the target-speed prior${c.mode === "fitted" ? ", and the shared wind penalty" : ""}${dataset.angularSizeOptions?.fit ? ", plus enabled angular-size fitting costs" : ""}. `
+                + `Each chart has its own color scale; colors do not establish a cross-model likelihood.`);
+        }).join("") + (!casCases.length ? "<p>No constant-air-speed search was run.</p>" : ""));
 
-    // Metric-centric summary paragraphs (sweep / range profiles / aircraft fit /
-    // cost of proximity). In truth mode these move out of the executive summary
-    // — the summary is then about closeness to the truth track — while the
-    // underlying detail sections (heatmap, profiles, time series) remain below.
-    const metricsSummaryHTML = `
-        <p>Lines of sight alone often do not uniquely determine a trajectory, so each analyzer below asks a different
-        question of the same data; the interesting output is the <em>family</em> of plausible solutions and the
-        maneuvering cost of everything else.</p>
+    const planCandidates = [...casCases.map(c => c.hypothesis).filter(Boolean),
+        ...ranked.filter(({h}) => ["lantern", "aircraft"].includes(h.key) && h.windMode === "fitted").map(({h}) => h)];
+    if (planCandidates.length) add("plan-view", "Trajectory comparison", figure(planViewChart(dataset, [
+        ...planCandidates.map((h, i) => ({track: h.track, label: h.name, color: [VIZ.constAir, "#cf8d3c", VIZ.aircraft, "#a68fe9"][i % 4]})),
+        ...(truth ? [{track: truth.track, label: `Truth: ${truth.label}`, color: VIZ.truth}] : []),
+    ]), "Selected trajectories with sensor path and sightlines", "East/North distances use equal scale. Filled dot marks the start, open circle the end. Labels explicitly identify wind treatment."));
 
-        ${sweepResultHTML}
-
-        <p>Sweeping the globally smoothest LOS-riding trajectory across assumed start ranges: the fast-object
-        profile (soft target ${kt1(speedTarget)} kt) reaches its minimum at
-        <strong>${nm1(fastRegion.best.startDist)} NM</strong>, with scores within 1.5× of that minimum
-        across <strong>${nm1(fastRegion.loM)}–${nm1(fastRegion.hiM)} NM</strong>. The slow-object profile
-        (soft target 5 kt) reaches its minimum at <strong>${nm1(slowRegion.best.startDist)} NM</strong>
-        (region ${nm1(slowRegion.loM)}–${nm1(slowRegion.hiM)} NM).</p>
-
-        ${aircraft ? `<p>The parametric fixed-wing fit (constant horizontal airspeed, slowly varying turn rate, constant climb, advected by
-        the wind) returned its lowest-cost deterministic solution at a start range of <strong>${nm1(ap.startDist)} NM</strong>, heading
-        <strong>${ap.heading.toFixed(1)}° in the sensor-origin ENU frame</strong>, horizontal airspeed <strong>${kt1(ap.tas)} kt</strong>,
-        turn rate ${ap.turnRate.toFixed(3)} °/s, climb ${fpm0(ap.climb)} fpm, with a mean LOS error of
-        <strong>${aircraft.errDeg.toFixed(3)}°</strong>.</p>`
-        : `<p><strong>The parametric fixed-wing fit did not return a solution</strong>, so no fixed-wing
-        trajectory appears in the charts or the candidate list below. This is a failure of that fit,
-        not evidence against an aircraft: see the Checks section for the recorded reason.</p>`}
-        ${closeRangeHTML}`;
-
-    // ---- candidate-interpretation gallery, comparison, verdict ----
-    const rankedGroups = groupAndRankHypotheses(hypotheses, {useTruth: false, dataset});
-    const rankedHyps = rankedGroups.flatMap((group) => group.items);
-    const screeningRanked = rankAllHypotheses(hypotheses, {useTruth: false, dataset});
-    const screeningSummaryHTML = buildScreeningSummaryHTML(screeningRanked);
-    const cardsHTML = rankedGroups.map((group) => {
-        const cards = group.items.map(({h, r, tied, groupIndex, groupSize}) => {
-            const thumb = hypothesisThumbnail(dataset, h);
-            const statsHTML = hypothesisStats(h, dataset, truthMaxG).map(([k, v, html]) =>
-                `<div class="st"><div class="stk">${escapeHtml(k)}</div>` +
-                `<div class="stv">${html ?? escapeHtml(v)}</div></div>`).join("");
-            const badgesHTML = [tierBadge(r), ...coLeaderBadge(r), ...completenessBadges(r)].map((badge) =>
-                `<span class="pill" style="background:${badge.color}">${escapeHtml(badge.label)}</span>`).join("");
-            const tieText = tied ? " · display-score tie" : "";
-            return `
-            <div class="card">
-                <div class="card-h">
-                    <span class="card-name">${escapeHtml(h.name)}</span>
-                    <span class="card-pills">${badgesHTML}</span>
-                </div>
-                <div class="card-sub">${escapeHtml(h.subtitle)}</div>
-                <div class="card-order">#${groupIndex + 1} of ${groupSize} within ${escapeHtml(group.shortLabel)}${escapeHtml(tieText)}</div>
-                <img class="card-thumb" src="${thumb}" alt="Overhead view of the ${escapeHtml(h.name)} trajectory">
-                <div class="card-stats">${statsHTML}</div>
-                <p class="rank-basis"><strong>Rank basis without truth:</strong> ${rankingTextHTML(rankingExplanation(h, r, {useTruth: false}), h, r)}</p>
-            </div>`;
-        }).join("");
-        return `<div class="candidate-group"><h3>${escapeHtml(group.label)}</h3>` +
-            `<p class="sub">${escapeHtml(group.description)}</p><div class="cards">${cards}</div></div>`;
+    const diagnostics = casCases.filter(c => c.hypothesis).map(c => {
+        const charts = hypothesisSeriesCharts(dataset, c.hypothesis, {truth, width: 900, height: 310});
+        if (!charts) return "";
+        return `<h3>${esc(c.label)}</h3>` + figure(charts.gURL, `${c.short} acceleration`)
+            + figure(charts.spdURL, `${c.short} 3D speed`) + figure(charts.errURL, `${c.short} LOS residual`);
     }).join("");
+    if (diagnostics) add("cas-diagnostics", "CAS candidate diagnostics", `<p>These are the actual selected gallery trajectories, including any slow-valley replacement. Speeds include vertical motion: airspeed is blue and ground speed green. Thin dashed lines show truth; air-relative truth diagnostics use the candidate's wind assumption. The gray trace uses the separate fine scale.</p>` + diagnostics);
 
-    // Use the same precision as the cards so close residuals stay distinct.
-    const losErrShort = (h) => {
-        const err = h?.errDeg;
-        if (!Number.isFinite(err)) return "—";
-        return formatRawLosResidual(h);
-    };
-    const compRows = screeningRanked.map(({h, r, category}, index) => {
-        const m = h.metricsFull;
-        return `
-        <tr${r.rank >= 3 ? ' class="best"' : ""}>
-            <td>${escapeHtml(category.shortLabel)}</td>
-            <td>${index + 1}</td>
-            <td>${escapeHtml(h.name)}</td>
-            <td>${nm1(m.range.min)}–${nm1(m.range.max)}</td>
-            <td>${kt1(m.airSpeed.mean)}${h.params?.motionFrame === "ground" ? " ground" : " air"}</td>
-            <td>${(Math.abs(m.altitude.mean) < 15.24 ? 0 : m.altitude.mean / 304.8).toFixed(1)}</td>
-            <td>${fpm0(m.verticalSpeed.mean)}</td>
-            <td>${m.gLoad.max.toFixed(2)}</td>
-            <td>${escapeHtml(losErrShort(h))}</td>
-            <td><span class="pill" style="background:${r.color}">${escapeHtml(r.label)}</span></td>
-        </tr>`;
+    const profiles = [
+        {rows: fastProfile, color: VIZ.fastObj, label: `Supplied wind, target ${number(toKt(speedTarget), 0)} kt`},
+        {rows: slowProfile, color: VIZ.slowObj, label: "Supplied wind, target 5 kt"},
+        {rows: profilesFreeWind?.slowProfile, color: VIZ.aircraft, label: "Fitted wind, target 5 kt"},
+    ].filter(p => p.rows?.length);
+    if (profiles.length) add("range-profiles", "Range profiles", figure(lineChart({width: 940, height: 500, logY: true,
+        title: "Motion cost versus assumed start range", xLabel: "start range (NM)", yLabel: "heuristic score (log scale)",
+        series: profiles.map(p => ({xs: p.rows.map(r => toNM(r.startDist)), ys: p.rows.map(r => r.score), color: p.color, label: p.label})),
+    }), "Range profiles under the stated wind and speed assumptions", "These are separate soft-target range searches, not the constant-air-speed heatmaps. A low or flat score is conditional on the model, priors and smoothing; it does not establish a unique range or a universal physical lower bound."));
+
+    const ss = analyzeSolutionSpace({dataset, fastProfile: fastProfile ?? []});
+    add("candidate-details", "Candidate measurements and explanations", `<p>One full-width entry per candidate, grouped by method. Truth statistics and overlays are comparison only; ranking explanations exclude truth.</p>`
+        + buildReportHypothesisDetails(dataset, detailOrder, ss, truthMaxG, id));
+
+    add("inputs", "Inputs, filtering and angular-size evidence", `<p>Frames ${dataset.frame0 ?? 0}–${dataset.frame1 ?? dataset.n - 1}; ${dataset.n} samples at ${number(dataset.fps, 3)} frames/s; duration ${number((dataset.n - 1) / dataset.fps, 1)} s. Supplied wind: ${esc(windText ?? "not recorded")}. Target-speed prior: ${number(toKt(speedTarget), 1)} kt.</p>`
+        + `<p><strong>Angular size:</strong> judging ${dataset.angularSizeOptions?.judge ? "on" : "off"}; fitting ${dataset.angularSizeOptions?.fit ? "on, supported methods only" : "off"}; constant projected size ${dataset.angularSizeOptions?.constantProjectedSize ? "assumed" : "not assumed"}. ${esc(angularSizeInventory(dataset.angularSize).summary)} ${esc(angularSizeInventory(dataset.angularSize).upperOnlyNote)}</p>`
+        + `<p>${esc(dataset.angularSize?.source ?? "No recorded angular-size source.")} Size checks do not identify the object. Each candidate states whether size entered its fit.</p>`
+        + (manifest.filtering ? `<p>${esc(manifest.filtering.note)}</p>`
+            + [...manifest.filtering.rows, ...manifest.filtering.outputFilters].map(f =>
+                `<h3>${esc(f.source)}</h3><p><strong>${esc(f.method)}</strong> (${esc(f.status)}); ${esc(f.duration)}. ${esc(f.detail)}</p>`).join("")
+            : "<p>Filtering metadata was not captured for this run.</p>"));
+
+    add("methods", "Methods and interpretation limits", `<p><strong>Constant air speed.</strong> A range/airspeed grid drives a smoothed range-spline solve. Selection includes smoothness, speed fidelity and a weak target-speed prior; fitted-wind searches retain the shared wind penalty. The near-best family tolerance is max(0.05, 15% of the best score), a heuristic rather than a confidence interval. A separate slow-valley comparison can replace the grid representative.</p>
+        <p><strong>Minimum acceleration and range profiles.</strong> An acceleration-minimizing range spline follows the sightlines, with a soft speed target when used. Smoothing can move the final path off the rays; the resulting residual is reported. Minimum Speed instead minimizes air-relative speed. Allowing wind to vary changes both searches and does not make their inferred winds weather observations.</p>
+        <p><strong>Fixed-wing aircraft.</strong> A forward trajectory with constant horizontal airspeed, evolving turn rate and constant climb is optimized using differential evolution and local polish. Supplied and fitted wind are separate searches; soft priors and hard search bounds remain part of the interpretation.</p>
+        <p><strong>Balloon.</strong> A passive horizontal wind tracer starts with steady drift and constant rise or sink. More complex wind and vertical-life-cycle models are retained only when they improve the fit sufficiently. Zero horizontal airspeed does not imply zero 3D airspeed during ascent.</p>
+        <p><strong>Other methods.</strong> Each candidate entry describes its own geometric, smoothing or physical model, constraints and optimizer completion. Candidate classes are not mutually exclusive probabilities.</p>
+        <p><strong>Metrics and truth.</strong> Motion metrics use finite differences over about half a second, with acceleration differentiated again. Truth is excluded from fitting and primary ranking. Truth LOS error includes observation error; truth airspeed requires a wind assumption. Partial truth coverage is omitted from derivative comparisons.</p>
+        <p><strong>Limits.</strong> Active bounds and incomplete searches qualify results. A close LOS fit is necessary but does not uniquely establish distance, wind, object identity or physical cause. Independent wind, range, size or other corroboration can distinguish otherwise compatible trajectories.</p>`);
+
+    const gridTables = casCases.filter(c => c.sweep?.results?.length).map(c => {
+        const top = [...c.sweep.results].sort((a, b) => a.score - b.score).slice(0, 10);
+        return `<h3>${esc(c.label)}</h3>` + table(["#", "Start range (NM)", "Requested speed (kt)", "Grid score", "Wind cost", "Speed-hold error (kt)"], top.map((r, i) => row([
+            String(i + 1), number(toNM(r.startDist)), number(toKt(r.speed), 1), number(r.score, 3), number(r.windCost ?? 0, 3), number(toKt(r.spdErr), 2),
+        ])));
     }).join("");
+    if (gridTables) add("grid-cells", "Appendix: lowest-score CAS grid cells", "<p>The ten lowest grid scores for each wind treatment. These rows are search diagnostics; they need not contain a separately selected slow-valley candidate.</p>" + gridTables);
 
-    const verdictHTML = buildVerdict(hypotheses, provenance, null, dataset);
-    const truthSummaryHTML = truth ? buildTruthSummaryHTML(rankedHyps, truth, dataset) : "";
+    const runs = [{fit: aircraft, label: "Fixed-wing — supplied wind"}, {fit: aircraftFreeWind, label: "Fixed-wing — fitted wind"}].filter(c => c.fit?.runs?.length);
+    if (runs.length) add("aircraft-runs", "Appendix: fixed-wing search runs", runs.map(c => `<h3>${esc(c.label)}</h3>`
+        + table(["Run", "Cost", "Start range (NM)", "Horizontal airspeed (kt)", "Climb (fpm)"], c.fit.runs.map((r, i) => row([
+            String(i + 1), number(r.cost, 3), number(toNM(r.startDist)), number(toKt(r.tas), 1), number(r.climb * 60 / 0.3048, 0),
+        ]))) + c.fit.runs.map((r, i) => `<p class="sub">Run ${i + 1}: heading ${number(r.heading, 1)}°; turn ${number(r.turnRate, 3)}°/s; turn acceleration ${number(r.turnAccel, 4)}°/s²; seed ${esc(r.de?.seed ?? "unrecorded")}; ${esc(r.de?.evaluations ?? "unrecorded")} evaluations; termination ${esc(r.de?.stopReason ?? "unknown")} / ${esc(r.polishStopReason ?? "unknown")}.</p>`).join("")).join("")
+        + "<p>Agreement between runs is a stability diagnostic, not proof of global convergence.</p>");
 
-    // Executive assessment block: the frozen headline plus the per-class
-    // evidence matrix — the SAME record the gallery strip and verdict render,
-    // never a reclassification. Truth has a separate comparison section.
-    const ea = executiveAssessment;
-    const executiveHTML = ea ? `
-<section>
-    <h2>Assessment</h2>
-    <p><strong>${escapeHtml(ea.headline)}</strong> ${escapeHtml(ea.detail)}</p>
-    <table class="comp">
-        <thead><tr><th>Interpretation</th><th>Tested</th><th>Complete</th><th>Close fit</th>
-            <th>Ordinary motion</th><th>Independent evidence</th><th>Status</th></tr></thead>
-        <tbody>
-        ${ea.classes.map((c) => {
-        const status = c.viable
-            ? (c.supported ? "viable — independently supported" : "viable")
-            : (c.tested ? (c.blocker || "not viable") : "not run");
-        // A negative evidence result may only be reported where an evidence
-        // CHECK actually exists and ran. Only two do in this release: the
-        // balloon wind comparison and the catalogue angular match. The other
-        // classes have no corroboration input yet (no ADS-B/radar), so their
-        // cell is "not checked" — never "none available", which would falsely
-        // read as a check that came back empty.
-        const evCell = c.key === "balloon"
-            ? (c.windRating ? `wind: ${c.windRating}` : "not checked")
-            : c.key === "knownObject"
-                ? (c.viable ? "close catalogue match (pointing uncertainty uncalibrated)"
-                    // the blocker distinguishes "matched but shadowed/faint"
-                    // from a genuinely distant match — never collapse the two
-                    : c.tested ? (c.blocker || "no close catalogue match") : "not checked")
-                : "not checked (no corroboration input in this release)";
-        const yn = (v) => (v ? "✓" : "—");
-        return `<tr><td style="text-align:left">${escapeHtml(c.label)}</td>`
-            + `<td>${yn(c.tested)}</td><td>${yn(c.complete)}</td><td>${yn(c.close)}</td>`
-            + `<td>${yn(c.ordinary)}</td><td>${escapeHtml(evCell)}</td>`
-            + `<td style="text-align:left">${escapeHtml(status)}</td></tr>`;
-    }).join("")}
-        </tbody>
-    </table>
-    <p class="sub">"Probably" requires independent corroboration; a sole passing fit reads "consistent
-    with". Checks not run or unavailable this pass:
-    ${ea.notRun.length ? escapeHtml(ea.notRun.join("; ")) : "none"}.
-    Causes with no model in this analysis (never tested, never excluded):
-    ${escapeHtml(ea.notModelled.join("; "))}.</p>
-</section>` : "";
-    const reportSS = analyzeSolutionSpace({dataset, fastProfile});
-    const solutionDetailsHTML = buildReportHypothesisDetails(dataset, rankedHyps, reportSS, truthMaxG);
-
-    // ---- tables ----
-    const sweepRows = top.map((r, i) => `
-        <tr${i === 0 ? ' class="best"' : ""}>
-            <td>${i + 1}</td><td>${nm1(r.startDist)}</td><td>${kt1(r.speed)}</td>
-            <td>${r.score.toFixed(3)}</td>
-            <td>${r.metrics.gLoad.rms.toFixed(2)}</td><td>${r.metrics.gLoad.max.toFixed(2)}</td>
-            <td>${r.metrics.turnRate.std.toFixed(2)}</td>
-            <td>${fpm0(r.metrics.verticalSpeed.mean)}</td>
-            <td>${r.spdErr !== undefined ? kt1(r.spdErr) : "—"}</td>
-        </tr>`).join("");
-
-    const runRows = (aircraft?.runs ?? []).map((r, i) => `
-        <tr${i === 0 ? ' class="best"' : ""}>
-            <td>${i + 1}</td><td>${r.cost.toFixed(2)}</td><td>${nm1(r.startDist)}</td>
-            <td>${r.heading.toFixed(1)}</td><td>${kt1(r.tas)}</td>
-            <td>${r.turnRate.toFixed(3)}</td><td>${r.turnAccel.toFixed(4)}</td>
-            <td>${fpm0(r.climb)}</td>
-            <td>${r.de?.seed !== undefined ? `0x${r.de.seed.toString(16).padStart(8, "0")}` : "—"}</td>
-            <td>${r.de?.evaluations ?? "—"}</td>
-            <td>${escapeHtml(`${r.de?.stopReason ?? "unknown"} / ${r.polishStopReason ?? "unknown"}`)}</td>
-        </tr>`).join("");
-    const manifestJSON = escapeHtml(JSON.stringify({...manifest,
-        angularSize: {options: dataset.angularSizeOptions ?? {judge: false, fit: false, constantProjectedSize: false},
-            fittedInput: dataset.angularSizeFittedInput ?? null,
-            observations: dataset.angularSize ?? null, fittingByCandidate: hypotheses.map(h => ({name: h.name, ...h.angularSizeFit}))}, executive: executiveAssessment ?? manifest.executive}, null, 2));
-
-    // ---- footer / version ----
+    const reportManifest = {...manifest, executive: assessment, angularSize: {options: dataset.angularSizeOptions, observations: dataset.angularSize}};
+    add("audit", "Appendix: run audit and reproducibility", `<p>The report records the run's inputs, assumptions, search bounds and termination information. Retain the original observations, wind and terrain sources, and application revision to reproduce it.</p>
+        <p>Input fingerprint: ${esc(manifest.inputFingerprint ?? "not recorded")}. Source: ${esc(manifest.situation ?? sitName)}. Failed or unavailable checks: ${failures.length}.</p>
+        <p>The complete machine-readable manifest is embedded in this HTML and available through <a href="#report-top">Download run data</a>. Its raw JSON is omitted from the printed report.</p>
+        <details class="manifest"><summary>Inspect complete run manifest</summary><pre>${esc(JSON.stringify(reportManifest, null, 2))}</pre></details>`);
     let version = "";
-    try { version = process.env.BUILD_VERSION_STRING || ""; } catch (e) { version = ""; }
-
-    const scoreNote = "score = 4·g<sub>RMS</sub> + g<sub>max</sub> + 0.05·turn σ " +
-        "+ 0.02·max(0, |VS<sub>mean</sub>|−5) + 0.2·((v−v<sub>target</sub>)/250 kt)² " +
-        "+ (speed-hold error/10 kt)² — lower is a better match to this heuristic";
-
-    const fileName = "Traverse-Analysis-" +
-        String(sitName).replace(/[^A-Za-z0-9._-]+/g, "_") + ".html";
-
-    const downloadScript =
-        '<script>\n' +
-        'document.getElementById("dl-report").addEventListener("click", function () {\n' +
-        '    var html = "<!DOCTYPE html>\\n" + document.documentElement.outerHTML;\n' +
-        '    this.href = URL.createObjectURL(new Blob([html], {type: "text/html"}));\n' +
-        '});\n' +
-        '<\/script>';
-
-    // Light/dark toggle. The choice persists (localStorage, guarded — a saved
-    // copy opened from file:// may not have storage), and printing ALWAYS gets
-    // the light theme: forced on beforeprint, restored on afterprint. A report
-    // downloaded while in light mode keeps the class in its saved markup and
-    // still carries this script, so the toggle works in saved copies too.
-    const themeScript =
-        '<script>\n' +
-        '(function () {\n' +
-        '    var KEY = "sitrec-report-theme";\n' +
-        '    var btn = document.getElementById("theme-toggle");\n' +
-        '    // Seed from the DOCUMENT, not a hardcoded default: a copy saved in\n' +
-        '    // light mode carries the class in its markup, and must reopen light\n' +
-        '    // even where storage is unavailable (file://). Stored preference,\n' +
-        '    // when readable, still wins over the snapshot state.\n' +
-        '    var mode = document.documentElement.classList.contains("light") ? "light" : "dark";\n' +
-        '    function apply(m) {\n' +
-        '        document.documentElement.classList.toggle("light", m === "light");\n' +
-        '        btn.textContent = (m === "light") ? "Dark view" : "Light view (print)";\n' +
-        '    }\n' +
-        '    try { mode = localStorage.getItem(KEY) || mode; } catch (e) { }\n' +
-        '    apply(mode);\n' +
-        '    btn.addEventListener("click", function () {\n' +
-        '        mode = (mode === "light") ? "dark" : "light";\n' +
-        '        try { localStorage.setItem(KEY, mode); } catch (e) { }\n' +
-        '        apply(mode);\n' +
-        '    });\n' +
-        '    var preprint = null;\n' +
-        '    window.addEventListener("beforeprint", function () {\n' +
-        '        preprint = mode;\n' +
-        '        apply("light");\n' +
-        '    });\n' +
-        '    window.addEventListener("afterprint", function () {\n' +
-        '        if (preprint !== null) { apply(preprint); preprint = null; }\n' +
-        '    });\n' +
-        '})();\n' +
-        '<\/script>';
-
-    return `<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Traverse Analysis — ${escapeHtml(sitName)}</title>
-<style>
-:root { color-scheme: dark; }
-body { background: #0d0f12; color: #d8dce2; margin: 0; padding: 32px 20px;
-    font: 15px/1.55 system-ui, -apple-system, "Segoe UI", sans-serif; }
-.wrap { max-width: 1020px; margin: 0 auto; }
-h1 { font-size: 24px; margin: 0 0 4px 0; color: #e8eaed; }
-h2 { font-size: 18px; margin: 40px 0 12px 0; color: #e8eaed;
-    border-bottom: 1px solid rgba(255,255,255,0.08); padding-bottom: 6px; }
-.sub { color: #8a9099; font-size: 13px; margin-bottom: 20px; }
-.meta { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-    gap: 10px; margin: 18px 0; }
-.meta > div { background: #14161a; border: 1px solid rgba(255,255,255,0.08);
-    border-radius: 8px; padding: 10px 12px; }
-.meta .k { font-size: 11px; color: #8a9099; text-transform: uppercase; letter-spacing: 0.05em; }
-.meta .v { font-size: 15px; color: #e8eaed; font-variant-numeric: tabular-nums; margin-top: 2px; }
-figure { margin: 16px 0; background: #14161a; border: 1px solid rgba(255,255,255,0.08);
-    border-radius: 8px; padding: 12px; }
-figure img { width: 100%; height: auto; display: block; border-radius: 4px; }
-figcaption { font-size: 13px; color: #8a9099; margin-top: 8px; }
-.row { display: flex; flex-wrap: wrap; gap: 12px; }
-.row figure { flex: 1 1 300px; margin: 0; min-width: 280px; }
-.tablebox { overflow-x: auto; }
-table { border-collapse: collapse; width: 100%; font-size: 13.5px;
-    font-variant-numeric: tabular-nums; }
-th, td { padding: 6px 10px; text-align: right;
-    border-bottom: 1px solid rgba(255,255,255,0.08); white-space: nowrap; }
-/* Headers may wrap onto two lines ("Horizontal / airspeed (kt)") so a long
-   unit-bearing header never forces its column wider than the values need —
-   that, not the data, is what made tables overflow into scrollbars. */
-th { color: #8a9099; font-weight: 600; white-space: normal; vertical-align: bottom; }
-td:first-child, th:first-child { text-align: left; }
-tr.best td { color: #e8eaed; font-weight: 600; }
-.summary p, .methods p { max-width: 78ch; }
-strong { color: #e8eaed; }
-a { color: #3987e5; }
-footer { margin-top: 44px; color: #8a9099; font-size: 13px;
-    border-top: 1px solid rgba(255,255,255,0.08); padding-top: 12px;
-    display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
-.cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
-    gap: 14px; margin: 18px 0; }
-.candidate-group { margin: 26px 0 34px; padding-top: 10px; border-top: 1px solid rgba(255,255,255,0.1); }
-.candidate-group h3 { color:#dce3eb; font-size:16px; margin:0 0 3px; }
-.card { background: #14161a; border: 1px solid rgba(255,255,255,0.08); border-radius: 10px;
-    padding: 12px; display: flex; flex-direction: column; }
-.card-h { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-.card-name { font-weight: 700; color: #e8eaed; font-size: 15px; }
-.card-pills, .solution-pills { display:flex; gap:5px; flex-wrap:wrap; justify-content:flex-end; }
-.card-sub { color: #8a9099; font-size: 12px; margin: 3px 0 9px 0; }
-.card-order, .solution-order { color:#7fb0ee; font-size:12px; margin:0 0 9px; }
-.card-thumb { width: 100%; height: auto; display: block; border-radius: 6px;
-    border: 1px solid rgba(255,255,255,0.06); }
-.card-stats { display: grid; grid-template-columns: 1fr 1fr; gap: 7px 12px; margin-top: 11px; }
-.st { display: flex; flex-direction: column; }
-.stk { font-size: 10.5px; color: #8a9099; text-transform: uppercase; letter-spacing: 0.04em; }
-.stv { font-size: 13px; color: #e8eaed; font-variant-numeric: tabular-nums; margin-top: 1px; }
-.solution-detail { margin: 22px 0 34px 0; padding-bottom: 28px;
-    border-bottom: 1px solid rgba(255,255,255,0.08); }
-.solution-detail figure { margin: 14px 0 16px 0; }
-.solution-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; }
-.solution-head h3 { margin: 0; color: #e8eaed; font-size: 17px; line-height: 1.25; }
-.solution-sub { color: #8a9099; font-size: 13px; margin-top: 3px; }
-.solution-metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
-    gap: 8px 14px; margin: 12px 0; padding: 11px; background: #15181d; border-radius: 8px; }
-.solution-series { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0; }
-.solution-series img { flex: 1 1 30%; min-width: 260px; max-width: 100%; height: auto;
-    border-radius: 6px; border: 1px solid rgba(255,255,255,0.06); }
-.solution-lead { color: #e0e4ea; font-size: 15px; }
-.tg-score-help { cursor:help; text-decoration:underline dotted; text-underline-offset:3px; }
-.rank-basis { color:#c7ced7; font-size:13px; line-height:1.5; padding:9px 11px;
-    background:#171b20; border-left:3px solid #7fb0ee; border-radius:5px; }
-.solution-detail h4 { color: #7fb0ee; font-size: 11.5px; font-weight: 700; text-transform: uppercase;
-    letter-spacing: 0.05em; margin: 18px 0 5px 0; }
-.solution-detail p { max-width: 78ch; }
-.pill { display: inline-block; padding: 2px 9px; border-radius: 999px; font-size: 11px;
-    font-weight: 700; color: #0d0f12; white-space: nowrap; }
-td .pill { color: #0d0f12; }
-table.comp td:nth-child(3), table.comp th:nth-child(3),
-table.truthtab td:nth-child(2), table.truthtab th:nth-child(2),
-table.truthtab td:nth-child(3), table.truthtab th:nth-child(3) { text-align: left; }
-table.screeningtab td, table.screeningtab th { text-align:left; white-space:normal; }
-table.screeningtab td:nth-child(1), table.screeningtab td:nth-child(6) { text-align:right; white-space:nowrap; }
-table.screeningtab td:last-child { min-width:260px; max-width:55ch; }
-.warning { margin: 16px 0; padding: 12px 14px; border-radius: 8px;
-    background: #4a3a12; color: #ffd479; border: 1px solid #8a6d2a; }
-details.manifest { background:#14161a; border:1px solid rgba(255,255,255,0.08);
-    border-radius:8px; padding:10px 12px; }
-details.manifest summary { cursor:pointer; color:#e8eaed; font-weight:600; }
-details.manifest pre { white-space:pre-wrap; overflow-wrap:anywhere; font:12px/1.45 ui-monospace, monospace;
-    color:#b9bfc7; }
-/* ---- Light theme: designed to PRINT clearly (dark text on white, no solid
-   ink blocks). Toggled by the fixed button; printing forces it for the
-   duration of the print regardless of the on-screen choice (beforeprint /
-   afterprint hooks in the theme script). ---- */
-html.light { color-scheme: light; }
-html.light body { background: #fff; color: #23262a; }
-html.light h1, html.light h2 { color: #111; }
-html.light h2 { border-bottom-color: rgba(0,0,0,0.18); }
-html.light .sub, html.light figcaption, html.light footer { color: #5a6068; }
-html.light .meta > div, html.light figure, html.light details.manifest,
-html.light .card { background: #f4f5f7; border-color: rgba(0,0,0,0.14); }
-html.light .meta .k, html.light .stk, html.light th,
-html.light .card-sub, html.light .solution-sub { color: #5a6068; }
-html.light .meta .v, html.light .stv, html.light .card-name, html.light strong,
-html.light tr.best td, html.light .solution-head h3,
-html.light details.manifest summary, html.light .candidate-group h3 { color: #111; }
-html.light th, html.light td { border-bottom-color: rgba(0,0,0,0.14); }
-html.light footer { border-top-color: rgba(0,0,0,0.18); }
-html.light .candidate-group { border-top-color: rgba(0,0,0,0.18); }
-html.light .card-thumb, html.light .solution-series img { border-color: rgba(0,0,0,0.12); }
-html.light .card-order, html.light .solution-order,
-html.light .solution-detail h4 { color: #2b64ad; }
-html.light .solution-metrics { background: #eef0f3; }
-html.light .solution-lead { color: #23262a; }
-html.light .solution-detail { border-bottom-color: rgba(0,0,0,0.14); }
-html.light .rank-basis { color: #2d3238; background: #eef2f7; border-left-color: #3d78c2; }
-html.light a { color: #1a6fd0; }
-html.light details.manifest pre { color: #444; }
-/* The inline-styled banner variants (amber/green/red/pink) flatten to ONE
-   neutral light card here — their meaning rides on the symbols and lead text,
-   and solid dark ink blocks are exactly what a printout must not have. */
-html.light .warning { background: #f4f5f7 !important; color: #23262a !important;
-    border-color: rgba(0,0,0,0.3) !important; }
-/* Charts and plots are pre-rendered dark PNGs. In light mode invert them —
-   dark background becomes light, light gridlines/labels become dark — with a
-   180° hue rotation so each series keeps a recognizable colour (invert alone
-   would turn every hue into its complement). Scoped to html.light only, so
-   the dark view ships the exact same untouched pixels as before. */
-html.light figure img, html.light .solution-series img, html.light .card-thumb {
-    filter: invert(1) hue-rotate(180deg); }
-/* Inversion flips BRIGHTNESS, so any caption that describes a brightness
-   encoding must flip its wording with the theme (the heatmap: dark mode
-   "darker = more plausible", light mode "lighter = more plausible"). */
-.light-only { display: none; }
-html.light .light-only { display: inline; }
-html.light .dark-only { display: none; }
-#theme-toggle { position: fixed; top: 14px; right: 14px; z-index: 50;
-    padding: 8px 14px; font-size: 13px; font-weight: 600; cursor: pointer;
-    border-radius: 8px; border: 1px solid rgba(255,255,255,0.25);
-    background: rgba(20,22,26,0.92); color: #e8eaed; }
-html.light #theme-toggle { background: rgba(255,255,255,0.95); color: #23262a;
-    border-color: rgba(0,0,0,0.3); }
-@media print {
-    #theme-toggle, #dl-report { display: none !important; }
-    body { padding: 0; }
-}
-</style>
-</head>
-<body>
-<button id="theme-toggle" type="button"
-    title="Toggle a light rendering designed to print clearly. Printing always uses it.">Light view (print)</button>
-<div class="wrap">
-<header>
-    <h1>Traverse Analysis — ${escapeHtml(sitName)}</h1>
-    <div class="sub">Generated ${escapeHtml(new Date().toLocaleString())}</div>
-    <div class="meta">
-        <div><div class="k">Frame range</div><div class="v">${globalFrame0}–${globalFrame1}</div></div>
-        <div><div class="k">Frames</div><div class="v">${n} @ ${fps} fps</div></div>
-        <div><div class="k">Duration</div><div class="v">${durationS.toFixed(1)} s</div></div>
-        <div><div class="k">LOS azimuth</div><div class="v">${azOf(0).toFixed(1)}° → ${azOf(n - 1).toFixed(1)}°</div></div>
-        <div><div class="k">LOS elevation</div><div class="v">${elOf(0).toFixed(1)}° → ${elOf(n - 1).toFixed(1)}°</div></div>
-        <div><div class="k">Wind used</div><div class="v">${escapeHtml(windText)}</div></div>
-        <div><div class="k">Speed target</div><div class="v">${kt1(speedTarget)} kt</div></div>
-        ${truth ? `<div><div class="k">Truth track</div><div class="v">${escapeHtml(truth.label)}</div></div>` : ""}
-        <div><div class="k">Analysis coverage</div><div class="v">${hypotheses.filter((h) => h.track).length} results · ${failures.length} failed/unavailable</div></div>
-    </div>
-</header>
-
-<section>
-    <h2>Angular-size evidence</h2>
-    <p>Judging: ${dataset.angularSizeOptions?.judge ? "on" : "off"}. Fitting: ${dataset.angularSizeOptions?.fit ? "experimental, supported methods only (CPU)" : "off"}.
-    Constant projected physical size: ${dataset.angularSizeOptions?.constantProjectedSize ? "assumed" : "not assumed"}.</p>
-    <p>${escapeHtml(angularSizeInventory(dataset.angularSize).summary)} ${escapeHtml(angularSizeInventory(dataset.angularSize).upperOnlyNote)}</p>
-    <p>${escapeHtml(dataset.angularSize?.source ?? "No recorded source label")}. ${(dataset.angularSize?.samples ?? []).length} absolute samples;
-    ${(dataset.angularSize?.relative ?? []).length} relative samples${dataset.angularSize?.relativeBound ? "; clip-wide relative bound" : ""}.
-    Absolute size is checked against broad class-size envelopes. Size-change inference requires the constant-size assumption.
-    These checks do not identify an object or change the BOT Score formula. Each candidate states whether size entered its fit.</p>
-</section>
-
-<section id="ranking-without-truth">
-    <h2>Ranking without truth</h2>
-    <p class="sub">The reference track does not affect this order. Results are compared by broad screening grade, optional angular-size conflicts,
-    search completion and active model limits, then by the BOT Score — lower is better.
-    BOT Score adds weighted motion and sightline-fit terms; hover over its name for the calculation.
-    Co-leaders pass the same screening checks; their score order is a heuristic, not a probability.
-    Scores marked ° are angular-only checks and are not compared numerically with trajectory scores.</p>
-    ${screeningSummaryHTML}
-</section>
-
-${truth ? `<section id="ranking-with-truth">
-    <h2>Ranking with truth</h2>
-    <p class="sub">The same candidate paths are now compared with the reference track. They have not been refitted.
-    This separate order does not change the ranking without truth above.</p>
-    ${truthSummaryHTML}
-</section>` : ""}
-
-${executiveHTML}
-${windComparisonHTML(hypotheses, dataset)}
-
-<section>
-    <h2>Filtering and interpolation</h2>
-    ${filteringSummaryHTML(manifest.filtering)}
-</section>
-
-${provenance?.circular ? `<div class="warning"><strong>Constructed LOS — validation only.</strong> ` +
-    `${escapeHtml(provenance.reason)} Fits below test internal consistency, not independent object inference.</div>` : ""}
-
-${provenance?.measuredAlternativeNote ? `<div class="warning" style="background:#16321f;color:#9fd8ae;border-color:#2f6a42">` +
-    `<strong>Alternative sightlines available.</strong> ${escapeHtml(provenance.measuredAlternativeNote)}</div>` : ""}
-
-${provenance?.rangeUnobservable ? `<div class="warning" style="background:#4a1512;color:#ffab9e;border-color:#a03a2e">` +
-    `<strong>⛔ Range is NOT determined by this evidence.</strong> The sensor's motion over the analysis ` +
-    `window (baseline ${Math.round(provenance.sensorSpan ?? 0)} m) is negligible at the assumed working ` +
-    `distance: the sightlines contain no usable parallax, every distance along them fits equally well, ` +
-    `and each method's range reflects its own priors, not measurement.</div>` : ""}
-
-<section class="summary">
-    <h2>Analysis without truth</h2>
-    <p><strong>Overall interpretation.</strong> ${verdictHTML}</p>
-    ${geometryHTML}
-    ${metricsSummaryHTML}
-    ${failures.length ? `<p><strong>Unavailable checks:</strong> ${failures.map((f) =>
-        `${escapeHtml(f.method)} (${escapeHtml(f.error)})`).join("; ")}.</p>` : ""}
-    ${terrainChangedDuringRun ? `<p><strong>Terrain note:</strong> elevation data finished loading while this
-        analysis ran. Results use the elevation sampled during the run and are unlikely to be materially affected;
-        re-run once terrain has settled if you need the ground samples exact.</p>` : ""}
-    ${truthUnusableLabel ? `<p><strong>Truth note:</strong> the selected truth track
-        "${escapeHtml(truthUnusableLabel)}" overlaps only ${truthUnusableFrames} frame(s) of this A-B window, so
-        truth-based ordering is off and candidates are shown in the ordinary screening order.</p>` : ""}
-</section>
-
-<section>
-    <h2>Run audit manifest</h2>
-    <p class="sub">Frozen headline inputs, effective timing, search bounds, completeness flags, optimizer seeds,
-    termination metadata, and check coverage for this run. This is an audit summary, not a self-contained input archive;
-    source files, full wind/terrain fields, and the exact application revision must also be retained for reproduction.</p>
-    <details class="manifest"><summary>Show machine-readable manifest</summary><pre>${manifestJSON}</pre></details>
-</section>
-
-<section>
-    <h2>Candidate interpretations — ranking without truth</h2>
-    <p class="sub">Panels include trajectory constraints, fitting algorithms, and forward physical models;
-    they are not independent object identifications. The first ranking table gives the order across groups;
-    these panels are grouped by method and ordered without truth within each group. Each path is shown against the same
-    sightlines. Any truth measurements or reference overlays are comparison only. Screening pills summarize maneuvering, peak speed,
-    completeness, active model limits, and raw LOS residual under the stated assumptions.
-    Every term in the &ldquo;Rank basis&rdquo; line below &mdash; the ordering keys, the three tier
-    grades, the within-group score, the balloon nudge &mdash; is defined in
-    <a href="${escapeHtml(docUrl("docs/TraverseAnalysis", {anchor: "how-the-tiles-are-ranked", absolute: true}))}"
-    target="_blank" rel="noopener">How the tiles are ranked</a>.</p>
-    ${cardsHTML}
-</section>
-
-<section>
-    <h2>Candidate details — ranking without truth</h2>
-    <p class="sub">Expanded derivation, constraints, and solution-space notes for each candidate above.
-    Repeated per-candidate charts are omitted here; the shared comparison plots and full-resolution series below
-    provide the same evidence on common axes without duplicating dozens of large images.</p>
-    ${solutionDetailsHTML}
-</section>
-
-<section>
-    <h2>Measurements in ranking order without truth</h2>
-    <div class="tablebox">
-    <table class="comp">
-        <thead><tr>
-            <th>Group</th><th>#</th><th>Interpretation</th><th>Range (NM)</th><th>Speed (kt)</th><th>Alt (kft)</th>
-            <th>Climb (fpm)</th><th>Max accel (g)</th><th>Raw LOS residual</th><th>Screen</th>
-        </tr></thead>
-        <tbody>${compRows}</tbody>
-    </table>
-    </div>
-    <p class="sub">Same order as Ranking without truth above. Rows passing the broad screen are highlighted.
-    Altitude and speed are means; speed states its air or ground reference;
-    max accel is kinematic. Each candidate card above states the rank basis that actually controls its order,
-    and explains its mean LOS error and available reference comparison.</p>
-</section>
-
-<section>
-    <h2>Details</h2>
-    <p class="sub">The full sweep heatmap, range profile, best-solution time series, combined plan view,
-    and solution tables behind the gallery above.</p>
-</section>
-
-<section>
-    <h2>Constant-air-speed sweep</h2>
-    <figure>
-        <img src="${chartA}" alt="Heatmap of plausibility score over start range and air speed">
-        <figcaption>Score for every (start range, air speed) combination of the constant-air-speed
-        traverse; log color scale — <span class="dark-only">darker</span><span
-        class="light-only">lighter</span> = lower score = more plausible. ${scoreNote}.</figcaption>
-    </figure>
-</section>
-
-<section>
-    <h2>Range profile</h2>
-    <figure>
-        <img src="${chartB}" alt="Score versus assumed start range for fast and slow object hypotheses">
-        <figcaption>For each assumed start range, the score of the globally smoothest LOS-riding
-        trajectory (B-spline, soft speed target). A flat-bottomed valley means the data cannot
-        distinguish ranges within it; steep walls show ranges the data punishes.</figcaption>
-    </figure>
-</section>
-
-<section>
-    <h2>Selected constant-air representative: time series</h2>
-    <div class="row">
-        <figure><img src="${chartC1}" alt="Air speed time series"></figure>
-        <figure><img src="${chartC2}" alt="G-load time series"></figure>
-        <figure><img src="${chartC3}" alt="Turn rate time series"></figure>
-    </div>
-    <figure style="background:none;border:none;padding:0">
-        <figcaption>Per-frame physical demands of the selected constant-air-speed family representative${aircraft
-            ? " and the aircraft fit" : ""}. Values near the clip ends use shortened smoothing
-        windows.${aircraft ? "" : " The fixed-wing fit returned no solution, so it is absent from these charts."}</figcaption>
-    </figure>
-</section>
-
-<section>
-    <h2>Plan view</h2>
-    <figure>
-        <img src="${chartD}" alt="Plan view of sensor path, lines of sight, and candidate trajectories">
-        <figcaption>Local East/North (NM), equal aspect. Filled dot = start of each path, open
-        circle = end.</figcaption>
-    </figure>
-</section>
-
-<section>
-    <h2>10 lowest-score constant-air grid cells</h2>
-    <div class="tablebox">
-    <table>
-        <thead><tr>
-            <th>#</th><th>Range (NM)</th><th>Speed (kt)</th><th>Score</th>
-            <th>g RMS</th><th>g max</th><th>Turn σ (°/s)</th>
-            <th>VS mean (fpm)</th><th>Speed-hold err (kt)</th>
-        </tr></thead>
-        <tbody>${sweepRows}</tbody>
-    </table>
-    </div>
-</section>
-
-<section>
-    <h2>Aircraft fit runs</h2>
-    ${runRows ? `<div class="tablebox">
-    <table>
-        <thead><tr>
-            <th>Run</th><th>Cost</th><th>Range (NM)</th><th>Heading (ENU °)</th>
-            <th>Horizontal airspeed (kt)</th><th>Turn (°/s)</th><th>Turn accel (°/s²)</th>
-            <th>Climb (fpm)</th><th>Seed</th><th>DE evals</th><th>Stop (DE / polish)</th>
-        </tr></thead>
-        <tbody>${runRows}</tbody>
-    </table>
-    </div>
-    <p class="sub">Deterministically seeded differential-evolution restarts, each polished with a pattern search.
-    Agreement is a useful stability diagnostic, but is not proof of global convergence.</p>`
-    : `<p class="sub">The fixed-wing fit produced no runs to report — it returned no solution for
-    this geometry. An empty table would read as "the search found nothing interesting"; it did not
-    run to completion at all. See Checks for the recorded reason.</p>`}
-</section>
-
-<section class="methods">
-    <h2>Method notes</h2>
-    <p><strong>Constant-air-speed sweep.</strong> Solves a smoothed spline-QP trajectory over a grid of start
-    ranges and air speeds, scoring each track by flight smoothness and speed fidelity. Applying a card installs
-    that exact solved track as an analysis-result snapshot; it does not substitute the legacy sequential ray walker.</p>
-    <p><strong>Plausible traverse &amp; range profile.</strong> For a given start range, solves for
-    an acceleration-minimizing B-spline in range-along-ray with a soft airspeed target
-    (iteratively reweighted least squares). Output smoothing can move the final path off the sightlines;
-    its residual is reported. The range sweep compares maneuvering under these model and filtering
-    assumptions, rather than establishing a universal physical lower bound.</p>
-    <p><strong>Aircraft fit.</strong> Fits a simple fixed-wing model — constant horizontal airspeed through the air
-    mass, linearly varying turn rate, constant climb, positions advected by the wind — by differential
-    evolution plus pattern-search polish. The cost blends LOS angular error with loose penalties for
-    turning, climbing, and straying from the preferred speed.</p>
-    <p><strong>Forward physical models.</strong> Several interpretations are forward-integrated models fit
-    to the sightlines rather than paths pinned to the rays:
-    the fixed-wing aircraft (constant horizontal airspeed, slowly varying turn rate, constant climb); the sky
-    lantern / balloon (a wind tracer: horizontal velocity equals the bounded altitude-sheared wind — which may
-    also vary smoothly across the clip — with a rise / buoyancy-decay / terminal-sink vertical life cycle);
-    the quadcopter (a hover-capable multirotor, free ground speed and steep climb within a bounded envelope);
-    and the drone flown-inputs fit (the same object described as a few held control inputs, priced by control
-    effort rather than path shape). Because none is forced onto the lines of sight, each leaves a training
-    residual. Those residuals are not object-type probabilities and are not directly comparable without
-    accounting for parameter count, priors, bounds, wind freedom, and measurement covariance. A flexible
-    constant-acceleration residual is shown only as a generic reference; it combines pointing error and model
-    mismatch and is not a sensor-noise estimate.</p>
-    <p><strong>Scoring.</strong> The plausibility <em>priors</em> — a preferred speed, roughly level flight,
-    low g — are deliberately <em>soft</em>, so LOS-only data (which admits infinitely many exact solutions) is
-    characterized as a plausible family rather than a unique answer. The physical models additionally carry
-    <em>hard</em> parameter and search bounds (range, speed, climb, turn envelopes); a solution resting on one
-    of those bounds is flagged, because there the bound, not the data, is shaping the result.
-    Metrics use ~0.5 s central differences, so scores reflect sustained maneuvering, not solver noise.</p>
-</section>
-
-<footer>
-    <div>Generated by Sitrec Traverse Analysis${version ? " — " + escapeHtml(version) : ""}</div>
-    <div><a id="dl-report" href="#" download="${escapeHtml(fileName)}">Download this report</a></div>
-</footer>
-</div>
-${downloadScript}
-${themeScript}
-</body>
-</html>`;
+    try { version = process.env.BUILD_VERSION_STRING || ""; } catch (_) { /* optional */ }
+    return assembleTraverseReport({title: sitName, generated: new Date().toLocaleString(), version,
+        metaHTML: `<p class="sub">${dataset.n} frames · ${number((dataset.n - 1) / dataset.fps, 1)} s · ${hypotheses.filter(h => h.track).length} candidate trajectories. All results below refer to this frozen analysis run.</p>`,
+        summaryHTML, sections, manifest: reportManifest});
 }

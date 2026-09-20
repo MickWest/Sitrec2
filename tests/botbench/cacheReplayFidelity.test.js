@@ -306,8 +306,11 @@ describe("a row built from stored units equals a fresh one", () => {
         expect(only.units).toEqual({});
         const kalmanFresh = fresh.results.hypotheses.find((h) => h.key === "gfKalman");
         expect(diff(kalmanFresh, only.results.hypotheses[0], "kalman")).toBeNull();
-        // Without the sweep there is still a row, and a report that says why it is short.
-        expect(only.results.buildHtml()).toContain("without the constant-air-speed sweep");
+        // A subset gets the same complete report, with the absent grid disclosed.
+        const html = only.results.buildHtml();
+        expect(html).toContain("No constant-air-speed search was run");
+        expect(html).toContain('id="candidate-details"');
+        expect(html).toContain('id="contents"');
     });
 
     test("a subset fitted from nothing fits only the units it needs", async () => {

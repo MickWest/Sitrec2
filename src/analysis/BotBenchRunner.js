@@ -356,23 +356,14 @@ export async function runBotBenchAnalysis(record, {
         } : null,
     });
 
-    const buildHtml = () => (searched ? buildTraverseReportHTML({
+    const buildHtml = () => buildTraverseReportHTML({
         sitName: `BOTBench: ${record.label}`,
         dataset, windText, speedTarget: SPEED_TARGET_MS,
-        sweep, fastProfile, slowProfile, aircraft,
-        bestTrack: series.bestTrack, bestMetrics: series.bestMetrics,
-        sweepBestMetrics: series.sweepBestMetrics, constAirPick: series.constAirPick,
-        slowBestRow: series.slowBestRow, slowTrack: series.slowTrack,
-        closeLoM: series.closeLoM, closeHiM: series.closeHiM,
+        sweep, sweepFreeWind: battery.sweepFreeWind, profilesFreeWind: battery.profilesFreeWind,
+        aircraftFreeWind: battery.aircraftFreeWind, fastProfile, slowProfile, aircraft,
         hypotheses, provenance: battery.provenance, failures, manifest,
-        truth, terrainChangedDuringRun: false,
-        executiveAssessment,
-    }) : `<!doctype html><meta charset="utf-8"><title>BOTBench: ${record.label}</title>`
-        + `<body style="font:15px/1.5 system-ui,sans-serif;margin:24px;max-width:60em">`
-        + `<h2>BOTBench: ${record.label}</h2><p>This row was built from ${hypotheses.length} candidate(s) `
-        + `without the constant-air-speed sweep, so there is no search grid or range profile to report. `
-        + `Run it again with the Constant Air Speed solver selected for the full report.</p>`
-        + `<ul>${hypotheses.map((h) => `<li>${h.name}: ${Number.isFinite(h.errDeg) ? h.errDeg.toFixed(3) + "°" : "no track"}</li>`).join("")}</ul></body>`);
+        truth, terrainChangedDuringRun: false, executiveAssessment,
+    });
 
     const results = {
         // The file's own local ENU frame and epoch. Carried because a candidate
@@ -387,7 +378,7 @@ export async function runBotBenchAnalysis(record, {
             lonDeg: record.meta.originLLA[1],
             groundElevationMSL: record.meta.siteElevationMSL ?? 0,
         } : null,
-        dataset, sweep, fastProfile, slowProfile, aircraft,
+        dataset, sweep, sweepFreeWind: battery.sweepFreeWind, fastProfile, slowProfile, aircraft,
         best: sweep?.best ?? null, bestMetrics: series?.bestMetrics ?? null,
         slowBestRow: series?.slowBestRow ?? null,
         hypotheses, families, truth,

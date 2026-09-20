@@ -65,17 +65,17 @@ export const UNIT_ORDER = Object.freeze(Object.keys(BATTERY_UNITS));
  * build and reuses a unit only where the fresh fit reproduces the stored one.
  */
 export const UNIT_VERSIONS = Object.freeze({
-    constAir: 1,
-    constAirFreeWind: 2,
+    constAir: 2,
+    constAirFreeWind: 3,
     profiles: 1,
-    profilesFreeWind: 2,
+    profilesFreeWind: 3,
     aircraft: 2,
     aircraftFreeWind: 2,
     constAlt: 1,
     constAltFreeWind: 2,
     horizontalSpeed: 1,
     plausible: 1,
-    plausibleFreeWind: 2,
+    plausibleFreeWind: 3,
     gfCV: 1,
     gfCA: 1,
     kalman: 1,

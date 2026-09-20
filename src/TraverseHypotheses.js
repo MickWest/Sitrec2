@@ -29,7 +29,7 @@ import {classifyFixedWing, classifyQuadcopter} from "./VehicleModels";
 import {MULTIROTOR_LIMITS} from "./PhysicalEnvelopes";
 import {satelliteECEF, satelliteTrackENU, satelliteSunlit} from "./SatelliteSearch";
 import {localFitCompletionWarnings, settledButUnidentifiable} from "./TraverseRanking";
-import {datasetWithWindCorrection, solvedHorizontalWindAt} from "./TraverseWind";
+import {datasetWithWindCorrection, solvedHorizontalWindAt, windPriorCost} from "./TraverseWind";
 import {monteCarloName} from "./MonteCarloLOS";
 
 export const UNDERGROUND_TOL = 40;
@@ -120,6 +120,7 @@ export function syncRangeProfile(dataset, ranges, options = {}) {
         const {track, lam, wind} = traversePlausible(dataset, startDist, options);
         const m = trackMetrics(datasetForFittedWind(dataset, {wind}), track);
         let score = straightFlightScore(m);
+        if (wind) score += windPriorCost(wind.windE, wind.windN);
         if (vTarget !== null && scoreSpeedWeight > 0) {
             score += scoreSpeedWeight * ((m.airSpeed.mean - vTarget) / vSigma) ** 2;
         }
@@ -608,13 +609,14 @@ export function buildHypotheses({dataset, sweep, ca, horizontalSpeed, plausible,
                 searchBounds: boundaryPins.length ? boundaryPins : undefined,
                 params: {
                     range: slowPick.row.startDist, airSpeed: slowPick.speed, errFloor, ...slowPick.wind,
+                    speedTarget: sweep.speedTarget,
                     regime: "slow",
                     slowScore: slowPick.scored.score, fastScore: slowPick.fastScore,
                     boundaryLimited: slowProfile.boundaryLimited ? 1 : 0,
                 },
                 notes: "The smoothest path following the LOS rays while holding air speed fixed. "
                     + `The slow-object range valley (${nm1(slowPick.row.startDist)} NM at ~${kt1(slowPick.speed)} kt) `
-                    + `outscored the fast sweep's prior-anchored representative on the shared smoothness metric `
+                    + `outscored the fast sweep's prior-anchored representative on the shared smoothness${sweep.fitWind ? " and wind-prior" : ""} metric `
                     + `(${slowPick.scored.score.toFixed(2)} vs ${slowPick.fastScore.toFixed(2)}, lower is better) — `
                     + `the evidence prefers a slow drifting object over anything near the Target Speed prior.`,
             });
@@ -633,6 +635,7 @@ export function buildHypotheses({dataset, sweep, ca, horizontalSpeed, plausible,
                 searchBounds: boundaryPins.length ? boundaryPins : undefined,
                 params: {
                     range: sweep.best.startDist, airSpeed: sweep.best.speed, errFloor, ...regimePick.fast.wind,
+                    speedTarget: sweep.speedTarget,
                     familyRangeLo: sweep.familyBand?.rangeLo, familyRangeHi: sweep.familyBand?.rangeHi,
                     familySpeedLo: sweep.familyBand?.speedLo, familySpeedHi: sweep.familyBand?.speedHi,
                     familyCount: sweep.familyBand?.count,
