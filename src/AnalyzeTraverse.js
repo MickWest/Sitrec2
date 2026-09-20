@@ -67,11 +67,13 @@ import {
     candidateNotes, consistentTrackCSVs, contextTrackCSVs, lookCameraFraming,
     openHandoffWindow,
 } from "./TraverseHandoff";
+import {traverseHandoffTimeline} from "./FileHandoffTimeline";
 import {CNodeGUIValue} from "./nodes/CNodeGUIValue";
 import * as Astronomy from "astronomy-engine";
 import {applyRefractionECI, refractionOptsFromUniforms} from "./atmosphere/refraction";
 import {loadLEOSatrecsForDate, findBestSatellite, satelliteTrackENU, satelliteECEF, satelliteSunlit} from "./SatelliteSearch";
 import {Chart3D, Chart3DGroup} from "./Chart3D";
+import {TraverseTimeline} from "./TraverseTimeline";
 import {accelerationAtFrame, accelerationPeaks} from "./TraverseMotion";
 import {
     balloonConsistency,
@@ -91,7 +93,7 @@ import {
 import {mundanenessCost, mundanenessSummary, physicalCompatibilityDetails} from "./TraverseMundaneness";
 import {buildTraverseComparison, comparisonCandidates, traverseComparisonHTML} from "./TraverseComparison";
 import {docUrl} from "./docsRegistry";
-import {platformMirrorSummary} from "./TraversePlatformMirror";
+import {platformMirrorCardSummary} from "./TraversePlatformMirror";
 import {candidateCriteria, criteriaSummary, CRITERION_COLORS} from "./TraverseCriteria";
 import {
     terrainAnalysisConfigScalars,
@@ -1397,6 +1399,8 @@ export function addAnalyzeButton(folder) {
             // can be inspected without a popup — window.open needs a real click's
             // transient activation, which a test harness cannot supply.
             contextTrackCSVs, consistentTrackCSVs,
+            // Reopen captured results for gallery/handoff checks without refitting.
+            showTraverseGallery: showResultGallery,
         };
     }
     const existing = analyzeButtons.get(folder);
@@ -3178,15 +3182,11 @@ function hypothesisStats(h, dataset = null, truthMaxG = null) {
                 `${mund.impliedM.lo.toFixed(2)}–${mund.impliedM.hi.toFixed(2)} m at this range`]);
         }
     }
-    // DOES THIS CANDIDATE FLY THE CAMERA'S PATH? Shown only when it does, so a
-    // candidate moving under its own steam stays uncluttered. Unlike the
-    // ordinariness line above this one DOES move the ranking (it is a third
-    // binding tier dimension in TraverseRanking), because neither residual nor
-    // g-load can see it: a wrong range injects the platform's own manoeuvre
-    // into the solved path while the fit stays perfect and the numbers stay
-    // unremarkable. See TraversePlatformMirror.js.
-    const mirrorWhy = platformMirrorSummary(h.platformMirror);
-    if (mirrorWhy) stats.push(["Platform mirroring", mirrorWhy]);
+    // Show supported acceleration diagnostics even when they do not penalize
+    // the path, so a low match is visible rather than confused with no check.
+    if (h.platformMirror) {
+        stats.push(["Platform acceleration match", platformMirrorCardSummary(h.platformMirror)]);
+    }
 
     // What the model's soft priors cost at the solution, in the same units as
     // the residual above. Shown only when it is worth noticing (0.005°, an
@@ -3477,7 +3477,8 @@ function hypothesisVolumeScene(dataset, hyp, opts = {}) {
     }
 
     series.push({type: "line", pts: sensorPts, color: VIZ.sensor, width: opts.compact ? 1.8 : 2.4,
-        startDot: true, endRing: false, peaks: peakLabels(S, opts.sensorMetrics)});
+        startDot: true, endRing: false, peaks: peakLabels(S, opts.sensorMetrics),
+        positionAt: f => graphPoint(S, f)});
 
     // Ground-truth reference track (dashed, fixed truth color). Only frames
     // inside the truth track's own time span are drawn; validity is a
@@ -3523,6 +3524,7 @@ function hypothesisVolumeScene(dataset, hyp, opts = {}) {
         zoomBounds: padZoomBounds(zb),
         groundZ: groundLevel,
         series,
+        frameCount: n,
         camera: !hyp.atInfinity ? opts.camera : null,
         labels: {x: `East (${bigAb})`, y: `North (${bigAb})`, z: `Alt (${smallAb})`},
         // Altitude ticks are chosen and shown in the SMALL unit (nice values
@@ -3991,8 +3993,10 @@ const CHART_OVERLAY_BUTTONS_HTML =
     `<g fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round">` +
     `<rect x="1.5" y="4" width="8.5" height="8" rx="1.5"/>` +
     `<path d="M10 6.2 L14.5 3.8 V12.2 L10 9.8 Z"/></g></svg></button>` +
-    `<div class="tg-camera-scrub" hidden><input class="tg-camera-frame" type="range" min="0" step="1" ` +
-    `aria-label="Camera view frame"><output class="tg-camera-time"></output></div>`;
+    `<div class="tg-timeline"><button class="tg-timeline-play" type="button" ` +
+    `aria-label="Play timeline" title="Play timeline (Space)">▶</button>` +
+    `<input class="tg-timeline-frame" type="range" min="0" step="1" aria-label="Timeline frame">` +
+    `<output class="tg-timeline-time"></output></div>`;
 
 // Full Details-pane HTML for one selected hypothesis: big plan view, headline
 // stats, a plain-English verdict, then progressively deeper explanation
@@ -4139,12 +4143,14 @@ function buildDetailHTML(h, r, groupIndex, groupSize, category, ctx, tied = fals
 
     // per-frame diagnostics: g-force, speed, LOS error over the clip
     const sc = hypothesisSeriesCharts(ctx.dataset, h);
+    const seriesImage = (url, alt) => `<div class="tg-series-chart"><img src="${url}" ${sc.sizeAttrs} alt="${alt}">`
+        + `<div class="tg-series-plot" style="${sc.plotStyle}" aria-hidden="true"><span class="tg-series-playhead"></span></div></div>`;
     const seriesHTML = sc ? `
         <h4 class="tg-d-h">Frame-by-frame behaviour</h4>
         <div class="tg-d-series">
-            <img src="${sc.gURL}" ${sc.sizeAttrs} alt="Kinematic acceleration over the clip, expressed in g">
-            <img src="${sc.spdURL}" ${sc.sizeAttrs} alt="Speed over the clip">
-            <img src="${sc.errURL}" ${sc.sizeAttrs} alt="LOS fit error over the clip">
+            ${seriesImage(sc.gURL, "Kinematic acceleration over the clip, expressed in g")}
+            ${seriesImage(sc.spdURL, "Speed over the clip")}
+            ${seriesImage(sc.errURL, "LOS fit error over the clip")}
         </div>` : "";
 
     return `
@@ -4383,7 +4389,17 @@ function showResultGallery(results, uiState = null, onEvidenceChange = null) {
     let showCamera = uiState?.showCamera ?? false;
     let cameraFrame = Math.max(0, Math.min(dataset.n - 1,
         uiState?.cameraFrame ?? ((par.frame ?? 0) - (dataset.frame0 ?? 0))));
-    let cameraScrubRAF = 0;
+    const timeline = new TraverseTimeline({frameCount: dataset.n, fps: dataset.fps, frame: cameraFrame,
+        onChange: () => {
+            if (!overlay.isConnected) { timeline.dispose(); return; }
+            cameraFrame = timeline.frame;
+            overlay.style.setProperty("--tg-timeline-progress", `${100 * cameraFrame / Math.max(1, dataset.n - 1)}%`);
+            for (const chart of liveCharts) {
+                chart.setFrame(cameraFrame);
+                syncTimelineControls(chart);
+            }
+        }});
+    overlay.style.setProperty("--tg-timeline-progress", `${100 * cameraFrame / Math.max(1, dataset.n - 1)}%`);
 
     const currentChart = () => detailChart || (selected >= 0 ? tileCharts[selected] : null);
 
@@ -4496,17 +4512,27 @@ function showResultGallery(results, uiState = null, onEvidenceChange = null) {
                     : "View tracks from the camera's exact position, heading and roll, magnified to fit. Scrub to move the camera and track points.";
             cameraBtn.setAttribute("aria-label", cameraBtn.title);
         }
-        const scrub = shell?.querySelector(".tg-camera-scrub");
+        syncTimelineControls(chart);
+        syncZoomButton(chart);
+    }
+
+    function syncTimelineControls(chart) {
+        const shell = chart.canvas.closest(".tg-chart-shell, .tg-chart-fullscreen-shell");
+        const scrub = shell?.querySelector(".tg-timeline");
         if (scrub) {
-            scrub.hidden = !chart.cameraView;
             const slider = scrub.querySelector("input");
             slider.max = String(dataset.n - 1);
             slider.value = String(cameraFrame);
             const frameText = `Frame ${(dataset.frame0 ?? 0) + cameraFrame} · ${(cameraFrame / dataset.fps).toFixed(1)} s`;
             slider.setAttribute("aria-valuetext", frameText);
             scrub.querySelector("output").textContent = frameText;
+            const play = scrub.querySelector("button");
+            play.disabled = dataset.n < 2 || !(dataset.fps > 0);
+            play.textContent = timeline.playing ? "❚❚" : "▶";
+            play.title = `${timeline.playing ? "Pause" : "Play"} timeline (Space)`;
+            play.setAttribute("aria-label", play.title);
+            play.setAttribute("aria-pressed", String(timeline.playing));
         }
-        syncZoomButton(chart);
     }
 
     function disposeDetailChart() {
@@ -4536,8 +4562,7 @@ function showResultGallery(results, uiState = null, onEvidenceChange = null) {
     }
 
     function disposeAllCharts() {
-        if (cameraScrubRAF) cancelAnimationFrame(cameraScrubRAF);
-        cameraScrubRAF = 0;
+        timeline.dispose();
         closeChartFullscreen();
         if (resizeObserver) resizeObserver.disconnect();
         resizeObserver = null;
@@ -4564,7 +4589,7 @@ function showResultGallery(results, uiState = null, onEvidenceChange = null) {
     // keyboard. So the first thing onKey does is verify the overlay is still in
     // the DOM; if not, it unhooks itself and lets the key through normally.
     const onKey = (e) => {
-        if (!overlay.isConnected) { document.removeEventListener("keydown", onKey, true); return; }
+        if (!overlay.isConnected) { remove(); return; }
         if (e.target?.closest?.(".angular-size-dialog")) return;
         e.stopImmediatePropagation();
         if (e.key === "Escape") {
@@ -4572,6 +4597,10 @@ function showResultGallery(results, uiState = null, onEvidenceChange = null) {
             if (fullscreenView) closeChartFullscreen();
             else if (comparisonView) closeComparison();
             else remove();
+        } else if ((e.code === "Space" || e.key === " ") && !comparisonView
+            && (!isTextEntry(document.activeElement) || document.activeElement?.matches?.(".tg-timeline-frame"))) {
+            e.preventDefault();
+            if (!e.repeat && !e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey) timeline.toggle();
         } else if (e.key === "Enter" && !comparisonView
             && !isTextEntry(document.activeElement) && !isKeyboardFocusedControl(document.activeElement)) {
             // Enter belongs to the gallery here, so swallow auto-repeats and
@@ -4761,11 +4790,15 @@ function showResultGallery(results, uiState = null, onEvidenceChange = null) {
         .traverse-gallery-overlay .tg-chart-camera { top:152px; }
         .traverse-gallery-overlay .tg-chart-toggle:disabled { opacity:0.35; cursor:default; }
         .traverse-gallery-overlay .tg-chart-zoom:disabled { opacity:0.35; cursor:default; }
-        .traverse-gallery-overlay .tg-camera-scrub { position:absolute; bottom:6px; left:10px; right:10px;
-            z-index:3; display:flex; flex-direction:column; gap:2px; background:rgba(12,14,17,0.9); }
-        .traverse-gallery-overlay .tg-camera-scrub[hidden] { display:none; }
-        .traverse-gallery-overlay .tg-camera-frame { width:100%; margin:0; accent-color:#3987e5; cursor:ew-resize; }
-        .traverse-gallery-overlay .tg-camera-time { color:#cddbec; font-size:10px; text-align:center; }
+        .traverse-gallery-overlay .tg-timeline { position:absolute; bottom:6px; left:10px; right:10px;
+            z-index:3; display:grid; grid-template-columns:24px 1fr; align-items:center; gap:2px 6px;
+            background:rgba(12,14,17,0.9); }
+        .traverse-gallery-overlay .tg-timeline-play { color:#cddbec; background:transparent;
+            border:0; padding:2px; cursor:pointer; height:24px; }
+        .traverse-gallery-overlay .tg-timeline-frame { width:100%; min-width:0; margin:0;
+            accent-color:#3987e5; cursor:ew-resize; }
+        .traverse-gallery-overlay .tg-timeline-time { grid-column:1 / -1; color:#cddbec;
+            font-size:10px; text-align:center; }
         .traverse-gallery-overlay .tg-chart-zoom svg { width:15px; height:15px; }
         .traverse-gallery-overlay .tg-chart-zoom.on,
         .traverse-gallery-overlay .tg-chart-toggle.on { background:rgba(57,135,229,0.55);
@@ -4842,8 +4875,12 @@ function showResultGallery(results, uiState = null, onEvidenceChange = null) {
         .traverse-gallery-overlay .tg-d-h { color:#7fb0ee; font-size:11.5px; font-weight:700; text-transform:uppercase;
             letter-spacing:0.05em; margin:18px 0 5px 0; }
         .traverse-gallery-overlay .tg-d-p { color:#c2c8d0; font-size:13px; line-height:1.62; margin:0; }
-        .traverse-gallery-overlay .tg-d-series img { display:block; width:100%; height:auto;
-            border-radius:6px; border:1px solid #262b33; margin:0 0 8px 0; }
+        .traverse-gallery-overlay .tg-series-chart { position:relative; margin:0 0 8px 0;
+            border:1px solid #262b33; border-radius:6px; overflow:hidden; }
+        .traverse-gallery-overlay .tg-d-series img { display:block; width:100%; height:auto; }
+        .traverse-gallery-overlay .tg-series-plot { position:absolute; pointer-events:none; }
+        .traverse-gallery-overlay .tg-series-playhead { position:absolute; top:0; bottom:0; width:1px;
+            background:#b3a000; left:var(--tg-timeline-progress, 0%); }
         .traverse-gallery-overlay .tg-d-p b { color:#eef1f5; }
         .traverse-gallery-overlay .tg-wind { width:100%; border-collapse:collapse; font-size:12.5px;
             font-variant-numeric:tabular-nums; margin:4px 0; }
@@ -4899,7 +4936,7 @@ function showResultGallery(results, uiState = null, onEvidenceChange = null) {
         leftPane.appendChild(layer);
         const canvas = layer.querySelector("canvas");
         const chart = registerChart(new Chart3D(canvas, sourceChart.scene, chartGroup,
-            {pad: sourceChart.pad ?? 0.1, scaleBoost: sourceChart.scaleBoost, labelInsetRight: 56}));
+            {pad: sourceChart.pad ?? 0.1, scaleBoost: sourceChart.scaleBoost, labelInsetRight: 56, timelineInset: 48}));
         chart.localMatrix = sourceChart.localMatrix.slice();
         if (groupZoomed && chart.scene.zoomBounds) chart.setZoom(true);
         syncZoomButton(chart);
@@ -4970,20 +5007,14 @@ function showResultGallery(results, uiState = null, onEvidenceChange = null) {
     }, true);
 
     overlay.addEventListener("click", (e) => {
-        if (e.target.closest(".tg-camera-scrub")) e.stopPropagation();
+        if (!e.target.closest(".tg-timeline")) return;
+        e.stopPropagation();
+        if (e.target.closest(".tg-timeline-play")) timeline.toggle();
     }, true);
     overlay.addEventListener("input", (e) => {
-        if (!e.target.matches(".tg-camera-frame")) return;
+        if (!e.target.matches(".tg-timeline-frame")) return;
         e.stopPropagation();
-        cameraFrame = Math.max(0, Math.min(dataset.n - 1, Math.round(Number(e.target.value))));
-        if (cameraScrubRAF) return;
-        cameraScrubRAF = requestAnimationFrame(() => {
-            cameraScrubRAF = 0;
-            for (const chart of liveCharts) {
-                chart.setCameraView(showCamera, cameraFrame);
-                syncOverlayButtons(chart);
-            }
-        });
+        timeline.seek(Number(e.target.value));
     });
 
     const panel = document.createElement("div");
@@ -5525,7 +5556,7 @@ function showResultGallery(results, uiState = null, onEvidenceChange = null) {
         if (detailCanvas) {
             detailChart = registerChart(new Chart3D(detailCanvas,
                 hypothesisVolumeScene(dataset, h, sceneOptions),
-                chartGroup, {pad: 0.13, labelInsetRight: 44}));
+                chartGroup, {pad: 0.13, labelInsetRight: 44, timelineInset: 48}));
             if (chartGroup.syncScale) applySyncScale(true);
             if (groupZoomed && detailChart.scene.zoomBounds) detailChart.setZoom(true);
             syncZoomButton(detailChart);
@@ -5851,6 +5882,7 @@ function showResultGallery(results, uiState = null, onEvidenceChange = null) {
                     files: [...context.map(toFile), ...candidates.map(toFile)],
                     meta: {
                         source: "traverse",
+                        timeline: traverseHandoffTimeline(results, Sit.fps),
                         lookCameraFraming: lookCameraFraming(results, candidates),
                         // Put the camera back where the analysis watched from,
                         // looking along the sightlines it used. contextTrackCSVs
@@ -6034,7 +6066,7 @@ function showResultGallery(results, uiState = null, onEvidenceChange = null) {
         if (!canvas) continue;
         tileCharts[i] = registerChart(new Chart3D(canvas,
             hypothesisVolumeScene(dataset, h, {compact: true, ...sceneOptions}),
-            chartGroup, {pad: 0.14, labelInsetRight: 44}));
+            chartGroup, {pad: 0.14, labelInsetRight: 44, timelineInset: 48}));
         if (groupZoomed && tileCharts[i].scene.zoomBounds) tileCharts[i].setZoom(true);
         syncZoomButton(tileCharts[i]);
     }
@@ -6560,7 +6592,7 @@ function lineChart(o) {
         [y0, y1] = autoRange();
         ticksY = niceTicks(y0, y1);
     }
-    chart.setRange(xMin, xMax, y0, y1);
+    chart.setRange(o.xRange?.[0] ?? xMin, o.xRange?.[1] ?? xMax, y0, y1);
     chart.axes({
         xTicks: niceTicks(xMin, xMax, 8),
         yTicks: ticksY,
@@ -6652,6 +6684,9 @@ function hypothesisSeriesCharts(dataset, h, o = {}) {
     const base = {
         width: o.width ?? 560, height: o.height ?? 230,
         xLabel: "Time (s)", zeroBased: true,
+        // Keep the playhead on the full clip clock, including the short blank
+        // edges where derivative estimates were trimmed.
+        xRange: [0, (n - 1) / fps],
         // right margin holds the Fine scale's tick labels (kept when a chart
         // has no Fine scale, so the stacked charts stay aligned)
         margin: {left: 56, right: 46, top: 34, bottom: 40},
@@ -6692,7 +6727,10 @@ function hypothesisSeriesCharts(dataset, h, o = {}) {
     // width/height attributes let the details pane reserve each image's
     // height before its data URL decodes, so its scroll position can be set
     // at once
-    return {gURL, spdURL, errURL, sizeAttrs: `width="${base.width}" height="${base.height}"`};
+    const {left, right, top, bottom} = base.margin;
+    const plotStyle = `left:${100 * left / base.width}%;top:${100 * top / base.height}%;`
+        + `width:${100 * (base.width - left - right) / base.width}%;height:${100 * (base.height - top - bottom) / base.height}%`;
+    return {gURL, spdURL, errURL, plotStyle, sizeAttrs: `width="${base.width}" height="${base.height}"`};
 }
 
 function heatColor(tRaw) {

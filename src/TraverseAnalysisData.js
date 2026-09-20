@@ -25,7 +25,8 @@ export function sampleAnalysisCameraPose(cameraLOSNode, frame, originLat, origin
         return [enu.x, enu.y, enu.z];
     };
     return {position: convert(source.position, false), forward: convert(source.heading, true),
-        right: convert(source.right, true), up: convert(source.up, true)};
+        right: convert(source.right, true), up: convert(source.up, true),
+        vFOV: source.vFOV, aspect: source.aspect ?? cameraLOSNode.in?.cameraNode?.camera?.aspect};
 }
 
 /**

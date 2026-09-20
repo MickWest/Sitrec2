@@ -101,16 +101,15 @@ describe("Traverse placement explanations", () => {
 
     test("mirroring explains demotion despite the lower LOS error", () => {
         const items = rankAllHypotheses([
-            sceneHypothesis("constAlt", {errDeg: 0.053704, platformMirror: {
-                share: 0.995415, beta: 0.934539, mirroredM: 236.34, independentM: 16.04,
-                rmsPlatform: 252.89, rmsTrack: 236.88, snr: 236.34,
+            sceneHypothesis("constAlt", {errDeg: 0.053704, platformMirror: {method: "acceleration-pattern-v2", assessable: true, scaleStable: true, temporalMatch: true,
+                share: 0.995415, beta: 0.934539, snr: 236.34,
             }}),
             sceneHypothesis("gfPolyALS", {errDeg: 0.351339}),
         ], opts);
         expect(items[0].h.key).toBe("gfPolyALS");
         const why = rankingPlacementExplanation(items[1], items[0], opts);
         expect(why.key).toBe("tier");
-        expect(why.text).toContain("99.5% of manoeuvring mirrors the camera platform");
+        expect(why.text).toContain("99.5% of assessed time matches the platform acceleration across smoothing scales");
     });
 
     test("truth completion decides before a smaller distance", () => {
@@ -802,11 +801,9 @@ test("truth separation breaks co-leadership when truth is in play", () => {
 // A platform-mirror record in the shape platformMirrorStat returns. Built by
 // hand so the ranking consequences can be tested without a dataset — the
 // statistic itself is covered in TraversePlatformMirror.test.js.
-function mirror({share, snr = 100, beta = 0.25, rmsPlatform = 1200} = {}) {
+function mirror({share, snr = 100, beta = 0.25} = {}) {
     return {
-        beta, share, rmsPlatform, rmsTrack: 280,
-        mirroredM: Math.abs(beta) * rmsPlatform, independentM: 56, snr,
-        referenceRangeM: 2900,
+        method: "acceleration-pattern-v2", assessable: true, scaleStable: true, temporalMatch: true, beta, share, snr,
     };
 }
 
@@ -870,8 +867,8 @@ describe("scene-relative fit tiers", () => {
 
 describe("platform mirroring is a third binding dimension", () => {
     test("a perfect fit with unremarkable kinematics is still demoted when it flies the camera's path", () => {
-        // The measured Aguadilla gallery leader: 0.073° residual, 51 kt,
-        // 0.48 g — nothing in fit or kinematics can see the problem.
+        // A synthetic graded result isolates the acceleration-match caution
+        // from the LOS and kinematic gates.
         const h = hypothesis("constAlt", {name: "Constant Altitude", errDeg: 0.073,
             metrics: metrics({gMax: 0.48, speedMeanKt: 51, speedMaxKt: 69})});
         h.platformMirror = mirror({share: 0.959});
@@ -882,8 +879,8 @@ describe("platform mirroring is a third binding dimension", () => {
         expect(r.mirrorRank).toBe(1);
         expect(r.rank).toBe(1);
         expect(r.eligible).toBe(false);
-        expect(r.label).toBe("Mirrors the platform");
-        expect(r.reasons.join(" ")).toContain("the platform's own manoeuvre explains this path");
+        expect(r.label).toBe("Strong platform acceleration match");
+        expect(r.reasons.join(" ")).toContain("of assessed time matches a fixed scaled platform acceleration vector");
     });
 
     test("a half-share is reported as partial", () => {
@@ -891,7 +888,7 @@ describe("platform mirroring is a third binding dimension", () => {
         h.platformMirror = mirror({share: 0.62});
         const r = plausibilityRating(h);
         expect(r.mirrorRank).toBe(2);
-        expect(r.label).toBe("Partly mirrors the platform");
+        expect(r.label).toBe("Partial platform acceleration match");
     });
 
     test("an object moving under its own steam is untouched", () => {
@@ -914,7 +911,7 @@ describe("platform mirroring is a third binding dimension", () => {
         expect(r.mirrorRank).toBe(1);
         expect(r.rank).toBe(0);
         expect(r.label).toBe("Poor fit");
-        expect(r.reasons.join(" ")).toContain("the platform's own manoeuvre explains this path");
+        expect(r.reasons.join(" ")).toContain("of assessed time matches a fixed scaled platform acceleration vector");
     });
 
     test("mirroring demotes within a tier as well, and only ever downward", () => {
@@ -931,7 +928,7 @@ describe("platform mirroring is a third binding dimension", () => {
     });
 
     test("the balloon leads once the mirroring candidate is demoted", () => {
-        // The Aguadilla case end to end, with the measured numbers.
+        // Synthetic grade records test ordering; the signal itself is tested separately.
         const constAlt = hypothesis("constAlt", {name: "Constant Altitude", errDeg: 0.073,
             metrics: metrics({gMax: 0.48, speedMeanKt: 51, speedMaxKt: 69})});
         constAlt.fitScaleDeg = 0.1403;
@@ -944,7 +941,7 @@ describe("platform mirroring is a third binding dimension", () => {
         expect(order[0].h.name).toBe("Sky Lantern / Balloon");
         expect(order[0].r.eligible).toBe(true);
         expect(order[1].h.name).toBe("Constant Altitude");
-        expect(order[1].r.label).toBe("Mirrors the platform");
+        expect(order[1].r.label).toBe("Strong platform acceleration match");
     });
 
     test("a mirroring fit cannot carry an executive conclusion about its class", () => {
@@ -953,7 +950,7 @@ describe("platform mirroring is a third binding dimension", () => {
         const verdict = assessExecutiveVerdict([aircraft]);
         const cls = verdict.classes.find((c) => c.key === "fixedWing");
         expect(cls.viable).toBe(false);
-        expect(cls.blocker).toContain("pacing the camera or a wrong range");
+        expect(cls.blocker).toContain("range ambiguity or coordinated motion");
         expect(verdict.code).toBe("unresolved");
     });
 });

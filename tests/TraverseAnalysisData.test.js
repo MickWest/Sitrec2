@@ -26,6 +26,7 @@ test("camera sampling preserves the requested frame and rolled image axes in ENU
     const source = {v: jest.fn(frame => ({
         position: new Vector3(6378137, frame, 0),
         heading: new Vector3(0, 1, 0), right: new Vector3(1, 0, 0), up: new Vector3(0, 0, -1),
+        vFOV: 30, aspect: 1.5,
     }))};
     const pose = sampleAnalysisCameraPose(source, 45, 0, 0);
     expect(source.v).toHaveBeenCalledWith(45);
@@ -33,6 +34,8 @@ test("camera sampling preserves the requested frame and rolled image axes in ENU
     expect(pose.forward).toEqual([1, 0, 0]);
     expect(pose.right).toEqual([0, 0, 1]);
     expect(pose.up[1]).toBe(-1);
+    expect(pose.vFOV).toBe(30);
+    expect(pose.aspect).toBe(1.5);
     expect(sampleAnalysisCameraPose(makeLOSNode(), 0, 0, 0)).toBeNull();
 });
 

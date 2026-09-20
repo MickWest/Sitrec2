@@ -42,7 +42,8 @@ import {
 import {
     compareTrackToTruth, meanAngularError, KNOTS_TO_MS, METERS_PER_NM,
 } from "../TraverseAnalysis";
-import {rankAllHypotheses, assessExecutiveVerdict} from "../TraverseRanking";
+import {gradeHypotheses} from "../TraversePlatformMirror";
+import {rankAllHypotheses, assessExecutiveVerdict, hypothesisFitKind} from "../TraverseRanking";
 import {mundanenessCost} from "../TraverseMundaneness";
 import {BOT_DEFAULT_EPOCH_ISO, botENUToLLA} from "../TrackFiles/CTrackFileBOT";
 // RAYLEIGH_MEAN / RAYLEIGH_SD live in BotBenchIngest, beside assessSourceQuality:
@@ -142,6 +143,12 @@ export async function runBotBenchAnalysis(record, {
 
     const {hypotheses, sweep, resolvedRanges, fastProfile, slowProfile,
         slowOpts, aircraft, families, failures} = battery;
+    // Reuse expensive paths, but never reuse an obsolete motion assessment.
+    // Whole-battery caches predate the current acceleration correlation too.
+    if (cachedBattery) {
+        gradeHypotheses(hypotheses, dataset, hypothesisFitKind);
+        battery.executiveAssessment = assessExecutiveVerdict(hypotheses, {dataset, provenance});
+    }
     const executiveAssessment = angularSizeOptions?.judge
         ? assessExecutiveVerdict(hypotheses, {dataset, provenance}) : battery.executiveAssessment;
     // A run whose solvers need no constant-air sweep has no search grid to draw

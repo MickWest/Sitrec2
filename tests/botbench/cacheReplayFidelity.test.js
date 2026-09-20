@@ -146,6 +146,21 @@ describe("a replayed analysis equals a fresh one", () => {
         expect(replayed.elapsedMs).toBe(fresh.elapsedMs);
     });
 
+    test("legacy motion grades and verdicts are recalculated without refitting", async () => {
+        const battery = unpackFromCache(JSON.parse(JSON.stringify(packForCache(fresh.battery))));
+        for (const h of battery.hypotheses) h.platformMirror = {share: 1, beta: 1, snr: 100};
+        battery.executiveAssessment = {code: "stale", headline: "Old position-based judgement"};
+        const result = await runBotBenchAnalysis(ingest(), {battery, elapsedMs: fresh.elapsedMs});
+        expect(diff(fresh.row, result.row, "row")).toBeNull();
+        expect(diff(fresh.results.executiveAssessment, result.results.executiveAssessment, "verdict")).toBeNull();
+        expect(result.results.hypotheses.every(h => !h.platformMirror || h.platformMirror.method === "acceleration-pattern-v2")).toBe(true);
+    });
+
+    test("the rebuilt row callback agrees after replay", () => {
+        expect(typeof replayed.results.reassessRow).toBe("function");
+        expect(diff(fresh.results.reassessRow(), replayed.results.reassessRow(), "reassessedRow")).toBeNull();
+    });
+
     // Every candidate, coordinate for coordinate — the tracks are what Gallery
     // draws and what the handoff turns back into geography.
     test("every hypothesis is identical, tracks included", () => {
@@ -161,7 +176,7 @@ describe("a replayed analysis equals a fresh one", () => {
     // extend this file.
     test("the rest of the results object is identical", () => {
         const strip = (r) => {
-            const {buildHtml, ...rest} = r;
+            const {buildHtml, reassessRow, ...rest} = r;
             return rest;
         };
         expect(diff(strip(fresh.results), strip(replayed.results), "results")).toBeNull();
@@ -264,7 +279,7 @@ describe("a row built from stored units equals a fresh one", () => {
             expect(diff(fresh.results.hypotheses[i], fromUnits.results.hypotheses[i],
                 `hypotheses[${i}](${fresh.results.hypotheses[i].key})`)).toBeNull();
         }
-        const strip = ({buildHtml, ...rest}) => rest;
+        const strip = ({buildHtml, reassessRow, ...rest}) => rest;
         expect(diff(strip(fresh.results), strip(fromUnits.results), "results")).toBeNull();
     });
 

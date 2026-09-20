@@ -83,6 +83,7 @@ import {
 import {CNodeManager} from "./nodes/CNodeManager";
 import {CSitchFactory} from "./CSitchFactory";
 import {CNodeDateTime} from "./nodes/CNodeDateTime";
+import {applyHandoffTimeline} from "./FileHandoffTimeline";
 import {addAlignedGlobe} from "./Globe";
 import JSURL from "jsurl";
 import {configParams, localSituation} from "./runtimeConfig";
@@ -3230,6 +3231,10 @@ function loadStartupHandoffAfterSitchSetup() {
             // Snapshot the graph BEFORE importing, so the resize below can act
             // on the nodes this handoff created and nothing else.
             const before = new Set(Object.keys(NodeMan.list ?? {}));
+            // Generic exported CSVs do not auto-size a custom scene. Carry
+            // the analysis clock explicitly instead of leaving its 900-frame
+            // default to truncate otherwise complete tracks.
+            applyHandoffTimeline(handoff.meta?.timeline, Sit, par, GlobalDateTimeNode);
             // BEFORE the import, not after: this is the DEFAULT every track
             // marker reads in its constructor, and the import is what builds
             // them. Set afterwards it would apply to nothing. Sender's reason

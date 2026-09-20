@@ -5,7 +5,7 @@ import {
     hypothesisFitKind, rankAllHypotheses, rankingDecision, rankingPlacementExplanation,
 } from "./TraverseRanking";
 import {physicalClassChecks} from "./TraverseMundaneness";
-import {MIRROR_MIN_SNR, MIRROR_PARTIAL_SHARE} from "./TraversePlatformMirror";
+import {platformMirrorAssessed, platformMirrorExplanation} from "./TraversePlatformMirror";
 import {GROUND_CONTACT_TOL, UNDERGROUND_MIN_FRACTION, UNDERGROUND_TOL} from "./TraverseHypotheses";
 
 const number = (v, digits = 3) => Number.isFinite(v) ? v.toFixed(digits) : "unavailable";
@@ -63,11 +63,11 @@ export function comparisonGates({h, r}, {groundMode = null} = {}) {
             : {...limitCell(m?.airSpeed?.max / KNOTS_TO_MS, BROAD_SCREEN_LIMITS.speedKt, "kt", 1,
                 m?.airSpeed?.max / KNOTS_TO_MS <= BROAD_SCREEN_LIMITS.speedKt),
                 value: `${number(m?.airSpeed?.max / KNOTS_TO_MS, 1)} kt (${h.params?.motionFrame === "ground" ? "ground" : "air"})`}},
-        {key: "mirror", label: "Camera-motion mirroring", cell: rejected ? notRun()
-            : !Number.isFinite(mirror?.share) || !Number.isFinite(mirror?.snr)
-                ? cell("unknown", "Not assessed", "Geometry does not support this check; no penalty applied.")
-                : cell(r.mirrorRank === 3 ? "pass" : "fail", `${number(100 * mirror.share, 1)}% share; ${number(mirror.snr, 2)}× resolving scale`,
-                    `Fails at ≥ ${100 * MIRROR_PARTIAL_SHARE}% share AND ≥ ${MIRROR_MIN_SNR}× resolving scale.`)},
+        {key: "mirror", label: "Platform acceleration match", cell: rejected ? notRun()
+            : !platformMirrorAssessed(mirror)
+                ? cell("unknown", "Not assessed", platformMirrorExplanation(mirror))
+                : cell(r.mirrorRank === 3 ? "pass" : "fail", `${number(100 * mirror.share, 1)}% minimum share`,
+                    platformMirrorExplanation(mirror))},
         {key: "pins", label: "Active model limits", cell: rejected ? notRun()
             : cell(pins.length ? "fail" : "pass", `${pins.length} reached`, pins.length ? pins.join(", ") : "Required: 0 load-bearing limits reached")},
         {key: "bounds", label: "Search boundary", cell: rejected ? notRun()
@@ -155,7 +155,7 @@ export function traverseComparisonHTML(comparison) {
         + `<h3>BOT Score</h3><p class="tc-note">Lower is better. Weighted contributions add to the total. Difference = right − left; positive favors the left. The largest difference is highlighted.</p>`
         + `<div class="tc-scroll"><table>${headers('<th scope="col">Difference</th>')}<tbody>${scoreRows}`
         + `<tr class="tc-total"><th scope="row">Total BOT Score</th>${scores.map(s => `<td>${number(s?.total)}</td>`).join("")}<td>${signed(delta)}</td></tr></tbody></table></div>`
-        + `<p class="tc-note">No pass/fail cutoff or probability. Values are rounded; totals use full precision. Camera-motion adjustment is zero when mirroring is not significant or cannot be assessed.</p>`
+        + `<p class="tc-note">No pass/fail cutoff or probability. Values are rounded; totals use full precision. Platform acceleration adjustment is zero unless the same-time match is strong enough, resolved, and consistent across all three smoothing scales.</p>`
         + `<h3>Gates for a full pass</h3><p class="tc-note">These checks decide before the BOT Score. A pass can be close to a limit. Unassessed checks are marked explicitly; the current ranking may still pass.</p>`
         + `<div class="tc-scroll"><table>${headers()}<tbody>${rowsHTML(comparison.gates)}</tbody></table></div>`
         + `<h3>Physical compatibility</h3><p class="tc-note">The same class limits apply to both paths, regardless of solver. These checks do not change the BOT Score or establish an object type. Missing measurements are named beside the result.</p>`

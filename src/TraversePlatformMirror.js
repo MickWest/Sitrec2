@@ -1,64 +1,9 @@
 /**
- * TraversePlatformMirror.js — does a candidate require the object to fly a
- * copy of the OBSERVING PLATFORM's own path?
- *
- * THE MECHANISM. Put a candidate at range R_c along the same sightlines as a
- * true object at range R_t. Since both lie on the ray from the platform
- * position P(t), the candidate track is an affine blend of the two:
- *
- *     X_c(t) = k * X_t(t) + (1 - k) * P(t),      k = R_c / R_t
- *
- * The coefficient on P is (1 - k). Assume the range wrong and the platform's
- * own motion is injected into the solved trajectory — scaled by how wrong, and
- * MIRRORED when the guess is too far. That is the "Coryat curve": a spurious
- * banking/turning path that is really the camera aircraft's manoeuvre wearing
- * the object's clothes. It is not a fitting failure — such a candidate follows
- * the sightlines as faithfully as any other, which is exactly why residual
- * alone can never expose it.
- *
- * WHY DETRENDING IS THE WHOLE POINT, not a cleanup step. Bearings-only
- * observability says a constant-velocity observer cannot resolve range against
- * a constant-velocity target: only the observer's MANOEUVRE carries range
- * information. Removing the uniform-motion (straight, constant-speed) part of
- * both paths therefore isolates precisely the informative component, and what
- * is left asks the one question worth asking — is this candidate explaining the
- * camera's manoeuvre as the object's own?
- *
- * WHY THIS IS NOT THE TERM THAT FAILED BEFORE. An earlier Coryat term,
- * `losAlignment`, scored the share of lateral acceleration lying along the
- * sightline. It was measured HARMFUL and switched off: an object genuinely
- * manoeuvring in the plane containing the sightline scores as high as an
- * artifact, so it charged 0.3 decades to a quadcopter fit 0.0004 deg from the
- * rays. That statistic never referenced the platform at all. This one regresses
- * against the platform's specific manoeuvre WAVEFORM, which an unrelated object
- * has no reason to reproduce. Measured on the Aguadilla ground-track sitch, the
- * separation is not a tail — it is a gulf:
- *
- *     Minimum Acceleration  share 1.000  beta 0.95   1125 m mirrored
- *     Constant Altitude     share 0.959  beta 0.23    270 m mirrored
- *     Constant Air Speed    share 0.815  beta 0.39    460 m mirrored
- *     Balloon (sitch wind)  share 0.007  beta 0.001     1 m mirrored
- *     Quadcopter            share 0.002  beta 0.00      0 m mirrored
- *
- * The physics check that says this is real rather than a coincidence: solve each
- * candidate's beta for the range at which the mirroring vanishes, R_c/(1 - beta).
- * The eleven candidates that publish one have own ranges differing by a factor
- * of 1.78 (1587 m to 2828 m) and predict ranges differing by a factor of only
- * 1.12 (2598 m to 2911 m) — the fixed-wing fit and the balloon fit, which share
- * nothing but the rays, land 22 m apart. It is a consistency check rather than
- * an error bar: these are eleven readings of the SAME sightlines, not
- * independent measurements.
- *
- * Absent from that list, deliberately: the most collapsed candidate, whose
- * 1 - beta is 0.048 and therefore under the guard in referenceRangeM below. An
- * earlier version of this comment quoted a metre value for it that the code
- * refuses to produce.
- *
- * WHAT A HIGH SCORE ASSERTS, and it is not "this is impossible". An object CAN
- * mirror the platform: a chase aircraft, a drone flown to pace the camera. That
- * reading is available and the tile says so. It is simply an extraordinary
- * thing for an object to do, and it must be priced as extraordinary rather than
- * — as it was — costing nothing at all.
+ * Same-time matching of acceleration vectors with the observing platform.
+ * A wrong range can imprint platform motion on a candidate, but correlation
+ * alone does not establish a wrong range or identify an object. In particular,
+ * detrended POSITION correlation can mistake an independent speed step for a
+ * platform manoeuvre. Only acceleration patterns are used here.
  */
 
 /**
@@ -97,121 +42,171 @@ export function detrendUniformMotion(A, n, valid = null) {
     return out;
 }
 
-// Share of the candidate's manoeuvre that the platform's manoeuvre explains,
-// at or above which the candidate is reported as flying the platform's path.
+export const PLATFORM_MIRROR_METHOD = "acceleration-pattern-v2";
 export const MIRROR_FULL_SHARE = 0.85;
 export const MIRROR_PARTIAL_SHARE = 0.5;
-
-// The mirrored motion must exceed this multiple of the positional scale the
-// candidate's own LOS residual can resolve. Without it the statistic fires on
-// noise: a drone fit whose entire manoeuvre is an 11 m wander scored share 0.83
-// against a 6 m resolving scale, which is not evidence of anything.
 export const MIRROR_MIN_SNR = 3;
-
-// Floor on the angle used to build that resolving scale. The exact-ray
-// "Straight Line" candidate reaches 3e-7 deg by construction, which would make
-// any mirrored metre infinitely significant.
+export const MIRROR_SCALE_TOLERANCE = 0.25;
+export const MIRROR_VECTOR_TOLERANCE = 0.5;
+export const MIRROR_MIN_CHANGE_FIT = 0.5;
+export const MIRROR_MIN_PLATFORM_CHANGE_G = 0.01;
+const G_ACCEL = 9.81;
 const MIRROR_MIN_ANGLE_DEG = 0.01;
 
-const DEG_TO_RAD = Math.PI / 180;
+function median(values) {
+    const sorted = values.slice().sort((a, b) => a - b), mid = Math.floor(sorted.length / 2);
+    return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+}
 
 /**
- * Regress a candidate's manoeuvre onto the platform's.
+ * Compare same-time acceleration VECTORS with one fixed signed scale. A
+ * steady turn has constant acceleration magnitude but a rotating direction:
+ * magnitude-only correlation loses exactly the pattern we need to test.
  *
- * @param track     packed xyz candidate positions, same frame basis as platform
- * @param platform  packed xyz sensor/LOS-origin positions (dataset.S)
- * @param n         frame count
- * @param rangeM    mean slant range of the candidate (metres)
- * @param errDeg    the candidate's raw LOS residual (degrees)
- * @returns {{beta, share, rmsPlatform, rmsTrack, mirroredM, independentM, snr,
- *           referenceRangeM}} or null when the geometry cannot support the test
- *          — too few frames, or a platform that does not manoeuvre at all, in
- *          which case there is no parallax and nothing to regress against.
+ * At each scale, estimate beta robustly as the median of aX.aP / |aP|^2.
+ * A few independent acceleration spikes must not determine the whole fit.
+ * Count frames whose vector residual |aX - beta*aP| is at most half of
+ * |beta*aP|. Share is the fraction of active platform-acceleration frames that match,
+ * not variance explained or probability. Straight cruising frames add no evidence.
+ * No time shifts, arbitrary rotations or frame-specific gains are fitted.
+ *
+ * The matching frames must also follow actual changes: on those frames the
+ * scaled platform must remove at least half the error of a constant candidate
+ * acceleration. Thus a constant vector similar to the middle of a turn cannot
+ * count as following the turn. Platform vector variation must exceed 0.01 g.
+ *
+ * All tests use common interior samples at 1, 2 and 4 s half-windows (reduced
+ * together for short clips). Use the minimum time share; require the same sign
+ * and gains within 25% of their median. The coarse matched acceleration must
+ * resolve a second-difference displacement 3 times sqrt(6) times the positional
+ * scale range*LOS residual (floored at 0.01 degrees and 1 m). These are explicit
+ * heuristic guards, not a calibrated probability or proof of a wrong range.
  */
-export function platformMirrorStat(track, platform, n, {rangeM, errDeg} = {}) {
-    if (!track || !platform || !(n >= 6)) return null;
-    if (track.length < n * 3 || platform.length < n * 3) return null;
-    const rP = detrendUniformMotion(platform, n);
-    const rX = detrendUniformMotion(track, n);
-    let pp = 0, xx = 0, xp = 0;
+export function platformMirrorStat(track, platform, n, {fps, rangeM, errDeg} = {}) {
+    if (!track || !platform || !(n >= 17) || !(fps > 0) || !Number.isFinite(fps)
+        || track.length < n * 3 || platform.length < n * 3
+        || !Number.isFinite(rangeM) || !(rangeM > 0) || !Number.isFinite(errDeg) || errDeg < 0) return null;
     for (let i = 0; i < n * 3; i++) {
-        pp += rP[i] * rP[i];
-        xx += rX[i] * rX[i];
-        xp += rX[i] * rP[i];
+        if (!Number.isFinite(track[i]) || !Number.isFinite(platform[i])) return null;
     }
-    if (!(pp > 0) || !Number.isFinite(xx)) return null;
-    const rmsPlatform = Math.sqrt(pp / n);
-    const rmsTrack = Math.sqrt(xx / n);
-    // The positional scale below which the sightlines cannot resolve motion at
-    // this range. Metres, floored so a degenerate residual cannot divide by ~0.
-    const resolvingM = Math.max(1,
-        (Number.isFinite(rangeM) ? rangeM : 0)
-        * Math.max(Number.isFinite(errDeg) ? errDeg : 0, MIRROR_MIN_ANGLE_DEG) * DEG_TO_RAD);
-    // NO MANOEUVRE, NO VERDICT. A platform on a straight constant-velocity path
-    // detrends to floating-point dust, and a regression against dust returns a
-    // confident-looking beta built from nothing — measured at beta 0.77, share
-    // 0.78 and a fabricated 6.6 km reference range on a platform that never
-    // turned. That is also the honest physics: a non-manoeuvring observer
-    // recovers no range at all from bearings, so there is no mirroring to
-    // detect and the test must decline rather than answer.
-    if (!(rmsPlatform > resolvingM)) return null;
-    const beta = xp / pp;
-    // Share is the squared correlation: the fraction of the candidate's
-    // manoeuvre VARIANCE that a scalar multiple of the platform's accounts for.
-    // A candidate that does not manoeuvre at all (a stationary point, a
-    // constant-velocity fit) has nothing to explain and scores zero, which is
-    // correct — it is not mirroring anything.
-    const share = xx > 0 ? (xp * xp) / (xx * pp) : 0;
-    const mirroredM = Math.abs(beta) * rmsPlatform;
-    // beta = 1 - R_c/R_ref, so R_ref = R_c / (1 - beta): the range at which this
-    // candidate's motion would stop tracking the platform's. Undefined as beta
-    // approaches 1 (the candidate has collapsed essentially onto the platform).
-    const k = 1 - beta;
-    const referenceRangeM = Number.isFinite(rangeM) && k > 0.05
-        ? rangeM / k : null;
-    return {
-        beta, share, rmsPlatform, rmsTrack, mirroredM,
-        independentM: Math.sqrt(Math.max(0, xx - beta * xp) / n),
-        snr: mirroredM / resolvingM,
-        referenceRangeM,
-    };
+    const half = Math.min(4, (n - 1) / fps / 4);
+    const steps = [0.25, 0.5, 1].map(scale => Math.round(half * scale * fps));
+    if (steps[0] < 1 || new Set(steps).size !== 3) return null;
+    const trim = steps[2], count = n - 2 * trim;
+    const resolvingM = Math.max(1, rangeM * Math.max(errDeg, MIRROR_MIN_ANGLE_DEG) * Math.PI / 180);
+    const minPlatformAccel = MIRROR_MIN_PLATFORM_CHANGE_G * G_ACCEL;
+    const scales = steps.map(step => {
+        const seconds = step / fps, denom = seconds * seconds;
+        const P = new Float64Array(count * 3), X = new Float64Array(count * 3);
+        const meanP = [0, 0, 0], coefficients = [], active = new Uint8Array(count);
+        let platformPower = 0;
+        for (let f = trim; f < n - trim; f++) {
+            let pp = 0, xp = 0;
+            const i = f - trim;
+            for (let c = 0; c < 3; c++) {
+                const k = f * 3 + c, j = i * 3 + c;
+                P[j] = ((platform[k + 3 * step] - platform[k]) - (platform[k] - platform[k - 3 * step])) / denom;
+                X[j] = ((track[k + 3 * step] - track[k]) - (track[k] - track[k - 3 * step])) / denom;
+                meanP[c] += P[j] / count;
+                pp += P[j] * P[j]; xp += X[j] * P[j];
+            }
+            platformPower += pp;
+            if (pp >= minPlatformAccel * minPlatformAccel) {
+                active[i] = 1; coefficients.push(xp / pp);
+            }
+        }
+        const beta = coefficients.length ? median(coefficients) : 0;
+        let variation = 0, matched = 0, residualPower = 0;
+        const meanMatchedX = [0, 0, 0], matches = new Uint8Array(count);
+        for (let i = 0; i < count; i++) {
+            let pp = 0, error = 0;
+            for (let c = 0; c < 3; c++) {
+                const j = i * 3 + c;
+                pp += P[j] * P[j];
+                error += (X[j] - beta * P[j]) ** 2;
+                variation += (P[j] - meanP[c]) ** 2;
+            }
+            if (active[i] && beta !== 0 && error <= MIRROR_VECTOR_TOLERANCE ** 2 * beta ** 2 * pp) {
+                matched++; matches[i] = 1; residualPower += error;
+                for (let c = 0; c < 3; c++) meanMatchedX[c] += X[i * 3 + c];
+            }
+        }
+        let constantError = 0;
+        if (matched) {
+            for (let c = 0; c < 3; c++) meanMatchedX[c] /= matched;
+            for (let i = 0; i < count; i++) if (matches[i]) {
+                for (let c = 0; c < 3; c++) constantError += (X[i * 3 + c] - meanMatchedX[c]) ** 2;
+            }
+        }
+        const changeFit = constantError > 1e-12 ? Math.max(0, 1 - residualPower / constantError) : 0;
+        const matchedAccel = Math.abs(beta) * Math.sqrt(platformPower / count);
+        return {windowSeconds: 2 * seconds, beta, activeFrames: coefficients.length,
+            share: coefficients.length >= 6 ? matched / coefficients.length : 0, changeFit,
+            platformVariationAccel: Math.sqrt(variation / count), matchedAccel,
+            snr: matchedAccel * denom / (Math.sqrt(6) * resolvingM)};
+    });
+    if (scales.some(s => ![s.share, s.beta, s.changeFit, s.snr].every(Number.isFinite))) return null;
+    const assessable = scales.every(s => s.activeFrames >= 6 && s.platformVariationAccel >= minPlatformAccel);
+    const beta = median(scales.map(s => s.beta));
+    const scaleStable = beta !== 0 && scales.every(s => Math.sign(s.beta) === Math.sign(beta)
+        && Math.abs(s.beta - beta) <= MIRROR_SCALE_TOLERANCE * Math.abs(beta));
+    const coarse = scales[2];
+    return {method: PLATFORM_MIRROR_METHOD, assessable, beta, share: Math.min(...scales.map(s => s.share)),
+        scaleStable, temporalMatch: scales.every(s => s.changeFit >= MIRROR_MIN_CHANGE_FIT),
+        snr: coarse.snr, matchedAccel: coarse.matchedAccel,
+        platformVariationG: Math.min(...scales.map(s => s.platformVariationAccel / G_ACCEL)),
+        scales, framesUsed: count,
+        startSeconds: trim / fps, endSeconds: (n - trim - 1) / fps};
 }
 
-/**
- * The ordinariness rank this statistic supports: 3 when the candidate's motion
- * is its own, 2 when the platform explains half of it, 1 when the platform
- * explains essentially all of it. Never 0 — a mirrored path is extraordinary,
- * not invalid, and the analysis does not exclude it.
- */
-export function platformMirrorRank(stat) {
-    if (!stat || !Number.isFinite(stat.share) || !(stat.snr >= MIRROR_MIN_SNR)) return 3;
-    if (stat.share >= MIRROR_FULL_SHARE) return 1;
-    if (stat.share >= MIRROR_PARTIAL_SHARE) return 2;
-    return 3;
+/** Earlier position-only or magnitude-only records must be recalculated. */
+export function platformMirrorAssessed(stat) {
+    return stat?.method === PLATFORM_MIRROR_METHOD && stat.assessable === true && Number.isFinite(stat.share)
+        && Number.isFinite(stat.snr) && Number.isFinite(stat.beta);
 }
 
-/** True when the mirrored component is large enough to report at all. */
 export function platformMirrorSignificant(stat) {
-    return !!stat && stat.snr >= MIRROR_MIN_SNR && stat.share >= MIRROR_PARTIAL_SHARE;
+    return platformMirrorAssessed(stat) && stat.scaleStable === true && stat.temporalMatch === true
+        && stat.snr >= MIRROR_MIN_SNR && stat.share >= MIRROR_PARTIAL_SHARE;
 }
 
-/**
- * One plain-text sentence for the tile and the rank basis. States the share,
- * the scale factor, the metres involved, and — because it is the actionable
- * part — the range at which the mirroring would disappear.
- */
+export function platformMirrorRank(stat) {
+    if (!platformMirrorSignificant(stat)) return 3;
+    return stat.share >= MIRROR_FULL_SHARE ? 1 : 2;
+}
+
+export function platformMirrorCardSummary(stat) {
+    if (!platformMirrorAssessed(stat)) return "Not assessable: insufficient platform acceleration changes or timing. No penalty.";
+    if (!platformMirrorSignificant(stat)) return "No sustained match to the platform's changing acceleration. No penalty.";
+    return `${(stat.share * 100).toFixed(1)}% of assessed time matches the platform's changing acceleration`
+        + ` (scale ${stat.beta >= 0 ? "+" : ""}${stat.beta.toFixed(2)}×). Consistent across smoothing windows.`;
+}
+
+/** Details shared by criterion tooltips, comparison gates and rank reasons. */
+export function platformMirrorExplanation(stat) {
+    if (!platformMirrorAssessed(stat)) {
+        return stat?.method === PLATFORM_MIRROR_METHOD && !stat.assessable
+            ? `Not assessable: platform acceleration-vector variation is below ${MIRROR_MIN_PLATFORM_CHANGE_G.toFixed(2)} g RMS. No penalty.`
+            : "Not assessed: acceleration samples or timing are insufficient, or this result needs recalculation. No penalty applied.";
+    }
+    const windows = stat.scales?.map(s => s.windowSeconds.toFixed(1)).join(", ");
+    const intro = `${(stat.share * 100).toFixed(1)}% of assessed time matches a fixed scaled platform acceleration vector at the same timestamps`
+        + ` (minimum across ${windows || "three"}${windows ? " s" : ""} windows; only frames with platform acceleration ≥0.01 g; vector error within 50% of the scaled platform acceleration).`;
+    if (!platformMirrorSignificant(stat)) {
+        const reasons = [];
+        if (stat.share < MIRROR_PARTIAL_SHARE) reasons.push("less than half the assessed time matches");
+        if (!stat.temporalMatch) reasons.push("the matching frames do not establish shared acceleration changes");
+        if (!stat.scaleStable) reasons.push("the signed scale changes with smoothing");
+        if (stat.snr < MIRROR_MIN_SNR) reasons.push("the matched motion is too small at the LOS resolving scale");
+        return `${intro} No penalty: ${reasons.join("; ")}.`;
+    }
+    return `${intro} Consistent signed scale ${stat.beta >= 0 ? "+" : ""}${stat.beta.toFixed(2)}×`
+        + ` (${stat.beta < 0 ? "opposite" : "same"} direction). The match follows changing acceleration, including a steady turn.`
+        + " This is a range-ambiguity or coordinated-motion caution, not proof of a wrong range.";
+}
+
 export function platformMirrorSummary(stat) {
-    if (!platformMirrorSignificant(stat)) return null;
-    const pct = Math.round(stat.share * 100);
-    const at = stat.referenceRangeM
-        ? `; the mirroring vanishes at about ${stat.referenceRangeM >= 1000
-            ? `${(stat.referenceRangeM / 1000).toFixed(1)} km`
-            : `${Math.round(stat.referenceRangeM)} m`} range`
-        : "";
-    return `${pct}% of its manoeuvring is a ${Math.abs(stat.beta).toFixed(2)}× `
-        + `${stat.beta < 0 ? "mirrored " : ""}copy of the platform's own path `
-        + `(${Math.round(stat.mirroredM)} m of it, against `
-        + `${Math.round(stat.independentM)} m of independent motion)${at}`;
+    return platformMirrorSignificant(stat) ? platformMirrorExplanation(stat) : null;
 }
 
 /**
@@ -233,7 +228,7 @@ export function platformMirrorSummary(stat) {
  * ranking's dependency graph; callers pass hypothesisFitKind.
  *
  * @param hypotheses  the built set, mutated in place
- * @param dataset     needs S (sensor positions) and n (frame count)
+ * @param dataset     needs S (sensor positions), n (frame count) and fps
  * @param fitKindOf   hypothesisFitKind, or any predicate-compatible equivalent
  */
 export function gradeHypotheses(hypotheses, dataset, fitKindOf) {
@@ -256,13 +251,13 @@ export function gradeHypotheses(hypotheses, dataset, fitKindOf) {
         // at-infinity check carries a helper track whose range — and so whose
         // whole platform-correlated component — is an arbitrary drawing
         // convenience.
-        if (!h.track || h.atInfinity) continue;
+        if (!h.track || h.atInfinity) { delete h.platformMirror; continue; }
         if (fitKindOf) {
             const kind = fitKindOf(h);
-            if (kind === "identity" || kind === "directional-geometry") continue;
+            if (kind === "identity" || kind === "directional-geometry") { delete h.platformMirror; continue; }
         }
         h.platformMirror = platformMirrorStat(h.track, dataset.S, dataset.n, {
-            rangeM: h.metricsFull?.range?.mean,
+            fps: dataset.fps, rangeM: h.metricsFull?.range?.mean,
             errDeg: h.errDeg,
         });
     }

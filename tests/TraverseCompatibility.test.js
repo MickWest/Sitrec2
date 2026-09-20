@@ -45,8 +45,7 @@ test("a measured path above the broad g gate retains its physical alternatives",
 
 test("camera mirroring is disclosed by ranking, not used to reject class limits", () => {
     const {dataset, h} = circularPath();
-    h.platformMirror = {share: 0.99, beta: 1, mirroredM: 100, independentM: 1,
-        rmsPlatform: 100, rmsTrack: 100, snr: 100};
+    h.platformMirror = {method: "acceleration-pattern-v2", assessable: true, scaleStable: true, temporalMatch: true, share: 0.99, beta: 1, snr: 100};
     expect(plausibilityRating(h).mirrorRank).toBeLessThan(3);
     expect(assessPathCompatibility([h], dataset).classes.map(c => c.key)).toContain("quadcopter");
 });

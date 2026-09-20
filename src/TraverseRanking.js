@@ -309,27 +309,14 @@ function tierForFitRank(rank) {
     return {label: "Invalid", rank: -1, color: COLORS.invalid};
 }
 
-// Tier when PLATFORM MIRRORING is the binding judgement. A third dimension
-// beside fit quality and kinematic ordinariness, and it needed its own words
-// for the same reason pins did: a candidate whose manoeuvre is the camera's
-// manoeuvre is not fitting badly (it follows the sightlines perfectly) and is
-// not kinematically extreme (0.48 g and 51 kt are unremarkable numbers). Called
-// "Moderate" it says nothing; called this, it names the finding.
-//
-// It never reaches rank 0. An object CAN pace the observing platform — a chase
-// aircraft, a drone flown to follow the camera — so the reading stays available
-// and stays in the gallery. It is only extraordinary, which is what the tier
-// now says and what costing nothing at all did not.
+// A same-time acceleration match is a ranking caution, not proof of an
+// impossible path or a wrong range. Its thresholds are heuristic.
 function tierForMirrorRank(rank) {
     if (rank >= 3) return {label: "Passes broad screen", rank: 3, color: COLORS.pass};
-    if (rank === 2) return {label: "Partly mirrors the platform", rank: 2, color: COLORS.moderate};
-    return {label: "Mirrors the platform", rank: 1, color: COLORS.low};
+    if (rank === 2) return {label: "Partial platform acceleration match", rank: 2, color: COLORS.moderate};
+    return {label: "Strong platform acceleration match", rank: 1, color: COLORS.low};
 }
 
-// How far platform mirroring may move a candidate in secondaryScore (~0.3 deg
-// of residual-equivalent at the full value). It only ever demotes. Not mirroring the
-// platform is the ordinary expectation, not an achievement to be rewarded, and
-// a promotion here would be a thumb on the scale for far solutions.
 const PLATFORM_MIRROR_NUDGE = 6;
 
 function activePins(h) {
@@ -367,8 +354,8 @@ export function botScoreBreakdown(h) {
             formula: `above ${w.climbFreeMS} m/s × ${w.climb}`, contribution: w.climb * Math.max(0, Math.abs(m.verticalSpeed?.mean) - w.climbFreeMS)},
         {key: "los", label: "Mean LOS error", value: effectiveErrDeg(h), unit: "°", digits: 5,
             formula: `÷ ${BOT_LOS_UNIT_DEG}°`, contribution: effectiveErrDeg(h) / BOT_LOS_UNIT_DEG},
-        {key: "mirror", label: "Camera-motion adjustment", value: mirror * 100, unit: "%", digits: 1,
-            formula: `significant share × ${PLATFORM_MIRROR_NUDGE}`, contribution: PLATFORM_MIRROR_NUDGE * mirror},
+        {key: "mirror", label: "Platform acceleration adjustment", value: mirror * 100, unit: "%", digits: 1,
+            formula: `supported matching-time fraction × ${PLATFORM_MIRROR_NUDGE}`, contribution: PLATFORM_MIRROR_NUDGE * mirror},
     ];
     return {terms, total: terms.reduce((sum, term) => sum + term.contribution, 0)};
 }
@@ -495,16 +482,8 @@ export function plausibilityRating(h) {
         kinematicRank = (gMax > 9 || speedMaxKt > 900) ? 0
             : (gMax > 4 || speedMaxKt > BROAD_SCREEN_LIMITS.speedKt) ? 1
             : (gMax > BROAD_SCREEN_LIMITS.peakG) ? 2 : 3;
-        // THE THIRD BINDING DIMENSION. Fit quality asks whether the model
-        // reproduces the sightlines; kinematic ordinariness asks whether the
-        // motion is extreme; this asks whether the motion is the OBSERVER's.
-        // A wrong range injects the platform's own manoeuvre into the solved
-        // path (see TraversePlatformMirror.js), and neither of the other two
-        // can see it: such a candidate follows the rays perfectly and its
-        // speeds and g-loads are unremarkable. Measured on Aguadilla, the
-        // gallery leader required an object flying a 0.23x copy of the camera
-        // aircraft's path — 270 m of mirroring against 56 m of motion of its
-        // own — and was rated exactly as ordinary as a drifting balloon.
+        // Correlated acceleration only contributes when same-time changes
+        // agree across all smoothing scales and clear the amplitude guard.
         mirrorRank = platformMirrorRank(h?.platformMirror);
         // The MIRROR ONLY GETS TO NAME THE TIER WHEN IT IS STRICTLY THE WORST.
         // On a tie the measured failure keeps the stronger word: a model that
@@ -521,9 +500,7 @@ export function plausibilityRating(h) {
         if (speedMaxKt > 650) reasons.push(`peak air speed ${speedMaxKt.toFixed(0)} kt`);
         const mirrorWhy = platformMirrorSummary(h?.platformMirror);
         if (mirrorWhy) {
-            reasons.push(`the platform's own manoeuvre explains this path — ${mirrorWhy}`
-                + "; an object can pace the camera, but that is an extraordinary thing "
-                + "for one to do, and a wrong range produces the same signature");
+            reasons.push(mirrorWhy);
         }
         if (err > 0.05) {
             const label = kind === "ray-constrained" ? "solver-fidelity residual" : "raw LOS residual";
@@ -717,12 +694,8 @@ function judgeRepresentative(h) {
         && !(r.activePins && r.activePins.length)
         && !(r.modelClamps && r.modelClamps.length);
     const close = r.fitRank === 3;
-    // ORDINARY covers both ways the motion can be extraordinary. A fit that
-    // requires the object to fly the observing platform's own path must not
-    // make its class "viable" and so must not reach an executive conclusion:
-    // the wording there ("consistent with a conventional fixed-wing aircraft")
-    // would be asserting the ordinary reading of a candidate whose whole
-    // manoeuvre is the camera's.
+    // The acceleration match is an unresolved ranking caution. It does not
+    // physically exclude this class or establish an incorrect range.
     const mirrored = (r.mirrorRank ?? 3) < 3;
     const ordinary = r.kinematicRank === 3 && !mirrored;
     let blocker = null;
@@ -730,9 +703,9 @@ function judgeRepresentative(h) {
     else if (!close) blocker = `LOS fit not close (${Number.isFinite(r.scoredErrDeg)
         ? r.scoredErrDeg.toFixed(2) : "?"}° scored residual)`;
     else if (mirrored && r.kinematicRank === 3) {
-        blocker = "the platform's own manoeuvre explains the solved path "
-            + `(${Math.round((r.platformMirror?.share ?? 0) * 100)}% of it), so the fit `
-            + "requires an object pacing the camera or a wrong range";
+        blocker = "same-time platform acceleration match "
+            + `(${Math.round((r.platformMirror?.share ?? 0) * 100)}% of assessed time across smoothing scales); `
+            + "range ambiguity or coordinated motion remains unresolved";
     } else if (!ordinary) blocker = "requires non-ordinary kinematics";
     return {r, complete, close, ordinary, viable: complete && close && ordinary, blocker};
 }
@@ -1054,7 +1027,7 @@ function screeningLimitations({h, r}) {
         if (kt > 650) parts.push(`peak air speed ${kt.toFixed(0)} kt exceeds 650 kt`);
     }
     if (r.mirrorRank != null && r.mirrorRank < 3) {
-        parts.push(`${(100 * r.platformMirror.share).toFixed(1)}% of manoeuvring mirrors the camera platform`);
+        parts.push(`${(100 * r.platformMirror.share).toFixed(1)}% of assessed time matches the platform acceleration across smoothing scales`);
     }
     if (r.activePins?.length) parts.push(`${r.activePins.length} load-bearing model limit(s) reached`);
     if (r.optimizerWarnings?.length) parts.push("optimizer stopped before convergence");
@@ -1368,7 +1341,7 @@ export function rankingExplanation(h, rating = plausibilityRating(h), {useTruth 
             `scored LOS error / 0.05° = ${(rating.scoredErrDeg / 0.05).toFixed(3)}`,
         ];
         if (platformMirrorSignificant(h.platformMirror)) {
-            components.push(`platform-mirroring penalty = ${(PLATFORM_MIRROR_NUDGE * h.platformMirror.share).toFixed(3)}`);
+            components.push(`platform-acceleration penalty = ${(PLATFORM_MIRROR_NUDGE * h.platformMirror.share).toFixed(3)}`);
         }
         score += ` Score components (added): ${components.join("; ")}.`;
         score += " Every solver uses raw LOS error without an allowance or object-class bonus.";

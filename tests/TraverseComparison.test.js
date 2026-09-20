@@ -12,7 +12,7 @@ function candidate(key, changes = {}) {
             turnRate: {std: 1}, verticalSpeed: {mean: 0}, range: {mean: 10000},
         },
         groundStats: {minAGL: 500, fracBelow: 0},
-        platformMirror: {share: 0.1, snr: 4},
+        platformMirror: {method: "acceleration-pattern-v2", assessable: true, scaleStable: true, temporalMatch: true, beta: 0.25, share: 0.1, snr: 4},
         ...changes,
     };
 }
@@ -20,7 +20,7 @@ const item = h => ({h, r: plausibilityRating(h)});
 
 test("score contributions reconcile with ranking for every solver, including mirroring", () => {
     for (const key of ["quadcopter", "horizontalSpeed", "lantern", "gfCV", "constAlt"]) {
-        const h = candidate(key, {platformMirror: {share: 0.75, snr: 4}});
+        const h = candidate(key, {platformMirror: {method: "acceleration-pattern-v2", assessable: true, scaleStable: true, temporalMatch: true, beta: 0.25, share: 0.75, snr: 4}});
         const score = botScoreBreakdown(h);
         expect(score.total).toBeCloseTo(plausibilityRating(h).secondaryScore, 12);
         expect(score.terms.find(t => t.key === "mirror").contribution).toBe(4.5);

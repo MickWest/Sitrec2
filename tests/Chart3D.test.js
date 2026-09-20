@@ -74,6 +74,22 @@ test("camera current markers use the exact frame and omit unavailable truth posi
     expect(ctx.arc.mock.calls[0][1]).toBeCloseTo(expected.y, 9);
 });
 
+test("3D playhead uses exact positions without a camera pose and respects truth/zoom visibility", () => {
+    const ctx = {save() {}, restore() {}, setLineDash() {}, beginPath() {}, fill() {}, stroke() {}, arc: jest.fn()};
+    const chart = {cameraFrame: 1, showTruth: true, scene: {series: [
+        {color: "cyan", positionAt: f => [f, 2, 3]},
+        {color: "yellow", pts: [[0, 0, 0], [10, 10, 10]], positionAt: f => [f * 4, 5, 6]},
+        {color: "magenta", role: "truth", positionAt: f => f === 1 ? null : [f, 5, 6]},
+    ]}};
+    const draw = () => Chart3D.prototype._drawCurrentMarkers.call(chart, ctx, ([x, y]) => ({x, y}), BOX);
+    draw();
+    expect(ctx.arc.mock.calls.map(c => c.slice(0, 2))).toEqual([[1, 2], [4, 5]]);
+    ctx.arc.mockClear();
+    chart.cameraFrame = 3; chart.showTruth = false;
+    draw();
+    expect(ctx.arc.mock.calls.map(c => c.slice(0, 2))).toEqual([[3, 2]]);
+});
+
 test("camera g labels follow only current visible points as the slider moves", () => {
     const pose = {position: [0, 0, 0], forward: [0, 0, 1], right: [1, 0, 0], up: [0, 1, 0]};
     const points = [[0, 0, 10], [2, 1, 10], [4, 0, 10]];

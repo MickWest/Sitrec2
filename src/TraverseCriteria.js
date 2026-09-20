@@ -49,6 +49,7 @@
  * instead, and says that the greys behind it never ran.
  */
 
+import {platformMirrorAssessed, platformMirrorExplanation} from "./TraversePlatformMirror";
 import {KNOTS_TO_MS} from "./TraverseAnalysis";
 import {physicalClassChecks} from "./TraverseMundaneness";
 
@@ -228,26 +229,15 @@ export function candidateCriteria(h, rating, {dataset = null, useTruth = true} =
         });
     }
 
-    // --- platform mirroring ----------------------------------------------
+    // --- same-time platform acceleration ---------------------------------
     const pm = h?.platformMirror;
-    if (rating?.mirrorRank == null) {
-        out.push({key: "mirror", label: "Platform mirroring", letter: "M", status: "na", value: "—",
-            why: "not evaluated for this kind of candidate."});
-    } else if (!pm) {
-        out.push({key: "mirror", label: "Platform mirroring", letter: "M", status: "na", value: "—",
-            why: "the platform does not manoeuvre enough on this clip for the test to say "
-                + "anything: with no manoeuvre there is no parallax to reason from."});
-    } else {
-        out.push({
-            key: "mirror", label: "Platform mirroring", letter: "M",
-            status: rating.mirrorRank === 3 ? "pass" : rating.mirrorRank === 2 ? "caution" : "fail",
-            value: `${Math.round(pm.share * 100)}%`,
-            why: `${Math.round(pm.share * 100)}% of this candidate's manoeuvring is a `
-                + `${Math.abs(pm.beta).toFixed(2)}× copy of the platform's own path. An object can `
-                + "pace the camera, but a wrong range produces the same signature — so the higher "
-                + "this is, the more the solved motion belongs to the camera rather than the object.",
-        });
-    }
+    out.push({key: "mirror", label: "Platform acceleration", letter: "M",
+        status: rating?.mirrorRank == null || !platformMirrorAssessed(pm) ? "na"
+            : rating.mirrorRank === 3 ? "pass" : rating.mirrorRank === 2 ? "caution" : "fail",
+        value: platformMirrorAssessed(pm) ? `${Math.round(pm.share * 100)}%` : "—",
+        why: rating?.mirrorRank == null ? "Not evaluated for this kind of candidate."
+            : platformMirrorExplanation(pm),
+    });
 
     // --- search completeness ---------------------------------------------
     const pins = rating?.activePins?.length ?? 0;

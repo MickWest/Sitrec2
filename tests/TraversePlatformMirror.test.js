@@ -1,202 +1,200 @@
-/**
- * The platform-mirror (Coryat curve) statistic.
- *
- * The scenarios here are built from the mechanism itself: put a candidate at
- * the wrong range along the same sightlines and its track becomes the affine
- * blend k*truth + (1-k)*platform, so the platform's manoeuvre appears in the
- * solved path scaled by (1-k). Every expectation below is that identity read
- * back out of the statistic.
- */
-
+/** Same-time sustained acceleration pattern matching; no truth is used to grade. */
 import {
-    detrendUniformMotion,
-    platformMirrorStat,
-    platformMirrorRank,
-    platformMirrorSignificant,
-    platformMirrorSummary,
-    gradeHypotheses,
-    MIRROR_MIN_SNR,
+    detrendUniformMotion, platformMirrorStat, platformMirrorRank,
+    platformMirrorSignificant, platformMirrorSummary, platformMirrorExplanation,
+    gradeHypotheses, PLATFORM_MIRROR_METHOD,
 } from "../src/TraversePlatformMirror";
 import {hypothesisFitKind, plausibilityRating, assessExecutiveVerdict} from "../src/TraverseRanking";
 
-const N = 200;
-
-// A platform that translates AND manoeuvres: without the manoeuvre there is no
-// parallax, and the statistic correctly refuses to say anything.
-function platformPath(n = N, turnAmp = 600) {
-    const S = new Float64Array(n * 3);
-    for (let f = 0; f < n; f++) {
-        const t = f / (n - 1);
-        S[f * 3] = 4000 - 7000 * t;                       // uniform translation
-        S[f * 3 + 1] = -500 - 3400 * t + turnAmp * Math.sin(Math.PI * t);   // + a turn
-        S[f * 3 + 2] = 600 + 150 * t;
-    }
-    return S;
+const FPS = 10, N = 1201;
+function pathFrom(fn, fps = FPS, duration = 120) {
+    return Float64Array.from(Array.from({length: Math.round(fps * duration) + 1}, (_, f) => fn(f / fps)).flat());
 }
-
-// A true object on a straight, constant-velocity path — nothing for the
-// detrended regression to find.
-function truthPath(n = N) {
-    const X = new Float64Array(n * 3);
-    for (let f = 0; f < n; f++) {
-        const t = f / (n - 1);
-        X[f * 3] = 500 + 60 * t;
-        X[f * 3 + 1] = 2400 + 30 * t;
-        X[f * 3 + 2] = 250;
-    }
-    return X;
+function platformPath() {
+    // Positive but varying eastward acceleration, with a clear timing pattern.
+    return pathFrom(t => [1.5 * t * t - 2 / 0.04 * Math.sin(0.2 * t), 50 * t, 1000]);
 }
+function truthPath() { return pathFrom(t => [500 + 20 * t, 2400 + 5 * t, 250]); }
+function blend(truth, platform, k) { return truth.map((v, i) => k * v + (1 - k) * platform[i]); }
+function meanRange(track, platform) {
+    let sum = 0;
+    for (let f = 0; f < track.length / 3; f++) sum += Math.hypot(...[0,1,2].map(c => track[3*f+c] - platform[3*f+c]));
+    return sum / (track.length / 3);
+}
+const stat = (x, p, options = {}) => platformMirrorStat(x, p, x?.length / 3,
+    {fps: FPS, rangeM: 1000, errDeg: 0.01, ...options});
 
-/** The candidate a range guess of k*R_true produces on the same sightlines. */
-function blend(truth, platform, k, n = N) {
-    const out = new Float64Array(n * 3);
-    for (let i = 0; i < n * 3; i++) out[i] = k * truth[i] + (1 - k) * platform[i];
+// Integrate declared acceleration events. This defines trajectories, not the
+// correlation calculation under test.
+function eventPath(at, axis = 0, scale = 1, baseline = 0.2) {
+    const out = new Float64Array(N * 3);
+    let x = 0, v = 0;
+    for (let f = 0; f < N; f++) {
+        const t = f / FPS, a = scale * (baseline + 2 * Math.exp(-(((t-at)/3)**2)));
+        x += v / FPS + a / (2 * FPS * FPS); v += a / FPS;
+        out[3*f+axis] = x;
+    }
     return out;
 }
 
-function meanRange(track, platform, n = N) {
-    let sum = 0;
-    for (let f = 0; f < n; f++) {
-        sum += Math.hypot(track[f * 3] - platform[f * 3],
-            track[f * 3 + 1] - platform[f * 3 + 1],
-            track[f * 3 + 2] - platform[f * 3 + 2]);
-    }
-    return sum / n;
-}
-
-describe("detrendUniformMotion", () => {
-    test("a straight constant-velocity path detrends to exactly nothing", () => {
-        const straight = truthPath();
-        const r = detrendUniformMotion(straight, N);
-        for (let i = 0; i < N * 3; i++) expect(Math.abs(r[i])).toBeLessThan(1e-9);
+describe("acceleration pattern timing", () => {
+    test.each([0.3, 2.5])("same-time scaled events pass for range factor %s", k => {
+        const p = platformPath(), x = blend(truthPath(), p, k);
+        const s = stat(x, p);
+        expect(s.method).toBe(PLATFORM_MIRROR_METHOD);
+        expect(s.beta).toBeCloseTo(1-k, 8);
+        expect(s.share).toBeGreaterThan(0.999);
+        expect(s.scaleStable).toBe(true);
+        expect(s.scales).toHaveLength(3);
+        expect(platformMirrorRank(s)).toBe(1);
+        expect(s.referenceRangeM).toBeUndefined();
     });
 
-    test("a turn survives detrending, and its mean is removed", () => {
-        const r = detrendUniformMotion(platformPath(), N);
-        let sum = 0, peak = 0;
-        for (let f = 0; f < N; f++) {
-            sum += r[f * 3 + 1];
-            peak = Math.max(peak, Math.abs(r[f * 3 + 1]));
+    test("a brief shared manoeuvre remains assessable during a mostly straight clip", () => {
+        const p=eventPath(50,0,1,0),x=eventPath(50,0,2,0),s=stat(x,p);
+        expect(s.scales.every(c=>c.activeFrames<N/2)).toBe(true);
+        expect(s.share).toBeGreaterThan(0.99);
+        expect(platformMirrorRank(s)).toBe(1);
+    });
+
+    test("same event magnitudes in perpendicular directions do not copy the platform", () => {
+        const p = eventPath(45), x = eventPath(45, 1, 2);
+        const s = stat(x, p);
+        expect(s.share).toBeLessThan(0.05);
+        expect(platformMirrorSignificant(s)).toBe(false);
+    });
+
+    test("the same event at a different time is not shifted into a match", () => {
+        const s = stat(eventPath(80, 1), eventPath(35));
+        expect(s.assessable).toBe(true);
+        expect(s.share).toBeLessThan(0.05);
+        expect(platformMirrorRank(s)).toBe(3);
+    });
+
+    test("independent motion for part of the clip does not erase a sustained match", () => {
+        const p=platformPath(), x=blend(truthPath(),p,0.3);
+        // Add a strong northward acceleration for 35 seconds. Its squared
+        // magnitude dominates a least-squares score, but most of the clip
+        // still follows exactly the same platform acceleration pattern.
+        for (let f=0;f<N;f++) {
+            const t=f/FPS;
+            x[3*f+1] += 10*(Math.max(0,t-30)**2 - Math.max(0,t-65)**2);
         }
-        expect(Math.abs(sum / N)).toBeLessThan(1e-6);
-        expect(peak).toBeGreaterThan(100);
+        const s=stat(x,p);
+        expect(s.share).toBeGreaterThan(0.5);
+        expect(s.share).toBeLessThan(0.85);
+        expect(s.temporalMatch).toBe(true);
+        expect(platformMirrorRank(s)).toBe(2);
     });
 
-    test("a non-finite sample refuses rather than inventing a fit", () => {
-        const bad = truthPath();
-        bad[30] = NaN;
-        const r = detrendUniformMotion(bad, N);
-        for (let i = 0; i < N * 3; i++) expect(r[i]).toBe(0);
-    });
-});
-
-describe("platformMirrorStat", () => {
-    const S = platformPath();
-    const truth = truthPath();
-
-    test("the truth track itself mirrors nothing", () => {
-        const stat = platformMirrorStat(truth, S, N,
-            {rangeM: meanRange(truth, S), errDeg: 0.05});
-        expect(stat.share).toBeLessThan(0.01);
-        expect(platformMirrorRank(stat)).toBe(3);
+    test("opposite changes in magnitude are not simultaneous matching events", () => {
+        const x = pathFrom(t => [2*t*t + 0.8/0.04*Math.sin(0.2*t), 0, 0]);
+        const s = stat(x, platformPath());
+        expect(s.temporalMatch).toBe(false);
+        expect(platformMirrorRank(s)).toBe(3);
     });
 
-    test("beta recovers 1 - k, and the reference range recovers the true range", () => {
-        // A candidate placed at 30% of the true range: badly collapsed.
-        const k = 0.3;
-        const cand = blend(truth, S, k);
-        const rangeM = meanRange(cand, S);
-        const stat = platformMirrorStat(cand, S, N, {rangeM, errDeg: 0.05});
-        expect(stat.beta).toBeCloseTo(1 - k, 6);
-        expect(stat.share).toBeGreaterThan(0.99);
-        // R_ref = R_c / (1 - beta) must land back on the true mean range.
-        expect(stat.referenceRangeM).toBeCloseTo(meanRange(truth, S), 0);
-        expect(platformMirrorRank(stat)).toBe(1);
+    test("a copied steady turn is detected through its rotating acceleration vector", () => {
+        const p = pathFrom(t => [4000*Math.cos(70*t/4000),4000*Math.sin(70*t/4000),7000]);
+        const s = stat(blend(truthPath(), p, 0.3), p);
+        expect(s.assessable).toBe(true);
+        expect(s.temporalMatch).toBe(true);
+        expect(platformMirrorRank(s)).toBe(1);
+        expect(platformMirrorExplanation(s)).toContain("including a steady turn");
     });
 
-    test("an over-ranged candidate mirrors with the opposite sign", () => {
-        const cand = blend(truth, S, 2.5);
-        const stat = platformMirrorStat(cand, S, N,
-            {rangeM: meanRange(cand, S), errDeg: 0.05});
-        expect(stat.beta).toBeCloseTo(-1.5, 6);
-        expect(stat.share).toBeGreaterThan(0.99);
-        expect(platformMirrorRank(stat)).toBe(1);
-        expect(platformMirrorSummary(stat)).toContain("mirrored");
+    test("independent speed step against a steady orbit is not mirroring", () => {
+        const p = pathFrom(t => [4000*Math.cos(70*t/4000),4000*Math.sin(70*t/4000),7000]);
+        const x = pathFrom(t => [20*t + 180*Math.max(0,t-36.4),0,3000]);
+        const oldP = detrendUniformMotion(p, N), oldX = detrendUniformMotion(x, N);
+        // There can be substantial position correlation without simultaneous
+        // acceleration events; never use it as the new score.
+        let pp=0,xx=0,xp=0;
+        for(let i=0;i<oldP.length;i++){pp+=oldP[i]**2;xx+=oldX[i]**2;xp+=oldP[i]*oldX[i];}
+        expect(xp*xp/(pp*xx)).toBeGreaterThan(0.1);
+        const s = stat(x,p);
+        expect(s.assessable).toBe(true);
+        expect(platformMirrorSignificant(s)).toBe(false);
     });
 
-    test("an object with a manoeuvre of its own is reported as partial, not full", () => {
-        // Half the manoeuvre is genuinely the object's, half the platform's.
-        const own = truthPath();
-        for (let f = 0; f < N; f++) {
-            own[f * 3] += 245 * Math.sin(3 * Math.PI * (f / (N - 1)));   // its own wiggle
+    test("similar constant acceleration cannot masquerade as following a turn", () => {
+        const w=Math.PI/240,r=2/w**2;
+        const p=pathFrom(t=>[r*Math.cos(w*t),r*Math.sin(w*t),0]);
+        const x=pathFrom(t=>[-t*t/Math.sqrt(2),-t*t/Math.sqrt(2),0]);
+        const s=stat(x,p);
+        expect(s.assessable).toBe(true);
+        expect(s.share).toBeGreaterThan(0.5);
+        expect(s.temporalMatch).toBe(false);
+        expect(platformMirrorRank(s)).toBe(3);
+    });
+
+    test("same-speed turns with different phases are not rotated into agreement", () => {
+        const w=70/4000;
+        const p=pathFrom(t=>[4000*Math.cos(w*t),4000*Math.sin(w*t),0]);
+        const x=pathFrom(t=>[4000*Math.cos(w*t+Math.PI/4),4000*Math.sin(w*t+Math.PI/4),0]);
+        const s=stat(x,p);
+        expect(s.assessable).toBe(true);
+        expect(s.share).toBeLessThan(0.05);
+        expect(platformMirrorRank(s)).toBe(3);
+    });
+
+    test("straight or uniformly accelerating platforms are unassessed", () => {
+        for (const p of [truthPath(), pathFrom(t => [t*t,0,0])]) {
+            const s = stat(platformPath(),p);
+            expect(s.assessable).toBe(false);
+            expect(platformMirrorRank(s)).toBe(3);
         }
-        const cand = blend(own, S, 0.5);
-        const stat = platformMirrorStat(cand, S, N,
-            {rangeM: meanRange(cand, S), errDeg: 0.05});
-        expect(stat.share).toBeGreaterThan(0.5);
-        expect(stat.share).toBeLessThan(0.85);
-        expect(platformMirrorRank(stat)).toBe(2);
-        // The independent manoeuvre does not bias the coefficient: beta still
-        // reads the range error, which is what makes the reference range usable
-        // on a real object rather than only on a collapsed one.
-        expect(stat.beta).toBeCloseTo(0.5, 6);
-        expect(stat.independentM).toBeGreaterThan(50);
     });
 
-    test("a straight-flying platform gives no parallax and no verdict", () => {
-        const straightS = platformPath(N, 0);      // translation only, no turn
-        const cand = blend(truth, straightS, 0.3);
-        const stat = platformMirrorStat(cand, straightS, N,
-            {rangeM: meanRange(cand, straightS), errDeg: 0.05});
-        expect(stat).toBeNull();
+    test("constant-velocity candidates match no acceleration events", () => {
+        expect(platformMirrorRank(stat(truthPath(),platformPath()))).toBe(3);
     });
 
-    test("mirrored motion below what the residual can resolve is not evidence", () => {
-        // The measured false positive this gate exists for: a drone fit whose
-        // ENTIRE manoeuvre is a few metres of platform-shaped wander. The share
-        // is high, the amount is nothing, and it must not be demoted for it.
-        const cand = blend(truth, S, 0.995);
-        const stat = platformMirrorStat(cand, S, N,
-            {rangeM: meanRange(cand, S), errDeg: 0.15});
-        expect(stat.share).toBeGreaterThan(0.99);      // shape says "the platform"
-        expect(stat.snr).toBeLessThan(MIRROR_MIN_SNR); // scale says "nothing there"
-        expect(platformMirrorRank(stat)).toBe(3);
-        expect(platformMirrorSignificant(stat)).toBe(false);
-        expect(platformMirrorSummary(stat)).toBeNull();
+    test("an unresolved tiny matching motion gets no penalty", () => {
+        const p=platformPath(),s=stat(blend(truthPath(),p,0.999),p);
+        expect(s.share).toBeGreaterThan(0.99);
+        expect(s.snr).toBeLessThan(3);
+        expect(platformMirrorRank(s)).toBe(3);
+        expect(platformMirrorSummary(s)).toBeNull();
     });
 
-    test("a degenerate near-zero residual cannot make any metre significant", () => {
-        // The exact-ray "Straight Line" candidate reaches ~3e-7 deg by
-        // construction; without the angle floor its resolving scale is zero.
-        const cand = blend(truth, S, 0.9999);
-        const stat = platformMirrorStat(cand, S, N,
-            {rangeM: meanRange(cand, S), errDeg: 3e-7});
-        expect(Number.isFinite(stat.snr)).toBe(true);
-        expect(platformMirrorRank(stat)).toBe(3);
+    test("the complete signal must agree across smoothing scales", () => {
+        // A fast unrelated oscillation disappears only in the widest window.
+        const p=platformPath(),x=p.map((v,i)=>v+(i%3===0 ? 3*Math.sin(2*Math.PI*(Math.floor(i/3)/FPS)/3) : 0));
+        const s=stat(x,p);
+        expect(s.scales.some(c=>c.share < 0.5)).toBe(true);
+        expect(platformMirrorRank(s)).toBe(3);
     });
 
-    test("a candidate that does not manoeuvre at all is not mirroring anything", () => {
-        const still = new Float64Array(N * 3);
-        for (let f = 0; f < N; f++) { still[f * 3] = 500; still[f * 3 + 1] = 2400; still[f * 3 + 2] = 250; }
-        const stat = platformMirrorStat(still, S, N, {rangeM: meanRange(still, S), errDeg: 0.1});
-        expect(stat.share).toBeLessThan(1e-3);
-        expect(platformMirrorRank(stat)).toBe(3);
+    test.each([10,30,60])("physical windows are stable at %s fps", fps => {
+        const p=pathFrom(t=>[0.5*t*t-20*Math.sin(0.2*t),0,0],fps);
+        const s=stat(p.map(v=>2*v),p,{fps});
+        expect(s.scales.map(c=>c.windowSeconds)).toEqual([2,4,8]);
+        expect(s.beta).toBeCloseTo(2,8);
+        expect(platformMirrorRank(s)).toBe(1);
     });
 
-    test("too few frames, or a missing track, returns null rather than a guess", () => {
-        expect(platformMirrorStat(null, S, N, {})).toBeNull();
-        expect(platformMirrorStat(truth, S, 4, {})).toBeNull();
-        expect(platformMirrorStat(truth, S, N + 50, {})).toBeNull();
+    test("missing timing, invalid samples and short tracks are unassessed", () => {
+        expect(stat(null, platformPath())).toBeNull();
+        expect(stat(truthPath(),platformPath(),{fps:undefined})).toBeNull();
+        expect(platformMirrorStat(new Float64Array(30),new Float64Array(30),10,{fps:30,rangeM:1000,errDeg:0.01})).toBeNull();
+        const bad=truthPath();bad[30]=NaN;
+        expect(stat(bad,platformPath())).toBeNull();
     });
 
-    test("the summary states the share, the scale, the metres and the honest range", () => {
-        const cand = blend(truth, S, 0.3);
-        const stat = platformMirrorStat(cand, S, N,
-            {rangeM: meanRange(cand, S), errDeg: 0.05});
-        const text = platformMirrorSummary(stat);
-        expect(text).toMatch(/^\d+% of its manoeuvring is a [\d.]+× copy of the platform's own path/);
-        expect(text).toContain("of independent motion");
-        expect(text).toContain("the mirroring vanishes at about");
+    test.each([undefined,"acceleration-magnitude-v1"])("old records (%s) cannot penalize a path", method => {
+        const old={method,assessable:true,scaleStable:true,temporalMatch:true,share:1,beta:1,snr:100};
+        expect(platformMirrorRank(old)).toBe(3);
+        expect(platformMirrorSummary(old)).toBeNull();
+    });
+
+    test("summary describes the actual test without a range claim", () => {
+        const s=stat(eventPath(45,0,2),eventPath(45));
+        const text=platformMirrorSummary(s);
+        expect(text).toContain("assessed time");
+        expect(text).toContain("at the same timestamps");
+        expect(text).toContain("same");
+        expect(text).not.toContain("vanishes");
     });
 });
 
@@ -211,7 +209,7 @@ describe("gradeHypotheses", () => {
 
     function hyp(key, track, errFloor = 0.1403) {
         return {
-            key, name: key, track, errDeg: 0.05,
+            key, name: key, track, errDeg: 0.01,
             params: {errFloor},
             metricsFull: {
                 range: {min: 1, max: 1, mean: meanRange(track, S), rms: 1, std: 0},
@@ -227,7 +225,7 @@ describe("gradeHypotheses", () => {
     test("attaches the scene scale and the mirror record to every fitted candidate", () => {
         const mirroring = hyp("constAlt", blend(truth, S, 0.3));
         const clean = hyp("lantern", truth);
-        gradeHypotheses([mirroring, clean], {S, n: N}, hypothesisFitKind);
+        gradeHypotheses([mirroring, clean], {S, n: N, fps: FPS}, hypothesisFitKind);
 
         expect(mirroring.fitScaleDeg).toBeCloseTo(0.1403, 6);
         expect(clean.fitScaleDeg).toBeCloseTo(0.1403, 6);
@@ -245,8 +243,8 @@ describe("gradeHypotheses", () => {
         // Graded, both reject it — and they must move together: a headline
         // calling a class viable while its own tile is badged "Mirrors the
         // platform" is the inconsistency this ordering exists to prevent.
-        gradeHypotheses([aircraft], {S, n: N}, hypothesisFitKind);
-        expect(plausibilityRating(aircraft).label).toBe("Mirrors the platform");
+        gradeHypotheses([aircraft], {S, n: N, fps: FPS}, hypothesisFitKind);
+        expect(plausibilityRating(aircraft).label).toBe("Strong platform acceleration match");
         expect(assessExecutiveVerdict([aircraft]).classes
             .find((c) => c.key === "fixedWing").viable).toBe(false);
     });
@@ -254,20 +252,20 @@ describe("gradeHypotheses", () => {
     test("a catalogue identification is judged on angle alone and is never graded", () => {
         const sat = hyp("satellite", blend(truth, S, 0.3));
         sat.params = {...sat.params, satellite: "STARLINK-1", sunlit: true};
-        gradeHypotheses([sat], {S, n: N}, hypothesisFitKind);
+        gradeHypotheses([sat], {S, n: N, fps: FPS}, hypothesisFitKind);
         expect(sat.platformMirror).toBeUndefined();
     });
 
     test("an at-infinity check carries an arbitrary helper range and is never graded", () => {
         const inf = hyp("fixedPoint", blend(truth, S, 0.3));
         inf.atInfinity = true;
-        gradeHypotheses([inf], {S, n: N}, hypothesisFitKind);
+        gradeHypotheses([inf], {S, n: N, fps: FPS}, hypothesisFitKind);
         expect(inf.platformMirror).toBeUndefined();
     });
 
     test("no reference residual leaves the absolute ladder in charge", () => {
         const h = hyp("lantern", truth, NaN);
-        gradeHypotheses([h], {S, n: N}, hypothesisFitKind);
+        gradeHypotheses([h], {S, n: N, fps: FPS}, hypothesisFitKind);
         expect(h.fitScaleDeg).toBeUndefined();
     });
 });

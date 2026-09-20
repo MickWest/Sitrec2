@@ -41,3 +41,35 @@ test("image-plane fitting includes full-resolution extrema between drawn samples
     }
     expect(cameraTrackProjection([{pts: [[1, 1, -10]]}], pose, viewport)).toBeNull();
 });
+
+test("near-plane outliers outside the lens do not collapse the visible paths", () => {
+    const viewPose = {...pose, vFOV: 30, aspect: 1.5};
+    const viewport = {left: 0, top: 0, width: 300, height: 200};
+    const track = [[-0.36, -0.27, 0.00057], [-1, 0, 10], [1, 0, 10]];
+    const project = cameraTrackProjection([{pts: track}], viewPose, viewport);
+    expect(project(track[0])).toBeNull();
+    expect(project(track[2]).x - project(track[1]).x).toBeGreaterThan(50);
+});
+
+test("a segment with both ends outside still crosses the camera field", () => {
+    const points = [[-20, 0, 10], [20, 0, 10]];
+    const project = cameraTrackProjection([{pts: points}], {...pose, vFOV: 30, aspect: 1},
+        {left: 10, top: 20, width: 200, height: 100});
+    expect(project(points[0])).toBeNull();
+    expect(project(points[1])).toBeNull();
+    const [a, b] = project.segment(...points);
+    expect(a.x).toBeCloseTo(24, 8);
+    expect(b.x).toBeCloseTo(196, 8);
+    expect(a.y).toBeCloseTo(b.y, 8);
+});
+
+test("clip a segment crossing from behind the camera without dropping its visible part", () => {
+    const points = [[2, 0, -1], [0, 0, 10]];
+    const project = cameraTrackProjection([{pts: points}], {...pose, vFOV: 30, aspect: 1},
+        {left: 0, top: 0, width: 200, height: 100});
+    const [a, b] = project.segment(...points);
+    expect(a.depth).toBeGreaterThan(0);
+    expect(b.depth).toBe(10);
+    expect(a.x).toBeGreaterThan(b.x);
+    expect(project.segment([1, 0, -2], [2, 0, -1])).toBeNull();
+});

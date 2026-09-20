@@ -103,21 +103,20 @@ describe("the ribbon", () => {
     });
 
     test("mirroring is reported from the rating, with its share", () => {
-        const h = hyp("constAlt", {extra: {platformMirror: {
-            share: 0.959, beta: 0.229, snr: 94, rmsPlatform: 1182, rmsTrack: 276,
-            mirroredM: 270, independentM: 56, referenceRangeM: 2911,
+        const h = hyp("constAlt", {extra: {platformMirror: {method: "acceleration-pattern-v2", assessable: true, scaleStable: true, temporalMatch: true,
+            share: 0.959, beta: 0.229, snr: 94,
         }}});
         const c = of(candidateCriteria(h, plausibilityRating(h)), "mirror");
         expect(c.status).toBe("fail");
         expect(c.value).toBe("96%");
-        expect(c.why).toContain("0.23× copy");
+        expect(c.why).toContain("signed scale +0.23×");
     });
 
     test("a platform that never manoeuvres gives grey, not green", () => {
         const h = hyp("constAlt");                 // no platformMirror attached
         const c = of(candidateCriteria(h, plausibilityRating(h)), "mirror");
         expect(c.status).toBe("na");
-        expect(c.why).toContain("no parallax");
+        expect(c.why).toContain("timing are insufficient");
     });
 
     test("grey always says what is missing, never what was found", () => {

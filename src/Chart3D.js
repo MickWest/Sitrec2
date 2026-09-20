@@ -247,6 +247,7 @@ export class Chart3D {
         this.labelInsetRight = opts.labelInsetRight ?? 8;
         this.cameraView = false;
         this.cameraFrame = 0;
+        this.timelineInset = opts.timelineInset ?? 0;
         group.add(this);
         this._bindPointer();
         this.resize();
@@ -354,8 +355,13 @@ export class Chart3D {
 
     setCameraView(on, frame = this.cameraFrame) {
         this.cameraView = !!(on && this.scene.camera);
-        this.cameraFrame = Math.max(0, Math.min((this.scene.camera?.frameCount ?? 1) - 1, Math.round(frame)));
         this.canvas.style.cursor = this.cameraView ? "default" : "grab";
+        this.setFrame(frame);
+    }
+
+    setFrame(frame) {
+        const count = this.scene.frameCount ?? this.scene.camera?.frameCount ?? 1;
+        this.cameraFrame = Math.max(0, Math.min(count - 1, Math.round(frame)));
         this.draw();
     }
 
@@ -404,9 +410,10 @@ export class Chart3D {
         // current projected corner bounds. That keeps the chart's scale stable
         // while rotating instead of "breathing" larger/smaller by orientation.
         const sphereR = Math.hypot(hx, hy, hz) || 1;
-        const scale = Math.min(W * (1 - this.pad * 2), H * (1 - this.pad * 2)) / (sphereR * 2) * this.scaleBoost;
+        const plotHeight = Math.max(40, H - this.timelineInset);
+        const scale = Math.min(W * (1 - this.pad * 2), plotHeight * (1 - this.pad * 2)) / (sphereR * 2) * this.scaleBoost;
         const cx = W / 2;
-        const cy = H / 2;
+        const cy = plotHeight / 2;
         this.lastScale = scale;
 
         // project a DISPLAY-unit point -> canvas px
@@ -422,6 +429,7 @@ export class Chart3D {
 
         this._drawFrame(ctx, b, projN, orientation, hx, hy, hz);
         this._drawSeries(ctx, proj, this.zoomed ? b : null);
+        this._drawCurrentMarkers(ctx, proj, this.zoomed ? b : null);
         if (this.showPeaks) this._drawPeakLabels(ctx, proj, this.zoomed ? b : null);
     }
 
@@ -634,6 +642,31 @@ export class Chart3D {
         }
     }
 
+    // Use full-resolution frame positions, not the decimated line samples.
+    // Draw truth first as an outer ring so coincident solutions remain visible.
+    _drawCurrentMarkers(ctx, proj, clipB = null) {
+        const series = this.scene.series.filter(s => s.positionAt)
+            .sort((a, b) => Number(b.role === "truth") - Number(a.role === "truth"));
+        ctx.save();
+        ctx.setLineDash([]);
+        ctx.globalAlpha = 1;
+        for (const s of series) {
+            if (s.role === "truth" && !this.showTruth) continue;
+            const point = s.positionAt(this.cameraFrame);
+            if (!point || !point.every(Number.isFinite) || (clipB && !boundsContainPoint(clipB, point))) continue;
+            const p = proj(point);
+            if (!p) continue;
+            ctx.strokeStyle = s.role === "truth" ? s.color : "#0c0e11";
+            ctx.fillStyle = s.color;
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.arc(p.x, p.y, s.role === "truth" ? 7 : 4.5, 0, Math.PI * 2);
+            if (s.role !== "truth") ctx.fill();
+            ctx.stroke();
+        }
+        ctx.restore();
+    }
+
     _drawPeakLabels(ctx, proj, clipB = null, series = this.scene.series) {
         const candidates = [];
         for (const s of series) {
@@ -666,7 +699,7 @@ export class Chart3D {
             const positions = [[p.x + 6, p.y - height - 4], [p.x - width - 6, p.y - height - 4],
                 [p.x + 6, p.y + 4], [p.x - width - 6, p.y + 4]];
             const position = positions.find(([x, y]) => x >= 4 && y >= 4
-                && x + width <= this.w - this.labelInsetRight && y + height <= this.h - 4
+                && x + width <= this.w - this.labelInsetRight && y + height <= this.h - (this.timelineInset ?? 0) - 4
                 && placed.every(r => x + width + 4 < r.x || x > r.x + r.width + 4
                     || y + height + 4 < r.y || y > r.y + r.height + 4));
             if (!position) continue;
@@ -697,7 +730,7 @@ export class Chart3D {
         ctx.textBaseline = "top";
         ctx.fillText("Camera perspective", 14, this.h - 58);
         if (!proj) {
-            ctx.fillText(pose ? "No track points in front of the camera" : "Camera pose unavailable at this frame", 10, 34);
+            ctx.fillText(pose ? "No tracks in the camera's field of view" : "Camera pose unavailable at this frame", 10, 34);
             ctx.restore();
             return;
         }
@@ -711,13 +744,14 @@ export class Chart3D {
             ctx.globalAlpha = s.alpha ?? 1;
             ctx.setLineDash(s.dash ?? []);
             ctx.beginPath();
-            let connected = false;
-            for (const point of s.pts) {
-                const p = proj(point);
-                if (!p) { connected = false; continue; }
-                if (connected) ctx.lineTo(p.x, p.y);
-                else ctx.moveTo(p.x, p.y);
-                connected = true;
+            let end = null;
+            for (let i = 1; i < s.pts.length; i++) {
+                const segment = proj.segment(s.pts[i - 1], s.pts[i]);
+                if (!segment) { end = null; continue; }
+                const [a, b] = segment;
+                if (!end || Math.hypot(a.x - end.x, a.y - end.y) > 1e-6) ctx.moveTo(a.x, a.y);
+                ctx.lineTo(b.x, b.y);
+                end = b;
             }
             ctx.stroke();
         }
