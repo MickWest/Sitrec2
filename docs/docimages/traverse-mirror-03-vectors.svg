@@ -1,0 +1,85 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="760" height="572" viewBox="0 0 760 572" font-family="Helvetica, Arial, sans-serif">
+<rect width="760" height="572" fill="#FFFFFF"/>
+<defs><marker id="ap" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="9" markerHeight="9" markerUnits="userSpaceOnUse" orient="auto"><path d="M0,1 L9,5 L0,9 z" fill="#2F6FD6"/></marker><marker id="an" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="9" markerHeight="9" markerUnits="userSpaceOnUse" orient="auto"><path d="M0,1 L9,5 L0,9 z" fill="#C9690F"/></marker><marker id="af" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="9" markerHeight="9" markerUnits="userSpaceOnUse" orient="auto"><path d="M0,1 L9,5 L0,9 z" fill="#A83A9F"/></marker></defs>
+<text x="380.0" y="26.0" font-family="Helvetica, Arial, sans-serif" font-size="18" font-weight="700" fill="#17202A" text-anchor="middle" style="">Same instant, one fixed scale, compared as vectors</text>
+<text x="60.0" y="74.0" font-family="Helvetica, Arial, sans-serif" font-size="14" font-weight="700" fill="#17202A" text-anchor="start" style="">a candidate that follows the turn</text>
+<text x="60.0" y="90.0" font-family="Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#7E8893" text-anchor="start" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">its acceleration turns with the platform&#x27;s, at a fixed fraction of it</text>
+<line x1="128.0" y1="166.0" x2="84.8" y2="150.3" stroke="#2F6FD6" stroke-width="3" marker-end="url(#ap)"/>
+<circle cx="106.4" cy="158.1" r="11.5" fill="none" stroke="#7E8893" stroke-width="1.2"/>
+<circle cx="106.4" cy="158.1" r="2.2" fill="#7E8893"/>
+<line x1="128.0" y1="166.0" x2="110.4" y2="155.1" stroke="#C9690F" stroke-width="2.6" marker-end="url(#an)"/>
+<circle cx="128.0" cy="166.0" r="3.2" fill="#17202A"/>
+<text x="128.0" y="192.0" font-family="Helvetica, Arial, sans-serif" font-size="11.5" font-weight="700" fill="#0A9384" text-anchor="middle" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">match</text>
+<line x1="271.0" y1="166.0" x2="244.6" y2="128.3" stroke="#2F6FD6" stroke-width="3" marker-end="url(#ap)"/>
+<circle cx="257.8" cy="147.2" r="11.5" fill="none" stroke="#7E8893" stroke-width="1.2"/>
+<circle cx="257.8" cy="147.2" r="2.2" fill="#7E8893"/>
+<line x1="271.0" y1="166.0" x2="254.8" y2="151.2" stroke="#C9690F" stroke-width="2.6" marker-end="url(#an)"/>
+<circle cx="271.0" cy="166.0" r="3.2" fill="#17202A"/>
+<text x="271.0" y="192.0" font-family="Helvetica, Arial, sans-serif" font-size="11.5" font-weight="700" fill="#0A9384" text-anchor="middle" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">match</text>
+<line x1="414.0" y1="166.0" x2="414.0" y2="120.0" stroke="#2F6FD6" stroke-width="3" marker-end="url(#ap)"/>
+<circle cx="414.0" cy="143.0" r="11.5" fill="none" stroke="#7E8893" stroke-width="1.2"/>
+<circle cx="414.0" cy="143.0" r="2.2" fill="#7E8893"/>
+<line x1="414.0" y1="166.0" x2="416.0" y2="147.0" stroke="#C9690F" stroke-width="2.6" marker-end="url(#an)"/>
+<circle cx="414.0" cy="166.0" r="3.2" fill="#17202A"/>
+<text x="414.0" y="192.0" font-family="Helvetica, Arial, sans-serif" font-size="11.5" font-weight="700" fill="#0A9384" text-anchor="middle" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">match</text>
+<line x1="557.0" y1="166.0" x2="583.4" y2="128.3" stroke="#2F6FD6" stroke-width="3" marker-end="url(#ap)"/>
+<circle cx="570.2" cy="147.2" r="11.5" fill="none" stroke="#7E8893" stroke-width="1.2"/>
+<circle cx="570.2" cy="147.2" r="2.2" fill="#7E8893"/>
+<line x1="557.0" y1="166.0" x2="566.2" y2="145.2" stroke="#C9690F" stroke-width="2.6" marker-end="url(#an)"/>
+<circle cx="557.0" cy="166.0" r="3.2" fill="#17202A"/>
+<text x="557.0" y="192.0" font-family="Helvetica, Arial, sans-serif" font-size="11.5" font-weight="700" fill="#0A9384" text-anchor="middle" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">match</text>
+<line x1="700.0" y1="166.0" x2="743.2" y2="150.3" stroke="#2F6FD6" stroke-width="3" marker-end="url(#ap)"/>
+<circle cx="721.6" cy="158.1" r="11.5" fill="none" stroke="#7E8893" stroke-width="1.2"/>
+<circle cx="721.6" cy="158.1" r="2.2" fill="#7E8893"/>
+<line x1="700.0" y1="166.0" x2="724.6" y2="154.1" stroke="#C9690F" stroke-width="2.6" marker-end="url(#an)"/>
+<circle cx="700.0" cy="166.0" r="3.2" fill="#17202A"/>
+<text x="700.0" y="192.0" font-family="Helvetica, Arial, sans-serif" font-size="11.5" font-weight="700" fill="#0A9384" text-anchor="middle" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">match</text>
+<text x="128.0" y="214.0" font-family="Helvetica, Arial, sans-serif" font-size="12" font-weight="700" fill="#4E5A66" text-anchor="middle" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">t1</text>
+<text x="271.0" y="214.0" font-family="Helvetica, Arial, sans-serif" font-size="12" font-weight="700" fill="#4E5A66" text-anchor="middle" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">t2</text>
+<text x="414.0" y="214.0" font-family="Helvetica, Arial, sans-serif" font-size="12" font-weight="700" fill="#4E5A66" text-anchor="middle" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">t3</text>
+<text x="557.0" y="214.0" font-family="Helvetica, Arial, sans-serif" font-size="12" font-weight="700" fill="#4E5A66" text-anchor="middle" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">t4</text>
+<text x="700.0" y="214.0" font-family="Helvetica, Arial, sans-serif" font-size="12" font-weight="700" fill="#4E5A66" text-anchor="middle" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">t5</text>
+<text x="60.0" y="250.0" font-family="Helvetica, Arial, sans-serif" font-size="14" font-weight="700" fill="#17202A" text-anchor="start" style="">a candidate holding one constant acceleration</text>
+<text x="60.0" y="266.0" font-family="Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#7E8893" text-anchor="start" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">the same vector at every instant — the size and direction of t3</text>
+<line x1="128.0" y1="342.0" x2="84.8" y2="326.3" stroke="#2F6FD6" stroke-width="3" marker-end="url(#ap)"/>
+<circle cx="106.4" cy="334.1" r="11.5" fill="none" stroke="#7E8893" stroke-width="1.2"/>
+<circle cx="106.4" cy="334.1" r="2.2" fill="#7E8893"/>
+<line x1="128.0" y1="342.0" x2="128.0" y2="319.0" stroke="#A83A9F" stroke-width="2.6" stroke-dasharray="4 3" marker-end="url(#af)"/>
+<circle cx="128.0" cy="342.0" r="3.2" fill="#17202A"/>
+<text x="128.0" y="368.0" font-family="Helvetica, Arial, sans-serif" font-size="11.5" font-weight="700" fill="#B5372E" text-anchor="middle" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">no match</text>
+<line x1="271.0" y1="342.0" x2="244.6" y2="304.3" stroke="#2F6FD6" stroke-width="3" marker-end="url(#ap)"/>
+<circle cx="257.8" cy="323.2" r="11.5" fill="none" stroke="#7E8893" stroke-width="1.2"/>
+<circle cx="257.8" cy="323.2" r="2.2" fill="#7E8893"/>
+<line x1="271.0" y1="342.0" x2="271.0" y2="319.0" stroke="#A83A9F" stroke-width="2.6" stroke-dasharray="4 3" marker-end="url(#af)"/>
+<circle cx="271.0" cy="342.0" r="3.2" fill="#17202A"/>
+<text x="271.0" y="368.0" font-family="Helvetica, Arial, sans-serif" font-size="11.5" font-weight="700" fill="#B5372E" text-anchor="middle" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">no match</text>
+<line x1="414.0" y1="342.0" x2="414.0" y2="296.0" stroke="#2F6FD6" stroke-width="3" marker-end="url(#ap)"/>
+<circle cx="414.0" cy="319.0" r="11.5" fill="none" stroke="#7E8893" stroke-width="1.2"/>
+<circle cx="414.0" cy="319.0" r="2.2" fill="#7E8893"/>
+<line x1="414.0" y1="342.0" x2="414.0" y2="319.0" stroke="#A83A9F" stroke-width="2.6" stroke-dasharray="4 3" marker-end="url(#af)"/>
+<circle cx="414.0" cy="342.0" r="3.2" fill="#17202A"/>
+<text x="414.0" y="368.0" font-family="Helvetica, Arial, sans-serif" font-size="11.5" font-weight="700" fill="#0A9384" text-anchor="middle" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">match</text>
+<line x1="557.0" y1="342.0" x2="583.4" y2="304.3" stroke="#2F6FD6" stroke-width="3" marker-end="url(#ap)"/>
+<circle cx="570.2" cy="323.2" r="11.5" fill="none" stroke="#7E8893" stroke-width="1.2"/>
+<circle cx="570.2" cy="323.2" r="2.2" fill="#7E8893"/>
+<line x1="557.0" y1="342.0" x2="557.0" y2="319.0" stroke="#A83A9F" stroke-width="2.6" stroke-dasharray="4 3" marker-end="url(#af)"/>
+<circle cx="557.0" cy="342.0" r="3.2" fill="#17202A"/>
+<text x="557.0" y="368.0" font-family="Helvetica, Arial, sans-serif" font-size="11.5" font-weight="700" fill="#B5372E" text-anchor="middle" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">no match</text>
+<line x1="700.0" y1="342.0" x2="743.2" y2="326.3" stroke="#2F6FD6" stroke-width="3" marker-end="url(#ap)"/>
+<circle cx="721.6" cy="334.1" r="11.5" fill="none" stroke="#7E8893" stroke-width="1.2"/>
+<circle cx="721.6" cy="334.1" r="2.2" fill="#7E8893"/>
+<line x1="700.0" y1="342.0" x2="700.0" y2="319.0" stroke="#A83A9F" stroke-width="2.6" stroke-dasharray="4 3" marker-end="url(#af)"/>
+<circle cx="700.0" cy="342.0" r="3.2" fill="#17202A"/>
+<text x="700.0" y="368.0" font-family="Helvetica, Arial, sans-serif" font-size="11.5" font-weight="700" fill="#B5372E" text-anchor="middle" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">no match</text>
+<rect x="150.0" y="386.0" width="464.0" height="62.0" rx="5" fill="#F7F9FA"/>
+<line x1="170.0" y1="408.0" x2="206.0" y2="408.0" stroke="#2F6FD6" stroke-width="3" marker-end="url(#ap)"/>
+<text x="216.0" y="412.0" font-family="Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#4E5A66" text-anchor="start" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">the platform&#x27;s acceleration — same size, rotating</text>
+<circle cx="188.0" cy="434.0" r="10" fill="none" stroke="#7E8893" stroke-width="1.2"/>
+<circle cx="188.0" cy="434.0" r="2.2" fill="#7E8893"/>
+<text x="216.0" y="438.0" font-family="Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#4E5A66" text-anchor="start" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">β × that vector, and the 50% tolerance around it</text>
+<text x="380.0" y="482.0" font-family="Helvetica, Arial, sans-serif" font-size="12.5" font-weight="normal" fill="#4E5A66" text-anchor="middle" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">β is one signed number for the whole clip, taken as the median of the per-frame ratios so that a few</text>
+<text x="380.0" y="498.0" font-family="Helvetica, Arial, sans-serif" font-size="12.5" font-weight="normal" fill="#4E5A66" text-anchor="middle" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">independent spikes cannot set it. A frame matches when the candidate&#x27;s acceleration lands within half</text>
+<text x="380.0" y="514.0" font-family="Helvetica, Arial, sans-serif" font-size="12.5" font-weight="normal" fill="#4E5A66" text-anchor="middle" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">of β × the platform&#x27;s — as a vector, so its direction has to turn with it. A steady turn holds its size</text>
+<text x="380.0" y="530.0" font-family="Helvetica, Arial, sans-serif" font-size="12.5" font-weight="normal" fill="#4E5A66" text-anchor="middle" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">and changes only direction, so comparing sizes alone would pass the lower row at every instant.</text>
+<text x="380.0" y="556.0" font-family="Helvetica, Arial, sans-serif" font-size="11.5" font-weight="normal" fill="#7E8893" text-anchor="middle" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">The share is the fraction of assessed time that matches — a count of frames, not a variance explained or a probability.</text>
+</svg>

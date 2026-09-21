@@ -1,8 +1,9 @@
 // Theme - the dark / light theme of the user interface.
 //
-// There is one GLOBAL theme (Settings). It sets the look of the menus and dialogs
-// (a "data-theme" attribute on <html>, which the CSS reads), and a change of the
-// global theme sets EVERY themeable view to the new mode.
+// There is one GLOBAL theme (Settings). It sets the look of the menus, the other lil-gui
+// panels, the view header bars and the tooltips (a "data-theme" attribute on <html>, which
+// the CSS reads), and a change of the global theme sets EVERY themeable view to the new mode.
+// The HTML dialogs and the page chrome that have inline colors do not change.
 //
 // After that, each themeable view has its own mode: the Dark / Light button in its
 // header changes that view only. Shift + click changes all views. See

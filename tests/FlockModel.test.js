@@ -455,10 +455,20 @@ describe("FlockModel", () => {
         const model = new FlockModel({count: 5000, formation: "Cluster"});
         const layout = performance.now() - start;
         const out = new Float64Array(3 * 5000);
-        const evalStart = performance.now();
-        for (let k = 0; k < 30; k++) model.evaluate(k / 30, SPEED, out);
-        const perEvaluate = (performance.now() - evalStart) / 30;
+        // The limit is for an order-of-magnitude slowdown, not for the load of the machine.
+        // So: one call first (the JavaScript engine compiles the code on it), then the MEDIAN
+        // of 30 calls. A mean includes the slow calls that a busy test run causes. Measured
+        // 2026-09-20: median 18 ms alone, approximately 30 ms in the full suite.
+        model.evaluate(0, SPEED, out);
+        const times = [];
+        for (let k = 0; k < 30; k++) {
+            const evalStart = performance.now();
+            model.evaluate((k + 1) / 30, SPEED, out);
+            times.push(performance.now() - evalStart);
+        }
+        times.sort((a, b) => a - b);
+        const medianEvaluate = times[15];
         expect(layout).toBeLessThan(2000);
-        expect(perEvaluate).toBeLessThan(20);
+        expect(medianEvaluate).toBeLessThan(60);
     });
 });

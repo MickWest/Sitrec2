@@ -9,6 +9,40 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.166.0 (2026-09-20)
+
+### New Features
+
+- **Flocks of birds** (Objects → an object's menu → **Flock**): draws a 3D object as a flock of birds that follows its track. Each bird is the object's own model or geometry. In **Flock Parameters**, set the **Number of Birds**, the **Formation** (V, Echelon, Line Astern, Line Abreast, Irregular Front or Cluster) and a **Species** preset such as Canada Goose, White Pelican or Gull. The presets use field measurements of real flocks where there are any.
+- **Starling murmurations** (Objects → an object's menu → **Flock Parameters** → **Formation** → *Murmuration*, or the *Starling Murmuration* **Species** preset): a simulated flock of hundreds or thousands of starlings that turns, stretches and changes shape by itself around the object's position. The simulation runs in the background, and the folder title shows its progress.
+- **QP Graph** (Video → Forensics → **QP Graph**): a graph of the maximum, mean and minimum quantization parameter (QP) of each frame of an H.264 video, which shows how much each frame was compressed. The values are read from the video data itself, not estimated from the picture. Click or drag in the graph to go to a frame. A message tells you when a video cannot be read: a codec that is not H.264, H.264 with CAVLC coding (Baseline profile), interlaced video, or an image.
+- **Theme** (Sitrec → Settings → **Theme**): *Classic* (the start value, with no change to the look), *Dark* or *Light*. Dark and Light set the colors of the menus and of the 2D panels: the graphs (Show → Graphs, custom graphs, the QP Graph), curve editors such as the FOV Editor, Notes, the chat and debug panels, and the Audio Spectrum. Each of these panels has a **◐** button in its header, left of the fullscreen button. A click changes that panel, and Shift + click changes all panels. The 3D views, the video view, pop-up dialogs such as error messages, and the bottom strip with the frame slider do not change.
+- **Angular size evidence** (Traverse → **Analyze Traverse Methods...** results → **Angular size…**): use measured bounds on the object's angular size to check each result. Bounds come from angular-diameter columns in BOT and MISB CSV files, from placed A/B points in manual tracking, or from values you enter. A result whose range gives an impossible size is placed after the others; the BOT Score and the LOS errors do not change. All options are off at the start. **Note:** a file's size bound no longer affects *Physical compatibility* until **Use angular size to judge and order results** is on.
+- **Angular size in BOTBench** (File → File Analysis → **BOTBench...**): new **Judge angular size**, **Assume constant projected size (recommended)** and **Fit angular size (experimental)** options, a new **AS** column, and new angular-size columns in the CSV export.
+- **Supplied wind and fitted wind** (Traverse → **Analyze Traverse Methods...**): each method that depends on wind (Fixed-Wing Aircraft, Balloon, Quadcopter, Constant Air Speed, Constant Altitude, Minimum Acceleration and Minimum Speed) now gives one result with your wind held fixed and one with the wind fitted. Balloon also gives a result with your wind plus a correction; **Wind correction scale (kt)** (Traverse → Traverse Analysis Tweaks) sets how much correction is allowed. A new table above the results compares the winds. Click a cell to show that result.
+- **Timeline in the traverse results** (Traverse → **Analyze Traverse Methods...** results): each graph has a play button and a frame slider, and all graphs move together. **Space** plays and pauses. A dot shows the current position on each path, and a line shows the current frame on the frame-by-frame graphs. The main playhead does not change.
+
+### Improvements
+
+- **Balloon fit** (Traverse → **Analyze Traverse Methods...**): the fit starts with steady drift and a constant rise or sink, and uses a more complex model only when the fit gets clearly better. *Sky Lantern / Balloon* is now *Balloon*, or *Possible sky lantern (rise then fall)* when the fitted motion rises and then falls.
+- **Platform acceleration match** (Traverse → **Analyze Traverse Methods...** results): replaces *Platform mirroring*. It compares the changes of acceleration of a result and of the camera platform at the same times, which gives fewer false matches. It no longer gives a range, and some results change order.
+- **Traverse report** (Traverse → **Analyze Traverse Methods...** → **Open Full Report**): the report now starts with plan views of the leading paths and *Key findings*, and has linked contents, the two wind searches, the source files, a glossary, and a layout for print with a **Print / Save PDF** button. **Download run data** saves the run record. A saved sitch now keeps the name, size, date and relative path of each dropped track file for this. BOTBench rows that ran without the Constant Air Speed solver now also open the full report.
+- **Horizontal and vertical air speed** (Traverse → **Analyze Traverse Methods...** results and report): each result shows its horizontal air speed in knots and its vertical air speed in feet per minute, and the frame-by-frame graphs now have one graph for each. With a truth track, thin dashed lines show truth in these graphs.
+- **Explanations of terms** (Traverse → **Analyze Traverse Methods...** results and report): hover over a term with a dotted underline, such as *Fitted wind* or *BOT Score*, to read what it means.
+- **Camera view in the result graphs** (Traverse → **Analyze Traverse Methods...** results, the camera button on a graph): the view fits only what is inside the camera's field of view, so points outside it no longer shrink the paths.
+- **Truth track color** (imported tracks): a truth track and its marker now use the truth color, and magenta is no longer given to other tracks, so some imported tracks have new colors.
+- **Result cards** (Traverse → **Analyze Traverse Methods...** results): the status *Passed all gates* is now *Broad gates passed*.
+- **Constant Air Speed** (Traverse → **Analyze Traverse Methods...**): the family of near-best results now includes only results close to the best score, and a fitted wind keeps its cost when a result is selected. Some results change.
+- **Faster BOTBench** (File → File Analysis → **BOTBench...**): Constant Air Speed fitting is faster, with the same results.
+
+### Bug Fixes
+
+- Fixed wind from a track file (Physics → Wind → **Wind Source** → **Track:** *name*) being applied at approximately half its speed: the file's wind speed is in metres per second, and Sitrec read it as knots. **Note:** if you put knots in the wind speed column of your own track file to work around this, change it to metres per second.
+- Fixed a file dropped while playback is paused not being read until the next mouse click.
+- Fixed **Open Consistent** and **Open Consistent+Weak** (Traverse → **Analyze Traverse Methods...** results) opening a sitch of the default length, which cut off the tracks of a longer analysis.
+- Fixed the marker of an imported track not keeping the color of its line after a later import.
+- Fixed **Enter** opening the expanded graph again instead of closing it, in the traverse results.
+
 ## Version 2.165.1 (2026-09-18)
 
 ### New Features

@@ -1,0 +1,57 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="760" height="560" viewBox="0 0 760 560" font-family="Helvetica, Arial, sans-serif">
+<rect width="760" height="560" fill="#FFFFFF"/>
+<defs></defs>
+<text x="380.0" y="26.0" font-family="Helvetica, Arial, sans-serif" font-size="18" font-weight="700" fill="#17202A" text-anchor="middle" style="">Three windows, and four guards that must all hold</text>
+<text x="116.0" y="66.0" font-family="Helvetica, Arial, sans-serif" font-size="14" font-weight="700" fill="#17202A" text-anchor="start" style="">the signed scale β, at each window</text>
+<line x1="114.0" y1="266.5" x2="406.0" y2="266.5" stroke="#7E8893" stroke-width="1.3"/>
+<text x="108.0" y="270.5" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#7E8893" text-anchor="end" style="">0</text>
+<text x="108.0" y="191.3" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#7E8893" text-anchor="end" style="">0.5</text>
+<line x1="114.0" y1="187.3" x2="118.0" y2="187.3" stroke="#7E8893" stroke-width="1.2"/>
+<text x="108.0" y="112.0" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#7E8893" text-anchor="end" style="">1.0</text>
+<line x1="114.0" y1="108.0" x2="118.0" y2="108.0" stroke="#7E8893" stroke-width="1.2"/>
+<line x1="128.0" y1="322.0" x2="128.0" y2="327.0" stroke="#7E8893" stroke-width="1.2"/>
+<text x="128.0" y="343.0" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#7E8893" text-anchor="middle" style="">1 s</text>
+<line x1="260.0" y1="322.0" x2="260.0" y2="327.0" stroke="#7E8893" stroke-width="1.2"/>
+<text x="260.0" y="343.0" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#7E8893" text-anchor="middle" style="">2 s</text>
+<line x1="392.0" y1="322.0" x2="392.0" y2="327.0" stroke="#7E8893" stroke-width="1.2"/>
+<text x="392.0" y="343.0" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#7E8893" text-anchor="middle" style="">4 s</text>
+<text x="260.0" y="366.0" font-family="Helvetica, Arial, sans-serif" font-size="12.5" font-weight="normal" fill="#4E5A66" text-anchor="middle" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">smoothing half-window</text>
+<rect x="114.0" y="167.2" width="284.0" height="39.7" rx="0" fill="#DDEFEC"/>
+<text x="406.0" y="187.2" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="700" fill="#0A9384" text-anchor="start" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">±25%</text>
+<polyline points="128.0,185.4 260.0,189.3 392.0,187.1" fill="none" stroke="#0A9384" stroke-width="2.6" stroke-linejoin="round" stroke-linecap="round"/>
+<circle cx="128.0" cy="185.4" r="4.5" fill="#0A9384"/>
+<circle cx="260.0" cy="189.3" r="4.5" fill="#0A9384"/>
+<circle cx="392.0" cy="187.1" r="4.5" fill="#0A9384"/>
+<text x="118.0" y="169.4" font-family="Helvetica, Arial, sans-serif" font-size="11.5" font-weight="700" fill="#0A9384" text-anchor="start" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">holds its sign and size</text>
+<polyline points="128.0,196.8 260.0,285.5 392.0,134.9" fill="none" stroke="#A83A9F" stroke-width="2.6" stroke-linejoin="round" stroke-linecap="round" stroke-dasharray="5 4"/>
+<circle cx="128.0" cy="196.8" r="4.5" fill="#A83A9F"/>
+<circle cx="260.0" cy="285.5" r="4.5" fill="#A83A9F"/>
+<circle cx="392.0" cy="134.9" r="4.5" fill="#A83A9F"/>
+<text x="270.0" y="303.5" font-family="Helvetica, Arial, sans-serif" font-size="11.5" font-weight="700" fill="#A83A9F" text-anchor="start" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">changes sign — declined</text>
+<text x="470.0" y="66.0" font-family="Helvetica, Arial, sans-serif" font-size="14" font-weight="700" fill="#17202A" text-anchor="start" style="">all four must hold</text>
+<rect x="460.0" y="80.0" width="262.0" height="54.0" rx="4" fill="#F7F9FA"/>
+<text x="470.0" y="96.0" font-family="Helvetica, Arial, sans-serif" font-size="12.5" font-weight="700" fill="#17202A" text-anchor="start" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">share ≥ 0.50</text>
+<text x="470.0" y="112.0" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#4E5A66" text-anchor="start" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">of assessed time matches — and the share taken</text>
+<text x="470.0" y="126.0" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#4E5A66" text-anchor="start" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">is the SMALLEST of the three windows</text>
+<rect x="460.0" y="142.0" width="262.0" height="54.0" rx="4" fill="#F7F9FA"/>
+<text x="470.0" y="158.0" font-family="Helvetica, Arial, sans-serif" font-size="12.5" font-weight="700" fill="#17202A" text-anchor="start" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">the scale is stable</text>
+<text x="470.0" y="174.0" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#4E5A66" text-anchor="start" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">same sign at every window, and within 25% of</text>
+<text x="470.0" y="188.0" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#4E5A66" text-anchor="start" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">their median</text>
+<rect x="460.0" y="204.0" width="262.0" height="54.0" rx="4" fill="#F7F9FA"/>
+<text x="470.0" y="220.0" font-family="Helvetica, Arial, sans-serif" font-size="12.5" font-weight="700" fill="#17202A" text-anchor="start" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">the match follows changes</text>
+<text x="470.0" y="236.0" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#4E5A66" text-anchor="start" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">on the matching frames the scaled platform must</text>
+<text x="470.0" y="250.0" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#4E5A66" text-anchor="start" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">beat a constant acceleration by half</text>
+<rect x="460.0" y="266.0" width="262.0" height="54.0" rx="4" fill="#F7F9FA"/>
+<text x="470.0" y="282.0" font-family="Helvetica, Arial, sans-serif" font-size="12.5" font-weight="700" fill="#17202A" text-anchor="start" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">the motion is resolvable</text>
+<text x="470.0" y="298.0" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#4E5A66" text-anchor="start" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">the matched second-difference displacement is at</text>
+<text x="470.0" y="312.0" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#4E5A66" text-anchor="start" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">least 3√6 × range × sightline residual</text>
+<text x="470.0" y="358.0" font-family="Helvetica, Arial, sans-serif" font-size="12" font-weight="700" fill="#4E5A66" text-anchor="start" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">Any one of them failing means no penalty at all.</text>
+<text x="380.0" y="414.0" font-family="Helvetica, Arial, sans-serif" font-size="12.5" font-weight="normal" fill="#4E5A66" text-anchor="middle" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">The same comparison is run three times, over 1, 2 and 4 second half-windows, on one common stretch of the</text>
+<text x="380.0" y="430.0" font-family="Helvetica, Arial, sans-serif" font-size="12.5" font-weight="normal" fill="#4E5A66" text-anchor="middle" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">clip. A shared manoeuvre is the same manoeuvre however hard it is smoothed, so its scale barely moves; a</text>
+<text x="380.0" y="446.0" font-family="Helvetica, Arial, sans-serif" font-size="12.5" font-weight="normal" fill="#4E5A66" text-anchor="middle" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">coincidence between two unrelated motions does not survive being looked at three ways. Taking the smallest</text>
+<text x="380.0" y="462.0" font-family="Helvetica, Arial, sans-serif" font-size="12.5" font-weight="normal" fill="#4E5A66" text-anchor="middle" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">share of the three, rather than the best, is what makes that a test rather than a choice.</text>
+<text x="380.0" y="494.0" font-family="Helvetica, Arial, sans-serif" font-size="11.5" font-weight="normal" fill="#7E8893" text-anchor="middle" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">The β values plotted are illustrative shapes, not measurements. The thresholds beside them — 0.50, 25%, half, 3√6 —</text>
+<text x="380.0" y="508.0" font-family="Helvetica, Arial, sans-serif" font-size="11.5" font-weight="normal" fill="#7E8893" text-anchor="middle" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">are the shipped constants (MIRROR_PARTIAL_SHARE, MIRROR_SCALE_TOLERANCE, MIRROR_MIN_CHANGE_FIT, MIRROR_MIN_SNR).</text>
+<text x="380.0" y="530.0" font-family="Helvetica, Arial, sans-serif" font-size="11.5" font-weight="normal" fill="#7E8893" text-anchor="middle" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">A result that passes all four is a range-ambiguity or coordinated-motion caution. It is never a proof of a wrong range,</text>
+<text x="380.0" y="544.0" font-family="Helvetica, Arial, sans-serif" font-size="11.5" font-weight="normal" fill="#7E8893" text-anchor="middle" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">and it never rules a candidate out — an object really can pace the camera.</text>
+</svg>

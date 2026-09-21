@@ -297,14 +297,14 @@ cannot determine:
   use this score regardless of the method that produced them. Angular-only
   checks use different units and are displayed after tied trajectories. Each tile still reports its standing within its own category
   ("#1 of 4 physically based").
-- **Fit quality, ordinariness and platform mirroring are separate judgements**:
+- **Fit quality, ordinariness and platform acceleration match are separate judgements**:
   a tile's tier is the worst of the three, but the **badge names whichever one
   is binding**. When
   the fit is the limit the labels read `Passes broad screen` / `Fair fit` /
   `Weak fit` / `Poor fit`; when the motion is the limit they read `Passes broad
   screen` / `Moderate` / `Low` / `Kinematically extreme`; when the solved path
-  turns out to be the camera's own path they read `Partly mirrors the platform`
-  / `Mirrors the platform`. This stops a slow,
+  follows the camera's own changes of acceleration they read `Partial platform
+  acceleration match` / `Strong platform acceleration match`. This stops a slow,
   ordinary object with a middling residual being called "Implausible" (that word
   is about the object; the evidence was about the fit), and stops a 12 g solution
   that threads the rays exactly being hidden as merely a good fit. Search-edge,
@@ -323,7 +323,7 @@ cannot determine:
 - **The criteria ribbon**: a row of small squares under each tile's heading, one
   per criterion, each carrying one white letter — **P** physically admissible,
   **L** line-of-sight fit, **S** speed, **A** acceleration, **Z** size,
-  **M** mirroring, **C** convergence, **W** wind, **T** truth — coloured
+  **M** platform acceleration match, **C** convergence, **W** wind, **T** truth — coloured
   green, yellow or red, with grey for anything that was not evaluated. Hovering
   a square says what it measures, what this candidate scored, and why it is that
   colour. It is a reading aid, not an input: nothing in the ribbon moves the
@@ -349,18 +349,19 @@ cannot determine:
   is what keeps the rest honest: a candidate rejected outright (underground,
   non-physical, off-mode) carries no ranks at all, so without it such a tile
   would show mostly grey and read as unobjectionable.
-- **Platform mirroring (the "Coryat curve")**: assume the wrong range and the
-  observing platform's own manoeuvre is injected into the solved path, because
-  both the candidate and the real object lie on the same rays — the candidate
-  track becomes a blend of the object's path and the camera's. Neither of the
-  other two judgements can see this: such a tile follows the sightlines
-  perfectly and its speeds and g-loads are unremarkable. Each trajectory tile is
-  therefore regressed against the platform's manoeuvre, and reports what share
-  of its own manoeuvring that explains, at what scale factor, and the range at
-  which the mirroring would vanish. An object *can* pace the camera — a chase
-  aircraft, a drone flown to follow it — so a mirroring tile keeps its place in
-  the gallery; it is simply an extraordinary thing for an object to do, and the
-  tier now says so. See
+- **Platform acceleration match (the "Coryat curve")**: assume the wrong range
+  and the observing platform's own manoeuvre is injected into the solved path,
+  because both the candidate and the real object lie on the same rays — the
+  candidate track becomes a blend of the object's path and the camera's. Neither
+  of the other two judgements can see this: such a tile follows the sightlines
+  perfectly and its speeds and g-loads are unremarkable. Each trajectory tile's
+  **acceleration** is therefore compared with the platform's at the same
+  timestamps, and reports what share of the assessed time matches a single fixed
+  scaling of it, and at what signed scale. Position is deliberately not used: it
+  cannot tell an independent speed change from a shared manoeuvre. An object
+  *can* pace the camera — a chase aircraft, a drone flown to follow it — so a
+  matching tile keeps its place in the gallery; it is simply an extraordinary
+  thing for an object to do, and the tier now says so. See
   [Does it fly the camera's path?](#does-it-fly-the-cameras-path).
 - **Balloon-consistency tie-break**: a *Physically based* balloon tile is
   scored on whether its own fitted motion is self-consistent with a passive
@@ -643,10 +644,12 @@ Notes on the gallery tiles:
   just because it appeared first among zero-cost classes. Expanded details
   explain exclusions and missing measurements. These checks do not establish
   an object identity. Implied object size converts the file's angular-size bound to metres at
-  the candidate's range; a sub-pixel target gives an upper bound only, and the
-  line says so rather than printing a fictitious lower end. Neither line moves
-  the order of the tiles — the **Platform mirroring** line, which appears only
-  when a tile actually flies the camera's path, is the one stats line that does.
+  the candidate's range. A published angular diameter is an **upper** bound, so
+  the line reads `≤ X m from size bounds; no measured lower bound` rather than
+  printing a fictitious lower end. Neither line moves
+  the order of the tiles — the **Platform acceleration match** line, which is
+  shown whenever the statistic could be computed at all, is the one stats line
+  that does.
   See
   [How ordinary is the answer?](BOTBench.md#how-ordinary-is-the-answer) for the
   definition and the measured behaviour.
@@ -837,15 +840,19 @@ residual, so that blind evaluation sees exactly the tiers an analyst sees.
 (still ≤ 650 kt) is *Moderate*; above 4 g or 650 kt is *Low*; above 9 g or
 900 kt is *Kinematically extreme*.
 
-*Platform mirroring*: the share of the tile's own manoeuvring that the observing
-platform's manoeuvre explains — 0.85 and above is *Mirrors the platform*, 0.50
-and above is *Partly mirrors the platform*. It applies only when the mirrored
-motion is at least three times the positional scale the tile's own residual can
-resolve, so a few metres of platform-shaped wander is never treated as evidence,
-and it never reaches the bottom grade, because pacing the camera is
-extraordinary rather than impossible. On a tie it does not take the label: a
-model that both fits poorly and mirrors is reported as fitting poorly, with the
-mirroring still spelled out in the rank basis.
+*Platform acceleration match*: the share of the assessed time whose acceleration
+matches a single fixed scaling of the platform's, at the same timestamps — 0.85
+and above is *Strong platform acceleration match*, 0.50 and above is *Partial
+platform acceleration match*. The share taken is the smallest of three smoothing
+windows, and three further guards must hold: the signed scale must be stable
+across those windows, the matching frames must establish a shared *change* of
+acceleration rather than a constant one, and the matched motion must be at least
+three times the positional scale the tile's own residual can resolve — so a few
+metres of platform-shaped wander is never treated as evidence. It never reaches
+the bottom grade, because pacing the camera is extraordinary rather than
+impossible. On a tie it does not take the label: a model that both fits poorly
+and matches is reported as fitting poorly, with the match still spelled out in
+the rank basis.
 
 One locally load-bearing model limit
 caps the tier at 2, two or more at 1, and an unconverged optimizer caps it
@@ -867,9 +874,9 @@ so one score unit equals 0.05° of LOS residual, putting "how much
 manoeuvring does this require" and "how well does it thread the rays" on
 one scale. The composite prices exactly the things a wrong assumed
 distance forces on a solution: sustained and peak acceleration, erratic
-turning, and implausible climb or descent. A tile that mirrors the platform
-carries a further demotion of up to about 0.3° of residual-equivalent, in
-proportion to the mirrored share. That term only ever demotes: not flying the
+turning, and implausible climb or descent. A tile that matches the platform's
+acceleration carries a further demotion of up to about 0.3° of
+residual-equivalent, in proportion to the matching share. That term only ever demotes: not flying the
 camera's path is the ordinary expectation, not an achievement, and rewarding it
 would be a standing thumb on the scale for distant solutions.
 
@@ -920,135 +927,119 @@ clothes. This is what Metabunk's Gimbal thread named a *Coryat curve*.
 Nothing about the fit exposes it. Such a candidate follows the sightlines as
 faithfully as any other — it is a member of the same exact-ray family — and its
 speeds and accelerations are unremarkable. Aguadilla's Constant Altitude tile sat
-at 0.073° residual, 51 kt and 0.48 g, and led the gallery. What exposes it is
-comparing the candidate's motion with the **platform's**.
+at 0.073° residual, 51 kt and 0.48 g, and led the gallery; the stamped bend cost
+it less than half a g, which no screen on acceleration would ever stop. What
+exposes it is comparing the candidate's motion with the **platform's**.
 
-**Why the straight line comes off first.** Both paths have their uniform motion
-— the best-fitting straight line at constant speed — removed before anything
-else. That step is the whole method rather than a tidying-up, and it has a
-one-line justification: bearings-only observability says a constant-velocity
-observer cannot resolve range against a constant-velocity target. Only the
-observer's *manoeuvre* carries range information, so removing the straight line
-is what isolates the informative part.
+**Why the comparison is made on acceleration.** The blend survives
+differentiation. If `k` holds roughly steady then the candidate's acceleration is
+`k` times the object's plus `(1 − k)` times the platform's, exactly as its
+position was, so the imprint is there to be found in acceleration as well. It is
+the safer of the two places to look.
 
-Call the leftover of a path its *residual* after that straight line is
-subtracted. Subtracting a best-fit straight line is a linear operation — the
-leftover of a sum is the sum of the leftovers, and scaling a path scales its
-leftover — so applying it to the blend above gives, with `x` for the candidate's
-leftover and `p` for the platform's:
+Earlier releases compared **positions**, with each path's best-fitting straight
+line removed first. That test asked one question of the whole clip — how well does
+a single multiple of the platform's leftover reproduce the candidate's? — and
+answered it with a least-squares projection, scoring the squared cosine of the
+angle between the two stacked leftovers.
 
-    x(f) = k·(the object's leftover) + (1 − k)·p(f)
+A squared cosine is a forgiving thing to ask for. It ignores the sign, it ignores
+the size, and it is taken over the whole clip at once, so two motions that merely
+rise and fall on a similar schedule score highly whether or not they have anything
+to do with one another. A candidate that never turns at all, but changes speed
+once in the middle, leaves a tent-shaped position leftover that scores 0.96
+against a platform turning steadily throughout.
 
-An object flying straight at constant speed has **no** leftover of its own, and
-the expression collapses to
+![Positions can agree when the motion does not](docimages/traverse-mirror-02-acceleration.svg)
 
-    x(f) = (1 − k)·p(f)
+Acceleration separates those two cases immediately, because it asks *when* as
+well as *what shape*. A turn is a sustained push that lasts as long as the turn
+does; a speed change is one short push with nothing at all either side of it. The
+shipped test therefore works on acceleration alone, and the criterion is named
+**platform acceleration match** rather than "platform mirroring".
 
-The candidate's leftover *is* the platform's leftover, scaled by exactly
-`(1 − k)`. Two consequences follow immediately, and both are behaviours of the
-shipped test: a platform that never manoeuvres has `p = 0`, so there is nothing
-to compare against and no verdict is returned; and a candidate at the right range
-has `k = 1`, so it has nothing left to explain.
+**How the comparison is made.** Acceleration is estimated by a second difference
+over a half-window `h` — `(X(t+h) − 2X(t) + X(t−h)) / h²` — for both paths, and
+the two are compared **at the same timestamps**. No time shift, rotation or
+per-frame gain is fitted. One signed number `β` scales the platform's acceleration
+for the whole clip.
 
-![Take away the straight line, and the camera's wiggle is what remains](docimages/traverse-mirror-02-detrend.svg)
+`β` is the **median** of the per-frame ratios `aX·aP / |aP|²`, taken over the
+frames where the platform's own acceleration reaches 0.01 g. A median rather than
+a least-squares fit, because a handful of independent acceleration spikes in the
+candidate must not be allowed to set the scale for everything else.
 
-**Measuring it.** A real object does manoeuvre, so `x` is only *partly* the
-platform's. Stack every frame's leftover — all three coordinates — into two long
-lists of numbers, `x` and `p`, and write `x·p` for their dot product (multiply
-matching entries, add the results). Fit `x ≈ β p` by choosing the `β` that
-minimises the squared miss:
+A frame counts as **matching** when the candidate's acceleration lands within half
+of `β` times the platform's:
 
-    E(β) = (x − βp)·(x − βp) = x·x − 2β(x·p) + β²(p·p)
+    |aX − β·aP|  ≤  0.5 · |β·aP|
 
-That is an ordinary parabola in one unknown. Differentiating and setting the
-result to zero,
+and that is a comparison of **vectors**, not of sizes. The distinction is the
+point of the whole test. A steady turn holds its acceleration *magnitude* constant
+and changes only its *direction*, so a test on magnitudes alone would pass any
+candidate whose acceleration happened to be the right size, whichever way it
+pointed. Requiring the direction to turn with the platform's is what makes a
+steady turn testable at all.
 
-    E'(β) = −2(x·p) + 2β(p·p) = 0        so     β = (x·p) / (p·p)
+![Same instant, one fixed scale, compared as vectors](docimages/traverse-mirror-03-vectors.svg)
 
-and `E''(β) = 2(p·p)`, which is positive whenever the platform manoeuvred at
-all, so this is the minimum rather than a maximum.
+The **share** is the fraction of assessed frames that match. It is a count of
+frames — not a variance explained, and not a probability. Frames in which the
+platform is not accelerating carry no information either way, and are not counted.
 
-The part left over, `x − βp`, is at a right angle to `p` — substituting `β`
-gives `p·(x − βp) = p·x − (x·p) = 0` — so the two pieces combine by Pythagoras:
+**Four guards, all of which must hold.** The comparison is run three times over,
+at half-windows of 1, 2 and 4 seconds — the 2, 4 and 8 second windows the tooltip
+names — on one common interior stretch of the clip. A finding needs all four of
+the following, and any one of them failing means no penalty at all.
 
-    x·x  =  β²(p·p)  +  (x − βp)·(x − βp)
-            \_______/   \_________________/
-          the platform's    the candidate's own
+- **A majority of the time matches.** The share must reach 0.50, and the share
+  taken is the **smallest** of the three windows rather than the best of them.
+- **The scale is stable.** The three windows' `β` values must share one sign and
+  sit within 25% of their median. A real shared manoeuvre is the same manoeuvre
+  however hard it is smoothed; a coincidence between two unrelated motions rarely
+  survives being looked at three ways.
+- **The match follows changes.** On the matching frames, the scaled platform
+  acceleration must remove at least half of the error that a *constant* candidate
+  acceleration would leave. Without this, a candidate holding one steady
+  acceleration that resembles the middle of the platform's turn could be credited
+  with following the turn.
+- **The motion is resolvable.** The matched acceleration must produce a
+  second-difference displacement of at least `3√6` times the positional scale the
+  candidate's own residual can resolve — about `R × ε` metres at range `R` for a
+  residual of `ε` radians. The `√6` is the noise gain of a second difference,
+  which combines three samples with weights 1, −2, 1, so an independent
+  per-sample error of size `σ` arrives as `√6 σ`.
 
-The **share** is the first piece as a fraction of the whole, and because
-`cos θ = (x·p) / (|x||p|)` for the angle `θ` between the two, it is also that
-angle's cosine squared:
+![Three windows, and four guards that must all hold](docimages/traverse-mirror-04-guards.svg)
 
-    share = β²(p·p) / (x·x) = (x·p)² / ((x·x)(p·p)) = cos²θ
+That last guard is what stops a few metres of platform-shaped wander being treated
+as evidence. The residual is also floored at 0.01° before the comparison, because
+the exact-ray Straight Line candidate reaches 3 × 10⁻⁷ degrees by construction and
+would otherwise make any matched metre infinitely significant.
 
-So the two numbers on a tile mean two different things and both are needed:
-`β` is *how much* of the platform is in the candidate, and the share is *how
-completely* the platform accounts for the candidate's motion. The check that the
-algebra is consistent: for the pure blend above, `x = (1 − k)p` exactly, so
-`β = 1 − k` and the share is 1.
+**What a finding says, and what it does not.** A result that passes all four is
+reported as *Partial platform acceleration match* at a share of 0.50 or better,
+and *Strong platform acceleration match* at 0.85 or better. Both are cautions
+about **range ambiguity or coordinated motion**. Neither is a proof that the range
+is wrong, and neither identifies an object.
 
-![The test is a projection](docimages/traverse-mirror-03-projection.svg)
+In particular, the test no longer turns `β` into a range. An earlier release
+published `R = R_c / (1 − β)`, the range at which the imprint would vanish, on the
+strength of the position regression. That inversion rested on the candidate's
+whole leftover being the platform's, scaled; the acceleration test makes no such
+claim, because it measures what fraction of the *time* matches rather than what
+fraction of the *motion* is accounted for. The figure is therefore no longer
+computed, and no longer appears on a tile.
 
-**Reading a range back out.** Since `β = 1 − k` and `k = R_c / R_ref`, the range
-at which the mirroring would vanish falls out directly:
+Records written before this change carry no assessment at all. The stored
+statistic names its own method, and anything that is not `acceleration-pattern-v2`
+is treated as unassessed and recalculated — so a cached BOTBench battery is
+re-graded rather than read at face value, and some results change order as a
+result.
 
-    R_ref = R_c / (1 − β)
-
-Constant Altitude sits at `R_c` = 2245 m with `β` = 0.229, so it predicts
-2245 / 0.771 = **2911 m**. Applied across the gallery this is the most useful
-thing the test produces, because it turns a score into a distance the reader can
-act on.
-
-It also explains the one case where no distance is quoted. Differentiating,
-`dR_ref/dβ = R_c / (1 − β)²`, so the *fractional* error behaves as
-
-    (error in R_ref) / R_ref  =  (error in β) / (1 − β)
-
-At `β` = 0.23 an uncertainty of 0.01 in `β` moves the answer by 1.3%; at
-`β` = 0.95 the same uncertainty moves it by 20%, and the figure grows without
-limit as `β` approaches 1. Below `1 − β` = 0.05 the division stops being a
-measurement, and the analysis says so instead of printing a number.
-
-![Measured: candidates at different ranges agree on where the mirroring stops](docimages/traverse-mirror-04-agreement.svg)
-
-That agreement is the check that this describes real geometry rather than a
-coincidence. On the Aguadilla ground track, eleven candidates whose own ranges
-differ by a factor of **1.78** — 1587 m to 2828 m — predict ranges that differ by
-a factor of only **1.12**: 2598 m to 2911 m. Measured the same way, as a spread
-against the smallest of each set, the inputs disagree by 78% and their
-predictions by 12% — a factor of 6.5 between them. That is the parallax the
-sightlines contain, recovered by asking which range stops requiring the object
-to copy the camera.
-
-It is worth being precise about what that does and does not establish. The
-candidates are not independent measurements — they are eleven readings of the
-same sightlines under different assumptions — so their agreement is a
-consistency check, not an error bar, and the spread is not an uncertainty. What
-it does establish is that the answer is a property of the geometry rather than
-of any one model's priors: a fixed-wing fit and a balloon fit, which share
-nothing but the rays, land 22 m apart.
-
-Note also that the g cost alone never found it: the stamped bend cost Constant
-Altitude only 0.48 g, which no screen on acceleration would stop.
-
-**The two guards, in units.** A high share means nothing if the mirrored motion
-is smaller than the sightlines can resolve. The mirrored component measures
-`|β| × rms(p)` metres, where `rms(p)` is the root-mean-square size of the
-platform's leftover; the sightlines resolve about `R × ε` metres at range `R`
-with a residual of `ε` radians. The finding needs the first to be at least three
-times the second. The case that gate exists for is a drone fit whose whole
-manoeuvre was an 11 m wander:
-
-    drone              0.010 × 1182 =  11 m   against  2802 × 0.00215 =  6.0 m   →  1.9×   declined
-    Constant Altitude  0.229 × 1182 = 270 m   against  2245 × 0.00128 =  2.9 m   →   94×   reported
-
-The residual is also floored at 0.01° before that comparison, because the
-exact-ray Straight Line candidate reaches 3 × 10⁻⁷ degrees by construction and
-would otherwise make any mirrored metre infinitely significant.
-
-And a mirroring tile is never called invalid. An object *can* pace the camera,
-so the reading stays available, keeps its tile, and is priced as extraordinary
-instead of free.
+And a matching tile is never called invalid. An object *can* pace the camera — a
+chase aircraft, a drone flown to follow it — so the reading stays available, keeps
+its tile, and is priced as extraordinary instead of free.
 
 **Surfacing true anomalies.** Several deliberate choices keep a genuinely
 anomalous solution from being ranked or labelled out of sight. The
@@ -1057,9 +1048,9 @@ sightlines exactly is badged *Kinematically extreme* — a good fit
 describing extraordinary motion — rather than blending in among good
 fits or being dismissed as a bad one. The free Quadcopter fit is left
 unseeded as the unconstrained, anomaly-reachable search. Object-class
-preferences do not change the BOT Score. The platform-mirror test demotes only what it can measure — it
-needs a manoeuvring platform, a resolvable mirrored component, and a
-majority share before it says anything — and it never rules a tile out,
+preferences do not change the BOT Score. The platform acceleration test demotes only what it can measure — it
+needs a manoeuvring platform, a resolvable matched component, a scale that holds
+across three smoothing windows, and a majority share before it says anything — and it never rules a tile out,
 because an object pacing the camera is a real possibility rather than an
 impossible one. And when nothing passes, the verdict is *Unresolved* — stated
 with what was and wasn't tested — rather than either a manufactured

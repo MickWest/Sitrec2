@@ -72,8 +72,12 @@ export function impliedDiameter(rangeM, thetaMaxDeg) {
 /**
  * Physical-class screens applied to the recovered path, regardless of solver.
  *
- * @param dataset  carries the angular measurement when the source file had one
- *                 (angularDiameterMaxDeg / fovFullDeg / pixelsAcross)
+ * @param dataset  carries the angular measurement when the source file had one:
+ *                 angularSize / angularSizeOptions when the angular-size
+ *                 assessment is switched on, else the legacy scalar upper
+ *                 bound angularDiameterMaxDeg. The sensor block the file may
+ *                 also carry (fovFullDeg / pixelsAcross) is NOT used here —
+ *                 resolution cannot supply an unreported lower bound.
  * @param h        the hypothesis; needs metricsFull
  * Returns all class checks, motion diagnostics and unmeasured quantities.
  */
