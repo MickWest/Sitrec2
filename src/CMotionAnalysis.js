@@ -798,10 +798,20 @@ export class MotionAnalyzer {
             setRenderOne(true);
         }
     }
+
+    // The shared mask owns this setting, including when motion analysis is stopped.
+    get maskEnabled() {
+        return this.maskOverlayNode?.maskEnabled ?? this._maskEnabled ?? true;
+    }
+
+    set maskEnabled(value) {
+        this._maskEnabled = !!value;
+        if (this.maskOverlayNode) this.maskOverlayNode.maskEnabled = !!value;
+    }
     
     updateMaskPreview() {
         if (this.maskOverlayNode) {
-            this.maskOverlayNode.setShowMaskPreview(this.maskEnabled);
+            this.maskOverlayNode.maskEnabled = this.maskEnabled;
             setRenderOne(true);
         }
     }
@@ -1116,6 +1126,7 @@ export class MotionAnalyzer {
             visible: false,
             onMaskChange: () => this.onMaskChange(),
         });
+        this.maskOverlayNode.maskEnabled = this._maskEnabled ?? true;
         return this.maskOverlayNode;
     }
 
@@ -1171,10 +1182,7 @@ export class MotionAnalyzer {
             this.overlayCtx.clearRect(0, 0, this.overlay.width, this.overlay.height);
         }
         if (this.graphCanvas) this.graphCanvas.style.display = 'none';
-        if (this.maskOverlayNode) {
-            this.maskOverlayNode.setShowMaskPreview(false);
-            this.maskOverlayNode.setEditing(false);
-        }
+        // The mask has independent Show/Edit controls and remains usable when analysis stops.
         if (this.speedOverlayNode) {
             this.speedOverlayNode.setEnabled(false);
         }

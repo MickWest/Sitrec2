@@ -2420,7 +2420,6 @@ function createMaskingFolder(parentFolder) {
     // Action buttons + the editMask flag + the colour object live as plain props;
     // the numeric/boolean analyzer fields are defined as proxies below.
     const maskParams = {
-        editMask: false,
         // Colour is bound as a plain object (lil-gui mutates addColor objects in
         // place) and pushed into the analyzer on change.
         autoMaskTargetColor: {r: 235, g: 235, b: 235},
@@ -2537,7 +2536,8 @@ function createMaskingFolder(parentFolder) {
     for (const [prop, dflt, after] of maskFields) {
         Object.defineProperty(maskParams, prop, {
             enumerable: true,
-            get() { return motionAnalyzer ? motionAnalyzer[prop] : dflt; },
+            get() { return motionAnalyzer ? motionAnalyzer[prop]
+                : prop === 'maskEnabled' ? (NodeMan.get("videoMask", false)?.maskEnabled ?? dflt) : dflt; },
             set(v) { const a = ensureMaskingAnalyzer(); if (!a) return; a[prop] = v; after?.(a); },
         });
     }
@@ -2546,11 +2546,27 @@ function createMaskingFolder(parentFolder) {
         get() { return motionAnalyzer?.maskOverlayNode?.brushSize ?? 20; },
         set(v) { const a = ensureMaskingAnalyzer(); if (a?.maskOverlayNode) { a.maskOverlayNode.brushSize = v; setRenderOne(true); } },
     });
+    for (const [property, field] of [['showMask', 'showMaskPreview'], ['editMask', 'editing']]) {
+        Object.defineProperty(maskParams, property, {
+            enumerable: true,
+            get() { return (motionAnalyzer?.maskOverlayNode ?? NodeMan.get("videoMask", false))?.[field] ?? false; },
+            set(value) {
+                const overlay = ensureMaskingAnalyzer()?.maskOverlayNode;
+                if (!overlay) return;
+                if (property === 'showMask') overlay.setShowMaskPreview(value);
+                else overlay.setEditing(value);
+                setRenderOne(true);
+            },
+        });
+    }
 
-    const maskEnabledController = maskFolder.add(maskParams, 'maskEnabled').name("Enable Mask").perm()
+    const maskEnabledController = maskFolder.add(maskParams, 'maskEnabled').name("Enable Mask").listen().perm()
         .tooltip("Enable/disable mask filtering");
 
-    const editMaskController = maskFolder.add(maskParams, 'editMask').name("Edit Mask").perm()
+    const showMaskController = maskFolder.add(maskParams, 'showMask').name("Show Mask").listen().perm()
+        .tooltip("Show the mask without painting. The overlay is stronger when Enable Mask is on, dimmer when off.");
+
+    const editMaskController = maskFolder.add(maskParams, 'editMask').name("Edit Mask").listen().perm()
         .onChange((v) => {
             const a = ensureMaskingAnalyzer();
             if (a) a.setMaskEditing(v);
@@ -2562,6 +2578,7 @@ function createMaskingFolder(parentFolder) {
     // most mirror sources they are registered ONCE at startup and survive every sitch load —
     // clearMenuMirrors() keeps permanent sources for exactly this case.
     maskEnabledController.shareAs(viewMenuKey("video", "mask"));
+    showMaskController.shareAs(viewMenuKey("video", "maskShow"));
     editMaskController.shareAs(viewMenuKey("video", "maskEdit"));
 
     const brushSizeController = maskFolder.add(maskParams, 'brushSize', 5, BRUSH_MAX_AT_720, 1)
@@ -3135,6 +3152,14 @@ export async function deserializeMotionAnalysis(data) {
     
     const videoView = NodeMan.get("video", false);
     if (!videoView) return;
+
+    // Older saves stored Enable Mask only here, even when motion analysis was inactive.
+    // Restore that setting without requiring OpenCV or starting analysis.
+    const maskAnalyzer = ensureMaskingAnalyzer();
+    if (maskAnalyzer && data.maskEnabled !== undefined) {
+        maskAnalyzer.maskEnabled = data.maskEnabled;
+        maskAnalyzer.updateMaskPreview();
+    }
     
     if (data.active) {
         const doRestore = () => {

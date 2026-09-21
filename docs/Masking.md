@@ -43,7 +43,8 @@ only thing that removes everything.
 
 | Control | What it does |
 | --- | --- |
-| **Edit Mask** | Paint by hand. Drag to add, **Alt/Option**-drag to erase, `[` and `]` for brush size. |
+| **Show Mask** | Show the red exclusion overlay without painting. It is stronger with **Enable Mask** on and dimmer with it off. |
+| **Edit Mask** | Show the mask and paint by hand. Drag to add, **Alt/Option**-drag to erase, `[` and `]` for brush size. |
 | **Mask Ground (auto)** | No clicks. Splits the frame into blocks and keeps as sky only what a large, uniform block can describe — so foliage, which forces the blocks to keep subdividing, is picked out. Best first thing to try. |
 | **Mask Ground (click sky, then ground)** | Click a patch of sky, then a patch of ground. The second click lets Sitrec *measure* which of brightness or texture separates them in your particular clip rather than assuming. Declines honestly if neither works. |
 | **Auto Mask OSD** | Finds pixels that never change over a window of frames and are close to a target colour — burned-in text, timestamps, reticles. |
@@ -100,4 +101,5 @@ worse than having none. Reloading a saved sitch keeps the mask that was saved wi
   to check what difference it is making.
 - Masking is undoable like any other edit, including the automatic methods — so trying
   **Mask Ground (auto)** on a mask you have already hand-painted costs nothing.
-- The red overlay is only drawn while **Edit Mask** is on. The mask still applies when it is off.
+- The red overlay is drawn when **Show Mask** or **Edit Mask** is on. **Enable Mask** controls filtering independently: hiding the overlay does not disable the mask. The visibility and enabled settings are saved with the sitch.
+- The [Tonal Range Graph](VideoTonalRange.md) ignores masked pixels while **Enable Mask** is on and recalculates when the mask changes.

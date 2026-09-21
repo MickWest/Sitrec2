@@ -46,6 +46,7 @@ import {DebugArrowAB, elevationAtLL} from "./threeExt";
 import {FeatureManager} from "./CFeatureManager";
 import {CustomGraphManager} from "./CCustomGraphManager";
 import {deserializeVideoQPGraph, serializeVideoQPGraph} from "./VideoQPGraph";
+import {deserializeVideoTonalGraph, serializeVideoTonalGraph} from "./VideoTonalGraph";
 import {restoreStreetViewPanoFromMod} from "./StreetViewPanoUI";
 import {CNodeTrackGUI} from "./nodes/CNodeControllerTrackGUI";
 import {isVideoRestoredByStreaming} from "./VideoStreaming";
@@ -666,6 +667,7 @@ export const serializeMethods = {
 
         // The video QP graph (Video > Forensics). undefined while it is not shown.
         out.videoQPGraph = serializeVideoQPGraph()
+        out.videoTonalGraph = serializeVideoTonalGraph()
 
         // Serialize synthetic 3D buildings from Synth3DManager
         out.syntheticBuildings = Synth3DManager.serialize()
@@ -1877,6 +1879,8 @@ export const serializeMethods = {
         // covers. Creating it earlier hides a graph saved on top of the video,
         // depending on how quickly its dynamic import finishes.
         await deserializeVideoQPGraph(sitchData.videoQPGraph);
+        if (Globals.loadGeneration !== myGeneration) return;
+        await deserializeVideoTonalGraph(sitchData.videoTonalGraph);
         if (Globals.loadGeneration !== myGeneration) return;
 
         Globals.dontRecalculate = false;

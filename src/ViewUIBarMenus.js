@@ -145,6 +145,7 @@ export const VIEW_UIBAR_MENUS = {
         {slot: "brightness", name: "Brightness", folder: "adjustments"},
         {slot: "contrast", name: "Contrast", folder: "adjustments"},
         {slot: "mask", name: "Enable Mask", folder: "masking"},
+        {slot: "maskShow", name: "Show Mask", folder: "masking"},
         {slot: "maskEdit", name: "Edit Mask", folder: "masking"},
     ],
 };

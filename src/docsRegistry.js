@@ -241,6 +241,11 @@ export const helpDocs = [
         chatDesc: "Simulating a long-exposure photograph (Video → Long Exposure) so moving aircraft, satellites, and stars leave trails.",
     },
     {
+        file: "docs/VideoTonalRange", labelKey: "menus.help.documentation.videoTonalGraph",
+        section: "video", menuId: "video", role: "reference",
+        chatDesc: "The Video Tonal Range graph: per-frame brightness percentiles and a temporal histogram, using the enabled video mask. Also compares a Point Track object's brightness with its local background. Recorded intensity is not temperature. Read for brightness distribution, dynamic range, thermal contrast, or possible global gain changes.",
+    },
+    {
         file: "docs/VideoQPGraph", labelKey: "menus.help.documentation.videoQPGraph",
         section: "video", menuId: "video", role: "reference",
         chatDesc: "The video QP graph (Video → Forensics → QP Graph): a graph of the H.264 quantization parameter (QP) of the loaded video, with the maximum, mean and minimum macroblock QP of every frame, read from the bitstream itself (the same values as FFmpeg -debug qp). Covers what QP means for compression loss, how to read the three lines, which streams it cannot read (non-H.264 codecs, CAVLC, interlaced), and why one QP number does not describe a whole video. Read for 'how compressed is this video', 'what QP was this encoded at', 'how much did the compression change during the clip', or questions about compression quality of on-screen text.",

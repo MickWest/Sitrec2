@@ -73,6 +73,7 @@ export class CNodeMaskOverlay extends CNodeActiveOverlay {
         this.preDrawMaskData = null;
         this.lastBrushAdjustTime = 0;
         this.showMaskPreview = false;
+        this.maskEnabled = true;
         this.editing = false;
         this.visible = false;
         
@@ -100,6 +101,9 @@ export class CNodeMaskOverlay extends CNodeActiveOverlay {
             // never actually restored - the two had drifted apart precisely because the mask was
             // owned by one system and configured through another.
             brushSize: this.brushSize,
+            maskEnabled: this.maskEnabled,
+            showMaskPreview: this.showMaskPreview,
+            editing: this.editing,
         };
     }
 
@@ -113,10 +117,13 @@ export class CNodeMaskOverlay extends CNodeActiveOverlay {
             this.scheduleMaskRestore();
         }
         if (Number.isFinite(v.brushSize)) this.brushSize = v.brushSize;
+        this.maskEnabled = v.maskEnabled !== false;
+        this.setShowMaskPreview(!!v.showMaskPreview);
+        this.setEditing(!!v.editing);
     }
     
     setEditing(editing) {
-        this.editing = editing;
+        this.editing = !!editing;
         this.updateVisibility();
         if (this.overlayView && this.overlayView.div) {
             this.overlayView.div.style.cursor = editing ? 'none' : '';
@@ -128,7 +135,7 @@ export class CNodeMaskOverlay extends CNodeActiveOverlay {
     }
     
     setShowMaskPreview(show) {
-        this.showMaskPreview = show;
+        this.showMaskPreview = !!show;
         this.updateVisibility();
     }
     
@@ -174,6 +181,9 @@ export class CNodeMaskOverlay extends CNodeActiveOverlay {
                     // top-left corner and leaves the rest of the frame unmasked. It also has to
                     // scale for the case this method already existed for: a mask restored onto a
                     // video of different dimensions. initMask does the same thing.
+                    // This is a complete saved snapshot, not an additive brush operation.
+                    // Repeated restores must not accumulate alpha along its soft edges.
+                    this.maskCtx.clearRect(0, 0, this.maskCanvas.width, this.maskCanvas.height);
                     this.maskCtx.drawImage(img, 0, 0, this.maskCanvas.width, this.maskCanvas.height);
                     this.updateMaskImageData();
                 }
@@ -613,7 +623,7 @@ export class CNodeMaskOverlay extends CNodeActiveOverlay {
         const flowRotation = getFlowAlignRotation(frame);
         
         ctx.save();
-        ctx.globalAlpha = this.editing ? 0.4 : 0.2;
+        ctx.globalAlpha = this.maskEnabled ? 0.4 : 0.2;
         
         if (flowRotation !== 0) {
             ctx.translate(this.widthPx / 2, this.heightPx / 2);
