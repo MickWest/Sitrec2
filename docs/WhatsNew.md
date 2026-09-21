@@ -9,6 +9,21 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.166.1 (2026-09-21)
+
+### New Features
+
+- **Create Output Files** (File → File Analysis → **BOTBench...**): saves the top candidate for each analysed file, selected without truth, as a CSV file with the same name in a folder named *output*; set it before you choose **Folder (Caching)**, and note that BOTBench no longer scans folders named *output*.
+
+### Improvements
+
+- **Opening a BOTBench row** (File → File Analysis → **BOTBench...**, click a file name): now asks what to open, **Open solutions in Sitrec** (the file with the analysis results, as before) or **Open file in Sitrec** (the file alone).
+- **Error by solver charts** (File → File Analysis → **Result Charts...**): each wind variant of a solver now has its own label, such as *balloon/FW* for fitted wind and *balloon/GW* for supplied wind, and all *Possible sky lantern (rise then fall)* results share one *lantern* box.
+
+### Bug Fixes
+
+- Fixed a **QP Graph** (Video → Forensics → **QP Graph**) saved on top of a full-screen view sometimes being hidden when the sitch loads again; in sitches saved from this version, a graph that was behind a full-screen view stays behind it until you leave full screen.
+
 ## Version 2.166.0 (2026-09-20)
 
 ### New Features

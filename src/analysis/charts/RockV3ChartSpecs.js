@@ -1829,11 +1829,20 @@ export function shortSolverName(name) {
         .replace(/Polynomial LSQ \(order (\d+)\)/i, "Polynomial LSQ $1");
 }
 
-/** The axis label supplied by a registered solver, with legacy sweep fallbacks. */
+const isLanternCandidate = (candidate) => /^Possible sky lantern\b/i.test(candidate?.name ?? "");
+
+/** The compact solver label, retaining wind variants except for the pooled lantern group. */
 export function solverAxisName(candidate) {
+    if (isLanternCandidate(candidate)) return "lantern";
     const supplied = solverById(candidate?.key)?.shortName;
-    if (supplied) return supplied;
     const name = String(candidate?.name ?? candidate?.key ?? "?");
+    if (supplied) {
+        const windSuffix = /\(supplied wind \+ correction\)$/i.test(name) ? "/GW+"
+            : /\(supplied wind\)$/i.test(name) ? "/GW"
+            : /\(fitted wind\)$/i.test(name) ? "/FW"
+            : /\(wind undetermined\)$/i.test(name) ? "/UW" : "";
+        return supplied + windSuffix;
+    }
     const order = name.match(/\(order\s+(\d+)\)/i)?.[1];
     if (order && candidate?.key === "gfPolyALS") return `poly_${order}`;
     if (order && candidate?.key === "gfMC1") return `mc1_${order}`;
@@ -1861,7 +1870,8 @@ function customSolverRank(candidate) {
 }
 
 /**
- * Every candidate's error against truth, one box per solver.
+ * Every candidate's error against truth, one box per solver variant. The
+ * rise-then-fall lantern candidates share one box across wind variants.
  *
  * The other error figures follow the candidate the blind ranking put first. This one
  * scores every candidate each solver produced, chosen or not, which separates a
@@ -1884,6 +1894,7 @@ export function figErrorBySolver(rows, {rungsWanted = [0, 0.2], measure = makeMe
     // Dots of 3 px would shrink to 1 px at the shortest length, so area by length starts from 4.
     const dotSize = marks.sizeByLength ? 4 : 3;
     const nameOf = (c) => c.name ?? c.key ?? "?";
+    const groupOf = (c) => isLanternCandidate(c) ? "Possible sky lantern (rise then fall)" : nameOf(c);
 
     // The ordinary figure preserves the solver order carried by the candidate
     // lists. The sorted companion derives EACH panel's order from the same
@@ -1897,7 +1908,7 @@ export function figErrorBySolver(rows, {rungsWanted = [0, 0.2], measure = makeMe
         for (const c of r.r_candidates) {
             const v = measure.candidate(c);
             if (!fin(v)) continue;
-            const name = nameOf(c);
+            const name = groupOf(c);
             if (!pooled.has(name)) pooled.set(name, []);
             pooled.get(name).push(v);
             if (!axisNames.has(name)) axisNames.set(name, solverAxisName(c));
@@ -1938,7 +1949,7 @@ export function figErrorBySolver(rows, {rungsWanted = [0, 0.2], measure = makeMe
             for (const r of here) {
                 for (const c of r.r_candidates) {
                     const v = measure.candidate(c);
-                    if (fin(v) && valuesBySolver.has(nameOf(c))) valuesBySolver.get(nameOf(c)).push(v);
+                    if (fin(v) && valuesBySolver.has(groupOf(c))) valuesBySolver.get(groupOf(c)).push(v);
                 }
             }
             const panelSolvers = (customOrder ? customSolvers : solvers).slice();
@@ -1958,7 +1969,7 @@ export function figErrorBySolver(rows, {rungsWanted = [0, 0.2], measure = makeMe
             const points = [];
             for (const r of here) {
                 for (const c of r.r_candidates) {
-                    const s = slot.get(nameOf(c));
+                    const s = slot.get(groupOf(c));
                     const v = measure.candidate(c);
                     if (s === undefined || !fin(v)) continue;
                     points.push({x: s, y: Math.min(atLeast(v, floor), ceiling), id: r.rowIndex ?? null, ...marks.style(r, dotSize, classHue(cls)),
@@ -2023,10 +2034,14 @@ export function figErrorBySolver(rows, {rungsWanted = [0, 0.2], measure = makeMe
             caption: `${drawn} candidate errors drawn across the panels from ${scored.length} tracks, all clip lengths pooled. `
                 + (presentRungs.length > 1
                     ? `All Pointing Errors pools all ${presentRungs.length} available levels for each target class. ` : "")
-                + `One box per solver: `
-                + `every candidate that solver produced, scored against truth whether or not the blind ranking put it `
+                + `One box per solver variant: `
+                + `every candidate in that group, scored against truth whether or not the blind ranking put it `
                 + `first. A solver with a low box can find the answer; set it beside the blind top candidate's error in `
                 + `the clip-length figure to see what the ranking passed over. `
+                + ([...axisNames.values()].some((name) => /\/(?:FW|GW\+?|UW)$/.test(name))
+                    ? `FW = fitted wind; GW = supplied wind; GW+ = supplied wind + correction; UW = wind undetermined. ` : "")
+                + ([...axisNames.values()].includes("lantern")
+                    ? `The lantern box pools rise-then-fall candidates across all wind variants. ` : "")
                 + (customOrder
                     ? `CA, CV, Kalman, MC 100k, MC 1M, MC 250K, MC 500K and MC 50K appear first in that order when present; remaining solvers keep the order supplied by the analysis. `
                     : sortByMedian

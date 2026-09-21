@@ -723,6 +723,43 @@ describe("whose error, and in what unit", () => {
         const withoutCA = ordered.map((r) => ({...r, r_candidates: r.r_candidates.filter((c) => c.key !== "gfCA")}));
         expect(figErrorBySolver(withoutCA, {customOrder: true}).layout.xaxis.ticktext[0]).toBe("cv");
     });
+    test.each([
+        ["ordinary", {}], ["sorted", {sortByMedian: true}], ["custom", {customOrder: true}],
+    ])("the %s solver figure labels wind variants and pools lantern errors without losing hover identities", (unused, options) => {
+        const candidates = [
+            {key: "lantern", name: "Balloon (fitted wind)", relSep: 0.01},
+            {key: "lantern", name: "Balloon (supplied wind)", relSep: 0.02},
+            {key: "lantern", name: "Balloon (supplied wind + correction)", relSep: 0.03},
+            {key: "lantern", name: "Possible sky lantern (rise then fall) (supplied wind)", relSep: 0.1},
+            {key: "lantern", name: "Possible sky lantern (rise then fall) (fitted wind)", relSep: 0.3},
+            {key: "lantern", name: "Possible sky lantern (rise then fall) (supplied wind + correction)", relSep: 0.2},
+            {key: "constAlt", name: "Constant Altitude (supplied wind)", relSep: 0.04},
+            {key: "constAlt", name: "Constant Altitude (wind undetermined)", relSep: 0.05},
+            {key: "constAir", name: "Constant Air Speed (supplied wind)", relSep: 0.06},
+            {key: "constAir", name: "Constant Air Speed (fitted wind)", relSep: 0.07},
+        ];
+        const figure = figErrorBySolver([
+            {base: "balloon-a", rowIndex: 0, d_class: "balloon", d_errorDeg: 0, r_candidates: candidates},
+            {base: "balloon-b", rowIndex: 1, d_class: "balloon", d_errorDeg: 0,
+                r_candidates: [{...candidates[3], relSep: 0.4}]},
+        ], options);
+        const labels = figure.layout.xaxis.ticktext;
+        expect([...labels].sort()).toEqual([
+            "balloon/FW", "balloon/GW", "balloon/GW+", "lantern",
+            "const_alt/GW", "const_alt/UW", "const_air/GW", "const_air/FW",
+        ].sort());
+        const lanternSlot = labels.indexOf("lantern");
+        expect(figure.data.find((trace) => trace.type === "box").median[lanternSlot]).toBeCloseTo(0.25, 12);
+        const dots = figure.data.find((trace) => trace.type === "scattergl");
+        expect(dots.x).toHaveLength(11);
+        expect(dots.x.filter((slot) => Math.abs(slot - lanternSlot) < 0.5)).toHaveLength(4);
+        expect(dots.text).toEqual([
+            ...candidates.map((c) => `balloon-a<br>Solver: ${c.name}`),
+            `balloon-b<br>Solver: ${candidates[3].name}`,
+        ]);
+        expect(figure.layout.annotations.at(-1).text.replace(/<br>/g, " "))
+            .toContain("The lantern box pools rise-then-fall candidates across all wind variants.");
+    });
     test("the solver boxes use compact publication styling", () => {
         const figure = figErrorBySolver(rows, {customOrder: true});
         const boxes = figure.data.filter((trace) => trace.type === "box");

@@ -71,6 +71,11 @@ computed from the rows on screen rather than written in by hand.
 
 The three **Error by solver** figures use the compact name registered with each
 solver: for example `ca`, `cv`, `kf`, `mc_100k`, `fixed_wing`, and `flown_drone`.
+Wind variants have suffixes: `/FW` for fitted wind, `/GW` for supplied wind,
+`/GW+` for supplied wind plus correction, and `/UW` when wind is undetermined.
+For example, `balloon/FW` and `balloon/GW` are separate boxes. Results described
+as "Possible sky lantern (rise then fall)" share one `lantern` box that pools
+their wind variants, retaining every candidate error.
 The full solver name remains in each point's hover label. Their boxes use a
 tighter category gap, a darker class-color fill and dark class-color points,
 with thin black outlines and whiskers for contrast.
