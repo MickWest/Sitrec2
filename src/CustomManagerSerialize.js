@@ -1308,9 +1308,6 @@ export const serializeMethods = {
                 CustomGraphManager.deserialize(sitchData.customGraphs)
             }
 
-            // The video QP graph loads its code on demand, so this does not wait for it.
-            deserializeVideoQPGraph(sitchData.videoQPGraph)
-
             // Deserialize synthetic 3D buildings BEFORE applying mods
             // This recreates the building nodes so that mods can be applied to them
             if (sitchData.syntheticBuildings) {
@@ -1875,6 +1872,12 @@ export const serializeMethods = {
         // one view was saved as doubled. Corrupted saves with multiple doubled
         // views are detected and un-doubled here.
         ViewMan.restoreFullscreenFromMods();
+
+        // Restore the on-demand graph after fullscreen snapshots the views it
+        // covers. Creating it earlier hides a graph saved on top of the video,
+        // depending on how quickly its dynamic import finishes.
+        await deserializeVideoQPGraph(sitchData.videoQPGraph);
+        if (Globals.loadGeneration !== myGeneration) return;
 
         Globals.dontRecalculate = false;
 

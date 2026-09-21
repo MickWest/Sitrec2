@@ -373,6 +373,7 @@ export async function runBotBenchAnalysis(record, {
         // verbatim, which is what keeps candidates in the same frame as the
         // scenario's own tracks.
         originLat, originLon, clipStartMs: record.clipStartMs ?? null,
+        outputSamples: record.outputSamples ?? null,
         botOrigin: Array.isArray(record.meta?.originLLA) ? {
             latDeg: record.meta.originLLA[0],
             lonDeg: record.meta.originLLA[1],

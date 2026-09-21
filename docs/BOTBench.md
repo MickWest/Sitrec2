@@ -159,6 +159,25 @@ group.
   themselves are still reused. Use it after a change to the candidates, the
   ranking or the verdict, which the cache cannot see (see
   [the result cache](#the-result-cache)).
+- **Create Output Files** — optionally save the **Top interpretation**, selected
+  without truth, for each analysed file. Enable this before choosing **Folder
+  (Caching)** to grant write access. The output is CSV with the **same filename**
+  as the source. If `All/` or `Input/` was reached through its parent, the file
+  goes in a sibling `output/` folder; otherwise `output/` is created inside the
+  track folder. Existing output files are replaced, and generated `output/`
+  folders are excluded from subsequent scans. Cached fits are reused, with the
+  candidate paths rebuilt for export.
+
+  Columns are `TrackID,Time,AlgorithmID,EstimatedPositionX,EstimatedPositionY,EstimatedPositionZ,CovarianceXX,CovarianceYY,CovarianceZZ,CovarianceXY,CovarianceXZ,CovarianceYZ`.
+  BOT `TrackID` and `Time` values match the retained input samples at their native
+  rate, including a nonzero start time. XYZ coordinates are metres in the input's
+  local frame. `AlgorithmID` is `sitrec_` followed by the selected method's key.
+  The optional covariance cells are blank because calibrated position covariance
+  is unavailable. Other input formats use their source label as `TrackID` and
+  the fitted sample clock, starting at zero, as `Time`; positions are in the
+  analysis's local ENU frame. No output is written for a direction-only winner
+  or a missing/incomplete track. The status line counts written, skipped and
+  failed outputs; hover a row's status for its path or reason.
 - **Solvers…** — choose which [solvers](#choosing-the-solvers) the next run fits
   and ranks. The button shows the current choice, and every run started from
   the window opens the same dialog first.
@@ -192,7 +211,7 @@ A long run keeps every row in the table, but not every row's full analysis. Each
 file's analysis holds its dataset and every candidate's track for every frame,
 which on a large folder runs to gigabytes and makes each file slower than the one
 before. So only the last few finished rows, and any row you open, keep theirs.
-Pressing **Gallery**, **Report** or the file name on an older row rebuilds its
+Pressing **Gallery**, **Report** or **Open solutions in Sitrec** on an older row rebuilds its
 analysis first, which takes a moment. It reads the row's fits from the folder
 cache where they are stored and fits the rest, and it checks that the rebuilt
 row is the row in the table. Either way the gallery and report belong to the
@@ -352,9 +371,9 @@ disappoints.
 
 - **File** — path relative to the chosen folder, or the scenario's *descriptive
   name* where an answer-key sidecar supplies one (the path then moves to the
-  tooltip). **Click it to open that scenario in a new Sitrec window** — the
-  sensor track, the truth track and the analysis's own consistent candidates,
-  loaded as ordinary tracks so you can look at them in 3D. See
+  tooltip). **Click it to choose Open solutions in Sitrec or Open file in Sitrec**.
+  Both open a new window; the first includes the analysis candidates and the
+  second opens the source file alone. See
   [Opening a row in Sitrec](#opening-a-row-in-sitrec).
 - **Status** — progress while running, then the final state: `done` (every fit
   made in this run), `partly cached` (some fits read from the folder cache,
@@ -532,10 +551,17 @@ itself as further rows complete, so it can be opened mid-run.
 
 ### Opening a row in Sitrec
 
-Clicking a row's **File** cell opens that scenario in a fresh Sitrec window.
+Clicking a row's **File** cell offers two choices:
+
+1. **Open solutions in Sitrec** — open the source file with the analysis's
+   candidate tracks in a fresh Sitrec window, rebuilding cached solutions if needed.
+2. **Open file in Sitrec** — open the source file alone in a fresh Sitrec window,
+   without loading or rebuilding analysis candidates. Sensor and truth tracks
+   already in the file remain part of the import, and sidecars are included as Notes.
+
 The rows come from a folder picker or a drag, so the file is an in-memory blob
 with no path for a link to point at — the bytes are handed over through an
-internal handoff store instead, and the new window loads:
+internal handoff store instead. With **Open solutions in Sitrec**, the new window loads:
 
 - the **sensor track** with its sightlines, and the **truth track** where one
   exists (drawn with the usual ground-truth marker);

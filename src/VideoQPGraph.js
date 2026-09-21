@@ -6,6 +6,7 @@
 //   - the parser is only imported by the worker (src/workers/H264QPWorker.js)
 
 import {Globals, NodeMan, setRenderOne} from "./Globals";
+import {ViewMan} from "./CViewManager";
 import {t} from "./i18n";
 
 const VIEW_ID = "videoQPGraph";
@@ -33,9 +34,15 @@ export async function showVideoQPGraph(show, savedState = null) {
         // Another sitch started to load, or the user cleared the checkbox, during the import.
         if (Globals.loadGeneration !== generation || !wanted) return;
         view = currentView() ?? createVideoQPGraphView(VIEW_ID);
-        if (savedState) view.modDeserialize(savedState);
     }
+    if (savedState) view.modDeserialize(savedState);
     view.show(show);
+    // Restore runs after fullscreen. Older saves carry only visible:true, so
+    // show their graph; new saves also distinguish a graph covered by fullscreen
+    // from one deliberately opened on top of it.
+    if (show && savedState?.fullscreenSuppressed && ViewMan.fullscreenView) {
+        ViewMan.fullscreenSuppressed.add(view);
+    }
     wanted = false;
     setRenderOne();
 }
@@ -58,12 +65,13 @@ export function serializeVideoQPGraph() {
     const view = currentView();
     if (!view || !view.visible) return undefined;
     const state = view.modSerialize();   // geometry, and the theme when it is not the global one
+    state.fullscreenSuppressed = !!ViewMan.fullscreenView && ViewMan.fullscreenSuppressed.has(view);
     delete state.rootTestRemove;
     return state;
 }
 
 export function deserializeVideoQPGraph(state) {
-    if (state?.visible) showVideoQPGraph(true, state);
+    if (state?.visible) return showVideoQPGraph(true, state);
 }
 
 // Called when the nodes of a sitch are disposed.

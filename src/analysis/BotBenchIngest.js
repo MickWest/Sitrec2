@@ -1048,6 +1048,9 @@ export function ingestBotCSV(text, {sidecar = null, label = "", labels = null} =
         kind: "bot",
         label: label || sidecar?.label || sidecar?.trackId || "BOT scenario",
         dataset,
+        // These remain aligned after invalid rows, other tracks and timing gaps
+        // are removed. Exports must not replace the source clock with f / fps.
+        outputSamples: {trackId: kept[0].id, times},
         // Preserve observation-level timing/range limits for the CLI-style
         // Monte Carlo search; other fits keep their existing uniform clock.
         losSamples: {times, maxRange: Float64Array.from(kept, p =>
@@ -2166,6 +2169,10 @@ export function ingestMISBRecords(misb, {label = "", geoid = true,
         kind: "fmv",
         label: label || "FMV clip",
         dataset,
+        // These formats have no BOT TrackID/Time columns. Name the source and
+        // use the fitted sample clock within the analysed span instead.
+        outputSamples: {trackId: label || "FMV clip",
+            times: Float64Array.from({length: n}, (_, f) => f / fps)},
         originLat, originLon,
         // GROUND, WITH THE DATUM SPELLED OUT. ECEF2ENU_radii puts the frame
         // origin at ALTITUDE 0 for the origin lat/lon — i.e. on the WGS84

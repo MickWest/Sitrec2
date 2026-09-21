@@ -31,7 +31,7 @@ import {
     showLocalFolderAccessUnsupportedMessage,
     supportsDirectoryPicker,
 } from "../CFileManagerUtils";
-import {showConfirm, showError} from "../showError";
+import {showChoice, showConfirm, showError} from "../showError";
 import {openResultChartsForEntries} from "./charts/RockV3ChartsUI";
 import {apertureFromPositions, candidateErrorsFrom, sensorTurnFromPositions} from "./charts/BotBenchChartRows";
 import {showTimingAnalysis} from "../showTimingAnalysis";
@@ -56,6 +56,7 @@ import {ABSENT_HYPOTHESES, DEFAULT_ANCHOR_M, runBotBenchAnalysis} from "./BotBen
 import {botBenchConcurrency, createBotBenchYield, runBotBenchQueue} from "./BotBenchWorkerPool";
 import {BotBenchAnalysisPool} from "./BotBenchAnalysisPool";
 import {entryFileHashes, readEntrySidecars} from "./BotBenchEntryFiles";
+import {canWriteTrackOutput, TRACK_OUTPUT_DIR, writeTrackOutput} from "./BotBenchTrackOutput";
 import {packForCache, sameFittedRow, unpackFromCache} from "./BotBenchCacheCodec";
 import {
     allSolverIds,
@@ -1936,7 +1937,9 @@ export function collectFsEntry(fsEntry, basePath, out, recursive, depth = 0, onS
             }
             resolve();
         } else if (fsEntry.isDirectory && (recursive || depth === 0)) {
-            if (fsEntry.name === CACHE_BLOB_DIR) { resolve(); return; }
+            if (fsEntry.name === CACHE_BLOB_DIR || fsEntry.name.toLowerCase() === TRACK_OUTPUT_DIR) {
+                resolve(); return;
+            }
             // Every child is read before any is followed, because whether a subfolder
             // is walked depends on which folders sit beside it (see
             // interchangeFoldersToSkip). A read error ends the listing; what was read
@@ -2089,7 +2092,7 @@ async function entriesFromDataTransfer(dataTransfer, recursive, {onSkip = null} 
 export async function walkDirectoryHandle(directoryHandle, {recursive, basePath = "", onFound = null, parentHandle = null,
     onSkip = null} = {}) {
     const files = [];
-    if (directoryHandle.name === CACHE_BLOB_DIR) return files;
+    if (directoryHandle.name === CACHE_BLOB_DIR || directoryHandle.name.toLowerCase() === TRACK_OUTPUT_DIR) return files;
     // Every child is listed before any is followed, because whether a subfolder is
     // walked depends on which folders sit beside it.
     const children = [];
@@ -2114,7 +2117,7 @@ export async function walkDirectoryHandle(directoryHandle, {recursive, basePath 
         } else if (recursive && handle.kind === "directory") {
             // Fit blobs are generated output, never scenario inputs. A processed
             // folder can have hundreds of thousands of these file handles.
-            if (name === CACHE_BLOB_DIR) continue;
+            if (name === CACHE_BLOB_DIR || name.toLowerCase() === TRACK_OUTPUT_DIR) continue;
             if (skip.has(name)) {
                 onSkip?.(relativePath);
                 continue;
@@ -2286,6 +2289,11 @@ function createDialog() {
         "Do not show a remembered row as it is: rebuild every row from the stored fits, which takes "
         + "a fraction of a second a file. The fits themselves are still reused. Use it after a change "
         + "to the candidates, the ranking or the verdict, which the cache cannot see.", false);
+    const trackOutput = labelledCheckbox("Create Output Files",
+        "Save the top candidate, selected without truth, as a CSV with the source filename. "
+        + "Creates output beside All/Input when opened through their parent, otherwise inside "
+        + "the track folder. Preserves BOT TrackID, sample times and XYZ metres; optional covariance "
+        + "cells are blank. Replaces existing output files. Needs Folder (Caching) write access.", false);
     const angularSizeJudge = labelledCheckbox("Judge angular size", "Use available angular-size observations as a separate ranking check; keep LOS and BOT scores unchanged.", false);
     const angularSizeFit = labelledCheckbox("Fit angular size (experimental)", "Adds a separate size-interval loss in supported CPU fits. Requires constant projected size and range-change evidence. Unsupported methods remain LOS-only; every result names its fitting mode.", false);
     const angularSizeConstant = labelledCheckbox("Assume constant projected size (recommended)", "Recommended when shape and orientation stay stable. Allows relative angular size and changes in absolute size to constrain range changes. Rotation, inflation or occlusion can invalidate this assumption.", false);
@@ -2358,7 +2366,7 @@ function createDialog() {
         + "or a 300 dpi PNG for a paper.");
 
     for (const el of [recursive.label, families.label, mcSweep.label, gpuSearch.label, screenshots.label,
-        rebuildRows.label, angularSizeJudge.label, angularSizeConstant.label, angularSizeFit.label,
+        rebuildRows.label, trackOutput.label, angularSizeJudge.label, angularSizeConstant.label, angularSizeFit.label,
         anchorLabel, workerLabel, fractionLabel, solversButton,
         chooseFolderReadButton, chooseFolderCacheButton, chooseFilesButton,
         cancelButton, clearButton,
@@ -2501,6 +2509,7 @@ function createDialog() {
         gpuSearchInput: gpuSearch.input,
         screenshotsInput: screenshots.input,
         rebuildRowsInput: rebuildRows.input,
+        trackOutputInput: trackOutput.input,
         angularSizeJudgeInput: angularSizeJudge.input,
         angularSizeFitInput: angularSizeFit.input,
         angularSizeConstantInput: angularSizeConstant.input,
@@ -2681,10 +2690,8 @@ function createTableRow(state) {
         cells.push(td);
         tr.appendChild(td);
     }
-    // The filename OPENS the file, in a fresh Sitrec. A bulk row says a fit
-    // landed 97% of range from truth and the immediate question is always
-    // "let me look at it" — which meant finding the file on disk and dragging
-    // it in by hand. See openInNewSitrec for why this cannot be a plain href.
+    // The filename offers the source alone or the source with solutions, in a
+    // fresh Sitrec. See openInNewSitrec for why this cannot be a plain href.
     const link = document.createElement("a");
     link.href = "#";
     link.style.cssText = "color: #1565c0; text-decoration: none; cursor: pointer;";
@@ -2692,9 +2699,24 @@ function createTableRow(state) {
     link.onmouseleave = () => { link.style.textDecoration = "none"; };
     const row = {tr, cells, link, item: null};
     // The entry is looked up when the link is clicked, since the row shows others.
-    link.onclick = (ev) => {
+    link.onclick = async (ev) => {
         ev.preventDefault();
-        if (row.item) openInNewSitrec(state, row.item);
+        // Capture the clicked entry before awaiting: virtual rows are reused.
+        const entry = row.item;
+        if (!entry || entry.busy?.link) return;
+        const choice = await showChoice(entry.relativePath, {
+            title: "Open in Sitrec",
+            options: [
+                {label: "Open solutions in Sitrec", value: "solutions", primary: true,
+                    description: "Open the source file with the analysis candidates in a new window."},
+                {label: "Open file in Sitrec", value: "file",
+                    description: "Open the source file alone in a new window."},
+                {label: "Cancel", value: null, cancel: true},
+            ],
+        });
+        if (choice && state.overlay.isConnected) {
+            openInNewSitrec(state, entry, {includeSolutions: choice === "solutions"});
+        }
     };
     cells[COL.file].appendChild(link);
     cells[COL.file].style.textAlign = "left";
@@ -2733,7 +2755,7 @@ function paintTableRow(state, row, entry) {
     // files (no name) keep showing their path.
     link.textContent = entry.busy?.link ?? r?.displayName ?? entry.relativePath;
     c[COL.file].title = (r?.displayName ? `${r.displayName}\n` : "") + entry.relativePath
-        + "\n\nClick to open this scenario in a new Sitrec window.";
+        + "\n\nClick to open solutions or the source file in a new Sitrec window.";
 
     if (entry.filled && r) {
         paintResultCells(state, entry, c, tr);
@@ -3086,7 +3108,7 @@ function paintResultCells(state, entry, c, tr) {
 }
 
 /**
- * Open one scenario in a fresh Sitrec window.
+ * Open one scenario in a fresh Sitrec window, optionally with its solutions.
  *
  * WHY THIS IS NOT A PLAIN href. The rows come from a folder picker or a drag,
  * so the file is an in-memory Blob with no URL and no path — there is nothing
@@ -3107,19 +3129,16 @@ function paintResultCells(state, entry, c, tr) {
  * and nothing can arrive half-transferred because the record is written in one
  * transaction.
  *
- * WHAT TRAVELS: the scenario CSV (sensor track, and truth where the file
- * carries it), one CUSTOM1 CSV per consistent candidate named c_<key>, and the
- * notes. The candidates are the point — the scenario alone shows what was
- * observed, and the reason to open a row is to see what the analysis made of it.
- * When NO candidate passed the consistency screen, the WEAK band travels
- * instead, named w_<key> — see the fallback below for why that is a fallback
- * and not an addition.
+ * The file-only choice sends the source and its notes without loading fits.
+ * The solutions choice also sends one CUSTOM1 CSV per consistent candidate,
+ * named c_<key>. When no candidate passed the consistency screen, the weak
+ * band travels instead, named w_<key>.
  *
  * The window is claimed synchronously, before the store write, for the same
  * reason openReport does it: window.open is only honoured while the click's
  * transient activation is live, and an await drops it.
  */
-function openInNewSitrec(state, entry) {
+function openInNewSitrec(state, entry, {includeSolutions = true} = {}) {
     // The row's link may show another entry by the time the window opens, so
     // "opening…" is kept on the entry, not written into the link.
     setRowBusy(state, entry, "link", "opening…");
@@ -3139,6 +3158,13 @@ function openInNewSitrec(state, entry) {
                 parse(sidecars.labelsText, "truth sidecar"),
                 entry.relativePath);
 
+            if (!includeSolutions) {
+                return {files: [file], meta: {
+                    source: "botbench", relativePath: entry.relativePath,
+                    cameraOnScenarioTrack: true, notes,
+                }};
+            }
+
             // The candidates need the full analysis. A released one is rebuilt;
             // a row that never finished opens without candidates, as before.
             let results = null;
@@ -3155,8 +3181,8 @@ function openInNewSitrec(state, entry) {
 
             // Consistent if there are any, weak in their place if there are
             // not — handoffCandidateCSVs owns that rule and the reasoning for
-            // it. A bench row has ONE link, so it decides; the live gallery
-            // offers the same choice as two buttons instead.
+            // it. The solutions action uses that automatic fallback; the live
+            // gallery offers the two candidate bands as separate buttons.
             const candidates = csvOpts ? handoffCandidateCSVs(results, csvOpts) : [];
 
             return {
@@ -3299,6 +3325,7 @@ function refreshControls(state) {
     state.gpuSearchInput.disabled = running;
     state.screenshotsInput.disabled = running;
     state.rebuildRowsInput.disabled = running;
+    state.trackOutputInput.disabled = running;
     state.anchorInput.disabled = running;
     state.workerLimitInput.disabled = running;
     state.fractionInput.disabled = running;
@@ -3462,6 +3489,8 @@ export async function analyzeEntries(state, found, {askSolvers = false} = {}) {
     // key, and whether a picture was taken has no bearing on the numbers. A run
     // with screenshots on must still hit the cache written by a run with them off.
     const wantShots = state.screenshotsInput.checked;
+    const wantTrackOutput = state.trackOutputInput.checked;
+    const outputStats = {written: 0, skipped: 0, failed: 0};
     const shotStats = {written: 0, skipped: 0, failed: 0};
     // The queue is held on the state so Cancel Run can stop it: captures are queued
     // as each analysis finishes, so a cancelled run can otherwise have hundreds
@@ -3604,7 +3633,7 @@ export async function analyzeEntries(state, found, {askSolvers = false} = {}) {
                     const out = await analyseEntryWithCache(entry, {
                         options, plan, key, pool, dirCache, hashes, adoptUnits, adoptRows,
                         forceRows,
-                        needResults: false,
+                        needResults: wantTrackOutput && canWriteTrackOutput(entry),
                         onStatus: (text, tooltip) => setRowStatus(state, entry, text, tooltip),
                         onProgress: (frac, label) => {
                             setRowStatus(state, entry, `${Math.round(frac * 100)}%`, label);
@@ -3664,6 +3693,21 @@ export async function analyzeEntries(state, found, {askSolvers = false} = {}) {
             // the charts need from the full analysis, so they are taken now, while
             // the positions exist.
             if (entry.status === "done") {
+                if (wantTrackOutput) {
+                    try {
+                        entry.trackOutput = await writeTrackOutput(entry);
+                        if (entry.trackOutput.written) outputStats.written++;
+                        else outputStats.skipped++;
+                    } catch (error) {
+                        outputStats.failed++;
+                        entry.trackOutput = {written: false, failed: true, reason: error?.message ?? String(error)};
+                        console.warn("BOTBench track output failed for", entry.relativePath, error);
+                    }
+                    const output = entry.trackOutput;
+                    setRowStatus(state, entry, output.written ? entry.statusText
+                        : output.failed ? "output failed" : "output skipped",
+                    `${entry.statusTitle}\nTrack output: ${output.written ? output.path : output.reason}`);
+                }
                 captureChartData(entry);
                 holdResults(state, entry);
             }
@@ -3730,10 +3774,14 @@ export async function analyzeEntries(state, found, {askSolvers = false} = {}) {
           + (shotQueue.skipped ? `, ${shotQueue.skipped} skipped on cancel` : "") + "."
         : "";
     state.shotQueue = null;
+    const outputNote = wantTrackOutput
+        ? ` Track output: ${outputStats.written} written, ${outputStats.skipped} skipped, ${outputStats.failed} failed.`
+          + (outputStats.skipped || outputStats.failed ? " Hover the row status for details." : "")
+        : "";
     state.status.textContent = (state.cancelled
         ? `Cancelled. ${done} result(s) in the table.`
         : `Done. ${done} result(s) in the table, ${describeSolvers(options.solvers)}.`)
-        + fractionNote + adoptNote + shotNote + (state.memoryNote ?? "") + cacheIndexNote(state);
+        + fractionNote + adoptNote + shotNote + outputNote + (state.memoryNote ?? "") + cacheIndexNote(state);
     state.running = false;
     refreshControls(state);
     updateSummary(state);
