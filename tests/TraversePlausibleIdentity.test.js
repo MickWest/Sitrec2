@@ -64,6 +64,10 @@ const CASES = [
     {label: "fast speed rows", opts: {K: 25, iters: 3, vTarget: 190, rangeFloor: true}},
     {label: "speed and climb rows", opts: {K: 18, iters: 4, vTarget: 2, wClimb: 0.5, rangeFloor: true}},
     {label: "zero weighted speed rows", opts: {K: 25, iters: 3, vTarget: 0, wSpd: 0, rangeFloor: true}},
+    {label: "fitted wind with slow speed", opts: {K: 25, iters: 3, vTarget: 5, fitWind: true, rangeFloor: true}},
+    {label: "fitted wind with fast speed", opts: {K: 25, iters: 3, vTarget: 190, fitWind: true, rangeFloor: true}},
+    {label: "fitted wind with strided climb rows", opts: {K: 18, iters: 4, vTarget: 25, fitWind: true,
+        accelStride: 3, wClimb: 0.5, rangeFloor: true}},
 ];
 
 describe("traversePlausible is bit-stable across refactors", () => {

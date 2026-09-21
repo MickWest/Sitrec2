@@ -308,7 +308,8 @@ describe("a row built from stored units equals a fresh one", () => {
         expect(diff(kalmanFresh, only.results.hypotheses[0], "kalman")).toBeNull();
         // A subset gets the same complete report, with the absent grid disclosed.
         const html = only.results.buildHtml();
-        expect(html).toContain("No constant-air-speed search was run");
+        const report = new DOMParser().parseFromString(html, "text/html");
+        expect(report.body.textContent).toContain("No constant-air-speed search was run");
         expect(html).toContain('id="candidate-details"');
         expect(html).toContain('id="contents"');
     });

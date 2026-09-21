@@ -3,6 +3,10 @@ import {cacheableBotBenchBattery, fitBotBenchRecord} from "./BotBenchFit";
 import {transferableBuffers} from "./BotBenchWorkerPool";
 import {unitsFromTexts} from "./BotBenchUnitTexts";
 
+// Each worker runs one case at a time. Keep CAS buffers local to that worker;
+// transferring a completed result must never detach or expose these arrays.
+const sweepWorkspaces = {};
+
 self.onmessage = async ({data: {id, record, options, earthRadii}}) => {
     try {
         Object.assign(Globals, earthRadii);
@@ -14,6 +18,7 @@ self.onmessage = async ({data: {id, record, options, earthRadii}}) => {
         const {cached, migrated, legacyHeld} = unitsFromTexts(unitTexts);
         const fitted = await fitBotBenchRecord(record, {
             ...fitOptions,
+            sweepWorkspaces,
             units: {cached},
             onProgress: (fraction, label) => {
                 const now = performance.now();

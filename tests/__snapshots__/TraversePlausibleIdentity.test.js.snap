@@ -14,6 +14,27 @@ exports[`traversePlausible is bit-stable across refactors fast speed rows 1`] = 
 }
 `;
 
+exports[`traversePlausible is bit-stable across refactors fitted wind with fast speed 1`] = `
+{
+  "lam": "535a3c4d",
+  "track": "7f82a96b",
+}
+`;
+
+exports[`traversePlausible is bit-stable across refactors fitted wind with slow speed 1`] = `
+{
+  "lam": "e658a742",
+  "track": "85b0bc6c",
+}
+`;
+
+exports[`traversePlausible is bit-stable across refactors fitted wind with strided climb rows 1`] = `
+{
+  "lam": "512bb979",
+  "track": "b1564d25",
+}
+`;
+
 exports[`traversePlausible is bit-stable across refactors range search preserves its profiles and final fit 1`] = `
 {
   "lam": "2499476f",

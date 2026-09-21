@@ -62,7 +62,15 @@ const HEADING_MIN_HORIZ_SPEED = 0.05;
 // local radius differs <0.4%, negligible relative to the correction itself).
 export const EARTH_RADIUS_M = 6371000;
 const TRACK_METRICS_WORKSPACE = Symbol("track metrics workspace");
+const TRACK_METRICS_WIND = Symbol("cumulative metrics wind");
 const _trackMetricsSupport = new WeakMap();
+
+function scratchArray(workspace, name, length, Type = Float64Array) {
+    if (workspace?.[name]?.length === length) return workspace[name];
+    const value = new Type(length);
+    if (workspace) workspace[name] = value;
+    return value;
+}
 
 function trackMetricsSupport(dataset, h) {
     const prior = _trackMetricsSupport.get(dataset);
@@ -105,6 +113,7 @@ export function trackMetrics(dataset, track, options = {}) {
     const h = metricSmoothingWindow(n, fps, options);
     const support = trackMetricsSupport(dataset, h);
     const workspace = options[TRACK_METRICS_WORKSPACE];
+    const cumulative = options[TRACK_METRICS_WIND] ?? support.wind;
     const scratch = (name, length) => {
         if (!workspace) return new Float64Array(length);
         const value = workspace[name];
@@ -114,9 +123,9 @@ export function trackMetrics(dataset, track, options = {}) {
     const air = scratch("air", n * 3);
     for (let f = 0; f < n; f++) {
         const b = f * 3;
-        air[b] = track[b] - support.wind[b];
-        air[b + 1] = track[b + 1] - support.wind[b + 1];
-        air[b + 2] = track[b + 2] - support.wind[b + 2];
+        air[b] = track[b] - cumulative[b];
+        air[b + 1] = track[b + 1] - cumulative[b + 1];
+        air[b + 2] = track[b + 2] - cumulative[b + 2];
     }
 
     // Clamp the half-window so short (but supported, >=10-frame) A-B windows
@@ -162,7 +171,7 @@ export function trackMetrics(dataset, track, options = {}) {
         // straight — which flatters slow candidates, the exact bias this review
         // is guarding against. 0.05 m/s sits below any real wander and above
         // the numerical floor. NaN (not 0) so stat() skips these frames.
-        const horizAir = Math.hypot(va0, va1);
+        const horizAir = horizontalAirSpeed[f];
         heading[f] = horizAir > HEADING_MIN_HORIZ_SPEED
             ? Math.atan2(va0, va1) * 180 / Math.PI
             : NaN;
@@ -1735,8 +1744,16 @@ export async function sweepConstAirSpeed(dataset, options = {}) {
     const {K: smoothK, curvature} = trajectorySmoothingSettings(ds.n, ds.fps);
     const results = [];
 
-    const workspace = {};
-    const metricsWorkspace = {};
+    // Caller-owned scratch survives sequential jobs in a worker. Only summaries
+    // leave the sweep; its temporary tracks may safely share these buffers.
+    // A workspace must not be shared by concurrent sweeps.
+    const workspace = options.workspace ?? {};
+    workspace.sweepOutput ??= {};
+    const smoothWorkspace = workspace.smooth ??= {};
+    const metricsWorkspace = workspace.metrics ??= {};
+    const metricsOptions = {[TRACK_METRICS_WORKSPACE]: metricsWorkspace};
+    const metricsWind = options.fitWind ? scratchArray(workspace, "metricsWind", ds.n * 3) : null;
+    if (metricsWind) metricsOptions[TRACK_METRICS_WIND] = metricsWind;
     const sweepRanges = async (rangeList, progressBase, progressSpan) => {
         for (let ri = 0; ri < rangeList.length; ri++) {
             for (const speedMs of speeds) {
@@ -1753,8 +1770,19 @@ export async function sweepConstAirSpeed(dataset, options = {}) {
                 // 120 m are pushed out, not forbidden (the penalty is soft).
                 const {track, wind} = traversePlausible(ds, rangeList[ri],
                     {fitWind: options.fitWind, vTarget: speedMs, vSigma, iters: 3, K: 25, minDist: 120, rangeFloor: true, [PLAUSIBLE_WORKSPACE]: workspace});
-                const sm = smoothTrackBspline(track, ds.n, smoothK, curvature);
-                const m = trackMetrics(datasetForFittedWind(ds, {wind}), sm, {[TRACK_METRICS_WORKSPACE]: metricsWorkspace});
+                const sm = smoothTrackBspline(track, ds.n, smoothK, curvature, smoothWorkspace);
+                if (metricsWind) {
+                    // Match datasetWithConstantWind + cumulative integration,
+                    // including addition order. Multiplying by frame would
+                    // change rounding and can change the selected family.
+                    const dx = wind.windE / ds.fps, dy = wind.windN / ds.fps;
+                    let wx = 0, wy = 0;
+                    for (let f = 0; f < ds.n; f++) {
+                        metricsWind[f * 3] = wx; metricsWind[f * 3 + 1] = wy; metricsWind[f * 3 + 2] = 0;
+                        wx += dx; wy += dy;
+                    }
+                }
+                const m = trackMetrics(ds, sm, metricsOptions);
                 let score = straightFlightScore(m, 0) + sizeCost(sm);
                 if (speedTarget !== null) {
                     score += 0.2 * ((speedMs - speedTarget) / speedSigma) ** 2;
@@ -1992,7 +2020,7 @@ export function bsplineBasis(n, K) {
 // Consecutive speed rows always visit the first frame's four columns, then
 // any new columns from the next frame. Cache this symbolic layout with the
 // immutable basis; it contains no observations or iteration-dependent values.
-function speedBasis(B) {
+function speedBasis(B, K) {
     let rows = _speedBasisCache.get(B);
     if (rows) return rows;
     rows = [];
@@ -2001,7 +2029,7 @@ function speedBasis(B) {
         const offset = Math.min(4, b - a);
         const cols = [a, a + 1, a + 2, a + 3];
         for (let q = 4 - offset; q < 4; q++) cols.push(b + q);
-        rows.push({cols, offset, previous: wa.map(w => -1 * w), next: wb});
+        rows.push({cols, windCols: [...cols, K, K + 1], offset, previous: wa.map(w => -1 * w), next: wb});
     }
     _speedBasisCache.set(B, rows);
     return rows;
@@ -2018,14 +2046,30 @@ export function datasetForFittedWind(dataset, fit) {
 // their box-constrained least squares exactly by checking the nine active sets.
 // The unconstrained solve usually suffices; bounds never get silently clipped
 // while leaving the range coordinates inconsistent with the chosen wind.
-function solveWindNormalEquations(A, rhs, K, fps) {
+function solveWindNormalEquations(A, rhs, K, fps, workspace = {}) {
     const limit = SIGHTLINE_WIND_LIMIT / fps;
-    const initial = solveDense(A.map(row => row.slice()), rhs);
+    const dim = A.length;
+    if (workspace.matrix?.length !== dim) {
+        workspace.matrix = Array.from({length: dim}, () => new Float64Array(dim));
+        workspace.rhs = new Float64Array(dim);
+        workspace.solution = new Float64Array(dim);
+        workspace.best = new Float64Array(dim);
+    }
+    // Elimination consumes this matrix. Refill it for each active set instead
+    // of allocating two matrices (and all their typed-array rows) per trial.
+    // The winning vector needs its own buffer: the next trial overwrites c.
+    const {matrix, rhs: b, solution} = workspace;
+    const resetMatrix = () => {
+        for (let i = 0; i < dim; i++) matrix[i].set(A[i]);
+    };
+    resetMatrix();
+    const initial = solveDense(matrix, rhs, solution);
     if (Math.abs(initial[K]) <= limit && Math.abs(initial[K + 1]) <= limit) return initial;
     let best = null, bestCost = Infinity;
     for (const e of [null, -limit, limit]) for (const n of [null, -limit, limit]) {
         if (e === null && n === null) continue;
-        const matrix = A.map(row => row.slice()), b = rhs.slice();
+        resetMatrix();
+        b.set(rhs);
         for (const [index, value] of [[K, e], [K + 1, n]]) {
             if (value === null) continue;
             for (let i = 0; i < b.length; i++) {
@@ -2033,14 +2077,14 @@ function solveWindNormalEquations(A, rhs, K, fps) {
             }
             matrix[index].fill(0); matrix[index][index] = 1; b[index] = value;
         }
-        const c = solveDense(matrix.map(row => row.slice()), b);
+        const c = solveDense(matrix, b, solution);
         if (Math.abs(c[K]) > limit + 1e-9 || Math.abs(c[K + 1]) > limit + 1e-9) continue;
         let cost = 0;
         for (let i = 0; i < c.length; i++) {
             cost -= 2 * rhs[i] * c[i];
             for (let j = 0; j < c.length; j++) cost += c[i] * A[i][j] * c[j];
         }
-        if (cost < bestCost) { best = c; bestCost = cost; }
+        if (cost < bestCost) { workspace.best.set(c); best = workspace.best; bestCost = cost; }
     }
     if (!best) throw new Error("Wind-constrained range solve failed");
     return best;
@@ -2093,7 +2137,9 @@ function fitScoringWind() {
  */
 export function traversePlausible(dataset, startDist, options = {}) {
     const {n, fps, S, D} = dataset;
-    const W = options.fitWind ? new Float64Array(n * 3) : dataset.W;
+    const workspace = options[PLAUSIBLE_WORKSPACE];
+    const buffers = workspace ? (workspace.buffers ??= {}) : null;
+    const W = options.fitWind ? scratchArray(buffers, "zeroWind", n * 3) : dataset.W;
     const K = options.K ?? 25;
     const vTarget = options.vTarget ?? null;
     const freeWind = options.fitWind && vTarget !== null;
@@ -2107,32 +2153,34 @@ export function traversePlausible(dataset, startDist, options = {}) {
     const hA = Math.max(1, Math.min(Math.round(options.accelStride ?? 1), Math.floor((n - 1) / 2)));
     const minDist = options.minDist ?? 120;
     const useFloor = options.rangeFloor ?? false;
-    const floorW = new Float64Array(n);
+    const floorW = scratchArray(buffers, "floorW", n).fill(0);
 
     const B = bsplineBasis(n, K);
-    const speedRows = vTarget !== null ? speedBasis(B) : null;
-    const speedWeights = new Float64Array(freeWind ? 10 : 8);
+    const speedRows = vTarget !== null ? speedBasis(B, K) : null;
+    const speedWeights = scratchArray(buffers, "speedWeights", freeWind ? 10 : 8);
     const accelScale = fps * fps / G_ACCEL / (hA * hA);
-    const lam = new Float64Array(n).fill(startDist);
+    const lam = scratchArray(workspace?.sweepOutput, "lam", n).fill(startDist);
     let c = null;
 
     // Scratch for the row assembly in `stencil` below — allocated once per
     // solve instead of once per row. scratchSeen is a membership flag reset
     // only for the entries actually touched, so clearing is O(touched).
-    const scratchVal = new Float64Array(K);
-    const scratchSeen = new Uint8Array(K);
-    const scratchIdx = new Int32Array(K);
+    const scratchVal = scratchArray(buffers, "stencilValue", K);
+    const scratchSeen = scratchArray(buffers, "stencilSeen", K, Uint8Array).fill(0);
+    const scratchIdx = scratchArray(buffers, "stencilIndex", K, Int32Array);
 
     // Acceleration is independent of the IRLS iterate. Copy its completed
     // prefix of the normal equations; adding separately summed matrices here
     // would reorder floating-point additions and perturb the optimizer.
-    const workspace = options[PLAUSIBLE_WORKSPACE];
+    const windWorkspace = workspace ? (workspace.windSolve ??= {}) : {};
     let acceleration = workspace?.acceleration;
     if (acceleration && (acceleration.dataset !== dataset || acceleration.K !== K
         || acceleration.hA !== hA || acceleration.fps !== fps || acceleration.dim !== dim)) acceleration = null;
     const maxIters = useFloor ? iters + 5 : iters;
-    const A = Array.from({length: dim}, () => new Float64Array(dim));
-    const rhs = new Float64Array(dim);
+    const A = buffers?.matrix?.length === dim ? buffers.matrix
+        : Array.from({length: dim}, () => new Float64Array(dim));
+    if (buffers) buffers.matrix = A;
+    const rhs = scratchArray(buffers, "rhs", dim);
     for (let iter = 0; iter < maxIters; iter++) {
         for (const row of A) row.fill(0);
         rhs.fill(0);
@@ -2239,7 +2287,7 @@ export function traversePlausible(dataset, startDist, options = {}) {
                 const dot1 = D[next] * u0 + D[next + 1] * u1 + D[next + 2] * u2;
                 const row = speedRows[f];
                 const {offset, previous, next: nextWeights} = row;
-                const cols = freeWind ? [...row.cols, K, K + 1] : row.cols;
+                const cols = freeWind ? row.windCols : row.cols;
                 // Keep the original zero-add and falsy reset, including signed
                 // zero, and combine overlapping columns in first-touch order.
                 for (let q = 0; q < 4; q++) speedWeights[q] = 0 + previous[q] * dot0;
@@ -2292,7 +2340,7 @@ export function traversePlausible(dataset, startDist, options = {}) {
             const precision = (n - 1) * (fps / WIND_PRIOR_SIGMA_MS) ** 2;
             A[K][K] += precision; A[K + 1][K + 1] += precision;
         }
-        c = freeWind ? solveWindNormalEquations(A, rhs, K, fps) : solveDense(A, rhs);
+        c = freeWind ? solveWindNormalEquations(A, rhs, K, fps, windWorkspace) : solveDense(A, rhs);
         if (freeWind) { windE = c[K]; windN = c[K + 1]; }
         for (let f = 0; f < n; f++) {
             const [seg, w] = B[f];
@@ -2306,7 +2354,7 @@ export function traversePlausible(dataset, startDist, options = {}) {
         if (vTarget !== null && iter >= iters - 1 && !viol) break;
     }
 
-    let track = new Float64Array(n * 3);
+    let track = scratchArray(workspace?.sweepOutput, "track", n * 3);
     for (let f = 0; f < n; f++) {
         track[f * 3] = S[f * 3] + D[f * 3] * lam[f];
         track[f * 3 + 1] = S[f * 3 + 1] + D[f * 3 + 1] * lam[f];
@@ -2358,7 +2406,7 @@ export function traversePlausible(dataset, startDist, options = {}) {
 // and can spike the g-load in the first/last fraction of a second).
 const _smoothSystemCache = new Map();
 
-function smoothTrackBspline(pts, n, K, curvature = 0) {
+function smoothTrackBspline(pts, n, K, curvature = 0, workspace = null) {
     K = Math.max(4, Math.min(K, n));
     const B = bsplineBasis(n, K);
     const key = `${n}:${K}:${curvature}`;
@@ -2386,15 +2434,17 @@ function smoothTrackBspline(pts, n, K, curvature = 0) {
         }
         _smoothSystemCache.set(key, system);
     }
-    const out = new Float64Array(n * 3);
+    const out = scratchArray(workspace, "track", n * 3);
+    const rhs = scratchArray(workspace, "rhs", K);
+    const solution = scratchArray(workspace, "solution", K);
     for (let a = 0; a < 3; a++) {
-        const rhs = new Float64Array(K);
+        rhs.fill(0);
         for (let f = 0; f < n; f++) {
             const [seg, w] = B[f];
             const p = pts[f * 3 + a];
             for (let i = 0; i < 4; i++) rhs[seg + i] += w[i] * p;
         }
-        const c = solveFactoredDense(system, rhs);
+        const c = solveFactoredDense(system, rhs, solution);
         for (let f = 0; f < n; f++) {
             const [seg, w] = B[f];
             out[f * 3 + a] = c[seg] * w[0] + c[seg + 1] * w[1] + c[seg + 2] * w[2] + c[seg + 3] * w[3];
@@ -3016,22 +3066,23 @@ export function fitPlausibleBestRange(dataset, options = {}) {
 }
 
 // Gaussian elimination with partial pivoting (small dense systems, K ~ 25)
-function solveDense(A, b) {
-    const {M, x} = factorDense(A, b);
+function solveDense(A, b, solution) {
+    const {M, x} = factorDense(A, b, solution);
     return backSubstituteDense(M, x);
 }
 
 // The same elimination for changing and constant systems. Store the actual
 // pivots and multipliers, then replay RHS operations in their original order.
 // Inverting A or multiplying by an inverse would change rounding.
-function factorDense(A, b = null) {
+function factorDense(A, b = null, solution) {
     // Consumes A. Callers assemble it for this solve and keep any reusable
     // prefix in a separate copy before passing it here.
     const nn = A.length;
     const M = A;
     // Ordinary solves need no elimination log. Only constant systems retain
     // the pivots/factors for additional right-hand sides.
-    const x = b === null ? null : Float64Array.from(b);
+    const x = b === null ? null : (solution ?? new Float64Array(nn));
+    if (x) x.set(b);
     const pivots = x ? null : new Int32Array(nn);
     const factors = x ? null : Array.from({length: nn}, () => new Float64Array(nn));
     for (let col = 0; col < nn; col++) {
@@ -3053,9 +3104,10 @@ function factorDense(A, b = null) {
     return {M, pivots, factors, x};
 }
 
-function solveFactoredDense({M, pivots, factors}, b) {
+function solveFactoredDense({M, pivots, factors}, b, solution) {
     const nn = b.length;
-    const x = Float64Array.from(b);
+    const x = solution ?? new Float64Array(nn);
+    x.set(b);
     for (let col = 0; col < nn; col++) {
         const maxR = pivots[col];
         const t = x[col]; x[col] = x[maxR]; x[maxR] = t;

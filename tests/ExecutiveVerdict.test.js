@@ -252,6 +252,11 @@ test("HSV and Quadcopter contribute the same path compatibility without inventin
         {errDeg: 2}, {nonPhysical: true}, {atInfinity: true}]) {
         expect(assessExecutiveVerdict([{...hsv, ...change}]).pathCompatibility.classes).toHaveLength(0);
     }
-    const dataset = {angularDiameterMaxDeg: 1, fovFullDeg: 2, pixelsAcross: 2000};
+    // A resolved size measurement can reject these small-object classes;
+    // an upper bound alone does not imply that the object is this large.
+    const dataset = {n: hsv.track.length / 3, S: new Float64Array(hsv.track.length),
+        angularSize: {samples: [{frame: 0, minDeg: 1, maxDeg: 1.01}]}};
+    expect(assessExecutiveVerdict([hsv], {dataset}).pathCompatibility.classes).toEqual(h.pathCompatibility.classes);
+    dataset.angularSizeOptions = {judge: true};
     expect(assessExecutiveVerdict([hsv], {dataset}).pathCompatibility.classes).toHaveLength(0);
 });

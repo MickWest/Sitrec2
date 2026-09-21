@@ -91,6 +91,27 @@ test("poor high-speed grid cells cannot enlarge the CAS equivalent-fit family", 
     expect(extended.best.score - extended.bestRaw.score).toBeLessThanOrEqual(Math.max(0.05, extended.bestRaw.score * 0.15) + 1e-10);
 });
 
+test("CAS workspace reuse across cases and wind modes preserves results and earlier outputs", async () => {
+    const workspace = {};
+    const cases = [
+        {dataset: scene(60, 2).dataset, fitWind: true},
+        {dataset: scene(45, 3).dataset, fitWind: false},
+        {dataset: datasetWithConstantWind(scene(60, 2).dataset, -20, 15), fitWind: true},
+        {dataset: scene(60, 4).dataset, fitWind: false},
+        {dataset: scene(60, 2).dataset, fitWind: true},
+    ];
+    const retained = [];
+    for (const {dataset, fitWind} of cases) {
+        const options = {fitWind, ranges: [200, 2500, 6000], speeds: [5, 25, 190], speedTarget: 160};
+        const expected = await sweepConstAirSpeed(dataset, options);
+        const actual = await sweepConstAirSpeed(dataset, {...options, workspace});
+        expect(actual).toEqual(expected);
+        retained.push({actual, expected});
+    }
+    // Later jobs must not mutate results already delivered to cache/reporting.
+    for (const {actual, expected} of retained) expect(actual).toEqual(expected);
+});
+
 test.each([SkyLanternModel, QuadcopterModel])("supplied %p wind is fixed and integrates every input interval", Model => {
     const {dataset} = scene(25, 10);
     for (let f = 0; f < dataset.n; f++) dataset.W.set([f % 2 ? -2 : 3, 0.25, 0], f * 3);

@@ -476,6 +476,9 @@ export async function runTraverseBattery({
     afterHypotheses = null,
     familyScreen = kinematicFamilyScreen,
     sweepOverrides = null,
+    // Sequential worker jobs reuse scratch; dataset-dependent prefixes are
+    // checked against each job's observations before reuse.
+    sweepWorkspaces = null,
 
     // phase(base, span, label) -> async (frac) => void, matching the app's
     // progress-overlay helper. Null runs with no progress reporting at all.
@@ -556,6 +559,7 @@ export async function runTraverseBattery({
 
     const requestedBounds = {fitRangeMin, fitRangeMax, caRangeMin, caRangeMax, plausRangeMin, plausRangeMax};
     const sweep = await runUnit("constAir", () => sweepConstAirSpeed(dataset, {
+        workspace: sweepWorkspaces ? (sweepWorkspaces.supplied ??= {}) : undefined,
         ranges,
         speedTarget,
         // Auto-expand the range bracket when the winner sits on a grid
@@ -564,6 +568,7 @@ export async function runTraverseBattery({
         progress: at(0.00, 0.09, "Sweeping constant-air-speed grid (supplied wind)..."),
     }));
     const sweepFreeWind = await runUnit("constAirFreeWind", () => sweepConstAirSpeed(dataset, {
+        workspace: sweepWorkspaces ? (sweepWorkspaces.fitted ??= {}) : undefined,
         ranges, speedTarget, fitWind: true, expand: rangeIsDefault,
         progress: at(0.09, 0.09, "Sweeping constant-air-speed grid (fitted wind)..."),
     }));

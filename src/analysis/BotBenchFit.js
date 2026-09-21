@@ -125,7 +125,7 @@ export async function fitBotBenchRecord(record, {
     // failures}}, onUnit}. The plan of units is derived from the solvers here,
     // so a caller never has to know which unit serves which candidate.
     solvers = null, units = null,
-    onProgress = null, isCancelled = () => false,
+    onProgress = null, isCancelled = () => false, sweepWorkspaces = null,
 } = {}) {
     const {dataset, originLat, originLon, groundZ} = record;
     dataset.groundLevelM = groundZ;
@@ -205,6 +205,7 @@ export async function fitBotBenchRecord(record, {
 
     const battery = await runTraverseBattery({
         dataset, originLat, originLon, provenance,
+        sweepWorkspaces,
         anchorDist: anchorM,
         speedTarget: SPEED_TARGET_MS,
         ranges,
