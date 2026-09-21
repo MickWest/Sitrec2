@@ -5,7 +5,7 @@ import {ingestBotCSV} from "../../src/analysis/BotBenchIngest";
 import {compareTrackToTruth, trackMetrics} from "../../src/TraverseAnalysis";
 import {rankAllHypotheses} from "../../src/TraverseRanking";
 import {
-    buildTrackOutputCSV, trackOutputLocation, writeTrackOutput,
+    buildTrackOutputCSV, trackOutputLocation, trackOutputName, writeTrackOutput,
 } from "../../src/analysis/BotBenchTrackOutput";
 import {
     analyzeEntries, collectFsEntry, openBotBenchDialog, pairSidecars, walkDirectoryHandle,
@@ -99,6 +99,23 @@ test("ordinary nested folders keep their outputs inside the track folder", () =>
     const dirHandle = {name: "tracks"};
     expect(trackOutputLocation({name: "x.csv", dirPath: "batch/tracks", dirHandle, parentHandle: {}}))
         .toEqual({base: dirHandle, path: "batch/tracks/output/x.csv"});
+});
+
+test.each([
+    ["clip.ts", "clip.ts.csv"], ["clip.klv", "clip.klv.csv"], ["track.csv", "track.csv"], ["TRACK.CSV", "TRACK.CSV"],
+])("the output for %s is named %s", (source, expected) => {
+    expect(trackOutputName(source)).toBe(expected);
+    const dirHandle = {name: "tracks"};
+    expect(trackOutputLocation({name: source, dirPath: "", dirHandle}).path).toBe(`output/${expected}`);
+});
+
+test("a non-CSV source writes a file with .csv added", async () => {
+    const record = ingestBotCSV(scenarioCSV());
+    const getFileHandle = jest.fn(async () => ({createWritable: async () => ({write: jest.fn(), close: jest.fn()})}));
+    const dirHandle = {name: "tracks", getDirectoryHandle: async () => ({getFileHandle})};
+    await expect(writeTrackOutput({name: "clip.ts", dirHandle, results: {...record, hypotheses: candidates(record)}}))
+        .resolves.toMatchObject({written: true, path: "output/clip.ts.csv"});
+    expect(getFileHandle).toHaveBeenCalledWith("clip.ts.csv", {create: true});
 });
 
 // A small in-memory File System Access implementation, including atomic close,

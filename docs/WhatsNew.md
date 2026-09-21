@@ -9,6 +9,23 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.167.0 (2026-09-21)
+
+### New Features
+
+- **Tonal Range Graph** (Video → Forensics → **Tonal Range Graph**): a graph of the recorded brightness of each video frame, with the median, the 5th and 95th percentiles, and shaded bands that hold the middle 50% and the middle 90% of the pixels. Set **Display** (Video → Forensics → **Tonal Range Settings**) to *Histogram over time* to see all brightness levels of each frame, and use **Export CSV** to save the values. While **Enable Mask** is on, masked pixels are not counted. The graph fills in without moving the playhead, and you can click or drag in it to go to a frame. The values are the brightness recorded in the video, not temperature. Explained at Help → Documentation → *Video Tonal Range Graph*.
+- **Object against its background** (Video → Forensics → **Tonal Range Settings** → **Tracked object**): uses the object positions from **Point Track** to add the mean brightness of the object and the median brightness of a ring of background around it; **Object radius (px)** sets the size. The **Display** choices *Object − local background* and *Contrast / local IQR* show the difference, and the difference divided by the spread of the middle half of the background brightness.
+
+### Improvements
+
+- **Show Mask** (Video → Masking, or the Video view's own header menu → *Masking*): shows the red mask overlay without painting. Only **Show Mask** and **Edit Mask** now show or hide the overlay: changing **Enable Mask**, or starting or stopping Motion Analysis, no longer does, and stopping Motion Analysis no longer turns off **Edit Mask**. The overlay is stronger while **Enable Mask** is on and dimmer while it is off. **Enable Mask**, **Show Mask** and **Edit Mask** are saved with the sitch.
+- **Create Output Files** (File → File Analysis → **BOTBench...**): each output file name now ends in *.csv*. A source that is not a CSV file gets *.csv* added to its name (*clip.ts* gives *clip.ts.csv*), and a CSV source keeps its name.
+
+### Bug Fixes
+
+- Fixed **Enable Mask** (Video → Masking) being on again when a sitch loads, if the sitch was saved with it off while Motion Analysis was not running.
+- Fixed the soft edges of a saved mask sometimes becoming stronger when the sitch loads.
+
 ## Version 2.166.1 (2026-09-21)
 
 ### New Features

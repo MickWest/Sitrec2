@@ -9,6 +9,80 @@ lockstep with docs/WhatsNew.md.
 
 ---
 
+## Version 2.167.0 (2026-09-21)
+
+### New Features
+
+- **Video Tonal Range graph** (Video → Forensics → **Tonal Range Graph**, with its settings in Video → Forensics → **Tonal Range Settings**; `450e7cc0`; new `src/VideoTonalGraph.js` (`addVideoTonalGraphMenu`, `showVideoTonalGraph`, `serializeVideoTonalGraph`, `deserializeVideoTonalGraph`, `resetVideoTonalGraph`, `TONAL_DEFAULTS`), new `src/videoTonal/CNodeVideoTonalGraphView.js`, new `src/videoTonal/VideoTonalAnalysis.js` (`startTonalAnalysis`), new `src/videoTonal/TonalStatistics.js` (`histogramStatistics`, `exclusionMask`, `measureTonalFrame`, `rotatedUV`, `TONAL_FIELDS`), new `src/workers/VideoTonalWorker.js`, the menu hook in `addFiltersToVideoNode` (`src/nodes/CNodeVideoViewFilters.js`), i18n `videoTonal.*`, new `tests/VideoTonalStatistics.test.js` and `tests/VideoTonalGraphRestore.test.js`, new `docs/VideoTonalRange.md`).
+  - **What it does.** A floating graph (`CNodeVideoTonalGraphView`, a `CNodeCustomGraphView` with `isFrameX`) shows the distribution of recorded pixel intensity in each frame of the loaded video, plotted against the sitch frame. Click or drag inside the plot to go to a frame, as in the QP Graph. The header has the ◐ Dark/Light button. The readout above the plot gives the current frame's P5, median, P95, the P95–P5 span and the number of pixels counted. The title ends in *Mask applied* or *Whole frame*. The Y axis is labelled *Recorded luma (0–255)*, *Recorded luma (N-bit scaled to 0–255)* or *Display gray (0–255)*.
+  - **Display modes** (**Display**, `options.mode`).
+    - *Percentile bands* (the default) draws P5 (blue), median (white on dark, black on light) and P95 (orange) lines, with shaded P5–P95 and P25–P75 bands. These are distribution bands, not uncertainty intervals.
+    - *Histogram over time* draws a 256-level image, with at most one column per screen pixel (up to 2048). The color is the fraction of counted pixels at that level, on a fixed log scale from 0.001% to 10%. When several frames share a screen column, their histograms are pooled for display only. The P5, median and P95 lines stay on top.
+    - **Show mean** and **Show min/max** add those lines in both modes. Both are off at the start. In both modes the Y axis is fixed at 0–255.
+  - **How values are measured.**
+    - A Web Worker (`VideoTonalWorker.js`) does the work with its own `VideoDecoder` (`hardwareAcceleration: 'prefer-software'`). It is fed copies of the source's encoded chunks (`sourceVideoOf(videoData).chunks`) in batches of at most 64 chunks or 4 MB. The playback decoder, the playhead and the frame cache are not touched, and the graph fills in as batches return.
+    - Decoded frames are matched to display order by timestamp (`timestampToChunkIndex`). Sitch frames map to them through `displayIndexForFrame`, the same mapping the QP Graph uses.
+    - For I420, I422, I444 (including their alpha, 10-bit and 12-bit variants) and NV12 frames, the worker reads the Y plane as recorded code values, with no limited-range expansion. 10-bit and 12-bit values are scaled to 0–255, and the axis says so.
+    - Other decoder outputs are drawn to an `OffscreenCanvas` and converted with 0.299 R + 0.587 G + 0.114 B, labelled *Display gray*. A change of pixel format or frame size during one analysis is an error.
+    - `histogramStatistics` takes nearest-rank percentiles (min, P5, P25, median, P75, P95, max) and the mean from a 256-bin histogram. A frame with no counted pixels gives a gap, not zero. No temporal smoothing is applied.
+    - The run stops with *Video analysis failed: …* if a worker request gets no reply within 60 s, the video changes or is disposed, or a decoded frame index is missing or duplicated.
+    - Still images and image sequences have no encoded chunks, so they give *Load an encoded video to analyze its frames*.
+  - **Mask.** While **Enable Mask** is on, the graph takes a snapshot of the alpha of the shared mask (`videoMask`, or `motionMaskOverlay` when there is no shared node). `exclusionMask` excludes each native pixel whose mask alpha is above 128, the same threshold that the other mask users apply. The mask is painted in rotated video coordinates, so the mapping follows the video's `effectiveRotation` (90, 180 or 270). A saved mask that is still decoding gives *Waiting for the saved mask to load*. A run in which every pixel is excluded gives *No background pixels remain after exclusions*.
+  - **Recalculation.** While the graph is shown, it checks its inputs every 500 ms: the video, its chunks, the mask image, the rotation and the tracked positions. It starts a new analysis when one of them has changed. So a mask edit, an undo, or a change of **Enable Mask** restarts it. **Recalculate** forces a new pass. Hiding the graph cancels an analysis that is not complete. A complete result is kept.
+  - **Export CSV** (`exportCSV`, file `VideoTonalRange.csv`) writes one row per sitch frame, with the columns `frame, sourceFrame, representation (luma_scaled_0_255 or display_gray_0_255), sourceBits, maskEnabled, count, min, p05, p25, median, p75, p95, max, mean, target, local, contrast, relativeContrast, span, targetCount, localCount`. It exports only the values available at that time, so wait for the analysis to finish. A value that could not be measured is an empty cell.
+  - **Saved sitches.** While it is shown, the graph is saved in a new top-level `videoTonalGraph` record: position, size, theme, `tonalOptions` and `fullscreenSuppressed`. It is restored after the full-screen state and after the QP Graph, with the same `Globals.loadGeneration` check and full-screen handling as the 2.166.1 QP Graph fix. An unknown saved mode falls back to *Percentile bands*, and the radius is clamped to 1–100. `disposeEverything` calls `resetVideoTonalGraph`.
+  - **What the values are not.** They are recorded code values, not temperature and not the sensor's dynamic range. AGC, scene content, clipping and compression all change them. The commit message says the percentiles and extrema of all 7,028 masked frames of the test video matched an independent FFmpeg decode.
+- **Tracked object against its local background** (Video → Forensics → **Tonal Range Settings** → **Tracked object** and **Object radius (px)**, and the **Display** choices *Object − local background* and *Contrast / local IQR*; `450e7cc0`; `captureTargets` in `src/videoTonal/CNodeVideoTonalGraphView.js`, `measureTonalFrame` in `src/videoTonal/TonalStatistics.js`).
+  - **Positions.** The positions come from **Point Track** (`getObjectTracker().trackedPositions`) for the same video. They are read when **Tracked object** is on or a contrast mode is selected. Unmeasured frames (`unmeasuredFrames`) and points that are not finite are skipped and stay gaps. The graph does not interpolate a track. With no positions, it shows *Use Point Track to measure object positions first; missing frames remain gaps*.
+  - **Regions.** **Object radius (px)** (1–100, default 6) is in original video pixels and becomes an elliptical aperture in the decoded frame.
+    - The area within 1 radius gives the object mean (green line).
+    - A ring from 2 to 4 radii gives the local background median (pink line).
+    - The band from 1 to 2 radii is a guard gap.
+    - Pixels within 2 radii are also removed from the frame's global histogram, and masked pixels are excluded from every region.
+    - With **Tracked object** on, the percentile and histogram modes add the green and pink lines.
+  - **Contrast modes.**
+    - *Object − local background* plots the object mean minus the local median. A negative value means the object is darker than its surroundings.
+    - *Contrast / local IQR* divides that difference by the ring's P75 − P25 span. A span below 1 code value gives no value.
+    - In these modes the Y axis is symmetric about zero and fitted to the largest value. The readout gives the object, local, difference and relative values.
+    - The relative measure does not change under a shared positive linear gain and offset, but it is not a calibrated SNR.
+
+### Improvements
+
+- **Show Mask, and mask overlay controls that work independently** (Video → Masking → **Show Mask**, also the Video view's header menu → *Masking* → *Show Mask*; `450e7cc0`; `createMaskingFolder` and `deserializeMotionAnalysis` in `src/CMotionAnalysisUI.js`; the `maskEnabled` getter/setter, `updateMaskPreview`, `ensureMaskOverlay` and `hideOverlays` in `src/CMotionAnalysis.js`; `modSerialize`, `modDeserialize`, `setEditing`, `setShowMaskPreview` and `renderCanvas` in `src/nodes/CNodeMaskOverlay.js`; slot `maskShow` in `VIEW_UIBAR_MENUS` (`src/ViewUIBarMenus.js`); i18n `viewMenus.maskShow`; `tests/CNodeMaskOverlayAsync.test.js`; `docs/Masking.md`).
+  - **Before.**
+    - The red overlay showed while **Edit Mask** was on. It also followed **Enable Mask** once that box was changed or Motion Analysis started, because `updateMaskPreview` called `setShowMaskPreview(maskEnabled)`.
+    - Stopping Motion Analysis (`hideOverlays`) turned off both the overlay and **Edit Mask**.
+    - The overlay alpha was 0.4 while editing and 0.2 otherwise.
+    - **Enable Mask** was a field of `MotionAnalyzer`, saved only in the `motionAnalysis` record.
+  - **Now.**
+    - A new **Show Mask** check box sits between **Enable Mask** and **Edit Mask**, with the tooltip *Show the mask without painting. The overlay is stronger when Enable Mask is on, dimmer when off.* It is mirrored to the Video header menu (`shareAs(viewMenuKey("video", "maskShow"))`).
+    - The overlay is visible exactly when **Show Mask** or **Edit Mask** is on (`showMaskPreview || editing`). Changing **Enable Mask**, and starting or stopping Motion Analysis, no longer show or hide it, and `hideOverlays` no longer turns off **Edit Mask**.
+    - The overlay alpha is 0.4 while **Enable Mask** is on and 0.2 while it is off. It now follows `maskEnabled`, not `editing`.
+    - **Enable Mask** now lives on the shared mask node (`CNodeMaskOverlay.maskEnabled`, default true). `MotionAnalyzer.maskEnabled` is a getter/setter that reads and writes that value, so the setting holds while Motion Analysis is stopped, and the Tonal Range Graph reads the same value.
+    - The mask node now saves `maskEnabled`, `showMaskPreview` and `editing` with the sitch. A mask record without them restores Enable on, Show off and Edit off. Numeric menu values are stored as booleans.
+    - The three check boxes now `listen()`, so they show restored values.
+- **BOTBench output files always end in .csv** (File → File Analysis → **BOTBench...** → **Create Output Files**; new `trackOutputName` in `src/analysis/BotBenchTrackOutput.js`, used by `trackOutputLocation` and `writeTrackOutput`; `tests/botbench/trackOutput.test.js`; `docs/BOTBench.md`).
+  - In 2.166.1 an output file kept the source file name unchanged. So a source such as `clip.ts` or `clip.klv` produced a CSV file named `clip.ts` or `clip.klv`.
+  - `trackOutputName` now adds `.csv` unless the name already ends in `.csv` (any letter case). So `clip.ts` gives `clip.ts.csv`, while `track.csv` and `TRACK.CSV` are unchanged.
+  - The output path in the row status tooltip uses the same name.
+  - A file that 2.166.1 wrote under the old name is not removed or renamed. A new run writes the `.csv` name beside it.
+
+### Bug Fixes
+
+- **Enable Mask set to off came back on when a sitch loaded, if Motion Analysis was not running** (Video → Masking → **Enable Mask**; `450e7cc0`; `deserializeMotionAnalysis` in `src/CMotionAnalysisUI.js`, `CNodeMaskOverlay.modSerialize` and `modDeserialize`).
+  - **Bug.** `serializeMotionAnalysis` saved `maskEnabled` whenever a `MotionAnalyzer` existed, and the Masking menu creates one. But `deserializeMotionAnalysis` applied the value only inside its `data.active` branch. So a sitch saved with **Enable Mask** off and Motion Analysis stopped loaded with the mask enabled.
+  - **Fix.** Sitches saved from this version keep the setting on the `videoMask` node itself. For older saves, `deserializeMotionAnalysis` now applies `data.maskEnabled` through `ensureMaskingAnalyzer()` before the `data.active` check, without loading OpenCV or starting analysis. That path needs the video view to have its `videoData` at that point.
+- **The soft edges of a restored mask could become stronger** (`450e7cc0`; `loadMask` in `src/nodes/CNodeMaskOverlay.js`, `tests/CNodeMaskOverlayAsync.test.js`).
+  - **Bug.** The saved mask is a PNG that is usually narrower than the video. It is drawn scaled onto the mask canvas, so its edges have partial alpha. Several paths call `loadMask()` during a load: the constructor, `modDeserialize`, `initMask` once the video size is known, and the Motion Analysis restore. Each decoded image that found a canvas was drawn on top of what the canvas already held.
+  - **Effect.** When more than one image reached the canvas, the partial alpha at the edges built up and the red edges became stronger. Every mask user thresholds at alpha > 128, so edge pixels could also cross into the masked area.
+  - **Fix.** `loadMask` now clears the canvas (`clearRect`) before it draws the saved image, because that image is a complete snapshot and not a brush stroke.
+
+### Documentation
+
+- New `docs/VideoTonalRange.md` (Help → Documentation → *Video Tonal Range Graph*; `helpDocs` entry in `src/docsRegistry.js`, i18n `menus.help.documentation.videoTonalGraph`, link in `README.md`).
+- `docs/Masking.md`: the **Show Mask** row, and notes on when the overlay shows, that **Enable Mask** is independent of the overlay, that all three settings are saved, and how the mask applies to the Tonal Range Graph.
+- `docs/BOTBench.md`: the `.csv` naming rule for **Create Output Files**.
+
 ## Version 2.166.1 (2026-09-21)
 
 ### New Features

@@ -8,13 +8,18 @@ export const TRACK_OUTPUT_COLUMNS = [
     "CovarianceXY", "CovarianceXZ", "CovarianceYZ",
 ];
 
+/** The source filename, with ".csv" added unless it already ends in ".csv" (clip.ts -> clip.ts.csv). */
+export function trackOutputName(sourceName) {
+    return /\.csv$/i.test(sourceName) ? sourceName : `${sourceName}.csv`;
+}
+
 /** A parent handle exists only when the track folder was reached through it. */
 export function trackOutputLocation(entry) {
     const beside = /^(all|input)$/i.test(entry.dirHandle?.name ?? "") && entry.parentHandle;
     const base = beside ? entry.parentHandle : entry.dirHandle;
     const dir = String(entry.dirPath ?? "").replace(/\/$/, "");
     const prefix = beside ? dir.replace(/(^|\/)[^/]+$/, "") : dir;
-    return {base, path: [prefix, TRACK_OUTPUT_DIR, entry.name].filter(Boolean).join("/")};
+    return {base, path: [prefix, TRACK_OUTPUT_DIR, trackOutputName(entry.name)].filter(Boolean).join("/")};
 }
 
 export function canWriteTrackOutput(entry) {
@@ -62,7 +67,7 @@ export async function writeTrackOutput(entry) {
     if (!output.csv) return {written: false, reason: output.reason};
     const {base, path} = trackOutputLocation(entry);
     const directory = await base.getDirectoryHandle(TRACK_OUTPUT_DIR, {create: true});
-    const file = await directory.getFileHandle(entry.name, {create: true});
+    const file = await directory.getFileHandle(trackOutputName(entry.name), {create: true});
     const writable = await file.createWritable();
     try {
         await writable.write(output.csv);

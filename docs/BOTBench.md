@@ -162,7 +162,9 @@ group.
 - **Create Output Files** — optionally save the **Top interpretation**, selected
   without truth, for each analysed file. Enable this before choosing **Folder
   (Caching)** to grant write access. The output is CSV with the **same filename**
-  as the source. If `All/` or `Input/` was reached through its parent, the file
+  as the source, with `.csv` added when the source name does not already end in
+  `.csv` (`clip.ts` gives `clip.ts.csv`; `track.csv` stays `track.csv`). If
+  `All/` or `Input/` was reached through its parent, the file
   goes in a sibling `output/` folder; otherwise `output/` is created inside the
   track folder. Existing output files are replaced, and generated `output/`
   folders are excluded from subsequent scans. Cached fits are reused, with the
