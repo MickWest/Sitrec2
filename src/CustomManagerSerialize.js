@@ -45,6 +45,7 @@ import {CNodeDisplayTrack} from "./nodes/CNodeDisplayTrack";
 import {DebugArrowAB, elevationAtLL} from "./threeExt";
 import {FeatureManager} from "./CFeatureManager";
 import {CustomGraphManager} from "./CCustomGraphManager";
+import {deserializeVideoQPGraph, serializeVideoQPGraph} from "./VideoQPGraph";
 import {restoreStreetViewPanoFromMod} from "./StreetViewPanoUI";
 import {CNodeTrackGUI} from "./nodes/CNodeControllerTrackGUI";
 import {isVideoRestoredByStreaming} from "./VideoStreaming";
@@ -662,6 +663,9 @@ export const serializeMethods = {
 
         // Serialize user-created custom graphs
         out.customGraphs = CustomGraphManager.serialize()
+
+        // The video QP graph (Video > Forensics). undefined while it is not shown.
+        out.videoQPGraph = serializeVideoQPGraph()
 
         // Serialize synthetic 3D buildings from Synth3DManager
         out.syntheticBuildings = Synth3DManager.serialize()
@@ -1303,6 +1307,9 @@ export const serializeMethods = {
             if (sitchData.customGraphs) {
                 CustomGraphManager.deserialize(sitchData.customGraphs)
             }
+
+            // The video QP graph loads its code on demand, so this does not wait for it.
+            deserializeVideoQPGraph(sitchData.videoQPGraph)
 
             // Deserialize synthetic 3D buildings BEFORE applying mods
             // This recreates the building nodes so that mods can be applied to them

@@ -559,10 +559,17 @@ class MetaBezierCurveEditor {
     };
 
 
+    // The colors in this file are for a WHITE background. The view that owns the canvas can
+    // be in the dark theme: T() gives the color for the current theme (CNodeView.themeColor).
+    T(color) {
+        const view = this.p.view;
+        return view?.themeColor ? view.themeColor(color) : color;
+    }
+
     drawPoint(p, color) {
         if (!this.disable) {
 
-            this.ctx.fillStyle = color;
+            this.ctx.fillStyle = this.T(color);
             this.ctx.beginPath();
             const canvasX = this.D2CX(p.x);
             const canvasY = this.D2CY(p.y);
@@ -595,8 +602,8 @@ class MetaBezierCurveEditor {
         const ctx = this.ctx;
         lines.forEach(line => {
             ctx.beginPath();
-            ctx.strokeStyle = line.color;
-            ctx.fillStyle = line.color;
+            ctx.strokeStyle = this.T(line.color);
+            ctx.fillStyle = this.T(line.color);
             ctx.lineWidth = 1
             if (line.y !== undefined) {
                 ctx.moveTo(this.D2CX(this.min.x), this.D2CY(line.y));
@@ -696,11 +703,11 @@ class MetaBezierCurveEditor {
         const ctx = this.ctx;
 
 
-        ctx.fillStyle = "white";
+        ctx.fillStyle = this.T("white");
         ctx.fillRect(0, 0, canvasWidth, canvasHeight);
 
         // X axis
-        ctx.fillStyle = "black";
+        ctx.fillStyle = this.T("black");
         ctx.font = "12px Arial";
         // Draw major vertical gridlines
         ctx.textAlign = "center";
@@ -708,7 +715,7 @@ class MetaBezierCurveEditor {
 
             if (!this.noVerticalLines) {
                 ctx.beginPath();
-                ctx.strokeStyle = "#808080";
+                ctx.strokeStyle = this.T("#808080");
                 ctx.lineWidth = 1
                 ctx.moveTo(this.D2CX(x), this.D2CY(this.min.y));
                 ctx.lineTo(this.D2CX(x), this.D2CY(this.max.y));
@@ -726,7 +733,7 @@ class MetaBezierCurveEditor {
         ctx.textAlign = "right";
         for (let y = this.min.y; y < this.max.y + 1; y += this.yStep) {
             ctx.beginPath();
-            ctx.strokeStyle = "#808080";
+            ctx.strokeStyle = this.T("#808080");
             ctx.lineWidth = 1
             ctx.moveTo(this.D2CX(this.min.x), this.D2CY(y));
             ctx.lineTo(this.D2CX(this.max.x), this.D2CY(y));
@@ -776,7 +783,7 @@ class MetaBezierCurveEditor {
             if (i % 2 === 0) {
                 if (!this.curve.override && !this.curve.useRegression) {
                     ctx.beginPath();
-                    ctx.strokeStyle = "#90b091";
+                    ctx.strokeStyle = this.T("#90b091");
                     ctx.moveTo(this.D2CX(this.curve.ps[i].x), this.D2CY(this.curve.ps[i].y));
                     ctx.lineTo(this.D2CX(this.curve.ps[i + 1].x), this.D2CY(this.curve.ps[i + 1].y));
                     ctx.stroke();
@@ -798,7 +805,7 @@ class MetaBezierCurveEditor {
         let realMaxY = -10000000000
 
         if (this.curve.ps.length > 0) {
-            ctx.strokeStyle = valueColor;
+            ctx.strokeStyle = this.T(valueColor);
             ctx.beginPath();
             if (this.independentAxis === "y") {
                 for (let y = this.min.y; y < this.max.y; y += (this.max.y - this.min.y) / 100) {
@@ -811,7 +818,7 @@ class MetaBezierCurveEditor {
 
 
             if (!this.curve.override && !this.curve.useRegression) {
-                ctx.strokeStyle = bezierColor;
+                ctx.strokeStyle = this.T(bezierColor);
                 ctx.beginPath();
                 for (let t = 0; t <= 1; t += 0.05 / this.curve.ps.length) {
                     const p = BezierPoint(this.curve.ps, t);
@@ -849,7 +856,7 @@ class MetaBezierCurveEditor {
                     this.drawLines(compareNode.lines)
                 }
 
-                ctx.strokeStyle = compareNode.color;
+                ctx.strokeStyle = this.T(compareNode.color);
                 ctx.lineWidth = 1 // compareNode.lineWidth ?? 1
                 ctx.beginPath();
 
@@ -1131,9 +1138,9 @@ class MetaBezierCurveEditor {
                 if (i%2 === 0 || !this.curve.useRegression) {
                     const d = Math.sqrt(Math.pow(this.D2CX(this.curve.ps[i].x) - e.layerX, 2) + Math.pow(this.D2CY(this.curve.ps[i].y) - e.layerY, 2));
                     if (d <= (this.interactionRadius ?? 10)) {
-                        ctx.fillStyle = "green";
+                        ctx.fillStyle = this.T("green");
                         if (i % 2 === 0) {
-                            ctx.fillStyle = "black"
+                            ctx.fillStyle = this.T("black")
                         }
                         ctx.beginPath();
                         ctx.arc(this.D2CX(this.curve.ps[i].x), this.D2CY(this.curve.ps[i].y), 8, 0, Math.PI * 2);

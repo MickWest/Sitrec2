@@ -19,6 +19,7 @@ import {par} from "./par";
 import {t} from "./i18n";
 import {EventManager} from "./CEventManager";
 import {GraphDataManager} from "./CGraphDataManager";
+import {defaultViewDark} from "./Theme";
 import {viewMenuKey} from "./ViewUIBarMenus";
 import {CNodeCustomGraphView} from "./nodes/CNodeCustomGraphView";
 import {CNodeDisplayLOS} from "./nodes/CNodeDisplayLOS";
@@ -231,7 +232,10 @@ class CCustomGraph {
         return {
             id: this.id,
             title: this.title,
-            dark: this.view ? this.view.dark : true,
+            // Saved when the user set this graph on purpose, or when it is not in its default
+            // mode. A graph with no saved mode follows the theme of the person who opens the sitch.
+            dark: this.view && (this.view.themeExplicit || this.view.dark !== defaultViewDark(true))
+                ? this.view.dark : undefined,
             showLegend: this.view ? this.view.showLegend : true,
             show: this.view ? this.view.visible : true,
             xSeries: this._storedX,
@@ -331,7 +335,7 @@ class CCustomGraphManager {
             id,
             menuName: config.title ?? ("Graph " + id),
             title: config.title ?? "",
-            dark: config.dark ?? true,
+            dark: config.dark,   // undefined = the global theme
             showLegend: config.showLegend ?? true,
             visible: config.show ?? true,
             left,
@@ -365,7 +369,9 @@ class CCustomGraphManager {
         });
         const showProxy = { get show() { return view.visible; }, set show(v) { view.show(v); } };
         folder.add(showProxy, 'show').name(t("graphControls.show")).listen();
-        folder.add(view, 'dark').name(t("graphControls.dark")).onChange(() => setRenderOne());
+        // listen(): the view header's Dark / Light button changes the same flag.
+        // setDark(): a change here is a choice for this graph, so it is saved.
+        folder.add(view, 'dark').name(t("graphControls.dark")).onChange((value) => view.setDark(value)).listen();
         folder.add({ legend: () => { view.showLegend = !view.showLegend; setRenderOne(); } }, 'legend')
             .name(t("graphControls.toggleLegend"));
         folder.add(graph, 'lastSeconds', 0, 30, 0.5).name("Show Last (secs)")

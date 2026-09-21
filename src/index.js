@@ -166,6 +166,8 @@ import {debugLog} from "./DebugLog";
 import {getEnvBool} from "./envUtils";
 import {FeatureManager} from "./CFeatureManager";
 import {CustomGraphManager} from "./CCustomGraphManager";
+import {resetVideoQPGraph} from "./VideoQPGraph";
+import {setGlobalTheme} from "./Theme";
 import {GraphDataManager} from "./CGraphDataManager";
 import {classifyProvenance, setSitchProvenance} from "./SitchProvenance";
 import {
@@ -1884,6 +1886,10 @@ async function initializeOnce() {
 //  --name-width: 36%;
 
 
+    // The settings are loaded and no GUI exists yet, so the theme is in place before the
+    // first paint (Theme.js).
+    setGlobalTheme(Globals.settings?.theme);
+
     initI18n();
     Globals.menuBar = new CGuiMenuBar();
 
@@ -3405,6 +3411,7 @@ function disposeEverything() {
     // dispose custom graphs (folders) and clear the per-frame data-series registry
     CustomGraphManager.disposeAll();
     GraphDataManager.disposeAll();
+    resetVideoQPGraph();
 
     // reset motion analysis state (must be after NodeMan.disposeAll since it references the video node)
     resetMotionAnalysis();

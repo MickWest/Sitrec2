@@ -85,6 +85,13 @@ export class CNodeViewText extends CNodeView {
 
         // Apply theme
         this.setTheme(this.theme);
+        // Dark / Light header button (CNodeView). This view has a color table for each
+        // theme (THEMES), so applyTheme() only selects one.
+        this.enableTheme();
+    }
+
+    applyTheme() {
+        if (this.outputArea) this.setTheme(this.dark ? 'dark' : 'light');
     }
 
     /**

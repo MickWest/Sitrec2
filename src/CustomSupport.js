@@ -80,6 +80,7 @@ import {textSitchToObject} from "./RegisterSitches";
 import {waitForExportFrameSettled} from "./ExportFrameSettler";
 import {parseObjectInput as parseObjectInputUtil} from "./utils/parseObjectInput";
 import {initializeSettings, SettingsSaver} from "./SettingsManager";
+import {setGlobalTheme} from "./Theme";
 import {CNodeCurveEditor2} from "./nodes/CNodeCurveEdit2";
 import {CNodeViewDAG} from "./nodes/CNodeViewDAG";
 import {CNodeNotes} from "./nodes/CNodeNotes";
@@ -461,6 +462,21 @@ export class CCustomManager {
                 if (normalizedLanguage !== previousLanguage) {
                     window.location.reload();
                 }
+            })
+            .listen();
+
+        // Dark / light theme of the menus, and of every view that has a Dark / Light button.
+        // No reload: setGlobalTheme() changes the CSS and sets all the views (Theme.js).
+        settingsFolder.add(Globals.settings, "theme", {
+            [t("custom.settings.theme.options.classic")]: "",
+            [t("custom.settings.theme.options.dark")]: "dark",
+            [t("custom.settings.theme.options.light")]: "light",
+        })
+            .name(t("custom.settings.theme.label"))
+            .tooltip(t("custom.settings.theme.tooltip"))
+            .onChange((value) => {
+                setGlobalTheme(value);
+                this.saveGlobalSettings(true);
             })
             .listen();
 

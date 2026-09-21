@@ -367,6 +367,14 @@ const VENDORED_LIBRARIES = [
         notes: "ACES filmic tone mapping by Stephen Hill, extracted from Three.js examples (src/shaders/ACESFilmicToneMappingShader.js). Original source: https://github.com/selfshadow/ltc_code/blob/master/webgl/shaders/ltc/ltc_blit.fs",
     },
     {
+        name: "OpenH264 (CABAC constant tables)",
+        version: "n/a",
+        license: "BSD-2-Clause",
+        copyright: "Copyright (c) 2013, Cisco Systems",
+        repository: "https://github.com/cisco/openh264",
+        notes: "The CABAC context, range and state-transition constants of ITU-T Rec. H.264 (Tables 9-12 to 9-24, 9-44 and 9-45) in src/H264CabacTables.js were converted by script from the transcription of those tables in codec/common/src/common_tables.cpp. The values are fixed by the standard. No program code was copied.",
+    },
+    {
         name: "FLIR Shader (adapted from Geeks3D)",
         version: "n/a",
         license: "Public tutorial code",

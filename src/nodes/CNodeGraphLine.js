@@ -28,10 +28,12 @@ export class CNodeGraphLine extends CNodeViewUI {
         
         var e = this.overlayView.editor
         var c = this.ctx
+        // this overlay draws on the graph, so its colors follow the theme of the graph view
+        const T = (color) => this.overlayView.themeColor ? this.overlayView.themeColor(color) : color;
 
         c.beginPath();
         c.lineWidth = this.lineWidth
-        c.strokeStyle = this.color;
+        c.strokeStyle = T(this.color);
         c.moveTo(e.D2CX(par.frame), e.D2CY(e.min.y));
         c.lineTo(e.D2CX(par.frame), e.D2CY(e.max.y));
         c.stroke();
@@ -51,7 +53,7 @@ export class CNodeGraphLine extends CNodeViewUI {
                 
                 const textHeight = c.measureText(valueText).actualBoundingBoxAscent;
                 c.font = "14px Arial";
-                c.fillStyle = e.compareNode[i].color;
+                c.fillStyle = T(e.compareNode[i].color);
                 c.fillText(valueText, e.D2CX(par.frame + 1), e.D2CY(value) + textHeight);
             }
         }

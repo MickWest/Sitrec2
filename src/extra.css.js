@@ -46,6 +46,54 @@ export const extraCSS = `
     --sitrec-space-3: 12px;
 }
 
+/* ============================================================================
+   LIGHT THEME (Settings > Theme). Theme.js sets data-theme on the html element.
+   The block above is the dark theme, and it stays the start condition.
+   lil-gui declares its color variables on .lil-gui itself, so a :root value cannot
+   reach them: the second rule must name .lil-gui. Only COLORS change here. The
+   lil-gui metric variables (font size, widget height) keep their touch variants.
+   ============================================================================ */
+html[data-theme="light"] {
+    --sitrec-bg-menubar: #e6e6e6;
+    --sitrec-bg-panel: #f2f2f2;
+    --sitrec-bg-title: #dadada;
+    --sitrec-bg-folder: #e4e6f2;
+    --sitrec-bg-widget: #d2d2d2;
+    --sitrec-hover: #c2c2c2;
+    --sitrec-bg-header: #d6d6d6;
+    --sitrec-text: #1c1c1c;
+    --sitrec-text-strong: #000000;
+    --sitrec-text-dim: #5a5a5a;
+    --sitrec-border: #9a9a9a;
+    --sitrec-border-folder: #404040;
+    --sitrec-border-area: rgba(0, 0, 0, 0.18);
+    --sitrec-accent: #0077a8;
+    --sitrec-link: #0060c0;
+}
+
+html[data-theme="light"] .lil-gui {
+    --background-color: var(--sitrec-bg-panel);
+    --text-color: var(--sitrec-text);
+    --title-background-color: var(--sitrec-bg-title);
+    --title-text-color: var(--sitrec-text);
+    --widget-color: var(--sitrec-bg-widget);
+    --hover-color: var(--sitrec-hover);
+    --focus-color: #b2b2b2;
+    --number-color: var(--sitrec-accent);
+    --string-color: #4d7a00;
+}
+
+/* The menu bar strip and its icons have inline colors (lil-gui-extras.js). An inline
+   style wins over a stylesheet rule, so these need !important. */
+html[data-theme="light"] #menuBarBlackBar {
+    background-color: var(--sitrec-bg-menubar) !important;
+    border-bottom-color: var(--sitrec-border) !important;
+}
+
+html[data-theme="light"] .menu-bar-icon {
+    color: var(--sitrec-text) !important;
+}
+
 .uplot {
     font-family: monospace;
 }
@@ -323,7 +371,7 @@ html, body {
     user-select: text;
     -webkit-user-select: text;
     cursor: text;
-    color: #ffffff;
+    color: var(--sitrec-text-strong);
     padding: 4px 8px;
 }
 

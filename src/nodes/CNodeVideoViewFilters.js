@@ -19,6 +19,7 @@ import {CNodeGridOverlay} from "./CNodeGridOverlay";
 import {EventManager} from "../CEventManager";
 import {addStarOptimizeControls} from "../starTrack/StarAdjustOptimize";
 import {viewMenuKey} from "../ViewUIBarMenus";
+import {addVideoQPGraphMenu} from "../VideoQPGraph";
 
 // Top-level GUI folders are shared across CNodeVideoView instances — the first
 // node through addFiltersToVideoNode creates them; the class methods in
@@ -61,6 +62,7 @@ export function addFiltersToVideoNode(videoNode) {
     if (guiVideoNoiseFolder === null) {
         guiVideoNoiseFolder = guiVideoForensicsFolder.addFolder(t("videoView.folders.noiseAnalysis")).close().perm();
         guiVideoNoiseFolder.onOpenClose(() => setRenderOne(true));
+        addVideoQPGraphMenu(guiVideoForensicsFolder);
     }
 
     let brightness, contrast, levels, levelsInputBlack, levelsMidpoint, levelsInputWhite, levelsOutputBlack, levelsOutputWhite, showHistogram, histogramOnScreen, curves, showCurves, shadows, highlights, dehaze, blur, hue, invert, saturate, enableVideoEffects, convolutionFilter;

@@ -120,6 +120,27 @@ On the **look view's** header bar the same button means a little more, because t
 ## Per-view controls
 
 Anything that can be shown in one view but not another is a **pair** of controls, named the same way throughout: "Labels in Main" and "Labels in Look", "Equatorial Grid in Main" and "Equatorial Grid in Look", and so on. The two are independent — neither is a master switch for the other — so a ticked box always means the thing is on in that view. In the view's own header menu the "in Main" / "in Look" is dropped, because the menu you opened already says which view it is.
+
+## Dark and light themes
+
+**Sitrec ▸ Settings ▸ Theme** sets the colors of the user interface. It has three values:
+
+| Theme | Result |
+|---|---|
+| **Classic** | The look before themes, and the start condition. The menus are dark, and each view has its own original colors: most are dark, and the classic curve graphs (Show ▸ Graphs) are white |
+| **Dark** | Dark menus, and every view that has a theme is white on black |
+| **Light** | Light menus, and every view that has a theme is black on white. This is the better one for a figure in a printed document |
+
+The views that have a theme are the 2D panels: the graphs (Show ▸ Graphs, custom graphs, the [Video QP Graph](VideoQPGraph.md)), the curve editors such as the FOV Editor, Notes, the chat and debug panels, and the Audio Spectrum. The 3D views and the video view do not change.
+
+A change of the Theme setting sets **all** of those views to the new mode. After that, each view is independent:
+
+- The **◐** button in the header of a view, to the left of the fullscreen button, changes **that view only**.
+- **Shift + click** on the ◐ button changes that view, and then sets **all other views** to the same mode. The menus do not change: only the Theme setting changes them.
+
+A view draws its lines in colors that are clear on its background. When a graph has a color for one theme only, Sitrec calculates the color for the other theme: greys are mirrored (white text becomes black text), and a color keeps its hue but becomes darker for a white background or lighter for a black one.
+
+The Theme setting is saved with your other settings, not in a sitch. A sitch saves the mode of a view when you set that view yourself with its ◐ button, or when the view is not in your theme. So a sitch that you open follows your own theme, except for a view that its author set on purpose, such as one white graph. A mode that was saved stays saved when the sitch is saved again.
  
 # Time and Date User Interface
 

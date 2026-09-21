@@ -144,6 +144,11 @@ export function sanitizeSettings(settings) {
         sanitized.showFilename = settings.showFilename;
     }
 
+    // "" = no selection (the classic look), "dark" or "light". See Theme.js.
+    if (settings.theme !== undefined && ["", "dark", "light"].includes(settings.theme)) {
+        sanitized.theme = settings.theme;
+    }
+
     if (settings.language !== undefined) {
         const language = String(settings.language).toLowerCase();
         if (/^[a-z]{2}$/.test(language)) {
@@ -409,6 +414,7 @@ export async function initializeSettings() {
             showAttribution: true, // Show map/elevation data source attribution overlay
             showFilename: true, // Show the current video filename in the bottom overlay
             language: "en", // UI language
+            theme: "", // UI theme: "" = no selection (classic look), "dark" or "light" (Theme.js)
 
             // How a NEW sitch starts. These are applied to Sit before setup runs
             // (see StartupDefaults.js) and are never part of a sitch, so loading a
@@ -455,6 +461,7 @@ export async function initializeSettings() {
         Globals.settings.maxDetails = 20;
         Globals.settings.videoMaxSize = "720P";
         Globals.settings.showAttribution = false;
+        Globals.settings.theme = "";
         Globals.lastSettingsJSON = JSON.stringify(sanitizeSettings(Globals.settings));
         return Globals.settings;
     }

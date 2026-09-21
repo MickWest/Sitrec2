@@ -55,6 +55,16 @@ describe('sanitizeSettings', () => {
         }
     });
 
+    test('should accept only the known theme values', () => {
+        for (const theme of ['', 'dark', 'light']) {
+            expect(sanitizeSettings({theme}).theme).toBe(theme);
+        }
+        for (const invalid of ['Dark', 'blue', true, 1, null, {}]) {
+            expect(sanitizeSettings({theme: invalid}).theme).toBeUndefined();
+        }
+        expect(sanitizeSettings({}).theme).toBeUndefined();
+    });
+
     test('should not include showAttribution when not provided', () => {
         expect(sanitizeSettings({}).showAttribution).toBeUndefined();
     });

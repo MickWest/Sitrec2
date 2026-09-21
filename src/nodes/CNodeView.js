@@ -18,6 +18,9 @@ import {FRIENDLY_VIEW_NAMES, populateViewUIBarIcons, populateViewUIBarMenu} from
 import {isKeyHeld} from "../KeyBoardHandler";
 import {par} from "../par";
 import {getDocumentTitle} from "../utils";
+import {t} from "../i18n";
+import {defaultViewDark, setAllViewsDark} from "../Theme";
+import {convertThemeColor} from "../ThemeColors";
 import {
     getCenterSidebarAdjustment,
     getLeftSidebar,
@@ -377,6 +380,52 @@ class CNodeView extends CNode {
         this.setFromDiv(this.div);
     }
 
+    // --- Dark / light theme (see Theme.js) ---
+    // A view that can draw both themes calls enableTheme() in its constructor. It then draws
+    // with this.dark, and/or passes each color through themeColor().
+    // nativeDark: the theme that the colors in the view's drawing code were made for.
+    enableTheme({nativeDark = true} = {}) {
+        this.themeable = true;
+        this.nativeDark = nativeDark;
+        // modDeserialize can run before this (inside the base constructor) and set the mode
+        if (this.dark === undefined || this.dark === null) this.dark = defaultViewDark(nativeDark);
+        this.addThemeIcon();
+        if (this.dark !== nativeDark) this.applyTheme?.();
+    }
+
+    // Header button, to the left of the fullscreen button. Click: this view.
+    // Shift + click: this view, and then all other views go to the same mode.
+    addThemeIcon() {
+        const bar = this.uiBar;
+        if (!bar || bar.right.querySelector('[data-uibar-action="darklight"]')) return;
+        const icon = bar.addIcon('◐', (event) => {
+            if (event?.shiftKey) setAllViewsDark(!this.dark);
+            else this.setDark(!this.dark);
+        }, t("graphControls.darkLight"), 'darklight');
+        // Left of the fullscreen button. A view with no fullscreen button: left of the
+        // first standard button that it has (querySelector gives the first in the bar).
+        const first = bar.right.querySelector('[data-uibar-action="fullscreen"],[data-uibar-action="popout"],'
+            + '[data-uibar-action="pin"],[data-uibar-action="close"]');
+        if (first) bar.right.insertBefore(icon, first);
+    }
+
+    // A subclass with DOM content (not a canvas that it draws each frame) has an
+    // applyTheme() method. It must do nothing when its DOM is not made yet.
+    // explicit: the user set THIS view on purpose (its own button, or a value from a saved
+    // sitch). An explicit mode is always saved. A change of all views together (the global
+    // theme, Shift + click) is not explicit.
+    setDark(dark, explicit = true) {
+        this.dark = !!dark;
+        this.themeExplicit = explicit;
+        this.applyTheme?.();
+        setRenderOne();
+    }
+
+    // A color from the view's drawing code -> the color for the current mode
+    themeColor(color) {
+        return this.dark === this.nativeDark ? color : convertThemeColor(color, this.dark);
+    }
+
     // --- Phase 3: per-view header / UI bar (Blender-style) ---
     // The header is a CUIBar: an OVERLAY strip above the canvas (it never insets the
     // canvas, so showing/hiding changes NO rendering — the viewport renders full-size
@@ -696,6 +745,13 @@ class CNodeView extends CNode {
         if (this.dockedSidebar) {
             result.dockedSidebar = this.dockedSidebar;
         }
+        // A view in its default mode saves nothing, so it follows the theme of the
+        // person who opens the sitch. A mode is saved when the user set this view on
+        // purpose (also when it is the same as the theme of the person who saves), or
+        // when it is not the default mode.
+        if (this.themeable && (this.themeExplicit || this.dark !== defaultViewDark(this.nativeDark))) {
+            result.theme = this.dark ? "dark" : "light";
+        }
         // Only the actual fullscreen view should serialize as doubled.
         // Otherwise all views with doubled:true race during deserialization,
         // and the last one wins — hiding the others.
@@ -726,6 +782,13 @@ class CNodeView extends CNode {
             this.undockFromSidebar();
         }
         this.simpleDeserialize(v,this.toSerialCNodeView)
+        if (v.theme === "dark" || v.theme === "light") {
+            this.dark = v.theme === "dark";
+            this.themeExplicit = true;  // a saved mode stays saved when the sitch is saved again
+            // Not themeable yet = this runs inside the base constructor. enableTheme()
+            // applies the mode later.
+            if (this.themeable) this.applyTheme?.();
+        }
         this.updateWH();
         const visible = v.visible ?? this.visible;
         if (restoredDockedSidebar) {

@@ -35,7 +35,12 @@ export class CNodeCustomGraphView extends CNodeOSDGraphView {
         this.hasY3 = false;
         this.minY3 = 0;
         this.maxY3 = 1;
-        this.dark = v.dark ?? true;
+        // A saved mode (also the "dark: true" that every legacy save has) is kept as a choice,
+        // so a sitch that is saved again does not lose it. No value: the default mode.
+        if (v.dark !== undefined && v.dark !== null) {
+            this.dark = !!v.dark;
+            this.themeExplicit = true;
+        }
         this.showLegend = v.showLegend ?? true;
         this.title = v.title ?? "";
         // Set by CCustomGraphManager; called once per render so the graph can
@@ -53,6 +58,9 @@ export class CNodeCustomGraphView extends CNodeOSDGraphView {
         this.scatterMode = false;
         this.scatter = null;
         this._hoverIndex = -1;
+        // Dark / Light header button. This view has a full color table for each theme
+        // (DARK_THEME / LIGHT_THEME), so it reads this.dark and needs no color conversion.
+        this.enableTheme();
     }
 
     /**

@@ -80,6 +80,9 @@ export class CNodeAudioSpectrumView extends CNodeViewCanvas2D {
         this._combined = null;   // max(L,R) scratch for peak picking
         this.div.style.border = "1px solid rgba(255,255,255,0.22)";
         this.div.style.boxShadow = "0 2px 8px rgba(0,0,0,0.45)";
+        // Dark / Light header button. The colors below are for the dark theme, and
+        // themeColor() (CNodeView) converts them for the light theme.
+        this.enableTheme();
     }
 
     dispose() {
@@ -244,7 +247,7 @@ export class CNodeAudioSpectrumView extends CNodeViewCanvas2D {
                 if (f < FREQ_MIN || f > freqMax) continue;
                 const major = mult === 1 && f >= 10;
                 const x = this.xForFreq(f, w, freqMax);
-                ctx.strokeStyle = major ? "rgba(255,255,255,0.22)" : "rgba(255,255,255,0.10)";
+                ctx.strokeStyle = major ? this.themeColor("rgba(255,255,255,0.22)") : this.themeColor("rgba(255,255,255,0.10)");
                 ctx.lineWidth = hairline;
                 ctx.beginPath();
                 ctx.moveTo(x, 0);
@@ -258,7 +261,7 @@ export class CNodeAudioSpectrumView extends CNodeViewCanvas2D {
         ctx.textBaseline = "top";
         const placed = [];
         for (let tier = 0; tier < 3; tier++) {
-            ctx.fillStyle = tier === 0 ? "rgba(255,255,255,0.60)" : "rgba(255,255,255,0.42)";
+            ctx.fillStyle = tier === 0 ? this.themeColor("rgba(255,255,255,0.60)") : this.themeColor("rgba(255,255,255,0.42)");
             for (const {f, x} of labelTiers[tier]) {
                 if (x < 14 || x > w - 14) continue;
                 const text = f >= 1000 ? (f / 1000) + "k" : String(f);
@@ -272,14 +275,14 @@ export class CNodeAudioSpectrumView extends CNodeViewCanvas2D {
         // Horizontal lines every 6 dB, labeled on the left
         for (let db = DB_TOP - DB_GRID_STEP; db >= DB_BOTTOM; db -= DB_GRID_STEP) {
             const y = this.yForDb(db, h);
-            ctx.strokeStyle = "rgba(255,255,255,0.12)";
+            ctx.strokeStyle = this.themeColor("rgba(255,255,255,0.12)");
             ctx.lineWidth = hairline;
             ctx.beginPath();
             ctx.moveTo(0, y);
             ctx.lineTo(w, y);
             ctx.stroke();
             if (y > LABEL_TOP + 12 && y < h - 2) {
-                ctx.fillStyle = "rgba(255,255,255,0.55)";
+                ctx.fillStyle = this.themeColor("rgba(255,255,255,0.55)");
                 ctx.textAlign = "left";
                 ctx.textBaseline = "bottom";
                 ctx.fillText(String(db), 3, y - 1);
@@ -350,8 +353,8 @@ export class CNodeAudioSpectrumView extends CNodeViewCanvas2D {
         ctx.font = "15px sans-serif";    // 1.5x the axis label font
         ctx.textAlign = "center";
         ctx.textBaseline = "bottom";
-        ctx.fillStyle = "rgba(228,246,255,0.95)";
-        ctx.shadowColor = "rgba(0,0,0,0.85)";
+        ctx.fillStyle = this.themeColor("rgba(228,246,255,0.95)");
+        ctx.shadowColor = this.themeColor("rgba(0,0,0,0.85)");
         ctx.shadowBlur = 3;
         picked.sort((a, b) => a.i - b.i);
         const boxes = [];
@@ -405,7 +408,7 @@ export class CNodeAudioSpectrumView extends CNodeViewCanvas2D {
 
         ctx.save();
         ctx.clearRect(0, 0, w, h);
-        ctx.fillStyle = "rgba(30,32,34,0.94)";
+        ctx.fillStyle = this.themeColor("rgba(30,32,34,0.94)");
         ctx.fillRect(0, 0, w, h);
 
         const handler = this.getAudioHandler();
@@ -438,9 +441,9 @@ export class CNodeAudioSpectrumView extends CNodeViewCanvas2D {
             const binHz = sampleRate / FFT_SIZE;
             // right channel behind in darker blue, left on top in bright cyan-white
             if (this.chanDb.length > 1) {
-                this.drawTrace(ctx, this.chanDb[1], binHz, w, h, freqMax, "rgba(96,140,168,0.95)");
+                this.drawTrace(ctx, this.chanDb[1], binHz, w, h, freqMax, this.themeColor("rgba(96,140,168,0.95)"));
             }
-            this.drawTrace(ctx, this.chanDb[0], binHz, w, h, freqMax, "rgba(214,240,250,0.95)");
+            this.drawTrace(ctx, this.chanDb[0], binHz, w, h, freqMax, this.themeColor("rgba(214,240,250,0.95)"));
 
             // peak labels from the loudest of the channels at each bin
             let peakSource = this.chanDb[0];
@@ -456,7 +459,7 @@ export class CNodeAudioSpectrumView extends CNodeViewCanvas2D {
             this.drawPeakLabels(ctx, peakSource, binHz, w, h, freqMax);
         } else {
             const msg = !handler ? "No audio" : "Waiting for audio to decode…";
-            ctx.fillStyle = "rgba(255,255,255,0.4)";
+            ctx.fillStyle = this.themeColor("rgba(255,255,255,0.4)");
             ctx.font = "12px sans-serif";
             ctx.textAlign = "center";
             ctx.textBaseline = "middle";

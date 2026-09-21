@@ -241,6 +241,11 @@ export const helpDocs = [
         chatDesc: "Simulating a long-exposure photograph (Video → Long Exposure) so moving aircraft, satellites, and stars leave trails.",
     },
     {
+        file: "docs/VideoQPGraph", labelKey: "menus.help.documentation.videoQPGraph",
+        section: "video", menuId: "video", role: "reference",
+        chatDesc: "The video QP graph (Video → Forensics → QP Graph): a graph of the H.264 quantization parameter (QP) of the loaded video, with the maximum, mean and minimum macroblock QP of every frame, read from the bitstream itself (the same values as FFmpeg -debug qp). Covers what QP means for compression loss, how to read the three lines, which streams it cannot read (non-H.264 codecs, CAVLC, interlaced), and why one QP number does not describe a whole video. Read for 'how compressed is this video', 'what QP was this encoded at', 'how much did the compression change during the clip', or questions about compression quality of on-screen text.",
+    },
+    {
         file: "docs/MQ9TrackingSimulation", labelKey: "menus.help.documentation.mq9Tracking",
         section: "video", menuId: "camera", role: "reference",
         chatDesc: "The MQ9 tracking simulation (Camera > MQ9 Tracking): simulating an operator acquiring and following a rendered scene object behind the MQ9 sensor overlay. Covers the acquisition gate and how its metre label is estimated from where the boresight meets the terrain, the handoff to tracking corners, temporary loss and reacquisition, and operator control. Read for 'how do I simulate tracking an object', 'what do the tracking corners mean', or questions about the acquisition box. Note this simulates an operator tracking a SCENE object - it does not do computer vision on a loaded video, which is Point Track.",

@@ -167,6 +167,11 @@ function sanitizeSettings($settings) {
         $sanitized['showFilename'] = $settings['showFilename'];
     }
 
+    // "" = no selection (the classic look), "dark" or "light"
+    if (isset($settings['theme']) && in_array($settings['theme'], ['', 'dark', 'light'], true)) {
+        $sanitized['theme'] = $settings['theme'];
+    }
+
     if (isset($settings['language'])) {
         $language = strtolower(strval($settings['language']));
         if (preg_match('/^[a-z]{2}$/', $language)) {

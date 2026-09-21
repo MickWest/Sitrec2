@@ -39,6 +39,7 @@ class CNodeNotes extends CNodeView {
         this.createTextArea();
         this.setupEventListeners();
         this.addModeIcon();
+        this.enableTheme();     // Dark / Light header button (CNodeView)
 
         guiShowHide.add(this, 'visible')
             .listen()
@@ -54,6 +55,23 @@ class CNodeNotes extends CNodeView {
 
         this.applyEarlyMods();
         this.setVisible(this.visible);
+    }
+
+    // The colors of the panel, for the current theme. The colors here are the dark-theme
+    // ones, as in createTextArea(): themeColor() converts them for the light theme.
+    applyTheme() {
+        if (!this.textArea) return;
+        this.div.style.backgroundColor = this.themeColor('#222');
+        for (const panel of [this.textArea, this.linkOverlay]) {
+            if (!panel) continue;
+            panel.style.backgroundColor = this.themeColor('#1a1a1a');
+            panel.style.color = this.themeColor('#eee');
+        }
+        if (this.editButton) {
+            this.editButton.style.color = this.themeColor('#ddd');
+            this.editButton.style.backgroundColor = this.themeColor('rgba(60, 60, 60, 0.9)');
+            this.editButton.style.border = '1px solid ' + this.themeColor('rgba(255, 255, 255, 0.25)');
+        }
     }
 
     createTextArea() {

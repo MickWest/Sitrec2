@@ -31,6 +31,8 @@ export class CNodeCurveEditorView2 extends CNodeTabbedCanvasView {
             }
         }
         
+        this.enableTheme();     // Dark / Light header button (CNodeView)
+
         this.draggedPointIndex = null;
         this.draggedLineIndex = null;
         this.isDragging = false;
@@ -788,6 +790,8 @@ export class CNodeCurveEditorView2 extends CNodeTabbedCanvasView {
         if (!this.visible) return;
 
         const ctx = this.ctx;
+        // the colors here are for the dark theme: T() gives the color for the current one
+        const T = (color) => this.themeColor(color);
         const margin = 60;
         const width = this.widthPx;
         const height = this.heightPx;
@@ -795,11 +799,11 @@ export class CNodeCurveEditorView2 extends CNodeTabbedCanvasView {
         const graphWidth = width - margin * 2;
         const graphHeight = height - margin * 2;
         
-        ctx.fillStyle = '#000';
+        ctx.fillStyle = T('#000');
         ctx.fillRect(0, 0, width, height);
         
-        ctx.strokeStyle = '#444';
-        ctx.fillStyle = '#ddd';
+        ctx.strokeStyle = T('#444');
+        ctx.fillStyle = T('#ddd');
         ctx.lineWidth = 1;
         ctx.font = '12px sans-serif';
         
@@ -812,7 +816,7 @@ export class CNodeCurveEditorView2 extends CNodeTabbedCanvasView {
         const dynamicXStep = this.calculateStep(xRange, graphWidth);
         const dynamicYStep = this.calculateStep(yRange, graphHeight);
         
-        ctx.strokeStyle = '#666';
+        ctx.strokeStyle = T('#666');
         ctx.lineWidth = 1;
         for (let x = Math.ceil(this.minX / dynamicXStep) * dynamicXStep; x <= this.maxX; x += dynamicXStep) {
             const screen = this.graphToScreen(x, this.minY);
@@ -836,7 +840,7 @@ export class CNodeCurveEditorView2 extends CNodeTabbedCanvasView {
         }
         ctx.textAlign = 'left';
         
-        ctx.fillStyle = '#fff';
+        ctx.fillStyle = T('#fff');
         ctx.font = '14px sans-serif';
         ctx.fillText(this.xLabel, width / 2 - 20, height - 10);
         
@@ -856,7 +860,7 @@ export class CNodeCurveEditorView2 extends CNodeTabbedCanvasView {
             const lastX = activePoints[activePoints.length - 1].x;
             const lastY = activePoints[activePoints.length - 1].y;
 
-            ctx.strokeStyle = '#4af';
+            ctx.strokeStyle = T('#4af');
             ctx.lineWidth = 2;
             ctx.beginPath();
 
@@ -889,7 +893,7 @@ export class CNodeCurveEditorView2 extends CNodeTabbedCanvasView {
 
         for (let i = 0; i < this.points.length; i++) {
             const disabled = this.points[i].x >= Sit.frames;
-            ctx.fillStyle = disabled ? 'rgba(74, 170, 255, 0.3)' : '#4af';
+            ctx.fillStyle = disabled ? T('rgba(74, 170, 255, 0.3)') : T('#4af');
             const screen = this.graphToScreen(this.points[i].x, this.points[i].y);
             ctx.beginPath();
             ctx.arc(screen.x, screen.y, 5, 0, Math.PI * 2);
@@ -898,7 +902,7 @@ export class CNodeCurveEditorView2 extends CNodeTabbedCanvasView {
         
         if (Sit.aFrame !== undefined && Sit.aFrame >= this.minX && Sit.aFrame <= this.maxX) {
             const frameScreen = this.graphToScreen(Sit.aFrame, this.minY);
-            ctx.strokeStyle = 'rgba(0, 255, 0, 0.5)';
+            ctx.strokeStyle = T('rgba(0, 255, 0, 0.5)');
             ctx.lineWidth = 1;
             ctx.beginPath();
             ctx.moveTo(frameScreen.x, margin);
@@ -908,7 +912,7 @@ export class CNodeCurveEditorView2 extends CNodeTabbedCanvasView {
         
         if (Sit.bFrame !== undefined && Sit.bFrame >= this.minX && Sit.bFrame <= this.maxX) {
             const frameScreen = this.graphToScreen(Sit.bFrame, this.minY);
-            ctx.strokeStyle = 'rgba(255, 0, 0, 0.5)';
+            ctx.strokeStyle = T('rgba(255, 0, 0, 0.5)');
             ctx.lineWidth = 1;
             ctx.beginPath();
             ctx.moveTo(frameScreen.x, margin);
@@ -918,7 +922,7 @@ export class CNodeCurveEditorView2 extends CNodeTabbedCanvasView {
         
         if (par.frame >= this.minX && par.frame <= this.maxX) {
             const frameScreen = this.graphToScreen(par.frame, this.minY);
-            ctx.strokeStyle = '#ff0';
+            ctx.strokeStyle = T('#ff0');
             ctx.lineWidth = 2;
             ctx.beginPath();
             ctx.moveTo(frameScreen.x, margin);
@@ -1268,6 +1272,7 @@ export class CNodeOSDGraphView extends CNodeCurveEditorView2 {
         }
 
         const ctx = this.ctx;
+        const T = (color) => this.themeColor(color);
         const margin = 60;
         const rightMargin = this.hasY2 ? 60 : 60;
 
@@ -1279,11 +1284,11 @@ export class CNodeOSDGraphView extends CNodeCurveEditorView2 {
         const graphWidth = width - margin - rightMargin;
         const graphHeight = height - margin * 2;
 
-        ctx.fillStyle = '#000';
+        ctx.fillStyle = T('#000');
         ctx.fillRect(0, 0, width, height);
 
-        ctx.strokeStyle = '#444';
-        ctx.fillStyle = '#ddd';
+        ctx.strokeStyle = T('#444');
+        ctx.fillStyle = T('#ddd');
         ctx.lineWidth = 1;
         ctx.font = '12px sans-serif';
 
@@ -1296,7 +1301,7 @@ export class CNodeOSDGraphView extends CNodeCurveEditorView2 {
         const dynamicXStep = this.calculateStep(xRange, graphWidth);
         const dynamicY1Step = this.calculateStep(y1Range, graphHeight);
 
-        ctx.strokeStyle = '#333';
+        ctx.strokeStyle = T('#333');
         ctx.lineWidth = 1;
         for (let x = Math.ceil(this.minX / dynamicXStep) * dynamicXStep; x <= this.maxX; x += dynamicXStep) {
             const screen = this.graphToScreenAxis(x, this.minY, this.minY, this.maxY);
@@ -1313,14 +1318,14 @@ export class CNodeOSDGraphView extends CNodeCurveEditorView2 {
             ctx.stroke();
         }
 
-        ctx.fillStyle = '#ddd';
+        ctx.fillStyle = T('#ddd');
         ctx.textAlign = 'center';
         for (let x = Math.ceil(this.minX / dynamicXStep) * dynamicXStep; x <= this.maxX; x += dynamicXStep) {
             const screen = this.graphToScreenAxis(x, this.minY, this.minY, this.maxY);
             ctx.fillText(Math.round(x).toString(), screen.x, margin + graphHeight + 20);
         }
 
-        const SERIES_COLORS = ['#4af', '#f44', '#4f4', '#fa4', '#f4f', '#4ff'];
+        const SERIES_COLORS = ['#4af', '#f44', '#4f4', '#fa4', '#f4f', '#4ff'].map(T);
         const y1Color = SERIES_COLORS[0];
         const y2Color = SERIES_COLORS[1];
 
@@ -1347,7 +1352,7 @@ export class CNodeOSDGraphView extends CNodeCurveEditorView2 {
 
         ctx.font = '14px sans-serif';
         ctx.textAlign = 'center';
-        ctx.fillStyle = '#fff';
+        ctx.fillStyle = T('#fff');
         ctx.fillText(this.xLabel, margin + graphWidth / 2, height - 10);
 
         const y1Labels = [];
@@ -1376,7 +1381,7 @@ export class CNodeOSDGraphView extends CNodeCurveEditorView2 {
             const sMinY = isY2 ? this.minY2 : this.minY;
             const sMaxY = isY2 ? this.maxY2 : this.maxY;
             const mainColor = isY2 ? SERIES_COLORS[1] : SERIES_COLORS[0];
-            const rawStroke = 'rgba(255, 0, 0, 0.5)';
+            const rawStroke = T('rgba(255, 0, 0, 0.5)');
 
             if (this.isFrameX) {
                 if (s.raw) {
@@ -1443,7 +1448,7 @@ export class CNodeOSDGraphView extends CNodeCurveEditorView2 {
         if (this.isFrameX) {
             if (currentFrame >= this.minX && currentFrame <= this.maxX) {
                 const frameScreen = this.graphToScreenAxis(currentFrame, this.minY, this.minY, this.maxY);
-                ctx.strokeStyle = '#ff0';
+                ctx.strokeStyle = T('#ff0');
                 ctx.lineWidth = 2;
                 ctx.beginPath();
                 ctx.moveTo(frameScreen.x, margin);
@@ -1460,7 +1465,7 @@ export class CNodeOSDGraphView extends CNodeCurveEditorView2 {
                     const sMinY = isY2 ? this.minY2 : this.minY;
                     const sMaxY = isY2 ? this.maxY2 : this.maxY;
                     const yScreen = this.graphToScreenAxis(currentFrame, interp.y, sMinY, sMaxY);
-                    ctx.strokeStyle = '#ff0';
+                    ctx.strokeStyle = T('#ff0');
                     ctx.lineWidth = 1;
                     ctx.setLineDash([4, 4]);
                     ctx.beginPath();
@@ -1484,7 +1489,7 @@ export class CNodeOSDGraphView extends CNodeCurveEditorView2 {
                 const sMinY = isY2 ? this.minY2 : this.minY;
                 const sMaxY = isY2 ? this.maxY2 : this.maxY;
                 const screen = this.graphToScreenAxis(interp.x, interp.y, sMinY, sMaxY);
-                ctx.strokeStyle = '#ff0';
+                ctx.strokeStyle = T('#ff0');
                 ctx.lineWidth = 1;
                 ctx.beginPath();
                 ctx.moveTo(screen.x, margin);

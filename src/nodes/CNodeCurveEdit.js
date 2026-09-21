@@ -24,6 +24,10 @@ export class CNodeCurveEditorView extends CNodeViewCanvas2D {
         this.editor = new MetaBezierCurveEditor(v.editorConfig)
         this.recalculate()
 
+        // Dark / Light header button. The editor's colors are for a white background, and
+        // MetaBezierCurveEditor.T() converts them when this view is dark.
+        this.enableTheme({nativeDark: false});
+
 
         // We need to call recalculate when its canvas has been resized
         // to force a redraw
@@ -31,6 +35,11 @@ export class CNodeCurveEditorView extends CNodeViewCanvas2D {
         // (i.e. the "dirty" flag is set)
         this.recalculateOnCanvasChange = true;
 
+    }
+
+    // The graph only draws again when it is dirty.
+    applyTheme() {
+        if (this.editor) this.editor.dirty = true;
     }
 
     modSerialize() {
