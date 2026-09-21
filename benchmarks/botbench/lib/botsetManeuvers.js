@@ -117,11 +117,11 @@ export function botsetManeuverFov(v) {
     return v.fovFullDeg ?? fovForFraction(MANEUVER_DIAMETER_M[v.kind], v.rangeM);
 }
 
-export function botsetManeuverSpec(v, durationSeconds, errorLevel) {
+export function botsetManeuverSpec(v, durationSeconds, errorLevel, fps = 10) {
     const fovFullDeg = botsetManeuverFov(v);
     const spec = {
         epochISO: "2025-02-01T20:00:00Z",   // noon PST: daylight at the site
-        durationSeconds, fps: 10,
+        durationSeconds, fps,
         initialHorizontalRangeM: v.rangeM,
         siteId: DEFAULT_SITE,
         platform: {...ORBIT},
@@ -141,7 +141,7 @@ export function botsetManeuverSpec(v, durationSeconds, errorLevel) {
         // absolute degrees (botsetErrors.js); a rung this field cannot hold
         // widens it, so the observation's fovFullDeg can exceed the framing
         // field returned by botsetManeuverFov.
-        observation: errorLevel.observation(fovFullDeg),
+        observation: errorLevel.observation(fovFullDeg, fps),
     };
     return v.depressionDeg !== undefined ? anomalies2Spec(spec, v.depressionDeg, errorLevel) : spec;
 }

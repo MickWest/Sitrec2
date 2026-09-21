@@ -60,11 +60,11 @@ test("the original anomaly set keeps its old altitude and ranges", () => {
     }
 });
 
-test("exports a complete batch with angular size, paired sidecars, and measured view angles", () => {
+test.each([1, 10])("exports a complete %i Hz batch with angular size, paired sidecars, and measured view angles", (fps) => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "anomalies2-test-"));
     try {
         const out = generateBotsetManeuverBatch({setKey: "anomalies2", durationSeconds: 20,
-            errorLabel: "0.0deg", outRoot: root});
+            errorLabel: "0.0deg", outRoot: root, fps});
         expect(out.scenarios).toBe(15);
         expect(out.files).toBe(75);
         expect(out.dir).toBe(path.join(root, "Anomalies2", "batch_20s", "0.0deg"));
@@ -77,7 +77,17 @@ test("exports a complete batch with angular size, paired sidecars, and measured 
             const header = lines[0].split(",");
             const angularSize = header.indexOf("AngularDiameterMaxDeg");
             expect(angularSize).toBeGreaterThanOrEqual(0);
-            expect(lines).toHaveLength(202);
+            expect(lines).toHaveLength(20 * fps + 2);
+            expect(row.fps).toBe(fps);
+            expect(row.frames).toBe(20 * fps + 1);
+            const sidecar = JSON.parse(fs.readFileSync(path.join(out.dir, "meta", `${row.basename}.scenario.json`), "utf8"));
+            expect(sidecar.nominalFps).toBe(fps);
+            expect(sidecar.frameCount).toBe(row.frames);
+            expect(sidecar.durationSeconds).toBe(20);
+            const timeIndex = header.indexOf("Time");
+            const timestamps = lines.slice(1).map(line => Number(line.split(",")[timeIndex]));
+            expect(timestamps[1] - timestamps[0]).toBeCloseTo(1 / fps, 6);
+            expect(timestamps[timestamps.length - 1] - timestamps[0]).toBeCloseTo(20, 6);
             expect(Number(lines[1].split(",")[angularSize])).toBeGreaterThan(0);
             expect(Number.isFinite(row.view.medianDeg)).toBe(true);
             if (row.view.requestedInitialDeg !== null) {

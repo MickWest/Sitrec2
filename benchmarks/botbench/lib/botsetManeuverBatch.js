@@ -39,9 +39,10 @@ const round5 = (x) => Math.round(x * 1e5) / 1e5;
  * @param durationSeconds  clip length for every scenario in the cell
  * @param errorLabel       a BOTSET_MANEUVER_ERROR_LEVELS label ("0.0deg" | "0.01deg" | ... | "2.0deg")
  * @param outRoot          the results root that holds every botset_* directory
+ * @param fps              sample rate in Hz (default 10)
  * @returns {set, batch, dir, scenarios, files, ms}
  */
-export function generateBotsetManeuverBatch({setKey, durationSeconds, errorLabel, outRoot}) {
+export function generateBotsetManeuverBatch({setKey, durationSeconds, errorLabel, outRoot, fps = 10}) {
     const set = botsetManeuverSet(setKey);
     const err = BOTSET_MANEUVER_ERROR_LEVELS.find((e) => e.label === errorLabel);
     if (!err) throw new Error(`botsetManeuverBatch: unknown error level "${errorLabel}"`);
@@ -57,7 +58,7 @@ export function generateBotsetManeuverBatch({setKey, durationSeconds, errorLabel
     const names = new Set();
 
     for (const v of variants) {
-        const spec = botsetManeuverSpec(v, durationSeconds, err);
+        const spec = botsetManeuverSpec(v, durationSeconds, err, fps);
         const scenario = generateScenario(spec, {scenarioSeed: BOTSET_MANEUVER_SEED});
         const profile = scenario.target.profile;
         const view = set.viewMix ? anomalyViewStats(scenario) : null;
@@ -113,11 +114,11 @@ export function generateBotsetManeuverBatch({setKey, durationSeconds, errorLabel
         manifest.push({set: setKey, kind: v.kind, variant: v.variant,
             anomalous: v.anomalous, basename: out.basename,
             scenarioId: scenario.scenarioId, profile,
-            rangeM: spec.initialHorizontalRangeM, durationSeconds,
+            rangeM: spec.initialHorizontalRangeM, durationSeconds, fps, frames: scenario.n,
             errorLevel: err.label, errorDeg: err.deg,
             fovFullDeg: spec.observation.fovFullDeg,
             familyFovFullDeg: set.viewMix
-                ? botsetManeuverSpec(v, durationSeconds, BOTSET_MANEUVER_ERROR_LEVELS[0]).observation.fovFullDeg
+                ? botsetManeuverSpec(v, durationSeconds, BOTSET_MANEUVER_ERROR_LEVELS[0], fps).observation.fovFullDeg
                 : botsetManeuverFov(v),
             ...(view ? {view: {requestedInitialDeg: v.depressionDeg, ...view}, platform: spec.platform} : {}),
             realizedRmsDeg: round5(scenario.observation.realizedRmsDegAllFrames),

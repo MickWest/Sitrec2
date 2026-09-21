@@ -105,6 +105,7 @@
     "bench-bot-folder": "node benchmarks/botbench/run-folder-performance.mjs",
     "bench-bot-platform": "npx jest benchmarks/botbench/botset-platform.bench.test.js --testPathIgnorePatterns /node_modules/ --forceExit",
     "bench-bot-rock-v3": "node benchmarks/botbench/run-rock-v3.mjs",
+    "bench-bot-clean": "node benchmarks/botbench/run-clean-datasets.mjs",
     "bench-bot-video": "node benchmarks/botbench/run-botset-video.mjs",
     "bench-bot-video-set": "node benchmarks/botbench/build-video-set.mjs",
     "bench-bot-video-verify": "node benchmarks/botbench/verify-video-set.mjs",

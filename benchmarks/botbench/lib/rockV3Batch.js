@@ -102,9 +102,10 @@ export function maneuverStrengthDeg(S, T, n, fps) {
  * @param durationSeconds  one of ROCK_V3.durations
  * @param errorLabel       a ROCK_V3_ERROR_LEVELS label ("0.0deg" ... "2.0deg")
  * @param outRoot          the results root that holds rock_v3/
+ * @param fps              sample rate in Hz (default 10)
  * @returns {batch, dir, scenarios, files, ms}
  */
-export function generateRockV3Batch({durationSeconds, errorLabel, outRoot}) {
+export function generateRockV3Batch({durationSeconds, errorLabel, outRoot, fps = ROCK_V3.fps}) {
     const err = ROCK_V3_ERROR_LEVELS.find((e) => e.label === errorLabel);
     if (!err) throw new Error(`rockV3Batch: unknown error level "${errorLabel}"`);
     if (!ROCK_V3.durations.includes(durationSeconds)) {
@@ -115,13 +116,13 @@ export function generateRockV3Batch({durationSeconds, errorLabel, outRoot}) {
     const t0 = Date.now();
     const manifest = [];
     const names = new Set();
-    const definitionHash = rockDefinitionHash();
+    const definitionHash = rockDefinitionHash(fps);
 
     for (const cls of ROCK_V3.classes) {
         for (let index = 1; index <= ROCK_V3.perClass; index++) {
             const basename = rockBasename(cls, index);
             const where = `${basename} ${durationSeconds}s ${err.label}`;
-            const {spec, draws} = rockSpec(cls.key, index, durationSeconds, err);
+            const {spec, draws} = rockSpec(cls.key, index, durationSeconds, err, fps);
             const scenario = generateScenario(spec, {scenarioSeed: ROCK_V3.seed});
             const n = scenario.n;
             const S = scenario.platform.positionENU;
@@ -193,7 +194,7 @@ export function generateRockV3Batch({durationSeconds, errorLabel, outRoot}) {
                 basename, class: cls.key, index, scenarioId: scenario.scenarioId,
                 definitionHash,
                 turnDeg,
-                durationSeconds, frames: n, errorLevel: err.label, errorDeg: err.deg,
+                durationSeconds, fps, frames: n, errorLevel: err.label, errorDeg: err.deg,
                 rangeM: spec.initialHorizontalRangeM,
                 trueRangeStartM: Math.round(slant0),
                 trueRangeMeanM: Math.round(meanRange),

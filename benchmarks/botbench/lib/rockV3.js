@@ -268,7 +268,7 @@ export function rockDraws(clsKey, index) {
 }
 
 /** The spec for one track at one clip length and one rung. */
-export function rockSpec(clsKey, index, durationSeconds, errorLevel) {
+export function rockSpec(clsKey, index, durationSeconds, errorLevel, fps = ROCK_V3.fps) {
     const d = rockDraws(clsKey, index);
     const cls = rockClass(clsKey);
     // ONE operator wobble draw per (track, rung), shared by every clip length.
@@ -280,14 +280,14 @@ export function rockSpec(clsKey, index, durationSeconds, errorLevel) {
     // rung, so each rung still draws its own wobble. It is the key the first
     // version used, so the errors are its errors too.
     const observation = errorLevel.deg > 0
-        ? {...errorLevel.observation(ROCK_V3.fovFullDeg),
+        ? {...errorLevel.observation(ROCK_V3.fovFullDeg, fps),
             sharedSeedKey: `${ROCK_V3.name}|${rockBasename(cls, index)}|${errorLevel.label}`}
-        : errorLevel.observation(ROCK_V3.fovFullDeg);
+        : errorLevel.observation(ROCK_V3.fovFullDeg, fps);
     return {
         draws: d,
         spec: {
             epochISO: ROCK_V3.epochISO,
-            durationSeconds, fps: ROCK_V3.fps,
+            durationSeconds, fps,
             initialHorizontalRangeM: d.rangeM,
             siteId: DEFAULT_SITE,
             platform: {...d.platform},
@@ -305,8 +305,9 @@ export function rockSpec(clsKey, index, durationSeconds, errorLevel) {
  * by an older definition is recognisable as stale, and the driver flags it
  * instead of letting the master manifest describe files it did not define.
  */
-export function rockDefinitionHash() {
+export function rockDefinitionHash(fps = ROCK_V3.fps) {
     const {classes, ...constants} = ROCK_V3;
+    constants.fps = fps;
     return fnv1a32(JSON.stringify({constants, classes, tracks: rockTrackTable()})).toString(16).padStart(8, "0");
 }
 

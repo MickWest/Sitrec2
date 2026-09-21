@@ -42,7 +42,7 @@ if (parentPort) {
         // The balloon integrator falls back to Sit.lat/lon in places; the Jest
         // benches set the same values, so a worker and a bench agree byte for
         // byte.
-        setSit({name: "rock-v3", frames: 10000, fps: 10, simSpeed: 1, lat: 40, lon: -105});
+        setSit({name: "rock-v3", frames: 10000, fps: workerData.fps ?? ROCK_V3.fps, simSpeed: 1, lat: 40, lon: -105});
         const result = generateRockV3Batch(workerData);
         parentPort.postMessage({ok: true, result});
     } catch (e) {

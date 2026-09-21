@@ -291,6 +291,29 @@ describe("rock_v3 definition", () => {
         }
     });
 
+    test.each([1, 10])("%i Hz preserves the clip duration and scenario parameters", (fps) => {
+        for (const cls of ROCK_V3.classes) {
+            const original = rockSpec(cls.key, 17, 20, CLEAN).spec;
+            const {spec} = rockSpec(cls.key, 17, 20, CLEAN, fps);
+            expect(spec).toEqual({...original, fps});
+            const scenario = generateScenario(spec, {scenarioSeed: ROCK_V3.seed});
+            expect(scenario.n).toBe(20 * fps + 1);
+            expect(scenario.times[0]).toBe(0);
+            expect(scenario.times[1]).toBe(1 / fps);
+            expect(scenario.times[scenario.n - 1]).toBe(20);
+            expect(scenario.observation.outOfFrameCount).toBe(0);
+            expect(measuredHeadingChange(scenario.platform.positionENU, scenario.n).totalDeg)
+                .toBeCloseTo(spec.platform.turnDeg, 6);
+        }
+    });
+
+    test("the sample rate changes the definition hash without changing the default", () => {
+        expect(rockDefinitionHash()).toBe("750057ac");
+        expect(rockDefinitionHash(10)).toBe(rockDefinitionHash());
+        expect(rockDefinitionHash(1)).not.toBe(rockDefinitionHash());
+        expect(ROCK_V3.fps).toBe(10);
+    });
+
     test.each(ROCK_V3.classes.map((c) => c.key))("%s: generates clean, turns by its level, and its target truth nests while the sensor path scales", (clsKey) => {
         const index = TRACK_NUMBERS.find((i) => rockPlatform(i).platform.turnDeg === 10);
         const make = (seconds, platformChange = {}) => {

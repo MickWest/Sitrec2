@@ -3,7 +3,7 @@
  * run-botset-maneuvers.mjs — worker_threads driver for the maneuver botsets.
  *
  *     npm run bench-bot-maneuvers-par
- *     node benchmarks/botbench/run-botset-maneuvers.mjs [--concurrency N]
+ *     node benchmarks/botbench/run-botset-maneuvers.mjs [--concurrency N] [--out DIR] [--hz N]
  *
  * The batch folders (selected sets x 4 durations x 9 error rungs) are independent
  * — no two touch the same file — so each runs in its own worker thread. Batch
@@ -31,13 +31,14 @@ import {createRequire} from "node:module";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const require = createRequire(import.meta.url);
-const RESULTS = path.join(__dirname, "results");
+let RESULTS = path.join(__dirname, "results");
 const ENTRY = path.join(__dirname, "lib", "botsetManeuverWorker.js");
 
 // ---- args -------------------------------------------------------------------
 const argv = process.argv.slice(2);
 let conc = null;
 let selectedSets = null;
+let hz = 10;
 for (let i = 0; i < argv.length; i++) {
     if (argv[i] === "--concurrency") {
         const v = argv[++i];
@@ -53,9 +54,22 @@ for (let i = 0; i < argv.length; i++) {
     } else if (argv[i] === "--sets") {
         selectedSets = (argv[++i] ?? "").split(",").filter(Boolean);
         if (!selectedSets.length) throw new Error("--sets needs at least one set key");
+    } else if (argv[i] === "--hz") {
+        hz = Number(argv[++i]);
+        if (!Number.isSafeInteger(hz) || hz < 1) {
+            console.error("--hz must be a positive whole number");
+            process.exit(1);
+        }
+    } else if (argv[i] === "--out") {
+        const dir = argv[++i];
+        if (!dir || dir.startsWith("--")) {
+            console.error("--out requires a directory");
+            process.exit(1);
+        }
+        RESULTS = path.resolve(dir);
     } else {
         console.error(`unknown option: ${argv[i]}\n`
-            + "usage: run-botset-maneuvers.mjs [--concurrency N] [--sets anomalies,mundane,anomalies2]");
+            + "usage: run-botset-maneuvers.mjs [--concurrency N] [--sets anomalies,mundane,anomalies2] [--out DIR] [--hz N]");
         process.exit(1);
     }
 }
@@ -130,14 +144,14 @@ async function main() {
         for (const durationSeconds of AXES.durations) {
             for (const errorLabel of AXES.errorLabels) {
                 tasks.push({setKey: set.key, durationSeconds, errorLabel,
-                    outRoot: RESULTS});
+                    fps: hz, outRoot: RESULTS});
             }
         }
     }
 
     const conc2 = conc ?? Math.max(1, Math.min(tasks.length,
         (os.availableParallelism?.() ?? os.cpus().length) - 1));
-    console.log(`[botset-par] ${tasks.length} batches, concurrency ${conc2}, `
+    console.log(`[botset-par] ${tasks.length} batches, ${hz} Hz, concurrency ${conc2}, `
         + `worker bundle in ${buildMs} ms`);
 
     // Same clean-slate rule as the bench: names encode variant and flags, so a
@@ -179,6 +193,7 @@ async function main() {
         fs.writeFileSync(path.join(RESULTS, set.dirName, "timing.json"), JSON.stringify({
             generatedAt: new Date().toISOString(),
             set: set.key,
+            fps: hz,
             scenarios: mine.reduce((s2, r) => s2 + r.scenarios, 0),
             files: mine.reduce((s2, r) => s2 + r.files, 0),
             totalMs: wallMs,
@@ -190,6 +205,7 @@ async function main() {
         ? `botset_maneuvers-${sets.map(s => s.key).join("-")}-timing.json`
         : "botset_maneuvers-timing.json"), JSON.stringify({
         generatedAt: new Date().toISOString(),
+        fps: hz,
         scenarios: results.reduce((s, r) => s + r.scenarios, 0),
         files: filesTotal,
         totalMs: wallMs,

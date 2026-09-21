@@ -23,6 +23,56 @@ is a small curated spread — one of everything, to see the whole space at once.
 The **botsets** are large swept grids, each built to answer a single question,
 where a result reads as a *curve* across a ladder rather than as one number.
 
+## Generate clean copies of rock_v3 and Anomalies2
+
+From the repository root after cloning:
+
+```bash
+npm install
+npm run bench-bot-clean
+```
+
+This generates both complete datasets from scratch at the default 10 Hz, with no analysis caches:
+
+- `benchmarks/botbench/results/clean/rock_v3/` — 18,900 scenarios.
+- `benchmarks/botbench/results/clean/Anomalies2/` — 540 scenarios.
+
+Allow about 12 GB of disk space. No Sitrec build, browser, server configuration,
+or private scripts are needed. The generators run in sequence and use worker
+threads within each dataset. To limit the number of workers:
+
+```bash
+npm run bench-bot-clean -- --concurrency 4
+```
+
+Use `--hz` to choose a positive whole-number sample rate. For example:
+
+```bash
+npm run bench-bot-clean -- --hz 1
+```
+
+This writes the same 18,900 and 540 scenario definitions at 1 Hz to
+`benchmarks/botbench/results/clean_1hz/rock_v3/` and
+`benchmarks/botbench/results/clean_1hz/Anomalies2/` (about 1.3 GB combined).
+Each CSV contains one sample per second, including both endpoints: a 20-second
+clip has 21 samples. The output rate is recorded in the manifests and sidecars.
+At rates below 10 Hz, the operator wobble still runs at least ten steps per second
+to resolve its reaction time, then is sampled at the output rate. Other rates use
+`clean_<N>hz`; 10 Hz always uses `clean`. `--hz` and `--concurrency` can be combined.
+
+Re-running replaces these two folders under the selected output directory, including any caches or
+analysis outputs added there. Other datasets under `results` are preserved.
+Open either generated folder in BOTBench with **Recursive** enabled.
+
+The individual generators also accept `--hz N` (default 10) and `--out DIR`, which selects the parent
+directory for the dataset folder. Relative paths are resolved from the current
+working directory:
+
+```bash
+npm run bench-bot-rock-v3 -- --out benchmarks/botbench/results/clean
+npm run bench-bot-anomalies2 -- --out benchmarks/botbench/results/clean
+```
+
 ## The interchange set — one of everything
 
 ```bash

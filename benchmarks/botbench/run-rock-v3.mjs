@@ -4,7 +4,7 @@
  *
  *     npm run bench-bot-rock-v3
  *     node benchmarks/botbench/run-rock-v3.mjs [--concurrency N]
- *         [--durations 20,40] [--rungs 0.0deg,0.2deg] [--keep]
+ *         [--durations 20,40] [--rungs 0.0deg,0.2deg] [--keep] [--out DIR] [--hz N]
  *
  * The 63 batch folders (7 clip lengths x 9 pointing-error rungs) are
  * independent, so each runs in its own worker thread. Batch generation lives in
@@ -35,12 +35,13 @@ import {execSync} from "node:child_process";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const require = createRequire(import.meta.url);
-const RESULTS = path.join(__dirname, "results");
+let RESULTS = path.join(__dirname, "results");
 const ENTRY = path.join(__dirname, "lib", "rockV3Worker.js");
 
 // ---- args -------------------------------------------------------------------
 const argv = process.argv.slice(2);
 let conc = null, onlyDurations = null, onlyRungs = null, keep = false;
+let hz = 10;
 for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--concurrency") {
@@ -52,8 +53,21 @@ for (let i = 0; i < argv.length; i++) {
         onlyRungs = argv[++i].split(",");
     } else if (a === "--keep") {
         keep = true;
+    } else if (a === "--hz") {
+        hz = Number(argv[++i]);
+        if (!Number.isSafeInteger(hz) || hz < 1) {
+            console.error("--hz must be a positive whole number");
+            process.exit(1);
+        }
+    } else if (a === "--out") {
+        const dir = argv[++i];
+        if (!dir || dir.startsWith("--")) {
+            console.error("--out requires a directory");
+            process.exit(1);
+        }
+        RESULTS = path.resolve(dir);
     } else {
-        console.error(`unknown option: ${a}\nusage: run-rock-v3.mjs [--concurrency N] [--durations 20,40] [--rungs 0.0deg,0.2deg] [--keep]`);
+        console.error(`unknown option: ${a}\nusage: run-rock-v3.mjs [--concurrency N] [--durations 20,40] [--rungs 0.0deg,0.2deg] [--keep] [--out DIR] [--hz N]`);
         process.exit(1);
     }
 }
@@ -115,14 +129,14 @@ async function main() {
     const partial = !!(onlyDurations || onlyRungs);
     const tasks = [];
     for (const durationSeconds of durations) {
-        for (const errorLabel of rungs) tasks.push({durationSeconds, errorLabel, outRoot: RESULTS});
+        for (const errorLabel of rungs) tasks.push({durationSeconds, errorLabel, fps: hz, outRoot: RESULTS});
     }
     // Longest clips first, so the tail of the run is short.
     tasks.sort((a, b) => b.durationSeconds - a.durationSeconds);
 
     const conc2 = conc ?? Math.max(1, Math.min(tasks.length, (os.availableParallelism?.() ?? os.cpus().length) - 1));
     console.log(`[rock_v3] ${tasks.length} batch folders (${durations.length} lengths x ${rungs.length} rungs), `
-        + `concurrency ${conc2}, worker bundle in ${buildMs} ms`);
+        + `${hz} Hz, concurrency ${conc2}, worker bundle in ${buildMs} ms`);
 
     const setDir = path.join(RESULTS, AXES.dirName);
     if (!partial && !keep && fs.existsSync(setDir)) {
@@ -167,7 +181,7 @@ async function main() {
     const wallMs = Date.now() - t1;
     const provenance = gitHead();
     const timing = {
-        generatedAt: new Date().toISOString(), set: DATASET.name, ...provenance,
+        generatedAt: new Date().toISOString(), set: DATASET.name, fps: hz, ...provenance,
         scenarios: results.reduce((s, r) => s + r.scenarios, 0),
         files: results.reduce((s, r) => s + r.files, 0),
         totalMs: wallMs, cpuMs: results.reduce((s, r) => s + r.ms, 0),
@@ -186,7 +200,7 @@ async function main() {
     // were written under, and a folder whose hash differs from the current
     // definition is flagged stale, so a partial run after a definition change
     // cannot present old files as members of the new set.
-    const definitionHash = rockDefinitionHash();
+    const definitionHash = rockDefinitionHash(hz);
     const expectedTracks = DATASET.perClass * DATASET.classes.length;
     const folders = [];
     const onDiskBatches = fs.readdirSync(setDir).filter((d) => /^batch_\d+sec$/.test(d))
@@ -223,7 +237,7 @@ async function main() {
         complete,
         staleFolders,
         incompleteFolders: incomplete,
-        lastRun: {partial, durations, rungs, generatedAt: timing.generatedAt,
+        lastRun: {partial, durations, rungs, fps: hz, generatedAt: timing.generatedAt,
             record: partial ? "timing-partial.json" : "timing.json"},
         layout: {
             batchFolders: onDiskBatches,
@@ -237,7 +251,7 @@ async function main() {
         },
         folders,
         design: {
-            fps: DATASET.fps, fovFullDeg: DATASET.fovFullDeg, epochISO: DATASET.epochISO,
+            fps: hz, fovFullDeg: DATASET.fovFullDeg, epochISO: DATASET.epochISO,
             errorLadderDeg: AXES.errorLabels.map((l) => parseFloat(l)),
             platform: {...DATASET.platform, kind: "centered-turn",
                 note: "level flight: straight for the first quarter of the clip, one constant-rate turn through the "

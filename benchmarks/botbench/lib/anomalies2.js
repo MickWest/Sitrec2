@@ -25,7 +25,7 @@ export function anomalies2Spec(base, depressionDeg, errorLevel) {
     const target = {...base.target, parameters: {...base.target.parameters, altitudeAGL: targetAltitude}};
     const fovFullDeg = fovForFraction(target.diameterM, Math.hypot(rangeM, height));
     return {...base, initialHorizontalRangeM: rangeM, platform, target,
-        observation: errorLevel.observation(fovFullDeg)};
+        observation: errorLevel.observation(fovFullDeg, base.fps)};
 }
 
 // Positive depression is down. Use clean truth geometry so the pointing-error

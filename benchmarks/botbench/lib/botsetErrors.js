@@ -92,18 +92,22 @@ export function botsetFovForRung(familyFovDeg, amplitudeDeg) {
 }
 
 /**
- * The ladder. `observation(familyFovDeg)` builds the spec.observation section
- * for a rung; the clean rung keeps the family's field exactly.
+ * The ladder. `observation(familyFovDeg, fps)` builds the spec.observation section
+ * for a rung; the clean rung keeps the family's field exactly. Below 10 Hz,
+ * simulate operator reactions on a finer time grid and sample that trace at
+ * the output rate. A one-second update misses the 0.4-second reaction delay
+ * and lets the wobble exceed the field of view. The default 10 Hz is unchanged.
  */
 export const BOTSET_ERROR_LEVELS = BOTSET_ERROR_DEG.map((deg) => ({
     label: botsetErrorLabel(deg),
     deg,
     kind: deg === 0 ? "clean" : "wobble",
     fovFor: (familyFovDeg) => (deg === 0 ? familyFovDeg : botsetFovForRung(familyFovDeg, deg)),
-    observation: (familyFovDeg) => (deg === 0
+    observation: (familyFovDeg, fps = 10) => (deg === 0
         ? {kind: "clean", fovFullDeg: familyFovDeg}
         : {kind: "wobble", fovFullDeg: botsetFovForRung(familyFovDeg, deg),
-            wobble: botsetWobbleParams(deg)}),
+            wobble: botsetWobbleParams(deg),
+            ...(fps < 10 ? {wobbleFps: fps * Math.ceil(10 / fps)} : {})}),
 }));
 
 /** Batch folder name for a clip length: batch_20s, batch_300s. */

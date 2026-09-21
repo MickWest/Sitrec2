@@ -92,15 +92,26 @@ describe("botset error ladder", () => {
         }
     });
 
-    test("no rung masks the target out of the frame, in either family, over the longest clip", () => {
+    test("1 Hz samples the existing 10 Hz operator trace at whole seconds", () => {
+        const level = BOTSET_ERROR_LEVELS[8];
+        const high = offsetSeries(level.observation(3), N, FPS, 99991);
+        const low = offsetSeries(level.observation(3, 1), LONGEST_CLIP_S + 1, 1, 99991);
+        for (let f = 0; f <= LONGEST_CLIP_S; f++) {
+            expect(low.pan[f]).toBe(high.pan[f * FPS]);
+            expect(low.tilt[f]).toBe(high.tilt[f * FPS]);
+        }
+    });
+
+    test.each([1, 3, 10])("%i Hz: no rung masks the target out of the frame over the longest clip", (fps) => {
         const familyFovs = [BOTSET_BALLOON_FOV_FULL_DEG,
             ...new Set(BOTSET_MANEUVER_VARIANTS.map((v) => botsetManeuverFov(v)))];
         expect(Math.min(...familyFovs)).toBeLessThan(0.5);   // the narrow pod fields are in the set
-        const cleanDir = constantDirections(N);
+        const n = LONGEST_CLIP_S * fps + 1;
+        const cleanDir = constantDirections(n);
         for (const fov of familyFovs) {
             for (const l of BOTSET_ERROR_LEVELS) {
                 for (const seed of [11, 22, 33]) {
-                    const obs = generateObservation(l.observation(fov), cleanDir, N, FPS, seed);
+                    const obs = generateObservation(l.observation(fov, fps), cleanDir, n, fps, seed);
                     expect(obs.outOfFrameCount).toBe(0);
                 }
             }
