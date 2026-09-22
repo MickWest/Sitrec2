@@ -83,10 +83,12 @@ export function generateScenario(spec, {scenarioSeed, generatorVersion = GENERAT
     delete targetGroup.parameters.impulse;
     delete targetGroup.parameters.paired;
     const platformGroup = {...spec.platform};
-    if (targetGroup.parameters.fullCoverage) {
-        targetGroup.parameters.fullCoverage = {...targetGroup.parameters.fullCoverage};
-        delete targetGroup.parameters.fullCoverage.clipStartSeconds;
-        delete platformGroup.timeOffsetSeconds;
+    for (const coverage of ["fullCoverage", "mundaneCoverage"]) {
+        if (targetGroup.parameters[coverage]) {
+            targetGroup.parameters[coverage] = {...targetGroup.parameters[coverage]};
+            delete targetGroup.parameters[coverage].clipStartSeconds;
+            delete platformGroup.timeOffsetSeconds;
+        }
     }
     const scenarioGroupId = `bg-${fnv1a32(canonical({
         platform: platformGroup,
