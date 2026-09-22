@@ -104,6 +104,14 @@ function formatTruthRange(summary) {
     return parts.length ? `Truth ${parts.join(", ")}` : "";
 }
 
+function formatPlatformFlightLevel(summary) {
+    const platform = summary?.tracks?.find(track => track.role === "camera" && !track.isTruth);
+    if (!Number.isFinite(platform?.altMeanM)) return "";
+    // Track files supply altitude, rather than a standard-pressure flight level.
+    const level = Math.round(platform.altMeanM / 30.48);
+    return `${level < 0 ? "-" : ""}${String(Math.abs(level)).padStart(3, "0")}`;
+}
+
 /**
  * Draw a summary as a north-up plan view.
  *
@@ -1140,6 +1148,13 @@ export class CTrackBrowser {
         meta.textContent = `${formatDistance(entry.summary.spanM)} · ${formatDuration(entry.summary.durationS)}`;
         const truthRange = formatTruthRange(entry.summary);
         if (truthRange) meta.textContent += ` · ${truthRange}`;
+        const platformFlightLevel = formatPlatformFlightLevel(entry.summary);
+        if (platformFlightLevel) {
+            const platform = document.createElement("span");
+            platform.textContent = ` · Plat FL:${platformFlightLevel}`;
+            platform.title = "Mean platform altitude in hundreds of feet, rounded. Based on track altitude, without a pressure correction.";
+            meta.appendChild(platform);
+        }
         card.appendChild(meta);
 
         card.addEventListener("click", (e) => this._handleCardClick(e, entry.key));
@@ -1280,9 +1295,11 @@ export class CTrackBrowser {
         }
 
         const stat = (label, value) => `<div><span style="color:#7a7a94">${label}:</span> ${value}</div>`;
+        const platformFlightLevel = formatPlatformFlightLevel(summary);
         this._previewStats.innerHTML =
             stat("Extent", formatDistance(summary.spanM))
             + stat("Duration", formatDuration(summary.durationS))
+            + (platformFlightLevel ? stat("Plat FL", platformFlightLevel) : "")
             + stat("Origin", `${summary.originLat.toFixed(5)}, ${summary.originLon.toFixed(5)}`)
             + (this.overlayTracks
                 ? `<div style="color:#7a7a94;font-size:12px;margin-top:6px">`

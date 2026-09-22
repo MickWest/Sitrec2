@@ -933,7 +933,10 @@ legacySetup();
 await setupFunctions();
 loadStartupDropURLAfterSitchSetup();
 loadStartupHandoffAfterSitchSetup();
-runStartupToolAction(startupAction, {openBotBenchDialog});
+runStartupToolAction(startupAction, {
+    openBotBenchDialog,
+    openTrackBrowser: () => FileManager.ensureTrackBrowser().open(),
+});
 
 const dateTime = urlParams.get("datetime");
 if (dateTime) {

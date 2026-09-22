@@ -329,6 +329,7 @@ export function summarizeTrackFile(probed, filename, {maxPoints = 500} = {}) {
         const stride = Math.max(1, Math.ceil(misb.length / maxPoints));
         const xy = [];
         let altMinM = Infinity, altMaxM = -Infinity;
+        let altSumM = 0, altCount = 0;
         let trackMinX = Infinity, trackMaxX = -Infinity, trackMinY = Infinity, trackMaxY = -Infinity;
         let trackStart = Infinity, trackEnd = -Infinity;
         const role = safeCall(trackFile, "trackRoleHint", trackIndex) ?? null;
@@ -360,6 +361,8 @@ export function summarizeTrackFile(probed, filename, {maxPoints = 500} = {}) {
             if (Number.isFinite(alt)) {
                 if (alt < altMinM) altMinM = alt;
                 if (alt > altMaxM) altMaxM = alt;
+                altSumM += alt;
+                altCount++;
             }
             const t = row[MISB.UnixTimeStamp];
             if (Number.isFinite(t)) {
@@ -395,6 +398,7 @@ export function summarizeTrackFile(probed, filename, {maxPoints = 500} = {}) {
             maxY: trackMaxY,
             altMinM: altMinM === Infinity ? null : altMinM,
             altMaxM: altMaxM === -Infinity ? null : altMaxM,
+            altMeanM: altCount ? altSumM / altCount : null,
             maxG: isTruth ? maxKinematicG(kinematicSamples) : null,
         });
     }
