@@ -110,7 +110,11 @@ In the **look view**, when the camera is manually positioned, you can walk:
 | Key | Action |
 |---|---|
 | `W` `A` `S` `D` | Walk forward / left / back / right (10 m/s) |
-| `Shift` | Walk faster (50 m/s) |
+| `PageUp` / `PageDown` | Raise / lower the camera at the same speed as walking |
+| `Shift` | Move faster (50 m/s), including altitude changes |
+
+WASD preserves the camera's altitude. If a step goes below the loaded ground
+surface, the camera is raised to eye level above it.
 
 A **manually positioned** camera has its own, separate movement handler with the same letters
 but a much finer step (0.1 m per frame, ×10 with `Shift`), and adds:

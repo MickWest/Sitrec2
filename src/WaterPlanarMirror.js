@@ -117,7 +117,10 @@ export class CWaterPlanarMirror {
     // difference of two nearly-equal huge numbers.
     detectPlane(view) {
         const node = this.node;
-        const camera = view.camera;
+        // A panorama has several capture directions but one water surface.
+        // Detect it from the observer's central view, so face boundaries do
+        // not change the water level or disable reflection on a skyward face.
+        const camera = view._panoramaBaseCamera ?? view.camera;
         const camPos = camera.position;
 
         // Manual override: the user has told us the water level, so the only
@@ -356,7 +359,11 @@ export class CWaterPlanarMirror {
         // offset from the shoreline. Copying also resets last frame's oblique
         // clip, which is why nothing has to undo it.
         cam.projectionMatrix.copy(src.projectionMatrix);
-        cam.projectionMatrixInverse.copy(src.projectionMatrixInverse);
+        // The reflected basis reverses screen-right. Mirror an asymmetric
+        // crop too (panorama side faces and video pan), otherwise the mirror
+        // captures the opposite half of the scene and runs out at the seam.
+        cam.projectionMatrix.elements[8] *= -1;
+        cam.projectionMatrixInverse.copy(cam.projectionMatrix).invert();
         cam.updateMatrixWorld(true);
 
         // Texture matrix: NDC -> [0,1], from the UNMODIFIED projection. Built

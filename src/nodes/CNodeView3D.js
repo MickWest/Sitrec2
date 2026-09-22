@@ -38,6 +38,7 @@ import {GlobalDaySkyScene, GlobalNightSkyScene, GlobalScene, GlobalSunSkyScene} 
 import {ATMOSPHERE_PROJECTION_GLSL, atmosphereProjectionUniforms, setAtmosphereProjection} from "../atmosphere/AtmosphereProjection";
 import {materialAtmosphereUniforms, withMaterialAtmosphere} from "../atmosphere/MaterialAtmosphere";
 import {renderFisheyeMask, fisheye, fisheyeUniforms, fisheyeStarLens, isFisheyeCamera, FISHEYE_TYPE_INDEX} from "../FisheyeProjection";
+import {isPanoramicCamera, PanoramicRenderer} from "../PanoramicCamera";
 import {worldUnitsPerPixel, offsetWorldPointPixels} from "../ViewUtils";
 import {DRAG} from "../mouseMoveView";
 import {GPUMemoryMonitor} from "../GPUMemoryMonitor";
@@ -1147,6 +1148,8 @@ export class CNodeView3D extends CNodeViewCanvas {
         this._lodSavedQuaternion = this.applyCameraOffset();
         if (this._lodSavedQuaternion) this.camera.updateMatrixWorld();
 
+        if (isPanoramicCamera(this.camera)) return;
+
         // Always use the FULL videoZoom for LOD, not the pixel-match-capped value.
         // The tile system must see the final effective FOV (after all zoom) so it
         // loads tiles at the correct resolution regardless of whether rendering
@@ -2121,6 +2124,11 @@ export class CNodeView3D extends CNodeViewCanvas {
 
 
     renderTargetAndEffects() {
+        if (isPanoramicCamera(this.camera) && !this.isXRPresenting()) {
+            return (this.panoramicRenderer ??= new PanoramicRenderer()).render(this);
+        }
+        this.panoramicRenderer?.dispose();
+        this.panoramicRenderer = null;
         const refraction = this.raytracedRefraction;
         if (!refraction) return this.renderTargetAndEffectsInternal();
         const restore = refraction.begin();
@@ -2132,13 +2140,14 @@ export class CNodeView3D extends CNodeViewCanvas {
     }
 
     getPendingLoadState(viewIds = null) {
+        if (isPanoramicCamera(this.camera)) return null;
         if (!this.raytracedRefraction || (viewIds && !viewIds.includes(this.id))) return null;
         const pass = this.raytracedRefraction;
         const pending = !!(pass.busy || pass.queued || pass.previewBusy || pass.previewQueued);
         return {hasPending: pending, perView: {[this.id]: {refraction: pending}}};
     }
 
-    renderTargetAndEffectsInternal(refraction) {
+    renderTargetAndEffectsInternal(refraction, panoramaPass = null) {
         {
 
             if (this.visible) {
@@ -2152,7 +2161,7 @@ export class CNodeView3D extends CNodeViewCanvas {
 
                 if (globalProfiler) globalProfiler.push('#ffa500', 'rtSetup');
                 // if the lookView, then check for the video view
-                if (this.id === "lookView") {
+                if (this.id === "lookView" && !panoramaPass) {
 
                     let videoView = null;
                     // we default the the mirrorVideo, but if that doesn't exist, then we use the video view
@@ -2179,7 +2188,8 @@ export class CNodeView3D extends CNodeViewCanvas {
                 // to maintaim a consisten vertical FOV for the portion of the viewport
                 // that matches the vertical extent of the caerma
                 const oldFOV = this.camera.fov;
-                if (this.fovOverride !== undefined) {
+                if (panoramaPass) this._matchVideoAspect = false;
+                if (this.fovOverride !== undefined && !panoramaPass) {
                     this.camera.fov = this.fovOverride;
                     this.camera.updateProjectionMatrix();
                 }
@@ -2314,7 +2324,7 @@ export class CNodeView3D extends CNodeViewCanvas {
                 // CRITICAL: Sync renderer size with current dimensions EVERY FRAME
                 // This prevents race conditions where resize gestures cause frames to render
                 // before the 100ms deferred resize completes. Deduping avoids redundant WebGL calls.
-                if (width !== this._lastSyncedRendererWidth || height !== this._lastSyncedRendererHeight) {
+                if (!panoramaPass?.width && (width !== this._lastSyncedRendererWidth || height !== this._lastSyncedRendererHeight)) {
                     this.renderer.setSize(width, height, false);
                     this._lastSyncedRendererWidth = width;
                     this._lastSyncedRendererHeight = height;
@@ -2324,9 +2334,18 @@ export class CNodeView3D extends CNodeViewCanvas {
                 // views). Derive physical target pixels from Three, never scale twice or
                 // resize its canvas behind its back. Size inactive effect targets too so
                 // enabling a pass at an unchanged window size cannot leave a tiny target.
-                const targetSize = resizeRenderTargetsToDrawingBuffer(this.renderer,
+                const targetSize = panoramaPass?.width ? new Vector2(panoramaPass.width, panoramaPass.height) : resizeRenderTargetsToDrawingBuffer(this.renderer,
                     [this.renderTargetAntiAliased, this.renderTargetA, this.renderTargetB],
                     this._renderTargetSize ??= new Vector2());
+                if (panoramaPass?.width) {
+                    for (const target of [this.renderTargetAntiAliased, this.renderTargetA, this.renderTargetB]) {
+                        target.setSize(targetSize.x, targetSize.y);
+                    }
+                }
+                if (panoramaPass?.setupOnly) {
+                    if (globalProfiler) globalProfiler.pop();
+                    return;
+                }
                 const rtWidth = targetSize.x;
                 const rtHeight = targetSize.y;
                 refraction?.attachDepth(this.renderTargetAntiAliased);
@@ -2397,7 +2416,7 @@ export class CNodeView3D extends CNodeViewCanvas {
                     sunNode.update();
                 }
 
-                const savedQuaternion = this.applyCameraOffset();
+                const savedQuaternion = panoramaPass ? null : this.applyCameraOffset();
 
                 // Apply asymmetric frustum shift for video pan offset.
                 // This shifts which portion of the rendered view is visible without
@@ -2406,7 +2425,7 @@ export class CNodeView3D extends CNodeViewCanvas {
                 // re-computation (e.g. matchVideoAspect re-apply after renderSky).
                 let _panPatchedCamera = null;
                 let _panOrigUpdatePM = null;
-                if (this.syncVideoZoom) {
+                if (this.syncVideoZoom && !panoramaPass) {
                     const panSyncView = NodeMan.exists("video") ? NodeMan.get("video") : null;
                     if (panSyncView !== null) {
                         const panX = panSyncView.panOffsetX ?? 0;
@@ -2455,7 +2474,7 @@ export class CNodeView3D extends CNodeViewCanvas {
                 // frustum by that factor, compressing the content into the same height.
                 let _yCompressPatchedCamera = null;
                 let _yCompressOrigUpdatePM = null;
-                if (this.yCompress !== undefined && this.yCompress > 1.0001) {
+                if (!panoramaPass && this.yCompress !== undefined && this.yCompress > 1.0001) {
                     _yCompressPatchedCamera = this.camera;
                     _yCompressOrigUpdatePM = this.camera.updateProjectionMatrix;
                     const cam = this.camera;
@@ -2687,7 +2706,7 @@ export class CNodeView3D extends CNodeViewCanvas {
                     this.camera.layers.mask = oldLayers;
                     if (restoreTerrainMasks) restoreTerrainMasks();
 
-                    if (this.fovOverride !== undefined) {
+                    if (this.fovOverride !== undefined && !panoramaPass) {
                         this.camera.fov = oldFOV;
                         this.camera.updateProjectionMatrix();
                     }
@@ -2701,64 +2720,68 @@ export class CNodeView3D extends CNodeViewCanvas {
                 // exposure and sensor effects in the unified colour pipeline.
                 if (refraction) currentRenderTarget = refraction.render(this, currentRenderTarget);
 
-                if (globalProfiler) globalProfiler.push('#bebada', 'effectsPasses');
-                const effects = this.effectsEnabled && Globals.renderDebugFlags.dbg_renderEffects
-                    ? splitViewEffects(this.effectPasses, colorPolicy.opticsBeforeSensor)
-                    : {optical: [], sensor: []};
-                const drawEffect = effectNode => {
-                    const effectPass = effectNode.pass;
-                    const target = currentRenderTarget === this.renderTargetA ? this.renderTargetB : this.renderTargetA;
-                    if (effectPass.isCustomPass) {
-                        effectNode.updateCustomPass(par.frame, this, effectPass);
-                        if (effectNode.canRender && !effectNode.canRender()) return;
-                        effectPass.render(this.renderer, target, currentRenderTarget, effectPass.psfPixels);
-                    } else {
-                        forceFilterChange(currentRenderTarget.texture,
-                            effectNode.filter.toLowerCase() === "linear" ? LinearFilter : NearestFilter, this.renderer);
-                        effectPass.uniforms.tDiffuse.value = currentRenderTarget.texture;
-                        this.renderer.setRenderTarget(target);
-                        this.fullscreenQuad.material = effectPass.material;
-                        this.renderer.render(this.fullscreenQuad, this.fullscreenQuadCamera);
-                    }
-                    currentRenderTarget = target;
-                };
-                for (const effect of effects.optical) drawEffect(effect);
-                // Apply exposure once, after optical integration and before sensor
-                // clipping. Archived scenes can retain their original effect order.
-                if (colorPolicy.active && (colorPolicy.toneMapping || colorPolicy.exposure !== 1)) {
-                    const pass = this.hdrToneMappingPass;
-                    pass.uniforms.exposure.value = colorPolicy.exposure;
-                    pass.uniforms.toneMappingEnabled.value = colorPolicy.toneMapping;
-                    pass.uniforms.tDiffuse.value = currentRenderTarget.texture;
-                    const target = currentRenderTarget === this.renderTargetA ? this.renderTargetB : this.renderTargetA;
-                    this.renderer.setRenderTarget(target);
-                    this.fullscreenQuad.material = pass.material;
-                    this.renderer.render(this.fullscreenQuad, this.fullscreenQuadCamera);
-                    currentRenderTarget = target;
-                }
-                for (const effect of effects.sensor) drawEffect(effect);
-                if (globalProfiler) globalProfiler.pop();
+                if (panoramaPass) return currentRenderTarget;
 
-                if (globalProfiler) globalProfiler.push('#fdb462', 'copyToScreen');
-                if (Globals.renderDebugFlags.dbg_copyToScreen && currentRenderTarget !== null) {
-                    this.copyMaterial.uniforms['tDiffuse'].value = currentRenderTarget.texture;
-                    this.copyMaterial.uniforms['sRGBOutput'].value = Globals.renderDebugFlags.dbg_sRGBOutputEncoding;
-                    this.fullscreenQuad.material = this.copyMaterial;  // Set the material to the copy material
-                    this.renderer.setRenderTarget(null);
-                    this.renderer.render(this.fullscreenQuad, this.fullscreenQuadCamera);
-                }
-
-                // Fisheye image-circle mask: black out the area outside the lens's
-                // image circle, like the unexposed border of a real allsky frame.
-                // Drawn onto the finished canvas so it also covers the effects chain.
-                if (Globals.renderDebugFlags.dbg_copyToScreen) {
-                    renderFisheyeMask(this);
-                }
-                if (globalProfiler) globalProfiler.pop();
-
-
+                this.renderEffectsAndOutput(currentRenderTarget, colorPolicy);
             }
         }
+    }
+
+    renderEffectsAndOutput(currentRenderTarget, colorPolicy) {
+        if (globalProfiler) globalProfiler.push('#bebada', 'effectsPasses');
+        const effects = this.effectsEnabled && Globals.renderDebugFlags.dbg_renderEffects
+            ? splitViewEffects(this.effectPasses, colorPolicy.opticsBeforeSensor)
+            : {optical: [], sensor: []};
+        const drawEffect = effectNode => {
+            const effectPass = effectNode.pass;
+            const target = currentRenderTarget === this.renderTargetA ? this.renderTargetB : this.renderTargetA;
+            if (effectPass.isCustomPass) {
+                effectNode.updateCustomPass(par.frame, this, effectPass);
+                if (effectNode.canRender && !effectNode.canRender()) return;
+                effectPass.render(this.renderer, target, currentRenderTarget, effectPass.psfPixels);
+            } else {
+                forceFilterChange(currentRenderTarget.texture,
+                    effectNode.filter.toLowerCase() === "linear" ? LinearFilter : NearestFilter, this.renderer);
+                effectPass.uniforms.tDiffuse.value = currentRenderTarget.texture;
+                this.renderer.setRenderTarget(target);
+                this.fullscreenQuad.material = effectPass.material;
+                this.renderer.render(this.fullscreenQuad, this.fullscreenQuadCamera);
+            }
+            currentRenderTarget = target;
+        };
+        for (const effect of effects.optical) drawEffect(effect);
+        // Apply exposure once, after optical integration and before sensor
+        // clipping. Archived scenes can retain their original effect order.
+        if (colorPolicy.active && (colorPolicy.toneMapping || colorPolicy.exposure !== 1)) {
+            const pass = this.hdrToneMappingPass;
+            pass.uniforms.exposure.value = colorPolicy.exposure;
+            pass.uniforms.toneMappingEnabled.value = colorPolicy.toneMapping;
+            pass.uniforms.tDiffuse.value = currentRenderTarget.texture;
+            const target = currentRenderTarget === this.renderTargetA ? this.renderTargetB : this.renderTargetA;
+            this.renderer.setRenderTarget(target);
+            this.fullscreenQuad.material = pass.material;
+            this.renderer.render(this.fullscreenQuad, this.fullscreenQuadCamera);
+            currentRenderTarget = target;
+        }
+        for (const effect of effects.sensor) drawEffect(effect);
+        if (globalProfiler) globalProfiler.pop();
+
+        if (globalProfiler) globalProfiler.push('#fdb462', 'copyToScreen');
+        if (Globals.renderDebugFlags.dbg_copyToScreen && currentRenderTarget !== null) {
+            this.copyMaterial.uniforms['tDiffuse'].value = currentRenderTarget.texture;
+            this.copyMaterial.uniforms['sRGBOutput'].value = Globals.renderDebugFlags.dbg_sRGBOutputEncoding;
+            this.fullscreenQuad.material = this.copyMaterial;  // Set the material to the copy material
+            this.renderer.setRenderTarget(null);
+            this.renderer.render(this.fullscreenQuad, this.fullscreenQuadCamera);
+        }
+
+        // Fisheye image-circle mask: black out the area outside the lens's
+        // image circle, like the unexposed border of a real allsky frame.
+        // Drawn onto the finished canvas so it also covers the effects chain.
+        if (Globals.renderDebugFlags.dbg_copyToScreen) {
+            renderFisheyeMask(this);
+        }
+        if (globalProfiler) globalProfiler.pop();
     }
 
 
@@ -2922,7 +2945,7 @@ export class CNodeView3D extends CNodeViewCanvas {
             // so the camera is correct for the celestial sphere
             // which is rendered before the main scene
             // but uses the same camera
-            this.preRenderCameraUpdate()
+            if (!this._panoramaFace) this.preRenderCameraUpdate()
 
             // preRenderCameraUpdate() resets camera.aspect to the full viewport
             // aspect ratio. If matchVideoAspect is active, restore the corrected
@@ -3408,6 +3431,8 @@ export class CNodeView3D extends CNodeViewCanvas {
     }
 
     disposeRenderTargets() {
+        this.panoramicRenderer?.dispose();
+        this.panoramicRenderer = null;
         this.softDepthPass?.dispose();
         this.softDepthPass = null;
         if (this.renderTargetAntiAliased) this.renderTargetAntiAliased.dispose();
@@ -3474,7 +3499,7 @@ export class CNodeView3D extends CNodeViewCanvas {
     }
 
     get camera() {
-        return this.cameraNode.camera;
+        return this._panoramaCamera ?? this.cameraNode.camera;
     }
 
     updateIsIR() {

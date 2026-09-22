@@ -12,6 +12,8 @@
 import {assert} from "./assert";
 import {ViewMan} from "./CViewManager";
 import {Vector2, Vector3} from "three";
+import {isPanoramicCamera, panoramic, panoramicProjectVector} from "./PanoramicCamera";
+import {panoramaDirection} from "./rendering/PanoramaMath";
 
 // ---------------------------------------------------------------------------------------------
 // Right-click arbitration between a view and an overlay sitting on top of it.
@@ -274,16 +276,24 @@ export function withDisplayedCamera(view, fn) {
 export function setRaycasterFromView(raycaster, view, clientX, clientY) {
     const ndc = mouseToNDC(view, clientX, clientY);
     if (!Number.isFinite(ndc.x) || !Number.isFinite(ndc.y)) return false;
-    withDisplayedCamera(view, camera => raycaster.setFromCamera(ndc, camera));
+    withDisplayedCamera(view, camera => setRaycasterFromCamera(raycaster, ndc, camera));
     return true;
+}
+
+export function setRaycasterFromCamera(raycaster, ndc, camera) {
+    if (!isPanoramicCamera(camera)) return raycaster.setFromCamera(ndc, camera);
+    raycaster.ray.origin.setFromMatrixPosition(camera.matrixWorld);
+    panoramaDirection(ndc.x, ndc.y, panoramic.hfov, panoramic.vfov, raycaster.ray.direction).transformDirection(camera.matrixWorld);
+    raycaster.camera = camera;
 }
 
 /** Geometric world point -> pane pixels, matching setRaycasterFromView. */
 export function projectWorldToView(view, position) {
     return withDisplayedCamera(view, camera => {
         const local = position.clone().applyMatrix4(camera.matrixWorldInverse);
-        if (local.z >= 0) return null;
-        const ndc = position.clone().project(camera);
+        if (local.z >= 0 && !isPanoramicCamera(camera)) return null;
+        const ndc = position.clone();
+        if (!panoramicProjectVector(ndc, camera)) ndc.project(camera);
         if (!Number.isFinite(ndc.x) || !Number.isFinite(ndc.y)) return null;
         return ndcToView(view, ndc);
     });
@@ -297,6 +307,9 @@ export function worldUnitsPerPixel(view, position) {
     return withDisplayedCamera(view, camera => {
         const height = view.canvas?.getBoundingClientRect().height
             ?? renderedRect(view, view.widthPx, view.heightPx).h;
+        if (isPanoramicCamera(camera)) {
+            return height > 0 ? position.distanceTo(camera.position) * panoramic.vfov * Math.PI / (180 * height) : 0;
+        }
         const projectionScale = Math.abs(camera.projectionMatrix.elements[5]);
         if (!(height > 0) || !(projectionScale > 0)) return 0;
         const depth = camera.isOrthographicCamera ? 1
@@ -313,6 +326,13 @@ export function offsetWorldPointPixels(view, position, x, y) {
         const rendered = renderedRect(view, view.widthPx, view.heightPx);
         const width = r?.width ?? rendered.w, height = r?.height ?? rendered.h;
         if (!(width > 0) || !(height > 0)) return position.clone();
+        if (isPanoramicCamera(camera)) {
+            const ndc = position.clone();
+            const distance = ndc.distanceTo(camera.position);
+            panoramicProjectVector(ndc, camera);
+            return panoramaDirection(ndc.x + 2 * x / width, ndc.y + 2 * y / height, panoramic.hfov, panoramic.vfov)
+                .multiplyScalar(distance).applyMatrix4(camera.matrixWorld);
+        }
         const ndc = position.clone().project(camera);
         ndc.x += 2 * x / width;
         ndc.y += 2 * y / height;

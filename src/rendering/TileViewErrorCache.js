@@ -21,6 +21,8 @@ export class TileViewErrorCache {
             }
         }
         key.push(!!lift);
+        key.push(renderer._panorama?.hfov ?? 0, renderer._panorama?.vfov ?? 0,
+            renderer._panorama?.width ?? 0, renderer._panorama?.height ?? 0);
         if (lift) {
             key.push(lift.k, lift.obsAlt, lift.R, lift.maxBendRad, lift.scaleHeightM, lift.maxLiftM,
                 lift.observer.x, lift.observer.y, lift.observer.z,

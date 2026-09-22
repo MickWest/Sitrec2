@@ -10,6 +10,8 @@ import {assert} from "./assert";
 import "./threeExt";
 import {EventManager} from "./CEventManager";
 import {removeMaterialByCacheKeyImpl} from "./QuadTreeTileMaterial";
+import {isPanoramicCamera, panoramic} from "./PanoramicCamera";
+import {panoramaFrusta, panoramaIntersectsSphere, panoramaPixelsPerRadian} from "./rendering/PanoramaMath";
 
 // Reusable scratch objects to avoid garbage collection pressure.
 // Reused across all tile visibility calculations within a single pass.
@@ -556,6 +558,14 @@ export class QuadTreeMap {
         // visibility check can compute screen-space error in real pixel units.
         // Fallback to 1080 if the view hasn't sized itself yet (early frames).
         camera._viewportHeightPx = view.heightPx || 1080;
+        camera._panoramaWidth = view.widthPx || 1920;
+        camera._panoramaFrusta = null;
+        if (isPanoramicCamera(camera)) {
+            camera.viewFrustum = {intersectsSphere: sphere => panoramaIntersectsSphere(sphere, camera, panoramic.hfov, panoramic.vfov)};
+            camera.dilatedFrustum = {intersectsSphere: sphere => panoramaIntersectsSphere(sphere, camera, panoramic.hfov, panoramic.vfov, SUBDIVISION_FOV_DILATION)};
+            camera._panoramaFrusta = panoramaFrusta(camera, panoramic.hfov, panoramic.vfov);
+            camera._panoramaDilatedFrusta = panoramaFrusta(camera, Math.min(360, panoramic.hfov * SUBDIVISION_FOV_DILATION), Math.min(180, panoramic.vfov * SUBDIVISION_FOV_DILATION));
+        }
 
         // V5 Phase 3: build the FrustumShape (planes + 8 world-space points)
         // required by NASA's OBB.intersectsFrustum. One shape per (view,
@@ -1570,11 +1580,15 @@ export class QuadTreeMap {
             && tile.altitudeBounds?.measured === true) {
             const _obb = tile.cullingState?.obb;
             if (_obb) {
-                if (inDilated && camera._dilatedFrustumShape && !_obb.intersectsFrustum(camera._dilatedFrustumShape)) {
+                if (inDilated && (camera._panoramaFrusta
+                    ? !camera._panoramaDilatedFrusta.some(f => _obb.intersectsFrustum(f))
+                    : camera._dilatedFrustumShape && !_obb.intersectsFrustum(camera._dilatedFrustumShape))) {
                     inDilated = false;
                     if (diag) diag.obbRejectedDilated++;
                 }
-                if (inStrict && camera._viewFrustumShape && !_obb.intersectsFrustum(camera._viewFrustumShape)) {
+                if (inStrict && (camera._panoramaFrusta
+                    ? !camera._panoramaFrusta.some(f => _obb.intersectsFrustum(f))
+                    : camera._viewFrustumShape && !_obb.intersectsFrustum(camera._viewFrustumShape))) {
                     inStrict = false;
                     if (diag) diag.obbRejectedStrict++;
                 }
@@ -1608,6 +1622,10 @@ export class QuadTreeMap {
             const projDistance = _lodDistance;
             screenSpaceError = (metersPerTexel * viewportHeightPx) /
                                (projDistance * 2 * Math.tan(fovRad / 2));
+            if (camera._panoramaFrusta) {
+                screenSpaceError = metersPerTexel / projDistance * panoramaPixelsPerRadian(_cullingSphere,
+                    camera, camera._panoramaWidth, viewportHeightPx, panoramic.hfov, panoramic.vfov);
+            }
 
             // Flat Earth: range cap on refinement (Globals.flatEarthRefineLimit
             // — a flat disc has no horizon, and the far band would otherwise

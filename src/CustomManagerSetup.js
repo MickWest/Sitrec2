@@ -34,6 +34,7 @@ import {setupCameraMotionMenu} from "./CameraMotionFromVideo";
 import {makeStarTrackCameraController, setupStarTrackerMenu} from "./starTrack/StarTrackerUI";
 import {ScenarioManager} from "./CScenarioManager";
 import {setupFisheye} from "./FisheyeProjection";
+import {setupPanoramicCamera} from "./PanoramicCamera";
 import {setupStreetViewPanoMenu} from "./StreetViewPanoUI";
 import {CustomGraphManager} from "./CCustomGraphManager";
 import {ECEFToLLAVD_radii, LLAToECEF} from "./LLA-ECEF-ENU";
@@ -2317,6 +2318,7 @@ export const setupMethods = {
         // custom sitch: legacy sitches keep their hand-tuned camera UI.
         if (Sit.isCustom && NodeMan.exists("lookCamera")) {
             setupFisheye();
+            setupPanoramicCamera();
         }
 
         // Orbit camera - orbits around a selected target track at a given radius and period

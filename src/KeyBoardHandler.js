@@ -271,6 +271,12 @@ export function initKeyboard() {
             return;
         }
 
+        // Camera altitude keys must not scroll the page, including key repeats.
+        if ((e.code === 'PageUp' || e.code === 'PageDown')
+            && NodeMan.get("lookView", false)?.controls?.enabled) {
+            e.preventDefault();
+        }
+
         if (e.repeat && e.code !== 'Comma' && e.code !== 'Period') return;
 
         setRenderOne(true);

@@ -16,7 +16,8 @@
 
 import {Raycaster, Vector3} from "three";
 import {NodeMan} from "./Globals";
-import {renderedRect, withDisplayedCamera, ndcToView, viewToNDC} from "./ViewUtils";
+import {renderedRect, withDisplayedCamera, ndcToView, viewToNDC, setRaycasterFromCamera} from "./ViewUtils";
+import {isPanoramicCamera, panoramicProjectVector} from "./PanoramicCamera";
 import {ellipsoidAlongRay, intersectDisplayed, raycastGroundElevationFast} from "./raycastGround";
 import {liftWorldPoint} from "./atmosphere/terrestrialRefraction";
 import {currentTerrestrialLiftContext} from "./atmosphere/refractionSettings";
@@ -170,8 +171,9 @@ export function projectToCanvas(view, world) {
         const apparent = liftWorldPoint(currentTerrestrialLiftContext(eye), world, new Vector3());
         const fwd = new Vector3();
         cam.getWorldDirection(fwd);
-        if (apparent.clone().sub(eye).dot(fwd) <= 0) return null;   // behind the camera
-        const ndc = apparent.project(cam);
+        if (!isPanoramicCamera(cam) && apparent.clone().sub(eye).dot(fwd) <= 0) return null;
+        const ndc = apparent;
+        if (!panoramicProjectVector(ndc, cam)) ndc.project(cam);
         if (!Number.isFinite(ndc.x) || !Number.isFinite(ndc.y)) return null;
         return ndcToView(view, ndc);
     });
@@ -181,7 +183,7 @@ export function projectToCanvas(view, world) {
 function surfaceUnderCanvasRay(view, cx, cy, useTiles, useObjects) {
     const ray = withDisplayedCamera(view, (cam) => {
         const raycaster = new Raycaster();
-        raycaster.setFromCamera(viewToNDC(view, cx, cy), cam);
+        setRaycasterFromCamera(raycaster, viewToNDC(view, cx, cy), cam);
         return {origin: raycaster.ray.origin, dir: raycaster.ray.direction};
     });
     if (!ray || !Number.isFinite(ray.dir.x)) return null;

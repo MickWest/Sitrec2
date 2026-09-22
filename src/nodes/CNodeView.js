@@ -1267,7 +1267,9 @@ class CNodeView extends CNode {
         // for angular size is proportional to that
         let veticalCanvasPx;
 
-        if (view.in.canvasWidth) {
+        if (view._panoramaFace) {
+            veticalCanvasPx = view._panoramaFace.height / view.renderer.getPixelRatio();
+        } else if (view.in.canvasWidth) {
             veticalCanvasPx = view.getRenderTargetHeight();
         } else {
             veticalCanvasPx = view.heightPx;

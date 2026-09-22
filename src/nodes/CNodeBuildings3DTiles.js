@@ -33,6 +33,8 @@ import {
 } from "../atmosphere/terrestrialRefraction";
 import {currentTerrestrialLiftContext} from "../atmosphere/refractionSettings";
 import {TileViewErrorCache} from "../rendering/TileViewErrorCache";
+import {isPanoramicCamera, panoramic} from "../PanoramicCamera";
+import {panoramaFrusta, panoramaIntersectsSphere, panoramaPixelsPerRadian} from "../rendering/PanoramaMath";
 
 const DEG2RAD = Math.PI / 180;
 
@@ -165,6 +167,9 @@ let _trScratchOBB = null;
 class FlatAwareTilesRenderer extends TilesRenderer {
     prepareForTraversal() {
         super.prepareForTraversal();
+        if (this._panorama) {
+            this._panorama.cameraInfo = this._panorama.frusta.map(frustum => ({...this.cameraInfo[0], frustum}));
+        }
         this._viewErrorCache ??= new TileViewErrorCache();
         this._viewErrorCache.begin(this, this._terrLiftCtx, !!Globals.flatEarthWarpSphere);
     }
@@ -176,6 +181,30 @@ class FlatAwareTilesRenderer extends TilesRenderer {
     }
 
     _calculateTileViewError(tile, target) {
+        if (this._panorama) {
+            const p = this._panorama;
+            const volume = tile.engineData.boundingVolume;
+            volume.getSphere(_feWorldSphere);
+            _feWorldSphere.applyMatrix4(this.group.matrixWorld);
+            const originalRadius = _feWorldSphere.radius;
+            Globals.flatEarthWarpSphere?.(_feWorldSphere);
+            if (Globals.flatEarthWarpSphere && this._terrLiftCtx) liftWorldPoint(this._terrLiftCtx, _feWorldSphere.center, _feWorldSphere.center);
+            target.inView = panoramaIntersectsSphere(_feWorldSphere, p.camera, p.hfov, p.vfov);
+            // A ground-level panorama intersects enormous coarse spheres
+            // below the horizon. Keep the tight box test, then let the same
+            // lifted-box retest used by perspective cameras rescue refraction.
+            if (target.inView && !Globals.flatEarthWarpSphere) {
+                target.inView = p.frusta.some(f => volume.intersectsFrustum(f));
+            }
+            const distance = !Globals.flatEarthWarpSphere
+                ? volume.distanceToPoint(this.cameraInfo[0].position)
+                : Math.max(0, p.camera.position.distanceTo(_feWorldSphere.center) - _feWorldSphere.radius);
+            target.distanceFromCamera = distance;
+            target.error = distance === 0 ? Infinity : tile.geometricError * (_feWorldSphere.radius / Math.max(originalRadius, 1e-9))
+                * panoramaPixelsPerRadian(_feWorldSphere, p.camera, p.width, p.height, p.hfov, p.vfov) / distance;
+            if (!Globals.flatEarthWarpSphere) this._terrestrialRefractionRetest(tile, target);
+            return;
+        }
         const warpSphere = Globals.flatEarthWarpSphere;
         if (!warpSphere) {
             super.calculateTileViewError(tile, target);
@@ -409,9 +438,18 @@ class FlatAwareTilesRenderer extends TilesRenderer {
         _trGroupSphere.center.copy(_trGroupLifted);
         _trGroupSphere.radius = _trWorldSphere.radius + pad;
 
+        let panoramaDensity = null;
+        if (this._panorama) {
+            const p = this._panorama;
+            _trWorldSphere.center.copy(_trLiftedCenter);
+            _trWorldSphere.radius += pad;
+            if (!panoramaIntersectsSphere(_trWorldSphere, p.camera, p.hfov, p.vfov)) return;
+            panoramaDensity = panoramaPixelsPerRadian(_trWorldSphere, p.camera, p.width, p.height, p.hfov, p.vfov);
+        }
+
         // Stock aggregation semantics (max error / min distance over in-view
         // cameras), with the lifted volume standing in for the stock one.
-        const cameraInfo = this.cameraInfo;
+        const cameraInfo = this._panorama?.cameraInfo ?? this.cameraInfo;
         let inView = false;
         let inViewError = 0;
         let inViewDistance = Infinity;
@@ -427,10 +465,11 @@ class FlatAwareTilesRenderer extends TilesRenderer {
                 error = tile.geometricError / info.pixelSize;
                 distance = Infinity;
             } else {
-                distance = Math.max(_trGroupSphere.distanceToPoint(info.position), 0);
+                distance = Math.max(this._panorama && testVolume
+                    ? testVolume.distanceToPoint(info.position) : _trGroupSphere.distanceToPoint(info.position), 0);
                 error = distance === 0
                     ? Infinity
-                    : tile.geometricError / (distance * info.sseDenominator);
+                    : tile.geometricError / (distance * (panoramaDensity ? 1 / panoramaDensity : info.sseDenominator));
             }
             inView = true;
             inViewError = Math.max(inViewError, error);
@@ -671,7 +710,7 @@ class PerViewTiles {
         const canPrepare = typeof view.prepareCameraForLOD === "function"
             && typeof view.restoreCameraAfterLOD === "function";
         const displayedDiffers = canPrepare
-            && (view.syncVideoZoom || view.syncPixelZoomWithVideo || (view.yCompress ?? 1) > 1.0001);
+            && (isPanoramicCamera(view.camera) || view.syncVideoZoom || view.syncPixelZoomWithVideo || (view.yCompress ?? 1) > 1.0001);
         // prepareCameraForLOD is NOT re-entrant and does not guard itself — _lodSavedZoom is only
         // its restore marker. Callers guard externally, so only prepare (and only restore) a
         // bracket we actually opened; if the terrain pass already has one open, reuse it.
@@ -718,10 +757,12 @@ class PerViewTiles {
         const group = this.renderer.group;
         group.updateWorldMatrix(true, false);
         const size = view.renderer.getSize(_tilesSizeTmp);
+        const panoKey = isPanoramicCamera(cam) ? `${panoramic.hfov}/${panoramic.vfov}` : "";
         const refractionK = Sit.terrestrialRefraction ? resolveTerrestrialK(Sit) : 0;
         // Compare complete matrices: sums can cancel during a diagonal move or
         // rotation. The projection includes video pan, compression and ortho mode.
         const moved = !this._lastCamMatrix
+            || panoKey !== this._lastPanoramaKey
             || !this._lastCamMatrix.equals(cam.matrixWorld)
             || !this._lastProjectionMatrix.equals(cam.projectionMatrix)
             || !this._lastGroupMatrix.equals(group.matrixWorld)
@@ -729,6 +770,7 @@ class PerViewTiles {
             || size.x !== this._lastResW || size.y !== this._lastResH
             || !!Globals.flatEarthWarpSphere !== this._lastFlatMode;
         if (moved) {
+            this._lastPanoramaKey = panoKey;
             (this._lastCamMatrix ??= new Matrix4()).copy(cam.matrixWorld);
             (this._lastProjectionMatrix ??= new Matrix4()).copy(cam.projectionMatrix);
             (this._lastGroupMatrix ??= new Matrix4()).copy(group.matrixWorld);
@@ -770,6 +812,11 @@ class PerViewTiles {
 
         this.renderer.setCamera(cam);
         this.renderer.setResolutionFromRenderer(cam, view.renderer);
+        this.renderer._panorama = panoKey ? {
+            camera: cam, hfov: panoramic.hfov, vfov: panoramic.vfov,
+            width: size.x, height: size.y,
+            frusta: panoramaFrusta(cam, panoramic.hfov, panoramic.vfov, group.matrixWorld),
+        } : null;
         this.renderer.update();
     }
 

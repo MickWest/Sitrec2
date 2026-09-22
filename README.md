@@ -67,6 +67,7 @@ assistant — so if you add a doc, add it there.
 - [BOTBench Result Charts - Interactive charts of a result set, and figures for a paper](docs/BOTBenchCharts.md)
 - [Camera Modes - Normal (Az/El) and Satellite (quaternion) view modes](docs/satcam.md)
 - [Fisheye and All-Sky Lenses](docs/Fisheye.md)
+- [Panoramic Camera](docs/PanoramicCamera.md)
 - [Recreating Starlink Situations - Horizon Flares](docs/Starlink.md)
 
 **Bespoke examples (not typical)**

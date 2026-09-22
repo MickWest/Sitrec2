@@ -25,7 +25,7 @@ import {getCursorPositionFromTopView, getTopViewWithCursor, onDocumentMouseMove}
 import {isKeyHeld} from "../KeyBoardHandler";
 import {isLocal} from "../configUtils"
 import {getInteractionRouter, INTERACTION} from "../InteractionRouter";
-import {isViewDisplayed, mouseToNDC, mouseToView, mouseInRenderedView, setRaycasterFromView, viewToNDC, withDisplayedCamera} from "../ViewUtils";
+import {isViewDisplayed, mouseToNDC, mouseToView, mouseInRenderedView, setRaycasterFromCamera, setRaycasterFromView, viewToNDC, withDisplayedCamera} from "../ViewUtils";
 import {raycastLocalGround} from "../raycastGround";
 import {CNodeMeasureAB} from "../nodes/CNodeLabels3D";
 import {CNodePositionXYZ} from "../nodes/CNodePositionLLA";
@@ -34,9 +34,9 @@ import * as LAYER from "../LayerMasks";
 import {isViewDragging} from "../DragResizeUtils";
 import {fitViewSyncActive, fitViewSyncPan, fitViewSyncWheel} from "../FitViewSync";
 import {fisheye, fisheyeEquivalentFOVDeg, isFisheyeCamera, setFisheyeFov} from "../FisheyeProjection";
+import {isPanoramicCamera, panoramic, zoomPanorama} from "../PanoramicCamera";
 
-// Eye height above the ground for WASD walking — 5 feet, the height the user
-// asked the camera to hold above the 3D tile surface directly below.
+// Recovery height when a WASD step goes below the loaded ground surface.
 const WASD_EYE_HEIGHT = f2m(5);
 
 const globalMeasureState = {
@@ -228,7 +228,7 @@ class CameraMapControls {
 				this.zoomBy(-zoomSpeed)
 			}
 
-			// WASD walking controls (terrain-following)
+			// WASD walking controls with below-ground correction
 			// Only active for lookView
 			if (this.view && this.view.id === "lookView") {
 				this.updateWASDWalking();
@@ -273,7 +273,7 @@ class CameraMapControls {
 		// Fisheye look view: the wheel zooms the fisheye FOV (zoomBy below), whatever
 		// controller drives the camera. The pinhole fov is ignored by that render, and
 		// the dolly/sphere-rotate paths below would move the camera instead of the field.
-		if (isFisheyeCamera(this.camera)) {
+		if (isFisheyeCamera(this.camera) || isPanoramicCamera(this.camera)) {
 			this.zoomBy(wheelDelta);
 			setRenderOne(true);
 			return;
@@ -676,6 +676,10 @@ class CameraMapControls {
 
 	zoomBy(delta) {
 		if (!this.zoomGestures || !this.enableZoom) return;
+		if (isPanoramicCamera(this.camera)) {
+			zoomPanorama(this.zoomScale(1, delta, 1.5, 0.95));
+			return;
+		}
 
 		// While the fisheye is on, every zoom gesture on the look view (wheel, pinch,
 		// keyboard) scales the fisheye FOV. Same per-step ratio as the PTZ fov zoom;
@@ -980,7 +984,7 @@ class CameraMapControls {
 					// Drag rate follows the field on screen: under the fisheye that is the
 					// equivalent pinhole FOV (same degrees-per-pixel at the image centre),
 					// not the ignored pinhole fov.
-					const dragFov = fisheyeEquivalentFOVDeg(this.camera) ?? ptzControls.fov;
+					const dragFov = isPanoramicCamera(this.camera) ? panoramic.vfov : (fisheyeEquivalentFOVDeg(this.camera) ?? ptzControls.fov);
 
 					if (ptzControls.satellite) {
 						// Satellite mode: camera-local rotations via quaternion
@@ -1093,7 +1097,7 @@ class CameraMapControls {
 				var start3D = new Vector3();
 				var end3D = new Vector3();
 
-				withDisplayedCamera(this.view, camera => raycaster.setFromCamera(startPointer, camera));
+				withDisplayedCamera(this.view, camera => setRaycasterFromCamera(raycaster, startPointer, camera));
 				let startHitSphere = false;
 				if (this.targetIsTerrain && !this.useGlobe) {
 					if (!raycaster.ray.intersectPlane(dragPlane, start3D)) break;
@@ -1105,7 +1109,7 @@ class CameraMapControls {
 						if (!raycaster.ray.intersectPlane(tangentPlane, start3D)) break;
 					}
 				}
-				withDisplayedCamera(this.view, camera => raycaster.setFromCamera(endPointer, camera));
+				withDisplayedCamera(this.view, camera => setRaycasterFromCamera(raycaster, endPointer, camera));
 				let endHitSphere = false;
 				if (this.targetIsTerrain && !this.useGlobe) {
 					if (!raycaster.ray.intersectPlane(dragPlane, end3D)) break;
@@ -1282,21 +1286,22 @@ class CameraMapControls {
 	}
 
 	updateWASDWalking() {
-		// WASD walking controls with terrain-following
-		// Normal speed: 3 m/s, Fast speed (with Shift): 10 m/s
-		// Maintains constant height above terrain
+		// WASD moves horizontally; Page Up/Down changes altitude at the same speed.
 
 		let moveForward = 0;
 		let moveRight = 0;
+		let moveUp = 0;
 
 		// Check WASD keys
 		if (isKeyHeld('w')) moveForward += 1;
 		if (isKeyHeld('s')) moveForward -= 1;
 		if (isKeyHeld('d')) moveRight += 1;
 		if (isKeyHeld('a')) moveRight -= 1;
+		if (isKeyHeld('PageUp')) moveUp += 1;
+		if (isKeyHeld('PageDown')) moveUp -= 1;
 
 		// If no movement, return early
-		if (moveForward === 0 && moveRight === 0) return;
+		if (moveForward === 0 && moveRight === 0 && moveUp === 0) return;
 
 		// Determine speed based on Shift key
 		const normalSpeed = 10.0;  // meters per second
@@ -1324,37 +1329,60 @@ class CameraMapControls {
 
 		// When looking almost straight up or down the horizontal projection is
 		// near-zero; normalizing it would produce NaN and fling the camera off the
-		// planet. Bail out rather than move in a garbage direction.
-		if (forwardHorizontal.lengthSq() < 1e-6) return;
+		// planet. Skip horizontal movement, but still allow altitude adjustments.
+		if (forwardHorizontal.lengthSq() < 1e-6) {
+			if (moveUp === 0) return;
+			moveForward = moveRight = 0;
+		}
 		forwardHorizontal.normalize();
 
 		// Right vector is perpendicular to both up and forward
 		const rightHorizontal = new Vector3().crossVectors(localUp, forwardHorizontal).normalize().negate();
 
-		// Calculate the (purely horizontal) movement vector
+		// Calculate movement in the camera's local horizontal plane and vertical.
 		const movement = new Vector3();
 		movement.add(forwardHorizontal.multiplyScalar(moveForward * moveDistance));
 		movement.add(rightHorizontal.multiplyScalar(moveRight * moveDistance));
+		movement.addScaledVector(localUp, moveUp * moveDistance);
 
-		// The horizontal target after this step.
+		// The target after this step.
 		const newPos = currentPos.add(movement);
 
-		// We want the walker to ride a fixed eye height above the actual 3D tile
-		// surface directly below — the rendered Google Photorealistic / OSM geometry,
-		// NOT the smooth elevation map (which ignores buildings and often disagrees
-		// with the tiles).
+		if (moveUp !== 0) {
+			// Explicit altitude changes must bypass the walker's ground snap. Free Look
+			// also needs the camera moved directly because its controllers are suspended.
+			if (this.view.cameraNode?.freeLook) {
+				this.camera.position.copy(newPos);
+				this.camera.updateMatrix();
+				this.camera.updateMatrixWorld();
+			}
+			const fixedCamera = NodeMan.get("fixedCameraPosition", false);
+			if (fixedCamera) {
+				const lla = ECEFToLLAVD_radii(newPos);
+				const altitude = fixedCamera.agl
+					? fixedCamera.getAltitude() + moveUp * moveDistance
+					: lla.z - meanSeaLevelOffset(lla.x, lla.y);
+				fixedCamera.setLLA(lla.x, lla.y, altitude);
+			}
+			setRenderOne(true);
+			return;
+		}
+
+		// Keep the chosen altitude unless the step goes beneath the loaded surface.
+		// Use the rendered tiles, not the elevation map, which can disagree with them.
 		const tileGround = getTilesPointBelow(newPos);
+		const upAtGround = tileGround !== null ? getLocalUpVector(tileGround) : null;
+		const belowGround = tileGround !== null
+			&& newPos.clone().sub(tileGround).dot(upAtGround) < 0;
 
 		// Free Look walks the CAMERA. Normally WASD writes the step into the position
 		// node and the position controller carries it to the camera on the next update,
 		// but Free Look suspends that controller (see CNodeCamera.applyControllers), so
 		// a write there would move nothing. The direction of travel is simply reversed:
 		// step the camera here, and syncFreeLookPosition() — called right after this, in
-		// update() — publishes the result back to the position node. Same tile-surface
-		// ride either way.
+		// update() — publishes the result back to the position node.
 		if (this.view.cameraNode?.freeLook) {
-			if (tileGround !== null) {
-				const upAtGround = getLocalUpVector(tileGround);
+			if (belowGround) {
 				this.camera.position.copy(tileGround.add(upAtGround.multiplyScalar(WASD_EYE_HEIGHT)));
 			} else {
 				this.camera.position.copy(newPos);
@@ -1372,20 +1400,18 @@ class CameraMapControls {
 			// user's AGL height above the ground — which, via _aglGroundPoint, is now
 			// the same 3D-tile surface the absolute-altitude branch snaps to.
 			fixedCamera.setFromECEF(newPos);
-		} else if (tileGround !== null) {
-			// Absolute-altitude camera: snap to 5 ft above the tile surface.
+		} else if (belowGround) {
+			// Recover to 5 ft above the tile surface only after going below it.
 			// getTilesPointBelow returns the tile hit nearest the elevation-map ground,
 			// so the walker follows the street rather than climbing onto a roof/tree
 			// canopy or dropping through to a sub-building floor.
-			const upAtGround = getLocalUpVector(tileGround);
 			const eye = tileGround.add(upAtGround.multiplyScalar(WASD_EYE_HEIGHT));
 			const lla = ECEFToLLAVD_radii(eye);
 			// setLLA wants MSL altitude; ECEFToLLAVD_radii returns HAE (h = H + N).
 			const altMSL = lla.z - meanSeaLevelOffset(lla.x, lla.y);
 			fixedCamera.setLLA(lla.x, lla.y, altMSL);
 		} else {
-			// Absolute-altitude camera with no 3D tiles loaded directly below (or none
-			// in this sitch): move horizontally and keep the current MSL altitude. We
+			// Already above ground, or no loaded tile below: keep the current MSL altitude. We
 			// deliberately do NOT fall back to the elevation map here — and never
 			// re-anchor via getPointBelow(), which returns a bogus point on an
 			// unloaded tile and once flung the camera into the ocean.

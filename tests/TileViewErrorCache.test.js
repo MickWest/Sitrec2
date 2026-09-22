@@ -48,9 +48,20 @@ test.each([
     ["refraction limit", f => f.lift.maxLiftM *= 2],
     ["geometric error", f => f.tile.geometricError *= 2],
     ["replaced bounds", f => f.tile.engineData.boundingVolume = {}],
+    ["panorama enabled", f => f.renderer._panorama = {hfov: 180, vfov: 60, width: 1600, height: 800}],
 ])("invalidates for %s", (name, change) => {
     const f = fixture();
     change(f);
+    f.update();
+    expect(f.cache.read(f.tile, {})).toBe(false);
+});
+
+test.each(["hfov", "vfov", "width", "height"])("panorama %s changes invalidate settled tile answers", field => {
+    const f = fixture();
+    f.renderer._panorama = {hfov: 180, vfov: 60, width: 1600, height: 800};
+    f.update();
+    f.cache.write(f.tile, {inView: true, error: 2, distanceFromCamera: 100});
+    f.renderer._panorama[field] *= 0.5;
     f.update();
     expect(f.cache.read(f.tile, {})).toBe(false);
 });

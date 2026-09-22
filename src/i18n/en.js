@@ -157,6 +157,7 @@ const en = {
                 customModels: "Objects and 3D Models (Planes)",
                 cameraModes: "Camera Modes (Normal & Satellite)",
                 fisheye: "Fisheye (Allsky) Projection",
+                panoramicCamera: "Panoramic Camera",
                 video: "Rendering and Exporting Video",
                 longExposure: "Long Exposure Simulation",
                 videoQPGraph: "Video QP Graph",

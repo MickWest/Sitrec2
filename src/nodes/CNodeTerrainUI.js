@@ -2211,10 +2211,12 @@ export class CNodeTerrainUI extends CNode {
                     // pan right and up by matching amounts, or pan one view and counter-pan the
                     // other, and the total is unchanged while both frusta have moved.
                     const p = view.camera.projectionMatrix.elements;
+                    const pano = Globals.panoramic;
+                    const panoKey = view.id === "lookView" && pano?.enabled ? `${pano.hfov}/${pano.vfov}` : "";
                     const prev = this._lastLodShift[i];
-                    if (!prev || prev[0] !== p[8] || prev[1] !== p[9] || prev[2] !== p[5]) {
+                    if (!prev || prev[0] !== p[8] || prev[1] !== p[9] || prev[2] !== p[5] || prev[3] !== panoKey) {
                         shiftChanged = true;
-                        this._lastLodShift[i] = [p[8], p[9], p[5]];
+                        this._lastLodShift[i] = [p[8], p[9], p[5], panoKey];
                     }
                 }
                 if (cameraFingerprint !== this._lastCameraFingerprint || shiftChanged) {

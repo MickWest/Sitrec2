@@ -2373,6 +2373,7 @@ export class CCustomManager {
             + "C - Move Camera<br>"
             + "X - Move Target<br>"
             + "WASD - Walk in look View<br>"
+            + "PageUp/PageDown - Raise/lower Camera<br>"
             + "Shift-C - Ground Camera<br>"
             + "Shift-X - Ground Target<br>"
             + "; - Decrease Start Time<br>"

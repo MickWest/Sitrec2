@@ -784,6 +784,8 @@ let _fisheyeArmed = false;
 
 export function applyFisheyeState() {
     if (fisheye.enabled) {
+        // Both modes preserve their own settings, but only one can render.
+        if (Globals.panoramic) Globals.panoramic.enabled = false;
         refreshFisheyeParams();
         installAllSceneHooks(!_fisheyeArmed);
         _fisheyeArmed = true;

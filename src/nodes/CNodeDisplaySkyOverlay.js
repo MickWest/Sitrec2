@@ -12,6 +12,7 @@ import {getHUDColor} from "../HUDColor";
 import {viewControlLabel, viewMenuKey} from "../ViewUIBarMenus";
 import {renderedRect, withDisplayedCamera} from "../ViewUtils";
 import {fisheyeProjectVector, isFisheyeCamera} from "../FisheyeProjection";
+import {isPanoramicCamera, panoramicProjectVector} from "../PanoramicCamera";
 import {labelPixelOffset} from "../LabelOffsets";
 
 // World-space Vector3 → NDC through whatever projection the view is actually
@@ -19,7 +20,7 @@ import {labelPixelOffset} from "../LabelOffsets";
 // otherwise the camera's own (pinhole) projection. Mutates and returns pos,
 // like Vector3.project, so labels land on the rendered dots in both modes.
 function projectForCamera(pos, camera) {
-    if (!fisheyeProjectVector(pos, camera)) pos.project(camera);
+    if (!panoramicProjectVector(pos, camera) && !fisheyeProjectVector(pos, camera)) pos.project(camera);
     return pos;
 }
 
@@ -128,6 +129,7 @@ export class CNodeDisplaySkyOverlay extends CNodeViewUI {
         // the pinhole projection while the dots render fisheye. Tag the copy
         // so isFisheyeCamera can unwrap it.
         camera._fisheyeProxyFor = live;
+        camera._panoramaProxyFor = live;
         if (atOrigin) {
             camera.position.set(0, 0, 0);
             camera.updateMatrix();
@@ -475,7 +477,7 @@ export class CNodeDisplaySkyOverlay extends CNodeViewUI {
             // field past 180° legitimately images that sky (the projection twin
             // parks anything past its cull cap outside the z window instead).
             const viewPos = satRender.clone().applyMatrix4(camera.matrixWorldInverse);
-            if (viewPos.z >= 0 && !isFisheyeCamera(camera)) continue;
+            if (viewPos.z >= 0 && !isFisheyeCamera(camera) && !isPanoramicCamera(camera)) continue;
 
             const satScreenPos = projectForCamera(satRender.clone(), camera);
             if (satScreenPos.z < -1 || satScreenPos.z > 1) continue;

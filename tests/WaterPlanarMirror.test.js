@@ -5,6 +5,8 @@ jest.mock('../src/raycastGround', () => ({}));
 
 import {CWaterPlanarMirror} from '../src/WaterPlanarMirror';
 import {sharedUniforms} from '../src/js/map33/material/SharedUniforms';
+import {PerspectiveCamera, Vector3} from 'three';
+import {panoramaFaceCamera, panoramaFaces} from '../src/rendering/PanoramaMath';
 
 function capture({clip = true, maskReady = true, fail = false} = {}) {
     const node = {mirrorClip: clip, applyTileWater: jest.fn(() => {
@@ -61,4 +63,26 @@ test('an unavailable water mask cannot reuse a previous view mask', () => {
     mirror.render(view, 0, null);
     expect(sharedUniforms.waterGeoActive.value).toBe(1);
     expect(sharedUniforms.waterTileCapture.value).toBe(0);
+});
+
+test('a cropped panorama face and its mirror cover the same points on the water', () => {
+    const observer = new PerspectiveCamera(45, 2, 0.1, 1e6);
+    observer.position.set(0, 10, 0);
+    observer.rotation.x = -0.3;
+    observer.updateMatrixWorld(true);
+    const mirror = new CWaterPlanarMirror({});
+    const plane = {point: new Vector3(), normal: new Vector3(0, 1, 0)};
+    for (const face of panoramaFaces(180, 60)) {
+        const camera = panoramaFaceCamera(face, observer);
+        expect(mirror.setupCamera({camera}, plane)).toBe(true);
+        for (const x of [-0.8, 0, 0.8]) {
+            const ray = new Vector3(x, -0.5, 0).unproject(camera).sub(camera.position).normalize();
+            if (ray.y >= 0) continue;
+            const point = camera.position.clone().addScaledVector(ray, -camera.position.y / ray.y);
+            const real = point.clone().project(camera);
+            const reflected = point.clone().project(mirror.camera);
+            expect(reflected.x).toBeCloseTo(-real.x, 8);
+            expect(reflected.y).toBeCloseTo(real.y, 8);
+        }
+    }
 });
