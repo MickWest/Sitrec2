@@ -9,6 +9,23 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.168.0 (2026-09-22)
+
+### New Features
+
+- **Panoramic Camera** (Camera → FOV (Zoom) → **Panoramic Camera**): shows the look view as a panorama. **Panorama HFOV °** sets the horizontal span, from 1° to 360°. The vertical span follows the shape of the view, so both directions have the same scale. At 180° vertical, black bars fill the extra height. The scroll wheel changes the span, and terrain, 3D buildings, water reflections, sky labels and mouse selection all work in panorama. Panoramic Camera and Fisheye cannot both be on, and the setting is saved with the sitch. Explained at Help → Documentation → *Panoramic Camera*.
+- **Plat FL** (File → File Analysis → **Browse Track Folder...**): each file's card and preview show the mean altitude of the camera platform, in hundreds of feet. This comes from the track altitude, with no pressure correction.
+- **Open the Track Browser directly**: add ?action=trackbrowser to the Sitrec address to open the Track Browser at startup, without the sitch browser.
+
+### Improvements
+
+- **Page Up / Page Down** (look view): raise or lower the camera at the walking speed (faster with Shift). WASD now keeps the camera's altitude, and moves the camera up to eye level only when a step would take it below the ground.
+- **FOV (Zoom) menu** (Camera → FOV (Zoom)): shows only the settings for the active mode (normal, Fisheye or Panoramic Camera). The switches to change mode are always shown.
+
+### Bug Fixes
+
+- Fixed water reflections showing the wrong part of the scene when the look view is cropped off-center.
+
 ## Version 2.167.0 (2026-09-21)
 
 ### New Features

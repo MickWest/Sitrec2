@@ -297,6 +297,11 @@ export const helpDocs = [
         chatDesc: "Where BOTBench's scenario files come from: how the BOT benchmark scenarios are generated in the Sitrec source repository rather than shipped with it, the curated interchange set (bench-bot-interchange) versus the swept botsets and the single question each set was built to answer, the Input/Truth/All folder layout with its index.json and MANIFEST.json, sealed releases and their hash commitment, and the npm commands that build and export each set. Read for 'where do the bot-NNNN.input.csv files come from', 'how do I regenerate the benchmark scenarios', 'what is a botset', or 'what is a sealed release'.",
     },
     {
+        file: "docs/BuildingMotionDatasets", labelKey: "menus.help.documentation.buildingMotionDatasets",
+        section: "analysis", menuId: "file", role: "reference",
+        chatDesc: "How to build the Mundane (mundane_v1), Extreme and Anomalies motion datasets for BOTBench and the Track Browser from the Sitrec source repository: the npm build commands and their parameters (--fps, --duration, --error, --generic-names, --out), full sets versus single sets, the 20 Extreme target maneuvers and 8 hypothetical Anomalies motions, the ten shared platform paths (two straight controls and eight curved), clean-machine setup, and the output folder layout with its README, manifest.json and timing.json. Read for 'how do I build the extreme / anomalies / mundane dataset', 'what motions are in the Anomalies set', or 'what platform paths do the datasets use'.",
+    },
+    {
         file: "docs/BOTBenchCharts", labelKey: "menus.help.documentation.botBenchCharts",
         section: "analysis", menuId: "file", role: "reference",
         chatDesc: "The Result Charts window (File \u2192 File Analysis \u2192 Result Charts...): interactive charts of a BOTBench result set, and the same figures exported for a paper. Covers the nine figures and what each answers, how to get data in (drop a joined results JSONL, or open it from a finished run), how to read a box plot whose whiskers use Tukey's rule applied in log space, why the exact Clopper-Pearson confidence intervals are wider than the usual ones, exporting SVG or a 300 dpi PNG from the browser with no extra tool, and the optional command-line renderer (npm run bot-charts) with every option. Read for 'how do I chart the BOTBench results', 'what do the whiskers mean', 'how do I export a figure for a paper', or 'why is the chart library downloaded separately'.",
@@ -314,7 +319,7 @@ export const helpDocs = [
     {
         file: "docs/PanoramicCamera", labelKey: "menus.help.documentation.panoramicCamera",
         section: "analysis", menuId: "camera", role: "reference",
-        chatDesc: "Panoramic Camera mode under Camera → FOV (Zoom): independent horizontal FOV from 1 to 360 degrees and vertical FOV from 1 to 180 degrees, wheel zoom, saved settings, and matching a swept panorama photograph. Equirectangular rendering with panorama-aware terrain and 3D tile detail.",
+        chatDesc: "Panoramic Camera mode under Camera → FOV (Zoom): horizontal FOV from 1 to 360 degrees, with a read-only vertical FOV derived from the horizontal FOV and the view's shape so both axes have the same scale (letterboxed at 180 degrees), wheel zoom, saved settings, and matching a swept panorama photograph. Equirectangular rendering with panorama-aware terrain and 3D tile detail.",
     },
     {
         file: "docs/Starlink", labelKey: "menus.help.documentation.starlink",

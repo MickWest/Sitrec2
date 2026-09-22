@@ -176,6 +176,7 @@ const en = {
                 traverseAnalysis: "Traverse Analysis and the Verdict",
                 botBench: "BOTBench — Bearings-Only Traversal Bulk Analysis",
                 botBenchScenarios: "BOTBench Scenario Files — where they come from",
+                buildingMotionDatasets: "Building the Mundane, Extreme and Anomalies Datasets",
                 botBenchCharts: "BOTBench Result Charts",
                 gimbalRecreate: "Recreating Gimbal Step-by-Step",
                 nimitz: "Nimitz / Tic Tac Case Study",

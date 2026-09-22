@@ -9,6 +9,63 @@ lockstep with docs/WhatsNew.md.
 
 ---
 
+## Version 2.168.0 (2026-09-22)
+
+### New Features
+
+- **Panoramic Camera** (Camera → FOV (Zoom) → **Panoramic Camera**; `138364db`, `d36d1e69`; new `src/PanoramicCamera.js` (`panoramic`, `setupPanoramicCamera`, `applyPanoramicState`, `zoomPanorama`, `isPanoramicCamera`, `panoramicProjectVector`, `getPanoramaFrame`, `CNodePanoramicCamera`, `PanoramicRenderer`), new `src/rendering/PanoramaMath.js` (`panoramaFrame`, `panoramaDirection`, `panoramaProject`, `panoramaIntersectsSphere`, `panoramaPixelsPerRadian`, `panoramaFaces`, `panoramaFaceCamera`, `panoramaFrusta`), new `docs/PanoramicCamera.md` (Help → Documentation → *Panoramic Camera*, i18n `menus.help.documentation.panoramicCamera`), new `tests/panorama.test.js` and `tests/panoramicCameraState.test.js`).
+  - **What it does.** The look view renders an equirectangular panorama: horizontal and vertical angles are spaced evenly across the image. The camera's heading, tilt and roll set the panorama's orientation. `setupPanoramicCamera` runs only in custom sitches that have a `lookCamera` (the same gate as Fisheye in `CustomManagerSetup.js`).
+  - **Controls.**
+    - **Panoramic Camera** switches the mode on and off.
+    - **Panorama HFOV °** sets the horizontal span, clamped to 1–360°. At 360° the image wraps behind the camera.
+    - **Panorama VFOV °** is a read-only value. `panoramaFrame` derives it from HFOV and the look view's pixel aspect, so both axes have the same pixels per degree.
+    - When the vertical span reaches 180°, the image height is reduced and the rest of the pane is black (letterboxed), not stretched. A full 360° × 180° panorama therefore has a 2:1 image.
+    - The look-view scroll wheel and pinch change HFOV (`zoomBy` → `zoomPanorama`). Drag-rotate speed uses the fitted image height and the panorama VFOV.
+  - **Rendering.** `PanoramicRenderer` renders up to six cropped cube-face perspective captures, one for each cube face that the angular window touches (`panoramaFaces`). Each capture is padded by 8% so face edges stay clear of the water mirror's edge fade. A shader then reprojects the captures into one equirectangular half-float target. It picks the owning face for each ray by direction, so there is no seam at the back. Exposure, tone mapping and the effect passes then run once on the assembled image, through the new `CNodeView3D.renderEffectsAndOutput` that was split out of `renderTargetAndEffectsInternal`. During a panorama pass these are bypassed: Match Video Aspect, the video pan offset, `yCompress` and `fovOverride`. Panorama is not used while an XR headset is presenting. The experimental ray-traced refraction pass is also skipped in panorama; the normal terrain refraction still applies.
+  - **Terrain and 3D building detail.**
+    - `QuadTreeMap` and `CNodeBuildings3DTiles` select tiles with angular visibility (`panoramaIntersectsSphere`) plus the cropped face frusta (`panoramaFrusta`).
+    - Tile screen-space error comes from the real output pixels per radian (`panoramaPixelsPerRadian`). This value is capped near the poles, and the letterbox bars are not counted.
+    - So a wider panorama covers more ground without asking for the old zoom level everywhere.
+    - The HFOV and VFOV are part of the LOD-change fingerprint in `CNodeTerrainUI` and part of the `TileViewErrorCache` key.
+  - **Things that stay aligned.** These all use the panorama projection:
+    - Mouse picking and ray casting (`setRaycasterFromCamera` in `ViewUtils.js`, used by `setRaycasterFromView`, `CameraControls` and `FitSurfacePick`).
+    - World-to-screen projection (`projectWorldToView`, `projectToCanvas`), and `worldUnitsPerPixel` / `offsetWorldPointPixels`.
+    - Sky overlay labels (`CNodeDisplaySkyOverlay.projectForCamera`, with the `_panoramaProxyFor` tag), including satellites behind the camera.
+    - `CWaterPlanarMirror.detectPlane` finds the water plane from the observer's central camera (`_panoramaBaseCamera`), so a face boundary cannot change the water level or turn off reflection on a face that looks at the sky.
+  - **Mode exclusivity and saving.**
+    - Turning Fisheye on turns Panoramic Camera off, and the reverse. Each mode keeps its own settings, and the normal camera FOV is not changed.
+    - `CNodePanoramicCamera` (id `PanoramicCamera`) saves `panoEnabled` and `panoHFOV`. A `panoVFOV` in an older save is ignored, because VFOV is now derived.
+- **Plat FL in the Track Browser** (File → File Analysis → **Browse Track Folder...**; `c5005202`; `formatPlatformFlightLevel` in `src/CTrackBrowser.js`, `altMeanM` in `summarizeTrackFile` in `src/TrackFiles/TrackFileProbe.js`).
+  - Each card's meta line and the preview stats now show **Plat FL**. This is the mean altitude of the camera-role track that is not the truth track, in hundreds of feet, rounded and padded to three digits (e.g. `Plat FL:250`).
+  - It uses the track's own altitude values, with no standard-pressure correction, so it is not a true pressure flight level. The card tooltip says so.
+  - It is left out when the file has no such track or no finite altitudes.
+- **Open the Track Browser from a URL** (`?action=trackbrowser`; `c5005202`; `STARTUP_ACTION_TRACKBROWSER` and `runStartupToolAction` in `src/StartupActions.js`, `src/index.js`).
+  - The action is matched without regard to letter case. It counts as an explicit startup action, so the sitch browser does not open automatically.
+  - After setup, Sitrec calls `FileManager.ensureTrackBrowser().open()`. This is the same path as `?action=botbench`.
+
+### Improvements
+
+- **Page Up / Page Down change camera altitude, and WASD keeps the altitude** (look view; `138364db`; `updateWASDWalking` in `src/js/CameraControls.js`, `src/KeyBoardHandler.js`, `docs/KeyboardShortcuts.md`, the help text in `CustomSupport.js`).
+  - Page Up and Page Down raise and lower the camera along the local up vector at the WASD speed (10 m/s, or 50 m/s with Shift). An AGL fixed camera changes its AGL height. An absolute-altitude camera is set by LLA with MSL altitude. The change also works in Free Look, and when the camera looks almost straight up or down (where horizontal WASD movement is skipped).
+  - `KeyBoardHandler` stops Page Up and Page Down from scrolling the page while the look view's controls are enabled.
+  - **Behavior change:** before, WASD on an absolute-altitude camera (and in Free Look) snapped the camera to 5 ft above the 3D tile surface on every step. Now it keeps the current altitude. It moves the camera up to 5 ft (`WASD_EYE_HEIGHT`) above the tile surface only when a step would go below that surface. An AGL camera still keeps its height above ground, as before.
+- **Camera FOV menu shows only the active projection's controls** (Camera → FOV (Zoom); `d36d1e69`; new `src/CameraFOVControls.js` `updateCameraFOVControls`, called from `applyFisheyeState`, `setupFisheye`, `applyPanoramicState` and `setupPanoramicCamera`).
+  - With Fisheye or Panoramic Camera on, the normal FOV controls are hidden. With a mode off, that mode's sub-folder shows only its on/off switch.
+  - Hidden controls get a CSS class and `inert`, so they cannot be clicked or reached from the keyboard. Their lil-gui show and disable state is left alone, so a disable set by video aspect locks or EXIF data still applies when they reappear.
+
+### Bug Fixes
+
+- **Water reflections with an asymmetric (cropped) look-view frustum** (`138364db`; `CWaterPlanarMirror.setupCamera` in `src/WaterPlanarMirror.js`, test in `tests/WaterPlanarMirror.test.js`).
+  - Cause: the reflected camera reverses screen-right, but it copied the source projection matrix unchanged. With an off-center crop, the mirror captured the opposite half of the scene and ran out at the crop edge.
+  - Fix: the horizontal off-axis term (`projectionMatrix.elements[8]`) is now negated, and the inverse is rebuilt from it.
+  - The fix was made for the panorama side faces. It applies to any asymmetric look-view frustum; the code comment also names the video pan offset. It changes nothing for a centered frustum.
+
+### Documentation
+
+- **Building the Mundane, Extreme and Anomalies Datasets** (Help → Documentation → *Building the Mundane, Extreme and Anomalies Datasets*; new `docs/BuildingMotionDatasets.md` from `c8ef2714`, registered in `src/docsRegistry.js` next to *BOTBench Scenario Files*, i18n `menus.help.documentation.buildingMotionDatasets`, and linked from the README documentation index).
+  - The page explains how to build the mundane, extreme and anomalies track datasets from the Sitrec source repository, with the build commands and their parameters.
+  - It covers full and single selections, clean-machine setup, the shared platform paths, and the output files and how to import them.
+
 ## Version 2.167.0 (2026-09-21)
 
 ### New Features
