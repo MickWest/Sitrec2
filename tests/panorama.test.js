@@ -1,11 +1,23 @@
 import {PerspectiveCamera, Sphere, Vector3} from "three";
 import {
-    panoramaDirection, panoramaFaceCamera, panoramaFaces, panoramaFrusta,
+    panoramaDirection, panoramaFaceCamera, panoramaFaces, panoramaFrame, panoramaFrusta,
     panoramaIntersectsSphere, panoramaPixelsPerRadian, panoramaProject,
 } from "../src/rendering/PanoramaMath";
 
 const camera = new PerspectiveCamera(30, 2, 0.1, 1e6);
 camera.updateMatrixWorld(true);
+
+test.each([[180, 1600, 900, 101.25, 900], [360, 1600, 900, 180, 800],
+    [360, 800, 1200, 180, 400], [360, 2400, 600, 90, 600], [90, 600, 1200, 180, 1200],
+    [1, 1600, 900, 0.5625, 900]])(
+    "%s degrees in a %s × %s pane keeps equal pixels per degree", (hfov, width, height, vfov, fittedHeight) => {
+        const frame = panoramaFrame(hfov, width, height);
+        expect(frame.width).toBe(width);
+        expect(frame.vfov).toBeCloseTo(vfov);
+        expect(frame.height).toBeCloseTo(fittedHeight);
+        expect(frame.width / hfov).toBeCloseTo(frame.height / frame.vfov);
+        expect(frame.height).toBeLessThanOrEqual(height);
+    });
 
 test.each([[1, 1], [90, 60], [180, 90], [280, 120], [360, 180]])(
     "%s × %s angular projection round trips through the rear seam and poles", (h, v) => {
@@ -68,6 +80,14 @@ test("widening the panorama reduces tile detail at fixed output dimensions", () 
     const wide = panoramaPixelsPerRadian(tile, camera, 1600, 800, 360, 180);
     expect(wide).toBeCloseTo(narrow / 4);
     expect(panoramaPixelsPerRadian(tile, camera, 3200, 1600, 360, 180)).toBeCloseTo(wide * 2);
+});
+
+test("extra letterbox height does not request finer tiles", () => {
+    const tile = sphere(0, 0);
+    const frames = [400, 800, 1600].map(height => panoramaFrame(360, 800, height));
+    const errors = frames.map(f => panoramaPixelsPerRadian(tile, camera, f.width, f.height, 360, f.vfov));
+    expect(errors[0]).toBeCloseTo(errors[1]);
+    expect(errors[0]).toBeCloseTo(errors[2]);
 });
 
 test("visibility and capture frusta follow the camera pose", () => {

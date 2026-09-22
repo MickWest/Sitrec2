@@ -2,11 +2,16 @@ import {HalfFloatType, LinearFilter, LinearSRGBColorSpace, ShaderMaterial, Vecto
 import {Globals, guiMenus, NodeMan, setRenderOne} from "./Globals";
 import {CNode} from "./nodes/CNode";
 import {applyFisheyeState, fisheye} from "./FisheyeProjection";
-import {panoramaFaces, panoramaFaceCamera, panoramaProject} from "./rendering/PanoramaMath";
+import {panoramaFaces, panoramaFaceCamera, panoramaFrame, panoramaProject} from "./rendering/PanoramaMath";
+import {updateCameraFOVControls} from "./CameraFOVControls";
 
-const defaults = {enabled: false, hfov: 180, vfov: 60};
-export const panoramic = {...defaults};
+const defaults = {enabled: false, hfov: 180};
+export const panoramic = {...defaults, get vfov() { return getPanoramaFrame().vfov; }};
 const clamp = (value, max, fallback) => Number.isFinite(value) ? Math.max(1, Math.min(max, value)) : fallback;
+
+export function getPanoramaFrame(view = NodeMan.get("lookView", false)) {
+    return panoramaFrame(panoramic.hfov, view?.widthPx, view?.heightPx);
+}
 
 export function isPanoramicCamera(camera) {
     return panoramic.enabled && !!camera && (camera._panoramaProxyFor ?? camera) === NodeMan.get("lookCamera", false)?.camera;
@@ -14,20 +19,16 @@ export function isPanoramicCamera(camera) {
 
 export function applyPanoramicState() {
     panoramic.hfov = clamp(panoramic.hfov, 360, defaults.hfov);
-    panoramic.vfov = clamp(panoramic.vfov, 180, defaults.vfov);
     if (panoramic.enabled && fisheye.enabled) {
         fisheye.enabled = false;
         applyFisheyeState();
     }
+    updateCameraFOVControls();
     setRenderOne(true);
 }
 
 export function zoomPanorama(factor) {
-    // Keep the two fields' ratio while zooming, including at either limit.
-    factor = Math.max(1 / panoramic.hfov, 1 / panoramic.vfov,
-        Math.min(factor, 360 / panoramic.hfov, 180 / panoramic.vfov));
     panoramic.hfov *= factor;
-    panoramic.vfov *= factor;
     applyPanoramicState();
 }
 
@@ -43,14 +44,14 @@ export function panoramicProjectVector(v, camera) {
 class CNodePanoramicCamera extends CNode {
     constructor(v) {
         super(v);
-        this.addSimpleSerials(["panoEnabled", "panoHFOV", "panoVFOV"]);
+        // Older saves may contain panoVFOV. Ignore it: the view now determines VFOV.
+        this.addSimpleSerials(["panoEnabled", "panoHFOV"]);
     }
     get panoEnabled() { return panoramic.enabled; }
     set panoEnabled(v) { panoramic.enabled = !!v; }
     get panoHFOV() { return panoramic.hfov; }
     set panoHFOV(v) { panoramic.hfov = v; }
     get panoVFOV() { return panoramic.vfov; }
-    set panoVFOV(v) { panoramic.vfov = v; }
     modDeserialize(v) { super.modDeserialize(v); applyPanoramicState(); }
     dispose() { Object.assign(panoramic, defaults); super.dispose(); }
 }
@@ -62,12 +63,13 @@ export function setupPanoramicCamera() {
     parent.folders.find(f => f._title === "Panoramic Camera")?.destroy();
     const folder = parent.addFolder("Panoramic Camera").close();
     folder.add(panoramic, "enabled").listen().name("Panoramic Camera").onChange(applyPanoramicState)
-        .tooltip("Render a swept panorama in the look view. Horizontal and vertical angles have independent fields of view; the normal FOV controls are preserved. The look-view scroll wheel zooms both panorama fields together.");
+        .tooltip("Render a swept panorama with equal horizontal and vertical angular scale. VFOV follows the view's shape, with letterboxing at 180°. The look-view scroll wheel adjusts HFOV.");
     folder.add(panoramic, "hfov", 1, 360, 0.1).listen().name("Panorama HFOV °").onChange(applyPanoramicState)
         .tooltip("Horizontal angular span of the panorama. 360° wraps all the way around the camera.");
-    folder.add(panoramic, "vfov", 1, 180, 0.1).listen().name("Panorama VFOV °").onChange(applyPanoramicState)
-        .tooltip("Vertical angular span. 180° includes both poles. Angles are evenly spaced across the image.");
+    folder.add(panoramic, "vfov", 0, 180, 0.1).listen().decimals(1).disable().name("Panorama VFOV °")
+        .tooltip("Derived from HFOV and the view's aspect ratio to keep the same pixels per degree on both axes. At 180°, black bars fill any extra height.");
     Globals.panoramic = panoramic;
+    updateCameraFOVControls();
 }
 
 // Cache the targets for up to six cropped perspective faces, avoiding GPU
@@ -114,6 +116,7 @@ export class PanoramicRenderer {
         view.renderTargetAndEffectsInternal(null, {setupOnly: true});
         renderer.getDrawingBufferSize(this.size);
         const width = this.size.x, height = this.size.y;
+        const {vfov} = getPanoramaFrame(view);
         this.target.texture.type = view.renderTargetA.texture.type;
         this.target.setSize(width, height);
         renderer.setRenderTarget(this.target);
@@ -122,9 +125,9 @@ export class PanoramicRenderer {
         const savedOffset = view.applyCameraOffset();
         camera.updateMatrixWorld(true);
         view._panoramaBaseCamera = camera;
-        const density = Math.max(width / (panoramic.hfov * Math.PI / 180), height / (panoramic.vfov * Math.PI / 180));
+        const density = Math.max(width / (panoramic.hfov * Math.PI / 180), height / (vfov * Math.PI / 180));
         const limit = Math.min(renderer.capabilities.maxTextureSize, Math.max(width, height) * 2);
-        const faces = panoramaFaces(panoramic.hfov, panoramic.vfov);
+        const faces = panoramaFaces(panoramic.hfov, vfov);
         const names = ["renderTargetAntiAliased", "renderTargetA", "renderTargetB"];
         const savedTargets = names.map(name => view[name]);
         try {
@@ -152,7 +155,7 @@ export class PanoramicRenderer {
                 const source = view.renderTargetAndEffectsInternal(null, view._panoramaFace);
                 const u = this.material.uniforms;
                 u.tDiffuse.value = source.texture;
-                u.angularFov.value.set(panoramic.hfov * Math.PI / 180, panoramic.vfov * Math.PI / 180);
+                u.angularFov.value.set(panoramic.hfov * Math.PI / 180, vfov * Math.PI / 180);
                 u.forward.value = face.forward; u.right.value = face.right; u.up.value = face.up;
                 u.bounds.value.set(...face.bounds);
                 renderer.setRenderTarget(this.target);

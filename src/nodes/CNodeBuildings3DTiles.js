@@ -33,7 +33,7 @@ import {
 } from "../atmosphere/terrestrialRefraction";
 import {currentTerrestrialLiftContext} from "../atmosphere/refractionSettings";
 import {TileViewErrorCache} from "../rendering/TileViewErrorCache";
-import {isPanoramicCamera, panoramic} from "../PanoramicCamera";
+import {getPanoramaFrame, isPanoramicCamera, panoramic} from "../PanoramicCamera";
 import {panoramaFrusta, panoramaIntersectsSphere, panoramaPixelsPerRadian} from "../rendering/PanoramaMath";
 
 const DEG2RAD = Math.PI / 180;
@@ -758,6 +758,10 @@ class PerViewTiles {
         group.updateWorldMatrix(true, false);
         const size = view.renderer.getSize(_tilesSizeTmp);
         const panoKey = isPanoramicCamera(cam) ? `${panoramic.hfov}/${panoramic.vfov}` : "";
+        if (panoKey) {
+            const frame = getPanoramaFrame(view);
+            size.y = size.x * frame.height / frame.width;
+        }
         const refractionK = Sit.terrestrialRefraction ? resolveTerrestrialK(Sit) : 0;
         // Compare complete matrices: sums can cancel during a diagonal move or
         // rotation. The projection includes video pan, compression and ortho mode.

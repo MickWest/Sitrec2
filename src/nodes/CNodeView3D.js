@@ -38,7 +38,7 @@ import {GlobalDaySkyScene, GlobalNightSkyScene, GlobalScene, GlobalSunSkyScene} 
 import {ATMOSPHERE_PROJECTION_GLSL, atmosphereProjectionUniforms, setAtmosphereProjection} from "../atmosphere/AtmosphereProjection";
 import {materialAtmosphereUniforms, withMaterialAtmosphere} from "../atmosphere/MaterialAtmosphere";
 import {renderFisheyeMask, fisheye, fisheyeUniforms, fisheyeStarLens, isFisheyeCamera, FISHEYE_TYPE_INDEX} from "../FisheyeProjection";
-import {isPanoramicCamera, PanoramicRenderer} from "../PanoramicCamera";
+import {getPanoramaFrame, isPanoramicCamera, PanoramicRenderer} from "../PanoramicCamera";
 import {worldUnitsPerPixel, offsetWorldPointPixels} from "../ViewUtils";
 import {DRAG} from "../mouseMoveView";
 import {GPUMemoryMonitor} from "../GPUMemoryMonitor";
@@ -2262,6 +2262,10 @@ export class CNodeView3D extends CNodeViewCanvas {
                     this._matchVideoAspectFOV = undefined;
                     this._matchVideoAspectAspect = undefined;
                 }
+                if (panoramaPass) {
+                    const frame = getPanoramaFrame(this);
+                    height = width * frame.height / frame.width;
+                }
 
                 // The vertical fraction of the render target Match Video Aspect actually
                 // draws into, published for adjustPointScale — camera.fov has narrowed to
@@ -2278,19 +2282,20 @@ export class CNodeView3D extends CNodeViewCanvas {
                 // Video Aspect is off.
                 this.letterboxScaleY = heightBeforeMatch > 0 ? height / heightBeforeMatch : 1;
 
-                // Letterbox CSS: center the canvas within its div when aspect doesn't match
-                if (this._matchVideoAspect && !this._wasMatchingVideoAspect) {
+                // Both video matching and panoramic pole limits can letterbox the image.
+                const matchCanvasAspect = this._matchVideoAspect || !!panoramaPass;
+                if (matchCanvasAspect && !this._wasMatchingCanvasAspect) {
                     this.div.style.backgroundColor = '#000';
-                    this._wasMatchingVideoAspect = true;
-                } else if (!this._matchVideoAspect && this._wasMatchingVideoAspect) {
+                    this._wasMatchingCanvasAspect = true;
+                } else if (!matchCanvasAspect && this._wasMatchingCanvasAspect) {
                     this.canvas.style.width = '100%';
                     this.canvas.style.height = '100%';
                     this.canvas.style.left = '0px';
                     this.canvas.style.top = '0px';
                     this.div.style.backgroundColor = '';
-                    this._wasMatchingVideoAspect = false;
+                    this._wasMatchingCanvasAspect = false;
                 }
-                if (this._matchVideoAspect) {
+                if (matchCanvasAspect) {
                     // Compute CSS dimensions from div size and video aspect
                     const divW = this.div.clientWidth;
                     const divH = this.div.clientHeight;

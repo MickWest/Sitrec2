@@ -48,6 +48,7 @@ import {CNode} from "./nodes/CNode";
 import {GlobalScene, GlobalNightSkyScene, GlobalDaySkyScene, GlobalSunSkyScene} from "./LocalFrame";
 import {LENS_PRESETS, makeLens} from "./CameraLens";
 import {getLocalNorthVector, getLocalUpVector} from "./SphericalMath";
+import {updateCameraFOVControls} from "./CameraFOVControls";
 
 // ── Shared uniforms ─────────────────────────────────────────────────
 // Every patched material references these same objects, so one update per
@@ -794,6 +795,7 @@ export function applyFisheyeState() {
         restoreSceneState();
         _fisheyeArmed = false;
     }
+    updateCameraFOVControls();
     setRenderOne(true);
 }
 
@@ -882,4 +884,5 @@ export function setupFisheye() {
     Globals.fisheye = fisheye;
 
     if (fisheye.enabled) applyFisheyeState();
+    else updateCameraFOVControls();
 }

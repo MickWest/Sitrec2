@@ -10,7 +10,7 @@ import {assert} from "./assert";
 import "./threeExt";
 import {EventManager} from "./CEventManager";
 import {removeMaterialByCacheKeyImpl} from "./QuadTreeTileMaterial";
-import {isPanoramicCamera, panoramic} from "./PanoramicCamera";
+import {getPanoramaFrame, isPanoramicCamera, panoramic} from "./PanoramicCamera";
 import {panoramaFrusta, panoramaIntersectsSphere, panoramaPixelsPerRadian} from "./rendering/PanoramaMath";
 
 // Reusable scratch objects to avoid garbage collection pressure.
@@ -561,6 +561,8 @@ export class QuadTreeMap {
         camera._panoramaWidth = view.widthPx || 1920;
         camera._panoramaFrusta = null;
         if (isPanoramicCamera(camera)) {
+            // Black bars contain no scene pixels and must not raise tile detail.
+            camera._viewportHeightPx = getPanoramaFrame(view).height;
             camera.viewFrustum = {intersectsSphere: sphere => panoramaIntersectsSphere(sphere, camera, panoramic.hfov, panoramic.vfov)};
             camera.dilatedFrustum = {intersectsSphere: sphere => panoramaIntersectsSphere(sphere, camera, panoramic.hfov, panoramic.vfov, SUBDIVISION_FOV_DILATION)};
             camera._panoramaFrusta = panoramaFrusta(camera, panoramic.hfov, panoramic.vfov);

@@ -34,7 +34,7 @@ import * as LAYER from "../LayerMasks";
 import {isViewDragging} from "../DragResizeUtils";
 import {fitViewSyncActive, fitViewSyncPan, fitViewSyncWheel} from "../FitViewSync";
 import {fisheye, fisheyeEquivalentFOVDeg, isFisheyeCamera, setFisheyeFov} from "../FisheyeProjection";
-import {isPanoramicCamera, panoramic, zoomPanorama} from "../PanoramicCamera";
+import {getPanoramaFrame, isPanoramicCamera, panoramic, zoomPanorama} from "../PanoramicCamera";
 
 // Recovery height when a WASD step goes below the loaded ground surface.
 const WASD_EYE_HEIGHT = f2m(5);
@@ -972,8 +972,9 @@ class CameraMapControls {
 
 			case STATE.PAN: // Rotate the camera about itself
 
-				const xRotate = 2 * Math.PI * this.mouseDelta.x / this.view.heightPx / 4;
-				const yRotate = 2 * Math.PI * this.mouseDelta.y / this.view.heightPx / 4
+				const dragHeight = isPanoramicCamera(this.camera) ? getPanoramaFrame(this.view).height : this.view.heightPx;
+				const xRotate = 2 * Math.PI * this.mouseDelta.x / dragHeight / 4;
+				const yRotate = 2 * Math.PI * this.mouseDelta.y / dragHeight / 4
 
 				//				console.log("PAN: "+xRotate+","+yRotate)
 

@@ -3,6 +3,14 @@ import {Frustum, Matrix4, PerspectiveCamera, Quaternion, Vector3} from "three";
 const RAD = Math.PI / 180;
 const direction = new Vector3();
 
+// Equal pixels per degree on both axes. Fill the pane until the vertical span
+// reaches both poles, then reduce the image height instead of stretching it.
+export function panoramaFrame(hfov, width, height) {
+    if (!(width > 0 && height > 0)) { width = 16; height = 9; }
+    const aspect = Math.max(width / height, hfov / 180);
+    return {width, height: width / aspect, vfov: hfov / aspect};
+}
+
 // Longitude and latitude are measured in the camera's frame. Unlike a
 // cylindrical tangent mapping this remains finite at a vertical FOV of 180°.
 export function panoramaDirection(x, y, hfov, vfov, target = new Vector3()) {
