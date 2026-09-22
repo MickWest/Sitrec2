@@ -311,6 +311,10 @@ function anomalousTrack({n, fps, event, altitudeAGL = 3000, baseSpeed = 120}) {
 // object (without venus — that lives in venus.js to keep the astronomy import
 // out of the common path), plus events[] for anomalous kinds.
 export function generateTargetTruth(targetSpec, {site, n, fps, seed, windSeed, wind}) {
+    if (targetSpec.family === "motion-v1") {
+        const {generateMotionV1Truth} = require("./motionV1Targets");
+        return generateMotionV1Truth(targetSpec, {n, fps});
+    }
     const p = targetSpec.parameters ?? {};
     const valid = new Uint8Array(n).fill(1);
     const mk = (positionENU) => ({kind: "track", family: targetSpec.family, positionENU, valid});

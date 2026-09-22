@@ -53,7 +53,10 @@ export function canonical(obj) {
 // (audit R2), so realizations differ from version 1 by design.
 export const GENERATOR_VERSION = "1.1";
 
-export function generateScenario(spec, {scenarioSeed, generatorVersion = GENERATOR_VERSION} = {}) {
+export function generateScenario(spec, {scenarioSeed, generatorVersion = GENERATOR_VERSION,
+    // Batch generators may reuse deterministic target truth across platform
+    // and observation variants. Copy event records before adding pair metadata.
+    targetTruth = null} = {}) {
     if (!Number.isInteger(scenarioSeed)) {
         throw new Error("botbench: scenarioSeed (integer) is required");
     }
@@ -79,8 +82,14 @@ export function generateScenario(spec, {scenarioSeed, generatorVersion = GENERAT
     // across members and may stay.
     delete targetGroup.parameters.impulse;
     delete targetGroup.parameters.paired;
+    const platformGroup = {...spec.platform};
+    if (targetGroup.parameters.fullCoverage) {
+        targetGroup.parameters.fullCoverage = {...targetGroup.parameters.fullCoverage};
+        delete targetGroup.parameters.fullCoverage.clipStartSeconds;
+        delete platformGroup.timeOffsetSeconds;
+    }
     const scenarioGroupId = `bg-${fnv1a32(canonical({
-        platform: spec.platform,
+        platform: platformGroup,
         target: targetGroup,
         wind: spec.wind,
         rangeM: spec.initialHorizontalRangeM ?? null,
@@ -106,12 +115,15 @@ export function generateScenario(spec, {scenarioSeed, generatorVersion = GENERAT
 
     // --- platform ---------------------------------------------------------
     const R = spec.initialHorizontalRangeM;
-    const {positionENU: platformPos, feasibility} =
+    const {positionENU: platformPos, feasibility, profile: platformProfile} =
         generatePlatformPath(spec.platform, n, times, fps, R);
 
     // --- target truth ------------------------------------------------------
     let target, events, capabilityProfile = null;
-    if (spec.target.kind === "venus") {
+    if (targetTruth) {
+        target = targetTruth.target;
+        events = targetTruth.events.map(e => ({...e}));
+    } else if (spec.target.kind === "venus") {
         // Lazy import keeps astronomy-engine out of non-venus scenarios.
         // eslint-disable-next-line global-require
         const {generateVenusTruth} = require("./venus");
@@ -157,13 +169,32 @@ export function generateScenario(spec, {scenarioSeed, generatorVersion = GENERAT
     // --- observation --------------------------------------------------------
     const cleanDir = cleanDirections(platformPos, target, n);
     const observation = generateObservation(obsSpec, cleanDir, n, fps, rngSeeds.observation);
+    if (obsSpec.visibility === "opaque-water") {
+        if (spec.siteId !== "ocean" || target.kind !== "track") {
+            throw new Error("opaque-water observations require a finite track at the ocean site");
+        }
+        observation.measurementAvailable = new Uint8Array(n).fill(1);
+        observation.occludedCount = 0;
+        for (let f = 0; f < n; f++) {
+            if (target.positionENU[3 * f + 2] < 0) {
+                observation.measurementAvailable[f] = 0;
+                observation.excluded.add(f);
+                observation.occludedCount++;
+            }
+        }
+    }
 
     // --- diagnostics ---------------------------------------------------------
     const activeFrames = [];
     const allFrames = [];
     for (let f = 0; f < n; f++) {
         allFrames.push(f);
-        if (observation.inFov[f]) activeFrames.push(f);
+        if (observation.inFov[f] && observation.measurementAvailable?.[f] !== 0) activeFrames.push(f);
+    }
+    if (observation.measurementAvailable) {
+        observation.realizedRmsDegActiveFrames = activeFrames.length
+            ? Math.sqrt(activeFrames.reduce((sum, f) => sum + observation.angularErrorDeg[f] ** 2, 0) / activeFrames.length)
+            : null;
     }
     const condObs = cvDesignConditioning(observation.observedDirectionENU, times, activeFrames);
     const condClean = cvDesignConditioning(cleanDir, times, allFrames);
@@ -193,7 +224,7 @@ export function generateScenario(spec, {scenarioSeed, generatorVersion = GENERAT
             surfaceModel: "flat-elevation-proxy",
             epochISO: spec.epochISO ?? "2025-02-01T02:00:00Z",
         },
-        platform: {positionENU: platformPos, feasibility},
+        platform: {positionENU: platformPos, feasibility, ...(platformProfile ? {profile: platformProfile} : {})},
         target,
         capabilityProfile,
         wind: {displacementPerFrameENU: windStep, sampledVelocityENU: windVel},

@@ -327,13 +327,14 @@ function measurementFields(scenario, i, trackSource, sigmaStr, maxR) {
     const b = i * 3;
     const S = scenario.platform.positionENU;
     const D = scenario.observation.observedDirectionENU;
+    const available = scenario.observation.measurementAvailable?.[i] !== 0;
     return [
         trackSource,
         f(scenario.times[i]),
         f(S[b]), f(S[b + 1]), f(S[b + 2]),
-        f(D[b]), f(D[b + 1]), f(D[b + 2]),
+        available ? f(D[b]) : "", available ? f(D[b + 1]) : "", available ? f(D[b + 2]) : "",
         maxR, sigmaStr,
-        angularDiameterMaxField(scenario, i),
+        available ? angularDiameterMaxField(scenario, i) : "",
     ];
 }
 
@@ -436,7 +437,8 @@ export function invalidFrames(scenario) {
     const targetValid = scenario.target.valid ?? null;
     const out = [];
     for (let i = 0; i < scenario.n; i++) {
-        if (!(scenario.observation.inFov[i] && (!targetValid || targetValid[i]))) out.push(i);
+        if (!(scenario.observation.inFov[i] && (!targetValid || targetValid[i]))
+            || scenario.observation.measurementAvailable?.[i] === 0) out.push(i);
     }
     return out;
 }
@@ -511,6 +513,8 @@ export function buildScenarioJson(scenario, trackId, {
             // block id names the experimental cell this scenario came from,
             // which is a truth hint in a sealed set.
             trackSource,
+            ...(scenario.spec.observation.visibility ? {visibility: scenario.spec.observation.visibility,
+                missingMeasurementRule: "Submerged targets have blank LOS and angular diameter fields; see invalidFrames."} : {}),
         },
         seal,
     };
@@ -576,6 +580,8 @@ export function buildTruthJson(scenario, trackId,
         // defensible. Null where the scenario declares no size.
         objectDiameterM: scenario.spec.target?.diameterM ?? null,
         anomalous: scenario.spec.target.parameters?.anomalous === true,
+        ...(scenario.spec.target.family === "motion-v1" ? {motionProfile: t.profile} : {}),
+        ...(scenario.platform.profile ? {platformProfile: scenario.platform.profile} : {}),
         // The whole answer for a direction-kind target, because truth.csv's
         // position columns are empty for one: at effective infinity there is no
         // position to write. Flat [x,y,z, x,y,z, ...] unit vectors in the frame
@@ -634,6 +640,7 @@ export function buildTruthJson(scenario, trackId,
             maxDeg: obs.realizedMaxDeg,
             outOfFrameCount: obs.outOfFrameCount,
             outOfFrameFraction: obs.outOfFrameFraction,
+            ...(obs.occludedCount !== undefined ? {occludedCount: obs.occludedCount} : {}),
         },
         // Truth-side wind. NOT the full field: the mean vector below is a
         // single mid-clip sample of the BASE wind, which for a layered/gusty
@@ -736,11 +743,14 @@ export function writeInterchange(scenario, challengeDir, opts = {}) {
     fs.mkdirSync(allDir, {recursive: true});
     if (metaDir) fs.mkdirSync(metaDir, {recursive: true});
 
-    const inputFile = path.join(inputDir, `${basename}.input.csv`);
+    // Folder names distinguish the CSV roles when plain numbered filenames
+    // are requested. The default interchange naming remains unchanged.
+    const csvName = role => `${basename}${opts.plainCsvNames ? "" : `.${role}`}.csv`;
+    const inputFile = path.join(inputDir, csvName("input"));
     const scenarioFile = path.join(metaDir ?? inputDir, `${basename}.scenario.json`);
-    const truthFile = path.join(truthDir, `${basename}.truth.csv`);
+    const truthFile = path.join(truthDir, csvName("truth"));
     const truthJsonFile = path.join(metaDir ?? truthDir, `${basename}.truth.json`);
-    const allFile = path.join(allDir, `${basename}.all.csv`);
+    const allFile = path.join(allDir, csvName("all"));
 
     const inputCsv = buildInputCsv(scenario, trackId, trackSource);
     const truthCsv = buildTruthCsv(scenario, trackId);

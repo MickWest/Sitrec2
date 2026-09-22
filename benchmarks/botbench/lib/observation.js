@@ -83,11 +83,13 @@ export function offsetSeries(obsSpec, n, fps, observationSeed) {
         if (!Number.isInteger(stride) || stride < 1) {
             throw new Error("botbench: wobbleFps must be a positive integer multiple of fps");
         }
+        const start = (obsSpec.timeOffsetSeconds ?? 0) * wobbleFps;
+        if (!Number.isInteger(start) || start < 0) throw new Error("botbench: invalid wobble time offset");
         const w = generateWobbleOffsets({seed: observationSeed, ...obsSpec.wobble},
-            (n - 1) * stride + 1, wobbleFps);
+            start + (n - 1) * stride + 1, wobbleFps);
         for (let f = 0; f < n; f++) {
-            pan[f] = w[f * stride].pan;
-            tilt[f] = w[f * stride].tilt;
+            pan[f] = w[start + f * stride].pan;
+            tilt[f] = w[start + f * stride].tilt;
         }
         return {pan, tilt};
     }

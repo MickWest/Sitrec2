@@ -1,4 +1,4 @@
-// platforms.js — the eight fixed-wing sensor paths (PLAN.md "Platform
+// platforms.js — fixed-wing sensor paths (PLAN.md "Platform
 // configurations"), analytic/integrated in the scenario ENU frame.
 //
 // Frame convention (documented in PLAN.md): ENU origin is the target's initial
@@ -8,6 +8,8 @@
 // Feasibility contract: every path must satisfy R_turn >= v^2 / (g tan 30deg).
 // Generation FAILS LOUDLY (throws) rather than silently altering speed/bank;
 // the feasibility record is still returned on success for the scenario object.
+
+import {buildTurnProgram} from "./turnPrograms";
 
 const G = 9.80665;
 const DEG = Math.PI / 180;
@@ -176,8 +178,9 @@ function centeredTurnXY(s, t, x0, y0) {
 //        bankAmplitudeDeg?, bankPeriodSeconds?, and for "racetrack":
 //        legSeconds?, phaseSeconds?, headingDeg?, turnDir?, and for
 //        "centered-turn": headingDeg?, turnDeg?, turnDir?, turnStartFraction?,
-//        turnEndFraction?}
-// Returns {positionENU: Float64Array(3n), feasibility}.
+//        turnEndFraction?; "turn-program": headingDeg?, segments with
+//        fraction and turnRateDegS}
+// Returns {positionENU: Float64Array(3n), feasibility, profile?}.
 export function generatePlatformPath(spec, n, times, fps, initialHorizontalRangeM) {
     const v = spec.speedMS ?? 70;
     const z = spec.altitudeAGL ?? 3000;
@@ -185,8 +188,21 @@ export function generatePlatformPath(spec, n, times, fps, initialHorizontalRange
     const pos = new Float64Array(n * 3);
     const rMin = minAllowedRadius(v);
     let actualMinRadius = Infinity;
+    let profile;
 
     switch (spec.kind) {
+        case "turn-program": {
+            const program = buildTurnProgram(spec, times[n - 1] - times[0]);
+            for (let f = 0; f < n; f++) {
+                const state = program.state(times[f] - times[0], f, fps);
+                pos[f * 3] = state.x;
+                pos[f * 3 + 1] = state.y - R;
+                pos[f * 3 + 2] = z;
+            }
+            actualMinRadius = program.minimumRadiusM;
+            profile = program.profile;
+            break;
+        }
         case "orbit-point":
             // Orbit the target's initial ground point; radius = initial separation.
             actualMinRadius = fillOrbit(pos, n, times, 0, 0, R, 0, -R, z, v);
@@ -301,5 +317,5 @@ export function generatePlatformPath(spec, n, times, fps, initialHorizontalRange
             + `min radius ${actualMinRadius.toFixed(0)} m < required ${rMin.toFixed(0)} m `
             + `(v=${v} m/s, phiMax=${PHI_MAX_DEG} deg)`);
     }
-    return {positionENU: pos, feasibility};
+    return {positionENU: pos, feasibility, ...(profile ? {profile} : {})};
 }
