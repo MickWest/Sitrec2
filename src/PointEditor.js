@@ -1,5 +1,6 @@
 import {registerEditorInteraction} from "./EditorInteraction";
 import {PointEditorWidget} from "./PointEditorWidget";
+import {showPointContextMenu} from "./PointContextMenu";
 import {
     BoxGeometry,
     ConeGeometry,
@@ -420,21 +421,9 @@ export class PointEditor {
         this.onDownButton = event.button;
     }
 
-    /**
-     * Right-click a control point to delete it.
-     *
-     * Called from the view's context-menu path (CNodeView3DMouse.onContextMenuInner)
-     * rather than from a pointerdown of our own, so that "delete this point" and "open
-     * the track menu" are decided in one place: whichever the click landed on wins, and
-     * there is no race between two listeners over the same button press.
-     *
-     * The point under the widget is hittable too — attach() hides the cube, but a
-     * Raycaster ignores .visible, so the point you are currently positioned on deletes
-     * like any other.
-     *
-     * @returns {boolean} true if a point was deleted, and the caller should not open a menu
-     */
-    deletePointAtEvent(event) {
+    // The cube hidden under the movement widget remains pickable. Capture the
+    // object, not its index: another edit can shift the array while the menu is open.
+    showPointMenuAtEvent(event) {
         if (!this.enable) return false;
         if (!this.setupRaycasterForEvent(event)) return false;
 
@@ -444,12 +433,17 @@ export class PointEditor {
         const index = this.splineHelperObjects.findIndex(ob => ob === object);
         if (index < 0) return false;
 
-        // Never the last one — see removePointByIndex. Reported rather than silently
-        // ignored, or a click that does nothing looks like a missed hit.
-        if (this.numPoints <= 1) {
-            console.log("Not deleting the only control point of this track");
-            return false;
-        }
+        showPointContextMenu(event, `Track Point: Frame ${this.frameNumbers[index]}`, [{
+            label: "Delete Point", enabled: this.numPoints > 1,
+            action: () => {
+                if (this.enable) this.deletePointWithUndo(this.splineHelperObjects.indexOf(object));
+            },
+        }]);
+        return true;
+    }
+
+    deletePointWithUndo(index) {
+        if (!(index >= 0 && index < this.numPoints) || this.numPoints <= 1) return false;
 
         const frame = this.frameNumbers[index];
         const position = this.positions[index].clone();

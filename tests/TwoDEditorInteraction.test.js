@@ -159,6 +159,21 @@ test("current curve grab offset is retained through final release", () => {
     expect(Sit.aFrame).toBe(0);
 });
 
+test("right-click with a delete modifier leaves current and video curves unchanged", () => {
+    const curve = currentCurve();
+    const before = curve.points.map(p => ({...p}));
+    send(curve.canvas, "pointerdown", 200, 200, {button: 2, buttons: 2, altKey: true});
+    send(document, "pointerup", 200, 200, {button: 2});
+    expect(curve.points).toEqual(before);
+    const video = videoEditor(CNodeVideoCurvesView);
+    video.graphRect = {left: 0, right: 255, top: 0, bottom: 255, width: 255, height: 255};
+    video.points = [{x: 0, y: 0}, {x: 128, y: .5}, {x: 255, y: 1}];
+    send(video.div, "pointerdown", 128, 127.5, {button: 2, buttons: 2, altKey: true});
+    send(document, "pointerup", 128, 127.5, {button: 2});
+    expect(video.points).toEqual([{x: 0, y: 0}, {x: 128, y: .5}, {x: 255, y: 1}]);
+    expect(UndoManager.add).not.toHaveBeenCalled();
+});
+
 test.each(["ctrlKey", "metaKey"])("current curve %s adds one undoable point", modifier => {
     const e = currentCurve();
     send(e.canvas, "pointerdown", 250, 220, {[modifier]: true});

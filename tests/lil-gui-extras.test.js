@@ -723,6 +723,22 @@ describe('CGuiMenuBar.placeMenuBesidePoint', () => {
         document.body.innerHTML = '';
     });
 
+    test('point context menus can coexist with an editing panel and close independently', () => {
+        const panel = menuBar.createStandaloneMenu('Track', 800, 100, false);
+        const first = menuBar.createStandaloneMenu('Track Point', 400, 200, true, true);
+        expect(first).not.toBeNull();
+        expect(menuBar.activePersistentMenu).toBe(panel);
+        expect(menuBar.activeContextMenu).toBe(first);
+        const second = menuBar.createStandaloneMenu('Track Point', 420, 200, true, true);
+        expect(first.domElement.isConnected).toBe(false);
+        expect(menuBar.activeContextMenu).toBe(second);
+        second.destroy();
+        expect(menuBar.activeContextMenu).toBeNull();
+        expect(menuBar.activePersistentMenu).toBe(panel);
+        expect(panel.domElement.isConnected).toBe(true);
+        panel.destroy();
+    });
+
     test('shifts right by half the menu width when there is room', () => {
         const {left, width} = place(858, 1900);
         expect(width).toBe(240);

@@ -95,7 +95,7 @@ test("resizing stops after pointer cancellation and disposal", () => {
     document.dispatchEvent(event("pointerup", 240, 100));
 });
 
-test("legacy curve right-click deletes one pair without adding a replacement", () => {
+test("legacy curve right-click never edits points on press", () => {
     const points = Array.from({length: 6}, (_, i) => ({x: i, y: i}));
     const removed = points[2];
     const editor = Object.assign(Object.create(MetaBezierCurveEditor.prototype), {
@@ -107,10 +107,10 @@ test("legacy curve right-click deletes one pair without adding a replacement", (
     try {
         editor.mouseDown({button: 2, layerX: 100, layerY: 100, preventDefault() {}, stopPropagation() {}});
     } finally { log.mockRestore(); }
-    expect(points).not.toContain(removed);
-    expect(points).toHaveLength(4);
+    expect(points).toContain(removed);
+    expect(points).toHaveLength(6);
     expect(points.some(p => p.x === 100 && p.y === 100)).toBe(false);
-    expect(editor.onChange).toHaveBeenCalledTimes(1);
+    expect(editor.onChange).not.toHaveBeenCalled();
 });
 
 test.each(["pointercancel", "blur", "lostpointercapture"])("%s completes once at the last valid position", type => {

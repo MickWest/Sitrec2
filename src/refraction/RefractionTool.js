@@ -252,7 +252,7 @@ export class RefractionTool {
         const profiles = element("div", "rf-profiles", null, page);
         this.addEditor(profiles, "Temperature profile", "Temperature · °C", "temperatureCurve", -40, 100);
         this.addEditor(profiles, "Humidity profile", "Humidity · %", "humidityCurve", 0, 100);
-        element("p", "rf-hint", "Drag Sitrec’s curve points and handles. Right-click to add or remove a point. Editing a curve activates it. Camera height, tilt and FOV follow the selected Sitrec camera.", page);
+        element("p", "rf-hint", "Drag Sitrec’s curve points and handles. Right-click, then choose Add Point or Delete Point. Editing a curve activates it. Camera height, tilt and FOV follow the selected Sitrec camera.", page);
     }
 
     addEditor(page, title, xLabel, key, low, high) {

@@ -35,6 +35,7 @@ export const GESTURE_PROFILES = Object.freeze({
         ["Ground-overlay yellow / cyan / magenta grips", "Resize / rotate / move lock points"],
         ["Flood yellow grips", "Resize the simulation boundary"],
         ["Drag / one finger", "Move the selected grip; larger touch targets keep the grab offset"],
+        ["Right-click track point", "Open its menu; choose Delete Point to remove it"],
     ]},
     tracking: {label: "Manual video tracking", gestures: [
         ["Ctrl/Command-click", "Add or reposition a point"], ["Alt/Option-click", "Delete an A point"],
@@ -52,7 +53,7 @@ export const GESTURE_PROFILES = Object.freeze({
     ]},
     fit: {label: "Camera-fit points", gestures: [
         ["Click empty video", "Add a point"], ["Drag empty video", "Pan without adding a point"],
-        ["Drag a point", "Move its observation"], ["Right-click video point", "Delete it"],
+        ["Drag a point", "Move its observation"], ["Right-click video point", "Open its menu; choose Delete Point to remove it"],
         ["Off-frame 3D point", "Select its frame before editing"],
     ]},
     groundTrack: {label: "Ground-track points", gestures: [
@@ -65,7 +66,7 @@ export const GESTURE_PROFILES = Object.freeze({
         ["Drag playhead / A / B", "Scrub time / edit frame limits"],
     ]},
     legacyCurve: {label: "Bezier curves", gestures: [
-        ["Drag point or tangent", "Edit the curve"], ["Right-click", "Add or delete a point pair"],
+        ["Drag point or tangent", "Edit the curve"], ["Right-click", "Open the Add Point or Delete Point menu"],
         ["Shift-drag", "Carry subsequent points"],
     ]},
     adjustments: {label: "Video adjustments and regions", gestures: [

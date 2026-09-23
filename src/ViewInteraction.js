@@ -50,9 +50,18 @@ export function viewInteractionAdapter(view) {
         },
         capture: () => view.overlayView?.canvas ?? view.host?.canvas ?? view.canvas,
         // One actual surface receives wheel input; overlay forwarding is omitted.
-        hitSurface: e => !view.overlayView && !view.host && mouseInViewOnly(view, e.clientX, e.clientY)
-            ? {zIndex: view.zIndex ?? 0} : null,
+        hitSurface: e => {
+            if (!mouseInViewOnly(view, e.clientX, e.clientY)) return null;
+            if (view.getContextMenuIntent) {
+                const intent = view.getContextMenuIntent(e, e.clientX, e.clientY);
+                return intent && {zIndex: view.zIndex ?? 0, ...intent};
+            }
+            return !view.overlayView && !view.host ? {zIndex: view.zIndex ?? 0} : null;
+        },
     };
+    if (view.getContextMenuIntent && view.onContextMenu) {
+        adapter.contextMenu = e => view.onContextMenu(e, e.clientX, e.clientY);
+    }
     if (view.onMouseWheel && !view.mouse && !view.controls) adapter.wheel = e => view.onMouseWheel(e, e.clientX, e.clientY, e.deltaX, e.deltaY);
     if (view.onMouseRollback) adapter.rollback = e => view.onMouseRollback(e);
     adapters.set(view, adapter);

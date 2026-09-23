@@ -2755,10 +2755,11 @@ export class CGuiMenuBar {
     // Returns a GUI object that behaves like the individual menus from the menu bar
     // but is not attached to the menu bar itself
     // dismissOnOutsideClick: if true, clicking outside the menu will dismiss it (for context menus)
-    createStandaloneMenu(title, x = 100, y = 100, dismissOnOutsideClick = false) {
+    // Point menus can coexist with the persistent panel for the object being edited.
+    createStandaloneMenu(title, x = 100, y = 100, dismissOnOutsideClick = false, allowWithPersistentMenu = false) {
         // If a persistent menu is already open, don't allow creating new context menus
         // This prevents right-clicking from opening menus while editing
-        if (this.activePersistentMenu && dismissOnOutsideClick) {
+        if (this.activePersistentMenu && dismissOnOutsideClick && !allowWithPersistentMenu) {
             console.log(`Cannot create context menu "${title}" - persistent menu "${this.activePersistentMenu.$title.textContent}" is open`);
             return null;
         }

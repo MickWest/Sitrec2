@@ -33,7 +33,8 @@ import {Matrix4, Vector3} from "three";
 import {assert} from "../assert";
 import {Globals, guiMenus, NodeMan, setRenderOne, UndoManager} from "../Globals";
 import {par} from "../par";
-import {claimRightClick, mouseToCanvas} from "../ViewUtils";
+import {mouseToCanvas} from "../ViewUtils";
+import {showPointContextMenu} from "../PointContextMenu";
 import {ECEFToLLAVD_radii, LLAToECEF} from "../LLA-ECEF-ENU";
 import {meanSeaLevelOffset} from "../EGM96Geoid";
 import {getLocalUpVector, getNorthPole} from "../SphericalMath";
@@ -2389,30 +2390,34 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
         if (!this.enabled || !this.hasVideoGeometry()) return null;
         const [cx, cy] = mouseToCanvas(this, mouseX, mouseY);
         const hit = this.pointNear(cx, cy);
-        if (e.button === 2) return hit ? {kind: "click", priority: 75} : null;
         if (e.button !== 0) return null;
         if (hit) return {kind: this.onCorrectFrame() ? "drag" : "click", priority: 75, handleId: hit.id};
         return this.onCorrectFrame() && e.isPrimary !== false ? {kind: "pending", priority: 20} : null;
     }
 
+    getContextMenuIntent(e, mouseX, mouseY) {
+        if (!this.enabled || !this.hasVideoGeometry()) return null;
+        const [cx, cy] = mouseToCanvas(this, mouseX, mouseY);
+        return this.pointNear(cx, cy) ? {priority: 75} : null;
+    }
+
+    onContextMenu(e, mouseX, mouseY) {
+        if (!this.enabled || !this.hasVideoGeometry()) return;
+        const [cx, cy] = mouseToCanvas(this, mouseX, mouseY);
+        const point = this.pointNear(cx, cy);
+        if (!point) return;
+        showPointContextMenu(e, "Camera Fit Point", [{label: "Delete Point", action: () => {
+            if (this.enabled && this.points.includes(point)) this.removePoint(point.id);
+        }}]);
+    }
+
     onMouseDown(e, mouseX, mouseY) {
+        if (e.button !== 0) return false;
         // A new press supersedes whatever the last one left behind, however it ended.
         this.cancelGesture();
         if (!this.enabled || !this.hasVideoGeometry()) return false;
         const [cx, cy] = mouseToCanvas(this, mouseX, mouseY);
         const hit = this.pointNear(cx, cy);
-
-        if (e.button === 2) {
-            if (hit) {
-                // Claim the click so the video view does not also open its "Video Adjustments"
-                // menu on top of the deletion. A right-click on empty video is NOT claimed, so
-                // that menu still works normally while fitting.
-                this.removePoint(hit.id);
-                return true;
-            }
-            return false;
-        }
-        if (e.button !== 0) return false;
 
         if (hit) {
             // Reaching for a point on the wrong frame: offer to go to the keyframe it lives on.
