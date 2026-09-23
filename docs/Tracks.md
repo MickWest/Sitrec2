@@ -227,9 +227,22 @@ Sitrec's own interchange format for a **hand-drawn** track — the control point
 spline, not a per-frame path. Dropping one in creates a synthetic track, identical to
 one made with **Add Track**, with the control points already placed and editable.
 
-While editing a 3D track, right-click a control point to open its menu, then choose
-**Delete Point** to remove it. Opening or dismissing the menu leaves the track
-unchanged. Deletion supports undo, and the last control point cannot be deleted.
+Turn on **Edit Track** in the track's folder to edit it. Edit mode is modal: while it is
+on, a label at the top of each 3D view names the track, and right-click acts only on that
+track. Press **Escape**, or choose **Exit Edit Mode** from either menu, to leave it.
+
+- **Right-click a control point** to open its menu: **Go to Frame N**, **Delete Point**
+  and **Exit Edit Mode**. This is the only way to delete a point. Opening or dismissing
+  the menu leaves the track unchanged. Deletion supports undo, and the last control point
+  cannot be deleted.
+- **Right-click anywhere else** (the ground, the track line, another track) to open the
+  edit menu. When the playhead is not on a control point, it offers **Add Point Here**
+  (at the ground under the pointer) and **Add Point on Track** (on the track's current
+  path, which splits the segment without moving it). When the playhead is on a control
+  point, it offers **Move Point N Here** instead. All three support undo.
+
+Only one of these menus is on screen at a time. Other tracks and objects do not open
+their menus until you exit edit mode.
 
 This is how a hand-authored solution moves between sitches as a data file instead of
 being hard-coded in a `Sit*.js`. Write one out with the **Export Spline** button, found

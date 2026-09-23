@@ -28,6 +28,7 @@ import {
 import {isKeyHeld, toggler} from "./KeyBoardHandler";
 import {ECEFToLLAVD_radii, LLAToECEF} from "./LLA-ECEF-ENU";
 import {par} from "./par";
+import {exitTrackEditMode} from "./TrackEditMode";
 import {makeCreateObjectUndoAction} from "./undoCreateObject";
 import {GlobalScene} from "./LocalFrame";
 import {refreshLabelsAfterLoading} from "./nodes/CNodeLabels3D";
@@ -46,7 +47,6 @@ import {FeatureManager} from "./CFeatureManager";
 import {CNodeTrackGUI} from "./nodes/CNodeControllerTrackGUI";
 import {forceUpdateUIText} from "./nodes/CNodeViewUI";
 import {configParams} from "./runtimeConfig";
-import {showError} from "./showError";
 import {showPostLoadFilterDialog} from "./TrackFilterDialog";
 import {textSitchToObject} from "./RegisterSitches";
 import {waitForExportFrameSettled} from "./ExportFrameSettler";
@@ -946,10 +946,15 @@ export const menuMethods = {
     },
 
     /**
-     * Show a context menu for track editing when in edit mode
+     * The one right-click menu for track edit mode, everywhere except on a control point
+     * (PointEditor.showPointMenuAtEvent owns that). Its items depend on whether the playhead
+     * is on a control point: with none there, it can add one; with one there, it can move it.
+     * Items that cannot apply are shown disabled rather than hidden, so the menu never goes
+     * blank. Deleting is only in the point menu, on the point the user picked.
+     *
      * @param {number} mouseX - Screen X coordinate
      * @param {number} mouseY - Screen Y coordinate
-     * @param {Vector3} groundPoint - The 3D point where the ground was clicked (in ECEF coordinates)
+     * @param {Vector3|null} groundPoint - Ground under the pointer (ECEF), or null for the sky
      */
     showTrackEditingMenu(mouseX, mouseY, groundPoint) {
         const trackOb = Globals.editingTrack;
@@ -960,97 +965,48 @@ export const menuMethods = {
 
         const splineEditor = trackOb.splineEditor;
         const shortName = trackOb.menuText || trackOb.trackID;
+        const frame = Math.round(par.frame);
+        const hasPointAtFrame = splineEditor.frameNumbers.includes(frame);
 
-        // Check if current frame already has a control point
-        const currentFrame = par.frame;
-        const hasPointAtCurrentFrame = splineEditor.frameNumbers.includes(currentFrame);
+        // A context menu, so it replaces any other context menu (the point menu included), and
+        // it may open over the track's own panel.
+        const menu = Globals.menuBar.createStandaloneMenu(
+            t("custom.contextMenu.editTrackTitle", {name: shortName}), mouseX, mouseY, true, true);
+        if (!menu) return;
 
-        // Create the context menu
-        const menu = Globals.menuBar.createStandaloneMenu(`Edit: ${shortName}`, mouseX, mouseY);
-        menu.open();
-
-        // Create menu actions
-        const menuData = {
-            splitTrack: () => {
-                // Add a point at the current frame and current track position
-                // Get the track node to access the interpolated position
-                const trackNode = trackOb.splineEditorNode;
-                assert(!trackNode?._needsRecalculate, "call ensureRecalculated() before direct array access on " + trackNode?.id);
-                if (trackNode && trackNode.array && trackNode.array.length > 0) {
-                    const currentFrame = Math.floor(par.frame);
-                    if (currentFrame >= 0 && currentFrame < trackNode.array.length) {
-                        const trackPosition = trackNode.array[currentFrame].position;
-                        if (trackPosition) {
-                            splineEditor.insertPoint(par.frame, trackPosition);
-                            console.log(`Split track ${shortName} at frame ${par.frame} (position indicator)`);
-                        } else {
-                            console.warn("No track position available at current frame");
-                        }
-                    } else {
-                        console.warn("Current frame out of range");
-                    }
-                } else {
-                    console.warn("Track node or array not available");
-                }
-                menu.destroy();
-                setRenderOne(true);
-            },
-            addGroundPoint: () => {
-                // Add a point at the current frame and clicked position
-                splineEditor.insertPoint(par.frame, groundPoint);
-                console.log(`Added ground point to track ${shortName} at frame ${par.frame}`);
-                menu.destroy();
-                setRenderOne(true);
-            },
-            removeClosestPoint: () => {
-                // Find the closest point to the clicked position
-                let closestIndex = -1;
-                let closestDistance = Infinity;
-
-                for (let i = 0; i < splineEditor.numPoints; i++) {
-                    const pointPos = splineEditor.positions[i];
-                    const distance = groundPoint.distanceTo(pointPos);
-                    if (distance < closestDistance) {
-                        closestDistance = distance;
-                        closestIndex = i;
-                    }
-                }
-
-                if (closestIndex >= 0) {
-                    const frameNumber = splineEditor.frameNumbers[closestIndex];
-
-                    // Share the point menu's minimum count and undo behavior.
-                    if (!splineEditor.deletePointWithUndo(closestIndex)) {
-                        showError(`Cannot remove the only control point of "${shortName}"`);
-                        menu.destroy();
-                        return;
-                    }
-
-                    console.log(`Removed point at frame ${frameNumber} from track ${shortName}`);
-                    setRenderOne(true);
-                } else {
-                    console.warn("No point found to remove");
-                }
-                menu.destroy();
-            },
-            exitEditMode: () => {
-                // Exit edit mode
-                trackOb.editMode = false;
-                splineEditor.setEnable(false);
-                Globals.editingTrack = null;
-                console.log(`Exited edit mode for track ${shortName}`);
-                menu.destroy();
-            }
+        const run = (action) => () => {
+            menu.destroy();
+            action();
+            setRenderOne(true);
         };
 
-        // Add menu items
-        // Only show point-adding options if current frame doesn't already have a control point
-        if (!hasPointAtCurrentFrame) {
-            menu.add(menuData, "splitTrack").name(`Split Track (Frame ${par.frame})`);
-            menu.add(menuData, "addGroundPoint").name(`Add Ground Point (Frame ${par.frame})`);
+        const trackPositionAtFrame = () => {
+            const trackNode = trackOb.splineEditorNode;
+            assert(!trackNode?._needsRecalculate, "call ensureRecalculated() before direct array access on " + trackNode?.id);
+            return trackNode?.array?.[frame]?.position ?? null;
+        };
+
+        const menuData = {
+            addPointHere: run(() => splineEditor.insertPointWithUndo(frame, groundPoint)),
+            addPointOnTrack: run(() => {
+                const position = trackPositionAtFrame();
+                if (position) splineEditor.insertPointWithUndo(frame, position);
+            }),
+            movePointHere: run(() => splineEditor.insertPointWithUndo(frame, groundPoint)),
+            exitEditMode: run(() => exitTrackEditMode(trackOb)),
+        };
+
+        if (hasPointAtFrame) {
+            const move = menu.add(menuData, "movePointHere").name(t("custom.contextMenu.movePointHere", {frame}));
+            if (!groundPoint) move.disable();
+        } else {
+            const here = menu.add(menuData, "addPointHere").name(t("custom.contextMenu.addPointHere", {frame}));
+            if (!groundPoint) here.disable();
+            const onTrack = menu.add(menuData, "addPointOnTrack").name(t("custom.contextMenu.addPointOnTrack", {frame}));
+            if (!trackPositionAtFrame()) onTrack.disable();
         }
-        menu.add(menuData, "removeClosestPoint").name(t("custom.contextMenu.removeClosestPoint"));
         menu.add(menuData, "exitEditMode").name(t("custom.contextMenu.exitEditMode"));
+        menu.open();
     },
 
     showBuildingEditingMenu(mouseX, mouseY) {

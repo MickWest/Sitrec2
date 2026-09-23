@@ -36,6 +36,8 @@ export const GESTURE_PROFILES = Object.freeze({
         ["Flood yellow grips", "Resize the simulation boundary"],
         ["Drag / one finger", "Move the selected grip; larger touch targets keep the grab offset"],
         ["Right-click track point", "Open its menu; choose Delete Point to remove it"],
+        ["Right-click elsewhere while editing a track", "Add a point at the playhead, or move the one there"],
+        ["Escape while editing a track", "Leave edit mode"],
     ]},
     tracking: {label: "Manual video tracking", gestures: [
         ["Ctrl/Command-click", "Add or reposition a point"], ["Alt/Option-click", "Delete an A point"],
@@ -57,12 +59,12 @@ export const GESTURE_PROFILES = Object.freeze({
         ["Off-frame 3D point", "Select its frame before editing"],
     ]},
     groundTrack: {label: "Ground-track points", gestures: [
-        ["Ctrl/Command-click", "Add a keyframe"], ["Alt/Option-click", "Delete a keyframe"],
+        ["Ctrl/Command-click", "Add a keyframe"], ["Right-click a keyframe", "Open its menu; choose Delete Point to remove it"],
         ["Click off-frame point", "Seek to its frame"], ["Drag current-frame point", "Move it on the ground"],
     ]},
     curve: {label: "Curve editor", gestures: [
         ["Drag point or segment", "Edit the curve"], ["Ctrl/Command-click", "Add a point"],
-        ["Alt/Option-click", "Delete a point"], ["Shift-drag", "Toggle snapping"],
+        ["Right-click a point", "Open its menu; choose Delete Point to remove it"], ["Shift-drag", "Toggle snapping"],
         ["Drag playhead / A / B", "Scrub time / edit frame limits"],
     ]},
     legacyCurve: {label: "Bezier curves", gestures: [

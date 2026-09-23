@@ -1210,8 +1210,12 @@ const en = {
             centerTerrain: "Center Terrain square here",
             googleMapsHere: "Google Maps Here",
             googleEarthHere: "Google Earth Here",
-            removeClosestPoint: "Remove Closest Point",
+            editTrackTitle: "Edit: {{name}}",
+            addPointHere: "Add Point Here (Frame {{frame}})",
+            addPointOnTrack: "Add Point on Track (Frame {{frame}})",
+            movePointHere: "Move Point {{frame}} Here",
             exitEditMode: "Exit Edit Mode",
+            editingBadge: "Editing: {{name}} — Esc to exit",
         },
     },
     view3d: {

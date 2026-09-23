@@ -1130,6 +1130,16 @@ export const mouseMethods = {
             return;
         }
 
+        // Track edit mode is modal, as in a curve editor's edit mode. Every other right-click
+        // opens the one edit menu, so the ground, the edited track's own line, other tracks and
+        // objects cannot open their menus until the user exits.
+        if (Globals.editingTrack?.splineEditor?.enable && this.camera && mouseInViewOnly(this, mouseX, mouseY)) {
+            this.raycaster.setFromCamera(screenToNDC(this, mouseX, mouseY), this.camera);
+            const groundPoint = raycastLocalGround(this.raycaster, this.camera)?.point ?? null;
+            CustomManager.showTrackEditingMenu(mouseX, mouseY, groundPoint);
+            return;
+        }
+
         // First check for feature markers using screen-space detection (more reliable for screen-invariant markers)
         if (FeatureManager.handleContextMenu(mouseX, mouseY, this)) {
             return; // Feature menu shown, we're done

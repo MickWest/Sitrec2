@@ -44,7 +44,7 @@ Turn on **Enable Ground Track**. Handles then appear in the main and look views,
 | **Ctrl+click** | place (or move) the point for the **current frame** |
 | **click an unselected point** | select it — go to the frame it describes, and move nothing |
 | **click and drag the selected point** | move it over the ground |
-| **Alt+click a point** | delete it |
+| **right-click a point** | open its menu: **Go to Frame N**, or **Delete Point** |
 | **drag empty space** | orbit the view, exactly as if the editor were off |
 
 **Selecting and moving are two separate presses.** The selected point is the red one, labelled with

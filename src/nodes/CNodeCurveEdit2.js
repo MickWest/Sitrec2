@@ -1,4 +1,5 @@
 import {commandModifier} from "../GestureActions";
+import {showPointContextMenu} from "../PointContextMenu";
 import {registerSurfaceInteraction} from "../SurfaceInteraction";
 import {HANDLE_STYLE} from "../HandleStyle";
 import {CNodeTrack} from "./CNodeTrack";
@@ -102,7 +103,37 @@ export class CNodeCurveEditorView2 extends CNodeTabbedCanvasView {
                 EventManager.dispatchEvent("abFrameChanged");
             },
             end: e => this.onMouseUp(e),
+            contextMenu: e => this.onContextMenu(e),
         });
+    }
+
+    // Right-click on a point opens its menu. Deleting is only ever that menu's explicit choice,
+    // the same as in the other point editors.
+    onContextMenu(e) {
+        if (this.isMenuInteraction(e)) return;
+        const rect = this.canvas.getBoundingClientRect();
+        const index = this.findPointAt(e.clientX - rect.left, e.clientY - rect.top);
+        if (index === null) return;
+        const point = this.points[index];
+        showPointContextMenu(e, "Curve Point", [{
+            label: "Delete Point", enabled: this.points.length > 1,
+            action: () => this.deletePointWithUndo(point),
+        }]);
+    }
+
+    deletePointWithUndo(point) {
+        const index = this.points.indexOf(point);
+        if (index < 0 || this.points.length <= 1) return;
+        const stateBefore = this.captureState();
+        this.points.splice(index, 1);
+        const stateAfter = this.captureState();
+        if (this.onChange) this.onChange();
+        UndoManager?.add({
+            description: "Delete curve point",
+            undo: () => this.restoreState(stateBefore),
+            redo: () => this.restoreState(stateAfter),
+        });
+        setRenderOne(true);
     }
 
     addMenuItems() {
@@ -289,20 +320,6 @@ export class CNodeCurveEditorView2 extends CNodeTabbedCanvasView {
         
         this.draggedPointIndex = this.findPointAt(x, y);
         if (this.draggedPointIndex !== null) {
-            if (e.altKey && this.points.length > 1) {
-                e.preventDefault();
-                e.stopPropagation();
-                this.stateBeforeDrag = this.captureState();
-                this.points.splice(this.draggedPointIndex, 1);
-                if (this.onChange) {
-                    this.onChange();
-                }
-                this.draggedPointIndex = null;
-                this.isDragging = true;
-                setRenderOne(true);
-                return;
-            }
-            
             e.preventDefault();
             e.stopPropagation();
             this.stateBeforeDrag = this.captureState();

@@ -10,7 +10,7 @@
 //   Ctrl+click            place (or move) the keyframe for the CURRENT frame
 //   click an unselected   select it: go to the frame it describes, and move nothing
 //   click the selected    grab it, and drag it over the ground
-//   Alt+click             delete the handle under the cursor
+//   right-click a handle  its menu: go to its frame, or delete it
 //   drag empty space      orbit, exactly as if the editor were off
 //
 // Selecting and moving are two presses, deliberately. A point describes ONE frame, so reaching for
@@ -29,6 +29,8 @@ import {mouseToCanvas} from "./ViewUtils";
 import {projectToCanvas} from "./FitSurfacePick";
 import {drawFitHandle} from "./FitHandleDraw";
 import {CTerrainHandleOverlay, TerrainHandles3D} from "./TerrainHandles3D";
+import {showPointContextMenu} from "./PointContextMenu";
+import {goToFrame} from "./GoTo";
 
 /** The interpolated path between keyframes, and the keyframes themselves. */
 const TRACK_COLOR = "#00FF80";
@@ -158,18 +160,35 @@ class CGroundTrackOverlay extends CTerrainHandleOverlay {
         return this.groundUnder(cx, cy) ? {kind: "drag", priority: 70} : null;
     }
 
+    // Right-click on a keyframe opens its menu. Deleting is only ever that menu's explicit
+    // choice, the same as a track control point's.
+    getContextMenuIntent(e, mouseX, mouseY) {
+        if (!this.owner.enabled) return null;
+        const [cx, cy] = mouseToCanvas(this, mouseX, mouseY);
+        return this.pick(cx, cy, this.projected()) ? {priority: 75} : null;
+    }
+
+    onContextMenu(e, mouseX, mouseY) {
+        if (!this.owner.enabled) return;
+        const [cx, cy] = mouseToCanvas(this, mouseX, mouseY);
+        const hit = this.pick(cx, cy, this.projected());
+        if (!hit) return;
+        const frame = hit.frame;
+        showPointContextMenu(e, `Point: Frame ${frame}`, [{
+            label: `Go to Frame ${frame}`, enabled: !this.isSelected(frame),
+            action: () => goToFrame(frame),
+        }, {
+            label: "Delete Point",
+            action: () => { if (this.owner.enabled) this.owner.deletePoint(frame); },
+        }]);
+    }
+
     onMouseDown(e, mouseX, mouseY) {
         this.draggingId = null;
         if (!this.owner.enabled || e.button !== 0) return false;
 
         const [cx, cy] = mouseToCanvas(this, mouseX, mouseY);
         const hit = this.pick(cx, cy, this.projected());
-
-        if (hit && e.altKey) {
-            this.owner.deletePoint(hit.frame);
-            setRenderOne(true);
-            return true;                        // claimed, so the view does not also orbit
-        }
 
         if (hit) {
             // Asked BEFORE the playhead moves, which is the whole point: this press must not

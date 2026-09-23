@@ -1,12 +1,12 @@
 /** @jest-environment jsdom */
 import {getInteractionRouter} from "../src/InteractionRouter";
-import {UndoManager, Sit} from "../src/Globals";
+import {Globals, UndoManager, Sit} from "../src/Globals";
 import {CNodeVideoLevelsView} from "../src/nodes/CNodeVideoLevelsView";
 import {CNodeVideoCurvesView} from "../src/nodes/CNodeVideoCurvesView";
 import {CNodeCurveEditorView2} from "../src/nodes/CNodeCurveEdit2";
 import {CRegionSelector} from "../src/CRegionSelector";
 
-jest.mock("../src/Globals", () => ({setRenderOne: jest.fn(), markSitchDirty: jest.fn(),
+jest.mock("../src/Globals", () => ({Globals: {}, setRenderOne: jest.fn(), markSitchDirty: jest.fn(),
     UndoManager: {add: jest.fn()}, NodeMan: {get: () => null}, Sit: {frames: 101, aFrame: 0, bFrame: 100}}));
 jest.mock("../src/CEventManager", () => ({EventManager: {dispatchEvent: jest.fn()}}));
 jest.mock("../src/CViewManager", () => ({ViewMan: {iterate() {}}}));
@@ -141,14 +141,34 @@ function currentCurve() {
     e.setupMouseHandlers(); roots.push(e); return e;
 }
 
-test("current curve deletion finishes once and Escape can restore it", () => {
+test("current curve Alt-click grabs a point and never deletes it", () => {
     const e = currentCurve();
-    send(e.canvas, "pointerdown", 200, 200, {altKey: true});
-    expect(e.points).toHaveLength(2);
-    document.dispatchEvent(new KeyboardEvent("keydown", {key: "Escape", bubbles: true}));
-    expect(e.points).toHaveLength(3); expect(UndoManager.add).not.toHaveBeenCalled();
     send(e.canvas, "pointerdown", 200, 200, {altKey: true}); send(document, "pointerup", 200, 200);
-    expect(e.points).toHaveLength(2); expect(UndoManager.add).toHaveBeenCalledTimes(1);
+    expect(e.points).toHaveLength(3);
+});
+
+test("current curve right-click opens a point menu; only Delete Point removes it, with undo", () => {
+    const e = currentCurve();
+    const actions = [];
+    const menu = {destroy: jest.fn(), open: jest.fn(), add: (data, key) => {
+        const action = {run: data[key], enabled: true}; actions.push(action);
+        const controller = {name: label => { action.label = label; return controller; },
+            disable: () => { action.enabled = false; }};
+        return controller;
+    }};
+    Globals.menuBar = {createStandaloneMenu: jest.fn(() => menu)};
+    try {
+        send(e.canvas, "contextmenu", 20, 20, {button: 2});
+        expect(actions).toHaveLength(0);
+        send(e.canvas, "contextmenu", 200, 200, {button: 2});
+        expect(actions.map(a => a.label)).toEqual(["Delete Point"]);
+        expect(e.points).toHaveLength(3);
+        actions[0].run();
+        expect(e.points).toEqual([{x: 0, y: 0}, {x: 100, y: 100}]);
+        expect(UndoManager.add).toHaveBeenCalledTimes(1);
+        UndoManager.add.mock.calls[0][0].undo(); expect(e.points[1]).toEqual({x: 50, y: 50});
+        UndoManager.add.mock.calls[0][0].redo(); expect(e.points).toHaveLength(2);
+    } finally { delete Globals.menuBar; }
 });
 
 test("current curve grab offset is retained through final release", () => {

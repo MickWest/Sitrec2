@@ -2613,7 +2613,7 @@ class CTrackManager extends CManager {
         
         // Add edit mode checkbox to the GUI folder (before display track controls)
         // This checkbox controls whether the track is in edit mode
-        guiFolder.add(trackOb, 'editMode').name(t("trackManager.editTrack")).onChange((value) => {
+        const applyEditMode = (value) => {
             splineEditor.setEnable(value);
             
             // Set or clear the global editing track reference
@@ -2631,7 +2631,18 @@ class CTrackManager extends CManager {
                 }
                 console.log(`Edit mode disabled for track: ${shortName}`);
             }
-        });
+        };
+
+        // Exits from outside the checkbox (the edit menus, Esc) go through setEditMode, so the
+        // checkbox, the editor and Globals.editingTrack cannot disagree. listen() keeps the
+        // checkbox current when another track's edit mode switches this one off.
+        const editModeController = guiFolder.add(trackOb, 'editMode').name(t("trackManager.editTrack")).listen()
+            .onChange((value) => applyEditMode(value));
+        trackOb.setEditMode = (value) => {
+            trackOb.editMode = value;
+            editModeController.updateDisplay();
+            applyEditMode(value);
+        };
         
         if (options.constantSpeed !== undefined) {
             splineEditorNode.constantSpeed = options.constantSpeed;

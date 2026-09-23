@@ -36,6 +36,7 @@ import {SceneLineMaterial} from "./SceneLineMaterial";
 import {LineGeometry} from "./SceneLineGeometry";
 import {Line2} from "three/addons/lines/Line2.js";
 import {assert} from "./assert";
+import {updateTrackEditBadge} from "./TrackEditMode";
 import {intersectSphere2, makeMatrix4PointYAt, V3} from "./threeUtils";
 
 // When ColorManagement is disabled, standard materials operate in sRGB space.
@@ -421,6 +422,7 @@ export function scaleArrows(view) {
  * and maintain constant screen size
  */
 export function updateTrackPositionIndicator(view) {
+    updateTrackEditBadge(view);
 
     // Update Globals.editingTrack (TrackManager-managed synthetic tracks)
     if (Globals.editingTrack && Globals.editingTrack.splineEditor) {

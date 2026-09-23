@@ -3094,7 +3094,9 @@ export class CGuiMenuBar {
                 for (const container of allContainers) {
                     if (container._gui && container._gui._standaloneContainer) {
                         const zIndex = parseInt(container.style.zIndex);
-                        if (zIndex > maxZIndex) {
+                        // >= because at equal z-index the later sibling is drawn on top, so a
+                        // context menu opened over a panel is closed before the panel.
+                        if (zIndex >= maxZIndex) {
                             maxZIndex = zIndex;
                             topmostMenu = container._gui;
                         }

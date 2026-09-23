@@ -5,6 +5,7 @@ import {Vector3} from "three";
 import {EventManager} from "./CEventManager";
 import {KeyframeRegistry} from "./CKeyframeRegistry";
 import {updateFrameSlider} from "./nodes/CNodeFrameSlider";
+import {exitTrackEditMode, hasOpenContextMenu} from "./TrackEditMode";
 
 /* Usage examples
 
@@ -352,6 +353,13 @@ export function initKeyboard() {
             updateFrameSlider();
             NodeMan.recalculateAllRootFirst();
             EventManager.dispatchEvent("abFrameChanged");
+            e.preventDefault();
+            return;
+        }
+
+        // Escape leaves track edit mode, but first closes any right-click menu that is open.
+        if (keyCode === 'Escape' && Globals.editingTrack && !hasOpenContextMenu()) {
+            exitTrackEditMode();
             e.preventDefault();
             return;
         }

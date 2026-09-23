@@ -415,10 +415,6 @@ export class CNodeGroundTrack extends CNodeTrack {
         if (this.keyframes.length !== before) this.afterEdit();
     }
 
-    deleteCurrentPoint() {
-        this.deletePoint(Math.round(par.frame));
-    }
-
     /**
      * Pull the A/B analysis limits in around the keyframes, with a little air either side.
      *
@@ -616,9 +612,6 @@ export class CNodeGroundTrack extends CNodeTrack {
         this.gui.add(this, "useObjects").name("Place on Objects")
             .tooltip("Also place points on the scene's own 3D objects (an aircraft, a balloon). " +
                 "Off by default: a ground track is meant to land on the ground.");
-
-        this.gui.add(this, "deleteCurrentPoint").name("Delete Point at Frame")
-            .tooltip("Delete the ground track point for the current frame, if there is one.");
 
         this.gui.add(this, "clearPoints").name("Clear All Points")
             .tooltip("Delete every ground track point.");

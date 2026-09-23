@@ -30,6 +30,9 @@ beforeEach(() => {
     undoManager.add.mockClear();
 });
 
+// The most recent menu item whose label starts with `prefix`.
+const item = prefix => actions.filter(a => a.label?.startsWith(prefix)).at(-1);
+
 function trackEditor(count = 3) {
     const editor = Object.assign(Object.create(PointEditor.prototype), {
         enable: true, scene: new Scene(), geometry: new BoxGeometry(),
@@ -52,8 +55,7 @@ test("3D point menus preserve points until Delete Point is chosen, with undo and
     menu.destroy();
     expect(editor.numPoints).toBe(3);
     editor.showPointMenuAtEvent({clientX: 20, clientY: 30});
-    expect(actions[1].label).toBe("Delete Point");
-    actions[1].run();
+    item("Delete Point").run();
     expect(editor.frameNumbers).toEqual([10, 20]);
     expect(undoManager.add).toHaveBeenCalledTimes(1);
     const edit = undoManager.add.mock.calls[0][0];
@@ -65,8 +67,8 @@ test("3D point menus preserve points until Delete Point is chosen, with undo and
 test("a single track point has a disabled delete action and cannot be removed", () => {
     const editor = trackEditor(1);
     editor.showPointMenuAtEvent({clientX: 20, clientY: 30});
-    expect(actions[0].enabled).toBe(false);
-    actions[0].run();
+    expect(item("Delete Point").enabled).toBe(false);
+    item("Delete Point").run();
     expect(editor.numPoints).toBe(1);
     expect(editor.deletePointWithUndo(0)).toBe(false);
     expect(undoManager.add).not.toHaveBeenCalled();
@@ -76,9 +78,44 @@ test("a stale point menu cannot delete a different point after the original is r
     const editor = trackEditor();
     editor.showPointMenuAtEvent({clientX: 20, clientY: 30});
     editor.removePointByIndex(0);
-    actions[0].run();
+    item("Delete Point").run();
     expect(editor.frameNumbers).toEqual([10, 20]);
     expect(undoManager.add).not.toHaveBeenCalled();
+});
+
+test("the track point menu offers Go to Frame, and Exit Edit Mode only for the edited track", () => {
+    const editor = trackEditor();
+    Globals.editingTrack = null;
+    editor.showPointMenuAtEvent({clientX: 20, clientY: 30});
+    expect(actions.map(a => a.label)).toEqual(["Go to Frame 0", "Delete Point"]);
+    expect(Globals.menuBar.createStandaloneMenu.mock.calls[0][0]).toBe("Point: Frame 0");
+
+    actions = [];
+    const trackOb = {splineEditor: editor, setEditMode: jest.fn()};
+    Globals.editingTrack = trackOb;
+    try {
+        editor.showPointMenuAtEvent({clientX: 20, clientY: 30});
+        expect(actions.map(a => a.label)).toEqual(["Go to Frame 0", "Delete Point", "Exit Edit Mode"]);
+        item("Exit Edit Mode").run();
+        expect(trackOb.setEditMode).toHaveBeenCalledWith(false);
+        expect(editor.numPoints).toBe(3);
+    } finally { Globals.editingTrack = null; }
+});
+
+test("insertPointWithUndo adds a new point, or moves the one at that frame, as one undo step", () => {
+    const editor = trackEditor();
+    editor.insertPointWithUndo(5, new Vector3(9, 9, 9));
+    expect(editor.frameNumbers).toEqual([0, 5, 10, 20]);
+    const add = undoManager.add.mock.calls[0][0];
+    add.undo(); expect(editor.frameNumbers).toEqual([0, 10, 20]);
+    add.redo(); expect(editor.positions[1].toArray()).toEqual([9, 9, 9]);
+
+    editor.insertPointWithUndo(10, new Vector3(7, 7, 7));
+    expect(editor.frameNumbers).toEqual([0, 5, 10, 20]);
+    expect(editor.positions[2].toArray()).toEqual([7, 7, 7]);
+    const move = undoManager.add.mock.calls[1][0];
+    move.undo(); expect(editor.positions[2].toArray()).toEqual([1, 0, 0]);
+    move.redo(); expect(editor.positions[2].toArray()).toEqual([7, 7, 7]);
 });
 
 test("fit point right-click opens one point menu, empty space opens the video menu, right-drag navigates", () => {

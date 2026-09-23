@@ -19,7 +19,10 @@ import {assert} from "./assert";
 import {V3} from "./threeUtils";
 import {ViewMan} from "./CViewManager";
 import {getInteractiveViewAt, mouseToNDC, setRaycasterFromView} from "./ViewUtils";
-import {NodeMan, setRenderOne, Sit} from "./Globals";
+import {Globals, NodeMan, setRenderOne, Sit} from "./Globals";
+import {par} from "./par";
+import {goToFrame} from "./GoTo";
+import {exitTrackEditMode} from "./TrackEditMode";
 import {radians} from "./utils";
 import {undoManager as UndoManager} from "./UndoManager";
 import * as LAYER from "./LayerMasks";
@@ -433,13 +436,54 @@ export class PointEditor {
         const index = this.splineHelperObjects.findIndex(ob => ob === object);
         if (index < 0) return false;
 
-        showPointContextMenu(event, `Track Point: Frame ${this.frameNumbers[index]}`, [{
+        const frame = this.frameNumbers[index];
+        const actions = [{
+            label: `Go to Frame ${frame}`, enabled: Math.round(par.frame) !== frame,
+            action: () => goToFrame(frame),
+        }, {
             label: "Delete Point", enabled: this.numPoints > 1,
             action: () => {
                 if (this.enable) this.deletePointWithUndo(this.splineHelperObjects.indexOf(object));
             },
-        }]);
+        }];
+        // Sitch-defined editors (agua's lantern) have no edit mode to leave.
+        if (Globals.editingTrack?.splineEditor === this) {
+            actions.push({label: "Exit Edit Mode", action: () => exitTrackEditMode()});
+        }
+        showPointContextMenu(event, `Point: Frame ${frame}`, actions);
         return true;
+    }
+
+    /**
+     * Place a point at `frame`, or move the one already there, as one undoable step.
+     * insertPoint replaces a point with the same frame, so this serves both.
+     */
+    insertPointWithUndo(frame, position) {
+        const at = this.frameNumbers.indexOf(frame);
+        const previous = at >= 0 ? this.positions[at].clone() : null;
+        const placed = position.clone();
+
+        this.insertPoint(frame, placed.clone());
+        if (this.onChange) this.onChange();
+
+        if (UndoManager) {
+            UndoManager.add({
+                description: previous ? "Move track control point" : "Add track control point",
+                undo: () => {
+                    if (previous) this.insertPoint(frame, previous.clone());
+                    else {
+                        const i = this.frameNumbers.indexOf(frame);
+                        if (i >= 0) this.removePointByIndex(i);
+                    }
+                    if (this.onChange) this.onChange();
+                },
+                redo: () => {
+                    this.insertPoint(frame, placed.clone());
+                    if (this.onChange) this.onChange();
+                },
+            });
+        }
+        setRenderOne(true);
     }
 
     deletePointWithUndo(index) {
