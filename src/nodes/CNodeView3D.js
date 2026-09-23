@@ -2641,6 +2641,7 @@ export class CNodeView3D extends CNodeViewCanvas {
                 }
 
                 const waterReflectionNode = NodeMan.get("waterReflection", false);
+                const cityLightsNode = NodeMan.get("cityLights", false);
                 let waterReflectionPushed = false;
                 let _restoreShadowScope = null;
                 try {
@@ -2663,6 +2664,7 @@ export class CNodeView3D extends CNodeViewCanvas {
                     // view-scoped one that _enterShadowRenderScope() switches to
                     // (Globals.sunLight is hidden). Capturing before that point
                     // gave a reflection lit by ambient alone.
+                    cityLightsNode?.push(this);
                     waterReflectionPushed = waterReflectionNode ? waterReflectionNode.push(this) : false;
 
                     // [DBG] Render main scene
@@ -2684,6 +2686,7 @@ export class CNodeView3D extends CNodeViewCanvas {
                 } finally {
                     // Reverse order of acquisition.
                     if (waterReflectionPushed) waterReflectionNode.pop();
+                    cityLightsNode?.pop();
                     if (_restoreShadowScope) _restoreShadowScope();
                 }
 

@@ -2,12 +2,13 @@ import {MeshStandardMaterial, ShaderChunk, Vector3} from "three";
 import {sharedUniforms} from "./SharedUniforms";
 import {waterShadeGLSL, waterUniformsGLSL} from "../../../water/WaterShading.glsl.js";
 import {Globals} from "../../../Globals";
+import {applyCityLightsShader, cityLightsDefault} from "../../../citylights/CityLightsShader";
 import {
     addTerrestrialRefractionUniforms,
     patchTerrestrialRefractionVertexShader,
 } from "../../../atmosphere/terrestrialRefraction";
 
-const CACHE_KEY = "DayNightStandardMaterial.v11waterskirts";
+const CACHE_KEY = "DayNightStandardMaterial.v12citylights";
 
 // Whether a NEWLY CREATED tile material should carry the water branch.
 //
@@ -50,6 +51,7 @@ export class DayNightStandardMaterial extends MeshStandardMaterial {
         this.useSitrecShadowCoords = useSitrecShadowCoords;
         this.defines = {};
         if (tileWaterEnabled) this.defines.SITREC_TILE_WATER = "";
+        if (cityLightsDefault()) this.defines.SITREC_CITY_LIGHTS = "";
 
         this._dayNightUniforms = {
             sunDirection: {value: Globals.sunLight.position},
@@ -408,6 +410,15 @@ if (waterReflection > 0.0 || waterTileCapture > 0.5) {
 }
 #endif`
         );
+        applyCityLightsShader(shader, this);
+    }
+
+    setCityLights(on) {
+        const want = !!on;
+        if ((this.defines?.SITREC_CITY_LIGHTS !== undefined) === want) return;
+        if (want) this.defines.SITREC_CITY_LIGHTS = "";
+        else delete this.defines.SITREC_CITY_LIGHTS;
+        this.needsUpdate = true;
     }
 
     /**
@@ -452,7 +463,8 @@ if (waterReflection > 0.0 || waterTileCapture > 0.5) {
         // the water variant is separated either way; naming it here as well
         // keeps the key readable in a shader dump.
         return `${CACHE_KEY}.${this.useSitrecShadowCoords ? "sitrec" : "stock"}`
-            + `.${this.defines?.SITREC_TILE_WATER !== undefined ? "water" : "dry"}`;
+            + `.${this.defines?.SITREC_TILE_WATER !== undefined ? "water" : "dry"}`
+            + `.${this.defines?.SITREC_CITY_LIGHTS !== undefined ? "city" : "unlit"}`;
     }
 
     static fromMaterial(source, options = {}) {

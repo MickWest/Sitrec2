@@ -90,6 +90,17 @@ export class TilesDayNightPlugin {
         });
     }
 
+    setCityLights(on) {
+        this.tiles?.forEachLoadedModel(scene => {
+            scene.traverse(child => {
+                if (!child.isMesh) return;
+                for (const material of Array.isArray(child.material) ? child.material : [child.material]) {
+                    material?.setCityLights?.(on);
+                }
+            });
+        });
+    }
+
     // Update the active material mode. Applies to FUTURE tile loads only —
     // re-walking already-loaded tiles would orphan TilesFadePlugin entries.
     setMaterialMode(mode, flatColor) {
