@@ -167,6 +167,7 @@ import {debugLog} from "./DebugLog";
 import {getEnvBool} from "./envUtils";
 import {FeatureManager} from "./CFeatureManager";
 import {CustomGraphManager} from "./CCustomGraphManager";
+import {MeasurementManager} from "./CMeasurementManager";
 import {resetVideoQPGraph} from "./VideoQPGraph";
 import {resetVideoTonalGraph} from "./VideoTonalGraph";
 import {setGlobalTheme} from "./Theme";
@@ -2063,6 +2064,10 @@ async function initializeOnce() {
         .tooltip(t("menus.showHide.views.tooltip"));
     const _guiShowHideGraphs = addTranslatedGUIFolder("showhidegraphs", "menus.showHide.graphs.title", "showhide")
         .tooltip(t("menus.showHide.graphs.tooltip"));
+    // The Measurements in Main / Look toggles (setupMeasurementUI) and, in a custom sitch, the
+    // user's own measurements (CMeasurementManager).
+    addTranslatedGUIFolder("showhidemeasurements", "menus.showHide.measurements.title", "showhide")
+        .tooltip(t("menus.showHide.measurements.tooltip"));
     const _guiTweaks = addTranslatedGUIMenu("effects", "menus.effects.title", {closeFolders: true})
         .tooltip(t("menus.effects.tooltip"));
     addGUIFolder("renderingEffects", "Rendering Effects", "effects");
@@ -3414,6 +3419,9 @@ function disposeEverything() {
 
     // dispose of any feature manager managed nodes
     FeatureManager.disposeAll();
+
+    // forget the user measurements (their nodes went with NodeMan.disposeAll above)
+    MeasurementManager.disposeAll();
 
     // dispose custom graphs (folders) and clear the per-frame data-series registry
     CustomGraphManager.disposeAll();

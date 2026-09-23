@@ -145,8 +145,13 @@ export class PointEditor {
 
         this._measureNodeIDs = Object.keys(NodeMan.list).filter(id => !preMeasureNodeIDs.has(id));
         
-        // Initially hide the measurement
-        this.measureAltitude.group.visible = false;
+        // Initially hide the measurement. show(), not group.visible alone:
+        // refreshMeasurementVisibility() rewrites group.visible for every measurement
+        // after each sitch load and keeps only those whose node.visible is set. Hidden
+        // through the group alone, this one came back with its point at the Earth's
+        // centre and a NaN ground point, and its NaN arrows matched every right-click
+        // raycast in the main view, so the ground/track menus could no longer open.
+        this.measureAltitude.show(false);
 
         this.transformControl.rollbackEdit = () => {
             if (this.stateBeforeDrag) {
@@ -292,7 +297,7 @@ export class PointEditor {
             }
             // Hide the measurement when edit mode is disabled
             if (this.measureAltitude) {
-                this.measureAltitude.group.visible = false;
+                this.measureAltitude.show(false);
             }
         } else {
             // Show all control cubes when entering edit mode
@@ -311,7 +316,7 @@ export class PointEditor {
             }
             // Show the measurement when edit mode is enabled
             if (this.measureAltitude) {
-                this.measureAltitude.group.visible = true;
+                this.measureAltitude.show(true);
             }
         }
     }

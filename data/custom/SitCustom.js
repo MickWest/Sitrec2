@@ -887,10 +887,9 @@ sitch = {
 
     DisplayCameraFrustum: {radius: 500000, lineWeight: 1.0, color: "frustumColor"},
 
-    altitudeLabel: {kind: "MeasureAltitude", position: "lookCamera"},
-    altitudeLabel2: {kind: "MeasureAltitude", position: "traverseSmoothedTrack"},
-//    distanceLabel: {kind: "MeasureAB", A: "cameraTrackSwitchSmooth", B: "targetTrackSwitchSmooth", defer: true},
-    distanceLabel: {kind: "MeasureAB", A: "cameraTrackSwitchSmooth", B: "traverseSmoothedTrack", groupNode: "MeasureDistanceGroupNode", defer: true},
+    // The camera altitude, traverse altitude and camera-to-traverse distance measurements are
+    // made by CMeasurementManager (Show > Measurements), not defined here. Old saves that still
+    // carry them as node definitions are converted by migrateLegacyMeasurements.
 
 
 

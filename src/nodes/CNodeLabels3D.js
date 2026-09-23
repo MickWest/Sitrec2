@@ -13,7 +13,7 @@ import {
 } from "../threeExt";
 import {pointOnSphereBelow} from "../SphericalMath";
 import {CNodeMunge} from "./CNodeMunge";
-import {Globals, guiShowHide, NodeMan, setRenderOne, Units} from "../Globals";
+import {Globals, guiMenus, guiShowHide, NodeMan, setRenderOne, Units} from "../Globals";
 import {CNode3DGroup} from "./CNode3DGroup";
 import {par} from "../par";
 import {ECEFToLLAVD_radii, LLAToECEF} from "../LLA-ECEF-ENU";
@@ -78,7 +78,9 @@ export function refreshMeasurementVisibility() {
     const anyView = mask !== 0;
     NodeMan.iterate((key, node) => {
         if (!node.isMeasurement) return;
-        node.group.visible = anyView;
+        // A measurement's own Show flag (node.visible) still counts: the view toggles must not
+        // bring back a measurement the user hid.
+        node.group.visible = anyView && node.visible !== false;
         if (node.layerMask !== undefined) node.layerMask = mask;
         // DebugArrow applies a layer mask only when it CREATES the arrow — later calls under the
         // same name leave the layers alone — so arrows already in the scene have to be re-layered
@@ -133,14 +135,18 @@ export function setupMeasurementUI() {
     // Each of these six is a per-view toggle that happens to live in the (global) Show menu.
     // .shareAs() also surfaces it in that view's own header menu — the SAME controller,
     // so there is no second copy of the flag and no second onChange. See src/ViewUIBarMenus.js.
-    measurementUIVars.controller =  guiShowHide.add(Globals, "showMeasurements").name(t("labels3d.measurements.label")).tooltip(t("labels3d.measurements.tooltip")).listen().onChange( (value) => {
+    // The two measurement toggles live in Show > Measurements, beside the user's own
+    // measurements (see CMeasurementManager). guiShowHide is the fallback for a menu bar that
+    // has no such folder.
+    const measurementFolder = guiMenus.showhidemeasurements ?? guiShowHide;
+    measurementUIVars.controller =  measurementFolder.add(Globals, "showMeasurements").name(t("labels3d.measurements.label")).tooltip(t("labels3d.measurements.tooltip")).listen().onChange( (value) => {
 //        console.warn("%%%%%%% showMeasurements changed to " + value)
         refreshMeasurementVisibility();
         setRenderOne(true);
     })
     measurementUIVars.controller.shareAs(viewMenuKey("mainView", "measurements"));
 
-    measurementUIVars.controllerLook = guiShowHide.add(Globals, "showMeasurementsLook").name(t("labels3d.measurementsInLook.label")).tooltip(t("labels3d.measurementsInLook.tooltip")).listen().onChange( (value) => {
+    measurementUIVars.controllerLook = measurementFolder.add(Globals, "showMeasurementsLook").name(t("labels3d.measurementsInLook.label")).tooltip(t("labels3d.measurementsInLook.tooltip")).listen().onChange( (value) => {
         refreshMeasurementVisibility();
         setRenderOne(true);
     })
@@ -611,6 +617,170 @@ export class CNodeMeasureAltitude extends CNodeMeasureAB {
         super(v);
 
         this.altitude = true;
+    }
+}
+
+// Unit choices a measurement can use in place of the sitch units. "default" means the sitch
+// units: small units for an altitude, big units for a distance, as the old labels did.
+export const MEASUREMENT_UNITS = {
+    m:  {toM: 1,        abbrev: "m",  decimals: 0},
+    km: {toM: 1000,     abbrev: "km", decimals: 2},
+    ft: {toM: 0.3048,   abbrev: "ft", decimals: 0},
+    mi: {toM: 1609.344, abbrev: "mi", decimals: 2},
+    nm: {toM: 1852,     abbrev: "NM", decimals: 2},
+};
+
+// How long a ground point below an altitude measurement is reused while the measured point
+// does not move. The ground point is a 3D-tile raycast (~2.5 ms). A paused view that is
+// orbited re-runs update() on every render, and without this every render would pay for it.
+const GROUND_POINT_REUSE_MS = 500;
+
+/**
+ * A user measurement, owned by CMeasurementManager: the altitude of one point, or the
+ * distance between two.
+ *
+ * The end points are NOT node inputs. A point can be a pin or a building, which are not
+ * position nodes, so each end is a {kind, id} reference that the manager resolves every frame
+ * (v.resolvePosition). A reference whose target was deleted resolves to null, and then the
+ * measurement draws nothing until the target is back.
+ *
+ * node.visible is the measurement's own Show flag. The view toggles in Show > Measurements
+ * still apply on top of it (refreshMeasurementVisibility).
+ */
+export class CNodeMeasurement extends CNodeLabel3D {
+    constructor(v) {
+        v.textAlign = 'center';
+        super(v);
+        this.resolvePosition = v.resolvePosition;
+        this.isUserMeasurement = true;
+        this.A = V3();
+        this.B = V3();
+        this.groundCache = {A: V3(), B: V3(), time: -Infinity, valid: false};
+        this.setConfig(v.config);
+    }
+
+    // config: {type, from, to, show, color, lineWidth, units, label}
+    setConfig(config) {
+        this.config = {...config};
+        this.color = this.config.color;
+        this.useHUDColor = false;
+        this.groundCache.valid = false;
+        // Arrows are re-made from scratch, so a changed line width or color takes effect even
+        // for an arrow that already exists.
+        this.removeArrows();
+        this.show(this.config.show !== false);
+    }
+
+    show(visible = true) {
+        this.visible = visible;
+        this.config.show = visible;
+        this.group.visible = visible && measurementLayerMask() !== 0;
+        setRenderOne(true);
+    }
+
+    // Show is saved in the config (the sitch's measurements block), so the generic
+    // visibility mod is neither written nor read: it would save a live-preview Show that the
+    // dialog later cancels, and on load it would override the config.
+    modSerialize() {
+        const out = super.modSerialize();
+        delete out.visible;
+        return out;
+    }
+
+    modDeserialize(v) {
+        super.modDeserialize(v);
+        this.show(this.config.show !== false);
+    }
+
+    groundBelow(A) {
+        const cache = this.groundCache;
+        const now = performance.now();
+        if (cache.valid && cache.A.equals(A) && now - cache.time < GROUND_POINT_REUSE_MS) {
+            return cache.B;
+        }
+        // The same surface CNodeMeasureAltitude uses: 3D tiles, then terrain, then the sphere.
+        let B = getTilesPointBelow(A);
+        if (B == null) {
+            B = NodeMan.exists("TerrainModel")
+                ? NodeMan.get("TerrainModel").getPointBelow(A)
+                : pointOnSphereBelow(A);
+        }
+        cache.A.copy(A);
+        cache.B.copy(B);
+        cache.time = now;
+        cache.valid = true;
+        return cache.B;
+    }
+
+    formatLength(m, unitType, decimals) {
+        const unit = MEASUREMENT_UNITS[this.config.units];
+        if (unit) return (m / unit.toM).toFixed(unit.decimals) + " " + unit.abbrev;
+        return Units.withUnits(m, decimals, unitType);
+    }
+
+    update(f) {
+        // no need to update if it, or its parent group, is not visible
+        if (!this.group.visible || !this.groupNode.group.visible) return;
+
+        const isAltitude = this.config.type === "altitude";
+        const A = this.resolvePosition(this.config.from, f);
+        const B = isAltitude
+            ? (A ? this.groundBelow(A) : null)
+            : this.resolvePosition(this.config.to, f);
+
+        if (!A || !B) {
+            // An end is missing (deleted object, track not loaded yet): draw nothing.
+            this.removeArrows();
+            this.changeText("");
+            return;
+        }
+        this.A.copy(A);
+        this.B.copy(B);
+
+        const midPoint = this.A.clone().add(this.B).multiplyScalar(0.5);
+        this.position.copy(midPoint);
+        this.textPosition.copy(midPoint);
+
+        // Two arrows from 90% of the way to the middle, out to each end, as CNodeMeasureAB draws.
+        const C = this.A.clone().lerp(midPoint, 0.9);
+        const D = this.B.clone().lerp(midPoint, 0.9);
+        const color = this.config.color;
+        DebugArrowAB(this.id + "start", C, this.A, color, true, this.group, 20, this.layerMask);
+        DebugArrowAB(this.id + "end", D, this.B, color, true, this.group, 20, this.layerMask);
+        for (const suffix of ["start", "end"]) {
+            const material = DebugArrows[this.id + suffix]?.line?.material;
+            if (material) material.linewidth = this.config.lineWidth ?? 1;
+        }
+
+        let text;
+        if (isAltitude) {
+            // MSL, not the ellipsoid height, as CNodeMeasureAB does for altitudes.
+            const alt = altitudeMSLFromECEF(this.A);
+            const agl = alt - altitudeMSLFromECEF(this.B);
+            if (alt >= HIGH_ALTITUDE_LABEL_THRESHOLD_M && !MEASUREMENT_UNITS[this.config.units]) {
+                text = Units.withUnits(alt, HIGH_ALTITUDE_LABEL_DECIMALS, "big") + " msl";
+            } else if (Math.abs(alt - agl) < 1) {
+                // The ground is at sea level (over the ocean), so AGL and MSL are the same.
+                text = this.formatLength(agl, "small", 0) + " msl";
+            } else {
+                text = this.formatLength(agl, "small", 0) + " agl\n"
+                    + this.formatLength(alt, "small", 0) + " msl";
+            }
+        } else {
+            text = this.formatLength(this.A.distanceTo(this.B), "big", 2);
+        }
+        if (this.config.label) text = this.config.label + "\n" + text;
+        this.changeText(text);
+    }
+
+    removeArrows() {
+        removeDebugArrow(this.id + "start");
+        removeDebugArrow(this.id + "end");
+    }
+
+    dispose() {
+        this.removeArrows();
+        super.dispose();
     }
 }
 

@@ -37,6 +37,7 @@ import {setupFisheye} from "./FisheyeProjection";
 import {setupPanoramicCamera} from "./PanoramicCamera";
 import {setupStreetViewPanoMenu} from "./StreetViewPanoUI";
 import {CustomGraphManager} from "./CCustomGraphManager";
+import {MeasurementManager} from "./CMeasurementManager";
 import {ECEFToLLAVD_radii, LLAToECEF} from "./LLA-ECEF-ENU";
 import {par} from "./par";
 import {GlobalScene} from "./LocalFrame";
@@ -2301,6 +2302,10 @@ export const setupMethods = {
         // Custom graphs: populate the data-series registry, add the "Add Custom
         // Graph" button, and rebuild any graphs the sitch will deserialize.
         CustomGraphManager.setup();
+
+        // Show > Measurements: the user's altitude and distance measurements. Made here, before
+        // the save's mods are applied, from Sit.measurements (or the defaults for a new sitch).
+        MeasurementManager.setup();
 
         this.setupSimpleFlightSim();
 

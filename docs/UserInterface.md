@@ -121,6 +121,14 @@ On the **look view's** header bar the same button means a little more, because t
 
 Anything that can be shown in one view but not another is a **pair** of controls, named the same way throughout: "Labels in Main" and "Labels in Look", "Equatorial Grid in Main" and "Equatorial Grid in Look", and so on. The two are independent — neither is a master switch for the other — so a ticked box always means the thing is on in that view. In the view's own header menu the "in Main" / "in Look" is dropped, because the menu you opened already says which view it is.
 
+## Measurements
+
+**Show ▸ Measurements** holds the measurements drawn in the 3D views. A measurement is either the **altitude** of one thing (its height above the ground and above mean sea level) or the **distance** between two things. **Measurements in Main** and **Measurements in Look** turn all of them on or off in each view.
+
+In a custom sitch, **Add Measurement** opens a dialog. Select the measurement type, then select the thing to measure: first its kind (Camera, Traverse, Track, 3D Object, Pin or Building), then the item in the list. A distance has a **From** and a **To**. You can also set a label (text shown above the value), the color, the line width, and units that are different from the sitch units. For a building, the measurement uses the middle of the roof.
+
+Each measurement then has its own entry in the folder. Click it to open the same dialog, where you can change it, hide it with **Show**, or **Delete** it. A new custom sitch starts with three measurements: the camera altitude, the traverse altitude, and the distance from the camera to the traverse. A sitch saved before this feature is converted when it is loaded, and it is saved in the new form. If the thing a measurement uses is deleted, the measurement is not drawn, and its dialog shows the missing item as "not found".
+
 ## Dark and light themes
 
 **Sitrec ▸ Settings ▸ Theme** sets the colors of the user interface. It has three values:

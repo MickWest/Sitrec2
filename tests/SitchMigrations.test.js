@@ -8,6 +8,8 @@ import {
     migrateCameraMenuFolders,
     objHasNestedChoice,
     migrateMaskOverlayId,
+    migrateLegacyMeasurements,
+    legacyMeasurementRef,
 } from "../src/SitchMigrations";
 
 // A minimal saved-custom shape with the OLD nested two-switch camera-heading model.
@@ -320,5 +322,83 @@ describe("migrateMaskOverlayId", () => {
         expect(() => migrateMaskOverlayId(null)).not.toThrow();
         expect(() => migrateMaskOverlayId({})).not.toThrow();
         expect(() => migrateMaskOverlayId({mods: {}})).not.toThrow();
+    });
+});
+
+
+describe("migrateLegacyMeasurements", () => {
+    // The three measurement nodes SitCustom.js defined before Show > Measurements existed,
+    // exactly as an old save embeds them.
+    function oldCustomSave(extra = {}) {
+        return {
+            name: "custom",
+            isCustom: true,
+            altitudeLabel: {kind: "MeasureAltitude", position: "lookCamera"},
+            altitudeLabel2: {kind: "MeasureAltitude", position: "traverseSmoothedTrack"},
+            distanceLabel: {kind: "MeasureAB", A: "cameraTrackSwitchSmooth", B: "traverseSmoothedTrack",
+                groupNode: "MeasureDistanceGroupNode", defer: true},
+            mods: {altitudeLabel2: {visible: false}, someOtherNode: {value: 3}},
+            ...extra,
+        };
+    }
+
+    test("converts the three old nodes into measurements with the same ids", () => {
+        const obj = oldCustomSave();
+        migrateLegacyMeasurements(obj);
+        expect(obj.measurements).toEqual([
+            {id: "altitudeLabel", type: "altitude", from: {kind: "camera", id: "lookCamera"}, to: null, show: true},
+            {id: "altitudeLabel2", type: "altitude", from: {kind: "traverse", id: "traverseSmoothedTrack"}, to: null, show: false},
+            {id: "distanceLabel", type: "distance", from: {kind: "camera", id: "lookCamera"},
+                to: {kind: "traverse", id: "traverseSmoothedTrack"}, show: true},
+        ]);
+    });
+
+    test("removes the old node definitions and their mods, and nothing else", () => {
+        const obj = oldCustomSave();
+        migrateLegacyMeasurements(obj);
+        expect(obj.altitudeLabel).toBeUndefined();
+        expect(obj.altitudeLabel2).toBeUndefined();
+        expect(obj.distanceLabel).toBeUndefined();
+        expect(obj.mods).toEqual({someOtherNode: {value: 3}});
+    });
+
+    test("is idempotent, and leaves a new-format save alone", () => {
+        const obj = oldCustomSave();
+        migrateLegacyMeasurements(obj);
+        const once = JSON.parse(JSON.stringify(obj));
+        migrateLegacyMeasurements(obj);
+        expect(obj).toEqual(once);
+
+        // A new save whose user deleted every measurement keeps its empty list.
+        const emptied = {name: "custom", measurements: []};
+        migrateLegacyMeasurements(emptied);
+        expect(emptied.measurements).toEqual([]);
+    });
+
+    test("adds no measurements block to a custom sitch that has no old nodes", () => {
+        // A fresh custom sitch (SitCustom.js itself): CMeasurementManager makes the defaults.
+        const obj = {name: "custom", isCustom: true, lookCamera: {}};
+        migrateLegacyMeasurements(obj);
+        expect("measurements" in obj).toBe(false);
+    });
+
+    test("does not touch a built-in sitch", () => {
+        const obj = {name: "gimbal", altitudeLabel: {kind: "MeasureAltitude", position: "jetTrack"}};
+        migrateLegacyMeasurements(obj);
+        expect(obj.altitudeLabel).toBeDefined();
+        expect(obj.measurements).toBeUndefined();
+    });
+
+    test("keeps a definition-level hide and a color from the old node", () => {
+        const obj = {name: "custom",
+            altitudeLabel: {kind: "MeasureAltitude", position: "lookCamera", visible: false, color: "#ff0000"}};
+        migrateLegacyMeasurements(obj);
+        expect(obj.measurements[0].show).toBe(false);
+        expect(obj.measurements[0].color).toBe("#ff0000");
+    });
+
+    test("keeps any other node id as an Other reference", () => {
+        expect(legacyMeasurementRef("jetTrack")).toEqual({kind: "node", id: "jetTrack"});
+        expect(legacyMeasurementRef("cameraTrackSwitchSmooth")).toEqual({kind: "camera", id: "lookCamera"});
     });
 });

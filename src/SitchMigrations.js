@@ -230,3 +230,55 @@ export function migrateCameraMenuFolders(obj) {
         if (cts.labels.flightSimCamera === undefined) cts.labels.flightSimCamera = "Flight Sim";
     }
 }
+
+/**
+ * Convert the old hard-wired measurement nodes of a saved CUSTOM sitch into the
+ * `measurements` block that CMeasurementManager builds from (Show > Measurements).
+ *
+ * Before measurements could be added by the user, SitCustom.js defined three nodes: camera
+ * altitude (altitudeLabel), traverse altitude (altitudeLabel2) and camera-to-traverse
+ * distance (distanceLabel). A saved custom sitch embeds its whole node graph, so every old
+ * save still carries them. Each MeasureAltitude / MeasureAB node definition becomes a
+ * measurement with the same id, and the node definition (and any mod for it) is deleted, so
+ * a re-save is in the new format only.
+ *
+ * Only a sitch with at least one such node gets a `measurements` block. A fresh custom sitch
+ * has none, and CMeasurementManager then makes the three defaults. A new save always has the
+ * block (it can be empty, when the user deleted them all), and it is left alone.
+ *
+ * @param {Object} obj - parsed sitch object
+ */
+export function migrateLegacyMeasurements(obj) {
+    if (!obj || typeof obj !== "object") return;
+    if (obj.name !== "custom" && !obj.isCustom) return;
+    if (obj.measurements !== undefined) return;
+
+    const measurements = [];
+    for (const [id, def] of Object.entries(obj)) {
+        if (!def || typeof def !== "object") continue;
+        let measurement;
+        if (def.kind === "MeasureAltitude" && typeof def.position === "string") {
+            measurement = {id, type: "altitude", from: legacyMeasurementRef(def.position), to: null};
+        } else if (def.kind === "MeasureAB" && typeof def.A === "string" && typeof def.B === "string") {
+            measurement = {id, type: "distance", from: legacyMeasurementRef(def.A), to: legacyMeasurementRef(def.B)};
+        } else {
+            continue;
+        }
+        // Hidden by the definition or by a mod. A color on the old node is kept too; the
+        // default sitch never set one, but a hand-edited sitch can have.
+        measurement.show = def.visible !== false && obj.mods?.[id]?.visible !== false;
+        if (typeof def.color === "string") measurement.color = def.color;
+        measurements.push(measurement);
+        delete obj[id];
+        if (obj.mods && typeof obj.mods === "object") delete obj.mods[id];
+    }
+    if (measurements.length > 0) obj.measurements = measurements;
+}
+
+// The {kind, id} reference for a node id used by an old measurement node. The camera track
+// (cameraTrackSwitchSmooth) is where the look camera is, so both mean "the camera".
+export function legacyMeasurementRef(nodeId) {
+    if (nodeId === "lookCamera" || nodeId === "cameraTrackSwitchSmooth") return {kind: "camera", id: "lookCamera"};
+    if (nodeId === "traverseSmoothedTrack") return {kind: "traverse", id: nodeId};
+    return {kind: "node", id: nodeId};
+}

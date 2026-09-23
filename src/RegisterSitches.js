@@ -6,7 +6,7 @@ import {checkForModding} from "./utils";
 import {showError} from "./showError";
 import {isServerless} from "./configUtils";
 import {migrateCameraHeadingReorg, migrateFovSwitchLabel, migrateCameraMenuFolders,
-    migrateMaskOverlayId} from "./SitchMigrations";
+    migrateMaskOverlayId, migrateLegacyMeasurements} from "./SitchMigrations";
 
 //////////////////////////////////////////////////////////////////////////////////////
 // Note. This failed once due to what seemed to be a circular dependency
@@ -130,6 +130,8 @@ export function textSitchToObject(text, canMod = true) {
         migrateCameraMenuFolders(obj);
         // Carry a mask painted when the mask belonged to Motion Analysis onto the shared node.
         migrateMaskOverlayId(obj);
+        // Turn the old hard-wired measurement nodes into Show > Measurements entries.
+        migrateLegacyMeasurements(obj);
         if (canMod) {
             return rememberSitchText(checkForModding(obj), text);
         } else {

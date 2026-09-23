@@ -46,6 +46,7 @@ import {CNodeDisplayTrack} from "./nodes/CNodeDisplayTrack";
 import {DebugArrowAB, elevationAtLL} from "./threeExt";
 import {FeatureManager} from "./CFeatureManager";
 import {CustomGraphManager} from "./CCustomGraphManager";
+import {MeasurementManager} from "./CMeasurementManager";
 import {deserializeVideoQPGraph, serializeVideoQPGraph} from "./VideoQPGraph";
 import {deserializeVideoTonalGraph, serializeVideoTonalGraph} from "./VideoTonalGraph";
 import {restoreStreetViewPanoFromMod} from "./StreetViewPanoUI";
@@ -669,6 +670,11 @@ export const serializeMethods = {
 
         // Serialize user-created custom graphs
         out.customGraphs = CustomGraphManager.serialize()
+
+        // Show > Measurements. setup() rebuilds them from Sit.measurements on load. Always an
+        // array for a custom sitch — an empty one means "the user deleted them all", which must
+        // not bring the defaults back.
+        out.measurements = MeasurementManager.serialize()
 
         // The video QP graph (Video > Forensics). undefined while it is not shown.
         out.videoQPGraph = serializeVideoQPGraph()
