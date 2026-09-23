@@ -132,6 +132,13 @@ export class CVideoWebCodecBase extends CVideoAndAudio {
             // Trigger a re-request for the current frame on next render
             setRenderOne(true);
         }
+        // Requests made while the worker was being (re)configured were queued by
+        // handleBusyDecoder, and that queue is otherwise drained only when a group
+        // completes. After a flush (a decode-resolution change) nothing is in
+        // flight, so without this the queued groups wait forever: waitForFrame
+        // requests its group once, then times out. Analyse Object at the start of
+        // a reduced-resolution clip failed every time for this reason.
+        this.handleGroupComplete();
     }
 
     /**

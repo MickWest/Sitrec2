@@ -22,8 +22,8 @@ Sitrec has three video-derived line-of-sight sources, selected in **Traverse →
 
 | LOS Source | What is stored | Needs the FOV? |
 |---|---|---|
-| Camera + Point Track | a video pixel, tracked automatically | yes |
-| Camera + Object Track | a video pixel, keyframed by hand | yes |
+| Camera + Point Track ([Point Tracking](PointTrack.md)) | a video pixel, tracked automatically | yes |
+| Camera + Object Track (Traverse → Manual Tracking) | a video pixel, keyframed by hand | yes |
 | **Camera + Ground Track** | **a place on the earth** | **no** |
 
 The first two start from the camera's centreline and rotate it by the angle a tracked *pixel*
@@ -210,6 +210,6 @@ so the largest range the ground track allows.
 ## See also
 
 * [Traverse Methods](TraverseMethods.md) — what happens to these lines of sight next
-* [Point Track](PointTrack.md) — the pixel-based tracker, and video stabilization
+* [Point Tracking](PointTrack.md) — the automatic pixel tracker, Manual Tracking compared, and video stabilization
 * [Terrain and Elevation](Terrain.md) — where the ground surface comes from
 * [Doing Defensible Analysis](DefensibleAnalysis.md) — what a range ceiling does and does not license you to say

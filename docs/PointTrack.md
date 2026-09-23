@@ -1,325 +1,390 @@
-# Point Track and Stabilization
+# Point Tracking
 
 **Video → Point Track**
 
-Point Track follows an object through the video automatically, frame by frame. It is how you
-turn "there is a light moving in this footage" into a line of sight you can actually analyse —
-and it can also stabilize the footage on whatever it is following.
+Point Track follows an object through the video automatically, frame by frame. It turns "there
+is something moving in this footage" into a position on every frame, which becomes a line of
+sight you can analyse. It can also stabilize the footage on whatever it is following.
+
+This page has four parts:
+
+- **A. [Simple procedures](#a-simple-procedures)** that work for most videos
+- **B. [Point tracks in traverse analysis](#b-point-tracks-in-traverse-analysis)**, and how Point Track differs from Manual Tracking and Ground Track
+- **C. [Stabilization and stabilized rendering](#c-stabilization-and-stabilized-rendering)**
+- **D. [Handling problems](#d-handling-problems)**: what each setting does, and what to change when tracking goes wrong
 
 ---
 
-## Quick start
+## A. Simple procedures
 
-1. Open **Video → Point Track** and switch it on. A yellow cursor appears over the video.
-2. Scrub to a frame where the object is clearly visible, then **drag the yellow cursor onto
-   it**. Dragging is what creates the keyframe — a bare click on the object does nothing
-   unless it lands on the cursor or an existing keyframe.
-3. Hold **`'`** to advance frame by frame, tracking as it goes. The cursor turns green while
-   tracking, and a cyan trail shows the path.
-4. Watch it. When it loses the object — and on hard footage it will — release, scrub back to
-   the last good frame, drag the cursor back onto the object, and continue.
+### The standard procedure
 
-Hold **`;`** to go back the other way. Note this is not "tracking backwards": it **rewinds and
-deletes** the tracked positions as it goes, so use it to undo a bad run rather than to extend
-the track behind your starting frame.
+This works for most videos, including small objects over moving terrain, sea or cloud:
 
-The hold loop advances at the sitch's frame rate, so it runs at roughly playback speed. The
-separate **Start Point Track** button runs its own loop as fast as the machine allows, which
-is much quicker over a long clip.
+1. Open **Video → Point Track** and press **Enable Point Track**. A yellow cursor appears over
+   the video.
+2. Go to the first frame you want tracked, at a moment where you can see the object.
+3. **Drag the yellow cursor onto the object.** The drag places the start point. A bare click
+   does nothing unless it lands on the cursor or on an existing point.
+4. Check that **Tracking Method** is **Motion (Background)**, the default. See
+   [Choosing a tracking method](#choosing-a-tracking-method) for the cases where another method
+   is better.
+5. Press **Analyse Object**. It measures the object at this frame and sets Feature Size,
+   Motion Polarity, Motion Frame Gap and Motion Parallax Slack to suit it. The result shows on
+   the button for a few seconds, for example *bright, size 1, gap 3, slack 0 (27 sigma)*.
+6. If you only want part of the clip, set the end of the range with the **B** marker on the
+   timeline (or the **O** key at that frame). Tracking stops at B.
+7. Press **Start Point Track**. It runs as fast as the machine allows, from the current frame
+   to B. A long HD clip takes a few minutes.
+8. Scrub through the result. The cyan trail is the track. On the timeline, green marks frames
+   where the object was detected, amber marks estimated frames, and magenta marks points you
+   placed by hand.
 
-### Analysis resolution
+Do not skip step 5. With the default settings, Motion (Background) can lose a soft object
+over bright ground, or can smooth away a small dot. Analyse Object picks settings for the
+object you are actually tracking.
 
-**Analysis Resolution** defaults to **Original (no limit)** so small targets are measured
-using every source pixel, even when Settings limits normal playback to 720p. The choice is
-shared by the video analysis menus in this tab. Select **Use Settings** to follow the playback
-limit, or choose a smaller size when speed or memory matters more. **Analysis pixels** shows
-the resulting dimensions and warns when they are reduced from the source.
+### If the track goes wrong partway through
 
-Changing either this dropdown or the Settings video limit clears the decoded frame cache.
-A running analysis stops so it cannot mix measurements from different resolutions; start it
-again after changing the limit. Existing track points keep their original video coordinates.
-Playback returns to its Settings limit when analysis and any motion-field preview finish.
+1. Stop the track, or let it finish.
+2. Go to the last frame where the track is still on the object.
+3. Press **Clear from Here**. This deletes the tracked points from the current frame to B.
+4. Go forward to a frame where you can see the object again, and drag the cursor onto it. This
+   is a **user point**: the tracker takes it as fact and restarts from it.
+5. Press **Start Point Track** again. Frames that already have points are kept.
+
+If a whole section is hard, press **Analyse Object** at a frame inside that section and track
+it again. The best settings can change as the object's size and contrast change.
+
+### Stepping frame by frame
+
+Hold **`'`** to track one frame at a time at about playback speed, which is useful for watching
+a difficult stretch. Hold **`;`** to go back. Note that `;` is not "tracking backwards": it
+**deletes** the tracked points as it goes, so use it to undo a bad run.
+
+### Lights at night, and stars
+
+For a single light against a dark sky, choose **High Peak** (or **Center on Bright**) instead of
+Motion (Background). There is no background texture to register, and a peak fit is more
+accurate for a point of light. Set **Feature Size** to about the size of the light in pixels.
+
+### What to expect
+
+On the three reference clips used to test Point Track, the standard procedure tracks the
+whole clip:
+
+| Clip | Object | Result |
+|---|---|---|
+| Simulated aircraft video, 640×480, 900 frames | 6 px object over farmland, with a wobbling camera | every frame, within 1.7 px of the true position |
+| Sea and sky with wind turbines, 1920×1080, 2981 frames | 3 px white dot, black redaction boxes | every frame, continuous lock |
+| Desert, hand-held long lens, 1920×1080, 1810 frames | soft bright blob among bright rocks | every frame (79 of 1810 estimated, mostly through a saturated stretch) |
 
 ---
 
-## Choosing a tracking method
+## B. Point tracks in traverse analysis
 
-There are eight (nine on a local development build), and picking the right one matters far
-more than tuning the sliders.
+### From a point track to a line of sight
+
+Sitrec turns the tracked pixel into a direction. It starts from the camera's centre line and
+rotates it by the angle at which the pixel sits off the centre of the frame. To use it:
+
+1. Track the object as in part A.
+2. Set **Traverse → LOS Source** to **Camera + Point Track**.
+3. Choose a method in **Traverse → LOS Traverse Method**.
+
+Output Smoothing (see [Smoothing the output](#smoothing-the-output)) applies to the line of
+sight as well as to the trail.
+
+### Point Track, Manual Tracking and Ground Track
+
+Sitrec has three ways to get a line of sight from a video. They are easy to confuse:
+
+| | **Point Track** | **Manual Tracking** | **Ground Track** |
+|---|---|---|---|
+| Menu | Video → Point Track | Traverse → Manual Tracking | Traverse → Ground Track |
+| LOS Source | Camera + Point Track | Camera + Object Track | Camera + Ground Track |
+| Who finds the positions | the computer, on every frame | you, at keyframes; a curve joins them | you, at keyframes |
+| What is stored | a pixel in the video | a pixel in the video | a place on the ground |
+| Needs the field of view | yes | yes | no |
+| Also gives | stabilization | angular size, from a second point (B) on each keyframe | an upper limit on the range |
+
+- Use **Point Track** when the object is visible for most of the clip. It measures every
+  frame, so it keeps detail that keyframes would miss.
+- Use **Manual Tracking** when you need only a few well-chosen keyframes, or when you want the
+  object's angular size from its two ends. Place its points with **Ctrl+click** (**Cmd+click**
+  on a Mac) on the video.
+- Use **[Ground Track](GroundTrack.md)** when the object passes in front of terrain you can
+  identify. It needs no field of view, and it says the object was no further away than the
+  ground behind it.
+
+Two things with similar names are not part of this:
+
+- The **Manual Tracking** button in the MQ-9 tracking simulation releases that simulation's
+  automatic track. It is not the Traverse menu's Manual Tracking.
+- **Video → Motion Analysis → Stabilize Video** removes camera shake from the whole frame.
+  It does not follow an object. Point Track's stabilization is described in part C.
+
+### The field of view matters
+
+A point track is only as good as the field of view you give the camera. The conversion from a
+pixel offset to an angle uses the FOV, so it scales every off-centre angle. A 10% error in the
+FOV gives about a 10% error in every angular rate, and that error goes into range, speed and
+acceleration. (This is exact only near the centre of the frame, because the conversion uses a
+tangent.) The conversion also assumes a lens without distortion, so accuracy falls toward the
+edges, and a cropped video has its optical centre off the frame centre.
+
+If there are stars in the footage, measure the field of view with the
+[Star Tracker](StarTracker.md). This is the most valuable single step for making a
+pixel-based analysis trustworthy. See [Doing Defensible Analysis](DefensibleAnalysis.md) §2.3.
+
+If you cannot trust the field of view, a [Ground Track](GroundTrack.md) avoids it.
+
+---
+
+## C. Stabilization and stabilized rendering
+
+When you have a track, Sitrec can shift every frame so the tracked point stays still. This
+makes shaky or long-lens footage much easier to watch. It also makes it easier to see whether
+the object moves relative to the background, or relative to the stars.
+
+1. Track the object (part A).
+2. Press **Stabilize**. The video now moves so the tracked point stays fixed.
+3. Use **Enable Stabilization / Disable Stabilization** to switch between the stabilized and
+   the original view.
+4. To save a video, press **Render Stabilized Expanded** or **Render Stabilized Video**.
+
+| Control | What it does |
+|---|---|
+| **Stabilize** | Applies the current track to the video. Press it again after you change the track |
+| **Enable / Disable Stabilization** | Switches the stabilized view on or off without losing it |
+| **Stabilize Centers** (on) | Holds the tracked point at the centre of the view. When it is off, the point stays where it was on the first tracked frame |
+| **Render Stabilized Expanded** | Exports the stabilized video on a larger canvas, so no part of the picture is cut off. Use this one unless you need the original frame size |
+| **Render Stabilized Video** | Exports at the original frame size. Picture that moves outside the frame is lost, and the edges can show black |
+| **Include Video Readout** | Adds the Video Readout (frame counter, time code, dates) and any visible OSD Tracker readouts to the rendered video |
+
+Stabilization uses the smoothed output. If the stabilized video still jitters, try an
+[Output Smoothing](#smoothing-the-output) of 3–5 frames and press **Stabilize** again. Between
+tracked points the shift is interpolated; frames that the tracker marked as lost are shown
+without a shift.
+
+---
+
+## D. Handling problems
+
+### Symptoms and fixes
+
+| What you see | Likely cause | What to do |
+|---|---|---|
+| **Analyse Object** says *object not clear here* | The object does not stand out at this frame, or the cursor is not on it | Move the cursor exactly onto the object, or analyse at a frame where it is clearer |
+| The track follows something else nearby | A look-alike (rock, wave, light) is almost as strong as the object | Run **Analyse Object** at the frame where it went wrong. Lower **Search Radius**. Place a user point on the object and track again |
+| The track jumps to on-screen text or a reticle | White or grey overlay is not recognized as overlay | Paint a [mask](Masking.md) over it and keep **Use Mask** on |
+| The track drops out while the object hovers | Motion (Background) cannot see an object that is still relative to the ground | Expected. Place user points across the stop, or use *Template Match* or a *Center on* method for that section |
+| Many amber (estimated) frames | The object was hard to detect, so those frames were joined by a straight line or by the camera motion | Check them. Run **Analyse Object** inside that section, or place user points |
+| The track sits on the edge of the object, not its centre | A slow or large object stays in the background samples and is partly subtracted | Raise **Motion Frame Gap** |
+| The track is lost during a fast pan or zoom | Background registration fails when frames overlap too little | Lower **Motion Frame Gap**. Analyse again after the zoom |
+| Hilly terrain or buildings give false detections | The background cannot be cancelled exactly at an angle | Raise **Motion Parallax Slack** to 2–3 |
+| A faint object keeps dropping out | Its detections are below the threshold | Lower **Motion Threshold** a little |
+| The track keeps jumping to clutter | Weak peaks in clutter are accepted | Raise **Motion Threshold** |
+| The marker jitters between bright parts of one object | Several peaks on the same object | Use **Output Smoothing** 3–5 |
+| Dragging the current point moves an older point | Earlier points overlap inside the cursor | Turn on **Edit Head Only** |
+| Template Match drifts onto the background | **Track Radius** is too big, so the template contains background | Reduce **Track Radius** |
+| The object escapes between frames | **Search Radius** is too small for its speed | Increase **Search Radius** |
+
+When nothing on this list helps, turn on **Show Motion Field**. If you cannot see the object in
+the motion field, no change to the Motion settings will find it, and a different method (or
+Manual Tracking) is the answer.
+
+### Choosing a tracking method
+
+Choosing the right method matters more than tuning the sliders.
 
 | Method | Use it when |
 |---|---|
-| **Template Match** | The object has visible structure — an aircraft, a vehicle, anything with a recognisable shape. The default, and the right choice most of the time |
-| **Optical Flow** | The object is textured and moves smoothly. Cheaper than template matching |
-| **Center on Bright** | A bright point on a dark background — a light at night, a star, a flare |
-| **Center on Dark** | A dark point on a bright background — a distant object against overcast sky |
+| **Motion (Background)** | The object is small, or looks like the clutter it crosses: the same brightness, size or texture. The best general choice for aircraft and drone footage over terrain or sea |
+| **Template Match** | The object has visible structure, such as an aircraft or vehicle, and the background is plain |
+| **Optical Flow** | The object is textured and moves smoothly. Faster than template matching |
+| **Center on Bright** | A bright point on a dark background, such as a light at night |
+| **Center on Dark** | A dark point on a bright background, such as a distant object against overcast sky |
 | **Center on Color** | The object is distinguished by colour rather than brightness |
-| **High Peak** | A sub-pixel-accurate bright point. Better than *Center on Bright* for point sources, since it fits a peak rather than averaging |
+| **High Peak** | A bright point where you need sub-pixel accuracy. It fits a peak instead of averaging |
 | **Low Peak** | The same for dark points |
-| **Motion (Background)** | The object is *indistinguishable* from the clutter it crosses — the same brightness, the same size, the same texture. See below |
-| **SAM2 (Meta)** | Segmentation-based tracking. Local builds only |
+| **SAM2 (Meta)** | Segmentation-based tracking. Local development builds only |
 
-For a light in the night sky, **High Peak** or **Center on Bright** will hold on far longer
-than template matching, because there is no template to match — just a blob that changes shape
-frame to frame.
+### How Motion (Background) works
 
-### Motion (Background)
+Every other method asks *what does the object look like?* In some videos that question has no
+answer. A dot crossing a city of rooftops of the same size and brightness, or a bright object
+crossing a desert of equally bright rocks, defeats template matching and the centroid methods.
 
-Every other method asks *what does the object look like?* — and there are videos where that
-question has no answer. A dot crossing a city of rooftops the same size and brightness as
-itself, or a bright object crossing a desert full of equally bright rocks, defeats template
-matching and the centroid methods alike, because there is nothing to lock onto.
+**Motion (Background)** asks instead: *which pixels move differently from the ground around
+them?* The scene behind the object moves as one rigid thing as the camera pans. Sitrec measures
+that motion, predicts what the background should look like in this frame, and subtracts it.
+What remains shows candidate objects, together with sensor noise and imperfect registration.
+The tracker checks how strong and how consistent they are before it accepts one.
 
-**Motion (Background)** asks a different question: *which pixels are moving differently from
-the ground around them?* The scene behind the object moves as one rigid thing as the camera
-pans, so Sitrec measures that motion, predicts what the background should look like this
-frame, and subtracts it. The residual reveals candidate objects, along with sensor noise
-and imperfect registration. The tracker checks their strength and motion before accepting
-them. Detection depends on the object's motion relative to the scene as well as the quality
-of that background estimate.
+It follows that **an object that stops moving relative to the ground disappears**. While it
+hovers over fixed terrain it is, as far as this method can tell, part of the background.
 
-One consequence follows directly, and it is the thing to know before you reach for it:
+A still camera can make registration easier, but the object must move far enough between the
+sampled frames. A slow or large object can stay in most of those samples and be partly
+subtracted from itself, which leaves an edge instead of its centre. A higher **Motion Frame
+Gap** helps then. A fast pan or zoom may need closer samples.
 
-* **An object that stops moving relative to the ground disappears.** At that moment it *is*
-  part of the background as far as this method can tell. Expect it to drop out while an
-  object hovers over fixed terrain, and to pick up again when it moves off. This is the one
-  case where *Template Match* or a *Center on* method will do better.
+### What Analyse Object measures
 
-A still camera can simplify background registration, but the object must move far enough
-between the sampled frames. A slowly moving or enlarged object can remain in most of those
-samples and be partly subtracted from itself, leaving an edge instead of its center.
-Increasing **Motion Frame Gap** can help in that situation, while a rapid pan or zoom may
-need closer samples to keep registration usable. Recheck calibration after a large change
-in apparent size; one setting may not suit an entire clip.
+**Analyse Object** tries each combination of polarity (bright or dark), parallax slack and
+feature size at the cursor, and keeps the one that makes the object stand out most clearly.
 
-### Start with Analyse Object
+The two ends of the range need very different numbers. A 3 px dot on smooth sky wants Feature
+Size 1; a soft blob on rough desert wants 4. On one test clip the same footage gives a
+confident track at Feature Size 1 and almost no detections at 4.
 
-Put the cursor on the object, pick a frame where it is clearly visible, and press
-**Analyse Object**. It measures the object and sets Motion Polarity, Feature Size and Parallax
-Slack to suit it, then reports how strongly the object stands out with those settings.
+It also checks for look-alikes. The tracker accepts a detection only when it clearly beats the
+next strongest thing within the Search Radius. Analyse Object measures that too. If the
+strongest setting leaves nearby clutter almost as strong as the object, and another setting is
+nearly as strong but separates the object clearly, it chooses that one. On one test clip,
+Feature Size 2 was slightly stronger at the first frame, but it left rocks almost as bright as
+the object. Feature Size 4 was as strong and stood out 14 times above them, and it tracks the
+whole clip.
 
-This matters more than it sounds, because the two ends of the range need genuinely different
-numbers. A 3 px dot on a smooth sky wants Feature Size 1; a soft blob on rough desert wants 4.
-Get that wrong and the object is either smoothed away before it can be found or buried in its
-own noise — measured on one clip, the same footage gives a confident track at Feature Size 1
-and **almost no detections** at 4. There is no single setting that serves both, which is why
-this measures rather than guesses.
-
-**It measures the frame you are on.** A target's apparent size and contrast change over a long
-clip, so the best settings at the start are not always the best throughout — on one test clip
-Feature Size 2 wins at frame 0 but Feature Size 4 tracks far better over the whole video. The
-result therefore also lists any close alternatives. If tracking fades partway through, try one
-of those, or move to a frame in the difficult stretch and analyse again.
-
-If the object is not clearly visible where you analyse, it says so and changes nothing, rather
-than committing settings measured from noise.
+**It measures the frame you are on.** An object's size and contrast change through a long
+clip. The console report lists close alternatives; if tracking fades later, try one of them, or
+analyse again inside the difficult section. If the object is not clear where you analyse, it
+says so and changes nothing.
 
 ### Show Motion Field
 
-Draws what the tracker actually works from: the current frame with the background's own motion
-subtracted away. Mid-grey means "explained by the background", bright means "brighter than the
-background predicts", and black means masked out.
+**Show Motion Field** draws what the tracker works from: the current frame with the
+background's motion subtracted. Mid-grey means "explained by the background", bright means
+"brighter than the background predicts", and black means masked out. It shows at once whether
+the object stands out, what else does, and whether something the tracker followed was real.
 
-It answers in one glance what the resulting track never can — whether the object stands out at
-all, what else in the frame does, and whether something the tracker chased was a real feature
-or an artefact. If the object is not visible in the motion field, no amount of tuning the other
-settings will find it, and a different method is the answer.
+Coloured symbology (cursors, letters, readouts) and solid black redaction boxes are recognized
+and ignored, also when they move across the frame. **Grey or white overlay is not**, because
+nothing tells it apart from the picture. Mask it.
 
-**Overlay:** coloured symbology — cursors, cardinal letters, readouts — and solid black
-redaction boxes are recognised and ignored, including when they drift across the frame as the
-aircraft turns. **Grey or white overlay is not**, because there is nothing to tell it apart
-from the picture. A white burned-in arrow or reticle that drifts across the object can
-therefore capture the track; move the object's start point away from it, or use another
-method for that stretch.
-
-Changing the method **while a track is actively running clears it**. Changing it while stopped
-leaves the existing track alone. Either way, choose before you invest in a long run.
-
----
-
-## The controls
+### The controls
 
 | Control | Default | Range | What it does |
 |---|---|---|---|
-| **Track Radius** | 30 | 10–100 | The inner solid circle: the template size, or the window the centroid is computed over |
-| **Search Radius** | 50 | 20–300 | The outer dashed circle: how far from the last position the tracker will look |
-| **Feature Size** | 4 | 1–20 | How big the thing you are tracking is, in pixels. Used by High/Low Peak and by *Motion (Background)* — see the note below |
-| **Motion Polarity** | Either | — | Whether the object is brighter or darker than the background. *Either* works but is slightly noisier |
-| **Motion Frame Gap** | 3 | 1–12 | How far back the background samples are taken. Raise it when the object moves slowly against the scene, so it separates from where it used to be |
-| **Motion Parallax Slack** | 0 | 0–5 | Pixels of background shift to forgive. 0 for flat ground seen from above; 2–3 for hills or buildings seen at an angle, where the background cannot be cancelled exactly |
-| **Motion Threshold** | 6 | 3–30 | How far above the noise a detection must be before it is believed. Lower it to hold a faint object, raise it if the track jumps to clutter |
-| **Use Mask** | on | — | Ignore masked-out parts of the frame in Motion (Background) and the centroid methods |
-| **Brightness Threshold** | 128 | 0–255 | Cutoff for the centroid methods |
-| **Color Distance** | 80 | 0–442 | How far a pixel may be from the target colour and still count, for *Center on Color*. 442 is "everything matches" |
-| **Edit Head Only** | off | — | Only the point at the current frame can be dragged; the rest of the track fades back. See [Edit Head Only](#edit-head-only) |
-| **Stabilize Centers** | on | — | See below |
-| **Include Video Info Display** | off | — | Burn the readouts into a stabilized render |
+| **Tracking Method** | Motion (Background) | — | See [Choosing a tracking method](#choosing-a-tracking-method). Changing it during a run clears the track |
+| **Track Radius** | 30 | 10–100 | The inner solid circle: the template size, or the window a centroid is measured over |
+| **Search Radius** | 50 | 20–300 | The outer dashed circle: how far from the predicted position the tracker looks |
+| **Feature Size** | 4 | 1–20 | The size of the object in pixels. Used by High/Low Peak and Motion (Background). Set by Analyse Object |
+| **Motion Polarity** | Either | — | Whether the object is brighter or darker than its background. *Either* works but is noisier; Analyse Object picks one |
+| **Motion Frame Gap** | 3 | 1–12 | How many frames apart the background samples are |
+| **Motion Parallax Slack** | 0 | 0–5 | Pixels of background shift to forgive: 0 for flat ground seen from above, 2–3 for hills or buildings seen at an angle |
+| **Motion Threshold** | 6 | 3–30 | How far above the noise a detection must be before it is accepted |
+| **Use Mask** | on | — | Ignore masked parts of the frame (Motion and the *Center on* methods) |
+| **Brightness Threshold** | 128 | 0–255 | Cut-off for the *Center on* methods |
+| **Color Distance** | 80 | 0–442 | For *Center on Color*: how far a pixel's colour may be from the target colour. 442 matches everything |
+| **Output Smoothing** | Off | Off, 2–10 frames | Smooths the output track; see below |
+| **Edit Head Only** | off | — | Only the point at the current frame can be dragged; see below |
+| **Clear from Here** | — | — | Delete tracked points from the current frame to B |
+| **Clear User Points** / **Clear Auto Points** | — | — | Delete only your points (asks first), or only the tracker's |
 
-Track Radius and Search Radius use **original video** pixels, so they do not change when you
-resize the view or change the decode limit. Feature Size and Parallax Slack use the pixels
-actually analysed. Run **Analyse Object** again after changing the analysis resolution.
+Track Radius and Search Radius are in **original video** pixels, so they do not change when you
+resize the view or when the video plays at a lower resolution. Feature Size and Parallax Slack
+are in the pixels actually analysed, so run **Analyse Object** again after you change the
+analysis resolution.
 
-### Getting the radii right
+### Analysis resolution
 
-The two circles are the whole game:
+**Analysis Resolution** defaults to **Original (no limit)**, so small objects are measured with
+every source pixel, even when Settings limits normal playback to 720p. **Use Settings** follows
+the playback limit; a smaller size is faster and uses less memory. **Analysis pixels** shows the
+size in use and warns when it is smaller than the source.
 
-- **Track Radius too large** and the template picks up background, so the tracker starts
-  following the background instead of the object. This is the usual failure on a small target
-  against textured terrain.
-- **Track Radius too small** and there is not enough structure to match.
-- **Search Radius too small** and a fast-moving object escapes between frames.
-- **Search Radius too large** and the tracker finds something else that looks similar —
-  another star, another light — and jumps to it.
+Changing this, or the Settings video limit, clears the decoded frames. A running analysis
+stops, so it cannot mix measurements made at two resolutions; start it again. Existing points
+keep their original video coordinates.
 
-Start with the defaults, and if the track jumps, reduce the *search* radius first.
+### Using a mask
 
-## Using a mask
+If the object passes in front of trees or a rooftop, or near burned-in on-screen text, mask
+those areas and keep **Use Mask** on. See [Masking](Masking.md). Motion (Background) and the
+*Center on* methods use the mask; Motion also leaves masked pixels out of the camera
+registration and the background model. Template Match, Optical Flow and High/Low Peak do not
+use the mask.
 
-If the object passes in front of trees, a rooftop, or a burned-in on-screen display, mask
-those regions out first and leave *Use Mask* on. See [Masking](Masking.md).
+### User points and auto points
 
-The mask protects *Motion (Background)* and the centroid methods — *Center on Bright*,
-*Center on Dark* and *Center on Color*. Motion tracking excludes masked pixels from camera
-registration, detection and the earlier frames used to predict the background. This helps
-prevent readouts and reticles from becoming false targets during a wide reacquisition search.
-Template Match, Optical Flow and High/Low Peak do not consult the mask.
+A track holds two kinds of point:
 
-## User points and auto points
+- **Auto points** are what the tracker found. Detections are green on the timeline; estimated
+  points are amber. Both can be recomputed.
+- **User points** are the ones you place by dragging the cursor onto the object. They are drawn
+  as magenta crosses and marked magenta on the timeline. Tracking never overwrites them, never
+  interpolates over them, and restarts from each one.
 
-A track holds two kinds of point, and the difference matters.
+Where the tracker cannot see the object, place a few user points by eye and track again. It
+continues between them, so you do not have to place every frame. A wrong user point is worse
+than none, because nothing will correct it.
 
-* **Auto points** are what the tracker worked out. Detections are marked green on the
-  timeline; interpolated estimates from Motion (Background) are amber. Both can be recomputed.
-* **User points** are the ones you placed by hand, by dragging the cursor onto the object.
-  They are drawn as magenta crosses, marked magenta on the timeline, and are **inviolable** —
-  tracking never overwrites one, never interpolates over one, and treats each as a fresh
-  starting point for what follows.
+**Clear User Points** deletes only yours and asks first. **Clear Auto Points** deletes only the
+tracked points, so you can track again from the same guidance. User points are saved with the
+sitch.
 
-That is what makes a difficult clip workable. Where the tracker cannot see the object — a
-stretch of saturated terrain, say, where a bright object is indistinguishable from bright
-rocks — you place a few points by eye and track again. The tracker uses them to correct itself
-and carries on between them, so you do not have to place every frame.
+### Leaving the frame and coming back
 
-**Clear User Points** deletes only yours, and asks first, because nothing can recompute them.
-**Clear Auto Points** deletes only the tracked ones and keeps yours, so you can re-track from
-the same guidance. User points are saved with the sitch.
+While Motion (Background) searches for a lost object, the missing frames stay empty. The marker
+stays at the last known position, with **target not found** beside the frame number. No guessed
+position is added during the loss.
 
-### Leaving the image and returning
+A return needs a second consistent detection, or a user point. Then Sitrec estimates the path
+between the two observations, using the measured camera motion. These points are marked
+**estimated** (amber). They are reconstructions, not observations: turns, acceleration,
+parallax or registration errors can make them wrong. If the camera registration fails, an
+off-screen gap stays empty. A return inside the frame is joined with a straight line, also
+marked estimated.
 
-Motion (Background) keeps missing frames blank while it searches. The marker stays at the
-last available position as an editing handle, with **target not found** beside the frame
-number. No extrapolated position is added to the track during the loss.
+The tracker also searches the whole area from time to time. A return found that way needs three
+consistent sightings and a matching feature in the raw image. Mask readouts and reticles before
+you track a cluttered clip.
 
-When an object crosses the edge, background motion guides an internal search prediction.
-A return needs a second consistent detection, or a user point. After that confirmation,
-Sitrec estimates the intervening path using the measured camera motion at each frame and
-constant target motion relative to the registered background between the two observations.
-This can produce off-screen positions during the gap even when both endpoints are on-screen.
+**Background: stationary** in the status means the camera is locked on the scenery. The tracker
+keeps the object's motion relative to the scenery through a pan–lock–pan change. **Registration
+unavailable** is different: it means the camera motion could not be measured, not that the
+camera stopped.
 
-These points are labeled **estimated** and marked amber on the timeline. They are rough
-reconstructions, not observations: turns, acceleration, parallax, or registration error can
-make them wrong. If camera registration is missing or fails, an off-screen gap stays blank.
-An in-frame return can instead use straight interpolation, also marked estimated. Estimates
-and missing-frame status are saved with the sitch, and smoothing does not fill a missing gap.
+### Smoothing the output
 
-The tracker also makes periodic wide searches, even if its off-screen prediction has drifted
-away. Wide returns need three consistent sightings and a corresponding feature in the raw
-image. Mask readouts and reticles before searching a cluttered frame. Shorter **Motion Frame Gap**
-values help when rapid camera motion leaves little overlap with older background samples;
-**Analyse Object** tries a one-frame gap if the current spacing cannot measure the selected
-point. Its result reports the chosen gap.
+**Output Smoothing** is **Off** or **2–10 frames**. Try 3–5 frames when the point jumps between
+bright parts of the same object. The centred average reduces that jitter without moving a steady
+track forward or back in time. Longer windows also soften real changes in motion.
 
-While tracking, **Background: stationary** identifies a camera locked onto the scenery.
-The tracker retains the object's motion relative to that scenery across a pan/lock/pan
-transition, and temporarily searches more frequently during the transition. **Registration
-unavailable** is a separate state; it does not mean the camera has stopped moving.
+Smoothing changes the trail, the graphs, the line of sight, stabilization and stabilized
+exports. It does not change the raw points; choose **Off** to see them. User points stay exactly
+where you placed them, and smoothing does not reach across a user point or an empty gap.
 
-Brief in-frame gaps reconnect confirmed image positions with straight interpolation. This
-avoids inserting false zigzags when background registration switches between a tower and
-the more distant scene. A detection that continues the observed target motion is still
-plausible even if a background-motion prediction disagrees with it.
+Smoothing gives a steadier reference point. It does not find the object's true centre, and it
+does not repair a track that has followed a different object.
 
-## Smoothing the output
+### Editing the track
 
-**Output Smoothing** offers **Off** and **2–10 frames**. Start with 3–5 frames when the
-measured point jumps between bright parts of the same object. The centered average reduces
-that jitter without shifting a constant-velocity track forward or backward in time. Longer
-windows soften real changes in motion too.
-
-Smoothing affects the trail, graphs, line of sight, stabilization, and stabilized exports.
-It leaves the raw points used by the tracking algorithm intact; choose **Off** to see them
-again. The smoothing choice is saved with the sitch alongside those raw points. User points
-remain exactly where you placed them, and the filter does not reach across a user point or
-a missing-frame gap. At the ends of the track it uses a shorter symmetric window.
-
-This produces a steadier image reference point. It does not determine the object's physical
-center of mass or repair a track that has latched onto a different object.
-
-## Editing the track
-
-- **Drag the cursor onto the object** to place or replace a keyframe at the current frame.
-  A bare click does nothing unless it lands on the cursor or an existing keyframe — the
-  keyframe is created by the drag, not the click.
-- **`Delete`** or **`Backspace`** removes the keyframe under the mouse.
-- Re-seeding mid-track is normal and expected — it is better than fighting the parameters.
+- **Drag the cursor onto the object** to place or replace the point at the current frame.
+- **`Delete`** or **`Backspace`** removes the point under the mouse.
+- Placing new points partway through a track is normal. It is usually better than fighting the
+  settings.
 
 ### Edit Head Only
 
-On a slow-moving object the track doubles back on itself, and a dozen earlier keyframes end
-up sitting inside the yellow cursor. A click anywhere in that pile grabs whichever keyframe
-it lands on — so trying to nudge the current point silently drags a keyframe from two seconds
-ago instead, and the mistake is invisible until you scrub back.
+When an object moves slowly, the track doubles back and many earlier points sit inside the
+yellow cursor. A drag then grabs whichever point it lands on, which can move a point from two
+seconds ago without you noticing.
 
-**Edit Head Only** fixes that. With it on, the only thing a drag can move is the *head* — the
-point at the current frame, inside the yellow cursor. The rest of the track still draws, so
-you keep the context, but faded back: the cyan path at 25% and the other keyframes at 10%.
-Clicks pass straight over them. What is bright is what you can move.
-
-Turn it off again to go back and adjust an earlier keyframe directly.
-
-`Delete` / `Backspace` is unaffected — it still removes the keyframe under the mouse,
-whichever frame that belongs to.
-
----
-
-## Stabilization
-
-Once you have a track, Sitrec can shift every frame so the tracked point stays put. This makes
-otherwise unwatchable handheld or long-lens footage legible, and makes it far easier to see
-whether the object is moving relative to the background — or relative to the stars.
-
-| Option | Effect |
-|---|---|
-| **Stabilize** | Shift frames so the tracked point holds still |
-| **Stabilize Centers** (on) | Hold the point at the centre of the frame. With it **off**, the point holds at wherever it was on its first frame |
-| **Render Stabilized** | Export the stabilized video at the original frame size — shifted content moves out of frame and is lost |
-| **Render Stabilized Expanded** | Export with the canvas grown so nothing is cropped away. Use this one unless you specifically need the original dimensions |
-
----
-
-## Using the result
-
-The tracked pixel becomes a line of sight, and this is where care is needed.
-
-The conversion from pixel offset to angle uses the **assumed field of view**, which makes the
-FOV a scale factor on every off-boresight angle you measure. A 10 % FOV error is roughly a
-10 % error in every angular rate, and it propagates into range, speed and acceleration.
-(The scaling is exact only near the centre of frame — the conversion goes through a tangent
-and an arctangent, so the relationship departs from simple proportionality toward the edges.)
-The conversion also assumes a rectilinear lens, so accuracy degrades toward the frame edges,
-and a cropped video has its optical axis off centre.
-
-If there are stars in the footage, measure the field of view with the
-[Star Tracker](StarTracker.md) rather than guessing it. This is the single highest-value thing
-you can do to make a pixel-derived analysis trustworthy.
-
-See [Doing Defensible Analysis](DefensibleAnalysis.md) §2.3.
+With **Edit Head Only** on, a drag can move only the point at the current frame. The rest of the
+track is still drawn, but faded: the cyan path at 25% and the other points at 10%. Clicks pass
+over them. `Delete` / `Backspace` still removes the point under the mouse. Turn it off to adjust
+an earlier point directly.
 
 ---
 
 ## See also
 
-- [Masking](Masking.md) — keep the tracker off the trees
+- [Ground Track](GroundTrack.md) — a line of sight from places on the ground, with no field of view needed
+- [Masking](Masking.md) — keep the tracker off overlays, trees and buildings
 - [Star Tracker](StarTracker.md) — measure the field of view instead of assuming it
-- [Traverse Methods](TraverseMethods.md) — what to do with the line of sight once you have it
+- [Traverse Methods](TraverseMethods.md) — what to do with the line of sight
+- [Doing Defensible Analysis](DefensibleAnalysis.md)
 - [Keyboard Shortcuts](KeyboardShortcuts.md)

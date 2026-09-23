@@ -13,6 +13,7 @@ import {isLocal} from "./configUtils";
 import {t} from "./i18n";
 import {Color} from "three";
 import {MotionBackgroundTracker} from "./MotionBackgroundTracker";
+import {chooseMotionCalibration} from "./MotionCalibration";
 import {MotionReacquisition} from './MotionReacquisition';
 import {MotionTrackingRegime} from './MotionTrackingRegime';
 import {addVideoAnalysisResolutionMenu, beginVideoAnalysis} from './VideoAnalysisResolution';
@@ -60,7 +61,10 @@ function anchorsFromUserPoint(tracker, frame, x, y) {
 // drops the value, then .listen() repaints the old one, with no error anywhere.
 // These are applied to the tracker the moment it is created.
 const pendingTrackingSettings = {
-    trackingMethod: 'template',
+    // Motion (Background) is the default: it is the method that tracks small objects over
+    // moving terrain, sea or sky, which is most of what gets tracked. Saves that never
+    // recorded a method still load as Template Match (see deserializeAutoTracking).
+    trackingMethod: 'motion',
     motionPolarity: 'both',
     motionGap: 3,
     motionSamples: 8,
@@ -173,16 +177,16 @@ export class ObjectTracker {
         this.searchRadius = 50;  // pixels
 
         // Tracking method:
-        //   'template'        — OpenCV template matching (default)
+        //   'template'        — OpenCV template matching
         //   'opticalflow'     — jsfeat Lucas-Kanade
         //   'centerOnBright'  — brightness-weighted centroid above threshold
         //   'centerOnDark'    — brightness-weighted centroid below threshold
         //   'centerOnColor'   — color-similarity-weighted centroid within colorDistance
         //   'highPeak'        — local-maximum peak (blob-shaped, motion-extrapolated)
         //   'lowPeak'         — local-minimum peak (dark blob)
-        //   'motion'          — background-motion subtraction (see below)
+        //   'motion'          — background-motion subtraction (see below; default)
         //   'sam2'            — server-side SAM2 segmentation
-        this.trackingMethod = 'template';
+        this.trackingMethod = 'motion';
 
         // Motion tracking: the only method that does not key on appearance. It
         // asks what is inconsistent with the BACKGROUND's own motion, so it can
@@ -1978,7 +1982,7 @@ export class ObjectTracker {
                 for (const slack of [0, 2]) {
                     for (const featureScale of [1, 2, 4, 8]) {
                         say(`testing ${polarity} scale ${featureScale}`);
-                        const hit = this.motionTracker.measure(videoData, frame, cx, cy, {
+                        const options = {
                             gap,
                             samples: this.motionSamples,
                             // A tight gate: we are asking "how well does the object
@@ -1993,15 +1997,21 @@ export class ObjectTracker {
                             mask: this.getMotionMask(),
                             firstFrame: Sit.aFrame ?? 0,
                             lastFrame: Sit.bFrame ?? (Sit.frames - 1),
-                        });
+                        };
+                        const hit = this.motionTracker.measure(videoData, frame, cx, cy, options);
                         if (!hit || hit.waiting) continue;
-                        tried.push({score: hit.score, polarity, slack, featureScale, gap});
-                        if (!best || hit.score > best.score) {
-                            best = {score: hit.score, polarity, slack, featureScale, gap};
-                        }
+                        // Separately, what the tracker itself will face: the object
+                        // against the strongest competitor in its own search gate.
+                        // The tight gate above cannot contain a competitor at all.
+                        const wide = this.motionTracker.measure(videoData, frame, cx, cy,
+                            {...options, gate: this.searchRadius * scale, preferNear: true});
+                        const ratio = wide && !wide.waiting
+                            ? wide.score / Math.max(wide.second, 1e-6) : undefined;
+                        tried.push({score: hit.score, ratio, polarity, slack, featureScale, gap});
                     }
                 }
             }
+            best = chooseMotionCalibration(tried, this.motionThreshold);
             if (best?.score >= this.motionThreshold) break;
         }
         if (!best) return {error: "nothing measurable here"};
@@ -2019,11 +2029,11 @@ export class ObjectTracker {
         this.motionFieldCache = null;
 
         // Report the close runners-up too. This measures ONE frame, and a
-        // target's apparent size changes over a long clip — measured on one,
-        // Feature Size 2 wins at frame 0 (16.5 vs 12.8 sigma) yet 4 tracks far
-        // better over the whole thing. Showing the alternatives lets the user
-        // try the other one instead of trusting a single number, which is more
-        // honest than a tie-break rule tuned to whichever clip was to hand.
+        // target's apparent size changes over a long clip. Showing the
+        // alternatives lets the user try another one instead of trusting a
+        // single number. (Where the strongest setting leaves clutter almost as
+        // strong as the object, chooseMotionCalibration already prefers a
+        // comparably strong setting that separates it; see MotionCalibration.js.)
         const alternatives = tried
             .filter(t => t.polarity === best.polarity && t.featureScale !== best.featureScale
                 && t.score > best.score * 0.6)
@@ -2031,7 +2041,9 @@ export class ObjectTracker {
             .filter((t, i, all) => all.findIndex(v => v.featureScale === t.featureScale) === i)
             .slice(0, 2)
             .map(t => `size ${t.featureScale} at ${t.score.toFixed(0)}`);
-        return Object.assign({}, best, {alternatives});
+        return {score: best.score, polarity: best.polarity, slack: best.slack,
+            featureScale: best.featureScale, gap: best.gap, alternatives,
+            ...(best.clearer ? {clearer: true} : {})};
     }
 
     // Draw the motion field — the current frame with the background's own
@@ -3374,10 +3386,10 @@ export function addObjectTrackingMenu() {
     const trackingMethodParams = {
         get trackingMethod() {
             const method = objectTracker?.trackingMethod ?? pendingTrackingSettings.trackingMethod;
-            return Object.keys(trackingMethodOptions).find(k => trackingMethodOptions[k] === method) || 'Template Match';
+            return Object.keys(trackingMethodOptions).find(k => trackingMethodOptions[k] === method) || 'Motion (Background)';
         },
         set trackingMethod(v) {
-            pendingTrackingSettings.trackingMethod = trackingMethodOptions[v] || 'template';
+            pendingTrackingSettings.trackingMethod = trackingMethodOptions[v] || 'motion';
             if (objectTracker) {
                 objectTracker.trackingMethod = pendingTrackingSettings.trackingMethod;
                 if (objectTracker.tracking) {
@@ -3466,6 +3478,10 @@ export function addObjectTrackingMenu() {
                     console.log(`Analyse Object: ${found.polarity}, feature size `
                         + `${found.featureScale}, parallax slack ${found.slack} — the object `
                         + `stands out at ${found.score.toFixed(1)} sigma with those settings.`
+                        + (found.clearer
+                            ? ` Chosen over a stronger setting that left nearby clutter`
+                              + ` almost as strong as the object.`
+                            : "")
                         + (found.alternatives?.length
                             ? ` Close alternatives: ${found.alternatives.join(", ")} —`
                               + ` this measures one frame, so if tracking fades later,`

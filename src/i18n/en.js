@@ -164,7 +164,7 @@ const en = {
                 videoTonalGraph: "Video Tonal Range Graph",
                 masking: "Masking Out Part of the Video",
                 starTracker: "Star Tracker",
-                pointTrack: "Point Track and Stabilization",
+                pointTrack: "Point Tracking and Stabilization",
                 mq9Tracking: "MQ9 Tracking Simulation",
                 lensGhost: "Lens Ghosts and Reflections",
                 scriptedVideo: "Scripted Camera Moves",
@@ -486,7 +486,7 @@ const en = {
         },
         trackingMethod: {
             label: "Tracking Method",
-            tooltip: "Template Match (OpenCV) or Optical Flow (jsfeat Lucas-Kanade)",
+            tooltip: "How the object is found. Motion (Background), the default, finds what moves differently from the background and suits small objects over terrain, sea or sky; press Analyse Object after choosing it. Template Match suits objects with visible structure; High Peak and Center on Bright suit lights at night",
         },
         clearUserPoints: {
             label: "Clear User Points",

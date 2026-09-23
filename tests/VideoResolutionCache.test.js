@@ -62,3 +62,24 @@ test('an asynchronous bitmap from before a flush cannot refill the new cache', a
         global.createImageBitmap = originalCreate;
     }
 });
+
+test('a group queued while the worker is reconfigured is decoded once the worker is ready', () => {
+    const v = video();
+    const group = {frame: 0, length: 4, loaded: false, pending: 0, dataReady: true};
+    v.groups = [group];
+    v.chunks = [];
+    v.groupsPending = 0;
+    v.requestQueue = [];
+    v.nextRequest = null;
+    v.flushing = false;
+    // Being reconfigured after a resolution change: the request can only be queued.
+    v._workerManager = {configured: false, configFailed: false, busy: false};
+    v.requestGroup(group);
+    expect(v.requestQueue).toContain(group);
+
+    v._workerManager.configured = true;
+    v._requestGroupViaWorker = jest.fn();
+    v._onWorkerConfigured('prefer-hardware');
+    expect(v._requestGroupViaWorker).toHaveBeenCalledTimes(1);
+    expect(v._requestGroupViaWorker).toHaveBeenCalledWith(group);
+});

@@ -189,5 +189,5 @@ A few keys are bound in more than one place. These are the ones that surprise pe
 
 - [User Interface Basics](UserInterface.md) — menus, views, and the time controls
 - [Saving and Loading Sitches](SavingAndLoading.md)
-- [Point Track and Stabilization](PointTrack.md)
+- [Point Tracking and Stabilization](PointTrack.md)
 - [Masking](Masking.md)
