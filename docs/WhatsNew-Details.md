@@ -9,6 +9,38 @@ lockstep with docs/WhatsNew.md.
 
 ---
 
+## Version 2.169.1 (2026-09-23)
+
+### Improvements
+
+- **Right-click opens a point menu instead of deleting the point** (`7d586f6c`). Before this change, a right-click did the edit straight away in three editors:
+  - On a 3D track's control point, it deleted the point.
+  - On a camera-fit point in the video, it deleted the point.
+  - On a Bezier curve, it deleted the point pair under the cursor, or added a pair on empty graph space.
+
+  Now the right-click opens a small menu, and the model changes only when the user picks the action. Opening or dismissing the menu leaves the data unchanged.
+  - **Shared helper.** New `src/PointContextMenu.js` `showPointContextMenu(event, title, actions)` builds the menu with `Globals.menuBar.createStandaloneMenu(...)`. `CGuiMenuBar.createStandaloneMenu` (`src/lil-gui-extras.js`) gains an `allowWithPersistentMenu` argument. Before, a context menu was refused while a persistent menu was open. Now a point menu can open beside the editing panel of the object being edited. The menu labels are literal strings, not i18n keys.
+  - **3D tracks** (`src/PointEditor.js`, `src/nodes/CNodeView3DMouse.js`):
+    - `deletePointAtEvent` becomes `showPointMenuAtEvent`, and `deleteControlPointAtEvent` becomes `showControlPointMenuAtEvent`.
+    - A right-click on a control point of a track being edited opens **Track Point: Frame N** with **Delete Point**. The point menu takes priority over the track and ground menus behind it.
+    - **Delete Point** is greyed out when the track has only one control point.
+    - The menu stores the picked object, not its index, so an edit made while the menu is open cannot shift the target.
+    - The deletion moves into the new `deletePointWithUndo(index)`. It keeps the old undo record ("Delete track control point", undone by frame number) and the old rule that the last point cannot be deleted.
+  - **Remove Closest Point** (the track right-click menu, **Remove Closest Point**, in `CustomManagerMenus.js`) now calls `deletePointWithUndo` instead of `removePointByIndex`. This adds an undo step to that action, which it did not have before. The "Cannot remove the only control point" error is unchanged.
+  - **Camera fitting** (`src/nodes/CNodeFitCameraPoints.js`):
+    - `getPointerIntent` and `onMouseDown` no longer handle button 2. Before, a right-button press on a point was claimed as a click and the point was deleted on the press.
+    - New `getContextMenuIntent` and `onContextMenu` open **Camera Fit Point** with **Delete Point**. That item calls the existing undoable `removePoint` ("Delete camera fit point"). The camera fit has no minimum point count.
+    - `viewInteractionAdapter` (`src/ViewInteraction.js`) now sends the context menu through `InteractionRouter` for any view that has `getContextMenuIntent`. The right-button press is no longer taken by the point, so a right-drag over a point still moves the view. The router opens the menu only on a release that stays within the click slop.
+  - **Bezier curves** (`src/MetaCurveEdit.js`, used by `CNodeCurveEdit` and the Ray-traced Refraction profile editor):
+    - Presses and drags now respond to the left button only.
+    - The surface interaction's `contextMenu` calls the new `showPointMenu`, which opens **Curve Points** with either **Delete Point** (over a point) or **Add Point** (inside the graph).
+    - **Delete Point** is greyed out when the curve has only two point pairs, the same limit as before (`curve.ps.length > 4`).
+    - Each action adds an explicit `UndoManager` entry, "Delete curve point" or "Add curve point".
+  - **Documentation and help text:**
+    - `docs/Tracks.md` explains the track point menu.
+    - The Help → *Mouse, touch and pen controls* gesture list (`GESTURE_PROFILES` in `GestureActions.js`) is updated for Bezier curves and camera-fit points. It gains a "Right-click track point" row.
+    - The Refraction tool's hint now says "Right-click, then choose Add Point or Delete Point".
+
 ## Version 2.169.0 (2026-09-23)
 
 ### New Features

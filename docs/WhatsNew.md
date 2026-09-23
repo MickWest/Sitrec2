@@ -9,6 +9,12 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.169.1 (2026-09-23)
+
+### Improvements
+
+- **Point menus**: right-clicking a control point on a 3D track being edited, a camera-fit point, or a point on a Bezier curve (such as the refraction profiles) now opens a menu. Choose **Delete Point** to remove the point, so a right-click no longer deletes points by accident. On Bezier curves, right-click empty graph space and choose **Add Point**. These edits can be undone, including **Remove Closest Point** in the track's right-click menu.
+
 ## Version 2.169.0 (2026-09-23)
 
 ### New Features
