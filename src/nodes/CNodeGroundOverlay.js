@@ -1,4 +1,5 @@
 import {registerEditorInteraction} from "../EditorInteraction";
+import {addNameControl} from "../DisplayName";
 import {getInteractionRouter} from "../InteractionRouter";
 /**
  * Module: ground overlay node.
@@ -1458,9 +1459,7 @@ export class CNodeGroundOverlay extends CNode3DGroup {
     createGUIFolder() {
         this.guiFolder = guiMenus.objects.addFolder(`Overlay: ${this.name}`);
         
-        this.guiFolder.add(this, 'name').name(t("groundOverlay.name.label")).onChange(() => {
-            this.guiFolder.title = `Overlay: ${this.name}`;
-        });
+        addNameControl(this.guiFolder, this, {prefix: "Overlay"});
 
         this.guiFolder.add(this, 'visible').name(t("groundOverlay.visible.label")).onChange((value) => {
             this.show(value);

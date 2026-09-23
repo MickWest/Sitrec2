@@ -654,6 +654,12 @@ export const serializeMethods = {
             if (Object.keys(live).length) out.walkers = live
         }
 
+        // Track display names the user changed, {trackID: name}, for every kind of track. The
+        // shortNames are keys and are saved with their tracks; these are only what is shown.
+        // Always set: `out` starts as a copy of Sit, which holds the names from the last load.
+        const trackDisplayNames = TrackManager.serializeDisplayNames()
+        out.trackDisplayNames = Object.keys(trackDisplayNames).length ? trackDisplayNames : undefined
+
         // Balloon tracks: compact generator params (the appFlight pattern) —
         // deserializeBalloons recreates identical node ids before the mods pass
         out.balloonTracks = TrackManager.serializeBalloons()
@@ -1330,6 +1336,10 @@ export const serializeMethods = {
             // Rebuild fixed 3D objects BEFORE applying mods, under their saved ids, so
             // the mod carrying each one's geometry, size, color and material re-attaches.
             this.deserializeFixedObjects(sitchData.fixedObjects)
+
+            // Every track exists by now (imported, synthetic, balloon), so the names the user
+            // gave them can go back on. Objects restore their own names from their mods.
+            TrackManager.applyDisplayNames(sitchData.trackDisplayNames)
 
             // now we've either got
             // console.log("Promised files loaded in Custom Manager deserialize")

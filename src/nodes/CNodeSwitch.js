@@ -1,5 +1,5 @@
 import {CNode} from "./CNode";
-import {addOptionToGUIMenu, removeOptionFromGUIMenu} from "../lil-gui-extras";
+import {addOptionToGUIMenu, relabelOptionInGUIMenu, removeOptionFromGUIMenu} from "../lil-gui-extras";
 import {isConsole, isLocal} from "../configUtils";
 import {Globals, markSitchDirty, NodeMan, Sit} from "../Globals";
 import {assert} from "../assert";
@@ -247,6 +247,15 @@ class CNodeSwitch extends CNode {
 //        console.log("+++ ADDING   "+option+" to   "+this.id)
         addOptionToGUIMenu(this.controller, this.guiLabels[option] ?? option, option)
         this.applyPendingChoiceIfAvailable();
+    }
+
+    // Change the label shown for an option; its key and the stored choice stay the same.
+    // A label equal to the key is dropped, so the option shows its key as before.
+    setOptionLabel(option, label) {
+        if (this.inputs[option] === undefined || this.guiLabels === undefined) return;
+        if (label === undefined || label === option) delete this.guiLabels[option];
+        else this.guiLabels[option] = label;
+        if (this.controller) relabelOptionInGUIMenu(this.controller, option, label ?? option);
     }
 
     removeOption(option, dontSelectFirst=false) {

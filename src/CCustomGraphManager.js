@@ -603,8 +603,8 @@ class CCustomGraphManager {
         const tracks = [];
         TrackManager.iterate((id, ob) => {
             if (!ob.trackNode) return;
-            const sn = ob.displayTargetSphere?.menuName
-                ?? shortObjectName(ob.menuText ?? ob.trackNode.shortName ?? id);
+            const sn = shortObjectName(ob.displayName ?? ob.displayTargetSphere?.menuName
+                ?? ob.menuText ?? ob.trackNode.shortName ?? id);
             tracks.push({id, node: ob.trackNode, sn});
         });
         // Objects may finish loading after the track sources are registered.

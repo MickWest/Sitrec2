@@ -131,6 +131,10 @@ export const menuMethods = {
             if (node.menuText) {
                 names.push(node.menuText);
             }
+            // A renamed or fixed object carries its name here, not in menuText.
+            if (node.displayName) {
+                names.push(node.displayName);
+            }
         });
 
         return nextSequentialObjectName(names);
@@ -299,9 +303,10 @@ export const menuMethods = {
      * @param {string} positionID - id for its CNodePositionLLA
      * @param {number[]} LLA - [lat, lon, alt]; the altitude is MSL, or AGL when agl is set
      * @param {boolean} [agl] - the altitude is above ground level
+     * @param {string} [displayName] - the name shown for it; a saved sitch restores its own
      * @returns {CNode3DObject} the created object node
      */
-    createFixedObject(objectID, positionID, LLA, agl = false) {
+    createFixedObject(objectID, positionID, LLA, agl = false, displayName = undefined) {
         // No `gui`, so no controls are created for it.
         const positionNode = new CNodePositionLLA({
             id: positionID,
@@ -311,6 +316,7 @@ export const menuMethods = {
 
         const objectNode = new CNode3DObject({
             id: objectID,
+            displayName,
             geometry: "sphere",
             radius: 5,
             color: 0x808080,
@@ -537,7 +543,8 @@ export const menuMethods = {
 
                 // MSL to match the other ground-menu placements (setTargetOnGround and
                 // friends use altMSL).
-                const objectNode = this.createFixedObject(objectID, positionID, [lat, lon, altMSL]);
+                const displayName = this.getNextObjectName();
+                const objectNode = this.createFixedObject(objectID, positionID, [lat, lon, altMSL], false, displayName);
 
                 console.log(`Created fixed object ${objectID} at ${lat}, ${lon}, ${altMSL}m MSL`);
                 this.groundContextMenu = null;
@@ -565,7 +572,7 @@ export const menuMethods = {
                             NodeMan.disposeRemove(positionID);
                         },
                         redo: () => {
-                            this.createFixedObject(objectID, positionID, [lat, lon, altMSL]);
+                            this.createFixedObject(objectID, positionID, [lat, lon, altMSL], false, displayName);
                         },
                         description: "Add 3D object",
                     });

@@ -97,6 +97,18 @@ export function removeOptionFromGUIMenu(controller, optionName) {
     }
 }
 
+// Change the text shown for one option of a drop down menu, found by its VALUE. The value (and
+// so the stored choice) is unchanged; only what the user reads changes. For a thing whose
+// display name was edited, e.g. a track option in the camera and target switches.
+export function relabelOptionInGUIMenu(controller, optionValue, newName) {
+    const index = controller._values.indexOf(optionValue);
+    if (index === -1 || controller._names[index] === newName) return;
+    controller._names[index] = newName;
+    controller.$select.options[index].textContent = newName;
+    controller._lastDisplayedValue = undefined;
+    controller.updateDisplay();
+}
+
 export function dumpGUIMenu(controller) {
     if (controller._names[0] === "Start Time") {
         console.log("Dumping GUI Menu")

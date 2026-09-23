@@ -4,6 +4,7 @@
  * Extracted from CustomSupport.js as a mixin. Methods are merged into
  * CCustomManager.prototype so `this` references the CCustomManager instance.
  */
+import {titleFollowsDisplayName} from "./DisplayName";
 import {
     addGUIFolder,
     FileManager,
@@ -161,6 +162,7 @@ export const mirrorMethods = {
         if (!standaloneMenu) return null;    // blocked by an open persistent menu
 
         this.setupDynamicMirroring(guiToMirror, standaloneMenu);
+        titleFollowsDisplayName(standaloneMenu, node.id, () => node.menuName || node.id);
         if (node instanceof CNode3DObject) {
             // Registering the editing object is also what attaches CObjectMoveWidget, so
             // this is what makes the object draggable without holding Option.

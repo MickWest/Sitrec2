@@ -54,7 +54,8 @@ import {
     WebGLCubeRenderTarget,
     WireframeGeometry
 } from "three";
-import {FileManager, GlobalDateTimeNode, Globals, guiMenus, markShadowCastersDirty, NodeMan, setRenderOne, Sit} from "../Globals";
+import {FileManager, GlobalDateTimeNode, Globals, guiMenus, markShadowCastersDirty, NodeMan, setRenderOne, Sit, TrackManager} from "../Globals";
+import {addNameControl, notifyDisplayNameChanged} from "../DisplayName";
 import {assert} from "../assert";
 import {
     DebugArrowAB,
@@ -221,11 +222,16 @@ export class CNode3DObject extends CNode3DGroup {
         // of names like "elevated_track (Platform)" is at the end. The budget is
         // generous (fills the folder-title width; the .title has no CSS ellipsis and
         // would wrap instead). The full, untruncated name is set as the folder tooltip.
-        const fullName = (this.props.name ?? this.id).replace(/_ob$/, "");
-        this.menuName = shortObjectName(fullName);
+        //
+        // The name is the object's DISPLAY name: the user can edit it, and it is saved. The id
+        // never changes. A saved name is applied in modDeserialize.
+        this.displayName = String(v.displayName ?? this.props.name ?? this.id).replace(/_ob$/, "");
+        this.menuName = shortObjectName(this.displayName);
 
         this.gui = guiMenus.objects.addFolder(this.menuName).close()
-        this.gui.tooltip(fullName);
+        this.gui.tooltip(this.displayName);
+        // The Sitrec API and getFolder() can find the folder by id after a rename.
+        this.gui._lookupId = this.id;
         this.common = {}
         this.geometryParams = {};
         this.materialParams = {};
@@ -349,6 +355,14 @@ export class CNode3DObject extends CNode3DGroup {
             .moveToFirst();
         visibleController.isCommon = true;
 
+        // Name, above Visible. Common, so a model/geometry rebuild of the folder keeps it.
+        this.nameController = addNameControl(this.gui, this, {
+            property: "displayName",
+            first: true,
+            onRename: (name) => this.setDisplayName(name, {fromControl: true}),
+        });
+        this.nameController.isCommon = true;
+
         // The view owns and serializes focus/follow. These checkboxes reflect that
         // shared state even when another object or track menu changes it.
         addCameraFocusControl(this, this.gui, () => objectFocusTrack(this))
@@ -419,6 +433,30 @@ export class CNode3DObject extends CNode3DGroup {
         }
     }
 
+
+    /**
+     * Rename the object. Only the display name changes; the id stays.
+     * An object that rides a track shares its name with the track, so the track is renamed too
+     * (linked=false stops the track renaming this object back).
+     */
+    setDisplayName(name, {linked = true, fromControl = false} = {}) {
+        name = String(name ?? "");
+        const oldMenuName = this.menuName;
+        this.displayName = name;
+        this.menuName = shortObjectName(name);
+        // The Name control sets the folder title itself; a rename from elsewhere does not.
+        this.gui.title(this.menuName);
+        this.gui.tooltip(name);
+        if (!fromControl) this.nameController?.updateDisplay();
+        // The 3D label follows only when it showed the name, not a label chosen for it.
+        if (this.label && this.label.text === oldMenuName) this.label.changeText(this.menuName);
+        if (linked) {
+            const trackOb = TrackManager?.trackForObject?.(this.id);
+            if (trackOb) TrackManager.setTrackDisplayName(trackOb, name, {linked: false});
+        }
+        if (!fromControl) notifyDisplayNameChanged(this.id);
+        setRenderOne(true);
+    }
 
     addLabel( label ) {
 
@@ -1037,6 +1075,7 @@ ${trackPlacemark}    </Document>
         }
         return {
             ...super.modSerialize(),
+            displayName: this.displayName,
             color: this.color,
             modelOrGeometry: this.modelOrGeometry,
             model: this.selectModel,
@@ -1052,6 +1091,10 @@ ${trackPlacemark}    </Document>
 
     modDeserialize(v) {
         super.modDeserialize(v)
+        // Not linked: the track restores its own saved name.
+        if (typeof v.displayName === "string" && v.displayName !== this.displayName) {
+            this.setDisplayName(v.displayName, {linked: false});
+        }
         this.color = v.color;
         this.modelOrGeometry = v.modelOrGeometry;
         this.selectModel = resolveModelAlias(v.model);

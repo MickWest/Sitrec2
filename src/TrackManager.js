@@ -1,5 +1,6 @@
 // Creating timed data and then tracks from pre-parsed track files
 // should be agnostic to the source of the data (KML/ADSB, CSV, KLVS, etc)
+import {addNameControl, notifyDisplayNameChanged} from "./DisplayName";
 import {CNodeScale} from "./nodes/CNodeScale";
 import {requestCameraFocusSync} from "./CameraFocusUI";
 import {showConfirm, showChoice} from "./showError";
@@ -1013,6 +1014,7 @@ class CTrackManager extends CManager {
 
                     // track folder in Contents menu
                     trackOb.guiFolder = guiFolder;
+                    TrackManager.initTrackDisplayName(trackOb);
 
 
                     const dummy = {
@@ -2586,10 +2588,6 @@ class CTrackManager extends CManager {
             // skipGUI: false (default) - let it add controls to the folder
         });
         
-        // NOW change the folder title to the short name
-        // This must happen AFTER CNodeDisplayTrack has found the folder
-        guiFolder.$title.innerText = shortName;
-        
         // Create the track object - use smoothedTrackNode as the primary track node
         const trackOb = this.add(trackID, new CMetaTrack(null, smoothedTrackNode, smoothedTrackNode));
         trackOb.trackID = trackID;
@@ -2607,6 +2605,9 @@ class CTrackManager extends CManager {
         trackOb.constantSpeed = false; // Default to time-based interpolation
         trackOb.extrapolateTrack = true; // Default to extrapolating beyond control points
         trackOb.objectID = options.objectID || null; // Store associated object ID
+        // The user's name ("Object 1"), shown in place of the shortName. The folder was made
+        // with the track id as its title, which CNodeDisplayTrack found it by; this retitles it.
+        this.initTrackDisplayName(trackOb, options.displayName ?? name);
         
         splineEditorNode.shortName = shortName;
         smoothedTrackNode.shortName = shortName;
@@ -2770,7 +2771,7 @@ class CTrackManager extends CManager {
         // Add delete button to the folder
         const dummy = {
             deleteTrack: async () => {
-                if (await showConfirm(`Delete synthetic track "${shortName}"?`, {title: "Delete Track"})) {
+                if (await showConfirm(`Delete synthetic track "${trackOb.displayName ?? shortName}"?`, {title: "Delete Track"})) {
                     this.disposeSyntheticTrack(trackID);
                 }
             }
@@ -3053,8 +3054,6 @@ class CTrackManager extends CManager {
             ignoreAB: true,
         });
 
-        // now the display track has found the folder, show the short name
-        guiFolder.$title.innerText = shortName;
 
         // the balloon itself: a 0.5 m radius sphere riding the track
         const objectNode = new CNode3DObject({
@@ -3077,6 +3076,7 @@ class CTrackManager extends CManager {
         trackOb.guiFolder = guiFolder;
         trackOb.trackColor = trackColor;
         trackOb.objectID = objectID;
+        this.initTrackDisplayName(trackOb, options.displayName);
 
         // Show-in-look-view toggle (same semantics as synthetic tracks)
         trackOb.showInLook = !!options.showInLook;
@@ -3240,6 +3240,106 @@ class CTrackManager extends CManager {
      * This is called during the serialization process to save synthetic track metadata
      * @returns {Array} Array of synthetic track metadata objects
      */
+    // --- display names -------------------------------------------------------
+    //
+    // A track's display name is what the user sees and can edit. It is separate from its
+    // shortName (trackOb.menuText), which is a KEY: node ids, the track switches' options and
+    // their saved choices, and usedShortNames are all built from it, so it never changes.
+
+    /**
+     * Give a track its display name, its folder title and its Name control.
+     * Called once per track, after its Contents folder exists.
+     * @param {CMetaTrack} trackOb
+     * @param {string} [name] - defaults to the shortName
+     */
+    initTrackDisplayName(trackOb, name) {
+        trackOb.displayName = String(name ?? trackOb.menuText);
+        // The object made with the track ("Add Object", a balloon) takes the same name. An
+        // imported track's sphere is made later, from the same shortName.
+        this.objectForTrack(trackOb)?.setDisplayName?.(trackOb.displayName, {linked: false});
+        const folder = trackOb.guiFolder;
+        if (!folder) return;
+        // Found by id whatever the title says (CNodeDisplayTrack, the Sitrec API).
+        folder._lookupId = trackOb.trackID;
+        folder.title(trackOb.displayName);
+        addNameControl(folder, trackOb, {
+            property: "displayName",
+            id: trackOb.trackID,
+            first: true,
+            onRename: (value) => this.setTrackDisplayName(trackOb, value, {fromControl: true}),
+        });
+    }
+
+    /**
+     * Rename a track. Only the display name changes. Its 3D object shares the name, so it is
+     * renamed too (linked=false stops the object renaming the track back).
+     */
+    setTrackDisplayName(trackOb, name, {linked = true, fromControl = false} = {}) {
+        name = String(name ?? "");
+        trackOb.displayName = name;
+        if (!fromControl) {
+            trackOb.guiFolder?.title(name);
+            trackOb.guiFolder?.controllers.find(c => c.property === "displayName")?.updateDisplay();
+        }
+        // The spline's own name, used when it is exported.
+        if (trackOb.splineEditorNode) trackOb.splineEditorNode.menuText = name;
+        this.relabelTrackOptions(trackOb);
+        if (linked) {
+            const object = this.objectForTrack(trackOb);
+            object?.setDisplayName?.(name, {linked: false});
+        }
+        if (!fromControl) notifyDisplayNameChanged(trackOb.trackID);
+        setRenderOne(true);
+    }
+
+    // Show the display name in every switch that offers this track (camera, target, orbit...).
+    // The option keys stay the shortName, so the saved choices still match.
+    relabelTrackOptions(trackOb) {
+        const key = trackOb.menuText;
+        const name = trackOb.displayName ?? key;
+        NodeMan.iterate((id, node) => {
+            if (typeof node.setOptionLabel !== "function" || !node.inputs) return;
+            if (node.inputs[key] !== undefined) node.setOptionLabel(key, name);
+            if (node.inputs["Angles_" + key] !== undefined) node.setOptionLabel("Angles_" + key, name + " angles");
+        });
+    }
+
+    // The 3D object that rides a track: synthetic and balloon tracks name it by id, imported
+    // tracks keep it as their display sphere.
+    objectForTrack(trackOb) {
+        if (trackOb.objectID) return NodeMan.get(trackOb.objectID, false) ?? null;
+        return trackOb.displayTargetSphere ?? null;
+    }
+
+    trackForObject(objectID) {
+        let found = null;
+        this.iterate((id, trackOb) => {
+            if (!found && this.objectForTrack(trackOb)?.id === objectID) found = trackOb;
+        });
+        return found;
+    }
+
+    // {trackID: displayName} for every track whose display name is not its shortName.
+    // Saved as the sitch's trackDisplayNames, one entry per renamed track of any kind.
+    serializeDisplayNames() {
+        const names = {};
+        this.iterate((id, trackOb) => {
+            if (trackOb.displayName !== undefined && trackOb.displayName !== trackOb.menuText) {
+                names[id] = trackOb.displayName;
+            }
+        });
+        return names;
+    }
+
+    // Not linked: each object restores its own saved name from its mod.
+    applyDisplayNames(names) {
+        if (!names || typeof names !== "object") return;
+        for (const [id, name] of Object.entries(names)) {
+            const trackOb = this.get(id, false);
+            if (trackOb && typeof name === "string") this.setTrackDisplayName(trackOb, name, {linked: false});
+        }
+    }
+
     serialize() {
         const syntheticTracks = [];
         

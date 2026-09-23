@@ -24,6 +24,7 @@ import {closeMeasurementDialog, openMeasurementDialog} from "./MeasurementDialog
 import {V3} from "./threeUtils";
 import {t} from "./i18n";
 import {EventManager} from "./CEventManager";
+import {DISPLAY_NAME_CHANGED} from "./DisplayName";
 
 // The kinds of thing a measurement can point at, in the order the dialog shows them.
 // "node" is only for an old save whose measurement used some other node id; the dialog shows
@@ -109,6 +110,8 @@ class CMeasurementManager {
         // objects have no change event).
         this.tracksChangedListener = () => this.refreshMenuNames();
         EventManager.addEventListener("tracksChanged", this.tracksChangedListener);
+        // A renamed track or object: its measurements' menu names change with it.
+        EventManager.addEventListener(DISPLAY_NAME_CHANGED, this.tracksChangedListener);
         folder.onOpenClose(() => this.refreshMenuNames());
     }
 
@@ -118,6 +121,7 @@ class CMeasurementManager {
         closeMeasurementDialog();
         if (this.tracksChangedListener) {
             EventManager.removeEventListener("tracksChanged", this.tracksChangedListener);
+            EventManager.removeEventListener(DISPLAY_NAME_CHANGED, this.tracksChangedListener);
             this.tracksChangedListener = null;
         }
         for (const node of Object.values(this.list)) {
@@ -275,8 +279,8 @@ class CMeasurementManager {
             case "track":
                 TrackManager.iterate((id, track) => {
                     if (!track.trackNode) return;
-                    const name = track.displayTargetSphere?.menuName
-                        ?? shortObjectName(track.menuText ?? track.trackNode.shortName ?? id);
+                    const name = shortObjectName(track.displayName ?? track.displayTargetSphere?.menuName
+                        ?? track.menuText ?? track.trackNode.shortName ?? id);
                     out.push({id, name});
                 });
                 break;

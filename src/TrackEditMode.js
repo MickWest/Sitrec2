@@ -32,7 +32,7 @@ export function updateTrackEditBadge(view) {
     if (!div) return;
     const trackOb = Globals.editingTrack;
     const text = trackOb?.splineEditor?.enable
-        ? t("custom.contextMenu.editingBadge", {name: trackOb.menuText || trackOb.trackID})
+        ? t("custom.contextMenu.editingBadge", {name: trackOb.displayName || trackOb.menuText || trackOb.trackID})
         : null;
     if (view._trackEditBadgeText === text) return;
     view._trackEditBadgeText = text;

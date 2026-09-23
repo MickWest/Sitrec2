@@ -39,6 +39,18 @@ import {areControlsHidden, toggleControlsVisibility} from "./PageStructure";
 import {closeFullscreen, isFullscreen, openFullscreen} from "./utils";
 import {forceUpdateUIText} from "./nodes/CNodeViewUI";
 
+// Find a 3D object's folder in the Objects menu by what a script names it: the object's id
+// (which never changes, so a script still finds an object the user renamed), then its exact
+// display name, then a partial match either way round. Case-insensitive.
+function findObjectFolder(folders, name) {
+    const wanted = String(name).toLowerCase();
+    const title = (folder) => String(folder._title).toLowerCase();
+    return folders.find(f => String(f._lookupId ?? "").toLowerCase() === wanted)
+        ?? folders.find(f => title(f) === wanted)
+        ?? folders.find(f => title(f).includes(wanted))
+        ?? folders.find(f => wanted.includes(title(f)));
+}
+
 // Flexible RA parser: accepts decimal hours, "3h47m10s", "03:47:10", "3h47m", "3h 47m 10s", etc.
 function parseRA(input) {
     if (input == null) return null;
@@ -1655,17 +1667,10 @@ class CSitrecAPI {
                     const gui = guiMenus.objects;
                     if (!gui) return { success: false, error: "Objects menu not found" };
                     
-                    const objectLower = String(v.object).toLowerCase();
                     const folders = gui.children.filter(c => c instanceof GUI);
                     
                     // Find best matching folder
-                    let folder = folders.find(c => c._title.toLowerCase() === objectLower);
-                    if (!folder) {
-                        folder = folders.find(c => c._title.toLowerCase().includes(objectLower));
-                    }
-                    if (!folder) {
-                        folder = folders.find(c => objectLower.includes(c._title.toLowerCase()));
-                    }
+                    let folder = findObjectFolder(folders, v.object);
                     if (!folder) {
                         const available = folders.map(c => c._title).join(', ');
                         return { success: false, error: `Object '${v.object}' not found. Available: ${available}` };
@@ -1733,17 +1738,10 @@ class CSitrecAPI {
                     const gui = guiMenus.objects;
                     if (!gui) return { success: false, error: "Objects menu not found" };
                     
-                    const objectLower = String(v.object).toLowerCase();
                     const folders = gui.children.filter(c => c instanceof GUI);
                     
                     // Find best matching folder
-                    let folder = folders.find(c => c._title.toLowerCase() === objectLower);
-                    if (!folder) {
-                        folder = folders.find(c => c._title.toLowerCase().includes(objectLower));
-                    }
-                    if (!folder) {
-                        folder = folders.find(c => objectLower.includes(c._title.toLowerCase()));
-                    }
+                    let folder = findObjectFolder(folders, v.object);
                     if (!folder) {
                         const available = folders.map(c => c._title).join(', ');
                         return { success: false, error: `Object '${v.object}' not found. Available: ${available}` };
@@ -1865,16 +1863,9 @@ class CSitrecAPI {
                     const gui = guiMenus.objects;
                     if (!gui) return { success: false, error: "Objects menu not found" };
                     
-                    const objectLower = String(v.object).toLowerCase();
                     const folders = gui.children.filter(c => c instanceof GUI);
                     
-                    let folder = folders.find(c => c._title.toLowerCase() === objectLower);
-                    if (!folder) {
-                        folder = folders.find(c => c._title.toLowerCase().includes(objectLower));
-                    }
-                    if (!folder) {
-                        folder = folders.find(c => objectLower.includes(c._title.toLowerCase()));
-                    }
+                    let folder = findObjectFolder(folders, v.object);
                     if (!folder) {
                         const available = folders.map(c => c._title).join(', ');
                         return { success: false, error: `Object '${v.object}' not found. Available: ${available}` };

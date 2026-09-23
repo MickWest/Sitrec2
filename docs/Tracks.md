@@ -415,6 +415,10 @@ Each loaded track gets its own folder in the **Contents** menu. You can:
 
 Each track's folder in the Contents menu provides these controls:
 
+### Name
+
+**Name**, at the top of the folder, is the name shown for the track: the folder title, the track's menus, the camera and target track lists, graphs and measurements. You can change it at any time, and it is saved with the sitch. A track and the 3D object that rides on it (an object from **Add Object**, a balloon, or an imported track's sphere) share one name, so renaming one renames the other; the object's **Name** is at the top of its folder in the Objects menu. Renaming changes only what you see. The track's short name (such as `synth_01_d`) stays the same underneath, so choices saved in the sitch, such as which track is the target, keep working.
+
 ### Visibility and Appearance
 
 | Control | Description |

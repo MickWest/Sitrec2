@@ -1,4 +1,5 @@
 import {SceneLineSegments} from "../SceneLines";
+import {addNameControl, uniqueDisplayName} from "../DisplayName";
 import {SceneLineMaterial} from "../SceneLineMaterial";
 import {getInteractionRouter} from "../InteractionRouter";
 // Synthetic 3D Building/Object Node
@@ -1399,10 +1400,11 @@ export class CNodeSynthBuilding extends CNode3DGroup {
         
         this.guiFolder = guiMenus.objects.addFolder(`Building: ${this.name}`);
         
-        this.guiFolder.add(this, 'name').name(t("synthBuilding.name.label")).onChange(() => {
-            this.guiFolder.title = `Building: ${this.name}`;
-            setRenderOne(true);
-        }).onFinishChange(() => { CustomManager.saveGlobalSettings(true); });
+        addNameControl(this.guiFolder, this, {
+            prefix: "Building",
+            onRename: () => setRenderOne(true),
+            onFinishChange: () => CustomManager.saveGlobalSettings(true),
+        });
         
         const editModeData = {editMode: this.editMode};
         this.guiFolder.add(this, 'visible').name(t("synthBuilding.visible.label")).onChange((value) => {
@@ -1533,35 +1535,9 @@ export class CNodeSynthBuilding extends CNode3DGroup {
      * @returns {string} A unique name that doesn't conflict with existing buildings
      */
     generateUniqueName() {
-        // Check if current name ends with "-N" where N is a number
-        const match = this.name.match(/^(.+?)-(\d+)$/);
-        let baseName, startNumber;
-        
-        if (match) {
-            // Name already has a number suffix, extract base and increment
-            baseName = match[1];
-            startNumber = parseInt(match[2], 10);
-        } else {
-            // No number suffix, use full name as base
-            baseName = this.name;
-            startNumber = 1;
-        }
-        
-        // Collect all existing building names
-        const existingNames = new Set();
-        Synth3DManager.iterate((id, building) => {
-            existingNames.add(building.name);
-        });
-        
-        // Find the first available number
-        let counter = startNumber;
-        let candidateName;
-        do {
-            candidateName = `${baseName}-${counter}`;
-            counter++;
-        } while (existingNames.has(candidateName));
-        
-        return candidateName;
+        const existingNames = [];
+        Synth3DManager.iterate((id, building) => existingNames.push(building.name));
+        return uniqueDisplayName(this.name, existingNames);
     }
     
     /**

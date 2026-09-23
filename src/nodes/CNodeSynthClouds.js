@@ -1,4 +1,5 @@
 import {CloudSort, registerTransparentCamera} from "../rendering/CloudSort";
+import {addNameControl} from "../DisplayName";
 import {installSoftDepthMaterial} from "../rendering/SoftDepth";
 import {registerEditorInteraction} from "../EditorInteraction";
 import {getInteractionRouter} from "../InteractionRouter";
@@ -748,9 +749,10 @@ export class CNodeSynthClouds extends CNode3DGroup {
     createGUIFolder() {
         this.guiFolder = guiMenus.objects.addFolder(`Clouds: ${this.name}`);
         
-        this.guiFolder.add(this, 'name').name(t("synthClouds.name.label")).onChange(() => {
-            this.guiFolder.title = `Clouds: ${this.name}`;
-        }).onFinishChange(() => { CustomManager.saveGlobalSettings(true); });
+        addNameControl(this.guiFolder, this, {
+            prefix: "Clouds",
+            onFinishChange: () => CustomManager.saveGlobalSettings(true),
+        });
         
         this.guiFolder.add(this, 'visible').name(t("synthClouds.visible.label")).onChange((value) => {
             this.show(value);

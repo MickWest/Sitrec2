@@ -12,6 +12,7 @@
  * Installed on CNodeView3D.prototype via Object.assign (see CNodeView3D.js).
  */
 
+import {titleFollowsDisplayName} from "../DisplayName";
 import {
     CustomManager,
     GlobalDateTimeNode,
@@ -1084,7 +1085,8 @@ export const mouseMethods = {
                 smoothedNode._updateParameterVisibility();
             }
 
-            const menuTitle = `Track: ${closestTrack.trackOb?.menuText || closestTrack.trackID}`;
+            const trackMenuTitle = () => `Track: ${trackOb?.displayName || trackOb?.menuText || closestTrack.trackID}`;
+            const menuTitle = trackMenuTitle();
 
             // Create a standalone menu and mirror the track's GUI folder
             // Use dismissOnOutsideClick=false so dragging control points doesn't close the menu
@@ -1097,6 +1099,7 @@ export const mouseMethods = {
 
             // Set up dynamic mirroring for the track's GUI folder
             CustomManager.setupDynamicMirroring(closestTrack.guiFolder, standaloneMenu);
+            titleFollowsDisplayName(standaloneMenu, closestTrack.trackID, trackMenuTitle);
 
             // Add a method to manually refresh the mirror
             standaloneMenu.refreshMirror = () => {

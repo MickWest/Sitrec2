@@ -11,6 +11,7 @@
 // Resolves to {action: "apply", config}, {action: "delete"}, or null (cancelled).
 
 import {Globals} from "./Globals";
+import {makeDraggable, removeDraggable} from "./DragResizeUtils";
 import {t} from "./i18n";
 
 // Units a measurement can override the sitch units with. The keys are the values saved in
@@ -103,29 +104,8 @@ export function openMeasurementDialog({config, isNew, manager, onChange}) {
             cursor: move; user-select: none; position: sticky; top: 0; background: white;
         `, t(isNew ? "measurements.dialog.addTitle" : "measurements.dialog.editTitle"));
         modal.appendChild(titleBar);
-        titleBar.addEventListener("pointerdown", (e) => {
-            if (e.button !== 0) return;
-            e.preventDefault();
-            const startX = e.clientX - modal.offsetLeft;
-            const startY = e.clientY - modal.offsetTop;
-            // Capture keeps the drag going when the pointer runs ahead of the panel.
-            try { titleBar.setPointerCapture(e.pointerId); } catch (err) { /* pointer already gone */ }
-            const move = (ev) => {
-                // Keep at least the title bar on screen, so the panel can always be moved back.
-                const x = Math.min(Math.max(ev.clientX - startX, 40 - modal.offsetWidth), window.innerWidth - 40);
-                const y = Math.min(Math.max(ev.clientY - startY, 0), window.innerHeight - 40);
-                modal.style.left = x + "px";
-                modal.style.top = y + "px";
-            };
-            const up = () => {
-                titleBar.removeEventListener("pointermove", move);
-                titleBar.removeEventListener("pointerup", up);
-                titleBar.removeEventListener("pointercancel", up);
-            };
-            titleBar.addEventListener("pointermove", move);
-            titleBar.addEventListener("pointerup", up);
-            titleBar.addEventListener("pointercancel", up);
-        });
+        // The shared floating-window drag (the same one the track filter dialog uses).
+        makeDraggable(modal, {handle: titleBar});
 
         // --- type ----------------------------------------------------------
         modal.appendChild(sectionTitle(t("measurements.dialog.type")));
@@ -145,7 +125,7 @@ export function openMeasurementDialog({config, isNew, manager, onChange}) {
                 state.type = type;
                 // Moving to a distance with no "To" yet: start it on something other than
                 // "From", which is the usual case, rather than on nothing.
-                if (type === "distance" && !state.to) state.to = defaultOtherRef(state.from);
+                if (type === "distance" && (!state.to || sameRef(state.from, state.to))) state.to = defaultOtherRef();
                 render();
             };
             typeButtons[type] = b;
@@ -166,9 +146,27 @@ export function openMeasurementDialog({config, isNew, manager, onChange}) {
         // The kind tab each picker is showing. Starts on the kind of the current choice.
         const shownKind = {from: state.from?.kind ?? "camera", to: state.to?.kind ?? "traverse"};
 
-        function defaultOtherRef(from) {
+        const sameRef = (a, b) => !!a && !!b && a.kind === b.kind && a.id === b.id;
+
+        // What a picker can offer for one kind: its items, less the thing "From" is set to when
+        // this is the "To" picker (a distance from a thing to itself is always zero), plus the
+        // current choice if it is not found (deleted, or an old save's "Other" node), so the
+        // user can see what it was.
+        function choices(which, kind) {
+            const current = state[which];
+            const items = manager.listSources(kind)
+                .filter(s => !(which === "to" && sameRef(state.from, {kind, id: s.id})));
+            if (current?.kind === kind && !items.some(s => s.id === current.id)
+                && !(which === "to" && sameRef(state.from, current))) {
+                items.unshift({id: current.id, name: t("measurements.dialog.missing", {id: current.id}), missing: true});
+            }
+            return items;
+        }
+
+        // Something for "To" that is not the "From" thing, or null when there is nothing else.
+        function defaultOtherRef() {
             for (const kind of manager.sourceKinds) {
-                const other = manager.listSources(kind).find(s => !(from && from.kind === kind && from.id === s.id));
+                const other = choices("to", kind).find(s => !s.missing);
                 if (other) return {kind, id: other.id};
             }
             return null;
@@ -178,19 +176,24 @@ export function openMeasurementDialog({config, isNew, manager, onChange}) {
             container.textContent = "";
             const current = state[which];
 
+            // Only kinds with something to pick get a tab. When the kind on show has none left,
+            // show the current choice's kind, or else the first kind that has something.
+            const kinds = manager.sourceKinds.filter(kind => choices(which, kind).length > 0);
+            if (!kinds.includes(shownKind[which])) {
+                shownKind[which] = kinds.includes(current?.kind) ? current.kind : kinds[0];
+            }
+
             const tabs = el("div", "display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 6px;");
             container.appendChild(tabs);
-            for (const kind of manager.sourceKinds) {
-                const count = manager.listSources(kind).length;
+            for (const kind of kinds) {
+                const count = choices(which, kind).filter(s => !s.missing).length;
                 const holdsCurrent = current?.kind === kind;
-                // "Other" is only for an old save's odd reference; it has no list of its own.
-                if (kind === "node" && !holdsCurrent) continue;
                 const selected = shownKind[which] === kind;
                 const tab = el("button", `
                     padding: 6px 12px; border-radius: 16px; cursor: pointer; font-family: inherit;
                     font-size: 13px; border: 1px solid ${selected ? BLUE : "#bbb"};
                     background: ${selected ? BLUE : (holdsCurrent ? "#e3f2fd" : "white")};
-                    color: ${selected ? "white" : (count || holdsCurrent ? "#222" : "#999")};
+                    color: ${selected ? "white" : "#222"};
                 `, manager.kindLabel(kind) + (kind === "node" ? "" : ` (${count})`));
                 tab.type = "button";
                 tab.onclick = () => { shownKind[which] = kind; render(); };
@@ -203,18 +206,13 @@ export function openMeasurementDialog({config, isNew, manager, onChange}) {
             `);
             container.appendChild(list);
 
-            const kind = shownKind[which];
-            const items = manager.listSources(kind).map(s => ({...s}));
-            // The current choice is always listed, even when it is not found (deleted, or an
-            // old save's "Other" node), so the user can see what it was.
-            if (current?.kind === kind && !items.some(s => s.id === current.id)) {
-                items.unshift({id: current.id, name: t("measurements.dialog.missing", {id: current.id}), missing: true});
-            }
-            if (items.length === 0) {
+            if (kinds.length === 0) {
                 list.appendChild(el("div", "padding: 12px; color: #888; font-size: 13px;",
-                    t("measurements.dialog.nothingOfKind", {kind: manager.kindLabel(kind)})));
+                    t("measurements.dialog.nothingToPick")));
+                return;
             }
-            for (const item of items) {
+            const kind = shownKind[which];
+            for (const item of choices(which, kind)) {
                 const selected = current?.kind === kind && current.id === item.id;
                 const row = el("div", `
                     padding: 7px 12px; cursor: pointer; font-size: 14px; border-bottom: 1px solid #eee;
@@ -222,7 +220,15 @@ export function openMeasurementDialog({config, isNew, manager, onChange}) {
                     color: ${selected ? "white" : (item.missing ? "#999" : "#222")};
                 `, item.name);
                 row.title = item.id;
-                row.onclick = () => { state[which] = {kind, id: item.id}; render(); };
+                row.onclick = () => {
+                    state[which] = {kind, id: item.id};
+                    // "From" moved onto the thing "To" was set to: move "To" to something else.
+                    if (which === "from" && sameRef(state.from, state.to)) {
+                        state.to = defaultOtherRef();
+                        if (state.to) shownKind.to = state.to.kind;
+                    }
+                    render();
+                };
                 list.appendChild(row);
             }
         }
@@ -328,6 +334,7 @@ export function openMeasurementDialog({config, isNew, manager, onChange}) {
 
         function close(result) {
             document.removeEventListener("keydown", onDocumentKey);
+            removeDraggable(modal);
             if (modal.parentNode) modal.parentNode.removeChild(modal);
             dialogOpen = false;
             cancelOpenDialog = null;

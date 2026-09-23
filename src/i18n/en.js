@@ -2284,6 +2284,11 @@ const en = {
         },
     },
 
+    displayName: {
+        label: "Name",
+        tooltip: "The name shown for this in menus, labels and lists. Changing it does not change anything else",
+    },
+
     measurements: {
         add: {
             label: "Add Measurement",
@@ -2317,7 +2322,7 @@ const en = {
             from: "From",
             to: "To",
             point: "Measure the altitude of",
-            nothingOfKind: "There is no {{kind}} in this sitch",
+            nothingToPick: "There is nothing else in this sitch to measure to",
             missing: "{{id}} (not found)",
             label: "Label",
             labelPlaceholder: "Optional text shown above the value",
