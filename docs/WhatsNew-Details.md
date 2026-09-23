@@ -9,6 +9,101 @@ lockstep with docs/WhatsNew.md.
 
 ---
 
+## Version 2.170.0 (2026-09-23)
+
+### New Features
+
+- **Measurements** (Show → **Measurements**; `43cb2f04`, follow-up in `137e4292`). New `src/CMeasurementManager.js`, `src/MeasurementDialog.js`, and a `CNodeMeasurement` class in `src/nodes/CNodeLabels3D.js`.
+  - **What it does.** A new Show → Measurements folder (`showhidemeasurements`, i18n `menus.showHide.measurements`) holds the measurements drawn in the 3D views. The existing **Measurements in Main** / **Measurements in Look** switches move into it from the top level of the Show menu (`setupMeasurementUI` now adds them to `guiMenus.showhidemeasurements`, falling back to `guiShowHide`). In a custom sitch only (`MeasurementManager.setup()` returns unless `Sit.isCustom`), **Add Measurement** opens a dialog:
+    - **Measurement Type**: *Altitude* (height above the ground and above mean sea level) or *Distance* (straight-line distance between two things).
+    - The thing to measure: a kind (*Camera*, *Traverse*, *Track*, *3D Object*, *Pin*, *Building*), then an item. A distance has **From** and **To**.
+    - **Label** (text shown above the value), **Color**, **Line Width**, **Units** (*Sitch units*, Meters, Kilometers, Feet, Statute Miles, Nautical Miles) and **Show**.
+  - **Editing.** Each measurement gets its own entry in the folder, and a click reopens the same dialog to change it, hide it or **Delete** it.
+  - **The dialog is not modal.** It is a draggable panel, and changes preview live. **Cancel** reverts them. A save made while the dialog is open writes the config from before it opened (`drafts`).
+  - **The ends are references.** Each end is a `{kind, id}` reference resolved every frame (`resolvePosition`), because pins and buildings are not position nodes. A building resolves to the middle of its roof. A deleted target draws nothing, and the dialog lists it as "(not found)".
+  - **Altitude text.** Altitude uses MSL and shows agl + msl, or msl only over sea level. The ground point is found from 3D tiles, then terrain, then the sphere, and is cached for 500 ms while the point does not move.
+  - **Saving.** Measurements are saved as the sitch's `measurements` block (always an array, so deleting all of them does not bring the defaults back). The measurement's own Show flag lives in that config. The generic visibility mod is not written, and `refreshMeasurementVisibility` now respects `node.visible`.
+  - **Defaults and old saves.** A new custom sitch gets three defaults with the old node ids: `altitudeLabel` (camera altitude), `altitudeLabel2` (traverse altitude) and `distanceLabel` (camera-to-traverse distance). These were removed from `data/custom/SitCustom.js`. Old saves are converted on load by `migrateLegacyMeasurements` (`SitchMigrations.js`, called from `textSitchToObject`), which turns `MeasureAltitude` / `MeasureAB` node definitions into entries with the same ids, keeps their hidden state and color, and deletes the old definitions and mods.
+  - **Follow-up in `137e4292`:**
+    - The **To** picker no longer offers the item chosen for **From**, and choosing that item in **From** moves **To** to another item.
+    - A kind with nothing to pick has no tab. When nothing is left, the dialog shows "There is nothing else in this sitch to measure to" (`measurements.dialog.nothingToPick` replaces `nothingOfKind`).
+    - The dialog drags with the shared `makeDraggable` / `removeDraggable` (`DragResizeUtils.js`), not its own pointer listeners.
+  - Documented in `docs/UserInterface.md` ("Measurements").
+
+- **Editable names for tracks and 3D objects** (`137e4292`; new `src/DisplayName.js`, `tests/DisplayName.test.js`).
+  - **Where.** A **Name** control (i18n `displayName.label`) is now the first control in each track's Contents folder and each 3D object's Objects folder.
+  - **What it changes.** Only a display name. The ids do not change: a track's `shortName` (`trackOb.menuText`) stays the key for node ids, switch option keys, saved choices and `usedShortNames`, and an object's node id is unchanged. So saved choices such as the target track still resolve.
+  - **Where the name shows:**
+    - the folder title
+    - the camera / target / other track switch labels (new `CNodeSwitch.setOptionLabel` → `relabelOptionInGUIMenu` in `lil-gui-extras.js`, which relabels an option without changing its value)
+    - the track right-click menu title and the object edit menu title (these stay current while the menu is open, through `titleFollowsDisplayName`)
+    - the track edit-mode badge, custom graph series names, measurements, and the object's 3D label (only when the label showed the old name)
+    - the spline's `menuText`, which is used on export
+  - **Tracks and objects share a name.** A track and the 3D object that rides on it share one name (`TrackManager.objectForTrack` / `trackForObject`), so renaming either renames both. This covers an object from **Add Object**, a balloon, and an imported track's sphere.
+  - **Default names.** A new object takes its track's name. A fixed object gets the next "Object N" (`getNextObjectName`, now also counting `displayName`).
+  - **Saving.** Track names are saved in one `trackDisplayNames` block (`TrackManager.serializeDisplayNames` / `applyDisplayNames`, applied after all tracks exist on load). Object names are saved in the object's mod (`displayName`). The object Name control is `isCommon`, so a model or geometry rebuild keeps it.
+  - **The Sitrec API.** Its object lookup (`findObjectFolder` in `CSitrecAPI.js`) matches the immutable id first (`folder._lookupId`), then the display name, so a script still finds a renamed object.
+  - Documented in `docs/Tracks.md` ("Name").
+
+### Improvements
+
+- **Track edit mode has one right-click menu** (`b6db8c9f`; new `src/TrackEditMode.js`).
+  - **Modal right-click.** While a track is in edit mode, right-click acts only on that track. A new branch at the top of `onContextMenuInner` (`CNodeView3DMouse.js`) runs before the feature, object and track picks.
+  - **The point menu.** A control point opens the point menu (`PointEditor.showPointMenuAtEvent`), now titled "Point: Frame N", with:
+    - **Go to Frame N** (greyed out when already there)
+    - **Delete Point**
+    - **Exit Edit Mode** (only for a track in edit mode)
+  - **The edit menu.** Every other right-click opens the edit menu `showTrackEditingMenu` ("Edit: <name>"). Its items depend on the playhead:
+    - With no control point at the current frame: **Add Point Here (Frame N)** (at the ground under the pointer) and **Add Point on Track (Frame N)** (on the current path).
+    - With a control point there: **Move Point N Here**.
+    - Always: **Exit Edit Mode**.
+    - Items that cannot apply (for example, no ground under the pointer) are greyed out, not hidden.
+    - Add and move use the new undoable `PointEditor.insertPointWithUndo` ("Add track control point" / "Move track control point").
+  - **Removed.** **Remove Closest Point** and the old "Split Track" / "Add Ground Point" items are gone. A point is deleted only from its own point menu.
+  - **One menu at a time.** Both menus are dismissable context menus, so only one shows at a time.
+  - **Leaving edit mode.** **Escape** exits edit mode (`KeyBoardHandler.js`) once no context menu is open. A badge at the top of each 3D view reads "Editing: <name> — Esc to exit" (`custom.contextMenu.editingBadge`, drawn by `updateTrackEditBadge`). `trackOb.setEditMode` keeps the **Edit Track** checkbox, the spline editor and `Globals.editingTrack` in step.
+  - **Escape closes the menu first.** The Escape topmost-menu test in `lil-gui-extras.js` now uses `>=`, so a context menu opened over the track's panel is closed before the panel.
+  - **The same rule in the other editors:**
+    - Ground Track points (`GroundTrackHandles3D.js`): Alt+click delete is replaced by a right-click menu with **Go to Frame N** / **Delete Point**, and the **Delete Point at Frame** button is removed from `CNodeGroundTrack`.
+    - The curve editor (`CNodeCurveEdit2.js`): Alt+click delete is replaced by a right-click **Curve Point** menu with an undoable **Delete Point**.
+  - Updated: the `GESTURE_PROFILES` rows, `docs/Tracks.md` and `docs/GroundTrack.md`.
+
+- **Point Track: Motion (Background) is the default, and Analyse Object is more reliable** (Video → **Point Track**; `967607ec`).
+  - **New default.** The default tracking method changes from Template Match to **Motion (Background)** (`pendingTrackingSettings.trackingMethod` and `ObjectTracker.trackingMethod` = `'motion'`). A save that records a method keeps it. A save with none still loads as Template Match (`deserializeAutoTracking`). The **Tracking Method** tooltip now explains when each method suits.
+  - **Look-alikes near the object.** For each setting it tries, **Analyse Object** now also measures the object against the strongest competitor inside the tracker's own Search Radius gate (a second `measure()` with `preferNear`). The new `chooseMotionCalibration` (`src/MotionCalibration.js`) keeps the strongest setting unless its score / runner-up ratio is below 3.2 (twice the tracker's 1.6 acceptance ratio). In that case it picks a setting with at least 60% of the score that passes 3.2. On the Rubber Duck clip this picks Feature Size 4 over 2, and the clip tracks to the end.
+  - **Help page.** It is rewritten and retitled **Point Tracking and Stabilization** (`docs/PointTrack.md`). It now has sections on procedures, traverse use, stabilization and troubleshooting, and it is cross-linked with Ground Track.
+
+- **Point Track: better High Peak and Template Match, and a method recommendation** (Video → **Point Track**; `72953927`; new `src/PointTrackRecommend.js`).
+  - **High Peak / Low Peak** (shared `findLocalPeak`):
+    - When the object is lost, the frame is recorded as missing (`markUnmeasured`), not as the last position.
+    - Peaks are ranked by contrast over the background median times nearness.
+    - A peak is refused unless it beats the next separate peak by 1.6×.
+    - The position is refined to a fraction of a pixel by a parabola fit.
+  - **Finding the object again.** `predictPosition` now uses only measured points, with velocity over about five frames. It coasts for ten frames, then searches at the last sighting. `trackFrame` uses it when the previous frame is missing, so a run continues past a gap.
+  - **Template Match:**
+    - It keeps its first template, and marks a frame missing when the match score is below half the median of recent scores, instead of latching onto the road or overlay text.
+    - A user point resets the template (`resetTemplates`), and the new template is taken from the user's frame.
+  - **Speed.** Centroid, peak and template code read only the needed rectangle into one reused canvas (`readROI`, `grayPatch`), not the full frame.
+  - **Recommendation.** **Analyse Object** measures the raw image at the cursor (`measureAppearance`, `appearanceAtSeed`), and `recommendMethod` chooses:
+    - Motion (Background), when the motion result agrees with the raw polarity
+    - High Peak or Low Peak, for an isolated clear peak (isolation ≥ 8)
+    - Template Match, otherwise
+  - **How it is shown.** When the recommendation differs from the selected method, the button label reads "Try <method>: <reason>". The method is not changed. The **Analyse Object** tooltip explains this. The help page describes the methods and the recommendation.
+
+### Bug Fixes
+
+- **Fixed Analyse Object failing, and a tracking run losing its first frames, at the start of HD clips that play at a reduced analysis resolution** (`967607ec`). After a decode-resolution change, frame groups that `handleBusyDecoder` queued while the worker was reconfigured were drained only when another group completed. Nothing was in flight, so they waited until `waitForFrame` timed out. `CVideoWebCodecBase._onWorkerConfigured` now calls `handleGroupComplete()` to send them.
+
+- **Fixed a hand-set video frame rate not always being restored when a saved sitch is loaded** (`bcc0e729`).
+  - **Cause.** The video loaders finish asynchronously, often after the saved `Sit` values are restored, and each one assigned `Sit.fps` from the video header. This silently replaced the rate the user had typed.
+  - **What is saved.** A rate set in Time → **Video FPS** (now on `onChange`, so the API and `setMenuValue` also set it), chosen in the fps mismatch dialog, or set through `CVideoH264Data.updateFPS` is recorded as `Sit.fpsOverride` and saved with the sitch. The header rate is not saved.
+  - **The fix.** Every loader (`CVideoMp4Data`, `CVideoWebCodecData`, `CVideoH264Data`, `CVideoStreamData`, `CVideoAudioOnly`) now goes through the new `setSitFpsFromVideo` (`UpdateSitFrames.js`), which prefers the override. The deserializer also applies it directly if the video has already loaded.
+  - **When the override is cleared.** A new video import on the timeline clears it, but only once that video has actually loaded (`clearsFpsOverride`). A cancelled or failed import therefore keeps the current rate. Removing the video also clears it.
+
+- **Fixed right-click in the main view not opening the ground and track menus after loading a sitch with a synthetic track** (`43cb2f04`). `PointEditor` hid its altitude measurement with `group.visible` only, and `refreshMeasurementVisibility()` turned it back on after each load. That measurement had an invalid (NaN) position, and its arrows matched every right-click raycast. It is now hidden with `show(false)`, and the refresh keeps a node whose own `visible` flag is false.
+
+- **Fixed renaming a building, clouds or a ground overlay not updating its menu folder title** (`137e4292`). The old code assigned to `folder.title`, which is a lil-gui method. The title did not change, and a later `title()` call would throw. All three now use the shared `addNameControl` (`DisplayName.js`). Building name de-duplication moves to the shared `uniqueDisplayName`.
+
 ## Version 2.169.1 (2026-09-23)
 
 ### Improvements

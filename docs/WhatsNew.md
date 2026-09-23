@@ -9,6 +9,28 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.170.0 (2026-09-23)
+
+### New Features
+
+- **Measurements** (Show → **Measurements**): in a custom sitch, **Add Measurement** measures the altitude of one thing, or the distance between two things: the camera, the traverse, a track, a 3D object, a pin or a building. Each measurement has a label, color, line width, units and a **Show** setting. Click a measurement in the menu to change or delete it. The dialog is a panel that you can move, changes show at once, and **Cancel** undoes them. A new custom sitch starts with the camera altitude, traverse altitude and camera-to-traverse distance, and older sitches are converted when they load. **Measurements in Main** and **Measurements in Look** are now in this folder.
+- **Editable names** (**Name**, at the top of each track's folder in Contents and each 3D object's folder in Objects): rename a track or 3D object. The name shows in menus, the camera and target track lists, 3D labels, graphs and measurements, and it is saved with the sitch. A track and the object that rides on it share one name. Renaming changes only what you see, so saved choices such as the target track still work.
+
+### Improvements
+
+- **Track edit mode** (**Edit Track** in the track's folder): right-click now acts only on the track being edited. Right-click a control point to **Go to Frame**, **Delete Point** or **Exit Edit Mode**. Right-click anywhere else to **Add Point Here**, **Add Point on Track**, or **Move Point Here** when the playhead is on a point. **Remove Closest Point** is gone, **Escape** leaves edit mode, and a label in each 3D view shows the track being edited.
+- **Ground Track and curve editor points**: Alt-click no longer deletes a point. Right-click the point and choose **Delete Point**. The Ground Track **Delete Point at Frame** button is removed.
+- **Point Track** (Video → Point Track): **Motion (Background)** is now the default tracking method, and saved sitches keep their own method. **Analyse Object** now avoids settings that leave look-alike clutter near the object, and it recommends a better method on its button when one suits the object (it does not change the method).
+- **Point Track** (Video → Point Track): High Peak and Template Match now mark a frame as missing when they lose the object, instead of jumping to something else. High Peak finds the object to a fraction of a pixel, and a user point gives Template Match a new template.
+- **Point Tracking help** (Help → Documentation → *Point Tracking and Stabilization*): rewritten, with step-by-step procedures, traverse use, stabilization and a troubleshooting guide.
+
+### Bug Fixes
+
+- Fixed Analyse Object failing, and tracking losing its first frames, at the start of HD videos analyzed at a lower resolution.
+- Fixed a frame rate set by hand (Time → **Video FPS**, or the frame rate mismatch dialog) not always being restored when a saved sitch is loaded.
+- Fixed right-click in the main view not opening the ground and track menus after loading a sitch with a synthetic track.
+- Fixed renaming a building, clouds or a ground overlay not updating its menu title.
+
 ## Version 2.169.1 (2026-09-23)
 
 ### Improvements
