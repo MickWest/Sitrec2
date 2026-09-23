@@ -38,6 +38,12 @@
       "mayReceive": ["coarse-area", "user-file"]
     },
     {
+      "host": "overturemaps-extras-us-west-2.s3.us-west-2.amazonaws.com",
+      "purpose": "Overture Maps road and building data (PMTiles) for City Lights",
+      "trigger": "automatic while City Lights is on with a mapped method (Mapped Roads and Buildings, or Hybrid)",
+      "mayReceive": ["coarse-area"]
+    },
+    {
       "host": "*.amazonaws.com",
       "purpose": "operator-configured object storage; the bucket host is set in configuration, not in code. An isolated deployment may instead point storage at its own host with S3_ENDPOINT, which is read from the deployment configuration and never from a request",
       "trigger": "the user chooses to upload or share a file, or opens a shared file",
@@ -459,6 +465,12 @@
     {
       "host": "www.openstreetmap.org",
       "purpose": "attribution and terms link shown with the map",
+      "trigger": "the user opens it",
+      "mayReceive": ["none"]
+    },
+    {
+      "host": "docs.overturemaps.org",
+      "purpose": "attribution link shown with City Lights",
       "trigger": "the user opens it",
       "mayReceive": ["none"]
     },

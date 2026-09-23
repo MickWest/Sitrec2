@@ -9,6 +9,62 @@ lockstep with docs/WhatsNew.md.
 
 ---
 
+## Version 2.169.0 (2026-09-23)
+
+### New Features
+
+- **City Lights** (Lighting → **City Lights** → **Show City Lights**; `a85e238e`; new `src/nodes/CNodeCityLights.js` (id `cityLights`, created in `addNightSky` in `CNodeDisplayNightSky.js`), new `src/citylights/` (`CityLightsShader.js`, `CityLightsMasks.js`, `CityLightsWorker.js`, `CityLightsRaster.js`, `CityLightsRegion.js`, `CityLightsData.js`), new `tests/CityLights.test.js` and `tests/CityLightsRegion.test.js`).
+  - **What it does.** It draws approximate night lights on the photorealistic 3D map tiles (`buildings3DTiles`) as street lamps, lit windows and a dimmer ground. Lamp positions and lit windows are synthetic; the control's tooltip says so. It is off by default. It does not change the elevation-map terrain, because only the 3D-tile `DayNightStandardMaterial` gets the shader. Without 3D tiles in a view, **Status** reads "Requires 3D map tiles".
+  - **Night only.** The emission blends in with a local night factor, `1 - smoothstep(-0.08, 0.04, dot(up, sunDirection))`. So lights show only where the Sun is below the local horizon, and daytime views do not change. At night the ground is scaled by **Ground Brightness** before the lights are added.
+  - **Controls** (labels are literal strings in `CNodeCityLights`, not i18n keys):
+    - **Method**:
+      - *Mapped Roads and Buildings* (the default, mode 3)
+      - *Geometry Windows* (2): windows on steep, neutral-colored tile faces, with no map data
+      - *Texture Regularity* (1): lights where the photo texture has strong, regular edges
+      - *Hybrid* (4): mapped lights plus a weaker layer of geometry windows
+    - **Road Lights (%)** (default 60) and **Paths / Parking (%)** (default 8). Both show only for the mapped methods. The service, pedestrian, footway and cycleway road classes use the Paths value. More density adds lamps at stable positions.
+    - **Lit Windows (%)** (default 35). It is hidden for Texture Regularity.
+    - **Light Intensity** (0–3, default 1) and **Ground Brightness** (0–1, default 0.22).
+    - **Reload Lights**, and a read-only **Status**.
+  - **Data source.** The mapped methods read Overture Maps `buildings` and `transportation` PMTiles (release `2026-08-19.0`) straight from `overturemaps-extras-us-west-2.s3.us-west-2.amazonaws.com`. The new dependency `pmtiles` 4.5.0 (pinned) handles this in a module worker (`CityLightsWorker.js`).
+    - Roads come from zoom 14. Buildings come from zoom 14, or 13 for the wider regions.
+    - Underground buildings are skipped. So are tunnel, indoor and under-construction road segments.
+    - Features become compact uint16 records. `CityLightsRaster` rasterizes them into a 4096² RGBA mask: building heading/style, warm and cool lamps, and footprints.
+  - **Coverage and limits.**
+    - `cityLightsRegion` centers a square of 4, 8 or 16 zoom-14 tiles on the point where the view's camera ray hits the ellipsoid. It sizes the square to about 8–32 km, scaled with camera altitude, and caps it at 320 tiles.
+    - A region is kept until the target nears its edge (`cityLightsRegionContains`).
+    - There are at most two masks (main and look). The worker keeps at most two region caches.
+    - The worker starts lazily, so with city lights off there are no fetches.
+    - On an error, Status reads "City lights unavailable — use Reload Lights to retry".
+  - **Rendering hook.**
+    - `CNodeView3D` calls `cityLightsNode.push(this)` / `pop()` around the scene draw. Each view, and each export, uses its own mask and a quarter-degree-snapped local frame. This keeps the window patterns stable for a given camera.
+    - `DayNightStandardMaterial` gains a `SITREC_CITY_LIGHTS` define (`setCityLights`, via the new `TilesDayNightPlugin.setCityLights` and `CNodeBuildings3DTiles.setCityLights`). Its cache key is now `v12citylights` with a `.city`/`.unlit` suffix.
+    - The emission is inserted before the tile-water block, so darker ground does not darken the reflected sky.
+  - **Saving.** The node's simple serials `enabled`, `method`, `roads`, `paths`, `windows`, `intensity` and `groundBrightness` are saved with the sitch and clamped on load.
+  - **Attribution.** For the mapped methods, the new `setCityLightsAttribution` in `AttributionOverlay.js` adds "City lights: Overture Maps / © OpenStreetMap contributors" to the on-screen credits and to the plain-text attribution used by `getAttributionText`. The overlay now wraps (`white-space: normal`) instead of cutting long text with an ellipsis. `disposeAttributionOverlay` now also resets the `water` part.
+- **Lat/Lon Grid** (Show → **Lat/Lon Grid in Main** / **Lat/Lon Grid in Look**; `1e22266d`; new `src/LatLonGrid.js` (`setupLatLonGrid`, `removeLatLonGrid`, `refreshLatLonGridVisibility`), i18n `latLonGrid.inMain` / `latLonGrid.inLook` and `viewMenus.latLonGrid` ("Lat/Lon Grid")).
+  - **What it does.** It draws a latitude/longitude grid over the whole globe, with a line every 10°. Each line is sampled every 1° so it follows the curve. The lines are light blue at alpha 0.45; the equator and the prime meridian are brighter (alpha 0.9), through a per-vertex alpha attribute in a single `LineSegments`.
+  - **Visibility.** Both toggles are off by default, and each view has its own flag (`Globals.showLatLonGridMain` / `showLatLonGridLook`, applied through `LAYER.perViewLayerMask`).
+    - Each toggle is shared with its view's header menu (`.shareAs(viewMenuKey(..., "latLonGrid"))`).
+    - A globe icon (`ICON_LAT_LON_GRID`) is added to `COMMON_3D_ICONS` for the Main and Look header bars.
+    - `latLonGrid` is in `DECLUTTER_SLOTS`, so Declutter hides the grid.
+  - **Drawing.**
+    - The grid is drawn with no depth test (`renderOrder` 1000), so terrain, 3D buildings and the globe never hide it.
+    - Lines on the far side of the Earth are discarded per fragment against the WGS84 ellipsoid tangent plane. So the cut falls exactly on the horizon, not at a vertex.
+    - The vertex shader uses `projectionMatrix * (modelViewMatrix * position)`, not `projection * view * world`. The second form rounds clip z and w separately at ECEF scale, which could clip a nearby line against the look view's near/far planes.
+  - **Saving and the Earth model.** `showLatLonGridMain` / `showLatLonGridLook` are added to the saved globals in `CustomManagerSerialize.js`, which calls `refreshLatLonGridVisibility` after loading. The grid is set up per sitch next to `setupMeasurementUI` in `index.js` and removed in `disposeEverything`. An `onBeforeRender` check rebuilds the geometry and material when `Globals.equatorRadius` / `polarRadius` change. For example, that happens when Terrain → **Use Ellipsoid Earth Model** is toggled.
+
+### Improvements
+
+- **Sunset and sunrise markers** (Starlink Horizon Flares tool → results, horizon view; `1e22266d`; `sunRiseSetMarkers`, `sunAltitudeAt` and `fmtClockLabel` in `tools/shf/app.js`, `horizonView` in `tools/shf/skyview.js`, `.lg-sunevent` in `tools/shf/style.css`).
+  - The band of hourly Sun-azimuth markers above the horizon view now also shows the sunset before the flare window and the sunrise after it. Each has an orange (`#ff8a3d`) arrow at the Sun's azimuth and a label such as "Sunset 7:42pm". This applies to both the live and the normal results views, and the legend gains "sunset/sunrise".
+  - How it works:
+    - Rise and set use the standard −0.833° Sun altitude (refraction plus the solar semi-diameter).
+    - Each event is searched up to 24 h from the window in 10-minute steps, then bisected to about 1 s.
+    - In a polar day or night with no crossing, that marker is left out.
+    - A marker shows only when its azimuth is inside the horizon view.
+  - The sunset/sunrise labels take priority: an hourly label that would overlap one is dropped. If the two event labels would overlap (for example, near the midnight sun), they sit side by side, meeting at the midpoint between the two arrows. All labels are clamped inside the band. The overlap test now uses the width of each label, not a fixed 30 px.
+
 ## Version 2.168.0 (2026-09-22)
 
 ### New Features

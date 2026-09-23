@@ -9,6 +9,17 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.169.0 (2026-09-23)
+
+### New Features
+
+- **City Lights** (Lighting → City Lights → **Show City Lights**): shows approximate street lights and lit windows on 3D map tiles where it is night, using Overture Maps road and building data (downloaded when needed). Lamp positions and lit windows are synthetic. You can choose the method, the density of road, path and window lights, the light intensity and the ground brightness, and the settings are saved with the sitch.
+- **Lat/Lon Grid** (Show → **Lat/Lon Grid in Main** / **Lat/Lon Grid in Look**, or the globe button on each view's header bar): draws a line every 10° of latitude and longitude over the globe, with the equator and prime meridian brighter. Terrain never hides it, and lines on the far side of the Earth are not drawn. Declutter hides it, and the settings are saved with the sitch.
+
+### Improvements
+
+- **Starlink Horizon Flares tool**: the horizon view now shows orange markers with the time for the sunset before the flares and the sunrise after them, where they fall inside the view.
+
 ## Version 2.168.0 (2026-09-22)
 
 ### New Features
