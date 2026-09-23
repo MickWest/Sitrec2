@@ -44,6 +44,12 @@ Do not skip step 5. With the default settings, Motion (Background) can lose a so
 over bright ground, or can smooth away a small dot. Analyse Object picks settings for the
 object you are actually tracking.
 
+**Analyse Object also recommends a method.** If Motion (Background) is not the right method
+for this object, the button says so, for example *Try High Peak: isolated bright point* or
+*Try Template Match: too large or too still for Motion*. It does not change the method for you. Choose
+the recommended method in **Tracking Method**, then press **Start Point Track**. See
+[Which method Analyse Object recommends](#which-method-analyse-object-recommends).
+
 ### If the track goes wrong partway through
 
 1. Stop the track, or let it finish.
@@ -65,8 +71,23 @@ a difficult stretch. Hold **`;`** to go back. Note that `;` is not "tracking bac
 ### Lights at night, and stars
 
 For a single light against a dark sky, choose **High Peak** (or **Center on Bright**) instead of
-Motion (Background). There is no background texture to register, and a peak fit is more
-accurate for a point of light. Set **Feature Size** to about the size of the light in pixels.
+Motion (Background). There is no background texture to register, so Motion (Background) can
+pick the wrong polarity, and a peak fit is more accurate for a point of light. Analyse Object
+recommends High Peak in this case. Set **Feature Size** to about the size of the light in
+pixels.
+
+### Large objects with structure
+
+For a vehicle, an aircraft seen close, or anything much bigger than the tracking circles, use
+**Template Match**. Motion (Background) cannot track a large object: the object overlaps its
+own earlier positions and cancels itself out, so Analyse Object reports *object not clear
+here* and recommends Template Match.
+
+Template Match compares every frame with the patch you started on. When the object turns or
+changes size on screen, for example a truck as the aircraft circles it, the match gets worse
+and the track can be lost. When that happens, go to the frame, **drag the cursor onto the
+object** to place a user point, and track again. The template restarts from what the object
+looks like there.
 
 ### What to expect
 
@@ -188,6 +209,8 @@ without a shift.
 | The marker jitters between bright parts of one object | Several peaks on the same object | Use **Output Smoothing** 3–5 |
 | Dragging the current point moves an older point | Earlier points overlap inside the cursor | Turn on **Edit Head Only** |
 | Template Match drifts onto the background | **Track Radius** is too big, so the template contains background | Reduce **Track Radius** |
+| Template Match loses an object that turned | The template no longer matches the object's new appearance | Place a user point at that frame; the template restarts from it |
+| High Peak or Template Match leaves frames empty | The peak or match was not clear enough to trust | Expected: an empty frame is better than a wrong one. Place user points, or smooth over the gaps |
 | The object escapes between frames | **Search Radius** is too small for its speed | Increase **Search Radius** |
 
 When nothing on this list helps, turn on **Show Motion Field**. If you cannot see the object in
@@ -201,12 +224,12 @@ Choosing the right method matters more than tuning the sliders.
 | Method | Use it when |
 |---|---|
 | **Motion (Background)** | The object is small, or looks like the clutter it crosses: the same brightness, size or texture. The best general choice for aircraft and drone footage over terrain or sea |
-| **Template Match** | The object has visible structure, such as an aircraft or vehicle, and the background is plain |
+| **Template Match** | The object is large and has visible structure, such as a vehicle. Place a user point when it turns on screen |
 | **Optical Flow** | The object is textured and moves smoothly. Faster than template matching |
-| **Center on Bright** | A bright point on a dark background, such as a light at night |
+| **Center on Bright** | A bright point on a darker or plain background, such as a light at night or a dot on sky |
 | **Center on Dark** | A dark point on a bright background, such as a distant object against overcast sky |
 | **Center on Color** | The object is distinguished by colour rather than brightness |
-| **High Peak** | A bright point where you need sub-pixel accuracy. It fits a peak instead of averaging |
+| **High Peak** | An isolated bright point, such as a light at night. It finds the peak to a fraction of a pixel, and marks a frame as missing when the peak is not clear |
 | **Low Peak** | The same for dark points |
 | **SAM2 (Meta)** | Segmentation-based tracking. Local development builds only |
 
@@ -229,6 +252,32 @@ A still camera can make registration easier, but the object must move far enough
 sampled frames. A slow or large object can stay in most of those samples and be partly
 subtracted from itself, which leaves an edge instead of its centre. A higher **Motion Frame
 Gap** helps then. A fast pan or zoom may need closer samples.
+
+### Which method Analyse Object recommends
+
+Each method fails within a few dozen frames on the wrong kind of clip, so Analyse Object also
+looks at the raw image at the cursor and recommends a method:
+
+1. **Motion (Background)**, if the motion measurement finds the object with the same polarity
+   (brighter or darker) that the raw image shows. This is the usual case: a small object over
+   terrain, sea or sky.
+2. **High Peak** (or **Low Peak** for a dark object), if not, and the object is an isolated point:
+   a clear peak at the cursor, at least 8 times the spread of the background around it. This
+   is the light-on-a-dark-sky case.
+3. **Template Match** otherwise: an object too large or too still for Motion (Background), and
+   not an isolated point.
+
+The console shows the measurements behind the recommendation.
+
+Measured on five test clips, each method's share of frames within 10 px of the verified track:
+
+| Clip | Motion (Background) | Template Match | Center on Bright | High Peak | Recommended |
+|---|---|---|---|---|---|
+| Small object over farmland | **100%** | 6% | 77% | 71%, the rest marked missing | Motion (Background) |
+| Dot on sky with wind turbines | **100%** | 96% | **99%** | **99%** | Motion (Background) |
+| Blob among bright rocks | **100%** | 6% | 7% | 36% | Motion (Background) |
+| Truck seen from an aircraft | refused | **100%** until it turns | 7% | 0% | Template Match |
+| Light on a dark sky | wrong polarity | 96% | 92% | **96%**, the rest marked missing | High Peak |
 
 ### What Analyse Object measures
 

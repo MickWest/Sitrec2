@@ -498,7 +498,7 @@ const en = {
         },
         analyseObject: {
             label: "Analyse Object",
-            tooltip: "Motion (Background) mode: put the cursor on the object, then press this. It measures the object and sets Motion Polarity, Feature Size and Parallax Slack to suit it. A small dot on a smooth background and a soft blob on rough terrain need very different settings, and this finds them rather than leaving you to guess",
+            tooltip: "Put the cursor on the object, then press this. It measures the object and sets Motion Polarity, Feature Size and Parallax Slack to suit it. A small dot on a smooth background and a soft blob on rough terrain need very different settings, and this finds them rather than leaving you to guess. It also recommends a method: if another method suits this object better (High Peak for a light on a dark sky, Template Match for a large object), the button says so",
         },
         showMotionField: {
             label: "Show Motion Field",

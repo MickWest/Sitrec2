@@ -14,6 +14,7 @@ import {t} from "./i18n";
 import {Color} from "three";
 import {MotionBackgroundTracker} from "./MotionBackgroundTracker";
 import {chooseMotionCalibration} from "./MotionCalibration";
+import {measureAppearance, recommendMethod} from "./PointTrackRecommend";
 import {MotionReacquisition} from './MotionReacquisition';
 import {MotionTrackingRegime} from './MotionTrackingRegime';
 import {addVideoAnalysisResolutionMenu, beginVideoAnalysis} from './VideoAnalysisResolution';
@@ -698,11 +699,7 @@ export class ObjectTracker {
             this.trackedPositions.set(frame, {x: this.trackX, y: this.trackY});
         }
         
-        if (this.initialTemplate) {
-            this.initialTemplate.delete();
-        }
-        this.initialTemplate = null;
-        this.initialTemplateFrame = null;
+        this.resetTemplates();
         
         this.initialGrayImage = null;
         this.initialPyramid = null;
@@ -768,15 +765,7 @@ export class ObjectTracker {
         const roiWidth = maxX - minX + 1;
         const roiHeight = maxY - minY + 1;
 
-        // Extract ONLY the ROI pixels
-        const canvas = document.createElement('canvas');
-        canvas.width = imgWidth;
-        canvas.height = imgHeight;
-        const ctx = canvas.getContext('2d');
-        ctx.drawImage(image, 0, 0, imgWidth, imgHeight);
-
-        const imageData = ctx.getImageData(minX, minY, roiWidth, roiHeight);
-        const data = imageData.data;
+        const data = this.readROI(image, minX, minY, roiWidth, roiHeight);
 
         let totalWeight = 0;
         let weightedX = 0;
@@ -868,6 +857,8 @@ export class ObjectTracker {
             this.trackX = given.x;
             this.trackY = given.y;
             this.anchorMotionPoint(frame, given);
+            // A user point is what the object looks like NOW: take the next template from it.
+            this.resetTemplates();
             return;
         }
 
@@ -907,6 +898,9 @@ export class ObjectTracker {
             prevPos = this.getRawInterpolatedPosition(frame - 1);
         }
         if (!prevPos && this.trackingMethod === 'motion') prevPos = {x: this.trackX, y: this.trackY};
+        // After a frame recorded as missing there is no position at frame-1 to start from.
+        // Search from the last measured position instead of stopping the run.
+        if (!prevPos) prevPos = this.predictPosition(frame);
         if (!prevPos) return;
 
         const videoData = this.videoView?.videoData;
@@ -953,58 +947,81 @@ export class ObjectTracker {
         });
     }
 
-    // Linear extrapolation from the two most recent tracked positions before
-    // the given frame. Returns null if no prior positions exist; the single
-    // prior position if only one exists. Used to seed peak-tracking so a fast-
-    // moving feature is followed instead of latched to the stale position at
-    // frame-1 (which is what trips up bright-centroid in dim sections).
-    predictPosition(frame) {
-        const priors = Array.from(this.trackedPositions.keys())
-            .filter(f => f < frame)
-            .sort((a, b) => a - b);
-        if (priors.length === 0) return null;
-        const recent = priors[priors.length - 1];
-        if (priors.length === 1) return this.trackedPositions.get(recent);
-        const older = priors[priors.length - 2];
-        const p1 = this.trackedPositions.get(older);
-        const p2 = this.trackedPositions.get(recent);
-        const dt = recent - older;
-        if (dt <= 0) return p2;
+    // Where to look for the object at `frame`, from the positions the tracker actually MEASURED.
+    //
+    // Estimated and missing frames are skipped. The previous version extrapolated from the
+    // tracker's own last two outputs, so a peak found at the front of the search window raised
+    // the velocity every frame, and once the prediction left the image it was stored as the
+    // position and drifted on forever — measured at over 250,000 px on three test clips.
+    //
+    // A short gap keeps the last velocity; a long one searches where the object was last seen,
+    // because the velocity before a loss says little about where the object is now.
+    predictPosition(frame, maxLook = 60, maxCoast = 10) {
+
+        // Velocity over about five frames, not one: a single wrong measurement next to the
+        // latest one must not set the direction of the whole search.
+        let recent = null, older = null;
+        for (let f = frame - 1; f >= frame - maxLook; f--) {
+            const p = this.trackedPositions.get(f);
+            if (!p || p.estimated) continue;
+            if (!recent) recent = {frame: f, x: p.x, y: p.y};
+            else {
+                older = {frame: f, x: p.x, y: p.y};
+                if (recent.frame - f >= 5) break;
+            }
+        }
+        if (!recent) {
+            // Unseen for longer than the look-back: keep searching where it was last seen,
+            // rather than stopping the search altogether.
+            let lastFrame = -Infinity;
+            for (const [f, p] of this.trackedPositions) if (f < frame && f > lastFrame && !p.estimated) lastFrame = f;
+            if (lastFrame === -Infinity) return null;
+            const p = this.trackedPositions.get(lastFrame);
+            return {x: p.x, y: p.y};
+        }
+        const ahead = frame - recent.frame;
+        if (!older || ahead > maxCoast) return {x: recent.x, y: recent.y};
+        const dt = recent.frame - older.frame;
         return {
-            x: p2.x + (p2.x - p1.x) * (frame - recent) / dt,
-            y: p2.y + (p2.y - p1.y) * (frame - recent) / dt,
+            x: recent.x + (recent.x - older.x) * ahead / dt,
+            y: recent.y + (recent.y - older.y) * ahead / dt,
         };
     }
 
     trackPeak(frame, currImage, prevPos, isHigh) {
-        const peak = this.findLocalPeak(
-            currImage, prevPos.x, prevPos.y,
-            this.searchRadius, this.featureSize, isHigh
-        );
+        const w = currImage.width || currImage.videoWidth;
+        const h = currImage.height || currImage.videoHeight;
+        // Search from inside the image even if the prediction is outside it.
+        const cx = Math.min(w - 1, Math.max(0, prevPos.x));
+        const cy = Math.min(h - 1, Math.max(0, prevPos.y));
+        const peak = this.findLocalPeak(currImage, cx, cy, this.searchRadius, this.featureSize, isHigh);
         if (peak) {
             this.trackX = peak.x;
             this.trackY = peak.y;
+            this.trackedPositions.set(frame, {x: this.trackX, y: this.trackY});
         } else {
-            this.trackX = prevPos.x;
-            this.trackY = prevPos.y;
+            // Nothing clear: record the frame as missing rather than inventing a position.
+            // The cursor stays at the last position as an editing handle.
+            this.trackedPositions.markUnmeasured(frame);
         }
-        this.trackedPositions.set(frame, {x: this.trackX, y: this.trackY});
         this.updateSliderStatus();
     }
 
-    // Find a local peak (max if isHigh, min if !isHigh) in a search ROI.
+    // Find the object's peak (max if isHigh, min if !isHigh) in a search ROI.
     // - Gaussian-blurs with sigma=featureSize to suppress noise and emphasise
     //   features of approximately that scale.
     // - Rejects line-like ridges via Hessian eigenvalue ratio (Harris-style).
     // - Relative-brightness gate: peak's *original* luminance must sit in the
     //   top 5% (high) or bottom 5% (low) of the ROI's pixels. This adapts to
     //   per-frame lighting where a fixed brightnessThreshold can't.
-    // - Among qualifying peaks, picks the one with the largest *blurred*
-    //   response — the blurred peak value already combines brightness and
-    //   spatial extent (a wider/brighter blob retains more of its peak after
-    //   blur than a sharp pixel-noise spike), so this approximates
-    //   "brightest+largest" without measuring extent separately.
-    // Returns {x, y} in IMAGE coords, or null if no qualifying peak.
+    // - Candidates are ranked by contrast above the ROI's median, weighted by nearness to the
+    //   search centre (half weight at the edge of the search radius). Without the nearness
+    //   prior the brightest blob anywhere in the window wins, and the track jumps to it.
+    // - A candidate that does not clearly beat the runner-up (the same 1.6 ratio the motion
+    //   method uses) is ambiguous, and null is returned rather than a guess.
+    // - The winner is refined to sub-pixel precision with a parabola through the blurred
+    //   values either side of it.
+    // Returns {x, y} in IMAGE coords, or null if no clear peak.
     findLocalPeak(image, centerX, centerY, searchRadius, sigma, isHigh) {
         const imgW = image.width || image.videoWidth;
         const imgH = image.height || image.videoHeight;
@@ -1019,8 +1036,10 @@ export class ObjectTracker {
         const luma = this.extractGrayROI(image, minX, minY, roiW, roiH);
         const blurred = sigma > 0.3 ? gaussianBlur1D(luma, roiW, roiH, sigma) : luma;
         const threshold = this.percentileLuma(luma, isHigh ? 0.95 : 0.05);
+        const background = this.percentileLuma(luma, 0.5);
+        const gate2 = Math.max(1, searchRadius * searchRadius);
 
-        let best = null;
+        const candidates = [];
         for (let y = 1; y < roiH - 1; y++) {
             for (let x = 1; x < roiW - 1; x++) {
                 const v = blurred[y * roiW + x];
@@ -1055,14 +1074,29 @@ export class ObjectTracker {
                 if (det <= 0) continue;
                 if ((trace * trace) / det > 12) continue;
 
-                // "Brightest + largest" → highest |blurred| score wins.
-                const score = isHigh ? v : -v;
-                if (best === null || score > best.score) {
-                    best = {x: x + minX, y: y + minY, score};
-                }
+                const contrast = isHigh ? v - background : background - v;
+                if (contrast <= 0) continue;
+                const dx = x + minX - centerX, dy = y + minY - centerY;
+                candidates.push({x, y, rank: contrast / (1 + (dx * dx + dy * dy) / gate2)});
             }
         }
-        return best ? {x: best.x, y: best.y} : null;
+        if (!candidates.length) return null;
+        candidates.sort((a, b) => b.rank - a.rank);
+        const best = candidates[0];
+        // The runner-up must lie outside the winner's own blob.
+        const keepOut = Math.max(3, 3 * sigma);
+        const second = candidates.find(c => Math.hypot(c.x - best.x, c.y - best.y) > keepOut);
+        if (second && best.rank < 1.6 * second.rank) return null;
+
+        // Sub-pixel refinement: vertex of the parabola through three samples on each axis.
+        const at = (x, y) => blurred[y * roiW + x];
+        const vertex = (a, b, c) => {
+            const d = a - 2 * b + c;
+            return d !== 0 ? Math.max(-0.5, Math.min(0.5, (a - c) / (2 * d))) : 0;
+        };
+        const ox = vertex(at(best.x - 1, best.y), at(best.x, best.y), at(best.x + 1, best.y));
+        const oy = vertex(at(best.x, best.y - 1), at(best.x, best.y), at(best.x, best.y + 1));
+        return {x: best.x + minX + ox, y: best.y + minY + oy};
     }
 
     // Stride-sampled percentile of a Float32Array, avoids sorting the full
@@ -1077,18 +1111,31 @@ export class ObjectTracker {
     }
 
     extractGrayROI(image, minX, minY, roiW, roiH) {
-        const canvas = document.createElement('canvas');
-        canvas.width = roiW;
-        canvas.height = roiH;
-        const ctx = canvas.getContext('2d');
-        ctx.drawImage(image, minX, minY, roiW, roiH, 0, 0, roiW, roiH);
-        const imgData = ctx.getImageData(0, 0, roiW, roiH);
+        const data = this.readROI(image, minX, minY, roiW, roiH);
         const luma = new Float32Array(roiW * roiH);
         for (let i = 0; i < roiW * roiH; i++) {
             const k = i * 4;
-            luma[i] = 0.299 * imgData.data[k] + 0.587 * imgData.data[k + 1] + 0.114 * imgData.data[k + 2];
+            luma[i] = 0.299 * data[k] + 0.587 * data[k + 1] + 0.114 * data[k + 2];
         }
         return luma;
+    }
+
+    // RGBA pixels of one rectangle of the frame. Draws only that rectangle, into one canvas
+    // kept for the tracker's lifetime: the methods used to copy the WHOLE frame into a new
+    // canvas on every call, which at 1080p cost far more than the tracking itself.
+    readROI(image, minX, minY, roiW, roiH) {
+        if (!this._roiCanvas) {
+            this._roiCanvas = document.createElement('canvas');
+            this._roiCtx = this._roiCanvas.getContext('2d', {willReadFrequently: true});
+        }
+        const canvas = this._roiCanvas;
+        if (canvas.width < roiW || canvas.height < roiH) {
+            canvas.width = Math.max(canvas.width, roiW);
+            canvas.height = Math.max(canvas.height, roiH);
+        }
+        this._roiCtx.clearRect(0, 0, roiW, roiH);
+        this._roiCtx.drawImage(image, minX, minY, roiW, roiH, 0, 0, roiW, roiH);
+        return this._roiCtx.getImageData(0, 0, roiW, roiH).data;
     }
 
     runAlgorithm(frame, currImage, prevPos, fn) {
@@ -1159,12 +1206,7 @@ export class ObjectTracker {
         const roiHeight = maxY - minY + 1;
         if (roiWidth < 1 || roiHeight < 1) return null;
 
-        const canvas = document.createElement('canvas');
-        canvas.width = imgWidth;
-        canvas.height = imgHeight;
-        const ctx = canvas.getContext('2d');
-        ctx.drawImage(image, 0, 0, imgWidth, imgHeight);
-        const data = ctx.getImageData(minX, minY, roiWidth, roiHeight).data;
+        const data = this.readROI(image, minX, minY, roiWidth, roiHeight);
 
         const radiusSquared = radius * radius;
         const invRadius = radius > 0 ? 1 / radius : 0;
@@ -1665,82 +1707,117 @@ export class ObjectTracker {
         this.updateSliderStatus();
     }
 
+    resetTemplates() {
+        this.templateScores = [];
+        this.initialTemplate?.delete();
+        this.initialTemplate = null;
+        this.initialTemplateFrame = null;
+    }
+
+    // Grey OpenCV patch of the image, clipped to the frame. The caller owns (deletes) it.
+    grayPatch(image, x, y, w, h) {
+        const width = image.width || image.videoWidth;
+        const height = image.height || image.videoHeight;
+        const x0 = Math.max(0, Math.floor(x)), y0 = Math.max(0, Math.floor(y));
+        const x1 = Math.min(width, Math.floor(x) + w), y1 = Math.min(height, Math.floor(y) + h);
+        if (x1 - x0 < 4 || y1 - y0 < 4) return null;
+        const data = this.readROI(image, x0, y0, x1 - x0, y1 - y0);
+        const rgba = cv.matFromImageData(new ImageData(data, x1 - x0, y1 - y0));
+        const gray = new cv.Mat();
+        cv.cvtColor(rgba, gray, cv.COLOR_RGBA2GRAY);
+        rgba.delete();
+        return {mat: gray, x: x0, y: y0};
+    }
+
+    // Template Match against the patch captured on the first tracked frame.
+    //
+    // The template is deliberately NOT updated as the track goes, and the search window and
+    // capture are unchanged from the original method. Refreshing the template, a wider search
+    // and a nearness preference were all measured on the truck and ISS test clips, and each one
+    // made the track worse: a refreshed patch takes in background and drifts, and the truck's
+    // patch matches almost equally well at two places a few pixels apart, so any change to the
+    // search tips it between them. When the object's appearance changes too much — the truck
+    // turning on screen as the aircraft circles — place a user point: the template restarts
+    // from what the object looks like there.
+    //
+    // What changed: a match is no longer accepted however poor. Its correlation is judged
+    // against the clip's own recent matches, because the values mean different things on
+    // different clips (a correct match on the truck clip scores about 0.45). A collapse to under
+    // half of that — a lost track — is recorded as missing instead of walking onto the road and
+    // the overlay text. And only the needed rectangles of the frame are read, not the whole frame.
     trackTemplateMatch(frame, currImage, prevPos, videoData) {
         if (!cv) return;
-
         const width = currImage.width || currImage.videoWidth;
         const height = currImage.height || currImage.videoHeight;
 
-        const currCanvas = document.createElement('canvas');
-        currCanvas.width = width;
-        currCanvas.height = height;
-        const currCtx = currCanvas.getContext('2d');
-        currCtx.drawImage(currImage, 0, 0, width, height);
-        const currImageData = currCtx.getImageData(0, 0, width, height);
-
-        const currMat = cv.matFromImageData(currImageData);
-        const currGray = new cv.Mat();
-        cv.cvtColor(currMat, currGray, cv.COLOR_RGBA2GRAY);
-
-        // Capture initial template on first tracking frame (prevents drift)
-        if (!this.initialTemplate || this.initialTemplateFrame === null) {
-            const templateSize = this.trackRadius * 2;
-            const templateX = Math.max(0, Math.floor(prevPos.x - this.trackRadius));
-            const templateY = Math.max(0, Math.floor(prevPos.y - this.trackRadius));
-            const templateW = Math.min(templateSize, width - templateX);
-            const templateH = Math.min(templateSize, height - templateY);
-
-            const templateROI = currGray.roi(new cv.Rect(templateX, templateY, templateW, templateH));
-            this.initialTemplate = templateROI.clone();
-            templateROI.delete();
+        // Capture the template, centred on the start position. At the start of a run this is
+        // the first tracked frame, as it always was. After a user point (which resets the
+        // template), take it from the user point's own frame when that is still decoded:
+        // capturing it one frame later, at the user point's coordinates, would include
+        // background whenever the object moved more than Track Radius in that frame.
+        if (!this.initialTemplate) {
+            const userFrame = this.isUserPoint(frame - 1) && videoData?.isFrameLoaded?.(frame - 1)
+                ? videoData.getImage(frame - 1) : null;
+            const source = userFrame?.width ? userFrame : currImage;
+            const r = this.trackRadius;
+            const templateX = Math.max(0, Math.floor(prevPos.x - r));
+            const templateY = Math.max(0, Math.floor(prevPos.y - r));
+            const templateW = Math.min(r * 2, width - templateX);
+            const templateH = Math.min(r * 2, height - templateY);
+            const patch = this.grayPatch(source, templateX, templateY, templateW, templateH);
+            if (!patch) return;
+            this.initialTemplate = patch.mat;
             this.initialTemplateFrame = frame;
-            
-            this.trackX = prevPos.x;
-            this.trackY = prevPos.y;
-            this.trackedPositions.set(frame, {x: this.trackX, y: this.trackY});
-            this.updateSliderStatus();
-            currMat.delete();
-            currGray.delete();
-            return;
+            this.templateScores = [];
+            if (source === currImage) {
+                this.trackX = prevPos.x;
+                this.trackY = prevPos.y;
+                this.trackedPositions.set(frame, {x: this.trackX, y: this.trackY});
+                this.updateSliderStatus();
+                return;
+            }
         }
 
         const templateW = this.initialTemplate.cols;
         const templateH = this.initialTemplate.rows;
-
-        // Search area centered on previous position
         const searchX = Math.max(0, Math.floor(prevPos.x - this.searchRadius));
         const searchY = Math.max(0, Math.floor(prevPos.y - this.searchRadius));
         const searchW = Math.min(this.searchRadius * 2, width - searchX);
         const searchH = Math.min(this.searchRadius * 2, height - searchY);
-
         if (searchW <= templateW || searchH <= templateH) {
-            this.trackX = prevPos.x;
-            this.trackY = prevPos.y;
-            this.trackedPositions.set(frame, {x: this.trackX, y: this.trackY});
-            currMat.delete();
-            currGray.delete();
+            this.trackedPositions.markUnmeasured(frame);
+            this.updateSliderStatus();
             return;
         }
-
-        const searchArea = currGray.roi(new cv.Rect(searchX, searchY, searchW, searchH));
-
+        const area = this.grayPatch(currImage, searchX, searchY, searchW, searchH);
+        if (!area) return;
         const result = new cv.Mat();
-        cv.matchTemplate(searchArea, this.initialTemplate, result, cv.TM_CCOEFF_NORMED);
-
-        const minMax = cv.minMaxLoc(result);
-        
-        const bestX = searchX + minMax.maxLoc.x + templateW / 2;
-        const bestY = searchY + minMax.maxLoc.y + templateH / 2;
-
-        this.trackX = bestX;
-        this.trackY = bestY;
-        this.trackedPositions.set(frame, {x: this.trackX, y: this.trackY});
-        this.updateSliderStatus();
-
-        currMat.delete();
-        currGray.delete();
-        searchArea.delete();
+        cv.matchTemplate(area.mat, this.initialTemplate, result, cv.TM_CCOEFF_NORMED);
+        const mm = cv.minMaxLoc(result);
         result.delete();
+        area.mat.delete();
+        const x = area.x + mm.maxLoc.x + templateW / 2;
+        const y = area.y + mm.maxLoc.y + templateH / 2;
+
+        const recent = this.templateScores ?? (this.templateScores = []);
+        const typical = recent.length >= 5 ? [...recent].sort((a, b) => a - b)[recent.length >> 1] : null;
+        const accepted = mm.maxVal > 0 && (typical === null || mm.maxVal >= 0.5 * typical);
+        if (this.motionDebug) {
+            this.motionDebug.push({f: frame, method: 'template', score: +mm.maxVal.toFixed(3),
+                typical: typical && +typical.toFixed(3), x: +x.toFixed(1), y: +y.toFixed(1), ok: accepted ? 1 : 0});
+            if (this.motionDebug.length > 4000) this.motionDebug.shift();
+        }
+        if (!accepted) {
+            this.trackedPositions.markUnmeasured(frame);
+            this.updateSliderStatus();
+            return;
+        }
+        recent.push(mm.maxVal);
+        if (recent.length > 30) recent.shift();
+        this.trackX = x;
+        this.trackY = y;
+        this.trackedPositions.set(frame, {x, y});
+        this.updateSliderStatus();
     }
 
     trackOpticalFlow(frame, currImage, prevPos, videoData) {
@@ -1972,6 +2049,14 @@ export class ObjectTracker {
         const cx = point.x * scale;
         const cy = point.y * (image.height || image.videoHeight) / (videoData.originalVideoHeight || image.height);
 
+        // What the raw image shows at the seed, for recommending a method (PointTrackRecommend.js).
+        // Advice only: if the pixels cannot be read, make no recommendation rather than fail.
+        let appearance = null;
+        try { appearance = this.appearanceAtSeed(image, cx, cy, scale); } catch (e) { appearance = null; }
+        const recommend = (motionFound, motionPolarity) => appearance ? {
+            ...recommendMethod({...appearance, motionFound, motionPolarity}), appearance,
+        } : undefined;
+
         let best = null;
         const tried = [];
         // A fast pan can move the selected region outside every older sample.
@@ -2014,12 +2099,13 @@ export class ObjectTracker {
             best = chooseMotionCalibration(tried, this.motionThreshold);
             if (best?.score >= this.motionThreshold) break;
         }
-        if (!best) return {error: "nothing measurable here"};
+        if (!best) return {error: "nothing measurable here", recommendation: recommend(false)};
         // A weak best is not a measurement of the object, it is a measurement of
         // noise — and committing settings derived from it is worse than doing
         // nothing, because they look deliberate. Say so and change nothing.
         if (best.score < this.motionThreshold) {
-            return {error: `object not clear here (best ${best.score.toFixed(1)} sigma)`};
+            return {error: `object not clear here (best ${best.score.toFixed(1)} sigma)`,
+                recommendation: recommend(false)};
         }
 
         this.motionPolarity = best.polarity;
@@ -2043,7 +2129,24 @@ export class ObjectTracker {
             .map(t => `size ${t.featureScale} at ${t.score.toFixed(0)}`);
         return {score: best.score, polarity: best.polarity, slack: best.slack,
             featureScale: best.featureScale, gap: best.gap, alternatives,
+            recommendation: recommend(true, best.polarity),
             ...(best.clearer ? {clearer: true} : {})};
+    }
+
+    // Raw appearance at the seed (image coordinates): polarity, isolation from the background,
+    // and whether the peak detector finds a clear peak right there. See PointTrackRecommend.js.
+    appearanceAtSeed(image, cx, cy, scale) {
+        const w = image.width || image.videoWidth, h = image.height || image.videoHeight;
+        let r = Math.max(8, Math.round(this.searchRadius * scale));
+        r = Math.min(r, Math.floor(cx), Math.floor(cy), Math.floor(w - 1 - cx), Math.floor(h - 1 - cy));
+        if (r < 4) return {rawPolarity: 'bright', contrast: 0, spread: 1, isolation: 0, peakAtSeed: false};
+        const size = 2 * r + 1;
+        const luma = this.extractGrayROI(image, Math.round(cx) - r, Math.round(cy) - r, size, size);
+        const measured = measureAppearance(luma, size, Math.min(r, 4));
+        const sigma = 1.5;
+        const peak = this.findLocalPeak(image, cx, cy, r, sigma, measured.rawPolarity === 'bright');
+        const peakAtSeed = !!peak && Math.hypot(peak.x - cx, peak.y - cy) <= 4;
+        return {...measured, peakAtSeed};
     }
 
     // Draw the motion field — the current frame with the background's own
@@ -3468,10 +3571,26 @@ export function addObjectTrackingMenu() {
             try {
                 const found = await objectTracker.analyseObject(
                     (step) => show(`${label}: ${step}...`));
+                // A method better suited to this object than the one selected. Shown, not applied:
+                // switching method clears a running track, so the choice stays the user's.
+                const rec = found?.recommendation;
+                const methodName = m => Object.keys(trackingMethodOptions).find(k => trackingMethodOptions[k] === m) || m;
+                const suggest = rec && rec.method !== objectTracker.trackingMethod ? rec : null;
+                if (suggest) {
+                    show(`Try ${methodName(suggest.method)}: ${suggest.reason}`);
+                    console.log(`Analyse Object recommends ${methodName(suggest.method)}: ${suggest.reason}. `
+                        + `Raw image at the cursor: ${rec.appearance.rawPolarity}, `
+                        + `${rec.appearance.isolation.toFixed(1)} times the background spread`
+                        + (rec.appearance.peakAtSeed ? ", a clear peak." : ", no clear peak.")
+                        + (found.error ? ` Motion (Background): ${found.error}.` : ""));
+                }
                 if (!found || found.error) {
-                    show(`${label}: ${found?.error || "nothing found"}`);
+                    if (!suggest) show(`${label}: ${found?.error || "nothing found"}`);
                     console.warn("Analyse Object: " + (found?.error || "nothing measurable") +
                         " — put the cursor on the object, at a frame where it is visible.");
+                } else if (suggest) {
+                    console.log(`Analyse Object: Motion (Background) settings were still set: `
+                        + `${found.polarity}, feature size ${found.featureScale}, gap ${found.gap}, slack ${found.slack}.`);
                 } else {
                     show(`${found.polarity}, size ${found.featureScale}, gap ${found.gap}, `
                         + `slack ${found.slack} (${found.score.toFixed(0)} sigma)`);

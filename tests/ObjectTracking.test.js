@@ -382,3 +382,33 @@ test('a weak camera-centered search also checks the continuing image trajectory'
     expect(measure.mock.calls.map(args => args[2])).toEqual([600, 500]);
     expect(t.trackedPositions.get(10)).toEqual({x: 1002, y: 500});
 });
+
+test("the peak prediction uses measured points only, so it cannot run away", () => {
+    const {t} = makeTracker();
+    t.trackedPositions.clear();
+    for (let f = 0; f <= 10; f++) t.trackedPositions.set(f, {x: 100 + 2 * f, y: 50});
+    // An estimated point far ahead must not steer the prediction.
+    t.trackedPositions.set(11, {x: 900, y: 50, estimated: 'linear'});
+    const p = t.predictPosition(12);
+    expect(p.x).toBeCloseTo(124, 5);          // 120 + 2 px/frame x 2 frames, from measured points
+    expect(p.y).toBeCloseTo(50, 5);
+});
+
+test("after a gap the peak search restarts where the object was last seen", () => {
+    const {t} = makeTracker();
+    t.trackedPositions.clear();
+    for (let f = 0; f <= 10; f++) t.trackedPositions.set(f, {x: 100 + 5 * f, y: 50});
+    expect(t.predictPosition(15).x).toBeCloseTo(175, 5);     // short coast keeps the velocity
+    expect(t.predictPosition(40)).toEqual({x: 150, y: 50});    // long loss: last seen, no velocity
+    // Beyond the look-back window the search still continues from the last sighting.
+    expect(t.predictPosition(300)).toEqual({x: 150, y: 50});
+});
+
+test("one wrong measurement next to the latest does not set the search direction", () => {
+    const {t} = makeTracker();
+    t.trackedPositions.clear();
+    for (let f = 0; f <= 9; f++) t.trackedPositions.set(f, {x: 100, y: 50});
+    t.trackedPositions.set(10, {x: 100, y: 84});   // one bad frame, 34 px off
+    // Velocity is taken over about five frames, so the prediction moves 34/5 per frame, not 34.
+    expect(t.predictPosition(11).y).toBeCloseTo(84 + 34 / 5, 5);
+});
