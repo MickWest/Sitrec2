@@ -1,14 +1,24 @@
 /** @jest-environment jsdom */
 import {MetaBezierCurveEditor} from "../src/MetaCurveEdit";
 import {getInteractionRouter} from "../src/InteractionRouter";
+import {Globals, UndoManager} from "../src/Globals";
 
-jest.mock("../src/Globals", () => ({Sit: {}, setRenderOne: jest.fn()}));
+jest.mock("../src/Globals", () => ({Globals: {}, Sit: {}, setRenderOne: jest.fn(), UndoManager: {add: jest.fn()}}));
 jest.mock("../src/utils", () => ({findStep: () => 1}));
 jest.mock("../src/CViewManager", () => ({ViewMan: {iterate() {}}}));
 jest.mock("../src/KeyBoardHandler", () => ({isKeyHeld: () => false}));
 
-let editor, canvas, router, started, ended;
+let editor, canvas, router, started, ended, menu, actions;
 beforeEach(() => {
+    actions = [];
+    menu = {destroy: jest.fn(), open: jest.fn(), add: (data, key) => {
+        const entry = {run: data[key], enabled: true}; actions.push(entry);
+        const controller = {name: label => { entry.label = label; return controller; },
+            disable: () => { entry.enabled = false; }};
+        return controller;
+    }};
+    Globals.menuBar = {createStandaloneMenu: jest.fn(() => menu)};
+    UndoManager.add.mockClear();
     canvas = document.createElement("canvas"); document.body.appendChild(canvas);
     canvas.width = 380; canvas.height = 340;
     Object.defineProperties(canvas, {clientWidth: {value: 380}, clientHeight: {value: 340}});
@@ -57,8 +67,14 @@ test.each(["pointercancel", "blur", "Escape"])("%s ends preview mode and release
 test("adding an inversion point sorts by height, not temperature", () => {
     pointer(canvas, "pointerdown", 25, 500, {button: 2, buttons: 2});
     pointer(document, "pointerup", 25, 500, {button: 2});
+    expect(editor.curve.ps).toHaveLength(6);
+    expect(actions[0].label).toBe("Add Point");
+    actions[0].run();
     expect(editor.curve.ps.filter((_, i) => i % 2 === 0).map(p => p.y)).toEqual([0, 300, 500, 1000]);
     expect(editor.curve.ps[4].x).toBe(25);
+    expect(UndoManager.add).toHaveBeenCalledTimes(1);
+    UndoManager.add.mock.calls[0][0].undo(); expect(editor.curve.ps).toHaveLength(6);
+    UndoManager.add.mock.calls[0][0].redo(); expect(editor.curve.ps).toHaveLength(8);
 });
 
 test("a handle in the canvas margin can be selected and dragged again", () => {
@@ -79,8 +95,42 @@ test("a handle in the canvas margin can be selected and dragged again", () => {
 test("empty canvas margins claim input without inserting out-of-domain points", () => {
     const before = editor.getProfile().slice();
     pointer(canvas, "pointerdown", -2, 500, {button: 2, buttons: 2});
-    expect(started).toHaveBeenCalledTimes(1);
+    expect(started).not.toHaveBeenCalled();
     pointer(document, "pointerup", -2, 500, {button: 2});
     expect(editor.getProfile()).toEqual(before);
-    expect(ended).toHaveBeenCalledTimes(1);
+    expect(ended).not.toHaveBeenCalled();
+    expect(actions).toHaveLength(0);
+});
+
+test("point menu dismissal is harmless and explicit deletion removes a pair with undo", () => {
+    const before = editor.getProfile().slice();
+    pointer(canvas, "pointerdown", 8, 300, {button: 2, buttons: 2});
+    expect(editor.getProfile()).toEqual(before);
+    pointer(document, "pointerup", 8, 300, {button: 2});
+    expect(actions[0].label).toBe("Delete Point");
+    expect(editor.getProfile()).toEqual(before);
+    menu.destroy();
+    expect(UndoManager.add).not.toHaveBeenCalled();
+    pointer(canvas, "pointerdown", 8, 300, {button: 2, buttons: 2});
+    pointer(document, "pointerup", 8, 300, {button: 2});
+    actions[1].run();
+    expect(editor.curve.ps).toHaveLength(4);
+    expect(started).toHaveBeenCalledTimes(1); expect(ended).toHaveBeenCalledTimes(1);
+    expect(UndoManager.add).toHaveBeenCalledTimes(1);
+    const edit = UndoManager.add.mock.calls[0][0];
+    edit.undo(); expect(editor.getProfile()).toEqual(before);
+    edit.redo(); expect(editor.curve.ps).toHaveLength(4);
+    pointer(canvas, "pointerdown", 15, 0, {button: 2, buttons: 2});
+    pointer(document, "pointerup", 15, 0, {button: 2});
+    expect(actions[2].enabled).toBe(false);
+});
+
+test("right dragging over a curve leaves its points and undo stack unchanged", () => {
+    const before = editor.getProfile().slice();
+    pointer(canvas, "pointerdown", 8, 300, {button: 2, buttons: 2});
+    pointer(document, "pointermove", 20, 400, {button: 2, buttons: 2});
+    pointer(document, "pointerup", 20, 400, {button: 2});
+    expect(editor.getProfile()).toEqual(before);
+    expect(actions).toHaveLength(0);
+    expect(UndoManager.add).not.toHaveBeenCalled();
 });

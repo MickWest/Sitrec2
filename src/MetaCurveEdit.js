@@ -1,13 +1,14 @@
 import {registerSurfaceInteraction} from "./SurfaceInteraction";
 import {interactionEvent} from "./InteractionRouter";
 import {HANDLE_STYLE} from "./HandleStyle";
+import {showPointContextMenu} from "./PointContextMenu";
 /////////////////////////////////////////////////////////////////////////
 // Bezier code editor and utilites by Mick West
 // regression module: https://github.com/Tom-Alexander/regression-js (MIT license)
 import regression from 'regression'
 
 import {assert} from "./assert";
-import {Sit} from "./Globals";
+import {Sit, UndoManager, setRenderOne} from "./Globals";
 import {findStep} from "./utils";
 
 //const result = regression.polynomial([[0, 1], [32, 67], [12, 79]], {order:2});
@@ -468,15 +469,17 @@ class MetaBezierCurveEditor {
             // owns input so they remain selectable and clicks cannot reach a view below.
             hitTest: () => ({}),
             begin: e => {
+                if (e.button !== 0) return;
                 const at = local(e);
                 this.interactionRadius = e.pointerType === "touch" ? HANDLE_STYLE.touchRadius : 10;
                 this.lastMouseX = at.layerX; this.lastMouseY = at.layerY;
                 p.onEditStart?.();
                 this.mouseDown(at);
             },
-            move: e => this.mouseMove(local(e)),
+            move: e => { if (e.buttons === 1) this.mouseMove(local(e)); },
             hover: e => { if (e) this.mouseMove(local(e)); },
-            end: e => { this.mouseFinished(local(e)); p.onEditEnd?.(); }, contextMenu: () => {},
+            end: e => { if (e.button === 0) { this.mouseFinished(local(e)); p.onEditEnd?.(); } },
+            contextMenu: e => this.showPointMenu(local(e)),
             snapshot: () => this.getProfile().slice(),
             restore: state => { this.selectedPoint = null; this.setPointsFromFlatArray(state); this.onChange(); this.dirty = true; },
             undo: "Edit curve points",
@@ -987,7 +990,7 @@ class MetaBezierCurveEditor {
 
 
     mouseDown(e) {
-        if (e.button !== 0 && e.button !== 2) return;
+        if (e.button !== 0) return;
 
         // we use shift key to drag the window, so ignore mouse down if shift pressed
      //   if (e.shiftKey) return;
@@ -995,48 +998,48 @@ class MetaBezierCurveEditor {
         this.mouseIsDown = true;
         if (!this.curve.override && !this.disable) {
             this.selectPointAt(e.layerX, e.layerY);
+        }
+    }
 
-            // adding and deleteing point is now done with right click
-            if (e.button === 2) {
-
-                if (this.selectedPoint !== null && this.curve.ps.length > 4) {
-                    // right button removes
-                    this.curve.ps.splice(2 * Math.floor(this.selectedPointIndex / 2), 2);
-                    this.selectedPoint = null;
-                    this.mouseIsDown = false;
-                    this.recalculate()
+    showPointMenu(e) {
+        if (this.curve.override || this.disable) return;
+        this.selectedPoint = null;
+        this.selectPointAt(e.layerX, e.layerY);
+        const point = this.selectedPoint;
+        this.selectedPoint = null;
+        if (!point && !this.insideGraph(e.layerX, e.layerY)) return;
+        const x = this.C2DX(e.layerX), y = this.C2DY(e.layerY), handleY = this.C2DY(e.layerY + 25);
+        showPointContextMenu(e, "Curve Points", [{
+            label: point ? "Delete Point" : "Add Point",
+            enabled: !point || this.curve.ps.length > 4,
+            action: () => {
+                if (this.curve.override || this.disable || this.c.isConnected === false) return;
+                const index = this.curve.ps.indexOf(point);
+                if (point && (index < 0 || this.curve.ps.length <= 4)) return;
+                const before = this.getProfile().slice();
+                this.p.onEditStart?.();
+                try {
+                    if (point) this.curve.ps.splice(2 * Math.floor(index / 2), 2);
+                    else {
+                        this.curve.ps.push(new Point(x, y), new Point(x, handleY));
+                        this.sortPoints();
+                    }
+                    this.recalculate();
                     this.onChange();
                     this.dirty = true;
-                    console.log("+++ Set Editor DIRTY here")
-
-
-                    e.preventDefault();
-                    e.stopPropagation();
-                    return;
-                }
-//                return false;
-
-
-                if (this.selectedPoint !== null) {
-                    return;
-                }
-
-                // Existing handles are selectable in the margins, but new
-                // points must start inside the plotted domain.
-                if (!this.insideGraph(e.layerX, e.layerY)) return;
-
-                this.curve.ps.push(new Point(this.C2DX(e.layerX), this.C2DY(e.layerY)));
-                this.curve.ps.push(new Point(this.C2DX(e.layerX), this.C2DY(e.layerY + 25)));
-                this.sortPoints();
-                this.recalculate()
-                this.onChange();
-                this.dirty = true;
-                console.log("+++ Set Editor DIRTY here")
-            }
-
-        }
-
-
+                } finally { this.p.onEditEnd?.(); }
+                const after = this.getProfile().slice();
+                const restore = state => {
+                    this.selectedPoint = null;
+                    this.setPointsFromFlatArray(state);
+                    this.onChange();
+                    this.dirty = true;
+                    setRenderOne(true);
+                };
+                UndoManager?.add({description: point ? "Delete curve point" : "Add curve point",
+                    undo: () => restore(before), redo: () => restore(after)});
+            },
+        }]);
     }
 
     sortPoints() {

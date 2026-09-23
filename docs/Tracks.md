@@ -227,6 +227,10 @@ Sitrec's own interchange format for a **hand-drawn** track — the control point
 spline, not a per-frame path. Dropping one in creates a synthetic track, identical to
 one made with **Add Track**, with the control points already placed and editable.
 
+While editing a 3D track, right-click a control point to open its menu, then choose
+**Delete Point** to remove it. Opening or dismissing the menu leaves the track
+unchanged. Deletion supports undo, and the last control point cannot be deleted.
+
 This is how a hand-authored solution moves between sitches as a data file instead of
 being hard-coded in a `Sit*.js`. Write one out with the **Export Spline** button, found
 in a synthetic track's folder under **Contents** and in the spline editor's own folder

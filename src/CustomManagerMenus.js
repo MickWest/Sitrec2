@@ -1019,11 +1019,8 @@ export const menuMethods = {
                 if (closestIndex >= 0) {
                     const frameNumber = splineEditor.frameNumbers[closestIndex];
 
-                    // removePointByIndex owns the "never the last one" rule and all the
-                    // array/scene surgery, so this path and the right-click-a-point path
-                    // can never disagree about what removing a point means. (It used to
-                    // be duplicated here, behind a native alert().)
-                    if (!splineEditor.removePointByIndex(closestIndex)) {
+                    // Share the point menu's minimum count and undo behavior.
+                    if (!splineEditor.deletePointWithUndo(closestIndex)) {
                         showError(`Cannot remove the only control point of "${shortName}"`);
                         menu.destroy();
                         return;

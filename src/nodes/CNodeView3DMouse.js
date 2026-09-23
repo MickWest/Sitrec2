@@ -51,25 +51,24 @@ import {raycastLocalGround} from "../raycastGround";
 // UIChangedAz to a non-cyclic module or use a lazy require at call site.
 
 /**
- * Offer a right-click to every enabled control-point editor, so it can delete the point
- * that was clicked.
+ * Offer a context menu to every enabled control-point editor.
  *
  * Iterates NodeMan rather than reading Globals.editingTrack, for the same reason
  * updateTrackPositionIndicator does: sitch-defined splines (agua's lantern editor) are
  * enabled directly and never pass through TrackManager's editingTrack.
  *
- * @returns {boolean} true if a point was deleted and no menu should open
+ * @returns {boolean} true if a control point owns the menu
  */
-function deleteControlPointAtEvent(event) {
-    let deleted = false;
+function showControlPointMenuAtEvent(event) {
+    let handled = false;
     NodeMan.iterate((id, node) => {
-        if (deleted) return;
+        if (handled) return;
         const editor = node.splineEditor;
-        if (editor?.enable && editor.deletePointAtEvent?.(event)) {
-            deleted = true;
+        if (editor?.enable && editor.showPointMenuAtEvent?.(event)) {
+            handled = true;
         }
     });
-    return deleted;
+    return handled;
 }
 
 export const mouseMethods = {
@@ -1125,11 +1124,9 @@ export const mouseMethods = {
         
         if (!this.mouseEnabled) return;
 
-        // A right-click on the control point of a track being edited DELETES that point,
-        // and opens nothing. Checked before every menu below so the two readings of the
-        // same click are settled in one place: whichever the click actually landed on
-        // wins, with no race between separate listeners over one button press.
-        if (deleteControlPointAtEvent(event)) {
+        // A control point gets its own menu before the track or ground behind it.
+        // Deletion only happens when the user chooses Delete Point in that menu.
+        if (showControlPointMenuAtEvent(event)) {
             return;
         }
 
