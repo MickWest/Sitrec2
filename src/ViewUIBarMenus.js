@@ -96,6 +96,7 @@ export const VIEW_UIBAR_MENUS = {
         {slot: "los", name: "Lines of Sight"},
         {slot: "currentLos", name: "Current LOS"},
         {slot: "frustum", name: "Camera Frustum"},
+        {slot: "latLonGrid", name: "Lat/Lon Grid"},
         {slot: "showTracks", name: "Show Tracks", shared: true},
         {slot: "extendToGround", name: "Extend Tracks to Ground", shared: true},
         {slot: "compass", name: "Compass"},
@@ -115,6 +116,7 @@ export const VIEW_UIBAR_MENUS = {
         {slot: "labels", name: "Labels"},
         {slot: "features", name: "Pins"},
         {slot: "allTracks", name: "All Tracks"},
+        {slot: "latLonGrid", name: "Lat/Lon Grid"},
         {slot: "showTracks", name: "Show Tracks", shared: true},
         {slot: "extendToGround", name: "Extend Tracks to Ground", shared: true},
         {slot: "compass", name: "Compass"},
@@ -306,6 +308,17 @@ const ICON_SATELLITE = `<svg viewBox="0 0 20 16" width="19" height="15" aria-hid
     </g>
     <rect x="8.4" y="5.8" width="3.2" height="4.4" rx="0.7" fill="currentColor"/></svg>`;
 
+// A globe with its graticule: the outline, the equator and two parallels drawn as flattened
+// ellipses, and a meridian — the grid the button draws, seen from a little above the equator.
+// The same light blue as the lines themselves.
+const ICON_LAT_LON_GRID = `<svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true">
+    <g fill="none" stroke="#8cd9ff" stroke-width="1.1">
+        <circle cx="8" cy="8" r="6.3"/>
+        <ellipse cx="8" cy="8" rx="2.8" ry="6.3"/>
+        <path d="M1.7 8 H14.3"/>
+        <path d="M2.9 4.6 H13.1"/><path d="M2.9 11.4 H13.1"/>
+    </g></svg>`;
+
 // A compass rose: the ring, and a needle whose north half is solid — the half that carries the
 // information.
 const ICON_COMPASS = `<svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true">
@@ -342,7 +355,7 @@ const ICON_ZOOM_100 = `<span style="font:600 11px/1 sans-serif; letter-spacing:0
 // view that hosts a readout can turn one off.
 const DECLUTTER_SLOTS = [
     "labels", "features", "measurements", "showTracks", "starNames",
-    "compass", "timeDisplay", "simInfo", "videoInfo", "los", "frustum",
+    "compass", "timeDisplay", "simInfo", "videoInfo", "los", "frustum", "latLonGrid",
 ];
 
 // The run Main and Look both open with, written once so it cannot drift: they sit side by side
@@ -358,6 +371,7 @@ const COMMON_3D_ICONS = [
         double: "clearExtendToGround"},
     {slot: "showSatellites", icon: ICON_SATELLITE, shared: true},
     {slot: "starNames", icon: ICON_STAR_NAMES},
+    {slot: "latLonGrid", icon: ICON_LAT_LON_GRID},
     // View chrome rather than scene content, so last — and each only exists in the view that
     // happens to host it, so on most sitches only the look view shows these two.
     {slot: "compass", icon: ICON_COMPASS},

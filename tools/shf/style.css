@@ -720,6 +720,7 @@ button.sim-note.synth-load.load-err {
 .legend .lg-star { color: #aab8da; }
 .legend .lg-arrow { color: #ffcf3f; font-weight: 700; }
 .legend .lg-hour { color: #ffcf3f; font-weight: 700; }
+.legend .lg-sunevent { color: #ff8a3d; font-weight: 700; }
 
 /* loading panel */
 .loading {

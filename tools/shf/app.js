@@ -111,6 +111,13 @@ function fmtHourLabel(utcMs, tz) {
   return new Intl.DateTimeFormat("en-US", o).format(new Date(utcMs))
     .replace(/\s/g, "").toLowerCase();   // "10 PM" -> "10pm"
 }
+// Compact 12-hour clock label with minutes, e.g. "7:42pm" (sunset/sunrise markers).
+function fmtClockLabel(utcMs, tz) {
+  const o = { hour: "numeric", minute: "2-digit", hour12: true };
+  if (tz) o.timeZone = tz;
+  return new Intl.DateTimeFormat("en-US", o).format(new Date(utcMs))
+    .replace(/\s/g, "").toLowerCase();   // "7:42 PM" -> "7:42pm"
+}
 // Short zone abbreviation (e.g. "PST", "MDT", "UTC") for a zone at a given instant.
 // tz "" → the browser's local zone. Used for the form button and every where/when line
 // so the location, date, and zone are always spelled out — never a bare "No Flares".
@@ -795,7 +802,7 @@ function setupLiveResults() {
      <div class="r-meta" id="live-meta"></div>
      ${roseBoxHTML("", "live-rose")}
      ${horizonWrapHTML(`<svg viewBox="0 -30 760 330" class="horizon-view"></svg>`)}
-     <div class="legend"><span class="lg-flare">●</span> flare &nbsp;·&nbsp; <span class="lg-star">●</span> star &nbsp;·&nbsp; <span class="lg-arrow">↗</span> direction &nbsp;·&nbsp; <span class="lg-hour">↓</span> Sun by hour</div>
+     <div class="legend"><span class="lg-flare">●</span> flare &nbsp;·&nbsp; <span class="lg-star">●</span> star &nbsp;·&nbsp; <span class="lg-arrow">↗</span> direction &nbsp;·&nbsp; <span class="lg-hour">↓</span> Sun by hour &nbsp;·&nbsp; <span class="lg-sunevent">↓</span> sunset/sunrise</div>
      <div class="results-tail-reserve" aria-hidden="true">
        <button type="button" class="go-btn sitrec-btn" tabindex="-1">Open in Sitrec ↗</button>
        <div class="sim-note synth">⚠<br><span class="synth-cta">&nbsp;</span></div>
@@ -924,7 +931,7 @@ function liveRender() {
     ({ azDeg: f.azDeg, elDeg: f.elDeg, dAzDeg: f.dAzDeg, dElDeg: f.dElDeg, intensity: f.intensity,
        startMs: f.startMs, peakMs: f.peakMs, endMs: f.endMs, coreStartMs: f.coreStartMs, coreEndMs: f.coreEndMs }));
   const win = horizonWindow(hvFlares);
-  const sunMarks = sunHourMarkers(t1, t2, tz, obsLat, obsLon);
+  const sunMarks = [...sunRiseSetMarkers(t1, t2, tz, obsLat, obsLon), ...sunHourMarkers(t1, t2, tz, obsLat, obsLon)];
   const moved = compass16(startAz) !== compass16(endAz) && Math.abs(angDiff(endAz, startAz)) >= 12;
   const arrows = moved ? [{ azDeg: startAz }, { azDeg: endAz }] : [{ azDeg: startAz }];
   const range = `${fmtTime(t1, tz, { second: undefined })}–${fmtTime(t2, tz, { second: undefined })} ${escapeHtml(zoneAbbrev(tz, t1))}`;
@@ -1031,6 +1038,40 @@ function sunHourMarkers(t1, t2, tz, latDeg, lonDeg) {
     if (utc > t2) break;
     if (utc < t1) continue;
     out.push({ azDeg: sunAz(utc), label: fmtHourLabel(utc, tz) });
+  }
+  return out;
+}
+
+// The Sun's true altitude (°) at a place and UTC instant — same model as sunAzimuthAt.
+function sunAltitudeAt(utcMs, latDeg, lonDeg) {
+  const d = new Date(utcMs);
+  const eq = sunEquatorial(d);
+  return equatorialToAltAz(eq.raDeg, eq.decDeg, latDeg, lonDeg, d).altDeg;
+}
+
+// Sunset before the window and sunrise after it, as { azDeg, label, kind } markers for the
+// same headroom band as the hourly ticks. "Set"/"rise" is the standard −0.833° (refraction plus
+// the solar semi-diameter). Each is searched up to 24 h out in 10-minute steps, then bisected
+// to ~1 s. A polar day or night has no crossing, so that marker is simply omitted.
+function sunRiseSetMarkers(t1, t2, tz, latDeg, lonDeg) {
+  const SET_ALT = -0.833, STEP = 600000, SPAN = 24 * 3600000;
+  const up = (t) => sunAltitudeAt(t, latDeg, lonDeg) > SET_ALT;
+  // Bisect a crossing bracketed by [a, b], where up(a) !== up(b).
+  const refine = (a, b) => {
+    const upA = up(a);
+    while (b - a > 1000) { const m = (a + b) / 2; if (up(m) === upA) a = m; else b = m; }
+    return (a + b) / 2;
+  };
+  const mark = (t, kind) => ({
+    azDeg: sunAzimuthAt(t, latDeg, lonDeg), kind,
+    label: `${kind === "sunset" ? "Sunset" : "Sunrise"} ${fmtClockLabel(t, tz)}`,
+  });
+  const out = [];
+  for (let t = t1; t > t1 - SPAN; t -= STEP) {          // last up→down crossing before t1
+    if (!up(t) && up(t - STEP)) { out.push(mark(refine(t - STEP, t), "sunset")); break; }
+  }
+  for (let t = t2; t < t2 + SPAN; t += STEP) {          // first down→up crossing after t2
+    if (!up(t) && up(t + STEP)) { out.push(mark(refine(t, t + STEP), "sunrise")); break; }
   }
   return out;
 }
@@ -1502,7 +1543,7 @@ function renderResults(flares, stats, req, origin, dest) {
     startMs: f.startMs, peakMs: f.peakMs, endMs: f.endMs, coreStartMs: f.coreStartMs, coreEndMs: f.coreEndMs,
   }));
   const win = horizonWindow(hvFlares);
-  const sunMarks = sunHourMarkers(t1, t2, tz, obsLat, obsLon);
+  const sunMarks = [...sunRiseSetMarkers(t1, t2, tz, obsLat, obsLon), ...sunHourMarkers(t1, t2, tz, obsLat, obsLon)];
 
   els.results.innerHTML =
     `<div class="r-when">Flares <b>${localT}</b> ${escapeHtml(zone)} · peak <b>${peakT}</b></div>
@@ -1510,7 +1551,7 @@ function renderResults(flares, stats, req, origin, dest) {
      <div class="r-meta">${escapeHtml(place)} · ${fmtDateShort(t1, tz)} · ${utcT} UTC</div>
      ${roseBoxHTML("")}
      ${horizonWrapHTML(horizonView({ stars, bodies, flares: hvFlares, sunMarks, mode: horizonMode, ...zoomWin(win) }))}
-     <div class="legend"><span class="lg-flare">●</span> flare &nbsp;·&nbsp; <span class="lg-star">●</span> star &nbsp;·&nbsp; <span class="lg-arrow">↗</span> direction &nbsp;·&nbsp; <span class="lg-hour">↓</span> Sun by hour</div>
+     <div class="legend"><span class="lg-flare">●</span> flare &nbsp;·&nbsp; <span class="lg-star">●</span> star &nbsp;·&nbsp; <span class="lg-arrow">↗</span> direction &nbsp;·&nbsp; <span class="lg-hour">↓</span> Sun by hour &nbsp;·&nbsp; <span class="lg-sunevent">↓</span> sunset/sunrise</div>
      <button id="opensitrec" type="button" class="go-btn sitrec-btn">Open in Sitrec ↗</button>
      ${notesHTML(req)}`;
 

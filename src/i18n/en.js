@@ -2303,6 +2303,18 @@ const en = {
         },
     },
 
+    // Show > Lat/Lon Grid (src/LatLonGrid.js): the latitude/longitude graticule over the globe.
+    latLonGrid: {
+        inMain: {
+            label: "Lat/Lon Grid in Main",
+            tooltip: "Show a latitude/longitude grid over the globe in the main 3D view. It is drawn over the terrain, but not on the far side of the Earth",
+        },
+        inLook: {
+            label: "Lat/Lon Grid in Look",
+            tooltip: "Show a latitude/longitude grid over the globe in the look/camera view. It is drawn over the terrain, but not on the far side of the Earth",
+        },
+    },
+
     // The two-line UTC + local date/time readout overlaid on the look view
     // (src/UIHelpers.js). Only the NOUN is translated: the row name is composed at
     // runtime as "<thing> in <view>", because the overlay follows whichever view
@@ -2339,6 +2351,7 @@ const en = {
         starNames: "Star Names",
         onlyPlanets: "Only Label Planets",
         equatorialGrid: "Equatorial Grid",
+        latLonGrid: "Lat/Lon Grid",
         celestialVectors: "Celestial Vectors",
         overlayTransparency: "Transparency %",
         overlayKeyColor: "Key Color",

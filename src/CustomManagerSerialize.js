@@ -31,6 +31,7 @@ import {ECEFToLLAVD_radii, LLAToECEF} from "./LLA-ECEF-ENU";
 import {par} from "./par";
 import {GlobalScene} from "./LocalFrame";
 import {refreshLabelsAfterLoading} from "./nodes/CNodeLabels3D";
+import {refreshLatLonGridVisibility} from "./LatLonGrid";
 import {assert} from "./assert";
 import {getShortURL} from "./urlUtils";
 import {REMOVED_NODE_IDS} from "./RemovedNodes";
@@ -551,6 +552,8 @@ export const serializeMethods = {
             "showLabelsLook",
             "showFeaturesMain",
             "showFeaturesLook",
+            "showLatLonGridMain",
+            "showLatLonGridLook",
             "objectScale",
             "objectScaleMain",
             "showAllTracksInLook",
@@ -1823,6 +1826,7 @@ export const serializeMethods = {
         }
 
         refreshLabelsAfterLoading();
+        refreshLatLonGridVisibility();
         this.refreshLookViewTracks();
 
         await restoreRefractionTool();

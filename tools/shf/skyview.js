@@ -327,7 +327,8 @@ export function compassRose(arrows, flares, opts = {}) {
 //   stars:    [{name, azDeg, altDeg, mag}]   (all above the horizon; filtered here)
 //   bodies:   [{name, azDeg, altDeg, color, r}]
 //   flares:   [{azDeg, elDeg, dAzDeg, dElDeg, intensity}]
-//   sunMarks: [{azDeg, label}]   hourly Sun-azimuth markers (label e.g. "11pm")
+//   sunMarks: [{azDeg, label, kind?}]  hourly Sun-azimuth markers (label e.g. "11pm");
+//             kind "sunset"/"sunrise" draws an orange marker that wins label collisions
 //   azCenter, halfWidthDeg, elMaxDeg
 // }
 export function horizonView(opts) {
@@ -353,18 +354,41 @@ export function horizonView(opts) {
     // a marker whose label would crowd the previous one (keeps it readable on mobile).
     const HEAD = 30;                                // headroom band height (when used)
     const labelY = -HEAD + 13, lineTop = -10, lineBot = 12;   // arrow spans headroom -> top of sky
+    // Sunset/sunrise marks (kind set) use orange and are drawn first; an hourly mark is dropped
+    // when its label would overlap one of theirs. Labels are clamped inside the band.
     let hourMarksSvg = "";
-    let lastX = -1e9;
-    for (const mk of sunMarks) {
+    const drawn = [];                               // [{ x, halfW }] of labels already placed
+    const labelHalfW = (s) => s.length * 3.9 + 2;   // ~13px bold, generous
+    const sunEvents = sunMarks.filter((mk) => mk.kind);
+    const hourMarks = sunMarks.filter((mk) => !mk.kind);
+    // Label centre for each sunset/sunrise mark. Both are always drawn: near the midnight sun
+    // they can be ~1° apart, so when their labels would overlap they sit side by side, meeting
+    // at the midpoint between the two arrows.
+    const eventTx = new Map();
+    const shownEvents = sunEvents.filter((mk) => inWin(mk.azDeg)).sort((a, b) => xOf(a.azDeg) - xOf(b.azDeg));
+    for (const mk of shownEvents) eventTx.set(mk, xOf(mk.azDeg));
+    if (shownEvents.length === 2) {
+        const [a, b] = shownEvents, ha = labelHalfW(a.label), hb = labelHalfW(b.label);
+        const xa = xOf(a.azDeg), xb = xOf(b.azDeg);
+        if (xb - xa < ha + hb + 4) {
+            const mid = Math.max(2 * ha + 2, Math.min(W - 2 * hb - 2, (xa + xb) / 2));
+            eventTx.set(a, mid - 2 - ha);
+            eventTx.set(b, mid + 2 + hb);
+        }
+    }
+    for (const mk of [...shownEvents, ...hourMarks]) {
         if (!inWin(mk.azDeg)) continue;
         const x = xOf(mk.azDeg);
-        if (Math.abs(x - lastX) < 30) continue;     // avoid overlapping labels
-        lastX = x;
-        hourMarksSvg += `<g stroke="#ffcf3f" fill="#ffcf3f" opacity="0.85">`
+        const halfW = labelHalfW(mk.label);
+        const tx = Math.max(halfW, Math.min(W - halfW, eventTx.get(mk) ?? x));
+        if (!mk.kind && drawn.some((d) => Math.abs(tx - d.x) < halfW + d.halfW + 4)) continue;   // avoid overlapping labels
+        drawn.push({ x: tx, halfW });
+        const color = mk.kind ? "#ff8a3d" : "#ffcf3f";
+        hourMarksSvg += `<g stroke="${color}" fill="${color}" opacity="${mk.kind ? 0.95 : 0.85}">`
             + `<line x1="${n(x)}" y1="${lineTop}" x2="${n(x)}" y2="${lineBot}" stroke-width="1.5"/>`
             + `<polygon points="${n(x)},${n(lineBot + 5)} ${n(x - 3.5)},${n(lineBot - 1)} ${n(x + 3.5)},${n(lineBot - 1)}" stroke="none"/>`
             + `</g>`
-            + `<text x="${n(x)}" y="${labelY}" text-anchor="middle" font-size="13" font-weight="700" fill="#ffcf3f">${esc(mk.label)}</text>`;
+            + `<text x="${n(tx)}" y="${labelY}" text-anchor="middle" font-size="13" font-weight="700" fill="${color}">${esc(mk.label)}</text>`;
     }
     const head = hourMarksSvg ? HEAD : 0;           // only reserve the band if a marker drew
 

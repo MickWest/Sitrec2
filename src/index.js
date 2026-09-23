@@ -110,6 +110,7 @@ import {CFileManager, waitForParsingToComplete} from "./CFileManager";
 import {VideoLoadingManager} from "./CVideoLoadingManager";
 import {disposeDebugArrows, disposeDebugSpheres, disposeScene} from "./threeExt";
 import {removeMeasurementUI, setupMeasurementUI} from "./nodes/CNodeLabels3D";
+import {removeLatLonGrid, setupLatLonGrid} from "./LatLonGrid";
 import {imageQueueManager} from "./js/get-pixels-mick";
 import {disposeGimbalChart} from "./JetChart";
 import {CNode} from "./nodes/CNode";
@@ -2559,6 +2560,7 @@ async function setupFunctions() {
     await waitForParsingToComplete();
 
     setupMeasurementUI(); // bit of an odd one - setting up the measurement measure ment grounp and UI
+    setupLatLonGrid();    // Show > Lat/Lon Grid in Main / Look
 
 //
 // Now that the assets are loaded, we can setup the situation
@@ -3401,6 +3403,7 @@ function disposeEverything() {
     // it's created as needed, but will get destroyed with the scene
     // so we need to make sure it knows it's been destroyed
     removeMeasurementUI();
+    removeLatLonGrid();
 
 
     // dispose the track manager managed nodes
