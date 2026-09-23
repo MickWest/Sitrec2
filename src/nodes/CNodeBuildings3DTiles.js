@@ -1052,6 +1052,10 @@ export class CNodeBuildings3DTiles extends CNode {
         }
     }
 
+    setCityLights(on) {
+        for (const pv of Object.values(this._perView)) pv.dayNightPlugin?.setCityLights?.(on);
+    }
+
     // Effective opacity for one view's tiles: the global opacity, times the look-view-only
     // sim fade for the look view's renderer.
     _effectiveOpacity(viewId) {

@@ -1,5 +1,6 @@
 import {CNode3DGroup} from "./CNode3DGroup";
 import {CNodeAtmosphericOptics} from "./CNodeAtmosphericOptics";
+import {CNodeCityLights} from "./CNodeCityLights";
 import {CNodeEclipse} from "./CNodeEclipse";
 import {CNodeLunarEclipse} from "./CNodeLunarEclipse";
 import {CNodeWaterReflection} from "./CNodeWaterReflection";
@@ -1918,6 +1919,10 @@ export function addNightSky(def) {
     // already exists. Master toggle defaults OFF.
     if (!NodeMan.exists("theHalos")) {
         new CNodeAtmosphericOptics({id: "theHalos"});
+    }
+
+    if (!NodeMan.exists("cityLights")) {
+        new CNodeCityLights({id: "cityLights"});
     }
 
     // Solar-eclipse visuals (Moon silhouette, Baily's beads, diamond ring,

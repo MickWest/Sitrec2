@@ -9,7 +9,7 @@ import {getDisplayFilename} from "./FilenameUtils";
 
 let overlayDiv = null;
 let filenameDiv = null;
-let currentParts = {map: "", elevation: "", water: "", tiles: ""};
+let currentParts = {map: "", elevation: "", water: "", tiles: "", cityLights: ""};
 let currentFilename = "";
 
 function htmlToText(html) {
@@ -47,9 +47,7 @@ function createOverlay() {
         pointerEvents: "auto",
         zIndex: "10000",
         borderRadius: "2px",
-        whiteSpace: "nowrap",
-        overflow: "hidden",
-        textOverflow: "ellipsis",
+        whiteSpace: "normal",
     });
     document.body.appendChild(overlayDiv);
     return overlayDiv;
@@ -97,7 +95,7 @@ function renderFilename() {
 function render() {
     const el = createOverlay();
     if (!el) return;
-    const parts = [currentParts.map, currentParts.elevation, currentParts.water, currentParts.tiles]
+    const parts = [currentParts.map, currentParts.elevation, currentParts.water, currentParts.tiles, currentParts.cityLights]
         .filter(Boolean);
     if (parts.length === 0) {
         el.style.display = "none";
@@ -160,11 +158,16 @@ export function setTilesAttribution(text) {
     render();
 }
 
+export function setCityLightsAttribution(sourceDef) {
+    currentParts.cityLights = formatAttribution(sourceDef);
+    render();
+}
+
 /**
  * Return the current attribution as plain text (for canvas/video rendering).
  */
 export function getAttributionText() {
-    const parts = [currentParts.map, currentParts.elevation, currentParts.water, currentParts.tiles]
+    const parts = [currentParts.map, currentParts.elevation, currentParts.water, currentParts.tiles, currentParts.cityLights]
         .filter(Boolean)
         .map(html => htmlToText(html));
     return parts.join(" | ");
@@ -209,6 +212,6 @@ export function disposeAttributionOverlay() {
     }
     overlayDiv = null;
     filenameDiv = null;
-    currentParts = {map: "", elevation: "", tiles: ""};
+    currentParts = {map: "", elevation: "", water: "", tiles: "", cityLights: ""};
     currentFilename = "";
 }
