@@ -414,7 +414,11 @@ export class CNodeDateTime extends CNode {
             .tooltip(t("dateTime.pingPong.tooltip"))
 
 
-        this.dateTimeFolder.add(Sit, "fps",1,120,0.01).name(t("dateTime.videoFps.label")).listen().onFinishChange((v) => {
+        this.dateTimeFolder.add(Sit, "fps",1,120,0.01).name(t("dateTime.videoFps.label")).listen().onChange((v) => {
+            // A hand-set rate survives save/reload and later video loads (see setSitFpsFromVideo).
+            // onChange, not onFinishChange: setValue() from the API or setMenuValue fires only this.
+            Sit.fpsOverride = v;
+        }).onFinishChange((v) => {
             this.changedFrames()
         })
             .tooltip(t("dateTime.videoFps.tooltip"))

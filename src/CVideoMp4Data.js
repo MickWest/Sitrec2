@@ -1,7 +1,7 @@
 import {FileManager, Sit} from "./Globals";
 import {MP4Demuxer, MP4Source} from "./js/mp4-decode/mp4_demuxer";
 import {CVideoWebCodecBase} from "./CVideoWebCodecBase";
-import {updateSitFrames} from "./UpdateSitFrames";
+import {setSitFpsFromVideo, updateSitFrames} from "./UpdateSitFrames";
 import {EventManager} from "./CEventManager";
 import {showError} from "./showError";
 import {VideoLoadingManager} from "./CVideoLoadingManager";
@@ -520,7 +520,7 @@ export class CVideoMp4Data extends CVideoWebCodecBase {
                         Sit.videoFrames = demuxer.source.totalFrames * this.videoSpeed;
 
                         // also update the fps (use the stored original fps)
-                        Sit.fps = this.originalFps;
+                        setSitFpsFromVideo(this.originalFps, this);
 
                         updateSitFrames()
                     }

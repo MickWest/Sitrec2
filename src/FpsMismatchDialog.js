@@ -119,6 +119,7 @@ function tryShow() {
             if (chosen != null && chosen > 0 && chosen !== Sit.fps) {
                 console.log(`[FpsMismatchDialog] User chose Sit.fps = ${chosen} (was ${Sit.fps})`);
                 Sit.fps = chosen;
+                Sit.fpsOverride = chosen;
                 updateSitFrames();
             }
         })

@@ -169,6 +169,12 @@ export class CNodeVideoWebCodecView extends CNodeVideoView {
             this.videoData?.stopStreaming?.();
         }
 
+        // A hand-set fps belongs to the video it was set for, so a new import on the timeline
+        // starts from its own header rate - but only once it has loaded (see
+        // setSitFpsFromVideo). The deserializing guard keeps the override through a restore,
+        // which also comes through here for files saved with the sitch.
+        this._newImportClearsFpsOverride = this.ownsTimeline && !Globals.deserializing;
+
         await this._doUploadFile(file);
     }
 
@@ -249,6 +255,10 @@ export class CNodeVideoWebCodecView extends CNodeVideoView {
      * diagnostic can track it, and add the video entry to the menu.
      */
     _finishUploadSetup(file) {
+        if (this._newImportClearsFpsOverride) {
+            this.videoData.clearsFpsOverride = true;
+            this._newImportClearsFpsOverride = false;
+        }
         const videoDataId = this.videoData.id;
         VideoLoadingManager.registerLoading(videoDataId, file.name);
         this.videoData._loadingId = videoDataId;

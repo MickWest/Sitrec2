@@ -5,7 +5,7 @@ import {MP4Demuxer, MP4Source} from "./js/mp4-decode/mp4_demuxer";
 import {par} from "./par";
 import {isLocal} from "./configUtils";
 import {CVideoData} from "./CVideoData";
-import {updateSitFrames} from "./UpdateSitFrames";
+import {setSitFpsFromVideo, updateSitFrames} from "./UpdateSitFrames";
 import {showError} from "./showError";
 import {buildAssetURL} from './release/assetURL';
 
@@ -318,7 +318,7 @@ export class CVideoWebCodecData extends CVideoData {
                 Sit.videoFrames = demuxer.source.totalFrames * this.videoSpeed;
 
                 // also update the fps
-                Sit.fps = demuxer.source.fps;
+                setSitFpsFromVideo(demuxer.source.fps, this);
 
                 updateSitFrames()
             }

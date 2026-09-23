@@ -2,7 +2,7 @@ import {CVideoAndAudio} from "./CVideoAndAudio";
 import {MP4Demuxer, MP4Source} from "./js/mp4-decode/mp4_demuxer";
 import {NodeMan, Sit} from "./Globals";
 import {EventManager} from "./CEventManager";
-import {updateSitFrames} from "./UpdateSitFrames";
+import {setSitFpsFromVideo, updateSitFrames} from "./UpdateSitFrames";
 import {isWebAudioFormat} from "./AudioFormats";
 import {quickFetch} from "./quickFetch";
 
@@ -253,7 +253,7 @@ export class CVideoAudioOnly extends CVideoAndAudio {
             
             if (this.definesSitchTimeline()) {
                 Sit.videoFrames = this.frames;
-                Sit.fps = this.originalFps;
+                setSitFpsFromVideo(this.originalFps, this);
                 updateSitFrames();
             } else {
                 console.log(`[CVideoAudioOnly] not the shown entry — leaving Sit.frames alone`);
@@ -520,7 +520,7 @@ export class CVideoAudioOnly extends CVideoAndAudio {
             // Update global frame count
             if (this.definesSitchTimeline()) {
                 Sit.videoFrames = this.frames;
-                Sit.fps = this.originalFps;
+                setSitFpsFromVideo(this.originalFps, this);
                 updateSitFrames();
             } else {
                 console.log(`[CVideoAudioOnly] not the shown entry — leaving Sit.frames alone`);

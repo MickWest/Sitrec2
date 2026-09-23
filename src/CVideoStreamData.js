@@ -10,7 +10,7 @@ import {NodeMan, setRenderOne, Sit} from './Globals';
 import {VideoLoadingManager} from './CVideoLoadingManager';
 import {LoadingManager} from './CLoadingManager';
 import {EventManager} from './CEventManager';
-import {updateSitFrames} from './UpdateSitFrames';
+import {setSitFpsFromVideo, updateSitFrames} from './UpdateSitFrames';
 import {indexedDBManager} from './IndexedDBManager';
 import {fetchBufferWithStall} from './quickFetch';
 
@@ -281,7 +281,7 @@ export class CVideoStreamData extends CVideoWebCodecBase {
         clearTimeout(this._readyTimer);
         if (this.ownsTimeline) {
             Sit.videoFrames = this.frames * this.videoSpeed;
-            Sit.fps = this.originalFps;
+            setSitFpsFromVideo(this.originalFps, this);
             updateSitFrames();
         }
         VideoLoadingManager.setStatus(this._loadingId, 'ready for playback; downloading in background');

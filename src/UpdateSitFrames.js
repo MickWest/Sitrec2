@@ -38,6 +38,24 @@ export function clampSitFrameRange() {
     }
 }
 
+// A video sets Sit.fps from its own header when it finishes loading - but a rate the
+// user typed in (the "Video fps" field, or the fps-mismatch dialog) wins, and is saved
+// with the sitch as Sit.fpsOverride. The loaders finish asynchronously, often AFTER the
+// saved Sit values are restored, so every one of them must come through here or the
+// restored rate is silently replaced by the header rate.
+//
+// A hand-set rate belongs to the video it was set for. A NEW import on the timeline is
+// tagged clearsFpsOverride (CNodeVideoWebCodecView.uploadFile), and the override is
+// dropped only here, when that video has actually loaded - so an import that is
+// cancelled, rejected or fails leaves the current video's rate alone.
+export function setSitFpsFromVideo(fps, videoData) {
+    if (videoData?.clearsFpsOverride) {
+        videoData.clearsFpsOverride = false;
+        Sit.fpsOverride = undefined;
+    }
+    Sit.fps = Number.isFinite(Sit.fpsOverride) && Sit.fpsOverride > 0 ? Sit.fpsOverride : fps;
+}
+
 export function updateSitFrames() {
     if (Sit.framesFromVideo) {
         const oldLastFrame = lastSitFrame();

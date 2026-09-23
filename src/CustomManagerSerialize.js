@@ -526,6 +526,8 @@ export const serializeMethods = {
             "sitchName",  // the same for the save file of the custom sitch
             "aFrame",
             "bFrame",
+            // Only a HAND-SET rate is saved; the video's own header rate is re-read on load.
+            "fpsOverride",
             "ignores",
             // Master switch and its two halves. refractionEnabled and
             // terrestrialRefraction are DERIVED from these (see
@@ -1795,6 +1797,12 @@ export const serializeMethods = {
             for (let key in sitchData.Sit) {
                 //console.log("Applying Sit "+key+" with value "+sitchData.Sit[key])
                 Sit[key] = sitchData.Sit[key];
+            }
+            // The video may already have finished loading and set Sit.fps from its header.
+            // If it has not, setSitFpsFromVideo applies the override when it does.
+            if (Number.isFinite(Sit.fpsOverride) && Sit.fpsOverride > 0 && Sit.fps !== Sit.fpsOverride) {
+                Sit.fps = Sit.fpsOverride;
+                GlobalDateTimeNode?.changedFrames?.();
             }
         }
         updateDocumentTitle();

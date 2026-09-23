@@ -3,7 +3,7 @@ import {assert} from "./assert";
 import {loadImage} from "./utils";
 import {CVideoWebCodecBase} from "./CVideoWebCodecBase";
 import {H264Decoder} from "./H264Decoder";
-import {updateSitFrames} from "./UpdateSitFrames";
+import {setSitFpsFromVideo, updateSitFrames} from "./UpdateSitFrames";
 import {EventManager} from "./CEventManager";
 import {showError} from "./showError";
 
@@ -544,7 +544,7 @@ export class CVideoH264Data extends CVideoWebCodecBase {
             // (see C1, 2.70.0 review).
             if (this.ownsTimeline) {
                 Sit.videoFrames = this.frames * this.videoSpeed;
-                Sit.fps = fps;
+                setSitFpsFromVideo(fps, this);
 
                 updateSitFrames();
             }
@@ -919,6 +919,7 @@ export class CVideoH264Data extends CVideoWebCodecBase {
             // (see C1, 2.70.0 review).
             if (this.ownsTimeline) {
                 Sit.fps = newFps;
+                Sit.fpsOverride = newFps;
 
                 // Update frame timing if needed
                 updateSitFrames();

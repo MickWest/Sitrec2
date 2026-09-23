@@ -1,6 +1,6 @@
 import {setGlobalDateTimeNode, setSit, Sit} from "../src/Globals";
 import {par} from "../src/par";
-import {clampSitFrameRange, lastSitFrame, updateSitFrames} from "../src/UpdateSitFrames";
+import {clampSitFrameRange, lastSitFrame, setSitFpsFromVideo, updateSitFrames} from "../src/UpdateSitFrames";
 
 describe("Sit frame range normalization", () => {
     beforeEach(() => {
@@ -56,5 +56,47 @@ describe("Sit frame range normalization", () => {
         clampSitFrameRange();
 
         expect(Sit.bFrame).toBe(1030);
+    });
+});
+
+describe("Video fps versus a hand-set fps", () => {
+    beforeEach(() => {
+        setSit({fps: 30});
+    });
+
+    test("a loaded video sets Sit.fps from its header when nothing was set by hand", () => {
+        setSitFpsFromVideo(29.97);
+        expect(Sit.fps).toBe(29.97);
+    });
+
+    // The reported bug: set 24, save, reload - the video finishes loading after the
+    // saved Sit values are restored and put its own 30 back.
+    test("a restored hand-set fps wins over a video that finishes loading later", () => {
+        Sit.fpsOverride = 24;
+        Sit.fps = 24;
+        setSitFpsFromVideo(30);
+        expect(Sit.fps).toBe(24);
+    });
+
+    test("a newly imported video drops the override once it loads", () => {
+        Sit.fpsOverride = 24;
+        const newVideo = {clearsFpsOverride: true};
+        setSitFpsFromVideo(30, newVideo);
+        expect(Sit.fps).toBe(30);
+        expect(Sit.fpsOverride).toBeUndefined();
+        expect(newVideo.clearsFpsOverride).toBe(false);
+    });
+
+    test("a video that is not a new import keeps the override", () => {
+        Sit.fpsOverride = 24;
+        setSitFpsFromVideo(30, {});
+        expect(Sit.fps).toBe(24);
+        expect(Sit.fpsOverride).toBe(24);
+    });
+
+    test("an invalid override is ignored", () => {
+        Sit.fpsOverride = 0;
+        setSitFpsFromVideo(25);
+        expect(Sit.fps).toBe(25);
     });
 });

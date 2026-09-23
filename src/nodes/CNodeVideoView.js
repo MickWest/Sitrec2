@@ -1891,6 +1891,7 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
         }
 
         Sit.videoFrames = undefined;
+        Sit.fpsOverride = undefined;   // it was set for the video that is going
 
         if (before && Number.isFinite(before.frames)) {
             Sit.frames = before.frames;
