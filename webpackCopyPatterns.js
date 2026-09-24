@@ -92,6 +92,24 @@ patterns.push({
     },
 });
 
+// Aircraft Designer is a standalone module graph. Keep its renderer, controls and
+// exporter on the same installed Three.js version, including in offline builds.
+patterns.push({
+    from: "tools/aircraft/index.html",
+    to: "./tools/aircraft/index.html",
+    force: true,
+    transform(content) {
+        return content.toString().replace(/__BUILD_V__/g, String(BUILD_V));
+    },
+});
+for (const file of ["three.module.js", "three.core.js"]) {
+    patterns.push({from: path.join(path.dirname(require.resolve("three")), file), to: `./tools/aircraft/vendor/${file}`});
+}
+for (const [folder, file] of [["controls", "OrbitControls.js"], ["exporters", "GLTFExporter.js"]]) {
+    patterns.push({from: require.resolve(`three/examples/jsm/${folder}/${file}`), to: `./tools/aircraft/vendor/${file}`});
+}
+patterns.push({from: path.join(path.dirname(require.resolve("three")), "../LICENSE"), to: "./tools/aircraft/vendor/THREE-LICENSE.txt"});
+
 patterns.push({ from: "assets/install", to: "./install" });
 
 // Copy tests directory (for browser-based benchmarks/tests) - dev only

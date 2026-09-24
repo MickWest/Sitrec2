@@ -44,6 +44,10 @@ const en = {
                         label: "Diffraction PSF Studio",
                         tooltip: "Make the diffraction point spread function (PSF) of a camera aperture, and export it for Camera > Camera Tweaks > Diffraction Glare",
                     },
+                    aircraftDesigner: {
+                        label: "Aircraft Designer",
+                        tooltip: "Build a procedural aircraft with live sliders, common aircraft presets, and GLB model export",
+                    },
                 },
             },
             selectPlaceholder: "-Select-",
