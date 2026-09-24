@@ -1,5 +1,5 @@
 import {FileManager, Globals, gui, guiShowHide, NodeMan, setRenderOne, Sit, UndoManager} from "./Globals";
-import {par} from "./par";
+import {par, stopControlledPlayback} from "./par";
 import {closeFullscreen, openFullscreen} from "./utils";
 import {Vector3} from "three";
 import {EventManager} from "./CEventManager";
@@ -284,6 +284,19 @@ export function initKeyboard() {
 
         const keyCode = e.code
         const key = e.key.toLowerCase()
+
+        if (par.playbackLocked && !e.ctrlKey && !e.metaKey) {
+            if (keyCode === 'Space') {
+                e.preventDefault();
+                stopControlledPlayback();
+                return;
+            }
+            if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Comma', 'Period',
+                'KeyG', 'KeyI', 'KeyO', 'Quote', 'Semicolon'].includes(keyCode)) {
+                e.preventDefault();
+                return;
+            }
+        }
 
         if ((e.ctrlKey || e.metaKey) && keyCode === 'KeyS') {
             e.preventDefault();

@@ -15,6 +15,12 @@ let hookedKeys = false;
 // update the frame number and time based on the current state of the controls
 export function updateFrame(elapsed) {
 
+    if (par.playbackLocked) {
+        updateFrameSlider();
+        par.time = par.frame / Sit.fps;
+        return;
+    }
+
     if (!hookedKeys) {
         if (KeyMan) {
             KeyMan.key('arrowright').onDown(() => {

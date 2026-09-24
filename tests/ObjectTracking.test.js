@@ -1,6 +1,6 @@
 import {ObjectTracker, pointTrackingShift} from '../src/CObjectTracking';
 import {Sit} from '../src/Globals';
-import {par} from '../src/par';
+import {par, resetPar, stopControlledPlayback} from '../src/par';
 import {KeyMan} from '../src/KeyBoardHandler';
 import {loadOpenCV} from '../src/openCVLoader';
 
@@ -9,15 +9,14 @@ jest.mock('../src/Globals', () => ({
     NodeMan: {get: () => null}, setRenderOne: jest.fn(),
     unregisterFrameBlocker: jest.fn(),
 }));
-jest.mock('../src/par', () => ({par: {frame: 0, paused: true}}));
 jest.mock('../src/openCVLoader', () => ({getCV: () => ({}), loadOpenCV: jest.fn()}));
 jest.mock('../src/jsfeatLoader', () => ({}));
 jest.mock('../src/CVideoData', () => ({interpolatePosition: (map, f) => map.get(f)}));
 jest.mock('../src/CEventManager', () => ({}));
-jest.mock('../src/KeyBoardHandler', () => ({KeyMan: {isKeyHeld: jest.fn()}}));
+jest.mock('../src/KeyBoardHandler', () => ({KeyMan: {isKeyHeld: jest.fn(), clearAll: jest.fn()}}));
 jest.mock('../src/VideoExporter', () => ({}));
 jest.mock('../src/utils', () => ({}));
-jest.mock('../src/showError', () => ({}));
+jest.mock('../src/showError', () => ({showError: jest.fn()}));
 jest.mock('../src/AttributionOverlay', () => ({}));
 jest.mock('../src/configUtils', () => ({isLocal: true}));
 jest.mock('../src/i18n', () => ({t: v => v}));
@@ -35,7 +34,130 @@ function makeTracker() {
     return {t, image, videoData};
 }
 
-beforeEach(() => {par.frame = 0; Sit.bFrame = 19;});
+beforeEach(() => {resetPar(); par.paused = true; Sit.bFrame = 19;});
+
+function startTestRun() {
+    const result = makeTracker();
+    result.t.tracking = false;
+    result.t.trackingMethod = 'highPeak';
+    result.t.trackFrame = jest.fn(frame => result.t.trackedPositions.set(frame, {x: 800, y: 300}));
+    return result;
+}
+
+test.each([true, false])('completion leaves the last tracked frame paused (initial paused=%s)', async paused => {
+    const {t} = startTestRun();
+    par.paused = paused;
+    Sit.bFrame = 3;
+    t.startTracking();
+    expect(par.playbackLocked).toBe(true);
+    expect(par.paused).toBe(true);
+    await t.trackingPromise;
+    expect(t.trackFrame.mock.calls.map(([frame]) => frame)).toEqual([0, 1, 2, 3]);
+    expect(par.frame).toBe(3);
+    expect(par.paused).toBe(true);
+    expect(par.playbackLocked).toBe(false);
+    expect(t.tracking).toBe(false);
+});
+
+test.each(['button', 'space'])('%s stops at the last tracked frame while the next decode is pending', async stop => {
+    const {t, videoData} = startTestRun();
+    let releaseDecode, waiting;
+    const pending = new Promise(resolve => {waiting = resolve;});
+    videoData.waitForFrame = frame => frame < 2 ? Promise.resolve(true) : new Promise(resolve => {
+        releaseDecode = resolve;
+        waiting();
+    });
+    par.paused = false;
+    t.startTracking();
+    await pending;
+    expect(par.frame).toBe(2);
+    par.frame = 18;
+    par.paused = false;
+    expect(par.frame).toBe(2);
+    expect(par.paused).toBe(true);
+    if (stop === 'space') expect(stopControlledPlayback()).toBe(true);
+    else t.stopTracking();
+    expect(par.frame).toBe(1);
+    expect(par.paused).toBe(true);
+    expect(par.playbackLocked).toBe(false);
+    // The next Space is ordinary playback; the old decode cannot stop it.
+    expect(stopControlledPlayback()).toBe(false);
+    par.paused = false;
+    par.frame = 4;
+    releaseDecode(true);
+    await t.trackingPromise;
+    expect(t.trackedPositions.has(2)).toBe(false);
+    expect(par.frame).toBe(4);
+    expect(par.paused).toBe(false);
+    expect(t.tracking).toBe(false);
+});
+
+test('stopping during library loading cannot start tracking later', async () => {
+    const {t} = startTestRun();
+    t.trackingMethod = 'motion';
+    let loaded;
+    loadOpenCV.mockImplementationOnce(() => new Promise(resolve => {loaded = resolve;}));
+    t.startTracking();
+    expect(par.playbackLocked).toBe(true);
+    stopControlledPlayback();
+    par.paused = false;
+    loaded();
+    await t.trackingPromise;
+    expect(t.trackFrame).not.toHaveBeenCalled();
+    expect(t.tracking).toBe(false);
+    expect(par.playbackLocked).toBe(false);
+    expect(par.paused).toBe(false);
+});
+
+test('completion returns to the last result when final frames cannot be decoded', async () => {
+    const {t, videoData} = startTestRun();
+    Sit.bFrame = 4;
+    videoData.waitForFrame = async frame => frame < 3;
+    t.startTracking();
+    await t.trackingPromise;
+    expect(par.frame).toBe(2);
+    expect(par.paused).toBe(true);
+    expect(par.playbackLocked).toBe(false);
+});
+
+test('a failed tracking run releases playback at its last result', async () => {
+    const {t, videoData} = startTestRun();
+    videoData.waitForFrame = async frame => {
+        if (frame === 2) throw new Error('decode failed');
+        return true;
+    };
+    const log = jest.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+        t.startTracking();
+        await t.trackingPromise;
+        expect(par.playbackLocked).toBe(false);
+        expect(par.frame).toBe(1);
+        expect(par.paused).toBe(true);
+        expect(t.analysisResolutionSession).toBeNull();
+    } finally { log.mockRestore(); }
+});
+
+test('a stopped server tracking request cannot resume after its response arrives', async () => {
+    const {t} = startTestRun();
+    t.trackingMethod = 'sam2';
+    t.videoView.videoData.videoDroppedData = new ArrayBuffer(1);
+    const originalFetch = globalThis.fetch;
+    let respond;
+    globalThis.fetch = jest.fn(() => new Promise(resolve => {respond = resolve;}));
+    try {
+        t.startTracking();
+        expect(par.playbackLocked).toBe(true);
+        stopControlledPlayback();
+        par.paused = false;
+        respond({ok: true});
+        await t.trackingPromise;
+        expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+        expect(t.tracking).toBe(false);
+        expect(par.playbackLocked).toBe(false);
+        expect(par.paused).toBe(false);
+        expect(t.trackedPositions.size).toBe(0);
+    } finally { globalThis.fetch = originalFetch; }
+});
 
 test.each([false, true])('a user point resets the search even with force=%s', force => {
     const {t} = makeTracker();
