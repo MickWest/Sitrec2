@@ -9,6 +9,85 @@ lockstep with docs/WhatsNew.md.
 
 ---
 
+## Version 2.170.1 (2026-09-24)
+
+### Improvements
+
+- **Point Track now has sole control of playback while it tracks** (Video → Point Track → **Start Point Track**; `67e66554`).
+  - **What the user sees.** While a Start Point Track run advances through the video, normal playback and seeking are disabled:
+    - The transport buttons are dimmed and inactive (Play/Pause, frame back and advance, fast rewind and forward, start, end).
+    - The frame slider is disabled, and the A/B limits cannot be dragged. The pin and audio buttons still work.
+    - The frame-stepping and transport keys are ignored (arrows, `,` `.` `G` `I` `O` `'` `;`).
+  - **Stopping.** The run ends in one of three ways: it completes, the user presses **Stop Point Track**, or the user presses **Space**. Each one leaves playback **paused at the last tracked frame**. Pressing Space again resumes normal playback without starting a new run.
+    - Before, `stopTracking` restored the saved frame and the play/pause state from before the run (`savedFrame` / `savedPaused`). That moved the playhead back to where tracking started.
+    - The tooltip (`tracking.start.tooltip`) now says this: "Automatically advance through the video and track the object inside the cursor. Normal playback controls are disabled while tracking. Press Stop Point Track or Space to stop at the last tracked frame."
+  - **Mechanism.** `src/par.js` adds `acquirePlaybackControl(onStop)`, `stopControlledPlayback()` and a `par.playbackLocked` getter.
+    - While a control handle exists:
+      - Ordinary `par.frame` writes are ignored.
+      - `_frameOverride` is not applied.
+      - Unpausing is refused, the same way as with `pausedLock`.
+      - Only the run's own handle (`control.setFrame`) can move the frame.
+    - `acquirePlaybackControl` returns `null` if another control is active or `pausedLock` is set, for example while Star Tracker's detect pass runs. Start then does nothing.
+    - `resetPar()` clears the handle.
+    - `updateFrame()` returns early while the lock is held. It only updates the slider and `par.time`.
+    - `CNodeFrameSlider.updatePlaybackControls()` dims the buttons, disables the slider and clears held or drag state. Capture-phase listeners block pointer, touch and key input on the slider container, but let Space reach the global handler. The A/B limit interaction is disabled with `enabled: () => !par.playbackLocked`.
+    - `KeyBoardHandler` routes Space to `stopControlledPlayback()` and swallows the transport keys.
+  - **Tracking-run lifetime** (`CObjectTracking.js`).
+    - `startTracking()` gets the playhead first, before it loads OpenCV or jsfeat or starts SAM2. Stop and Space can therefore cancel a run while it is still starting. After each await, the `trackingRunId` guards stop a late library load, decode response or SAM2 response from restarting a stopped run or writing into a later one. `runSAM2Tracking(objectTracker, runId)` now takes the run id and checks `isCurrentRun()` after each await.
+    - Library loading moved out of `toggleStartTracking()` into `runFastTrackingLoop()`. The Start/Stop item now stays "Stop Point Track" during loading and SAM2 work, instead of showing loading or SAM2 progress text. A load failure is shown through the `Point tracking failed` error.
+    - `stopTracking()` is the one cleanup path. It pauses, sets the frame to `lastTrackedFrame`, releases the handle, refreshes the smoothed output and slider status, and resets the menu label. `onTrackingComplete()` now calls only this.
+  - **One measurement pass.** Only the tracking loop measures frames. `renderOverlay` no longer calls `trackFrame()` while tracking, which removes a second pass that could race the loop, or write an extra point, when a decode was pending.
+  - **Start before the first overlay render.** The constructor sets `lastVideoWidth` and `lastVideoHeight` from `getImageDimensions()`. Pressing Start before the overlay has rendered no longer treats the current video as a replacement.
+
+- **Help folders in every app menu, and new reference pages** (`ababbfe0`).
+  - **Help folders.** `menuId` in `src/docsRegistry.js` can now be an array (`docMenuIds()`), and `getDocsForMenu` and the Help-folder loop in `src/index.js` both use it.
+    - New Help folders: Sitrec (main), View, Show, Effects, Target and Time. Before, only Camera, Contents, File, Lighting, Objects, Physics, Satellites, Terrain, Traverse and Video had one.
+    - The user interface page is listed under Sitrec, View and Show. Refraction is listed under View and Effects. Lunar Eclipse and Aerial Perspective are listed under Lighting.
+  - **New pages.** Each one is in Help → Documentation (new `menus.help.documentation.*` keys):
+    - **Time, Frames and Syncing**
+    - **Adding Objects and Tracks** (the ground right-click menu and scene objects)
+    - **Camera and Target Menus**
+    - **Lighting Menu**
+    - **Loading and Adjusting Video**
+    - **Motion Analysis**
+    - **Satellites Menu**
+    - **URL Parameters**
+  - **Lens Ghost.** The Lens Ghost page is now a tool reference. Its worked example moved to a new **Lens Ghost Case Study (Pr055)** page (`docs/LensGhostCaseStudy.md`). Like Gimbal and Nimitz, that page is linked from README and offered to the AI Assistant, but it is not listed in Help → Documentation.
+  - **Football.** Its label is now "Football Scenario", and it is a plain reference, no longer a case study.
+  - **Removed page.** The **Doing Defensible Analysis** page is removed (`docs/DefensibleAnalysis.md` and `menus.help.documentation.defensibleAnalysis`).
+
+### Security
+
+- **The AI request log no longer stores prompt text** (`ababbfe0`). This log is written only when `SITREC_TRACK_STATS` is set.
+  - `logAIRequest()` in `sitrecServer/ai_log.php` now takes a fixed `$kind` label instead of the prompt:
+    - `chatbot.php` passes `"chat"`.
+    - `aimask.php` passes `"mask ground"`.
+  - Each row now holds only the user id, kind, model, provider, token usage and cost.
+  - Before, each row held the first 500 characters of the prompt. `stripLegacyPromptText()` removes that `prompt` field from older rows. Both writers call it, `logAIRequest` and `recordAISpend`, so no write can carry the old text forward, even under concurrent writes.
+  - The admin dashboard's Recent AI Requests table shows a **Kind** column in place of **Prompt**. The Privacy section of `docs/AIAssistant.md` describes this behavior.
+
+### Bug Fixes
+
+- **Fixed H.264 frame-rate parsing, and playback that jumped back to frame zero on streamed H.264 video** (`8cc0e2c3`).
+  - **Parser fix.** `H264BitReader.readBits` (`src/H264Decoder.js`) now skips emulation-prevention bytes as it reads. These are the `0x03` bytes inserted after two zero bytes. The reader does not scan or change the decoder's NAL data.
+    - Before, an SPS that contained one was misread. This affected the VUI timing fields (`num_units_in_tick` / `time_scale`, and therefore `calculated_fps`) and the fields after them.
+    - The new test SPS now parses as 30 fps and 640×480.
+  - **Streaming fix.** `CVideoStreamData` now applies the same bounds as the complete-file loader (`CVideoH264Data`). A finite value above 0 and at most 240 is used. Any other value falls back to 30 fps.
+    - Before, any detected value was used as-is. The regression test includes 349525.33 fps as an example.
+    - The commit reports that the bad frame rate made playback return to frame zero on every update.
+
+- **Fixed Mask Ground not showing the mask it made** (Video → Masking → Auto Masking → **Mask Ground (auto)** and **Mask Ground (click sky, then ground)**; `ababbfe0`).
+  - These buttons turned on only **Enable Mask**. Since the **Show Mask** toggle was added, the overlay draws only when Show Mask or Edit Mask is on, so the new mask was invisible.
+  - Both buttons now also turn on **Show Mask** (`showMaskController.setValue(true)` in `createMaskingFolder`). They use Show Mask, not Edit Mask, so the next click on the video does not paint.
+
+- **Fixed broken anchor links in the built documentation** (`ababbfe0`).
+  - `addHeadingIds` in `webpack.common.js` now makes one hyphen per space, as GitHub does. Before, it collapsed runs of whitespace into one hyphen.
+  - Example: "Stage 2 — Undo" becomes `stage-2--undo`. Links to headings that had a dash between spaces were broken in the built site.
+
+- **Corrected in-app text** (`ababbfe0`).
+  - The **Weather Balloons** live-feed tooltip now says it shows radiosondes received by SondeHub in the last hour, each at its latest position. It also says the feed is live only and cannot show past flights.
+  - The Long Exposure **Moonlight** tooltip now gives full moonlight as about 18.6 stops below daylight. The old value was about 20 stops.
+
 ## Version 2.170.0 (2026-09-23)
 
 ### New Features

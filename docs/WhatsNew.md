@@ -9,6 +9,21 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.170.1 (2026-09-24)
+
+### Improvements
+- **Point Track** (Video → Point Track → **Start Point Track**): while tracking runs, the normal playback controls and frame-stepping keys are disabled. Press **Stop Point Track** or **Space** to stop. Playback stays paused at the last tracked frame, and Space again resumes normal playback.
+- **Help in every menu**: each main menu now has a **Help** folder at the top. New pages cover time and syncing, adding objects and tracks, the Camera and Target menus, the Lighting menu, loading video, motion analysis, the Satellites menu and URL parameters.
+
+### Security
+- The server's AI usage log no longer keeps the text of your prompts. It keeps only who made a request, what kind it was, the model, the tokens used and the cost.
+
+### Bug Fixes
+- Fixed wrong frame rates on some H.264 videos, and fixed streamed H.264 video jumping back to the first frame during playback.
+- Fixed **Mask Ground (auto)** and **Mask Ground (click sky, then ground)** (Video → Masking → Auto Masking) not showing the mask they made.
+- Fixed broken links to some headings in the built documentation.
+- Corrected the **Weather Balloons** and **Moonlight** tooltips.
+
 ## Version 2.170.0 (2026-09-23)
 
 ### New Features
