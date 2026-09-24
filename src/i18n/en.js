@@ -437,7 +437,7 @@ const en = {
         start: {
             label: "Start Point Track",
             stopLabel: "Stop Point Track",
-            tooltip: "Automatically track the object inside the cursor as video plays",
+            tooltip: "Automatically advance through the video and track the object inside the cursor. Normal playback controls are disabled while tracking. Press Stop Point Track or Space to stop at the last tracked frame.",
         },
         useMask: {
             label: "Use Mask",

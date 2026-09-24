@@ -107,6 +107,20 @@ export class CNodeFrameSlider extends CNode {
         this.sliderContainer.style.alignItems = 'center';
         this.sliderContainer.style.touchAction = 'none'; // Prevent browser default touch behaviors
 
+        // Block transport input while an analysis owns the playhead, including
+        // touch and A/B-limit dragging. Pin and audio remain available.
+        for (const type of ['pointerdown', 'pointermove', 'mousedown', 'mousemove',
+            'touchstart', 'touchmove', 'touchend', 'click', 'dblclick', 'input', 'keydown']) {
+            this.sliderContainer.addEventListener(type, event => {
+                if (!par.playbackLocked || this.pinButton?.contains(event.target) ||
+                    this.audioButton?.contains(event.target)) return;
+                // Let Space reach the global handler so it can stop tracking.
+                if (type === 'keydown' && event.code === 'Space') return;
+                event.preventDefault();
+                event.stopImmediatePropagation();
+            }, {capture: true, passive: false});
+        }
+
         // Prevent double click behavior on the slider container
         this.sliderContainer.addEventListener('dblclick', (event) => {
             event.preventDefault();
@@ -696,6 +710,7 @@ export class CNodeFrameSlider extends CNode {
 
         this.unregisterLimitInteraction = registerSurfaceInteraction(this.sliderDiv, {
             profile: "limits",
+            enabled: () => !par.playbackLocked,
             model: this, nativeControl: true, intent: {priority: 80, zIndex: 1002},
             hitTest: e => {
                 const p = getMousePos(e), limit = getNearLimit(p.x, p.y, pointerHitRadius(e, this.dragThreshold));
@@ -820,6 +835,7 @@ export class CNodeFrameSlider extends CNode {
     }
 
     update(frame) {
+        this.updatePlaybackControls();
         // Update audio button visibility and state
         this.updateAudioButton();
 
@@ -1118,6 +1134,7 @@ export class CNodeFrameSlider extends CNode {
     }
 
     updateFrameSlider() {
+        this.updatePlaybackControls();
         if (this.sliderInput.style.opacity === "1") {
             // Use par._frame directly so the slider thumb stays at the real frame
             // position even when _frameOverride is active (during A/B limit dragging)
@@ -1171,6 +1188,28 @@ export class CNodeFrameSlider extends CNode {
         return container;
     }
 
+    updatePlaybackControls() {
+        const locked = !!par.playbackLocked;
+        if (locked === this.lastPlaybackLocked) return;
+        this.lastPlaybackLocked = locked;
+        for (const button of [this.playPauseButton, this.frameBackButton, this.frameAdvanceButton,
+            this.fastRewindButton, this.fastForwardButton, this.startButton, this.endButton]) {
+            if (!button) continue;
+            button.setAttribute('aria-disabled', String(locked));
+            button.style.opacity = locked ? '0.35' : '';
+            button.style.cursor = locked ? 'not-allowed' : 'pointer';
+        }
+        if (this.sliderInput) this.sliderInput.disabled = locked;
+        if (locked) {
+            this.advanceHeld = this.backHeld = false;
+            this.advanceHoldFrames = this.backHoldFrames = 0;
+            if (this.fastForwardButton) this.fastForwardButton.held = false;
+            if (this.fastRewindButton) this.fastRewindButton.held = false;
+            this.draggingALimit = this.draggingBLimit = false;
+            this.pendingKeyframeSnap = null;
+        }
+    }
+
     // Function to update the play/pause button based on the state of par.paused
     updatePlayPauseButton() {
         // only do it if state changes, as it's surprisingly expensive
@@ -1190,6 +1229,7 @@ export class CNodeFrameSlider extends CNode {
 
     // Play/Pause toggle function
     togglePlayPause() {
+        if (par.playbackLocked) return;
         par.paused = !par.paused;
         this.updatePlayPauseButton();
     }
@@ -1245,6 +1285,7 @@ export class CNodeFrameSlider extends CNode {
 
     // Advance a single frame function
     advanceOneFrame() {
+        if (par.playbackLocked) return;
         par.paused = true;
         this.updatePlayPauseButton()
         let currentFrame = parseInt(this.sliderInput.value, 10);
@@ -1255,6 +1296,7 @@ export class CNodeFrameSlider extends CNode {
 
     // Back a single frame function
     backOneFrame() {
+        if (par.playbackLocked) return;
         par.paused = true;
         this.updatePlayPauseButton()
         let currentFrame = parseInt(this.sliderInput.value, 10);
@@ -1265,6 +1307,7 @@ export class CNodeFrameSlider extends CNode {
 
     // Set frame helper function
     setFrame(frame) {
+        if (par.playbackLocked) return;
         this.sliderInput.value = frame;
         par.frame = frame;
     }

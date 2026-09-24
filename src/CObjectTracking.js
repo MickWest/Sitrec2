@@ -1,5 +1,5 @@
 import {GlobalDateTimeNode, Globals, guiMenus, NodeMan, setRenderOne, Sit, unregisterFrameBlocker} from "./Globals";
-import {par} from "./par";
+import {acquirePlaybackControl, par} from "./par";
 import {getCV, loadOpenCV} from "./openCVLoader";
 import {getJsfeat, loadJsfeat} from "./jsfeatLoader";
 import {interpolatePosition} from "./CVideoData";
@@ -269,12 +269,15 @@ export class ObjectTracker {
         this.initialTemplateFrame = null;
 
         this.guiFolder = null;
-        this.savedPaused = true;
-        this.savedFrame = undefined;
+        this.playbackControl = null;
+        this.lastTrackedFrame = undefined;
 
         // Track video dimensions to detect when video changes
-        this.lastVideoWidth = 0;
-        this.lastVideoHeight = 0;
+        // Start can be pressed before the overlay has rendered even once.
+        // The first render must not treat the current video as a replacement.
+        const initialVideoDimensions = this.getImageDimensions();
+        this.lastVideoWidth = initialVideoDimensions.width;
+        this.lastVideoHeight = initialVideoDimensions.height;
         
         this.thresholdPreview = false;
     }
@@ -447,6 +450,7 @@ export class ObjectTracker {
                 if (!this.enabled || !KeyMan.isKeyHeld(heldKey)) return;
                 this.analysisResolutionSession = beginVideoAnalysis(videoData, () => { this.tracking = false; });
                 this.tracking = true;
+                this.lastTrackedFrame = Math.floor(par.frame);
                 this.initializeTracker();
                 Globals.justVideoAnalysis = true;
             }
@@ -465,6 +469,7 @@ export class ObjectTracker {
                     // force=true so we re-run the algorithm even if the new
                     // frame already has a stale stored position.
                     this.trackFrame(nf, true);
+                    if (this.trackedPositions.has(nf)) this.lastTrackedFrame = nf;
                 } else {
                     // Delete any keyframe at the current frame, then step back.
                     this.trackedPositions.delete(cur);
@@ -574,19 +579,21 @@ export class ObjectTracker {
     
     startTracking() {
         if (!this.enabled || this.tracking || this.holdLoopActive) return;
+        this.playbackControl = acquirePlaybackControl(() => this.stopTracking());
+        if (!this.playbackControl) return;
         this.trackingRunId = (this.trackingRunId || 0) + 1;
-        this.analysisResolutionSession = beginVideoAnalysis(this.videoView?.videoData, () => this.onTrackingComplete());
         this.tracking = true;
-        this.initializeTracker();
+        this.lastTrackedFrame = Math.floor(par.frame);
+        if (GlobalDateTimeNode) GlobalDateTimeNode.liveMode = false;
+        KeyMan.clearAll();
+        if (startMenuItem) startMenuItem.name(t("tracking.start.stopLabel"));
         this.updateSliderStatus();
-
-        this.savedPaused = par.paused;
-        this.savedFrame = par.frame;
         Globals.justVideoAnalysis = true;
-        par.paused = true;  // Pause the animation loop
+        NodeMan.get('FrameSlider', false)?.updatePlaybackControls();
 
-        // Start fast tracking loop
-        this.runFastTrackingLoop().catch(error => {
+        // Acquire the playhead before loading libraries, so Space/Stop can
+        // cancel startup too, and a late load cannot restart a stopped run.
+        this.trackingPromise = this.runFastTrackingLoop().catch(error => {
             console.error('Point tracking failed', error);
             showError(`Point tracking failed: ${error.message}`);
         });
@@ -595,6 +602,21 @@ export class ObjectTracker {
     async runFastTrackingLoop() {
         const runId = this.trackingRunId;
         try {
+            if (this.playbackControl) {
+                if (this.trackingMethod === 'sam2') {
+                    await runSAM2Tracking(this, runId);
+                    return;
+                }
+                if (this.trackingMethod === 'motion' || this.trackingMethod === 'template') {
+                    await loadOpenCV();
+                    cv = getCV();
+                } else if (this.trackingMethod === 'opticalflow' && !getJsfeat()) {
+                    await loadJsfeat();
+                }
+                if (!this.tracking || runId !== this.trackingRunId) return;
+                this.analysisResolutionSession = beginVideoAnalysis(this.videoView?.videoData, () => this.stopTracking());
+                this.initializeTracker();
+            }
             await this.trackFrames(runId);
         } finally {
             // A stopped run may still be returning from a decode wait after
@@ -620,7 +642,8 @@ export class ObjectTracker {
             if (!this.tracking || runId !== this.trackingRunId) break;
 
             // Set current frame
-            par.frame = frame;
+            if (this.playbackControl) this.playbackControl.setFrame(frame);
+            else par.frame = frame; // Hold-key / standalone tracking callers.
 
             // Skip held (synthesized duplicate) frames: identical pixels as
             // the prior canonical V, so template-matching would produce the
@@ -629,7 +652,10 @@ export class ObjectTracker {
             // trackedPositions.get(frame) sees a value, but skip the work.
             if (wrapperHasHolds && videoData.isHeldFrame(frame) && !this.isUserPoint(frame)) {
                 const prev = this.trackedPositions.get(frame - 1);
-                if (prev) this.trackedPositions.set(frame, {...prev});
+                if (prev) {
+                    this.trackedPositions.set(frame, {...prev});
+                    this.lastTrackedFrame = frame;
+                }
                 else if (this.trackingMethod === 'motion') this.trackedPositions.markUnmeasured(frame);
                 continue;
             }
@@ -644,6 +670,7 @@ export class ObjectTracker {
 
             // Track this frame
             this.trackFrame(frame);
+            if (this.trackedPositions.has(frame)) this.lastTrackedFrame = frame;
 
             // Only render and yield if enough time has passed (target 25 FPS visual updates)
             const now = performance.now();
@@ -667,6 +694,7 @@ export class ObjectTracker {
     }
 
     stopTracking() {
+        if (!this.tracking && !this.playbackControl) return;
         this.trackingRunId = (this.trackingRunId || 0) + 1;
         this.tracking = false;
         this.analysisResolutionSession?.end();
@@ -674,19 +702,24 @@ export class ObjectTracker {
         if (this.tracker) {
             this.tracker = null;
         }
-        par.paused = this.savedPaused;
-        if (this.savedFrame !== undefined) {
-            par.frame = this.savedFrame;
+        par.paused = true;
+        if (this.playbackControl) {
+            this.playbackControl.setFrame(this.lastTrackedFrame);
+            this.playbackControl.release();
+            this.playbackControl = null;
+        } else if (this.lastTrackedFrame !== undefined) {
+            par.frame = this.lastTrackedFrame;
         }
         Globals.justVideoAnalysis = false;
+        this.refreshSmoothedOutput();
+        this.updateSliderStatus();
+        NodeMan.get('FrameSlider', false)?.updatePlaybackControls();
+        if (startMenuItem) startMenuItem.name(t("tracking.start.label"));
         setRenderOne(true);
     }
     
     onTrackingComplete() {
         this.stopTracking();
-        this.refreshSmoothedOutput();
-        if (startMenuItem) startMenuItem.name(t("tracking.start.label"));
-        setRenderOne(true);
     }
     
     initializeTracker() {
@@ -873,8 +906,8 @@ export class ObjectTracker {
             // Stored auto points have no saved measurement confidence. Start a
             // new prediction at the end of this section instead of retaining a
             // velocity from before the skipped frames.
-            // renderOverlay also calls this for the frame just measured. That
-            // redraw must retain its anchors for the next tracking step.
+            // A repeated request for the frame just measured must retain its
+            // anchors for the next tracking step.
             if (this.trackingMethod === 'motion' && this.motionLastFrame !== frame) this.motionLastFrame = null;
             return;
         }
@@ -2481,9 +2514,9 @@ export class ObjectTracker {
             }
         }
 
-        if (this.tracking) {
-            this.trackFrame(frame);
-        } else {
+        // Only the tracking loop measures frames. Rendering a frame while its
+        // decode is pending must not race the loop or write an extra point.
+        if (!this.tracking) {
             const f = Math.floor(frame);
             const pos = this.getInterpolatedPosition(f);
             if (pos) {
@@ -2839,68 +2872,11 @@ function toggleStartTracking() {
         return;
     }
 
-    // Pure-JS methods don't need external libraries
-    const noLibMethods = ['centerOnBright', 'centerOnDark', 'centerOnColor', 'highPeak', 'lowPeak'];
-    if (noLibMethods.includes(objectTracker.trackingMethod)) {
-        objectTracker.startTracking();
-        if (startMenuItem) startMenuItem.name(t("tracking.start.stopLabel"));
-        setRenderOne(true);
-        return;
-    }
-
-    // SAM2 mode: send video + click to server, get back all positions
-    if (objectTracker.trackingMethod === 'sam2') {
-        runSAM2Tracking();
-        return;
-    }
-
-    // Optical flow mode requires jsfeat
-    if (objectTracker.trackingMethod === 'opticalflow') {
-        const jsfeat = getJsfeat();
-        if (jsfeat) {
-            objectTracker.startTracking();
-            if (startMenuItem) startMenuItem.name(t("tracking.start.stopLabel"));
-            setRenderOne(true);
-            return;
-        }
-
-        if (startMenuItem) startMenuItem.name(t("tracking.status.loadingJsfeat"));
-
-        loadJsfeat().then(() => {
-            objectTracker.startTracking();
-            if (startMenuItem) startMenuItem.name(t("tracking.start.stopLabel"));
-            setRenderOne(true);
-        }).catch(e => {
-            console.error("Failed to load jsfeat:", e);
-            alert("Failed to load jsfeat.js: " + e.message);
-            if (startMenuItem) startMenuItem.name(t("tracking.start.label"));
-        });
-        return;
-    }
-
-    // Template matching mode requires OpenCV
-    if (cv) {
-        objectTracker.startTracking();
-        if (startMenuItem) startMenuItem.name(t("tracking.start.stopLabel"));
-        setRenderOne(true);
-        return;
-    }
-
-    if (startMenuItem) startMenuItem.name(t("tracking.status.loadingOpenCv"));
-
-    loadOpenCV().then(() => {
-        cv = getCV();
-        objectTracker.startTracking();
-        if (startMenuItem) startMenuItem.name(t("tracking.start.stopLabel"));
-        setRenderOne(true);
-    }).catch(e => {
-        console.error("Failed to load OpenCV:", e);
-        alert("Failed to load OpenCV.js: " + e.message);
-        if (startMenuItem) startMenuItem.name(t("tracking.start.label"));
-    });
+    objectTracker.startTracking();
 }
 
-async function runSAM2Tracking() {
+async function runSAM2Tracking(objectTracker, runId) {
+    const isCurrentRun = () => objectTracker.tracking && objectTracker.trackingRunId === runId;
     const videoView = objectTracker.videoView;
     const videoData = videoView?.videoData;
 
@@ -2920,13 +2896,13 @@ async function runSAM2Tracking() {
     const clickY = objectTracker.trackY;
     const clickFrame = Math.floor(par.frame);
 
-    if (startMenuItem) startMenuItem.name(t("tracking.status.sam2Connecting"));
     setRenderOne(true);
 
     try {
         // SAM2 service is proxied through the web server at /sam2/
         const sam2Base = '/sam2';
         const healthResp = await fetch(`${sam2Base}/health`).catch(() => null);
+        if (!isCurrentRun()) return;
         if (!healthResp || !healthResp.ok) {
             alert("SAM2 service is not running.\n\nStart it with:\n  cd sam2-service && ./start.sh\n\nMake sure your web server proxies /sam2/ to port 8001.");
             if (startMenuItem) startMenuItem.name(t("tracking.start.label"));
@@ -2934,9 +2910,9 @@ async function runSAM2Tracking() {
         }
 
         // Upload video and start tracking job
-        if (startMenuItem) startMenuItem.name(t("tracking.status.sam2Uploading"));
         setRenderOne(true);
         await new Promise(resolve => setTimeout(resolve, 0));
+        if (!isCurrentRun()) return;
 
         const formData = new FormData();
         const blob = new Blob([videoBuffer], { type: 'video/mp4' });
@@ -2949,6 +2925,7 @@ async function runSAM2Tracking() {
             method: 'POST',
             body: formData,
         });
+        if (!isCurrentRun()) return;
 
         if (!startResp.ok) {
             const errText = await startResp.text();
@@ -2956,12 +2933,14 @@ async function runSAM2Tracking() {
         }
 
         const { job_id } = await startResp.json();
+        if (!isCurrentRun()) return;
         console.log(`[SAM2] Job started: ${job_id}`);
 
         // Poll for progress
         let results = null;
         while (true) {
             await new Promise(resolve => setTimeout(resolve, 1000));
+            if (!isCurrentRun()) return;
 
             const pollResp = await fetch(`${sam2Base}/track/${job_id}`);
             if (!pollResp.ok) {
@@ -2969,18 +2948,13 @@ async function runSAM2Tracking() {
             }
 
             const job = await pollResp.json();
+            if (!isCurrentRun()) return;
 
             if (job.status === 'error') {
                 throw new Error(job.error || 'SAM2 tracking failed');
             }
 
-            // Update status display with progress
-            if (job.total > 0 && job.progress > 0) {
-                const pct = Math.round(100 * job.progress / job.total);
-                if (startMenuItem) startMenuItem.name(`SAM2: ${job.phase} ${pct}%`);
-            } else {
-                if (startMenuItem) startMenuItem.name(`SAM2: ${job.phase}...`);
-            }
+            // Keep the Stop Point Track action available while the server works.
             setRenderOne(true);
 
             if (job.status === 'complete') {
@@ -2998,6 +2972,7 @@ async function runSAM2Tracking() {
         for (const r of results) {
             if (r.cx >= 0 && r.cy >= 0) {
                 objectTracker.trackedPositions.set(r.frame, { x: r.cx, y: r.cy });
+                objectTracker.lastTrackedFrame = Math.max(objectTracker.lastTrackedFrame, r.frame);
                 validCount++;
             } else {
                 lostCount++;
@@ -3015,6 +2990,7 @@ async function runSAM2Tracking() {
         setRenderOne(true);
 
     } catch (e) {
+        if (!isCurrentRun()) return;
         console.error("[SAM2] Tracking failed:", e);
         alert("SAM2 tracking failed: " + e.message);
         if (startMenuItem) startMenuItem.name(t("tracking.start.label"));

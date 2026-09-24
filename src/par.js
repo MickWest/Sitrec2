@@ -5,6 +5,42 @@
 export const par = {}
 globalThis.par = par;
 
+let playbackControl = null;
+
+function writeFrame(value) {
+    par._frame = value;
+    par.renderOne = true;
+    globalThis.__sitrecWakeRenderLoop?.();
+}
+
+// An analysis can own the playhead until it stops. Ordinary frame writes and
+// Play requests are ignored; only this run's handle can advance the frame.
+export function acquirePlaybackControl(onStop) {
+    if (playbackControl || par.pausedLock) return null;
+    const control = {
+        onStop,
+        setFrame(value) {
+            if (playbackControl === control) writeFrame(value);
+        },
+        release() {
+            if (playbackControl !== control) return;
+            par.paused = true;
+            par._frameOverride = undefined;
+            playbackControl = null;
+        },
+    };
+    playbackControl = control;
+    par._frameOverride = undefined;
+    par.paused = true;
+    return control;
+}
+
+export function stopControlledPlayback() {
+    if (!playbackControl) return false;
+    playbackControl.onStop();
+    return true;
+}
+
 
 const parDefaults = {
     el: -2,
@@ -19,13 +55,13 @@ const parDefaults = {
     _paused: false,
 
     get frame() {
-        return this._frameOverride !== undefined ? this._frameOverride : this._frame;
+        return !playbackControl && this._frameOverride !== undefined ? this._frameOverride : this._frame;
     },
     set frame(value) {
-        this._frame = value;
-        this.renderOne = true;
-        globalThis.__sitrecWakeRenderLoop?.();
+        if (!playbackControl) writeFrame(value);
     },
+
+    get playbackLocked() { return playbackControl !== null; },
 
     // While set, playback cannot be resumed. Held by analyses that drive par.frame themselves
     // (Star Tracker's detect pass steps the video frame by frame), where a stray play - from the
@@ -38,7 +74,7 @@ const parDefaults = {
     },
     set paused(value) {
         const nextPaused = Boolean(value);
-        if (this.pausedLock && !nextPaused) {
+        if ((this.pausedLock || playbackControl) && !nextPaused) {
             return;
         }
         const wasPaused = this._paused;
@@ -101,6 +137,7 @@ const parDefaults = {
 // par needs to be a PERMANENT object, so we can't just replace it with a new object
 // so we need to reset it to its default values
 export function resetPar() {
+    playbackControl = null;
 
     // remove all properties from par
     for (const prop in par) {
