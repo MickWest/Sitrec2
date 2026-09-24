@@ -1,5 +1,6 @@
 import {CVideoStreamData} from '../src/CVideoStreamData';
 import {CVideoWebCodecBase} from '../src/CVideoWebCodecBase';
+import {H264Decoder} from '../src/H264Decoder';
 
 jest.mock('../src/CVideoWebCodecBase', () => ({CVideoWebCodecBase: class {
     async waitForFrame(frame) { return !!this.isFrameCached(frame); }
@@ -7,7 +8,10 @@ jest.mock('../src/CVideoWebCodecBase', () => ({CVideoWebCodecBase: class {
 jest.mock('../src/CVideoMp4Data', () => ({}));
 jest.mock('../src/CVideoByteStream', () => ({}));
 jest.mock('../src/H264StreamParser', () => ({}));
-jest.mock('../src/H264Decoder', () => ({}));
+jest.mock('../src/H264Decoder', () => ({H264Decoder: {
+    analyzeH264Stream: jest.fn(), createAVCDecoderConfig: jest.fn(),
+    extractNALUnits: jest.fn(() => []), createEncodedVideoChunks: jest.fn(() => []),
+}}));
 jest.mock('../src/js/mp4-decode/mp4_demuxer', () => ({}));
 jest.mock('../src/CStreamingAudio', () => ({}));
 jest.mock('../src/Globals', () => ({setRenderOne: jest.fn()}));
@@ -52,4 +56,20 @@ test('a late successful initial decode clears only the startup failure', () => {
     expect(v.loadedCallback).toHaveBeenCalledTimes(1);
     v.maybeReady();
     expect(v.loadedCallback).toHaveBeenCalledTimes(1);
+});
+
+test.each([
+    [25, 25], [30000 / 1001, 29.97], [undefined, 30],
+    [349525.33, 30], [-30, 30], [Infinity, 30], [NaN, 30],
+])('streaming H.264 timing %s uses %s fps for playback and chunk timestamps', async (detected, expected) => {
+    H264Decoder.analyzeH264Stream.mockReturnValue({
+        hasSPS: true, hasPPS: true, spsData: new Uint8Array([0x67, 0x42, 0xc0, 0x1f]),
+        vui: {calculated_fps: detected}, width: 640, height: 480,
+    });
+    const v = video();
+    Object.assign(v, {chunks: [], configureVideo: jest.fn(), publishGroups: jest.fn()});
+    await v.appendH264Group(new ArrayBuffer(0));
+    expect(v.originalFps).toBe(expected);
+    expect(v.detectedFps).toBe(expected);
+    expect(H264Decoder.createEncodedVideoChunks).toHaveBeenLastCalledWith(expect.anything(), expected, null, 0);
 });

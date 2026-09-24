@@ -219,7 +219,10 @@ export class CVideoStreamData extends CVideoWebCodecBase {
         if (!this.config) {
             const analysis = H264Decoder.analyzeH264Stream(buffer);
             if (!analysis.hasSPS || !analysis.hasPPS) throw new Error('H.264 video is missing SPS/PPS configuration');
-            this.originalFps = Math.round((analysis.vui?.calculated_fps || 30) * 100) / 100;
+            // Apply the same timing validation as the complete-file H.264 loader.
+            const detectedFps = analysis.vui?.calculated_fps;
+            this.originalFps = Number.isFinite(detectedFps) && detectedFps > 0 && detectedFps <= 240
+                ? Math.round(detectedFps * 100) / 100 : 30;
             this.detectedFps = this.originalFps;
             await this.configureVideo({
                 codec: 'avc1.' + Array.from(analysis.spsData.slice(1, 4), b => b.toString(16).padStart(2, '0')).join(''),

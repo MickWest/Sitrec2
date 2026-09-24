@@ -24,6 +24,14 @@ class H264BitReader {
         let result = 0;
         
         for (let i = 0; i < numBits; i++) {
+            // Syntax fields exclude the 0x03 inserted after two zero bytes
+            // to prevent start-code emulation. Skip it as we read, without
+            // scanning whole slice payloads or changing the decoder's NAL bytes.
+            if (this.bitOffset === 0 && this.byteOffset >= 2 &&
+                this.data[this.byteOffset] === 0x03 &&
+                this.data[this.byteOffset - 1] === 0 && this.data[this.byteOffset - 2] === 0) {
+                this.byteOffset++;
+            }
             if (this.byteOffset >= this.data.length) {
                 throw new Error("Unexpected end of data");
             }
