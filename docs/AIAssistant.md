@@ -8,7 +8,7 @@ the thing rather than telling you where the control is.
 Open it with **Help → AI Assistant**, or press **Tab**. It is an ordinary Sitrec window, so you
 can drag it, resize it, scroll the log with the wheel, and select and copy text from the log.
 Click outside it to give the keyboard back to Sitrec's shortcuts. **Tab** again, or the **X**,
-hides it. The up arrow recalls what you last typed, and the **+** in its header starts a fresh
+hides it; so does **Esc** when the window floats. The up arrow recalls what you last typed, and the **+** in its header starts a fresh
 conversation.
 
 ## What it can do
@@ -32,8 +32,9 @@ number of extras that have no menu entry at all.
 
 Some of the more specialist things are there too, but are worth asking for by name: the Fit
 Camera to Points tool, synthetic buildings, cloud layers and ground overlays, the nearest
-weather-balloon soundings, and an object that walks a list of waypoints. Those four
-constructors are not loaded into every conversation — the assistant asks for them when it
+weather-balloon soundings, and an object that walks a list of waypoints. The four
+constructors (buildings, cloud layers, ground overlays and the waypoint walker) are not loaded
+into every conversation — the assistant asks for them when it
 decides it needs them, which costs it one extra step.
 
 Two things it deliberately cannot do. It cannot fetch a web address of its own choosing, and
@@ -106,7 +107,7 @@ error itself, so a silent "Done." with something plainly unchanged is worth a se
 
 ## Choosing a model
 
-**Settings → AI Model** picks which model answers. The same dropdown is mirrored into the
+**Sitrec → Settings → AI Model** picks which model answers. The same dropdown is mirrored into the
 Assistant window's own header menu, so you can change it without leaving the conversation.
 
 There are four routes, and they differ in who pays and where the conversation goes.
@@ -127,16 +128,15 @@ other routes.
 against the shape this assistant's requests actually have — a large prompt and a fairly short
 reply — and picks the cheapest. Use it if you have no reason to prefer a particular model.
 
-**Your own key** and **your own server** are set up in **Settings → API Keys…**. Which models
+**Your own key** and **your own server** are set up in **Sitrec → Settings → API Keys…**. Which models
 appear, what a custom endpoint needs, and what happens to your key are all covered in
-[Your API Keys](APIKeys.md).
+[Your API Keys](APIKeys.md). By default the list shows only each provider's newest model family
+for your own keys; tick **Enable old AI models** in the same Settings folder to list the older
+generations too.
 
-The choice is not only about money. A smaller or cheaper model is noticeably less reliable at
-multi-step requests: it is likelier to do the first half of a two-part instruction, to pick the
-wrong control, or to say it has done something it has not. If a request keeps going wrong, try
-it on a larger model before concluding Sitrec cannot do it.
+If a request keeps going wrong, try it on a larger model.
 
-**Sitrec Focused** is on by default, in Settings and the Assistant header menu. For models
+**Sitrec Focused** is on by default, in **Sitrec → Settings** and the Assistant header menu. For models
 using **your own API key or custom endpoint**, turn it off to discuss any topic. It also
 applies to the spoken assistant and updates an active voice session immediately. Sitrec's
 own models always retain their Sitrec topic restriction. The preference is saved with your
@@ -145,7 +145,7 @@ settings, and changing it takes effect on the next typed request.
 Turning focus off shows an **API usage costs** notice. General conversations still send the
 Sitrec instructions and recent chat history, and longer conversations or replies can use
 more tokens. Your provider's charges apply. Review usage and local limits in
-**Settings → API Keys…**, and set spending caps or budget alerts with the provider;
+**Sitrec → Settings → API Keys…**, and set spending caps or budget alerts with the provider;
 Sitrec's local limits are not provider billing controls. See [Your API Keys](APIKeys.md).
 
 ## The header bar
@@ -155,8 +155,8 @@ read from the setting each time rather than remembered, so it is right after you
 after a saved session is restored, and after the assistant changes the setting itself.
 
 While the microphone is live it shows the voice model instead, prefixed with a microphone
-glyph, because that is a different model on a different API and costs roughly an order of
-magnitude more per turn.
+glyph, because that is a different model on a different API, billed at the provider's
+realtime-audio rates. Check the provider's current pricing.
 
 ## Speaking to it
 
@@ -176,19 +176,18 @@ menu-bar one reads **REC**. Either one stops the session, and so does closing th
 loading a different sitch. The menu-bar button is the one to rely on: the Assistant window can
 be scrolled, hidden or covered, and the menu bar cannot.
 
-**Settings → Voice Model** chooses which realtime model is used; it is mirrored into the
+**Sitrec → Settings → Voice Model** chooses which realtime model is used; it is mirrored into the
 Assistant header menu alongside AI Model. The spoken assistant requires **your own OpenAI key** —
 there is no Sitrec-provided route for it — and pressing the button without one gives you a
 message saying where to add it. Your microphone audio is streamed to OpenAI while the session
-is open, and spoken tokens cost far more than typed ones. Both points are covered properly in
-[Your API Keys](APIKeys.md); read that section before you start using it heavily.
+is open, and spoken tokens are billed at the provider's realtime-audio rates. Both points are
+covered in [Your API Keys](APIKeys.md).
 
 ## What it is not good at
 
-It is worth being straight about the limits.
-
 - **It is instructed to stay on the subject of Sitrec.** It will decline unrelated topics,
-  including people, events and politics.
+  including people, events and politics — unless you have turned **Sitrec Focused** off, which
+  is possible only on your own key or endpoint.
 - **It cannot see.** It has no access to the video frames, the rendered 3D view, or a
   screenshot. It knows the scene only through what it can query — track positions, menu
   values, the camera, the clock. "What is that bright thing in the corner?" is not a question
@@ -200,8 +199,7 @@ It is worth being straight about the limits.
   which is what makes it useful and also what makes a misread request change something you
   did not want changed. Check the result.
 - **It does not know your sitch's history.** It sees the current state, not why you set it up
-  that way. It cannot tell you whether a reconstruction is sound — that is
-  [Doing Defensible Analysis](DefensibleAnalysis.md), and it is a judgement, not a lookup.
+  that way.
 - **Documentation answers can be truncated.** A very long help page is cut off when it is read,
   and the assistant is told to say so when that happens. If it warns you its answer may be
   incomplete, open the page itself.
@@ -217,11 +215,16 @@ neither the credential nor the conversation.
 Nothing in either path includes your stored API keys: the assistant is never told them and has
 no tool that can read one.
 
-**Your prompts are not kept.** Sitrec's server passes a conversation to the model provider and
-does not retain it. There is a development log of what people asked the assistant, but it now
-records only the maintainer's own account — the check is in the server endpoint itself, not
-just in the browser, so nothing else reaches it. The bring-your-own-key and your-own-server
-routes never touched that log at all, since they do not go through Sitrec's server.
+**Your prompts and replies are not kept.** Sitrec's server passes a conversation to the model
+provider and does not retain its text. What the server does keep, when the installation has
+usage statistics turned on, is accounting data for the AI feature: for each of the last 500
+requests, who made it (your user id), what kind of request it was (a chat or a ground mask),
+which model answered, how many tokens it used and what it cost, plus daily totals. None of
+that includes what you typed or what came back. There is also a development log of what
+people asked the assistant, but it records only the maintainer's own account — the check is
+in the server endpoint itself, not just in the browser, so nothing else reaches it. The
+bring-your-own-key and your-own-server routes do not go through Sitrec's server, so they
+appear in neither log.
 
 What the model *provider* keeps is a separate question, and theirs rather than Sitrec's: each
 one has its own retention policy, and on your own key or your own server that relationship is

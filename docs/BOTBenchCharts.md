@@ -3,7 +3,7 @@
 Interactive charts of a BOTBench result set, and the same figures exported for a
 paper. Open them from **File → File Analysis → Result Charts...**.
 
-The charts answer questions a table of numbers cannot: how accuracy changes with
+The charts show how accuracy changes with
 clip length and requested batch duration, how it decays along the pointing-error ladder, what the executive
 verdict actually concluded, and how much the blind ranking cost against the best
 candidate it had on offer.
@@ -53,7 +53,7 @@ rung figures. The figures that compare clip lengths need at least two.
 | Error by Duration | The same error against the requested `batch_20sec`, `batch_40sec`, `batch_60sec`, `batch_120sec`, `batch_180sec`, `batch_240sec` and `batch_300sec` duration, kept separate from the measured clip length |
 | Error by pointing error | The same error against the pointing-error ladder, one panel per class and clip length |
 | Mean absolute error vs. mean true range | One dot per evaluation: its mean absolute error in metres against its mean true range, on a linear range axis from zero. With **log Error** on, the error axis is logarithmic and clamped at 1 mm: a smaller error, an exact zero included, is drawn at the floor and its hover label keeps the value. With it off, the error axis is linear from zero with no floor |
-| Error by clip length, per sensor turn | Median error against clip length, one line per sensor-turn level, with quartile bars. A flat line means a longer clip does not help at that amount of turn |
+| Error by clip length, per sensor turn | Median error against clip length, one line per sensor-turn level, with quartile bars. A flat line means median error does not change with clip length at that turn level |
 | Error by sensor turn, per clip length | The same medians against the turn level, one line per clip length |
 | Within tolerance, by length | Share of tracks inside 5% and 1% of true range, against clip length, with exact 95% intervals |
 | Within tolerance, by pointing error | The same shares against the pointing-error rung |
@@ -232,8 +232,7 @@ runaway fit cannot stretch the axis to 10^59.
 The within-tolerance figures use exact Clopper-Pearson intervals at 95%. They
 are conservative by construction, meaning their true coverage is at least 95%
 and usually a little more. They are wider than the score intervals often used
-for the same job, which is the price of never overstating certainty on a small
-count. A track whose top candidate has no range at all counts as outside the
+for the same job. A track whose top candidate has no range at all counts as outside the
 tolerance rather than being dropped.
 
 ## Full size
@@ -251,8 +250,8 @@ the exports are unchanged: they still render at the figure's own layout size.
 
 ## Exporting for a paper
 
-**Export SVG** gives vector output with the text still text, which is what a
-journal wants and what lets a typesetter restyle labels.
+**Export SVG** gives vector output with the text kept as text, so labels can
+be restyled.
 
 **Export PNG** gives a raster at three times the layout size, about 4500 pixels
 wide, which is past 300 dpi for a full-page figure.
@@ -286,7 +285,7 @@ renderer: its only static export routes are a real browser or a Python tool that
 itself requires one. The browser it uses is the Playwright Chromium the
 repository already installs for its regression tests, so there is no new
 dependency, but it does make the command-line path slower and heavier than the
-in-app export. **Prefer the in-app export unless a script has to do the work.**
+in-app export.
 
 ## Where the code lives
 

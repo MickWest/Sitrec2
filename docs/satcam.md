@@ -12,13 +12,14 @@ Normal mode uses conventional **Azimuth/Elevation** angles to point the camera. 
 - **Pan (Az)**: Horizontal heading in degrees (0 = north, 90 = east)
 - **Tilt (El)**: Vertical tilt from the horizon (-89 to +89 degrees)
 - **Roll**: Camera roll around the viewing axis
-- **Zoom (fov)**: Field of view in degrees
+
+The vertical field of view is set separately by **VFOV (deg)** in **Camera > FOV (Zoom)**. The mode switch does not change it.
 
 This is the natural choice when the camera is looking roughly toward the horizon, as in aircraft-based scenarios.
 
 ### Pan: -180 to +180, or 0 to 360
 
-An azimuth is an angle on a circle, so 270 and -90 are the same direction — one is a compass bearing, the other is signed. Pan (Az) shows the signed spelling by default, and the **Use 0-360 for Pan** checkbox at the bottom of the Heading folder switches it to the compass one.
+An azimuth is an angle on a circle, so 270 and -90 are the same direction — one is a compass bearing, the other is signed. Pan (Az) shows the signed spelling by default, and the **Use 0-360 for Pan** checkbox in the Heading folder switches it to the compass one.
 
 The checkbox changes only how the angle is *written*. It does not move the camera, and it does not change anything else in Sitrec: the angle is stored signed either way, so a saved sitch, a traverse, an exported track and a photo match all come out identical whichever box is ticked.
 
@@ -42,7 +43,8 @@ Satellite mode uses a **quaternion-based** orientation system referenced to the 
 When satellite mode is enabled, the Pan/Tilt/Roll sliders are hidden and replaced with:
 
 - **Rotation**: Screen-space spin around the camera's look axis (like rotating a photograph). This is baked into the internal quaternion, so mouse drags remain screen-aligned at any rotation angle.
-- **Zoom (fov)**: Field of view (always visible in both modes)
+
+**VFOV (deg)** in **Camera > FOV (Zoom)** sets the field of view in both modes. It is hidden while [Fisheye](Fisheye.md) or [Panoramic Camera](PanoramicCamera.md) is on, because those projections have their own field-of-view controls.
 
 Mouse dragging pans the view in screen space — left/right and up/down always match the screen directions regardless of orientation.
 
@@ -65,11 +67,11 @@ Internally the two modes use different parameterizations of the same rotation:
 
 ### Automatic Switching
 
-When another controller (such as a track) is driving the camera and it reaches a near-vertical orientation (within ~0.08 degrees of nadir or zenith), Sitrec **automatically enables satellite mode** to prevent gimbal lock. This only occurs while the Manual PTZ controller is inactive — it does not trigger during manual mouse dragging.
+When another controller (such as a track) is driving the camera, Sitrec keeps the Pan/Tilt/Roll values in step with the camera. If the camera reaches a near-vertical orientation (within ~0.08 degrees of nadir or zenith), Sitrec **automatically enables satellite mode** to prevent gimbal lock, and it turns satellite mode off again when the camera is not near vertical. This happens while another **Camera Heading** source drives the camera, and once when you switch Camera Heading back to **Manual** or turn off Free Look. It does not trigger during manual mouse dragging.
 
 ### Manual Toggle
 
-The **Satellite Mode** checkbox appears in the **Camera > Heading** folder, alongside the Pan, Tilt, Roll, and Rotation controls. Check it to enter satellite mode; uncheck to return to normal mode.
+The **Satellite Mode** checkbox appears in the **Camera > Heading** folder, alongside the Pan, Tilt, Roll, and Rotation controls. Check it to enter satellite mode; uncheck to return to normal mode. **Camera Heading** must be set to **Manual**: for any other heading source, Satellite Mode, Pan, Tilt, Rotation and Use 0-360 for Pan are greyed out.
 
 ---
 
@@ -82,7 +84,7 @@ The **Satellite Mode** checkbox appears in the **Camera > Heading** folder, alon
 | **Reference frame** | World north/up | Camera-local axes |
 | **Rotation control** | Roll slider | Rotation slider |
 
-In normal mode, dragging left always pans toward west regardless of camera roll. In satellite mode, dragging left always moves the view left on screen — the rotation is applied in camera-local space. The Rotation slider spins the view without affecting drag behavior, because it is part of the same quaternion.
+In normal mode, a horizontal drag always changes azimuth (a turn about the local vertical), whatever the camera roll; dragging left turns toward west only when the camera faces north. In satellite mode, dragging left always moves the view left on screen — the rotation is applied in camera-local space. The Rotation slider spins the view without affecting drag behavior, because it is part of the same quaternion.
 
 ---
 

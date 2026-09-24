@@ -33,7 +33,7 @@ A few terms used throughout. If you've used Sitrec before some of these will be 
 
 Sitrec keeps two kinds of wind state side by side:
 
-- **Target Wind** — the wind acting on the *target* (the thing you are tracking). Used by traverse methods that compute target motion through the air (e.g. `LOSTraverseConstantSpeed` in airspeed mode).
+- **Target Wind** — the wind acting on the *target* (the thing you are tracking). Used by traverse methods that compute target motion through the air (e.g. `LOSTraverseConstantSpeed` in airspeed mode). In [Traverse Analysis](TraverseAnalysis.md#analysis-integrity), Target Wind is the **supplied wind**: each wind-dependent fit runs once with it and once with a wind of its own.
 - **Local Wind** — the wind acting on the *camera platform* (the jet, ship, balloon you are looking from). Used by anything that needs platform-relative airflow.
 
 Each has a heading-from (true degrees, north = 0, blowing **from** that direction) and a speed in knots. By default both come from the same **Wind Source**; turn on **Separate Wind Sources** to drive them from different inputs.
@@ -82,8 +82,8 @@ Available sources:
 | Source | What it is | When to use it |
 |---|---|---|
 | **GFS (NOAA)** | Global atmospheric grid from the NOAA Global Forecast System. Whole-Earth coverage, 6-hour cycles. | Default for most modern dates. Good when you need wind at altitudes other than the ground. |
-| **UWYO Soundings** | Radiosonde profiles from University of Wyoming. Auto-fetches the nearest stations and IDW-blends them. | Historical dates back to ~1973, good vertical resolution near launch sites. |
-| **IGRA2 Soundings** | NOAA NCEI's Integrated Global Radiosonde Archive. Same idea as UWYO but a different upstream archive. | Older dates UWYO doesn't have, or when you want a second opinion against UWYO. |
+| **UWYO Soundings** | Radiosonde profiles from University of Wyoming. Auto-fetches the nearest stations and IDW-blends them. | Historical dates, good vertical resolution near launch sites. |
+| **IGRA2 Soundings** | NOAA NCEI's Integrated Global Radiosonde Archive. Same idea as UWYO but a different upstream archive. | A different archive from UWYO. Can have dates or stations that UWYO does not. |
 | **Manual Soundings** | Soundings *you* dragged in (a UWYO `.csv`/`.txt` or an IGRA2 `.txt`). | When you want curated profiles instead of automatic nearest-station fetches. |
 | **open-meteo** | Per-track-point fetches from the Open-Meteo public API (no key, rate-limited). | Useful for one-off lookups; not great for filling a whole grid. |
 | **Manual** | A single uniform wind defined by **Target Wind From / Knots**. | Quick experiments, sitches without specific weather, or when the real data is missing/wrong. |
@@ -100,13 +100,15 @@ These are easy to confuse — they share the same four GUI sliders.
 
 A pass-through. Drag a UWYO `.csv`/`.txt` or an IGRA2 `.txt` (a zipped `.txt.zip` is auto-extracted) onto the page; Sitrec parses it and adds it to the loaded-soundings pool. Picking **Manual Soundings** uses *only* what you've dropped in (no auto-fetch). Useful when you want curated profiles rather than nearest-station fetches.
 
-**Selecting an atmospheric source for the first time** auto-toggles **Show Wind Lines** on once and triggers the data load — both happen in one step, so the streamlines appear as soon as the data arrives. If you turn the lines off explicitly, that auto-show won't fire again for that source in the same session.
+**Selecting GFS, UWYO, IGRA2, Manual Soundings or a Track: source for the first time** auto-toggles **Show Wind Lines** on once and triggers the data load — both happen in one step, so the streamlines appear as soon as the data arrives. If you turn the lines off explicitly, that auto-show won't fire again for that source in the same session.
 
 ### Separate Wind Sources
 
 Off (default): a single Wind Source feeds both target and local. Toggling it on reveals **Local Wind Source** so the two can use different inputs.
 
 A common reason to turn this on: a sitch where the camera platform has a track-file wind (MISB-derived) and you want the target to use real GFS data instead of inheriting from the platform.
+
+Limitation: only one atmospheric data set is loaded at a time, and it follows the Target Wind Source. If you pick two *different* atmospheric sources (for example GFS for the target and UWYO for local), the local wind is sampled from the target's data set, not from its own. Only **Manual** or a **Track:** option gives the local side a truly independent input.
 
 When you turn **Separate** off again, Local Wind Source snaps back to whatever Target is set to, so the two pipelines don't quietly drift out of sync.
 
@@ -128,7 +130,7 @@ Lock-to-Camera/Target is useful when you want the streamlines to always be at th
 
 ### Nearby Wind Only / Nearby Radius (km)
 
-By default Sitrec's wind grid is global (5° resolution); the streamline mesh covers the whole Earth. **Nearby Wind Only** restricts streamline seeding to a circle of **Nearby Radius (km)** around your scene, which is faster to compute and easier to read when you're zoomed in close.
+Sitrec's wind grid is global: 1° for GFS, 5° for the sounding, Manual and Track sources. **Nearby Wind Only** is on by default (**Nearby Radius (km)** = 250): it restricts streamline seeding to a lat/lon box of that radius around the camera position, which is faster to compute and easier to read when you're zoomed in close. Turn it off to seed streamlines over the whole globe.
 
 The arrows overlay (see below) is unaffected.
 
@@ -166,7 +168,7 @@ Visual tuning for the streamlines.
 
 - **Opacity** — overall alpha (0–1).
 - **Spacing (°)** — seed density in degrees of latitude/longitude. Higher value = fewer, more spread-out streamlines.
-- **Max Speed (m/s)** — clamps the colour ramp. Wind faster than this paints at the high end of the gradient.
+- **Max Speed (m/s)** — clamps the color ramp. Wind faster than this paints at the high end of the gradient.
 
 ### Refresh Wind Data
 
@@ -175,16 +177,20 @@ Re-runs the current source's load. Useful if:
 - The atmospheric data was empty/failed earlier and you want to retry;
 - The date or hour changed and you want the next GFS cycle.
 
+### Local from Constant Camera
+
+Estimates the wind at the camera platform from the camera track, on the assumption that the platform flew at a constant airspeed. It finds the single horizontal wind that makes the airspeed along the track most nearly constant, and writes it into **Local Wind From** / **Local Wind Knots**. So that the result is not overwritten, it switches the source to **Manual** — the **Local Wind Source** only when **Separate Wind Sources** is on, otherwise the shared **Wind Source**. **Status** then shows the result, e.g. `Local wind: 270° / 45 kt (σ=3.2 kt, …)`, where σ is the remaining spread in airspeed.
+
 ### Sounding Count
 
-How many of the nearest soundings to fetch when an auto-loading sounding source (UWYO / IGRA2) is picked. Default 3, max 10. More points = more accurate IDW grid in your region but more network round-trips.
+How many of the nearest soundings to fetch when an auto-loading sounding source (UWYO / IGRA2) is picked. Default 3, max 10. More soundings = more stations in the IDW blend, and more network requests.
 
 ### Import Sounding…
 
 Opens a dialog to fetch a *specific* sounding by station + date + hour. Three-step:
 
 1. **Station picker** — type to filter, pick from the list (sorted by distance to your camera).
-2. **Source** — UWYO (fastest) or IGRA2 (NCEI archive, possibly more accurate).
+2. **Source** — UWYO (fastest) or IGRA2 (NCEI archive).
 3. **Date / hour** — defaults to the sitch's start date and the closest 00Z/12Z launch.
 
 After fetching, Sitrec auto-switches your Wind Source to **Manual Soundings** so you can keep dropping more in without each one being clobbered by an auto-fetch.

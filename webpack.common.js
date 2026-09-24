@@ -66,7 +66,10 @@ function addHeadingIds(html) {
             .replace(/&amp;/g, '&');
         let slug = text.toLowerCase().trim()
             .replace(/[^\w\s-]/g, '')                          // drop punctuation
-            .replace(/\s+/g, '-');
+            // One hyphen PER space, as GitHub does. "Stage 2 — Undo" loses the dash and
+            // keeps both spaces, so GitHub's slug is "stage-2--undo"; collapsing the run
+            // to one hyphen broke every such link in the built site.
+            .replace(/\s/g, '-');
         if (!slug) return match;
         // GitHub disambiguates repeats with -1, -2, ...
         const n = used.get(slug) || 0;

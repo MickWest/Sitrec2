@@ -23,7 +23,7 @@ When `useEllipsoid` is **false**, Sitrec treats both radii as equal to *a*, dege
 
 **The default is `false` — a sphere** (`CSituation.js`). Only the `custom` sitch and the night-sky/Starlink sitch opt in to the ellipsoid; every legacy sitch (gimbal, gofast, aguadilla, Nimitz, chilean, …) runs on a sphere, for regression stability.
 
-The cost of sphere mode is often described as a ~10 km radial difference. That framing is misleading: a radial offset is *common-mode*, it moves the whole scene together and barely affects local geometry. What actually corrupts a measurement is the **anisotropic horizontal scale error**. In sphere mode the geodetic latitude is used as if it were the spherical polar angle, so north–south and east–west distances are scaled differently:
+In sphere mode the radius differs from the ellipsoid by up to ~21 km, but that offset is *common-mode*: it moves the whole scene together and barely affects local geometry. The error that affects measurements is the **anisotropic horizontal scale error**. In sphere mode the geodetic latitude is used as if it were the spherical polar angle, so north–south and east–west distances are scaled differently:
 
 | Latitude | N–S scale error | E–W scale error | Differential over a 50 km baseline |
 |---|---|---|---|
@@ -35,9 +35,9 @@ The cost of sphere mode is often described as a ~10 km radial difference. That f
 
 At 34°N a 50 km north–south baseline is stretched by about 179 m while a 50 km east–west baseline is compressed by about 52 m, so a 20 nm range is off by up to ~130 m depending on bearing.
 
-Two things soften this in practice. Terrain, tracks and cameras all go through the same transform, so a sphere-mode scene is *internally* consistent — it is absolute distances and bearings that are distorted, not the alignment of one object against another. And Sitrec forces `useEllipsoid` on whenever 3D buildings are enabled (`CNodeTerrainUI.js`), because Google and Cesium tiles are true-ECEF and mixing them with a spherical ground would be far worse; the Terrain-menu toggle then refuses to switch back. That is why the setting sometimes appears to move on its own.
+Two things soften this in practice. Terrain, tracks and cameras all go through the same transform, so a sphere-mode scene is *internally* consistent — it is absolute distances and bearings that are distorted, not the alignment of one object against another. And Sitrec forces `useEllipsoid` on whenever 3D buildings are enabled (`CNodeTerrainUI.js`), because Google and Cesium tiles are true-ECEF and mixing them with a spherical ground would be far worse; the **Use Ellipsoid Earth Model** toggle (Terrain → Terrain Tweaks) then refuses to switch back. That is why the setting sometimes appears to move on its own.
 
-**Use the ellipsoid for any quantitative work.**
+The ellipsoid removes the scale errors in the table above.
 
 Changing the Earth model at runtime updates the global radii, recalculates the node graph,
 and refreshes terrain. Editable splines created from LLA or legacy local coordinates retain
@@ -51,7 +51,7 @@ The ellipsoid is a smooth mathematical surface. The actual shape of sea level �
 
 **EGM96** (Earth Gravitational Model 1996) is a spherical harmonic model of the geoid. It defines the **geoid undulation** *N* at any point on Earth: the signed vertical distance between the geoid and the WGS84 ellipsoid. Across the whole Earth *N* runs from about **−107 m** to **+85 m**.
 
-"Up to 100 m" is the global extreme, which is not the number you need. The number you need is the one where your sighting happened, and it is usually a large, consistent offset:
+At a given location *N* is a nearly constant offset. Some values:
 
 | Location | EGM96 *N* |
 |---|---|
@@ -89,19 +89,18 @@ In plain terms:
 
 ## How to tell you have a datum error
 
-Datum mistakes do not announce themselves. Nothing crashes and no warning appears — you just get a track in slightly the wrong place, and every angle, range and speed you derive from it inherits the error. The good news is that each mistake has a distinctive *signature*, so you can usually identify which one you have made by looking at how the error behaves.
+Sitrec does not detect datum errors. Nothing crashes and no warning appears — the track is in slightly the wrong place, and every angle, range and speed derived from it inherits the error. The table below lists the pattern each error makes.
 
 | What you see | What it probably is |
 |---|---|
 | Track sits uniformly ~20–40 m **underground** in the continental US, by the same amount everywhere | An MSL→HAE conversion that did not happen. Your source was orthometric and was read as ellipsoidal |
-| Track sits uniformly ~20–40 m **too high**, by the same amount everywhere | The conversion was applied **twice** — often because you added a manual Alt offset to "fix" a problem Sitrec had already handled |
-| Error is small near the ground and grows to hundreds or thousands of feet at cruise | Pressure altitude. See "Barometric Altimetry" below — no setting in Sitrec can fix this after the fact |
+| Track sits uniformly ~20–40 m **too high**, by the same amount everywhere | The conversion was applied **twice** — for example, a manual Alt offset added to a track that Sitrec had already converted |
+| Error is small near the ground and grows to hundreds or thousands of feet at cruise | Pressure altitude. See "Barometric Altimetry" below — Sitrec has no pressure-altitude correction |
 | Error follows the shape of the terrain — right over flat ground, wrong on hills | AGL and MSL have been mixed up |
-| A sudden vertical step at a tile boundary | A void (no-data) area in the elevation model, which is filled without the geoid offset its neighbours got |
 | An aircraft on the ground at a high-elevation airport reads ~5,400 ft, then snaps to 0 | Not a datum error — that is the ADS-B "on ground" bit taking over |
 | Everything is fine near the scene origin and drifts as you move away | Sphere mode. See the scale table above |
 
-The most useful habit: before trusting any altitude, find one object whose height you independently know — a building, a runway, a mountain summit, the sea — and check that Sitrec puts it where it belongs. A single known reference catches almost every error in this table.
+Tip: to check the altitude datum, compare an object of known height (a building, a runway, a mountain summit, the sea surface) with its position in Sitrec.
 
 ## AWS Terrain Tiles (Terrarium Format)
 
@@ -119,7 +118,7 @@ elevation = R * 256 + G + B / 256 - 32768   (meters)
 
 These elevations are **orthometric heights** — heights above sea level, not above the WGS84 ellipsoid — and Sitrec corrects them with EGM96 (below).
 
-As with Mapbox (see the note further down), treat that as a practical approximation rather than a universal truth: Terrarium is a mosaic of SRTM, 3DEP/NED, GMTED and ETOPO1, whose native vertical datums are not all EGM96. The same single correction is applied to every source by the same code path.
+As with Mapbox (see the note further down), the source datums are not all EGM96: Terrarium is a mosaic of SRTM, 3DEP/NED, GMTED and ETOPO1, whose native vertical datums are not all EGM96. Sitrec applies the same single EGM96 correction to every source by the same code path.
 
 Terrarium also encodes **negative** elevations over water — seafloor depth from global bathymetry. Sitrec discards these: every ground query clamps to `max(terrain, geoid)`. **Over water, Sitrec's ground is the EGM96 geoid, and bathymetry is thrown away.**
 
@@ -142,7 +141,7 @@ elevation[ij] = R * 256 + G + B / 256 - 32768
 
 The same correction is currently applied to Mapbox Terrain-RGB tiles (`computeElevationFromRGBA_MB`) for consistency with Sitrec's EGM96-based altitude handling.
 
-Mapbox's own documentation states Terrain-RGB is built from mixed vertical datums (for example NAVD88, EGM96, and local datums), so this correction should be treated as a practical approximation, not a universal truth for every tile.
+Mapbox's own documentation states Terrain-RGB is built from mixed vertical datums (for example NAVD88, EGM96, and local datums), so the correction is approximate where a tile's source datum is not EGM96.
 
 Without this correction, terrain would be displaced vertically by up to ~100 m depending on location, causing visible misalignment with GPS tracks, satellite imagery, and 3D building tiles (all of which derive their positions from HAE, not MSL).
 
@@ -196,6 +195,15 @@ The same altitude test separates ECEF from a `lat, lon, altitude` triple, so nei
 
 That overlap is not hypothetical: `0, 0, 6356752` is the north pole *and* a lat/lon 6356 km up, and at a pole the "ECEF numbers are far too big to be degrees" intuition fails outright, because `x` and `y` are zero there. An altitude outside the window that is not a position on Earth either — a geostationary subsatellite point at 35,786 km — stays a lat/lon.
 
+## Lat/Lon Grid
+
+**Show → Lat/Lon Grid in Main** and **Show → Lat/Lon Grid in Look** draw a latitude/longitude
+graticule over the globe in that view: a line every 10°, with the equator and the prime
+meridian brighter. Each view's header bar has the same toggle as a globe button. The grid is
+drawn over terrain and buildings, so they never hide it, but lines on the far side of the
+Earth are not drawn. It follows the Earth model (sphere or ellipsoid), Declutter hides it,
+and a saved sitch keeps both settings.
+
 ## 3D Tiles (Cesium / Google)
 
 Cesium Ion and Google Photorealistic 3D Tiles are delivered as 3D Tiles in Cartesian coordinates. For global geospatial tilesets this is typically WGS84 ECEF (often EPSG:4978 per the 3D Tiles spec). Sitrec uses these directly in ECEF (`CNodeBuildings3DTiles.js`). No geoid correction is needed because there is no separate "MSL altitude" field to reinterpret.
@@ -209,14 +217,14 @@ Cesium Ion and Google Photorealistic 3D Tiles are delivered as 3D Tiles in Carte
 |---|---|
 | **WGS84 Ellipsoid** | A smooth mathematical oblate spheroid. Pure geometry, no physical meaning. Reference for GPS. |
 | **Geoid** | An equipotential gravitational surface approximating mean sea level. Irregular shape, physically meaningful. |
-| **Mean Sea Level (MSL)** | Approximated by the geoid, but also used loosely for barometric altitude — the source of most confusion. |
+| **Mean Sea Level (MSL)** | Approximated by the geoid, but also used loosely for barometric altitude. |
 
 ---
 
 ## Standard Terms
 
 ### Ellipsoidal Height (geometric)
-- **HAE** — Height Above Ellipsoid *(most common in military/DoD)*
+- **HAE** — Height Above Ellipsoid
 - **Ellipsoidal height / ellipsoid height**
 - **h** *(lowercase, formal geodetic literature)*
 - *"GPS altitude"* *(informal)*
@@ -261,10 +269,10 @@ The geoid undulation **N** ranges globally from approximately **−107 m** to **
 Height above the geoid (EGM96 or EGM2008). Derived by GPS receiver applying a geoid model to the raw ellipsoidal height. This is the geodetically correct meaning.
 
 ### 2. Barometric / Aviation MSL
-Height derived from atmospheric pressure, calibrated to the ISA (International Standard Atmosphere) model. Reported by altimeters and used in ATC. **Not the same as geodetic MSL** — deviates by tens of meters under non-standard temperature/pressure conditions.
+Height derived from atmospheric pressure, calibrated to the ISA (International Standard Atmosphere) model. Reported by altimeters and used in ATC. **Not the same as geodetic MSL** — the difference depends on temperature and height; see "Temperature error" below.
 
 ### 3. "GPS altitude" mislabeled as MSL
-Many GPS devices, NMEA sentences, and flight logs report the raw ellipsoidal height (HAE) but label it "altitude" or "MSL" — especially when the onboard geoid model is absent or low quality.
+Some devices and logs label ellipsoidal height (HAE) as "altitude" or "MSL". Check the documentation for the source.
 
 ---
 
@@ -277,7 +285,7 @@ $GPGGA,...,<MSL altitude>,M,<geoid separation>,M,...
 - **Geoid separation** = N (geoid height above ellipsoid)
 - **Ellipsoidal height** = MSL altitude + geoid separation (h = H + N)
 
-However, the geoid separation field is often populated from a coarse onboard table (sometimes just a single global constant), making it unreliable on many consumer devices.
+The quality of the geoid separation field depends on the geoid model in the receiver.
 
 ---
 
@@ -289,7 +297,7 @@ However, the geoid separation field is often populated from a coarse onboard tab
 | 75 | SensorEllipsoidHeight | HAE (WGS84 ellipsoid) |
 | 104 | SensorEllipsoidHeightExtended | HAE, extended precision |
 
-The standard defines Tag 15 as "MSL" but **does not explicitly specify EGM96**. In practice, DoD platforms of the Predator/Reaper era use EGM96 as the geoid model. Tag 75 was added later specifically because Tag 15's ambiguity was a known problem.
+The standard defines Tag 15 as "MSL" but **does not explicitly specify EGM96**.
 
 ---
 
@@ -309,7 +317,7 @@ Google's `gx:` extension namespace adds two sea-floor variants (`clampToSeaFloor
 
 **Spec point:** KML `absolute` altitude is sea-level referenced (OGC KML: EGM96 geoid vertical datum in the standard geodetic CRS definition).
 
-**Sitrec implementation note:** Sitrec treats KML `absolute` altitude as **MSL** (EGM96 geoid), per the OGC KML vertical datum. KML feature import (`CNodeTrackFromLLAArray`, absolute mode) passes `altitudeReference: "MSL"` and the track KML exporters (`CNodeTrack.exportTrackKML`, `CNode3DObject.exportToKML`) convert HAE→MSL on the way out, so exported tracks and objects open at the correct height in Google Earth. (`CNodeTrackFromLLAArray` / `CNodeTrack` still default `altitudeReference` to `"HAE"` for non-KML callers that supply raw ellipsoidal data.)
+**Sitrec implementation note:** Sitrec treats KML `absolute` altitude as **MSL** (EGM96 geoid), per the OGC KML vertical datum. KML feature import (`CNodeTrackFromLLAArray`, absolute mode) passes `altitudeReference: "MSL"` and the track KML exporters (`CNodeArray.exportTrackKML`, `CNode3DObject.exportToKML`) convert HAE→MSL on the way out, so exported tracks and objects open at the correct height in Google Earth. (`CNodeTrackFromLLAArray` / `CNodeTrack` still default `altitudeReference` to `"HAE"` for non-KML callers that supply raw ellipsoidal data.)
 
 ---
 
@@ -319,9 +327,9 @@ ADS-B Extended Squitter (1090ES) mandates two altitude fields per FAR 91.227(d):
 
 **Barometric (pressure) altitude** — always required, always referenced to **1013.25 hPa (QNE)**. This is the raw transponder Mode C output. It is *never* QNH-corrected in the transmitted data stream — QNH correction only happens onboard the aircraft and in ATC systems on the ground.
 
-**Geometric (GNSS) altitude** — also required, transmitted as **HAE (height above WGS84 ellipsoid)**. This is GPS-derived. Not used for ATC separation — only as a cross-check and for EGPWS/terrain systems.
+**Geometric (GNSS) altitude** — also required, transmitted as **HAE (height above WGS84 ellipsoid)**. This is GPS-derived.
 
-These two values are almost never the same. At cruising altitude the difference is routinely **1,500–3,000 ft** in winter — see the temperature-error section below for how to compute it for your own case.
+The two values differ. The difference depends on the air temperature and the sea-level pressure — see the temperature-error section below for how to estimate it.
 
 ---
 
@@ -336,15 +344,13 @@ When exporting a KML track from globe.adsbexchange.com, three altitude options a
 - The aircraft will appear at the right height above the terrain model
 
 ### 2. Baro + avg.(EGM96 − baro)
-- Takes the `alt_baro` field (QNE pressure altitude) and adds a **regional average offset** between EGM96 and barometric altitude
-- Compensates for the aggregate effect of geoid undulation and local atmospheric pressure deviation from standard
-- A reasonable approximation when geometric altitude is unavailable or noisy, but not precise
+- Takes the `alt_baro` field (QNE pressure altitude) and adds an average offset between EGM96 and barometric altitude
+- An approximation: the offset is an average, not the value for the exact time and place
 
 ### 3. Uncorrected pressure altitude
 - Raw `alt_baro` field: pressure altitude at **1013.25 hPa standard**, no correction
 - This is what ATC Mode C radar sees before QNH correction
-- Looks wrong in Google Earth because it doesn't account for geoid undulation or non-standard pressure
-- Lowest quality for 3D reconstruction; use only when the others are unavailable
+- Not corrected for local pressure or the geoid, so it does not match the terrain in Google Earth
 
 ### ADSBexchange API fields (for reference):
 - `alt_baro` — barometric pressure altitude, feet, QNE (1013.25 hPa), or `"ground"`
@@ -354,12 +360,11 @@ When exporting a KML track from globe.adsbexchange.com, three altitude options a
 
 ## FlightRadar24
 
-FR24 displays **barometric altitude only** — specifically the raw QNE (1013.25 hPa standard pressure) altitude from the ADS-B transponder. It is **not** corrected for local QNH.
+FR24 displays the raw QNE (1013.25 hPa standard pressure) altitude from the ADS-B transponder. It is **not** corrected for local QNH.
 
 Consequences:
 - At high-altitude airports (e.g., Denver KDEN, elevation 5,433 ft), aircraft on the ground will show ~5,400 ft, then jump to 0 ft when the "on ground" bit is set, creating a discontinuous step.
-- FR24 does show GPS altitude separately where available (aircraft transmitting geometric altitude), displayed as a secondary field.
-- The primary altitude shown is always the raw QNE pressure altitude — not true MSL, not HAE, not EGM96.
+- The altitude shown is QNE pressure altitude — not true MSL, not HAE, not EGM96.
 
 **FR24 statement:** *"ADS-B only reports altitude values based on the standard pressure of 1013 hectopascals."*
 
@@ -370,8 +375,6 @@ Consequences:
 FlightAware similarly displays **barometric pressure altitude at 29.92 inHg (QNE)**. It is uncorrected for local altimeter setting.
 
 This means the altitude shown is the same datum as FR24 — raw QNE pressure altitude. Not true MSL in the geodetic sense; not HAE; not EGM96-corrected.
-
-FlightAware can show geometric altitude when available from ADS-B, but it is not the primary displayed value.
 
 **Practical implication:** A flight at 5,500 ft indicated (with a local altimeter setting of, say, 30.15 inHg) appears on FlightAware at roughly **5,270 ft**, because FlightAware uses QNE, not QNH. The rule of thumb is about 1,000 ft per inHg near sea level, so (30.15 − 29.92) = 0.23 inHg ≈ 230 ft.
 
@@ -389,7 +392,7 @@ This means:
 - FL350 (35,000 ft) is the pressure level corresponding to 35,000 ft in the **International Standard Atmosphere (ISA)**, not necessarily 35,000 ft above the geoid.
 - On a cold day, the atmosphere is denser and FL350 is geometrically *lower* than 35,000 ft.
 - On a hot day, FL350 is geometrically *higher* than 35,000 ft.
-- The divergence between pressure altitude and geometric altitude at cruise is routinely **2,000–4,000 ft** in ordinary winter conditions — not an extreme case.
+- The size of the difference is estimated in "Temperature error" below.
 
 ### Why the transition exists
 The purpose of QNE above FL180 is not accuracy — it's **uniformity**. Every aircraft uses the same datum above the transition, so vertical separation is consistent even if the absolute altitude is off. ATC radar works with Mode C (QNE) codes and applies its own QNH correction to convert to displayed altitude for controllers.
@@ -398,7 +401,7 @@ The purpose of QNE above FL180 is not accuracy — it's **uniformity**. Every ai
 A barometric altimeter is calibrated to ISA (15°C at sea level, lapse rate of 2°C/1000 ft — strictly 6.5 K/km). It has no temperature compensation for real-world conditions. On a cold day:
 - Air is denser; a given pressure is reached at a *lower* geometric altitude
 - The aircraft is physically lower than the altimeter indicates
-- **Cold temperature correction** is required for obstacle clearance; it is safety-critical and commonly neglected
+- **Cold temperature correction** is required for obstacle clearance; it is safety-critical
 
 **Estimating it.** The aviation rule of thumb for cold-temperature correction is about **4 ft per 1,000 ft per °C of ISA deviation**:
 
@@ -408,7 +411,7 @@ error (ft) ≈ 4 × (height in thousands of ft) × (ISA deviation in °C)
 
 Two cautions on using it. The operational version of this rule — the one in the FAA's cold-temperature guidance — is defined for **height above the altimeter setting source** (the airport), using the *reported* surface temperature, because that is the case pilots need for obstacle clearance. Applying it to a full flight level against a single cruise-level temperature reading is an extrapolation, not the published procedure.
 
-Even so, the magnitude it implies is the right order: the divergence between pressure and geometric altitude at cruise runs to thousands of feet in cold air, not hundreds. If you need the number to be right rather than indicative, integrate the actual temperature profile from a sounding rather than applying a rule of thumb — and if the conclusion depends on it, say which you did.
+For FL350 at ISA −10 °C the rule gives about 4 × 35 × 10 = 1,400 ft. For an exact value, integrate the temperature profile from a sounding.
 
 ---
 
@@ -418,9 +421,9 @@ Even so, the magnitude it implies is the right order: the divergence between pre
 |---|---|---|---|
 | ADS-B `alt_baro` | Pressure altitude | QNE (1013.25 hPa) | Never QNH-corrected in the data stream |
 | ADS-B `alt_geom` | Geometric / HAE | WGS84 ellipsoid | GPS-derived; not used by ATC |
-| ADSBx KML: geometric (EGM96) | Orthometric | EGM96 geoid | Best for Google Earth / 3D reconstruction |
-| ADSBx KML: baro + avg | Approximate MSL | EGM96 approximate | Good fallback; regional correction only |
-| ADSBx KML: uncorrected pressure | Pressure altitude | QNE | Raw; worst for 3D reconstruction |
+| ADSBx KML: geometric (EGM96) | Orthometric | EGM96 geoid | Geoid-corrected GNSS altitude |
+| ADSBx KML: baro + avg | Approximate MSL | EGM96 approximate | Average correction only |
+| ADSBx KML: uncorrected pressure | Pressure altitude | QNE | Raw; no pressure or geoid correction |
 | FlightRadar24 | Pressure altitude | QNE (1013.25 hPa) | Same as raw ADS-B baro |
 | FlightAware | Pressure altitude | QNE (1013.25 hPa) | Same as raw ADS-B baro |
 | KML `absolute` mode | Orthometric | EGM96 geoid | Assumed by Google Earth renderer |
@@ -429,16 +432,16 @@ Even so, the magnitude it implies is the right order: the divergence between pre
 
 ---
 
-## Relevance to UAP/ADS-B Analysis
+## Converting ADS-B altitudes to HAE
 
-When reconstructing aircraft geometry (e.g., in Sitrec) from ADS-B data:
+To get HAE for an aircraft from ADS-B data:
 
 1. Use `alt_geom` (HAE) if available — it's geometrically clean and can be used directly with WGS84 lat/lon.
 2. If only `alt_baro` (QNE) is available, you need to apply two corrections to get HAE:
     - **QNH correction**: convert from QNE to orthometric height using local pressure (requires meteorological data for that time/place)
     - **Geoid correction**: add EGM96 undulation N to convert from orthometric to HAE
 3. ADSBx's "geometric (EGM96)" KML export already does this correctly and is suitable for Google Earth rendering and 3D reconstruction.
-4. The uncorrected QNE baro altitude can be off by hundreds to over a thousand feet from true geometric altitude at cruise — never use it for precision geometry without correction.
+4. Uncorrected QNE altitude includes the temperature and pressure error described above.
 
 
 
@@ -448,7 +451,7 @@ When reconstructing aircraft geometry (e.g., in Sitrec) from ADS-B data:
 
 | Source | What "altitude" likely means           |
 |---|----------------------------------------|
-| Raw GPS / GNSS receiver output | HAE (ellipsoidal)                      |
+| Raw GPS / GNSS receiver output | Depends on the receiver and the output sentence |
 | NMEA $GPGGA "MSL altitude" field | Orthometric (geoid), quality varies    |
 | Aviation altimeter / ATC reports | Barometric MSL                         |
 | Military KLV/MISB Tag 15 | EGM96 orthometric MSL                  |

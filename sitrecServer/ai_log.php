@@ -1,6 +1,10 @@
 <?php
 
-// The AI request log: one rolling file of who asked what of which model, and what it cost.
+// The AI request log: one rolling file of who used which model, and what it cost.
+//
+// It records NO prompt or reply text. The user docs (docs/AIAssistant.md, "Privacy") promise
+// that Sitrec's server does not keep conversations, and this log is written for every user,
+// so it must hold only accounting data: user id, kind of request, model, usage and cost.
 //
 // Shared, for the same reason ai_models.php is: the log is only useful if EVERY endpoint that
 // spends money on a provider writes to it. A second endpoint keeping its own file, or naming
@@ -10,8 +14,8 @@
 //
 // Two stores, because they answer different questions and have different lifetimes:
 //
-//   $AI_LOG_FILE      the last 500 individual requests, for "what did this user just ask,
-//                     and what did that one cost". Rolling, so it forgets.
+//   $AI_LOG_FILE      the last 500 individual requests, for "which request was expensive,
+//                     and whose was it". Rolling, so it forgets.
 //   recordDailyStats  28 days of totals, in the persistent cache dir. This is the one that
 //                     answers "what is the AI feature costing", and it must not be tied to
 //                     the 500-entry window or a busy hour would erase a day's spend.
@@ -90,9 +94,21 @@ function emptyAIUsage() {
     return ['inputTokens' => 0, 'outputTokens' => 0, 'cacheReadTokens' => 0, 'cacheWriteTokens' => 0, 'calls' => 0];
 }
 
+// Rows written by older builds held the first 500 characters of the prompt. EVERY writer of
+// $AI_LOG_FILE calls this on what it read, so no write can carry that text forward - including
+// a recordAISpend() that read the file before a concurrent logAIRequest() cleaned it.
+function stripLegacyPromptText($logs) {
+    foreach ($logs as &$entry) {
+        if (is_array($entry)) unset($entry['prompt']);
+    }
+    unset($entry);
+    return $logs;
+}
+
 // Record that a request was ATTEMPTED. Called before the provider call so a failure still
 // appears. Returns an id; hand it to recordAISpend() afterwards to attach what it cost.
-function logAIRequest($userId, $prompt, $model = null, $provider = null) {
+// $kind is a fixed label for the endpoint ("chat", "mask ground"), never user text.
+function logAIRequest($userId, $kind, $model = null, $provider = null) {
     global $AI_LOG_FILE;
 
     // Unique per entry so recordAISpend can find its own row under concurrency, rather
@@ -105,11 +121,13 @@ function logAIRequest($userId, $prompt, $model = null, $provider = null) {
         $logs = json_decode($content, true) ?: [];
     }
 
+    $logs = stripLegacyPromptText($logs);
+
     $logs[] = [
         'id' => $id,
         'timestamp' => time(),
         'user_id' => $userId,
-        'prompt' => substr($prompt, 0, 500),
+        'kind' => $kind,
         'model' => $model,
         'provider' => $provider,
     ];
@@ -145,7 +163,7 @@ function recordAISpend($logId, $userId, $provider, $model, $usage) {
     //    and comes back - and they all carry the same log id, because they are one thing
     //    the user asked for and should appear as one cost.
     if ($logId !== null && file_exists($AI_LOG_FILE)) {
-        $logs = json_decode(file_get_contents($AI_LOG_FILE), true) ?: [];
+        $logs = stripLegacyPromptText(json_decode(file_get_contents($AI_LOG_FILE), true) ?: []);
         foreach ($logs as &$entry) {
             if (($entry['id'] ?? null) === $logId) {
                 $entry['usage'] = addAIUsage($entry['usage'] ?? null, $usage);

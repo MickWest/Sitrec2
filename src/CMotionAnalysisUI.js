@@ -2450,7 +2450,11 @@ function createMaskingFolder(parentFolder) {
             console.log(`[SkyMask] quadtree: ${d.skyLeaves}/${d.leaves} leaves sky, `
                 + `split tolerance ${d.splitTolerance.toFixed(2)}, `
                 + `ground ${(d.groundFraction * 100).toFixed(0)}% of frame`);
+            // Show the new mask, so the user can see what it covers. Show Mask, not Edit
+            // Mask: the overlay draws only when one of the two is on, and editing would make
+            // the next click on the video paint.
             maskEnabledController.setValue(true);
+            showMaskController.setValue(true);
         },
         // Safety band added along the AI's outline, as a fraction of the frame's shorter side.
         // Not a fudge for a bad outline - it is where the model's residual error is made to
@@ -2509,8 +2513,10 @@ function createMaskingFolder(parentFolder) {
                     + `(luma ${d.lumaScore?.toFixed?.(2) ?? "-"}, `
                     + `texture ${d.textureScore?.toFixed?.(2) ?? "-"}), `
                     + `ground ${(d.groundFraction * 100).toFixed(0)}% of frame`);
-                // A fresh mask is only useful visible, exactly as the auto-mask buttons assume.
+                // A fresh mask is only useful visible. Enable Mask alone does not draw it, so
+                // also turn on Show Mask (see Mask Ground (auto) above).
                 maskEnabledController.setValue(true);
+                showMaskController.setValue(true);
             });
         },
     };

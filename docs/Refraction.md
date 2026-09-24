@@ -6,9 +6,8 @@ Air bends light. Distant things therefore appear slightly *higher* than straight
 says they should — including things below the geometric horizon, which is why you can
 sometimes see land that "should" be hidden by the Earth's curvature.
 
-This matters in Sitrec because a large class of arguments turns on exactly that question:
-*could the observer have seen X from Y?* Answered with refraction off, the answer is wrong by
-a knowable and often decisive amount.
+Refraction changes the answer to *could the observer have seen X from Y?* The tables below
+give the size of the change.
 
 > **Refraction is ON by default.** Sitrec bends light the way the atmosphere does unless you
 > turn it off. Switch it off only when you deliberately want straight-line geometry — to
@@ -31,10 +30,12 @@ Thirteen nautical miles at airliner altitude. At the standard-lapse value of k �
 about +10 %.
 
 For a *terrestrial* target the lift depends on how far away it is, because the light has only
-crossed the air between you and it:
+crossed the air between you and it. At Sitrec's default *k* of 0.176 (see below):
 
-- about **0.7 arcminutes at 20 km**
-- about **3.4 arcminutes at 100 km**
+- about **0.95 arcminutes at 20 km**
+- about **4.7 arcminutes at 100 km**
+
+At the traditional surveying value k = 0.13 these are about 0.7′ and 3.5′.
 
 For a *star*, which is seen through the whole atmosphere, the lift at the horizon is about
 **29 arcminutes** — roughly the diameter of the Sun. This is why the Sun is already
@@ -61,10 +62,12 @@ height lift   dh = k·d² / (2R)
 
 where *d* is the range and *R* the Earth's radius.
 
+The bend is applied to everything drawn in the scene: terrain, 3D tiles, buildings, the sea,
+3D models, tracks and line-of-sight lines all rise together, so a track stays on the terrain it
+sits on. Satellites and their tracks are the exception — they are already bent by the Sky model.
+
 **This is display only.** Ground elevations, altitude readouts and line-of-sight geometry stay
-geometric — refraction bends light, it does not raise the land. Note also that 3D models,
-tracks and line-of-sight lines are not currently lifted, so a track drawn against refracted
-terrain is drawn on the unrefracted geometry.
+geometric — refraction bends light, it does not raise the land.
 
 ---
 
@@ -97,47 +100,61 @@ k = 503 · (P / T²) · (0.0342 + dT/dh)
 with *P* in hPa, *T* in kelvin, and *dT/dh* the temperature gradient in K/m. So *k* is **not**
 independent of the pressure and temperature above it — changing those changes it.
 
-The term that matters is the temperature gradient, and it is also the one you are least likely
-to know:
+The term that matters most is the temperature gradient:
 
 | Gradient | Situation | Resulting *k* |
 |---|---|---|
 | −9.8 K/km | Dry adiabatic — strong daytime heating | low |
 | −6.5 K/km | Standard atmosphere | ≈ 0.176 |
-| −13.7 K/km | A sun-warmed land surface | 0.13, the traditional surveying value |
-| **positive** | **Inversion** — routine over water at night | **sharply higher**, can exceed 0.5 |
+| −13.7 K/km | Gives the traditional surveying value | 0.13 |
+| **positive** | **Inversion** (temperature increases with height) | **sharply higher**, can exceed 0.5 |
 
-That last row is the important one. Over water at night an inversion can nearly triple the
-refraction, which is the mechanism behind superior mirages and looming — distant ships and
-coastlines appearing well above where geometry puts them.
+An inversion is the cause of superior mirages and looming — distant ships and coastlines
+appearing well above where geometry puts them.
 
-**Practical consequence: refraction is a bounded-uncertainty term, not a fixed correction.**
-If your argument depends on it, do not quote one number. Run it at the standard gradient and
-again at a plausible inversion, and report both. If the conclusion flips between them, the
-honest finding is that the observation does not settle the question.
+*k* depends on the temperature gradient, which is usually not measured. Tip: to see the range
+of the effect, compare the result at −6.5 K/km with the result at a positive gradient.
 
 The bend is capped at 34′, on the reasoning that a finite target can never be lifted by more
 than the whole atmosphere would lift a star.
+
+**Elevated observers get less bend.** A ray only curves where there is air, so Sitrec scales
+*k* by the mean air density along the sight line (an 8.5 km scale height). An observer on the
+ground is unchanged; a camera at airliner altitude sees a smaller effective *k* than the
+textbook value, and a camera in orbit lifts the scene almost not at all. The apparent lift is
+also capped at 25.5 km, a guard that never applies to real ground-level geometry. So the
+30,000 ft row of the horizon table above, which uses a constant k = 0.13, overstates what the
+render shows from that height.
 
 ### Fitting k to an observation
 
 If you have a photograph showing a landmark at a known distance and known height, you can
 work backwards: tick **Override k** and adjust it until the render matches. That gives you a
-measured *k* for those conditions, which you can then apply to the object you actually care
-about. This is far stronger than assuming a textbook value — but state that you did it, since
-it is a fitted parameter.
+measured *k* for those conditions, which you can then apply to another object in the same
+scene.
 
 ---
 
 ## What is *not* refracted
 
+Refraction changes where things are *drawn*, not the numbers Sitrec computes:
+
 - Ground elevations and AGL readouts — geometric
-- Line-of-sight lines and traverse geometry — geometric
-- 3D models and tracks — not lifted
+- Line-of-sight and traverse calculations — geometric (the lines are drawn lifted, like
+  everything else in the scene)
 - The horizon calculations exposed to other parts of the app — geometric
 
-So if you turn refraction on and the distant terrain rises but the aircraft track sitting on
-it does not, that is expected. Do not read the resulting mismatch as a data problem.
+---
+
+## Ray-traced Refraction
+
+**Effects → Ray-traced Refraction**
+
+The two models above use one constant *k*. For non-uniform air — mirages, ducting, folds in
+the horizon — use the separate ray-traced tool. Tick **Enable Ray-traced Refraction** to apply
+it to one chosen 3D view, and click **Profiles, Rays & Lasers…** to open its editor. There you
+pick a temperature profile preset, drag the temperature and humidity curves, and add laser
+beams to see where light really goes. The settings save with the sitch.
 
 ---
 
@@ -146,5 +163,3 @@ it does not, that is expected. Do not read the resulting mismatch as a data prob
 - [GIS, Geodesy and Altitude](GIS.md) — the Earth model the curvature comes from
 - [Haze and Aerial Perspective](AtmosphericAerialPerspective.md) — the other way the
   atmosphere changes what a distant object looks like
-- [Doing Defensible Analysis](DefensibleAnalysis.md) — reporting a bounded-uncertainty term
-  honestly

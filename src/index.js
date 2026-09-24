@@ -52,7 +52,7 @@ import {
 } from "./Globals";
 import {disableScroll, f2m, stripComments, updateDocumentTitle} from './utils'
 import {CSituation} from "./CSituation";
-import {helpDocs, DOC_SECTIONS, getDocsForMenu} from "./docsRegistry";
+import {helpDocs, DOC_SECTIONS, getDocsForMenu, docMenuIds} from "./docsRegistry";
 import {EXTRA_TOOLS} from "./extraTools";
 import {parseFromAppParams, buildFromAppSitch, finishFromApp} from "./fromApp.js";
 import {par, resetPar} from "./par";
@@ -2137,7 +2137,7 @@ async function initializeOnce() {
     // Contextual help: a "Help" folder at the top of each app menu that has docs, so the
     // documentation is reachable from where the controls are rather than only from the
     // Help menu. Driven entirely by `menuId` in the registry.
-    for (const menuId of new Set(helpDocs.map(d => d.menuId).filter(Boolean))) {
+    for (const menuId of new Set(helpDocs.flatMap(docMenuIds))) {
         const menu = guiMenus[menuId];
         if (menu === undefined) continue;      // menu not created in this build/sitch
         const folder = addTranslatedGUIFolder(

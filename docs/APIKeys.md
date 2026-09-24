@@ -4,10 +4,8 @@ Sitrec lets you supply your own API keys — for the AI assistant, for Google's 
 for Cesium Ion, and for other providers — instead of using Sitrec's shared quota. You
 manage them in **Settings → API Keys…**.
 
-Handing an application a credential is a real decision, so this page explains exactly what
-Sitrec does with it, what protections exist, what they do *not* cover, and how to limit the
-damage if something goes wrong. It describes what the code actually does today, including
-the parts that are still weak.
+This page tells what Sitrec does with your keys, what protects them, what does not, and how
+to limit the damage if something goes wrong. It describes what the code does today.
 
 ---
 
@@ -22,8 +20,8 @@ the parts that are still weak.
 - Keys are **obscured at rest**, so they are not sitting in the database as readable text.
   This is a guard against accidental exposure, **not** real encryption — see below.
 - Anything that can run JavaScript on the Sitrec page can still obtain them.
-- Use **narrowly scoped keys with spending limits set at the provider**. That is the single
-  most effective protection, and it is the one thing Sitrec cannot do for you.
+- Use **narrowly scoped keys with spending limits set at the provider**. Sitrec cannot do
+  this for you.
 
 ---
 
@@ -53,20 +51,17 @@ Practical consequences of storing them there:
 Stored values are wrapped with AES-GCM before being written, so what sits in the database is
 an opaque blob beginning `sitrec-obf-v1:` rather than a recognisable `sk-ant-...` string.
 
-**Be clear about what this is worth.** The passphrase used to wrap them is a fixed value
-compiled into Sitrec's public JavaScript. Anyone who wants the plaintext can read that
-passphrase out of the published code and unwrap the value in seconds. This is *obfuscation*,
-and calling it encryption would be misleading.
+The passphrase used to wrap them is a fixed value compiled into Sitrec's public JavaScript,
+so anyone with the code can unwrap the value. This is *obfuscation*, not encryption.
 
-It is still worth doing, because the realistic exposures are accidents rather than attacks:
+It keeps the key from appearing as recognizable plain text in, for example:
 
 - a screenshot or screen-share showing the browser's storage inspector
 - a browser-profile backup, sync blob, or disk image read casually
 - a support request where someone pastes their stored settings
 
-In each of those, a plaintext key is instantly recognisable and instantly usable by whoever
-sees it; an opaque blob is not. It buys nothing at all against software running on the page,
-which can simply ask Sitrec for the key and be handed it.
+It gives no protection against software running on the page, which can ask Sitrec for the key
+and be handed it.
 
 Genuine encryption at rest would require a passphrase **you** type each session, so the
 unwrapping secret is never stored alongside the data. Sitrec does not currently offer that.
@@ -175,11 +170,8 @@ Anything else your key lists is offered. If one of them turns out not to work, t
 provider's own message says so and names the model. The list is refreshed when you change
 a key, and at most once a day otherwise.
 
-**By default you see only each provider's newest generation** — the Claude 5 models and the
-GPT-5.6 ones, at the time of writing — because an OpenAI key alone lists seventy models
-going back to GPT-3.5, and scrolling past a decade of superseded releases is not a choice
-worth making every time. Tick **Enable old AI models**, directly under the AI Model list in
-Settings, to see the rest. Sitrec works out what "newest" means from the version numbers
+**By default you see only each provider's newest generation.** Tick **Enable old AI
+models**, directly under the AI Model list in Settings, to see the rest. Sitrec works out what "newest" means from the version numbers
 the provider reports, so a family released tomorrow is current the day it appears. A model
 you have already selected stays in the list either way, so turning the option off never
 moves you to a different model.
@@ -200,8 +192,8 @@ an endpoint inside your network — instead of a hosted provider. Enter three th
   gateway. A base address is enough; the exact call paths are shown underneath so you can
   see what Sitrec will request. If your server mounts the API somewhere unusual, paste the
   full path to the completions endpoint and that is used as given.
-- **Format.** The wire protocol the server speaks, not the vendor. **OpenAI-compatible** is
-  the right answer for almost everything self-hosted — Ollama (at its `/v1` path), LM
+- **Format.** The wire protocol the server speaks, not the vendor. Most self-hosted
+  servers use the **OpenAI-compatible** format — Ollama (at its `/v1` path), LM
   Studio, llama.cpp's server, vLLM, LocalAI, Jan, text-generation-webui, and LiteLLM, which
   can put that shape in front of almost anything else. **Anthropic-compatible** is there for
   gateways that serve `/v1/messages`.
@@ -236,12 +228,7 @@ The **OpenAI** key runs both halves of the assistant on your account: the typed 
 the "(your OpenAI key)" entries in the AI Model list, and the microphone button in the
 Assistant window.
 
-It was voice-only until recently, and you may still see that written elsewhere. The reason
-was real and has expired: `api.openai.com` used to refuse a browser's cross-origin request
-to its text endpoints, so the only way to reach GPT from the page was through OpenRouter.
-It now allows them, so the extra hop is optional. OpenRouter remains useful for reaching
-models OpenAI does not serve, and it reports the exact charged cost of every request, which
-OpenAI does not — Sitrec estimates that from published prices instead.
+OpenRouter also reaches models OpenAI does not serve.
 
 Three things about the spoken assistant are worth knowing before you supply a key:
 
@@ -253,11 +240,9 @@ Three things about the spoken assistant are worth knowing before you supply a ke
   close the Assistant, or load a different sitch.
 - **Your browser will ask for microphone permission.** If you refuse, nothing is sent and
   no request is spent.
-- **Spoken tokens cost far more than typed ones.** On the voice model, audio input is
-  billed at about eight times the text rate and audio output at nearly three times. A long
-  conversation is much more expensive than the same conversation typed. Sitrec's usage
-  readout reports audio and text tokens separately for exactly this reason, and the
-  spending limit you set at OpenAI is the protection that actually binds.
+- **Spoken tokens are billed at realtime-audio rates**, which are higher than text rates.
+  Check OpenAI's current pricing. Sitrec's usage readout reports audio and text tokens
+  separately, and the spending limit you set at OpenAI is the limit that binds.
 
 **Choosing a voice model.** Settings → **Voice Model** lists every realtime model your
 OpenAI key can reach. Leaving it on *Default* uses `gpt-realtime-2`, which is the one with
@@ -300,7 +285,7 @@ added — this is checked automatically when Sitrec's code changes.
 
 ---
 
-## What is *not* protected — please read this part
+## What is *not* protected
 
 **Anything running on the Sitrec page can read the keys.** IndexedDB is readable by
 JavaScript on the same origin. That includes:
@@ -316,8 +301,7 @@ JavaScript on the same origin. That includes:
 (`object-src`, `base-uri`, `form-action`), but it does **not** restrict which addresses the
 page may send data to. That restriction — the one that would contain an exfiltration attempt
 — is not currently possible, because Sitrec can be asked to load a situation file from *any*
-web address, and that feature and a restrictive policy are mutually exclusive. This is a
-known limitation, recorded here rather than glossed over.
+web address, and that feature and a restrictive policy are mutually exclusive.
 
 **Anyone with access to your computer or browser profile** may be able to recover the keys.
 The obfuscation described above makes casual discovery harder, but it is not a barrier to

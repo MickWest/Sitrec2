@@ -97,12 +97,10 @@ The graph shows a message when it cannot read a video:
   compressed more than once (for example, a download from a video-sharing site), the graph shows
   only the last encode. Damage from an earlier, heavier encode does not show in it.
 - **Changes in quality through a clip.** A step up in all three lines for a range of frames
-  means that the encoder had fewer bits for those frames. Frequently the cause is more motion or
-  more detail in the scene. Expect fine detail, such as small on-screen text, to be less reliable
-  in those frames.
-- **Do not assume one QP for a whole video.** The spread between the minimum and maximum lines
-  shows how much the compression changes inside one frame. Any test that simulates the
-  compression of a video must use the QP of the area and frames of interest, not one number.
+  means that the encoder had fewer bits for those frames. A higher QP means coarser
+  quantization, so fine detail such as small on-screen text is reproduced less accurately.
+- **QP changes within a video.** QP varies between frames and between macroblocks in a frame.
+  The spread between the minimum and maximum lines shows that range inside each frame.
 
 ## See also
 

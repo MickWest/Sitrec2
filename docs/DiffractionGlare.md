@@ -2,16 +2,14 @@
 
 A bright point of light in a photograph rarely looks like a point. It grows spikes. Those
 spikes are not in the sky — they are made by the camera, by the edges inside its aperture, and
-their shape is a fingerprint of that particular optic.
+their shape depends on the shape of that aperture.
 
 Sitrec can reproduce this. You build a model of a camera's aperture in the **Diffraction PSF
 Studio**, export it, and import it into a Sitrec camera. Every bright source the camera then
 sees is drawn with that camera's own diffraction pattern.
 
-This matters for analysis. If an unidentified object in footage has a distinctive spiked or
-starburst shape, one of the first questions is whether that shape belongs to the object or to
-the camera. Building the camera's pattern and comparing it with the footage answers that
-question with something better than an impression.
+You can use it to compare a camera's modelled diffraction pattern with a bright source in
+footage.
 
 ---
 
@@ -21,7 +19,8 @@ question with something better than an impression.
 2. Pick a preset, or build the aperture: outer shape, central obstruction, spider vanes.
 3. Press **Download .psf.json**.
 4. In Sitrec: **Camera ▸ Camera Tweaks ▸ Diffraction Glare ▸ Import PSF…**
-5. Turn on **Diffraction Glare** in **Effects On/Off**, and raise **Glare Gain**.
+5. Tick **Custom_DiffractionGlare** in **Effects ▸ Rendering Effects ▸ Thermal/NV**, then raise
+   **Glare Gain (10^)** back in the camera's Diffraction Glare folder.
 
 ---
 
@@ -31,7 +30,7 @@ Light passing an edge spreads. The image of a point source is therefore not a po
 pattern — the **point spread function**, or PSF — and its shape is set entirely by the shape of
 the opening the light came through.
 
-Three rules cover almost everything you will see:
+Three rules describe the main features:
 
 **A straight edge throws a spike perpendicular to itself.** A hexagonal iris throws six spikes.
 A square stop throws a vertical one and a horizontal one. A perfect circle has no straight edge
@@ -97,15 +96,15 @@ that is why.
 
 **Brightness** is in *decades*: 4 means a gain of ten thousand. It has to work this way. The
 spikes are around a millionth of the peak, so nothing about them is visible at ordinary
-exposures — the published images of patterns like these all have thoroughly blown-out cores.
+exposures.
 
 ### Two stops
 
-Real instruments often have more than one aperture in the path — a housing window at the front
+Real instruments can have more than one aperture in the path — a housing window at the front
 and an iris near the sensor. **Combine** decides how they are treated:
 
 - **Sum the two PSFs** — for stops in *different planes*. They do not share a pupil, so their
-  patterns add as intensities. This is the honest choice when the stops are separated, and it is
+  patterns add as intensities. Use this when the stops are in separate planes. It is
   what produces the eight-spike pattern in the Chandelier preset: four from the vanes, four from
   the iris.
 - **Intersect into one pupil** — for stops in the *same* plane, which really are one aperture,
@@ -120,14 +119,18 @@ and an iris near the sensor. **Combine** decides how they are treated:
 The PSF belongs to the camera, not to the view, because it describes that camera's optics. It is
 saved with the sitch, so a shared scenario keeps them.
 
-Then enable **DiffractionGlare** under **Effects On/Off**. The controls:
+The folder shows the imported PSF's name in a read-only **PSF** row, with **Import PSF…** and
+**Clear PSF**. It is on the look camera only.
 
-**Glare Gain** is in decades — 3 means a thousand times. It needs to be this large, and the
-reason is worth stating plainly: a real bright source outshines its own spikes by orders of
-magnitude, but the render has already clipped it to white. This control stands in for the
-dynamic range the frame no longer carries. It is the honest knob, not a fudge factor, but it is
-also the one thing here that is *not* derived from the optics — so do not read the absolute
-brightness of a simulated spike as a prediction.
+To switch the effect on, tick **Custom_DiffractionGlare** in **Effects ▸ Rendering Effects ▸
+Thermal/NV** — it is off by default, and does nothing without an imported PSF. The controls
+below are all in the camera's **Diffraction Glare** folder:
+
+**Glare Gain (10^)** is in decades — 3 means a thousand times. It needs to be this large because
+a bright source outshines its own spikes by orders of magnitude, but the render has already
+clipped it to white, so the frame does not hold its full brightness. Glare Gain puts back an
+amount you choose. The optics do not set it, so the absolute brightness of a spike is a setting,
+not a result.
 
 **Threshold** is the luminance a pixel must exceed before it glares. Raising it also removes the
 part of the source the frame already draws correctly.
@@ -136,12 +139,8 @@ part of the source the frame already draws correctly.
 makes the pattern bigger on screen, exactly as it does for everything else, because the pattern
 has a fixed angular size on the sky.
 
-That true size is often *very small*. A 0.4 m aperture produces a pattern about two arcminutes
-across — roughly one pixel in a 30° view, and about thirty in a 1° view. This is not a
-limitation of the simulation, it is the physics: **real diffraction patterns are only prominent
-in narrow fields of view, or in heavily cropped and stretched images.** If you have to raise
-Size × far above 1 to see anything, that is telling you something real about the footage you are
-trying to match.
+At Size × 1 the pattern has its computed angular size, which can be smaller than a pixel in a
+wide view.
 
 **Bright Pass ÷** trades cost against how finely close-together sources are separated.
 
@@ -167,12 +166,11 @@ faint one.
 
 With the mode on, every star is drawn as a fixed 3-pixel point and its magnitude is carried by
 **intensity**, on Pogson's true ratio — each magnitude is 2.512× in flux, so a first-magnitude
-star really is a thousand times a sixth-magnitude one. The same 2° field then gives 2-pixel
+star is a hundred times a sixth-magnitude one (2.512⁵ ≈ 100). The same 2° field then gives 2-pixel
 sources with peak values spanning the real range. The apparent size of a star becomes something
 the PSF produces, which is what produces it in a real instrument too.
 
-Faint stars correctly stop throwing visible spikes, because they are faint. That is the point:
-in real footage only the bright sources have spikes, and which sources do is evidence.
+Faint stars give spikes too faint to see.
 
 With no PSF active the mode looks *worse* — nothing is left to turn the intensity back into
 apparent size, so most of the sky becomes very small dots. That is why it is off by default.
@@ -207,10 +205,9 @@ the spikes, the rings, the feathers and their colour.
 
 It does **not** model lens flare (internal reflections between elements), scattering from dust
 or scratches, sensor blooming or column bleed, or any smearing from the readout. Those produce
-their own artefacts, and several of them also look like streaks. A pattern that fails to match
-here has not been shown to be an object; it may just have a different instrumental cause.
+their own artefacts, and several of them also look like streaks.
 
-Two more honest limits. The glare is *added* to a frame that already contains the source, rather
+Two more limits. The glare is *added* to a frame that already contains the source, rather
 than replacing it — the standard compromise, and what Threshold is for. And the gain, as above,
 is not derived from anything: the shape is physics, the absolute brightness is a setting.
 
@@ -227,9 +224,7 @@ The workflow that this feature was built to support:
 3. Compare *feature by feature* against the image: the number of spikes, their angles, the
    relative brightness of the diagonal against the vertical, the presence and shape of feathers,
    the shape of the central region.
-4. Where they disagree, ask what would have to change to fix it — a second stop, a different
-   vane profile — and whether that change is plausible for the instrument.
+4. Where they disagree, try a second stop or a different vane profile.
 
-Match the *structure*, not the brightness. The angles and the count of spikes are strong
-evidence, because they follow from geometry alone. Brightness depends on exposure, compression
-and the display curve, and proves much less.
+Spike count and angles depend only on aperture geometry. Brightness also depends on exposure,
+compression and the display curve, and on the Glare Gain setting.

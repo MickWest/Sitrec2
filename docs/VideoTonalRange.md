@@ -46,7 +46,7 @@ Two other Display modes show:
   that the object is darker than its surroundings.
 - **Contrast / local IQR:** that difference divided by the local background's
   75th–25th percentile span. It is unchanged under an ideal shared positive linear
-  gain and offset applied to unchanged samples. A zero local span gives no value.
+  gain and offset applied to unchanged samples. A local span below one code value gives no value.
 
 These modes use existing tracking positions even when Tracked object is unticked.
 Track changes are picked up while the graph is visible. **Recalculate** also forces
@@ -63,12 +63,11 @@ that scaling. Decoder outputs without a Y plane use display RGB gray values
 not mix these representations during one analysis. It requires an encoded video
 and browser decoding support; still images and image sequences are not analyzed.
 
-These are recorded code values, **not temperature or the sensor's dynamic range**.
-AGC, scene composition, clipping and compression can all change the distribution.
-Constant global percentiles do not rule out AGC. Object and background changes
-that coincide suggest a relationship but do not establish a cause. The relative
-contrast measure is not calibrated SNR and does not remove nonlinear or spatially
-varying image processing. Keep the QP graph alongside it when assessing compression.
+These are decoded code values. They are **not calibrated to temperature, radiance or the
+sensor's dynamic range**. AGC, scene composition, clipping and compression all change
+them. The relative contrast measure is not a calibrated SNR and does not remove nonlinear
+or spatially varying image processing. The [QP graph](VideoQPGraph.md) shows the
+compression level of the same frames.
 
 **Export CSV** exports the currently available per-frame values, sample counts,
 mask-applied flag, representation and source bit depth. Wait for analysis to finish

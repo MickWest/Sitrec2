@@ -19,7 +19,7 @@ Sitrec auto-detects the format of imported files. You don't need to specify the 
 
 ### ADS-B / Flight Tracking (KML/KMZ)
 
-The most common track source. Export a KML or KMZ file from a flight tracking service:
+Export a KML or KMZ file from a flight tracking service:
 
 - **FlightRadar24** (flightradar24.com)
 - **Planefinder.net**
@@ -34,7 +34,7 @@ If you know the aircraft's ICAO 24-bit hex address (shown on most flight tracker
 
 ### Live ADS-B Traffic (adsb.lol)
 
-**Contents → Live ADS-B Traffic** shows **every aircraft adsb.lol can currently see** around wherever the camera is, updated every few seconds. Each aircraft is a small dart pointing along its course, colored by altitude, with a short trail showing where it has just been:
+**Contents → Live Feeds → Live ADS-B Traffic** shows **every aircraft adsb.lol can currently see** around wherever the camera is, updated every few seconds. Each aircraft is a small dart pointing along its course, colored by altitude, with a short trail showing where it has just been:
 
 | Color | Altitude |
 |---|---|
@@ -46,7 +46,7 @@ If you know the aircraft's ICAO 24-bit hex address (shown on most flight tracker
 | Cyan | 20,000 – 30,000 ft |
 | Violet | Above 30,000 ft |
 
-**Traffic Radius** sets how far to look, in nautical miles, up to 250. The **Traffic** readout below it says how many aircraft are being shown, so an empty sky over open ocean can be told apart from a feed that is not working.
+**Traffic Radius (nm)** sets how far to look, in nautical miles, up to 250. The **Traffic** readout below it says how many aircraft are being shown, so an empty sky over open ocean can be told apart from a feed that is not working.
 
 Some things worth knowing:
 
@@ -59,13 +59,13 @@ Some things worth knowing:
 
 Dragging is unaffected: a press that moves before you release is a camera drag, not a click, so you can still orbit and pan starting from anywhere on screen.
 
-The live layer is for situational awareness; promote an aircraft when you want to analyse it.
+The live layer is for situational awareness; promote an aircraft when you want to analyze it.
 
 Data is ODbL-licensed by adsb.lol; credit "adsb.lol" when publishing imagery made with it.
 
 ### Other Live Feeds
 
-**Contents → Live Feeds** overlays other live data on the world. Each has its own on/off switch and a count underneath it, so an empty result can be told apart from a feed that is not working — the count reads `loading…` before the first answer, a number once it has one, and says so plainly when the source is unreachable.
+**Contents → Live Feeds** also overlays other live data on the world. Each has its own on/off switch and a count underneath it, so an empty result can be told apart from a feed that is not working — the count reads `loading…` before the first answer, a number once it has one, and says so plainly when the source is unreachable.
 
 | Feed | What | Coverage | Needs a key | Source |
 |---|---|---|---|---|
@@ -77,15 +77,15 @@ Data is ODbL-licensed by adsb.lol; credit "adsb.lol" when publishing imagery mad
 | **Rocket Launches** | The last 40 orbital launches, at their pads | Worldwide | no | Launch Library 2 |
 | **Earthquakes** | Magnitude 2.5+ in the last 24 hours, sized by magnitude | Worldwide | no | USGS |
 
-**Three of these need your own free API key.** Ships, webcams and road traffic have no usable keyless source: every provider with worldwide coverage requires an account. Rather than ship a crippled regional substitute, Sitrec asks for a key — add one under **Settings → API Keys…**, and the feed's count line tells you when one is missing rather than silently showing an empty world. All three have a free tier.
+**Three of these need your own API key.** The ship, webcam and road-traffic feeds need a key from their provider (AISStream, Windy, TomTom). Add one under **Settings → API Keys…**. The feed's count line tells you when a key is missing.
 
 Those three talk to their provider **straight from your browser**, so your key never reaches the Sitrec server — the same rule as every other key Sitrec holds (see [Your API Keys](APIKeys.md)). A useful side effect: unlike the keyless feeds, they also work in the desktop app and other serverless builds, because no Sitrec server is involved.
 
 Some notes on reading them:
 
-- **Shape as well as colour.** Ships are boxes, webcams octahedra, balloons spheres, launches cones, aircraft darts. With several layers on at once colour alone stops being enough, and it is no help at all to a colour-blind viewer.
+- **Shape as well as color.** Ships are boxes, webcams octahedra, balloons spheres, launches cones, aircraft darts, so the layers can be told apart without color.
 - **Clicking does something different per feed.** A military aircraft imports its full track, exactly like a civil one. A webcam opens its live image. A launch or earthquake opens its source page. A ship or balloon shows its details in the count line for a few seconds.
-- **Weather balloons answer a real question.** "Could it have been a weather balloon?" is one of the standard mundane explanations, and this says whether one was actually up there.
+- **Weather balloons are live only.** The feed shows the radiosondes that SondeHub has received in the last hour, each at its latest reported position, with altitude and climb rate. It shows only sondes that the SondeHub network tracks, and it does not show past flights.
 - **Earthquakes are drawn at the epicentre**, on the surface. Depth is in the details rather than the position — a quake plotted at its true hypocentre is inside the Earth and invisible.
 - **None of it is saved with your sitch.** These are views of the live present, not part of a recreation.
 - **The keyless feeds need the Sitrec server**, so they are unavailable in the desktop app and other serverless builds. The three keyed feeds work everywhere.
@@ -102,7 +102,7 @@ SRT metadata files extracted from DJI drone video. These contain per-frame posit
 
 ### MISB / KLV (CSV or binary)
 
-Military-standard metadata (STANAG 0601) from surveillance platforms. Contains sensor position, gimbal angles, field of view, frame center coordinates, and slant range. Can be in CSV form (with MISB column headers) or binary KLV format.
+MISB ST 0601 metadata (the KLV metadata standard carried in STANAG 4609 motion imagery) from surveillance platforms. Contains sensor position, gimbal angles, field of view, frame center coordinates, and slant range. Can be in CSV form (with MISB column headers) or binary KLV format.
 
 ### STANAG 4676
 
@@ -121,6 +121,11 @@ Platform points identically whether it aims at Target or Ground.) When the track
 ground-locks the target, `dynamics/pos` coincides with `posLow` and the duplicate is
 dropped automatically, so such files yield two tracks instead of three (the surviving
 Target track is on the ground in that case).
+
+If a camera track with line-of-sight data is already loaded when you drop a STANAG file,
+a **Load STANAG Track** dialog asks what to load: **Target track only** (the platform and
+ground tracks repeat the loaded camera's line of sight) or **Load all tracks**. Closing
+the dialog loads all tracks.
 
 The **CSV** flavour carries one row per track point, with the three positions in parallel
 column families:
@@ -159,17 +164,17 @@ A flexible format for **position tracks**, with auto-detected columns. Header na
 |------|---------------------------|
 | **Time** (required) | `DATETIMEUTC`, `DATETIME_UTC`, `DATE_TIME_UTC`, `DATETIME UTC`, `UTC`, `DATETIME`, `DATE_TIME`, `TIMESTAMP`, `TIME`, `DATE`, `DTG`, `DT`, or `FRAME` (a frame number) |
 | **Latitude / Longitude** | `LAT` / `LATITUDE` / `TPLAT` / `LATITUDEDEGS`, and `LON` / `LONG` / `LONGITUDE` / `TPLON` / `LONGITUDEDEGS` |
-| **Grid** (instead of lat/lon) | `MGRS` / `GRID` / `GRIDREF` / `GRID_REF` (military grid), or `REGGRID` / `REG_GRID` / `GRID56` / `GRID_56` (Maidenhead / ham-radio locators) |
-| **Altitude** | `ALTITUDE` / `ALT` / `ALTITUDE (m)*` / `TPHAE` / `alt_m` (metres), `ALTITUDE (FT)` / `ALT (FT)` / `ALTITUDE(FT)` / `ALT(FT)` (feet), `ALTITUDEKM` (km), or `AGL` / `ALT (m/agl)` (above ground level) |
+| **Grid** (instead of lat/lon) | `MGRS` / `GRID` / `GRIDREF` / `GRID_REF` (military grid), or `REGGRID` / `REG_GRID` (Maidenhead / ham-radio locators). An optional `GRID56` / `GRID_56` column adds extra locator characters; it is not enough on its own |
+| **Altitude** | `ALTITUDE` / `ALT` / `ALTITUDE (m)*` (the `*` is part of the header) / `TPHAE` / `alt_m` (metres), `ALTITUDE (FT)` / `ALT (FT)` / `ALTITUDE(FT)` / `ALT(FT)` (feet), `ALTITUDEKM` (km), or `AGL` / `ALT (m/agl)` (above ground level) |
 | **Identification** | `AIRCRAFT` / `AIRCRAFTSPECIFICTYPE`, `CALLSIGN` / `TAILNUMBER` / `BALLOON_CALLSIGN` |
 | **Multiple tracks** | `TRACK_ID` / `THRESHERID` / `STAGENUMBER` (one track per distinct ID) |
 | **Speed** | `SPEED_KTS` (knots; stored as airspeed) |
 
-A generic CSV needs, at minimum, a **time** column plus either **lat + lon** or a **grid** column. Altitude defaults to ground/sea level if absent.
+A generic CSV needs, at minimum, a **time** column plus either **lat + lon** or a **grid** column. Altitude defaults to ground/sea level if absent. If a file has more than one altitude column, `ALTITUDEKM` is used first, then the feet columns, then the metre columns.
 
 **Multiple tracks in one CSV**: if a track-ID column is present, Sitrec splits the data into separate tracks by ID.
 
-**Time formats**: Sitrec auto-detects ISO dates, Unix epoch (seconds, milliseconds, or microseconds), relative seconds, and `FRAME` numbers (converted to time using the sitch's fps).
+**Time formats**: Sitrec auto-detects ISO dates, Unix epoch (seconds, milliseconds, or microseconds), relative seconds, and `FRAME` numbers (converted to time using the sitch's fps). A plain-number time column is read as relative seconds only when its first value is less than 1 (for example, a column that starts at `0`); otherwise it is read as an epoch time.
 
 **Grid coordinates**: both MGRS and Maidenhead (ham radio) grid locators are accepted in place of lat/lon.
 
@@ -194,7 +199,7 @@ frame,az,el
 1,123.6,5.3
 ```
 
-Sitrec feeds these into the look camera's Az/El controller, so it pans/tilts to follow your angles. If the first column is `time`, the values may be ISO datetimes or seconds, and are converted to frames using the sitch's fps. Import it by dragging it in (or **File → Import File**), exactly like any other track.
+Sitrec loads `az` and `el` into the look camera's Az/El controller and adds a **Custom Az/El** option to the **Camera Heading** menu. That option is not selected for you: choose **Custom Az/El** as the Camera Heading to make the camera pan/tilt to follow your angles. An `fov` or `zoom` column, by contrast, is selected as the camera's FOV source as soon as it loads. If the first column is `time`, the values may be ISO datetimes or seconds, and are converted to frames using the sitch's fps. Import it by dragging it in (or **File → Import File**), exactly like any other track.
 
 ### FlightRadar24 CSV
 
@@ -202,7 +207,7 @@ Direct CSV export from FlightRadar24 with fixed columns: Timestamp, UTC, Callsig
 
 ### GeoJSON
 
-Standard GeoJSON FeatureCollections with Point geometries. Supports multiple tracks via `thresherId` or `dtg` properties.
+GeoJSON FeatureCollections of Point features, each with a `dtg` timestamp, a `thresherId`, and the position in `lat`, `lon` and `alt` properties. Sitrec makes one track for each distinct `thresherId`; a file with no `thresherId` gives no tracks.
 
 ### Radiosonde / Weather Balloon
 
@@ -211,7 +216,7 @@ Atmospheric sounding data from weather balloons:
 - **IGRA2** format (NOAA fixed-width text)
 - **UWYO** format (University of Wyoming, TEXT:LIST or TEXT:CSV)
 
-These reconstruct 3D trajectories from atmospheric profiles and include wind, pressure, and temperature data. Sonde tracks can be colored by temperature gradient and display wind direction arrows.
+These reconstruct 3D trajectories from atmospheric profiles and include wind, pressure, and temperature data. Sonde tracks display wind direction arrows, and their folder has a **Color Mode** menu that colors the track by **Temperature**, **Altitude** or **Pressure**, or **Flat (Line Color)** for a single color.
 
 ### FlightClub JSON
 
@@ -225,7 +230,8 @@ National Imagery Transmission Format files with embedded metadata.
 
 Sitrec's own interchange format for a **hand-drawn** track — the control points of a
 spline, not a per-frame path. Dropping one in creates a synthetic track, identical to
-one made with **Add Track**, with the control points already placed and editable.
+one made with the ground right-click menu's **Create Track with Object** or **Create Track
+(No Object)**, with the control points already placed and editable.
 
 Turn on **Edit Track** in the track's folder to edit it. Edit mode is modal: while it is
 on, a label at the top of each 3D view names the track, and right-click acts only on that
@@ -276,7 +282,7 @@ the spline generates.
 Points are `[frame, lat, lon, alt]`. Being geodetic, the file survives a change of Earth
 model or sitch origin — unlike the raw ECEF arrays older sitches embed. Altitude is
 **HAE** (height above ellipsoid), so the round trip is exact with no geoid lookup.
-`color` is optional: omit it and the importer takes the next palette colour.
+`color` is optional: omit it and the importer takes the next palette color.
 
 The file is validated on import and refused with a message naming the problem, so
 hand-editing is safe to attempt. In particular **frame numbers must strictly
@@ -355,6 +361,19 @@ When a track is loaded, Sitrec automatically centers the 3D view over the track 
 
 Use **File > Import File** to open a file picker. This works identically to drag and drop.
 
+### Browsing a Folder of Tracks
+
+**File > File Analysis > Browse Track Folder...** opens the **Track Browser**, for a local folder of multi-track files. Click **Choose Folder…** and Sitrec reads every track file in it (CSV, KML, KMZ, XML, SRT, JSON and GeoJSON) without loading anything into the scene. Each file that holds two or more tracks is drawn as a north-up plan view; files with fewer tracks are counted in the status line but not listed.
+
+Each card shows the file's path in the folder, its extent and duration, and **Plat FL**: the mean altitude of the platform (camera) track in hundreds of feet, rounded. Plat FL comes from the track's own altitude, with no pressure correction, so it is not a true flight level. Turn on **Split view** to show a larger preview of the selected file, with the same figures.
+
+- **Include subfolders** reads the folders inside the chosen folder too. **Filter by name or path…**, **Sort**, and **Columns** control the grid.
+- **Overlay tracks** (on by default) centers each track in the box so their shapes sit on top of each other, still at one shared scale. Turn it off to see the true distance between the tracks.
+- Select a file with a click; shift-click, cmd/ctrl-click, or drag a box to select several.
+- **Import** adds the selected files to the current sitch, exactly as dragging them in would. Double-click or **Enter** does the same. **Open as New Sitch** opens the file in a fresh custom sitch in a new tab, and **Open in BOTBench** sends the selection to [BOTBench](BOTBench.md).
+
+The menu item appears only in browsers that can pick a folder. To open the Track Browser directly, add `?action=trackbrowser` to the Sitrec address, for example `https://www.metabunk.org/sitrec/?action=trackbrowser`. Sitrec then opens the Track Browser instead of the sitch browser.
+
 ### What Happens When a Track Loads
 
 1. Sitrec detects the file format automatically
@@ -369,26 +388,27 @@ Use **File > Import File** to open a file picker. This works identically to drag
 
 ### Two-Track Setup (Camera + Target)
 
-The most common setup for analyzing UAP videos uses two tracks:
+A common setup for analyzing a video uses two tracks:
 
 - **First track imported** = camera platform (the aircraft filming)
 - **Second track imported** = target object (the UAP or other aircraft)
 
-Sitrec automatically calculates the closest point of approach and sets the region of interest accordingly.
+When the second track loads, Sitrec finds the time of closest approach between the two tracks and re-times the sitch so it starts there, moves the main view over the closest approach, and sets the **Camera Heading** to **To Target** so the camera points at the second track.
 
 ![Two aircraft tracks over Lake Michigan](docimages/tracks-two-aircraft-lakemichigan.jpg)
 
 ### Selecting from Multi-Track Files
 
-When you import a file containing **three or more tracks** (common with ADS-B KML exports covering an area), Sitrec shows a **Track Selection Dialog**:
+When you import a file containing **three or more tracks** (common with ADS-B KML exports covering an area), Sitrec shows a **Multiple Tracks Detected** dialog with four buttons:
 
-- Each track is listed with its callsign/name and altitude range
-- Checkboxes let you select which tracks to import
-- A **Filter** panel provides additional filtering options (see below)
+- **Load All** loads every track in the file
+- **Select...** opens a **Select Tracks** list: each track is shown with its callsign/name and altitude range (in feet), with a checkbox to choose it
+- **Filter...** opens the filter panel (see below), then shows the **Select Tracks** list with the tracks that pass the filters already checked
+- **Cancel** loads nothing from the file
 
 ### Multi-Track Filter Panel
 
-The filter panel (available during multi-track import and later from the Contents menu) lets you narrow down which tracks to load:
+The filter panel (available during multi-track import, and later as **Filter Tracks** in the Contents menu) lets you narrow down which tracks to load:
 
 | Filter | Description |
 |--------|-------------|
@@ -405,7 +425,7 @@ Each loaded track gets its own folder in the **Contents** menu. You can:
 
 - **Show/hide** individual tracks with the visibility checkbox
 - **Recolor** tracks using the Line Color picker (the folder label color updates to match)
-- **Remove** a track with the Remove button (with confirmation)
+- **Remove** a track with the **Remove Track** button (with confirmation). A hand-drawn track has a **Delete Track** button instead
 - **Highlight** a track by hovering over its folder label (the track line turns white temporarily)
 - **Center camera** on a track using the "Go to track" button
 
@@ -423,15 +443,20 @@ Each track's folder in the Contents menu provides these controls:
 
 | Control | Description |
 |---------|-------------|
-| **Visible** | Show or hide this track |
+| **visible** | Show or hide this track |
 | **Line Color** | Color picker for the track line |
+| **Color Mode** | Radiosonde tracks only: color the track by **Temperature**, **Altitude** or **Pressure**, or **Flat (Line Color)** |
+| **Line Width** | Width of the track line in pixels (0.5-10) |
 | **Poly Color** | Color for the ground extension polygons |
 | **Extend To Ground** | Draw semi-transparent vertical walls from the track down to the terrain |
 | **Display Step** | Frame spacing (1-100). Higher values skip frames for sparser display |
+| **Show in look view** | Hand-drawn tracks only: also draw the track in the look view (by default they show only in the main view) |
+| **Focus Camera Here** | Keep the main camera looking at this track and orbiting around it |
+| **Follow Camera Here** | Move the main camera with this track's position and heading (the same as **View > Lock Track**) |
 
 ### Contrails
 
-Contrails simulate the visual appearance of condensation trails behind aircraft, adjusted for wind:
+Contrails simulate the visual appearance of condensation trails behind aircraft, adjusted for wind. These controls are in the track's **Contrail** sub-folder:
 
 | Control | Range | Description |
 |---------|-------|-------------|
@@ -460,36 +485,31 @@ Contrails simulate the visual appearance of condensation trails behind aircraft,
 
 > **The altitude lock is HAE, not MSL.** Locking an object to "10,000 ft" with *Alt Lock AGL*
 > off puts it at 10,000 ft above the ellipsoid, which in Los Angeles is about 10,115 ft above
-> sea level. In the continental US the difference is 20–40 m almost everywhere; see
+> sea level. Over the contiguous US the geoid is below the ellipsoid everywhere, by about 8 m
+> (near Yellowstone) to about 40 m (the North Carolina coast); see
 > [GIS, Geodesy and Altitude](GIS.md) for the value at your location.
 
-> **An Alt offset applied by eye is not a fix.** If a track sits underground, the offset that
-> makes it look right also invalidates every altitude, altitude-difference and vertical-speed
-> number you take from it afterwards. Diagnose the datum first — the signature table in
-> [GIS.md](GIS.md) tells you which mistake you are looking at. If you do end up using an
-> offset, record its value and why.
+> **What Alt offset changes.** Alt offset adds the same constant to every altitude of the
+> track. It changes the track's absolute altitudes, and its height relative to the terrain and
+> to other tracks. It does not change altitude differences inside the track or its vertical
+> speed. If a track sits underground, the signature table in [GIS.md](GIS.md) lists the usual
+> datum mismatches and how each one looks.
 
 ## Filtering Bad Data
 
-ADS-B and other track data sources sometimes contain **spurious data points** — sudden position jumps caused by reception errors, multipath interference, or encoding issues. Sitrec includes a g-force filter that detects and removes these bad points.
+ADS-B and other track data sources sometimes contain **spurious data points** — sudden position jumps caused by, for example, reception errors, multipath interference, or encoding issues. Sitrec includes a g-force filter that detects and removes these bad points.
 
-> **This filter encodes a physical assumption, and in a UAP investigation that assumption is
-> the thing you are testing.**
+> **The Bad Data Filter prompt.** The filter treats any point that needs more than *Max G* to
+> reach as bad data. When you import a file whose first track has a maximum g above *Max G*, a
+> **Bad Data Filter** dialog appears: *"Bad points in track data 'X'. Max g-force: Ng. Enable
+> Bad Data Filter?"* Yes turns on **Enable Filter** for that track. Tracks that look like
+> rockets (a FlightClub trajectory, a file name with the word "stage" in it, or a maximum
+> altitude of 50 km or more) do not get the prompt. Under regression tests or MCP automation
+> the filter is turned on without the dialog. Loading a saved sitch never asks; it restores
+> the saved filter setting. Filtered points are hidden, not deleted: turn the filter off and
+> they come back.
 >
-> The filter's premise is that acceleration above *Max G* must be measurement error. That is
-> a safe premise for airliner ADS-B and a loaded one for an anomaly report: if the question is
-> "did this object manoeuvre impossibly?", switching the filter on answers it for you, in the
-> shape of a data-quality fix.
->
-> Sitrec will also *offer* to do it. When a track loads with a maximum g above the threshold,
-> a dialog appears — *"Bad points in track data 'X'. Max g-force: Ng. Enable Bad Data Filter?"*
-> — and clicking yes silently removes the points that prompted the question. (Tracks that look
-> like rockets are exempted from the prompt automatically, and under regression or MCP
-> automation the filter is **enabled without asking**, so scripted runs are always filtered.)
->
-> **Work with it off first.** If you then enable it, report the threshold you used, how many
-> points it removed, and what the result looks like with it off — that comparison is the
-> evidence, not either run on its own.
+> Tip: compare the track with the filter on and off.
 
 ### How the G-Force Filter Works
 
@@ -502,15 +522,14 @@ Each data track has a **Filter Bad Data** folder with:
 | Control | Default | Description |
 |---------|---------|-------------|
 | **Enable Filter** | off | Turn the g-force filter on or off |
-| **Try Altitude First** | on | Before removing a point entirely, try fixing just its altitude by interpolating from neighbors. Many ADS-B errors are altitude-only |
-| **Max G** | 10.0 | Acceleration threshold in g (0.1-10). Points exceeding this are filtered. 10g allows for sparse curved tracks where computed g can be high; most spurious data generates 100g+ |
+| **Try Altitude First** | on | Before removing a point entirely, try fixing just its altitude by interpolating from neighbors |
+| **Max G** | 10.0 | Acceleration threshold in g (0.1-10). Points exceeding this are filtered. 10g allows for sparse curved tracks where computed g can be high |
 
 ### What Gets Filtered
 
 - The filter runs **multiple passes**, iteratively removing the worst points
 - Filtered points are hidden from the display but the original data is preserved
 - If "Try Altitude First" is enabled, the filter attempts to **correct** altitude before removing the point entirely
-- A typical bad ADS-B point generates 100g+ of apparent acceleration, well above the 10g default threshold
 
 ## Smoothing and Interpolation
 
@@ -518,47 +537,42 @@ Track data is often noisy or sparse. Sitrec provides several smoothing methods t
 
 ### Available Methods
 
-The smoothing-method dropdown shows these option keys directly:
+The **Smoothing Method** dropdown shows these option keys directly. The default is **spline** for the first track in a file and **none** for the other tracks in the same file (for example, a MISB file's frame-center track):
 
 | Method | Description |
 |--------|-------------|
 | **none** | No smoothing — raw data points |
 | **moving** | Rolling moving average |
-| **movingPolyEdge** | Moving average with polynomial edge handling (better behaviour at the ends of the track) |
+| **movingPolyEdge** | Moving average with polynomial edge handling (better behavior at the ends of the track) |
 | **sliding** | Sliding window average |
 | **savgol** | Savitzky-Golay polynomial-fitting filter that preserves peaks better than simple averaging |
 | **spline** | Catmull-Rom spline. With no associated data track it fits a smooth curve through interpolated control points; when a data track is present it does a chordal Catmull-Rom spline through the actual data points |
 
 ### Smoothing Parameters
 
-| Parameter | Description |
-|-----------|-------------|
-| **Smoothing window** | Rolling window size (larger = smoother) |
-| **SavGol Poly Order** | Polynomial degree for Savitzky-Golay |
-| **Catmull Tension** | Catmull-Rom spline tension (0 = loose, 1 = tight) |
-| **Catmull Intervals** | Number of control points for spline fitting |
-| **Edge Fit Order** | Polynomial order used for the edge fit at the ends of the track |
-| **Edge Fit Window** | Window size for the edge fit |
+Only the parameters that the selected method uses are shown. **spline** on a track loaded from a file goes through the data points themselves, so it has no parameters.
+
+| Parameter | Range (default) | Description |
+|-----------|-----------------|-------------|
+| **Smoothing window** | 0-200 (0) | Rolling window size (larger = smoother) |
+| **SavGol Poly Order** | 1-5 (3) | Polynomial degree for Savitzky-Golay |
+| **Catmull Intervals** | 2-100 (10) | Number of control points for spline fitting |
+| **Edge Fit Order** | 1-5 (2) | Polynomial order used for the edge fit at the ends of the track |
+| **Edge Fit Window** | 3-400 (100) | Window size for the edge fit |
 
 ### What smoothing costs you
 
-Smoothing is a low-pass filter on position, and the quantity it removes first is
-**acceleration** — which is usually the quantity a UAP analysis exists to measure. A wider
-window does not just tidy the picture; it drives peak g downwards, roughly as the square of
-the window length.
+Smoothing is a low-pass filter on position. It reduces peak acceleration and turn rate, and a
+wider window reduces them more.
 
-This matters directly, because the traverse analysis grades candidates on maximum kinematic
-acceleration and its tier boundaries are stated in g (see
-[Traverse Methods](TraverseMethods.md)). Smoothing a track can therefore move a candidate
-across a threshold without anything about the underlying data having changed.
+The traverse analysis grades candidates on maximum kinematic acceleration, with tier limits
+stated in g (see [Traverse Methods](TraverseMethods.md)), so a change of smoothing can move a
+candidate across a tier limit.
 
-It cuts both ways. Smoothing the *camera* track changes the line-of-sight directions, and so
-changes every fit computed from them.
+Smoothing the *camera* track also changes the line-of-sight directions, and so changes every
+fit computed from them.
 
-**The rule: run the analysis on the raw track first, then on the smoothed one, and report
-both.** Any g-figure, turn-rate or "impossible manoeuvre" claim taken from a smoothed track
-alone is a statement about the filter, not about the object. Always state the method and the
-window alongside the number.
+Tip: compare the results with the raw track and the smoothed track.
 
 ## Altitude Handling
 
@@ -587,9 +601,9 @@ Track altitudes come in several reference systems. Understanding these is import
 
 ### Common Altitude Issues
 
-- **Track appears underground**: The altitude reference may not match Sitrec's expectation. Try a positive Alt offset.
-- **Track is too high**: Some ADS-B sources report pressure altitude, which can differ from geometric altitude by hundreds of feet depending on weather. Try a negative Alt offset.
-- **Inconsistent altitude between tracks**: Different sources use different references (HAE vs MSL vs pressure). The EGM96 geoid offset at a given location can be up to ~100 meters.
+- **Track appears underground**: The altitude reference may not match Sitrec's expectation. Use the signature table in [GIS.md](GIS.md) to find which datum mistake it is before you change anything.
+- **Track is too high or too low**: Some ADS-B sources report pressure altitude, which can differ from geometric altitude by hundreds of feet depending on weather. Use a geometric-altitude source if one is available.
+- **Inconsistent altitude between tracks**: Different sources use different references (HAE vs MSL vs pressure). The EGM96 geoid height N (the height of mean sea level above the ellipsoid) is between about −8 m and −40 m over the contiguous US, and between about −107 m and +85 m worldwide.
 
 ## Timing and Synchronization
 
@@ -611,7 +625,7 @@ Some formats (frame numbers, seconds from zero) don't have absolute times. For t
 
 ### Time Offset
 
-Every track has a **Time offset (sec)** slider (-600 to +600 seconds) for fine-tuning synchronization. This is useful when:
+Every track loaded from a file has a **Time offset (sec)** slider (-600 to +600 seconds) for fine-tuning synchronization. This is useful when:
 
 - Video and track timestamps are slightly out of sync
 - Different data sources have clock drift
@@ -625,14 +639,17 @@ Sitrec can export tracks in several formats via the export buttons in the **Expo
 
 | Format | Contents |
 |--------|----------|
-| **CSV** | Frame, Time, Lat, Lon, Alt(m) — simple tabular data |
-| **KML** | Google Earth compatible with `<gx:Track>`, timestamps, and altitude mode |
-| **MISB CSV** | Full 12-column MISB-standard format including heading, pitch, roll, FOV, gimbal angles |
+| **CSV** (*Per-frame array with frame and time (ms)*) | Frame, Time, Lat, Lon, Alt(m) — simple tabular data. File `sitrecArray-<name>.csv` |
+| **KML** (*KML Track Export*) | Google Earth compatible with `<gx:Track>`, timestamps, and altitude mode. File `<sitch>-<name>.kml` |
+| **MISB CSV** (*MISB Compliant CSV*) | 12 per-frame MISB columns: time, sensor position, FOV, platform heading/pitch/roll and gimbal angles. Hand-drawn tracks and computed tracks (such as a line-of-sight track) have it. A line-of-sight track also gets the frame-center columns. File `MISB-<name>.csv` |
+| **MISB CSV** (*MISB CSV Export*) | The raw data of a track loaded from a file, one row per source sample, with every MISB column. File `MISB-DATA<name>.csv` |
 | **Spline JSON** | Control points of a hand-drawn spline track — see [Sitrec Spline](#sitrec-spline-splinejson). Also available as the **Export Spline** button in the track's **Contents** folder |
 | **FOV JSON** | Camera zoom keyframes — see [Sitrec Camera FOV](#sitrec-camera-fov-fovjson). Exported with **Camera ▸ FOV (Zoom) ▸ Export for FOV Editor** |
 
-Exported files are downloaded directly to your browser's download folder, named after
-the track (e.g. `MISB-Aguadilla Ground Spline.csv`).
+Exported files are downloaded directly to your browser's download folder. The name comes
+from the track's internal id (for a track loaded from a file, something like
+`Track_N123AB_unsmoothed`), not from its display **Name**. A hand-drawn spline track uses
+its spline name instead (e.g. `MISB-Aguadilla Ground Spline.csv`).
 
 An object in the **Objects** menu has its own **Export to KMZ with Track** button. It
 writes a KMZ holding the object as a 3D model at its current position and, when the
@@ -643,8 +660,9 @@ file back as a track. Seconds at which the track has no position (a constant-alt
 traverse where the line of sight never reaches that altitude) break the line rather
 than being joined across.
 
-A spline track — one made with **Add Track**, dropped in as a `.spline.json`, or built
-into a sitch — gets all four: its control points *and* the per-frame track it generates,
+A spline track — one made from the ground right-click menu (**Create Track with Object**,
+**Create In->Out Obj Track** or **Create Track (No Object)**), dropped in as a
+`.spline.json`, or built into a sitch — gets all four: its control points *and* the per-frame track it generates,
 in CSV, MISB CSV and KML. The per-frame formats export the **smoothed** track, so they
 match the line drawn on screen and reflect the track's Smoothing window, altitude offset
 and altitude lock. The control points do not carry the altitude offset, which is stored
@@ -656,12 +674,15 @@ Exports write each format's conventional datum, converting via the EGM96 geoid a
 
 - **KML** exports use `altitudeMode` `absolute`, whose altitudes are **MSL** (EGM96)
   per the KML spec — so exported tracks land at the correct height in Google Earth.
+- **CSV** (*Per-frame array*) exports write `Alt(m)` as **HAE** (height above the WGS84
+  ellipsoid) for a track computed from 3D positions, which is most tracks. It is not MSL.
 - **MISB CSV** exports keep the MISB column conventions: `SensorTrueAltitude` (tag 15)
-  and `FrameCenterElevation` (tag 25) are **MSL**. A track whose source altitudes are
-  HAE (e.g. STANAG 4676) writes them unconverted into the **ellipsoid-height columns**
-  (`SensorEllipsoidHeight` / `FrameCenterHeightAboveEllipsoid`, tags 75/78) instead —
-  re-importing such a CSV detects the HAE column and preserves the datum, so a
-  STANAG → MISB CSV → Sitrec round trip is loss-free.
+  and `FrameCenterElevation` (tag 25) are **MSL**. *MISB Compliant CSV* always converts
+  to MSL. *MISB CSV Export* (the raw data) handles a track whose source altitudes are
+  HAE (e.g. STANAG 4676) differently: it writes them unconverted into the
+  **ellipsoid-height columns** (`SensorEllipsoidHeight` / `FrameCenterHeightAboveEllipsoid`,
+  tags 75/78) instead — re-importing such a CSV detects the HAE column and preserves the
+  datum, so a STANAG → MISB CSV Export → Sitrec round trip is loss-free.
 
 There is no STANAG 4676 exporter (XML or CSV); STANAG-derived tracks export through the
 formats above.

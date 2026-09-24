@@ -46,7 +46,7 @@ some legacy ones are not.
 
 **ADS-B** — Automatic Dependent Surveillance–Broadcast: the position signal that airliners
 broadcast continuously. Flight-tracking sites record it, and you can usually export a track as
-KML. This is how you find out whether a light was a plane. See
+KML. Load an aircraft track to compare its position with a sighting. See
 [Where to Get Flight Data](KMLDataSources.md).
 
 **KML / KMZ** — Google Earth's file format for geographic data. KMZ is a zipped KML. The usual
@@ -73,7 +73,7 @@ Being retired because it cannot represent modern catalogue numbers.
 dragging in the `.srt` gives you the drone's track.
 
 **Terrarium** — an elevation-tile encoding that packs a height into the red, green and blue
-channels of a PNG. Sitrec's default terrain source.
+channels of a PNG. Sitrec's default terrain source on the standard installation.
 
 ---
 
@@ -91,14 +91,14 @@ below the horizon.
 
 **FOV (field of view)** — how wide an angle the camera sees. Zoomed in = small FOV. Getting
 this right is what makes the simulated view line up with the footage, and it is a
-multiplicative scale factor on every angle measured from a tracked pixel — so it deserves
-measuring rather than guessing. See [Star Tracker](StarTracker.md).
+multiplicative scale factor on every angle measured from a tracked pixel. The Star Tracker can
+measure it from stars in the frame. See [Star Tracker](StarTracker.md).
 
-**PTZ** — Pan, Tilt, Zoom: the three axes of a steerable camera. Sitrec's satellite camera
-mode adds Roll as a fourth.
+**PTZ** — Pan, Tilt, Zoom: the three axes of a steerable camera. Sitrec's PTZ controls also
+have Roll. **Satellite Mode** replaces Pan, Tilt and Roll with a single Rotation.
 
 **Parallax** — the apparent shift of an object against its background when the *observer*
-moves. It is the only thing that makes range observable from a camera. No parallax, no range.
+moves. Without parallax, the lines of sight alone do not fix the range.
 
 **Boresight** — the camera's exact centre axis. A boresight line of sight is the only kind
 that does not depend on the assumed field of view.
@@ -126,8 +126,9 @@ shows. Also called *orthometric height* or *AMSL*.
 in the Earth's gravity.
 
 **Geoid undulation (N)** — how far the geoid sits above (+) or below (−) the ellipsoid at a
-given point. `HAE = MSL + N`. In the continental US, N is between about −36 m and −7 m, so
-confusing the two shifts a track by that much. See [GIS](GIS.md).
+given point. `HAE = MSL + N`. Over the contiguous US, N is negative everywhere, from about
+−8 m (near Yellowstone) to about −40 m (the North Carolina coast); worldwide, EGM96 N is
+between about −107 m and +85 m. Confusing MSL and HAE shifts a track by N. See [GIS](GIS.md).
 
 **WGS84** — the reference ellipsoid and datum used by GPS and by essentially all mapping.
 
@@ -163,17 +164,20 @@ start distance. (The Kalman Smoother propagates state frame to frame internally,
 all-frame seed and backward pass make it a global fit in this sense.)
 
 **Executive verdict** — the one-line summary at the top of the traverse analysis. There are
-five verdict codes (six wordings — *Insufficient* has two) and each licenses something
-different. See [Reading the executive verdict](DefensibleAnalysis.md#7-reading-the-executive-verdict-without-over-reading-it)
-and [Traverse Analysis](TraverseAnalysis.md#the-executive-verdict).
+five verdict codes and eight wordings, and each has a different meaning. See
+[The executive verdict](TraverseAnalysis.md#the-executive-verdict).
 
 **Solution family** — the range of distances at which a given model can still explain the
-sightlines. Reporting the family rather than a single number is usually the honest answer.
+sightlines.
+
+**Coryat curve** — the false turning path that appears in a solved track when the assumed
+range is wrong: the observing platform's own manoeuvre, scaled by the range error and reversed
+in sign when the guess is too far. See
+[Does it fly the camera's path?](TraverseAnalysis.md#does-it-fly-the-cameras-path).
 
 ---
 
 ## See also
 
 - [Getting Started](CustomSitchTool.md)
-- [Doing Defensible Analysis](DefensibleAnalysis.md)
 - [GIS, Geodesy and Altitude](GIS.md)

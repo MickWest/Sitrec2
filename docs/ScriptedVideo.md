@@ -46,7 +46,8 @@ the scene tab); the included tab's events are shown on the master timeline but
 are wheel-editable only in their own tab; self-includes and circular includes
 are errors, nesting is capped at 8.
 
-Because a script stretches over the **whole** sitch timeline, a scene tab that
+Because a script stretches over the sitch's whole **In/Out (A-B) range** (unless its
+shots declare [world windows](#world-time)), a scene tab that
 covers only part of the world's time should pad itself when previewed alone —
 the **`included()`** predicate (plain JS) keeps the padding out of the master:
 
@@ -87,15 +88,37 @@ zoom object 6 1500
 linger 1
 ```
 
-1. Open **Video → Scripted Video → Script Window…** and type (or paste) a script.
+1. Open **Video → Scripting → Scripting Window…** and type (or paste) a script.
 2. It parses on every keystroke; the **timeline** below the editor shows labelled blocks.
    Click a line (or a block) to **scrub** the viewport to that moment.
 3. Press **space** during a preview to play/pause.
 4. When happy, **Render Video (1080P60)**.
 
-The sitch's own playhead advances linearly across the whole scripted duration, so the world
-(an aircraft flying its track, a satellite moving, the sun setting) animates *while* the
-camera moves.
+The sitch's own playhead advances linearly across the whole scripted duration, from the
+sitch's **In (A)** frame to its **Out (B)** frame, so the world (an aircraft flying its
+track, a satellite moving, the sun setting) animates *while* the camera moves. To control
+which moment of the world each shot shows, see [World time](#world-time).
+
+## World time
+
+By default the script's whole duration is mapped evenly onto the In/Out range. To choose
+the slice of world time for each shot, attach a **`world`** marker to it with `&`:
+
+```text
+track UFO 4
+& world 23:04:39..23:04:49     # 10 s of world in 4 s of screen (fast)
+orbit UFO 6
+& world 23:04:44               # freeze the world at one instant
+```
+
+The shot's own duration and its world window are independent, which gives slow motion,
+speed-up, freeze and replay. Each endpoint can be seconds into the sitch (`164`), a sitch
+frame (`f4920`), a wall-clock time on the sitch's start date in its display time zone
+(`23:04:39`), or an absolute instant (`1973-10-19T03:02:00Z`).
+
+Once any shot has a `world` marker, **every** shot that takes time must have one. A
+missing window, a time outside the sitch, or two shots that overlap on the screen are
+parse errors; until they are fixed, the preview uses the even In/Out mapping.
 
 ## The language is JavaScript
 
@@ -177,7 +200,7 @@ temporal smoothing pass (`cameraSmoothing`, ~0.35 s) so consecutive moves *flow*
 other instead of decelerating to a stop at every boundary. The camera is also kept a few
 metres **above the terrain** (`groundClearance`), so a low move never clips through the
 ground. Both apply identically in preview and the final render. (For a hard cut, use a
-zero-second beat — e.g. `flyto look 0` — or cut the *view*, not the camera, with `view`.)
+zero-second beat — e.g. `flyto look 0` — or the `cut` command. To cut the *view* rather than the camera, use `view`.)
 
 ## Command reference
 
@@ -196,6 +219,14 @@ zero-second beat — e.g. `flyto look 0` — or cut the *view*, not the camera, 
 | `fov` | `fov(degrees, secs=1)` | pure lens change (1–120°); keeps position and aim |
 | `flyto` | `flyto(target="look", secs=0)` | fly the main camera to another camera's live pose. Only `look` (the witness camera) is supported — so `flyto look` is **the pose that matches the witness video**. `flyto look 0` snaps; `flyto look 3` swoops over 3 s |
 | `wait` / `linger` | `wait(secs=1)` | hold the current pose (visible bar). `linger` is an alias |
+| `cut` | `cut()` | an explicit camera cut: the next shot starts on its own pose instead of easing out of the previous one. Takes no time and moves nothing itself. Use it before a `ride` or `follow` shot that should open cleanly |
+
+**Shot markers** (attach to a shot with `&`; they take no time):
+
+| Command | Signature | Notes |
+| --- | --- | --- |
+| `world` | `world(from, to?)` | the slice of world time the shot shows — `world a..b`, `world a b`, or `world a` to freeze. See [World time](#world-time) |
+| `intent` | `intent(establish \| feature)` | what the shot is for, so the cinematic check knows what to hold it to: `establish` (showing where we are; a small subject is fine) or `feature` (looking at the subject). Without it the intent is guessed from the move |
 
 **Views, captions, fades:**
 
@@ -289,13 +320,18 @@ The timeline under the editor (and the strip that replaces the frame slider duri
 
 ## Rendering
 
-**Render Video (1080P60)** renders to MP4 (via the Mediabunny encoder). Quality knobs live
+**Render Video (1080P60)** renders to MP4 (H.264, 16 Mbit/s, via the Mediabunny encoder). If
+the browser cannot encode H.264 at 1920×1080 it writes WebM (VP8) instead. It does not open
+the Video Render & Export dialog, so no signal-format filter is applied. Quality knobs live
 under **Render Quality**:
 
 - **Wait For Terrain** — ON (default) settles each frame so terrain is stable and correct (no
   pop or edge-tile toggling), slower. OFF is fast/rough; terrain may pop.
 - **Terrain Detail** — LOD multiplier; lower loads far fewer tiles → much faster, slightly
   coarser. `1` = full detail.
+- **Freeze Terrain (Preview)** — OFF (default) keeps terrain tiles loading during the live
+  preview as the camera moves. ON freezes the tile set at preview start: no LOD flicker, but
+  areas the camera had not already looked at have missing tiles.
 - **Motion Blur** — sub-frames averaged per output frame; `1` = off.
 - **Super-sample** — render at N×N then downscale for extra anti-aliasing; slower.
 
@@ -306,6 +342,7 @@ caption overlay, menu) and `src/scriptedVideo/`:
 
 | File | Role |
 | --- | --- |
+| `ScriptRunnerClient.js` | main-thread front end to the script runner. Scripts run only in a Worker (`src/workers/ScriptRunnerWorker.js`), never in the page |
 | `ScriptCommands.js` | command registry — each command's args / prepare / sample (add a command = one entry here) |
 | `ScriptJSRunner.js` | the JS scheduling kernel (virtual clock, the record-only API) |
 | `ScriptSugar.js` | the flat-line → JS rewriter (line-preserving) |
@@ -313,3 +350,8 @@ caption overlay, menu) and `src/scriptedVideo/`:
 | `ScriptTimelineWidget.js` | the timeline canvas (draw, scrub, wheel-edit) |
 | `ScriptEditorWindow.js` | the floating script editor window |
 | `ScriptRenderer.js` | the offline 1080P60 MP4 render |
+| `ScriptTimeMap.js` | maps script time to sitch frames (`world` windows, the even In/Out mapping) |
+| `ScriptCinematics.js` | cinematic checks: measures sampled shots against framing rules and reports findings |
+| `ScriptJSCallSites.js` | finds where each API call is in the script text, for timeline↔editor highlighting and wheel-editing |
+| `ScriptAuthoring.js` | text helpers for palette inserts and timeline edits |
+| `ScriptMath.js` | small shared math helpers |

@@ -301,9 +301,8 @@ export const LIVE_FEEDS = [
         id: 'balloons',
         labels: true,
         label: 'Weather Balloons',
-        tooltip: 'Radiosondes currently aloft, worldwide, from the SondeHub network.\n'
-            + 'A balloon aloft is one of the standard mundane explanations, so this\n'
-            + 'answers "was there actually one up there?".\nData: SondeHub',
+        tooltip: 'Radiosondes received by the SondeHub network in the last hour, worldwide,\n'
+            + 'each at its latest position. Live only: it does not show past flights.\nData: SondeHub',
         attribution: 'SondeHub',
         coverage: 'Worldwide',
         pollMs: 60000,

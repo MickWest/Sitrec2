@@ -19,8 +19,8 @@ assistant — so if you add a doc, add it there.
 **Start here**
 
 - [Getting Started - What Sitrec is, and building your first sitch](docs/CustomSitchTool.md)
-- [Doing Defensible Analysis - How to reach a conclusion that holds up, and how to write it up](docs/DefensibleAnalysis.md)
 - [The Sitrec User Interface - How the menus work](docs/UserInterface.md)
+- [Time, Frames and Syncing - The Time menu, video frame rates, and lining up video with tracks](docs/TimeAndSync.md)
 - [The AI Assistant - Models, tools, privacy, and troubleshooting](docs/AIAssistant.md)
 - [Keyboard Shortcuts](docs/KeyboardShortcuts.md)
 - [Glossary - sitch, traverse, LOS, HAE, MISB, and the rest](docs/Glossary.md)
@@ -33,23 +33,28 @@ assistant — so if you add a doc, add it there.
 - [Saving and Loading Sitches - Server saves and local folder workflow](docs/SavingAndLoading.md)
 - [Custom Models and 3D Objects - Add your own planes](docs/CustomModels.md)
 - [Reference Objects](docs/ObjectReferences.md)
+- [Adding Objects and Tracks - The right-click ground menu, buildings, clouds, ground overlays and grids](docs/SceneObjects.md)
 
 **The world**
 
+- [Camera and Target Menus - Where the camera is, where it points, its field of view, and the target](docs/CameraAndTarget.md)
 - [GIS, Geodesy, and Altitude - Datums, coordinate systems, and how to spot a datum error](docs/GIS.md)
 - [Terrain and Elevation - Map vs elevation sources, and which surface a ground query hits](docs/Terrain.md)
 - [Atmospheric Refraction - Horizons, and why distant things look higher than they are](docs/Refraction.md)
 - [Wind in Sitrec - Wind menu, atmospheric data sources, streamlines](docs/Wind.md)
 - [Historic Skies - Reconstructing the sky for dates back to 1700, and what stays accurate there](docs/HistoricSkies.md)
+- [Lighting Menu - Sun, exposure, shadows, atmosphere, halos and city lights](docs/Lighting.md)
 - [Lunar Eclipses - Reconstructing eclipse geometry and appearance](docs/LunarEclipse.md)
 - [Haze and Aerial Perspective](docs/AtmosphericAerialPerspective.md)
 
 **Video tools**
 
+- [Loading and Adjusting Video - Formats, frame rate, rotation, adjustments, annotations and forensics](docs/LoadingVideo.md)
 - [Rendering and Exporting Video](docs/Video.md)
 - [Masking Out Part of the Video](docs/Masking.md)
 - [Star Tracker - Identify the stars, and measure the field of view](docs/StarTracker.md)
 - [Point Track and Stabilization](docs/PointTrack.md)
+- [Motion Analysis - Measuring background motion, stabilizing, and making panoramas](docs/MotionAnalysis.md)
 - [Long Exposure Simulation](docs/LongExposure.md)
 - [Video QP Graph - how hard each frame of an H.264 video was compressed](docs/VideoQPGraph.md)
 - [Video Tonal Range - per-frame brightness distribution and tracked-object contrast](docs/VideoTonalRange.md)
@@ -61,7 +66,7 @@ assistant — so if you add a doc, add it there.
 - [Traverse Concepts - What a traverse is and what can be inferred from line of sight](docs/TraverseConcepts.md)
 - [Ground Track - Intersecting a line of sight with terrain](docs/GroundTrack.md)
 - [Traverse Methods - How LOS + physical assumptions resolve target positions per frame](docs/TraverseMethods.md)
-- [Traverse Analysis and the Verdict - The Analyze button, the gallery, and what it licenses](docs/TraverseAnalysis.md)
+- [Traverse Analysis and the Verdict - The Analyze button, the gallery, and the verdict codes](docs/TraverseAnalysis.md)
 - [BOTBench - Evaluating bearings-only tracking methods against known truth](docs/BOTBench.md)
 - [BOTBench Scenarios - Provenance and regeneration of benchmark scenarios](docs/BOTBenchScenarios.md)
 - [Building the Mundane, Extreme and Anomalies Datasets](docs/BuildingMotionDatasets.md)
@@ -69,22 +74,25 @@ assistant — so if you add a doc, add it there.
 - [Camera Modes - Normal (Az/El) and Satellite (quaternion) view modes](docs/satcam.md)
 - [Fisheye and All-Sky Lenses](docs/Fisheye.md)
 - [Panoramic Camera](docs/PanoramicCamera.md)
+- [Satellites Menu - Loading satellite data, filtering, flares, labels and sky views](docs/Satellites.md)
 - [Recreating Starlink Situations - Horizon Flares](docs/Starlink.md)
 
 **Bespoke examples (not typical)**
 
 - [Recreating Gimbal - Walkthrough: build a Gimbal sitch from scratch via drag-and-drop](docs/gimbal-recreate.md)
 - [Nimitz / Tic Tac - Handling sources that disagree](docs/Nimitz.md)
-- [Football and Cable Cam](docs/Football.md)
+- [Lens Ghost Case Study - The Lens Ghost tool on the Pr055 clip](docs/LensGhostCaseStudy.md)
 
 **Advanced**
 
+- [URL Parameters - Linking to a sitch, a place, a time or a startup action](docs/URLParameters.md)
 - [Your API Keys - Bring-your-own-provider keys, storage, limits, and privacy](docs/APIKeys.md)
 - [Control Sitrec with ChatGPT site tools (WebMCP)](docs/WebMCP.md)
 - [Local Custom Sitches - JSON-based sitch definitions for advanced setups](docs/LocalCustomSitches.md)
 - [Scripted Camera Moves](docs/ScriptedVideo.md)
 - [Diffraction Glare - modelling a camera's diffraction spikes, and telling them from an object](docs/DiffractionGlare.md)
 - [What's New (Details)](docs/WhatsNew-Details.md)
+- [Football Scenario - The Physics → Scenarios → Football controls](docs/Football.md)
 
 
 ### Technical Documentation (for coders and webmasters)

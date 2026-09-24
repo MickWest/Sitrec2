@@ -1001,7 +1001,7 @@ $userNames = getUserNames($allUserIds);
                 <h2>Recent AI Requests (Last 50)</h2>
                 <div class="log-table">
                     <table>
-                        <tr><th>Time</th><th>User</th><th>Model</th><th>Calls</th><th>Tokens (in/out)</th><th>Cost</th><th>Prompt</th></tr>
+                        <tr><th>Time</th><th>User</th><th>Model</th><th>Calls</th><th>Tokens (in/out)</th><th>Cost</th><th>Kind</th></tr>
                         <?php foreach ($aiRequestLogs as $log): ?>
                         <?php
                             // Rows written before this request finished - or by a build that
@@ -1017,7 +1017,7 @@ $userNames = getUserNames($allUserIds);
                             <td><?= $u ? number_format($u['calls'] ?? 0) : '-' ?></td>
                             <td><?= $u ? number_format($inTok) . ' / ' . number_format($u['outputTokens'] ?? 0) : '-' ?></td>
                             <td><?= array_key_exists('cost_micros', $log) ? fmtUSD($log['cost_micros']) : '-' ?></td>
-                            <td><div class="prompt-text"><?= htmlspecialchars($log['prompt']) ?></div></td>
+                            <td><?= htmlspecialchars($log['kind'] ?? '-') ?></td>
                         </tr>
                         <?php endforeach; ?>
                         <?php if (empty($aiRequestLogs)): ?>
