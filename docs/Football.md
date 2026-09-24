@@ -1,65 +1,37 @@
 # Football (Physics → Scenarios → Football)
 
-Launch a football (soccer ball) from a point on any track, with real ballistic
+Launch a football (soccer ball) from a point on any track, with ballistic
 physics — quadratic drag, Magnus lift from spin, ground bounces — plus a
 Spidercam-style cable cam whose four support wires are drawn and checked for
 collision with the ball, a regulation pitch ground overlay, and a fixed
-"broadcast" camera view. Built to investigate the 2026 World Cup
-England–Norway "Wire-gate" goal kick (Hard Rock Stadium, 2026-07-11, 45+2'),
-but usable as a general projectile-vs-cable-cam tool.
+"broadcast" camera view.
 
-All code lives in `src/Football.js`; nodes are created per-sitch by
-`setupFootball()` (called from `CCustomManager.setup()`), so the feature is
-available in any custom sitch. Everything serializes through the standard
+All code lives in `src/Football.js`. The scenario loads only when you open
+**Physics → Scenarios → Football**; **Enable Football Simulation** creates its
+nodes in the current custom sitch. Everything serializes through the standard
 mods mechanism — Save/Save As round-trips all parameters, switch choices,
 cable-cam keyframes, and the pitch overlay.
 
-## One-click replication
+## Preset: "Load England-Norway Goal Kick (WC 2026)"
 
-**Physics → Scenarios → Football → "Load England-Norway Goal Kick (WC 2026)"** builds a
-reconstruction of the incident: Hard Rock Stadium terrain, the pitch frame (long axis on a
-compass heading of 121.4°, re-fitted against the 3D building tiles — an earlier 111° came
-from a low-zoom satellite strip), match date and time so the sun is right, the kick
-(35 m/s at 38° elevation, 300 rpm backspin, from the Norway goal area), the spidercam racing
-downfield from behind the goal, the wire strike (~23 m up, just short of halfway, tens of
-metres from the camera), the drop in front of the benches, the pitch overlay, and the look
-camera riding the cable cam.
+This button enables the simulation and sets up a preset scene for a goal kick in
+which the ball was reported to hit a cable-cam wire: Hard Rock Stadium terrain, the
+pitch frame (long axis on a compass heading of 121.4°, fitted against the 3D
+building tiles), the match date and time (for the sun position), the kick (35 m/s at
+38° elevation, 300 rpm backspin, Cd 0.22, from the goal area), the cable-cam path
+and aim keyframes, the pitch overlay, the look camera riding the cable cam, and a
+ball g-force graph. With these values the simulated ball contacts a wire about 23 m
+up, just short of halfway.
 
-### What this reconstruction is, and what it is not
-
-**The scenario is partly fitted to the claim it is being used to examine.** The published
-facts — stadium, date, time, pitch dimensions — are fixed. But the dolly position, the exact
-kick spot and the camera-1 gantry were never published, and the values shipped here are
-*estimates chosen to reproduce the described flight*. The spidercam motion was matched
-frame-by-frame against the broadcast clip; the kick heading was tuned.
-
-That is a normal and legitimate way to build a reconstruction, but it has a consequence that
-must be stated whenever the output is shown: **a scenario tuned to reproduce a described
-flight will reproduce that flight.** Doing so is not evidence that the flight happened that
-way. What the reconstruction *can* do is test whether the described flight is geometrically
-and physically possible with a real ball, real drag and a real wire in a real stadium — and
-show you what would have to be true for it to work.
-
-### The underlying dispute
-
-The incident is contested, and the scenario does not settle it. At 45+2' in the 2026 World
-Cup quarter-final (Norway 1–2 England, Hard Rock Stadium, 2026-07-11), Ørjan Nyland's goal
-kick appeared to clip a Spidercam suspension wire and drop near-vertically in front of the
-benches near halfway; Elliot Anderson collected it and the move ended with England's
-equaliser.
-
-- **FIFA's position:** the ball's 500 Hz IMU recorded no contact spike, and the camera
-  "neither shakes nor moves".
-- **Norway's position**, supported by a widely circulated BBC optical 3D replay: the flight
-  path shows a kink consistent with a wire strike.
-
-Both of those are claims about *evidence Sitrec does not have*. If you publish anything built
-on this scenario, say which of the two you are testing, which parameters you changed, and
-which remained estimates.
+The stadium, date, time and pitch size are published values. The dolly position,
+the exact kick spot and the broadcast-camera position are estimates; no published
+value was found. The cable-cam keyframes were matched frame by frame to a real-time
+broadcast clip, and the kick heading was tuned.
 
 ## Manual setup
 
-1. Start a **Custom** sitch (New Sitch → Custom).
+1. Start a **Custom** sitch (New Sitch → Custom), open Physics → Scenarios →
+   Football and click **Enable Football Simulation**.
 2. **Pitch frame** — Physics → Scenarios → Football → *Pitch Location*: set Pitch Center
    lat/lon (altitude is MSL) and *Pitch Heading (°)* = compass bearing of the
    long axis. All cable-cam and scenario geometry is defined in this frame.

@@ -7,43 +7,51 @@
 
 ## What this is
 
-The **Lens Ghost** tool (`CNodeLensGhost`) draws a *simulated* sun reflection — a
-"ghost" disc — as an overlay on a video, and fits it to a tracked disc in the
-footage. It was built to test whether the bright "disc" in the Pr055 / Corbell
-MQ-9 MTS thermal video (the "huge disc hiding in the clouds") is an **internal
-reflection of the Sun** rather than a physical object.
+A **lens ghost** is an image formed by light that reflects off internal optical
+surfaces — lens faces, a window, a filter — before it reaches the sensor. The main
+image of a source is formed by light that passes straight through the optics; a ghost
+is formed by the small fraction that is reflected an even number of times on the way.
+Because the reflected light takes a different path, a ghost is usually out of focus
+(a disc or blob rather than a point), much fainter than the source, and placed in the
+frame according to the **direction of the bright source relative to the camera**,
+not according to the scene. In a rotationally symmetric optic, a ghost lies on the
+line through the source's image position and the optical centre. A ghost can appear
+when the source itself is outside the frame.
 
-The short answer it produces: the disc's motion — sweeping left-then-right while
-drifting steadily down — is reproduced by a sun-ghost model to high accuracy, and
-that motion is **decoupled from the scene** (it reverses while the clouds only ever
-translate one way), which a real object at cloud distance cannot do.
+The **Lens Ghost** tool (`CNodeLensGhost`) draws a *simulated* sun (or moon)
+reflection — a "ghost" disc — as an overlay on a video, and can fit that model to a
+tracked disc in the footage. The overlay is labelled **"PREDICTED sun ghost"** so it
+is not mistaken for anything in the video.
 
-This document explains *exactly* how the ghost position is computed.
+This document explains how the ghost position is computed, what each control does,
+and what the fit outputs. For a worked example on a real clip, see
+[Lens Ghost Case Study](LensGhostCaseStudy.md).
+
+The tool is created in custom sitches that have a video, a camera line of sight and
+an FOV.
 
 ---
 
-## 1. The optical setup
+## 1. The optical model
 
-The MTS turret (e.g. AN/DAS-1 / MTS-B class) on an MQ-9 is a **catadioptric**
-(mirror, Cassegrain-type) telescope with a long focal length and a narrow field of
-view, sitting behind a **flat protective window**. In a thermal (MWIR) system that
-window is **germanium**, not glass, with a high refractive index (~4.0) and a
-correspondingly high surface reflectance — an efficient ghost generator. The Sun is
-by far the brightest thing in the MWIR band, so even a faint internal reflection
-shows up as an obvious bright disc.
+The model assumes a **catadioptric** (mirror, Cassegrain-type) telescope with a long
+focal length and a narrow field of view, behind a **flat protective window**. Window
+materials differ in refractive index, and a higher index gives a higher surface
+reflectance (for example, germanium, n ≈ 4.0, reflects much more than glass). In
+daytime scenes the Sun is by far the brightest source, so even a faint internal
+reflection of it can show as a bright disc.
 
 ![Sun ghost in a catadioptric telescope](docimages/lensghost-optics.png)
 
-Two consequences matter:
+In the model:
 
 - The ghost is a **defocused disc** — the reflected cone refocuses at the wrong
-  plane, so it's an out-of-focus image of the circular aperture. Because the window
-  is **flat**, the disc stays **round** (a curved refractor would smear it into a
-  teardrop). A central dark spot can appear from the secondary-mirror obstruction
-  (a "donut").
+  plane, so it is an out-of-focus image of the circular aperture. The tool draws a
+  round disc. A central dark spot (a "donut") can be added for the secondary-mirror
+  obstruction.
 - The ghost's position on the sensor is set by the **Sun direction relative to the
-  camera**, not by the scene. As the turret slews, the ghost tracks the Sun — so it
-  can move *against* the background.
+  camera**, not by the scene. As the camera slews, the ghost follows the Sun's
+  position relative to the boresight, so it can move *against* the background.
 
 ---
 
@@ -101,9 +109,8 @@ pinhole/gnomonic projection:
 
 ![Gnomonic projection of the off-axis Sun](docimages/lensghost-frame.png)
 
-For the Pr055 case the Sun is ~58° off-axis and **above** the frame, so `sunY` is far
-off the top — it is not in the picture. This is the classic "bright source just out of
-frame" flare condition.
+When the Sun is far off-axis, `sunX`/`sunY` lie outside the frame. The ghost can
+still be inside it.
 
 ---
 
@@ -138,16 +145,9 @@ and project **r** the same way to get the **reflected source image**:
 - A tilted flat mirror obeys the **2θ rule**: tilting the window by θ rotates the
   reflected ray by **2θ**, so increasing the lean shifts the reflected image — and
   hence the ghost — mostly **vertically** (because the lean is in the vertical plane).
-  This is the physical origin of the disc's vertical offset; before the lean was
-  modeled, that offset had to be faked with an enormous principal-point offset.
-
-```
-   reflected-image Y vs lean (Pr055, frame 180, illustrative):
-      lean  0° →  reflY ≈ 5232      (far below)
-      lean 10° →  reflY ≈ 2834
-      lean 20° →  reflY ≈ 1482
-      lean 30° →  reflY ≈  407      (near centre)
-```
+  In the model, the lean angle produces a vertical offset of the ghost. Before lean
+  was added, a large principal-point offset was needed instead. Window Lean is set by
+  hand; it is not measured or fitted.
 
 ---
 
@@ -168,9 +168,9 @@ and the principal point may be offset from the frame centre:
 
 `magX` and `magY` are **anisotropic** — they can differ because a tilting flat window
 introduces direction-dependent (keystone-like) stretching. With the reflection now
-modeled explicitly (Section 4), the fitted magnifications come out **positive and
-small** (the real curved-mirror power), instead of the unphysical `magX ≈ −1` the
-earlier "mirror-through-centre only" model required.
+modeled explicitly (Section 4), the fitted magnifications can come out **positive and
+small**, instead of the `magX ≈ −1` that the earlier "mirror-through-centre only" model
+needed.
 
 A defocused disc of diameter `diameter` (px) is drawn at `(ghostX, ghostY)`, with an
 optional central obstruction (`obstruction`, the secondary-mirror donut) and a soft
@@ -178,11 +178,11 @@ edge (`softness`).
 
 ---
 
-## 6. Image roll — why the disc *reverses* horizontally
+## 6. Image roll — how the ghost can reverse horizontally
 
-This is the subtle part. As the turret slews, the boresight sweeps **monotonically**
-past the Sun — the background (clouds) only ever translate one way. Yet the disc
-sweeps left, **stops, and comes back**. Where does the reversal come from?
+As the camera slews, the boresight can sweep **monotonically** past the Sun, so the
+background only moves one way. The ghost can still move one way, stop, and come back.
+In the model, this comes from image roll.
 
 The camera's **image roll** φ (rotation about the boresight, measured from the
 video's optical flow — `cameraMotionTrack.imageRot`) rotates the basis, which rotates
@@ -193,10 +193,9 @@ the Sun's large *off-axis* offset between the horizontal and vertical axes:
    su' =  su·cos φ − sr·sin φ
 ```
 
-Because the Sun sits ~58° **above** the boresight, `su` is large. As φ changes by
-~14° over the clip, that large vertical offset bleeds into the horizontal channel and
-**back again** — producing a horizontal reversal even though the boresight never
-reverses.
+When the Sun is far above (or below) the boresight, `su` is large. As φ changes, part
+of that large vertical offset moves into the horizontal channel and back again. This
+can produce a horizontal reversal even though the boresight never reverses.
 
 ![Image roll makes the disc reverse horizontally](docimages/lensghost-roll.png)
 
@@ -207,30 +206,7 @@ supplies it from the motion track.
 
 ---
 
-## 7. Putting it together: the two-axis decomposition
-
-The Pr055 disc motion decomposes cleanly into two independent mechanisms:
-
-```
-   ┌─────────────┬──────────────────────────────┬───────────────────────────┐
-   │ Axis        │ Driver                        │ Behaviour / fit           │
-   ├─────────────┼──────────────────────────────┼───────────────────────────┤
-   │ Y (down)    │ slew/tilt geometry + window   │ monotonic descent,        │
-   │             │ lean — no roll needed         │ R² ≈ 0.998                │
-   ├─────────────┼──────────────────────────────┼───────────────────────────┤
-   │ X (sweep)   │ image roll rotating the large │ left→right reversal,      │
-   │             │ vertical Sun offset           │ R² ≈ 0.99 (with real roll)│
-   └─────────────┴──────────────────────────────┴───────────────────────────┘
-```
-
-The Y fit is the strongest single piece of corroboration: it needs **no fitted Y
-roll term** — the downward drift falls straight out of the sun-vs-camera geometry. A
-real descending object's vertical motion would be independent of its horizontal
-sweep; here the two are locked projections of one rigid sun-relative geometry.
-
----
-
-## 8. Fitting to a tracked disc
+## 7. Fitting to a tracked disc
 
 `Fit to Disc Track` does a least-squares fit of the model to a manual/auto disc
 track. The track source is, in priority order:
@@ -250,19 +226,29 @@ for a fixed lean and roll, the fit is cheap:
    keep the k with the lowest combined RMSE
 ```
 
+The scan runs `k` from −3 to 3 in steps of 0.1, then refines in steps of 0.01 around
+the best value. Frames where the source is behind the camera, or within 5° of the
+focal plane, are skipped.
+
 `Window Lean` is a **manual** parameter (set it, then fit). An axis whose track has no
-variance (e.g. an X-only track) is skipped and left unchanged. The fit reports R²,
-RMSE, frame range, and which axes were fitted, and flags:
+variance (e.g. an X-only track) is skipped and left unchanged.
+
+The fit writes its results into the controls: **Roll Coupling**, **Magnification X/Y**
+and **Centre Offset X/Y**. It then turns on **Show Ghost** and **Show Geometry**. The
+**Fit quality** row shows the X-axis R² and RMSE (in pixels), the number of frames
+and the frame range, and the Y-axis R² (or "X only"). It also flags:
 
 - **rollScale hit the scan edge** (no real roll signal to fit);
 - **magX ≈ −1 degeneracy** (principal point indeterminate — see below).
 
-A separate on-video HUD warning (not part of the fit report) flags **stabilized video**
-(camera roll ≈ 0 → the reversal can't be reproduced).
+The **⚠ Warning** row and the HUD show one warning at a time, most severe first: the
+Sun is behind the camera; the video looks **stabilized** (Roll Coupling is non-zero
+but the camera roll span is under 0.5°); roll is applied twice (camera-motion
+orientation is on and Roll Coupling is non-zero); or `magX ≈ −1`.
 
 ---
 
-## 9. Parameters
+## 8. Parameters
 
 ```
    Source           celestial body (Sun / Moon)                 — MEASURED direction
@@ -283,31 +269,39 @@ provenance, fit R²/RMSE, warnings), a **reflection line** (source → optical c
 ghost), an off-frame **Sun arrow**, and a **"PREDICTED sun ghost"** label so the
 modelled disc is never mistaken for the tracked object.
 
+The display toggles in the folder:
+
+```
+   Show Ghost       draw the modelled ghost (off by default; Fit to Disc Track turns it on)
+   Show Geometry    the reflection line and optical-centre marker (on by default)
+   Mark Source      mark where the source itself images, or an edge arrow (off by default)
+   Show HUD         the on-video readout block (on by default)
+```
+
+Below **Fit to Disc Track** are four read-only rows: **Sun geometry**, **Roll source**,
+**Fit quality** and **⚠ Warning** — the same information as the HUD.
+
 ---
 
-## 10. The MQ-9 light-path 3D view
+## 9. The MQ-9 light-path 3D view
 
 A companion bespoke 3D view ("[BETA] MQ-9 Light Path", in the Views menu — see
 `BespokeView.js`) shows a close-up of the MQ-9 with the **boresight** (where the MTS
-looks) and the **incoming sun ray** drawn from the turret, so the ~58° angle between
-them — the off-axis flare condition — is visible in 3D and animates over the clip.
+looks) and the **incoming sun ray** drawn from the turret, so the angle between
+them is visible in 3D and animates over the clip.
 
 ---
 
-## 11. Limitations & open questions
+## 10. Limitations & open questions
 
 - **Stabilized footage has no roll.** If the loaded video was stabilized (camera
   motion removed), `imageRot ≈ 0` and the horizontal reversal cannot be reproduced
   from that clip — fit the **raw** clip instead. The tool detects and warns about this.
-- **The ~2× roll-scale factor.** Empirically the disc needs ≈0.5× the measured
-  cumulative `imageRot`. Because the fit reaches R² ≈ 0.99 with a single scalar, this
-  is almost certainly a *linear bookkeeping* factor (an over-accumulated rotation or a
-  sign/convention double-count), **not** a large-angle nonlinearity. It is left as a
-  fitted, on-screen-labelled parameter pending a definitive measurement.
+- **Roll Coupling is fitted, not derived.** The amount of measured roll the model
+  applies is a free scale factor. Its value is shown on screen.
 - **magX ≈ −1 degeneracy.** With the older mirror-only model the principal-point
   offset blew up near `magX = −1`; modeling the window reflection explicitly removes
   the need for that regime, but the guard/label remains.
-- **Off-axis validity.** The linear-in-reflected-position model is *consistent with*
-  the data; with X-and-Y track data it is well constrained, but a full validation
-  would also predict the disc **diameter** vs field angle, which the current model
-  treats as a free constant.
+- **Disc size is not predicted.** The model predicts position only. The disc
+  **diameter** vs field angle is not modelled; the current model treats it as a free
+  constant.

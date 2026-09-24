@@ -13,7 +13,7 @@ and you have said two things at once:
 * the object was somewhere on the line from the camera to that spot, and
 * it was **no further away than that spot**.
 
-The second half is what makes it worth doing. Most lines of sight say only "somewhere along
+The second property is what other LOS sources lack. Most lines of sight say only "somewhere along
 here"; a ground track says "somewhere along here, and not past *that*".
 
 ## How it differs from Point Track and Object Track
@@ -41,7 +41,7 @@ Turn on **Enable Ground Track**. Handles then appear in the main and look views,
 
 | Gesture | What it does |
 |---|---|
-| **Ctrl+click** | place (or move) the point for the **current frame** |
+| **Ctrl+click** (**Cmd+click** on a Mac also works) | place (or move) the point for the **current frame** |
 | **click an unselected point** | select it — go to the frame it describes, and move nothing |
 | **click and drag the selected point** | move it over the ground |
 | **right-click a point** | open its menu: **Go to Frame N**, or **Delete Point** |
@@ -90,14 +90,14 @@ costs a terrain ray per frame, which is why it is not the default, and it stands
 you are dragging a point so the drag stays responsive.
 
 There is no third option that snaps the *interpolated* points onto the terrain, and that is
-deliberate. It sounds right and it is wrong: because the line of sight is camera-to-point, snapping
+deliberate. It is not offered because the line of sight is camera-to-point, snapping
 feeds the terrain profile straight into the line of sight. A track crossing a clifftop dived down
 to the shoreline and climbed back, swinging the line of sight several degrees in a few frames — and
 a traversal downstream turns that into speed and acceleration that were never in the data.
 
 A note on *Ground Intersection*. At a point you placed there is nothing to be sensitive to: the
 range is the distance to a real place. Between placed points the direction is a guess, and these
-rays graze. On a typical clifftop track — 6 km range, 6° of depression — the intersection moves
+rays graze. For example, at 6 km range and 6° of depression the intersection moves
 about a kilometre for every degree of direction, so a fraction of a degree of interpolation error
 moves it hundreds of metres, and enough of it lets a ray clear the lip it was aimed at and land far
 beyond. Hits that disagree badly with the smooth curve are rejected for that reason. **Read the
@@ -106,9 +106,9 @@ ceiling at the points you placed; treat the frames in between as interpolation.*
 **Outside the first and last point the track holds still.** It does not carry on in a straight
 line. A ground point extrapolated a few thousand frames past the evidence would be somewhere in
 the next county, and the traverse downstream would faithfully follow it there. Holding at least
-keeps the line of sight aimed at somewhere real — but it is not data, and the honest reading of a
-ground track is the span between the points you placed. **Limit A/B to Track** moves the A and B
-analysis limits in around that span so the graphs stop describing frames the track knows nothing
+keeps the line of sight aimed at somewhere real — but it is not data. The track is data only
+between the first and last placed points. **Limit A/B to Track** moves the A and B
+analysis limits in around that span, with a margin of 10% of the span on each side, so the graphs stop describing frames the track knows nothing
 about.
 
 ## What this is, next to tracking the object itself
@@ -120,7 +120,7 @@ Object Track) are the same measurement written two different ways.
 what "behind it" means — so at every point you place, the ground track's line of sight is *identical*
 to the one you would get by tracking the object at that frame. Nothing is gained or lost there.
 
-**But they fail in opposite directions**, and that is the whole reason to have both:
+**But they fail in opposite directions**:
 
 | The line of sight is built from | Object Track | Ground Track |
 |---|---|---|
@@ -131,9 +131,8 @@ to the one you would get by tracking the object at that frame. Nothing is gained
 | bounds the range | no | **yes** |
 
 Once the points are placed, a ground track's line of sight is just `camera position → ground point`.
-Nothing else enters. Not the field of view, not where the camera was aimed. That is a stronger
-statement than it looks, because those two are usually the least certain numbers in the whole
-reconstruction, and a ground track's line of sight cannot be corrupted by either of them.
+Nothing else enters. Not the field of view, not where the camera was aimed, so errors in
+orientation or field of view do not enter it.
 
 **The catch is that the dependency moves earlier, not away.** Placing a point means deciding *which
 piece of ground* is behind the object, and you make that decision by comparing the look view to the
@@ -155,21 +154,18 @@ function of (camera position, orientation, field of view, pixel); a ground track
 (camera position, ground point). Where the two agree, the orientation and field of view that mapped
 that pixel to that direction have been corroborated by geometry that never used them.
 
-**Only the ground track puts a ceiling on the range.** For a slow, drifting object — a balloon, a
-lantern — that is usually the decisive number. It converts an angular size into a real size, and it
-is often the difference between "could be anything" and "under a metre across".
+**Only the ground track puts a ceiling on the range.** With the ceiling, an angular size gives an
+upper bound on physical size.
 
-**Which is why the interpolation question is not cosmetic.** A balloon's signature is that it is
-slow and consistent with the wind. Fake acceleration is exactly the artefact that would destroy
-that reading, and terrain-snapped interpolation manufactures fake acceleration wherever the ground
-is steep. Smooth line of sight first; ground contact second.
+**The interpolation choice affects derived motion.** Where the ground is steep, terrain-snapped
+interpolation adds acceleration that is not in the data. For this reason the default is *3D
+Position*, and no option snaps interpolated points onto the terrain.
 
 **And it tells you where the tool applies.** A ground track only says anything while the object is
 *below the skyline*. The moment it rises above the ridge there is no ground behind it, the ceiling
 becomes infinite, and there is nothing to place. That is why the track holds still outside the
-points you placed rather than carrying on: those frames are not covered. The natural division of
-labour is a ground track over the terrain-backed part of the flight and an object track over the
-rest, with the ceiling from the first constraining the traversal of the whole.
+points you placed rather than carrying on: those frames are not covered. Outside the placed span,
+another LOS source is needed.
 
 One thing Sitrec does **not** do yet: nothing downstream consumes the ceiling as a constraint. It is
 a readout, not a bound the traversal is held to. Read it yourself and check the traversal against it.
@@ -186,6 +182,9 @@ planet.
 **Place on Objects** also allows points on the scene's own 3D objects (an aircraft, a balloon). It
 is off by default, because a ground track is meant to land on the ground.
 
+**Show Track** draws the interpolated ground path, and a cross at the current frame's point, even
+when editing is off. **Clear All Points** deletes every ground track point.
+
 ## Reading the result
 
 **Ground Range** shows the distance from the camera to the ground point at the current frame. That
@@ -193,17 +192,18 @@ is the ceiling: whatever the object was, it was closer than this.
 
 Select **Camera + Ground Track** as the LOS Source and every traverse method works from these
 lines of sight instead of the camera centreline. The traverse methods that constrain the object to
-the ground — *Ground Vehicle*, *Global Fit: Ground Object* — then put it at the far end of each
-line: the answer you would get if the object *were* on the ground rather than in front of it, and
-so the largest range the ground track allows.
+the ground — *Ground Vehicle*, *Global Fit: Ground Object* — do not read your placed points. Both
+use one elevation: the terrain under the point where the first frame's line of sight meets sea
+level. *Ground Vehicle* puts the object where each line of sight meets that elevation; *Ground
+Object* fits one fixed point at it. For the ceiling the ground track gives, read **Ground Range**.
 
 ## Cautions
 
 * A ground track is only as good as the camera **position** and the terrain — those are the two
   things its line of sight is built from. If the camera's own position is uncertain, so is every
   line of sight drawn from it; see *Fit Camera to Points* for recovering an unknown camera.
-* Marking ground *near* the object rather than directly behind it is the commonest error, and it
-  biases the line of sight by exactly the angle you were off. Zoom in.
+* A point marked *near* the object, rather than directly behind it, biases the line of sight by
+  the angle it is off. Zoom in.
 * The ceiling is a ceiling, not a measurement. An object can be far in front of the terrain it
   crosses, and nothing in the ground track says how far.
 
@@ -212,4 +212,3 @@ so the largest range the ground track allows.
 * [Traverse Methods](TraverseMethods.md) — what happens to these lines of sight next
 * [Point Tracking](PointTrack.md) — the automatic pixel tracker, Manual Tracking compared, and video stabilization
 * [Terrain and Elevation](Terrain.md) — where the ground surface comes from
-* [Doing Defensible Analysis](DefensibleAnalysis.md) — what a range ceiling does and does not license you to say

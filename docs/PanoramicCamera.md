@@ -8,7 +8,7 @@ to show a swept panorama in the look view.
   keeping the same pixels per degree horizontally and vertically.
 - At the **180°** vertical limit, black bars fill any extra height rather than
   stretching the image. A full **360° × 180°** panorama has a **2:1** image ratio.
-- The look-view scroll wheel and pinch adjust HFOV; VFOV follows automatically.
+- The look-view scroll wheel, pinch and keyboard zoom adjust HFOV; VFOV follows automatically.
 
 Panorama HFOV is independent of the normal camera FOV. Disabling panorama restores
 the normal projection, and saved sitches retain the panorama settings. Enabling
@@ -29,3 +29,7 @@ follow the panorama as well.
 
 The experimental ray-traced refraction pass and headset rendering use perspective
 cameras. Panorama uses the normal terrain-refraction model and the desktop look view.
+The Camera Tweaks **xOffset** / **yOffset** and **Look Y-comp** settings and Match
+Video Aspect do not apply to the panorama.
+
+Panoramic Camera is available in custom sitches only.

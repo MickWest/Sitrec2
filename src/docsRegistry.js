@@ -54,12 +54,13 @@ export function docUrl(file, {anchor = null, absolute = false} = {}) {
 //               Documentation folder), so casual users see it without drilling in.
 //   menuId    - id of the app menu this doc explains (the id passed to addGUIMenu in
 //               src/index.js: "video", "traverse", "terrain", ...). Drives the
-//               contextual "Help" folder at the top of that menu. Omit if the doc
-//               doesn't belong to one menu.
+//               contextual "Help" folder at the top of that menu. An array lists a doc
+//               under several menus (["camera", "target"]). Omit if the doc doesn't
+//               belong to a menu.
 //   role      - what KIND of document this is, which is not the same as what it covers:
 //                 "tutorial"    - walks you through doing something
 //                 "reference"   - look things up in it
-//                 "methodology" - how to reach a defensible conclusion
+//                 "methodology" - how to approach an analysis (no doc uses it at present)
 //                 "case-study"  - a worked real-world example
 //               Added because gimbal-recreate.md was filed as a worked example when it
 //               is really a build tutorial, and nothing in the data said so.
@@ -105,11 +106,6 @@ export const helpDocs = [
         chatDesc: "START HERE for any 'how do I use Sitrec / how do I get started / how do I make a sitch' question. The main getting-started guide: what Sitrec and a 'sitch' are, why a camera gives you a direction but not a distance, then three routes in depending on what the user has — filmed it themselves from the ground, has an aircraft flight track, or has a video with embedded metadata. Covers loading a Featured example to watch first, importing data (drag-and-drop or File → Import File), setting up the camera (position/heading/FOV) and target, two-track (camera+target) setups, syncing video, setting the date/time (Start Time vs Now Time), setting a location by name (Lookup/Geolocate), terrain, and adding satellites. Recommend this first for general 'how do I' questions, then point to the more specific docs.",
     },
     {
-        file: "docs/DefensibleAnalysis", labelKey: "menus.help.documentation.defensibleAnalysis",
-        section: "start", top: true, role: "methodology",
-        chatDesc: "How to reach a conclusion with Sitrec that will survive scrutiny, and how to write it up. Read this for ANY question of the form 'is this conclusion valid', 'how do I know the speed/range/altitude is right', 'what can I claim from this', 'how certain is this', 'how do I put an error bar on it', 'why do different methods disagree', or 'what does the verdict mean'. Covers the fundamental limit that bearings do not determine range, auditing your inputs before fitting (time, field of view, altitude datum, the bad-data filter, smoothing, wind, circular line-of-sight), choosing a method, the sanity checks to run, what a good fit does and does not license, what to do about uncertainty when Sitrec deliberately does not compute an error bar, reading the executive verdict without over-reading it, and a write-up template.",
-    },
-    {
         file: "docs/WhatsNew", labelKey: "menus.help.whatsNew",
         section: "start", top: true, role: "reference",
         // The changelog is ~200 KB and grows every release, so it will always exceed the
@@ -117,7 +113,7 @@ export const helpDocs = [
         // newest-first: the limit buys the assistant many recent releases, which is what
         // "what's new" questions are about. It stopped being a real problem once the
         // epistemic contract (verdict wordings, the not-modelled list) was promoted out of
-        // the changelog and into docs/DefensibleAnalysis.md (sections 5 and 7) —
+        // the changelog and into docs/TraverseAnalysis.md ("The executive verdict") —
         // before that, the changelog was the only place those were written down, and
         // truncating it hid them.
         aiTruncationExpected: true,
@@ -131,8 +127,13 @@ export const helpDocs = [
     },
     {
         file: "docs/UserInterface", labelKey: "menus.help.documentation.uiBasics",
-        section: "start", role: "reference",
+        section: "start", menuId: ["main", "view", "showhide"], role: "reference",
         chatDesc: "Using the interface: opening/dragging-off/re-docking menus, folders, sliders, color pickers, moving and resizing views/windows (hold the Q key), navigating the 3D main view with the mouse, the Time/Date controls, and changing the terrain imagery and elevation source. Read for any 'how do I use the menus / close a popped-off menu / move a view / set the time' question.",
+    },
+    {
+        file: "docs/TimeAndSync", labelKey: "menus.help.documentation.timeAndSync",
+        section: "start", menuId: "time", role: "reference",
+        chatDesc: "How do I sync my video to a flight track or set the correct date and time? This explains Start Time and Now Time, time zones, fps and 29.97 videos, Sitch Frames and Duration, In/Out frames, Live Mode, Sync Time to and Sync Duration to, and the playback bar and time keys. It also covers how tracks and video frames line up with the timeline.",
     },
     {
         file: "docs/AIAssistant", labelKey: "menus.help.documentation.aiAssistant",
@@ -176,8 +177,18 @@ export const helpDocs = [
         section: "data", menuId: "objects", role: "reference",
         chatDesc: "Reference objects: placing a known object in the scene to check the reconstruction against something whose position or size you already know.",
     },
+    {
+        file: "docs/SceneObjects", labelKey: "menus.help.documentation.sceneObjects",
+        section: "data", menuId: "objects", role: "reference",
+        chatDesc: "How do I add a building, clouds, a ground overlay image or a measurement grid to my sitch, and how do I edit or delete them? What does each item in the right-click ground menu do, such as Drop Pin, Add 3D Object, Create Track with Object or Add Balloon? How do I line up a map or satellite image with the ground?",
+    },
 
     // ── The world ───────────────────────────────────────────────────────────
+    {
+        file: "docs/CameraAndTarget", labelKey: "menus.help.documentation.cameraAndTarget",
+        section: "world", menuId: ["camera", "target"], role: "reference",
+        chatDesc: "Every control in the Camera and Target menus: where the camera is (Manual position, Flight Sim, Orbit, an imported track), which way it points (Manual pan/tilt, To Target, Custom Az/El, Relative Heading, MX-style roll) and its field of view (VFOV/HFOV, 35mm equivalent, Lock Aspect), plus Camera Tweaks, Smoothing, Tracking Wobble, Export Camera as KML, and the target's position, Target Track and Stop At. Read for 'how do I put the camera at a spot', 'how do I point the camera at another plane', 'how do I orbit around something', or 'what does this camera setting do'.",
+    },
     {
         file: "docs/GIS", labelKey: "menus.help.documentation.gis",
         section: "world", role: "reference",
@@ -190,7 +201,7 @@ export const helpDocs = [
     },
     {
         file: "docs/Refraction", labelKey: "menus.help.documentation.refraction",
-        section: "world", role: "reference",
+        section: "world", menuId: ["view", "effects"], role: "reference",
         chatDesc: "Atmospheric refraction: why distant things appear higher than geometry says, the celestial and terrestrial models Sitrec implements, that refraction is OFF by default and where the switch is (View menu), and how much it moves the horizon. Read for any question about the horizon distance, whether something was hidden behind the Earth's curvature, 'could I see X from Y', mirages, or looming.",
     },
     {
@@ -204,17 +215,27 @@ export const helpDocs = [
         chatDesc: "Reconstructing the sky for dates long before the modern UFO era - the 1896-97 airship waves, the 1909 scareships, and anything else back to 1700. How to reach a historic date (Go To box, the Year field, ?datetime=, a sitch's startTime) and how the Year slider's range extends. What is accurate and to what: Sun/Moon/planet positions, the EQJ-to-ECEF frame transform, precession, and Delta-T. What is not: stellar proper motion (catalogue epoch J1991.25, a few arcminutes by 1897), UT1-UTC, and the legacy sidereal helpers that skip precession. Time zones before standard time, and why daylight saving did not exist before 1916/1918. What is anachronistic (modern imagery and buildings, no satellites before 1957). Read for 'can Sitrec do historic dates', 'how far back does it go', 'why is the year slider limited', 'is the sky accurate for 1897', or any question about a 19th- or early-20th-century sighting.",
     },
     {
+        file: "docs/Lighting", labelKey: "menus.help.documentation.lighting",
+        section: "world", menuId: "lighting", role: "reference",
+        chatDesc: "Reference for every control in the Lighting menu: sun, ambient and scattered light, exposure, shadows, atmosphere and haze, the look-view tone mapping, halos and the Brocken spectre, city lights, and eclipses. Read for 'why is my night scene so bright/dark', 'how do I turn on shadows', 'how do I match the video's exposure', or 'are the city lights real'.",
+    },
+    {
         file: "docs/LunarEclipse", labelKey: "menus.help.documentation.lunarEclipse",
         section: "world", menuId: "lighting", role: "reference",
         chatDesc: "Lunar eclipses (Lighting menu -> Lunar Eclipse): the Earth's shadow on the Moon. What the penumbra and umbra are and why the umbral edge is soft, why a totally eclipsed Moon turns red (sunlight refracted through the Earth's atmosphere, with the blue scattered out) and why there is a turquoise fringe at the umbral edge (ozone). The controls: Atmospheric Clarity and how it walks the Danjon L0-L4 scale of how dark an eclipse looks, why exposure has to be raised at all when totality is ten magnitudes below a full Moon, and Shadow Outlines, which rings the whole umbra and penumbra at the Moon's distance. Also the 88 km shadow enlargement and the Chauvenet/Danjon dispute behind it. Includes dates of recent and forthcoming eclipses, and what is and is not modelled. Read this for 'why is the Moon red', 'blood moon', 'how do I show a lunar eclipse', 'what is the umbra', 'what is the Danjon scale', or any question about eclipses of the Moon. NOT for solar eclipses or for the Moon's shadow on the Earth.",
     },
     {
         file: "docs/AtmosphericAerialPerspective", labelKey: "menus.help.documentation.aerialPerspective",
-        section: "world", role: "reference",
+        section: "world", menuId: "lighting", role: "reference",
         chatDesc: "Atmospheric haze and aerial perspective: how distance washes out contrast and colour, and what that implies about how far away something in a photograph was.",
     },
 
     // ── Video ───────────────────────────────────────────────────────────────
+    {
+        file: "docs/LoadingVideo", labelKey: "menus.help.documentation.loadingVideo",
+        section: "video", menuId: "video", role: "reference",
+        chatDesc: "How do I load a video into Sitrec, and which formats work? How do I fix the frame rate, rotate the video, or zoom and pan in the video view? What do Video Adjustments, Video Processing, the Grid, Annotations, Error Level Analysis and Noise Analysis do?",
+    },
     {
         file: "docs/Video", labelKey: "menus.help.documentation.video",
         section: "video", menuId: "video", role: "reference",
@@ -234,6 +255,11 @@ export const helpDocs = [
         file: "docs/PointTrack", labelKey: "menus.help.documentation.pointTrack",
         section: "video", menuId: "video", role: "reference",
         chatDesc: "Point Tracking (Video \u2192 Point Track): following an object through the video automatically, then using the track as a line of sight and to stabilize the footage. Covers the standard procedure (drag the cursor onto the object, choose Motion (Background), press Analyse Object, then Start Point Track), recovering a track that goes wrong (Clear from Here, user points, analysing again inside a hard section), the tracking methods and when each is right, how Motion (Background) and Analyse Object work, Show Motion Field, the Traverse LOS Source Camera + Point Track and how Point Track differs from Manual Tracking (Camera + Object Track) and Ground Track (Camera + Ground Track), the field-of-view caveat, Stabilize and Render Stabilized Video / Expanded, and a symptom-by-symptom troubleshooting table for every setting (radii, Feature Size, polarity, frame gap, parallax slack, threshold, mask, smoothing, Edit Head Only, analysis resolution). Read for 'how do I track the object', 'why did the track jump or get lost', 'how do I stabilize the video', or 'how do I get a line of sight from the video'.",
+    },
+    {
+        file: "docs/MotionAnalysis", labelKey: "menus.help.documentation.motionAnalysis",
+        section: "video", menuId: "video", role: "reference",
+        chatDesc: "How do I measure camera or background motion in a video, stabilize a shaky pan, or stitch a pan into a panorama? Covers Video > Motion Analysis (Analyze Motion, Export Motion CSV, Create Track from Motion, Stabilize Video, Motion and Feature panoramas, De-Fence). Also covers Camera Motion (Background), Horizon Extractor and OSD Tracker.",
     },
     {
         file: "docs/LongExposure", labelKey: "menus.help.documentation.longExposure",
@@ -258,7 +284,7 @@ export const helpDocs = [
     {
         file: "docs/LensGhost", labelKey: "menus.help.documentation.lensGhost",
         section: "video", menuId: "video", role: "reference",
-        chatDesc: "Lens ghosts and internal reflections: recognising when the 'object' in a video is an artefact of the optics rather than something in the sky, and testing that explanation geometrically. Read for 'could this be a lens flare / reflection / internal reflection', or when a light moves opposite to, or mirrored about, a bright source.",
+        chatDesc: "The Lens Ghost tool: how a bright source such as the Sun can make a ghost image through internal reflection in the optics, what the tool models, every control, and what Fit computes and outputs. Read for 'could this be a lens flare / reflection / internal reflection', or when a light moves opposite to, or mirrored about, a bright source.",
     },
 
     // ── Analysis ────────────────────────────────────────────────────────────
@@ -270,7 +296,7 @@ export const helpDocs = [
     {
         file: "docs/GroundTrack", labelKey: "menus.help.documentation.groundTrack",
         section: "analysis", menuId: "traverse", role: "reference",
-        chatDesc: "Ground Track (Traverse \u2192 Ground Track): placing points ON THE GROUND behind the object \u2014 the hillside or coast it is silhouetted against \u2014 to get a line of sight that needs no field of view, and a hard ceiling on the object's range. Covers the Ctrl+click / click / Alt+click gestures in the look and main views, why a plain click still orbits, Spline vs Linear interpolation, Follow Terrain and why a rooftop point stays on the roof, why the track HOLDS rather than extrapolates outside the keyframes, Limit A/B to Track, placing against 3D tiles and objects, the Ground Range readout, and the 'Camera + Ground Track' LOS Source. Read for 'how far away could it have been', 'it passed in front of that hill', 'how do I get a line of sight without knowing the FOV', or any question about the Ground Track menu.",
+        chatDesc: "Ground Track (Traverse \u2192 Ground Track): placing points ON THE GROUND behind the object \u2014 the hillside or coast it is silhouetted against \u2014 to get a line of sight that needs no field of view, and a hard ceiling on the object's range. Covers the Ctrl+click (Cmd+click) and click gestures in the look and main views, why a plain click still orbits, Spline vs Linear interpolation, why a rooftop point stays on the roof, why the track HOLDS rather than extrapolates outside the keyframes, Limit A/B to Track, placing against 3D tiles and objects, the Ground Range readout, and the 'Camera + Ground Track' LOS Source. Read for 'how far away could it have been', 'it passed in front of that hill', 'how do I get a line of sight without knowing the FOV', or any question about the Ground Track menu.",
     },
     {
         file: "docs/TraverseMethods", labelKey: "menus.help.documentation.traverseMethods",
@@ -280,7 +306,7 @@ export const helpDocs = [
     {
         file: "docs/TraverseAnalysis", labelKey: "menus.help.documentation.traverseAnalysis",
         section: "analysis", menuId: "traverse", role: "reference",
-        chatDesc: "The Analyze Traverse Methods button and what it produces: the hypothesis gallery, how tiles are ranked, solution families and range bands, the plausibility checks, the Ordinariness and Implied object size disclosure lines, and a summary of the executive verdict's five codes. Read this for 'how do I read the analysis gallery', 'what do the tile badges mean', 'what is a solution family', or 'why does a good fit read Unresolved'. For exactly what each verdict wording licenses you to say, and the list of causes Sitrec has no model for at all, read Doing Defensible Analysis instead.",
+        chatDesc: "The Analyze Traverse Methods button and what it produces: the hypothesis gallery, how tiles are ranked, solution families and range bands, the plausibility checks, the Ordinariness and Implied object size disclosure lines, and the executive verdict: its five codes, every headline wording, what sets each one, and the list of causes Sitrec has no model for. Read this for 'how do I read the analysis gallery', 'what do the tile badges mean', 'what is a solution family', 'what does the verdict mean', or 'why does a good fit read Unresolved'.",
     },
     {
         file: "docs/BOTBench", labelKey: "menus.help.documentation.botBench",
@@ -322,6 +348,11 @@ export const helpDocs = [
         chatDesc: "Panoramic Camera mode under Camera → FOV (Zoom): horizontal FOV from 1 to 360 degrees, with a read-only vertical FOV derived from the horizontal FOV and the view's shape so both axes have the same scale (letterboxed at 180 degrees), wheel zoom, saved settings, and matching a swept panorama photograph. Equirectangular rendering with panorama-aware terrain and 3D tile detail.",
     },
     {
+        file: "docs/Satellites", labelKey: "menus.help.documentation.satellites",
+        section: "analysis", menuId: "satellites", role: "reference",
+        chatDesc: "Reference for the Satellites menu: loading TLE/OMM satellite data for a date or from a file, choosing which satellites show, the Filter TLEs window, brightness and flare settings, arrows and labels, Satellite to Track, and the Satellite Ephemeris, Sky Plot and Star Chart views. Read for 'why don't I see any satellites', 'how do I load satellites for a past date', 'how do I show only one satellite', or 'which satellite made this flare'.",
+    },
+    {
         file: "docs/Starlink", labelKey: "menus.help.documentation.starlink",
         section: "analysis", menuId: "satellites", role: "tutorial",
         chatDesc: "Investigating Starlink satellite flares, and more generally recreating a sighting seen from a fixed spot on the ground: loading satellites for a date (Satellite menu, 'Load LEO Satellites For Date'), orbital data and why very recent events need a few days' wait, and the flare band / sun-angle tools. Its step-by-step walkthrough (date and time, camera location by street address, pointing direction, adding the video, refining) applies to any ground-observer case, not just Starlink.",
@@ -340,15 +371,20 @@ export const helpDocs = [
     {
         file: "docs/Nimitz", labelKey: "menus.help.documentation.nimitz",
         role: "case-study",
-        chatDesc: "The Nimitz / 'Tic Tac' 2004 case as a worked example of handling conflicting evidence: a per-parameter table of every reconstruction value with its source and a confidence grade, a catalogue of the conflicts between different tellings, competing hypotheses set up as switchable configurations, and an explicit list of what remains unknown. The best model in the docs for how to document an analysis whose sources disagree.",
+        chatDesc: "The Nimitz / 'Tic Tac' 2004 case as a worked example of handling conflicting evidence: a per-parameter table of every reconstruction value with its source and a confidence grade, a catalogue of the conflicts between different tellings, competing hypotheses set up as switchable configurations, and an explicit list of what remains unknown.",
     },
     {
-        file: "docs/Football", labelKey: "menus.help.documentation.football",
+        file: "docs/LensGhostCaseStudy", labelKey: "menus.help.documentation.lensGhostCaseStudy",
         role: "case-study",
-        chatDesc: "The football/Spidercam wire-strike scenario: launching a ball with real ballistic physics (drag, Magnus lift from spin, bounces) against a cable-cam rig. Also a worked example of a reconstruction that is partly fitted to the claim it is testing, and what that means for what it can show.",
+        chatDesc: "A worked example of the Lens Ghost tool on the Pr055 thermal clip: the sitch setup, the Sun geometry, and the fit outputs (R², magnifications, Roll Coupling) the tool reported. It records what the fit tests and what it does not, and gives no conclusion about what the object is.",
     },
 
     // ── Advanced ────────────────────────────────────────────────────────────
+    {
+        file: "docs/URLParameters", labelKey: "menus.help.documentation.urlParameters",
+        section: "advanced", role: "reference",
+        chatDesc: "Every query parameter you can add to a Sitrec address: opening a sitch (sitch, custom, mod), loading a file from a URL (drop), setting the location, map and elevation source (latlon, mapType, elevationType), setting the start time or pinning a frame (datetime, frame), and startup actions (action=new, trackbrowser, botbench). Read for 'how do I link to a location or time', 'what does ?custom= accept', 'why does ?latlon= do nothing', or 'what URL do I share'.",
+    },
     {
         file: "docs/APIKeys", labelKey: "menus.help.documentation.apiKeys",
         section: "advanced", role: "reference",
@@ -380,6 +416,13 @@ export const helpDocs = [
         // No chatDesc: ~1 MB, so the assistant would only ever see the newest fraction.
         // docs/WhatsNew is the AI-facing changelog.
     },
+    // A single fringe scenario (Physics → Scenarios → Football). Reference only: kept out
+    // of the Help menu, and not presented as an example of anything.
+    {
+        file: "docs/Football", labelKey: "menus.help.documentation.football",
+        role: "reference",
+        chatDesc: "The Football scenario (Physics → Scenarios → Football): its controls for launching a ball with ballistic physics (drag, Magnus lift from spin, bounces) near a cable-cam rig.",
+    },
 ];
 
 // Basename used by getHelpDoc (docs/<name>.md). Strips the "docs/" prefix so the
@@ -398,7 +441,12 @@ export function getChatAvailableDocs() {
     return docs;
 }
 
+// The menus a doc is listed under: `menuId` may be one id or an array of ids.
+export function docMenuIds(d) {
+    return d.menuId == null ? [] : [].concat(d.menuId);
+}
+
 // Docs belonging to a given app menu, for that menu's contextual "Help" folder.
 export function getDocsForMenu(menuId) {
-    return helpDocs.filter(d => d.menuId === menuId);
+    return helpDocs.filter(d => docMenuIds(d).includes(menuId));
 }

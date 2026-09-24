@@ -6,15 +6,18 @@ Two paths: one-click preset (fastest) or piece-by-piece manual build (understand
 ## Path A — One-click preset
 
 1. Open Sitrec with the base custom sitch (`/?sitch=custom`, or the "Custom (Drag and Drop)" menu entry).
-2. Open **Physics > Gimbal Analysis**.
-3. (Optional) Tweak parameters. Only Cloud Wind From / Cloud Wind Knots,
-   Show Glare and Show ATFLIR Pod live in the Gimbal Analysis menu;
-   target/local wind are at the top of the Physics menu, and start distance /
-   target speed / traverse mode are in the Traverse menu.
+2. Open **Physics > Scenarios > Gimbal Analysis**. (The Gimbal Analysis
+   items appear when you first open the Scenarios folder.)
+3. (Optional) Tweak parameters. Of the Gimbal parameters, only Cloud Wind From /
+   Cloud Wind Knots, Show Glare and Show ATFLIR Pod live in the Gimbal Analysis
+   menu (it also holds Az Smooth / El Smooth, the Create buttons and, on the
+   plain base sitch, **Add ATFLIR Pod (reload)**); target/local wind are in
+   **Physics > Wind**, and start distance / target speed / traverse mode are in
+   the Traverse menu.
 4. Click **>> Create Gimbal Sitch**.
 
 The page reloads into a fresh sitch with:
-- Jet track at 28.5 N, -79.5 W, 25000 ft (Gimbal defaults)
+- Jet track at 28.5 N, 79.5 W, 25000 ft (Gimbal defaults)
 - Az/El/bank/glare switches fed from the built-in Gimbal CSVs
 - Clouds, winds (cloud/target/local), traverse switch
 - SA Page with target + 5-ship fleet HAFUs
@@ -26,7 +29,7 @@ The page reloads into a fresh sitch with:
 ## Path B — Manual build (piece-by-piece)
 
 1. Open Sitrec with the base custom sitch.
-2. Open **Physics > Gimbal Analysis**.
+2. Open **Physics > Scenarios > Gimbal Analysis**.
 3. Click **>> Create Gimbal Base (manual build)**.
    - Creates a sitch with the jet origin, altitude, terrain, camera, views,
      Gimbal CSVs and FA-18F/ATFLIR models already loaded — but **no pipeline nodes**.
@@ -60,7 +63,7 @@ pipeline.
 
 Individual view/pod toggles still live alongside these steps:
 - **Show > Views > SA Page** — toggles the SA page view.
-- **Physics > Gimbal Analysis > Add ATFLIR Pod (reload)** — enables the pod + HUD overlays.
+- **Physics > Scenarios > Gimbal Analysis > Add ATFLIR Pod (reload)** — enables the pod + HUD overlays.
   This button only appears on the plain base custom sitch (before any gimbal
   sitch is created, when neither `Sit.showATFLIR` nor `Sit.jetStuff` is set).
   Once you've created a gimbal sitch (`jetStuff` is set), the pod comes in via
@@ -69,12 +72,14 @@ Individual view/pod toggles still live alongside these steps:
 
 ## Adding the Gimbal video
 
-Drop the Gimbal MP4 anywhere on the page **either before or after** creating
-the Gimbal sitch (whichever path). Both work:
-- **Drop before:** the preset rehosts the video and bakes the URL into the
-  generated sitch so reload keeps it.
-- **Drop after:** the new sitch already has a video view, so the drop lands
-  in it directly.
+Drop the Gimbal MP4 anywhere on the page before or after creating the Gimbal
+sitch:
+- **Drop before (Path A only):** **>> Create Gimbal Sitch** rehosts the video
+  and bakes the URL into the generated sitch so reload keeps it. The Path B
+  button (**>> Create Gimbal Base (manual build)**) does not carry the video
+  over, so for Path B drop the video after the base sitch has loaded.
+- **Drop after (either path):** the new sitch already has a video view, so the
+  drop lands in it directly.
 
 Note: the server's PHP upload limits (`upload_max_filesize`, `post_max_size`)
 must cover the video size. If the pre-click rehost fails due to size, the
@@ -85,7 +90,7 @@ it'll work through the normal drop path.
 
 Once `gimbalSetup` is active, the **Create Gimbal Sitch** button is replaced
 by **Apply Parameter Changes**. Edit the cloud-wind / glare knobs in this
-menu (target/local wind are at the top of the Physics menu; start distance /
+menu (target/local wind are in **Physics > Wind**; start distance /
 target speed / traverse mode are in the Traverse menu), click that button, and
 the sitch resaves and reloads with the new values. The Manual Build sub-folder
 is also shown here so you can add any pipeline steps that weren't activated yet.
@@ -107,6 +112,9 @@ is also shown here so you can add any pipeline steps that weren't activated yet.
   legacy behaviour.
 - When `pipeline` is **present** (Path B or any saved piece-by-piece sitch),
   only flagged steps run during `handleGimbalSetup` at sitch load.
+  Two flags are recorded but not consulted there: `commonViews` (Jet Views
+  come back automatically at load whenever the Traverse step is present) and
+  `saHAFU` (the Fleet step re-adds the SA Page HAFUs when the SA Page exists).
 - Each Manual Build button live-applies its step AND flips its flag, so the
   next save reproduces the exact state on reload.
 - Every step clears the nodes it's about to (re)create before running, so

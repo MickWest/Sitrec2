@@ -8,7 +8,7 @@ sight you can analyse. It can also stabilize the footage on whatever it is follo
 
 This page has four parts:
 
-- **A. [Simple procedures](#a-simple-procedures)** that work for most videos
+- **A. [Simple procedures](#a-simple-procedures)**: the standard procedure
 - **B. [Point tracks in traverse analysis](#b-point-tracks-in-traverse-analysis)**, and how Point Track differs from Manual Tracking and Ground Track
 - **C. [Stabilization and stabilized rendering](#c-stabilization-and-stabilized-rendering)**
 - **D. [Handling problems](#d-handling-problems)**: what each setting does, and what to change when tracking goes wrong
@@ -19,7 +19,7 @@ This page has four parts:
 
 ### The standard procedure
 
-This works for most videos, including small objects over moving terrain, sea or cloud:
+On the three reference clips in [What to expect](#what-to-expect), this procedure tracked the whole clip:
 
 1. Open **Video → Point Track** and press **Enable Point Track**. A yellow cursor appears over
    the video.
@@ -32,8 +32,9 @@ This works for most videos, including small objects over moving terrain, sea or 
 5. Press **Analyse Object**. It measures the object at this frame and sets Feature Size,
    Motion Polarity, Motion Frame Gap and Motion Parallax Slack to suit it. The result shows on
    the button for a few seconds, for example *bright, size 1, gap 3, slack 0 (27 sigma)*.
-6. If you only want part of the clip, set the end of the range with the **B** marker on the
-   timeline (or the **O** key at that frame). Tracking stops at B.
+6. If you only want part of the clip, set the end of the range with the **Out** marker on the
+   timeline (**Time → Out Frame [O]**, or the **O** key at that frame). In this guide, "B" is
+   that Out frame. Tracking stops at B.
 7. Press **Start Point Track**. It runs as fast as the machine allows, from the current frame
    to B. A long HD clip takes a few minutes.
 8. Scrub through the result. The cyan trail is the track. On the timeline, green marks frames
@@ -54,7 +55,8 @@ the recommended method in **Tracking Method**, then press **Start Point Track**.
 
 1. Stop the track, or let it finish.
 2. Go to the last frame where the track is still on the object.
-3. Press **Clear from Here**. This deletes the tracked points from the current frame to B.
+3. Press **Clear from Here**. This deletes every point from the current frame to B,
+   including your user points.
 4. Go forward to a frame where you can see the object again, and drag the cursor onto it. This
    is a **user point**: the tracker takes it as fact and restarts from it.
 5. Press **Start Point Track** again. Frames that already have points are kept.
@@ -66,7 +68,7 @@ it again. The best settings can change as the object's size and contrast change.
 
 Hold **`'`** to track one frame at a time at about playback speed, which is useful for watching
 a difficult stretch. Hold **`;`** to go back. Note that `;` is not "tracking backwards": it
-**deletes** the tracked points as it goes, so use it to undo a bad run.
+**deletes** the points as it goes, user points included, so use it to undo a bad run.
 
 ### Lights at night, and stars
 
@@ -80,8 +82,9 @@ pixels.
 
 For a vehicle, an aircraft seen close, or anything much bigger than the tracking circles, use
 **Template Match**. Motion (Background) cannot track a large object: the object overlaps its
-own earlier positions and cancels itself out, so Analyse Object reports *object not clear
-here* and recommends Template Match.
+own earlier positions and cancels itself out, so Analyse Object shows *Try Template Match:
+too large or too still for Motion*. The detail (*object not clear here*) goes to the browser
+console.
 
 Template Match compares every frame with the patch you started on. When the object turns or
 changes size on screen, for example a truck as the aircraft circles it, the match gets worse
@@ -127,7 +130,7 @@ Sitrec has three ways to get a line of sight from a video. They are easy to conf
 | Who finds the positions | the computer, on every frame | you, at keyframes; a curve joins them | you, at keyframes |
 | What is stored | a pixel in the video | a pixel in the video | a place on the ground |
 | Needs the field of view | yes | yes | no |
-| Also gives | stabilization | angular size, from a second point (B) on each keyframe | an upper limit on the range |
+| Also gives | stabilization | angular size, from a second point on each keyframe (**Use Size Point**) | an upper limit on the range |
 
 - Use **Point Track** when the object is visible for most of the clip. It measures every
   frame, so it keeps detail that keyframes would miss.
@@ -155,10 +158,9 @@ tangent.) The conversion also assumes a lens without distortion, so accuracy fal
 edges, and a cropped video has its optical centre off the frame centre.
 
 If there are stars in the footage, measure the field of view with the
-[Star Tracker](StarTracker.md). This is the most valuable single step for making a
-pixel-based analysis trustworthy. See [Doing Defensible Analysis](DefensibleAnalysis.md) §2.3.
+[Star Tracker](StarTracker.md).
 
-If you cannot trust the field of view, a [Ground Track](GroundTrack.md) avoids it.
+If the field of view is not known, a [Ground Track](GroundTrack.md) avoids it.
 
 ---
 
@@ -172,7 +174,8 @@ the object moves relative to the background, or relative to the stars.
 2. Press **Stabilize**. The video now moves so the tracked point stays fixed.
 3. Use **Enable Stabilization / Disable Stabilization** to switch between the stabilized and
    the original view.
-4. To save a video, press **Render Stabilized Expanded** or **Render Stabilized Video**.
+4. To save a video, press **Render Stabilized Expanded** or **Render Stabilized Video**. The
+   render covers the In to Out frame range.
 
 | Control | What it does |
 |---|---|
@@ -196,7 +199,7 @@ without a shift.
 
 | What you see | Likely cause | What to do |
 |---|---|---|
-| **Analyse Object** says *object not clear here* | The object does not stand out at this frame, or the cursor is not on it | Move the cursor exactly onto the object, or analyse at a frame where it is clearer |
+| **Analyse Object** says *Try Template Match: too large or too still for Motion* for a small object, or *object not clear here* | The object does not stand out to Motion (Background) at this frame, or the cursor is not on it. The button shows *object not clear here* only when the selected method is already the one it would recommend | Move the cursor exactly onto the object and analyse again, or analyse at a frame where it is clearer |
 | The track follows something else nearby | A look-alike (rock, wave, light) is almost as strong as the object | Run **Analyse Object** at the frame where it went wrong. Lower **Search Radius**. Place a user point on the object and track again |
 | The track jumps to on-screen text or a reticle | White or grey overlay is not recognized as overlay | Paint a [mask](Masking.md) over it and keep **Use Mask** on |
 | The track drops out while the object hovers | Motion (Background) cannot see an object that is still relative to the ground | Expected. Place user points across the stop, or use *Template Match* or a *Center on* method for that section |
@@ -210,7 +213,7 @@ without a shift.
 | Dragging the current point moves an older point | Earlier points overlap inside the cursor | Turn on **Edit Head Only** |
 | Template Match drifts onto the background | **Track Radius** is too big, so the template contains background | Reduce **Track Radius** |
 | Template Match loses an object that turned | The template no longer matches the object's new appearance | Place a user point at that frame; the template restarts from it |
-| High Peak or Template Match leaves frames empty | The peak or match was not clear enough to trust | Expected: an empty frame is better than a wrong one. Place user points, or smooth over the gaps |
+| High Peak or Template Match leaves frames empty | The peak or match was not clear enough to trust | Expected: these methods leave a frame empty instead of guessing. Place user points, or smooth over the gaps |
 | The object escapes between frames | **Search Radius** is too small for its speed | Increase **Search Radius** |
 
 When nothing on this list helps, turn on **Show Motion Field**. If you cannot see the object in
@@ -219,16 +222,14 @@ Manual Tracking) is the answer.
 
 ### Choosing a tracking method
 
-Choosing the right method matters more than tuning the sliders.
-
 | Method | Use it when |
 |---|---|
-| **Motion (Background)** | The object is small, or looks like the clutter it crosses: the same brightness, size or texture. The best general choice for aircraft and drone footage over terrain or sea |
+| **Motion (Background)** | The object is small, or looks like the clutter it crosses: the same brightness, size or texture. Best on the three terrain/sea test clips (see the table below) |
 | **Template Match** | The object is large and has visible structure, such as a vehicle. Place a user point when it turns on screen |
 | **Optical Flow** | The object is textured and moves smoothly. Faster than template matching |
 | **Center on Bright** | A bright point on a darker or plain background, such as a light at night or a dot on sky |
 | **Center on Dark** | A dark point on a bright background, such as a distant object against overcast sky |
-| **Center on Color** | The object is distinguished by colour rather than brightness |
+| **Center on Color** | The object is distinguished by color rather than brightness |
 | **High Peak** | An isolated bright point, such as a light at night. It finds the peak to a fraction of a pixel, and marks a frame as missing when the peak is not clear |
 | **Low Peak** | The same for dark points |
 | **SAM2 (Meta)** | Segmentation-based tracking. Local development builds only |
@@ -255,7 +256,7 @@ Gap** helps then. A fast pan or zoom may need closer samples.
 
 ### Which method Analyse Object recommends
 
-Each method fails within a few dozen frames on the wrong kind of clip, so Analyse Object also
+On the test clips, the wrong method lost the object quickly (see the table below), so Analyse Object also
 looks at the raw image at the cursor and recommends a method:
 
 1. **Motion (Background)**, if the motion measurement finds the object with the same polarity
@@ -299,7 +300,8 @@ whole clip.
 **It measures the frame you are on.** An object's size and contrast change through a long
 clip. The console report lists close alternatives; if tracking fades later, try one of them, or
 analyse again inside the difficult section. If the object is not clear where you analyse, it
-says so and changes nothing.
+changes nothing. The button then shows the method it recommends instead, or *object not clear
+here* if that is already the selected method; the console has the detail.
 
 ### Show Motion Field
 
@@ -308,7 +310,7 @@ background's motion subtracted. Mid-grey means "explained by the background", br
 "brighter than the background predicts", and black means masked out. It shows at once whether
 the object stands out, what else does, and whether something the tracker followed was real.
 
-Coloured symbology (cursors, letters, readouts) and solid black redaction boxes are recognized
+Colored symbology (cursors, letters, readouts) and solid black redaction boxes are recognized
 and ignored, also when they move across the frame. **Grey or white overlay is not**, because
 nothing tells it apart from the picture. Mask it.
 
@@ -326,10 +328,12 @@ nothing tells it apart from the picture. Mask it.
 | **Motion Threshold** | 6 | 3–30 | How far above the noise a detection must be before it is accepted |
 | **Use Mask** | on | — | Ignore masked parts of the frame (Motion and the *Center on* methods) |
 | **Brightness Threshold** | 128 | 0–255 | Cut-off for the *Center on* methods |
-| **Color Distance** | 80 | 0–442 | For *Center on Color*: how far a pixel's colour may be from the target colour. 442 matches everything |
+| **Tracking Color** | red | — | For *Center on Color*: the target color |
+| **Color Distance** | 80 | 0–442 | For *Center on Color*: how far a pixel's color may be from the Tracking Color. 442 matches everything |
 | **Output Smoothing** | Off | Off, 2–10 frames | Smooths the output track; see below |
 | **Edit Head Only** | off | — | Only the point at the current frame can be dragged; see below |
-| **Clear from Here** | — | — | Delete tracked points from the current frame to B |
+| **Show N Keyframes** | 20 | 0–100 | Draws only this many user points (magenta crosses), the ones nearest the current frame |
+| **Clear from Here** | — | — | Delete all points, user points included, from the current frame to B |
 | **Clear User Points** / **Clear Auto Points** | — | — | Delete only your points (asks first), or only the tracker's |
 
 Track Radius and Search Radius are in **original video** pixels, so they do not change when you
@@ -412,7 +416,8 @@ does not repair a track that has followed a different object.
 ### Editing the track
 
 - **Drag the cursor onto the object** to place or replace the point at the current frame.
-- **`Delete`** or **`Backspace`** removes the point under the mouse.
+- **`Delete`** or **`Backspace`** removes the user point (magenta cross) within 5 screen pixels
+  of the mouse. It does not remove auto points; use **Clear from Here** or **Clear Auto Points**.
 - Placing new points partway through a track is normal. It is usually better than fighting the
   settings.
 
@@ -424,7 +429,7 @@ seconds ago without you noticing.
 
 With **Edit Head Only** on, a drag can move only the point at the current frame. The rest of the
 track is still drawn, but faded: the cyan path at 25% and the other points at 10%. Clicks pass
-over them. `Delete` / `Backspace` still removes the point under the mouse. Turn it off to adjust
+over them. `Delete` / `Backspace` still removes the user point under the mouse. Turn it off to adjust
 an earlier point directly.
 
 ---
@@ -435,5 +440,4 @@ an earlier point directly.
 - [Masking](Masking.md) — keep the tracker off overlays, trees and buildings
 - [Star Tracker](StarTracker.md) — measure the field of view instead of assuming it
 - [Traverse Methods](TraverseMethods.md) — what to do with the line of sight
-- [Doing Defensible Analysis](DefensibleAnalysis.md)
 - [Keyboard Shortcuts](KeyboardShortcuts.md)

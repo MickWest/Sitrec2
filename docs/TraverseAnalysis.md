@@ -1,12 +1,10 @@
 # Traverse Analysis and the Verdict
 
-This document covers **Traverse ▸ Analyze Traverse Methods…** — the button that runs every
-method at once, ranks the results, and issues an executive verdict — and how to read what it
-gives you without reading more into it than it says.
+This document covers **Traverse ▸ Analyze Traverse Methods...** — the button that runs every
+method at once, ranks the results, and issues an executive verdict — and what each result
+shows.
 
 For how each individual method computes a path, see [Traverse Methods](TraverseMethods.md).
-For how to conduct and write up an investigation, see
-[Doing Defensible Analysis](DefensibleAnalysis.md).
 
 ---
 
@@ -19,8 +17,8 @@ nominal speed, roughly straight and level flight, low kinematic acceleration)
 as a soft target rather than an exact constraint, so that it can report, for
 every range, how much maneuvering the sightlines would force on that
 assumption. The targets define the question each fit asks; they are not a
-preference of the analysis. The interesting output is the family of plausible
-solutions — and how much maneuvering every *other* interpretation would require.
+preference of the analysis. The output includes the family of solutions and the
+maneuvering each range requires.
 
 ### Global Fit: Minimum Acceleration
 
@@ -38,8 +36,8 @@ over ~half-second strides so that jitter cannot dominate it.
 coarse sweep over range: when the sensor itself maneuvers (an orbit, a hard
 turn), geometry alone pins the range — the smoothness-vs-range valley is
 decisive and the speed target is *not used* (the Minimum Acceleration Fit
-Results folder shows "not needed (geometry)"). Only when that valley is flat — the classic
-narrow-baseline case like Gimbal, where range is unobservable from geometry —
+Results folder shows "not needed (geometry)"). Only when that valley is flat — for
+example on the Gimbal sitch, where range is unobservable from geometry —
 does Stage 2 fall back to the soft air-speed target
 `((airspeed − Target Speed)/σ)²` with σ ≈ 60 kt (IRLS), which is then what
 gives the plausibility-vs-range curve a real minimum. The winner is refined
@@ -66,7 +64,7 @@ jitter (which would otherwise read as enormous kinematic acceleration on a slow 
 **When to use**: this is the drifting-lantern / near-static reading. When the
 sensor orbits or passes a slow, close object, most of the apparent motion is
 the sensor's own parallax — the slowest consistent object is then a
-near-static drifter (the classic Aguadilla answer, ~12 kt). It takes no
+near-static drifter (on the Aguadilla sitch this fit gives about 12 kt). It takes no
 parameters; the range follows from where the sightlines let an object move
 least. A final few IRLS passes level the air speed over the first/last 15%
 of the clip (the spline endpoints are data-starved, so without this the
@@ -93,7 +91,7 @@ real wind veers over minutes — a constant wind can only produce a straight
 ground track. Vertical motion follows the lantern life cycle — rise while the
 flame burns, exponential buoyancy decay after flame-out, terminal sink — and
 the solved flame-out time can fall before the clip (a lantern already in its
-cooling descent, the Aguadilla case), inside it, or after it (still climbing
+cooling descent), inside it, or after it (still climbing
 throughout). The base-wind components are bounded to ±40 m/s, the shear
 multiplier to 0.25–3, and rise/sink parameters to 4 m/s. Those are broad search
 constraints, not a certified lantern envelope: the wind box is wide enough to
@@ -102,8 +100,8 @@ reach ordinary winds aloft from any bearing, and along its diagonal it admits
 the light-wind speed prior and the kinematic ordinariness screen, not of the
 box. Its residual measures
 compatibility with this particular wind-tracer/life-cycle model, not the
-probability that the object is a lantern. Bound-pinned and shear-clamped
-solutions therefore need explicit scrutiny.
+probability that the object is a lantern. Bound pins and shear clamps are
+flagged on the tile.
 
 **Fixed Wing Aircraft** — constant horizontal airspeed, a linearly-varying turn rate,
 constant climb rate, and wind advection. Parameters (initial range, heading,
@@ -130,7 +128,7 @@ flight-envelope certification.
 selected, a second dropdown chooses a specific airframe/drone whose approximate
 performance envelope tightens the fit bounds — Cessna 172, Boeing 737-800,
 MQ-9 Reaper, F/A-18E/F, F-35, F-16; DJI Mini 4 Pro, Air 3, Mavic 3, Phantom 4
-Pro, DJI FPV, Racing FPV. Both default to **AUTO**, which fits a generic
+Pro, DJI FPV, Racing FPV. Both default to **Auto** ("Auto (generic conventional prior)", "Auto (any multirotor)"), which fits a generic
 envelope and can report the closest compatible catalog envelope from speed,
 climb, g, and altitude where available. Quadcopter climb capability is
 direction-aware: a solved descent is checked against the drone's maximum
@@ -146,7 +144,7 @@ model-conditioned diagnostics and inspect bound hits and sensitivity.
 
 **Drone (flown inputs)** — a gallery-only companion to the free Quadcopter that
 asks a different question. The free Quadcopter asks "is there *any* path inside
-the envelope that fits?" — almost always yes, which is how it can produce a
+the envelope that fits?", which is how it can produce a
 many-revolution corkscrew that buys a tiny residual. The flown-inputs fit instead
 models a drone as a *few held control inputs* (forward speed, yaw, climb, changed
 occasionally): it seeds from the best geometric path, inverts it into the control
@@ -154,9 +152,8 @@ history needed to fly it, and refines while paying for control **effort** — ho
 much the inputs must move — rather than for path shape. Holding an input is free,
 a steady orbit is cheap, and an aggressive-but-deliberate manoeuvre stays
 reachable; only motion that buys no residual (the corkscrew) is priced out.
-Reading the gap between its residual and the free Quadcopter's is the point: a
-small gap means an ordinary flight explains the sightlines as well as any
-contortion.
+The tile reports the residual gap between the flown-inputs fit and the free
+Quadcopter.
 
 ### Ground contact and underground rejection
 
@@ -189,12 +186,12 @@ the fits are byte-identical to before.
 
 ### Analysis integrity
 
-The analysis is engineered to be honest about what LOS-only data can and
-cannot determine:
+The analysis includes these controls on what LOS-only data can and cannot
+determine:
 
 - **Paired wind fits**: every wind-dependent analysis method has a **supplied
   wind** result and an independent wind treatment. This covers Fixed-Wing Aircraft,
-  Sky Lantern / Balloon, Quadcopter, Constant Air Speed, Constant Altitude,
+  Balloon, Quadcopter, Constant Air Speed, Constant Altitude,
   Minimum Acceleration and Minimum Speed, in both live analysis and BOTBench.
   Supplied wind is held fixed to the complete per-frame input series, including
   calm if selected; it is not a soft constraint. The second run searches wind
@@ -216,8 +213,9 @@ cannot determine:
   one trajectory.
 - **Balloon model selection**: analysis starts with constant horizontal drift
   and a signed constant vertical speed (four free parameters including range).
-  If needed it tries linear wind change, a rise/cooling/descent lifecycle,
-  altitude shear, and quadratic wind change as separate alternatives. It never
+  If needed, the fitted-wind balloon tries linear wind change, a rise/cooling/descent
+  lifecycle, altitude shear, and quadratic wind change as separate alternatives;
+  the supplied-wind variants try only the lifecycle. It never
   fits time variation and altitude shear together. Among completed fits it
   selects the fewest parameters within the larger of 0.002° or 10% of the best
   mean LOS residual. This is a practical tolerance, not a statistical test.
@@ -246,20 +244,22 @@ cannot determine:
   is computed there in double precision, as it is without this option. A larger
   search can find a better-fitting basin than the normal search, so results can
   differ from a CPU run, and they can differ slightly between graphics cards.
-  The balloon model selection, drone-control fit and supplied-wind quadcopter fit use the CPU. Range bands use the selected model
+  The balloon model selection, drone-control fit and supplied-wind quadcopter fit use the CPU,
+  as do all fits when angular-size fitting is on and the quadcopter under a ground-contact prior. Range bands use the selected model
   fits as their starting points. Without
   WebGPU, or if the graphics card reports an error, the analysis uses the normal
   search. The report's run audit records which search each fixed-wing run used.
 - **GPU Monte Carlo presets**: *Traverse Analysis Tweaks → Monte Carlo GPU*
-  adds a selected trial budget, or all six budgets, to the gallery. The presets
+  adds a selected trial budget, or all five budgets, to the gallery. The presets
   `mc_50k` through `mc_1M` use order 1 and 0.1° LOS uncertainty, sampling blind
   ranges independently of the range anchor. They require WebGPU and report
   failures explicitly. The same presets are selectable in the traverse menu
   and [BOTBench](BOTBench.md#choosing-the-solvers). They compare fitting methods;
   the trial count is a search budget, not a confidence level.
-- **Physical fits are seeded from the smoother**: the balloon (with its wind free
-  to vary over the clip) and the drone control-input candidate start from the
-  best geometric approximation — the Kalman-smoother path — and refine from
+- **Physical fits are seeded from the smoother**: the balloon and the drone
+  control-input candidate start from the best geometric approximation — the
+  Kalman-smoother path (or, if the smoother fails, the Minimum Acceleration
+  track; with neither, the fitted-wind balloon is not run) — and refine from
   there, rather than searching their high-dimensional parameter spaces blind.
   The smoother is regularised, and its constant-velocity start is given an
   explicit 500 m range floor because regularisation alone cannot remove an LOS
@@ -271,8 +271,8 @@ cannot determine:
   refinement (Nelder-Mead from the seed), which is why it now solves in about a
   second where it once took tens.
 - **Circular-LOS detection**: when the sightlines are *constructed* from the
-  target being tested (Camera Heading = "To Target" with LOS Source = raw
-  Camera Center), the gallery and verdict carry a prominent
+  target being tested (Camera Heading = "To Target" with an LOS built on the
+  camera center — the raw Camera Center, or a pixel-tracked LOS built on it), the gallery and verdict carry a prominent
   "Constructed LOS — validation only" banner. Fits recovering the target then
   confirm internal consistency, not an independent discovery.
 - **A ground answer must be visible**: the *Ground Object* is rejected, as the
@@ -292,8 +292,8 @@ cannot determine:
   best-first order, but that order is decided by keys which ARE comparable across
   categories (with a usable truth track — at least five overlapping frames:
   completeness, then closeness to that track; otherwise broad-screen pass,
-  eligibility, completeness, tier, and
-  bound-pin count) before the common BOT Score. Finite trajectories
+  angular-size conflict (only with angular-size judging on), eligibility,
+  completeness, tier, and bound-pin count) before the common BOT Score. Finite trajectories
   use this score regardless of the method that produced them. Angular-only
   checks use different units and are displayed after tied trajectories. Each tile still reports its standing within its own category
   ("#1 of 4 physically based").
@@ -310,14 +310,15 @@ cannot determine:
   that threads the rays exactly being hidden as merely a good fit. Search-edge,
   active-model-limit, inactive-bound, internal-clamp, and optimizer-incomplete
   badges remain independently visible; a tier is never relabelled upward, and an
-  incomplete result cannot receive an affirmative global winner badge. Two more
-  labels exist. **Not fully tested** replaces a tier label only when a model
+  incomplete result cannot receive an affirmative global winner badge. Three more
+  labels exist. **Provisional fit** replaces the tier label, capped at rank 1,
+  when an optimizer did not finish. **Not fully tested** replaces a tier label only when a model
   limit is the binding constraint — the fit and the motion would both grade
   higher, but a pinned bound stopped the search, so the model was never fully
   tested rather than measured and found wanting (a fit that pins *and* fits
   poorly keeps the stronger "Poor fit"). **Co-leader** marks tiles that tie on
-  every comparable key (screen pass, eligibility, completeness, tier, pin
-  count). Their remaining order is a heuristic BOT Score tie-break, not a
+  every comparable key (screen pass, angular-size conflict, eligibility,
+  completeness, tier, pin count). Their remaining order is a heuristic BOT Score tie-break, not a
   finding that one object type is more likely. Applying a truth track orders
   them by truth separation instead.
 - **The criteria ribbon**: a row of small squares under each tile's heading, one
@@ -346,9 +347,9 @@ cannot determine:
   angular size in the file, no truth track loaded, no manoeuvre by the platform
   to compare against — or that it ran and settled nothing, such as an
   inconclusive wind comparison. Each grey tooltip says which. The first square
-  is what keeps the rest honest: a candidate rejected outright (underground,
+  shows outright rejection: a candidate rejected outright (underground,
   non-physical, off-mode) carries no ranks at all, so without it such a tile
-  would show mostly grey and read as unobjectionable.
+  would show mostly grey.
 - **Platform acceleration match (the "Coryat curve")**: assume the wrong range
   and the observing platform's own manoeuvre is injected into the solved path,
   because both the candidate and the real object lie on the same rays — the
@@ -360,18 +361,15 @@ cannot determine:
   scaling of it, and at what signed scale. Position is deliberately not used: it
   cannot tell an independent speed change from a shared manoeuvre. An object
   *can* pace the camera — a chase aircraft, a drone flown to follow it — so a
-  matching tile keeps its place in the gallery; it is simply an extraordinary
-  thing for an object to do, and the tier now says so. See
+  matching tile is demoted but keeps its place in the gallery, and the tier
+  says so. See
   [Does it fly the camera's path?](#does-it-fly-the-cameras-path).
-- **Balloon-consistency tie-break**: a *Physically based* balloon tile is
-  scored on whether its own fitted motion is self-consistent with a passive
-  wind tracer — a steady climb, level, or descent drifting in one direction is
-  credited, and a "balloon" that had to yo-yo vertically or curve back on
-  itself is debited by the same amount. It is a consistency check on the model,
-  not a preference for the object: it is bounded and only ever reorders
-  otherwise equally-well-fitting candidates (it can never lift a balloon over a
-  clearly better-fitting drone), so it cannot foreclose a genuine
-  better-fitting energetic or maneuvering solution.
+- **Balloon consistency**: a balloon tile's own fitted motion is checked for
+  self-consistency with a passive wind tracer. A steady climb, level, or descent
+  drifting in one direction (consistency 0.75 or more) and a "balloon" that had
+  to yo-yo vertically or curve back on itself (0.45 or less) each add a reason
+  line. It is a diagnostic only: it does not change the BOT Score or the order.
+  It does gate the verdict — *Probably a wind-blown balloon* needs 0.75 or more.
 - **Family bands**: flat solution valleys are reported as bands ("50–650 kt at
   19–41 NM fit about equally") with a deterministic representative (nearest
   the Target Speed prior), instead of a knife-edge argmin that flips with
@@ -469,27 +467,31 @@ open. If you have scrolled down the details
 panel, a new selection keeps its frame-by-frame graphs at the same position on
 the screen, so you can step through the results and compare the graphs in place.
 
-The frame-by-frame graphs (**Kinematic acceleration**, **Speed** and **LOS fit
+The four frame-by-frame graphs (**Kinematic acceleration**, **Horizontal air
+speed** in kt, **Vertical air speed (+ up / − down)** in ft/min, and **LOS fit
 error**) can have two scales. The left scale starts at zero and its top rounds up to
-a whole step, with a minimum: 2 g in steps of 1 g, 40 kt in steps of 10 kt, and
-0.5° in steps of 0.5°. Graphs of different results therefore usually share a
-scale, and a small value draws as a small line. The left scale's numbers are in
-the result's color, like the lines that use it. A grey copy of the main line
-(g-force, air speed or LOS error), drawn behind it, uses the **Fine scale** on
+a whole step, with a minimum: 2 g in steps of 1 g, 40 kt in steps of 10 kt,
+1000 ft/min in steps of 500 ft/min, and 0.5° in steps of 0.5°. Graphs of
+different results therefore usually share a scale, and a small value draws as a
+small line. The acceleration and LOS graphs use the result's color; horizontal
+air speed is always blue and vertical air speed always green. A grey copy of the
+main line, drawn behind it, uses the **Fine scale** on
 the right, which has grey numbers. The Fine scale fits the main line's own
 range, but never spans less than one hundredth of the left minimum (0.02 g,
-0.4 kt, 0.005°), so it shows the detail without making numerical noise look
+0.4 kt, 10 ft/min, 0.005°), so it shows the detail without making numerical noise look
 like motion. A graph shows the Fine scale only when its span is less than 20%
 of the left scale's; otherwise the grey line would only repeat the main line,
-and the graph has one scale. Secondary lines, such as ground speed and the
-generic-fit reference, are dashed and use the left scale only. The legend is in
+and the graph has one scale. Secondary lines — truth and the generic-fit
+reference — are dashed and use the left scale only. The legend is in
 the title row of each graph.
 
-The report starts with **Ranking without truth**, using the same screening
-order as the gallery with **Use Truth Track** off. If a usable reference track
-is available, **Ranking with truth** follows: the same paths are ordered by
-search completion, then mean 3D distance from the reference. No candidate is
-refitted. Both sections appear regardless of the gallery toggle. The report's
+The report opens with an overview figure (plan views of the platform and the
+leading paths) and **Key findings**, then **Source files and video context** and
+**Candidate results — without truth**, using the same screening order as the
+gallery with **Use Truth Track** off. **Supplied and fitted wind** follows. If a
+usable reference track is available, **Comparison with truth** orders the same
+paths by search completion, then mean 3D distance from the reference. No
+candidate is refitted, and both sections appear regardless of the gallery toggle. The report's
 assessment, candidate cards and detailed rank explanations use the ranking
 without truth; any reference measurements there are comparison only.
 
@@ -533,6 +535,8 @@ console reports how many, and which frames were analyzed. If more than half the
 window is held frames nothing is trimmed — that is a scene problem (check that
 the clip's In/Out range covers real data), and the analysis says so.
 
+The report plots three of the battery's searches:
+
 1. **Constant-air-speed sweep** — a grid over (start distance × air speed,
    15–650 kt log-spaced so slow drifters are representable alongside jets).
    Each combo is solved as the smoothest ray-following path that holds that
@@ -540,20 +544,26 @@ the clip's In/Out range covers real data), and the analysis says so.
    method that exploded into corkscrews whenever the sensor maneuvered), then
    scored for smoothness (kinematic acceleration, turn-rate variability, climb) plus how well
    the requested speed could actually be held. Surfaces the valley of
-   straight-flight solutions (for Gimbal: ~30–32 NM, speed loosely
+   straight-flight solutions (on the Gimbal sitch: ~30–32 NM, speed loosely
    400–550 kt).
 2. **Range profile** — for each assumed start range, the least-maneuvering
    spline solution with a fast-object (cruise speed) and a slow-object
    (drifting) speed target. Quantifies what an object at any given distance
-   would *have* to do — e.g. at 6–8 NM the Gimbal object must nearly stop and
-   whip through a rapid heading reversal, or sustain a continuous banked turn.
+   would *have* to do — e.g. on the Gimbal sitch, the 6–8 NM range profile
+   requires a near stop and a rapid heading reversal, or a continuous banked turn.
 3. **Aircraft fit** — the differential-evolution fixed-wing fit, reported as
    interpretable parameters (range, origin-ENU heading, horizontal airspeed,
    turn, climb).
 
-The report contains provenance, a run-audit manifest, an executive summary, sweep
-and range-profile plots, common-axis track comparisons, selected time series,
-and candidate tables/details. Criteria are deliberately loose checks; scores
+The CAS sweep is drawn as two heatmaps, supplied and fitted wind, and the range
+profiles include a fitted-wind slow profile. The remaining sections are
+**Constant air speed: supplied versus fitted wind**, **Trajectory comparison**,
+**CAS candidate diagnostics**, **Range profiles**, **Candidate measurements and
+explanations**, **Inputs, filtering and angular-size evidence**, **Methods and
+interpretation limits**, three appendices (lowest-score CAS grid cells,
+fixed-wing search runs, run audit and reproducibility) and **Glossary — terms
+and units**. **Download HTML** and **Download run data** save the report and its
+manifest. Criteria are deliberately loose checks; scores
 order model-conditioned hypotheses and are not posterior probabilities.
 
 Unchanged analyses are cached by their LOS, A-B range, timing, wind, model
@@ -567,8 +577,7 @@ higher-resolution authoritative sample, explicit terrain reload, or source
 change invalidates normally. A lower-resolution fallback never overrides the
 cached authoritative sample. If terrain tiles merely finish loading
 *while* an analysis is running, the run is **not** discarded — it completes using
-the ground samples consumed while building and grading the candidates (a late
-sub-decimetre refinement is unlikely to be material) and
+the ground samples consumed while building and grading the candidates, and
 the gallery shows a small note that terrain finished loading, which you can act
 on by re-running once it settles if you need the ground samples exact. Starting
 an analysis while terrain is still doing its initial load is still blocked, since
@@ -605,7 +614,7 @@ Notes on the gallery tiles:
   is not a lower bound or a test of overfitting; unknown correlation stays
   unknown. Cached benchmark rows are rebuilt when the assessment revision
   changes, separately from the expensive solver results.
-- `Max kinematic acceleration (g)` is the change in smoothed air-relative
+- **Max g-Force** (kinematic acceleration) is the change in smoothed air-relative
   velocity divided by gravitational acceleration. It is not aircraft load
   factor and does not include the ordinary 1 g supporting level flight.
 - **True heading** is the compass direction of the candidate's horizontal
@@ -635,8 +644,8 @@ Notes on the gallery tiles:
   motion triangulates the range) it reports how sharply the full-clip cost
   valley pins the range instead.
 - The flexible constant-acceleration residual shown for scale is a
-  **model-reference residual**, not an estimate of sensor noise. It must not be
-  used to make statistical confidence or likelihood claims.
+  **model-reference residual**, not an estimate of sensor noise. The analysis
+  derives no confidence or likelihood from it.
 - **Physical compatibility** and **Implied object size** are disclosure lines,
   not ranking inputs. Compatibility lists all classes within the tested size,
   speed and acceleration limits, and checks steady drift for balloons. It
@@ -649,22 +658,23 @@ Notes on the gallery tiles:
   printing a fictitious lower end. Neither line moves
   the order of the tiles — the **Platform acceleration match** line, which is
   shown whenever the statistic could be computed at all, is the one stats line
-  that does.
+  that does, except that with angular-size judging on a size conflict also
+  demotes a tile.
   See
   [How ordinary is the answer?](BOTBench.md#how-ordinary-is-the-answer) for the
   definition and the measured behaviour.
-- The **Sky Lantern / Balloon (measured wind)** variant pins the drift to a
-  supplied wind. When no wind source is loaded (winds aloft, or the sitch wind)
-  it is reported as "not tested — no wind was supplied", never silently
-  omitted, so a missing tile is not mistaken for a failed fit.
+- The balloon runs as **Balloon (fitted wind)**, **Balloon (supplied wind)**,
+  which holds the drift to the complete supplied wind series (calm included),
+  and **Balloon (supplied wind + correction)**. A tile whose fitted lifecycle
+  shows a rise then a fall is renamed **Possible sky lantern (rise then fall)**;
+  this is a wording hint, not an identification.
 
 ### Solution families — the range band a model admits
 
 *Traverse Analysis Tweaks → "Solution families (range bands)". Off by default;
 it re-fits each physics model several times.*
 
-A single drawn trajectory is the most misleading thing this analysis can
-produce, because bearings alone rarely determine range. For **any** distance
+Bearings determine range only with enough parallax. For **any** distance
 profile R(t), the path `S(t) + R(t)·D(t)` reproduces the sightlines exactly —
 so a distance is only pinned once you assume something about how the object
 moves, and then only as far as that assumption actually constrains it.
@@ -677,8 +687,7 @@ model. The rungs whose fit stays acceptable are the model's **admitted band**.
 - Admitted members are drawn as faint tracks in the tile's own color, with
   the headline solution solid on top. A member that follows the sightlines but
   fails the physical screen (underground, extreme kinematics) is drawn dashed
-  and dimmer — visible, because "the rays allow this and physics does not" is
-  worth seeing, but never mistakable for part of the answer.
+  and dimmer, so that it is visible and distinct from admitted members.
 - The tile reports the band next to the slant range, with the number of rungs
   **sampled**: "3.0–3.6 NM (2 of 12 sampled)". A narrow band says the range is
   well constrained *for that model*; a wide one says it is not.
@@ -773,7 +782,8 @@ table gives measured values, limits and margins, plus search-completion and
 model-limit warnings. The physical-compatibility table applies the same class
 limits to both paths and marks missing measurements as unassessed. These class
 checks do not change the BOT Score. A result that passes the available checks
-names any missing inputs, for example **Passes measured checks · size unknown**.
+names any missing inputs, for example **Passes measured checks · size unknown**
+(or **· size judging off** when size data exists but judging is off).
 **Results**, **X**, or **Escape** returns to
 the gallery with its selection and chart settings intact.
 
@@ -789,18 +799,19 @@ categories, before anything model-specific is consulted:
    that is soundly comparable across every category.
 2. **Broad-screen pass** — anything rated *Kinematically extreme* / *Poor
    fit* (or flagged invalid, underground, or off-mode) sorts below
-   everything that passed, even an incomplete pass. This ordering is
-   deliberate: broad, weakly-constrained slow families are the ones that
-   honestly report touching a search edge, and completeness-first would
-   bury them under extreme-but-cleanly-converged solutions.
-3. **Eligibility** — complete *and* top tier.
-4. **Completeness** — no search-boundary or optimizer-incomplete flags.
-5. **Tier** (see below), then the count of locally load-bearing model limits.
-6. **Score basis** — finite trajectories use the BOT Score;
+   everything that passed, even an incomplete pass. Because this comes
+   before completeness, a broad slow family flagged *Search incomplete* can
+   lead an extreme solution that converged cleanly.
+3. **Angular-size conflict** (only with angular-size judging on) — a tile whose
+   implied size is outside every class its motion allows sorts below the rest.
+4. **Eligibility** — complete *and* top tier.
+5. **Completeness** — no search-boundary or optimizer-incomplete flags.
+6. **Tier** (see below), then the count of locally load-bearing model limits.
+7. **Score basis** — finite trajectories use the BOT Score;
    angular-only checks use raw degrees. When all earlier keys tie, finite
    trajectories are displayed first to avoid comparing numbers with different
    units. This is a display convention, not a preference for an object type.
-7. **BOT Score** for finite paths, or angular score for angular-only
+8. **BOT Score** for finite paths, or angular score for angular-only
    checks, then raw LOS residual. A physical-model solver gets no priority over
    an LOS-constrained or geometric solver.
 
@@ -810,9 +821,7 @@ and 0.3 g — top tier and eligible — leads it at the eligibility key; their
 scores are never compared. A slow drifting family flagged *Search
 incomplete* because its range band touches the grid edge still leads a
 cleanly-converged 900 kt / 12 g solution: the extreme candidate fails the
-broad-screen pass, which is decided *before* completeness, so honestly
-reporting a search edge is not punished by a worse tile that merely
-finished. And a catalogued planet with a close angular match (say 0.08°,
+broad-screen pass, which is decided *before* completeness. And a catalogued planet with a close angular match (say 0.08°,
 the top catalogue grade) ties a passing drone fit on every key down
 through tier and pin count — but its secondary score is 0.08 (raw
 degrees) while the drone's smoothness-plus-residual composite is several
@@ -830,7 +839,7 @@ fit*. The scale exists because scenes do not resolve equally well: on the
 Aguadilla ground-track sitch every fitted candidate lands between 0.07° and
 0.19° while the reference itself leaves 0.14°, so fit quality is not
 distinguishing anything there and a fixed ladder would only sort noise. The
-clamp is what stops the scale becoming an alibi — at the upper end the broad
+clamp limits the scale: at the upper end the broad
 screen still sits at 0.24°, well inside the old 0.5° boundary — and what stops a
 noiseless synthetic file, where a truth track threads its own rays, from failing
 every real model. It is deliberately **not** taken from a loaded truth track's
@@ -849,19 +858,20 @@ across those windows, the matching frames must establish a shared *change* of
 acceleration rather than a constant one, and the matched motion must be at least
 three times the positional scale the tile's own residual can resolve — so a few
 metres of platform-shaped wander is never treated as evidence. It never reaches
-the bottom grade, because pacing the camera is extraordinary rather than
-impossible. On a tie it does not take the label: a model that both fits poorly
+the bottom grade, because an object can pace the camera (a chase aircraft,
+a drone). On a tie it does not take the label: a model that both fits poorly
 and matches is reported as fitting poorly, with the match still spelled out in
 the rank basis.
 
 One locally load-bearing model limit
-caps the tier at 2, two or more at 1, and an unconverged optimizer caps it
+(badge *Not fully tested* when it binds) caps the tier at 2, two or more at 1, and an unconverged optimizer caps it
 at 1 as a *Provisional fit*. Two iteration-limit stops are **not** counted as
 unconverged: a Nelder-Mead simplex that has collapsed to its position tolerance
 on every parameter has converged even if the cost spread has not settled (no
 further iteration can move it), and a fit whose cost has settled while some
 parameters stay wide is reported as settled but unidentifiable on the named
-parameters — an identifiability limit of the clip, not an optimizer failure.
+parameters (currently the balloon lifecycle's vSink, tauCool and tBurn, when
+the burn outlasts the clip) — an identifiability limit of the clip, not an optimizer failure.
 Before this distinction the most precise fits were the likeliest to be refused;
 see [Why a good fit can still read "Unresolved"](BOTBench.md#why-a-good-fit-can-still-read-unresolved). Catalogue and at-infinity tiles have no
 kinematics to grade: they are tiered on angular offset alone, with the
@@ -876,9 +886,8 @@ one scale. The composite prices exactly the things a wrong assumed
 distance forces on a solution: sustained and peak acceleration, erratic
 turning, and implausible climb or descent. A tile that matches the platform's
 acceleration carries a further demotion of up to about 0.3° of
-residual-equivalent, in proportion to the matching share. That term only ever demotes: not flying the
-camera's path is the ordinary expectation, not an achievement, and rewarding it
-would be a standing thumb on the scale for distant solutions.
+residual-equivalent, in proportion to the matching share. That term only demotes; a tile with no match
+receives no bonus.
 
 **Balloon motion is a separate diagnostic.** Consistency measures a steady
 vertical trend and one-direction drift. It helps assess the balloon
@@ -918,9 +927,8 @@ That is exact, frame by frame. Over a clip where the range ratio holds roughly
 steady it reads as a single blend with a constant `k`, and the coefficient on
 the platform is `(1 − k)`: **guess the range wrong and the camera aircraft's own
 motion is added into the solved trajectory**, scaled by how wrong the guess is,
-and reversed in sign when the guess is too far. The result is a plausible-looking
-banking or turning path that is really the platform's flight wearing the object's
-clothes. This is what Metabunk's Gimbal thread named a *Coryat curve*.
+and reversed in sign when the guess is too far. The result is a turning path
+whose turn is the platform's, scaled. This path is called a *Coryat curve*.
 
 ![A wrong range stamps the platform's turn on the object](docimages/traverse-mirror-01-blend.svg)
 
@@ -928,7 +936,7 @@ Nothing about the fit exposes it. Such a candidate follows the sightlines as
 faithfully as any other — it is a member of the same exact-ray family — and its
 speeds and accelerations are unremarkable. Aguadilla's Constant Altitude tile sat
 at 0.073° residual, 51 kt and 0.48 g, and led the gallery; the stamped bend cost
-it less than half a g, which no screen on acceleration would ever stop. What
+it less than half a g, which passes the kinematic screen (at most 1.5 g). What
 exposes it is comparing the candidate's motion with the **platform's**.
 
 **Why the comparison is made on acceleration.** The blend survives
@@ -989,15 +997,16 @@ platform is not accelerating carry no information either way, and are not counte
 
 **Four guards, all of which must hold.** The comparison is run three times over,
 at half-windows of 1, 2 and 4 seconds — the 2, 4 and 8 second windows the tooltip
-names — on one common interior stretch of the clip. A finding needs all four of
+names — on one common interior stretch of the clip (clips under 16 s scale
+these to a quarter of the clip). Each window needs six active frames and 0.01 g
+RMS platform variation, or the line reads *Not assessable*. A finding needs all four of
 the following, and any one of them failing means no penalty at all.
 
 - **A majority of the time matches.** The share must reach 0.50, and the share
   taken is the **smallest** of the three windows rather than the best of them.
 - **The scale is stable.** The three windows' `β` values must share one sign and
-  sit within 25% of their median. A real shared manoeuvre is the same manoeuvre
-  however hard it is smoothed; a coincidence between two unrelated motions rarely
-  survives being looked at three ways.
+  sit within 25% of their median. This rejects matches that depend on one
+  smoothing scale.
 - **The match follows changes.** On the matching frames, the scaled platform
   acceleration must remove at least half of the error that a *constant* candidate
   acceleration would leave. Without this, a candidate holding one steady
@@ -1039,41 +1048,42 @@ result.
 
 And a matching tile is never called invalid. An object *can* pace the camera — a
 chase aircraft, a drone flown to follow it — so the reading stays available, keeps
-its tile, and is priced as extraordinary instead of free.
-
-**Surfacing true anomalies.** Several deliberate choices keep a genuinely
-anomalous solution from being ranked or labelled out of sight. The
-fit/ordinariness split means a 12 g solution that reproduces the
-sightlines exactly is badged *Kinematically extreme* — a good fit
-describing extraordinary motion — rather than blending in among good
-fits or being dismissed as a bad one. The free Quadcopter fit is left
-unseeded as the unconstrained, anomaly-reachable search. Object-class
-preferences do not change the BOT Score. The platform acceleration test demotes only what it can measure — it
-needs a manoeuvring platform, a resolvable matched component, a scale that holds
-across three smoothing windows, and a majority share before it says anything — and it never rules a tile out,
-because an object pacing the camera is a real possibility rather than an
-impossible one. And when nothing passes, the verdict is *Unresolved* — stated
-with what was and wasn't tested — rather than either a manufactured
-conventional winner or an anomaly claim the uncalibrated noise floor
-cannot support.
+its tile, and is demoted rather than removed.
 
 ## The executive verdict
 
-The analysis ends with a one-line **executive verdict** above the gallery. It
-has five codes: *insufficient* (two wordings — independent evidence is lacking
-because the sightlines were constructed from the target under test, or the
-range is undetermined because the sensor's motion gives no usable parallax),
-*probably a wind-blown balloon* (the only affirmative verdict, gated on an
-independent wind measurement), *consistent with one* conventional
-interpretation, *consistent with several*, and *unresolved* (the safety valve,
-not an anomaly claim). Exactly what each wording licenses you to say, and the
-list of causes Sitrec has no model for at all, are in
-[Reading the executive verdict without over-reading it](DefensibleAnalysis.md#7-reading-the-executive-verdict-without-over-reading-it)
-and [What a fit does and does not license](DefensibleAnalysis.md#5-what-a-fit-does-and-does-not-license).
+The analysis ends with a one-line **executive verdict** above the gallery. It is
+hidden while **Use Truth Track** orders the gallery. It has five codes and eight
+headlines:
+
+| Code | Headline |
+|---|---|
+| insufficient | *Insufficient independent evidence to discriminate.* (circular LOS) |
+| insufficient | *Insufficient evidence to discriminate.* (no usable parallax) |
+| probably-balloon | *Probably a wind-blown balloon.* |
+| consistent-one | *Consistent with a …, but not identified.* |
+| consistent-one | *Object type unresolved — close-fitting paths meet several physical class limits.* |
+| consistent-several | *Consistent with several conventional interpretations.* |
+| unresolved | *Unresolved — no completed tested conventional model passes the current screen.* |
+| unresolved | *Object type unresolved — close-fitting paths meet tested physical class limits.* |
+
+The *Object type unresolved* wordings replace the others when path
+compatibility finds several classes (consistent-one) or any class (unresolved);
+the detail then lists them under "Within tested limits" and notes that these
+are path compatibility checks, not extra fits or identifications. *Probably a
+wind-blown balloon*, the only affirmative verdict, needs all four of: a viable
+balloon class, a free-wind fit whose wind **supports** the loaded winds aloft,
+balloon consistency of at least 0.75, and no viable catalogued-object class.
+With angular-size judging on, a size conflict makes that class non-viable.
+An *Unresolved* strip also lists the causes that are not modelled at all: birds and insects,
+airborne debris, helicopters and rockets, reflections, glare and bokeh, and video-processing
+artefacts. Those are not ruled out, because nothing tests them. The balloon
+verdict is green, the *Consistent with* verdicts blue, and *Unresolved* and
+*Insufficient* neutral grey.
 
 ## Optional angular-size evidence
 
-Use **Angular size…** in the results browser to inspect or enter size bounds.
+Use **Angular size: on|off (N)…** in the results browser to inspect or enter size bounds.
 Judging and fitting are separate options, both off by default. The dialog accepts
 an initial diameter, start/end diameters, sparse per-frame bounds, and relative
 size ratios. A clip-wide ratio bound applies at every frame; isolated samples
@@ -1098,8 +1108,8 @@ intervals, using the same motion-compatible classes for every solver. A conflict
 means the proposed path and these assumptions do not agree. It is not an object
 identification or a proof that no other path fits. Results retain conflicting
 candidates so the reason remains inspectable. Among candidates with the same
-broad pass/fail grade, a size conflict comes before the existing completion,
-model-limit and BOT Score ordering. Unknown size checks do not count as evidence
+broad pass/fail grade, a size conflict comes before the existing eligibility,
+completion, model-limit and BOT Score ordering. Unknown size checks do not count as evidence
 of compatibility. Truth comparison remains a separate, requested ordering.
 
 The **Angular size** measurement names bounds passed, conflicts or unavailable

@@ -5,9 +5,9 @@
   <!-- telescope tube -->
   <rect x="250" y="95" width="540" height="250" rx="10" fill="#f4f6f8" stroke="#9fb0bd" stroke-width="1.5"/>
 
-  <!-- flat germanium window (tilted forward = lean) -->
+  <!-- flat window (tilted forward = lean) -->
   <line x1="262" y1="108" x2="246" y2="332" stroke="#16a085" stroke-width="7" stroke-linecap="round"/>
-  <text x="180" y="360" font-size="14" fill="#16a085" font-weight="600">flat germanium</text>
+  <text x="180" y="360" font-size="14" fill="#16a085" font-weight="600">flat</text>
   <text x="195" y="377" font-size="14" fill="#16a085" font-weight="600">window (lean θ)</text>
 
   <!-- primary mirror (concave) at right end -->

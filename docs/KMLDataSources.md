@@ -1,6 +1,6 @@
 # KML Data Sources
 
-KML (Keyhole Markup Language) is the most common way to import aircraft tracks into Sitrec. A
+KML (Keyhole Markup Language) is one of the main formats for importing aircraft tracks into Sitrec. A
 KML/KMZ file exported from a flight-tracking service contains a time-stamped series of
 latitude / longitude / altitude points, which Sitrec converts into a track and renders in 3D.
 
@@ -56,8 +56,8 @@ Internally each extracted track is a `TrackGroup`:
 
 ## Recognised track sources (the common providers)
 
-In practice almost every track dropped onto Sitrec comes from one of three flight-tracking
-services. They are listed here because their *shapes* are worth knowing — but they are no longer
+Three flight-tracking services produce most of the exported KML tracks that Sitrec has been
+tested with. They are listed here because their *shapes* are worth knowing — but they are no longer
 special-cased: each is just a particular arrangement of the generic time+geometry structure.
 
 | Source | Provider | Typical layout | Multi-track? |
@@ -80,7 +80,8 @@ they produce *scene features*, not tracks — see
 
 You obtain these files by exporting/downloading from the service's website. None of them are
 fetched automatically by Sitrec — you export the KML and then drag-and-drop it (or use
-**File → Import File**) into Sitrec.
+**File → Import File**) into Sitrec. The export options below are as they were at the time of
+writing; the providers can change them.
 
 - **ADS-B Exchange** — From the globe replay view
   (`https://globe.adsbexchange.com/?replay=…`), select aircraft and download the track KML.
@@ -94,8 +95,9 @@ fetched automatically by Sitrec — you export the KML and then drag-and-drop it
   connecting line segments, which carry no timestamps and are ignored for the track).
 
 > Note: pasting a *live map URL* from `globe.adsbexchange.com` or `www.flightradar24.com` into
-> Sitrec does **not** import a track. The URL handler in `DragDropHandler.js` (≈ lines 982–1016)
-> only extracts the **camera lat/lon/zoom** from those URLs to reposition the view. To get the
+> Sitrec does **not** import a track. The URL handler in `DragDropHandler.js` (≈ lines 1146–1161)
+> calls `parseMapURL()` (`CoordinateParser.js:384`), which only extracts the **camera
+> lat/lon/zoom** from those URLs to reposition the view. To get the
 > track itself you must export the KML file.
 
 ---
@@ -114,8 +116,9 @@ static canHandle(filename, data) {
 }
 ```
 
-`detectTrackFile()` (`CFileManagerParse.js:1632`) asserts that *exactly one* `CTrackFile` subclass
-claims a file, so `CTrackFileKML` is the sole owner of anything with a `kml` root.
+`detectTrackFile()` (`CFileManagerParse.js:1698`) asserts that *at most one* `CTrackFile` subclass
+claims a file (and returns `null` when none does), so `CTrackFileKML` is the sole owner of
+anything with a `kml` root.
 
 ### Stage 2 — Recursive descent (`extractTrackGroups`, `:187`)
 
@@ -130,8 +133,9 @@ is this?" branch ladder. It walks the parsed tree depth-first and collects timed
      (`samplesFromGxTrack`, `:156`).
    - **A direct `<TimeStamp><when>` or `<TimeSpan><begin>` plus a `<Point>`** → one sample
      (`sampleFromTimedPlacemark`, `:176`). This is the FR24 route-point case.
-   - **Geometry with no time** → not a track; left for `extractKMLObjectsInternal` to render as a
-     static shape.
+   - **Geometry with no time** → not a track. Separately, `extractKMLObjectsInternal` renders
+     shapes and named points whether or not they are timed (see
+     [Non-track KML content](#non-track-kml-content-overlays-shapes-points)).
 3. **Group** the samples into tracks by **enclosing-container identity** (see
    [How samples are grouped](#how-samples-are-grouped-into-tracks)).
 4. **Memoize.** The result is cached on the instance (`this._trackGroups`) because `this.data` is
@@ -297,7 +301,8 @@ Naming is the **only** source-specific part of import, and it is deliberately co
 avoid breaking saved sitches (which key node IDs on `Track_<shortName>`).
 
 - **`getShortName()`** (`:49`) is unchanged: it runs a regex ladder over the file structure —
-  `/([A-Z0-9]+) track/` on an ADS-B Exchange folder name, `/FlightAware ✈ ([A-Z0-9]+) /` and
+  `/([A-Z0-9]+) track/` on an ADS-B Exchange folder name (`/([A-Z0-9\-]+) track/` when the sitch
+  sets `allowDashInFlightNumber`), `/FlightAware ✈ ([A-Z0-9]+) /` and
   `/([A-Z0-9]+)\/[A-Z0-9]+/` (the X/Y callsign-or-ICAO form) on a `<Document>` name — and uses a seed value as the fallback.
 - **`legacyTrackName()`** (`:268`) supplies that seed, faithfully reproducing the *exact* value the
   old branch ladder produced for each shape (including quirks like `folder.name.split(' ')[0]` and
@@ -316,16 +321,16 @@ Sitrec doesn't only *read* KML — it also **writes** it, and those exports re-i
 
 | Generator | Output shape | Re-import behaviour |
 |---|---|---|
-| `CNodeTrack.exportTrackKML` (`CNodeTrack.js:158`) | `<Folder><Placemark><gx:Track>` — single folder, single placemark, `altitudeMode=absolute`, `extrude=1` | imports as a 1-track group |
-| `CNodeMISBData` track export (`CNodeMISBData.js:1810`) | Same `<Folder>…<gx:Track>` shape | imports as a 1-track group |
+| `CNodeArray.exportTrackKML` (`CNodeArray.js:126`; overridden in `CNodeSplineEdit.js:441` and `CNodeSwitch.js:214`) | `<Document><Placemark><gx:Track>` — single document, single placemark, `altitudeMode=absolute`, `extrude=1` | imports as a 1-track group, keeping its name (a `<Folder>` root would re-import as "Unnamed Track") |
+| `CNodeMISBData` track export (`CNodeMISBData.js:1851`) | Same `<Document>…<gx:Track>` shape | imports as a 1-track group |
 | `CNode3DObject.exportToKML` — the Objects menu's **Export to KMZ with Track** | `<Document>` holding a `<Placemark><Model><Link href=…dae>` for the object and, when it rides a track, a `<Placemark><gx:Track>` sampled once per second (`<gx:MultiTrack>` with `<gx:interpolate>0` where the track has gaps); the track half is written by `ExportObjectKMZ.js` | The `<gx:Track>` imports as a 1-track group at 1 Hz; the model Placemark has no time+geometry → a scene object, not a track |
-| `CustomManagerMenus` "Sitrec Pin" (`CustomManagerMenus.js:538`) | `<Document><Placemark><Point>` (no time) | A point landmark feature, not a track |
+| `CustomManagerMenus` "Sitrec Pin" (`googleEarthHere`, `CustomManagerMenus.js:790`) | `<Document><Placemark><Point>` (no time) | A point landmark feature, not a track |
 
 The track exporters emit **MSL** altitude (KML `absolute` is the EGM96 geoid datum) and
 convert from HAE on the way out —
 
 ```js
-// CNodeTrack.js — KML absolute altitude is MSL (EGM96) per OGC KML 2.2/2.3.
+// CNodeArray.js — KML absolute altitude is MSL (EGM96) per OGC KML 2.2/2.3.
 if (altReference === "HAE") alt -= meanSeaLevelOffset(lat, lon);
 ```
 
@@ -342,14 +347,12 @@ re-imports with identical geometry and opens at the correct height in Google Ear
 
 ### Altitude — HAE vs MSL
 
-This is the single most important thing to get right.
-
 - **KML `absolute` altitude is metres, MSL** — measured from the EGM96 geoid, per OGC KML 2.2/2.3
   (Google Earth reads `absolute` as height above sea level). It is **not** HAE.
 - **MISB `SensorTrueAltitude` is conventionally MSL** (orthometric, relative to the geoid) —
   the same datum, which is why `toMISB()` can copy the KML number **verbatim**.
 - MSL→HAE conversion (adds `meanSeaLevelOffset(lat, lon)`) happens once, on the way to ECEF at
-  render time. Exports mirror this: `CNodeTrack.exportTrackKML` and `exportMISBCompliantCSV`
+  render time. Exports mirror this: `CNodeArray.exportTrackKML` and `CNodeTrack.exportMISBCompliantCSV`
   convert HAE-referenced frames back to MSL before writing.
 
 > **Known limitation (datum):** every KML altitude is treated as **MSL**, and the geoid
@@ -362,7 +365,8 @@ This is the single most important thing to get right.
 > KML therefore gets a geoid correction applied to a number that was never sea-level referenced
 > at all — and the underlying pressure error (up to a few thousand feet at cruise) is untouched.
 > **Sitrec cannot detect this; no setting will fix it after import.** Re-export from ADS-B
-> Exchange using the *Geometric altitude (EGM96)* option instead.
+> Exchange using the *Geometric altitude (EGM96)* option instead (option name at the time of
+> writing).
 >
 > An ADS-B Exchange ground segment at `alt=0` (`clampToGround`) is likewise read as a literal
 > zero. Honouring `<altitudeMode>` properly would move existing tracks vertically, so it is
@@ -385,14 +389,15 @@ DJI/Airdata logs, not here.)
 ## Non-track KML content (overlays, shapes, points)
 
 A KML need not contain a track at all. `extractObjects()` → `extractKMLObjectsInternal()`
-(`:128`/`:309`) recursively walks the tree and turns **time-less** elements into scene features.
-This path is independent of the track walk and was unchanged by the refactor:
+(`:128`/`:309`) recursively walks the tree and turns shapes, overlays and named points into scene
+features. It does **not** check for time: a named `<Point>` placemark becomes a landmark whether it
+is timed or not. This path is independent of the track walk and was unchanged by the refactor:
 
 | KML element | Becomes | Handler |
 |---|---|---|
 | `<LineString>` | A displayed track/path line | `extractKMLLineString` (`:444`) |
-| `<Polygon>` (`outerBoundaryIs.LinearRing`) | A filled/capped area | `extractKMLPolygon` (`:492`) |
-| `<GroundOverlay>` (with `<LatLonBox>` + `<Icon>`) | A georeferenced image draped on terrain | `extractKMLGroundOverlay` (`:498`) |
+| `<Polygon>` (`outerBoundaryIs.LinearRing`) | A filled/capped area | `extractKMLPolygon` (`:498`) |
+| `<GroundOverlay>` (with `<LatLonBox>` + `<Icon>`) | A georeferenced image draped on terrain | `extractKMLGroundOverlay` (`:504`) |
 | `<Placemark>` with `<Point>` + `<name>` | A labelled landmark feature | inline (`:347-368`) |
 
 Styling (`LineStyle`/`PolyStyle` colours, `StyleMap` normal/highlight pairs) is resolved via
@@ -400,24 +405,26 @@ Styling (`LineStyle`/`PolyStyle` colours, `StyleMap` normal/highlight pairs) is 
 which splits on **any whitespace** (`/\s+/`) to tolerate pretty-printed KML.
 
 The FR24 `Route`/`Trail` folder pair is explicitly skipped here (`:331-334`) so an FR24 flight is
-not also drawn as a generic line shape.
+not also drawn as a generic line shape. Only that exact two-folder pair is skipped: an FR24 file
+without a `Trail` folder also gets a landmark for each named route point.
 
 ---
 
 ## KMZ archives
 
 A `.kmz` is a ZIP containing one or more KMLs plus referenced images. KMZ handling
-(`CFileManagerParse.js:1099-1190`) is richer than "unzip then parse":
+(`CFileManagerParse.js:1150-1248`) is richer than "unzip then parse":
 
 - **Detection is by content, not just extension.** A file is treated as a zip if its name ends in
   `.kmz`/`.zip` **or** if its first four bytes are the ZIP magic number `50 4B 03 04`
   (`PK\x03\x04`). So a mislabeled `.kml` that is actually zipped, or a `.zip` of KMLs, still works.
 - **Multiple inner KMLs are supported.** All `.kml` entries are collected; each non-image entry is
   recursively run back through `parseAsset()`, so each inner KML produces its own track(s)/features.
-- **Image references are extracted as overlay textures.** Each inner KML is scanned for
-  `<href>…png|jpg|jpeg|gif|webp|…</href>`; matching archive entries are stored as
+- **Image references are extracted as overlay textures.** When the file name ends in `.kmz`,
+  each inner KML is scanned for `<href>…png|jpg|jpeg|gif|webp|jp2|j2k|jpx</href>`; matching archive entries are stored as
   `dataType: "kmzImage"` blob URLs in `kmzImageMap`, which `extractKMLGroundOverlay()` consults so
   a `<GroundOverlay>`'s icon resolves to a local image instead of a (possibly dead) network URL.
+  A `.zip`, or a zip found only by its magic number, gets no image scan.
 - **`__MACOSX`/`._` junk entries are filtered out** so macOS-zipped archives don't inject phantoms.
 
 Apart from these unwrap steps, a KMZ's inner KML is parsed by exactly the same generic extractor as

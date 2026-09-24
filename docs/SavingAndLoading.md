@@ -45,7 +45,7 @@ Satellite data is stored with the sitch, so reopening it always shows exactly th
 satellites you saw, even years later.
 
 One case needs a little care. Orbital data is published a while after it applies, so a
-set loaded within a day or two of the date it covers is only partly filled in — see
+set loaded within a few days of the date it covers is only partly filled in — see
 [Investigating Starlink Flares](Starlink.md#wait-a-few-days-before-analysing-a-very-recent-event).
 A sitch saved that soon after an event therefore stores an incomplete set.
 
@@ -89,7 +89,7 @@ If unsupported, Sitrec shows a message asking you to use Chrome or Edge.
 2. Pick a working folder (prefer a dedicated project subfolder).
 3. Use **Open Local Sitch**, **Save Local**, or **Save Local As...**.
 
-`Save Local`, `Save Local As...`, and `Open Local Sitch` appear after a working folder is selected.
+`Save Local`, `Save Local As...`, and `Open Local Sitch` appear after a working folder is selected. In the desktop app they are always shown, and there is no working folder to select: **Open Local Sitch** opens any sitch file on disk, and **Save Local As...** saves to any path.
 
 ### Local menu actions
 

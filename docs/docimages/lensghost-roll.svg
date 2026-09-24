@@ -38,7 +38,7 @@
   <!-- no-roll monotonic line -->
   <line x1="478" y1="300" x2="795" y2="150" stroke="#888" stroke-width="2.5" stroke-dasharray="7 5"/>
   <text x="690" y="135" font-size="12" fill="#888" font-weight="600">no roll → monotonic</text>
-  <!-- with-roll V curve (real Pr055 disc-X shape) -->
+  <!-- with-roll V curve -->
   <polyline points="478,212 533,272 590,307 645,272 705,205 795,118" fill="none" stroke="#c0392b" stroke-width="3"/>
   <circle cx="590" cy="307" r="4.5" fill="#c0392b"/>
   <text x="560" y="300" text-anchor="end" font-size="11" fill="#c0392b" font-weight="700">turnaround</text>

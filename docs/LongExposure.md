@@ -3,7 +3,8 @@
 Sitrec can simulate a **long-exposure photograph** taken with the look camera: the scene
 is sampled across the exposure and averaged into a single still image, as if the camera's
 shutter had been open for that long in real time. Anything that moves — aircraft,
-satellites, stars, or the camera itself — leaves a trail, with physically correct brightness.
+satellites, stars, or the camera itself — leaves a trail. Point-source brightness is computed
+from each source's magnitude or light intensity.
 
 You'll find it under **Video → Long Exposure**.
 
@@ -25,9 +26,9 @@ Bright values roll off through a soft photographic shoulder rather than clipping
 
 A simple average of the rendered frames is *not* what a real camera records. Sitrec's live
 view draws stars, planets, and aircraft lights as small **fuzzy discs bright enough to see**
-— a display convention. Venus's real brightness is more like **2300× pixel saturation**: in a
-real exposure it stays a blinding point no matter how you average, and when it trails, the
-trail stays bright. If you just average the display's fuzzy discs, a moving Venus smears
+— a display convention. With the default Saturation Magnitude of 4, Venus (mag −4.4) is
+about **2300×** the level that saturates one pixel, so its point and its trail stay bright
+after averaging. If you just average the display's fuzzy discs, a moving Venus smears
 into a barely-visible blob and faint stars vanish entirely.
 
 With **HDR Point Sources** enabled (the default), the fuzzy display discs are hidden during
@@ -42,14 +43,15 @@ its astronomical magnitude:
 - **Planets** — at their refracted apparent positions. They are rendered white: the colored
   display sprites (green Venus, etc.) are identification aids, not photometry.
 - **The Moon** — stays as the rendered textured disk, scaled so its total light matches its
-  actual phase-dependent magnitude. In any exposure long enough to show stars, the Moon
-  burns out — just like a real photo.
+  actual phase-dependent magnitude. At settings that show faint stars, the Moon disc
+  saturates.
 - **Aircraft / model lights** — navigation, beacon, strobe, and landing lights on 3D models,
-  with realistic candela, inverse-square falloff and distance haze. **Strobes leave dashed
+  with light intensities in candela (about 100 cd for navigation lights and about 200 cd for
+  beacons), inverse-square falloff and distance haze. **Strobes leave dashed
   trails** (the dash spacing is the strobe period), and colored lights trail in
-  their own color — red/green wingtips make aircraft trails instantly recognizable.
+  their own color.
 - **Satellites** — only the ones that are actually **flaring** (sun-glint within the flare
-  cone), plus the **ISS when sunlit**. Everything else is omitted, as in a real photograph.
+  cone), plus the **ISS when sunlit**. Other satellites are omitted.
   A flare streak brightens smoothly from nothing, holds full brightness through the heart
   of the flare, and fades back to nothing.
 
@@ -64,16 +66,16 @@ trails are smooth curves even during fast camera motion.
 | **Lock Camera Heading** | On by default: the camera holds the heading it has *right now* for the whole exposure — a tripod doesn't track. Works in any camera mode (To Target, Celestial Lock, Horizon Flare Region…), behaving as if the heading were locked (Manual) on the current spot in the sky. The Camera Nudge still applies on top. Turn off to let the active camera mode steer during the exposure. |
 | **HDR Point Sources** | On by default: replaces the cosmetic star/planet/light sprites with physically-bright point splats (true linear flux) so bright sources stay visible in the average and leave correct trails. Off = a plain frame average. |
 | **HDR Background** | On by default: in a dark scene the lighting (Sun + Ambient) is temporarily boosted so the background renders using the full 8-bit range, then scaled back down in the HDR buffer. Pushing the EV slider up then reveals smooth ground detail instead of quantized color bands. Calibrated on the first frame; the lighting is restored after the render (including Enough/cancel). |
-| **Moonlight** | Off by default: light the scene with ONLY the Moon — ambient light is removed and the directional light is re-aimed at the Moon with its true phase-dependent brightness (a full moon is ~20 stops dimmer than the sun). The point sources (stars, planets, lights) are re-calibrated to the same physical scale as the moonlit ground using the camera's plate scale, so a *single* exposure shows the dim moonlit landscape **and** the brighter star trails together, the way a real moonlit long exposure does. The result window opens pre-developed at the moonlit exposure. Surfaces facing away from the Moon go fully dark, shadows (if enabled) fall from the Moon, and a Moon below the horizon gives a dark scene (stars still record). |
-| **Horizon Reddening** | Chromatic extinction (off by default): sources near the horizon redden as well as dim. In real star-trail photos the effect is largely masked by blue star colors and sky glow, so the default is dimming only. |
-| **Star Tint** | Intrinsic blue-white color of star trails (0 = flat white, 1 = bright-star population average). With Horizon Reddening on, extinction neutralizes the blue before warming, as in real star-trail photos. |
+| **Moonlight** | Off by default: light the scene with ONLY the Moon — ambient light is removed and the directional light is re-aimed at the Moon with its true phase-dependent brightness (a full moon is about 18.6 stops dimmer than the sun). The point sources (stars, planets, lights) are re-calibrated to the same physical scale as the moonlit ground using the camera's plate scale, so a *single* exposure shows the dim moonlit landscape **and** the brighter star trails together. The result window opens pre-developed at the moonlit exposure. Surfaces facing away from the Moon go fully dark, shadows (if enabled) fall from the Moon, and a Moon below the horizon gives a dark scene (stars still record). |
+| **Horizon Reddening** | Chromatic extinction (off by default): sources near the horizon redden as well as dim. Off by default, so the default is dimming only. |
+| **Star Tint** | Intrinsic blue-white color of star trails (0 = flat white, 1 = bright-star population average). With Horizon Reddening on, extinction neutralizes the blue before warming. |
 | **Saturation Magnitude** | The star magnitude whose light just saturates one pixel in a single frame — the "ISO" of the simulated camera. Default 4: Venus (−4.4) is then ~2300× saturation. Lower = a less sensitive camera. |
-| **Light Brightness** | Multiplier on model-light brightness. 1 = realistic candela (~100 cd effective navigation light, ~200 cd beacon), with inverse-square falloff and slant-path extinction. |
+| **Light Brightness** | Multiplier on model-light brightness. 1 = about 100 cd effective navigation light and about 200 cd beacon, with inverse-square falloff and slant-path extinction. |
 | **Moon Gain** | Multiplier on the magnitude-calibrated Moon disk (1 = physical). |
 | **Point Spread (px)** | The Gaussian point-spread width of splatted sources, in pixels. |
-| **Wait For Loading** | Settle terrain/3D-tiles each frame before capture (slower, but stable terrain). |
-| **Frame Step** | Sample every Nth frame of the range (default 30, ~30× faster). Exposure brightness is unaffected, and point-source trails (stars, lights, satellite flares — including strobe dashes) are integrated continuously between samples so they stay smooth and photometrically exact. Only background/scene motion becomes stepped. Set to 1 for a full-quality render. |
-| **Refraction** | The same setting as View → Atmospheric Refraction. When on, splatted sources use refracted apparent positions, and horizon culling and extinction follow the refracted direction. |
+| **Wait For Loading** | On by default: settle terrain/3D-tiles each frame before capture (slower, but stable terrain). |
+| **Frame Step** | Sample every Nth frame of the range (default 30, ~30× faster). Exposure brightness is unaffected, and point-source trails (stars, lights, satellite flares — including strobe dashes) are integrated continuously between samples so they stay smooth and their total flux does not depend on Frame Step. Only background/scene motion becomes stepped. Set to 1 for a full-quality render. |
+| **Refraction** | Shows whether sky refraction is in effect — normally on when **Enable Refraction** and **Sky** are both on in View → Atmospheric Refraction. Ticking it changes that state directly; it is not a copy of either View checkbox, and a later change in View → Atmospheric Refraction sets it again from those two switches. When on, splatted sources use refracted apparent positions, and horizon culling and extinction follow the refracted direction. |
 | **Occlusion Mask** | Hide splatted sources behind terrain and other opaque foreground (a planet setting behind a hill stays hidden). Exact under camera rotation, and recalculated automatically whenever the camera position moves. |
 
 ## Camera Nudge
@@ -120,7 +122,7 @@ brightness is dwell-time-correct photometry.
 
 Live ADS-B aircraft with 3D models. The nearby aircraft's lights saturate and trail; strobes
 leave dashes; red/green navigation lights trail in color. Distant aircraft fade with
-inverse-square falloff and atmospheric extinction, just as a camera would record them.
+inverse-square falloff and atmospheric extinction.
 
 ![Long exposure of aircraft lights at night](docimages/longexposure-planes.jpg)
 
@@ -154,6 +156,6 @@ grid are automatically excluded from exposures — chart overlays aren't light.
   behind it. The mask is sampled once per camera position (recomputed if the camera
   moves), so objects that move *during* the exposure occlude at their sampled positions
   only, and an aircraft's body still doesn't hide its own far-side lights.
-- Non-flaring satellites are omitted entirely (they are far below the visibility of the
-  star field in a real exposure of this kind).
+- Non-flaring satellites are omitted entirely. Only flaring satellites and the sunlit ISS
+  are drawn.
 - Long Exposure and Camera Nudge settings are saved with custom sitches.

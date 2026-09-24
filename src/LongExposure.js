@@ -80,7 +80,7 @@ const defaultParams = () => ({
                          // bands (calibrated on the first frame, restored after)
     moonlight: false,    // light the scene with ONLY the Moon: no ambient, the
                          // sun light re-aimed at the Moon with its true
-                         // phase-dependent brightness (~20 stops below daylight
+                         // phase-dependent brightness (~18.6 stops below daylight
                          // at full moon). Uses the HDR Background machinery to
                          // make that renderable; the result window auto-develops
     satMag: 4.0,         // magnitude that just saturates one frame's exposure
@@ -161,7 +161,7 @@ class CLongExposureManager {
         folder.add(this.params, "moonlight").name("Moonlight").perm().listen().onChange(dirty)
             .tooltip("Light the scene with ONLY the Moon: ambient light is removed and the\n" +
                 "sun light is re-aimed at the Moon's position with the Moon's true\n" +
-                "phase-dependent brightness (a full moon is ~20 stops dimmer than the\n" +
+                "phase-dependent brightness (a full moon is ~18.6 stops dimmer than the\n" +
                 "sun; shadows, if enabled, fall from the Moon). The HDR Background\n" +
                 "calibration makes this renderable, and the result window opens with\n" +
                 "the EV pre-set to a developed moonlit exposure. Moon below the\n" +
@@ -689,7 +689,7 @@ async function renderLongExposure(mgr) {
     // Content that does NOT respond to the lights (the atmosphere's sky glow,
     // emissive sprites) ends up boost x darker in the buffer — at night that
     // is near-black anyway, and stars/planets/lights are splatted in HDR.
-    // Moonlight mode needs a far higher cap: physical moonlight is ~20+ stops
+    // Moonlight mode needs a far higher cap: physical moonlight is ~18.6 stops
     // below the daylight calibration (more for a crescent), and the boost is
     // what brings it back into the 8-bit render.
     const BG_BOOST_CAP = P.moonlight ? 1e9 : 1024;
@@ -1297,7 +1297,7 @@ async function renderLongExposure(mgr) {
 
             // live preview of the developing exposure (running average so far);
             // moonlight mode previews at the developed gain (raw values are
-            // ~20 stops down and would preview black)
+            // ~18.6 stops down at full moon and would preview black)
             if (previewCtx && framesDone % previewEvery === 0) {
                 const previewGain = (P.moonlight && bgBoost > 1) ? bgBoost : 1;
                 tonemapBufferInto(acc, 1 / framesDone, W, H, previewGain, {useACES, acesExposure}, previewCtx, previewImg);

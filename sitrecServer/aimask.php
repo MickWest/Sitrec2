@@ -101,7 +101,7 @@ if (empty($apiKey)) {
 // because there is no user prompt here - the input is an image.
 $aiLogId = null;
 if (getenv('SITREC_TRACK_STATS')) {
-    $aiLogId = logAIRequest($userInfo['user_id'], '[mask ground] sky outline from video frame', $model, $provider);
+    $aiLogId = logAIRequest($userInfo['user_id'], 'mask ground', $model, $provider);
     recordDailyStats(['ai_requests' => 1]);
 }
 

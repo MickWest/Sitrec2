@@ -1,10 +1,11 @@
 # Keyboard Shortcuts
 
-Most of Sitrec's interaction is mouse-driven, but a substantial amount of it is only
-reachable from the keyboard — and several of the most useful controls (moving views, placing
-the camera, measuring) have no menu equivalent at all.
+Most of Sitrec's interaction is mouse-driven, but some of it is only reachable from the
+keyboard, such as moving and resizing views with `Q`. Other keys are quicker ways to reach
+controls that are also in a menu: for example, measurements are also in **Show → Measurements**,
+and camera placement is also in the right-click menu on the ground.
 
-Press **K** at any time to show a short summary overlay in the app.
+Press **K** in a custom sitch to show a short summary overlay in the app.
 
 Two conventions used below:
 
@@ -22,7 +23,7 @@ Keys are ignored while you are typing in a text field.
 | `Space` | Play / pause |
 | `,` and `.` | Step one frame back / forward (hold to repeat) |
 | `←` / `→` | Step back / forward; hold to run continuously |
-| `↑` / `↓` | Scrub quickly forward / backward |
+| `↑` / `↓` | Scrub quickly backward / forward (10× speed) |
 | `<` and `>` (Shift+`,` / Shift+`.`) | Jump to the previous / next **keyframe**, where a tool has published them. Does nothing if none exist — it deliberately does not fall back to single-stepping |
 | `G` | Go To: prompts for a frame number (jumps there and pauses), a date and/or time (`12pm`, `15:20`, `17:33 UTC`, `12/25`, `Jan 6, 2020`), a coordinate in any format, a place name to fly the camera to, or the two or three lines of a TLE, which are loaded as a satellite. Pasting text onto Sitrec (Ctrl/Cmd+V outside a text field) runs it through the same parser |
 | `I` | Set the **In** frame (start of the A-B range) |
@@ -41,8 +42,7 @@ analysis fit **only** the sightlines inside it. See [Traverse Methods](TraverseM
 | … with `Alt` | ×1000 |
 | … with `Cmd` | ×10000 |
 
-This is the fastest way to sync a video against the sky: hold `'` and watch the stars or a
-satellite slide into place.
+Hold `'` to slide the stars or a satellite into place when you sync a video against the sky.
 
 ## View layout
 
@@ -55,8 +55,8 @@ satellite slide into place.
 | Double-click a view | Make it fullscreen; double-click again to restore. Only works on views that allow it — a few, such as the video views in the `video` sitch, deliberately disable it |
 
 `Q` exists because most views use the mouse for camera navigation, so a bare drag inside a 3D
-view flies the camera instead of moving the window. Without `Q` held, nothing happens — which
-is the single most common "the app is broken" report.
+view flies the camera instead of moving the window. Without `Q` held, a drag does not move
+the view.
 
 ### View presets
 
@@ -102,36 +102,29 @@ In the main 3D view:
 | `Cmd` or `Ctrl` + drag | Aim the camera without moving it |
 | `-` / `=` | Zoom out / in |
 | Numpad `.` | Reset the camera to its start position |
-| Numpad `1` / `7` / `3` | Snap to front / top / side |
-| Numpad `9` | Flip 180° |
 
 In the **look view**, when the camera is manually positioned, you can walk:
 
 | Key | Action |
 |---|---|
-| `W` `A` `S` `D` | Walk forward / left / back / right (10 m/s) |
+| `W` `A` `S` `D` | Walk forward / left / back / right (about 10 m/s at 60 fps) |
 | `PageUp` / `PageDown` | Raise / lower the camera at the same speed as walking |
-| `Shift` | Move faster (50 m/s), including altitude changes |
+| `Shift` | Move faster (about 50 m/s at 60 fps), including altitude changes |
 
 WASD preserves the camera's altitude. If a step goes below the loaded ground
 surface, the camera is raised to eye level above it.
 
-A **manually positioned** camera has its own, separate movement handler with the same letters
-but a much finer step (0.1 m per frame, ×10 with `Shift`), and adds:
-
-| Key | Action |
-|---|---|
-| `Q` / `E` | Move the camera up / down |
-
-Note `Q` does double duty: held over a view edge it resizes a view, and on a manually
-positioned camera it ascends.
+A few legacy built-in sitches (for example Night Sky) have a "Manual Position" camera with its
+own, separate movement handler. It uses the same letters but a much finer step (0.1 m per
+frame, ×10 with `Shift`), and adds `Q` / `E` to move the camera up / down. The custom sitch
+does not use it.
 
 ## Files and editing
 
 | Key | Action |
 |---|---|
 | `Cmd`/`Ctrl` + `S` | Save |
-| `Cmd`/`Ctrl` + `O` | Open |
+| `Cmd`/`Ctrl` + `O` | Open (the server sitch browser) |
 | `Cmd`/`Ctrl` + `N` | New sitch |
 | `Cmd`/`Ctrl` + `Z` | Undo |
 | `Cmd`/`Ctrl` + `Y` or `Shift`+`Cmd`/`Ctrl`+`Z` | Redo |
@@ -144,6 +137,7 @@ positioned camera it ascends.
 | `K` | Show / hide the keyboard-shortcut overlay |
 | `N` | Show / hide notes (`Shift`+`N` docks them) |
 | `/` (hold) | Crosshair on any 2D view; click while held to pin it |
+| `Esc` | Hide the notes, or the AI assistant when it floats; leave track edit mode |
 
 ## Tool-specific
 
@@ -155,6 +149,7 @@ positioned camera it ascends.
 | `'` (hold) | Advance frame by frame, tracking as it goes | Point Track |
 | `;` (hold) | **Rewind, deleting tracked positions as it goes.** Not backward tracking — use it to undo a bad run | Point Track |
 | `Delete` / `Backspace` | Delete the keyframe under the mouse | Point Track |
+| `Delete` / `Backspace` | Delete the building, cloud layer or ground overlay being edited | Buildings, clouds, overlays |
 | `J` / `K` | Previous / next keyframe | Horizon Extractor |
 | `\`, `PageUp`/`PageDown` | Cycle OSD track / step keyframe | OSD Tracker |
 | `←` / `→` | Previous / next result, in tile order; wraps at the ends | Traverse analysis results |
@@ -167,7 +162,7 @@ positioned camera it ascends.
 
 ## Keys that collide
 
-A few keys are bound in more than one place. These are the ones that surprise people:
+A few keys are bound in more than one place:
 
 - **`O`** is *Set Out frame*, and is also bound as a show/hide toggle for lines of sight in
   some legacy sitches. The In/Out handler runs first and returns immediately, so the toggle
@@ -176,7 +171,6 @@ A few keys are bound in more than one place. These are the ones that surprise pe
 - **`;`** and **`'`** drive both the Start Time nudge and the Point Track run loop. If Point
   Track is open, expect both.
 - **`K`** is the shortcuts overlay and also *next keyframe* in the Horizon Extractor.
-- **`Q`** resizes views, and on a manually positioned camera also moves it up.
 - **`E`** extends tracks to the ground, and in the legacy jet sitches toggles the pod's-eye
   view.
 - **`V`**, **`G`**, **`C`**, **`X`**, **`N`**, **`P`** are all bound to show/hide toggles in

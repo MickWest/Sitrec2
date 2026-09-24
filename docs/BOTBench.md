@@ -40,12 +40,10 @@ diverge) over many files in one sitting, so you can:
   [FMV](#fmv) clips (`.ts` / `.klv`) and every clip gets the full analysis, without building a
   sitch per clip.
 - **Compare source data quality.** Half the table is measured *before any fit
-  runs* — it tells you what each file's geometry can support at all, which is
-  often the real explanation for why an analysis succeeded or failed.
+  runs* — it describes what each file's geometry can support.
 - **Catch defects in the analysis itself.** Running hundreds of scenarios whose
-  answers are known surfaces failures no single sitch would reveal — including
-  the awkward kind, where the analysis was systematically *penalising its own
-  best work*. See
+  answers are known surfaces failures no single sitch would reveal, including
+  ranking and convergence defects. See
   [Why a good fit can still read "Unresolved"](#why-a-good-fit-can-still-read-unresolved).
 
 Everything is computed at the file's own native sample rate. A benchmark
@@ -87,8 +85,7 @@ mixed freely in one folder:
 
 Ordinary video files (`.mp4`, `.mov`, …) are *not* queued: they carry no
 sightline metadata, so each one would only ever produce an error row. `.xml` is
-not walked for the same reason — a folder may hold XML for a hundred unrelated
-reasons — but *is* accepted when you pick the file yourself, which is a
+not walked, because XML files are often unrelated to sightline data, but *is* accepted when you pick the file yourself, which is a
 statement that you mean that file.
 
 Files that cannot be trusted are **refused with the reason** rather than
@@ -142,8 +139,7 @@ group.
 - **Monte Carlo sweep** — add the two [Monte Carlo](#monte-carlo) curve-fit
   strategies across [polynomial orders](#polynomial-order). This is a method diagnostic (it shows how sensitive the
   polynomial fits are to their order), adds ten candidates per file, and is the
-  bulk of the sweep's cost. Leave it off unless you are studying the methods
-  themselves.
+  bulk of the sweep's cost. It is off by default.
 - **GPU search** — enabled by default. Search the fixed-wing, balloon and
   quadcopter fits on the graphics card (WebGPU), as the live analysis's *GPU
   search (WebGPU)* option does: many
@@ -186,9 +182,8 @@ group.
 - **Range anchor … NM** — the start distance the search bracket is centred on,
   identical for **every file in the run** (default 20 [NM](#nautical-mile-nm),
   clamped to 0.3–90 NM). The interactive analysis anchors its bracket on the *Tgt Start
-  Dist* slider — which you have usually already nudged toward the answer. A
-  bulk run must not acquire any such knowledge, or the range bracket becomes a
-  function of the answer and cross-file comparison stops meaning anything. If
+  Dist* slider. BOTBench uses one fixed anchor for every file, so the bracket does
+  not depend on any per-file setting. If
   you type a value outside the clamp, the box shows the value actually used.
 - **Folder (Read)** — pick a folder to scan, with **read-only** access. You can
   also drag a folder from your file manager anywhere onto the window. (Folder
@@ -332,13 +327,12 @@ figures to see system-wide memory commitments; see
   [conditioning](#conditioning-and-rcond) (see the **Src** column below).
 - **Range unobservable** — files where the sensor baseline is too small for
   *any* [free-range method](#free-range-methods) to determine distance. No fit can recover range from
-  such a file; that is a property of the data, not a failure of the analysis.
+  such a file.
 - **Resolved** — files whose executive verdict was something other than
   "unresolved" *and* whose top candidate does not contradict the file's declared
   `MaxRange` (the longest distance the file says its sensor could plausibly
   have been measuring at). A parenthesised figure counts verdicts excluded for that
-  contradiction — a verdict resting on a candidate the measurement says is
-  impossible is not a resolution.
+  contradiction; such verdicts are not counted as resolved.
 - **With truth** — files whose conclusion can be scored: either a true position
   per frame, or a direction truth for a target that has a bearing but no finite
   range (a celestial object). The two are scored in different units and never
@@ -356,20 +350,20 @@ figures to see system-wide memory commitments; see
   is from the camera".
 - **Best candidate** — the same measure, but for the *closest candidate any
   method produced* on each file. Truth picks that winner, so this is an
-  [oracle](#oracle): a ceiling, never a score the analysis could claim. Read it
+  [oracle](#oracle): it uses truth to choose, so it is an upper bound on what
+  blind ranking could achieve. Read it
   beside *Median rel. sep* — that tile scores the **ranking**, this one scores
   the **fits**.
 - **Ranking cost** — the median of (top interpretation's error ÷ closest
   candidate's error). `1x` means the ranking chose the best available answer
   every time. A large figure means the fits had already found the object and the
-  selection stage discarded it — a completely different repair from the fits
-  missing it, which is why the two are separated.
+  selection stage did not rank it first, which is a different case from the fits
+  missing it, so the two are shown separately.
 
 ### The results table — SOURCE DATA columns
 
 These are measured from the file **before any fit runs**. They describe what
-the data can support, and they are the first place to look when a verdict
-disappoints.
+the data can support.
 
 - **File** — path relative to the chosen folder, or the scenario's *descriptive
   name* where an answer-key sidecar supplies one (the path then moves to the
@@ -384,16 +378,16 @@ disappoints.
   remembered row from an earlier build, shown after a checked sample), or an
   error; hover for detail.
 - **Target** — what the object **actually was and what it was doing**, read from
-  the answer-key sidecar. A flag marks a scenario *declared anomalous*, where
-  "unresolved" is the correct outcome and used to look identical to failure. A
+  the answer-key sidecar. A flag marks a scenario *declared anomalous* in its
+  answer key. A
   sham splice is labelled as a sham. Blank on challenge files, which carry no
   answer by design. This is a **source** column, not an analysis one: nothing
   derived from it reaches any fit — it is shown so a verdict can be judged
   against what was true.
 - **Platform** — what the sensor flew: declared by the sidecar where there is
   one, otherwise **measured** from the sensor path (straightness and sweep) and
-  shown in *italics* to mark it as inferred. The platform's path is what makes
-  range solvable at all, so this is the first thing to read when a file fails.
+  shown in *italics* to mark it as inferred. The platform's path determines the
+  available parallax.
 - **n** — usable samples in the file, at its own native rate.
 - **Dur** — clip duration in seconds.
 - **Base** — straight-line extent of the sensor's own path, in metres. This is
@@ -420,8 +414,7 @@ disappoints.
   midway between its two neighbours, converted to a [sigma](#sigma) under an
   explicit assumption ([isotropic Gaussian](#gaussian) pointing error on a
   locally straight path). Both raw figures are in the tooltip. A ratio outside
-  roughly 0.7–1.4 on a white-noise declaration is highlighted, because that is a
-  real disagreement worth chasing. A trailing `*` marks a
+  0.7–1.4 on a white-noise declaration is highlighted. A trailing `*` marks a
   [**correlated** error model](#correlated-wobble) — slow wobble rather than
   white jitter — whose declared amplitude is a *deadband amplitude*, not a
   standard deviation: the ratio there is not like-for-like and reads far below
@@ -436,9 +429,8 @@ disappoints.
   the numbers it came from are all in the row. The tooltip also carries the
   earth and ground models actually in force for this file, and the
   [geometry probe](#geometry-probe): whether pure geometry *pinned* a range with
-  no speed assumption involved, pinned one whose implied speed was implausibly
-  high (read that as **recoverable** — a fast object at a pinned range is a
-  finding, not an ambiguity), or left range genuinely ambiguous so the fit fell
+  no speed assumption involved, pinned one whose implied speed exceeded twice
+  the fit's target speed (reported as **recoverable**), or left range genuinely ambiguous so the fit fell
   back to its speed prior. The probe speaks for geometry only; physics and
   [stationary-point](#stationary-point-methods) methods may still succeed where
   it says "prior".
@@ -446,25 +438,23 @@ disappoints.
 ### The results table — ANALYSIS RESULT columns
 
 - **Verdict** — the [executive verdict](#executive-verdict) for this file,
-  shortened to fit the cell; hover for the full headline. The wordings and exactly what each one
-  licenses you to say are documented in
-  [Doing Defensible Analysis §7](DefensibleAnalysis.md#7-reading-the-executive-verdict-without-over-reading-it). "Unresolved" on a
-  row whose Src column says **hard** or **weak** is the system being honest
-  about data that cannot support a conclusion.
+  shortened to fit the cell; hover for the full headline. The verdict wordings
+  and their meanings are documented in
+  [The executive verdict](TraverseAnalysis.md#the-executive-verdict).
 - **Top interpretation** — the highest-ranked candidate (e.g. *Sky Lantern /
   Balloon*, *Constant Altitude*, *Quadcopter*) and its rank tier. Ranking is
   **blind**: truth, even when the file carries it, plays no part in choosing
   the winner — it is only used afterwards, to score the choice.
 - **|err|** — the top interpretation's mean line-of-sight
   [residual](#residual) in degrees, and after the slash the
-  **[noise floor](#noise-floor)** — the residual a *perfect* track would score
-  against the file's own declared pointing error. A residual at or below the
-  floor is fitting the noise, not the object, and cannot be read as a good
-  answer. The two belong together because the residual is nearly **invariant to
-  where along the sightline a track sits**: three files in one run once tied at
-  0.039° while sitting 0.2%, 1.4% and 97.5% of range from truth. A residual
-  cannot carry range, and a column that showed it alone invited the opposite
-  conclusion.
+  **[noise floor](#noise-floor)** — the mean residual a *perfect* track is
+  expected to score, given the file's declared pointing error (independent
+  Gaussian errors). It is an average over noise samples, not a lower bound: a
+  good fit scores near the floor, and a residual below it does not by itself
+  show overfitting. Residuals near the floor do not distinguish between
+  candidates, because the residual is nearly **invariant to where along the
+  sightline a track sits**. No floor is shown unless the file declares a
+  positive, uncorrelated pointing sigma.
 - **Range** — the top interpretation's start range, in nautical miles.
 - **Spd (Knots)** — the top interpretation's air speed over the clip, min–max.
 - **Alt (ft)** — the top interpretation's mean altitude.
@@ -474,9 +464,9 @@ disappoints.
   degrees.
 - **Best** — the same measure for the **closest candidate any method produced**.
   Truth picks that winner, so it is an [oracle](#oracle) and not an achievable
-  score. This is the single most diagnostic column in the table: a small **Best**
-  beside a large **Truth** means the answer *was found and then out-ranked* —
-  which the Truth column alone cannot distinguish from never finding it at all.
+  score. A small **Best** beside a large **Truth** means a close candidate
+  existed but was not ranked first, which the Truth column alone cannot
+  distinguish from never finding it at all.
   Hover for which method produced it.
 - **Gallery** / **Report** (last column) — **Gallery** opens the full-screen
   candidate gallery for this file, the same view the live Analyze button
@@ -524,21 +514,9 @@ each is recognised explicitly:
   has nowhere left to move, so no further iteration could shrink the cost spread
   — there is no x-movement left to shrink it with. This is convergence.
 
-That second case used to be badged incomplete, and the effect was backwards: **it
-penalised precision.** Measured on `botset_balloons_orbit` at 3.219 km in a
-steady wind, the fit that recovered truth to a
-[relative separation](#relative-separation) of **0.00015** drove its simplex to a
-*full* collapse — "spans 0.00% of parameter bounds" — was stamped incomplete,
-cost the balloon class its viability, and made the whole file report
-**Unresolved**. A deliberately sloppier fit of the same file, with a residual
-100× worse and its range 200 m out at a relative separation of 0.032, settled
-into a broad flat basin, met the cost tolerance, was stamped complete — and
-*resolved*. The better the answer, the likelier it was refused.
-
 Between those two exceptions, the only remaining iteration-limit stop is a
 search that genuinely was still moving, and that keeps the warning. Where the
-per-parameter spreads are missing entirely, the warning is also kept: silence is
-never inferred from an absent measurement.
+per-parameter spreads are missing entirely, the warning is also kept.
 
 ### Plotting two columns against each other
 
@@ -582,13 +560,9 @@ and places the scenario from the interchange format's defaults (epoch
 2025-02-01T20:00:00Z, the default site), whatever the sidecar declares, and the
 candidates are written on that same clock and at that same site so that they
 line up with it. When the sidecar declared something else, the notes say what
-was ignored. (Written from the sidecar's own epoch, as they once were, the
-candidates for a set generated at another date arrived outside the sitch's time
-window, so their markers sat still while the truth moved.) The conversion from
-the scenario's local frame back to latitude/longitude uses the interchange
-format's own flat-plane rule — using the general tangent-frame conversion
-instead put candidates 40 m from a truth track the analysis had scored at 2.8 m,
-which is the geoid separation plus curvature almost exactly.
+was ignored. The conversion from the scenario's local frame back to
+latitude/longitude uses the interchange format's own flat-plane rule, the same
+rule the analysis scores with.
 
 ### The result cache
 
@@ -636,10 +610,9 @@ comparison allows floating-point noise: a fit is deterministic, but the same
 code on another build of the JavaScript engine lands a few units in the last
 place apart. The drone-control fit is the one unit whose optimizer stops at an
 iteration budget rather than at convergence, so that last-place difference
-moves where it stands when it stops — up to a few tenths of a metre on a
-5 km track, on about one file in seventy; it counts as reproduced when its
-positions agree within a metre and its residual within a thousandth of a
-degree, since no reader could tell those fits apart. The wall time is kept
+moves where it stands when it stops, by up to a few tenths of a metre on a
+5 km track. It counts as reproduced when its positions agree within a metre and
+its residual within a thousandth of a degree. The wall time is kept
 beside the unit rather than inside it. Compatible fits are reused automatically;
 the final status names how many units were reused and how many were fitted again.
 Use **Flush Cache** before the run when every fit must be recomputed. Reused
@@ -689,8 +662,7 @@ than left to be discovered:
   is a level surface at the site elevation — exactly as the scenario generator
   defines it. An FMV clip has no scene either, so its ground plane is taken from
   the **file's own frame-centre elevations**: the producer's recorded terrain
-  height under the optical axis, median over the clip. That matters more than it
-  sounds — defaulting to sea level over Cheyenne puts the ground 1,867 m below
+  height under the optical axis, median over the clip. Defaulting to sea level over Cheyenne puts the ground 1,867 m below
   the real surface, so buried candidates passed the underground screen and the
   ground-vehicle fits rode a plane a kilometre under the road. Under five
   samples, or a median at or above the lowest sensor height, falls back to sea
@@ -702,9 +674,7 @@ than left to be discovered:
 - **No scene [hypotheses](#hypothesis).** No astronomy sweep, no satellite catalogue, no live
   line-of-sight-fitting method nodes from the interactive scene. These are
   listed under *absent hypotheses* in every
-  report and export, so a missing interpretation is never mistaken for negative
-  evidence — "no satellite matched" and "no satellite catalogue was searched"
-  are different statements.
+  report and export, so a report shows which hypothesis types were not tested.
 - **One range anchor for the whole run** (see the Range anchor control above).
 
 ## How ordinary is the answer?
@@ -716,8 +686,7 @@ sustained acceleration — falls inside *some* real class; `1` means the best
 available class is off by a factor of ten somewhere.
 
 It shows on each gallery tile as *Ordinariness*, with the binding quantity
-named, because "anomalous" without a named quantity is not a finding — for
-example *"nearest ordinary object is a light aircraft, and this misses that
+named, for example *"nearest ordinary object is a light aircraft, and this misses that
 envelope by 12x on acceleration"*. A bulk run carries the **same score from the
 same function**: three columns in the **Summary** report, and in the CSV export
 the per-term breakdown (size, speed, acceleration) beside the **Ord** total, since a
@@ -728,7 +697,8 @@ The separate, optional angular-size check described below can deprioritize a
 size-conflicting path when explicitly enabled. It does not add this envelope
 score to BOT Score.
 
-The score is **joint, never marginal**, and that is the whole point. A size test
+The score is **joint**: each class is tested on size, speed and acceleration
+together. A size test
 on its own cannot refute a solution that has collapsed toward the camera: a
 candidate at 500 m implies an object 0.28 m across, and 0.28 m is a perfectly
 ordinary size. What refutes it is the **pair** — 0.28 m sustaining 300 knots. A
@@ -747,23 +717,14 @@ The three columns are three different claims:
   OrdErr is an ordinary explanation that *does not fit*. A bare `0.00` with no
   OrdErr beside it would read as though one did.
 
-On a bearings-only problem **OrdMin is routinely far below Ord**, and a single
-column would hide exactly that. A low OrdMin at a *low* OrdErr, beside a high
-Ord, is the real finding: an ordinary explanation exists **at a different
-range**, and the sightlines alone cannot choose between them. Measurement on the
-benchmark sets bears this out: across fifteen *declared-anomalous* scenarios,
-the most ordinary candidate the analysis could find was in every case at least
-as ordinary as the true object, and in eight of the fifteen it sat entirely
-inside a real object's envelope — a fixed-wing model reproduced a 50 g turn's
-sightlines to 0.0037° with completely ordinary kinematics. That is not a defect
-in the analysis; it is the scale degeneracy of bearings-only data, restated in
-units a reader can act on. The practical consequence is blunt: **do not treat a
-low residual alone as a finding**, because almost everything fits a
-bearings-only problem somewhere along the line.
+On a bearings-only problem **OrdMin can be far below Ord**, which a single
+column would not show. When OrdMin is low and OrdErr is also low, a candidate
+inside an ordinary object envelope fits the sightlines **at a different range**
+from the top candidate, and the sightlines alone cannot choose between them. A
+low residual shows only that a candidate is consistent with the sightlines;
+candidates at different ranges can have nearly equal residuals.
 
-The framing matters and is easy to get backwards. A high ordinariness cost is a
-**positive finding about the object**, not a failure to explain it away, and the
-question the tool asks is always whether a mundane explanation *exists* — never
+The tool is designed to ask whether a mundane explanation *exists* — never
 which explanation it would prefer.
 
 ### Implied object size
@@ -774,7 +735,7 @@ observation counts even when judging is off; its tooltip describes the bounds.
 
 `AngularDiameterMaxDeg` alone supplies an upper limit, regardless of whether
 sensor resolution is known. The implied physical size is `0 ≤ D ≤ 2R tan(θmax/2)`.
-The analysis must not infer an unreported lower limit from the generator's
+The analysis does not infer an unreported lower limit from the generator's
 formula or treat changes in the upper limit as measured size ratios.
 
 An upper bound can reject a class if even its smallest object exceeds that
@@ -817,8 +778,7 @@ observed angular diameter — never the exact subtended angle. Paired with a
 **floor**, approximately `R ≥ D_min / θ` for small angles in radians. This
 uses a class-size assumption in addition to the bearings. It is
 deliberately a bound: publishing the exact `D/R` would let any consumer that
-assumes a diameter read range straight off, which would dissolve the benchmark
-rather than inform it. The bound can never be tighter than one
+assumes a diameter read range straight off, so only a bound is published. The bound can never be tighter than one
 [IFOV](#ifov), so a target far enough away to be sub-pixel still reports about
 two IFOVs including the measurement margin — read `sensor.pixelsAcross` in the sidecar to know what that is. Blank
 where the scenario declares no target size, and blank for direction-only
@@ -836,8 +796,8 @@ origin (latitude, longitude, ground elevation), the [epoch](#epoch), the sample
 rate, the declared line-of-sight error model ([white sigma](#white-noise) or
 [correlated wobble](#correlated-wobble) — the `*` in the Noise column), the
 sensor field of view **and its width in pixels**, a list of invalid frames, and
-an **analyst wind estimate** (what a forecast would have said — an input an
-analyst would legitimately have, distinct from the generator's true wind).
+an **analyst wind estimate** (a forecast-style wind value, separate from the
+generator's true wind).
 It also carries SHA-256 hashes of the input file and
 [*commitments*](#hash-commitment) to the truth files, so a scored release can
 later prove the truth was fixed before anyone ran it.
@@ -853,8 +813,8 @@ an input file becomes a sensor track with its sightlines, a truth file becomes
 a target track, an all file gives you both. That path is for *looking* at a
 scenario in 3D — it places the flat-plane data on the real ellipsoid (a
 curvature difference of ~2 m at 5 km, ~196 m at 50 km) and, without a sidecar,
-assumes the standard set's default site. Scoring belongs in BOTBench, which
-honours the flat-plane rule exactly.
+assumes the standard set's default site. BOTBench scores with the flat-plane
+rule; the drop-in path does not.
 
 ## Where the scenario files come from
 
@@ -879,22 +839,6 @@ That has its own page too: **[BOTBench Result Charts](BOTBenchCharts.md)** — t
 nine figures and what each answers, how to read a box whose whiskers use Tukey's
 rule in log space, why the confidence intervals are wider than the usual ones,
 and the optional command-line renderer.
-
-## One number worth remembering
-
-Because BOTBench measures the shipping pipeline end to end, its aggregate
-numbers are the honest ones to quote about the analysis as a whole — including
-the unflattering ones. On the standard scenario set the individual fits often
-land close to the truth, while the *ranking* — the choice of which candidate to
-put on top — picks the closest available candidate only a minority of the
-time. That gap between "a good answer was found" and "the good answer was
-chosen" is exactly the kind of thing this tool exists to make visible, and it is
-now measured directly: the **Best** column and the **Ranking cost** tile exist
-because a run once reported a median relative separation of 0.680 while the
-closest candidate any method produced had a median of 0.015 and landed within
-10% of range on 8 files of 10. The fits had found the objects; the ranking
-picked that candidate once. Those are opposite repairs, and the table has to be
-able to tell them apart.
 
 ---
 
@@ -921,7 +865,7 @@ along this line", and nothing more.
 
 The apparent shift of an object against distant background when the viewpoint
 moves — near things shift more than far things. Parallax from the sensor's own
-motion is the **only** source of distance information in bearings-only data,
+motion is the only geometric source of distance information in bearings-only data,
 which is why the sensor's [baseline](#baseline) matters so much.
 
 #### Baseline
@@ -950,7 +894,7 @@ ranks them; the **Top interpretation** column shows the winner.
 The one-line overall assessment the analysis issues for a file ("Consistent:
 wind-blown balloon", "Unresolved", …). The exact wordings, and precisely what
 each one does and does not claim, are documented in
-[Doing Defensible Analysis §7](DefensibleAnalysis.md#7-reading-the-executive-verdict-without-over-reading-it).
+[The executive verdict](TraverseAnalysis.md#the-executive-verdict).
 
 #### Constant Velocity (CV) family
 
@@ -974,8 +918,7 @@ route to range, but good rcond is not a guarantee of success.
 
 Data whose geometry cannot distinguish between very different answers — for
 example, a sensor that flew dead straight produces sightlines equally
-consistent with a near-slow object and a far-fast one. No amount of fitting
-skill recovers information the geometry never captured.
+consistent with a near-slow object and a far-fast one.
 
 #### Free-range methods
 
@@ -1115,7 +1058,7 @@ anomaly scenario.
 #### Aerostat
 
 Any lighter-than-air craft — balloons and blimps. A *HAB* is a high-altitude
-balloon, the kind that rides the stratosphere at 20–50 km.
+balloon, one that flies in the stratosphere.
 
 #### Simplex
 
@@ -1145,7 +1088,7 @@ the only measurement in the interchange format that pushes back against the
 scale degeneracy of bearings-only data, and it is deliberately a bound rather
 than the exact `D/R`, which any consumer assuming a diameter could read range
 straight off. A bright unresolved source blooms across neighbouring pixels, so
-apparent extent always *overstates* true size — the safe direction here, since
+its apparent extent *overstates* true size — the safe direction here, since
 overstating θ only weakens the floor it implies.
 
 #### IFOV
@@ -1169,19 +1112,20 @@ factor of ten somewhere, `2` by a hundred.
 
 #### Noise floor
 
-The [residual](#residual) a **perfect** track would score against a file's own
-declared pointing error — `sigma x sqrt(pi/2)`, because the pointing error is
-two Gaussians in the tangent plane and its magnitude follows a Rayleigh
-distribution. A fit at or below the floor is fitting the noise, not the object.
-It is shown after the slash in the **|err|** column so a small residual can
-never be mistaken for a good answer.
+The mean [residual](#residual) a **perfect** track is expected to score against
+a file's own declared pointing error — `sigma x sqrt(pi/2)`, because the
+pointing error is two independent Gaussians in the tangent plane and its
+magnitude follows a Rayleigh distribution. It is an average, not a lower bound:
+a perfect track scores near the floor, and a residual below it does not by
+itself show overfitting. It is shown after the slash in the **|err|** column so
+the residual can be compared with it.
 
 #### Oracle
 
 A score computed **using the answer** — here, the *closest candidate any method
 produced*, chosen by comparing every candidate against truth. It is a ceiling
-on what the fits could deliver, never a score the analysis could claim for
-itself, because the real analysis has to choose blind. Its distance from the
+on what the fits could deliver: it uses truth to choose, so it is an upper
+bound on what blind ranking could achieve. Its distance from the
 achieved score is exactly what the ranking costs.
 
 #### Geometry probe
@@ -1191,9 +1135,8 @@ grading entry conditions. The Minimum Acceleration fit's first stage tries to
 pin a range from pure trajectory smoothness, with no assumption about the
 object's speed; whether it succeeded rides every row in the **Src** tooltip.
 Three outcomes: geometry pinned a range; geometry pinned one whose implied
-speed was implausibly high, so the fit fell back to its prior (read as
-*recoverable* — a fast object at a pinned range is a finding, not an
-ambiguity); or geometry left range genuinely ambiguous. It speaks for geometry
+speed exceeded twice the fit's target speed, so the fit fell back to its prior
+(reported as *recoverable*); or geometry left range genuinely ambiguous. It speaks for geometry
 only.
 
 #### STANAG 4676

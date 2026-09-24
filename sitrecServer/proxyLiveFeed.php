@@ -68,8 +68,8 @@ $FEEDS = [
     ],
 
     // Radiosondes — weather balloons — worldwide, from the SondeHub community
-    // network. Directly useful to Sitrec: a balloon aloft is one of the standard
-    // mundane explanations, and this says whether one was actually up.
+    // network: the sondes received in the last hour (duration=1h), each at its
+    // latest position. Live only, so it cannot show a past flight.
     'balloons' => [
         'url' => 'https://api.v2.sondehub.org/sondes/telemetry?duration=1h',
         'params' => [],

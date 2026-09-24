@@ -10,14 +10,14 @@ This route does not require an OpenAI API key in Sitrec, a SitrecBridge installa
 2. Start ChatGPT Work or Codex with a site-tools-capable model.
 3. Open the built-in browser and visit [https://www.metabunk.org/sitrec](https://www.metabunk.org/sitrec) directly. Do not open Sitrec inside another page's iframe.
 4. Sign in to Metabunk/Sitrec in that browser profile if necessary.
-5. Open a Sitrec case.
+5. Open a Sitrec sitch.
 6. Select **Site tools** in the browser address bar to review the tools the page provides.
-7. Ask the agent to inspect or operate the open case and verify the result on the page.
+7. Ask the agent to inspect or operate the open sitch and verify the result on the page.
 
 For example:
 
 ```text
-Read the current Sitrec state and tell me the case, frame, FPS, and camera position.
+Read the current Sitrec state and tell me the sitch, frame, FPS, and camera position.
 ```
 
 ```text
@@ -33,7 +33,7 @@ Move the camera to latitude 38.5816, longitude -121.4944, altitude 2000 meters, 
 ```
 
 ```text
-List the available Sitrec cases containing "Gimbal." Load the matching saved case and report when its core state is ready.
+List the available Sitrec sitches containing "Gimbal." Load the matching saved sitch and report when its core state is ready.
 ```
 
 ```text
@@ -50,9 +50,9 @@ The public surface is deliberately limited:
 
 | Tool | What it does |
 |---|---|
-| `sitrec_get_state` | Reads the current case, frame, playback, simulation time, camera, and loading state. |
-| `sitrec_list_sitches` | Searches Sitrec's built-in and saved-case catalogs. |
-| `sitrec_load_sitch` | Loads an exact case returned by the catalog tool. It does not accept a URL or file path. |
+| `sitrec_get_state` | Reads the current sitch, frame, playback, simulation time, camera, and loading state. |
+| `sitrec_list_sitches` | Searches Sitrec's built-in and saved-sitch catalogs. |
+| `sitrec_load_sitch` | Loads an exact sitch returned by the catalog tool. It does not accept a URL or file path. |
 | `sitrec_seek_frame` | Moves to an exact zero-based frame and reads the frame back. |
 | `sitrec_set_playback` | Plays, pauses, or toggles playback and reads the resulting state. |
 | `sitrec_get_camera` | Reads the camera latitude, longitude, and altitude. |
@@ -96,7 +96,7 @@ The production registration lives in `src/WebMCP.js` and is imported by the norm
 
 Every site-tool operation passes through `CSitrecAPI.handleAPICall(..., "webmcp")`. Sitrec classifies `webmcp` with the untrusted `chat` source for non-LLM-callable functions, external URL blocking, external-sitch write confirmation, and untrusted-result fencing. The installed/developer `mcp` source used by SitrecBridge retains its existing trust model.
 
-The adapter validates strict inputs before CSitrecAPI argument coercion, accepts only case and track identifiers returned by current catalog tools, reads state back after visible mutations, and reports partial case loading honestly. Cancelling a site-tool invocation stops only its observer; it never cancels Sitrec's unrelated application work.
+The adapter validates strict inputs before CSitrecAPI argument coercion, accepts only sitch and track identifiers returned by current catalog tools, reads state back after visible mutations, and reports when a sitch is only partly loaded. Cancelling a site-tool invocation stops only its observer; it never cancels Sitrec's unrelated application work.
 
 Run the focused checks with:
 

@@ -11,7 +11,7 @@ The folder is closed by default and sits in the Video menu.
 
 ## The render buttons
 
-They differ in *what* they capture, which matters more than it sounds:
+They differ in *what* they capture:
 
 | Button | What it captures |
 |---|---|
@@ -19,7 +19,7 @@ They differ in *what* they capture, which matters more than it sounds:
 | **Render Viewport Video** | Everything visible, composited — all views and overlays, laid out as you see them |
 | **Render Source Video** | The video alone, at its original resolution, without the 3D scene — but **not** an untouched copy. See the warning below |
 | **Render Fullscreen Video** | The same viewport render, but it hides the menu bar and puts the browser into fullscreen first, so you get the layout at full screen resolution with no UI in shot |
-| **Record Browser Window** | A screen capture of the tab, via the browser's own screen-sharing prompt. Whatever is on screen is captured, menus included |
+| **Record Browser Window** | A screen capture of the tab, via the browser's own screen-sharing prompt. The tab is captured as shown, except that the render menus are closed first |
 
 All of them step through the **In/Out (A-B) range** frame by frame — including
 *Record Browser Window*, which despite the name is not a live recording of you using the app.
@@ -41,19 +41,15 @@ layout first with the view presets (`1`–`8`).
 >
 > It is also re-encoded, so it is lossy even if you changed nothing.
 >
-> This matters for provenance. If you publish this file as "the original video", you may be
-> publishing footage whose contrast you stretched an hour earlier to see something faint —
-> and someone will eventually notice the discrepancy against the real source and treat it as
-> evidence of manipulation.
->
-> **If you want the untouched original, distribute the file you started with.** Use this
-> export for showing the video the way you have been looking at it — enhancements included,
-> and said out loud.
+> For an unchanged copy, use the original file.
 
 ## Choosing the view
 
 *Render Video View* lists every view that can export — by default `lookView`. Overlay views
 are not offered on their own; they composite into the viewport render.
+
+Each view's header also has a render-video icon. It runs **Render Single View Video** for
+that view directly, without changing the *Render Video View* selection.
 
 ## The render dialog
 
@@ -66,11 +62,16 @@ so you can judge a look in a second rather than after a five-minute export. Tick
 fine grating make chroma bleed, dot crawl and rainbowing far easier to see than a
 photograph does.
 
-**An export always starts unfiltered**: *Pure digital*, with *Recorded off a screen* off,
-however the last one was set up. A filter is destructive and easy not to notice until the
-file is already out, so applying one is a decision made each time. What each stage was
+**An export always starts unfiltered**: *Pure digital (no filter)*, with *Recorded off a screen* off,
+however the last one was set up. The filter setting is not remembered between exports. What each stage was
 tuned to *is* remembered, so re-selecting a format or re-ticking the camera brings your
 settings back, and the compression settings persist as the preferences they are.
+
+If the [live video format effects](#live-video-format-effects) are switched on and the
+render includes the look view, they are baked into the output, and the dialog says so:
+*"The scene's Video Format Effects are included. Settings below add further effects."*
+The dialog's own signal format and off-a-screen settings are then applied on top, so the
+two can stack.
 
 ### Signal format
 
@@ -82,7 +83,7 @@ and respond to picture content accordingly.
 
 | Format | What it is |
 |---|---|
-| **Pure digital** | No filter. The rendered frames, untouched — the previous behaviour, and still the default |
+| **Pure digital (no filter)** | No filter. The rendered frames, untouched — the previous behaviour, and still the default |
 | **NTSC (525/60 colour)** | US broadcast composite. Dot crawl and cross-colour rainbowing |
 | **EIA RS-170 (525/60 monochrome)** | The pre-colour US studio standard. Luminance only, no subcarrier |
 | **PAL (625/50 colour)** | European composite. Phase-alternating V axis, softer vertical colour |
@@ -95,13 +96,13 @@ format letterboxes it, exactly as putting widescreen footage on tape would.
 
 **Signal detail** opens the individual parameters behind whichever preset is selected:
 luma and chroma bandwidth in MHz, chroma timing error, edge pre-emphasis, comb filter
-strength, Y/C separation (0 is composite, 1 is an S-Video or component feed), hue error,
+strength, Y/C separation (0 is composite, 1 is an S-Video or component feed), chroma gain, hue error,
 time-base error, head switching, tape noise, dropouts, interlace combing, ghosting, scan
 lines, vertical chroma smear, and the number of tape generations to run.
 
 **Dropouts** are the head losing contact with the tape — a missing patch of oxide, a
 crease, debris. Each costs a fraction of one scan line, not a whole one. Most are hidden
-by the *dropout compensator*, which every VCR has: it detects the signal collapsing and
+by the *dropout compensator*, which VCRs normally have: it detects the signal collapsing and
 repeats the previous line from a one-line delay, so a concealed dropout shows as a short
 horizontal smear of repeated picture rather than as anything bright, and a defect
 spanning several lines keeps repeating that same last good line. The minority the
@@ -113,17 +114,20 @@ setting: luma noise is grain the width of the format's luma channel, colour nois
 horizontal smears the width of its colour channel — about ten times wider on VHS, which
 records colour on a far narrower band than luminance. So VHS and NTSC at the same level
 still look quite different, and the level only says how much.
-The presets are derived from the published figures for each standard, so they are a
-reasonable starting point; the sliders are there for when you want a specific look.
+The presets are derived from the published figures for each standard; the sliders are there
+for when you want a specific look.
 
 ### Recorded off a screen
 
 Simulates pointing a phone at a monitor playing the video. Runs after the signal format,
 because that is the order it happens in.
 
-Three camera presets — **handheld**, **handheld (unsteady)** and **on a tripod** — set
-everything below, which you can then adjust:
+Three **Camera** presets — **Phone, handheld**, **Phone, handheld (unsteady)** and
+**Phone, on a tripod** — set everything below, which you can then adjust:
 
+- **Camera and screen** — camera HFOV, aspect ratio, screen width, distance and extra crop:
+  the physical setup that decides how much of the frame the screen fills (see
+  [Where the camera is standing](#where-the-camera-is-standing)).
 - **Handheld** — wobble amount, speed, and *variation*, which modulates the amount over
   time so the shot has steady stretches and unsteady ones instead of a constant buzz.
   Plus slow drift and rotation. The crop tightens automatically as far as it must to keep
@@ -131,17 +135,17 @@ everything below, which you can then adjust:
 - **Exposure** — auto exposure meters the frame and chases the target rather than snapping
   to it, so it visibly hunts. Bias, adaptation speed, a highlight knee and a clipping
   control for how hard the highlights blow out, black crush, black lift and bloom.
-- **Lens and screen** — zoom, keystone, barrel distortion, chromatic aberration, edge
+- **Lens and screen** — keystone, barrel distortion, chromatic aberration, edge
   softness, the screen's own pixel grid and its pitch (the moiré is the genuine beat
   between that grid and the output raster, not a drawn-on pattern), the rolling refresh
-  beat, a reflection on the glass, vignette and sensor noise.
+  beat, a reflection on the glass, the monitor bezel, vignette and sensor noise.
 
 ### Compression
 
 | Control | Default | What it does |
 |---|---|---|
 | **Container / codec** | MP4 (H.264) | As the *Video Format* control below, and shown only when the browser supports more than one |
-| **Bitrate** | 8 Mbit/s | Overrides the per-render default in the table below |
+| **Bitrate** | 8 Mbit/s | Used for every render started from the menu. Raise it by hand for HD/Retina exports |
 | **Keyframe interval** | 30 frames | Frames between keyframes. Lower seeks better and compresses worse |
 
 **Defaults** puts the three back where they started, without touching the signal format or
@@ -156,7 +160,7 @@ can encode instead.
 |---|---|---|
 | **MP4 (H.264)** | `.mp4` | AVC — the default, and the one to use unless you have a reason not to |
 | **MISB TS (H.264)** | `.ts` | AVC video with frame-synchronized MISB camera and track metadata |
-| **WebM (VP8)** | `.webm` | VP8 — the default on Firefox |
+| **WebM (VP8)** | `.webm` | VP8 — the default on Firefox, when Firefox can encode VP8. Sitrec cannot load WebM files back in |
 
 The dropdown appears when your browser supports more than one option. If it supports only one, that one
 is used and the control is hidden. Support is probed by asking the browser's video encoder
@@ -169,6 +173,10 @@ field of view, and the source frame's UTC time. The selected target track is inc
 available. A selected **Truth Track** in the traverse analysis controls is included as a separate
 metadata stream and is recognized as truth when the file is opened in Sitrec.
 
+MISB TS does not fall back to another format: if the browser cannot encode it at the
+render's resolution, the export stops with an error rather than silently dropping the
+metadata.
+
 For **Render Single View Video**, metadata describes that view's camera. Source-video and
 combined-view exports use the look camera. A combined-view export therefore describes the
 look camera, rather than every panel in the image.
@@ -179,9 +187,9 @@ Metadata describes the camera before image cropping, rotation, and simulated len
 | Control | Default | What it does |
 |---|---|---|
 | **Loops** | 1 | Repeat the clip up to 20 times in one file. Useful for short events you want people to be able to watch repeatedly |
-| **Use HD/Retina Export** | off | Renders at your display's device pixel ratio instead of CSS pixels — typically 2× linear, so 4× the pixels. Note the viewport bitrate scales with the square of the factor too, so the file gets roughly four times bigger as well |
+| **Use HD/Retina Export** | off | Renders at your display's device pixel ratio instead of CSS pixels — typically 2× linear, so 4× the pixels. The bitrate does not scale with it, so raise **Bitrate** in the render dialog to keep the same quality |
 | **Include Audio** | **on** | Carries the source video's audio through — but only when the export would stay in sync with it. Audio is silently dropped if playback speed is not 1×, ping-pong is on, Loops is above 1, *Unique frames only* actually skipped a frame, or the audio has not finished decoding |
-| **Unique frames only** | off | Skips frames that are nearly identical to the previous one. Shrinks a file where nothing is moving |
+| **Unique frames only** | off | Scans the A-B range of the source video first and skips source frames that duplicate the previous one (for example, repeated frames from a frame-rate conversion). The output keeps its frame rate, so the clip becomes shorter. Has no effect without a video |
 | **Unique threshold** | 1.0 | How different a frame has to be to be kept, as mean absolute difference in grey level. Lower keeps more frames |
 | **Wait for background loading** | off | Waits for terrain, 3D tiles and video decoding to settle before capturing each frame. Slower, but stops tiles popping in mid-shot |
 
@@ -189,17 +197,11 @@ Metadata describes the camera before image cropping, rotation, and simulated len
 the exporter captures as fast as it can, and terrain or Google 3D tiles that are still
 streaming will appear to pop in during the shot.
 
-## Bitrates
+## Bitrate
 
-The render dialog's **Bitrate** control overrides these. They are what each render uses
-when nothing sets it — and worth knowing when judging output quality:
-
-| Render | Bitrate |
-|---|---|
-| Single view | 5 Mbps |
-| Source video | 10 Mbps |
-| Viewport | 8 Mbps × (retina scale)² |
-| Fullscreen | as viewport — it delegates to the same exporter, so retina scales it too |
+Every render button opens the render dialog, and the dialog's **Bitrate** (default
+8 Mbit/s) and **Keyframe interval** (default 30) are used for the render. The render type
+and the HD/Retina setting do not change them.
 
 ## While it is running
 
@@ -213,21 +215,41 @@ instead — **`Enter`** to stop early, **`Esc`** to abort.
 
 Odd pixel dimensions are rounded up to even before encoding, since the codecs require it. If
 your chosen resolution is not supported, the exporter falls back to another format
-automatically; if nothing supports it you will get a `No codec supports W×H` error — resize
+automatically (except for MISB TS, which fails rather than drop its metadata); if nothing supports it you will get a `No codec supports W×H` error — resize
 the view and try again.
 
 ## Exporting a single frame
 
-**Export Video Frame JPG** and **Export Video Frame PNG** write the current frame at the video
+**Export Video Frame (JPG)** and **Export Video Frame (PNG)** write the current frame at the video
 view's own resolution, compositing the annotation overlay if you have one. JPEG is written at
 quality 0.92. Files are named `<prefix>_frame_00000.jpg` or `.png` to match the button you used.
 
-Use PNG if the image is going into further analysis, JPEG if it is going into a forum post.
+PNG is lossless. JPEG is written at quality 0.92.
 
 These write what is **on screen**, so — exactly as with Render Source Video above — any video
-adjustments, rotation and zoom are baked in. That is usually what you want, since it matches
-what you were looking at. Just say so when you publish it, rather than presenting it as an
-untouched frame.
+adjustments, rotation and zoom are baked in.
+
+**Export Look Panorama**, in the same folder, builds a panorama image from the look view
+across all frames, placed by the background position.
+
+## Render Fade
+
+**Video → Video Render & Export → Render Fade**
+
+Renders the chosen view while crossfading between the simulation and the video overlay, as
+if the look view's *Vid Overlay Trans %* slider were being moved up and down. Useful for a
+direct comparison of the recreation against the footage.
+
+| Control | Default | What it does |
+|---|---|---|
+| **Start With** | Look | The view the render opens on. *Look* is the simulation alone, *Video* is the video overlay alone |
+| **Initial Delay (s)** | 1 | Seconds on the starting view before the first fade |
+| **Fade Time (s)** | 1 | Seconds each crossfade takes |
+| **Hold Time (s)** | 2 | Seconds on each view after a fade arrives on it |
+| **Fades** | 2 | Number of crossfades. Each goes to the other view, so 2 goes there and back |
+| **Hold Current Frame** | on | Freezes on the current frame for a still comparison. Off plays the A-B range while fading, looping it if the fades outlast the clip |
+| **Render Whole Viewport** | off | Renders every visible view as laid out on screen, not just the one view. The fade still runs on the look view's overlay |
+| **Render Fade Video** | — | Opens the render dialog, then renders the view chosen in *Render Video View* (or the whole viewport). Length is Initial Delay + Fades × (Fade Time + Hold Time) |
 
 ---
 
@@ -241,11 +263,13 @@ A few things that make more difference than the settings do:
 3. **Turn on *Wait for background loading*** so the terrain is fully resolved.
 4. **Check the frame rate.** At normal speed the output runs at the sitch's own frame rate.
    Speeding playback up past 1× caps the output at 60 fps (dropping frames rather than
-   producing an unplayable rate); slowing it down gives you a slow-motion file, which is
-   usually what you want for a fast event.
+   producing an unplayable rate); slowing it down gives you a slow-motion file. Below 1× the output frame rate drops with the
+   speed (0.5× of a 30 fps sitch gives 15 fps), so slow motion is also choppier.
+   *Render Source Video* uses the frame rate in the video file's own header, not a
+   frame rate you set by hand for the video. If ping-pong is on, every export plays the
+   A-B range forward and back.
 5. **Consider the burned-in readouts.** The Video Readout and Look View Readout put
-   altitude, range, speed and time into the frame, so the numbers travel with the picture
-   instead of living in a caption someone will crop off.
+   altitude, range, speed and time into the frame, so the numbers travel with the picture.
 
 ---
 
@@ -255,7 +279,7 @@ A few things that make more difference than the settings do:
 
 The same analog simulation, running on screen over the look view instead of only on an
 export. Useful for judging a look interactively, and for showing a recreation as it would
-have appeared on the format it was supposedly recorded on.
+appear on a given recording format.
 
 It carries the same *Format* list and the main severity controls — tape noise, time-base
 error, head switching, dropouts, interlace combing, scan lines, colour smear — plus
@@ -269,7 +293,7 @@ between them they decide how much of the frame the screen fills:
 
 | Control | What it is |
 |---|---|
-| **Camera HFOV** | Horizontal field of view of the lens, in degrees. A phone's main camera is around 65 |
+| **Camera HFOV** | Horizontal field of view of the lens, in degrees. Default 65 |
 | **Aspect ratio** | Shape of the camera's own frame, width over height — 1.78 is 16:9. Letterboxed into the view when it differs, because that is what watching phone footage in a wider window looks like |
 | **Screen width** | Physical width of the screen being filmed, in metres |
 | **Distance** | How far the camera is from it, in metres |
@@ -295,22 +319,23 @@ ever see the 3D scene, so this one runs after every view has drawn.
 
 Two consequences of that:
 
-- It costs two full-frame copies per frame that the other effects do not pay. Measured at
-  a half-screen look view on a discrete GPU it holds 60 fps with no measurable frame-time
-  change; a full-screen view is four times the pixels and has not been measured.
+- It costs two full-frame copies per frame that the other effects do not pay.
 - The effect animates while the sitch is playing. Paused, the picture holds still — which
   is what a paused tape looks like — and any setting you change still takes effect
   immediately.
 
-**It always starts switched off**, whatever it was left as. Its format and tuning are
-remembered, so ticking it back on resumes where it was; only the choice to apply it is
-made afresh. The settings are not saved into a sitch.
+**It starts switched off in a new session.** Its format and tuning are remembered, so
+ticking it back on resumes where it was. A saved sitch stores the format, the tuning and
+the on/off state, and restores them when it is loaded.
+
+When it is on, renders that include the look view bake it into the output (see
+[The render dialog](#the-render-dialog)).
 
 ---
 
 ## See also
 
-- [Scripted Camera Moves](ScriptedVideo.md) — for scripted, repeatable camera moves rather
+- [Scripting](ScriptedVideo.md) — for scripted, repeatable camera moves rather
   than hand-flown ones
 - [Long Exposure Simulation](LongExposure.md) — trails rather than motion
 - [Keyboard Shortcuts](KeyboardShortcuts.md)

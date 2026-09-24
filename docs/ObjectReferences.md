@@ -36,12 +36,14 @@ Sitrec does not route every external URL through its object resolver.
 When Sitrec needs the bytes behind a reference, `src/SitrecObjectResolver.js` sends the
 canonical reference to `sitrecServer/object.php`. The endpoint returns JSON containing:
 
-- the canonical reference;
-- the decoded object key and compact share value;
-- a fetchable URL; and
-- an expiry time when the URL is temporary.
+- `ref`, the canonical reference;
+- `key` and `shareValue`, the decoded object key and compact share value;
+- `url`, a fetchable URL;
+- `expiresAt`, an expiry time when the URL is temporary; and
+- `version`, the file name of the resolved version.
 
-The browser caches that result until it is close to expiry. A private object can therefore
+The browser caches that result until 30 seconds before it expires; a URL with no expiry is
+cached for the rest of the session. A private object can therefore
 use a short-lived signed URL while a public object can use a stable URL. Callers use
 `resolveURLForFetch()` rather than depending on either storage form.
 
@@ -52,8 +54,10 @@ responses may also include an `objectUrl`, and older saved sitches with direct U
 loadable.
 
 A complete, versioned key is the right value for a public share link. A folder reference
-means "latest version" and may be resolved only by its owner or an administrator; this
-prevents a previously shared folder URL from revealing a newer, unshared version.
+means "latest version". For a public folder, anyone with the link gets the newest public
+version; private versions in the folder are skipped, so a shared folder URL does not reveal a
+newer version that is private. A private folder resolves only for its owner or an
+administrator, who always get the newest version.
 
 For the complete upload, storage, and configuration contract, see [File Rehosting and
 Object References](dev/FileRehosting.md).
@@ -65,7 +69,7 @@ normally enough to ask the resolver for it. Choosing private object-storage visi
 changes how the bytes are delivered, but does not by itself create per-object user
 authorization. Do not use a guessable key as an access-control boundary.
 
-Folder references are more restricted, as described above. Upload and deletion requests
+Folder references to private folders are more restricted, as described above. Upload and deletion requests
 also require an authenticated nonzero user and are constrained to that user's prefix.
 
 ## Serverless and local files

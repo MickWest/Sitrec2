@@ -13,41 +13,48 @@ projection, with fields of view up to and beyond 180°. Stars, satellites,
 planets, tracks and terrain all render through the fisheye, and the night-sky
 name labels follow.
 
+The Fisheye menu is available in custom sitches only. Fisheye and
+[Panoramic Camera](PanoramicCamera.md) cannot be on together: enabling one
+turns the other off.
+
 ## Controls
 
 - **Fisheye Lens** — enable the fisheye projection for the look view. The
-  normal Zoom / VFOV sliders are ignored while this is on; the field of view
-  comes from **Fisheye FOV** below, and the scroll wheel (or pinch, or the
-  keyboard zoom) in the look view adjusts that instead of the normal FOV.
+  other controls in this folder appear only while it is on. The normal FOV
+  controls in Camera → FOV (Zoom) (VFOV, HFOV, 35mm Equiv and the rest) are
+  hidden while this is on, except the Panoramic Camera switch; turning Fisheye
+  off shows them again with their values kept. The field of view comes from
+  **Fisheye FOV** below, and the scroll wheel (or pinch, or the keyboard zoom)
+  in the look view adjusts that instead of the normal FOV.
 - **Projection** — the lens's radial mapping r(θ): how far from the image
   centre a ray θ degrees off-axis lands.
-  - *Equidistant* (r = fθ): image radius proportional to angle. Common for
-    scientific all-sky lenses.
+  - *Equidistant* (r = fθ): image radius proportional to angle.
   - *Equisolid-angle* (r = 2f·sin(θ/2)): equal areas of sky get equal areas of
-    image. Most cheap board-camera fisheyes (the usual allsky hardware) are
-    close to this or equidistant.
+    image. If you do not know the lens, try Equisolid-angle and Equidistant
+    first.
   - *Stereographic* (r = 2f·tan(θ/2)): preserves shapes locally; fields
-    approaching 360° stay usable.
+    up to its 340° cap stay usable.
   - *Orthographic* (r = f·sin(θ)): compresses strongly toward the edge; caps
     at 180°.
   - *Rectilinear* (r = f·tan(θ)): the pinhole itself, included as a sanity
-    check — at the same FOV it matches the normal render exactly.
+    check — at the same FOV it matches the normal render exactly. Caps at
+    160°.
 
   These are the same lens models Star Track uses for its camera calibration,
   so a lens fitted there tells you which projection to pick here.
 - **Fisheye FOV °** — the full field of view across the image circle's
   *diameter*. 180 puts the horizon exactly on the circle's edge for a camera
   pointing straight up. Values past 180 image sky (or ground) *behind* the
-  camera plane. Many allsky cameras stop a little short of the horizon —
-  if the real image's circle edge is above the horizon, use less than 180.
+  camera plane. If the real image's circle edge is above the horizon, use
+  less than 180.
 - **Circle Size %** — the image circle's diameter as a percentage of the view
-  height. 100 fits the circle exactly top-to-bottom. A 16:9 allsky frame
-  usually *crops* the circle's top and bottom — the STLS/D'Antonio frame is
+  height. 100 fits the circle exactly top-to-bottom. A 16:9 frame that
+  *crops* the circle's top and bottom can need a larger value — for example,
   about 155.
 - **Center X % / Center Y %** — offset of the image circle's centre from the
   frame centre, in percent of view height (both axes use height units, so
-  equal numbers are equal pixels). Real allsky sensors are rarely perfectly
-  centred behind the lens.
+  equal numbers are equal pixels). Use these when the image circle is not
+  centred in the frame.
 - **Roll °** — rotate the fisheye image about its centre, matching a camera
   that was not mounted north-aligned. This is an image-plane rotation,
   independent of the camera's own orientation controls.
@@ -63,7 +70,7 @@ name labels follow.
 ## Matching an allsky video
 
 1. Load the video and set the camera location and time as usual.
-2. Press **Point Straight Up (Allsky)**, enable **Fisheye Lens**.
+2. Enable **Fisheye Lens**, then press **Point Straight Up (Allsky)**.
 3. Set **Circle Size %** so the rendered circle matches the video's image
    circle (155 for a circle whose diameter is 1.55× the frame height), and
    the Center offsets if the video's circle is off-centre.

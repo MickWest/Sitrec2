@@ -2,8 +2,8 @@
 
 **Physics → Scenarios → Nimitz** builds an interactive 4D reconstruction of the 14 November 2004
 USS Nimitz "Tic Tac" encounter as **verbally described** by CDR David Fravor and
-LT Alex Dietrich. It deliberately does **not** reconstruct the later FLIR1 video
-(that was Chad Underwood's separate sortie, ~an hour later — see `data/flir1/`).
+LT Alex Dietrich. It does **not** reconstruct the FLIR1 video, which was recorded on a separate
+sortie (see `data/flir1/`).
 
 Use it from the **custom** sitch:
 
@@ -54,7 +54,7 @@ LARGE UNID OBJECT IN WATER AT 1430L."* All node ids are prefixed `nimitz`.
 | Descent Start | 60 s | when the spiral begins | ~a minute watching the jinking object; [TTSA-F] "between probably nine and ten, I started an easy descent" |
 | Cut Across | 270 s | when Fravor abandons the spiral | ~360° of spiral (90° to mirror onset + 270° more) at the default circle |
 | Cut Across Altitude | 15,000 ft | Fravor's altitude at the cut | [HOC23] "Our altitude at this point was about 15,000 feet" |
-| Intercept Turn Rate | 6°/s | how hard he rolls out and pursues | assumption (no telling gives bank/airspeed for the cut — critic-flagged) |
+| Intercept Turn Rate | 6°/s | how hard he rolls out and pursues | assumption (no telling gives bank/airspeed for the cut) |
 | Dietrich Altitude | 20,000 ft | wing's high-cover orbit | [ER] FASTEAGLE 02 stayed high; Dietrich "20–25 kft" (weakly sourced — see gaps) |
 | Tic-Tac Length | 40 ft | capsule size (2.25:1 length:diameter per [MB-9829] scale-model proportions) | [HOC23 sworn] "40-foot flying Tic Tac… That is correct"; range 25–47 (conflict #8) |
 | Hover Altitude | 50 ft | object's low phase | [NYT17] "Hovering 50 feet above the churn" (alternates to 4,000 ft — conflict #11) |
@@ -70,8 +70,8 @@ LARGE UNID OBJECT IN WATER AT 1430L."* All node ids are prefixed `nimitz`.
 **Emergent (not parameterized) behavior:** the departure fires at *closest
 approach* — when the mirroring geometry brings the object across Fravor's nose —
 or when separation drops under Departure Range, whichever first. This keeps the
-beat timing self-consistent for any circle size (the research critic flagged
-that fixed beat times only work for one circle diameter). Fravor's cut-across is
+beat timing self-consistent for any circle size (fixed beat times only work for
+one circle diameter). Fravor's cut-across is
 pure pursuit: since the mirrored object is always diametrically opposite, aiming
 at it is exactly steering at the circle center, until inside his own turn radius
 where the chase becomes geometrically futile and he flies straight through.
@@ -83,7 +83,7 @@ object). Alternate timings exist (conflict #7).
 
 ---
 
-## 2. Reconciled timeline (default: Fravor's stable modern telling)
+## 2. Reconciled timeline (default: Fravor's modern telling)
 
 Citation keys: **[ES]** CVW-11 Event Summary 14 Nov 2004 (contemporaneous, leaked
 2007, authenticity unverified) · **[ER]** 2009 Executive Summary (leaked 2018) ·
@@ -108,14 +108,14 @@ Metabunk threads. Full URLs in §6.
 | +270 | ~1434:30 | Cut across | [HOC23] *"Our altitude at this point was about 15,000 feet and a Tic Tac was about 12,000"*; [CNN17] *"I'm at about the 8:00 position and the tick tack is about two. I cut across the circle."* |
 | ~+300 | ~1435 | Closest approach & departure | [HOC23] *"As we pulled nose onto the object within about a half mile of it"* — then it accelerates across the nose: *"rapidly accelerates to the south in about two seconds and disappears"* (Fravor YouTube telling; ≤1 s [FPP19/JRE19], ≤0.5 s [LEX20]). Alternates: climbs past their altitude [ABC17]; [ES] *"PILOT ESTIMATED THAT CAPSULE ACHIEVED 600-700 KTS… LOST VISUAL ID OF CAPSULE IN HAZE… AT 14KFT HEADING DUE EAST."* Dietrich: *"I only had visual of Tic Tac for 8-10 sec from high cover"* [AD-TW]; *"No acceleration"* (60 Min Overtime). In the sim the exact moment is emergent (closest approach), landing ~t+305 with default parameters. |
 | +310–330 | ~1435:30 | Whitewater gone | [HOC23] *"we immediately turned back to see where the whitewater was at, and it was gone also."* ([ER] alternate: it ceased during the maneuver.) |
-| +330–360 | ~1435:30–1436 | CAP call | Princeton, first *"picture clean"*, then: *"you're not going to believe this, its at your CAP"* [ER]. Blip at ~24,000 ft [ER]. Distance 60 mi ([HOC23] *"Roughly 60 miles away. In less than a minute"*; 40 mi in [NYT17]). Model as a NEW discrete blip, not a tracked transit — SPY-1 was auto-dropping these tracks ([MB-9190 #44], West: *"they saw a blip somewhere, then they saw a blip somewhere else"*). |
-| +600… | ~1440+ | RTB | The flight swings through the CAP, sees nothing, completes the exercise, returns. Underwood's FLIR1 sortie launches ~1500L — out of scope. |
+| +330–360 | ~1435:30–1436 | CAP call | Princeton, first *"picture clean"*, then: *"you're not going to believe this, its at your CAP"* [ER]. Blip at ~24,000 ft [ER]. Distance 60 mi ([HOC23] *"Roughly 60 miles away. In less than a minute"*; 40 mi in [NYT17]). The sim models the CAP reacquisition as a new discrete blip, not a tracked transit. [ER] says the tracks were *"quickly 'dropped'"*; see also [MB-9190 #44], West: *"they saw a blip somewhere, then they saw a blip somewhere else"*. |
+| +600… | ~1440+ | RTB | The flight swings through the CAP, sees nothing, completes the exercise, returns. The FLIR1 video comes from a separate sortie — out of scope. |
 
 **Compressed variant** (second preset button): t=0 tally → object seen +10 s →
 one aggressive descending turn on a ~1-nm circle (needs 60°+ bank — [TTSA-F]
 *"about a mile across the circle"*) → departure inside the first minute. This
 fits the [ES] narrative shape, Dietrich's 8–10 s visual, and her reading that
-the whole documented engagement could fit in ~10 s [AD-MW]. Fravor's concession,
+the whole documented engagement could fit in ~10 s [AD-MW]. Fravor's reply, as
 relayed by Dietrich: *"Could have been less but it was way more than a few
 seconds"* [AD-TW].
 
@@ -128,7 +128,7 @@ seconds"* [AD-TW].
 - Low phase: 50 ft, jitter over the patch (instant reversals imply ~10–100 g
   spikes — derived from *assumed* jitter numbers, not testimony).
 - Mirror: climbs 0→12,000 ft over ~3.5 min opposite Fravor on the circle
-  (~200–300 kt on the default 5-nm circle; scales with circle size).
+  (~200–300 kt on the default 5-nm-diameter circle; scales with circle size).
 - Departure: impulsive. To shrink a 12-m object below ~1 arcmin visual acuity
   from 0.5 nm in ~2 s it must recede to roughly 25 nm — average >20,000 kn.
   The sim's 500 g / 6,000 kn defaults make it *effectively* gone in about a
@@ -192,7 +192,7 @@ flip the switch via the scripted `set` command.
 | Cut across | +270 s / 15,000 ft | +45 s compressed | [HOC23] "about 15,000 feet" | Medium |
 | Object at cut | 12,000 ft | separation 2,000–3,000 ft | [HOC23] "about 12,000"; [CNN17] | Medium |
 | Closest approach | 0.5 nm | 0.5–1.0 | [HOC23] "within about a half mile" | Medium |
-| Vanish duration | ~2 s → sim ~1 s | 0.5–2 s; haze fade [ES] | [CNN17] "less than two seconds"; [LEX20] "less than a half second" (monotonic compression 2017→2020) | Medium |
+| Vanish duration | ~2 s → sim ~1 s | 0.5–2 s; haze fade [ES] | [CNN17] "less than two seconds"; [FPP19/JRE19] ≤1 s; [LEX20] "less than a half second" | Medium |
 | Departure direction | south (= CAP bearing) | up [ABC17]; east [ES] | [CNN17] "rapidly accelerated to the south" | Low-Med |
 | Tic tac length | 40 ft | 25–47 | [HOC23 sworn]; [ES] 25–30; [ER] ~46; [TTSA-F] 47 (conflict #8) | Medium |
 | Tic tac proportions | 2.25:1 length:diameter | — | candy proportions per [MB-9829] method (assumption — no width in any telling) | Low |
@@ -212,8 +212,7 @@ flip the switch via the scripted `set` command.
 ## 5. Conflicts between tellings (what the presets encode)
 
 1. **Time of day:** [ES] 1410/1430L vs "late morning" [FS15] vs TTSA-PR "1230".
-   NYT ("that November afternoon") and History.com ("about 2 p.m.") side with
-   the log. Sim uses 1430L.
+   NYT ("that November afternoon") agrees with the log. Sim uses 1430L.
 2. **Location, 43 nm apart:** [ES] N30°50.8′ W117°46.9′ vs the TTSA/AATIP/
    FighterSweep cluster near N31°20′ W117°10′. [ES] is also internally
    inconsistent by ~10 nm against its own "160@40NM". Sim defaults to the [ES]
@@ -230,7 +229,7 @@ flip the switch via the scripted `set` command.
    24 kft hover [FS15] / 15–20 kft [ER].
 6. **Whitewater size/shape:** 737-sized cross (Fravor 2019+) vs 60×80 ft oval
    (Dietrich, TTSA-PR) vs 50–100 m round (Kurth) vs "MUCH LARGER THAN A
-   SUBMARINE" [ES]. The cross first appears in 2019 podcasts; the 737 in 2015.
+   SUBMARINE" [ES].
 7. **Whitewater vanish timing:** after departure [HOC23] vs during the maneuver
    [ER] vs as the jets arrived (Kurth, [FS15]).
 8. **Tic tac length:** 25–30 [ES] / 30–40 [TTSA-PR] / 40 sworn [HOC23] / 46
@@ -238,7 +237,7 @@ flip the switch via the scripted `set` command.
 9. **Circle over-constraint:** "about a mile across" [TTSA-F] + "roughly 5
    minutes" + fighter speeds cannot coexist (1-nm circle at 250–300 kn needs
    >60° bank and ~40 s/lap). The sim honors duration+easy-bank by default
-   (5-nm circle) and offers the 1-nm circle in the compressed variant.
+   (5-nm-diameter circle) and offers the 1-nm circle in the compressed variant.
 10. **Orbit direction:** Fravor clockwise (every telling) — but Dietrich
     recalls a LEFT bank with the object at her 10 o'clock low [AD-MW]. The sim
     currently orbits both jets the same direction (future: independent wing
@@ -247,28 +246,27 @@ flip the switch via the scripted `set` command.
     ~500 kt level — *Fravor's own WSO* ([ER]: "His report differs from CDR
     Fravor") vs 1,000–3,000 ft [TTSA-PR] vs 4,000 ft [ES].
 12. **Engagement duration (~30×):** "roughly about five minutes" (Fravor,
-    2017–2021, escalating to "over five minutes" 2023) vs Dietrich "8-10 sec…
-    Maybe his 'time dilation' made 2-3 min feel like 5" [AD-TW]; the sworn 2023
-    telling gives no duration at all.
-13. **Departure character:** instant vanish south (≤2 s → ≤0.5 s, compressing
-    2017→2020) vs climbs past their altitude [ABC17] vs [ES] "COULD NOT KEEP UP
+    2017–2021, e.g. [60M21]); "over a 5-minute period" [HOC23 sworn] vs Dietrich
+    "8-10 sec… Maybe his 'time dilation' made 2-3 min feel like 5" [AD-TW].
+13. **Departure character:** instant vanish south ([CNN17] "less than two
+    seconds"; [FPP19/JRE19] ≤1 s; [LEX20] "less than a half second") vs climbs past their altitude [ABC17] vs [ES] "COULD NOT KEEP UP
     WITH THE RATE OF TURN AND THE GAIN OF ALTITUDE… LOST VISUAL ID OF CAPSULE IN
     HAZE… HEADING DUE EAST" at an estimated 600–700 kt. Dietrich: "No
     acceleration."
 14. **CAP reacquisition:** 40 mi [NYT17, SCU App. I] vs 60 mi [JRE19/HOC23];
-    "seconds" vs "<1 min" vs "couple of minutes" [SCU19 main text]. The two
-    earliest records ([ER], [FS15]) give **no** distance or time — the speed
-    claim first appears Dec 2017.
-15. **Blip vs track:** Kevin Day's tracked-transit telling (and the 0.78-s
-    descent figure, first appearing in his fictionalized 2008/09 anthology
-    story) vs [ER] "never obtained an accurate track… quickly 'dropped'" — the
-    Entropy-paper g-figures derive from Day's number, not independent data.
+    "seconds" vs "<1 min" vs "couple of minutes" [SCU19 main text]. [ER] and
+    [FS15] give no distance or time. The earliest source here with a distance
+    is [NYT17].
+15. **Blip vs track:** Kevin Day's tracked-transit telling, including a
+    0.78-s descent figure ([MB-11616]), vs [ER] "never obtained an accurate
+    track… quickly 'dropped'". The Entropy paper's g-figures [Knuth 2019] use
+    Day's figures as input.
     Sim models the CAP reacquisition as a new discrete blip.
 16. **Document provenance:** [ES] leaked 2007, authenticity unverified (SCU
     treated an unredacted copy as legitimate); [ER] anonymous, leaked 2018;
     Princeton's 2004 deck logs were never located.
 
-### Known gaps / future work (from the research completeness critic)
+### Known gaps / future work
 
 - Dietrich's altitude and orbit direction are weakly sourced; her "8–10 s
   visual from high cover" geometry has not been validated in-sim.
@@ -317,7 +315,7 @@ flip the switch via the scripted `set` command.
 - Missile hypothesis: https://www.metabunk.org/threads/nimitz-tic-tac-fravor-dietrich-encounter-missile-hypothesis.11838/
 - Radar-spoofing-test hypothesis: https://www.metabunk.org/threads/were-fravor-and-co-in-the-middle-of-a-test-of-radar-spoofing-tech.11733/
 - Tic-tac scale models (proportions method): https://www.metabunk.org/threads/how-big-is-a-tic-tac-scale-models-of-the-nimitz-incident.9829/
-- "Antennas" = compression artifacts: https://www.metabunk.org/threads/claim-navy-flir1-video-seems-to-show-tic-tac-antennas.12398/
+- FLIR1 "antennas" claim thread: https://www.metabunk.org/threads/claim-navy-flir1-video-seems-to-show-tic-tac-antennas.12398/
 - Thread index: https://www.metabunk.org/tags/nimitz/
 
 **Secondary analysis**

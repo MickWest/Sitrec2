@@ -447,7 +447,7 @@ if (!$selectedProvider && !empty($aiModels)) {
 // call, so outages are counted; continuations attach their spend to this same row.
 $aiLogId = null;
 if (getenv('SITREC_TRACK_STATS') && $selectedProvider) {
-    $aiLogId = logAIRequest($userInfo['user_id'], $prompt, $selectedModel, $selectedProvider);
+    $aiLogId = logAIRequest($userInfo['user_id'], 'chat', $selectedModel, $selectedProvider);
     recordDailyStats(['ai_requests' => 1]);
 }
 
