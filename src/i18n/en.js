@@ -1340,6 +1340,17 @@ const en = {
         windKnots: { label: "Wind (knots)" },
         deleteClouds: { label: "Delete Clouds" },
     },
+    cloudField: {
+        folder: { label: "Cloud Field: {{name}}" },
+        visible: { label: "Visible" },
+        gain: { label: "Brightness", tooltip: "Multiplies the emission of every sphere" },
+        minEmission: { label: "Minimum Emission", tooltip: "Hide spheres fainter than this. Removes weak fitted spheres; it does not rescale the others" },
+        refraction: { label: "Refraction", tooltip: "Bend the clouds with terrestrial refraction. Turn off for a field fitted to video, whose positions already include it" },
+        color: { label: "Color" },
+        blendMode: { label: "Blend", tooltip: "Add brightens the scene (white-hot); Subtract darkens it (black-hot)" },
+        windFrom: { label: "Wind From (°)", tooltip: "True direction the wind comes from. The whole field drifts with it" },
+        windKnots: { label: "Wind (knots)", tooltip: "Drift speed of the whole field" },
+    },
     synthBuilding: {
         name: { label: "Name" },
         visible: { label: "Visible" },

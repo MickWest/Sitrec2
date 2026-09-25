@@ -339,6 +339,51 @@ read per frame, becomes 12 editable keyframes in a custom sitch.
 Keyframe frame numbers are absolute, so a file authored over a different frame count
 will not line up with the video — the importer warns when the counts differ.
 
+### Sitrec Cloud Field (.json)
+
+Not a track either — a cloud made of soft, glowing spheres — but it is a droppable
+Sitrec data file. Dropping one adds a **Cloud Field** folder to the **Objects** menu.
+The file is kept with the sitch, and the folder's settings are saved with it.
+
+The spheres are fixed in a local frame that drifts with one wind. The frame's origin
+is a latitude, longitude and height (metres above the ellipsoid). Its +y axis points
+to the true bearing `headingDeg`, +x is 90° clockwise from that, and +z is up. Sphere
+rows are `[x, y, z, radius, emission]`, in metres except for `emission`, which has no
+unit.
+
+```json
+{
+  "type": "SitrecCloudField",
+  "version": 1,
+  "name": "Example",
+  "frame": {"origin": {"lat": 28.5, "lon": -79.5, "alt": 7620}, "headingDeg": 315},
+  "wind": {"fromDeg": 240, "knots": 17, "epochFrame": 2},
+  "profile": "thinEmission",
+  "display": {"gain": 0.25, "minEmission": 0, "refraction": false},
+  "spheres": [[-130964.9, 95055.1, -6093.7, 15.8, 0.08]]
+}
+```
+
+- **wind** moves the whole field. `fromDeg` is where the wind comes *from*. At
+  `epochFrame` the spheres are exactly where the file puts them. Optional; the
+  default is no wind.
+- **profile** `thinEmission` is the only one so far. Each sphere is an optically
+  thin glowing volume with density (1 − r²/R²)^(3/2). A ray that passes a distance
+  *b* from its centre collects emission × (1 − b²/R²)². Overlapping spheres add.
+  There is no shadowing or absorption.
+- **display** sets the starting **Brightness**, **Minimum Emission** and **Refraction**.
+  Optional. Set `refraction` to `false` for a field fitted to a video: its positions
+  are where the clouds *appear*, so bending them again would count refraction twice.
+  Leave it `true` (the default) for true positions.
+
+The folder has **Brightness**, **Minimum Emission** (hides spheres fainter than the
+value), **Refraction**, **Color**, **Blend** and the wind. **Add** makes the clouds brighten the scene,
+as on a white-hot display. **Subtract** makes them darken it, as on a black-hot display.
+
+Sitrec shows the scene in sRGB, which lifts faint light. A field fitted to a linear
+video display therefore looks hazier in Sitrec than in the video. Raise **Minimum
+Emission** to hide the weakest spheres.
+
 ## Importing Tracks
 
 There are two ways to get a track into Sitrec:
