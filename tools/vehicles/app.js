@@ -1,15 +1,18 @@
 import * as THREE from "three";
 import {OrbitControls} from "three/addons/controls/OrbitControls.js";
 import {GLTFExporter} from "three/addons/exporters/GLTFExporter.js";
-import {PARAMETER_GROUPS, PRESETS, normalizeParameters, parameterFile, readParameterFile, usesCanopy, usesAirlinerWindscreen} from "./parameters.js";
-import {buildAircraft, disposeAircraft} from "./aircraft.js";
+import {PRESETS, parameterGroups, isRoad, isMultirotor, isBalloon, normalizeParameters, parameterFile, readParameterFile} from "./vehicleParameters.js";
+import {usesCanopy, usesAirlinerWindscreen} from "./parameters.js";
+import {buildVehicle, disposeVehicle} from "./vehicle.js";
+import {animateVehicleLights} from "./vehicleLights.js";
 
 const $ = id => document.getElementById(id);
-const STORAGE_KEY = "sitrec-aircraft-designer-v1";
+const STORAGE_KEY = "sitrec-vehicle-designer-v1";
 let params = {...PRESETS[0].parameters}, activePreset = PRESETS[0].id, designName = PRESETS[0].name;
 let modified = false, model, modelDirty = true, renderDirty = true, saveTimer, currentView = "perspective";
 let lastBuildMs = 0, disposed = false, frameId;
 const fieldControls = new Map();
+let matchingPresets = [];
 
 function status(message) { $("status").textContent = message; }
 function error(message) { $("error").textContent = message; $("error").hidden = !message; }
@@ -22,11 +25,11 @@ function saveSession() {
 }
 
 try {
-    const stored = localStorage.getItem(STORAGE_KEY);
+    const stored = localStorage.getItem(STORAGE_KEY) ?? localStorage.getItem("sitrec-aircraft-designer-v1");
     if (stored) {
         const data = JSON.parse(stored), restored = readParameterFile(data);
         params = restored.parameters; designName = restored.name;
-        activePreset = PRESETS.some(p => p.id === data.activePreset) ? data.activePreset : PRESETS[0].id;
+        activePreset = PRESETS.some(p => p.id === data.activePreset) ? data.activePreset : "";
         modified = Boolean(data.modified);
     }
 } catch { /* A disabled store or an old record must not prevent the tool from opening. */ }
@@ -38,7 +41,7 @@ renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 1.1;
 $("canvasMount").append(renderer.domElement);
-renderer.domElement.setAttribute("aria-label", "3D aircraft. Drag to orbit, scroll to zoom, right-drag to pan.");
+renderer.domElement.setAttribute("aria-label", "3D vehicle. Drag to orbit, scroll to zoom, right-drag to pan.");
 renderer.domElement.tabIndex = 0;
 const scene = new THREE.Scene();
 scene.add(new THREE.HemisphereLight("#ffffff", "#718da6", 1.6));
@@ -54,24 +57,37 @@ controls.addEventListener("change", () => { renderDirty = true; });
 function updateName() {
     $("aircraftName").textContent = designName + (modified ? " · edited" : "");
     const reference = PRESETS.find(p => p.id === activePreset)?.reference;
+    $("resetPreset").disabled = !activePreset;
     $("presetReference").hidden = !reference;
     if (reference) {
         $("presetDescription").textContent = reference.description;
-        $("presetDimensions").textContent = `Preset reference: ${reference.length.toFixed(2)} m long · ${reference.wingspan.toFixed(2)} m span`;
+        $("presetDimensions").textContent = `${reference.quality ?? "Preset reference"}: ${reference.length.toFixed(2)} m ${reference.lengthLabel ?? "long"} · ${reference.wingspan.toFixed(2)} m ${reference.spanLabel ?? "span"}`;
         $("presetSource").href = reference.source;
     }
 }
 
 function updateCockpitControls() {
+    if(isMultirotor(params)||isBalloon(params))return;
+    for (const key of ["strobeLights","taxiLights","landingLayout","turnSignal"]) for (const control of fieldControls.get(key) ?? []) {
+        const inactive = key === "turnSignal" ? !isRoad(params) : isRoad(params);
+        control.disabled = inactive; control.closest(".field").classList.toggle("inactive",inactive);
+    }
+    if (isRoad(params)) {
+        for (const key of ["dumpTilt", "cargoLevel"]) for (const control of fieldControls.get(key) ?? [])
+            control.disabled = key === "dumpTilt" ? params.cargoStyle !== "dump" : !["box", "dump", "tanker"].includes(params.cargoStyle);
+        return;
+    }
     const canopy = usesCanopy(params);
+    const fixedPaneCount = ["auto", "airliner", "airliner4"].includes(params.cockpitStyle) && usesAirlinerWindscreen(params);
     for (const [key, controls] of fieldControls) {
-        if (key === "cockpit" || (!key.startsWith("cockpit") && key !== "canopyHeight")) continue;
-        const inactive = !params.cockpit || (key === "canopyHeight" ? !canopy :
-            ["cockpitSetback", "cockpitPanes", "cockpitPillar", "cockpitHeight"].includes(key) && canopy) ||
-            (key === "cockpitPanes" && usesAirlinerWindscreen(params)) ||
+        if (key === "cockpit" || (!key.startsWith("cockpit") && !["canopyHeight", "canopyFrame", "navigatorWindows"].includes(key))) continue;
+        const inactive = !params.cockpit || (["canopyHeight", "canopyFrame"].includes(key) ? !canopy :
+            ["cockpitSetback", "cockpitPanes", "cockpitHeight"].includes(key) && canopy) ||
+            (key === "cockpitPanes" && fixedPaneCount) ||
+            (key === "cockpitEyebrows" && !usesAirlinerWindscreen(params)) ||
             (key === "cockpitMask" && !usesAirlinerWindscreen(params));
         for (const control of controls) control.disabled = inactive;
-        if (key === "cockpitPanes") for (const control of controls) control.value = usesAirlinerWindscreen(params) ? (params.cockpitStyle === "airliner4" ? 4 : 6) : params.cockpitPanes;
+        if (key === "cockpitPanes") for (const control of controls) control.value = fixedPaneCount ? (params.cockpitStyle === "airliner4" ? 4 : 6) : params.cockpitPanes;
         controls[0].closest(".field").classList.toggle("inactive", inactive);
     }
 }
@@ -81,7 +97,7 @@ function updateFields() {
         if (element.type === "checkbox") element.checked = params[key];
         else element.value = params[key];
     }
-    $("presetSelect").value = activePreset;
+    updatePresetList();
     $("designName").value = designName;
     updateCockpitControls();
     updateName();
@@ -89,17 +105,22 @@ function updateFields() {
 
 function changed(field, value, source) {
     const next = normalizeParameters({...params, [field.key]: value});
-    if (next[field.key] === params[field.key]) return;
+    if (next[field.key] === params[field.key]) {
+        if(source && value!==next[field.key])source.value=next[field.key];
+        return;
+    }
     params = next;
-    for (const control of fieldControls.get(field.key)) {
-        if (control === source) continue;
-        if (control.type === "checkbox") control.checked = params[field.key]; else control.value = params[field.key];
+    for (const [key, controls] of fieldControls) for (const control of controls) {
+        if (control === source && value===next[field.key]) continue;
+        if (control.type === "checkbox") control.checked = params[key]; else control.value = params[key];
     }
     modified = true; modelDirty = true;
     updateCockpitControls(); updateName(); saveSession();
 }
 
-for (const group of PARAMETER_GROUPS) {
+function buildFields() {
+fieldControls.clear(); $("parameterFolders").replaceChildren();
+for (const group of parameterGroups(params)) {
     const folder = document.createElement("details"); folder.open = Boolean(group.open);
     const summary = document.createElement("summary"); summary.textContent = group.name;
     const count = document.createElement("span"); count.className = "folder-count"; count.textContent = String(group.fields.length); summary.append(count);
@@ -135,24 +156,49 @@ for (const group of PARAMETER_GROUPS) {
     }
     $("parameterFolders").append(folder);
 }
-
-const categories = new Map();
-for (const preset of PRESETS) {
-    if (!categories.has(preset.category)) {
-        const group = document.createElement("optgroup"); group.label = preset.category;
-        categories.set(preset.category, group); $("presetSelect").append(group);
-    }
-    categories.get(preset.category).append(new Option(preset.name, preset.id));
 }
+
+function updatePresetList() {
+    const normalize = value => value.toLowerCase().replace(/[^a-z0-9]/g, "");
+    const words = $("presetSearch").value.trim().split(/\s+/).map(normalize).filter(Boolean), region = $("presetRegion").value, kind = $("presetKind").value;
+    const matches = PRESETS.filter(p => (!kind || p.vehicleType === kind) && (!region || (region === "civil" ? !p.military : p.region === region)) &&
+        words.every(word => normalize(`${p.name} ${p.category}`).includes(word)));
+    matchingPresets = matches;
+    const categories = new Map(), select = $("presetSelect"); select.replaceChildren();
+    const prompt = new Option(matches.length ? "Choose a preset…" : "No matching vehicles", ""); prompt.disabled = true; select.append(prompt);
+    for (const preset of matches) {
+        if (!categories.has(preset.category)) {
+            const group = document.createElement("optgroup"); group.label = preset.category;
+            categories.set(preset.category, group); select.append(group);
+        }
+        categories.get(preset.category).append(new Option(preset.name, preset.id));
+    }
+    select.value = matches.some(p => p.id === activePreset) ? activePreset : "";
+    $("presetResults").textContent = `${matches.length} matching presets · ${PRESETS.length} total`;
+    $("previousPreset").disabled = $("nextPreset").disabled = matches.length === 0;
+}
+$("presetSearch").addEventListener("input", updatePresetList);
+$("presetRegion").addEventListener("change", updatePresetList);
+$("presetKind").addEventListener("change", () => {$("presetRegion").value = ""; updatePresetList();});
 $("presetCount").textContent = String(PRESETS.length);
 
-function applyPreset() {
-    const preset = PRESETS.find(item => item.id === $("presetSelect").value);
-    params = {...preset.parameters}; activePreset = preset.id; designName = preset.name; modified = false;
-    error(""); updateFields(); modelDirty = true; rebuild(); fit(); saveSession();
+function applyPreset(id = $("presetSelect").value, keepIdentity = true) {
+    const preset = PRESETS.find(item => item.id === id);
+    if (!preset) return;
+    const identity = keepIdentity && params.brandLivery === "sitrec" ? {brandLivery:params.brandLivery,brandColor:params.brandColor,brandScale:params.brandScale} : {};
+    params = {...preset.parameters,...identity}; activePreset = preset.id; designName = preset.name; modified = Boolean(identity.brandLivery);
+    error(""); buildFields(); updateFields(); modelDirty = true; rebuild(); fit(); saveSession();
 }
-$("presetSelect").addEventListener("change", applyPreset);
-$("resetPreset").addEventListener("click", applyPreset);
+function cyclePreset(direction) {
+    if (!matchingPresets.length) return;
+    const index = matchingPresets.findIndex(p => p.id === activePreset);
+    const next = index < 0 ? (direction > 0 ? 0 : matchingPresets.length - 1) : (index + direction + matchingPresets.length) % matchingPresets.length;
+    applyPreset(matchingPresets[next].id);
+}
+$("previousPreset").addEventListener("click", () => cyclePreset(-1));
+$("nextPreset").addEventListener("click", () => cyclePreset(1));
+$("presetSelect").addEventListener("change", () => applyPreset());
+$("resetPreset").addEventListener("click", () => applyPreset(activePreset, false));
 $("designName").addEventListener("input", () => {designName = $("designName").value; updateName(); saveSession();});
 
 function setWireframe(root, value) {
@@ -163,18 +209,27 @@ function setWireframe(root, value) {
 
 function rebuild() {
     const start = performance.now();
-    const replacement = buildAircraft(params);
-    if (model) disposeAircraft(model.root);
-    model = replacement; model.root.name = designName || "Aircraft"; scene.add(model.root);
+    const replacement = buildVehicle(params);
+    if (model) disposeVehicle(model.root);
+    model = replacement; model.root.name = designName || "Vehicle"; scene.add(model.root);
+    animateVehicleLights(model,0,false);
     setWireframe(model.root, $("wireframe").checked);
-    const gridSize = Math.max(params.length, params.span) * 2.5;
-    grid.scale.setScalar(gridSize); grid.position.y = model.bounds.min.y - Math.max(params.diameter * 0.15, 0.15);
+    const road = isRoad(params), drone=isMultirotor(params),balloon=isBalloon(params), aerial=drone||balloon;
+    const gridSize = Math.max(model.stats.size.x, model.stats.size.z,model.stats.size.y*.6) * 2.5;
+    grid.scale.setScalar(gridSize); grid.position.y = model.bounds.min.y - (road ? 0.025 : aerial?Math.min(params.width,params.height)*.1:Math.max(params.diameter * 0.15, 0.15));
     controls.maxDistance = Math.max(300, gridSize * 12);
-    $("lengthMetric").textContent = `${params.length.toFixed(2)} m`;
-    $("spanMetric").textContent = `${model.stats.wingspan.toFixed(2)} m`;
-    $("spanMetric").title = "Main wings and winglets, including tip thickness";
-    $("areaMetric").textContent = `${model.stats.area.toFixed(1)} m²`;
-    $("aspectMetric").textContent = model.stats.aspectRatio.toFixed(2);
+    $("lengthMetric").textContent = `${(drone?model.stats.size.z:params.length).toFixed(2)} m`;
+    $("lengthLabel").textContent = drone?"OVERALL LENGTH":balloon?"ENVELOPE LENGTH":road ? "BODY LENGTH" : "FUSELAGE";
+    const rotorOnly = !params.wings && params.rotorLayout !== "none";
+    $("spanLabel").textContent = drone?"OVERALL WIDTH":balloon?"ENVELOPE WIDTH":road ? "BODY WIDTH" : rotorOnly ? "ROTOR DIAMETER" : "WINGSPAN";
+    $("spanMetric").textContent = `${(drone?model.stats.size.x:road||balloon ? params.width : rotorOnly ? params.rotorDiameter : model.stats.wingspan).toFixed(2)} m`;
+    $("spanMetric").title = drone?"Current propeller positions; overall sweep varies while spinning":balloon?"Envelope width, excluding fins":road ? "Body width, excluding mirrors" : rotorOnly ? "Diameter of one main rotor" : "Main wings and winglets, including tip thickness";
+    $("areaLabel").textContent = drone?"HEIGHT":balloon?"ENVELOPE HEIGHT":road ? "HEIGHT" : "WING AREA";
+    $("aspectLabel").textContent = drone?"ROTORS":balloon?"TOTAL HEIGHT":road ? "WHEELBASE" : "ASPECT RATIO";
+    $("areaMetric").textContent = aerial?`${(balloon?params.height:model.stats.size.y).toFixed(2)} m`:road ? `${model.stats.height.toFixed(2)} m` : model.stats.area ? `${model.stats.area.toFixed(1)} m²` : "—";
+    $("aspectMetric").textContent = drone?String(model.stats.rotors):balloon?`${model.stats.size.y.toFixed(2)} m`:road ? `${model.stats.wheelbase.toFixed(2)} m` : model.stats.area ? model.stats.aspectRatio.toFixed(2) : "—";
+    $("spinLabel").textContent = road ? "Spin wheels" : "Spin rotors / props";
+    $("animateProps").disabled=balloon;
     $("geometryStats").textContent = `${Math.round(model.stats.triangles).toLocaleString()} triangles · metres`;
     lastBuildMs = performance.now() - start;
     status(`Live preview · ${lastBuildMs.toFixed(0)} ms update`);
@@ -217,8 +272,20 @@ document.querySelectorAll("[data-view]").forEach(button => button.addEventListen
 $("fitView").addEventListener("click", fit);
 window.addEventListener("keydown", event => {
     if (event.key.toLowerCase() === "f" && !event.ctrlKey && !event.metaKey && !["INPUT", "SELECT", "TEXTAREA"].includes(event.target.tagName)) {event.preventDefault(); fit();}
+    if (!event.ctrlKey && !event.metaKey && !event.altKey && !event.target.isContentEditable && !["INPUT", "SELECT", "TEXTAREA"].includes(event.target.tagName)) {
+        const direction = ["ArrowRight", "]"].includes(event.key) ? 1 : ["ArrowLeft", "["].includes(event.key) ? -1 : 0;
+        if (direction) {event.preventDefault(); cyclePreset(direction);}
+    }
 });
 $("showGrid").addEventListener("change", () => {grid.visible = $("showGrid").checked; renderDirty = true;});
+$("nightPreview").addEventListener("change", () => {
+    const night = $("nightPreview").checked;
+    $("preview").classList.toggle("night", night);
+    renderer.setClearColor(night ? "#081421" : "#e4ebf2");
+    scene.children.find(o => o.isHemisphereLight).intensity = night ? 0.15 : 1.6;
+    key.intensity = night ? 0.10 : 2.3; fill.intensity = night ? 0.08 : 0.85; renderDirty = true;
+});
+$("animateLights").addEventListener("change", () => {animateVehicleLights(model,0,false);renderDirty=true;});
 $("wireframe").addEventListener("change", () => {setWireframe(model.root, $("wireframe").checked); renderDirty = true;});
 $("autoRotate").addEventListener("change", () => {controls.autoRotate = $("autoRotate").checked;});
 $("fullscreen").addEventListener("click", async () => {
@@ -226,13 +293,13 @@ $("fullscreen").addEventListener("click", async () => {
     catch { status("Fullscreen is unavailable in this browser."); }
 });
 
-function filename() { return (designName || "aircraft").replace(/[^a-z0-9_-]+/gi, "-").replace(/^-|-$/g, "").slice(0, 80) || "aircraft"; }
+function filename() { return (designName || "vehicle").replace(/[^a-z0-9_-]+/gi, "-").replace(/^-|-$/g, "").slice(0, 80) || "vehicle"; }
 function download(blob, name) {
     const url = URL.createObjectURL(blob), link = document.createElement("a"); link.href = url; link.download = name;
     document.body.append(link); link.click(); link.remove(); setTimeout(() => URL.revokeObjectURL(url), 10000);
 }
 $("saveFile").addEventListener("click", () => {
-    download(new Blob([JSON.stringify(parameterFile(params, designName), null, 2)], {type: "application/json"}), `${filename()}.aircraft.json`);
+    download(new Blob([JSON.stringify(parameterFile(params, designName), null, 2)], {type: "application/json"}), `${filename()}.vehicle.json`);
     status("Design saved · open this JSON to keep editing");
 });
 $("openFile").addEventListener("click", () => $("fileInput").click());
@@ -242,7 +309,8 @@ $("fileInput").addEventListener("change", async () => {
         if (file.size > 1000000) throw new Error("The parameter file is too large (maximum 1 MB).");
         const data = readParameterFile(JSON.parse(await file.text()));
         params = data.parameters; designName = data.name; modified = true;
-        error(""); updateFields(); modelDirty = true; rebuild(); fit(); saveSession(); status("Design opened");
+        activePreset = "";
+        error(""); buildFields(); updateFields(); modelDirty = true; rebuild(); fit(); saveSession(); status("Design opened");
     } catch (e) {error(`Could not open the design: ${e.message}`);}
 });
 $("exportGLB").addEventListener("click", async () => {
@@ -250,13 +318,13 @@ $("exportGLB").addEventListener("click", async () => {
     let exported;
     try {
         // A separate model excludes the grid, studio lights, wireframe and animated prop pose.
-        exported = buildAircraft(params); exported.root.name = designName || "Aircraft";
+        exported = buildVehicle(params); exported.root.name = designName || "Vehicle";
         const exportName = filename();
         const glb = await new GLTFExporter().parseAsync(exported.root, {binary: true});
         download(new Blob([glb], {type: "model/gltf-binary"}), `${exportName}~L${exported.stats.size.z.toFixed(3)}m~.glb`);
         status("GLB exported · +Z forward, +Y up · import into Sitrec or a 3D editor");
     } catch (e) {error(`Export failed: ${e.message}`); status("Export failed");}
-    finally {if (exported) disposeAircraft(exported.root); $("exportGLB").disabled = false;}
+    finally {if (exported) disposeVehicle(exported.root); $("exportGLB").disabled = false;}
 });
 $("screenshot").addEventListener("click", () => {
     if (modelDirty) rebuild(); renderer.render(scene, camera);
@@ -271,15 +339,16 @@ function resize() {
 const observer = new ResizeObserver(resize); observer.observe($("canvasMount"));
 renderer.domElement.addEventListener("webglcontextlost", event => {event.preventDefault(); error("The 3D graphics context was lost. Save your design, then reload this page.");});
 renderer.domElement.addEventListener("webglcontextrestored", () => {error(""); renderDirty = true;});
-updateFields(); resize(); rebuild(); fit();
+buildFields(); updateFields(); resize(); rebuild(); fit();
 let lastTime = performance.now();
 function animate(now) {
     if (disposed) return;
     const dt = Math.min((now - lastTime) / 1000, 0.05); lastTime = now;
     if (modelDirty) rebuild();
     controls.update(dt);
+    if ($("animateLights").checked && model.lamps?.length) {animateVehicleLights(model,now/1000,true);renderDirty=true;}
     if ($("animateProps").checked && model.propellers.length) {
-        for (const propeller of model.propellers) propeller.rotation.z += dt * 18;
+        for (const propeller of model.propellers) propeller.rotation[propeller.userData.spinAxis ?? "z"] += dt * (propeller.userData.spinSpeed ?? 18) * (propeller.userData.spinDirection ?? 1);
         renderDirty = true;
     }
     if (renderDirty) {renderer.render(scene, camera); renderDirty = false;}
@@ -289,5 +358,5 @@ frameId = requestAnimationFrame(animate);
 window.addEventListener("pagehide", event => {
     if (event.persisted) return;
     disposed = true; cancelAnimationFrame(frameId); observer.disconnect(); controls.dispose();
-    disposeAircraft(model.root); grid.geometry.dispose(); grid.material.dispose(); renderer.dispose();
+    disposeVehicle(model.root); grid.geometry.dispose(); grid.material.dispose(); renderer.dispose();
 });

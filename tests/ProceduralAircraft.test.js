@@ -1,24 +1,123 @@
-import {Box3, Vector3} from "three";
-import {buildAircraft, disposeAircraft} from "../tools/aircraft/aircraft.js";
-import {DEFAULTS, PRESETS, normalizeParameters, parameterFile, readParameterFile} from "../tools/aircraft/parameters.js";
+import {Box3, Raycaster, Vector3} from "three";
+import {buildAircraft, disposeAircraft} from "../tools/vehicles/aircraft.js";
+import {DEFAULTS, PRESETS, normalizeParameters, parameterFile, readParameterFile} from "../tools/vehicles/parameters.js";
 
 describe("Procedural aircraft", () => {
     test("presets have unique stable IDs and researched families carry manufacturer references", () => {
         expect(new Set(PRESETS.map(p => p.id)).size).toBe(PRESETS.length);
         expect(PRESETS.filter(p => p.category.startsWith("Boeing"))).toHaveLength(22);
         expect(PRESETS.filter(p => p.category.startsWith("Airbus"))).toHaveLength(17);
-        for (const preset of PRESETS.filter(p => p.reference)) {
+        for (const preset of PRESETS.filter(p => p.reference && !p.military)) {
             expect(new URL(preset.reference.source).hostname).toMatch(/^(www\.boeing\.com|www\.aircraft\.airbus\.com)$/);
             expect(preset.reference.description.length).toBeGreaterThan(15);
         }
     });
 
-    test.each(PRESETS.filter(p => p.reference).map(p => [p.id, p]))("%s matches its published length and span envelope", (_, preset) => {
+    test.each(PRESETS.filter(p => p.reference && !p.military).map(p => [p.id, p]))("%s matches its published length and span envelope", (_, preset) => {
         const model = buildAircraft(preset.parameters);
         expect(model.stats.size.z).toBeCloseTo(preset.reference.length, 2);
         expect(Math.abs(model.stats.wingspan - preset.reference.wingspan)).toBeLessThan(0.10);
         expect(Math.abs(model.stats.size.x - preset.reference.wingspan)).toBeLessThan(0.10);
         disposeAircraft(model.root);
+    });
+
+    test("military catalog covers every region and major role with explicit references", () => {
+        const military = PRESETS.filter(p => p.military);
+        for (const region of ["US", "Europe", "China", "Iran", "Russia"]) {
+            const items = military.filter(p => p.region === region);
+            expect(items.length).toBeGreaterThanOrEqual(15);
+            for (const role of ["Fighter", "Transport", "Trainer", "Helicopter", "Drone"])
+                expect(items.some(p => p.role.includes(role))).toBe(true);
+        }
+        for (const p of military) {
+            expect(new URL(p.reference.source).protocol).toBe("https:");
+            expect(p.reference.description.length).toBeGreaterThan(30);
+            expect(p.reference.quality).toBeTruthy();
+            if (p.role === "Drone") {
+                expect(p.parameters.cockpit).toBe(false);
+                expect(p.parameters.windows).toBe(false);
+            }
+        }
+    });
+
+    test("rotor arrangements, glazing and mission shapes distinguish military families", () => {
+        const model = id => buildAircraft(PRESETS.find(p => p.id === `mil-${id}`).parameters);
+        const blackhawk = model("uh60"), chinook = model("ch47"), kamov = model("ka52"), osprey = model("v22");
+        expect(blackhawk.root.getObjectByName("Wing 1")).toBeUndefined();
+        expect(blackhawk.root.getObjectByName("Tail rotor")).toBeDefined();
+        expect(blackhawk.propellers.every(p => p.userData.spinAxis === "y")).toBe(true);
+        expect(chinook.propellers.filter(p => p.name === "Main rotor")).toHaveLength(2);
+        expect(chinook.root.getObjectByName("Tail rotor")).toBeUndefined();
+        expect(kamov.root.getObjectByName("Upper coaxial rotor")).toBeDefined();
+        expect(kamov.root.getObjectByName("Tail rotor")).toBeUndefined();
+        const aftKamov = buildAircraft({...PRESETS.find(p => p.id === "mil-ka52").parameters, rotorPosition: 65});
+        for (const aircraft of [kamov, aftKamov]) expect(aircraft.root.getObjectByName("Main rotor").userData.spinDirection)
+            .toBe(-aircraft.root.getObjectByName("Upper coaxial rotor").userData.spinDirection);
+        expect(osprey.root.getObjectByName("Tilt nacelle 1")).toBeDefined();
+        const bomber = model("b2"), hercules = model("c130h"), il76 = model("il76"), f16 = model("f16c"), f15 = model("f15e"), e2 = model("e2d");
+        expect(bomber.root.children.some(p => p.name.startsWith("Vertical fin"))).toBe(false);
+        expect(bomber.stats.size.x).toBeCloseTo(52.43, 2);
+        expect(hercules.root.children.filter(p => p.name.startsWith("Windshield"))).toHaveLength(6);
+        expect(il76.root.children.filter(p => p.name.startsWith("Lower nose glazing"))).toHaveLength(6);
+        expect(f16.root.getObjectByName("Canopy frame")).toBeUndefined();
+        expect(f15.root.getObjectByName("Canopy frame")).toBeDefined();
+        expect(e2.root.children.filter(p => p.name.startsWith("Vertical fin") && !p.name.endsWith("tip"))).toHaveLength(4);
+        expect(e2.root.getObjectByName("Radar fairing")).toBeDefined();
+        for (const aircraft of [blackhawk, chinook, kamov, aftKamov, osprey, bomber, hercules, il76, f16, f15, e2]) disposeAircraft(aircraft.root);
+    });
+
+    test("new configuration controls survive JSON save and restore", () => {
+        const p = normalizeParameters({rotorLayout: "tiltrotor", rotorTilt: 72, canopyFrame: "tandem", navigatorWindows: true,
+            engineCount: 8, engineMount: "paired", radarStyle: "disc", windowShape: "round", tailStyle: "boom"});
+        expect(readParameterFile(parameterFile(p)).parameters).toEqual(p);
+    });
+
+    test.each([
+        ["mil-j20", {}], ["mil-f35a", {}], ["mil-su35", {}], ["mil-mig21", {}],
+        ["mil-e2d", {}], ["mil-mohajer6", {}], ["737", {}],
+        ["mil-j20", {diameter: 0.8, bodyHeight: 0.35, tailRadius: 0, tailLength: 45, tailPosition: 96, tailSpan: 12, finCant: 40}],
+        ["mil-j20", {diameter: 5, tailRadius: 75, tailPosition: 66, finChord: 7, engineDiameter: 0.3, engineLength: 0.3}],
+        ["mil-j20", {length: 8, engineCount: 4, engineDiameter: 3, engineLength: 9, intakeStyle: "chin"}],
+        ["mil-f35a", {engineCount: 8, engineDiameter: 0.8, intakeStyle: "top"}],
+    ])("%s keeps fin, intake and exhaust joints closed after edits %j", (id, changes) => {
+        const aircraft = buildAircraft({...PRESETS.find(p => p.id === id).parameters, ...changes});
+        const hull = aircraft.root.getObjectByName("Fuselage"), ray = new Raycaster();
+        const point = (mesh, index) => new Vector3().fromBufferAttribute(mesh.geometry.attributes.position, index);
+        const embedded = vertex => {
+            // Test against the actual rendered triangles, not the same analytic
+            // radius used by the generator or overlapping bounding boxes.
+            for (const direction of [1, -1]) {
+                ray.set(new Vector3(vertex.x, direction * 100, vertex.z), new Vector3(0, -direction, 0));
+                const hit = ray.intersectObject(hull, false)[0];
+                expect(hit).toBeDefined();
+                expect(direction * (hit.point.y - vertex.y)).toBeGreaterThanOrEqual(-0.0001);
+            }
+        };
+        for (const fin of aircraft.root.children.filter(m => /^Vertical fin [-\d.]+$/.test(m.name))) {
+            const fairing = aircraft.root.getObjectByName(`Root fairing · ${fin.name}`);
+            for (let i = 0; i <= 40; i++) {
+                embedded(point(fairing ?? fin, i));
+                if (fairing) expect(point(fin, i).distanceTo(point(fairing, 4 * 41 + i))).toBeLessThan(0.00001);
+            }
+        }
+        for (const fairing of aircraft.root.children.filter(m => /^Engine fairing \d+$/.test(m.name))) {
+            const index = fairing.name.split(" ").at(-1), nozzle = aircraft.root.getObjectByName(`Integrated exhaust ${index}`);
+            for (let i = 0; i <= 32; i++) {
+                embedded(point(fairing, i));
+                expect(point(fairing, 24 * 33 + i).distanceTo(point(nozzle, i))).toBeLessThan(0.00001);
+            }
+        }
+        for (const intake of aircraft.root.children.filter(m => m.name.startsWith("Intake fairing ")))
+            for (let i = 0; i <= 32; i++) embedded(point(intake, 16 * 33 + i));
+        disposeAircraft(aircraft.root);
+    });
+
+    test("transport and helicopter windscreens honor every pane-count setting", () => {
+        for (const cockpitStyle of ["transport", "helicopter"]) for (const cockpitPanes of [2, 4, 6, 8]) {
+            const aircraft = buildAircraft({...DEFAULTS, cockpitStyle, cockpitPanes});
+            expect(aircraft.root.children.filter(p => p.name.startsWith("Windshield"))).toHaveLength(cockpitPanes);
+            disposeAircraft(aircraft.root);
+        }
     });
 
     test("airliner variants retain nose size while deck and tip geometry distinguish the families", () => {
@@ -50,7 +149,8 @@ describe("Procedural aircraft", () => {
             for (const attribute of [geometry.attributes.position, geometry.attributes.normal]) {
                 expect(Array.from(attribute.array).every(Number.isFinite)).toBe(true);
             }
-            expect(Math.max(...geometry.index.array)).toBeLessThan(geometry.attributes.position.count);
+            if (geometry.index) expect(Math.max(...geometry.index.array)).toBeLessThan(geometry.attributes.position.count);
+            else expect(geometry.attributes.position.count % 3).toBe(0);
         });
         const bodyBounds = new Box3().setFromObject(model.root.getObjectByName("Fuselage"));
         expect(bodyBounds.getSize(new Vector3()).z).toBeCloseTo(preset.parameters.length, 4);

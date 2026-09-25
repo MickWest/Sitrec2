@@ -89,8 +89,9 @@ export function buildAircraft(input) {
         }
         let factor = 1;
         if (u < nose) factor = Math.pow(Math.sin(u / nose * Math.PI / 2), p.bodyStyle === "jet" ? 1.2 : 0.65);
-        if (u > tail) factor = Math.pow(Math.cos((u - tail) / (1 - tail) * Math.PI / 2), 1.15);
+        if (u > tail) factor = mix(p.tailRadius / 100, 1, Math.pow(Math.cos((u - tail) / (1 - tail) * Math.PI / 2), 1.15));
         if (p.bodyStyle === "glider") factor *= mix(1, 0.38, Math.min(1, Math.max(0, (u - 0.35) * 4)));
+        if (p.bodyStyle === "helicopter") factor *= mix(1, 0.13, THREE.MathUtils.smoothstep(u, 0.40, 0.73));
         factor = Math.max(0.002, factor);
         return {width: factor, height: factor, center: u < nose ? -0.15 * (1 - factor) : 0.24 * (1 - factor)};
     }
@@ -129,6 +130,18 @@ export function buildAircraft(input) {
         return bodyPoint(u, side > 0 ? angle : Math.PI - angle, lift);
     }
 
+    // Attach a component to the sampled skin, not to an assumed body radius.
+    // Bury the joint slightly so faceting and slider changes cannot expose a seam.
+    function embedInBody(point) {
+        const u = THREE.MathUtils.clamp(0.5 - point[2] / L, 0.005, 0.995);
+        const section = bodySection(u), cy = H * section.center;
+        const angle = Math.atan2((point[1] - cy) / (H * section.height), point[0] / (R * section.width));
+        const skin = bodyPoint(u, angle, R * 0.00001);
+        const inset = [skin[0] * 0.96, cy + (skin[1] - cy) * 0.96, L * (0.5 - u)];
+        const distance = Math.hypot(point[0], point[1] - cy), limit = Math.hypot(inset[0], inset[1] - cy);
+        return distance <= limit && Math.abs(point[2] - inset[2]) < 1e-8 ? [...point] : inset;
+    }
+
     function panel(name, corners, point, mat, parent = root, subdivisions = 8) {
         const geometry = surface(subdivisions, subdivisions, (u, v) => {
             const a = corners[0].map((n, i) => mix(n, corners[1][i], u));
@@ -162,11 +175,15 @@ export function buildAircraft(input) {
         if (canopy) {
             // The perimeter follows the skin even while sliding along a tapered nose.
             // A raised surface avoids the old ellipsoid's exposed or buried edges.
-            mesh("Cockpit canopy", surface(24, 24, (u, v) => {
+            const canopyPoint = (u, v) => {
                 const point = bodyPoint(mix(start, end, u), Math.PI / 2 + (v * 2 - 1) * halfWidth, R * 0.012);
                 point[1] += H * p.canopyHeight * Math.pow(Math.sin(Math.PI * u) * Math.sin(Math.PI * v), 0.8);
                 return point;
-            }), glass);
+            };
+            mesh("Cockpit canopy", surface(32, 24, canopyPoint), glass);
+            const bows = {none: [], front: [0.25], tandem: [0.22, 0.57], cage: [0.20, 0.48, 0.76]}[p.canopyFrame];
+            for (const u of bows) for (let j = 0; j < 24; j++)
+                rod("Canopy frame", canopyPoint(u, j / 24), canopyPoint(u, (j + 1) / 24), p.cockpitPillar / 200, paint);
         } else if (usesAirlinerWindscreen(p)) {
             // One wraparound band, divided at shared edges into three panes per
             // side. Every edge uses the same nose coordinates and deformation,
@@ -182,6 +199,26 @@ export function buildAircraft(input) {
                 {bottom: [0.83, angleAtLevel(0.83, 0.44)], top: [0.835, angleAtLevel(0.835, 0.62)], setback: 1},
             ];
             if (p.cockpitStyle === "airliner4") stations.splice(2, 1);
+            if (["transport", "helicopter"].includes(p.cockpitStyle)) {
+                // Tall pilot windows and side panes share edges, unlike a row
+                // of disconnected passenger windows. Keep the lower edge low.
+                const helicopter = p.cockpitStyle === "helicopter";
+                const bottom = helicopter ? -0.15 : 0.18, top = helicopter ? 0.80 : 0.76;
+                stations.splice(0, stations.length,
+                    {bottom: [0.27, Math.PI / 2], top: [0.52, Math.PI / 2], setback: 0},
+                    {bottom: [0.46, angleAtLevel(0.46, bottom)], top: [0.69, angleAtLevel(0.69, top)], setback: 0.45},
+                    {bottom: [0.95, angleAtLevel(0.95, bottom)], top: [1.01, angleAtLevel(1.01, top)], setback: 1});
+                // Subdivide at shared coordinates so the tall flight-deck band
+                // stays joined for four-, six- and eight-pane configurations.
+                const perSide = Math.max(2, p.cockpitPanes / 2);
+                const a = stations[1], b = stations[2];
+                for (let i = perSide - 2; i >= 1; i--) {
+                    const t = i / (perSide - 1);
+                    stations.splice(2, 0, {bottom: a.bottom.map((n, k) => mix(n, b.bottom[k], t)),
+                        top: a.top.map((n, k) => mix(n, b.top[k], t)), setback: mix(a.setback, b.setback, t)});
+                }
+                if (p.cockpitPanes === 2) stations.splice(1, 1);
+            }
             const shift = p.cockpitPosition / 100 - 0.60;
             const location = u => THREE.MathUtils.clamp(nose * (0.58 + (u - 0.58) * p.cockpitLength / 30 + shift), 0.008, 0.94);
             const paneMaterial = cabinGlass.clone(); paneMaterial.name = "Airliner windshield"; paneMaterial.roughness = 0.34;
@@ -195,13 +232,18 @@ export function buildAircraft(input) {
             const lastPane = stations.length - 2;
             const mask = p.cockpitMask ? material("Cockpit surround", "#101820", {roughness: 0.65, side: THREE.DoubleSide}) : null;
             for (const side of [1, -1]) for (let pane = 0; pane <= lastPane; pane++) {
+                if (p.cockpitEyebrows && pane < 2) mesh(`Upper cockpit pane ${pane} ${side}`, surface(8, 8, (across, height) => {
+                    const a = bandCoordinate(stations[pane], mix(1.22, 1.56, height));
+                    const b = bandCoordinate(stations[pane + 1], mix(1.22, 1.56, height));
+                    return bandPoint(a.map((value, axis) => mix(value, b[axis], mix(0.15, 0.85, across))), side);
+                }), paneMaterial);
                 if (mask) mesh(`Cockpit mask ${pane} ${side}`, surface(12, 12, (across, height) => {
                     const a = bandCoordinate(stations[pane], mix(-0.13, 1.13, height));
                     const b = bandCoordinate(stations[pane + 1], mix(-0.13, 1.13, height));
                     const t = across * (pane === lastPane ? 1.08 : 1);
                     return bandPoint(a.map((value, axis) => mix(value, b[axis], t)), side, R * 0.010);
                 }), mask);
-                mesh(`Windshield ${["front", "side", "aft"][pane]} ${side}`, surface(12, 12, (across, height) => {
+                mesh(`Windshield ${["front", "side", "aft", "rear"][pane]} ${side}`, surface(12, 12, (across, height) => {
                     const a = bandCoordinate(stations[pane], height), b = bandCoordinate(stations[pane + 1], height);
                     const start = bandPoint(a, side), end = bandPoint(b, side);
                     const distance = Math.hypot(...start.map((value, axis) => end[axis] - value));
@@ -228,20 +270,28 @@ export function buildAircraft(input) {
             }
         }
     }
+    if (p.cockpit && p.navigatorWindows) for (const side of [1, -1]) {
+        const nose = p.noseLength / 100;
+        for (let i = 0; i < 3; i++) panel(`Lower nose glazing ${side} ${i}`,
+            [[nose * (0.18 + i * 0.16), -0.16], [nose * (0.31 + i * 0.16), -0.16],
+                [nose * (0.33 + i * 0.16), -0.55], [nose * (0.23 + i * 0.16), -0.55]],
+            (u, level) => sidePoint(u, H * level, side, R * 0.025), glass);
+    }
     if (p.windows) {
         const start = p.windowStart / 100, end = p.windowEnd / 100;
-        const spacing = (end - start) / Math.max(1, p.windowCount);
+        const spacing = Math.max(0, end - start) / Math.max(1, p.windowCount);
         const width = Math.min(p.windowWidth, spacing * L * 0.8);
         const doorCount = p.doorLayout === "five" ? 5 : 4;
         const exits = p.doorLayout === "overwing" ? [0.47, 0.505] :
             Array.from({length: doorCount}, (_, i) => mix(start - 0.025, end + 0.027, i / (doorCount - 1)));
-        for (let i = 0; i < p.windowCount; i++) {
+        for (let i = 0; spacing > 0 && i < p.windowCount; i++) {
             const u = start + spacing * (i + 0.5);
             if (p.doors && exits.some(exit => Math.abs(u - exit) * L < (p.doorLayout === "overwing" ? 0.35 : 0.65))) continue;
             for (const side of [1, -1]) {
                 const vertices = [...sidePoint(u, H * p.windowLevel, side, R * 0.02)], indices = [];
                 for (let j = 0; j <= 24; j++) {
-                    const a = j / 24 * Math.PI * 2, round = v => Math.sign(v) * Math.abs(v) ** 0.6;
+                    const a = j / 24 * Math.PI * 2, exponent = p.windowShape === "round" ? 1 : p.windowShape === "square" ? 0.2 : 0.6;
+                    const round = v => Math.sign(v) * Math.abs(v) ** exponent;
                     vertices.push(...sidePoint(u + width / L * round(Math.cos(a)) / 2,
                         H * p.windowLevel + p.windowHeight * round(Math.sin(a)) / 2, side, R * 0.02));
                     if (j) indices.push(0, j, j + 1);
@@ -344,7 +394,7 @@ export function buildAircraft(input) {
         if (!cranked) return mix(1, taper, s);
         return s < 0.34 ? mix(1, 0.65, s / 0.34) : mix(0.65, taper, (s - 0.34) / 0.66);
     }
-    function foil(name, span, chord, taper, sweep, dihedral, thickness, twist, origin, mat, vertical = false, side = 1, cranked = false) {
+    function foil(name, span, chord, taper, sweep, dihedral, thickness, twist, origin, mat, vertical = false, side = 1, cranked = false, attachRoot = false) {
         const point = (s, t) => {
             const theta = t * Math.PI * 2;
             const fraction = (1 - Math.cos(theta)) / 2;
@@ -360,6 +410,18 @@ export function buildAircraft(input) {
                 : [origin[0] + side * span * s, origin[1] + y, origin[2] + z];
         };
         const geometry = surface(10, 40, point, side < 0);
+        if (attachRoot) {
+            const rim = Array.from({length: 41}, (_, i) => point(0, i / 40));
+            const anchors = rim.map(embedInBody);
+            if (rim.some((v, i) => v.some((n, axis) => Math.abs(n - anchors[i][axis]) > 1e-6))) {
+                // Reuse the foil's complete root perimeter. The other end is
+                // inside the fuselage, including on tailless twin-fin layouts.
+                mesh(`Root fairing · ${name}`, surface(4, 40, (s, t) => {
+                    const i = Math.round(t * 40);
+                    return anchors[i].map((n, axis) => mix(n, rim[i][axis], s));
+                }, side < 0), mat);
+            }
+        }
         // Close the tip with a fan whose winding matches the skin.
         const tip = [], indices = [];
         for (let i = 0; i <= 40; i++) tip.push(...point(1, i / 40));
@@ -373,8 +435,20 @@ export function buildAircraft(input) {
     }
 
     const wingY = H * p.wingHeight, wingZ = L * (0.5 - p.wingPosition / 100);
-    for (const side of [1, -1]) {
-        foil(`Wing ${side}`, p.span / 2, p.rootChord, p.taper, p.sweep, p.dihedral, p.thickness / 100, p.twist, [0, wingY, wingZ], wingPaint, false, side, p.wingPlanform === "cranked");
+    if (p.wings) for (const side of [1, -1]) {
+        if (p.wingPlanform === "flying") {
+            const stations = p.flyingWingShape === "lambda" ? [[0,0,1],[0.35,0.27,0.90],[0.58,0.45,0.66],[1,0.78,0.80]] :
+                [[0, 0, 1], [0.22, 0.17, 0.79], [0.39, 0.31, 1], [0.57, 0.46, 0.73], [1, 0.82, 0.86]];
+            mesh(`Wing ${side}`, surface(40, 40, (s, t) => {
+                const i = Math.max(1, stations.findIndex(row => row[0] >= s)), a = stations[i - 1], b = stations[i];
+                const f = (s - a[0]) / (b[0] - a[0]), le = mix(a[1], b[1], f), te = mix(a[2], b[2], f);
+                const fraction = (1 - Math.cos(t * Math.PI * 2)) / 2, chord = (te - le) * L;
+                return [side * s * p.span / 2, wingY + Math.sin(t * Math.PI * 2) * chord * p.thickness / 200,
+                    L * (0.5 - mix(le, te, fraction))];
+            }, side < 0), wingPaint);
+        } else foil(`Wing ${side}`, p.span / 2, p.rootChord, p.taper, p.sweep, p.dihedral, p.thickness / 100, p.twist, [0, wingY, wingZ], wingPaint, false, side, p.wingPlanform === "cranked");
+        if (p.wingGlove > 0) foil(`Wing root extension ${side}`, p.span * 0.18, p.wingGlove, 0.08, 58, 0, 0.06, 0,
+            [0, wingY, wingZ + p.rootChord * 0.27], wingPaint, false, side);
         const tipY = wingY + Math.tan(p.dihedral * rad) * p.span / 2;
         const tipZ = wingZ - Math.tan(p.sweep * rad) * p.span / 2 + p.rootChord * (1 - p.taper) / 4;
         if (p.winglet > 0 && ["blended", "split"].includes(p.wingletStyle)) {
@@ -418,7 +492,7 @@ export function buildAircraft(input) {
                 [side * x, wingY + Math.tan(p.dihedral * rad) * x, z], R * 0.035, metal);
             if (p.biplane) rod(`Interplane strut ${side}`, [side * x, wingY, z], [side * x, wingY + p.diameter * 1.2, z], R * 0.04, metal);
         }
-        if (p.navLights) {
+        if (p.navLights && p.wingPlanform !== "flying") {
             const lamp = material(side === 1 ? "Port red" : "Starboard green", side === 1 ? "#ff3b30" : "#25ed87", {
                 emissive: side === 1 ? "#ff1808" : "#00bb44", emissiveIntensity: 0.8});
             ellipsoid(`Navigation lens ${side}`, side * (p.span / 2 - Math.max(0.035, R * 0.045)), tipY + p.rootChord * p.taper * 0.015, tipZ,
@@ -428,11 +502,11 @@ export function buildAircraft(input) {
 
     const tailZ = L * (0.5 - p.tailPosition / 100), tailY = H * 0.38;
     const tailPaint = p.livery === "solid" || p.livery === "british" ? paint : accent;
-    if (p.tailStyle !== "v") {
-        const fins = p.tailStyle === "twin" ? [1, -1] : [1];
+    if (!["v", "invertedv", "tailless"].includes(p.tailStyle) && !(p.rotorLayout === "single" && p.tailRotorStyle === "ducted")) {
+        const fins = p.tailStyle === "quad" ? [1, -1, 0.38, -0.38] : ["twin", "twinnone", "boom"].includes(p.tailStyle) ? [1, -1] : [1];
         for (const side of fins) {
             const fin = foil(`Vertical fin ${side}`, p.finHeight, p.finChord, 0.3, p.finSweep,
-                fins.length === 2 ? -p.finCant : 0, 0.09, 0, [fins.length === 2 ? side * p.tailSpan * 0.25 : 0, tailY, tailZ], tailPaint, true, side);
+                fins.length > 1 ? -p.finCant : 0, 0.09, 0, [fins.length > 1 ? side * p.tailSpan * 0.38 : 0, tailY, tailZ], tailPaint, true, Math.sign(side), false, true);
             if (p.livery === "british") for (const face of [1, -1]) {
                 for (const [a, b, mat] of [[0.10, 0.20, referenceRed], [0.30, 0.44, accent], [0.58, 0.82, referenceRed]]) {
                     panel(`Tail ribbon ${face}`, [[a, 0.01], [b, 0.01], [b - 0.09, 0.99], [a - 0.08, 0.99]], (s, chord) => {
@@ -443,11 +517,15 @@ export function buildAircraft(input) {
             }
         }
     }
-    if (p.tailStyle !== "none") for (const side of [1, -1]) {
+    if (!["none", "twinnone", "tailless"].includes(p.tailStyle)) for (const side of [1, -1]) {
         const y = p.tailStyle === "t" ? tailY + p.finHeight : tailY;
         const z = p.tailStyle === "t" ? tailZ - Math.tan(p.finSweep * rad) * p.finHeight : tailZ;
-        foil(`Tailplane ${side}`, p.tailSpan / 2, p.tailChord, 0.4, p.tailSweep, p.tailStyle === "v" ? 38 : 3,
+        foil(`Tailplane ${side}`, p.tailSpan / 2, p.tailChord, 0.4, p.tailSweep, p.tailStyle === "v" ? 38 : p.tailStyle === "invertedv" ? -38 : p.tailDihedral,
             0.08, 0, [0, y, z], wingPaint, false, side);
+        if (p.tailStyle === "boom") {
+            const x = side * p.tailSpan * 0.38;
+            rod(`Tail boom ${side}`, [x, wingY, wingZ], [x, tailY, tailZ], R * 0.14, paint);
+        }
     }
     if (p.canards) for (const side of [1, -1]) foil(`Canard ${side}`, p.canardSpan / 2, p.rootChord * 0.24, 0.35,
         22, 2, 0.07, 0, [0, H * 0.12, L * 0.21], wingPaint, false, side);
@@ -482,26 +560,67 @@ export function buildAircraft(input) {
                     p.propDiameter * 0.035, p.propDiameter * 0.25, p.propDiameter * 0.014, dark, prop);
                 blade.rotation.z = a;
             }
+            if (p.contraProps) {
+                const aft = prop.clone(true); aft.name = "Contra propeller"; aft.position.z -= r * 0.45;
+                aft.rotation.z = Math.PI / p.propBlades; aft.userData.spinDirection = -1; group.add(aft); propellers.push(aft);
+            }
         }
+        return group;
     }
 
-    if (p.engineType !== "none") {
+    if (p.engineType !== "none" && p.engineMount === "vectored") {
+        for (const side of [1,-1]) for (const [i,z] of [L*0.035,-L*0.09].entries()) {
+            const group = new THREE.Group();group.name=`Vectoring nozzle ${side} ${i}`;group.position.set(side*R*0.88,-H*0.30,z);group.rotation.x=-p.nozzleTilt*rad;root.add(group);
+            const r=p.engineDiameter*0.22;
+            ellipsoid("Nozzle shoulder",side*r*0.25,0,0,r,r,r*1.2,paint,group);
+            const nozzle=mesh("Vectoring exhaust",new THREE.CylinderGeometry(r*0.9,r,r*1.5,20,1,true),metal,group);nozzle.rotation.x=Math.PI/2;nozzle.position.set(side*r*0.45,0,-r*0.65);
+            const opening=mesh("Vectoring exhaust opening",new THREE.CircleGeometry(r*0.99,20),dark,group);opening.rotation.y=Math.PI;opening.position.set(side*r*0.45,0,-r*1.39);
+        }
+    } else if (p.engineType !== "none" && p.engineMount === "integrated") {
+        for (let i = 0; i < p.engineCount; i++) {
+            const x = (i - (p.engineCount - 1) / 2) * p.engineDiameter * 1.08, r = p.engineDiameter / 2;
+            const y = -H * 0.1, nozzleLength = Math.min(p.engineLength * 0.3, L * 0.18);
+            const joinZ = -L / 2 + nozzleLength, frontZ = L * 0.02;
+            const ring = (angle, radius, z) => [x + Math.cos(angle) * radius, y + Math.sin(angle) * radius, z];
+            mesh(`Integrated exhaust ${i + 1}`, surface(6, 32, (u, v) =>
+                ring(v * Math.PI * 2, r * mix(1, 0.85, u), joinZ - nozzleLength * u)), metal);
+            mesh(`Engine fairing ${i + 1}`, surface(24, 32, (u, v) => {
+                const angle = v * Math.PI * 2, anchor = embedInBody(ring(angle, r, frontZ));
+                const point = ring(angle, r * (1 + 0.06 * Math.sin(Math.PI * u)), mix(frontZ, joinZ, u));
+                const blend = THREE.MathUtils.smoothstep(u, 0, 0.4);
+                return [mix(anchor[0], point[0], blend), mix(anchor[1], point[1], blend), point[2]];
+            }), paint);
+            const outlet = mesh(`Exhaust opening ${i + 1}`, new THREE.CircleGeometry(r * 0.84, 24), dark);
+            outlet.position.set(x, -H * 0.1, -L / 2 + 0.005); outlet.rotation.y = Math.PI;
+            mesh(`Exhaust rim ${i + 1}`, surface(1, 32, (u, v) =>
+                ring(v * Math.PI * 2, r * mix(0.85, 0.83, u), -L / 2 + u * 0.006), true), metal);
+        }
+    } else if (p.engineType !== "none" && p.engineMount === "pusher") {
+        const group = engine(0, 0, -L / 2 + p.engineLength / 2 + p.engineDiameter * 0.46, 0); group.rotation.y = Math.PI;
+    } else if (p.engineType !== "none" && p.engineMount === "top") {
+        for (let i = 0; i < p.engineCount; i++) engine((i - (p.engineCount - 1) / 2) * p.engineDiameter * 1.1,
+            H + p.engineDiameter * 0.25, -L * 0.02 + p.engineOffset, i);
+    } else if (p.engineType !== "none") {
         const count = p.engineCount, pairs = Math.floor(count / 2);
         let index = 0;
         for (let pair = 0; pair < pairs; pair++) for (const side of [1, -1]) {
             let x, y, z, attach;
-            if (p.engineMount === "wing") {
-                x = p.span / 2 * Math.min(0.9, p.engineSpacing / 100 + pair * 0.25);
+            if (["wing", "paired"].includes(p.engineMount)) {
+                x = p.engineMount === "paired" ? p.span / 2 * Math.min(0.85, p.engineSpacing / 100 + Math.floor(pair / 2) * 0.31) + (pair % 2 - 0.5) * p.engineDiameter * 1.04 :
+                    p.span / 2 * Math.min(0.9, p.engineSpacing / 100 + pair * 0.25);
                 const chord = p.rootChord * chordFactor(x / (p.span / 2), p.taper, p.wingPlanform === "cranked");
                 attach = [side * x, wingY + Math.tan(p.dihedral * rad) * x, wingZ - Math.tan(p.sweep * rad) * x + (p.rootChord - chord) / 4];
                 y = attach[1] - p.engineDiameter * p.engineDrop;
                 z = attach[2] + p.engineOffset;
+            } else if (p.engineMount === "shoulder") {
+                x=R+p.engineDiameter*0.32;y=wingY;z=wingZ+p.engineOffset;
+                attach=[side*R*0.75,y,z];
             } else {
                 x = R * (p.engineMount === "rear" ? 0.9 : 0.65) + p.engineDiameter * (0.58 + pair * 1.1);
                 y = H * 0.05; z = p.engineMount === "rear" ? -L * 0.28 + p.engineOffset : L * 0.27 + p.engineOffset;
                 attach = [side * R * bodyRadius(0.5 - z / L) * 0.8, y, z];
             }
-            if (p.engineMount === "wing") {
+            if (["wing", "paired"].includes(p.engineMount)) {
                 const shape = [[attach[1], attach[2] + p.engineLength * 0.2], [y + p.engineDiameter * 0.3, z + p.engineLength * 0.3],
                     [y + p.engineDiameter * 0.3, z - p.engineLength * 0.3], [attach[1], attach[2] - p.engineLength * 0.3]];
                 const thickness = p.engineDiameter * 0.065, vertices = [];
@@ -515,11 +634,98 @@ export function buildAircraft(input) {
         if (count % 2) {
             const nose = p.engineMount === "nose";
             engine(0, nose ? -H * 0.08 : (count === 3 ? H * 0.85 : -H * 0.2),
-                nose ? L / 2 - p.engineLength * 0.38 : -L * 0.4, index);
+                nose ? L / 2 - p.engineLength / 2 - p.engineDiameter * (p.engineType === "jet" ? 0.04 : 0.46) : -L * 0.4, index);
         }
     }
 
-    if (p.gear) {
+    if (p.engineType !== "none" && p.intakeStyle !== "none") {
+        const sides = p.intakeStyle === "side" ? [1, -1] : [0];
+        for (const side of sides) {
+            const width = p.engineDiameter * 0.9, height = p.engineDiameter * 0.8;
+            const x = side * R * 0.9, y = p.intakeStyle === "chin" ? -H * 0.8 : p.intakeStyle === "top" ? H * 0.8 : -H * 0.12;
+            const z = p.intakeStyle === "nose" ? L * 0.493 : L * 0.16;
+            const depth = Math.min(p.engineDiameter * 2, L * 0.35);
+            const ring = (angle, scale, atZ) => [x + Math.cos(angle) * width * 0.70 * scale,
+                y + Math.sin(angle) * height * 0.75 * scale, atZ];
+            const inset = Math.min(p.engineDiameter * 0.08, depth * 0.2);
+            const inlet = mesh(`Integrated intake ${side}`, new THREE.CircleGeometry(1, 32), dark);
+            inlet.position.set(x, y, z - inset); inlet.scale.set(width * 0.70 * 0.93, height * 0.75 * 0.93, 1);
+            mesh(`Intake lip ${side}`, surface(2, 32, (u, v) => ring(v * Math.PI * 2, mix(1, 0.92, u), z - inset * u)), paint);
+            mesh(`Intake fairing ${side}`, surface(16, 32, (u, v) => {
+                const angle = v * Math.PI * 2, scale = mix(1, 0.7, u);
+                const point = ring(angle, scale, z - u * depth), anchor = embedInBody(point);
+                const blend = THREE.MathUtils.smoothstep(u, 0.25, 1);
+                return point.map((n, axis) => mix(n, anchor[axis], blend));
+            }), paint);
+        }
+    }
+
+    if (p.rotorLayout !== "none") {
+        const rotorZ = L * (0.5 - p.rotorPosition / 100), mastY = H + p.rotorHeight;
+        function rotor(name, x, y, z, diameter, blades, direction = 1, parent = root) {
+            const hub = new THREE.Group(); hub.name = name; hub.position.set(x, y, z); parent.add(hub);
+            hub.userData.spinAxis = "y"; hub.userData.spinDirection = direction; propellers.push(hub);
+            ellipsoid("Rotor hub", 0, 0, 0, diameter * 0.025, diameter * 0.013, diameter * 0.025, metal, hub);
+            for (let i = 0; i < blades; i++) {
+                const blade = mesh("Rotor blade", new THREE.BoxGeometry(diameter * 0.46, diameter * 0.003, diameter * 0.027), dark, hub);
+                const angle = i * Math.PI * 2 / blades;
+                blade.position.set(Math.cos(angle) * diameter * 0.27, 0, -Math.sin(angle) * diameter * 0.27); blade.rotation.y = angle;
+            }
+            return hub;
+        }
+        if (p.rotorLayout === "tiltrotor") for (const side of [1, -1]) {
+            const nac = new THREE.Group(); nac.name = `Tilt nacelle ${side}`;
+            nac.position.set(side * p.span / 2, wingY + Math.tan(p.dihedral * rad) * p.span / 2, wingZ);
+            nac.rotation.x = p.rotorTilt * rad; root.add(nac);
+            ellipsoid("Rotor nacelle", 0, 0, 0, p.engineDiameter / 2, p.engineLength / 2, p.engineDiameter / 2, nacelle, nac);
+            rotor("Tilt rotor", 0, p.engineLength / 2, 0, p.rotorDiameter, p.rotorBlades, side, nac);
+        } else {
+            const locations = p.rotorLayout === "tandem" ? [[L * 0.31, 0], [-L * 0.33, p.rotorHeight * 0.65]] : [[rotorZ, 0]];
+            for (const [z, rise] of locations) {
+                ellipsoid("Transmission housing", 0, H * 0.9 + rise, z, R * 0.65, p.rotorHeight * 0.7, R * 1.2, paint);
+                rod("Rotor mast", [0, H + rise, z], [0, mastY + rise, z], Math.max(0.06, R * 0.10), metal);
+                rotor("Main rotor", 0, mastY + rise, z, p.rotorDiameter, p.rotorBlades, p.rotorLayout === "tandem" && z < 0 ? -1 : 1);
+            }
+            if (p.rotorLayout === "coaxial") {
+                rod("Upper rotor mast", [0, mastY, rotorZ], [0, mastY + p.rotorHeight, rotorZ], R * 0.09, metal);
+                const upper = rotor("Upper coaxial rotor", 0, mastY + p.rotorHeight, rotorZ, p.rotorDiameter, p.rotorBlades, -1);
+                upper.rotation.y = Math.PI / p.rotorBlades;
+            }
+            if (p.rotorLayout === "single") {
+                const mount = new THREE.Group(); mount.name = "Tail rotor mount";
+                const ducted=p.tailRotorStyle==="ducted", diameter=p.rotorDiameter*p.tailRotorRatio/100;
+                const y=H*0.4+p.finHeight*0.65,z=-L*0.43,r=diameter/2;
+                mount.position.set(ducted?0:R*0.25,y,z);mount.rotation.z=-Math.PI/2;root.add(mount);
+                rotor("Tail rotor",0,0,0,diameter,ducted?10:4,-1,mount);
+                if(ducted) {
+                    const shroud=mesh("Tail rotor shroud",new THREE.TorusGeometry(r*1.09,r*0.12,8,40),paint);shroud.rotation.y=Math.PI/2;shroud.position.set(0,y,z);
+                    const shape=new THREE.Shape();shape.moveTo(z+r*1.35,tailY);shape.lineTo(z-r*1.3,tailY);shape.lineTo(z-r*1.3,y+r*1.35);shape.lineTo(z+r*0.75,y+r*1.6);shape.lineTo(z+r*1.35,y+r*0.55);shape.closePath();
+                    const hole=new THREE.Path();hole.absarc(z,y,r*1.03,0,Math.PI*2,true);shape.holes.push(hole);
+                    const fin=new THREE.ExtrudeGeometry(shape,{depth:R*0.12,bevelEnabled:false,curveSegments:32});fin.translate(0,0,-R*0.06);fin.rotateY(-Math.PI/2);mesh("Ducted tail fin",fin,paint);
+                    rod("Ducted tail support",[0,tailY,tailZ],[0,tailY,z],R*0.13,paint);
+                }
+            }
+        }
+    }
+    if (p.radarStyle !== "none") {
+        const z = -L * 0.08, y = H + R * 0.8;
+        for (const x of [-R * 0.35, R * 0.35]) rod("Radar support", [x, H * 0.85, z], [x, y, z], R * 0.13, paint);
+        ellipsoid("Radar fairing", 0, y, z, p.radarStyle === "disc" ? p.radarSize / 2 : R * 0.22,
+            p.radarSize * 0.065, p.radarStyle === "disc" ? p.radarSize / 2 : p.radarSize / 2, paint);
+    }
+    if (p.sensorTurret) {
+        ellipsoid("Sensor turret", 0, -H * 0.75, L * 0.27, R * 0.42, R * 0.42, R * 0.42, paint);
+        ellipsoid("Sensor glazing", 0, -H * 0.83, L * 0.27 + R * 0.32, R * 0.24, R * 0.24, R * 0.14, glass);
+    }
+    if (p.refuelBoom) rod("Refuelling boom", [0, -H * 0.4, -L * 0.24], [0, -H * 1.1, -L * 0.49], R * 0.06, paint);
+
+    if (p.gear && p.gearStyle === "skids") {
+        for (const side of [1, -1]) {
+            const x = side * R * 1.2, y = -H - p.gearHeight;
+            rod("Landing skid", [x, y, -L * 0.12], [x, y, L * 0.30], R * 0.065, metal);
+            for (const z of [-L * 0.03, L * 0.21]) rod("Skid support", [side * R * 0.5, -H * 0.7, z], [x, y, z], R * 0.045, metal);
+        }
+    } else if (p.gear) {
         const mainZ = p.gearStyle === "taildragger" ? wingZ + p.rootChord * 0.18 : wingZ - p.rootChord * 0.4;
         const wheelR = Math.max(0.12, Math.min(R * 0.28, p.gearHeight * 0.32));
         const bottom = -H - p.gearHeight;
@@ -544,8 +750,26 @@ export function buildAircraft(input) {
     const wingspan = wingBounds.getSize(new THREE.Vector3()).x;
     let triangles = 0;
     root.traverse(object => { if (object.isMesh) triangles += (object.geometry.index?.count ?? object.geometry.attributes.position.count) / 3; });
-    const area = p.span * p.rootChord / 2 * (p.wingPlanform === "cranked" ? 1.65 * 0.34 + (0.65 + p.taper) * 0.66 : 1 + p.taper);
-    return {root, propellers, bounds, stats: {triangles, size, wingspan, area, aspectRatio: p.span ** 2 / area}};
+    const area = !p.wings ? 0 : p.wingPlanform === "flying" ? p.span * L * 0.48 : p.span * p.rootChord / 2 * (p.wingPlanform === "cranked" ? 1.65 * 0.34 + (0.65 + p.taper) * 0.66 : 1 + p.taper);
+    const wingLight = side => {
+        const lens = root.getObjectByName(`Navigation lens ${side}`);
+        if (lens) return lens.position.toArray();
+        const wing = root.getObjectByName(`Wing ${side}`);
+        if (!wing) return null;
+        const box = new THREE.Box3().setFromObject(wing), x = side > 0 ? box.max.x : box.min.x;
+        const points = wing.geometry.attributes.position, center = new THREE.Vector3(); let count = 0;
+        for (let i = 0; i < points.count; i++) if (Math.abs(points.getX(i)-x)<0.001) {center.add(new THREE.Vector3().fromBufferAttribute(points,i));count++;}
+        return center.divideScalar(Math.max(1,count)).toArray();
+    };
+    const landing = side => {
+        const x = Math.min(p.span * 0.3, Math.max(R * 1.15, p.span * 0.07));
+        return [side*x, wingY+Math.tan(p.dihedral*rad)*x, wingZ+p.rootChord/4-Math.tan(p.sweep*rad)*x];
+    };
+    const lightAnchors = {leftWing: wingLight(1),rightWing: wingLight(-1),
+        cabinLeft: sidePoint(0.24,H*0.1,1,R*0.025),cabinRight: sidePoint(0.24,H*0.1,-1,R*0.025),
+        tail: bodyPoint(0.993,Math.PI/2,R*0.01),upper:bodyPoint(0.44,Math.PI/2,R*0.025),lower:bodyPoint(0.50,-Math.PI/2,R*0.025),
+        nose:bodyPoint(0.08,-Math.PI/2,R*0.025),gear:[0,-H-p.gearHeight*0.65,L*0.32],leftLanding:landing(1),rightLanding:landing(-1)};
+    return {root, propellers, bounds, lightAnchors, brandSurface:(u,level,side)=>sidePoint(THREE.MathUtils.clamp(u,0.02,0.98),H*level,side,R*0.012), stats: {triangles, size, wingspan, area, aspectRatio: area ? p.span ** 2 / area : 0}};
 }
 
 export function disposeAircraft(root) {
@@ -555,6 +779,8 @@ export function disposeAircraft(root) {
         for (const mat of Array.isArray(object.material) ? object.material : [object.material]) if (mat) materials.add(mat);
     });
     geometries.forEach(geometry => geometry.dispose());
-    materials.forEach(material => material.dispose());
+    const textures=new Set();
+    materials.forEach(material => {for(const value of Object.values(material))if(value?.isTexture)textures.add(value);material.dispose();});
+    textures.forEach(texture => texture.dispose());
     root.removeFromParent();
 }

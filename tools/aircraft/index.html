@@ -3,93 +3,9 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <meta name="color-scheme" content="dark">
-    <title>Aircraft Designer · Sitrec</title>
-    <link rel="icon" href="data:,">
-    <link rel="stylesheet" href="style.css?v=__BUILD_V__">
-    <script type="importmap">
-    {"imports": {
-        "three": "./vendor/three.module.js?v=__BUILD_V__",
-        "./vendor/three.core.js": "./vendor/three.core.js?v=__BUILD_V__",
-        "three/addons/controls/OrbitControls.js": "./vendor/OrbitControls.js?v=__BUILD_V__",
-        "three/addons/exporters/GLTFExporter.js": "./vendor/GLTFExporter.js?v=__BUILD_V__",
-        "./parameters.js": "./parameters.js?v=__BUILD_V__",
-        "./airlinerPresets.js": "./airlinerPresets.js?v=__BUILD_V__",
-        "./aircraft.js": "./aircraft.js?v=__BUILD_V__"
-    }}
-    </script>
+    <title>Vehicle Designer · Sitrec</title>
+    <meta http-equiv="refresh" content="0;url=../vehicles/index.html">
+    <script>location.replace("../vehicles/index.html" + location.search + location.hash);</script>
 </head>
-<body>
-    <header class="topbar">
-        <a class="brand" href="../index.html" title="All Sitrec tools">S<span>↗</span></a>
-        <div class="title"><h1>Aircraft Designer</h1><span>PROCEDURAL MODEL STUDIO</span></div>
-        <div class="header-actions">
-            <button id="openFile" title="Open a saved aircraft parameter file">Open</button>
-            <button id="saveFile" title="Download editable aircraft parameters">Save design</button>
-            <button id="exportGLB" class="primary" title="Export the aircraft as a GLB model in metres">Export GLB <span aria-hidden="true">↗</span></button>
-        </div>
-        <input id="fileInput" type="file" accept=".json,application/json" hidden>
-    </header>
-    <main class="workspace">
-        <aside class="sidebar" aria-label="Aircraft parameters">
-            <section class="preset-panel">
-                <div class="section-label">START WITH A PRESET <span id="presetCount"></span></div>
-                <label for="presetSelect" class="sr-only">Aircraft preset</label>
-                <select id="presetSelect"></select>
-                <p>Approximate aircraft types. Every dimension and detail is yours to change.</p>
-                <div id="presetReference" class="preset-reference" hidden>
-                    <span id="presetDimensions"></span>
-                    <p id="presetDescription"></p>
-                    <a id="presetSource" target="_blank" rel="noopener">Manufacturer reference ↗</a>
-                </div>
-                <div class="name-row"><label for="designName">Design name</label><button id="resetPreset" class="text-button">Reset preset</button></div>
-                <input id="designName" type="text" maxlength="100" value="My aircraft">
-            </section>
-            <div id="parameterFolders"></div>
-            <div class="sidebar-note">Dimensions in metres · angles in degrees.<br>Visual models; no flight simulation.</div>
-        </aside>
-        <section class="preview" id="preview" aria-label="Interactive 3D aircraft preview">
-            <div id="canvasMount"></div>
-            <div class="preview-heading">
-                <div><span class="eyebrow">DESIGN PREVIEW</span><h2 id="aircraftName">Aircraft</h2></div>
-                <span class="live-badge"><span></span> LIVE</span>
-            </div>
-            <div class="viewbar" aria-label="Camera views">
-                <button data-view="perspective" class="active" aria-pressed="true">3D</button>
-                <button data-view="side" aria-pressed="false">Side</button>
-                <button data-view="top" aria-pressed="false">Top</button>
-                <button data-view="front" aria-pressed="false">Front</button>
-                <span class="divider"></span><button id="fitView" title="Fit the aircraft in the view (F)">Fit <kbd>F</kbd></button>
-            </div>
-            <div class="preview-options">
-                <label><input id="showGrid" type="checkbox" checked> Grid</label>
-                <label><input id="wireframe" type="checkbox"> Wireframe</label>
-                <label><input id="autoRotate" type="checkbox"> Orbit</label>
-                <label><input id="animateProps" type="checkbox"> Spin props</label>
-                <button id="screenshot" title="Save a PNG of the current 3D view">Snapshot</button>
-                <button id="fullscreen" title="Toggle browser fullscreen">⛶ <span class="sr-only">Fullscreen</span></button>
-            </div>
-            <div id="error" class="error" role="alert" hidden></div>
-            <div class="preview-bottom">
-                <div class="metrics">
-                    <div><span>FUSELAGE</span><strong id="lengthMetric">—</strong></div>
-                    <div><span>WINGSPAN</span><strong id="spanMetric">—</strong></div>
-                    <div><span>WING AREA</span><strong id="areaMetric">—</strong></div>
-                    <div><span>ASPECT RATIO</span><strong id="aspectMetric">—</strong></div>
-                </div>
-                <p class="orbit-hint">Drag to orbit <span>·</span> Scroll to zoom <span>·</span> Right-drag to pan</p>
-            </div>
-        </section>
-    </main>
-    <footer><span id="status" role="status">Starting 3D preview…</span><span id="geometryStats"></span><a href="README.md" target="_blank" rel="noopener">Help & model conventions ↗</a></footer>
-    <script type="module">
-        import("./app.js?v=__BUILD_V__").catch(error => {
-            document.getElementById("status").textContent = "Preview could not start.";
-            const panel = document.getElementById("error");
-            panel.hidden = false;
-            panel.textContent = "Unable to start the 3D preview. Enable WebGL in your browser and reload. " + error.message;
-            console.error(error);
-        });
-    </script>
-</body>
+<body><p>Vehicle Designer has moved to <a href="../vehicles/index.html">tools/vehicles</a>.</p></body>
 </html>
