@@ -171,6 +171,18 @@
         <a href="psf/">Open Diffraction PSF Studio</a>
     </div>
 
+    <div class="tool">
+        <h3>Vehicle Designer</h3>
+        <p>Create procedural vehicles, drones, balloons and sky lanterns with a full-window Three.js preview that updates while you drag the sliders.</p>
+        <ul>
+            <li>292 presets for cars, trucks, aircraft, helicopters, DJI and other drones, balloons and sky lanterns</li>
+            <li>Vehicle-specific controls for body shape, glazing, wheels, cargo, wings, engines, rotors, and paint</li>
+            <li>Orbit, front, side, and top views with grid, wireframe, and animated wheels and rotors</li>
+            <li>Save editable designs, take snapshots, and export GLB models for Sitrec or other 3D editors</li>
+        </ul>
+        <a href="vehicles/">Open Vehicle Designer</a>
+    </div>
+
     <h2>Usage</h2>
     <ol>
         <li>For LOS Viewer: Export LOS data from Sitrec using the "CSV" button on any LOS node</li>
@@ -184,7 +196,7 @@
     <p>For detailed information about each tool, see the <a href="README.md">README.md</a> file.</p>
 
     <h2>Technical Details</h2>
-    <p>All tools use a local copy of <strong>Three.js r180</strong> (core module + OrbitControls) in the <code>three.js/</code> directory. This ensures no external CDN dependencies are required.</p>
+    <p>The 3D tools use local copies of <strong>Three.js</strong>, with no external CDN dependencies. Vehicle Designer packages its renderer, controls, and exporter together from Sitrec's installed Three.js version.</p>
 
     <hr style="margin-top: 40px;">
     <p style="text-align: center; color: #666; font-size: 14px;">

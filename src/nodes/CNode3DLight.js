@@ -6,6 +6,7 @@ import {NodeMan} from "../Globals";
 import {CNodeGUIValue} from "./CNodeGUIValue";
 import {CNodeGUIColor} from "./CNodeGUIColor";
 import {par} from "../par";
+import {Sit} from "../Globals";
 import {installTerrestrialRefractionOnShaderMaterial} from "../atmosphere/terrestrialRefraction";
 
 export class CNode3DLight extends CNode3D {
@@ -22,6 +23,7 @@ export class CNode3DLight extends CNode3D {
         // Initialize visibility control variables
         this.lightVisible = true;
         this.lightIlluminates = false;
+        this.deterministicStrobe = this.light.userData?.vehicleLight === true;
 
         //const size = v.size || 4; // default size if not specified
 
@@ -108,6 +110,7 @@ export class CNode3DLight extends CNode3D {
                 hash |= 0;
             }
             this.strobeOffset = (((hash >>> 0) % 50000) / 10000) ;
+            if (this.light.userData.vehicleLight && Number.isFinite(this.light.userData.strobeOffset)) this.strobeOffset = this.light.userData.strobeOffset;
             this.addSimpleSerial("strobeOffset");
         }
 
@@ -298,7 +301,7 @@ export class CNode3DLight extends CNode3D {
     // as it's only once per frame, not once per view render call
     update(f) {
         super.update(f);
-        const time = par.time;
+        const time = this.deterministicStrobe ? f * (Sit.simSpeed ?? 1) / (Sit.fps || 30) : par.time;
 
         let strobeOn = false;
 
@@ -313,7 +316,7 @@ export class CNode3DLight extends CNode3D {
             // this ensures we don't miss any very short flashes
             // (e.g. strobe every 1.01 seconds, but strobe length is 0.01 seconds)
             // since 0.01 is less than a frame, it would not always fall in the window
-            if (this.lastStrobeTime !== undefined
+            if (!this.deterministicStrobe && this.lastStrobeTime !== undefined
                 && (offsetTime - this.lastStrobeTime) > this.strobeEvery) {
                 strobeOn = true;
 
@@ -338,6 +341,12 @@ export class CNode3DLight extends CNode3D {
         else {
             // No strobe controls - use normal visibility settings
             this.updateVisibility();
+        }
+        const lensMaterial = this.vehicleLens?.material;
+        if (lensMaterial?.userData.vehicleLightLens === this.light.name) {
+            const on = this.lightVisible && (!(this.strobeEvery && this.strobeLength) || strobeOn);
+            lensMaterial.emissiveIntensity = on ? 1.8 : 0;
+            lensMaterial.emissive.copy(this.light.color);
         }
     }
 

@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="dark">
+    <title>Vehicle Designer · Sitrec</title>
+    <link rel="icon" href="data:,">
+    <link rel="stylesheet" href="style.css?v=__BUILD_V__">
+    <script type="importmap">
+    {"imports": {
+        "three": "./vendor/three.module.js?v=__BUILD_V__",
+        "./vendor/three.core.js": "./vendor/three.core.js?v=__BUILD_V__",
+        "three/addons/controls/OrbitControls.js": "./vendor/OrbitControls.js?v=__BUILD_V__",
+        "three/addons/exporters/GLTFExporter.js": "./vendor/GLTFExporter.js?v=__BUILD_V__",
+        "./generator.js": "./generator.js?v=__BUILD_V__",
+        "./motion.js": "./motion.js?v=__BUILD_V__",
+        "./exportGLB.js": "./exportGLB.js?v=__BUILD_V__",
+        "./files.js": "./files.js?v=__BUILD_V__",
+        "./catalog.js": "./catalog.js?v=__BUILD_V__",
+        "./studio.js": "./studio.js?v=__BUILD_V__",
+        "./preview.js": "./preview.js?v=__BUILD_V__",
+        "./designer.js": "./designer.js?v=__BUILD_V__",
+        "./aircraftSchema.js": "./aircraftSchema.js?v=__BUILD_V__",
+        "./vehicleSchema.js": "./vehicleSchema.js?v=__BUILD_V__",
+        "./recipeFormat.js": "./recipeFormat.js?v=__BUILD_V__",
+        "./recipe.js": "./recipe.js?v=__BUILD_V__",
+        "./parameters.js": "./parameters.js?v=__BUILD_V__",
+        "./airlinerPresets.js": "./airlinerPresets.js?v=__BUILD_V__",
+        "./militaryPresets.js": "./militaryPresets.js?v=__BUILD_V__",
+        "./aircraft.js": "./aircraft.js?v=__BUILD_V__",
+        "./vehicleParameters.js": "./vehicleParameters.js?v=__BUILD_V__",
+        "./roadPresets.js": "./roadPresets.js?v=__BUILD_V__",
+        "./helicopterPresets.js": "./helicopterPresets.js?v=__BUILD_V__",
+        "./aerialParameters.js": "./aerialParameters.js?v=__BUILD_V__",
+        "./aerialPresets.js": "./aerialPresets.js?v=__BUILD_V__",
+        "./multirotor.js": "./multirotor.js?v=__BUILD_V__",
+        "./balloon.js": "./balloon.js?v=__BUILD_V__",
+        "./roadVehicle.js": "./roadVehicle.js?v=__BUILD_V__",
+        "./vehicle.js": "./vehicle.js?v=__BUILD_V__",
+        "./vehicleLights.js": "./vehicleLights.js?v=__BUILD_V__",
+        "./vehicleLivery.js": "./vehicleLivery.js?v=__BUILD_V__"
+    }}
+    </script>
+</head>
+<body>
+    <header class="topbar">
+        <a class="brand" href="../index.html" title="All Sitrec tools">S<span>↗</span></a>
+        <div class="title"><h1>Vehicle Designer</h1><span>PROCEDURAL MODEL STUDIO</span></div>
+        <div class="header-actions">
+            <button id="openFile" title="Open a saved vehicle parameter file">Open</button>
+            <button id="saveFile" title="Download editable vehicle parameters">Save design</button>
+            <button id="exportGLB" class="primary" title="Export the vehicle as a GLB model in metres">Export GLB <span aria-hidden="true">↗</span></button>
+        </div>
+        <input id="fileInput" type="file" accept=".json,application/json" hidden>
+    </header>
+    <main class="workspace">
+        <aside class="sidebar" aria-label="Vehicle parameters">
+            <section class="preset-panel">
+                <div class="section-label">START WITH A PRESET <span id="presetCount"></span></div>
+                <label for="presetSearch" class="sr-only">Search vehicles, region or role</label>
+                <input id="presetSearch" type="search" placeholder="Search vehicles or role…" autocomplete="off">
+                <label for="presetKind" class="sr-only">Vehicle type</label>
+                <select id="presetKind"></select>
+                <label for="presetRegion" class="sr-only">Preset region</label>
+                <select id="presetRegion" aria-label="Preset region"></select>
+                <label for="presetSelect" class="sr-only">Vehicle preset</label>
+                <div class="preset-cycle"><button id="previousPreset" title="Previous matching preset (← or [)" aria-label="Previous preset">‹</button><select id="presetSelect"></select><button id="nextPreset" title="Next matching preset (→ or ])" aria-label="Next preset">›</button></div>
+                <span id="presetResults" class="preset-results" role="status"></span>
+                <p>Approximate vehicle types. Every dimension and detail is yours to change.</p>
+                <div id="presetReference" class="preset-reference" hidden>
+                    <span id="presetDimensions"></span>
+                    <p id="presetDescription"></p>
+                    <a id="presetSource" target="_blank" rel="noopener noreferrer">Reference ↗</a>
+                </div>
+                <div class="name-row"><label for="designName">Design name</label><button id="resetPreset" class="text-button">Reset preset</button></div>
+                <input id="designName" type="text" maxlength="100" value="My vehicle">
+            </section>
+            <div id="parameterFolders"></div>
+            <div class="sidebar-note">Dimensions in metres · angles in degrees.<br>Editable visual approximations.</div>
+        </aside>
+        <section class="preview" id="preview" aria-label="Interactive 3D vehicle preview">
+            <div id="canvasMount"></div>
+            <div class="preview-heading">
+                <div><span class="eyebrow">DESIGN PREVIEW</span><h2 id="aircraftName">Vehicle</h2></div>
+                <span class="live-badge"><span></span> LIVE</span>
+            </div>
+            <div class="viewbar" aria-label="Camera views">
+                <button data-view="perspective" class="active" aria-pressed="true">3D</button>
+                <button data-view="side" aria-pressed="false">Side</button>
+                <button data-view="top" aria-pressed="false">Top</button>
+                <button data-view="front" aria-pressed="false">Front</button>
+                <span class="divider"></span><button id="fitView" title="Fit the vehicle in the view (F)">Fit <kbd>F</kbd></button>
+            </div>
+            <div class="preview-options">
+                <label><input id="showGrid" type="checkbox" checked> Grid</label>
+                <label><input id="wireframe" type="checkbox"> Wireframe</label>
+                <label><input id="autoRotate" type="checkbox"> Orbit</label>
+                <label><input id="nightPreview" type="checkbox"> Night</label>
+                <label><input id="animateLights" type="checkbox" checked> Flash lights</label>
+                <label><input id="animateProps" type="checkbox"> <span id="spinLabel">Spin rotors / props</span></label>
+                <button id="screenshot" title="Save a PNG of the current 3D view">Snapshot</button>
+                <button id="fullscreen" title="Toggle browser fullscreen">⛶ <span class="sr-only">Fullscreen</span></button>
+            </div>
+            <div id="error" class="error" role="alert" hidden></div>
+            <div class="preview-bottom">
+                <div class="metrics">
+                    <div><span id="lengthLabel">FUSELAGE</span><strong id="lengthMetric">—</strong></div>
+                    <div><span id="spanLabel">WINGSPAN</span><strong id="spanMetric">—</strong></div>
+                    <div><span id="areaLabel">WING AREA</span><strong id="areaMetric">—</strong></div>
+                    <div><span id="aspectLabel">ASPECT RATIO</span><strong id="aspectMetric">—</strong></div>
+                </div>
+                <p class="orbit-hint">Drag to orbit <span>·</span> Scroll to zoom <span>·</span> Right-drag to pan</p>
+            </div>
+        </section>
+    </main>
+    <footer><span id="status" role="status">Starting 3D preview…</span><span id="geometryStats"></span><a href="README.md" target="_blank" rel="noopener noreferrer">Help & model conventions ↗</a></footer>
+    <script type="module">
+        import("./app.js?v=__BUILD_V__").catch(error => {
+            document.getElementById("status").textContent = "Preview could not start.";
+            const panel = document.getElementById("error");
+            panel.hidden = false;
+            panel.textContent = "Unable to start the 3D preview. Enable WebGL in your browser and reload. " + error.message;
+            console.error(error);
+        });
+    </script>
+</body>
+</html>

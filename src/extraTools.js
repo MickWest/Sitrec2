@@ -22,4 +22,5 @@ export const EXTRA_TOOLS = [
     {key: "compass", path: "compass/index.html"},
     {key: "shf", path: "shf/index.html", perBuild: true},
     {key: "psfStudio", path: "psf/index.html"},
+    {key: "aircraftDesigner", path: "vehicles/index.html"},
 ];

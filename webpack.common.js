@@ -214,6 +214,7 @@ module.exports = (env = {}) => ({
     },
     module: {
         rules: [
+            {resourceQuery: /raw/, type: "asset/source"},
             {
                 test: /\.ts$/,
                 loader: 'esbuild-loader',
@@ -223,6 +224,7 @@ module.exports = (env = {}) => ({
             },
             {
                 test: /\.css$/,
+                resourceQuery: {not: [/raw/]},
                 use: [
                     MiniCssExtractPlugin.loader,
                     'css-loader',
