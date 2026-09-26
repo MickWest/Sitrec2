@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import {normalizeParameters, usesCanopy, usesAirlinerWindscreen} from "./parameters.js";
+import {normalizeParameters, usesCanopy, usesAirlinerWindscreen} from "./aircraftSchema.js";
 
 const rad = Math.PI / 180;
 const mix = THREE.MathUtils.lerp;

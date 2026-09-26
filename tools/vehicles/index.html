@@ -13,6 +13,18 @@
         "./vendor/three.core.js": "./vendor/three.core.js?v=__BUILD_V__",
         "three/addons/controls/OrbitControls.js": "./vendor/OrbitControls.js?v=__BUILD_V__",
         "three/addons/exporters/GLTFExporter.js": "./vendor/GLTFExporter.js?v=__BUILD_V__",
+        "./generator.js": "./generator.js?v=__BUILD_V__",
+        "./motion.js": "./motion.js?v=__BUILD_V__",
+        "./exportGLB.js": "./exportGLB.js?v=__BUILD_V__",
+        "./files.js": "./files.js?v=__BUILD_V__",
+        "./catalog.js": "./catalog.js?v=__BUILD_V__",
+        "./studio.js": "./studio.js?v=__BUILD_V__",
+        "./preview.js": "./preview.js?v=__BUILD_V__",
+        "./designer.js": "./designer.js?v=__BUILD_V__",
+        "./aircraftSchema.js": "./aircraftSchema.js?v=__BUILD_V__",
+        "./vehicleSchema.js": "./vehicleSchema.js?v=__BUILD_V__",
+        "./recipeFormat.js": "./recipeFormat.js?v=__BUILD_V__",
+        "./recipe.js": "./recipe.js?v=__BUILD_V__",
         "./parameters.js": "./parameters.js?v=__BUILD_V__",
         "./airlinerPresets.js": "./airlinerPresets.js?v=__BUILD_V__",
         "./militaryPresets.js": "./militaryPresets.js?v=__BUILD_V__",
@@ -49,12 +61,9 @@
                 <label for="presetSearch" class="sr-only">Search vehicles, region or role</label>
                 <input id="presetSearch" type="search" placeholder="Search vehicles or role…" autocomplete="off">
                 <label for="presetKind" class="sr-only">Vehicle type</label>
-                <select id="presetKind"><option value="">All vehicle types</option><option value="car">Cars</option><option value="truck">Trucks, vans &amp; buses</option><option value="aircraft">Fixed-wing aircraft</option><option value="helicopter">Helicopters &amp; tiltrotors</option><option value="drone">Drones</option><option value="balloon">Balloons &amp; sky lanterns</option></select>
+                <select id="presetKind"></select>
                 <label for="presetRegion" class="sr-only">Preset region</label>
-                <select id="presetRegion" aria-label="Preset region">
-                    <option value="">All vehicles</option><option value="civil">Civil & general</option>
-                    <option>US</option><option>Europe</option><option>China</option><option>Iran</option><option>Russia</option>
-                </select>
+                <select id="presetRegion" aria-label="Preset region"></select>
                 <label for="presetSelect" class="sr-only">Vehicle preset</label>
                 <div class="preset-cycle"><button id="previousPreset" title="Previous matching preset (← or [)" aria-label="Previous preset">‹</button><select id="presetSelect"></select><button id="nextPreset" title="Next matching preset (→ or ])" aria-label="Next preset">›</button></div>
                 <span id="presetResults" class="preset-results" role="status"></span>
@@ -62,7 +71,7 @@
                 <div id="presetReference" class="preset-reference" hidden>
                     <span id="presetDimensions"></span>
                     <p id="presetDescription"></p>
-                    <a id="presetSource" target="_blank" rel="noopener">Reference ↗</a>
+                    <a id="presetSource" target="_blank" rel="noopener noreferrer">Reference ↗</a>
                 </div>
                 <div class="name-row"><label for="designName">Design name</label><button id="resetPreset" class="text-button">Reset preset</button></div>
                 <input id="designName" type="text" maxlength="100" value="My vehicle">
@@ -105,7 +114,7 @@
             </div>
         </section>
     </main>
-    <footer><span id="status" role="status">Starting 3D preview…</span><span id="geometryStats"></span><a href="README.md" target="_blank" rel="noopener">Help & model conventions ↗</a></footer>
+    <footer><span id="status" role="status">Starting 3D preview…</span><span id="geometryStats"></span><a href="README.md" target="_blank" rel="noopener noreferrer">Help & model conventions ↗</a></footer>
     <script type="module">
         import("./app.js?v=__BUILD_V__").catch(error => {
             document.getElementById("status").textContent = "Preview could not start.";

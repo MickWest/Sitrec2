@@ -104,6 +104,8 @@ import {
     materialTypes,
 } from "./CNode3DObjectGeometry";
 import {reflectionMethods} from "./CNode3DObjectReflection";
+import {proceduralObjectMethods} from "./CNode3DObjectProcedural";
+import {copyProceduralModel} from "../../tools/vehicles/recipeFormat.js";
 import {ObjectFlock} from "../ObjectFlock";
 import {installTerrestrialRefractionOnShaderMaterial} from "../atmosphere/terrestrialRefraction";
 
@@ -246,7 +248,7 @@ export class CNode3DObject extends CNode3DGroup {
         this.modelOrGeometry = v.modelOrGeometry;
         // if we don't have one, infer it from the presence of either "model" or geometry" in the parameters
         if (this.modelOrGeometry === undefined) {
-            if (v.model !== undefined) {
+            if (v.model !== undefined || v.proceduralModel) {
                 this.modelOrGeometry = "model";
             } else {
                 this.modelOrGeometry = "geometry";
@@ -263,7 +265,10 @@ export class CNode3DObject extends CNode3DGroup {
 
         this.selectModel = resolveModelAlias(v.model ?? "F/A-18F");
         this.modelMenu = this.gui.add(this, "selectModel", Object.keys(ModelFiles)).name(t("nodes3dObject.model.label")).onChange((v) => {
-            this.modelOrGeometry = "model"
+            this.modelOrGeometry = "model";
+            this.proceduralModel = null;
+            this.vehicleLightOverrides = {};
+            this._vehicleSpinParts = [];
             this.rebuild();
             setRenderOne(true)
         })
@@ -271,6 +276,7 @@ export class CNode3DObject extends CNode3DGroup {
             .tooltip(t("nodes3dObject.model.tooltip"));
 
         this.modelMenu.isCommon = true;
+        this.setupVehicleControls(v);
 
         // "Flock": draw this object as many birds, in formation about its track, in place
         // of the one. The birds are whatever the model or geometry is. See ObjectFlock.js.
@@ -1079,6 +1085,8 @@ ${trackPlacemark}    </Document>
             color: this.color,
             modelOrGeometry: this.modelOrGeometry,
             model: this.selectModel,
+            ...(this.proceduralModel ? {proceduralModel: copyProceduralModel(this.proceduralModel),
+                vehicleAnimation: this.vehicleAnimation, vehicleLightOverrides: this.captureVehicleOverrides()} : {}),
             common: commonCopy,
             geometryParams: this.geometryParams,
             materialParams: this.materialParams,
@@ -1098,6 +1106,9 @@ ${trackPlacemark}    </Document>
         this.color = v.color;
         this.modelOrGeometry = v.modelOrGeometry;
         this.selectModel = resolveModelAlias(v.model);
+        this.proceduralModel = copyProceduralModel(v.proceduralModel);
+        this.vehicleAnimation = v.vehicleAnimation ?? true;
+        this.vehicleLightOverrides = v.vehicleLightOverrides ?? {};
 
 
 
@@ -1339,6 +1350,9 @@ ${trackPlacemark}    </Document>
             }
         });
 
+        this.updateVehicleControls();
+        if (this.proceduralModel && this.modelOrGeometry === "model") this.modelMenu.hide();
+
         // Handle material folder with custom logic (depends on both mode and applyMaterial setting)
         if (this.materialFolder) {
             if (this.modelOrGeometry === "model" && !this.common.applyMaterial) {
@@ -1389,6 +1403,14 @@ ${trackPlacemark}    </Document>
 
         this.rebuildMaterial();
 
+
+        if (this.modelOrGeometry === "model" && this.proceduralModel) {
+            if (newType) this.destroyNonCommonUI(this.gui);
+            this.rebuildProceduralModel();
+            this.applyMaterialToModel();
+            this.rebuildBoundingBox();
+            return;
+        }
 
         if (this.modelOrGeometry === "model") {
             // Remove geometry parameters from UI when switching to model mode
@@ -1450,8 +1472,9 @@ ${trackPlacemark}    </Document>
                     // this.model with the wrong model (last-writer-wins) and desync it from
                     // this.currentModel — the same class of bug as the video selection race.
                     // Discard the stale result, keeping Globals.pendingActions balanced.
-                    if (model !== this.currentModel) {
+                    if (this._vehicleDisposed || model !== this.currentModel) {
                         console.warn(`Discarding stale model load "${model.file}" (current model is now "${this.currentModel?.file}")`);
+                        disposeScene(modelAsset.scene);
                         Globals.pendingActions--;
                         return;
                     }
@@ -1462,48 +1485,7 @@ ${trackPlacemark}    </Document>
                         // destroy the existing object AFTER the new one is loaded
                         // otherwise we might start loading a new object before the last one had finished loading
                         // so the first one will still get added
-                        this.destroyObject();
-                        this.destroyLights();
-
-                        this.model = modelAsset.scene;
-                        this.applyModelFilenameParameters(modelAsset);
-                        this.captureModelSourceMaterials();
-
-                        if (Globals.shadowsEnabled) {
-                            this.model.traverse((child) => {
-                                if (child.isMesh) {
-                                    child.castShadow = true;
-                                    child.receiveShadow = true;
-                                }
-                            });
-                        }
-
-                        this.extractLightsFromModel(this.model);
-
-                        this.group.add(this.model);
-                        
-                        // Cache the bounding sphere in local coordinates for efficient camera collision detection
-                        this.cachedBoundingSphere = computeGroupBoundingSphere(this.model);
-                        console.log("Cached bounding sphere for model:", model.file, "radius:", this.cachedBoundingSphere.radius);
-
-                        // Cache half extents of the local bounding box for gradient mapping
-                        const modelBox = computeLocalBoundingBox(this.model);
-                        this.cachedModelLength = modelBox.max.z - modelBox.min.z;
-                        this.cachedHalfHeight = (modelBox.max.y - modelBox.min.y) / 2;
-                        this.cachedHalfLength = (modelBox.max.z - modelBox.min.z) / 2;
-
-                        // Cache the height from center to lowest point for ground clamping
-                        this.cachedCenterToLowestPoint = computeCenterToLowestPoint(this.model);
-                        console.log("Cached center to lowest point for model:", model.file, "height:", this.cachedCenterToLowestPoint);
-                        
-                        this.propagateLayerMask()
-                        this.recalculate()
-                        this.applyMaterialToModel();
-                        this.rebuildBoundingBox();
-                        this.flock?.rebuildMeshes();
-                        console.log("ADDED TO SCENE : ", model.file);
-                        this.noteShadowCasterState("model-loaded");
-                        setRenderOne(true);
+                        this.installModelAsset(modelAsset, model.file);
 
                     }
                     Globals.pendingActions--;
@@ -1520,6 +1502,8 @@ ${trackPlacemark}    </Document>
         }
 
 
+        this.currentModel = undefined;
+        this._vehicleSpinParts = [];
         this.destroyObject();
         this.destroyLights();
 
@@ -2517,6 +2501,9 @@ ${trackPlacemark}    </Document>
 
 
     dispose() {
+        this._vehicleDisposed = true;
+        this.currentModel = undefined;
+        this._vehicleDialog?.dispose();
         this.cleanUpReflectionAnalysis();
         if (this.reflectionView) {
             this.reflectionView.dispose();
@@ -2533,6 +2520,57 @@ ${trackPlacemark}    </Document>
         this.gui.destroy();
         this.destroyObject();
         super.dispose();
+    }
+
+    installModelAsset(modelAsset, label, applyFilename = true) {
+        this.destroyObject();
+        this.destroyLights();
+
+        this.model = modelAsset.scene;
+        // glTF sanitizes node names. Stable lamp roles keep saved light controls
+        // attached to the same light when a procedural vehicle is frozen.
+        this.model.traverse(child => {
+            if (child.isLight && child.userData.vehicleLight && typeof child.userData.role === "string") child.name = child.userData.role;
+        });
+        if (applyFilename) this.applyModelFilenameParameters(modelAsset);
+        this.captureModelSourceMaterials();
+
+        if (Globals.shadowsEnabled) {
+            this.model.traverse((child) => {
+                if (child.isMesh) {
+                    child.castShadow = true;
+                    child.receiveShadow = true;
+                }
+            });
+        }
+
+        this.extractLightsFromModel(this.model);
+        this.configureVehicleModel(modelAsset);
+
+        this.group.add(this.model);
+
+        // Cache the bounding sphere in local coordinates for efficient camera collision detection
+        this.cachedBoundingSphere = computeGroupBoundingSphere(this.model);
+        console.log("Cached bounding sphere for model:", label, "radius:", this.cachedBoundingSphere.radius);
+
+        // Cache half extents of the local bounding box for gradient mapping
+        const modelBox = computeLocalBoundingBox(this.model);
+        this.cachedModelLength = modelBox.max.z - modelBox.min.z;
+        this.cachedHalfHeight = (modelBox.max.y - modelBox.min.y) / 2;
+        this.cachedHalfLength = (modelBox.max.z - modelBox.min.z) / 2;
+
+        // Cache the height from center to lowest point for ground clamping
+        this.cachedCenterToLowestPoint = computeCenterToLowestPoint(this.model);
+        console.log("Cached center to lowest point for model:", label, "height:", this.cachedCenterToLowestPoint);
+
+        this.propagateLayerMask()
+        this.recalculate()
+        this.applyMaterialToModel();
+        this.rebuildBoundingBox();
+        this.flock?.rebuildMeshes();
+        console.log("ADDED TO SCENE : ", label);
+        this.noteShadowCasterState("model-loaded");
+        setRenderOne(true);
     }
 
     applyModelFilenameParameters(modelAsset) {
@@ -2583,6 +2621,7 @@ ${trackPlacemark}    </Document>
 
     update(f) {
         super.update(f);
+        this.updateVehicleAnimation(f);
         if (this.flockEnabled) this.flock.update(f);
 
         // if (this.spriteText) {
@@ -2621,3 +2660,5 @@ ${trackPlacemark}    </Document>
 
 // Install reflection-analysis prototype methods.
 Object.assign(CNode3DObject.prototype, reflectionMethods);
+
+Object.assign(CNode3DObject.prototype, proceduralObjectMethods);

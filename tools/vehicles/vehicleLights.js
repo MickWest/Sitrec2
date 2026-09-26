@@ -35,7 +35,7 @@ export function addVehicleLights(model, p) {
         const intensity=(strength??(drone?Math.max(.02,R*R*25):kind==="spot"?2500:flash?1000:500))*p.lightGain;
         const light=kind==="spot"?new THREE.SpotLight(color,intensity,0,p.landingCone*Math.PI/180,0.3,2):new THREE.PointLight(color,intensity,0,2);
         light.name=name;light.position.set(...position);root.add(light);
-        light.userData={vehicleLight:true,role:name,placement:"Procedural family layout",...(flash?{strobeEvery:p.flashPeriod,strobeLength:Math.min(p.flashDuration,p.flashPeriod*0.8)}:{})};
+        light.userData={vehicleLight:true,role:name,placement:"Procedural family layout",...(flash?{strobeEvery:p.flashPeriod,strobeLength:Math.min(p.flashDuration,p.flashPeriod*0.8),strobeOffset:phase*p.flashPeriod}:{})};
         if(kind==="spot") {
             light.quaternion.setFromUnitVectors(new THREE.Vector3(0,0,-1),new THREE.Vector3(0,Math.sin(p.landingAim*Math.PI/180),Math.cos(p.landingAim*Math.PI/180)));
             const target=new THREE.Object3D();target.name=`${name} target`;target.position.set(0,0,-1);light.add(target);light.target=target;
@@ -46,6 +46,9 @@ export function addVehicleLights(model, p) {
             lens=new THREE.Mesh(new THREE.SphereGeometry(radius,10,8),new THREE.MeshStandardMaterial({color,emissive:color,emissiveIntensity:1.8,roughness:0.25}));
             lens.name=`${name} lens`;lens.position.set(...position);root.add(lens);
         } else {lens.material=lens.material.clone();lens.material.emissive.set(color);}
+        lens.userData.vehicleLightLens = name;
+        lens.material.userData.vehicleLightLens = name;
+        lens.material.emissiveIntensity = 1.8;
         lamps.push({light,lens,intensity,phase});
         return light;
     }

@@ -1,9 +1,47 @@
 # Vehicle Designer
 
+## Use a procedural model in Sitrec
+
+Open an object's controls and select **Browse vehicles…**. The visual picker has
+all 292 presets, with search, type/region filters, Favorites, Recently used, and
+**My models**. Select a tile to orbit its preview, then **Use this vehicle**.
+**Customize…** opens the full live designer. **Apply to object** accepts the
+draft; **Cancel** leaves the scene unchanged. **Edit design…** reopens the
+current object's parameters and preserves its independent size and material
+settings. **Use file model** returns to the existing model selector.
+
+Sitches save a complete parameter snapshot, its name and a generator revision.
+They do not depend on the preset still existing, or on another user's library.
+My models are stored locally in IndexedDB; use **Export design** / **Import
+design…** to move editable recipes between browsers. Older standalone aircraft
+and vehicle JSON files are accepted. Recipe previews and the catalog load only
+when needed; opening an ordinary sitch does not load the designer.
+
+**Freeze as GLB** stores generated geometry, materials and lights as an ordinary
+sitch asset. Normal local-folder and shared-sitch saving includes that asset.
+The parameter snapshot remains attached, so **Edit design…** can create a new
+procedural version later. Frozen geometry can still load when its generator
+revision is unavailable. For long-term exact geometry, keep a frozen copy.
+Procedural strobes and moving parts use simulation-frame time, so scrubbing and
+frame exports repeat the same pose. Light edits in the object's Lights folder
+survive design edits and freezing.
+
+## Standalone editor
+
 Open **Sitrec → Extra Tools → Vehicle Designer**, or `tools/vehicles/index.html`
 on a built Sitrec site. It fills the browser window, with collapsible parameter
 folders on the left and a Three.js preview on the right. On narrow screens the
 preview sits above the controls. The fullscreen button hides browser chrome where supported.
+
+Both entry points use the same editor markup, styles, parameter controls and
+model code. Shared modules live in `tools/vehicles/`: `generator.js` prepares
+models and metadata, `exportGLB.js` handles clean exports, `studio.js` handles
+preview rendering and camera fitting, `motion.js` poses moving parts, and
+`catalog.js` / `files.js` handle filtering and recipe files. The Sitrec modules
+adapt these to object controls, scene persistence and the model library.
+Keep vehicle behavior in the shared modules; the standalone entry point only
+mounts the editor. GLB export and Freeze as GLB use the same exporter and retain
+the same recipe, light and motion metadata.
 
 Choose one of 292 presets, then drag sliders or type exact values. Slider `input`
 events update the mesh on the next animation frame, including during a drag.

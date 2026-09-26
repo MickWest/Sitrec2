@@ -1,6 +1,6 @@
-:root {font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: #dbe4ef; background: #101923; font-size: 13px; --line: #2a3848; --muted: #91a2b6; --accent: #70d2cb;}
+:root, :host {font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: #dbe4ef; background: #101923; font-size: 13px; --line: #2a3848; --muted: #91a2b6; --accent: #70d2cb;}
 * {box-sizing: border-box;}
-body {margin: 0; height: 100vh; height: 100dvh; display: flex; flex-direction: column; overflow: hidden;}
+body, .designer-root {margin: 0; height: 100vh; height: 100dvh; display: flex; flex-direction: column; overflow: hidden;}
 button, input, select {font: inherit;}
 button, select, input[type=text], input[type=search], input[type=number] {border: 1px solid #3b4c60; border-radius: 5px; color: #e2ebf5; background: #1b2939;}
 button {padding: 8px 13px; cursor: pointer; white-space: nowrap;}

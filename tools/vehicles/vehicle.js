@@ -1,6 +1,6 @@
 import {buildAircraft, disposeAircraft} from "./aircraft.js";
 import {buildRoadVehicle} from "./roadVehicle.js";
-import {isRoad, isMultirotor, isBalloon, normalizeParameters} from "./vehicleParameters.js";
+import {isRoad, isMultirotor, isBalloon, normalizeParameters} from "./vehicleSchema.js";
 import {buildMultirotor} from "./multirotor.js";
 import {buildBalloon} from "./balloon.js";
 import {addVehicleLights} from "./vehicleLights.js";
