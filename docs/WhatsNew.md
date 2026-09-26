@@ -9,6 +9,12 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.171.0 (2026-09-26)
+
+### New Features
+- **Vehicle Designer** (Sitrec → Extra Tools → Vehicle Designer): a new tool to build cars, trucks, aircraft, helicopters, drones, balloons and sky lanterns from 292 searchable presets. Change them with live sliders, adjust their lights and paint (including a SITREC livery), save the design, and export a GLB model.
+- **Procedural vehicles on objects** (Objects → *object* → **Browse vehicles…**): pick a vehicle from the same preset library, or **Customize…** it in the designer, and apply it to any object. The design is saved with the sitch. **Edit design…** changes it later, and **Freeze as GLB** stores it as a fixed model. Moving parts and flashing lights follow the video frame, so scrubbing and exports repeat exactly.
+
 ## Version 2.170.1 (2026-09-24)
 
 ### Improvements
