@@ -212,6 +212,7 @@ look-ahead limit. A query made at midday therefore skips ahead to the next dusk 
 | `sw.js` | Service worker (offline + installability); cache name carries the build stamp. |
 | `icons/`, `screenshots/` | App icons (incl. maskable + SVG) and manifest screenshots. |
 | `tools/test-*.mjs` | Node tests: foundation (geo/astro), engine, location, skyview; `verify-browser.mjs` is a headless end-to-end check (incl. PWA). |
+| `stats/` | Command-line tool: flares per night through a year and per hour, by latitude, as CSV and an Excel workbook with charts. It uses this engine. See `stats/README.md`. |
 
 ## Conventions
 

@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Starlink Flare Statistics</title>
+<link rel="stylesheet" href="viewer.css">
+</head>
+<body>
+<main class="page">
+  <header class="page-head">
+    <h1>Starlink Flare Statistics</h1>
+    <p class="run" id="runInfo">Open the output of <code>flare-stats.mjs</code> to see its charts.</p>
+  </header>
+
+  <section class="loader" id="loader">
+    <p>Choose the output folder (for example <code>flare-stats-out</code>), or drop its files on this page.
+       The page reads the files in your browser and uploads nothing.</p>
+    <div class="loader-buttons">
+      <label class="button">Open folder…<input type="file" id="pickFolder" webkitdirectory hidden></label>
+      <label class="button secondary">Open files…<input type="file" id="pickFiles" multiple accept=".csv,.json" hidden></label>
+    </div>
+    <p class="hint">To load from a URL instead, add <code>?data=&lt;folder URL&gt;/</code> to this page's address.</p>
+    <p class="error" id="loadError" hidden></p>
+  </section>
+
+  <div id="report" hidden>
+    <div class="controls" role="group" aria-label="Filters">
+      <div class="segmented" role="radiogroup" aria-label="Which flares">
+        <button type="button" role="radio" data-kind="visible" aria-checked="true">Visible flares</button>
+        <button type="button" role="radio" data-kind="all" aria-checked="false">All flares (incl. faint)</button>
+      </div>
+      <div class="legend" id="legend" role="group" aria-label="Latitudes (select to show or hide)"></div>
+      <label class="button secondary small">Open other results…<input type="file" id="pickAgain" webkitdirectory hidden></label>
+    </div>
+    <p class="note" id="seriesNote" hidden></p>
+
+    <section class="card">
+      <h2>Flares per night through the year</h2>
+      <p class="sub">Each night runs from local solar noon to the next noon.</p>
+      <div class="chart" id="chartNight"></div>
+      <details><summary>Table</summary><div class="table-wrap" id="tableNight"></div></details>
+    </section>
+
+    <section class="card">
+      <h2>Flares per hour</h2>
+      <p class="sub">Mean flares per night that peak in each hour of local mean solar time, over all nights scanned.</p>
+      <div class="chart" id="chartHour"></div>
+      <details><summary>Table</summary><div class="table-wrap" id="tableHour"></div></details>
+    </section>
+
+    <section class="card">
+      <h2>Flares per hour, by month</h2>
+      <p class="sub">The same as above for each month. All months use one scale.</p>
+      <div class="multiples" id="chartMonths"></div>
+      <details><summary>Table</summary><div class="table-wrap" id="tableMonths"></div></details>
+    </section>
+
+    <section class="card">
+      <h2>Summary</h2>
+      <div class="table-wrap" id="tableSummary"></div>
+    </section>
+  </div>
+</main>
+<script type="module" src="viewer.js"></script>
+</body>
+</html>

@@ -116,3 +116,6 @@ AGENTS.md
 !/deploy/aws/*.tfvars.example
 /deploy/aws/*.tfplan
 /deploy/aws/plan.json
+
+# Output of tools/shf/stats/flare-stats.mjs (default --out directory)
+flare-stats-out/

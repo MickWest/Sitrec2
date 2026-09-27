@@ -58,7 +58,9 @@ patterns.push({ from: "tools", to: "./tools", globOptions: {
         "**/tools/SitrecBridge/README-dev.md",
         "**/tools/SitrecBridge/tests/dev-browser.test.js",
         "**/tools/SitrecBridge/tests_browser/dev-extension.test.mjs",
-        "**/sitrec-comms/node_modules/**", "**/sitrec-comms/package-lock.json"],
+        "**/sitrec-comms/node_modules/**", "**/sitrec-comms/package-lock.json",
+        // Output of tools/shf/stats/flare-stats.mjs, if it is run from inside tools/.
+        "**/flare-stats-out/**"],
 } });
 
 // Cache-busting for the standalone Starlink Flare tool: its index.html (which the
