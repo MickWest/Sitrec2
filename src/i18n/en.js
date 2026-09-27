@@ -109,6 +109,14 @@ const en = {
                 title: "Views",
                 tooltip: "Show or hide views (windows) like the look view, the video, the main view, as well as overlays like the MQ9UI",
             },
+            linesOfSight: {
+                title: "Lines of Sight (LOS)",
+                tooltip: "The lines of sight from the camera over the sitch, and the line for the current frame",
+            },
+            frustum: {
+                title: "Frustum",
+                tooltip: "The camera view frustum, and video projected into the frustum or onto the ground",
+            },
             graphs: {
                 title: "Graphs",
                 tooltip: "Show or hide various graphs",
@@ -2293,6 +2301,22 @@ const en = {
         videoOpacity: {
             label: "Video Opacity",
             tooltip: "Opacity of the projected video overlay",
+        },
+        frustumDistance: {
+            label: "Frustum Distance",
+            tooltip: "Distance from the camera to the far end of the displayed frustum",
+        },
+        showFrustumDistance: {
+            label: "Show Frustum Distance",
+            tooltip: "Show a label with the frustum distance at the far end of the frustum",
+        },
+        shadedFrustum: {
+            label: "Shaded Frustum",
+            tooltip: "Fill the four sides of the frustum with a transparent version of the frustum color",
+        },
+        frustumSidesPercent: {
+            label: "Frustum Sides %",
+            tooltip: "Opacity of the shaded frustum sides, as a percentage of the frustum edge color",
         },
     },
 

@@ -1,6 +1,7 @@
 //var matLineWhiteThin = makeMatLine(0xFFFFFF, 0.75);
 import {disposeMatLine, makeMatLine} from "../MatLines";
-import {guiShowHide, setRenderOne, Sit} from "../Globals";
+import {setRenderOne, Sit} from "../Globals";
+import {getLOSFolder} from "../LOSFrustumMenu";
 import {DebugSphere, dispose, intersectSurface} from "../threeExt";
 import {par} from "../par";
 import {metersFromMiles} from "../utils";
@@ -102,9 +103,10 @@ export class CNodeDisplayLOS extends CNode3DGroup {
 
         this.recalculate()
 
-        this.showHider(t("showHiders.linesOfSight.label"), "o", t("showHiders.linesOfSight.tooltip"))
+        const gui = getLOSFolder();
+        this.showHider(t("showHiders.linesOfSight.label"), "o", t("showHiders.linesOfSight.tooltip"), gui)
             .shareAs(viewMenuKey("mainView", "los"));
-        guiShowHide.add(this, "hideSomeLOS", 0, 10, 1)
+        gui.add(this, "hideSomeLOS", 0, 10, 1)
             .name(t("showHiders.hideSomeLOS.label", {defaultValue: "Hide Some LOS"}))
             .tooltip(t("showHiders.hideSomeLOS.tooltip", {defaultValue:
                 "Thin out the displayed lines of sight: 0 shows all, n shows only every 2ⁿ-th line (3 = every 8th)"}))
@@ -113,7 +115,7 @@ export class CNodeDisplayLOS extends CNode3DGroup {
                 this.recalculate();
                 setRenderOne(true);
             });
-        guiShowHide.add(this, "showCurrentLOS")
+        gui.add(this, "showCurrentLOS")
             .name(t("showHiders.currentLOS.label", {defaultValue: "Current LOS"}))
             .tooltip(t("showHiders.currentLOS.tooltip", {defaultValue: "Show only the current frame's line of sight"}))
             .listen()

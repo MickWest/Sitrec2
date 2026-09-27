@@ -89,8 +89,8 @@ export class CNode3D extends CNode {
     }
 
     // add a gui checkbox toggle for a member variable
-    guiToggle(member, name, tip) {
-        const ctrl = guiShowHide.add(this, member).name(name ?? member).listen().onChange((v) => {setRenderOne(true)})
+    guiToggle(member, name, tip, gui = guiShowHide) {
+        const ctrl = gui.add(this, member).name(name ?? member).listen().onChange((v) => {setRenderOne(true)})
         if (tip) ctrl.tooltip(tip);
 
         // as its something controlled by the UI, we need to ensure that it's serialized

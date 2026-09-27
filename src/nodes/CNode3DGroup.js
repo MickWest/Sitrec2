@@ -105,10 +105,11 @@ export class CNode3DGroup extends CNode3D {
     // Returns the controller, so a call site that wants this toggle to ALSO appear somewhere
     // else can chain onto it — `.shareAs(viewMenuKey("mainView", "los"))` publishes it to the
     // view header menus and icons (src/ViewUIBarMenus.js) without duplicating the flag.
-    showHider(name, key, tip) {
+    showHider(name, key, tip, gui = guiShowHide) {
         // "key" is the keystroke to show/hide the object
+        // "gui" is the menu or folder to put it in (default: the Show menu)
         this.visible = this.group.visible;
-        const hider = guiShowHide.add(this, "visible").name(name).listen().onChange((v) => {
+        const hider = gui.add(this, "visible").name(name).listen().onChange((v) => {
             this.show(v);
             setRenderOne(true);
         })

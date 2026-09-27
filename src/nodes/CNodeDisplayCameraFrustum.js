@@ -3,10 +3,12 @@ import {LineGeometry, updateLineSegmentPositions} from "../SceneLineGeometry";
 import {Line2} from "three/addons/lines/Line2.js";
 import {CNode3DGroup} from "./CNode3DGroup";
 import {DebugArrow, removeDebugArrow} from "../threeExt";
-import {Globals, guiMenus, guiShowHide, NodeMan, setRenderOne, Units} from "../Globals";
+import {Globals, guiMenus, NodeMan, setRenderOne, Units} from "../Globals";
 import {disposeMatLine, makeMatLine} from "../MatLines";
 import {LineSegmentsGeometry} from "three/addons/lines/LineSegmentsGeometry.js";
 import {
+    BufferAttribute,
+    BufferGeometry,
     CanvasTexture,
     DoubleSide,
     Mesh,
@@ -27,6 +29,8 @@ import {intersectSphere2} from "../threeUtils";
 import {CNodeGUIValue} from "./CNodeGUIValue";
 import {t} from "../i18n";
 import {viewMenuKey} from "../ViewUIBarMenus";
+import {getFrustumFolder} from "../LOSFrustumMenu";
+import {CNodeLabel3D} from "./CNodeLabels3D";
 
 export class CNodeDisplayCameraFrustumATFLIR extends CNode3DGroup {
     constructor(v) {
@@ -96,26 +100,81 @@ export class CNodeDisplayCameraFrustum extends CNode3DGroup {
         this.showQuad = v.showQuad ?? false;
 
         this.showFrustum = v.showFrustum ?? true;
-        this.showHider(t("showHiders.cameraViewFrustum.label"), undefined, t("showHiders.cameraViewFrustum.tooltip"))
+        const gui = getFrustumFolder();
+        this.showHider(t("showHiders.cameraViewFrustum.label"), undefined, t("showHiders.cameraViewFrustum.tooltip"), gui)
             .shareAs(viewMenuKey("mainView", "frustum"));
-        this.guiToggle("showQuad", t("cameraFrustum.frustumGroundQuad.label"), t("cameraFrustum.frustumGroundQuad.tooltip"))
+
+        // With a target track the far end follows the target every frame (see update()),
+        // so the distance slider only exists when the radius is a fixed value.
+        if (this.in.targetTrack === undefined) {
+            this.defaultRadius = this.radius;
+            const _radiusBig = Number(Units.mToBig(this.radius, 3));
+            this.frustumDistanceNode = new CNodeGUIValue({
+                id: this.id + "_frustumDistance",
+                value: _radiusBig,
+                start: 0,
+                end: _radiusBig * 2,
+                step: Number(Units.mToBig(10, 5)),
+                desc: t("cameraFrustum.frustumDistance.label"),
+                tooltip: t("cameraFrustum.frustumDistance.tooltip"),
+                unitType: "big",
+                elastic: true,
+                elasticMin: Number(Units.mToBig(1000, 3)),
+                elasticMax: Number(Units.mToBig(10000000, 3)),
+            }, gui);
+        }
+
+        this.showFrustumDistance = v.showFrustumDistance ?? false;
+        gui.add(this, "showFrustumDistance")
+            .name(t("cameraFrustum.showFrustumDistance.label"))
+            .tooltip(t("cameraFrustum.showFrustumDistance.tooltip"))
+            .listen().onChange(() => {
+                this.updateDistanceLabel();
+                setRenderOne(true);
+            })
+        this.addSimpleSerial("showFrustumDistance")
+        this.distanceLabel = null;
+
+        this.shadedFrustum = v.shadedFrustum ?? false;
+        gui.add(this, "shadedFrustum")
+            .name(t("cameraFrustum.shadedFrustum.label"))
+            .tooltip(t("cameraFrustum.shadedFrustum.tooltip"))
+            .listen().onChange(() => {
+                this.rebuild();
+                setRenderOne(true);
+            })
+        this.addSimpleSerial("shadedFrustum")
+
+        this.frustumSidesPercent = v.frustumSidesPercent ?? 5;
+        gui.add(this, "frustumSidesPercent", 0, 100, 1)
+            .name(t("cameraFrustum.frustumSidesPercent.label"))
+            .tooltip(t("cameraFrustum.frustumSidesPercent.tooltip"))
+            .listen().onChange(() => {
+                if (this.sidesMaterial) this.sidesMaterial.opacity = this.frustumSidesPercent / 100;
+                setRenderOne(true);
+            })
+        this.addSimpleSerial("frustumSidesPercent")
+        this.sidesMesh = null;
+        this.sidesMaterial = null;
+
+        this.guiToggle("showQuad", t("cameraFrustum.frustumGroundQuad.label"), t("cameraFrustum.frustumGroundQuad.tooltip"), gui)
 
         this.showVideoInFrustum = false;
-        guiShowHide.add(this, "showVideoInFrustum").name(t("cameraFrustum.videoInFrustum.label")).tooltip(t("cameraFrustum.videoInFrustum.tooltip")).listen().onChange((v) => {
+        gui.add(this, "showVideoInFrustum").name(t("cameraFrustum.videoInFrustum.label")).tooltip(t("cameraFrustum.videoInFrustum.tooltip")).listen().onChange((v) => {
             this.updateVideoQuadVisibility();
             setRenderOne(true);
         })
         this.addSimpleSerial("showVideoInFrustum")
 
         this.showVideoOnGround = false;
-        guiShowHide.add(this, "showVideoOnGround").name(t("cameraFrustum.videoOnGround.label")).tooltip(t("cameraFrustum.videoOnGround.tooltip")).listen().onChange((v) => {
+        gui.add(this, "showVideoOnGround").name(t("cameraFrustum.videoOnGround.label")).tooltip(t("cameraFrustum.videoOnGround.tooltip")).listen().onChange((v) => {
             this.updateGroundVideoQuadVisibility();
             setRenderOne(true);
         })
         this.addSimpleSerial("showVideoOnGround")
 
         this.showGroundVideoInLookView = false;
-        guiShowHide.add(this, "showGroundVideoInLookView").name(t("cameraFrustum.groundVideoInLookView.label")).tooltip(t("cameraFrustum.groundVideoInLookView.tooltip")).listen().onChange((v) => {
+        gui.add(this, "showGroundVideoInLookView").name(t("cameraFrustum.groundVideoInLookView.label")).tooltip(t("cameraFrustum.groundVideoInLookView.tooltip")).listen().onChange((v) => {
             this.updateGroundVideoLayerMask();
             setRenderOne(true);
         }).shareAs(viewMenuKey("lookView", "groundVideo"))
@@ -134,7 +193,7 @@ export class CNodeDisplayCameraFrustum extends CNode3DGroup {
             step: _step,
             desc: "Video Distance",
             unitType: "big",
-        }, guiMenus.showhide);
+        }, gui);
 
         this.matchVideoAspect = false;
         guiMenus.camera.add(this, "matchVideoAspect").name(t("cameraFrustum.matchVideoAspect.label"))
@@ -143,7 +202,7 @@ export class CNodeDisplayCameraFrustum extends CNode3DGroup {
         this.addSimpleSerial("matchVideoAspect")
 
         this.videoOpacity = 1.0;
-        guiShowHide.add(this, "videoOpacity", 0, 1, 0.01).name(t("cameraFrustum.videoOpacity.label")).tooltip(t("cameraFrustum.videoOpacity.tooltip")).listen().onChange(() => {
+        gui.add(this, "videoOpacity", 0, 1, 0.01).name(t("cameraFrustum.videoOpacity.label")).tooltip(t("cameraFrustum.videoOpacity.tooltip")).listen().onChange(() => {
             if (this.videoQuadMaterial) {
                 this.videoQuadMaterial.opacity = this.videoOpacity;
             }
@@ -336,6 +395,63 @@ export class CNodeDisplayCameraFrustum extends CNode3DGroup {
         this.videoQuad.visible = true;
     }
 
+    // A text label at the centre of the frustum's far rectangle, giving the frustum distance.
+    // Made on first use and kept, since labels are drawn only when their own group is visible.
+    updateDistanceLabel() {
+        const show = this.showFrustumDistance && this.showFrustum && this.visible;
+        if (!show) {
+            if (this.distanceLabel) this.distanceLabel.group.visible = false;
+            return;
+        }
+        if (!this.distanceLabel) {
+            this.distanceLabel = new CNodeLabel3D({
+                id: this.id + "_distanceLabel",
+                groupNode: this.id,
+                layers: this.group.layers.mask,
+                textAlign: "center",
+            });
+        }
+        // world position of the far rectangle's centre (see rebuild(): d = radius - 2)
+        const far = this.group.localToWorld(new Vector3(0, 0, -(this.radius - 2)));
+        this.distanceLabel.position.copy(far);
+        this.distanceLabel.textPosition.copy(far);
+        this.distanceLabel.changeText(Units.withUnits(this.radius, 2, "big"));
+        this.distanceLabel.group.visible = true;
+    }
+
+    // The distance slider holds its value in the big units that were current when the graph was
+    // built. A save made before the slider existed has no value for it, and loading that save
+    // switches units WITHOUT converting GUI values (Units.modDeserialize), so the default would be
+    // read in the wrong unit. The marker says the save has the slider; without it, restate the
+    // default in the units just loaded. Units are applied before any node mods, so they are current.
+    modSerialize() {
+        const out = super.modSerialize();
+        if (this.frustumDistanceNode) out.hasFrustumDistance = true;
+        return out;
+    }
+
+    modDeserialize(v) {
+        super.modDeserialize(v);
+        if (this.frustumDistanceNode && !v.hasFrustumDistance) {
+            this.frustumDistanceNode.setValue(Number(Units.mToBig(this.defaultRadius, 3)), true);
+        }
+    }
+
+    show(visible = true) {
+        super.show(visible);
+        this.updateDistanceLabel?.();
+    }
+
+    dispose() {
+        if (this.sidesMesh) {
+            this.sidesMesh.geometry.dispose();
+            this.sidesMaterial.dispose();
+            this.sidesMesh = null;
+            this.sidesMaterial = null;
+        }
+        super.dispose();
+    }
+
     rebuild() {
 
         // TODO: This is rather messy in the way it handles colors and line materials
@@ -375,10 +491,11 @@ export class CNodeDisplayCameraFrustum extends CNode3DGroup {
                 effectiveAspect = this.videoAspect;
             }
         }
-        const shape = [fov, effectiveAspect, this.radius, this.step, this.units, this.showFrustum];
+        const shape = [fov, effectiveAspect, this.radius, this.step, this.units, this.showFrustum, this.shadedFrustum];
         if (!this.showQuad && !this.showVideoOnGround && this._lastFrustumShape
             && shape.every((value, i) => value === this._lastFrustumShape[i])) {
             if (this.line) this.line.material = this.matLine;
+            if (this.sidesMaterial) this.sidesMaterial.color.copy(color);
             return;
         }
         // Ground footprints still recompute as streamed terrain arrives. The
@@ -546,6 +663,43 @@ export class CNodeDisplayCameraFrustum extends CNode3DGroup {
         } else if (this.line) {
             this.line.visible = false;
         }
+
+        // The shaded sides: four triangles from the camera to the edges of the far rectangle,
+        // the same far rectangle the first four lines above run to.
+        if (this.showFrustum && this.shadedFrustum) {
+            const fw = line_points[3], fh = line_points[4], fd = line_points[5];
+            const sides = new Float32Array([
+                0, 0, 0,  fw,  fh, fd,  fw, -fh, fd,   // right
+                0, 0, 0,  fw, -fh, fd, -fw, -fh, fd,   // bottom
+                0, 0, 0, -fw, -fh, fd, -fw,  fh, fd,   // left
+                0, 0, 0, -fw,  fh, fd,  fw,  fh, fd,   // top
+            ]);
+            if (!this.sidesMesh) {
+                const geometry = new BufferGeometry();
+                geometry.setAttribute("position", new BufferAttribute(sides, 3));
+                this.sidesMaterial = new MeshBasicMaterial({
+                    color: color.clone(),
+                    side: DoubleSide,
+                    transparent: true,
+                    opacity: this.frustumSidesPercent / 100,
+                    depthWrite: false,
+                });
+                this.sidesMesh = new Mesh(geometry, this.sidesMaterial);
+                this.sidesMesh.layers.mask = this.group.layers.mask;
+                this.group.add(this.sidesMesh);
+                Globals.flatEarthPrepareObject?.(this.sidesMesh);
+            } else {
+                const position = this.sidesMesh.geometry.getAttribute("position");
+                position.array.set(sides);
+                position.needsUpdate = true;
+                this.sidesMesh.geometry.computeBoundingSphere();
+            }
+            this.sidesMaterial.color.copy(color);
+            this.sidesMaterial.opacity = this.frustumSidesPercent / 100;
+            this.sidesMesh.visible = true;
+        } else if (this.sidesMesh) {
+            this.sidesMesh.visible = false;
+        }
         this.propagateLayerMask();
         this.lastFOV = this.camera.fov;
 
@@ -564,6 +718,9 @@ export class CNodeDisplayCameraFrustum extends CNode3DGroup {
         if (this.in.targetTrack !== undefined) {
             const targetPos = this.in.targetTrack.p(f)
             this.radius = targetPos.clone().sub(this.camera.position).length()
+        } else if (this.frustumDistanceNode) {
+            // keep it clear of zero: rebuild() draws the far rectangle at radius - 2
+            this.radius = Math.max(3, this.frustumDistanceNode.getValueFrame(f));
         }
 
       //  this.label.changePosition(this.camera.position)
@@ -587,6 +744,7 @@ export class CNodeDisplayCameraFrustum extends CNode3DGroup {
             this.lastFOV = this.camera.fov;
             this.rebuild();
     //    }
+        this.updateDistanceLabel();
 
         this.updateVideoQuad(f);
         this.updateGroundVideoOverlay(f, this.groundWorldCorners);
