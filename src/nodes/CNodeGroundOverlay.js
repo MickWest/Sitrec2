@@ -1459,12 +1459,12 @@ export class CNodeGroundOverlay extends CNode3DGroup {
     createGUIFolder() {
         this.guiFolder = guiMenus.objects.addFolder(`Overlay: ${this.name}`);
         
-        addNameControl(this.guiFolder, this, {prefix: "Overlay"});
+        addNameControl(this.guiFolder, this, {prefix: "Overlay"}).keepLiveWhenFolderOff();
 
         this.guiFolder.add(this, 'visible').name(t("groundOverlay.visible.label")).onChange((value) => {
             this.show(value);
             setRenderOne(true);
-        }).onFinishChange(() => { CustomManager.saveGlobalSettings(true); });
+        }).onFinishChange(() => { CustomManager.saveGlobalSettings(true); }).asFolderToggle();
 
         const editModeData = {editMode: this.editMode};
         this.editModeController = this.guiFolder.add(editModeData, 'editMode').name(t("groundOverlay.editMode.label")).onChange((value) => {
@@ -1565,9 +1565,10 @@ export class CNodeGroundOverlay extends CNode3DGroup {
             if (this.extractClouds) this.applyCloudExtraction();
         });
 
-        this.guiFolder.add({goto: () => this.gotoOverlay()}, 'goto').name(t("groundOverlay.gotoOverlay.label"));
+        // Going to or deleting a hidden overlay still works, so these stay usable.
+        this.guiFolder.add({goto: () => this.gotoOverlay()}, 'goto').name(t("groundOverlay.gotoOverlay.label")).keepLiveWhenFolderOff();
 
-        this.guiFolder.add({remove: () => this.deleteOverlay()}, 'remove').name(t("groundOverlay.deleteOverlay.label"));
+        this.guiFolder.add({remove: () => this.deleteOverlay()}, 'remove').name(t("groundOverlay.deleteOverlay.label")).keepLiveWhenFolderOff();
         
         this.guiFolder.domElement.addEventListener('mouseenter', () => {
             this.showHighlightBorder();

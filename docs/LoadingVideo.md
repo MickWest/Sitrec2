@@ -95,7 +95,7 @@ you have moved the camera.
 bitrate, and any EXIF data. It appears for every video and image, even one with no EXIF.
 
 **Video → Video Readout** draws information over the video: the filename, frame number,
-timecode, timestamp, and dates and times in UTC or local time. **Show Video Readout** is the
+timecode, timestamp, and dates and times in UTC or local time. **Show Video Readout**, the checkbox on the folder title, is the
 master switch.
 
 ### Videos with MISB metadata
@@ -203,9 +203,9 @@ other.
 |---|---|
 | **Zoom %** | View → Video Zoom % |
 | **Rotation** | Video → Video Rotation |
-| **Readout** | Video → Video Readout → Show Video Readout |
+| **Readout** | Video → Video Readout (title checkbox) |
 | **Grid** | Video → Grid → Show |
-| **Annotations** | Video → Annotate → Show Annotations |
+| **Annotations** | Video → Annotate (title checkbox) |
 | **EXIF / Metadata** | Video → Show EXIF/Metadata |
 | **Remove Video** | Video → Remove Video |
 | **Adjustments** → Enable Effects, Brightness, Contrast | Video → Video Adjustments |
@@ -225,7 +225,7 @@ back to the previous zoom), and a **render** button that exports this view on it
 **Video → Video Adjustments**
 
 These change how the video *looks*, both on screen and in **Render Source Video**. They do not
-change the file. **Enable Video Effects** switches all of them off and on together, so you can
+change the file. **Enable Video Effects**, the checkbox on the folder title, switches all of them off and on together, so you can
 compare with the original quickly.
 
 | Control | Default | What it does |
@@ -244,7 +244,7 @@ compare with the original quickly.
 | **Hue Rotate** | 0 | Rotate the hue, in degrees |
 | **Invert** | off | Invert the colors exactly (255 minus each value) |
 | **Saturate** | 1 | Saturation multiplier (0 = gray) |
-| **Enable Video Effects** | on | Master switch for all adjustments |
+| **Enable Video Effects** (title checkbox) | on | Master switch for all adjustments |
 | **Convolution Filter** | none | **sharpen**, **edgeDetect** or **emboss**. Each shows its own strength control: **Sharpen Amount**, **Edge Threshold** or **Emboss Depth** |
 | **Reset Video Adjustments** | | Put every adjustment back to its default |
 | **Render Source Video** | | Export the video from In to Out at its original resolution and frame rate, with the adjustments applied. See [Rendering and Exporting Video](Video.md) |
@@ -287,7 +287,7 @@ A pixel grid drawn over the video, for measuring sizes and positions by eye.
 
 | Control | Default | What it does |
 |---|---|---|
-| **Show** | off | Show the grid |
+| **Show** (title checkbox) | off | Show the grid |
 | **Size** | 64 | Grid cell size, in pixels (1 to 128) |
 | **Subdivisions** | 4 | Subdivisions within each cell (1 to 16) |
 | **X Offset** / **Y Offset** | 0 | Move the grid, in pixels |
@@ -305,7 +305,7 @@ saved with the sitch, and they are drawn into **Render Source Video** and export
 
 | Control | Default | What it does |
 |---|---|---|
-| **Show Annotations** | on | Master switch. When off, the annotations are hidden and the toolbar goes away |
+| **Show Annotations** (title checkbox) | on | Master switch. When off, the annotations are hidden and the toolbar goes away |
 | **Edit Mode** | off | Show the drawing toolbar in the video view, and use the mouse for drawing. Turns Show Annotations on |
 | **Fade Frames** | 0 | Frames until a stroke fades out completely. 0 = strokes stay on every frame. Otherwise a stroke shows from the frame it was drawn on and fades after it |
 | **Opacity** | 1 | Opacity of the annotations |

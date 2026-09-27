@@ -114,7 +114,7 @@ const en = {
                 tooltip: "The lines of sight from the camera over the sitch, and the line for the current frame",
             },
             frustum: {
-                title: "Frustum",
+                title: "Camera View Frustum",
                 tooltip: "The camera view frustum, and video projected into the frustum or onto the ground",
             },
             graphs: {

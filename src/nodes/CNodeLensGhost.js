@@ -125,7 +125,8 @@ export class CNodeLensGhost extends CNodeViewUI {
         this.gui.add(this, "show").name("Show Ghost").listen()
             .onChange(() => setRenderOne(true))
             .tooltip("Draw the MODELLED reflection of the Sun (not the tracked object). " +
-                "Compare its position to your manual disc track.");
+                "Compare its position to your manual disc track.")
+            .asFolderToggle();
 
         this.gui.add(this, "body", ["Sun", "Moon"]).name("Source").listen()
             .onChange(() => { this._sunCache = null; setRenderOne(true); })
@@ -173,7 +174,9 @@ export class CNodeLensGhost extends CNodeViewUI {
             .tooltip("On-video readout: source geometry, roll provenance, fit quality, warnings.");
 
         this.gui.add(this, "fitToTrack").name("Fit to Disc Track")
-            .tooltip("Least-squares fit magnification, centre offset & roll coupling to the disc track.");
+            .tooltip("Least-squares fit magnification, centre offset & roll coupling to the disc track.")
+            // fits with the ghost off, then turns it on itself (fitToTrack)
+            .keepLiveWhenFolderOff();
 
         // Read-only status fields (MEASURED / provenance / FITTED quality / WARNINGS).
         this.gui.add(this.readout, "source").name("Sun geometry").listen().disable();

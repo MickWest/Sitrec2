@@ -65,7 +65,8 @@ export class CNodeControllerTrackingWobble extends CNodeController {
         folder.add(this, "wobbleEnabled").listen().onChange(onChange)
             .name(t("trackingWobble.enabled.label", {defaultValue: "Tracking Wobble"}))
             .tooltip(t("trackingWobble.enabled.tooltip", {defaultValue:
-                "Simulate manual tracking: the camera drifts off the target and is imperfectly re-centered"}));
+                "Simulate manual tracking: the camera drifts off the target and is imperfectly re-centered"}))
+            .asFolderToggle();
         folder.add(this, "amplitude", 0, 5, 0.01).listen().onChange(onChange)
             .name(t("trackingWobble.amplitude.label", {defaultValue: "Amplitude (deg)"}))
             .tooltip(t("trackingWobble.amplitude.tooltip", {defaultValue:

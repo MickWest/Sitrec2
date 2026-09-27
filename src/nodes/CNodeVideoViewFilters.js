@@ -415,6 +415,15 @@ export function addFiltersToVideoNode(videoNode) {
     // the branch above either creates them or looks them up, and both paths land on these
     // locals. See src/ViewUIBarMenus.js.
     enableVideoEffects?.guiEntry.shareAs(viewMenuKey("video", "effects"));
+
+    // "Enable Video Effects" is the folder's title checkbox. The histogram rows and the two
+    // buttons still work with it off (Reset turns it back on), so they stay usable.
+    enableVideoEffects?.guiEntry.asFolderToggle();
+    showHistogram?.guiEntry?.keepLiveWhenFolderOff();
+    histogramOnScreen?.guiEntry?.keepLiveWhenFolderOff();
+    for (const c of guiVideoEffectsFolder.controllers) {
+        if (c.property === "resetFilters" || c.property === "exportSourceVideo") c.keepLiveWhenFolderOff();
+    }
     brightness?.guiEntry.shareAs(viewMenuKey("video", "brightness"));
     contrast?.guiEntry.shareAs(viewMenuKey("video", "contrast"));
 
@@ -481,7 +490,7 @@ export function addFiltersToVideoNode(videoNode) {
 
         gridFolder.add(gridOverlay, "gridShow").name(t("videoView.gridShow.label")).listen().onChange((value) => {
             gridOverlay.setShow(value);
-        }).tooltip(t("videoView.gridShow.tooltip")).shareAs(viewMenuKey("video", "grid"));
+        }).tooltip(t("videoView.gridShow.tooltip")).shareAs(viewMenuKey("video", "grid")).asFolderToggle();
 
         gridFolder.add(gridOverlay, "gridSize", 1, 128, 0.1).name(t("videoView.gridSize.label")).listen().onChange(() => {
             setRenderOne(true);

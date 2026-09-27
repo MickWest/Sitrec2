@@ -324,7 +324,8 @@ export class CNodeAtmosphericOptics extends CNode {
             const addBool = (property, name) => this.gui.add(this, property).name(name).listen().onChange(() => this.recalculate());
             const addValue = (property, start, end, step, name) => this.gui.add(this, property, start, end, step).name(name).listen().onChange(() => this.recalculate());
             addBool("enabled", "Show Halos")
-                .tooltip("Master toggle for ice-crystal atmospheric optics: Sun halos/arcs by day, and an optional Moon halo at night.");
+                .tooltip("Master toggle for ice-crystal atmospheric optics: Sun halos/arcs by day, and an optional Moon halo at night.")
+                .asFolderToggle();
             addValue("intensity", 0, 3, 0.01, "Intensity")
                 .tooltip("Overall brightness of the halos, arcs and sun dogs.");
             addBool("halo22", "22° Halo")
@@ -346,7 +347,8 @@ export class CNodeAtmosphericOptics extends CNode {
             addBool("parryArc", "Parry Arc")
                 .tooltip("An approximate suncave arc just above the upper tangent arc, from rare 'Parry-oriented' columns (c-axis horizontal with two side faces also horizontal). A sign of well-aligned crystals.");
             addBool("sunGlare", "Sun Glare")
-                .tooltip("A soft bright aureole of forward-scattered light around the Sun. Cosmetic — not a refraction optic, so it works independently of Show Halos. Fades out with the covered Sun during a solar eclipse.");
+                .tooltip("A soft bright aureole of forward-scattered light around the Sun. Cosmetic — not a refraction optic, so it works independently of Show Halos. Fades out with the covered Sun during a solar eclipse.")
+                .keepLiveWhenFolderOff();
             addBool("moonHalo", "Moon Halo (22°)")
                 .tooltip("A faint 22° halo around the Moon, drawn on the night sky. The same ice-crystal physics as the Sun's halo, but nearly colorless because moonlight is dim.");
             addBool("moonDogs", "Moon Dogs (Paraselenae)")
@@ -358,7 +360,8 @@ export class CNodeAtmosphericOptics extends CNode {
             const bBool = (property, name) => bf.add(this, property).name(name).listen().onChange(() => this.recalculate());
             const bVal = (property, start, end, step, name) => bf.add(this, property, start, end, step).name(name).listen().onChange(() => this.recalculate());
             bBool("brocken", "Show Brocken Spectre")
-                .tooltip("The observer's shadow and a colored 'glory' cast on a cloud/fog bank below, opposite the Sun. Needs the Sun above the horizon and (in reality) fog below you. Drawn at a real distance so terrain occludes it correctly.");
+                .tooltip("The observer's shadow and a colored 'glory' cast on a cloud/fog bank below, opposite the Sun. Needs the Sun above the horizon and (in reality) fog below you. Drawn at a real distance so terrain occludes it correctly.")
+                .asFolderToggle();
             bBool("brockenGlory", "Glory (rings)")
                 .tooltip("The concentric colored diffraction rings centered on the antisolar point — the shadow of your own head. Blue inside, red outside, repeating.");
             bBool("brockenShadow", "Shadow Figure")

@@ -29,6 +29,8 @@ import {
 import {getTextWidth} from "./lil-gui-slider-settings";
 import {updateGUIRootListeners} from "./GUIRootRegistry";
 import "./MenuMirror";      // installs Controller.shareAs/mirrorTo + GUI.addMirror/mirrorFolderFrom
+import "./FolderToggle";    // installs Controller.asFolderToggle (a folder's title-bar checkbox)
+import "./CheckboxDragPaint"; // press a checkbox and drag over others to set them the same way
 
 // Issue with lil-gui, the OptionController options() method adds a
 // _names array to the controller object, and a _values array

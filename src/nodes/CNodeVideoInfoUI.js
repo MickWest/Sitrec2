@@ -1006,7 +1006,10 @@ export class CNodeVideoInfoUI extends CNodeViewUI {
         folder.add(this, "readoutShown").name(t("videoInfo.showVideoInfo.label"))
             .tooltip(t("videoInfo.showVideoInfo.tooltip"))
             .listen()
-            .shareAs(viewMenuKey("video", "videoInfo"));
+            .shareAs(viewMenuKey("video", "videoInfo"))
+            // On the folder's title bar. Unticking the last item reads as off and greys the
+            // folder; the title checkbox then turns a default item back on (the setter above).
+            .asFolderToggle();
 
         folder.add(this, "showFilename").name(t("videoInfo.filename.label"))
             .tooltip(t("videoInfo.filename.tooltip"))

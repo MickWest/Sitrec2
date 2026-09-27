@@ -358,7 +358,8 @@ export class CNode3DObject extends CNode3DGroup {
             setRenderOne(true);
         })
             .tooltip("Toggle visibility of this object in the 3D scene")
-            .moveToFirst();
+            .moveToFirst()
+            .asFolderToggle();
         visibleController.isCommon = true;
 
         // Name, above Visible. Common, so a model/geometry rebuild of the folder keeps it.
@@ -368,6 +369,8 @@ export class CNode3DObject extends CNode3DGroup {
             onRename: (name) => this.setDisplayName(name, {fromControl: true}),
         });
         this.nameController.isCommon = true;
+        // Renaming a hidden object is still useful, so Name is not greyed out with the rest.
+        this.nameController.keepLiveWhenFolderOff();
 
         // The view owns and serializes focus/follow. These checkboxes reflect that
         // shared state even when another object or track menu changes it.

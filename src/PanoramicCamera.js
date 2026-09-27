@@ -63,7 +63,8 @@ export function setupPanoramicCamera() {
     parent.folders.find(f => f._title === "Panoramic Camera")?.destroy();
     const folder = parent.addFolder("Panoramic Camera").close();
     folder.add(panoramic, "enabled").listen().name("Panoramic Camera").onChange(applyPanoramicState)
-        .tooltip("Render a swept panorama with equal horizontal and vertical angular scale. VFOV follows the view's shape, with letterboxing at 180°. The look-view scroll wheel adjusts HFOV.");
+        .tooltip("Render a swept panorama with equal horizontal and vertical angular scale. VFOV follows the view's shape, with letterboxing at 180°. The look-view scroll wheel adjusts HFOV.")
+        .asFolderToggle();
     folder.add(panoramic, "hfov", 1, 360, 0.1).listen().name("Panorama HFOV °").onChange(applyPanoramicState)
         .tooltip("Horizontal angular span of the panorama. 360° wraps all the way around the camera.");
     folder.add(panoramic, "vfov", 0, 180, 0.1).listen().decimals(1).disable().name("Panorama VFOV °")

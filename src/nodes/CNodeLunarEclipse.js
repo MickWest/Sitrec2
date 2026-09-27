@@ -185,7 +185,8 @@ export class CNodeLunarEclipse extends CNode {
             .onChange(() => this.recalculate())
             .tooltip("Master toggle for the Earth's shadow on the Moon: the penumbral shading, the"
                 + " umbra with its feathered edge, and the refracted 'blood moon' light inside it."
-                + " Has no effect unless a lunar eclipse is actually in progress.");
+                + " Has no effect unless a lunar eclipse is actually in progress.")
+            .asFolderToggle();
 
         g.add(this, "bloodMoon").name("Blood Moon Color").listen()
             .onChange(() => this.recalculate())
@@ -219,7 +220,9 @@ export class CNodeLunarEclipse extends CNode {
                 + " so you can see the whole shadow the Moon is crossing. Drawn from the same"
                 + " geometry that shades the Moon, so the gold ring passes exactly along the shadow's"
                 + " edge on the Moon's face. The same colour convention as Show Moon's Shadow, which"
-                + " draws the Moon's shadow on the Earth.");
+                + " draws the Moon's shadow on the Earth.")
+            // drawn whether or not Eclipse Shading is on
+            .keepLiveWhenFolderOff();
 
         g.add(this, "info").name("Eclipse").listen().disable()
             .tooltip("What the current time works out to: the kind of eclipse, the umbral magnitude"

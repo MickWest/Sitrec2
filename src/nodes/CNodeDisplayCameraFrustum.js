@@ -102,7 +102,8 @@ export class CNodeDisplayCameraFrustum extends CNode3DGroup {
         this.showFrustum = v.showFrustum ?? true;
         const gui = getFrustumFolder();
         this.showHider(t("showHiders.cameraViewFrustum.label"), undefined, t("showHiders.cameraViewFrustum.tooltip"), gui)
-            .shareAs(viewMenuKey("mainView", "frustum"));
+            .shareAs(viewMenuKey("mainView", "frustum"))
+            .asFolderToggle();
 
         // With a target track the far end follows the target every frame (see update()),
         // so the distance slider only exists when the radius is a fixed value.

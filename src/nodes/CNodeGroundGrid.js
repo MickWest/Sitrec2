@@ -531,12 +531,12 @@ export class CNodeGroundGrid extends CNodeGroundOverlay {
 
         this.guiFolder.add(this, 'name').name(t("groundGrid.name.label")).onChange(() => {
             this.guiFolder.title = `Grid: ${this.name}`;
-        });
+        }).keepLiveWhenFolderOff();
 
         this.guiFolder.add(this, 'visible').name(t("groundGrid.visible.label")).onChange((value) => {
             this.show(value);
             setRenderOne(true);
-        }).onFinishChange(() => { CustomManager.saveGlobalSettings(true); });
+        }).onFinishChange(() => { CustomManager.saveGlobalSettings(true); }).asFolderToggle();
 
         const editModeData = {editMode: this.editMode};
         this.editModeController = this.guiFolder.add(editModeData, 'editMode').name(t("groundGrid.editMode.label")).onChange((value) => {
@@ -635,8 +635,9 @@ export class CNodeGroundGrid extends CNodeGroundOverlay {
         ];
         this.updateUnitLabels();
 
-        this.guiFolder.add({goto: () => this.gotoOverlay()}, 'goto').name(t("groundGrid.gotoGrid.label"));
-        this.guiFolder.add({remove: () => this.deleteOverlay()}, 'remove').name(t("groundGrid.deleteGrid.label"));
+        // Going to or deleting a hidden grid still works, so these stay usable.
+        this.guiFolder.add({goto: () => this.gotoOverlay()}, 'goto').name(t("groundGrid.gotoGrid.label")).keepLiveWhenFolderOff();
+        this.guiFolder.add({remove: () => this.deleteOverlay()}, 'remove').name(t("groundGrid.deleteGrid.label")).keepLiveWhenFolderOff();
 
         this.guiFolder.domElement.addEventListener('mouseenter', () => {
             this.showHighlightBorder();

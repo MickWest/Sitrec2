@@ -1,6 +1,6 @@
 # Panoramic Camera
 
-Open **Camera → FOV (Zoom) → Panoramic Camera** and enable **Panoramic Camera**
+Open **Camera → FOV (Zoom) → Panoramic Camera** and tick **Panoramic Camera**, the checkbox on the folder title,
 to show a swept panorama in the look view.
 
 - **Panorama HFOV °** sets the horizontal span from **1° to 360°**.

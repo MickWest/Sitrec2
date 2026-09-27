@@ -271,7 +271,8 @@ export class CNodeOSDDataSeriesController extends CNode {
                     this.graphView.show(true);
                 }
                 this.updateGraph();
-            });
+            })
+            .asFolderToggle();
         this.xAxisCtrl = null;
         this.y1AxisCtrl = null;
         this.y2AxisCtrl = null;

@@ -1404,13 +1404,13 @@ export class CNodeSynthBuilding extends CNode3DGroup {
             prefix: "Building",
             onRename: () => setRenderOne(true),
             onFinishChange: () => CustomManager.saveGlobalSettings(true),
-        });
+        }).keepLiveWhenFolderOff();
         
         const editModeData = {editMode: this.editMode};
         this.guiFolder.add(this, 'visible').name(t("synthBuilding.visible.label")).onChange((value) => {
             this.show(value);
             setRenderOne(true);
-        }).onFinishChange(() => { CustomManager.saveGlobalSettings(true); });
+        }).onFinishChange(() => { CustomManager.saveGlobalSettings(true); }).asFolderToggle();
 
         this.editModeController = this.guiFolder.add(editModeData, 'editMode').name(t("synthBuilding.editMode.label")).onChange((value) => {
 
@@ -1525,7 +1525,7 @@ export class CNodeSynthBuilding extends CNode3DGroup {
         const actions = {
             delete: () => this.deleteBuilding()
         };
-        this.guiFolder.add(actions, 'delete').name(t("synthBuilding.deleteBuilding.label"));
+        this.guiFolder.add(actions, 'delete').name(t("synthBuilding.deleteBuilding.label")).keepLiveWhenFolderOff();
         
         this.guiFolder.close();
     }

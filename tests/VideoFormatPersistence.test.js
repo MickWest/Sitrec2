@@ -72,6 +72,7 @@ test('restore refreshes all permanent controllers and editing marks the sitch di
         add(object, property) {
             const c = {object, property, updateDisplay: jest.fn(),
                 perm() {return this;}, name() {return this;}, tooltip() {return this;},
+                asFolderToggle() {return this;},
                 onChange(fn) {this.change = fn; return this;}};
             all.push(c);
             return c;

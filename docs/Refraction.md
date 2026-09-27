@@ -75,7 +75,7 @@ geometric — refraction bends light, it does not raise the land.
 
 | Control | Default | Notes |
 |---|---|---|
-| **Enable Refraction** | on | Master switch. Off means light travels in straight lines |
+| **Enable Refraction** (title checkbox) | on | Master switch. Off means light travels in straight lines |
 | **Terrain and Buildings** | on | The terrestrial model |
 | **Sky** | on | The celestial model |
 | **Refraction Pressure (hPa)** | 1010 | Feeds both models |

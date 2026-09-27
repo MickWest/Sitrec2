@@ -752,12 +752,12 @@ export class CNodeSynthClouds extends CNode3DGroup {
         addNameControl(this.guiFolder, this, {
             prefix: "Clouds",
             onFinishChange: () => CustomManager.saveGlobalSettings(true),
-        });
+        }).keepLiveWhenFolderOff();
         
         this.guiFolder.add(this, 'visible').name(t("synthClouds.visible.label")).onChange((value) => {
             this.show(value);
             setRenderOne(true);
-        }).onFinishChange(() => { CustomManager.saveGlobalSettings(true); });
+        }).onFinishChange(() => { CustomManager.saveGlobalSettings(true); }).asFolderToggle();
 
         const editModeData = {editMode: this.editMode};
         this.editModeController = this.guiFolder.add(editModeData, 'editMode').name(t("synthClouds.editMode.label")).onChange((value) => {
@@ -937,7 +937,7 @@ export class CNodeSynthClouds extends CNode3DGroup {
         const actions = {
             delete: () => this.deleteClouds()
         };
-        this.guiFolder.add(actions, 'delete').name(t("synthClouds.deleteClouds.label"));
+        this.guiFolder.add(actions, 'delete').name(t("synthClouds.deleteClouds.label")).keepLiveWhenFolderOff();
     }
     
     updateGUIControllers() {

@@ -156,7 +156,8 @@ export class CNodeAnnotateOverlay extends CNodeActiveOverlay {
             this._updateToolbarVisibility();
             setRenderOne(true);
         }).tooltip("Master switch. When off, annotations are hidden, the toolbar disappears, mouse passes through, and editing is suppressed.")
-            .shareAs(viewMenuKey("video", "annotations"));
+            .shareAs(viewMenuKey("video", "annotations"))
+            .asFolderToggle();
 
         this.gui.add(this, "editing").name("Edit Mode").listen().onChange(() => {
             // Editing implies the strokes you're drawing must be visible.

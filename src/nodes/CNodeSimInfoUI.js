@@ -341,7 +341,8 @@ export class CNodeSimInfoUI extends CNodeVideoInfoUI {
             // The look view's readout, published to that view's header menu and bar icon. Per
             // view, not shared: the video view has its own readout (CNodeVideoInfoUI), and the
             // two are separate overlays with separate flags.
-            .shareAs(viewMenuKey(viewId, "simInfo"));
+            .shareAs(viewMenuKey(viewId, "simInfo"))
+            .asFolderToggle();
 
         // Date/time rows reuse the videoInfo i18n strings (identical labels).
         folder.add(this, "showDateLocal").name(t("videoInfo.dateLocal.label"))

@@ -198,8 +198,10 @@ export function logCacheStatsImpl() {
 // this tile covers.
 export function osmWaterSourceForTile(tile) {
     // The flag lives on the Water Reflection node, which is what the combine
-    // exists to feed. No night sky in this sitch means no node and no combine.
-    if (!NodeMan.get("waterReflection", false)?.combineWithOSM) return null;
+    // exists to feed. No night sky in this sitch means no node and no combine,
+    // and the combine only runs while the reflection itself is on.
+    const water = NodeMan.get("waterReflection", false);
+    if (!water?.enabled || !water.combineWithOSM) return null;
 
     const terrainNode = tile.map.terrainNode;
     const ui = terrainNode.UI;
@@ -232,7 +234,9 @@ export function osmWaterSourceForTile(tile) {
 // satellite source declare no water color, so the color path does nothing at
 // all on them, while a vector mask works identically on all of them.
 export function vectorWaterMaskWanted(tile) {
-    if (!NodeMan.get("waterReflection", false)?.vectorWaterMask) return false;
+    // Only while the reflection is on, like the combine above.
+    const water = NodeMan.get("waterReflection", false);
+    if (!water?.enabled || !water.vectorWaterMask) return false;
     if (!waterMaskAvailable()) return false;
 
     // Web Mercator only. `mapping: 4326` selects GoogleCRS84Quad, whose tiles do

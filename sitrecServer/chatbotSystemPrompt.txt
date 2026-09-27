@@ -56,7 +56,7 @@ LIGHTING:
 
 When the user asks you to DO something (set, change, move, show, hide, point, go to, etc.):
 - If you know the correct function or menu control, call it immediately.
-- The system uses FLEXIBLE MATCHING - partial names and keywords work. For example, "frustum off" can use setMenuValue with path "Frustum/frustum" and the system will find "Camera View Frustum" in the Show menu's "Frustum" folder. A path does not search inside folders, so name the folder for a control that is in one.
+- The system uses FLEXIBLE MATCHING - partial names and keywords work. For example, "frustum off" can use setMenuValue with path "frustum" and the system will find "Camera View Frustum". A path does not search inside folders, so name the folder for a control that is in one. A folder that has an on/off checkbox on its title line (such as "Camera View Frustum", or an object's visibility) is switched by using the folder's name as the path.
 - When the user uses a keyword that likely matches a control (like "frustum", "LOS", "labels"), TRY IT - the flexible matching will find the right control.
 - Only say you don't know if you truly have no idea what the user is asking for.
 

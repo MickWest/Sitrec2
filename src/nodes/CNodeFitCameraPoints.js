@@ -470,7 +470,8 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
             .onChange((on) => this.setEnabled(on))
             .tooltip("Show the control points and allow editing. When off this feature does " +
                 "nothing at all — the camera keeps whatever the last fit gave it. Saved points " +
-                "are kept either way.");
+                "are kept either way.")
+            .asFolderToggle();
 
         this.gui.add(this, "syncLookCamera").name("Sync Look Camera").listen()
             .onChange((on) => this.setSyncLookCamera(on))
@@ -480,7 +481,8 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
                 "because a fit is only worth looking at side by side. Turn it off to fly the 3D " +
                 "camera again — the control points stay put, and the next fit turns it back on. " +
                 "Independent of Enable Fit: switching the fit off leaves this as you set it. " +
-                "Does not touch Match Video Aspect, which is yours to set in the Camera menu.");
+                "Does not touch Match Video Aspect, which is yours to set in the Camera menu.")
+            .keepLiveWhenFolderOff();
 
         this.gui.add(this, "showRays").name("Show Sight Lines").listen()
             .onChange(() => setRenderOne(true))
@@ -560,7 +562,8 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
                 "keyframes with FITTED cameras — a keyframe marked '?' has only a seeded " +
                 "guess and is not used for motion until it is solved. Each source can also be " +
                 "selected individually in the Camera menu, and switched back to Manual there " +
-                "at any time.");
+                "at any time.")
+            .keepLiveWhenFolderOff();
 
         ro("keyframeInfo", "Keyframes",
             "The fit keyframe frames, and which one is being edited. A frame marked '?' has " +

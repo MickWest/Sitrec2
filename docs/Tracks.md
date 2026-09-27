@@ -460,7 +460,7 @@ Contrails simulate the visual appearance of condensation trails behind aircraft,
 
 | Control | Range | Description |
 |---------|-------|-------------|
-| **Contrail** | on/off | Enable contrail ribbon rendering |
+| **Contrail** (title checkbox) | on/off | Enable contrail ribbon rendering |
 | **Contrail Secs** | 2-5000 | Duration of the contrail in seconds |
 | **Contrail Width m** | 10-200 | Maximum ribbon width in meters |
 | **Contrail Initial Width m** | 0-100 | Width at the exhaust point |

@@ -236,7 +236,7 @@ wobble is repeatable: the same seed always gives the same pattern.
 
 | Control | Default | What it does |
 |---|---|---|
-| **Tracking Wobble** | Off | Turns the simulation on. |
+| **Tracking Wobble** (title checkbox) | Off | Turns the simulation on. |
 | **Amplitude (deg)** | 0.5 | How far off center the aim drifts before the operator reacts. |
 | **Drift Speed (deg/s)** | 0.3 | Random drift rate away from the target. |
 | **Reaction Time (s)** | 0.4 | Delay between noticing the drift and starting the correction. |

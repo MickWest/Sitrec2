@@ -690,7 +690,7 @@ class GPUMemoryMonitor {
         };
 
         this.guiFolder.add(this.displayControls, 'enabled').name(t("gpuMonitor.enabled"))
-            .onChange(() => this.updateGUI(true)).perm();
+            .onChange(() => this.updateGUI(true)).perm().asFolderToggle();
         this.guiFolder.add(this.displayControls, 'total').name(t("gpuMonitor.total")).listen().disable().perm();
         this.guiFolder.add(this.displayControls, 'geometries').name(t("gpuMonitor.geometries")).listen().disable().perm();
         this.guiFolder.add(this.displayControls, 'textures').name(t("gpuMonitor.textures")).listen().disable().perm();
@@ -700,9 +700,10 @@ class GPUMemoryMonitor {
         this.guiFolder.add(this.displayControls, 'matCache').name('Material cache').listen().disable().perm();
         this.guiFolder.add(this.displayControls, 'mvGL').name('mainView (tex/geo/prog)').listen().disable().perm();
         this.guiFolder.add(this.displayControls, 'lvGL').name('lookView (tex/geo/prog)').listen().disable().perm();
-        this.guiFolder.add(this.displayControls, 'pruneInactive').name('Prune Inactive Tiles').perm();
-        this.guiFolder.add(this.displayControls, 'forceRender').name('Force Render (drain dispose queue)').perm();
-        this.guiFolder.add(this.displayControls, 'reset').name(t("gpuMonitor.reset")).perm();
+        // The three actions work whether or not the monitor is on.
+        this.guiFolder.add(this.displayControls, 'pruneInactive').name('Prune Inactive Tiles').perm().keepLiveWhenFolderOff();
+        this.guiFolder.add(this.displayControls, 'forceRender').name('Force Render (drain dispose queue)').perm().keepLiveWhenFolderOff();
+        this.guiFolder.add(this.displayControls, 'reset').name(t("gpuMonitor.reset")).perm().keepLiveWhenFolderOff();
         
         this.enabled = true;
         // Refresh immediately when Debug or this folder opens, including while

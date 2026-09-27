@@ -225,7 +225,7 @@ These are in **Objects → Building: *name*** and in the editor.
 | Control | Default | What it does |
 |---|---|---|
 | **Name** | *Building 1*, *Building 2*, ... | The name in the menus and the editor title |
-| **Visible** | on | Show or hide the building |
+| **Visible** (title checkbox) | on | Show or hide the building |
 | **Edit Mode** | on when created | Show the handles and the editor |
 | **Height → Roof Edge Height** | 4 m | Height of the top of the walls, above the highest ground point under the building |
 | **Height → Ridgeline Height** | same as Roof Edge Height | Height of the roof ridge. When it equals Roof Edge Height, the roof is flat. It cannot be lower than the roof edge |
@@ -268,7 +268,7 @@ These are in **Objects → Clouds: *name*** and in the editor.
 | Control | Default | What it does |
 |---|---|---|
 | **Name** | *Clouds 1*, *Clouds 2*, ... | The name in the menus and the editor title |
-| **Visible** | on | Show or hide the layer |
+| **Visible** (title checkbox) | on | Show or hide the layer |
 | **Edit Mode** | on when created | Show the handles and the editor |
 | **Properties → Altitude** | 10,000 ft | Height of the layer |
 | **Properties → Radius** | 500 m | Radius of the layer |
@@ -331,7 +331,7 @@ These are in **Objects → Overlay: *name*** and in the editor.
 | Control | Default | What it does |
 |---|---|---|
 | **Name** | *Overlay 1*, ... or the file name | The name in the menus and the editor title |
-| **Visible** | on | Show or hide the overlay |
+| **Visible** (title checkbox) | on | Show or hide the overlay |
 | **Edit Mode** | on when created | Show the handles and the editor |
 | **Lock Shape** | off | Hides the corner and rotation handles, so you cannot change the size, shape or rotation by accident. You can still drag the overlay to move it |
 | **Free Transform** | off | Lets each corner move by itself, for a perspective warp. Turning it on sets **Rotation** to 0. Turning it off returns the overlay to a rectangle |
@@ -371,7 +371,7 @@ when you change the unit system.
 | Control | Default | What it does |
 |---|---|---|
 | **Name** | *Grid 1*, ... | The name in the menus and the editor title |
-| **Visible** | on | Show or hide the grid |
+| **Visible** (title checkbox) | on | Show or hide the grid |
 | **Edit Mode** | on when created | Show the handles and the editor |
 | **Width**, **Height** | 1000 | Size of the grid |
 | **Major Step** | 100 | Spacing of the major lines. 0 turns them off |

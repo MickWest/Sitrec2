@@ -2647,6 +2647,20 @@ class CSitrecAPI {
                 const controller = this._matchController(current, name, true);
                 if (controller) return { success: true, controller };
 
+                // A folder with a title checkbox (FolderToggle.js) is switched by that
+                // checkbox's control, so the folder's own name addresses it. A part of the name
+                // counts only when it picks out ONE such folder: otherwise a misspelt control
+                // name ("Eclipse") could flip a whole folder it was never meant for.
+                let toggleFolder = this._matchFolder(current, name, name, false)?.folder;
+                if (!toggleFolder?._folderToggle) {
+                    const partial = current.children.filter(c => c instanceof GUI && c._folderToggle
+                        && c._title.toLowerCase().includes(nameLower));
+                    toggleFolder = partial.length === 1 ? partial[0] : null;
+                }
+                if (toggleFolder?._folderToggle) {
+                    return { success: true, controller: toggleFolder._folderToggle };
+                }
+
                 // List available controls in error
                 const available = current.controllers.map(c => c._name).join(', ');
                 return { success: false, error: `Control '${name}' not found. Available: ${available}` };

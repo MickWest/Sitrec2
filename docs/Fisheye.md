@@ -19,7 +19,7 @@ turns the other off.
 
 ## Controls
 
-- **Fisheye Lens** — enable the fisheye projection for the look view. The
+- **Fisheye Lens** (the checkbox on the **Fisheye** folder title) — enable the fisheye projection for the look view. The
   other controls in this folder appear only while it is on. The normal FOV
   controls in Camera → FOV (Zoom) (VFOV, HFOV, 35mm Equiv and the rest) are
   hidden while this is on, except the Panoramic Camera switch; turning Fisheye
@@ -70,7 +70,7 @@ turns the other off.
 ## Matching an allsky video
 
 1. Load the video and set the camera location and time as usual.
-2. Enable **Fisheye Lens**, then press **Point Straight Up (Allsky)**.
+2. Tick **Fisheye Lens** (the checkbox on the **Fisheye** folder title), then press **Point Straight Up (Allsky)**.
 3. Set **Circle Size %** so the rendered circle matches the video's image
    circle (155 for a circle whose diameter is 1.55× the frame height), and
    the Center offsets if the video's circle is off-centre.

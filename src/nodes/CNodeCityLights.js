@@ -37,7 +37,8 @@ export class CNodeCityLights extends CNode {
         this.gui = guiMenus.lighting?.addFolder("City Lights").close();
         if (this.gui) {
             this.gui.add(this, "enabled").name("Show City Lights").listen().onChange(() => this.recalculate())
-                .tooltip("Approximate nighttime lights on 3D map tiles. Lamp positions and occupied windows are synthetic.");
+                .tooltip("Approximate nighttime lights on 3D map tiles. Lamp positions and occupied windows are synthetic.")
+                .asFolderToggle();
             this.gui.add(this, "method", METHODS).name("Method").listen().onChange(() => this.recalculate());
             this.densityControllers = [];
             for (const [property, label] of [["roads", "Road Lights (%)"], ["paths", "Paths / Parking (%)"], ["windows", "Lit Windows (%)"]]) {

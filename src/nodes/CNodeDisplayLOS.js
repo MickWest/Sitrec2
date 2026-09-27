@@ -104,9 +104,18 @@ export class CNodeDisplayLOS extends CNode3DGroup {
         this.recalculate()
 
         const gui = getLOSFolder();
-        this.showHider(t("showHiders.linesOfSight.label"), "o", t("showHiders.linesOfSight.tooltip"), gui)
-            .shareAs(viewMenuKey("mainView", "los"));
-        gui.add(this, "hideSomeLOS", 0, 10, 1)
+        // The folder is shared by every LOS display in the sitch, but it can have only one title
+        // checkbox: the first display's. A later display's rows stay usable, since that
+        // checkbox is not their switch. The main view's header items follow the same display
+        // (a later shareAs would take them over), so the title checkbox and the header's
+        // "Lines of Sight" (and the "o" key, which also goes to the last display that asks for
+        // it) always switch the same lines.
+        const ownsFolder = !gui._folderToggle;
+        const losHider = this.showHider(t("showHiders.linesOfSight.label"), ownsFolder ? "o" : undefined,
+            t("showHiders.linesOfSight.tooltip"), gui);
+        if (ownsFolder) losHider.shareAs(viewMenuKey("mainView", "los")).asFolderToggle();
+        else losHider.keepLiveWhenFolderOff();
+        const hideSome = gui.add(this, "hideSomeLOS", 0, 10, 1)
             .name(t("showHiders.hideSomeLOS.label", {defaultValue: "Hide Some LOS"}))
             .tooltip(t("showHiders.hideSomeLOS.tooltip", {defaultValue:
                 "Thin out the displayed lines of sight: 0 shows all, n shows only every 2ⁿ-th line (3 = every 8th)"}))
@@ -115,7 +124,10 @@ export class CNodeDisplayLOS extends CNode3DGroup {
                 this.recalculate();
                 setRenderOne(true);
             });
-        gui.add(this, "showCurrentLOS")
+        if (!ownsFolder) hideSome.keepLiveWhenFolderOff();
+        // Current LOS is drawn on the container, not in this.group, so it shows even while the
+        // lines of sight are hidden: it keeps working when the folder is off.
+        const currentLOS = gui.add(this, "showCurrentLOS")
             .name(t("showHiders.currentLOS.label", {defaultValue: "Current LOS"}))
             .tooltip(t("showHiders.currentLOS.tooltip", {defaultValue: "Show only the current frame's line of sight"}))
             .listen()
@@ -124,7 +136,8 @@ export class CNodeDisplayLOS extends CNode3DGroup {
                 if (!v) this.clearCurrentLOS();
                 setRenderOne(true);
             })
-            .shareAs(viewMenuKey("mainView", "currentLos"));
+            .keepLiveWhenFolderOff();
+        if (ownsFolder) currentLOS.shareAs(viewMenuKey("mainView", "currentLos"));
     }
 
     // we update the positions of the spheres every frame

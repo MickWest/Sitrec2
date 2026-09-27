@@ -347,7 +347,8 @@ export function setupVideoFormatEffectsMenu() {
     add(settings, "enabled")
         .name("Video Format Effects")
         .tooltip("Simulate an analog video format, and optionally a phone filming a screen, live over the look view. Includes the on-screen display.")
-        .onChange(() => changed({rebuild: true}));
+        .onChange(() => changed({rebuild: true}))
+        .asFolderToggle();
 
     const formatNames = {};
     for (const [key, format] of Object.entries(SIGNAL_FORMATS)) formatNames[format.name] = key;

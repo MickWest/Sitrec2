@@ -150,7 +150,8 @@ export class CNodeEclipse extends CNode {
             const addBool = (property, name) => this.gui.add(this, property).name(name).listen()
                 .onChange(() => this.recalculate());
             addBool("enabled", "Eclipse Effects")
-                .tooltip("Master toggle for solar-eclipse visuals: the Moon's silhouette, Baily's beads, the diamond ring, and the totality corona with prominences. Has no effect unless the Moon actually overlaps the Sun.");
+                .tooltip("Master toggle for solar-eclipse visuals: the Moon's silhouette, Baily's beads, the diamond ring, and the totality corona with prominences. Has no effect unless the Moon actually overlaps the Sun.")
+                .asFolderToggle();
             this.gui.add(this, "intensity", 0, 3, 0.01).name("Intensity").listen()
                 .onChange(() => this.recalculate())
                 .tooltip("Overall brightness of the corona, prominences and bead/diamond glare.");
@@ -165,7 +166,9 @@ export class CNodeEclipse extends CNode {
                     setEclipseLightingEnabled(this.affectLighting);
                     this.recalculate();
                 })
-                .tooltip("Dim the scene lighting and sky with the eclipse: gradual attenuation through the partial phases, deep-twilight darkness and a 360° horizon glow at totality.");
+                .tooltip("Dim the scene lighting and sky with the eclipse: gradual attenuation through the partial phases, deep-twilight darkness and a 360° horizon glow at totality.")
+                // a separate flag (CEclipseCalc), in force whether or not Eclipse Effects is on
+                .keepLiveWhenFolderOff();
         }
     }
 

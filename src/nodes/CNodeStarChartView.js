@@ -101,7 +101,8 @@ export class CNodeStarChartView extends CNodeTabbedCanvasView {
                 this.setVisible(value);
                 setRenderOne(true);
             })
-            .tooltip("Show or hide the star chart view");
+            .tooltip("Show or hide the star chart view")
+            .asFolderToggle();
         this.guiFolder.add(this, "colorScheme", Object.keys(starChartSchemes)).listen().name("Color Scheme")
             .onChange(() => setRenderOne(true))
             .tooltip("Color scheme for the star chart");

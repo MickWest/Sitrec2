@@ -224,7 +224,8 @@ class CLongExposureManager {
         nf.add(this.nudge, "enabled").name("Nudge Enabled").perm().listen().onChange(nudgeChanged)
             .tooltip("Jolt the look camera at the given time: it bounces around and settles\n" +
                 "(damped spring impulse). Works live and in the long-exposure render,\n" +
-                "where it draws light trails.");
+                "where it draws light trails.")
+            .asFolderToggle();
         nf.add(this.nudge, "time", 0, 120, 0.1).name("Nudge Time (s)").perm().listen().onChange(nudgeChanged);
         nf.add(this.nudge, "magnitude", 0, 10, 0.05).name("Magnitude (°)").perm().listen().onChange(nudgeChanged)
             .tooltip("Peak deflection of the first swing, degrees.");

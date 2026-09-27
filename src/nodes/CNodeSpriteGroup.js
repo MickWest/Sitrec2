@@ -153,7 +153,7 @@ constructor(v) {
 
     this.gui.add(this, "visible").name(t("spriteGroup.visible.label")).tooltip(t("spriteGroup.visible.tooltip")).onChange(() => {
         this.group.visible = this.visible;
-    }).listen();
+    }).listen().asFolderToggle();
 
     // Size in meters, used a CNodeGUIValue to create a unit-scaled slider
     this.gui.add(this, "size", 0.1, 10, 0.01).name(t("spriteGroup.size.label")).onChange(() => {

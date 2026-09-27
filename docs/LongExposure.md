@@ -75,7 +75,7 @@ trails are smooth curves even during fast camera motion.
 | **Point Spread (px)** | The Gaussian point-spread width of splatted sources, in pixels. |
 | **Wait For Loading** | On by default: settle terrain/3D-tiles each frame before capture (slower, but stable terrain). |
 | **Frame Step** | Sample every Nth frame of the range (default 30, ~30× faster). Exposure brightness is unaffected, and point-source trails (stars, lights, satellite flares — including strobe dashes) are integrated continuously between samples so they stay smooth and their total flux does not depend on Frame Step. Only background/scene motion becomes stepped. Set to 1 for a full-quality render. |
-| **Refraction** | Shows whether sky refraction is in effect — normally on when **Enable Refraction** and **Sky** are both on in View → Atmospheric Refraction. Ticking it changes that state directly; it is not a copy of either View checkbox, and a later change in View → Atmospheric Refraction sets it again from those two switches. When on, splatted sources use refracted apparent positions, and horizon culling and extinction follow the refracted direction. |
+| **Refraction** | Shows whether sky refraction is in effect — normally on when **Enable Refraction** (the checkbox on the View → Atmospheric Refraction title) and **Sky** are both on. Ticking it changes that state directly; it is not a copy of either View checkbox, and a later change in View → Atmospheric Refraction sets it again from those two switches. When on, splatted sources use refracted apparent positions, and horizon culling and extinction follow the refracted direction. |
 | **Occlusion Mask** | Hide splatted sources behind terrain and other opaque foreground (a planet setting behind a hill stays hidden). Exact under camera rotation, and recalculated automatically whenever the camera position moves. |
 
 ## Camera Nudge
@@ -84,7 +84,7 @@ trails are smooth curves even during fast camera motion.
 around and settles, like a tripod that's been bumped — and every light in the frame writes
 that bounce into the exposure as a decaying zigzag trail.
 
-- **Nudge Enabled** — turn the bump on (off by default; with it off the other controls do nothing).
+- **Nudge Enabled** (the checkbox on the **Camera Nudge** title) — turn the bump on (off by default; with it off the other controls are greyed out and do nothing).
 - **Nudge Time (s)** — when the bump happens (sitch time).
 - **Magnitude (°)** — peak deflection of the first swing.
 - **Frequency (Hz)** — how fast it oscillates (the "elasticity" of the mount).

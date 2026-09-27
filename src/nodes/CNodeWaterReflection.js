@@ -301,10 +301,17 @@ export class CNodeWaterReflection extends CNode {
             const addValue = (property, start, end, step, name) =>
                 this.gui.add(this, property, start, end, step).name(name).listen().onChange(changed);
 
-            this.gui.add(this, "enabled").name("Water Reflection").listen().onChange(changed)
+            this.gui.add(this, "enabled").name("Water Reflection").listen().onChange(() => {
+                // Vector Water Mask and Combine Terrain with OSM only apply while the reflection
+                // is on (QuadTreeTileMaterial), and every tile's material is keyed on them, so
+                // switching the reflection has to rebuild the terrain when either is set.
+                if (this.vectorWaterMask || this.combineWithOSM) reloadTerrain();
+                changed();
+            })
                 .tooltip("Reflect the night sky in water. Water is detected by the color of the map texture, "
                     + "so it needs a map source with a flat water fill (OSM) — or Combine Terrain with OSM "
-                    + "below. Look view only.");
+                    + "below. Look view only.")
+                .asFolderToggle();
             this.gui.add(this, "mode", {
                 "Sky Cube": "cube",
                 "Planar Mirror (experimental)": "mirror",
@@ -335,7 +342,8 @@ export class CNodeWaterReflection extends CNode {
                 .tooltip("Find water from actual water polygons (MapTiler vector tiles) instead of from the "
                     + "color of the map imagery. Works on satellite sources, gives a clean antialiased "
                     + "coastline, and leaves the imagery untouched — unlike Combine Terrain with OSM, which "
-                    + "paints over it. Costs one vector tile fetch per terrain tile.")
+                    + "paints over it. Costs one vector tile fetch per terrain tile. Only applies while Water "
+                    + "Reflection is on.")
                 .onChange(reloadTerrain);
             if (!waterMaskAvailable()) {
                 // No key, so the switch would be wired to nothing.
@@ -388,7 +396,7 @@ export class CNodeWaterReflection extends CNode {
                 .tooltip("Also load the matching Open Streetmap tile for each terrain tile and copy its water "
                     + "areas into the current imagery, so water can be detected on satellite sources. Costs one "
                     + "extra tile fetch per tile and reloads the terrain when changed. Only available for "
-                    + "sources that share OSM's tile layout.")
+                    + "sources that share OSM's tile layout. Only applies while Water Reflection is on.")
                 .onChange(() => {
                     // Same reload path as switching map source: every tile's
                     // texture has to be rebuilt, and cached materials are keyed
@@ -642,14 +650,14 @@ export class CNodeWaterReflection extends CNode {
     // replace the basemap, CNodeTerrainUI then calls setMapAttribution(null),
     // and the water becomes the ONLY thing on screen needing a credit.
     //
-    // Tracks USE, not availability. The terrain's per-tile mask is fetched
-    // whenever vectorWaterMask is on, whether or not the effect is drawing
-    // (vectorWaterMaskWanted does not consult `enabled`), while the tiles' mask
-    // is only fetched when the effect is actually running — _tileWaterApplied
-    // already folds `enabled` in. Edge-triggered, like updateCombineAvailability
-    // above, because this runs every frame and render() touches the DOM.
+    // Tracks USE, not availability. The terrain's per-tile mask is fetched only
+    // while the effect is on and vectorWaterMask is set (vectorWaterMaskWanted),
+    // and the tiles' mask only when the effect is actually running —
+    // _tileWaterApplied already folds `enabled` in. Edge-triggered, like
+    // updateCombineAvailability above, because this runs every frame and render()
+    // touches the DOM.
     updateWaterAttribution() {
-        const inUse = this.vectorWaterMask || this._tileWaterApplied === true;
+        const inUse = (this.enabled && this.vectorWaterMask) || this._tileWaterApplied === true;
         const source = inUse ? vectorWaterSource() : null;
         const key = source ? `${source.attribution}|${source.termsURL}` : "";
         if (key === this._waterAttributionKey) return;

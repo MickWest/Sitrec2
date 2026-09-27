@@ -171,7 +171,8 @@ export function setupRefractionGUI() {
     folder.add(Sit, "refraction").listen()
         .name("Enable Refraction")
         .onChange(changed)
-        .tooltip("Master switch for atmospheric refraction. Off means light travels in straight lines — geometrically simple, but not what a camera sees near the horizon.");
+        .tooltip("Master switch for atmospheric refraction. Off means light travels in straight lines — geometrically simple, but not what a camera sees near the horizon.")
+        .asFolderToggle();
 
     folder.add(Sit, "refractionTerrain").listen()
         .name("Terrain and Buildings")

@@ -823,7 +823,8 @@ export function setupFisheye() {
         .tooltip("Render the look view through a fisheye lens instead of the pinhole projection, "
             + "allowing fields of view of 180° and beyond — as an allsky/meteor camera sees the sky. "
             + "The normal Zoom/VFOV sliders are ignored while this is on; use Fisheye FOV below "
-            + "(the scroll wheel in the look view adjusts it too).");
+            + "(the scroll wheel in the look view adjusts it too).")
+        .asFolderToggle();
 
     const typeOptions = {};
     for (const type of Object.keys(FISHEYE_TYPE_INDEX)) {

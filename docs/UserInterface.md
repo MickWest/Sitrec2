@@ -21,6 +21,12 @@ To re-dock a menu in the menu bar, either drag it to the top of the screen, or d
 
 Some menus have folders - essentially a sub menu - that you can expand. For example, the Object menu has one folder per object, and each object folder has its own Material folder. 
 
+Some folders have a checkbox at the right end of their title line. It switches the thing the folder controls on or off: each object folder's checkbox shows or hides that object, and **Show ▸ Camera View Frustum** shows or hides the frustum. When the checkbox is off, the controls in the folder are greyed out and do not change until you switch it on again.
+
+## Checkboxes
+
+To set several checkboxes at once, press one and drag over the others without releasing the mouse button. Each checkbox you pass over is set the same way as the first one: on if you pressed an unticked box, off if you pressed a ticked one. This works for the checkboxes in menu rows and for the checkboxes on folder titles, so with the object folders closed you can drag down the Objects menu to hide or show several objects. Every checkbox under the pointer is set, including the rows of an open folder that the drag passes through. Greyed-out checkboxes are skipped.
+
 ## Sliders
 
 Most values in Sitrec are edited via sliders. You can modify these in various ways:

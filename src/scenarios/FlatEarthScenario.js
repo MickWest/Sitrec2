@@ -1088,7 +1088,8 @@ export function setupFlatEarth() {
         folder.add(flatEarth, "enabled").listen()
             .name("Flat Earth Rendering")
             .onChange(applyFlatEarthState)
-            .tooltip("EXPERIMENTAL. Render the world as a flat disc: a polar azimuthal equidistant projection (the classic flat earth map), tangent to the globe at the current origin. Display only — physics, tracks and measurements stay on the globe.");
+            .tooltip("EXPERIMENTAL. Render the world as a flat disc: a polar azimuthal equidistant projection (the classic flat earth map), tangent to the globe at the current origin. Display only — physics, tracks and measurements stay on the globe.")
+            .asFolderToggle();
         folder.add(flatEarth, "flatness", 0, 1, 0.01).listen()
             .name("Flatness")
             .onChange(applyFlatEarthState)

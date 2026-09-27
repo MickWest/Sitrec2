@@ -265,7 +265,7 @@ the Moon, for the current time and look camera location, in the style of a print
 
 | Control | Default | What it does |
 |---|---|---|
-| **Show Star Chart** | Off | Shows or hides the chart |
+| **Show Star Chart** (title checkbox) | Off | Shows or hides the chart |
 | **Color Scheme** | White | **Lavendar**, **Black**, **Night Vision** or **White** |
 | **Satellite Track** | On | Draws the path of **Satellite to Track** across the chart, with times |
 

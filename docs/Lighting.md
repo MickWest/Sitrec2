@@ -140,12 +140,12 @@ kept.
 **Lighting → Atmospheric Optics (Halos)**
 
 Ice-crystal halos and arcs, drawn on the sky around the Sun by day and around the Moon at night.
-**Show Halos** is off by default. Each optic is drawn only when the Sun (or Moon) is at an
+**Show Halos**, the checkbox on the folder title, is off by default. Each optic is drawn only when the Sun (or Moon) is at an
 elevation where it can form.
 
 | Control | Default | What it does |
 |---|---|---|
-| **Show Halos** | Off | Master switch for all the halos and arcs below. Sun Glare and the Brocken spectre are separate |
+| **Show Halos** (title checkbox) | Off | Master switch for all the halos and arcs below. Sun Glare stays usable while it is off. The Brocken spectre also needs it on |
 | **Intensity** | 1 | Overall brightness of the halos, arcs and sun dogs (0 to 3) |
 | **22° Halo** | On | The common ring 22° from the Sun. Reddish inside, bluish-white outside |
 | **Sun Dogs (Parhelia)** | On | Bright spots on each side of the Sun at the same altitude, just outside the 22° halo |
@@ -170,7 +170,7 @@ real distance, so nearer terrain hides it correctly. It needs the Sun above the 
 
 | Control | Default | What it does |
 |---|---|---|
-| **Show Brocken Spectre** | Off | Master switch |
+| **Show Brocken Spectre** (title checkbox) | Off | Master switch |
 | **Glory (rings)** | On | The colored diffraction rings around the shadow of the observer's head |
 | **Shadow Figure** | On | The observer's magnified shadow at the center |
 | **Fog Bank** | On | A soft synthetic patch of fog for the spectre to fall on. Turn it off if the scene already has fog or cloud below |
@@ -202,7 +202,7 @@ strength when the Sun is about 5° below the horizon.
 
 | Control | Default | What it does |
 |---|---|---|
-| **Show City Lights** | Off | Master switch |
+| **Show City Lights** (title checkbox) | Off | Master switch |
 | **Method** | Mapped Roads and Buildings | How the light positions are chosen. See below |
 | **Road Lights (%)** | 60 | The percentage of candidate street-light positions that are lit, on roads. 0 turns road lights off |
 | **Paths / Parking (%)** | 8 | The same, for service roads, pedestrian ways, footways and cycleways |
@@ -270,7 +270,7 @@ Both folders do nothing unless an eclipse is actually in progress at the sitch t
 
 | Control | Default | What it does |
 |---|---|---|
-| **Eclipse Effects** | On | Master switch for the eclipse visuals |
+| **Eclipse Effects** (title checkbox) | On | Master switch for the eclipse visuals |
 | **Intensity** | 1 | Brightness of the corona, prominences and the bead and diamond-ring glare |
 | **Corona** | On | The white corona and streamers, seen when the Sun is almost fully covered |
 | **Prominences** | On | Pink-red loops on the Sun's edge during totality |

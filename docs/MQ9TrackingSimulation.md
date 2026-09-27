@@ -1,7 +1,7 @@
 # MQ9 Tracking Simulation
 
 Use **Camera → MQ9 Tracking** to simulate an operator acquiring and following
-a rendered scene object with the MQ9 overlay. Enable **Simulate Tracking**,
+a rendered scene object with the MQ9 overlay. Tick **Simulate Tracking** (the checkbox on the **MQ9 Tracking** folder title),
 select a **Scene Object**, and choose **Acquire / Box Target**. Enable the MQ9
 overlay to see the acquisition gate and tracking corners.
 

@@ -176,7 +176,8 @@ export class   CNodeMQ9UI extends CNodeViewUI {
         menu.add(this, "trackingEnabled").name("Simulate Tracking").listen().onChange(enabled => {
             if (enabled) this.startTrackingSimulation(); else this.stopTrackingSimulation();
             setRenderOne(true);
-        }).tooltip("Track a projected scene object. Drag in Look View to slew; while locked, slew is relative to the tracked object.");
+        }).tooltip("Track a projected scene object. Drag in Look View to slew; while locked, slew is relative to the tracked object.")
+            .asFolderToggle();
         this.trackingObjectController = menu.add(this, "trackingObject", {"Target object": "targetObject"})
             .name("Scene Object").onChange(() => {
                 this.trackingProgram = null; this.stopTrackingSimulation(); this.trackingEnabled = true; setRenderOne(true);

@@ -280,7 +280,7 @@ export class CNodeDisplayTrack extends CNode3DGroup {
             contrailFolder.add(this, "contrail").name(t("displayTrack.contrail.label")).tooltip(t("displayTrack.contrail.tooltip")).listen().onChange(() => {
                 this.updateContrail();
                 setRenderOne(true);
-            })
+            }).asFolderToggle()
             this.guiContrailDuration = contrailFolder.add(this, "contrailDuration", 2, 5000, 1)
                 .name(t("displayTrack.contrailSecs.label")).tooltip(t("displayTrack.contrailSecs.tooltip")).listen().onChange(() => {
                     if (this.contrailNode) {

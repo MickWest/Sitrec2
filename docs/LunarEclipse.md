@@ -59,7 +59,7 @@ on the ray paths that ran high through the stratosphere.
 
 | Control | What it does |
 |---|---|
-| **Eclipse Shading** | Master switch. On by default; has no effect at all except during an eclipse. |
+| **Eclipse Shading** (title checkbox) | Master switch. On by default; has no effect at all except during an eclipse. |
 | **Blood Moon Color** | The physical color of the refracted light. Off renders the same brightness in grey. |
 | **Atmospheric Clarity** | How clear the Earth's atmosphere is around the limb — see below. |
 | **Auto Exposure** | Brighten the shadowed part enough to see it. On by default. |
