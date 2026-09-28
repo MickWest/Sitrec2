@@ -38,7 +38,7 @@ def number(text):
     return int(value) if value.is_integer() else value
 
 
-def put_table(ws, header, rows, first_row=1, first_col=1, date_col=None):
+def put_table(ws, header, rows, first_row=1, first_col=1, date_col=None, freeze=True):
     """Write a header row and data rows; convert numbers (and ISO dates in date_col)."""
     for c, text in enumerate(header):
         cell = ws.cell(row=first_row, column=first_col + c, value=text)
@@ -52,7 +52,8 @@ def put_table(ws, header, rows, first_row=1, first_col=1, date_col=None):
             cell = ws.cell(row=first_row + r, column=first_col + c, value=value)
             if c == date_col:
                 cell.number_format = "yyyy-mm-dd"
-    ws.freeze_panes = ws.cell(row=first_row + 1, column=first_col + 1)
+    if freeze:
+        ws.freeze_panes = ws.cell(row=first_row + 1, column=first_col + 1)
     for c in range(len(header)):
         ws.column_dimensions[get_column_letter(first_col + c)].width = 12 if c else 16
 
@@ -63,6 +64,9 @@ def line_chart(title, y_title, x_title, width=CHART_W, height=CHART_H, date_axis
     chart.y_axis.title = y_title
     chart.width, chart.height = width, height
     if date_axis:
+        # A DateAxis has axId 500, so the y axis must cross 500 (not the default 10).
+        # A y axis that crosses a missing axis makes Excel delete the whole drawing.
+        chart.y_axis.crossAx = 500
         chart.x_axis = DateAxis(crossAx=100)
         chart.x_axis.number_format = "mmm"
         chart.x_axis.majorTimeUnit = "months"
@@ -156,7 +160,9 @@ def by_month_sheet(wb, out_dir, kind):
     for i, (month, month_rows) in enumerate(months):
         top = 1 + i * block
         ws.cell(row=top, column=1, value=month).font = Font(bold=True, size=12)
-        put_table(ws, header[1:], month_rows, first_row=top + 1)
+        # No frozen panes here: freezing and then clearing them leaves <selection>
+        # entries that name a missing pane, and Excel reports the sheet view as damaged.
+        put_table(ws, header[1:], month_rows, first_row=top + 1, freeze=False)
         chart = line_chart(f"{month}: {kind} flares per hour", "Mean per night", "Local solar hour",
                            SMALL_W, SMALL_H)
         chart.y_axis.scaling.min = 0
@@ -166,7 +172,6 @@ def by_month_sheet(wb, out_dir, kind):
         col = n + 3 + (i % 2) * 10
         row = 1 + (i // 2) * 17
         ws.add_chart(chart, f"{get_column_letter(col)}{row}")
-    ws.freeze_panes = None
 
 
 def summary_sheet(wb, out_dir):
