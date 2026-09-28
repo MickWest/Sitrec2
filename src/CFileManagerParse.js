@@ -827,6 +827,24 @@ export const parseMethods = {
 
                 const videoNode = NodeMan.get("video");
 
+                // A TS archive's audio substream is saved in loadedFiles beside its
+                // video substream, but it is only a video of the sitch if the saved
+                // video list names it. Uploading it here added it as a new video and
+                // made it current, so whenever this dispatch ran after the saved
+                // video had loaded, the audio replaced the picture (a black video
+                // view, seen as the intermittent cheytest regression failure).
+                if (Globals.deserializing && isAudioOnlyFormat(filename)) {
+                    const tsParent = fileManagerEntry.tsParentFilename
+                        ?? this.loadedFilesMetadata?.[filename]?.tsParentFilename;
+                    const savedVideos = videoNode.pendingVideoRestore?.videos ?? videoNode.videos ?? [];
+                    const isSavedVideo = videoNode.fileName === filename
+                        || savedVideos.some(v => v.fileName === filename);
+                    if (tsParent && savedVideos.length > 0 && !isSavedVideo) {
+                        console.log(`Skipping TS audio substream ${filename}: not one of the sitch's saved videos`);
+                        return false;
+                    }
+                }
+
                 // Skip if the video node already SUCCESSFULLY loaded this file
                 // via the separate videoFile/videos[] reload path. Without
                 // this, sitch reload would upload the same h264/aac substream

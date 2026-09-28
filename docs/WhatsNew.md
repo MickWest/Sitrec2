@@ -9,6 +9,15 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.172.2 (2026-09-28)
+
+### Improvements
+- **Flare statistics** (/sitrec/tools/shf/stats/): the page and the Excel workbook now explain that each count is for one observer at one place, not a worldwide total. They also give the difference between all flares and visible flares, and say that sky conditions such as twilight, haze, the Moon and light pollution are not included.
+
+### Bug Fixes
+- Fixed "Could not open the saved sitch … No versions found" when opening a featured sitch (File → Server → Open) while logged out, or while logged in as someone other than the sitch's owner.
+- Fixed a black video view that sometimes appeared when reopening a saved sitch whose video came from a .ts (transport stream) file.
+
 ## Version 2.172.1 (2026-09-28)
 
 ### Security

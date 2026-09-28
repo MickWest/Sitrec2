@@ -191,8 +191,9 @@ function isFeaturedSitch($userID, $name) {
         }
     }
 
-    if (!is_array($entries)) return false;
-    foreach ($entries as $entry) {
+    // metadata.php stores the list as {"sitches": [{name, userID, ...}, ...]}.
+    if (!is_array($entries) || !isset($entries['sitches']) || !is_array($entries['sitches'])) return false;
+    foreach ($entries['sitches'] as $entry) {
         if (!is_array($entry)) continue;
         if ((string)($entry['userID'] ?? '') === (string)$userID
             && (string)($entry['name'] ?? '') === (string)$name) {

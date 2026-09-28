@@ -9,6 +9,28 @@ lockstep with docs/WhatsNew.md.
 
 ---
 
+## Version 2.172.2 (2026-09-28)
+
+### Improvements
+- **Flare statistics now explain what they count** (`tools/shf/stats/`; `92b6c4d7`). The README, the viewer page and the workbook now say three things. First, each count is for one observer at one latitude, longitude and altitude, over the whole sky above the horizon. It is not a worldwide total. Second, **All** is every glint inside the 5° flare cone, and **Visible** is the glints that at least double the satellite's base brightness (`isFlareVisible` in `tools/shf/flarePhysics.js`). Third, sky conditions (twilight, haze near the horizon, the Moon, light pollution) are not included. In detail:
+  - **`README.md` ("Definitions").** A new first bullet explains that one glint is seen only from an area about 100–200 km across on the ground, and that longitude changes the counts very little. The Visible bullet now explains the threshold: full brightness within 3.75° of exact alignment, fading to zero at 5°. So a fully sunlit satellite passes when its glint angle is below about 4.44°, and a satellite partly in the Earth's shadow needs a smaller angle. The README also says the brightness is Sitrec's own scale, not an astronomical magnitude.
+  - **`index.html`.** A new explanation paragraph sits above the charts.
+  - **`make-xlsx.py`.** The workbook's About sheet (`about_sheet`) gains the rows "What is counted", "All flares" and "Not included", and the "Visible flare" row now gives the about-4.44° threshold.
+  - No counting or chart code changed.
+
+### Bug Fixes
+- **Fixed: featured sitches could not be opened by users who were logged out, or by logged-in users who don't own them.** In `sitrecServer/getsitches.php`, `isFeaturedSitch()` read `metadata/featured.json` (local disk or S3) as a plain list of `{name, userID}` entries. But `metadata.php` stores the list as `{"sitches": [...]}`. The loop therefore went over the top-level keys, never matched, and the function always returned false. The fix walks `$entries['sitches']` and returns false (fails closed) when that key is missing or not an array.
+  - **Logged-out users.** The anonymous exception for `?get=versions&userid=<owner>&name=<sitch>` never passed, so the server returned an empty array. In the sitch browser (File → Server → Open), `CSitchBrowser._loadSitch` → `CFileManager.loadSavedFile` then showed "Could not open the saved sitch." with the error "No versions found for <name>".
+  - **Logged-in users who are not the owner or an admin.** The `userid` override in the `versions` handler was refused, so the request listed the caller's own folder instead. That is normally empty, which gives the same error. If the caller has a sitch with the same name, it would list that one instead.
+  - **Unaffected.** The owner and admins pass the override by user ID or `isAdmin()`, so they were never affected.
+  - **After the fix.** The versions of a featured sitch are listed again, and `loadSavedFile` opens the latest one. The access rule has not changed: sitches that are not on the featured list are still private to their owner.
+  - **Origin.** The defect came in with `isFeaturedSitch` in 2.147.3.
+- **Fixed: reopening a saved sitch whose video came from a transport stream (`.ts`) file sometimes showed a black video view.** When you drop a `.ts` file, its substreams (for example H.264 video, AAC audio and KLV metadata) are all saved in the sitch's `loadedFiles`. Each has a `tsParentFilename`. Only the H.264 stream is in the video node's saved `videos` list.
+  - **Cause.** On reload, each loaded file is sent to `handleParsedFile` in `src/CFileManagerParse.js`. Since `2eae1827` (first released in 2.132.0), that function's `dataType === "video"` branch sends every audio-only format (`isAudioOnlyFormat`, except `.webm`) to `videoNode.uploadFile`. `CNodeVideoView.addVideoEntry` then adds the audio stream as a new video and makes it the current one.
+  - **Why it was intermittent.** It was a race. It happened only when the `.aac` file was handled after the saved H.264 video had loaded. The audio stream then replaced the picture: the video view went black and the timeline label showed the `.aac` file.
+  - **The fix.** While a sitch is being restored (`Globals.deserializing`), the branch now looks for the file's TS parent, on the file entry or in `loadedFilesMetadata`. It skips (logs and returns false) an audio-only file that has a TS parent and is not in the saved video list (`videoNode.pendingVideoRestore.videos`, else `videoNode.videos`) and is not `videoNode.fileName`. The check applies only when that saved list is not empty. Audio files that are not TS substreams, and audio that is one of the sitch's saved videos, load as before.
+  - **Test.** This was the intermittent "cheytest" visual regression failure: it failed in 5 of 5 runs in one worktree and 1 of 2 in another before the fix, and passed 3 of 3 after it.
+
 ## Version 2.172.1 (2026-09-28)
 
 ### Security
