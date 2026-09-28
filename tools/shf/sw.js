@@ -46,6 +46,9 @@ self.addEventListener("fetch", (event) => {
   if (req.method !== "GET") return;                              // only GETs are cacheable
   const url = new URL(req.url);
   if (url.origin !== self.location.origin) return;               // never cache cross-origin (geocoding/TLE)
+  // The flare-statistics viewer (stats/) is a separate page that is not version-stamped and
+  // loads result files that change between runs, so it always goes to the network.
+  if (url.pathname.startsWith(SCOPE + "stats/")) return;
 
   // Navigations: network-first, fall back to the cached shell when offline.
   if (req.mode === "navigate") {
