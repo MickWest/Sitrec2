@@ -2310,9 +2310,17 @@ const en = {
             label: "Show Frustum Distance",
             tooltip: "Show a label with the frustum distance at the far end of the frustum",
         },
+        frustumColor: {
+            label: "Frustum Color",
+            tooltip: "Color of the frustum edges, sides and ground quad",
+        },
+        showFrustumEdges: {
+            label: "Show Frustum Edges",
+            tooltip: "Show the lines along the edges of the frustum. Always on when the sides are hidden",
+        },
         shadedFrustum: {
-            label: "Shaded Frustum",
-            tooltip: "Fill the four sides of the frustum with a transparent version of the frustum color",
+            label: "Show Frustum Sides",
+            tooltip: "Fill the four sides of the frustum with a transparent version of the frustum color, shaded lighter on top and darker underneath",
         },
         frustumSidesPercent: {
             label: "Frustum Sides %",

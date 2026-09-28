@@ -10,6 +10,7 @@ import {
     BufferAttribute,
     BufferGeometry,
     CanvasTexture,
+    Color,
     DoubleSide,
     Mesh,
     MeshBasicMaterial,
@@ -31,6 +32,10 @@ import {t} from "../i18n";
 import {viewMenuKey} from "../ViewUIBarMenus";
 import {getFrustumFolder} from "../LOSFrustumMenu";
 import {CNodeLabel3D} from "./CNodeLabels3D";
+import {CNodeGUIColor} from "./CNodeGUIColor";
+import {SceneLineMaterial} from "../SceneLineMaterial";
+
+const WHITE = new Color(1, 1, 1);
 
 export class CNodeDisplayCameraFrustumATFLIR extends CNode3DGroup {
     constructor(v) {
@@ -136,15 +141,48 @@ export class CNodeDisplayCameraFrustum extends CNode3DGroup {
         this.addSimpleSerial("showFrustumDistance")
         this.distanceLabel = null;
 
+        // The color picker edits the color input node directly, so everything that shares that
+        // node follows it. A GUIColor input (the custom sitch's "frustumColor") keeps its value in
+        // its own serialization; its old control elsewhere is hidden, so there is only one picker.
+        // A plain constant color is serialized here instead (see modSerialize).
+        const colorNode = this.in.color;
+        colorNode.guiEntry?.hide();
+        this.colorProxy = {
+            get color() { return "#" + colorNode.v0.getHexString(); },
+            set color(hex) { colorNode.value = new Color(hex); },
+        };
+        gui.addColor(this.colorProxy, "color")
+            .name(t("cameraFrustum.frustumColor.label"))
+            .tooltip(t("cameraFrustum.frustumColor.tooltip"))
+            .listen().onChange(() => {
+                colorNode.recalculateCascade();
+                setRenderOne(true);
+            })
+
+        // Edges are the lines, sides are the shaded faces. At least one of them is always shown:
+        // with the sides off, the edges are forced on and their checkbox is disabled.
+        this.showFrustumEdges = v.showFrustumEdges ?? true;
+        this.edgesController = gui.add(this, "showFrustumEdges")
+            .name(t("cameraFrustum.showFrustumEdges.label"))
+            .tooltip(t("cameraFrustum.showFrustumEdges.tooltip"))
+            .listen().onChange(() => {
+                this.updateEdgesSidesState();
+                this.rebuild();
+                setRenderOne(true);
+            })
+        this.addSimpleSerial("showFrustumEdges")
+
         this.shadedFrustum = v.shadedFrustum ?? false;
         gui.add(this, "shadedFrustum")
             .name(t("cameraFrustum.shadedFrustum.label"))
             .tooltip(t("cameraFrustum.shadedFrustum.tooltip"))
             .listen().onChange(() => {
+                this.updateEdgesSidesState();
                 this.rebuild();
                 setRenderOne(true);
             })
         this.addSimpleSerial("shadedFrustum")
+        this.updateEdgesSidesState();
 
         this.frustumSidesPercent = v.frustumSidesPercent ?? 5;
         gui.add(this, "frustumSidesPercent", 0, 100, 1)
@@ -428,6 +466,7 @@ export class CNodeDisplayCameraFrustum extends CNode3DGroup {
     modSerialize() {
         const out = super.modSerialize();
         if (this.frustumDistanceNode) out.hasFrustumDistance = true;
+        if (!(this.in.color instanceof CNodeGUIColor)) out.frustumColor = this.colorProxy.color;
         return out;
     }
 
@@ -436,6 +475,33 @@ export class CNodeDisplayCameraFrustum extends CNode3DGroup {
         if (this.frustumDistanceNode && !v.hasFrustumDistance) {
             this.frustumDistanceNode.setValue(Number(Units.mToBig(this.defaultRadius, 3)), true);
         }
+        if (v.frustumColor !== undefined && !(this.in.color instanceof CNodeGUIColor)) {
+            this.colorProxy.color = v.frustumColor;
+        }
+        this.updateEdgesSidesState();
+    }
+
+    // With the sides off, the edges are the only thing drawn, so they are forced on.
+    updateEdgesSidesState() {
+        if (!this.shadedFrustum) this.showFrustumEdges = true;
+        this.edgesController?.enable(this.shadedFrustum);
+    }
+
+    // Shade the four sides as if lit from above, in the camera's frame:
+    // top lighter, left and right medium, bottom darker.
+    updateSidesColors(color) {
+        const top = color.clone().lerp(WHITE, 0.5);
+        const side = color.clone().multiplyScalar(0.6);
+        const bottom = color.clone().multiplyScalar(0.25);
+        const faces = [side, bottom, side, top]; // same order as the faces in rebuild()
+        const attr = this.sidesMesh.geometry.getAttribute("color");
+        for (let face = 0; face < 4; face++) {
+            for (let vertex = 0; vertex < 3; vertex++) {
+                const c = faces[face];
+                attr.setXYZ(face * 3 + vertex, c.r, c.g, c.b);
+            }
+        }
+        attr.needsUpdate = true;
     }
 
     show(visible = true) {
@@ -450,6 +516,8 @@ export class CNodeDisplayCameraFrustum extends CNode3DGroup {
             this.sidesMesh = null;
             this.sidesMaterial = null;
         }
+        this.quadMaterial?.dispose();
+        this.quadMaterial = null;
         super.dispose();
     }
 
@@ -492,11 +560,11 @@ export class CNodeDisplayCameraFrustum extends CNode3DGroup {
                 effectiveAspect = this.videoAspect;
             }
         }
-        const shape = [fov, effectiveAspect, this.radius, this.step, this.units, this.showFrustum, this.shadedFrustum];
+        const shape = [fov, effectiveAspect, this.radius, this.step, this.units, this.showFrustum, this.shadedFrustum, this.showFrustumEdges];
         if (!this.showQuad && !this.showVideoOnGround && this._lastFrustumShape
             && shape.every((value, i) => value === this._lastFrustumShape[i])) {
             if (this.line) this.line.material = this.matLine;
-            if (this.sidesMaterial) this.sidesMaterial.color.copy(color);
+            if (this.sidesMesh) this.updateSidesColors(color);
             return;
         }
         // Ground footprints still recompute as streamed terrain arrives. The
@@ -540,6 +608,8 @@ export class CNodeDisplayCameraFrustum extends CNode3DGroup {
 
 // WORK IN PROGRESS.  calculating the ground quadrilateral intersecting the frustum with the ground
 
+        // The ground quad is its own line, so it is drawn even when the frustum edges are hidden.
+        const quad_points = [];
         this.groundWorldCorners = null;
         if (this.showQuad || this.showVideoOnGround) {
             this.camera.updateMatrixWorld();
@@ -632,7 +702,7 @@ export class CNodeDisplayCameraFrustum extends CNode3DGroup {
                 corner[2] = this.camera.worldToLocal(corner[2]).add(localUp);
                 corner[3] = this.camera.worldToLocal(corner[3]).add(localUp);
                 if (this.showQuad) {
-                    line_points.push(
+                    quad_points.push(
                         corner[0].x, corner[0].y, corner[0].z,
                         corner[1].x, corner[1].y, corner[1].z,
                         corner[1].x, corner[1].y, corner[1].z,
@@ -647,7 +717,7 @@ export class CNodeDisplayCameraFrustum extends CNode3DGroup {
 
         }
 
-        if (this.showFrustum) {
+        if (this.showFrustum && this.showFrustumEdges) {
             this.FrustumGeometry ??= new LineSegmentsGeometry();
             const changed = updateLineSegmentPositions(this.FrustumGeometry, line_points);
             if (!this.line) {
@@ -665,8 +735,29 @@ export class CNodeDisplayCameraFrustum extends CNode3DGroup {
             this.line.visible = false;
         }
 
+        if (this.showFrustum && quad_points.length > 0) {
+            this.quadGeometry ??= new LineSegmentsGeometry();
+            const changed = updateLineSegmentPositions(this.quadGeometry, quad_points);
+            if (!this.quadLine) {
+                // Its own material, not the pooled matLine, so it can skip the depth test and
+                // stay visible through terrain. Drawn late, after the ground it sits over.
+                this.quadMaterial = new SceneLineMaterial({color, linewidth: this.lineWeigh, depthTest: false});
+                this.quadLine = new Line2(this.quadGeometry, this.quadMaterial);
+                this.quadLine.renderOrder = 1000;
+                this.quadLine.layers.mask = this.group.layers.mask;
+                this.group.add(this.quadLine);
+                Globals.flatEarthPrepareObject?.(this.quadLine);
+            }
+            this.quadMaterial.color.copy(color);
+            this.quadLine.visible = true;
+            if (changed) this.quadLine.computeLineDistances();
+        } else if (this.quadLine) {
+            this.quadLine.visible = false;
+        }
+
         // The shaded sides: four triangles from the camera to the edges of the far rectangle,
         // the same far rectangle the first four lines above run to.
+        // Faces are in the order right, bottom, left, top (see updateSidesColors()).
         if (this.showFrustum && this.shadedFrustum) {
             const fw = line_points[3], fh = line_points[4], fd = line_points[5];
             const sides = new Float32Array([
@@ -678,8 +769,9 @@ export class CNodeDisplayCameraFrustum extends CNode3DGroup {
             if (!this.sidesMesh) {
                 const geometry = new BufferGeometry();
                 geometry.setAttribute("position", new BufferAttribute(sides, 3));
+                geometry.setAttribute("color", new BufferAttribute(new Float32Array(sides.length), 3));
                 this.sidesMaterial = new MeshBasicMaterial({
-                    color: color.clone(),
+                    vertexColors: true,
                     side: DoubleSide,
                     transparent: true,
                     opacity: this.frustumSidesPercent / 100,
@@ -695,7 +787,7 @@ export class CNodeDisplayCameraFrustum extends CNode3DGroup {
                 position.needsUpdate = true;
                 this.sidesMesh.geometry.computeBoundingSphere();
             }
-            this.sidesMaterial.color.copy(color);
+            this.updateSidesColors(color);
             this.sidesMaterial.opacity = this.frustumSidesPercent / 100;
             this.sidesMesh.visible = true;
         } else if (this.sidesMesh) {
