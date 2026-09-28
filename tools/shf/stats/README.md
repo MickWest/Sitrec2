@@ -92,14 +92,27 @@ a table of its values under it.
 
 ## Definitions
 
+- **Each count is for one observer at one place**, at the given latitude, longitude
+  (`--lon`) and altitude (`--alt-km`). It is the number of flares that observer can see
+  in the whole sky above their horizon. It is not a worldwide total: one glint is seen
+  only from a small area on the ground, about 100–200 km across. The constellation is
+  spread evenly in longitude, and the hours are local solar time, so the longitude
+  changes the counts very little.
 - **Night of D** is from local mean solar noon on D to noon on D+1. Each dark period is
   counted once, and is not split at midnight.
 - **Local solar hour** is local mean solar time: UTC + longitude / 15 hours. There are no
   time zones and no daylight saving time, so all latitudes share one clock.
-- **Visible** flares are those whose glint at least doubles the satellite's base
+- **All** flares are all glints inside the 5° flare cone: the reflected sunlight comes
+  within 5° of the observer.
+- **Visible** flares are the glints that at least double the satellite's base
   brightness. The predictor and Sitrec's night sky use this same test
-  (`isFlareVisible` in `../flarePhysics.js`). **All** also counts faint glints at the edge
-  of the 5° flare cone.
+  (`isFlareVisible` in `../flarePhysics.js`). The glint is at full brightness within 3.75°
+  of exact alignment and fades to zero at 5°, so a fully sunlit satellite passes the test
+  when its glint angle is less than about 4.44°. A satellite that is partly in the Earth's
+  shadow needs a smaller angle.
+- The brightness is Sitrec's own scale, not an astronomical magnitude. Neither count
+  includes the sky conditions: twilight, haze near the horizon, the Moon, or light
+  pollution.
 - A flare is counted in the hour of its **peak**.
 
 ## Constellation

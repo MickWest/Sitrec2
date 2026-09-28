@@ -104,10 +104,16 @@ def about_sheet(ws, run):
         ("Generated", run["generated"]),
         ("", None),
         ("Definitions", None),
+        ("What is counted", "Flares seen by ONE observer at the latitude, longitude and altitude above, in the "
+                            "whole sky above the horizon. Not a worldwide total."),
         ("Night of D", "Local mean solar noon on D to noon on D+1, so each dark period is counted once."),
         ("Local solar hour", "Local mean solar time = UTC + longitude/15 hours (no time zones, no daylight saving)."),
+        ("All flares", "Every glint inside the 5 deg flare cone."),
         ("Visible flare", "The glint at least doubles the satellite's base brightness (the shared model the "
-                          "SHF predictor and Sitrec's night sky use). 'All' also counts faint cone-edge glints."),
+                          "SHF predictor and Sitrec's night sky use): a glint angle below about 4.44 deg for a "
+                          "fully sunlit satellite."),
+        ("Not included", "Sky conditions: twilight, haze near the horizon, the Moon, light pollution. The "
+                         "brightness is Sitrec's own scale, not an astronomical magnitude."),
         ("Per-hour values", "Mean number of flares per night that peak inside that hour."),
         ("Synthetic constellation", "About 10,500 satellites in the measured Starlink shells, re-epoched to each "
                                     "night. It gives realistic statistics, not the positions of real satellites."),
