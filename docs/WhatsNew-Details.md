@@ -9,6 +9,11 @@ lockstep with docs/WhatsNew.md.
 
 ---
 
+## Version 2.172.1 (2026-09-28)
+
+### Security
+- The flare statistics viewer (`tools/shf/stats/`) now loads a `?data=` folder only from its own site. `loadFromUrl` in `tools/shf/stats/viewer.js` resolves the folder against `location.href` and compares the result's `origin` with `location.origin`. If they differ (an absolute URL or a protocol-relative `//host/` on another host), it throws before any `fetch`, so a crafted link can no longer make the page send requests to another host. The error text is "?data= must be a folder on this site. To view results from elsewhere, choose the folder or drop its files on the page." It appears in the page's load-error line. The same resolved URL is now the base for every file fetch. Relative and same-site paths still work, and the folder picker, the file picker and drag-and-drop are unchanged. The hint in `index.html` and `tools/shf/stats/README.md` now describe `?data=<folder path>/` as a folder on this site. This replaces the 2.172.0 behavior, where `?data=<url>/` accepted any URL.
+
 ## Version 2.172.0 (2026-09-28)
 
 ### New Features

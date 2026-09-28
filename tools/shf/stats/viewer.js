@@ -45,9 +45,14 @@ async function readFileList(list) {
 
 async function loadFromUrl(base) {
     const dir = base.endsWith("/") ? base : base + "/";
+    // Only this site's own folders: a ?data= link must not make the page send requests to another host.
+    const dirUrl = new URL(dir, location.href);
+    if (dirUrl.origin !== location.origin) {
+        throw new Error("?data= must be a folder on this site. To view results from elsewhere, choose the folder or drop its files on the page.");
+    }
     const files = new Map();
     for (const name of [...NEEDED, "run.json"]) {
-        const resp = await fetch(new URL(name, new URL(dir, location.href)), { cache: "no-store" });
+        const resp = await fetch(new URL(name, dirUrl), { cache: "no-store" });
         if (resp.ok) files.set(name, await resp.text());
         else if (name !== "run.json") throw new Error(`Could not load ${dir}${name} (HTTP ${resp.status}).`);
     }

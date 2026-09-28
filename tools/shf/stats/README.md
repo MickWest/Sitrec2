@@ -83,7 +83,9 @@ python3 tools/shf/stats/make-xlsx.py flare-stats-out
 gives every latitude's value at the pointer. Open it from a Sitrec build at
 `https://local.metabunk.org/sitrec/tools/shf/stats/`, then choose the output folder or
 drop its files on the page. The browser reads the files locally and uploads nothing.
-To load results that a web server can reach, add `?data=<folder URL>/` to the address.
+To load results from a folder on the same site, add `?data=<folder path>/` to the address.
+The viewer refuses a folder on another host, so a link cannot make it send requests
+elsewhere.
 
 The controls choose visible or all flares, and show or hide each latitude. Each chart has
 a table of its values under it.

@@ -9,6 +9,11 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.172.1 (2026-09-28)
+
+### Security
+- The flare statistics page (/sitrec/tools/shf/stats/) now loads results given in its address only from a folder on the same site, and shows an error for a folder on another host. Choosing a folder or dropping files on the page works as before.
+
 ## Version 2.172.0 (2026-09-28)
 
 ### New Features
