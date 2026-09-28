@@ -9,6 +9,18 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.172.0 (2026-09-28)
+
+### New Features
+- **Frustum distance and shading** (Show → Camera View Frustum): **Frustum Distance** sets how far the frustum reaches when it has no target track, **Show Frustum Distance** labels that distance at the far end, **Shaded Frustum** fills the four sides with the frustum color, and **Frustum Sides %** sets their opacity.
+- **Folder title checkboxes**: many folders, including every object folder, the lighting effects, the video Grid and Annotate folders, and the building, cloud, overlay and grid folders, now have their on/off switch as a checkbox at the right end of the folder title. When it is off, the folder's other controls are greyed out.
+- **Drag to set checkboxes**: press a checkbox and drag over others to set them all the same way, for example to hide several objects at once in the Objects menu.
+- **Starlink flare statistics**: a new command-line tool counts Starlink horizon flares for every night of a year at several latitudes, and writes CSV tables and an Excel workbook with charts. A new page at /sitrec/tools/shf/stats/ shows the same charts in your browser from the results folder, without uploading anything.
+
+### Improvements
+- **Tidier Show menu** (Show): the line-of-sight controls are now in a **Lines of Sight (LOS)** folder, and the frustum and video projection controls are in a **Camera View Frustum** folder.
+- **Water Reflection** (Lighting → Water Reflection): **Vector Water Mask** and **Combine Terrain with OSM** now apply only while Water Reflection is on.
+
 ## Version 2.171.0 (2026-09-26)
 
 ### New Features

@@ -9,6 +9,40 @@ lockstep with docs/WhatsNew.md.
 
 ---
 
+## Version 2.172.0 (2026-09-28)
+
+### New Features
+
+- **Frustum distance, distance label and shaded sides** (Show → **Camera View Frustum**; `8ae31a62`). `CNodeDisplayCameraFrustum` gains four controls, all in the new Frustum folder:
+  - **Frustum Distance** (`cameraFrustum.frustumDistance`): a `CNodeGUIValue` (`<id>_frustumDistance`, `unitType: "big"`, elastic range from 1 km to 10,000 km). It sets `this.radius` in `update()`, with a minimum of 3 m because `rebuild()` draws the far rectangle at `radius - 2`. The slider exists only when the frustum has no `targetTrack`, because a target track sets the radius every frame. Saves from before this version have no value for the slider, and `Units.modDeserialize` changes units without converting GUI values. To handle this, `modSerialize()` writes a `hasFrustumDistance` marker. When the marker is missing, `modDeserialize()` resets the slider to the metre default in the units just loaded.
+  - **Show Frustum Distance** (`showFrustumDistance`, default off, serialized): `updateDistanceLabel()` places a `CNodeLabel3D` (`<id>_distanceLabel`) at the center of the far rectangle. It shows `Units.withUnits(radius, 2, "big")` and is hidden while the frustum or the node is hidden. `show()` is overridden to keep the label in step.
+  - **Shaded Frustum** (`shadedFrustum`, default off, serialized): fills the four sides with a transparent, double-sided `MeshBasicMaterial` mesh (`sidesMesh`, `depthWrite: false`). The mesh uses the frustum color and the group's layer mask, and it goes through `Globals.flatEarthPrepareObject`. `shadedFrustum` is part of the rebuild shape key, and `dispose()` frees the mesh.
+  - **Frustum Sides %** (`frustumSidesPercent`, 0–100, default 5, serialized): sets the opacity of the shaded sides.
+- **Folder title checkboxes** (`ff82ce7a`). The new `Controller.asFolderToggle()` in `src/FolderToggle.js`, installed through `lil-gui-extras.js`, shows a folder's existing on/off boolean ("Visible", "Show …", "Enable …") as a checkbox at the right end of the folder's title line. The controller stays in the folder with its row hidden by a CSS class (not `hide()`, which MenuMirror would pass on to the twins). As a result, `onChange`, `.listen()` polling, `.shareAs()` view-header twins, `setMenuValue` and serialization all work as before.
+  - When the value is off, each row of the folder gets the `lil-folder-faded` class and the `inert` attribute. The marks are reference-counted so nested toggle folders agree. Rows marked with `keepLiveWhenFolderOff()` stay usable (for example Name, Delete, and **Current LOS**). `MenuMirror.buildTwin` copies the exemption, and `mirrorFolderFrom` promotes the copied toggle, so object edit popups behave the same way.
+  - Adopted in about 30 places, including every 3D object folder (`CNode3DObject`), synthetic buildings, clouds, ground overlays and ground grid, Water Reflection, City Lights, Atmospheric Optics (halos and Brocken spectre), eclipse and lunar eclipse, lens ghosts, refraction, flat-earth rendering, Panoramic Camera, fisheye, long exposure, the GPU memory monitor, the video Grid / Annotate / info readout / format effects / video effects folders, MQ9 UI, sim info, OSD data series, star chart, tracking wobble, fit camera points, track contrails, and the Show → Camera View Frustum and Lines of Sight (LOS) folders.
+  - `CSitrecAPI` (`setMenuValue` path resolution) now takes a folder name as the address of that folder's title checkbox. A partial name matches only when it identifies exactly one toggle folder. `chatbotSystemPrompt.txt` describes this.
+  - `CNodeDisplayLOS`: every LOS display shares the LOS folder, but only the first display owns the title checkbox, the main-view header items and the **o** key. A later display's rows use `keepLiveWhenFolderOff()`.
+  - User docs updated: `docs/UserInterface.md`, plus "(title checkbox)" notes in Lighting, SceneObjects, LoadingVideo and other pages.
+- **Drag to set several checkboxes** (`ff82ce7a`, `src/CheckboxDragPaint.js`). Press any lil-gui checkbox (a boolean row or a folder title checkbox) and drag over others. Each checkbox you pass over is set to the new state of the first one. Each is set by sending the normal `change` event, so `setValue`, `onChange`, the finish callbacks and mirrors all run. Disabled checkboxes and checkboxes in `inert` rows are skipped. A press and release without a drag is a normal click, and the click that follows a drag is cancelled. This is documented in `docs/UserInterface.md` under "Checkboxes".
+- **Starlink flare statistics tool and chart viewer** (`tools/shf/stats/`; `d35e6249`, fix `b4551b68`).
+  - `flare-stats.mjs` is a Node command-line tool. It counts Starlink horizon flares for every night of a year at a set of latitudes (default `0,20,35,45,55,65,-35`). It uses the predictor's own `flareEngine.js`, the `dummyTLE.js` synthetic constellation, or a real TLE / OMM CSV file (`--tle`).
+  - It writes CSV tables of flares per night, flares per local mean solar hour (for the whole year and for each month) and a summary, for visible and for all flares. `make-xlsx.py` (needs `openpyxl`) writes `FlareStats.xlsx` with line charts.
+  - Nights are scanned on worker threads (`statsWorker.mjs`, `statsCore.mjs`) and cached in `nights.jsonl`, so an interrupted run continues. The cache key includes a hash of the physics source files, so a model change scans again instead of mixing old and new results.
+  - `index.html` / `viewer.js` / `lineChart.js` is a browser viewer. It draws the same charts, with a tooltip for each latitude, from a results folder that you choose or drop on the page (nothing is uploaded), or from `?data=<url>/`.
+  - `tools/shf/sw.js` does not cache `stats/`. The default output folder `flare-stats-out/` is ignored by `.gitignore` and by `webpackCopyPatterns.js`.
+  - `b4551b68` fixes the workbook before its first release. Excel reported it as damaged: the per-night `DateAxis` charts had the value axis cross the missing axis ID 10 instead of 500, and the hour-by-month sheets had selections that named a cleared frozen pane. This is not a separate entry, because the defect was never released.
+
+### Improvements
+
+- **Show menu: Lines of Sight (LOS) and Camera View Frustum folders** (`8ae31a62`, `ff82ce7a`). The new `src/LOSFrustumMenu.js` creates two sub-folders of Show, `menus.showHide.linesOfSight` ("Lines of Sight (LOS)") and `menus.showHide.frustum`. The frustum folder was named "Frustum" in `8ae31a62` and renamed "Camera View Frustum" in `ff82ce7a`.
+  - Each folder is created by the first node that asks for it. A cached folder is reused only while it is still attached, because `menuBar.destroy(false)` removes it when the sitch changes.
+  - `CNodeDisplayLOS` moves **Lines of Sight**, **Hide Some LOS** and **Current LOS** into the LOS folder.
+  - `CNodeDisplayCameraFrustum` moves the frustum show/hide control, the ground quad, **Video in Frustum**, **Video on Ground**, the ground-video look-view option, **Video Distance** and **Video Opacity** into the frustum folder. **Match Video Aspect** stays in the Camera menu.
+  - `CNode3D.guiToggle` and `CNode3DGroup.showHider` take an optional target `gui` for this.
+  - The chatbot system prompt example is updated, because a `setMenuValue` path does not search inside folders.
+- **Water Reflection masks follow the reflection switch** (Lighting → Water Reflection; `ff82ce7a`). `QuadTreeTileMaterial.osmWaterSourceForTile` and `vectorWaterMaskWanted` now also require `waterReflection.enabled`, so **Vector Water Mask** and **Combine Terrain with OSM** no longer fetch tiles or change the imagery while the reflection is off. Switching the reflection now calls `reloadTerrain()` when either option is set, because tile materials are keyed on these options. `updateWaterAttribution` credits the vector water source only when the reflection is on. The tooltips say that these options apply only while Water Reflection is on.
+
 ## Version 2.171.0 (2026-09-26)
 
 ### New Features

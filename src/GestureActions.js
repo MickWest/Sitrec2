@@ -144,6 +144,7 @@ export const NATIVE_INTERACTION_BOUNDARIES = Object.freeze({
     "BigSlider.js": "Range slider with pointer capture and cancellation",
     "lil-gui-extras.js": "GUI folders, menus and value controls",
     "lil-gui-slider-settings.js": "Native value-field settings",
+    "CheckboxDragPaint.js": "GUI checkbox drag-to-set",
     "CTrackBrowser.js": "Scrollable list selection and rubber-band selection",
     "CSitchBrowser.js": "Scrollable list/card selection and column sizing",
     "scriptedVideo/ScriptEditorWindow.js": "Textarea selection and number-token editing",
