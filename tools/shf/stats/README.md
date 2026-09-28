@@ -115,6 +115,77 @@ a table of its values under it.
   pollution.
 - A flare is counted in the hour of its **peak**.
 
+## Approximate formula
+
+A formula derived from the flare geometry gives the smooth curve that the nightly counts
+scatter about. The day-to-day scatter of the counts is about the same size as counting
+noise (the square root of the count), so the smooth curve is the expected number.
+
+The panel faces straight down, so it reflects only sunlight that comes from below the
+satellite's horizontal. The reflected ray therefore always passes just above the Earth's
+edge, and a flare needs the Sun a certain distance below the observer's horizon: about
+28° to 47°, depending on the satellite's altitude. Flares are low in the sky (below about
+15°) and toward the Sun's direction below the horizon.
+
+Angles are in degrees, and P = 3.14159.
+
+Inputs: L = observer latitude (north positive); N = day of year (1 January = 0);
+T = local solar time in hours; R = 6371 km; G = glint limit (5 for all flares, 4.44 for
+visible flares); K = 0.01049 (visible) or 0.01173 (all).
+
+Sun at the observer:
+
+- S = −23.44 × cos(360 × (N + 10) / 365.25) (solar declination)
+- H = 15 × (T − 12) (hour angle)
+- D = −asin(sin L × sin S + cos L × cos S × cos H) (Sun depression)
+- A = atan2(−sin H × cos S, cos L × sin S − sin L × cos S × cos H) (Sun azimuth)
+
+For each orbital shell k, with inclination Ik, altitude Hk (km) and Nk satellites (the
+shells are the `groups` in `../dummyTLE.js`):
+
+- E = acos(R / (R + Hk)) (the dip of the Earth's edge, seen from the satellite)
+- M = asin(tan E / sqrt(3))
+- U = 2 × E (upper edge of the window: the satellite enters the Earth's shadow)
+- B = 180 − M − 2 × asin(cos E × cos M) − G (lower edge of the window)
+- X = (D − B) / (U − B), and W = sqrt(sin(180 × X)) if 0 < X < 1, otherwise W = 0
+- C = 86 − asin(cos E × cos 4) (distance to the flaring satellites)
+- Z = asin(sin L × cos C + cos L × sin C × cos A) (latitude of the flaring satellites)
+- F(Y) = 0.5 + asin(sin Y / sin Ik) / 180, with sin Y / sin Ik limited to −1 to +1
+  (the fraction of the shell south of latitude Y)
+- Q = (F(Z + 3) − F(Z − 3)) / (2 × P × (sin(Z + 3) − sin(Z − 3))) (shell density there)
+
+Flares per hour at time T = K × (Q × W × Nk, added over all shells). Flares per night is
+the rate added from noon to the next noon in small steps (for example rate × 2/60 every
+2 minutes); flares in one hour is the same, over that hour.
+
+### How accurate it is
+
+The formula was fitted (only K) to a 2026 run of this tool: synthetic constellation, sea
+level, minimum elevation 0°, visible flares.
+
+R² is the fraction of the variation in the simulated counts that the formula explains:
+1 is a perfect match, and 0 is no better than a flat line at the average.
+
+- Per latitude, over the nights of the year, R² is 0.97 at 20°N, 0.91 at 35°N, 0.95 at
+  45°N, 0.97 at 65°N and 0.91 at 35°S. At 55°N it is 0.50 (see below). The curve at 0° is
+  almost flat, so R² does not apply there; its error (17 flares per night) is the same as
+  its counting noise.
+- For the per-hour shape, R² is 0.97 to 1.00 at every latitude except 55°N (0.59).
+- All 7 latitudes together give R² 0.95. This is higher than most single latitudes,
+  because it also counts the large differences between latitudes, which are easy to get
+  right.
+- At 5 latitudes that were not used in the fit (10°N, 28°N, 50°N, 60°N, 20°S), R² is 0.93
+  to 0.98, except 10°N (0.67). The 10°N curve is almost flat, and its error (24 flares
+  per night) is near its counting noise (17).
+- The mean per night is usually within about 5%, mostly slightly low.
+- It is least accurate near a shell's turning latitude, where the shell's satellites are
+  most dense. At 55°N, R² is 0.50, and in December the formula gives about twice the
+  simulated count.
+- It reproduces this tool's simulation, not the real sky. Compared with a real element
+  set over three weeks, the synthetic constellation was within about 10% up to 35°
+  latitude, but gave fewer flares at 45°N (−19%), 55°N (−37%) and 65°N (−65%).
+- It does not include the observer's altitude.
+
 ## Constellation
 
 By default the tool uses the synthetic constellation: about 10,500 satellites laid out in
