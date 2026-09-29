@@ -9,6 +9,14 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.172.3 (2026-09-28)
+
+### New Features
+- **Frustum edges, sides and color** (Show → Camera View Frustum): new **Show Frustum Edges**, **Show Frustum Sides** and **Frustum Color** controls let you show the frustum as lines, as shaded sides that look solid, or both. The ground quad lines now show through terrain, even when the edges are hidden.
+
+### Improvements
+- **Measurements** (Show → Measurements): each measurement has a checkbox at the right end of its entry to show or hide it. Click the entry again to close its dialog and keep your changes. The Edit dialog's title is now the measurement's name.
+
 ## Version 2.172.2 (2026-09-28)
 
 ### Improvements

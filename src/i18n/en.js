@@ -2340,8 +2340,8 @@ const en = {
         },
         entry: {
             tooltip: "Click to change, hide or delete this measurement",
+            showTooltip: "Show or hide this measurement",
         },
-        hiddenSuffix: "(hidden)",
         describe: {
             altitude: "Altitude: {{from}}",
             distance: "Distance: {{from}} → {{to}}",
@@ -2357,7 +2357,6 @@ const en = {
         },
         dialog: {
             addTitle: "Add Measurement",
-            editTitle: "Edit Measurement",
             type: "Measurement Type",
             altitude: "Altitude",
             altitudeHint: "Height above the ground and above mean sea level",

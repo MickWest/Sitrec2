@@ -20,7 +20,7 @@ import {Globals, guiMenus, NodeMan, setRenderOne, Sit, Synth3DManager, TrackMana
 import {FeatureManager} from "./CFeatureManager";
 import {CNodeMeasurement, setupMeasurementUI} from "./nodes/CNodeLabels3D";
 import {CNode3DObject, shortObjectName} from "./nodes/CNode3DObject";
-import {closeMeasurementDialog, openMeasurementDialog} from "./MeasurementDialog";
+import {applyMeasurementDialog, closeMeasurementDialog, openMeasurementDialog, setMeasurementDialogShow} from "./MeasurementDialog";
 import {V3} from "./threeUtils";
 import {t} from "./i18n";
 import {EventManager} from "./CEventManager";
@@ -72,6 +72,7 @@ class CMeasurementManager {
         // it had when the dialog opened, or null for one that is still being added. The live
         // preview must not reach a save made before OK.
         this.drafts = new Map();
+        this.dialogNode = null;  // the measurement whose dialog is open, or null
         this.sourceKinds = MEASUREMENT_SOURCE_KINDS;
     }
 
@@ -129,6 +130,7 @@ class CMeasurementManager {
         }
         this.list = {};
         this.drafts.clear();
+        this.dialogNode = null;
         this.active = false;
         // The controllers themselves are destroyed with the rest of the per-sitch menu
         // (menuBar.destroy(false)). Only our references to them go here.
@@ -170,9 +172,12 @@ class CMeasurementManager {
         // A new sitch loaded while the dialog is open (drag and drop still works behind it)
         // takes this measurement with it, and nothing more must be done here.
         const generation = Globals.loadGeneration;
+        // An open dialog keeps its edits and closes first, as for a click on another entry.
+        if (this.dialogNode) applyMeasurementDialog();
         const node = this.createMeasurement(null, normalizeMeasurementConfig({type: "altitude", from: CAMERA}));
         this.rebuildMenu();
         this.drafts.set(node, null);
+        this.dialogNode = node;
         const result = await openMeasurementDialog({
             config: normalizeMeasurementConfig(node.config),
             isNew: true,
@@ -180,6 +185,7 @@ class CMeasurementManager {
             onChange: (config) => this.previewConfig(node, config),
         });
         this.drafts.delete(node);
+        if (this.dialogNode === node) this.dialogNode = null;
         if (Globals.loadGeneration !== generation || this.list[node.id] !== node) return;
         if (result?.action === "apply") {
             node.setConfig(normalizeMeasurementConfig(result.config));
@@ -190,11 +196,20 @@ class CMeasurementManager {
     }
 
     // Edits show live. Cancel puts back the config the measurement had when the dialog opened.
+    // A click on a menu entry while a dialog is open keeps that dialog's edits and closes it,
+    // then opens this measurement's dialog, unless the open one was already this measurement.
     async editMeasurement(id) {
         const node = this.list[id];
         if (!node) return;
+        if (this.dialogNode) {
+            const same = this.dialogNode === node;
+            // Closes at once; the open dialog's own await applies the result after this.
+            applyMeasurementDialog();
+            if (same) return;
+        }
         const original = normalizeMeasurementConfig(node.config);
         this.drafts.set(node, original);
+        this.dialogNode = node;
         const result = await openMeasurementDialog({
             config: original,
             isNew: false,
@@ -202,6 +217,7 @@ class CMeasurementManager {
             onChange: (config) => this.previewConfig(node, config),
         });
         this.drafts.delete(node);
+        if (this.dialogNode === node) this.dialogNode = null;
         // The measurement may have gone while the dialog was open (a new sitch was loaded).
         if (this.list[id] !== node) return;
         if (result?.action === "delete") {
@@ -221,8 +237,9 @@ class CMeasurementManager {
         this.refreshMenuNames();
     }
 
-    // One button per measurement, after "Add Measurement". Rebuilt whenever one is added,
-    // changed or deleted, so each name and the order are always current.
+    // One button per measurement, after "Add Measurement", with a Show checkbox at the right
+    // end of the row. Rebuilt whenever one is added, changed or deleted, so each name and the
+    // order are always current.
     rebuildMenu() {
         const folder = guiMenus.showhidemeasurements;
         if (!folder || !this.active) return;
@@ -232,22 +249,32 @@ class CMeasurementManager {
             const button = folder.add({edit: () => this.editMeasurement(id)}, "edit")
                 .name(this.menuName(node))
                 .tooltip(t("measurements.entry.tooltip"));
-            this.menuButtons.push({id, button});
+            const checkbox = addRowCheckbox(button, t("measurements.entry.showTooltip"), (checked) => {
+                const current = this.list[id];
+                if (!current) return;
+                // With its dialog open, the change goes through the dialog (which previews it),
+                // so OK keeps it and Cancel undoes it like any other edit there.
+                if (this.drafts.has(current)) setMeasurementDialogShow(checked);
+                else current.show(checked);
+            });
+            checkbox.checked = node.visible !== false;
+            this.menuButtons.push({id, button, checkbox});
         }
     }
 
+    // Names and Show checkboxes: the dialog's live preview changes both.
     refreshMenuNames() {
-        for (const {id, button} of this.menuButtons) {
+        for (const {id, button, checkbox} of this.menuButtons) {
             const node = this.list[id];
             if (!node) continue;
             const name = this.menuName(node);
             if (button._name !== name) button.name(name);
+            checkbox.checked = node.visible !== false;
         }
     }
 
     menuName(node) {
-        const name = this.describe(node.config);
-        return node.visible ? name : name + " " + t("measurements.hiddenSuffix");
+        return this.describe(node.config);
     }
 
     // The menu name: the label if there is one, otherwise what is measured.
@@ -349,6 +376,41 @@ class CMeasurementManager {
         }
         return out;
     }
+}
+
+// A checkbox at the right end of a button row, drawn like a folder's title checkbox
+// (FolderToggle.js). It is a sibling of the button, so a click on it does not also click the
+// button. The row is rebuilt with the menu, so the checkbox goes with the controller.
+const ROW_CHECKBOX_STYLE_ID = "lil-row-checkbox-style";
+
+function addRowCheckbox(controller, tooltip, onChange) {
+    if (!document.getElementById(ROW_CHECKBOX_STYLE_ID)) {
+        const style = document.createElement("style");
+        style.id = ROW_CHECKBOX_STYLE_ID;
+        style.textContent = `
+.lil-gui .controller.lil-has-row-checkbox { position: relative; }
+.lil-gui .controller.lil-has-row-checkbox button { padding-right: calc(var(--checkbox-size) + 2 * var(--padding)); }
+.lil-gui .controller > input.lil-row-checkbox {
+    position: absolute;
+    top: 50%;
+    transform: translateY(-50%);
+    right: var(--padding);
+    margin: 0;
+    z-index: 1;
+}
+`;
+        document.head.appendChild(style);
+    }
+    const box = document.createElement("input");
+    box.type = "checkbox";
+    box.className = "lil-row-checkbox";
+    box.title = tooltip;
+    box.setAttribute("aria-label", tooltip);
+    box.addEventListener("click", (e) => e.stopPropagation());
+    box.addEventListener("change", () => onChange(box.checked));
+    controller.domElement.classList.add("lil-has-row-checkbox");
+    controller.domElement.appendChild(box);
+    return box;
 }
 
 // The middle of a building's roof: the mean of its top corners.

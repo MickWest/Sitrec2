@@ -9,6 +9,29 @@ lockstep with docs/WhatsNew.md.
 
 ---
 
+## Version 2.172.3 (2026-09-28)
+
+### New Features
+- **Camera view frustum: edge, side and color options** (Show → Camera View Frustum; `c209fb03`, `src/nodes/CNodeDisplayCameraFrustum.js`).
+  - **Color picker.** A new **Frustum Color** picker (`cameraFrustum.frustumColor`) edits the frustum's `color` input node through `colorProxy`, so everything that uses that node follows it. In the custom sitch the input is the `frustumColor` GUIColor node from `data/custom/SitCustom.js`. Its old control in the Contents menu is now hidden (`colorNode.guiEntry?.hide()`), so there is only one picker. A GUIColor input serializes itself. A plain constant color is saved by the frustum node as `frustumColor` (`modSerialize`/`modDeserialize`).
+  - **Edges and sides.** A new **Show Frustum Edges** checkbox (`showFrustumEdges`, default on, simple serial) turns the frustum lines on and off. **Shaded Frustum** is renamed **Show Frustum Sides**, and it keeps the serial name `shadedFrustum`, so old saves load. `updateEdgesSidesState()` forces the edges on, and disables their checkbox, while the sides are off, so the frustum never disappears completely.
+  - **Side shading.** The sides mesh now uses vertex colors (`MeshBasicMaterial` with `vertexColors: true`), set by `updateSidesColors()`. The top face is half-way to white, the left and right faces are 0.6 × the color, and the bottom face is 0.25 × the color. This makes the frustum look solid, as if lit from above.
+  - **Ground quad lines.** The **Frustum Ground Quad** lines are now a separate `Line2` (`quadLine`) with their own `SceneLineMaterial` (`depthTest: false`, `renderOrder` 1000). They use their own material because the pooled `matLine` is shared with other lines. As a result, the ground quad still shows when the edges are off, and it shows through terrain.
+
+### Improvements
+- **Show → Measurements: a show/hide checkbox on each entry, and click-to-close** (uncommitted: `src/CMeasurementManager.js`, `src/MeasurementDialog.js`, `src/i18n/en.js`, `docs/UserInterface.md`).
+  - **Show/hide checkbox.** `addRowCheckbox()` puts a checkbox at the right end of each measurement's button row, drawn like a folder title checkbox. Its tooltip is `measurements.entry.showTooltip`, "Show or hide this measurement". It is a sibling of the button, and `stopPropagation` stops a click on it from also opening the dialog. The " (hidden)" suffix (`measurements.hiddenSuffix`) is removed from the menu name. `refreshMenuNames()` keeps each checkbox in step with the measurement's `visible` state.
+  - **Checkbox while the dialog is open.** If that measurement's dialog is open (`drafts.has`), the checkbox goes through `setMeasurementDialogShow()`. This sets the dialog's **Show** field and previews the change, so OK keeps it and Cancel undoes it.
+  - **Clicks while a dialog is open.** The manager records the open dialog in `dialogNode`.
+    - A click on that measurement's own entry closes the dialog through `applyMeasurementDialog()`, which acts as OK.
+    - A click on a different entry, or on **Add Measurement**, also keeps the open dialog's edits and then opens the new dialog.
+    - If OK is not yet possible (a new measurement with nothing picked), the dialog closes as cancelled.
+  - **Dialog title.** The Edit dialog's title is now the measurement's menu name from `manager.describe(config)`, for example "Distance: Camera → Traverse". `notify()` updates it live as you edit. The `measurements.dialog.editTitle` key ("Edit Measurement") is removed. The Add dialog keeps "Add Measurement".
+  - **Documentation.** `docs/UserInterface.md` describes the new behavior.
+
+### Documentation
+- **Flare statistics README: an approximate flare-rate formula** (`tools/shf/stats/README.md`; `5411cd70`). The README now gives an approximate formula for flares per hour and per night at a given latitude and date. The formula comes from the flare geometry: the panel reflects sunlight to the observer only when the Sun is within a certain range below the observer's horizon. The README also says how closely the formula matches the simulated counts, and where it is least accurate. No code changed.
+
 ## Version 2.172.2 (2026-09-28)
 
 ### Improvements

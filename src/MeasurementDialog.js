@@ -33,11 +33,30 @@ const RED = "#c62828";
 let dialogOpen = false;
 // Closes the open dialog as cancelled, or null when there is none.
 let cancelOpenDialog = null;
+// Sets the open dialog's Show field, or null when there is none.
+let setOpenDialogShow = null;
+// Closes the open dialog keeping its edits, or null when there is none.
+let applyOpenDialog = null;
 
 // Close the open dialog as if Cancel was clicked. For a sitch teardown: the measurement being
 // edited is about to go, and the dialog must not outlive it.
 export function closeMeasurementDialog() {
     cancelOpenDialog?.();
+}
+
+// Set Show in the open dialog, as if its checkbox was clicked. For the Show checkbox on the
+// measurement's menu entry: the dialog is not modal, so that checkbox can be clicked while the
+// dialog is open, and the change must go into the dialog's state or its next change, OK or
+// Cancel would undo it.
+// Close the open dialog as if OK was clicked, or as cancelled when OK is not possible (a new
+// measurement with nothing picked yet). For a click on a measurement's menu entry while a
+// dialog is open: the edits show live, so the click keeps what the user sees.
+export function applyMeasurementDialog() {
+    applyOpenDialog?.();
+}
+
+export function setMeasurementDialogShow(show) {
+    setOpenDialogShow?.(show);
 }
 
 function el(tag, cssText = "", text = undefined) {
@@ -65,7 +84,8 @@ function sectionTitle(text) {
  * @param {object} opts
  * @param {object} opts.config - a normalized measurement config; the dialog edits a copy
  * @param {boolean} opts.isNew - "Add" (no Delete button) rather than "Edit"
- * @param {object} opts.manager - CMeasurementManager: sourceKinds, listSources(kind), kindLabel(kind)
+ * @param {object} opts.manager - CMeasurementManager: sourceKinds, listSources(kind), kindLabel(kind),
+ *     describe(config)
  * @param {function(object)} [opts.onChange] - called with the edited config after every change
  * @returns {Promise<{action:string, config?:object}|null>}
  */
@@ -99,10 +119,11 @@ export function openMeasurementDialog({config, isNew, manager, onChange}) {
         modal.dataset.interactionNative = "true";
 
         // The title bar moves the panel. Sticky, so it stays reachable when the panel scrolls.
+        // Editing, it shows the measurement's menu name, kept current as it is edited (notify).
         const titleBar = el("h3", `
             margin: 0 -24px 4px; padding: 16px 24px 8px; color: ${BLUE}; font-size: 20px;
             cursor: move; user-select: none; position: sticky; top: 0; background: white;
-        `, t(isNew ? "measurements.dialog.addTitle" : "measurements.dialog.editTitle"));
+        `, isNew ? t("measurements.dialog.addTitle") : manager.describe(config));
         modal.appendChild(titleBar);
         // The shared floating-window drag (the same one the track filter dialog uses).
         makeDraggable(modal, {handle: titleBar});
@@ -277,6 +298,11 @@ export function openMeasurementDialog({config, isNew, manager, onChange}) {
         showInput.type = "checkbox";
         showInput.checked = state.show;
         showInput.onchange = () => { state.show = showInput.checked; notify(); };
+        setOpenDialogShow = (show) => {
+            showInput.checked = show;
+            state.show = show;
+            notify();
+        };
 
         const addField = (key, input, span = false) => {
             grid.appendChild(el("label", "font-weight: bold; color: #444;", t("measurements.dialog." + key)));
@@ -306,7 +332,9 @@ export function openMeasurementDialog({config, isNew, manager, onChange}) {
 
         // Live preview: the caller applies every change as it is made.
         function notify() {
-            onChange?.(currentConfig());
+            const config = currentConfig();
+            if (!isNew) titleBar.textContent = manager.describe(config);
+            onChange?.(config);
         }
 
         function canApply() {
@@ -338,9 +366,12 @@ export function openMeasurementDialog({config, isNew, manager, onChange}) {
             if (modal.parentNode) modal.parentNode.removeChild(modal);
             dialogOpen = false;
             cancelOpenDialog = null;
+            setOpenDialogShow = null;
+            applyOpenDialog = null;
             resolve(result);
         }
         cancelOpenDialog = () => close(null);
+        applyOpenDialog = () => close(canApply() ? {action: "apply", config: currentConfig()} : null);
 
         // Keys stay in the dialog: the app's keyboard shortcuts (space to play, and so on)
         // must not act on the sitch while typing here. Bubble phase, so the dialog's own inputs
