@@ -146,6 +146,16 @@ function sanitizeSettings($settings) {
         $sanitized['byokSitrecFocused'] = $settings['byokSitrecFocused'];
     }
 
+    // AI Effort levels, mirrored from AI_EFFORT_VALUES in src/SettingsManager.js.
+    if (isset($settings['aiEffort'])
+        && in_array($settings['aiEffort'], ['low', 'medium', 'high', 'xhigh', 'max'], true)) {
+        $sanitized['aiEffort'] = $settings['aiEffort'];
+    }
+
+    if (isset($settings['aiRefusalFallback']) && is_bool($settings['aiRefusalFallback'])) {
+        $sanitized['aiRefusalFallback'] = $settings['aiRefusalFallback'];
+    }
+
     if (isset($settings['voiceModel'])) {
         $voiceModel = strval($settings['voiceModel']);
         // A bare model id, or empty for "use the default". No provider prefix: unlike

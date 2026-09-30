@@ -83,3 +83,12 @@ export async function callOpenRouter() {
 export async function chat() {
     throw new Error(NOT_AVAILABLE);
 }
+
+// Same values as the original; nothing in this build sends a request that uses them.
+export const DEFAULT_MAX_TOKENS = 16000;
+export const DEFAULT_EFFORT = 'medium';
+export const RETRY_POLICY = {maxRetries: 0, baseDelayMs: 0, maxDelayMs: 0};
+
+export function requestTimeoutMs() {
+    return 0;
+}

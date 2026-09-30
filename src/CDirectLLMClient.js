@@ -20,15 +20,154 @@
 // the client unit-testable and cleanly separated from the chat UI.
 
 import promptFileText from '../sitrecServer/chatbotSystemPrompt.txt';
-import {emptyUsage} from './BYOKUsage';
+import {addUsage, emptyUsage} from './BYOKUsage';
 import {
-    DEFAULT_VOICE_MODEL, KIND_VOICE, filterToCurrentGeneration, getCatalogModels,
+    DEFAULT_VOICE_MODEL, EFFORT_LEVELS, KIND_VOICE, effortLevelsFor, filterToCurrentGeneration,
+    getCatalogModels,
 } from './BYOKModelCatalog';
 
 const ANTHROPIC_API_URL = 'https://api.anthropic.com/v1/messages';
 const ANTHROPIC_VERSION = '2023-06-01';
 const OPENROUTER_API_URL = 'https://openrouter.ai/api/v1/chat/completions';
 const OPENAI_API_URL = 'https://api.openai.com/v1/chat/completions';
+// Server-side refusal fallback, "default" form: Anthropic picks the substitute model by
+// refusal category. The array form uses a different (older) header; do not mix them.
+const ANTHROPIC_FALLBACK_BETA = 'server-side-fallback-2026-07-01';
+
+// The output cap for one model response. It covers thinking, reply text and tool-call
+// arguments TOGETHER, and every current Claude model thinks by default (Opus 5.5 and Fable
+// 5.1 cannot turn it off), as do the OpenAI reasoning models. The old 1024/2048 caps let a
+// turn spend the whole allowance thinking and come back empty or with a cut-off tool call.
+// A cap is only a ceiling: nothing is billed for tokens the model does not produce.
+// 16000 is the usual ceiling for a non-streaming request; much higher and one response
+// can outlast an HTTP timeout.
+export const DEFAULT_MAX_TOKENS = 16000;
+
+// The AI Effort setting's default. "medium" is Opus 5.5's own default and a middle
+// setting on every other model; see effortForAnthropic / effortForOpenAI for the mapping.
+export const DEFAULT_EFFORT = 'medium';
+
+// ── Retry and timeout ──────────────────────────────────────────────────────────────────
+// 429 (rate limited) and 529 (Anthropic overloaded) are temporary by nature, and the next
+// attempt usually succeeds, so they are retried with exponential backoff. Nothing else is:
+// a 400 means the request itself is wrong, a 401 means the key is, and a 5xx other than
+// 529 may already have done (and billed) the work. OpenAI's out-of-credit answer is also a
+// 429, and waiting will not fix it, so that one is reported at once.
+//
+// Mutable so the tests can shrink the delays; nothing else should change it.
+export const RETRY_POLICY = {maxRetries: 3, baseDelayMs: 2000, maxDelayMs: 30000};
+const RETRYABLE_STATUS = new Set([429, 529]);
+
+// How long one request may take before it is abandoned. Scaled by effort, because a
+// high-effort response on a large model legitimately thinks for minutes, and a timeout
+// that fires on a working request wastes the tokens already spent. A user-named server
+// gets the longest allowance: loading a local model's weights before the first reply can
+// take about three minutes on its own (see probeEndpointResidency).
+const TIMEOUT_MS_BY_EFFORT = {low: 120000, medium: 180000, high: 300000, xhigh: 600000, max: 600000};
+const CUSTOM_ENDPOINT_TIMEOUT_MS = 600000;
+
+export function requestTimeoutMs(effort, custom = false) {
+    if (custom) return CUSTOM_ENDPOINT_TIMEOUT_MS;
+    return TIMEOUT_MS_BY_EFFORT[effort] ?? TIMEOUT_MS_BY_EFFORT[DEFAULT_EFFORT];
+}
+
+function sleep(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+// The wait before retry number `attempt` (0-based), or null to give up. A retry-after
+// header wins when the browser can read it (it depends on the provider's CORS
+// expose-headers list, so it is often hidden); otherwise 2 s, 4 s, 8 s with jitter, so
+// several tabs that hit the same limit do not all retry in step.
+function retryDelayMs(res, attempt) {
+    const raw = res?.headers?.get?.('retry-after');
+    if (raw) {
+        const seconds = Number(raw);
+        const ms = Number.isFinite(seconds) ? seconds * 1000 : Date.parse(raw) - Date.now();
+        if (Number.isFinite(ms)) {
+            // A provider asking for a long wait is better reported than waited out silently.
+            if (ms > RETRY_POLICY.maxDelayMs) return null;
+            return Math.max(0, ms);
+        }
+    }
+    const backoff = RETRY_POLICY.baseDelayMs * 2 ** attempt;
+    return Math.min(RETRY_POLICY.maxDelayMs, backoff + Math.random() * RETRY_POLICY.baseDelayMs / 2);
+}
+
+function isQuotaExhausted(data) {
+    const error = data?.error;
+    return error?.code === 'insufficient_quota' || error?.type === 'insufficient_quota';
+}
+
+// POST a JSON body and read the JSON reply, with the timeout and the 429/529 retry above.
+// Returns {res, data}; the body is read here, inside the timeout, because a stalled body
+// is as much a hang as a stalled connection.
+async function postJSON(url, headers, body, {timeoutMs, serviceName, custom}) {
+    for (let attempt = 0; ; attempt++) {
+        const controller = typeof AbortController === 'function' ? new AbortController() : null;
+        const timer = controller ? setTimeout(() => controller.abort(), timeoutMs) : null;
+        let res;
+        let data;
+        try {
+            res = await fetch(url, {method: 'POST', headers, body, signal: controller?.signal});
+            data = await res.json().catch(() => ({}));
+        } catch (e) {
+            // Not retried: the request may still be running, and billing, on the far side.
+            if (controller?.signal.aborted) {
+                throw new Error(`${serviceName} did not answer within ${Math.round(timeoutMs / 1000)} `
+                    + `seconds, so the request was stopped. Try again, or choose a lower AI Effort.`);
+            }
+            // A self-hosted address fails here far more often than a hosted one, and the
+            // browser's own message ("Failed to fetch") names neither cause. Say what the
+            // two actually are, since the user is the only one who can fix either.
+            if (!custom) throw e;
+            throw new Error(`Could not reach ${url}. The server may be down, or it may not `
+                + `allow requests from ${globalThis.location?.origin ?? 'this page'} — `
+                + `a self-hosted server has to be told to permit this origin (CORS).`);
+        } finally {
+            if (timer) clearTimeout(timer);
+        }
+        if (RETRYABLE_STATUS.has(res.status) && attempt < RETRY_POLICY.maxRetries
+            && !isQuotaExhausted(data)) {
+            const delay = retryDelayMs(res, attempt);
+            if (delay !== null) {
+                console.log(`BYOK: ${serviceName} answered ${res.status}; retry ${attempt + 1} `
+                    + `of ${RETRY_POLICY.maxRetries} in ${Math.round(delay / 100) / 10} s.`);
+                await sleep(delay);
+                continue;
+            }
+        }
+        return {res, data};
+    }
+}
+
+// ── Effort ─────────────────────────────────────────────────────────────────────────────
+// One setting, two wire forms. Anthropic takes output_config.effort with the five levels
+// as named. OpenAI's reasoning_effort has no "max", so it maps to "xhigh", its top level.
+function normalizeEffort(effort) {
+    return EFFORT_LEVELS.includes(effort) ? effort : DEFAULT_EFFORT;
+}
+
+// The level to send to an Anthropic model, or null to send none. When the catalogue
+// knows which levels the model takes, an unsupported request drops to the nearest lower
+// level it does take (Opus 4.6 has no "xhigh", say), and a model that takes no effort at
+// all (Haiku 4.5) gets none, since sending one is a 400.
+function effortForAnthropic(model, effort) {
+    const wanted = normalizeEffort(effort);
+    const supported = effortLevelsFor(model);
+    if (supported === null) return wanted;
+    if (supported.length === 0) return null;
+    const rank = EFFORT_LEVELS.indexOf(wanted);
+    for (let i = rank; i >= 0; i--) {
+        if (supported.includes(EFFORT_LEVELS[i])) return EFFORT_LEVELS[i];
+    }
+    return supported[0];
+}
+
+function effortForOpenAI(effort) {
+    const wanted = normalizeEffort(effort);
+    return wanted === 'max' ? 'xhigh' : wanted;
+}
 
 // Provider token for "call Anthropic directly with the user's own key". It is
 // deliberately NOT plain "anthropic": the chat model setting is a single
@@ -68,8 +207,8 @@ export function isBYOKProvider(provider) {
 // before the first catalogue fetch lands (or if it fails), so they are deliberately a few
 // safe, known-good ids rather than an attempt at a complete list.
 export const BYOK_MODELS = [
-    {provider: BYOK_ANTHROPIC_PROVIDER, keyProvider: 'anthropic', model: 'claude-opus-5', label: 'Claude Opus 5 (your Anthropic key)'},
-    {provider: BYOK_ANTHROPIC_PROVIDER, keyProvider: 'anthropic', model: 'claude-sonnet-5', label: 'Claude Sonnet 5 (your Anthropic key)'},
+    {provider: BYOK_ANTHROPIC_PROVIDER, keyProvider: 'anthropic', model: 'claude-opus-5-5', label: 'Claude Opus 5.5 (your Anthropic key)'},
+    {provider: BYOK_ANTHROPIC_PROVIDER, keyProvider: 'anthropic', model: 'claude-sonnet-5-5', label: 'Claude Sonnet 5.5 (your Anthropic key)'},
     {provider: BYOK_ANTHROPIC_PROVIDER, keyProvider: 'anthropic', model: 'claude-haiku-4-5', label: 'Claude Haiku 4.5 (your Anthropic key)'},
     {provider: BYOK_OPENAI_PROVIDER, keyProvider: 'openai', model: 'gpt-5-mini', label: 'OpenAI GPT-5 Mini (your OpenAI key)'},
     {provider: BYOK_OPENAI_PROVIDER, keyProvider: 'openai', model: 'gpt-5-nano', label: 'OpenAI GPT-5 Nano (your OpenAI key)'},
@@ -590,7 +729,22 @@ function withCacheBreakpoint(content) {
 // systemParts is the {staticPart, menuPart, volatilePart} split from
 // buildSystemPromptParts(). It is optional — callers that only have the concatenated
 // string still work, they just get one cached block, which is the pre-split behavior.
-export async function callAnthropic({ apiKey, systemPrompt, systemParts, messages, tools, model, maxTokens = 1024, endpoint }) {
+// Parameters an Anthropic model has refused this session, learned from its 400 and not
+// sent again: "<url> <model>" -> Set<'effort' | 'fallbacks'>. Keyed by the address too,
+// so a custom gateway that rejects effort for a model name does not stop effort being
+// sent to the same model on Anthropic's own API. The catalogue's capability data
+// normally prevents the effort case; this covers a model the catalogue does not know
+// (the built-in fallback list, a custom gateway) and a model that takes no fallback.
+const ANTHROPIC_DROPPED = new Map();
+
+function anthropicDropped(url, model) {
+    const key = `${url} ${model}`;
+    if (!ANTHROPIC_DROPPED.has(key)) ANTHROPIC_DROPPED.set(key, new Set());
+    return ANTHROPIC_DROPPED.get(key);
+}
+
+export async function callAnthropic({ apiKey, systemPrompt, systemParts, messages, tools, model,
+    maxTokens = DEFAULT_MAX_TOKENS, endpoint, effort = DEFAULT_EFFORT, refusalFallback = false }) {
     // ── PARITY WITH THE SERVER PROXY ──────────────────────────────────────────────────
     // This is the browser BYOK sibling of sitrecServer/chatbot.php callAnthropic(). The
     // two MUST stay behaviorally in sync — mirror changes to request shaping, the system
@@ -639,57 +793,79 @@ export async function callAnthropic({ apiKey, systemPrompt, systemParts, message
         systemBlocks.push({ type: 'text', text: systemPrompt, cache_control: { type: 'ephemeral' } });
     }
 
-    const body = {
-        model,
-        max_tokens: maxTokens,
-        system: systemBlocks,
-        messages: cachedMessages,
-        tools: convertToolsForAnthropic(tools),
-    };
-
     const url = endpoint?.chatURL || ANTHROPIC_API_URL;
     const custom = !!endpoint?.chatURL;
+    const serviceName = custom ? 'Endpoint' : 'Anthropic';
+    const dropped = anthropicDropped(url, model);
+    // The effort actually sent, which the timeout is scaled by.
+    const sentEffort = dropped.has('effort') ? null : effortForAnthropic(model, effort);
 
-    const headers = {
-        'Content-Type': 'application/json',
-        'anthropic-version': ANTHROPIC_VERSION,
+    const buildRequest = () => {
+        const body = {
+            model,
+            max_tokens: maxTokens,
+            system: systemBlocks,
+            messages: cachedMessages,
+            tools: convertToolsForAnthropic(tools),
+        };
+        // No `thinking` field: every current model runs adaptive thinking when it is
+        // omitted, and Opus 5.5 rejects an explicit "disabled". Effort is the one control.
+        if (!dropped.has('effort') && sentEffort) body.output_config = {effort: sentEffort};
+
+        const headers = {
+            'Content-Type': 'application/json',
+            'anthropic-version': ANTHROPIC_VERSION,
+        };
+        // Opt-in: a declined request is re-run on another Claude model inside the same
+        // call, billed to the user's key. Never sent to a custom gateway, which would not
+        // know the field or the beta header (and the header would fail its CORS preflight).
+        if (refusalFallback && !custom && !dropped.has('fallbacks')) {
+            body.fallbacks = 'default';
+            headers['anthropic-beta'] = ANTHROPIC_FALLBACK_BETA;
+        }
+        // Required for direct browser calls: Anthropic rejects a browser origin without it.
+        //
+        // NOT sent to a custom endpoint, and this is not a nicety. A non-standard request
+        // header forces a CORS preflight and must appear in the server's
+        // Access-Control-Allow-Headers, so sending it to a gateway that has never heard of
+        // it makes every request fail before it is issued. Measured against a compatible
+        // server whose allow-list covered anthropic-version but not this: the whole call
+        // died as "Failed to fetch". Every header sent to a server we do not control is a
+        // preflight term it has to know about, so only the ones it genuinely needs go.
+        if (!custom) headers['anthropic-dangerous-direct-browser-access'] = 'true';
+        // A self-hosted Anthropic-compatible gateway often needs no credential, and some
+        // reject an empty header outright, so it is omitted rather than sent blank.
+        if (apiKey) headers['x-api-key'] = apiKey;
+        return {headers, body};
     };
-    // Required for direct browser calls: Anthropic rejects a browser origin without it.
-    //
-    // NOT sent to a custom endpoint, and this is not a nicety. A non-standard request
-    // header forces a CORS preflight and must appear in the server's
-    // Access-Control-Allow-Headers, so sending it to a gateway that has never heard of it
-    // makes every request fail before it is issued. Measured against a compatible server
-    // whose allow-list covered anthropic-version but not this: the whole call died as
-    // "Failed to fetch". Every header sent to a server we do not control is a preflight
-    // term it has to know about, so only the ones it genuinely needs go.
-    if (!custom) headers['anthropic-dangerous-direct-browser-access'] = 'true';
-    // A self-hosted Anthropic-compatible gateway often needs no credential, and some
-    // reject an empty header outright, so it is omitted rather than sent blank.
-    if (apiKey) headers['x-api-key'] = apiKey;
 
-    let res;
-    try {
-        res = await fetch(url, {method: 'POST', headers, body: JSON.stringify(body)});
-    } catch (e) {
-        // A self-hosted address fails here far more often than a hosted one, and the
-        // browser's own message ("Failed to fetch") names neither cause. Say what the two
-        // actually are, since the user is the only one who can fix either.
-        if (!custom) throw e;
-        throw new Error(`Could not reach ${url}. The server may be down, or it may not `
-            + `allow requests from ${globalThis.location?.origin ?? 'this page'} — `
-            + `a self-hosted server has to be told to permit this origin (CORS).`);
-    }
+    // At most one retry per optional field: each 400 that names one drops it for this
+    // model and tries again; anything else is a real error and is reported.
+    for (let attempt = 0; attempt < 3; attempt++) {
+        const {headers, body} = buildRequest();
+        const {res, data} = await postJSON(url, headers, JSON.stringify(body), {
+            timeoutMs: requestTimeoutMs(sentEffort ?? DEFAULT_EFFORT, custom), serviceName, custom,
+        });
+        if (res.ok && !data.error) return data;
 
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok || data.error) {
         const msg = data?.error?.message || `HTTP ${res.status}`;
-        const err = new Error(`${custom ? 'Endpoint' : 'Anthropic'} API error: ${msg}`);
+        if (res.status === 400) {
+            const lower = msg.toLowerCase();
+            const drop = (body.fallbacks && lower.includes('fallback')) ? 'fallbacks'
+                : (body.output_config && (lower.includes('effort') || lower.includes('output_config')))
+                    ? 'effort' : null;
+            if (drop) {
+                dropped.add(drop);
+                console.log(`BYOK: ${model} does not take ${drop}; retrying without it.`);
+                continue;
+            }
+        }
+        const err = new Error(`${serviceName} API error: ${msg}`);
         err.status = res.status;
         err.body = data;
         throw err;
     }
-    return data;
+    throw new Error(`${serviceName} API error: ${model} rejected the request repeatedly.`);
 }
 
 const MAX_DIRECT_HISTORY_MESSAGES = 10;
@@ -829,7 +1005,7 @@ const OPTIONAL_PARAMS = new Set(['reasoning_effort', 'max_completion_tokens']);
 // Three strategies, most specific first. The last one is deliberately a blind guess,
 // because the set of servers this now talks to is open-ended: anyone's gateway, anyone's
 // local runner, each with its own wording for "I do not accept that field".
-function remedyFor(model, message) {
+function remedyFor(model, message, sentEffort = null) {
     const text = String(message || '');
     const quirks = quirksFor(model);
 
@@ -849,6 +1025,15 @@ function remedyFor(model, message) {
     const named = /(?:Unrecognized request argument supplied|Unsupported parameter|Unsupported value)\s*:?\s*'?([A-Za-z_][A-Za-z0-9_]*)'?/i
         .exec(text);
     const param = named?.[1];
+    // An effort LEVEL the model does not take ("xhigh" on a model whose top is "high") is
+    // stepped down one level before the parameter is given up entirely, so the user's
+    // choice is honoured as closely as the model allows.
+    if (param === 'reasoning_effort' && /Unsupported value/i.test(text)
+        && sentEffort === 'xhigh' && !quirks.steppedDown) {
+        quirks.steppedDown = true;
+        quirks.reasoningEffort = 'high';
+        return `reasoning_effort='high'`;
+    }
     if (param && OPTIONAL_PARAMS.has(param) && !quirks.drop.has(param)) {
         quirks.drop.add(param);
         return `drop ${param}`;
@@ -870,7 +1055,8 @@ function remedyFor(model, message) {
 }
 
 export async function callOpenAIFormat({apiKey, keyProvider = 'openrouter', systemPrompt,
-    systemParts, messages, tools, model, maxTokens = 2048, sessionId, endpoint}) {
+    systemParts, messages, tools, model, maxTokens = DEFAULT_MAX_TOKENS, sessionId, endpoint,
+    effort = DEFAULT_EFFORT}) {
     const custom = keyProvider === 'custom';
     const direct = keyProvider === 'openai';
     const url = custom ? endpoint?.chatURL : (direct ? OPENAI_API_URL : OPENROUTER_API_URL);
@@ -895,7 +1081,9 @@ export async function callOpenAIFormat({apiKey, keyProvider = 'openrouter', syst
         if (quirks.drop.has('max_completion_tokens')) body.max_tokens = maxTokens;
         else body.max_completion_tokens = maxTokens;
         if (!quirks.drop.has('reasoning_effort')) {
-            body.reasoning_effort = quirks.reasoningEffort ?? 'low';
+            // A level the provider itself asked for (gpt-5.6-sol wants 'none' alongside
+            // function tools) wins over the setting: the setting's level is a 400 there.
+            body.reasoning_effort = quirks.reasoningEffort ?? effortForOpenAI(effort);
         }
         // OpenRouter-only: it uses session_id for its own request grouping, and OpenAI
         // rejects unknown top-level body fields outright rather than ignoring them.
@@ -906,26 +1094,16 @@ export async function callOpenAIFormat({apiKey, keyProvider = 'openrouter', syst
     // Bounded at three, and each pass must make a change remedyFor() has not made before,
     // so a model that keeps refusing cannot loop: the second identical rejection returns
     // null and the error is reported.
+    const timeoutMs = requestTimeoutMs(effortForOpenAI(effort), custom);
     for (let attempt = 0; attempt < 3; attempt++) {
-        let res;
-        try {
-            res = await fetch(url, {
-                method: 'POST', headers, body: JSON.stringify(buildBody()),
-            });
-        } catch (e) {
-            // A self-hosted address fails here far more often than a hosted one, and the
-            // browser's own message ("Failed to fetch") names neither cause. Say what the
-            // two actually are, since the user is the only one who can fix either.
-            if (!custom) throw e;
-            throw new Error(`Could not reach ${url}. The server may be down, or it may not `
-                + `allow requests from ${globalThis.location?.origin ?? 'this page'} — `
-                + `a self-hosted server has to be told to permit this origin (CORS).`);
-        }
-        const data = await res.json().catch(() => ({}));
+        const {res, data} = await postJSON(url, headers, JSON.stringify(buildBody()),
+            {timeoutMs, serviceName, custom});
         if (res.ok && !data.error) return data;
 
         const msg = data?.error?.message || `HTTP ${res.status}`;
-        const remedy = res.status === 400 ? remedyFor(model, msg) : null;
+        const sent = quirksFor(model).drop.has('reasoning_effort') ? null
+            : (quirksFor(model).reasoningEffort ?? effortForOpenAI(effort));
+        const remedy = res.status === 400 ? remedyFor(model, msg, sent) : null;
         if (remedy) {
             console.log(`BYOK: ${model} needs ${remedy}; retrying.`);
             continue;
@@ -944,31 +1122,162 @@ export async function callOpenRouter(args) {
     return callOpenAIFormat({...args, keyProvider: 'openrouter'});
 }
 
+// When a server-side fallback replaced the model part-way through its output, the blocks
+// the declined model produced BEFORE the last `fallback` marker must not be echoed back:
+// its thinking and tool calls belong to a turn that was abandoned. Text blocks stay, as
+// does everything after the marker. The marker itself is kept: the API treats it as an
+// audit block it may ignore, and keeping it leaves the switch point in the history.
+// (A non-streaming response normally omits the declined partial anyway; this keeps the
+// history valid if one ever arrives.)
+const NOT_ECHOED_BEFORE_FALLBACK = new Set(['thinking', 'redacted_thinking', 'tool_use']);
+
+function echoableContent(content) {
+    let boundary = -1;
+    content.forEach((block, i) => { if (block?.type === 'fallback') boundary = i; });
+    if (boundary < 0) return content;
+    return content.filter((block, i) =>
+        i >= boundary || !NOT_ECHOED_BEFORE_FALLBACK.has(block?.type));
+}
+
+// Did a fallback model serve this response? usage.iterations carries a fallback_message
+// entry when it did, including "sticky" turns that have no fallback block in content.
+function servedByFallback(response) {
+    return (response?.usage?.iterations || []).some(entry => entry?.type === 'fallback_message');
+}
+
+function usageFromAnthropic(u) {
+    const round = emptyUsage();
+    round.inputTokens = u?.input_tokens || 0;
+    round.outputTokens = u?.output_tokens || 0;
+    round.cacheReadTokens = u?.cache_read_input_tokens || 0;
+    round.cacheWriteTokens = u?.cache_creation_input_tokens || 0;
+    return round;
+}
+
+// Refusal categories Anthropic bills when the refusal arrives before any output (as of
+// September 2026; see "How refusals are billed" in Anthropic's refusals-and-fallback doc).
+// Any other category, or a null one, costs nothing, although its tokens are still reported.
+const BILLED_REFUSAL_CATEGORIES = new Set(['bio', 'frontier_llm', 'reasoning_extraction']);
+
+// One response's attempts, split into what was billed and what was not.
+//
+// Returns {byModel: Map<model, usage>, unbilledTokens}. `unbilledTokens` counts the
+// input tokens of declined attempts that are left out of the estimate, so the caller can
+// say so rather than silently drop them.
+//
+// Without a fallback there is one attempt: the top-level usage. With one, top-level usage
+// covers ONLY the attempt that produced the returned message, and usage.iterations is the
+// per-attempt record, each entry naming the model that ran it. An attempt that declined
+// before any output is billed only for the categories above. The category is known only
+// for the attempt the response ends on (stop_details); an earlier declined hop reports no
+// category, so its cost cannot be known and it is left out, with the tokens reported.
+//
+// Keyed by the requested id unless a fallback really ran: response.model otherwise echoes
+// the id in its own form (a dated snapshot for an alias), which would split one model's
+// spend across two rows. A custom endpoint's model names mean nothing to this rule.
+function roundUsageByModel(response, model, custom) {
+    const usage = response?.usage || {};
+    const refused = response?.stop_reason === 'refusal';
+    const finalCategory = response?.stop_details?.category ?? null;
+    const fallbackRan = !custom && servedByFallback(response) && !!response.model;
+    const byModel = new Map();
+    let unbilledTokens = 0;
+    const add = (id, round) => byModel.set(id, addUsage(byModel.get(id) || emptyUsage(), round));
+
+    // A declined attempt with no output is billed only for a known billed category.
+    const billed = (attemptUsage, category, declined) => !declined
+        || (attemptUsage?.output_tokens || 0) > 0
+        || (category !== undefined && BILLED_REFUSAL_CATEGORIES.has(category));
+    const record = (id, attemptUsage, category, declined) => {
+        if (billed(attemptUsage, category, declined)) add(id, usageFromAnthropic(attemptUsage));
+        else unbilledTokens += attemptUsage?.input_tokens || 0;
+    };
+
+    const iterations = Array.isArray(usage.iterations) ? usage.iterations : [];
+    if (fallbackRan && iterations.length > 0
+        && iterations.every(entry => typeof entry?.input_tokens === 'number')) {
+        iterations.forEach((entry, i) => {
+            const last = i === iterations.length - 1;
+            const id = entry.model || (entry.type === 'fallback_message' ? response.model : model);
+            // Every entry but the last declined. The last declined only if the response
+            // is a refusal, and then its category is the one in stop_details.
+            const declined = !last || refused;
+            record(id, entry, last ? finalCategory : undefined, declined);
+        });
+    } else {
+        // One attempt, or a fallback without per-attempt figures: the top-level usage,
+        // under the model that produced it.
+        record(fallbackRan ? response.model : model, usage, finalCategory, refused);
+    }
+    const answeredBy = fallbackRan ? response.model : model;
+    add(answeredBy, {...emptyUsage(), requests: 1});
+    return {byModel, unbilledTokens};
+}
+
+function refusalText(response, refusalFallback) {
+    const details = response?.stop_details || {};
+    let text = 'The model declined this request';
+    if (details.category) text += ` (${details.category})`;
+    text += details.explanation ? `: ${details.explanation}` : '.';
+    if (!refusalFallback) {
+        text += ' Turning on Refusal Fallback in Settings lets another Claude model try it.';
+    }
+    return text;
+}
+
 async function chatAnthropic({apiKey, model, systemPrompt, systemParts, history, userText,
-    tools, specialistTools, executeCall, needsModelResult, maxIterations, onRound, endpoint}) {
+    tools, specialistTools, executeCall, needsModelResult, maxIterations, onRound, endpoint,
+    effort, refusalFallback}) {
     const messages = [
         ...historyToAnthropicMessages(boundedHistory(history)),
         {role: 'user', content: String(userText || '').slice(0, MAX_DIRECT_MESSAGE_CHARS)},
     ];
     const activeTools = [...(tools || [])];
-    const final = {text: '', executedCalls: [], usage: emptyUsage()};
+    // usageByModel splits the spend when a fallback model served some of the rounds, so
+    // each model's tokens are priced at that model's rate. `usage` stays the turn total.
+    const final = {text: '', executedCalls: [], usage: emptyUsage(), usageByModel: {}};
+    const addText = text => { final.text += (final.text ? '\n' : '') + text; };
 
     for (let iter = 0; iter < maxIterations; iter++) {
-        const response = await callAnthropic({apiKey, systemPrompt, systemParts, messages, tools: activeTools, model, endpoint});
-        const u = response.usage || {};
-        final.usage.requests += 1;
-        final.usage.inputTokens += u.input_tokens || 0;
-        final.usage.outputTokens += u.output_tokens || 0;
-        final.usage.cacheReadTokens += u.cache_read_input_tokens || 0;
-        final.usage.cacheWriteTokens += u.cache_creation_input_tokens || 0;
+        const response = await callAnthropic({apiKey, systemPrompt, systemParts, messages,
+            tools: activeTools, model, endpoint, effort, refusalFallback});
+        // Bank each attempt under the model that ran it, so it is priced at that model's
+        // rate. Only a fallback splits a round (see roundUsageByModel).
+        const {byModel, unbilledTokens} = roundUsageByModel(response, model, !!endpoint);
+        for (const [usedModel, round] of byModel) {
+            final.usageByModel[usedModel] = addUsage(final.usageByModel[usedModel] || emptyUsage(), round);
+            addUsage(final.usage, round);
+        }
+        final.unbilledRefusalTokens = (final.unbilledRefusalTokens || 0) + unbilledTokens;
+        // "Answered instead" only when the fallback model actually answered: if it declined
+        // too, the whole chain refused and the refusal branch below says so.
+        if (!endpoint && servedByFallback(response) && response.stop_reason !== 'refusal'
+            && response.model && response.model !== model) {
+            final.servedBy = response.model;
+        }
+
         const content = Array.isArray(response.content) ? response.content : [];
         for (const block of content) {
-            if (block.type === 'text' && block.text) final.text += (final.text ? '\n' : '') + block.text;
+            if (block.type === 'text' && block.text) addText(block.text);
+        }
+
+        // A refusal comes back as HTTP 200. Check it before anything in `content` is acted on.
+        if (response.stop_reason === 'refusal') {
+            addText(refusalText(response, refusalFallback));
+            break;
         }
 
         const toolBlocks = content.filter(block => block.type === 'tool_use');
+        // Cut off at the output cap: a tool call in this response may be incomplete, so none
+        // of them is run. The same rule as the OpenAI path's finish_reason === 'length'.
+        if (response.stop_reason === 'max_tokens') {
+            addText(toolBlocks.length > 0
+                ? 'That answer was cut off before I could finish the action, so I have not run it.'
+                : '(The reply was cut off at the length limit.)');
+            break;
+        }
         if (toolBlocks.length === 0 || response.stop_reason === 'end_turn') break;
-        messages.push({role: 'assistant', content});
+        messages.push({role: 'assistant', content: echoableContent(content)});
 
         const calls = toolBlocks.map(block => ({fn: block.name, args: block.input || {}}));
         // One model response's worth of calls is one round. The caller uses the boundary to
@@ -999,7 +1308,7 @@ async function chatAnthropic({apiKey, model, systemPrompt, systemParts, history,
 
 async function chatOpenAIFormat({apiKey, keyProvider, model, systemPrompt, systemParts, history,
     userText, tools, specialistTools, executeCall, needsModelResult, maxIterations, sessionId,
-    onRound, endpoint}) {
+    onRound, endpoint, effort}) {
     const messages = [
         ...historyToOpenAIMessages(history),
         {role: 'user', content: String(userText || '').slice(0, MAX_DIRECT_MESSAGE_CHARS)},
@@ -1010,7 +1319,7 @@ async function chatOpenAIFormat({apiKey, keyProvider, model, systemPrompt, syste
     for (let iter = 0; iter < maxIterations; iter++) {
         const response = await callOpenAIFormat({
             apiKey, keyProvider, systemPrompt, systemParts, messages, tools: activeTools,
-            model, sessionId, endpoint,
+            model, sessionId, endpoint, effort,
         });
         addOpenAIFormatUsage(final.usage, response.usage || {});
         const choice = response.choices?.[0] || {};
@@ -1079,6 +1388,10 @@ export async function chat({
     // {url, format} for a user-named server. Required for the 'custom' provider and
     // ignored for the rest, whose addresses are fixed.
     endpoint: endpointConfig,
+    // The AI Effort setting: 'low' | 'medium' | 'high' | 'xhigh' | 'max'.
+    effort = DEFAULT_EFFORT,
+    // Anthropic only: let another Claude model answer a request this one declines.
+    refusalFallback = false,
 }) {
     const keyProvider = keyProviderForBYOK(provider);
     if (!keyProvider) throw new Error(`BYOK provider '${provider}' not supported.`);
@@ -1101,7 +1414,8 @@ export async function chat({
     }
 
     const args = {apiKey, keyProvider, model, systemPrompt, systemParts, history, userText, tools,
-        specialistTools, executeCall, needsModelResult, maxIterations, sessionId, onRound, endpoint};
+        specialistTools, executeCall, needsModelResult, maxIterations, sessionId, onRound, endpoint,
+        effort, refusalFallback};
     // For a custom endpoint the TRANSPORT is chosen by the wire format the server speaks,
     // not by who is being billed — that is the whole point of asking for the format.
     const useAnthropic = custom ? format === 'anthropic' : keyProvider === 'anthropic';

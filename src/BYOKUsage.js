@@ -27,12 +27,21 @@ const USAGE_KEY = 'aiUsageTotals';
 // (Sonnet 5 by 50%), and quoting the promotional rate after it lapses understates it —
 // so the rate in effect is chosen by date, and cost is banked at the time of use
 // (see recordUsage) rather than re-derived later at whatever rate is current then.
+//
+// Claude rows checked against Anthropic's list prices on 2026-09-29. `cachedInput` is set
+// where a cache read is NOT the usual 0.1x of input: Opus 5.5 reads at $0.20 (0.05x) and
+// Fable 5.1 at $0.25 (0.025x), so the default multiplier would overstate both.
 const MODEL_PRICES = {
+    'claude-fable-5-1': {input: 10, output: 50, cachedInput: 0.25},
+    'claude-fable-5': {input: 10, output: 50},
+    'claude-opus-5-5': {input: 4, output: 20, cachedInput: 0.20},
     'claude-opus-5': {input: 5, output: 25},
-    'claude-sonnet-5': {
-        input: 3, output: 15,
-        promo: {input: 2, output: 10, untilUTC: Date.UTC(2026, 8, 1)},  // through 2026-08-31
-    },
+    'claude-opus-4-8': {input: 5, output: 25},
+    'claude-sonnet-5-5': {input: 2, output: 10},
+    // $2/$10 was announced as an introductory rate through 2026-08-31, but it is still the
+    // list price after that date, so no promo entry. The promo mechanism stays for the next one.
+    'claude-sonnet-5': {input: 2, output: 10},
+    'claude-sonnet-4-6': {input: 3, output: 15},
     'claude-haiku-4-5': {input: 1, output: 5},
     // OpenRouter model slugs. OpenRouter's response-provided usage.cost is preferred;
     // these are fallbacks for an upstream response that omits the exact charged cost.
@@ -58,6 +67,12 @@ const MODEL_PRICES = {
     },
 };
 
+// A dated snapshot ("claude-haiku-4-5-20251001") costs what its alias costs; the catalogue
+// lists both forms, so look up the alias when the dated id has no row of its own.
+function tableEntry(model) {
+    return MODEL_PRICES[model] ?? MODEL_PRICES[String(model).replace(/-\d{8}$/, '')];
+}
+
 // The per-million rates in effect at a given moment (defaults to now).
 //
 // The table above wins where it has an entry: it carries the promotional-rate logic and is
@@ -66,7 +81,7 @@ const MODEL_PRICES = {
 // outside the four hardcoded rows would report tokens and no cost at all, which is most of
 // them now that the dropdown lists whatever the key exposes.
 export function pricesFor(model, atMs = undefined) {
-    const entry = MODEL_PRICES[model];
+    const entry = tableEntry(model);
     if (!entry) {
         const listed = catalogPricesFor(model);
         if (!listed) return null;
@@ -95,7 +110,7 @@ const CACHE_WRITE_MULTIPLIER = 1.25;
 function cacheMultipliersFor(model) {
     // A catalogue-priced model states its own cache-write rate, so express it as the
     // multiple of the input rate that estimateCostUSD expects rather than guessing.
-    if (!MODEL_PRICES[model]) {
+    if (!tableEntry(model)) {
         const listed = catalogPricesFor(model);
         if (listed && listed.cacheWriteRate !== undefined && listed.input > 0) {
             return {read: CACHE_READ_MULTIPLIER, write: listed.cacheWriteRate / listed.input};
@@ -327,7 +342,20 @@ export async function getUsageByModel() {
     }
 }
 
-export async function recordUsage(model, usage) {
+// recordUsage is a read-modify-write of one stored object, so two overlapping calls (a
+// turn served by two models, or voice and typed chat at once) would each read the old
+// total and the second write would erase the first. Calls are therefore queued: each
+// starts only after the previous one has written.
+let recordQueue = Promise.resolve();
+
+export function recordUsage(model, usage) {
+    const run = recordQueue.then(() => recordUsageNow(model, usage));
+    // A failure must not stop the queue; the caller still sees it through `run`.
+    recordQueue = run.catch(() => {});
+    return run;
+}
+
+async function recordUsageNow(model, usage) {
     if (!model || !usage) return;
     const byModel = await getUsageByModel();
     // Bank the cost now, at today's rate, so the running total stays accurate across a

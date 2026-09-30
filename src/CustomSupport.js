@@ -686,6 +686,25 @@ export class CCustomManager {
                     this.updateChatModelSelector();
                 })
                 .listen();
+
+            // Own-key models only. Sitrec-provided models keep their server-side settings.
+            settingsFolder.add(Globals.settings, "aiEffort", {
+                [t("custom.settings.aiEffort.options.low")]: "low",
+                [t("custom.settings.aiEffort.options.medium")]: "medium",
+                [t("custom.settings.aiEffort.options.high")]: "high",
+                [t("custom.settings.aiEffort.options.xhigh")]: "xhigh",
+                [t("custom.settings.aiEffort.options.max")]: "max",
+            })
+                .name(t("custom.settings.aiEffort.label"))
+                .tooltip(t("custom.settings.aiEffort.tooltip"))
+                .onChange(() => this.saveGlobalSettings(true))
+                .listen();
+
+            settingsFolder.add(Globals.settings, "aiRefusalFallback")
+                .name(t("custom.settings.aiRefusalFallback.label"))
+                .tooltip(t("custom.settings.aiRefusalFallback.tooltip"))
+                .onChange(() => this.saveGlobalSettings(true))
+                .listen();
         }
 
         // BYOK (Bring Your Own Key): one dialog for every credential the user supplies —

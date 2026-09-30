@@ -5,6 +5,9 @@ import {
     buildSystemPrompt,
     buildSystemPromptParts,
     chat,
+    DEFAULT_MAX_TOKENS,
+    RETRY_POLICY,
+    requestTimeoutMs,
     isBYOKProvider,
     isUsableEndpointURL,
     resolveEndpoint,
@@ -737,7 +740,8 @@ describe('chat (direct OpenAI BYOK)', () => {
         });
 
         expect(fetch.mock.calls).toHaveLength(2);
-        expect(JSON.parse(fetch.mock.calls[0][1].body).reasoning_effort).toBe('low');
+        // The AI Effort default is medium.
+        expect(JSON.parse(fetch.mock.calls[0][1].body).reasoning_effort).toBe('medium');
         expect(JSON.parse(fetch.mock.calls[1][1].body).reasoning_effort).toBeUndefined();
         // The cap is not optional — dropping it would send an uncapped request.
         expect(JSON.parse(fetch.mock.calls[1][1].body).max_completion_tokens).toBeGreaterThan(0);
@@ -1083,5 +1087,288 @@ describe('custom endpoint', () => {
             await expect(run({url: 'http://127.0.0.1:11434/v1', format: 'openai'}))
                 .rejects.toThrow(/Could not reach http:\/\/127\.0\.0\.1:11434\/v1\/chat\/completions[\s\S]*CORS/);
         });
+    });
+});
+
+
+// ── Output cap, stop reasons, effort, refusal fallback, retry and timeout ──────────────
+describe('Anthropic request shaping and stop reasons', () => {
+    const TOOL = [{type: 'function', function: {name: 'play', description: 'Play',
+        parameters: {type: 'object', properties: {}}}}];
+    const run = (extra = {}) => chat({
+        apiKey: 'sk-ant-test', provider: 'byok-anthropic', model: extra.model || 'claude-opus-5-5',
+        systemPrompt: 'sp', history: [], userText: 'u', tools: TOOL,
+        executeCall: extra.executeCall || (async () => ({success: true})),
+        ...extra,
+    });
+
+    beforeEach(() => jest.resetAllMocks());
+
+    test('leaves room for thinking: max_tokens is the 16000 default, not 1024', async () => {
+        // Every current Claude model thinks by default, and max_tokens caps thinking and
+        // reply together. 1024 let a turn spend the whole cap thinking.
+        mockFetchSequence([{body: {content: [{type: 'text', text: 'ok'}], stop_reason: 'end_turn'}}]);
+        await run();
+        const body = JSON.parse(fetch.mock.calls[0][1].body);
+        expect(body.max_tokens).toBe(DEFAULT_MAX_TOKENS);
+        expect(DEFAULT_MAX_TOKENS).toBeGreaterThanOrEqual(16000);
+        expect(body.thinking).toBeUndefined();
+    });
+
+    test('sends the chosen effort, medium by default', async () => {
+        mockFetchSequence([
+            {body: {content: [{type: 'text', text: 'a'}], stop_reason: 'end_turn'}},
+            {body: {content: [{type: 'text', text: 'b'}], stop_reason: 'end_turn'}},
+        ]);
+        await run();
+        await run({effort: 'xhigh'});
+        expect(JSON.parse(fetch.mock.calls[0][1].body).output_config).toEqual({effort: 'medium'});
+        expect(JSON.parse(fetch.mock.calls[1][1].body).output_config).toEqual({effort: 'xhigh'});
+    });
+
+    test('drops effort for a model that rejects it, and remembers that', async () => {
+        mockFetchSequence([
+            {ok: false, status: 400, body: {error: {message: 'This model does not support the effort parameter.'}}},
+            {body: {content: [{type: 'text', text: 'ok'}], stop_reason: 'end_turn'}},
+            {body: {content: [{type: 'text', text: 'ok'}], stop_reason: 'end_turn'}},
+        ]);
+        const result = await run({model: 'claude-haiku-4-5-effort-test'});
+        expect(result.text).toBe('ok');
+        expect(JSON.parse(fetch.mock.calls[1][1].body).output_config).toBeUndefined();
+        await run({model: 'claude-haiku-4-5-effort-test'});
+        expect(fetch.mock.calls).toHaveLength(3);
+        expect(JSON.parse(fetch.mock.calls[2][1].body).output_config).toBeUndefined();
+    });
+
+    test('does not run a tool call from a response cut off at max_tokens', async () => {
+        const executeCall = jest.fn(async () => ({success: true}));
+        mockFetchSequence([{body: {
+            content: [{type: 'tool_use', id: 't1', name: 'play', input: {}}],
+            stop_reason: 'max_tokens',
+        }}]);
+        const result = await run({executeCall});
+        expect(executeCall).not.toHaveBeenCalled();
+        expect(result.text).toMatch(/cut off/);
+    });
+
+    test('reports a refusal with its reason and runs nothing', async () => {
+        const executeCall = jest.fn(async () => ({success: true}));
+        mockFetchSequence([{body: {
+            content: [{type: 'tool_use', id: 't1', name: 'play', input: {}}],
+            stop_reason: 'refusal',
+            stop_details: {type: 'refusal', category: 'cyber', explanation: 'Not allowed.'},
+        }}]);
+        const result = await run({executeCall});
+        expect(executeCall).not.toHaveBeenCalled();
+        expect(result.text).toContain('declined');
+        expect(result.text).toContain('cyber');
+        expect(result.text).toContain('Refusal Fallback');
+    });
+
+    test('refusal fallback is off by default and sends nothing extra', async () => {
+        mockFetchSequence([{body: {content: [{type: 'text', text: 'ok'}], stop_reason: 'end_turn'}}]);
+        await run();
+        const [, init] = fetch.mock.calls[0];
+        expect(JSON.parse(init.body).fallbacks).toBeUndefined();
+        expect(init.headers['anthropic-beta']).toBeUndefined();
+    });
+
+    test('refusal fallback on: sends fallbacks "default" with its beta header', async () => {
+        mockFetchSequence([{body: {content: [{type: 'text', text: 'ok'}], stop_reason: 'end_turn'}}]);
+        await run({refusalFallback: true});
+        const [, init] = fetch.mock.calls[0];
+        expect(JSON.parse(init.body).fallbacks).toBe('default');
+        expect(init.headers['anthropic-beta']).toBe('server-side-fallback-2026-07-01');
+    });
+
+    // Billing rules from Anthropic's "How refusals are billed" (September 2026): an attempt
+    // that declines before any output is billed only for bio, frontier_llm and
+    // reasoning_extraction; one that produced output is always billed.
+    test('prices each attempt from usage.iterations, under the model each entry names', async () => {
+        mockFetchSequence([{body: {
+            model: 'claude-opus-4-8',
+            content: [{type: 'text', text: 'ok'}],
+            stop_reason: 'end_turn',
+            usage: {input_tokens: 10, output_tokens: 5, iterations: [
+                // Declined mid-output: billed.
+                {type: 'message', model: 'claude-opus-5-5', input_tokens: 7, output_tokens: 3},
+                {type: 'fallback_message', model: 'claude-opus-4-8', input_tokens: 10, output_tokens: 5},
+            ]},
+        }}]);
+        const result = await run({refusalFallback: true});
+        expect(result.usageByModel['claude-opus-5-5']).toMatchObject({inputTokens: 7, outputTokens: 3, requests: 0});
+        expect(result.usageByModel['claude-opus-4-8']).toMatchObject({inputTokens: 10, outputTokens: 5, requests: 1});
+        expect(result.unbilledRefusalTokens).toBe(0);
+    });
+
+    test('leaves a zero-output declined hop of unknown category out of the estimate', async () => {
+        mockFetchSequence([{body: {
+            model: 'claude-opus-4-8',
+            content: [{type: 'fallback', from: {model: 'claude-opus-5-5'}, to: {model: 'claude-opus-4-8'}},
+                {type: 'text', text: 'ok'}],
+            stop_reason: 'end_turn',
+            stop_details: null,
+            usage: {input_tokens: 10, output_tokens: 5, iterations: [
+                {type: 'message', model: 'claude-opus-5-5', input_tokens: 535, output_tokens: 0},
+                {type: 'fallback_message', model: 'claude-opus-4-8', input_tokens: 10, output_tokens: 5},
+            ]},
+        }}]);
+        const result = await run({refusalFallback: true});
+        expect(result.usageByModel['claude-opus-5-5']).toBeUndefined();
+        expect(result.unbilledRefusalTokens).toBe(535);
+        expect(result.usage).toMatchObject({inputTokens: 10, outputTokens: 5, requests: 1});
+    });
+
+    test('a plain refusal before any output is priced only in a billed category', async () => {
+        const refusal = category => ({body: {
+            content: [], stop_reason: 'refusal',
+            stop_details: {type: 'refusal', category, explanation: null},
+            usage: {input_tokens: 400, output_tokens: 0},
+        }});
+        mockFetchSequence([refusal('cyber'), refusal('bio'), refusal(null)]);
+        const cyber = await run();
+        const bio = await run();
+        const uncategorized = await run();
+        expect(cyber.usage).toMatchObject({inputTokens: 0, requests: 1});
+        expect(cyber.unbilledRefusalTokens).toBe(400);
+        expect(bio.usage).toMatchObject({inputTokens: 400, requests: 1});
+        expect(uncategorized.usage.inputTokens).toBe(0);
+    });
+
+    test('does not claim a fallback answered when the whole chain declined', async () => {
+        mockFetchSequence([{body: {
+            model: 'claude-opus-4-8',
+            content: [],
+            stop_reason: 'refusal',
+            stop_details: {type: 'refusal', category: 'cyber'},
+            usage: {input_tokens: 10, output_tokens: 0,
+                iterations: [{type: 'message'}, {type: 'fallback_message'}]},
+        }}]);
+        const result = await run({refusalFallback: true});
+        expect(result.servedBy).toBeUndefined();
+        expect(result.text).toContain('declined');
+    });
+
+    test('echoes the fallback marker, but not the declined model\'s tool calls', async () => {
+        mockFetchSequence([
+            {body: {
+                model: 'claude-opus-4-8',
+                content: [
+                    {type: 'text', text: 'partial'},
+                    {type: 'tool_use', id: 'old', name: 'play', input: {}},
+                    {type: 'fallback', from: {model: 'claude-opus-5-5'}, to: {model: 'claude-opus-4-8'}},
+                    {type: 'tool_use', id: 'new', name: 'play', input: {}},
+                ],
+                stop_reason: 'tool_use',
+                usage: {input_tokens: 1, output_tokens: 1, iterations: [{type: 'fallback_message'}]},
+            }},
+            {body: {content: [{type: 'text', text: 'done'}], stop_reason: 'end_turn'}},
+        ]);
+        await run({refusalFallback: true});
+        const second = JSON.parse(fetch.mock.calls[1][1].body);
+        const echoed = second.messages.find(m => m.role === 'assistant').content;
+        expect(echoed.map(b => b.type)).toEqual(['text', 'fallback', 'tool_use']);
+        expect(echoed[2].id).toBe('new');
+    });
+
+    test('a custom gateway rejecting effort does not stop effort on Anthropic itself', async () => {
+        mockFetchSequence([
+            {ok: false, status: 400, body: {error: {message: 'unknown field: output_config.effort'}}},
+            {body: {content: [{type: 'text', text: 'ok'}], stop_reason: 'end_turn'}},
+            {body: {content: [{type: 'text', text: 'ok'}], stop_reason: 'end_turn'}},
+        ]);
+        await run({provider: 'byok-custom', model: 'claude-gateway-shared',
+            endpoint: {url: 'http://localhost:4000', format: 'anthropic'}});
+        await run({model: 'claude-gateway-shared'});
+        expect(JSON.parse(fetch.mock.calls[1][1].body).output_config).toBeUndefined();
+        expect(JSON.parse(fetch.mock.calls[2][1].body).output_config).toEqual({effort: 'medium'});
+    });
+
+    test('banks fallback-served rounds under the model that served them', async () => {
+        mockFetchSequence([{body: {
+            model: 'claude-opus-4-8',
+            content: [{type: 'fallback', from: {model: 'claude-opus-5-5'}, to: {model: 'claude-opus-4-8'}},
+                {type: 'text', text: 'ok'}],
+            stop_reason: 'end_turn',
+            usage: {input_tokens: 10, output_tokens: 5,
+                iterations: [{type: 'message'}, {type: 'fallback_message'}]},
+        }}]);
+        const result = await run({refusalFallback: true});
+        expect(result.servedBy).toBe('claude-opus-4-8');
+        expect(result.usageByModel['claude-opus-4-8'].inputTokens).toBe(10);
+        expect(result.usageByModel['claude-opus-5-5']).toBeUndefined();
+    });
+});
+
+describe('retry and timeout', () => {
+    const saved = {...RETRY_POLICY};
+    beforeEach(() => {
+        jest.resetAllMocks();
+        RETRY_POLICY.baseDelayMs = 1;
+        RETRY_POLICY.maxDelayMs = 5;
+    });
+    afterEach(() => Object.assign(RETRY_POLICY, saved));
+
+    const run = provider => chat({
+        apiKey: 'k', provider, model: provider === 'byok-openai' ? 'gpt-5-mini' : 'claude-opus-5-5',
+        systemPrompt: 'sp', history: [], userText: 'u', tools: [],
+        executeCall: async () => ({success: true}),
+    });
+
+    test('retries a 529 overload and then succeeds', async () => {
+        mockFetchSequence([
+            {ok: false, status: 529, body: {error: {type: 'overloaded_error', message: 'Overloaded'}}},
+            {ok: false, status: 429, body: {error: {type: 'rate_limit_error', message: 'Rate limited'}}},
+            {body: {content: [{type: 'text', text: 'ok'}], stop_reason: 'end_turn'}},
+        ]);
+        const result = await run('byok-anthropic');
+        expect(fetch.mock.calls).toHaveLength(3);
+        expect(result.text).toBe('ok');
+    });
+
+    test('gives up after the retry limit and reports the error', async () => {
+        const overloaded = {ok: false, status: 529, body: {error: {message: 'Overloaded'}}};
+        mockFetchSequence(Array.from({length: RETRY_POLICY.maxRetries + 1}, () => ({...overloaded})));
+        await expect(run('byok-anthropic')).rejects.toThrow(/Overloaded/);
+        expect(fetch.mock.calls).toHaveLength(RETRY_POLICY.maxRetries + 1);
+    });
+
+    test('does not retry an out-of-credit 429', async () => {
+        mockFetchSequence([{ok: false, status: 429,
+            body: {error: {code: 'insufficient_quota', message: 'You exceeded your current quota'}}}]);
+        await expect(run('byok-openai')).rejects.toThrow(/quota/);
+        expect(fetch.mock.calls).toHaveLength(1);
+    });
+
+    test('does not retry other errors', async () => {
+        mockFetchSequence([{ok: false, status: 500, body: {error: {message: 'boom'}}}]);
+        await expect(run('byok-anthropic')).rejects.toThrow(/boom/);
+        expect(fetch.mock.calls).toHaveLength(1);
+    });
+
+    test('timeouts scale with effort, and a custom endpoint gets the longest', () => {
+        expect(requestTimeoutMs('low')).toBeLessThan(requestTimeoutMs('high'));
+        expect(requestTimeoutMs('high')).toBeLessThan(requestTimeoutMs('max'));
+        expect(requestTimeoutMs('low', true)).toBe(requestTimeoutMs('max'));
+    });
+
+    test('abandons a request that does not answer in time', async () => {
+        jest.useFakeTimers();
+        try {
+            global.fetch = jest.fn((url, init) => new Promise((resolve, reject) => {
+                init.signal.addEventListener('abort', () => {
+                    const e = new Error('aborted');
+                    e.name = 'AbortError';
+                    reject(e);
+                });
+            }));
+            const pending = run('byok-anthropic');
+            const assertion = expect(pending).rejects.toThrow(/did not answer within 180 seconds/);
+            await jest.advanceTimersByTimeAsync(requestTimeoutMs('medium') + 1);
+            await assertion;
+            expect(fetch.mock.calls).toHaveLength(1);
+        } finally {
+            jest.useRealTimers();
+        }
     });
 });

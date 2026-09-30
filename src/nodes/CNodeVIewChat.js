@@ -1158,6 +1158,8 @@ class CNodeViewChat extends CNodeViewText {
                 }),
                 history: priorHistory.slice(-10),
                 userText: text,
+                effort: Globals.settings.aiEffort,
+                refusalFallback: Globals.settings.aiRefusalFallback,
                 // OpenAI-shaped on purpose: Anthropic converts it at its boundary, while
                 // OpenRouter accepts this shape directly.
                 tools: toolSet.tools,
@@ -1203,9 +1205,24 @@ class CNodeViewChat extends CNodeViewText {
                 // called "gpt-4o" cannot land in OpenAI's spend row — the ids are chosen
                 // by whoever runs the server and can collide with anything.
                 const usageKey = keyProvider === "custom" ? `custom/${model}` : model;
-                this.addDebugMessage(formatTurnUsage(usageKey, result.usage));
-                recordUsage(usageKey, result.usage)
-                    .catch(e => console.warn('BYOK usage not recorded:', e));
+                // When a refusal fallback served some rounds, each model's tokens are
+                // banked (and priced) under that model; otherwise it is the one row.
+                const byModel = keyProvider !== "custom" && result.usageByModel
+                    && Object.keys(result.usageByModel).length > 0
+                    ? result.usageByModel : {[usageKey]: result.usage};
+                for (const [usedModel, usage] of Object.entries(byModel)) {
+                    this.addDebugMessage(formatTurnUsage(usedModel, usage));
+                    recordUsage(usedModel, usage)
+                        .catch(e => console.warn('BYOK usage not recorded:', e));
+                }
+            }
+            if (result.unbilledRefusalTokens) {
+                this.addDebugMessage(`A declined attempt reported ${result.unbilledRefusalTokens} `
+                    + `input tokens. They are not in the cost estimate: Anthropic bills a refusal `
+                    + `before any output only in the bio, frontier_llm and reasoning_extraction categories.`);
+            }
+            if (result.servedBy) {
+                this.addDebugMessage(`${model} declined; ${result.servedBy} answered instead.`);
             }
 
             if (executedForLog.length > 0) {

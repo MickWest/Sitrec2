@@ -32,15 +32,23 @@ const DURING_PROMO = Date.UTC(2026, 7, 14);   // 2026-08-14
 const AFTER_PROMO = Date.UTC(2026, 8, 15);    // 2026-09-15
 
 describe('pricing', () => {
-    test('Sonnet 5 uses introductory rates during the promo window', () => {
+    // Announced as an introductory rate through 2026-08-31, but $2/$10 is still the list
+    // price after it; the table said $3/$15 from 2026-09-01 and overstated every turn by 50%.
+    test('Sonnet 5 is $2/$10 before and after the announced promo end', () => {
         expect(pricesFor('claude-sonnet-5', DURING_PROMO)).toEqual({input: 2, output: 10});
+        expect(pricesFor('claude-sonnet-5', AFTER_PROMO)).toEqual({input: 2, output: 10});
     });
 
-    // The promo is published as running "through 2026-08-31". Quoting the standard
-    // rate during it overstates a Sonnet turn by 50%; hardcoding the promo rate
-    // instead would understate it by 33% the moment the promo lapses.
-    test('Sonnet 5 reverts to standard rates once the promo lapses', () => {
-        expect(pricesFor('claude-sonnet-5', AFTER_PROMO)).toEqual({input: 3, output: 15});
+    test('current Claude models are priced, with their own cache-read rates', () => {
+        expect(pricesFor('claude-opus-5-5')).toMatchObject({input: 4, output: 20, cachedInput: 0.20});
+        expect(pricesFor('claude-sonnet-5-5')).toMatchObject({input: 2, output: 10});
+        expect(pricesFor('claude-fable-5-1')).toMatchObject({input: 10, output: 50, cachedInput: 0.25});
+        // 1M cached reads on Opus 5.5: $0.20, not the 0.1x default ($0.40).
+        expect(estimateCostUSD('claude-opus-5-5', {cacheReadTokens: 1e6})).toBeCloseTo(0.20, 6);
+    });
+
+    test('a dated snapshot is priced as its alias', () => {
+        expect(pricesFor('claude-haiku-4-5-20251001')).toMatchObject({input: 1, output: 5});
     });
 
     test('models without a promo are unaffected by the date', () => {
@@ -130,4 +138,19 @@ test('usage storage does not squat on the BYOK key namespace', async () => {
     // ...and a real key still registers.
     await setKey('anthropic', 'sk-ant-test');
     expect(await hasAnyKey()).toBe(true);
+});
+
+describe('concurrent recording', () => {
+    test('overlapping recordUsage calls for two models both land', async () => {
+        // A fallback turn records two models at once; each call reads, adds and writes
+        // the same stored object, so unqueued the second write erased the first.
+        await Promise.all([
+            recordUsage('claude-opus-5-5', {inputTokens: 100, requests: 1}),
+            recordUsage('claude-opus-4-8', {inputTokens: 50, requests: 1}),
+            recordUsage('claude-opus-5-5', {inputTokens: 1, requests: 0}),
+        ]);
+        const byModel = await getUsageByModel();
+        expect(byModel['claude-opus-5-5'].inputTokens).toBe(101);
+        expect(byModel['claude-opus-4-8'].inputTokens).toBe(50);
+    });
 });

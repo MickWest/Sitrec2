@@ -35,7 +35,8 @@ const CATALOG_KEY = 'sitrecModelCatalog';
 // window below had no reason to think anything had changed.
 //   1 — {id, label, created}
 //   2 — adds `kind` ('chat' | 'voice')
-const CATALOG_VERSION = 2;
+//   3 — Anthropic entries add `effortLevels` (see effortLevelsFor)
+const CATALOG_VERSION = 3;
 // A day is short enough to pick up a new release promptly and long enough that the usual
 // session costs nothing. Any key change refreshes immediately regardless (see the dialog's
 // resync), so this only governs the passive case.
@@ -163,7 +164,21 @@ async function fetchAnthropicModels(apiKey) {
         id: m.id,
         label: m.display_name || m.id,
         created: Date.parse(m.created_at) || 0,
+        effortLevels: parseEffortLevels(m.capabilities),
     }));
+}
+
+// The effort levels a model accepts, from the capability tree /v1/models returns:
+// {effort: {supported, low: {supported}, ..., max: {supported}}}. Returns an array of
+// level names ([] when the model takes no effort at all, as Haiku 4.5 does), or undefined
+// when the entry has no capability data — which means "unknown", not "none".
+export const EFFORT_LEVELS = ['low', 'medium', 'high', 'xhigh', 'max'];
+
+function parseEffortLevels(capabilities) {
+    const effort = capabilities?.effort;
+    if (!effort || typeof effort !== 'object') return undefined;
+    if (effort.supported === false) return [];
+    return EFFORT_LEVELS.filter(level => effort[level]?.supported === true);
 }
 
 async function fetchOpenAIModels(apiKey) {
@@ -403,24 +418,31 @@ export function getCatalogModels(keyProvider, kind = KIND_CHAT) {
 // only the newest generation of each vendor is offered, and "Enable old AI models" in
 // Settings brings the rest back.
 //
-// The generation is DERIVED from the ids rather than listed anywhere: whatever the highest
-// version number a vendor currently ships is, that is the current generation. A new family
-// is therefore current the day it appears, with no constant to update — the same reason
-// the model list itself is fetched rather than hardcoded.
+// "Newest" is judged per model FAMILY, not per vendor. A vendor's lines are versioned
+// independently: Anthropic ships Opus 5.5 and Sonnet 5.5 alongside Fable 5.1, and a
+// single per-vendor maximum (5.5) hid Fable 5.1, the most capable model of the lot. OpenAI
+// likewise ships gpt-5.6-sol next to a newer mini than gpt-5-mini. So a model is kept when
+// it is the newest of its family AND its family belongs to the vendor's current major
+// version. The second test is what still retires gpt-4o and claude-opus-4-8 once 5.x exists.
+//
+// Both are DERIVED from the ids rather than listed anywhere, so a new family is current the
+// day it appears, with no constant to update — the same reason the model list itself is
+// fetched rather than hardcoded.
 
-// The version a model id declares, or null when it declares none.
+// {version, family} for an id, or null when it declares no version.
 //
 // Two shapes cover every id seen, and they need different rules:
-//   the version FOLLOWS the family     gpt-5.6-sol, gpt-5-mini, gpt-4o    -> 5.6, 5, 4
-//   the version TRAILS the whole id    claude-opus-5, claude-haiku-4.5    -> 5, 4.5
-// An id with neither (o3, o4-mini, chat-latest, mistralai/mistral-nemo) has no declared
-// generation and counts as old — which is the right answer for all of them today.
-function generationOf(id) {
+//   the version FOLLOWS the prefix     gpt-5.6-sol, gpt-5-mini, gpt-4o    -> 5.6, 5, 4
+//   the version TRAILS the whole id    claude-opus-5-5, claude-haiku-4-5  -> 5.5, 4.5
+// The family is the id with the version taken out: "gpt|-sol", "gpt|-mini", "claude-opus".
+// An id with neither shape (o3, o4-mini, chat-latest, mistralai/mistral-nemo) has no
+// declared version and counts as old — which is the right answer for all of them today.
+function versionOf(id) {
     const bare = normalizeModelId(String(id).split('/').pop());
-    const leading = /^[a-z]+-(\d+(?:\.\d+)?)/.exec(bare);
-    if (leading) return Number(leading[1]);
-    const trailing = /-(\d+(?:\.\d+)?)$/.exec(bare);
-    return trailing ? Number(trailing[1]) : null;
+    const leading = /^([a-z]+)-(\d+(?:\.\d+)?)(.*)$/.exec(bare);
+    if (leading) return {version: Number(leading[2]), family: `${leading[1]}|${leading[3]}`};
+    const trailing = /^(.*)-(\d+(?:\.\d+)?)$/.exec(bare);
+    return trailing ? {version: Number(trailing[2]), family: trailing[1]} : null;
 }
 
 // Vendors are compared separately: an OpenRouter key spans many of them, and Anthropic
@@ -436,24 +458,40 @@ function vendorOf(id) {
 export function filterToCurrentGeneration(models, alwaysKeep = null) {
     if (!Array.isArray(models) || models.length === 0) return models;
 
-    const newest = new Map();
+    const newestMajor = new Map();     // vendor -> highest major version
+    const newestInFamily = new Map();  // vendor + family -> highest version
     for (const m of models) {
-        const gen = generationOf(m.model ?? m.id);
-        if (gen === null) continue;
-        const vendor = vendorOf(m.model ?? m.id);
-        if (!(newest.get(vendor) >= gen)) newest.set(vendor, gen);
+        const id = m.model ?? m.id;
+        const v = versionOf(id);
+        if (!v) continue;
+        const vendor = vendorOf(id);
+        const major = Math.floor(v.version);
+        if (!(newestMajor.get(vendor) >= major)) newestMajor.set(vendor, major);
+        const key = `${vendor} ${v.family}`;
+        if (!(newestInFamily.get(key) >= v.version)) newestInFamily.set(key, v.version);
     }
 
     const kept = models.filter(m => {
         const id = m.model ?? m.id;
         if (alwaysKeep && id === alwaysKeep) return true;
-        const gen = generationOf(id);
-        return gen !== null && gen === newest.get(vendorOf(id));
+        const v = versionOf(id);
+        if (!v) return false;
+        const vendor = vendorOf(id);
+        return Math.floor(v.version) === newestMajor.get(vendor)
+            && v.version === newestInFamily.get(`${vendor} ${v.family}`);
     });
 
     // Never hand back nothing. If an unfamiliar naming scheme defeats the rule entirely,
     // an over-long list is a far better failure than an empty one.
     return kept.length > 0 ? kept : models;
+}
+
+// Effort levels an Anthropic model accepts, or null when the catalogue does not know
+// (no catalogue yet, a fallback model, or an entry without capability data). The caller
+// then sends the requested level and lets the provider's 400 correct it.
+export function effortLevelsFor(model) {
+    const entry = (catalog.byProvider?.anthropic || []).find(m => m.id === model);
+    return Array.isArray(entry?.effortLevels) ? entry.effortLevels : null;
 }
 
 export function hasCatalog() {

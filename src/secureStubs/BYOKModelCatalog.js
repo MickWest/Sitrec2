@@ -46,3 +46,9 @@ export function filterToCurrentGeneration(models) {
 export function hasCatalog() {
     return false;
 }
+
+export const EFFORT_LEVELS = ['low', 'medium', 'high', 'xhigh', 'max'];
+
+export function effortLevelsFor() {
+    return null;
+}

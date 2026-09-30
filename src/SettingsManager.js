@@ -9,6 +9,9 @@ import {assert} from "./assert";
 import {getEnvBool} from "./envUtils";
 import {primeKeyCache} from "./BYOKKeyStore";
 
+// The AI Effort setting's levels, lowest first. Mirrored in sitrecServer/settings.php.
+export const AI_EFFORT_VALUES = ["low", "medium", "high", "xhigh", "max"];
+
 // Environment variable flags for storage methods (default to false if not specified)
 // Set to 'true', 'false', '1', '0', 'yes', or 'no'
 const SETTINGS_COOKIES_ENABLED = getEnvBool("SETTINGS_COOKIES_ENABLED", process.env.SETTINGS_COOKIES_ENABLED);
@@ -121,6 +124,14 @@ export function sanitizeSettings(settings) {
 
     if (settings.byokSitrecFocused !== undefined && typeof settings.byokSitrecFocused === "boolean") {
         sanitized.byokSitrecFocused = settings.byokSitrecFocused;
+    }
+
+    if (settings.aiEffort !== undefined && AI_EFFORT_VALUES.includes(settings.aiEffort)) {
+        sanitized.aiEffort = settings.aiEffort;
+    }
+
+    if (settings.aiRefusalFallback !== undefined && typeof settings.aiRefusalFallback === "boolean") {
+        sanitized.aiRefusalFallback = settings.aiRefusalFallback;
     }
 
     if (settings.voiceModel !== undefined) {
@@ -409,6 +420,8 @@ export async function initializeSettings() {
             chatModel: "", // AI chat model in "provider:model" format (empty = use first available)
             enableOldAIModels: false, // Offer superseded model generations in the AI Model list
             byokSitrecFocused: true, // Keep own-key and custom-endpoint chat on Sitrec topics
+            aiEffort: "medium", // Own-key models: how hard the model thinks (AI_EFFORT_VALUES)
+            aiRefusalFallback: false, // Own Anthropic key: another Claude model answers a declined request
             voiceModel: "", // Spoken assistant's realtime model (empty = the built-in default)
             centerSidebar: false, // Enable center sidebar between split views
             showAttribution: true, // Show map/elevation data source attribution overlay

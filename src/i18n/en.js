@@ -1097,6 +1097,22 @@ const en = {
                     + "own OpenAI key. Cost is only estimated for models with a published "
                     + "price on file; others report tokens used and no dollar figure.",
             },
+            aiEffort: {
+                label: "AI Effort",
+                tooltip: "For models using your own API key or custom endpoint. How much the "
+                    + "model thinks before it answers. Higher effort can give better answers "
+                    + "to hard questions, but it is slower and uses more tokens, which your "
+                    + "provider charges for. Medium is the default. A model that does not "
+                    + "take the level you choose uses the nearest level it does take.",
+                options: {low: "Low", medium: "Medium", high: "High", xhigh: "Extra high", max: "Max"},
+            },
+            aiRefusalFallback: {
+                label: "Refusal Fallback",
+                tooltip: "For Claude models using your own Anthropic key. When the model "
+                    + "declines a request, Anthropic tries it again on a different Claude "
+                    + "model that it selects. The second attempt is also charged to your key. "
+                    + "Off by default.",
+            },
             enableOldAIModels: {
                 label: "Enable old AI models",
                 tooltip: "Also list superseded model generations from your own API keys. "

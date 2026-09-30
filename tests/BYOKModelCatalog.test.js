@@ -29,7 +29,7 @@ jest.mock('../src/BYOKKeyStore', () => ({
 import {indexedDBManager} from '../src/IndexedDBManager';
 import {getEndpoint, getKey, isProviderEnabled} from '../src/BYOKKeyStore';
 import {
-    KIND_VOICE, catalogPricesFor, filterToCurrentGeneration, getCatalogModels,
+    KIND_VOICE, catalogPricesFor, effortLevelsFor, filterToCurrentGeneration, getCatalogModels,
     primeModelCatalog, probeEndpointResidency, refreshModelCatalog,
 } from '../src/BYOKModelCatalog';
 
@@ -197,7 +197,20 @@ describe('current-generation filter', () => {
             'gpt-4o', 'gpt-4.1', 'gpt-3.5-turbo',
             // No version at all: superseded in practice, and correctly counted as old.
             'o3', 'o4-mini', 'chat-latest',
-        ])).toEqual(['gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna']);
+        // Newest of each family in the current major version: the 5.6 tiers, plus the
+        // newest plain, -pro and -mini lines. gpt-5-mini is superseded by gpt-5.4-mini.
+        ])).toEqual(['gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna',
+            'gpt-5.5', 'gpt-5.5-pro', 'gpt-5.4-mini-2026-03-17']);
+    });
+
+    test('judges each Claude line on its own version, so Fable 5.1 is not hidden', () => {
+        // One vendor-wide maximum (5.5, from Opus and Sonnet) used to hide Fable 5.1,
+        // the most capable model on the list.
+        expect(ids([
+            'claude-fable-5-1', 'claude-opus-5-5', 'claude-sonnet-5-5',
+            'claude-fable-5', 'claude-opus-5', 'claude-sonnet-5',
+            'claude-opus-4-8', 'claude-haiku-4-5-20251001',
+        ])).toEqual(['claude-fable-5-1', 'claude-opus-5-5', 'claude-sonnet-5-5']);
     });
 
     test('compares vendors separately, so each keeps its own newest', () => {
@@ -214,7 +227,9 @@ describe('current-generation filter', () => {
         // The whole point: today's list plus one unknown future model, and the new one
         // wins on its version number alone.
         expect(ids(['gpt-5.6-sol', 'gpt-5.7-nova', 'gpt-5.5']))
-            .toEqual(['gpt-5.7-nova']);
+            .toContain('gpt-5.7-nova');
+        expect(ids(['gpt-5.6-sol', 'gpt-5.6-nova', 'gpt-6-nova']))
+            .toEqual(['gpt-6-nova']);
         expect(ids(['claude-opus-5', 'claude-quill-6']))
             .toEqual(['claude-quill-6']);
     });
@@ -446,5 +461,32 @@ describe('endpoint model residency', () => {
             await probeEndpointResidency('m');
             expect(fetch.mock.calls[0][0]).toBe(expected);
         }
+    });
+});
+
+// The AI Effort setting is clamped to what each model accepts, read from the capability tree
+// /v1/models returns, so a model that takes no effort is never sent one (a 400).
+describe('Anthropic effort capabilities', () => {
+    test('records the levels each model accepts, and none for a model without effort', async () => {
+        getKey.mockImplementation(async p => (p === 'anthropic' ? 'sk-ant-test' : null));
+        const level = supported => ({supported});
+        mockCatalogFetches({anthropic: [
+            {id: 'claude-opus-5-5', created_at: '2026-09-01T00:00:00Z', capabilities: {effort: {
+                supported: true, low: level(true), medium: level(true), high: level(true),
+                xhigh: level(true), max: level(true)}}},
+            {id: 'claude-opus-4-6', created_at: '2026-01-01T00:00:00Z', capabilities: {effort: {
+                supported: true, low: level(true), medium: level(true), high: level(true),
+                xhigh: level(false), max: level(true)}}},
+            {id: 'claude-haiku-4-5', created_at: '2025-10-01T00:00:00Z',
+                capabilities: {effort: {supported: false}}},
+            {id: 'claude-no-capability-data', created_at: '2025-10-01T00:00:00Z'},
+        ]});
+        await refreshModelCatalog({force: true});
+        expect(effortLevelsFor('claude-opus-5-5')).toEqual(['low', 'medium', 'high', 'xhigh', 'max']);
+        expect(effortLevelsFor('claude-opus-4-6')).toEqual(['low', 'medium', 'high', 'max']);
+        expect(effortLevelsFor('claude-haiku-4-5')).toEqual([]);
+        // Unknown is not the same as none: the caller sends the level and lets a 400 correct it.
+        expect(effortLevelsFor('claude-no-capability-data')).toBeNull();
+        expect(effortLevelsFor('not-listed')).toBeNull();
     });
 });
