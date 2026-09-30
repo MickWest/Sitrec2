@@ -131,7 +131,9 @@ Angles are in degrees, and P = 3.14159.
 
 Inputs: L = observer latitude (north positive); N = day of year (1 January = 0);
 T = local solar time in hours; R = 6371 km; G = glint limit (5 for all flares, 4.44 for
-visible flares); K = 0.01049 (visible) or 0.01173 (all).
+visible flares); K = 0.3147 (visible) or 0.3519 (all).
+(Earlier copies gave K = 0.01049 and 0.01173. Those values give flares per 2-minute step,
+not per hour, so they were 30 times too small for the formula below.)
 
 Sun at the observer:
 
@@ -157,6 +159,12 @@ shells are the `groups` in `../dummyTLE.js`):
 Flares per hour at time T = K × (Q × W × Nk, added over all shells). Flares per night is
 the rate added from noon to the next noon in small steps (for example rate × 2/60 every
 2 minutes); flares in one hour is the same, over that hour.
+
+The page `../rate/` (open it from the predictor's footer) draws this formula for any
+latitude and night, with sliders. `../rate/rateModel.js` is the formula in code, and
+`../tools/test-rate.mjs` checks that it reproduces the yearly means of the fit. Near the
+poles the code limits the ±3° band to ±90°, so that the formula stays finite; below about
+69° latitude this changes nothing.
 
 ### How accurate it is
 
@@ -204,5 +212,6 @@ a few weeks of the file's epoch.
 - `statsCore.mjs` — one night's scan and the time helpers, used by both
 - `make-xlsx.py` — builds the Excel workbook from the CSV files
 - `index.html`, `viewer.js`, `viewer.css` — the browser viewer
-- `lineChart.js` — the SVG line chart with a crosshair tooltip that the viewer uses
+- `../lineChart.js`, `../lineChart.css` — the SVG line chart with a crosshair tooltip that the
+  viewer uses (shared with the flare rate page, `../rate/`)
 - `../tools/test-stats.mjs` — test for the time helpers (part of `npm test` in `tools/shf/`)

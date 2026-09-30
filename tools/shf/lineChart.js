@@ -1,8 +1,9 @@
 // lineChart.js — a small SVG multi-series line chart with a crosshair tooltip.
 //
-// Used by the flare-statistics viewer for the per-night, per-hour and per-month charts.
-// Colors come from CSS custom properties (--series-1 ...), so the page's light and dark
-// themes apply without a re-render. Series and label text is set with textContent only.
+// Used by the flare-statistics viewer (stats/) and the flare rate page (rate/). Styles are
+// in lineChart.css. Colors come from CSS custom properties (--series-1 ...), so the page's
+// light and dark themes apply without a re-render. Series and label text is set with
+// textContent only.
 //
 //   const chart = createLineChart(element, options);
 //   chart.update(newOptions);    // re-render with new data
@@ -12,9 +13,13 @@
 //   xTicks    [{ pos, label }]  axis ticks
 //   series    [{ name, colorVar, values }]   values align with x; null = no value
 //   yLabel    axis title
-//   yMax      optional fixed top of the y axis (for small multiples on one scale)
+//   yMax      optional fixed top of the y axis (small multiples on one scale, or a locked
+//             axis); lines above it are clipped at the top of the plot
 //   height    px (default 320)
 //   compact   smaller margins and fonts, for small multiples
+//   markers   optional [{ pos, label }]: a vertical line at each pos, labelled at the top
+//   onPick    optional (index) => void: pressing on the plot picks the nearest X, and
+//             dragging keeps picking (mouse, pen or finger); Enter or Space picks from the keyboard
 //
 // A key of the series on show sits above the plot, so each chart names its own lines.
 
@@ -40,6 +45,8 @@ export function niceTicks(max, target = 5) {
 }
 
 const fmt = (v) => (v == null ? "–" : Number.isInteger(v) ? v.toLocaleString() : v.toFixed(1));
+
+let clipCount = 0;
 
 export function createLineChart(host, initial) {
     let opt = initial;
@@ -69,7 +76,7 @@ export function createLineChart(host, initial) {
         const yTop = yTicks[yTicks.length - 1];
         const sx = (v) => m.left + (xMax === xMin ? w / 2 : ((v - xMin) / (xMax - xMin)) * w);
         const sy = (v) => m.top + h - (v / yTop) * h;
-        geom = { sx, sy, m, w, h, width, height };
+        geom = { sx, sy, m, w, h, width, height, yTop };
 
         host.replaceChildren(legend());
         svg = svgEl("svg", {
@@ -99,7 +106,13 @@ export function createLineChart(host, initial) {
             title.textContent = opt.yLabel;
         }
 
-        // Lines; a null value breaks the line.
+        // Lines; a null value breaks the line. With a fixed yMax a value can be above the
+        // top of the axis, so the lines are clipped to the plot (plus room for the stroke).
+        // The id is unique per chart, because a saved image can hold several charts.
+        const clipId = `lc-clip-${++clipCount}`;
+        const clip = svgEl("clipPath", { id: clipId }, svgEl("defs", {}, svg));
+        svgEl("rect", { x: m.left - 2, y: m.top - 2, width: w + 4, height: h + 4 }, clip);
+        const lines = svgEl("g", { "clip-path": `url(#${clipId})` }, svg);
         for (const s of opt.series) {
             let d = "", pen = false;
             s.values.forEach((v, i) => {
@@ -107,7 +120,20 @@ export function createLineChart(host, initial) {
                 d += `${pen ? "L" : "M"}${sx(opt.x[i].pos).toFixed(1)},${sy(v).toFixed(1)}`;
                 pen = true;
             });
-            svgEl("path", { d, class: "lc-line", style: `stroke: var(${s.colorVar})` }, svg);
+            svgEl("path", { d, class: "lc-line", style: `stroke: var(${s.colorVar})` }, lines);
+        }
+
+        // Markers: a vertical line with a label at the top, kept inside the plot.
+        for (const mk of opt.markers || []) {
+            if (mk.pos < xMin || mk.pos > xMax) continue;
+            const x = sx(mk.pos);
+            svgEl("line", { x1: x, x2: x, y1: m.top, y2: m.top + h, class: "lc-marker" }, svg);
+            if (mk.label) {
+                const right = x > m.left + w * 0.75;
+                const label = svgEl("text", { x: x + (right ? -4 : 4), y: m.top + 10, class: "lc-marker-label",
+                    "text-anchor": right ? "end" : "start" }, svg);
+                label.textContent = mk.label;
+            }
         }
 
         // Crosshair and hover dots (hidden until hover)
@@ -124,9 +150,15 @@ export function createLineChart(host, initial) {
             showIndex(nearestIndex(e.clientX - rect.left));
         });
         hit.addEventListener("pointerleave", hide);
+        host.classList.toggle("lc-pick", !!opt.onPick);
         svg.addEventListener("focus", () => showIndex(hoverIndex ?? 0));
         svg.addEventListener("blur", hide);
         svg.addEventListener("keydown", (e) => {
+            if (opt.onPick && (e.key === "Enter" || e.key === " ") && hoverIndex != null) {
+                e.preventDefault();
+                opt.onPick(hoverIndex);
+                return;
+            }
             if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
             e.preventDefault();
             const step = e.key === "ArrowLeft" ? -1 : 1;
@@ -173,7 +205,7 @@ export function createLineChart(host, initial) {
             const v = opt.series[k].values[i];
             dot.setAttribute("visibility", v == null ? "hidden" : "visible");
             dot.setAttribute("cx", x);
-            if (v != null) dot.setAttribute("cy", geom.sy(v));
+            if (v != null) dot.setAttribute("cy", geom.sy(Math.min(v, geom.yTop)));   // clipped values: dot at the top
         });
 
         // Tooltip: the X label, then every series at this X, values first.
@@ -205,10 +237,32 @@ export function createLineChart(host, initial) {
     }
 
     function hide() {
+        if (dragId != null) return;          // a drag keeps its tooltip, even outside the plot
         if (svg && document.activeElement === svg) return;
         hoverIndex = null;
         tooltip.hidden = true;
         svg?.querySelector(".lc-cross")?.setAttribute("display", "none");
+    }
+
+    // Pick by press and drag (onPick). A pick usually makes the page draw the chart again,
+    // which replaces the SVG, so the listeners and the pointer capture are on the host,
+    // which stays.
+    let dragId = null;
+    function pickAt(clientX) {
+        const i = nearestIndex(clientX - svg.getBoundingClientRect().left);
+        showIndex(i);
+        opt.onPick(i);
+    }
+    host.addEventListener("pointerdown", (e) => {
+        if (!opt.onPick || e.button !== 0 || !e.target.classList?.contains("lc-hit")) return;
+        e.preventDefault();                  // no text selection while dragging
+        dragId = e.pointerId;
+        try { host.setPointerCapture(e.pointerId); } catch { /* the drag still works inside the chart */ }
+        pickAt(e.clientX);
+    });
+    host.addEventListener("pointermove", (e) => { if (e.pointerId === dragId) pickAt(e.clientX); });
+    for (const type of ["pointerup", "pointercancel", "lostpointercapture"]) {
+        host.addEventListener(type, (e) => { if (e.pointerId === dragId) dragId = null; });
     }
 
     const resize = new ResizeObserver(() => render());

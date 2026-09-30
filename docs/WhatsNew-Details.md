@@ -9,6 +9,59 @@ lockstep with docs/WhatsNew.md.
 
 ---
 
+## Version 2.173.0 (2026-09-30)
+
+### New Features
+- **Starlink Flare Rate page** (Starlink Flare Predictor, footer link "How many flares? The flare rate for any latitude and date →"; `tools/shf/rate/index.html`, `rate/rate.js`, `rate/rate.css`, `rate/rateModel.js`, `tools/shf/index.html`, `tools/shf/style.css`).
+  - **What it shows.** It shows the expected number of Starlink horizon flares at a latitude, through the year and through one night. The numbers come from the approximate closed-form formula in `rateModel.js`, not from a satellite scan. `rateModel.js` holds the synthetic constellation's shells (`SHELLS`, matched to the groups in `dummyTLE.js`). It also holds the fitted per-hour constants (`KINDS`: visible K = 0.3147 with glint limit 4.44°; all K = 0.3519 with 5°).
+  - **Controls.** A **Latitude** slider with a number field (−90° to 90°, step 0.5°). A **Night of** slider, and a **Tonight** button that sets it to the current date.
+  - **Charts.** "Flares per night through the year" has its y axis fixed at 1,500 (`YEAR_Y_MAX`), and lines above that are clipped. The **Scale to fit** checkbox fits the axis to the data instead. Press and drag on this chart to choose the night. "Flares per hour through the night" runs from 14:00 to 10:00 the next day, in local solar time.
+  - **Summary** (`summaryText()`). It shows the number of visible flares and, with faint glints, all flares. It gives the first and last flare times and the busiest time with its rate. When there are no flares it gives the reason: the Sun does not go deep enough below the horizon (compared with `MIN_DEPRESSION`), or it only just does.
+  - **Cautions** (`cautionText()`). One shows outside the tested range, 35°S to 65°N. Another shows near 55° (from 50° to 60°, north or south), where the formula can be up to twice too high in winter.
+  - **Sharing.** The address holds the settings (`?lat=&date=MM-DD&fit=0|1`). There are **Copy link** and **Share…** buttons (Share uses `navigator.share` where the browser has it). **Save image** renders both charts to a PNG. On a touch device it opens the share sheet when it can share the file, and it downloads the file otherwise.
+  - **Default latitude.** The page uses the latitude in the link. Without one, it uses the device position only if geolocation permission is already granted (`navigator.permissions.query`), so it never shows a prompt. Otherwise the default is 45°N. The **My location** button asks for the position.
+  - **Layout.** At 900 × 560 px and larger, the page fits the window with no scrolling (`html.fit-screen`). On phones the controls come first.
+  - **Build.** `webpackCopyPatterns.js` adds `rate/index.html` and `rate/formula.html` to the build-stamped shf files (their `__BUILD_V__` placeholders are replaced).
+  - **Tests.** A new test, `tools/shf/tools/test-rate.mjs`, is added to the shf `npm test`. It checks the formula and its shell list against the synthetic constellation.
+- **"How the flare rate is calculated" page** (`tools/shf/rate/formula.html`, `formula.js`, `formula.css`; linked from the rate page). It has six sections:
+  1. Why the Sun must be 28° to 47° below the horizon, with an SVG geometry diagram.
+  2. Where the flaring satellites are.
+  3. How shells crowd at their turning latitude.
+  4. Why the yearly curve has peaks and gaps, with a live chart split by shell inclination (43°, 53°, 70° and 97.5°).
+  5. The full formula.
+  6. Its accuracy.
+- **AI Effort and Refusal Fallback settings** (Sitrec → Settings; `c265210a`, `src/CustomSupport.js`, `src/SettingsManager.js`, `sitrecServer/settings.php`, `src/CDirectLLMClient.js`, `src/BYOKModelCatalog.js`).
+  - **AI Effort** (`custom.settings.aiEffort`: Low, Medium, High, Extra high, Max; default `medium`). It applies to own-key and custom-endpoint models.
+    - Anthropic gets it as `output_config.effort`. The level is limited to the levels the model lists in its `/v1/models` capabilities (`parseEffortLevels`, `effortLevelsFor`; catalog version 3). An unsupported level steps down to the nearest lower level. A model that takes no effort gets none.
+    - OpenAI-format requests get `reasoning_effort`, and Max becomes `xhigh`. Before this, the default was a fixed `low`. If a model rejects `xhigh`, the request is sent again with `high`.
+  - **Refusal Fallback** (`custom.settings.aiRefusalFallback`, default off). It applies only to Claude with the user's own Anthropic key. It sends `fallbacks: "default"` with the `server-side-fallback-2026-07-01` beta header, so Anthropic runs a declined request again on another Claude model, billed to the user's key. It is never sent to a custom endpoint.
+  - **When a model rejects a field.** If a model rejects `effort` or `fallbacks` with a 400, the request is sent again without that field, and this is remembered for that address and model (`ANTHROPIC_DROPPED`).
+  - **Validation.** Both settings are checked on the client and on the server (`AI_EFFORT_VALUES`, mirrored in PHP).
+
+### Improvements
+- **AI Model list shows the newest model of each family** (`c265210a`, `src/BYOKModelCatalog.js`). Before, `filterToCurrentGeneration` kept only the highest version per vendor. That hid Claude Fable 5.1 next to Opus and Sonnet 5.5. `versionOf()` now splits each id into version and family. A model is kept when it is the newest of its family and in the vendor's current major version, so older generations such as gpt-4o and claude-opus-4-8 stay hidden. The built-in fallback own-key models are now Claude Opus 5.5 and Sonnet 5.5.
+- **Retries and timeouts for own-key requests** (`postJSON` in `src/CDirectLLMClient.js`).
+  - **Retries.** A 429 or 529 answer is retried up to 3 times (`RETRY_POLICY`). The waits are 2, 4 and 8 s plus jitter, or `retry-after` when the browser can read it and it is no more than 30 s. OpenAI `insufficient_quota` is reported at once.
+  - **Timeouts.** The limit depends on effort: 2 minutes for low, 3 for medium, 5 for high, and 10 for extra high and max. A custom endpoint gets 10 minutes. A timeout is not retried, and its message suggests a lower AI Effort.
+- **Current Claude prices in the cost estimate** (`src/BYOKUsage.js`).
+  - New rows: Fable 5.1 and Fable 5 ($10/$50), Opus 5.5 ($4/$20), Opus 4.8 ($5/$25), Sonnet 5.5 ($2/$10) and Sonnet 4.6 ($3/$15). Opus 5.5 and Fable 5.1 have their own lower cache-read rates.
+  - Sonnet 5 is back at $2/$10, because the introductory rate is still the list price.
+  - A dated snapshot id uses its alias's price (`tableEntry`).
+  - `recordUsage` calls are now queued, because overlapping calls could overwrite each other's totals.
+  - When a fallback model served a turn, each model's tokens are recorded and priced under that model (`roundUsageByModel`, `usageByModel`). A refusal before any output is priced only in the `bio`, `frontier_llm` and `reasoning_extraction` categories. For other refusals, the input tokens are reported in a debug message and left out of the cost.
+
+### Bug Fixes
+- **Fixed empty or cut-off own-key AI replies** (`c265210a`, `src/CDirectLLMClient.js`, `src/nodes/CNodeVIewChat.js`).
+  - **Cause.** Own-key requests had an output cap of 1024 tokens (Anthropic) or 2048 (OpenAI format). Current models think before they answer, and thinking counts against that cap. So a turn could spend the whole cap thinking and come back empty, or with a tool call that was cut off.
+  - **Fix.** The cap is now `DEFAULT_MAX_TOKENS` = 16000, which is a ceiling only; the user pays only for tokens the model produces. The Anthropic path now checks `stop_reason`:
+    - `max_tokens`: no tool call from that response is run, and the chat says the reply was cut off.
+    - `refusal`: the chat shows the category and the explanation, and suggests Refusal Fallback when it is off.
+  - **Fallback history.** Thinking and tool blocks from the declined model before a `fallback` marker are not sent back in the history (`echoableContent`). When a fallback model answers, a debug message names it.
+
+### Documentation
+- **Flare rate formula constant corrected** (`tools/shf/stats/README.md`). The documented K values (0.01049 visible, 0.01173 all) were per 2-minute sample, not per hour. So the written per-hour formula gave 1/30 of the true count. They are now 0.3147 and 0.3519 per hour, with a note about the old values. The README also links the new rate page.
+- **Shared line chart** (`tools/shf/lineChart.js`, `lineChart.css`). The chart moved from `tools/shf/stats/` to `tools/shf/`, and its CSS was split out of `stats/viewer.css`, so the stats viewer and the rate page share it. It gained three options: `markers` (labelled vertical lines), `onPick` (press-and-drag picking, and Enter/Space from the keyboard) and a fixed `yMax` with the lines clipped to the plot. The stats viewer only changes its import and stylesheet paths.
+
 ## Version 2.172.3 (2026-09-28)
 
 ### New Features

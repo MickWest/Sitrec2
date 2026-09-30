@@ -70,7 +70,7 @@ patterns.push({ from: "tools", to: "./tools", globOptions: {
 // the same stamp in its cache name, so a new build produces a byte-different worker
 // that the browser installs and that purges the previous build's cache on activate.
 // force:true so these overwrite the verbatim copies made by the "tools" pattern.
-["index.html", "sw.js"].forEach((file) => {
+["index.html", "sw.js", "rate/index.html", "rate/formula.html"].forEach((file) => {
     patterns.push({
         from: `tools/shf/${file}`,
         to: `./tools/shf/${file}`,

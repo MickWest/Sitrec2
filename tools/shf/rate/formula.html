@@ -1,0 +1,244 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Flare Rate Formula</title>
+<meta name="description" content="How the Starlink flare rate formula is derived, and why the flare count through the year is not a simple curve.">
+<link rel="icon" href="../icons/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="../lineChart.css?v=__BUILD_V__">
+<link rel="stylesheet" href="rate.css?v=__BUILD_V__">
+<link rel="stylesheet" href="formula.css?v=__BUILD_V__">
+</head>
+<body class="article-page">
+<main class="article">
+  <a class="back" id="backLink" href="./">← Flare Rate</a>
+  <h1>How the flare rate is calculated</h1>
+  <p class="lede">The flare rate page does not scan satellites. It uses a formula that comes from the geometry of a
+    Starlink flare, with one constant fitted to a full simulation. This page gives the formula, where each part
+    comes from, and why the number of flares through the year is not a simple curve.</p>
+
+  <nav class="toc" aria-label="Contents">
+    <a href="#window">1. The Sun must be 28° to 47° down</a>
+    <a href="#zone">2. Where the flaring satellites are</a>
+    <a href="#shells">3. Satellites crowd at their turning latitude</a>
+    <a href="#shape">4. Why the curve is not simple</a>
+    <a href="#formula">5. The formula</a>
+    <a href="#accuracy">6. How accurate it is</a>
+  </nav>
+
+  <section id="window">
+    <h2>1. The Sun must be 28° to 47° below the horizon</h2>
+    <p>A Starlink satellite has a large flat antenna panel that faces straight down. When sunlight reflects from
+      the panel toward you, you see a brief flash: a flare. The flare counts when the reflected ray comes within
+      5° of your eye (<strong>all</strong> flares), or within 4.44°, where the flash at least doubles the
+      satellite's normal brightness (<strong>visible</strong> flares).</p>
+    <p>Because the panel faces down, it can reflect only sunlight that comes from <em>below</em> the satellite's
+      horizontal. But the satellite must also be in sunlight, so that light must pass <em>above</em> the Earth's
+      edge. Seen from the satellite, the Earth's edge is below the horizontal by an angle
+      E = acos(R / (R + h)), where R is the Earth's radius (6,371 km) and h is the satellite's altitude:
+      18.9° at 360 km, 21.5° at 480 km and 23.6° at 580 km. So the sunlight always grazes past the Earth's edge,
+      and the reflected ray comes down to an observer who sees the satellite low in the sky, in the direction
+      of the Sun below the horizon.</p>
+
+    <figure class="diagram">
+      <svg viewBox="0 95 760 212" role="img" aria-labelledby="dgTitle">
+        <title id="dgTitle">Side view of a flare: sunlight grazes past the Earth's edge, reflects from the downward-facing panel, and reaches an observer who sees the satellite low in the sky.</title>
+        <defs>
+          <marker id="dgArrowSun" viewBox="0 0 10 10" refX="5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0,0 L10,5 L0,10 z" class="dg-sun-head"/>
+          </marker>
+          <marker id="dgArrowRef" viewBox="0 0 10 10" refX="5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0,0 L10,5 L0,10 z" class="dg-ref-head"/>
+          </marker>
+        </defs>
+        <circle cx="300" cy="1000" r="800" class="dg-earth"/>
+        <!-- observer's horizon (the tangent at the observer) -->
+        <line x1="40.2" y1="228.7" x2="440" y2="172.9" class="dg-horizon"/>
+        <text x="40" y="220" class="dg-label-muted">observer's horizon</text>
+        <!-- sunlight: from lower right, grazing the Earth's edge, up to the panel (arrow at the midpoint) -->
+        <polyline points="705.9,298.2 610.6,217.3 515.3,136.4" class="dg-sun" marker-mid="url(#dgArrowSun)"/>
+        <text x="640" y="196" class="dg-label">sunlight,</text>
+        <text x="640" y="212" class="dg-label">just above the</text>
+        <text x="640" y="228" class="dg-label">Earth's edge</text>
+        <!-- reflected ray: from the panel down to the observer (arrow at the midpoint) -->
+        <polyline points="515.3,136.4 352,172.1 188.7,207.8" class="dg-ref" marker-mid="url(#dgArrowRef)"/>
+        <text x="318" y="150" class="dg-label">reflected ray</text>
+        <!-- satellite and its panel (perpendicular to the local vertical) -->
+        <line x1="494" y1="131.2" x2="536.6" y2="141.6" class="dg-panel"/>
+        <circle cx="515.3" cy="136.4" r="5" class="dg-sat"/>
+        <text x="500" y="112" class="dg-label">satellite; the panel faces down</text>
+        <!-- observer -->
+        <circle cx="188.7" cy="207.8" r="5" class="dg-obs"/>
+        <text x="120" y="244" class="dg-label">observer</text>
+        <!-- direction to the Sun from the observer -->
+        <line x1="188.7" y1="207.8" x2="252.7" y2="262.1" class="dg-sundir"/>
+        <text x="200" y="290" class="dg-label-muted">toward the Sun, D below the horizon</text>
+        <text x="60" y="296" class="dg-label-muted">Earth</text>
+      </svg>
+      <figcaption>A side view in the vertical plane that holds the Sun. Not to scale: the satellite's altitude is
+        drawn about 20 times too large. The mirror law is exact in the drawing, and the incoming light passes just
+        above the Earth's edge.</figcaption>
+    </figure>
+
+    <p>Let D be how far the Sun is below your horizon, e the satellite's elevation, and θ the angle, at the
+      Earth's centre, from you to the point under the satellite. In the plane of the drawing, the angle between
+      the reflected ray and your eye is <code>2θ + e − D</code>, with θ = 90° − e − asin(cos E × cos e). This gives
+      a window of Sun depths for each shell:</p>
+    <ul>
+      <li><strong>Lower edge B.</strong> The angle is smallest at an elevation e* where sin e* = tan E / √3, about
+        13°. The glint is within the limit G only if D &gt; 180° − e* − 2 × asin(cos E × cos e*) − G. When the
+        Sun is less deep, no reflected ray comes close enough to your eye. That is why there are no flares in
+        twilight.</li>
+      <li><strong>Upper edge U = 2E.</strong> When the Sun is deeper, the satellites in the right place are in
+        the Earth's shadow.</li>
+    </ul>
+    <table class="data">
+      <caption>The window compared with 3,000 simulated flares</caption>
+      <thead><tr><th>Satellite altitude</th><th>Simulated Sun depth (1st to 99th percentile)</th><th>Formula window</th></tr></thead>
+      <tbody>
+        <tr><td>363 km</td><td>27.7° – 37.6°</td><td>27.5° – 37.8°</td></tr>
+        <tr><td>423 km</td><td>29.9° – 40.5°</td><td>29.9° – 40.6°</td></tr>
+        <tr><td>479 km</td><td>31.6° – 42.9°</td><td>32.0° – 43.1°</td></tr>
+        <tr><td>550 km</td><td>34.7° – 45.8°</td><td>34.5° – 46.0°</td></tr>
+        <tr><td>579 km</td><td>35.9° – 46.6°</td><td>35.4° – 47.1°</td></tr>
+      </tbody>
+    </table>
+    <p>Inside the window the rate is a broad hump, lower at both edges. The formula uses
+      W = √sin(180° × X), where X goes from 0 at the lower edge to 1 at the upper edge. This shape was chosen to
+      fit the simulated flares; it is not derived. The same geometry also explains why flares are low in the sky
+      (below about 15°) and in the direction of the Sun: in the simulation, 90% are within 5° of the Sun's
+      azimuth.</p>
+  </section>
+
+  <section id="zone">
+    <h2>2. Where the flaring satellites are</h2>
+    <p>The satellites that flare for you are in a small zone about 15° to 20° away from you (measured at the
+      Earth's centre), in the direction of the Sun. For a shell with edge dip E, that distance is
+      C = 86° − asin(cos E × cos 4°). The latitude of the zone is</p>
+    <p class="eq">Z = asin(sin L × cos C + cos L × sin C × cos A)</p>
+    <p>where L is your latitude and A is the Sun's azimuth (its compass direction). So the zone is north of you
+      when the Sun is toward the north, and south of you when it is toward the south. The Sun's direction at the
+      times it is 28° to 47° down changes through the year, so <strong>the glint zone moves north and south
+      with the seasons</strong>. At 35°N, for example, it is at about 31°–33°N in early January, and at
+      45°–55°N in late April.</p>
+  </section>
+
+  <section id="shells">
+    <h2>3. Satellites crowd at their turning latitude</h2>
+    <p>A satellite in an orbit tilted at inclination i goes north to latitude i, turns, and goes south to −i.
+      Like a pendulum at the ends of its swing, it spends the most time near the turning points. So a shell
+      of satellites is thinly spread over the equator and densely packed near ±i. The fraction of a shell south
+      of latitude Y is F(Y) = ½ + asin(sin Y / sin i) / 180°, and the density per area is the change of F over a
+      band, divided by the band's area. The formula uses a band of ±3°.</p>
+    <figure class="chart-figure">
+      <div class="chart" id="chartDensity"></div>
+      <figcaption>Density of each shell at each latitude, relative to its density over the equator (the ±3° band
+        limits the peaks). The Starlink shells turn at 43°, 53°, 70° and 82.5° (the 97.5° shells go over the pole
+        and turn at 180° − 97.5°).</figcaption>
+    </figure>
+  </section>
+
+  <section id="shape">
+    <h2>4. Why the curve is not simple</h2>
+    <p>The flare count for a night is the product of two things that change through the year in different ways:</p>
+    <ol>
+      <li><strong>How long the Sun stays 28° to 47° down.</strong> This depends on your latitude and the season. In
+        summer at mid and high latitudes the Sun does not get deep enough, or only for a short time near
+        midnight.</li>
+      <li><strong>How many satellites are in the glint zone.</strong> The zone moves north and south with the
+        seasons (section 2), and the density of satellites there rises sharply each time the zone crosses a
+        shell's turning latitude (section 3).</li>
+    </ol>
+    <p>Each crossing makes a peak, and the Starlink shells have four turning latitudes, so one latitude can have
+      several peaks a year. The pattern repeats on both sides of the June solstice, because the Sun's path does.</p>
+
+    <div class="card breakdown">
+      <div class="breakdown-controls">
+        <label for="bLat">Latitude</label>
+        <input type="range" id="bLat" min="-90" max="90" step="0.5" value="45">
+        <output id="bLatLabel">45°N</output>
+      </div>
+      <div class="chart" id="chartBreakdown"></div>
+      <p class="sub">Visible flares per night through the year, split by the inclination of the shells that
+        make them.</p>
+    </div>
+
+    <p>Examples from the formula:</p>
+    <ul>
+      <li><strong>35°N.</strong> In January the zone is at 31°–33°N, and the 43° and 53° shells give about 400
+        flares a night together. In March and October the zone crosses 43°, and the 43° shells give 416 of about
+        780: the first bump. In late April and mid-August the zone is at 45°–55°N, over the 53° shells' turning
+        latitude, and those shells give 1,195 of 1,352: the main peaks. On 21 June the Sun goes only 31.6° down,
+        so only the lowest shells flare, for a short time near midnight: about 81.</li>
+      <li><strong>45°N.</strong> In December and January the zone is over the 43° turning latitude. In February
+        and October it crosses 53°. From early May to mid-August the Sun never gets 28° down, so there are no
+        flares at all.</li>
+      <li><strong>The equator.</strong> The zone stays within about 10° of the equator, far from every turning
+        latitude, and the Sun always goes deep. So the count is almost the same all year (about 230 to 270).</li>
+    </ul>
+    <p>The same two effects shape each night. When the Sun goes deeper than a shell's window around midnight,
+      those satellites are in the Earth's shadow, so the flares come in two groups, after dusk and before dawn.
+      On a short summer night the Sun reaches the window only near midnight, so there is one group. The twelve
+      shells are at different altitudes, so each has its own window, and together they soften the edges.</p>
+  </section>
+
+  <section id="formula">
+    <h2>5. The formula</h2>
+    <p>Angles are in degrees. Inputs: L = your latitude (north positive); N = day of the year (1 January = 0);
+      T = local solar time in hours (noon is when the Sun is highest); R = 6,371 km; G = 4.44 (visible) or 5
+      (all); K = 0.3147 (visible) or 0.3519 (all).</p>
+    <h3>The Sun</h3>
+    <pre class="formula">S = −23.44 × cos(360 × (N + 10) / 365.25)          solar declination
+H = 15 × (T − 12)                                  hour angle
+D = −asin(sin L × sin S + cos L × cos S × cos H)   depth below the horizon
+A = atan2(−sin H × cos S,
+          cos L × sin S − sin L × cos S × cos H)   azimuth</pre>
+    <h3>For each shell (inclination I, altitude h, n satellites)</h3>
+    <pre class="formula">E = acos(R / (R + h))                     dip of the Earth's edge
+M = asin(tan E / √3)
+U = 2 × E                                 upper edge of the window
+B = 180 − M − 2 × asin(cos E × cos M) − G lower edge of the window
+X = (D − B) / (U − B)
+W = √sin(180 × X) if 0 &lt; X &lt; 1, else 0   the hump in the window
+C = 86 − asin(cos E × cos 4)              distance to the glint zone
+Z = asin(sin L × cos C + cos L × sin C × cos A)   latitude of the glint zone
+F(Y) = 0.5 + asin(sin Y / sin I) / 180    (sin Y / sin I limited to −1 … +1)
+Q = (F(Z+3) − F(Z−3)) / (2π × (sin(Z+3) − sin(Z−3)))   density at the zone</pre>
+    <h3>The rate</h3>
+    <pre class="formula">flares per hour = K × (n × Q × W, added over all shells)</pre>
+    <p>Flares per night is this rate added up from noon to the next noon; the page uses 5-minute steps. K is the
+      only fitted number. It was fitted to a simulation of every night of 2026 at seven latitudes.</p>
+    <table class="data">
+      <caption>The shells of the synthetic constellation (10,249 satellites)</caption>
+      <thead><tr><th>Inclination</th><th>Altitude</th><th>Satellites</th></tr></thead>
+      <tbody id="shellTable"></tbody>
+    </table>
+    <p>The code is <a href="rateModel.js">rateModel.js</a>. Its test checks that the shells match the synthetic
+      constellation and that the formula gives the yearly means recorded when K was fitted. The flare statistics
+      <a href="https://github.com/MickWest/Sitrec2/blob/main/tools/shf/stats/README.md#approximate-formula"
+         rel="noopener" target="_blank">README</a> has the same formula and the simulation it was fitted to.</p>
+  </section>
+
+  <section id="accuracy">
+    <h2>6. How accurate it is</h2>
+    <ul>
+      <li>R² is the fraction of the night-to-night variation in the simulation that the formula explains (1 is a
+        perfect match). Over the nights of the year it is 0.97 at 20°N, 0.91 at 35°N, 0.95 at 45°N, 0.97 at
+        65°N and 0.91 at 35°S. At five latitudes not used in the fit, it is 0.93 to 0.98, except 10°N, where the
+        curve is almost flat.</li>
+      <li>The mean per night is usually within about 5% of the simulation.</li>
+      <li>It is least accurate near a turning latitude where the zone stays for a long time. At 55°N, R² is 0.50,
+        and in December the formula gives about twice the simulated count.</li>
+      <li>It reproduces the simulation of the synthetic constellation, not the real sky. The synthetic
+        constellation is within about 10% of the real one up to 35° latitude, but gives fewer flares further
+        north: −19% at 45°N, −37% at 55°N and −65% at 65°N.</li>
+      <li>It is for an observer at sea level, and it does not include sky conditions such as the Moon, haze and
+        light pollution. Real nights scatter about the expected number by roughly the square root of the
+        count.</li>
+    </ul>
+  </section>
+</main>
+<script type="module" src="formula.js?v=__BUILD_V__"></script>
+</body>
+</html>

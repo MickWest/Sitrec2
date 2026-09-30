@@ -9,6 +9,21 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.173.0 (2026-09-30)
+
+### New Features
+- **Starlink Flare Rate** (Starlink Flare Predictor → "How many flares?" link at the bottom): a new page shows the expected Starlink flares per night through the year and per hour through one night, for any latitude and date. You can share it as a link or save it as an image. A companion page explains how the rate is calculated and why the yearly curve has peaks and gaps.
+- **AI Effort** (Settings): choose how much an own-key or custom-endpoint AI model thinks before it answers, from Low to Max (default Medium).
+- **Refusal Fallback** (Settings): when Claude, used with your own Anthropic key, declines a request, another Claude model can try it. It is off by default, because the second attempt is also charged to your key.
+
+### Improvements
+- The *AI Model* list (Settings) now shows the newest model of each family, so Claude Fable 5.1 is no longer hidden.
+- Own-key AI requests now retry when the provider is busy or rate-limited, and they stop after a time limit that increases with the AI Effort level.
+- The AI cost estimate now has current Claude prices.
+
+### Bug Fixes
+- Fixed own-key AI replies that came back empty or with a cut-off action. When the model declines a request, the chat now shows the reason.
+
 ## Version 2.172.3 (2026-09-28)
 
 ### New Features

@@ -213,6 +213,8 @@ look-ahead limit. A query made at midday therefore skips ahead to the next dusk 
 | `icons/`, `screenshots/` | App icons (incl. maskable + SVG) and manifest screenshots. |
 | `tools/test-*.mjs` | Node tests: foundation (geo/astro), engine, location, skyview; `verify-browser.mjs` is a headless end-to-end check (incl. PWA). |
 | `stats/` | Command-line tool: flares per night through a year and per hour, by latitude, as CSV and an Excel workbook with charts. It uses this engine. See `stats/README.md`. |
+| `rate/` | The flare rate page (`rate/index.html`): the expected flares per night through the year and per hour through one night, for a latitude and date chosen with sliders. It uses the approximate formula (`rate/rateModel.js`; see "Approximate formula" in `stats/README.md`), not this engine. The year chart's y axis is fixed at 1,500 flares per night (lines above it are clipped), or fits the data with "Scale to fit". The address holds the settings (`?lat=35&date=06-21`, and `&fit=1` or `&fit=0` for "Scale to fit", which is off by default), so it is a link to the graph; "Save image" saves both charts as a PNG. Linked from the footer of the predictor. Without a latitude in the link it uses the user's position when the browser already has permission to give it (no prompt), else 45°N; "My location" asks. Press and drag on the year chart to choose the night. `rate/formula.html` explains the formula, its derivation, and why the curve has peaks and gaps, with live charts. |
+| `lineChart.js`, `lineChart.css` | The SVG line chart with a crosshair tooltip, used by `stats/` and `rate/`. |
 
 ## Conventions
 

@@ -1,0 +1,43 @@
+/* The formula page: a readable single column. Tokens and buttons come from rate.css. */
+.article { max-width: 820px; margin: 0 auto; padding: 16px 16px 64px; }
+.article h1 { font-size: 26px; margin: 6px 0 6px; }
+.article h2 { font-size: 20px; margin: 32px 0 8px; }
+.article h3 { font-size: 15px; margin: 18px 0 6px; color: var(--ink-2); }
+.article p, .article li { line-height: 1.55; }
+.article ul, .article ol { padding-left: 22px; }
+.article li { margin-bottom: 6px; }
+section { scroll-margin-top: 12px; }
+
+.toc { display: flex; flex-wrap: wrap; gap: 6px 14px; margin: 12px 0 8px; font-size: 14px; }
+.eq { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 14px; background: var(--surface);
+  border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px; overflow-x: auto; }
+.formula { font: 13px/1.5 ui-monospace, "SF Mono", Menlo, monospace; background: var(--surface);
+  border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; overflow-x: auto; margin: 0; }
+code { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 0.92em; }
+
+table.data { border-collapse: collapse; font-size: 14px; font-variant-numeric: tabular-nums; margin: 12px 0; }
+table.data caption { text-align: left; color: var(--ink-2); font-size: 13px; margin-bottom: 4px; }
+table.data th, table.data td { padding: 4px 12px 4px 0; border-bottom: 1px solid var(--grid); text-align: left; }
+table.data th { color: var(--ink-2); font-weight: 600; }
+
+figure { margin: 16px 0; }
+figcaption { font-size: 13px; color: var(--ink-2); margin-top: 6px; }
+.diagram svg { width: 100%; height: auto; display: block; background: var(--surface);
+  border: 1px solid var(--border); border-radius: 10px; }
+.dg-earth { fill: var(--grid); stroke: var(--axis); stroke-width: 1.5; }
+.dg-horizon { stroke: var(--muted); stroke-width: 1.2; stroke-dasharray: 5 4; }
+.dg-sun { fill: none; stroke: var(--series-4); stroke-width: 2.5; }
+.dg-sun-head { fill: var(--series-4); }
+.dg-ref { fill: none; stroke: var(--series-1); stroke-width: 2.5; }
+.dg-ref-head { fill: var(--series-1); }
+.dg-sundir { stroke: var(--series-4); stroke-width: 1.5; stroke-dasharray: 3 3; }
+.dg-panel { stroke: var(--ink); stroke-width: 4; stroke-linecap: round; }
+.dg-sat { fill: var(--ink); }
+.dg-obs { fill: var(--series-2); }
+.dg-label { fill: var(--ink); font-size: 13px; }
+.dg-label-muted { fill: var(--ink-2); font-size: 12px; }
+
+.breakdown { margin: 16px 0; }
+.breakdown-controls { display: grid; grid-template-columns: auto 1fr auto; gap: 10px; align-items: center; margin-bottom: 6px; }
+.breakdown-controls label { font-weight: 600; font-size: 13px; color: var(--ink-2); }
+.breakdown-controls output { min-width: 4em; text-align: right; }

@@ -1,0 +1,146 @@
+/* Flare rate page. Colors are tokens (the same set as ../stats/viewer.css); the chart
+   styles are in ../lineChart.css. */
+:root {
+  color-scheme: light;
+  --page: #f9f9f7;
+  --surface: #fcfcfb;
+  --ink: #0b0b0b;
+  --ink-2: #52514e;
+  --muted: #898781;
+  --grid: #e1e0d9;
+  --axis: #c3c2b7;
+  --border: rgba(11, 11, 11, 0.10);
+  --accent: #2a78d6;
+  --caution: #9a5b00;
+  --series-1: #2a78d6; --series-2: #eb6834; --series-3: #1baf7a; --series-4: #eda100; --series-5: #e87ba4;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --page: #0d0d0d; --surface: #1a1a19; --ink: #ffffff; --ink-2: #c3c2b7; --muted: #898781;
+    --grid: #2c2c2a; --axis: #383835; --border: rgba(255, 255, 255, 0.10); --accent: #3987e5;
+    --caution: #eda100;
+    --series-1: #3987e5; --series-2: #d95926; --series-3: #199e70; --series-4: #c98500; --series-5: #d55181;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --page: #0d0d0d; --surface: #1a1a19; --ink: #ffffff; --ink-2: #c3c2b7; --muted: #898781;
+  --grid: #2c2c2a; --axis: #383835; --border: rgba(255, 255, 255, 0.10); --accent: #3987e5;
+  --caution: #eda100;
+  --series-1: #3987e5; --series-2: #d95926; --series-3: #199e70; --series-4: #c98500; --series-5: #d55181;
+}
+
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0; background: var(--page); color: var(--ink);
+  font: 15px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+a { color: var(--accent); }
+.page {
+  max-width: 1100px; margin: 0 auto;
+  padding: 16px max(16px, env(safe-area-inset-right)) 48px max(16px, env(safe-area-inset-left));
+}
+.back { font-size: 13px; text-decoration: none; }
+h1 { font-size: 24px; margin: 4px 0 4px; }
+h2 { font-size: 17px; margin: 0 0 2px; }
+.lede, .sub { color: var(--ink-2); margin: 0 0 12px; }
+.sub { font-size: 13px; }
+
+.card {
+  background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
+  padding: 14px 16px; margin: 12px 0;
+}
+
+/* Controls: two sliders and the actions. Sticky on narrow screens, so the charts
+   below can be watched while a slider moves. */
+.controls {
+  display: grid; grid-template-columns: 1fr 1fr auto; gap: 12px 24px; align-items: end;
+}
+.control { align-self: start; min-width: 0; }
+.control label { display: block; font-weight: 600; font-size: 13px; color: var(--ink-2); margin-bottom: 4px; }
+.value-row { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; margin-top: 4px; min-height: 32px; }
+output { font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; }
+input[type="number"] {
+  width: 5.5em; font: inherit; padding: 4px 6px; border-radius: 6px;
+  border: 1px solid var(--axis); background: var(--page); color: var(--ink);
+}
+input[type="range"] { width: 100%; height: 28px; margin: 0; accent-color: var(--accent); touch-action: pan-y; }
+.actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.button {
+  font: inherit; font-weight: 600; cursor: pointer; border-radius: 8px; padding: 8px 14px;
+  background: var(--accent); color: #fff; border: 1px solid transparent; white-space: nowrap;
+}
+.button.secondary { background: transparent; color: var(--ink); border-color: var(--axis); }
+.button.small { padding: 3px 10px; font-size: 13px; font-weight: 500; }
+.button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.status { grid-column: 1 / -1; margin: 0; min-height: 0; font-size: 13px; color: var(--ink-2); }
+.status:empty { display: none; }
+.link-box {
+  grid-column: 1 / -1; width: 100%; font: 13px ui-monospace, monospace; padding: 6px 8px;
+  border-radius: 6px; border: 1px solid var(--axis); background: var(--page); color: var(--ink);
+}
+
+/* Page structure. Narrow screens: one scrolling column, notes last (the side panel's
+   parts join the page's own flow). Desktop (below): the side panel and the charts fill
+   the window, and the page does not scroll. */
+.page { display: flex; flex-direction: column; }
+.side { display: contents; }
+.notes { order: 1; }
+.charts { display: flex; flex-direction: column; }
+.notes summary { cursor: pointer; }
+.notes summary h2 { display: inline; }
+
+.summary p { margin: 0 0 4px; }
+.formula-link { display: inline-block; margin-top: 6px; font-size: 14px; font-weight: 600; }
+.headline { font-size: 17px; }
+.big { font-size: 34px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.caution { color: var(--caution); font-size: 13px; }
+.notes ul { margin: 6px 0 0; padding-left: 20px; }
+.notes li { margin-bottom: 6px; color: var(--ink-2); font-size: 14px; }
+.chart { position: relative; }
+.card-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.check { display: inline-flex; align-items: center; gap: 6px; font-size: 14px; color: var(--ink-2); cursor: pointer; white-space: nowrap; }
+.check input { width: 18px; height: 18px; margin: 0; accent-color: var(--accent); }
+
+@media (min-width: 900px) and (min-height: 560px) {
+  /* Only the rate page fits the screen; the formula page also loads this file and scrolls. */
+  html.fit-screen, html.fit-screen body { height: 100%; overflow: hidden; }
+  .page {
+    display: grid; grid-template-columns: minmax(300px, 360px) 1fr; gap: 12px;
+    max-width: none; height: 100vh; height: 100dvh; padding: 12px 16px;
+  }
+  .side { display: block; overflow-y: auto; min-height: 0; padding-right: 2px; }
+  .side .card { margin: 10px 0 0; }
+  .page-head .lede { font-size: 13px; margin-bottom: 0; }
+  h1 { font-size: 21px; }
+  .controls { grid-template-columns: 1fr; gap: 12px; }
+  .actions .button { flex: 1; padding: 7px 8px; }
+  .big { font-size: 30px; }
+  .charts { min-height: 0; gap: 12px; }
+  .chart-card { flex: 1 1 0; min-height: 0; margin: 0; display: flex; flex-direction: column; }
+  .chart-card .sub { margin-bottom: 4px; }
+  /* The chart's height comes from the card, not from its contents: rate.js reads it. */
+  .chart-card .chart { flex: 1 1 0; min-height: 0; overflow: hidden; }
+}
+
+@media (max-width: 720px) {
+  .page { padding-top: 8px; }
+  h1 { font-size: 21px; }
+  .lede { font-size: 14px; }
+  .controls {
+    grid-template-columns: 1fr 1fr; position: sticky; top: 0; z-index: 5;
+    margin-left: -8px; margin-right: -8px; padding: 10px 12px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
+  }
+  .actions { grid-column: 1 / -1; }
+  .value-row { gap: 6px; }
+  #dayLabel { font-size: 14px; }
+  .button.small { padding: 3px 7px; }
+  .actions .button { flex: 1; padding: 7px 8px; }
+  .big { font-size: 28px; }
+}
+@media (max-width: 380px) {
+  .controls { grid-template-columns: 1fr; }
+}

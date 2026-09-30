@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en" class="fit-screen">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Starlink Flare Rate</title>
+<meta name="description" content="Expected Starlink horizon flares per night and per hour, for any latitude and date.">
+<link rel="icon" href="../icons/favicon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="../icons/apple-touch-icon.png">
+<link rel="stylesheet" href="../lineChart.css?v=__BUILD_V__">
+<link rel="stylesheet" href="rate.css?v=__BUILD_V__">
+</head>
+<body>
+<main class="page">
+  <aside class="side">
+  <header class="page-head">
+    <a class="back" href="../">← Flare Predictor</a>
+    <h1>Starlink Flare Rate</h1>
+    <p class="lede">The expected number of Starlink horizon flares at a latitude, through the year and
+      through one night. It comes from an approximate formula, not from a scan of satellites.</p>
+  </header>
+
+  <section class="controls card" aria-label="Settings">
+    <div class="control">
+      <label for="latRange">Latitude</label>
+      <input type="range" id="latRange" min="-90" max="90" step="0.5" value="45">
+      <div class="value-row">
+        <input type="number" id="latNumber" min="-90" max="90" step="0.5" value="45" inputmode="decimal"
+               aria-label="Latitude in degrees, south negative">
+        <output id="latLabel" for="latRange">45°N</output>
+        <button type="button" class="button secondary small" id="myLocation" hidden>My location</button>
+      </div>
+    </div>
+    <div class="control">
+      <label for="dayRange">Night of</label>
+      <input type="range" id="dayRange" min="0" max="364" step="1" value="171">
+      <div class="value-row">
+        <output id="dayLabel" for="dayRange">21 June</output>
+        <button type="button" class="button secondary small" id="today">Tonight</button>
+      </div>
+    </div>
+    <div class="actions">
+      <button type="button" class="button" id="saveImage">Save image</button>
+      <button type="button" class="button secondary" id="copyLink">Copy link</button>
+      <button type="button" class="button secondary" id="shareLink" hidden>Share…</button>
+    </div>
+    <p class="status" id="status" role="status" aria-live="polite"></p>
+    <input type="text" class="link-box" id="linkBox" readonly hidden aria-label="Link to this graph">
+  </section>
+
+  <section class="card summary" aria-live="polite">
+    <p class="headline"><span class="big" id="nightTotal">–</span> <span id="nightTotalUnit">visible flares</span></p>
+    <p class="sub" id="nightWhen"></p>
+    <p id="nightDetail"></p>
+    <p class="caution" id="caution" hidden></p>
+    <a class="formula-link" id="formulaLink" href="formula.html">How this is calculated, and why the curve has this shape →</a>
+  </section>
+
+  <details class="card notes">
+    <summary><h2>What the numbers mean</h2></summary>
+
+    <ul>
+      <li>Each count is the flares one observer at this latitude could see in the whole sky above the horizon.
+        It is not a worldwide total. The longitude does not matter, because the times are local solar time.</li>
+      <li><strong>Visible</strong> flares at least double the satellite's normal brightness. <strong>All</strong>
+        also counts faint glints at the edge of the 5° flare cone.</li>
+      <li>A flare needs the Sun about 28° to 47° below the horizon, so there are none in twilight. Flares are low
+        in the sky, below about 15°, toward the direction of the Sun.</li>
+      <li>This is the expected (average) number. Real nights scatter about it by roughly the square root of the
+        count. Sky conditions — the Moon, haze, light pollution — are not included.</li>
+      <li>The formula matches a full simulation of the synthetic Starlink constellation with R² 0.93 to 0.98 at
+        most latitudes from 35°S to 65°N. It is least accurate near 55° in winter, where it can be up to twice
+        too high. The synthetic constellation itself gives fewer flares than the real one above about 45°.</li>
+      <li>For flares at a real place and time, with directions, use the
+        <a href="../">Flare Predictor</a>. The formula, how it was found, and its tests are on the
+        <a href="formula.html" id="formulaLink2">formula page</a>.</li>
+    </ul>
+  </details>
+  </aside>
+
+  <div class="charts">
+  <section class="card chart-card">
+    <div class="card-head">
+      <h2>Flares per night through the year</h2>
+      <label class="check"><input type="checkbox" id="scaleToFit"> Scale to fit</label>
+    </div>
+    <p class="sub">At <span id="yearLat">35°N</span>. Click or drag on the chart to choose a night.</p>
+    <div class="chart" id="chartYear"></div>
+  </section>
+
+  <section class="card chart-card">
+    <h2>Flares per hour through the night</h2>
+    <p class="sub" id="nightSub">Local solar time: noon is when the Sun is highest. Your clock can differ from it by an hour or more.</p>
+    <div class="chart" id="chartNight"></div>
+  </section>
+
+  </div>
+</main>
+<script type="module" src="rate.js?v=__BUILD_V__"></script>
+</body>
+</html>

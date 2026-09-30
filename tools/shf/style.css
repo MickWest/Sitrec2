@@ -460,6 +460,8 @@ input[type="file"]::file-selector-button {
 .app-footer { margin-top: 32px; }
 .app-footer p { color: var(--faint); font-size: 0.78rem; text-align: center; }
 .app-footer a { color: var(--muted); }
+.app-footer .rate-link { font-size: 0.9rem; }
+.app-footer .rate-link a { color: var(--accent, var(--muted)); }
 
 /* ---- wider screens ---- */
 @media (min-width: 560px) {

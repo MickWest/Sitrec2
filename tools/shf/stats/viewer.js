@@ -3,7 +3,7 @@
 // Reads the CSV files and run.json of one output folder: from a folder or file picker,
 // from files dropped on the page, or from ?data=<folder URL>/. Nothing is uploaded.
 
-import { createLineChart } from "./lineChart.js";
+import { createLineChart } from "../lineChart.js";
 
 const MAX_SERIES = 8;     // the categorical palette has 8 slots; colors are never cycled
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
