@@ -9,6 +9,86 @@ lockstep with docs/WhatsNew.md.
 
 ---
 
+## Version 2.174.0 (2026-10-01)
+
+### Improvements
+- **Starlink Flare Predictor: a synthetic constellation measured from the real one** (`tools/shf/dummyTLE.js`, new `tools/shf/starlinkShells.js`, new `tools/shf/tools/measure-shells.mjs`).
+  - **Where it is used.** The predictor uses the synthetic constellation in two cases: for a date more than a week from today, and when the current elements cannot be downloaded (`getTLEText` in `app.js`, unchanged). The flare statistics tool (`stats/`) uses it by default.
+  - **Shell table.** `measure-shells.mjs` generates `starlinkShells.js` (`STARLINK_SHELLS`) from the CelesTrak supplemental Starlink OMM CSV of 2026-10-01 (`starlink-sup-20261001-0250.csv`, 11,154 satellites). It moves every element to the reference epoch 2026-09-30 12:00 UTC. The table has 44 shells, grouped by inclination and then by 10 km altitude band, from 240 to 580 km. It has 993 measured planes:
+    - For the 43°, 53° and 70° shells, each plane's RAAN and satellite count (`raan`).
+    - For the Sun-synchronous 97.3° shells (`sso: true`), each plane's local mean solar time of the ascending node (`ltan`).
+    - For each shell, the within-plane phase irregularity (`gapSd`).
+  - **Generator.** `generateDummyTLE(date, total)` now calls `generateFromTable(date, opts)`. It replaces the 12 hand-set groups in evenly spaced Walker-style planes.
+    - Each shell is laid out in its measured planes. The planes move from the reference epoch to the date at the shell's J2 nodal rate (`nodalRate`, now exported): −4.7°/day at 53°/470 km, −5.6°/day at 43°/490 km and −2.5°/day at 70°/579 km. So the measured pattern of planes turns as a whole.
+    - A Sun-synchronous plane is placed at RAAN = GMST + 15° × (LTAN − UT), so it keeps its measured local time on any date.
+    - Within a plane, the satellites are evenly spaced with Gaussian jitter of `gapSd`. The phases advance at the shell's mean motion from the reference epoch, so the sets for consecutive dates are one moving constellation, not a reshuffle.
+    - The count defaults to the table's total: 11,154, where it was 10,500. Catalog numbers now start at 80001.
+    - `opts.mode` (`"walker"`, `"random"`), `phase`, `gapSd`, `seed` and `inc` are for measurements only.
+  - **Accuracy.** The synthetic set was compared with the real element set over five nights (29 September to 3 October 2026), at 14 latitudes from 60°S to 70°N and 6 longitudes.
+    - The synthetic visible-flare count is 1.002 of the real count (1.001 for all flares).
+    - It is within 2% at every latitude from 50°S to 60°N. The worst are 1.016 ± 0.006 at 10°S and 0.981 ± 0.016 at 60°N; the others are within 1%.
+    - The old generator was −19% at 45°N, −37% at 55°N and −65% at 65°N.
+    - The old even spread of the 97.3° planes gave 0.58 of the real count from that group (50°S to 55°N). These planes made 68% of the visible flares at 55°N in the measurement nights, and 57% over the year.
+  - **Refresh.** `node tools/shf/tools/measure-shells.mjs <omm.csv>` reads a CelesTrak OMM CSV, either the supplemental set or the standard group. It finds columns by name and refuses legacy TLE text. Then rebuild the rate page's year table and run the tests (`stats/README.md`, "Refreshing the table").
+  - **Statistics cache.** `stats/flare-stats.mjs` adds `starlinkShells.js` to `MODEL_FILES`. A change to the table therefore gives a new model version, and the cached nights are scanned again.
+  - **Tests.** `tools/test-dummytle.mjs` now checks that:
+    - the count equals the table's total;
+    - each inclination group's share and the median altitude equal the table's;
+    - the 53°/470 km planes match the table at the reference epoch;
+    - every Sun-synchronous plane holds its satellites at its local time on two dates nine months apart.
+- **Starlink Flare Rate page: a flux-integral model with dated orbital planes** (`tools/shf/rate/rateModel.js`, `rate/rate.js`, `rate/index.html`, new `rate/rateWorker.js`, new `rate/rateTable.json`, new `tools/shf/tools/build-rate-table.mjs`).
+  - **Model.** `rateModel.js` replaces the 2.173.0 closed-form formula and its fitted per-hour constants with a model of what the flare engine counts. No constant is fitted.
+    - At each time step it builds each shell's flare region. The reflected ray must be within the glint limit (`GLINT_LIMIT`: 5° for all flares, 5 − 1.25 × √0.2 ≈ 4.44° for visible flares). The satellite must be in sunlight (tested against the WGS84 shadow) and above the observer's horizon.
+    - It counts the satellites that enter that region: the integral along the region's edge of the satellite density times the inward speed relative to the moving edge.
+    - Each entry is one flare, less the chance that the engine's 2-second sampling misses a short run.
+    - The glint lobe is tabulated once for each altitude and kind, then placed and clipped at run time. One night of the whole constellation takes about 40 ms on a desktop.
+  - **Constellation.** The model merges `STARLINK_SHELLS` within 15 km altitude bands for each inclination group (`mergeShells`, `MERGE_BAND_KM`), which gives 36 model shells from 44. This changes a night with 20 or more flares by at most 1.7% (visible) or 2.8% (all flares).
+    - `shellsForNight(date)` dates the 43°, 53° and 70° planes with the generator's own `nodalRate`.
+    - The Sun-synchronous planes stay at their local mean solar times. The model corrects those times by the equation of time (`equationOfTimeHours`).
+    - The planes drift against the Sun during a day, so a night's count depends on the longitude. The page has no longitude, so by default each plane is spread over its day of drift (`SPREAD_STEP_DEG`), and the count is the mean over the observer's longitude. `expectedNight` takes `lon` for one longitude's night.
+  - **Accuracy** (as measured in `stats/README.md` and `rate/formula.html`).
+    - **Single-shell test constellations.** There are eleven; five were held back until the model was finished. The model's total over a set is within 1.3% for the sets used during the build and within 0.9% for the held-out sets. Most latitudes are within 2%, and all are within 7%.
+    - **Year scan.** The synthetic constellation was scanned through a year at 12 latitudes from 45°S to 65°N, on 24 nights, at 3 longitudes. Against the scan's 3-longitude mean, the model's longitude mean is 0.998 in total. It is within 1.7% on a typical night and within 6.3% on nine nights in ten, and the worst night is 17% off. Per latitude over the year it is 0.990 to 1.006.
+    - **Planes spread evenly.** With the planes spread evenly instead of dated, a typical night was off by 3.6% and the worst by 87%.
+    - **The 2.173.0 formula** had R² 0.50 at 55°N and gave twice the simulated count there in December.
+  - **Year span.** The nights are dated, so the page covers `SPAN`: 365 nights from the 1st of the month of the table's reference epoch. That is now 1 September 2026 to 31 August 2027.
+    - The labels show the year: the summary reads "Night of 21 to 22 June 2027"; the year axis shows the year on its first month and on each January; and the year chart's subtitle reads "At 45°N, 1 September 2026 to 31 August 2027."
+    - Links now carry `date=YYYY-MM-DD`. An older `date=MM-DD` link opens that month and day inside the span.
+    - A link date or **Tonight** outside the span shows the nearest night with a caution. For **Tonight**, the caution adds "The shell table needs refreshing."
+    - The saved PNG's file name now uses the full date.
+  - **Year table and worker.**
+    - The year curve is read from `rateTable.json`, which `build-rate-table.mjs` builds. It covers every night of the span at every half degree from 90°S to 90°N (every slider position, so nothing is interpolated), both kinds, to 0.1 flares, delta-coded (828 KB raw). A build takes about 18 minutes on 12 workers.
+    - `decodeRateTable` refuses a table built for another span or shell table. The worker then computes the year live, every 8th night first, with the caution "The year curve is being computed; it fills in over about a minute."
+    - The chosen night is computed in `rateWorker.js`. A newer request on the same channel cancels the older one.
+  - **No stale numbers.** While a new night is computed, the summary shows "…". **Save image** shows "The charts are still being computed." and does not save. So old numbers never appear, or export, under new labels (`nightIsCurrent`).
+  - **Chart and cautions.**
+    - The year chart's fixed y axis is now 2,000 flares per night (`YEAR_Y_MAX`, was 1,500). The table's highest values are 1,844 (all flares) and 1,633 (visible), at 32°S on 2 February 2027.
+    - The 35°S–65°N range caution and the 50°–60° winter caution are removed. The range caution is now 60°S to 70°N, the range the model was checked on.
+    - The page notes now explain two points. The count is the mean over longitude: three longitudes 120° apart differed by 6% of the count on a typical night, and by up to 47%. And the page is tied to the year after the constellation was measured.
+  - **Tests.** `tools/test-rate.mjs` now checks:
+    - the model against frozen engine-truth snapshots: `tools/fixtures/rate-truth.json` (11 single-shell sets × 2 kinds × 14 latitudes) and `rate-year.json` (the synthetic constellation, 12 latitudes × 24 nights × 3 longitudes);
+    - the dating of the planes and the Sun-synchronous local-time convention;
+    - that the year table equals the live model to its stored resolution;
+    - a 200 ms limit for one night.
+- **"How the flare rate is calculated" page rewritten for the model** (`tools/shf/rate/formula.html`, `formula.js`). The page title is now "Flare Rate Model". It has eight sections:
+  1. What a flare needs (the Sun 28° to 47° below the horizon).
+  2. Counting the satellites that enter the flare region.
+  3. Satellites crowd at their turning latitude.
+  4. The orbital planes on the night: the dated planes, the effect of longitude, the Sun-synchronous planes, and the equation-of-time check. In that check the scan gives 2,694 visible flares, the model 2,671, and the model without the equation of time 1,041.
+  5. The shell table, filled in live from `STARLINK_SHELLS`, with each model shell's plane count and turning rate.
+  6. Why the curve is not simple.
+  7. How accurate it is.
+  8. The code and the data.
+
+  The old "The formula" section is removed. The breakdown chart by inclination group (43°, 53°, 70° and "97.3° shells (polar)") now runs in `rateWorker.js`. It computes every 16th night first and fills in over about 15 seconds on a desktop.
+
+### Documentation
+- **Flare model and constellation documentation** (`tools/shf/stats/README.md`, `tools/shf/README.md`).
+  - "The flare-rate model" replaces the "Approximate formula" section. It gives the method, the measured accuracy, and a short history of the 2.173.0 formula.
+  - "Constellation" now covers the shell table, the planes, the Sun-synchronous group, the phases, the comparison with the real set, and how to refresh the shell table and the year table.
+  - The note on longitude now says that longitude changes the counts (by about 5% on a typical night, and by up to 47%). Before, it said the change was "very little".
+  - The file map adds `dummyTLE.js`, `starlinkShells.js`, `measure-shells.mjs` and `build-rate-table.mjs`, and updates the `rate/` and tests rows.
+
 ## Version 2.173.0 (2026-09-30)
 
 ### New Features

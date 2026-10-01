@@ -113,8 +113,8 @@ function nightKey(r, source, model) {
 // Version of the flare model: a hash of every source file that can change a count.
 // A change to the physics or the synthetic constellation gives a new key, so a
 // resumed run scans again rather than mixing old and new nights.
-const MODEL_FILES = ["../flareEngine.js", "../flarePhysics.js", "../dummyTLE.js", "../geo.js",
-    "../astro.js", "../lib/satellite.es.js", "./statsCore.mjs", "./statsWorker.mjs"];
+const MODEL_FILES = ["../flareEngine.js", "../flarePhysics.js", "../dummyTLE.js", "../starlinkShells.js",
+    "../geo.js", "../astro.js", "../lib/satellite.es.js", "./statsCore.mjs", "./statsWorker.mjs"];
 function modelVersion() {
     const hash = createHash("sha1");
     for (const file of MODEL_FILES) hash.update(fs.readFileSync(path.join(HERE, file)));

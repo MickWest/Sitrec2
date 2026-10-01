@@ -9,6 +9,14 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.174.0 (2026-10-01)
+
+### Improvements
+- **Starlink Flare Predictor** (Sitrec → Extra Tools): the synthetic satellite set is now built from real Starlink orbit data of 30 September 2026, with every shell in its real orbital planes. The predictor uses this set for dates more than a week away, or when it cannot download current data. Its flare counts now match the real constellation within 2% from 50°S to 60°N; the old set gave 19% to 65% too few flares at 45°N to 65°N. The flare statistics tool uses the same set.
+- **Starlink Flare Rate** (Starlink Flare Predictor → "How many flares?" link at the bottom): a new model of the flare geometry, with no fitted constant, replaces the approximate formula. It matches a full flare simulation within about 1% in total and 2% on a typical night.
+- **Starlink Flare Rate**: each night is now a real date, with the orbital planes where they are that night, so the page covers 1 September 2026 to 31 August 2027 and shows the year. Older links still open; a date outside that year shows the nearest night with a caution. The year chart's axis now goes to 2,000 flares per night.
+- The "How the flare rate is calculated" page is rewritten for the new model, and now gives its measured accuracy.
+
 ## Version 2.173.0 (2026-09-30)
 
 ### New Features

@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Flare Rate Formula</title>
-<meta name="description" content="How the Starlink flare rate formula is derived, and why the flare count through the year is not a simple curve.">
+<title>Flare Rate Model</title>
+<meta name="description" content="How the Starlink flare rate is calculated: a model of the flare geometry and the measured constellation, and why the flare count through the year is not a simple curve.">
 <link rel="icon" href="../icons/favicon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="../lineChart.css?v=__BUILD_V__">
 <link rel="stylesheet" href="rate.css?v=__BUILD_V__">
@@ -14,21 +14,25 @@
 <main class="article">
   <a class="back" id="backLink" href="./">← Flare Rate</a>
   <h1>How the flare rate is calculated</h1>
-  <p class="lede">The flare rate page does not scan satellites. It uses a formula that comes from the geometry of a
-    Starlink flare, with one constant fitted to a full simulation. This page gives the formula, where each part
-    comes from, and why the number of flares through the year is not a simple curve.</p>
+  <p class="lede">The flare rate page does not scan satellites. It uses a model of the flare geometry: at each
+    moment it finds the region of each satellite shell where a satellite would flare for you, and it counts the
+    satellites that move into that region. The shells come from a measurement of the real constellation, with
+    every orbital plane where it is on the night. No constant is fitted. This page gives the model, where each
+    part comes from, how accurate it is, and why the number of flares through the year is not a simple curve.</p>
 
   <nav class="toc" aria-label="Contents">
-    <a href="#window">1. The Sun must be 28° to 47° down</a>
-    <a href="#zone">2. Where the flaring satellites are</a>
+    <a href="#window">1. What a flare needs</a>
+    <a href="#flux">2. Counting the satellites that enter the flare region</a>
     <a href="#shells">3. Satellites crowd at their turning latitude</a>
-    <a href="#shape">4. Why the curve is not simple</a>
-    <a href="#formula">5. The formula</a>
-    <a href="#accuracy">6. How accurate it is</a>
+    <a href="#sso">4. The orbital planes: where they are on the night</a>
+    <a href="#table">5. The shell table</a>
+    <a href="#shape">6. Why the curve is not simple</a>
+    <a href="#accuracy">7. How accurate it is</a>
+    <a href="#code">8. The code and the data</a>
   </nav>
 
   <section id="window">
-    <h2>1. The Sun must be 28° to 47° below the horizon</h2>
+    <h2>1. What a flare needs: the Sun 28° to 47° below the horizon</h2>
     <p>A Starlink satellite has a large flat antenna panel that faces straight down. When sunlight reflects from
       the panel toward you, you see a brief flash: a flare. The flare counts when the reflected ray comes within
       5° of your eye (<strong>all</strong> flares), or within 4.44°, where the flash at least doubles the
@@ -94,8 +98,8 @@
         the Earth's shadow.</li>
     </ul>
     <table class="data">
-      <caption>The window compared with 3,000 simulated flares</caption>
-      <thead><tr><th>Satellite altitude</th><th>Simulated Sun depth (1st to 99th percentile)</th><th>Formula window</th></tr></thead>
+      <caption>The window compared with 3,000 simulated flares (all flares, G = 5°; visible flares need the Sun 0.56° deeper at the lower edge)</caption>
+      <thead><tr><th>Satellite altitude</th><th>Simulated Sun depth (1st to 99th percentile)</th><th>Window from the geometry</th></tr></thead>
       <tbody>
         <tr><td>363 km</td><td>27.7° – 37.6°</td><td>27.5° – 37.8°</td></tr>
         <tr><td>423 km</td><td>29.9° – 40.5°</td><td>29.9° – 40.6°</td></tr>
@@ -104,54 +108,147 @@
         <tr><td>579 km</td><td>35.9° – 46.6°</td><td>35.4° – 47.1°</td></tr>
       </tbody>
     </table>
-    <p>Inside the window the rate is a broad hump, lower at both edges. The formula uses
-      W = √sin(180° × X), where X goes from 0 at the lower edge to 1 at the upper edge. This shape was chosen to
-      fit the simulated flares; it is not derived. The same geometry also explains why flares are low in the sky
-      (below about 15°) and in the direction of the Sun: in the simulation, 90% are within 5° of the Sun's
-      azimuth.</p>
+    <p>Most of the constellation is at 470 to 490 km, where the window is about 32° to 43°; the lowest shells
+      with more than 1% of the satellites (364 km) open it at 28° (visible flares), and the highest (579 km)
+      close it at 47°. Inside the window the rate is not a fixed shape: the model computes it at each moment from the
+      size of the flare region and the speed of the satellites through its edge (section 2). The same
+      geometry also explains why flares are low in the sky (below about 15°) and in the direction of the Sun:
+      in the simulation, 90% are within 5° of the Sun's azimuth.</p>
   </section>
 
-  <section id="zone">
-    <h2>2. Where the flaring satellites are</h2>
-    <p>The satellites that flare for you are in a small zone about 15° to 20° away from you (measured at the
-      Earth's centre), in the direction of the Sun. For a shell with edge dip E, that distance is
-      C = 86° − asin(cos E × cos 4°). The latitude of the zone is</p>
-    <p class="eq">Z = asin(sin L × cos C + cos L × sin C × cos A)</p>
-    <p>where L is your latitude and A is the Sun's azimuth (its compass direction). So the zone is north of you
-      when the Sun is toward the north, and south of you when it is toward the south. The Sun's direction at the
-      times it is 28° to 47° down changes through the year, so <strong>the glint zone moves north and south
-      with the seasons</strong>. At 35°N, for example, it is at about 31°–33°N in early January, and at
-      45°–55°N in late April.</p>
+  <section id="flux">
+    <h2>2. Counting the satellites that enter the flare region</h2>
+    <p>At any instant, for one shell of satellites (one altitude and one inclination), the satellites that
+      flare for you are the ones inside a small <strong>flare region</strong> on the shell: the places where the
+      reflected ray is within G of your eye (a lobe up to 14° long and ±2.5° wide, in the Sun's vertical plane
+      through you), that are in sunlight (on your side of the Earth's shadow), and that are above your horizon.
+      Near the window's lower edge the region is a small blob; near the upper edge it is a thin strip along
+      the horizon.</p>
+    <p>A satellite that is inside the region flares; a satellite that <em>enters</em> it starts a new flare. So
+      the expected number of flares is the expected number of satellites that cross into the region. For a
+      density of satellites ρ (per km² of the shell's surface) moving at velocity v, and a region whose edge
+      itself moves at velocity u (the Sun moves and you turn with the Earth), the rate is the integral along
+      the edge of the density times the inward component of the relative velocity:</p>
+    <pre class="formula">flares per second = ∮ ρ × max(0, −(v − u) · n) dl        n = the outward normal of the edge</pre>
+    <p>This is exact for satellites at random positions: it is the rate at which a moving curve is crossed.
+      The night's total is this rate added up over time, and the hour of a flare is the time it enters plus half
+      the time it stays inside. The model builds the region as a polygon on the shell every 100 seconds (and in
+      20-second sub-steps where the rate changes abruptly: at the window's edges and when the region crosses a
+      shell's turning latitude), from a table of the lobe's shape, cut by the horizon and by the shadow of the
+      WGS84 ellipsoid, with the edges put back on the true curves, and it weights each edge by the density of
+      the shell's orbital planes there (section 4).</p>
+    <p>Two details of the simulation are in the model, because the model's job is to give the same answer as
+      the full scan: the satellites move on the orbits SGP4 makes of the synthetic elements (the shell's radius
+      is 10 to 15 km lower at its northern turning point than at its southern one, which moves the window's
+      edge by 0.1° to 0.3° of Sun depth), and the scan samples each satellite every 2 seconds, so a flare that
+      lasts less than 2 s is found with probability T / 2 s. Both the rate page and the flare predictor count
+      flares in this same way.</p>
   </section>
 
   <section id="shells">
     <h2>3. Satellites crowd at their turning latitude</h2>
     <p>A satellite in an orbit tilted at inclination i goes north to latitude i, turns, and goes south to −i.
-      Like a pendulum at the ends of its swing, it spends the most time near the turning points. So a shell
-      of satellites is thinly spread over the equator and densely packed near ±i. The fraction of a shell south
-      of latitude Y is F(Y) = ½ + asin(sin Y / sin i) / 180°, and the density per area is the change of F over a
-      band, divided by the band's area. The formula uses a band of ±3°.</p>
+      Like a pendulum at the ends of its swing, it spends the most time near the turning points. For a shell of
+      N satellites at random along their orbits, with the orbits' planes spread evenly in longitude, the density
+      per unit area at latitude φ is</p>
+    <p class="eq">ρ(φ) = N / (4π² r² √(sin² i − sin² φ))</p>
+    <p>for each direction of travel (north-going and south-going), and zero beyond the turning latitude. The
+      density rises without limit at ±i, but the number of satellites in a band near ±i stays finite, and the
+      model integrates the exact density along each edge of the region. The 43° and 53° shells turn at 43° and
+      53°, the 70° shells at 70°, and the 97.3° shells go over the pole and turn at 82.7°. This is the density
+      for planes spread evenly in longitude; the model multiplies it by the density of the shell's own planes
+      at the place and the time (section 4).</p>
     <figure class="chart-figure">
       <div class="chart" id="chartDensity"></div>
-      <figcaption>Density of each shell at each latitude, relative to its density over the equator (the ±3° band
-        limits the peaks). The Starlink shells turn at 43°, 53°, 70° and 82.5° (the 97.5° shells go over the pole
-        and turn at 180° − 97.5°).</figcaption>
+      <figcaption>Density of each inclination group at each latitude, relative to its density over the equator
+        (the chart stops at 8 times; the density itself goes higher at the turning latitude).</figcaption>
     </figure>
   </section>
 
+  <section id="sso">
+    <h2>4. The orbital planes: where they are on the night</h2>
+    <p>The satellites of a shell fly in a set of orbital planes: the 53°/470 km shell in 157 measured planes,
+      the 43°/490 km shell in 114, each 70° shell in 2 to 20. The flare region is only ±2.5° wide, so at any
+      moment it holds the satellites of a few planes, or of none. The model therefore weights the density of
+      section 3 by where the shell's planes are at that moment (a plane is taken as ±0.25° wide; ±0.15°, the
+      scatter the synthetic constellation gives its satellites about a plane, changes the results below by
+      less than 0.1%), and it finds where they are from the measured table:</p>
+    <ul>
+      <li><strong>The 43°, 53° and 70° shells.</strong> Their planes turn westward around the Earth's axis at
+        2.5° to 6° a day (7.4° for one small 30° shell; the Earth's equatorial bulge pulls them, and the rate
+        is set by the altitude and the inclination alone), so every plane passes through all local times every
+        7 to 15 weeks. The
+        table (section 5) holds each plane's position on the date it was measured; the model moves it to the
+        night at the shell's rate, the same rule the synthetic constellation of the flare predictor uses. Over
+        a season the planes average out, but a night is not a season: at 55°N on 24 March 2026 the full
+        simulation gives 43 visible flares, the model with the planes spread evenly 80, and with the planes
+        where they are that night 36. Over the 247 nights that were compared (section 7), the dated planes
+        cut the model's typical error from 3.6% to 1.7% and its worst from 87% to 17%. The night also depends
+        on the observer's longitude: a night at longitude L starts L / 360 of a day before the same night at
+        longitude 0, and in that time the planes drift against the Sun (a 53° plane by 5.7° a day, and the
+        planes of that shell are 2.3° apart), so the night meets a different pattern. In the simulation, three
+        longitudes 120° apart differed by 6% of the night's count on a typical night and by up to 47% (25°S on
+        8 May: 386, 304 and 240 visible flares). This page and the rate page have no longitude, so the model
+        spreads each plane over its day of drift and gives the average over the observer's longitude. The cost
+        is that the model is tied to a year: this page and the rate page cover
+        <span class="span-name"></span>, the year that starts in the month the constellation was measured,
+        and they are rebuilt when it is measured again.</li>
+      <li><strong>The 97.3° shells.</strong> Their planes turn <em>eastward</em> at 0.99° a day, the same rate
+        as the Sun moves along the sky, so each plane keeps a fixed local time on any date: it is
+        <strong>Sun-synchronous</strong>. Measured from the real set, the planes cross the equator northbound
+        at local mean solar times of 6.0 to 10.5 h and 17.3 to 22.5 h (two bands, near 8 h and 20 h), with a
+        smaller set near 1–3 h and 13–15 h; the table keeps every plane. This matters a great deal at high
+        latitudes: at 55°N these shells made 68% of the visible flares in the measurement nights around 1 October
+        2026 (57% over the year), and the earlier synthetic constellation, which spread their planes evenly, gave
+        0.58 of the real count from this group (over 50°S to 55°N).</li>
+    </ul>
+    <p>A Sun-synchronous plane's local time is a mean solar time, because the plane turns at the mean Sun's
+      uniform rate. The model places the flare region against the apparent Sun, so for each night it shifts
+      the plane list by the equation of time (up to 16 minutes, that is 4° of the plane's position). The sign
+      of this shift was checked against the full simulation of a two-plane Sun-synchronous shell: on 11
+      February at 50°N the scan gives 2,694 visible flares, the model 2,671; with the equation of time left out
+      it gives 1,041, and with the opposite sign 0. The dated planes of the other shells are written in the same
+      form (the local time of each plane at the night's noon), so one piece of code handles both.</p>
+  </section>
+
+  <section id="table">
+    <h2>5. The shell table</h2>
+    <p>The constellation is measured from a CelesTrak element set: each satellite's inclination and altitude,
+      grouped into shells (10 km altitude bands within each inclination group), with the orbital planes of each
+      shell (their positions on the reference date, <span class="ref-date"></span>) and their satellite counts.
+      The measured table (<span id="tableSource"></span>, <span id="tableTotal"></span> satellites, <span
+      id="tableShells"></span> shells) drives both the synthetic constellation of the flare predictor and this
+      model. For the model, shells of one inclination group within the same 15 km altitude band are merged at
+      their mean altitude, with their plane lists joined: <span id="tableMerged"></span> model shells, which
+      changes a night's count by at most 1.7% (2.8% for all flares) where there are 20 or more flares
+      (section 7) and makes the model a sixth faster.</p>
+    <table class="data">
+      <caption>The model's shells (<span id="tableCaption"></span>)</caption>
+      <thead><tr><th>Inclination</th><th>Altitude</th><th>Satellites</th><th>Planes</th></tr></thead>
+      <tbody id="shellTable"></tbody>
+    </table>
+  </section>
+
   <section id="shape">
-    <h2>4. Why the curve is not simple</h2>
-    <p>The flare count for a night is the product of two things that change through the year in different ways:</p>
+    <h2>6. Why the curve is not simple</h2>
+    <p>The flare count for a night is the product of three things that change through the year in different
+      ways:</p>
     <ol>
       <li><strong>How long the Sun stays 28° to 47° down.</strong> This depends on your latitude and the season. In
         summer at mid and high latitudes the Sun does not get deep enough, or only for a short time near
         midnight.</li>
-      <li><strong>How many satellites are in the glint zone.</strong> The zone moves north and south with the
-        seasons (section 2), and the density of satellites there rises sharply each time the zone crosses a
-        shell's turning latitude (section 3).</li>
+      <li><strong>How many satellites are in the flare region.</strong> The region is 15° to 20° away from you in
+        the direction of the Sun below the horizon, so it moves north and south with the seasons, and the density
+        of satellites there rises sharply each time it crosses a shell's turning latitude (section 3). The polar
+        shells add their own pattern, because their planes stay at fixed local times (section 4).</li>
+      <li><strong>Where the planes are that night.</strong> The planes of the 43°, 53° and 70° shells turn a few
+        degrees a day, so from one night to the next a different set of planes meets the flare region. For the
+        shells of a hundred planes this changes the count by a few percent; for the 70° shells, of 2 to 20
+        planes, by half or double. That is the night-to-night unevenness of the curves.</li>
     </ol>
-    <p>Each crossing makes a peak, and the Starlink shells have four turning latitudes, so one latitude can have
-      several peaks a year. The pattern repeats on both sides of the June solstice, because the Sun's path does.</p>
+    <p>Each crossing makes a peak, and the constellation has four turning latitudes, so one latitude can have
+      several peaks a year. The Sun's path is the same on both sides of the June solstice, so the broad shape is
+      too; the planes are not, so the nights differ.</p>
 
     <div class="card breakdown">
       <div class="breakdown-controls">
@@ -160,82 +257,144 @@
         <output id="bLatLabel">45°N</output>
       </div>
       <div class="chart" id="chartBreakdown"></div>
-      <p class="sub">Visible flares per night through the year, split by the inclination of the shells that
-        make them.</p>
+      <p class="sub" id="breakdownStatus">Visible flares per night through the year, split by the inclination of the shells that
+        make them. The model runs in the background: the curve appears coarse and sharpens over about fifteen seconds.</p>
     </div>
 
-    <p>Examples from the formula:</p>
+    <p>Examples from the model (visible flares per night, <span class="span-short"></span>):</p>
     <ul>
-      <li><strong>35°N.</strong> In January the zone is at 31°–33°N, and the 43° and 53° shells give about 400
-        flares a night together. In March and October the zone crosses 43°, and the 43° shells give 416 of about
-        780: the first bump. In late April and mid-August the zone is at 45°–55°N, over the 53° shells' turning
-        latitude, and those shells give 1,195 of 1,352: the main peaks. On 21 June the Sun goes only 31.6° down,
-        so only the lowest shells flare, for a short time near midnight: about 81.</li>
-      <li><strong>45°N.</strong> In December and January the zone is over the 43° turning latitude. In February
-        and October it crosses 53°. From early May to mid-August the Sun never gets 28° down, so there are no
-        flares at all.</li>
-      <li><strong>The equator.</strong> The zone stays within about 10° of the equator, far from every turning
-        latitude, and the Sun always goes deep. So the count is almost the same all year (about 230 to 270).</li>
+      <li><strong>35°N.</strong> In early September 2026 the region is over the 53° shells' turning latitude,
+        and those shells give 643 of 968. By October it has moved south over 43°: the 43° shells give 432 of
+        795. From November to mid-February the region is at about 31°–33°N, and the 43° and 53° shells give
+        about 180 to 220 each, 420 to 530 in all. In early March it crosses 43° again (the 43° shells up to
+        439 on 11 March, about 840 in all). From mid-April to mid-May, and again from late July to the end of
+        August, it is at 45°–55°N, over the 53° turning latitude, and those shells give about 770 to 1,290 of
+        1,100 to 1,400: the main peaks, 1,369 on 6 May and 1,394 on 8 August 2027. On 21 June the Sun goes
+        only 31.6° down, so only the lowest shells flare, for a short time near midnight: 75.</li>
+      <li><strong>45°N.</strong> In mid-October 2026 the region crosses 53°: the highest night of the year, 865
+        on 18 October, 691 of them from the 53° shells. In December and early January it is over the 43°
+        turning latitude (up to 431 from the 43° shells on 21 December, 760 to 850 in all), and in late February
+        it crosses 53° again (about 800 to 840, some 620 of them from the 53° shells). In late September and
+        late March, when the region is at 60°N and beyond, the 70° and polar shells make most of the flares (16
+        September: 547, of which 150 from the 70° and 217 from the polar shells). From 11 May to 30 July 2027
+        the Sun never gets deep enough for the main shells: fewer than 3 a night, from the few satellites in
+        a low, decaying 53° shell whose window opens at a smaller depth, and none at all from 6 to 30 June. From
+        mid-April to 10 May the Sun's midnight depth falls from 34° to 27° and the count falls from about 40 to 4
+        a night; from 1 August it rises again, from 5 a night (27° down at midnight) to 138 on 31 August (37°
+        down).</li>
+      <li><strong>55°N.</strong> The 43° shells never reach the region, and the 53° shells only in midwinter
+        (at most 114 a night, on 20 December). The polar shells make most of the flares (439 of 588 on 11
+        October 2026, 430 of 584 on 28 February 2027), the 70° shells the rest (up to 217 on 16 February), and
+        there are none from 8 April to 31 August 2027.</li>
+      <li><strong>The equator.</strong> The region stays within about 10° of the equator, far from every
+        turning latitude, and the Sun always goes deep. So the count is between 220 and 340 all year (the mean
+        is 287), and most of its change from night to night comes from the 70° shells' planes, which give from
+        about 1 to 46 a night as they pass through the region.</li>
     </ul>
     <p>The same two effects shape each night. When the Sun goes deeper than a shell's window around midnight,
       those satellites are in the Earth's shadow, so the flares come in two groups, after dusk and before dawn.
-      On a short summer night the Sun reaches the window only near midnight, so there is one group. The twelve
+      On a short summer night the Sun reaches the window only near midnight, so there is one group. The
       shells are at different altitudes, so each has its own window, and together they soften the edges.</p>
   </section>
 
-  <section id="formula">
-    <h2>5. The formula</h2>
-    <p>Angles are in degrees. Inputs: L = your latitude (north positive); N = day of the year (1 January = 0);
-      T = local solar time in hours (noon is when the Sun is highest); R = 6,371 km; G = 4.44 (visible) or 5
-      (all); K = 0.3147 (visible) or 0.3519 (all).</p>
-    <h3>The Sun</h3>
-    <pre class="formula">S = −23.44 × cos(360 × (N + 10) / 365.25)          solar declination
-H = 15 × (T − 12)                                  hour angle
-D = −asin(sin L × sin S + cos L × cos S × cos H)   depth below the horizon
-A = atan2(−sin H × cos S,
-          cos L × sin S − sin L × cos S × cos H)   azimuth</pre>
-    <h3>For each shell (inclination I, altitude h, n satellites)</h3>
-    <pre class="formula">E = acos(R / (R + h))                     dip of the Earth's edge
-M = asin(tan E / √3)
-U = 2 × E                                 upper edge of the window
-B = 180 − M − 2 × asin(cos E × cos M) − G lower edge of the window
-X = (D − B) / (U − B)
-W = √sin(180 × X) if 0 &lt; X &lt; 1, else 0   the hump in the window
-C = 86 − asin(cos E × cos 4)              distance to the glint zone
-Z = asin(sin L × cos C + cos L × sin C × cos A)   latitude of the glint zone
-F(Y) = 0.5 + asin(sin Y / sin I) / 180    (sin Y / sin I limited to −1 … +1)
-Q = (F(Z+3) − F(Z−3)) / (2π × (sin(Z+3) − sin(Z−3)))   density at the zone</pre>
-    <h3>The rate</h3>
-    <pre class="formula">flares per hour = K × (n × Q × W, added over all shells)</pre>
-    <p>Flares per night is this rate added up from noon to the next noon; the page uses 5-minute steps. K is the
-      only fitted number. It was fitted to a simulation of every night of 2026 at seven latitudes.</p>
-    <table class="data">
-      <caption>The shells of the synthetic constellation (10,249 satellites)</caption>
-      <thead><tr><th>Inclination</th><th>Altitude</th><th>Satellites</th></tr></thead>
-      <tbody id="shellTable"></tbody>
-    </table>
-    <p>The code is <a href="rateModel.js">rateModel.js</a>. Its test checks that the shells match the synthetic
-      constellation and that the formula gives the yearly means recorded when K was fitted. The flare statistics
-      <a href="https://github.com/MickWest/Sitrec2/blob/main/tools/shf/stats/README.md#approximate-formula"
-         rel="noopener" target="_blank">README</a> has the same formula and the simulation it was fitted to.</p>
-  </section>
-
   <section id="accuracy">
-    <h2>6. How accurate it is</h2>
+    <h2>7. How accurate it is</h2>
+    <p>The model is compared with the flare predictor's own scan (the full simulation), and the synthetic
+      constellation with the real one. Every number here is a measurement.</p>
+    <h3>The model against the full simulation</h3>
     <ul>
-      <li>R² is the fraction of the night-to-night variation in the simulation that the formula explains (1 is a
-        perfect match). Over the nights of the year it is 0.97 at 20°N, 0.91 at 35°N, 0.95 at 45°N, 0.97 at
-        65°N and 0.91 at 35°S. At five latitudes not used in the fit, it is 0.93 to 0.98, except 10°N, where the
-        curve is almost flat.</li>
-      <li>The mean per night is usually within about 5% of the simulation.</li>
-      <li>It is least accurate near a turning latitude where the zone stays for a long time. At 55°N, R² is 0.50,
-        and in December the formula gives about twice the simulated count.</li>
-      <li>It reproduces the simulation of the synthetic constellation, not the real sky. The synthetic
-        constellation is within about 10% of the real one up to 35° latitude, but gives fewer flares further
-        north: −19% at 45°N, −37% at 55°N and −65% at 65°N.</li>
+      <li><strong>Single shells.</strong> Eleven test constellations of 8,000 satellites, one shell each (43°,
+        53°, 70° and polar, at 360 to 580 km, with planes spread evenly or Sun-synchronous with the real local
+        times), scanned on 14 latitudes from 60°S to 70°N, 9 nights through the year, 4 longitudes each: 5,544
+        scans. Six of the sets were used while the model was built; five were held back and tested only at the
+        end. The model's total over a set is within 1.3% of the scan for the first six, and within 0.9% for the
+        five held-out sets, for both kinds of flare. Per latitude (the sum over the 9 nights), most ratios are
+        within 2% and all within 7%; the scatter is mostly the scan's own: each test set is one random draw of
+        8,000 orbit planes, shared by all its cells, and with the exact draw fed to the model its reduced
+        chi-squared falls from 0.94–2.76 to 0.8–1.35. The hour-by-hour shape differs from the scan by 5% of
+        the night's count, the same as the scan's own counting noise.</li>
+      <li><strong>Hour profiles.</strong> Scans with 80,000 satellites at single cells: 53°/470 km, five cells,
+        42,000 flares: all flares 0.9995 ± 0.004, visible 1.002 ± 0.005; 70°/580 km, four cells, 0.993 ±
+        0.010; the hour blocks of the 53° cells agree to 0.5% to 2%.</li>
+      <li><strong>The whole constellation through a year.</strong> The synthetic constellation (every shell in
+        its measured planes, as the flare predictor builds it) was scanned on 12 latitudes from 45°S to 65°N,
+        24 nights of 2026 at 15-day intervals, 3 longitudes (0°, 120° and 240°) each: 864 scans. The night at
+        each longitude is a different night, because the planes drift against the Sun between one longitude's
+        noon and the next (section 4): across the three longitudes the scan's count differs by 5.6% of its
+        mean on a typical night (the median over the 247 nights with 30 or more flares; 5.3% for all flares),
+        by 16% on one night in ten, and by up to 47% (25°S on 8 May: 386, 304 and 240 visible flares). With
+        the planes dated to each night and placed for the scan's longitude, the model follows each longitude:
+        on a typical night it is within 1.0% of the scan at 0° and 120° and 1.3% at 240° (0.9%, 1.0% and
+        1.2% for all flares), on 90% of nights within 2.7%, 2.8% and 4.5%, and at worst 12%, 8.5% and 31%
+        (55°N on 24 March at 240°: 53 against 37); its total over the grid is 0.996 to 1.000 of the scan at
+        each longitude. The pages give the average over longitude, and against the scan's 3-longitude mean
+        that is 0.998 in total (0.998 for all flares); on a typical night within 1.7% (1.8%), on 90% of nights
+        within 6.3% (5.9%), and at worst 17% (15%; 55°N on 24 March, 43 against 36, and 25°S on 8 May for all
+        flares, 364 against 420); per latitude over the year it is within 0.990 to 1.006 (0.987 to 1.003).
+        Most of that difference is the comparison's own: a mean of three longitudes is 1.7% (1.6%) uncertain
+        on the median night, because the three nights it averages differ as above. With the planes spread
+        evenly instead, the grid total is 1.002 but a typical night is off by 3.6%, 90% of nights are within
+        10.6%, and the worst is 87% (55°N on 24 March, 43 against 80): the few-plane 70° shells have no
+        average layout on one night.</li>
+      <li><strong>The merged shells.</strong> Merging the 44 measured shells into 36 was measured with the
+        dated planes at every half degree of latitude from 70°S to 72°N on 12 nights through the year (285 ×
+        12 cells for each kind). It changes a night's count by at most 1.7% (visible; 40.5°N on 14 May
+        2027, 100.5 against 102.2) or 2.8% (all flares; 41°N on 14 May 2027, 108.0 against 111.0) in cells
+        with 20 or more flares, and the total over the grid by 0.01%.</li>
+      <li><strong>The year table.</strong> The rate page's year curve is stored at every half degree of
+        latitude (every position of its slider), to 0.1 flares per night, so nothing is interpolated. A table
+        at whole degrees would not do: where the Sun's deepest point of the night just reaches a shell's
+        window, the count changes by a factor of several within one degree of latitude (at 71.5°N on 11
+        February 2027 the whole-degree neighbours give 318 and 17 flares a night, the half degree between them
+        31, where interpolation would give 167: a factor of 5).</li>
+    </ul>
+    <h3>The synthetic constellation against the real one</h3>
+    <ul>
+      <li>Scanned on five nights (29 September to 3 October 2026), 14 latitudes from 60°S to 70°N, 6
+        longitudes each, against the real element set of the same dates: the synthetic count is 1.002 of the
+        real one in all (1.001 for all flares), and within 2% at every latitude from 50°S to 60°N (the worst
+        are 1.016 ± 0.006 at 10°S and 0.981 ± 0.016 at 60°N; the others are within 1%); by inclination
+        group, 43° 1.002, 53° 1.003, 70° 1.008, polar 0.999. The reduced chi-squared of the per-latitude
+        ratios is 1.9: the differences are somewhat larger than the counting noise alone. (The earlier
+        synthetic constellation was −19% at 45°N, −37% at 55°N and −65% at 65°N.)</li>
+      <li>The measured planes matter: the same shells laid out evenly give ±5% to 10% per latitude on a given
+        night, mostly from the 70° shells, which are 2 to 20 planes each.</li>
+      <li>At 60°S and 70°N this season gives only 3.5 and 1.4 real flares a night, nearly all from a few
+        satellites at low, decaying altitudes; the synthetic constellation gives 0.5 and 0.0 there. Those
+        counts are too small to measure a ratio, so these two latitudes are not checked.</li>
+    </ul>
+    <h3>What it does not include</h3>
+    <ul>
       <li>It is for an observer at sea level, and it does not include sky conditions such as the Moon, haze and
         light pollution. Real nights scatter about the expected number by roughly the square root of the
         count.</li>
+      <li>The constellation changes: satellites are launched, raised and retired. The table is a measurement
+        on one date, and the planes are moved from that date at their computed rate; a launch, an orbit raise
+        or a retirement after the date changes the pattern. Refresh the table when it is a few months old
+        (section 8).</li>
+      <li>On a given night the model is within about 2% of the full simulation of the same constellation on a
+        typical night and within 7% on nine nights in ten (above); the real constellation differs from the
+        synthetic one by a further 1–2% per latitude.</li>
+    </ul>
+  </section>
+
+  <section id="code">
+    <h2>8. The code and the data</h2>
+    <ul>
+      <li><a href="rateModel.js">rateModel.js</a> — the model. Its test (<code>tools/test-rate.mjs</code>) checks
+        it against frozen snapshots of the simulation (the eleven single-shell sets and the whole
+        constellation's year above), the dating of the planes, the local-time convention of the polar planes,
+        the year table, and the night chart's range.</li>
+      <li><a href="../starlinkShells.js">starlinkShells.js</a> — the measured shell table, written by
+        <code>tools/measure-shells.mjs</code> from a CelesTrak element set (the file names its source and date).
+        The flare predictor's synthetic constellation (<code>dummyTLE.js</code>) is built from the same table
+        by the same rule: every shell in its measured planes, moved to the date at the planes' precession rate,
+        and the polar planes at their fixed local times. The model takes the rate from the same code.</li>
+      <li><a href="rateTable.json">rateTable.json</a> — the year table the rate page reads, built by
+        <code>tools/build-rate-table.mjs</code> from the model for the year <span class="span-short"></span>.
+        When the shell table is refreshed, the year moves with it and the table is built again.</li>
+      <li>The flare statistics <a href="https://github.com/MickWest/Sitrec2/blob/main/tools/shf/stats/README.md"
+         rel="noopener" target="_blank">README</a> describes the full scan that the model reproduces.</li>
     </ul>
   </section>
 </main>

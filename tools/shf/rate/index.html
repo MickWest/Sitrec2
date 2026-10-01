@@ -17,7 +17,8 @@
     <a class="back" href="../">← Flare Predictor</a>
     <h1>Starlink Flare Rate</h1>
     <p class="lede">The expected number of Starlink horizon flares at a latitude, through the year and
-      through one night. It comes from an approximate formula, not from a scan of satellites.</p>
+      through one night. It comes from a model of the flare geometry and the measured constellation, with
+      its orbital planes where they are on each night, not from a scan of satellites.</p>
   </header>
 
   <section class="controls card" aria-label="Settings">
@@ -33,9 +34,9 @@
     </div>
     <div class="control">
       <label for="dayRange">Night of</label>
-      <input type="range" id="dayRange" min="0" max="364" step="1" value="171">
+      <input type="range" id="dayRange" min="0" max="364" step="1" value="0">
       <div class="value-row">
-        <output id="dayLabel" for="dayRange">21 June</output>
+        <output id="dayLabel" for="dayRange">…</output>
         <button type="button" class="button secondary small" id="today">Tonight</button>
       </div>
     </div>
@@ -61,19 +62,30 @@
 
     <ul>
       <li>Each count is the flares one observer at this latitude could see in the whole sky above the horizon.
-        It is not a worldwide total. The longitude does not matter, because the times are local solar time.</li>
+        It is not a worldwide total. The times are local solar time. The count is the average over the
+        observer's longitude: the orbital planes drift against the Sun through the day, so the night at one
+        longitude can differ from this average (in the simulation, three longitudes 120° apart differed by
+        6% of the count on a typical night and by up to 47%).</li>
       <li><strong>Visible</strong> flares at least double the satellite's normal brightness. <strong>All</strong>
         also counts faint glints at the edge of the 5° flare cone.</li>
       <li>A flare needs the Sun about 28° to 47° below the horizon, so there are none in twilight. Flares are low
         in the sky, below about 15°, toward the direction of the Sun.</li>
       <li>This is the expected (average) number. Real nights scatter about it by roughly the square root of the
         count. Sky conditions — the Moon, haze, light pollution — are not included.</li>
-      <li>The formula matches a full simulation of the synthetic Starlink constellation with R² 0.93 to 0.98 at
-        most latitudes from 35°S to 65°N. It is least accurate near 55° in winter, where it can be up to twice
-        too high. The synthetic constellation itself gives fewer flares than the real one above about 45°.</li>
+      <li>The nights are real dates. The orbital planes of the 43°, 53° and 70° shells turn around the
+        Earth at a few degrees a day, and on a given night a shell of a few planes (the 70° shells) can
+        give half or twice the seasonal average. The model places every measured plane where it is on the
+        night, so the curve is uneven from night to night, as the real count is. That ties the page to the
+        year after the constellation was measured: the slider covers <span id="yearSpan2"></span>, and
+        the table is rebuilt when the constellation is measured again.</li>
+      <li>The model reproduces a full simulation of the flares within about 1% in total, within 2% on a
+        typical night, and within a few percent at any one latitude over the year. The synthetic
+        constellation it uses is measured from the real element set, and matches the real count within 2%
+        from 50°S to 60°N on the nights it was tested. The constellation changes with every launch, so the
+        numbers drift as the measurement ages.</li>
       <li>For flares at a real place and time, with directions, use the
-        <a href="../">Flare Predictor</a>. The formula, how it was found, and its tests are on the
-        <a href="formula.html" id="formulaLink2">formula page</a>.</li>
+        <a href="../">Flare Predictor</a>. The model, where each part comes from, and its tests are on the
+        <a href="formula.html" id="formulaLink2">model page</a>.</li>
     </ul>
   </details>
   </aside>
@@ -84,7 +96,7 @@
       <h2>Flares per night through the year</h2>
       <label class="check"><input type="checkbox" id="scaleToFit"> Scale to fit</label>
     </div>
-    <p class="sub">At <span id="yearLat">35°N</span>. Click or drag on the chart to choose a night.</p>
+    <p class="sub">At <span id="yearLat">45°N</span>, <span id="yearSpan"></span>. Click or drag on the chart to choose a night.</p>
     <div class="chart" id="chartYear"></div>
   </section>
 

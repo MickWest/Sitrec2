@@ -50,9 +50,9 @@ command again after an interruption and it continues. A later run with more lati
 with `--step-days 1` after a weekly preview, scans only the nights that are not in the
 cache yet. The cache key includes the longitude, altitude, minimum elevation,
 constellation and model version, so different settings can share one output directory.
-The model version is a hash of the engine, physics, constellation and `satellite.js`
-source files and the worker that runs them. After any change to them, the tool scans every night again and does not mix
-old results with new ones.
+The model version is a hash of the engine, physics, constellation (the generator and its
+shell table) and `satellite.js` source files and the worker that runs them. After any change
+to them, the tool scans every night again and does not mix old results with new ones.
 
 Each run deletes the old `FlareStats.xlsx` before it writes new tables. A workbook in the
 output directory therefore always matches the CSV files next to it.
@@ -95,9 +95,12 @@ a table of its values under it.
 - **Each count is for one observer at one place**, at the given latitude, longitude
   (`--lon`) and altitude (`--alt-km`). It is the number of flares that observer can see
   in the whole sky above their horizon. It is not a worldwide total: one glint is seen
-  only from a small area on the ground, about 100–200 km across. The constellation is
-  spread evenly in longitude, and the hours are local solar time, so the longitude
-  changes the counts very little.
+  only from a small area on the ground, about 100–200 km across. The hours are local
+  solar time, but the longitude still matters: the night at longitude L starts L / 360 of
+  a day earlier in UTC, and in that time the orbital planes of the 43°, 53° and 70° shells
+  drift against the Sun by a good part of their spacing, so the night meets a different
+  pattern of planes (three longitudes 120° apart differ by about 5% of the count on a
+  typical night, and by up to 47%).
 - **Night of D** is from local mean solar noon on D to noon on D+1. Each dark period is
   counted once, and is not split at midnight.
 - **Local solar hour** is local mean solar time: UTC + longitude / 15 hours. There are no
@@ -115,92 +118,118 @@ a table of its values under it.
   pollution.
 - A flare is counted in the hour of its **peak**.
 
-## Approximate formula
+## The flare-rate model
 
-A formula derived from the flare geometry gives the smooth curve that the nightly counts
-scatter about. The day-to-day scatter of the counts is about the same size as counting
-noise (the square root of the count), so the smooth curve is the expected number.
+The flare rate page (`../rate/`) gives the expected number of flares for any latitude and
+night without a scan. It uses a model of the flare geometry (`../rate/rateModel.js`) that
+reproduces what this tool counts: at each moment the model builds the region of each
+satellite shell where a satellite flares for the observer (the reflected ray within the
+glint limit, the satellite sunlit and above the horizon), and counts the satellites that
+move into that region, as the integral along the region's edge of the satellite density
+times the inward speed relative to the moving edge. Each entry is one flare, less the
+chance that the 2-second sampling of the scan misses a short run. There is no fitted
+constant. The satellite density is weighted by where the shell's orbital planes are at
+that moment: every shell's measured planes (below), moved to the night at the shell's
+precession rate by the same rule as the synthetic constellation, and the Sun-synchronous
+planes at their fixed local times. A night's count therefore belongs to its date, and the
+page covers the year that starts in the month the constellation was measured (365 nights;
+the year moves when the table is refreshed). The page has no longitude, so each plane is
+spread over its day of drift against the Sun and the count is the mean over the observer's
+longitude (`expectedNight` takes `lon` for one longitude's night). The page
+`../rate/formula.html` explains it, with the measured numbers.
 
-The panel faces straight down, so it reflects only sunlight that comes from below the
-satellite's horizontal. The reflected ray therefore always passes just above the Earth's
-edge, and a flare needs the Sun a certain distance below the observer's horizon: about
-28° to 47°, depending on the satellite's altitude. Flares are low in the sky (below about
-15°) and toward the Sun's direction below the horizon.
+Measured against this engine on eleven single-shell test constellations (8,000 satellites
+each; 14 latitudes from 60°S to 70°N, 9 nights, 4 longitudes; five of the sets held back
+until the model was finished): the model's total over a set is within 1.3% of the scan for
+the six sets used while it was built and within 0.9% for the five held-out sets, for both
+kinds of flare; per latitude most ratios are within 2% and all within 7% (the scatter is
+mostly the test sets' own: each is one random draw of 8,000 orbit planes); the hour-by-hour
+shape differs from the scan by 5% of the night's count, which is the scan's own counting
+noise. Scans with 80,000 satellites at single cells agree to 0.5% (53°/470 km) and 0.7%
+(70°/580 km). Against the synthetic constellation scanned through a year (12 latitudes from
+45°S to 65°N, 24 nights at 15-day intervals, 3 longitudes): with the planes placed for the
+scan's longitude (`lon` in `expectedNight`), a typical night is within 1.0–1.3% of the scan
+at that longitude (the median over the nights with 30 or more flares), nine nights in ten
+within 2.7–4.5%, the worst 31%. The pages give the mean over longitude (each plane spread
+over its day of drift); against the scan's 3-longitude mean that is 0.998 in total, a
+typical night within 1.7% (1.8% for all flares; the 3-longitude mean itself is 1.7%
+uncertain, because the three nights differ by 5.6% on a typical night), nine nights in ten
+within 6.3%, the worst 17%, and every latitude's year within 0.990–1.006. With the planes
+spread evenly instead of dated, a typical night was off by 3.6% and the worst by 87%: a
+shell of a few planes (the 70° shells) has no average layout on a given night.
+`../tools/test-rate.mjs` holds frozen snapshots of these scans and checks the model
+against them.
 
-Angles are in degrees, and P = 3.14159.
-
-Inputs: L = observer latitude (north positive); N = day of year (1 January = 0);
-T = local solar time in hours; R = 6371 km; G = glint limit (5 for all flares, 4.44 for
-visible flares); K = 0.3147 (visible) or 0.3519 (all).
-(Earlier copies gave K = 0.01049 and 0.01173. Those values give flares per 2-minute step,
-not per hour, so they were 30 times too small for the formula below.)
-
-Sun at the observer:
-
-- S = −23.44 × cos(360 × (N + 10) / 365.25) (solar declination)
-- H = 15 × (T − 12) (hour angle)
-- D = −asin(sin L × sin S + cos L × cos S × cos H) (Sun depression)
-- A = atan2(−sin H × cos S, cos L × sin S − sin L × cos S × cos H) (Sun azimuth)
-
-For each orbital shell k, with inclination Ik, altitude Hk (km) and Nk satellites (the
-shells are the `groups` in `../dummyTLE.js`):
-
-- E = acos(R / (R + Hk)) (the dip of the Earth's edge, seen from the satellite)
-- M = asin(tan E / sqrt(3))
-- U = 2 × E (upper edge of the window: the satellite enters the Earth's shadow)
-- B = 180 − M − 2 × asin(cos E × cos M) − G (lower edge of the window)
-- X = (D − B) / (U − B), and W = sqrt(sin(180 × X)) if 0 < X < 1, otherwise W = 0
-- C = 86 − asin(cos E × cos 4) (distance to the flaring satellites)
-- Z = asin(sin L × cos C + cos L × sin C × cos A) (latitude of the flaring satellites)
-- F(Y) = 0.5 + asin(sin Y / sin Ik) / 180, with sin Y / sin Ik limited to −1 to +1
-  (the fraction of the shell south of latitude Y)
-- Q = (F(Z + 3) − F(Z − 3)) / (2 × P × (sin(Z + 3) − sin(Z − 3))) (shell density there)
-
-Flares per hour at time T = K × (Q × W × Nk, added over all shells). Flares per night is
-the rate added from noon to the next noon in small steps (for example rate × 2/60 every
-2 minutes); flares in one hour is the same, over that hour.
-
-The page `../rate/` (open it from the predictor's footer) draws this formula for any
-latitude and night, with sliders. `../rate/rateModel.js` is the formula in code, and
-`../tools/test-rate.mjs` checks that it reproduces the yearly means of the fit. Near the
-poles the code limits the ±3° band to ±90°, so that the formula stays finite; below about
-69° latitude this changes nothing.
-
-### How accurate it is
-
-The formula was fitted (only K) to a 2026 run of this tool: synthetic constellation, sea
-level, minimum elevation 0°, visible flares.
-
-R² is the fraction of the variation in the simulated counts that the formula explains:
-1 is a perfect match, and 0 is no better than a flat line at the average.
-
-- Per latitude, over the nights of the year, R² is 0.97 at 20°N, 0.91 at 35°N, 0.95 at
-  45°N, 0.97 at 65°N and 0.91 at 35°S. At 55°N it is 0.50 (see below). The curve at 0° is
-  almost flat, so R² does not apply there; its error (17 flares per night) is the same as
-  its counting noise.
-- For the per-hour shape, R² is 0.97 to 1.00 at every latitude except 55°N (0.59).
-- All 7 latitudes together give R² 0.95. This is higher than most single latitudes,
-  because it also counts the large differences between latitudes, which are easy to get
-  right.
-- At 5 latitudes that were not used in the fit (10°N, 28°N, 50°N, 60°N, 20°S), R² is 0.93
-  to 0.98, except 10°N (0.67). The 10°N curve is almost flat, and its error (24 flares
-  per night) is near its counting noise (17).
-- The mean per night is usually within about 5%, mostly slightly low.
-- It is least accurate near a shell's turning latitude, where the shell's satellites are
-  most dense. At 55°N, R² is 0.50, and in December the formula gives about twice the
-  simulated count.
-- It reproduces this tool's simulation, not the real sky. Compared with a real element
-  set over three weeks, the synthetic constellation was within about 10% up to 35°
-  latitude, but gave fewer flares at 45°N (−19%), 55°N (−37%) and 65°N (−65%).
-- It does not include the observer's altitude.
+History: until version 2.173 the page used a closed formula with one fitted constant. It
+matched this tool's yearly curves with R² 0.91–0.97 at most latitudes but 0.50 at 55°N,
+where it gave twice the simulated count in December, and the synthetic constellation it was
+fitted to was 19–65% low against the real one north of 45°. Both were replaced in the next
+version by the model above and the measured constellation below.
 
 ## Constellation
 
-By default the tool uses the synthetic constellation: about 10,500 satellites laid out in
-the measured Starlink shells, with the epoch set to each night. It gives the statistics of
+By default the tool uses the synthetic constellation (`../dummyTLE.js`): the measured
+structure of the real one, with the epoch set to each night. It gives the statistics of
 the real constellation, not the positions of real satellites. This is the correct model
 for a whole year, because a real element set is only accurate for a few days either side
 of its epoch.
+
+The structure comes from a measurement of a CelesTrak element set, stored in
+`../starlinkShells.js` (the file names its source and date; 11,154 satellites on
+2026-09-30):
+
+- **Shells.** Satellites are grouped by inclination (43.0°, 53.2°, 70.0° and 97.3°) and by
+  10 km altitude band: 44 shells from 240 to 580 km. The eight largest hold 92% of the
+  constellation (53°/470 km 31%, 43°/490 km 29%, 97.3°/473 km 12%, 53°/478 km 9%, …); the
+  rest are raising and decaying groups.
+- **Planes.** Every shell keeps its measured orbital planes (the right ascension of each
+  plane at the reference epoch, and its satellite count). The generator moves them to the
+  night's date at the shell's precession rate (−4.7°/day at 53°/470 km, −5.6°/day at
+  43°/490 km, −2.5°/day at 70°/579 km), so the real pattern of planes is kept on any date.
+  This matters for the 70° shells, which are 2–20 planes each and made 30–55% of the
+  flares poleward of 45° in the measurement nights around 1 October 2026 (12–38% over the
+  year at 45°N–65°N): a shell of so few planes has no average layout on a given night.
+  The rate model dates the planes by the same rule (`nodalRate` in `../dummyTLE.js` is
+  the one function both use).
+- **The Sun-synchronous group.** The 97.3° planes precess eastward at the Sun's own rate
+  (0.99°/day), so each keeps a fixed local mean solar time of its ascending node. The table
+  stores those local times (two bands, 6.0–10.5 h and 17.3–22.5 h, and a smaller set near
+  1–3 h and 13–15 h), and the generator places the planes at them on any date. This group
+  made 68% of the visible flares at 55°N in the measurement nights around 1 October 2026
+  (57% over the year).
+- **Phases.** Within a plane the satellites are evenly spaced with the measured
+  irregularity (1–4° for the regular planes, about 10° for the 70° planes), and the phases
+  move continuously from night to night at the shell's mean motion.
+
+Measured against the real element set over five nights (29 September to 3 October 2026;
+14 latitudes from 60°S to 70°N, 6 longitudes): the synthetic count of visible flares is
+1.002 of the real one in all (1.001 for all flares), and within 2% at every latitude from
+50°S to 60°N (worst 1.016 ± 0.006 at 10°S and 0.981 ± 0.016 at 60°N; the others within
+1%); by inclination group 43° 1.002, 53° 1.003, 70° 1.008, 97.3° 0.999. The reduced
+chi-squared of the per-latitude ratios is 1.9. At 60°S and 70°N the real set gives only
+3.5 and 1.4 flares a night at that season (from a few low, decaying satellites) and the
+synthetic set 0.5 and 0.0: too few to measure a ratio, so those latitudes are not checked.
+
+**Refreshing the table.** The constellation changes with every launch, so refresh the
+table when it is a few months old: download a fresh CelesTrak CSV (the supplemental set is
+preferred; the standard group also works) and run the measurement tool, then rebuild the
+rate page's year table (its year starts on the 1st of the month of the new table's
+reference epoch, so the rate page's dates move with it; about 18 minutes on 12 worker
+threads), then the tests:
+
+```bash
+curl -o starlink.csv 'https://celestrak.org/NORAD/elements/supplemental/sup-gp.php?FILE=starlink&FORMAT=csv'
+node tools/shf/tools/measure-shells.mjs starlink.csv
+node tools/shf/tools/build-rate-table.mjs --workers 12
+(cd tools/shf && npm test)
+```
+
+The rate page refuses a year table built for another shell table or year, so the two must
+be refreshed together. `test-rate.mjs` compares the model with frozen scans of the
+constellation of 2026-09-30; after a refresh its simulated-year checks measure the new
+table against the old scans, so a difference there is the constellation's change, not a
+fault, and the fixtures (`../tools/fixtures/`) are rebuilt from a new scan when the
+difference matters.
 
 `--tle FILE` propagates one real element set to every night. Use it for date ranges within
 a few weeks of the file's epoch.
