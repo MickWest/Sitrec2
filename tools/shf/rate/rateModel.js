@@ -62,18 +62,21 @@ const J2 = 1.082616e-3, J3 = -2.53881e-6, RE_SGP4 = 6378.135, KE = 0.0743669161;
 const WA = geo.WGS84.a, WB = geo.WGS84.b;
 const DAY_MS = 86400000, HOUR_MS = 3600000;
 
-// The year span of the pages and the year table: 365 nights from the 1st of the month of
-// the shell table's reference epoch (a table measured on 30 September 2026 gives 1 September
-// 2026 to 31 August 2027). The planes are dated, so a night's count belongs to its date; the
-// span is derived from the table, and the year table (tools/build-rate-table.mjs) records
-// it. Night n of the span starts at local noon on dateOfDay(n).
-export const DAYS = 365;
-export const SPAN = (() => {
-    const ref = new Date(STARLINK_SHELLS.refEpoch);
-    const startMs = Date.UTC(ref.getUTCFullYear(), ref.getUTCMonth(), 1);
+// The span of the pages and the year table: two calendar years, from 1 January of the year
+// of the shell table's reference epoch to 31 December of the next year (a table measured on
+// 30 September 2026 gives 1 January 2026 to 31 December 2027, 730 nights; the count comes
+// from the dates, so a leap year is counted). The planes are dated, so a night's count
+// belongs to its date; the span is derived from the table, and the year table
+// (tools/build-rate-table.mjs) records it. Night n of the span starts at local noon on
+// dateOfDay(n). The pages show one calendar year of the span at a time (spanYears).
+export function spanOf(refEpoch) {
+    const year = new Date(refEpoch).getUTCFullYear();
+    const startMs = Date.UTC(year, 0, 1), endMs = Date.UTC(year + 1, 11, 31);
     const iso = (ms) => new Date(ms).toISOString().slice(0, 10);
-    return { startMs, days: DAYS, start: iso(startMs), end: iso(startMs + (DAYS - 1) * DAY_MS) };
-})();
+    return { startMs, days: Math.round((endMs - startMs) / DAY_MS) + 1, start: iso(startMs), end: iso(endMs), years: [year, year + 1] };
+}
+export const SPAN = spanOf(STARLINK_SHELLS.refEpoch);
+export const DAYS = SPAN.days;
 export const dateOfDay = (n) => new Date(SPAN.startMs + n * DAY_MS).toISOString().slice(0, 10);
 // The night index of a date ("YYYY-MM-DD"); outside the span it is < 0 or >= DAYS.
 export const dayOfDate = (date) => Math.round((Date.parse(date + "T00:00:00Z") - SPAN.startMs) / DAY_MS);
@@ -86,6 +89,14 @@ export function spanMonths() {
         if (d.getUTCDate() === 1) out.push({ day: n, month: d.getUTCMonth(), year: d.getUTCFullYear() });
     }
     return out;
+}
+// The calendar years of the span: each with the night index of its 1 January and its number
+// of nights. The pages show one of them at a time.
+export function spanYears() {
+    return SPAN.years.map((year) => {
+        const day = dayOfDate(`${year}-01-01`);
+        return { year, day, days: dayOfDate(`${year}-12-31`) - day + 1 };
+    });
 }
 
 // The night is binned at 5-minute steps from local solar noon to the next noon (288 bins):
@@ -113,6 +124,14 @@ export const DEFAULT_OPTS = {
     clipSegKm: 80,        // max length of a horizon/shadow edge segment
     ltanJitterDeg: 0.25,  // plane width (±deg) about each plane's local time; the generator jitters ±0.15° (difference < 0.1%)
 };
+
+// A faster, slightly coarser night for the rate page while a slider moves: the
+// Sun-synchronous shells step 300 s instead of 100 s, 8 lobe slices instead of 12, 2 edge
+// sub-steps instead of 5. Measured against DEFAULT_OPTS on 40 nights (8 latitudes x 5 dates,
+// nights with more than 20 flares): about 3x faster (12 ms against 38 ms a night on a
+// desktop), the night total within 1.3% (median 0.4%), the 5-minute profile within 2.8%
+// (median 1.4%). The page replaces it with a DEFAULT_OPTS night when the slider rests.
+export const PREVIEW_OPTS = { ssoStepDiv: 1, slices: 8, edgeRefine: 2 };
 
 // ---------------------------------------------------------------------------
 // The constellation for the model: the measured shells merged within altitude bands, in
@@ -1079,7 +1098,7 @@ export function relativeDensity(lat, inc, cap = 8) {
 export const RATE_TABLE_FORMAT = "shf-rate-table-3";
 export function decodeRateTable(table) {
     if (table.format !== RATE_TABLE_FORMAT) throw new Error(`unexpected year table format ${table.format}`);
-    if (!table.span || table.span.start !== SPAN.start || table.days !== DAYS) {
+    if (!table.span || table.span.start !== SPAN.start || table.span.end !== SPAN.end || table.days !== DAYS) {
         throw new Error(`the year table covers ${table.span ? table.span.start + " to " + table.span.end : "an unknown span"}, the model ${SPAN.start} to ${SPAN.end}`);
     }
     if (table.refEpoch !== STARLINK_SHELLS.refEpoch) throw new Error(`the year table was built from a shell table of ${table.refEpoch}, the model has ${STARLINK_SHELLS.refEpoch}`);

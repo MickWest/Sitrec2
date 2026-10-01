@@ -4,7 +4,8 @@
 //     shell's measured planes dated to the night (the Sun-synchronous ones at their fixed
 //     local times, the others moved at the generator's J2 rate, placed for one longitude's
 //     night or spread over the observer's longitude);
-//   * the year span is 365 nights from the 1st of the month of the table's reference epoch;
+//   * the span is two calendar years, the year of the table's reference epoch and the next,
+//     with its night count from the dates (a leap year has 366);
 //   * the model reproduces a FROZEN engine-truth snapshot (fixtures/rate-truth.json: single-
 //     shell constellations scanned with the flare engine, 11 sets x 2 kinds x 14 latitudes)
 //     within stated tolerances, and the generator's simulated year (fixtures/rate-year.json:
@@ -43,12 +44,27 @@ ok("the four inclination groups are present", M.GROUP_INCS.every((g) => groups[S
 ok("Sun-synchronous shells carry their plane local times", M.SHELLS.filter((s) => s.sso).every((s) => s.ltan.length > 0 && sum(s.ltan.map((p) => p[1])) === s.count));
 ok("every model shell has measured planes", M.SHELLS.every((s) => s.planes > 0), `${sum(M.SHELLS.map((s) => s.planes))} planes in all`);
 
-console.log("== rate: the year span and the dated planes ==");
-// 365 nights from the 1st of the month of the table's reference epoch.
-const ref = new Date(table.refEpoch);
-ok("the span starts on the 1st of the month of the shell table's reference epoch", M.SPAN.start === `${ref.getUTCFullYear()}-${String(ref.getUTCMonth() + 1).padStart(2, "0")}-01` && M.DAYS === 365,
-    `${M.SPAN.start} to ${M.SPAN.end}, reference epoch ${table.refEpoch}`);
-ok("dateOfDay and dayOfDate are inverse, and the span has 12 months", M.dateOfDay(M.DAYS - 1) === M.SPAN.end && M.dayOfDate(M.SPAN.end) === M.DAYS - 1 && M.dayOfDate(M.SPAN.start) === 0 && M.spanMonths().length === 12 && M.spanMonths()[0].day === 0);
+console.log("== rate: the span and the dated planes ==");
+// Two calendar years: 1 January of the year of the table's reference epoch to 31 December
+// of the next year, the night count from the dates.
+const refYear = new Date(table.refEpoch).getUTCFullYear();
+const nightsBetween = (a, b) => Math.round((Date.parse(b + "T00:00:00Z") - Date.parse(a + "T00:00:00Z")) / 86400000) + 1;
+ok("the span is 1 January of the reference epoch's year to 31 December of the next year", M.SPAN.start === `${refYear}-01-01` && M.SPAN.end === `${refYear + 1}-12-31` && M.DAYS === nightsBetween(M.SPAN.start, M.SPAN.end),
+    `${M.SPAN.start} to ${M.SPAN.end}, ${M.DAYS} nights, reference epoch ${table.refEpoch}`);
+ok("dateOfDay and dayOfDate are inverse at the ends, and the span has 24 months", M.dateOfDay(M.DAYS - 1) === M.SPAN.end && M.dayOfDate(M.SPAN.end) === M.DAYS - 1 && M.dayOfDate(M.SPAN.start) === 0 && M.spanMonths().length === 24 && M.spanMonths()[0].day === 0);
+ok("dateOfDay and dayOfDate round-trip across the year boundary", M.dayOfDate(`${refYear + 1}-01-01`) === M.dayOfDate(`${refYear}-12-31`) + 1 &&
+    M.dateOfDay(M.dayOfDate(`${refYear + 1}-01-01`) - 1) === `${refYear}-12-31` && M.dateOfDay(M.dayOfDate(`${refYear}-12-31`) + 1) === `${refYear + 1}-01-01`);
+{
+    const years = M.spanYears();
+    ok("spanYears gives the two calendar years, covering the span exactly", years.length === 2 && years[0].year === refYear && years[1].year === refYear + 1 && years[0].day === 0 &&
+        years[1].day === years[0].days && years[0].days + years[1].days === M.DAYS && M.dateOfDay(years[1].day) === `${refYear + 1}-01-01`,
+        years.map((y) => `${y.year}: nights ${y.day}..${y.day + y.days - 1} (${y.days})`).join(", "));
+    // A reference epoch in 2027 gives 2027-01-01..2028-12-31: 2028 is a leap year, 731 nights.
+    const leap = M.spanOf("2027-06-15T00:00:00.000Z");
+    ok("spanOf counts a leap year (reference epoch in 2027: 2027-01-01 to 2028-12-31, 731 nights)", leap.start === "2027-01-01" && leap.end === "2028-12-31" && leap.days === 731 && leap.years.join() === "2027,2028",
+        `${leap.start} to ${leap.end}, ${leap.days} nights`);
+    ok("spanOf gives this model's span for the shell table's reference epoch", M.spanOf(table.refEpoch).start === M.SPAN.start && M.spanOf(table.refEpoch).days === M.DAYS);
+}
 // Dated planes: a non-Sun-synchronous shell's planes are written as local times of the
 // ascending node at the night's noon; on the reference epoch's own date they are the measured
 // RAANs against GMST at noon; every plane list keeps the shell's count. A Sun-synchronous
@@ -185,7 +201,8 @@ if (!fs.existsSync(tableFile)) {
     if (!T) { T = { span: {}, days: 0, nLat: 0, visible: [], all: [] }; }
     ok("table header: format, span, shell table", T.span.start === M.SPAN.start && T.span.end === M.SPAN.end && T.days === M.DAYS && T.source === table.source && T.refEpoch === table.refEpoch,
         `${raw.format} ${T.span.start} to ${T.span.end}, ${T.source}; ${T.nLat} latitudes from ${T.latMin} step ${T.latStep}`);
-    ok("decodeRateTable refuses a table for another span", (() => { try { M.decodeRateTable({ ...raw, span: { start: "2020-01-01", end: "2020-12-30" } }); return false; } catch { return true; } })());
+    ok("decodeRateTable refuses a table for another span", (() => { try { M.decodeRateTable({ ...raw, span: { start: "2020-01-01", end: "2020-12-30" } }); return false; } catch { return true; } })() &&
+        (() => { try { M.decodeRateTable({ ...raw, span: { start: raw.span.start, end: "2026-12-31" }, days: 365 }); return false; } catch { return true; } })());
     // Every slider position (half degrees) has its own row: no interpolation. Where the
     // Sun's deepest point just reaches a shell's window, the count changes by a factor of
     // several within one degree of latitude, so interpolation between whole degrees was
@@ -193,19 +210,25 @@ if (!fs.existsSync(tableFile)) {
     ok("table covers 90°S to 90°N at every half degree", T.latMin === -90 && T.latStep === 0.5 && T.latMin + (T.nLat - 1) * T.latStep === 90);
     const at = (kind, i, n) => T[kind][i * T.days + n];
     const rowOf = (lat) => Math.round((lat - T.latMin) / T.latStep);
-    // Rows against the live model (dated planes): the stored value is the live value rounded to 1/scale.
+    // Rows against the live model (dated planes) on sample nights of both calendar years:
+    // the stored value is the live value rounded to 1/scale.
+    const sampleNights = M.spanYears().flatMap((y) => [5, 95, 185, 275, 360].map((n) => y.day + n));
+    ok("the sample nights fall in both calendar years", new Set(sampleNights.map((n) => M.dateOfDay(n).slice(0, 4))).size === 2, sampleNights.map(M.dateOfDay).join(" "));
     let worstRow = 0, worstRowAt = "";
-    for (const lat of [-35, 0, 20.5, 45, 54.5, 71.5]) for (const kind of M.KINDS) for (const n of [5, 41, 95, 140, 185, 230, 275, 320, 360]) {
+    for (const lat of [-35, 0, 20.5, 45, 54.5, 71.5]) for (const kind of M.KINDS) for (const n of sampleNights) {
         const live = M.expectedNight({ lat, date: M.dateOfDay(n), kind }).total;
         const e = Math.abs(at(kind, rowOf(lat), n) - live);
         if (e > worstRow) { worstRow = e; worstRowAt = `${lat}° ${M.dateOfDay(n)} ${kind}: ${at(kind, rowOf(lat), n)} vs ${live.toFixed(2)}`; }
     }
     ok("table rows equal the live model to the stored resolution (0.1 flares)", worstRow <= 0.5 / raw.scale + 1e-9, `worst difference ${worstRow.toFixed(3)} flares at ${worstRowAt}`);
     ok("all flares are never fewer than visible flares", T.all.every((v, k) => v >= T.visible[k] - 1e-9));
-    // Dating the planes moves nights, not years: the table's year total at a latitude (dated,
-    // every night) against the uniform planes' total over every second night, scaled. Measured
-    // over every night at every 5° from 60°S to 70°N: within 1.8% (visible) and 1.6% (all),
-    // the worst at 55°S; the half-night sample adds under 0.5%. Tolerance 2.5%.
+    // Dating the planes moves nights, not years: the table's total at a latitude (dated)
+    // against the uniform planes' total, both over every second night of the whole span
+    // (two years). Measured over every night at every 5° from 60°S to 70°N for the year
+    // September 2026 to August 2027: within 1.8% (visible) and 1.6% (all), the worst at
+    // 55°S. One calendar year differs more (2026: 55°S +3.2%, 55°N -2.7%; 2027: within
+    // 0.6%), the two together at 55°S by 1.5%; the half-night sample changes a ratio by
+    // under 0.05%. Tolerance 2.5% over the span.
     let worstYear = 0, worstYearAt = "";
     for (const lat of [-55, 45, 55]) {
         let dated = 0, uniform = 0;
@@ -213,7 +236,7 @@ if (!fs.existsSync(tableFile)) {
         const e = Math.abs(dated / uniform - 1);
         if (e > worstYear) { worstYear = e; worstYearAt = `${lat}°: ${dated.toFixed(0)} dated vs ${uniform.toFixed(0)} uniform`; }
     }
-    ok("the dated planes' year total at a latitude is within 2.5% of the uniform planes' (dating moves nights, not years)", worstYear < 0.025, `worst ${(100 * worstYear).toFixed(2)}% at ${worstYearAt}`);
+    ok("the dated planes' total over the span at a latitude is within 2.5% of the uniform planes' (dating moves nights, not years)", worstYear < 0.025, `worst ${(100 * worstYear).toFixed(2)}% at ${worstYearAt}`);
 }
 
 console.log("== rate: night chart range, poles and speed ==");

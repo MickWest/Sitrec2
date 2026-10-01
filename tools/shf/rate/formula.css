@@ -38,6 +38,11 @@ figcaption { font-size: 13px; color: var(--ink-2); margin-top: 6px; }
 .dg-label-muted { fill: var(--ink-2); font-size: 12px; }
 
 .breakdown { margin: 16px 0; }
-.breakdown-controls { display: grid; grid-template-columns: auto 1fr auto; gap: 10px; align-items: center; margin-bottom: 6px; }
+.breakdown-controls { display: grid; grid-template-columns: auto 1fr auto auto; gap: 10px; align-items: center; margin-bottom: 6px; }
 .breakdown-controls label { font-weight: 600; font-size: 13px; color: var(--ink-2); }
 .breakdown-controls output { min-width: 4em; text-align: right; }
+/* The year control (.segmented, from rate.css) takes its own row on a narrow screen. */
+@media (max-width: 480px) {
+  .breakdown-controls { grid-template-columns: auto 1fr auto; }
+  .breakdown-controls .segmented { grid-column: 1 / -1; justify-self: start; }
+}

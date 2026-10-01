@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // build-rate-table.mjs — precompute the flare rate page's year curve: the expected flares
-// per night for every night of the model's year span (rateModel.SPAN: 365 nights from the
-// 1st of the month of the shell table's reference epoch), at every half degree of latitude
+// per night for every night of the model's span (rateModel.SPAN: two calendar years, the
+// year of the shell table's reference epoch and the next), at every half degree of latitude
 // (every position of the page's slider), for both kinds, from the flux-integral model
 // (../rate/rateModel.js). The page fetches the result (../rate/rateTable.json) when it opens,
 // so that moving the latitude slider is instant; the live model takes about 40 ms per night,
@@ -13,8 +13,8 @@
 // Run it again after ../starlinkShells.js is refreshed (the span moves with the table's
 // reference epoch, and the dated planes with its measured planes) or the model changes: the
 // page refuses a table built for another span or shell table, and the test
-// tools/test-rate.mjs compares the table with the live model. About 18 minutes on 12
-// workers at the half-degree step (361 latitudes x 365 nights x 2 kinds).
+// tools/test-rate.mjs compares the table with the live model. About 39 minutes on 12
+// workers at the half-degree step (361 latitudes x 730 nights x 2 kinds).
 //
 // Why every half degree, not interpolation between whole degrees: where the Sun's deepest
 // point of the night just reaches a shell's window, the count changes by a factor of several
@@ -29,10 +29,13 @@
 // night x scale, rounded, then coded for size: along each latitude row the first night is
 // stored as is and every later night as the difference from the night before; and the "all"
 // rows hold the difference from the "visible" rows. rateModel.decodeRateTable undoes both.
-// Measured on the 2026-09-30 table over 1 Sep 2026 - 31 Aug 2027 with dated planes: 828 KB
-// raw, 237 KB with brotli and 261 KB with gzip on the wire (18 minutes on 12 workers). The
-// dated planes make the curve uneven from night to night, so the differences code less well
-// than with evenly spread planes (742 KB, 193 KB, 213 KB).
+// Measured on the 2026-09-30 table over 1 Jan 2026 - 31 Dec 2027 (730 nights) with dated
+// planes: 1,657 KB raw (1,696,747 bytes); compressed with Node's zlib, 473 KB brotli at
+// quality 11 and 514 KB at quality 6, 521 KB gzip at level 9 and 578 KB at level 1 (a
+// server's usual setting is between these; the one-year table, 828 KB raw and 237 KB
+// brotli at quality 11, was served as 281 KB). 2,310 s on 12 workers. The dated planes make
+// the curve uneven from night to night, so the differences code less well than with evenly
+// spread planes (one year: 742 KB, 193 KB brotli, 213 KB gzip).
 
 import { Worker, isMainThread, parentPort } from "node:worker_threads";
 import fs from "node:fs";

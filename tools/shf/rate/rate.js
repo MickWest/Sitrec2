@@ -10,14 +10,17 @@
 // coarse to fine.
 //
 // The nights are real dates: the model places every shell's measured orbital planes where
-// they are on that night, so the page covers the year span of its shell table (model.SPAN:
-// 365 nights from the 1st of the month the table was measured in). "Tonight", or a link's
-// date, outside the span is clamped to its nearest end, with a caution.
+// they are on that night, so the page covers the span of its shell table (model.SPAN: the
+// calendar year the table was measured in and the next). The year chart and the night
+// slider show one calendar year of the span, chosen with the year control; the night keeps
+// its month and day when the year changes. "Tonight", or a link's date, outside the span is
+// clamped to its nearest end, with a caution.
 //
 // The address always holds the current settings (?lat=35&date=2027-06-21), so the address
 // itself is the link to the graph; an older link with date=06-21 opens that month and day
-// inside the span. "Save image" draws both charts again off screen at a fixed width and
-// saves them as one PNG, so a phone and a desktop give the same picture.
+// in the current calendar year (or the nearest year of the span). "Save image" draws both
+// charts again off screen at a fixed width and saves them as one PNG, so a phone and a
+// desktop give the same picture.
 
 // Cache-busting, as in ../app.js: index.html loads this file as rate.js?v=<build>, and
 // the same query goes on every module, worker and file this file loads.
@@ -35,12 +38,21 @@ const DAY_MS = 86400000;
 const NIGHT_FROM = 14, NIGHT_TO = 34;  // hours shown on the night chart: 14:00 to 10:00 next day
 const EXPORT_WIDTH = 1200;
 const YEAR_Y_MAX = 2000;            // the year chart's fixed y axis, unless "Scale to fit" is on
-                                    // (the table's highest value is 1,844 all / 1,633 visible flares, 32°S on 2 February 2027)
+                                    // (the table's highest value is 1,929 all / 1,717 visible flares, 32°S on 7 November 2027)
 const DAYS = model.DAYS, SPAN = model.SPAN;
+const YEARS = model.spanYears();    // [{ year, day, days }]: the calendar years of the span
 
 // Nights are counted from the start of the span (its first night = 0): night n is the
 // night of dateOfDay(n). The labels show the full date.
 const dayDate = (n) => new Date(SPAN.startMs + n * DAY_MS);
+// The calendar year (an entry of YEARS) that night n belongs to.
+const yearOf = (n) => YEARS.find((y) => n < y.day + y.days) || YEARS[YEARS.length - 1];
+// The night index of a calendar date; a day past the end of the month is moved back to
+// its last day (29 February in a year without one).
+function dayOfCalendar(year, month, date) {
+    const last = new Date(Date.UTC(year, month + 1, 0)).getUTCDate();
+    return Math.round((Date.UTC(year, month, Math.min(date, last)) - SPAN.startMs) / DAY_MS);
+}
 const dayName = (n) => { const d = dayDate(n); return `${d.getUTCDate()} ${MONTHS_LONG[d.getUTCMonth()]} ${d.getUTCFullYear()}`; };
 const dayShort = (n) => { const d = dayDate(n); return `${d.getUTCDate()} ${MONTHS[d.getUTCMonth()]} ${d.getUTCFullYear()}`; };
 const dayParam = (n) => model.dateOfDay(n);
@@ -53,21 +65,21 @@ function nightName(n) {
 }
 const spanName = `${dayName(0)} to ${dayName(DAYS - 1)}`;
 const clampDay = (n) => Math.max(0, Math.min(DAYS - 1, n));
+// The current calendar year, or the nearest year of the span.
+const nearestYear = (year) => Math.max(YEARS[0].year, Math.min(YEARS[YEARS.length - 1].year, year));
 // The night of a date parameter: "YYYY-MM-DD", or the older "MM-DD", which is the month and
-// day inside the span. A date outside the span gives its nearest end, with outside set, so
-// that the page can say so (a link from last year, or for a night the table does not cover).
+// day in the current calendar year (or the nearest year of the span). A full date outside
+// the span gives its nearest end, with outside set, so that the page can say so (a link
+// from an earlier year, or for a night the table does not cover). A day past the end of
+// its month is moved back to the last day, as the year control does.
 function dayFromParam(text) {
     const full = /^(\d{4})-(\d{1,2})-(\d{1,2})$/.exec(text || ""), short = /^(\d{1,2})-(\d{1,2})$/.exec(text || "");
     const m = full || short;
     if (!m) return null;
     const month = Number(m[full ? 2 : 1]), date = Number(m[full ? 3 : 2]);
     if (month < 1 || month > 12 || date < 1 || date > 31) return null;
-    let year = full ? Number(m[1]) : null;
-    if (year == null) {
-        const start = dayDate(0);
-        year = month - 1 >= start.getUTCMonth() ? start.getUTCFullYear() : start.getUTCFullYear() + 1;
-    }
-    const n = Math.round((Date.UTC(year, month - 1, date) - SPAN.startMs) / DAY_MS);
+    const year = full ? Number(m[1]) : nearestYear(new Date().getFullYear());
+    const n = dayOfCalendar(year, month - 1, date);
     return { day: clampDay(n), outside: n < 0 || n >= DAYS };
 }
 // Tonight's night index (the local date), and whether it lies outside the span.
@@ -133,16 +145,19 @@ const queued = [];               // messages posted before the worker said it is
 worker.onmessage = (e) => {
     const m = e.data;
     if (m.ready) { workerReady = true; for (const q of queued.splice(0)) worker.postMessage(q); return; }
+    if (m.channel === "night") { onNight(m); return; }
     const req = requests.get(m.channel);
     if (!req || req.id !== m.id) return;        // a stale answer, cancelled by a newer request
     if (m.results) req.onResults(m.results);
     if (m.done) { requests.delete(m.channel); if (req.onDone) req.onDone(); }
 };
+function post(msg) {
+    if (workerReady) worker.postMessage(msg); else queued.push(msg);
+}
 function ask(channel, message, onResults, onDone) {
     const id = ++requestId;
     requests.set(channel, { id, onResults, onDone });
-    const msg = { id, channel, ...message };
-    if (workerReady) worker.postMessage(msg); else queued.push(msg);
+    post({ id, channel, ...message });
 }
 
 // The year curve at the latitude. The table has a row at every slider position (half
@@ -172,11 +187,14 @@ async function loadTable() {
     schedule({ year: true, night: false });
 }
 
-// Without the table: the worker fills the year in, every 8th night first, so that the
-// curve's shape shows within a second and sharpens after.
+// Without the table: the worker fills the span in, the year on show first, every 8th
+// night before the rest, so that the curve's shape shows within a second and sharpens after.
 function yearOrder() {
     const seen = new Set(), order = [];
-    for (const step of [8, 4, 2, 1]) for (let n = 0; n < DAYS; n += step) if (!seen.has(n)) { seen.add(n); order.push(n); }
+    const shown = yearOf(state.day);
+    for (const y of [shown, ...YEARS.filter((o) => o !== shown)]) {
+        for (const step of [8, 4, 2, 1]) for (let n = y.day; n < y.day + y.days; n += step) if (!seen.has(n)) { seen.add(n); order.push(n); }
+    }
     return order;
 }
 let yearLive = null;
@@ -200,26 +218,47 @@ function computeYear() {
     }
 }
 
-// The night result carries the latitude and day it was computed for. While a new night is
-// being computed, the old result stays for the chart but is not current: the summary shows
-// "…" and Save image waits, so old numbers never appear (or export) under the new labels.
+// The night chart follows a moving slider. Each change asks the worker for a PREVIEW of the
+// night, both kinds in one request (rateModel.PREVIEW_OPTS: about 3x faster, within ~1% of
+// the full night); when the latitude and the night have rested for NIGHT_REST_MS, it asks
+// for the full night. The page shows the NEWEST night that has arrived, even while a newer
+// request waits in the worker, so the chart moves with the slider instead of waiting for it
+// to stop. The result carries its own latitude, day and quality, and the summary is labelled
+// from the result, not from the slider, so numbers never appear under another night's label.
+// Save image waits for the full night of the current settings.
+const NIGHT_REST_MS = 150;
 const nightIsCurrent = () => !!state.night && state.night.lat === state.lat && state.night.day === state.day;
+const nightIsFinal = () => nightIsCurrent() && state.night.quality === "full";
+
+const nightAsked = new Map();     // request id -> { lat, day, quality, seq }
+let nightSeq = 0, nightShownSeq = 0, nightRestTimer = 0;
+
+function askNight(quality) {
+    const id = ++requestId;
+    nightAsked.set(id, { lat: state.lat, day: state.day, quality, seq: ++nightSeq });
+    post({ id, channel: "night", lat: state.lat, kinds: ["visible", "all"], days: [state.day], profile: true, quality });
+}
+
+function onNight(m) {
+    const asked = nightAsked.get(m.id);
+    if (!asked) return;
+    if (m.results && asked.seq > nightShownSeq) {        // never step back to an older night
+        nightShownSeq = asked.seq;
+        state.night = { lat: asked.lat, day: asked.day, quality: asked.quality };
+        for (const r of m.results) state.night[r.kind] = r;
+        // The worker computes only the newest request, so older ones never answer: forget them.
+        for (const [id, a] of nightAsked) if (a.seq <= nightShownSeq) nightAsked.delete(id);
+        renderText();
+        renderCharts();
+    }
+    if (m.done) nightAsked.delete(m.id);
+}
 
 function computeNight() {
-    if (nightIsCurrent()) return;
-    const lat = state.lat, day = state.day;
-    const got = { lat, day };
-    for (const kind of ["visible", "all"]) {
-        ask("night-" + kind, { lat, kind, days: [day], profile: true }, (results) => {
-            got[kind] = results[0];
-            // A late reply for a night the user has already left is dropped.
-            if (got.visible && got.all && lat === state.lat && day === state.day) {
-                state.night = got;
-                renderText();
-                renderCharts();
-            }
-        });
-    }
+    if (nightIsFinal()) return;
+    askNight("preview");
+    clearTimeout(nightRestTimer);
+    nightRestTimer = setTimeout(() => { if (!nightIsFinal()) askNight("full"); }, NIGHT_REST_MS);
 }
 
 // First and last times with a visible-flare rate, and the busiest time.
@@ -254,26 +293,30 @@ function chartHeight(host, fallback) {
     return Math.max(140, host.clientHeight - keyHeight);
 }
 
-// The year axis: a tick at the 1st of each month of the span, the year on the first tick and
-// on each January. A narrow chart shows every other month, but keeps those two.
-function monthTicks(width) {
+// The year axis: a tick at the 1st of each month of the calendar year on show, the year on
+// the January tick. A narrow chart shows every other month.
+function monthTicks(width, year) {
     const step = width < 560 ? 2 : 1;
     return model.spanMonths()
-        .filter((m, i) => i % step === 0 || i === 0 || m.month === 0)
-        .map((m, i) => ({ pos: m.day, label: i === 0 || m.month === 0 ? `${MONTHS[m.month]} ${m.year}` : MONTHS[m.month] }));
+        .filter((m) => m.year === year.year)
+        .filter((m, i) => i % step === 0)
+        .map((m) => ({ pos: m.day, label: m.month === 0 ? `${MONTHS[m.month]} ${m.year}` : MONTHS[m.month] }));
 }
 
+// The year chart shows the calendar year of the chosen night. Its x positions are night
+// indices of the span, so the marker and a pick use the same numbers as the slider.
 function yearOptions(width, interactive) {
-    const x = Array.from({ length: DAYS }, (_, n) => ({ pos: n, label: `Night of ${dayShort(n)}` }));
-    const xTicks = monthTicks(width);
-    const values = (key) => (state.year ? state.year[key].map((v) => (v == null ? null : Math.round(v * 10) / 10)) : new Array(DAYS).fill(null));
+    const year = yearOf(state.day);
+    const x = Array.from({ length: year.days }, (_, i) => ({ pos: year.day + i, label: `Night of ${dayShort(year.day + i)}` }));
+    const xTicks = monthTicks(width, year);
+    const values = (key) => (state.year ? state.year[key].slice(year.day, year.day + year.days).map((v) => (v == null ? null : Math.round(v * 10) / 10)) : new Array(year.days).fill(null));
     return {
         x, xTicks,
         series: SERIES.map((s) => ({ name: s.name, colorVar: s.colorVar, values: values(s.key) })),
         yLabel: "Flares per night",
         yMax: state.fit ? undefined : YEAR_Y_MAX,
         markers: [{ pos: state.day, label: dayShort(state.day).replace(/ \d{4}$/, "") }],   // the axis shows the year
-        onPick: interactive ? (i) => setDay(i) : undefined,
+        onPick: interactive ? (i) => setDay(year.day + i) : undefined,
         height: chartHeight($("chartYear"), width < 560 ? 240 : 300),
     };
 }
@@ -309,11 +352,13 @@ function renderCharts() {
 // Text
 // ---------------------------------------------------------------------------
 function summaryText() {
-    const when = `Night of ${nightName(state.day)}, at ${latLabel(state.lat)}.`;
-    if (!nightIsCurrent()) return { total: "…", when, detail: "" };
-    const vis = state.night.visible.total, all = state.night.all.total;
-    const shape = nightShape(state.night.visible);
-    const depth = model.maxDepression(state.lat, state.day);
+    // Labelled from the night shown (it can trail the slider by a frame or two while it moves).
+    const night = state.night;
+    if (!night) return { total: "…", when: `Night of ${nightName(state.day)}, at ${latLabel(state.lat)}.`, detail: "" };
+    const when = `Night of ${nightName(night.day)}, at ${latLabel(night.lat)}.`;
+    const vis = night.visible.total, all = night.all.total;
+    const shape = nightShape(night.visible);
+    const depth = model.maxDepression(night.lat, night.day);
     const need = model.MIN_DEPRESSION.visible;
     const lines = { total: vis < 0.5 ? "0" : `≈ ${round(vis)}`, when, detail: "" };
     if (vis < 0.5) {
@@ -334,9 +379,9 @@ function summaryText() {
 function cautionText() {
     // The model was checked against the full simulation from 60°S to 70°N, and the synthetic
     // constellation against the real one from 50°S to 60°N (see formula.html).
-    if (state.outsideSpan === "tonight") return `Tonight is outside the year this page covers (${spanName}): the nearest night is shown. ` +
+    if (state.outsideSpan === "tonight") return `Tonight is outside the years this page covers (${spanName}): the nearest night is shown. ` +
         "The shell table needs refreshing.";
-    if (state.outsideSpan === "link") return `This link's night is outside the year this page covers (${spanName}): the nearest night is shown.`;
+    if (state.outsideSpan === "link") return `This link's night is outside the years this page covers (${spanName}): the nearest night is shown.`;
     if (state.lat > 70 || state.lat < -60) return "This latitude is outside the range the model was checked on (60°S to 70°N). Treat it as a rough guide.";
     if (state.yearPartial) return "The year curve is being computed; it fills in over about a minute.";
     return "";
@@ -350,10 +395,12 @@ function renderText() {
     const caution = cautionText();
     $("caution").textContent = caution;
     $("caution").hidden = !caution;
+    const year = yearOf(state.day);
     $("yearLat").textContent = latLabel(state.lat);
-    $("yearSpan").textContent = spanName;
+    $("yearSpan").textContent = String(year.year);
     $("yearSpan2").textContent = spanName;
-    for (const id of ["formulaLink", "formulaLink2"]) $(id).href = `formula.html?lat=${formatLat(state.lat)}`;
+    for (const button of $("yearPick").children) button.setAttribute("aria-pressed", String(Number(button.value) === year.year));
+    for (const id of ["formulaLink", "formulaLink2"]) $(id).href = `formula.html?lat=${formatLat(state.lat)}&date=${dayParam(state.day)}`;
     $("latLabel").textContent = latLabel(state.lat);
     $("dayLabel").textContent = dayName(state.day);
     document.title = `Starlink Flare Rate — ${latLabel(state.lat)}, ${dayShort(state.day)}`;
@@ -388,15 +435,49 @@ function setLat(value) {
     schedule({ year: true, night: true });
 }
 
+// The night slider covers the calendar year of the chosen night. Its range is set before
+// its value, because the browser clamps the value to the range it has.
+function syncDayRange() {
+    const year = yearOf(state.day), range = $("dayRange");
+    range.min = year.day;
+    range.max = year.day + year.days - 1;
+    range.value = state.day;
+}
+
 function setDay(value, outsideSpan = false) {
     const day = clampDay(Math.round(Number(value)));
     if (!Number.isFinite(day)) return;
     const changed = day !== state.day || outsideSpan !== state.outsideSpan;
     state.day = day;
     state.outsideSpan = outsideSpan;
-    $("dayRange").value = day;
+    syncDayRange();
     if (changed) schedule({ year: false, night: true });
 }
+
+// Another calendar year, same month and day (29 February becomes 28 February).
+function setYear(year) {
+    const d = dayDate(state.day);
+    setDay(dayOfCalendar(Number(year), d.getUTCMonth(), d.getUTCDate()));
+}
+
+// The year control: one button per calendar year of the span. The arrow keys move between
+// the years from the keyboard, as in a set of radio buttons.
+for (const y of YEARS) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.value = String(y.year);
+    button.textContent = String(y.year);
+    button.setAttribute("aria-pressed", "false");
+    button.addEventListener("click", () => setYear(y.year));
+    $("yearPick").appendChild(button);
+}
+$("yearPick").addEventListener("keydown", (e) => {
+    if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+    e.preventDefault();
+    const i = YEARS.findIndex((y) => y === yearOf(state.day)), next = YEARS[Math.max(0, Math.min(YEARS.length - 1, i + (e.key === "ArrowLeft" ? -1 : 1)))];
+    setYear(next.year);
+    $("yearPick").children[YEARS.indexOf(next)].focus();
+});
 
 $("latRange").addEventListener("input", (e) => { state.userMovedLat = true; setLat(e.target.value); });
 $("latNumber").addEventListener("input", (e) => { state.userMovedLat = true; if (e.target.value !== "" && e.target.value !== "-") setLat(e.target.value); });
@@ -569,7 +650,7 @@ function exportSvg() {
     text(`${t.total} visible flares on the night of ${dayName(state.day)}.`, 18, token("--ink"), 600);
     text(t.detail, 15, token("--ink-2"));
     y += 12;
-    text("Flares per night through the year", 18, token("--ink"), 600);
+    text(`Flares per night through ${yearOf(state.day).year}`, 18, token("--ink"), 600);
     legend();
     y += 6;
     parts.push(`<g transform="translate(${pad} ${y})">${year.markup}</g>`);
@@ -603,7 +684,7 @@ async function exportPng() {
 }
 
 $("saveImage").addEventListener("click", async () => {
-    if (!nightIsCurrent() || !state.year) { showStatus("The charts are still being computed."); return; }
+    if (!nightIsFinal() || !state.year) { showStatus("The charts are still being computed."); return; }
     const name = `starlink-flares-${latLabel(state.lat).replace("°", "")}-${dayParam(state.day)}.png`;
     try {
         const blob = await exportPng();
@@ -638,8 +719,7 @@ $("saveImage").addEventListener("click", async () => {
 readAddress();
 $("latRange").value = state.lat;
 $("latNumber").value = state.lat;
-$("dayRange").max = DAYS - 1;
-$("dayRange").value = state.day;
+syncDayRange();
 $("scaleToFit").checked = state.fit;
 renderText();
 renderCharts();
@@ -650,5 +730,5 @@ useKnownLocation();
 
 // Local debugging hook for the SitrecBridge MCP tools, as in ../app.js; never on the live site.
 if (/^(localhost|127\.0\.0\.1|local\.metabunk\.org)$/.test(location.hostname)) {
-    window.shfRate = { state, model, exportSvg, setLat, setDay };
+    window.shfRate = { state, model, exportSvg, setLat, setDay, setYear };
 }

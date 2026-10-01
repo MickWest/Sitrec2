@@ -76,8 +76,9 @@
         Earth at a few degrees a day, and on a given night a shell of a few planes (the 70° shells) can
         give half or twice the seasonal average. The model places every measured plane where it is on the
         night, so the curve is uneven from night to night, as the real count is. That ties the page to the
-        year after the constellation was measured: the slider covers <span id="yearSpan2"></span>, and
-        the table is rebuilt when the constellation is measured again.</li>
+        years around the measurement: it covers <span id="yearSpan2"></span>, one calendar year at a time
+        (the year control above the chart), and the table is rebuilt when the constellation is measured
+        again.</li>
       <li>The model reproduces a full simulation of the flares within about 1% in total, within 2% on a
         typical night, and within a few percent at any one latitude over the year. The synthetic
         constellation it uses is measured from the real element set, and matches the real count within 2%
@@ -94,9 +95,12 @@
   <section class="card chart-card">
     <div class="card-head">
       <h2>Flares per night through the year</h2>
-      <label class="check"><input type="checkbox" id="scaleToFit"> Scale to fit</label>
+      <div class="head-controls">
+        <div class="segmented" id="yearPick" role="group" aria-label="Year"></div>
+        <label class="check"><input type="checkbox" id="scaleToFit"> Scale to fit</label>
+      </div>
     </div>
-    <p class="sub">At <span id="yearLat">45°N</span>, <span id="yearSpan"></span>. Click or drag on the chart to choose a night.</p>
+    <p class="sub">At <span id="yearLat">45°N</span>, 1 January to 31 December <span id="yearSpan"></span>. Click or drag on the chart to choose a night.</p>
     <div class="chart" id="chartYear"></div>
   </section>
 

@@ -101,8 +101,19 @@ input[type="range"] { width: 100%; height: 28px; margin: 0; accent-color: var(--
 .notes li { margin-bottom: 6px; color: var(--ink-2); font-size: 14px; }
 .chart { position: relative; }
 .card-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.head-controls { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
 .check { display: inline-flex; align-items: center; gap: 6px; font-size: 14px; color: var(--ink-2); cursor: pointer; white-space: nowrap; }
 .check input { width: 18px; height: 18px; margin: 0; accent-color: var(--accent); }
+/* The year control: one button per calendar year, the chosen one filled (aria-pressed).
+   Also used by the model page's breakdown chart. */
+.segmented { display: inline-flex; border: 1px solid var(--axis); border-radius: 8px; overflow: hidden; }
+.segmented button {
+  font: inherit; font-size: 14px; font-weight: 500; cursor: pointer; padding: 4px 12px; min-height: 30px;
+  background: transparent; color: var(--ink); border: 0; border-left: 1px solid var(--axis); touch-action: manipulation;
+}
+.segmented button:first-child { border-left: 0; }
+.segmented button[aria-pressed="true"] { background: var(--accent); color: #fff; font-weight: 600; }
+.segmented button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 
 @media (min-width: 900px) and (min-height: 560px) {
   /* Only the rate page fits the screen; the formula page also loads this file and scrolls. */

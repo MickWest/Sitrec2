@@ -9,6 +9,18 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.174.1 (2026-10-01)
+
+### Improvements
+- **Starlink Flare Rate** (Starlink Flare Predictor → "How many flares?" link at the bottom): the year chart now shows one calendar year, 1 January to 31 December, chosen with a new 2026 / 2027 control above the chart, and the page now covers 1 January 2026 to 31 December 2027.
+- **Starlink Flare Rate**: the night slider covers the chosen year and a change of year keeps the month and day, and an older link with only a month and day opens that date in the current year.
+- The breakdown chart on the "How the flare rate is calculated" page has the same year control.
+
+### Bug Fixes
+- Fixed the "Flares per hour through the night" chart (Starlink Flare Rate) staying still while you drag a slider; it now follows the slider, and the exact night replaces a quick preview when you stop.
+- Fixed the "← Flare Rate" link on the "How the flare rate is calculated" page going back to tonight instead of the night you had chosen.
+- Fixed a Starlink Flare Rate link with a day past the end of its month (such as 29 February 2026) opening a day in the next month; it now opens the last day of the month.
+
 ## Version 2.174.0 (2026-10-01)
 
 ### Improvements

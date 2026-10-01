@@ -9,6 +9,68 @@ lockstep with docs/WhatsNew.md.
 
 ---
 
+## Version 2.174.1 (2026-10-01)
+
+### Improvements
+- **Starlink Flare Rate page: calendar years with a year control** (`tools/shf/rate/rateModel.js`, `rate/rate.js`, `rate/index.html`, `rate/rate.css`, `rate/rateTable.json`, `tools/shf/tools/build-rate-table.mjs`).
+  - **Span.** `SPAN` is now `spanOf(STARLINK_SHELLS.refEpoch)`. It runs from 1 January of the reference epoch's year to 31 December of the next year. `DAYS` comes from the dates (`SPAN.days`), so a leap year is counted. For the 2026-09-30 shell table the span is 1 January 2026 to 31 December 2027, 730 nights. In 2.174.0 it was 365 nights from the 1st of the reference epoch's month, 1 September 2026 to 31 August 2027. The new `spanYears()` gives each calendar year of the span as `{ year, day, days }`: the night index of its 1 January and its number of nights.
+  - **Year control.** A segmented control (`#yearPick`, `.segmented`) is in the head of the "Flares per night through the year" card, next to **Scale to fit**. It has one button per year ("2026", "2027"), shows the chosen one with `aria-pressed`, and the arrow keys move between the years.
+    - The year chart shows the calendar year of the chosen night (`yearOf(state.day)`), from 1 January to 31 December. Its x positions are still span night indices, sliced out of the span-length year curve.
+    - The subtitle reads "At 45°N, 1 January to 31 December 2026." The year label is on the January tick only.
+    - The saved PNG's chart title reads "Flares per night through 2026" (it was "through the year").
+  - **Night slider.** `syncDayRange()` sets the **Night of** slider's min and max to the chosen calendar year. It sets the range before the value, because the browser clamps the value to the old range. `setYear()` keeps the month and day. A day past the end of the month moves back to its last day (`dayOfCalendar`); this matters only for 29 February, and neither 2026 nor 2027 has one.
+  - **Links.**
+    - `date=YYYY-MM-DD` opens that night, and so selects its year.
+    - An older `date=MM-DD` link now opens that month and day in the current calendar year, moved to the nearest year of the span (`nearestYear`), with no caution. In 2.174.0 it opened that month and day inside the September-to-August span.
+    - A full date outside the span still opens the nearest end, with a caution that now reads "…outside the years this page covers (1 January 2026 to 31 December 2027)…".
+    - The links from the rate page to `formula.html` now carry `&date=` for the chosen night.
+  - **Year table.**
+    - `rateTable.json` is rebuilt for the 730-night span: 1,696,747 bytes, twice the 2.174.0 table (847,951 bytes). A build takes about 39 minutes on 12 workers (2,310 s).
+    - The format string is unchanged (`shf-rate-table-3`). `decodeRateTable` now checks the span's end as well as its start and night count.
+    - The table's highest values are now 1,929 (all) and 1,717 (visible) flares, at 32°S on 7 November 2027, so the fixed 2,000 y axis (`YEAR_Y_MAX`) still holds.
+    - Without the table, the worker computes the whole span live, the year on show first (`yearOrder`).
+  - **Tests.** `tools/test-rate.mjs` now checks:
+    - the two-calendar-year span and its night count, and that it has 24 months;
+    - `dateOfDay` and `dayOfDate` across the year boundary;
+    - `spanYears`;
+    - a leap-year span: for a 2027 epoch, `spanOf` gives 2027-01-01 to 2028-12-31, 731 nights;
+    - that `decodeRateTable` refuses a table with the right start but another end;
+    - table rows against the live model on sample nights in both years;
+    - the total of dated against evenly spread planes over the whole span (tolerance still 2.5%; the worst is 1.52%, at 55°S).
+- **"How the flare rate is calculated" page: year control on the breakdown chart** (`rate/formula.js`, `rate/formula.html`, `rate/formula.css`).
+  - The breakdown chart by inclination group has the same year control (`#bYear`). The worker computes only the year on show (365 or 366 nights), so the chart still fills in over about 15 seconds.
+  - The chart opens on the year of the link's `date` (the rate page now sends its night), else on the current year. Either is moved to the nearest year of the span.
+  - The status text names the year, for example "Computing the nights of 2026 at 45°N…".
+  - The examples now say they follow September 2026 to August 2027, and give the other year's figures:
+    - 35°N: 1,408 on 6 May and 1,321 on 2 August 2026.
+    - 45°N: the highest night of 2027 is 874, on 29 December.
+    - 55°N: no flares from 8 April to 1 September 2027 (to 3 September in 2026).
+    - The equator: 220 to 350 in both years.
+
+### Bug Fixes
+- **Fixed the night chart staying still while a slider moves** (`rate/rate.js`, `rate/rateWorker.js`, `rate/rateModel.js`).
+  - **Cause.** 2.174.0 moved the night computation into `rateWorker.js`. So that old numbers never showed under new labels, it dropped every reply for a night the slider had already left. During a drag every reply was for such a night, so "Flares per hour through the night" did not move until the slider stopped. The two kinds were also separate requests (`night-visible`, `night-all`), and the page showed nothing until it had both for the same night.
+  - **Fix.**
+    - One `night` request now carries both kinds (`kinds: ["visible", "all"]`). The worker computes both kinds of a night in one step, so a newer request cannot split the pair.
+    - Each slider change asks for a preview night (`quality: "preview"`, which uses `rateModel.PREVIEW_OPTS`): the Sun-synchronous shells step 300 s instead of 100 s, with 8 lobe slices instead of 12 and 2 edge sub-steps instead of 5. On 40 nights with more than 20 flares, a preview night took 12 ms against 38 ms on a desktop. The night total was within 1.3% of the full night (median 0.4%), and the 5-minute profile within 2.8% (median 1.4%).
+    - When the latitude and night have not changed for 150 ms (`NIGHT_REST_MS`), the page asks for the full night.
+    - The page shows the newest night that has arrived, even while a newer request waits, and never goes back to an older one (`onNight`, with sequence numbers in `nightAsked`).
+  - **Summary.** The summary takes its label from the night it shows, so during a drag it can be a frame or two behind the slider, but its numbers never show under another night's label. The "…" now shows only until the first night arrives.
+  - **Save image** waits for the full night of the current settings (`nightIsFinal`). Until then it shows "The charts are still being computed."
+  - **Result.** In a headless browser, the chart updated about 20 times a second during a latitude drag and 28 times a second during a date drag. Before the fix, it did not update until the slider stopped.
+- **Fixed the model page's "← Flare Rate" link losing the chosen night** (`rate/formula.js` `backHref`, `rate/rate.js`).
+  - **Before.** The rate page linked to `formula.html?lat=` only, and the back link was `./?lat=`, so the rate page reopened on tonight.
+  - **Now.** The back link carries the night the rate page sent. If the year was changed on the model page, it carries that month and day in the new year.
+  - Without a date in the link, and with the year unchanged, the date is still left out, so the rate page opens on tonight.
+- **Fixed a link date past the end of its month** (`dayFromParam`, `dayOfCalendar` in `rate/rate.js`). A link such as `date=2026-02-29` or `date=02-30` now opens the last day of that month. Before, `Date.UTC` rolled it into the first days of the next month.
+
+### Documentation
+- `tools/shf/README.md` (the `rate/` and `build-rate-table.mjs` rows) and `tools/shf/stats/README.md` ("The flare-rate model" and "Refreshing the table") now describe:
+  - the two-calendar-year span and the year control;
+  - the new table maximum (1,929);
+  - the 39-minute table build.
+- The `rateWorker.js` header documents the new message fields: `kinds`, `quality`, and `kind` on each result.
+
 ## Version 2.174.0 (2026-10-01)
 
 ### Improvements

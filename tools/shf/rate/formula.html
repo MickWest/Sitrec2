@@ -190,9 +190,9 @@
         longitudes 120° apart differed by 6% of the night's count on a typical night and by up to 47% (25°S on
         8 May: 386, 304 and 240 visible flares). This page and the rate page have no longitude, so the model
         spreads each plane over its day of drift and gives the average over the observer's longitude. The cost
-        is that the model is tied to a year: this page and the rate page cover
-        <span class="span-name"></span>, the year that starts in the month the constellation was measured,
-        and they are rebuilt when it is measured again.</li>
+        is that the model is tied to its dates: this page and the rate page cover
+        <span class="span-name"></span> (the year the constellation was measured in and the next, one
+        calendar year at a time), and they are rebuilt when it is measured again.</li>
       <li><strong>The 97.3° shells.</strong> Their planes turn <em>eastward</em> at 0.99° a day, the same rate
         as the Sun moves along the sky, so each plane keeps a fixed local time on any date: it is
         <strong>Sun-synchronous</strong>. Measured from the real set, the planes cross the equator northbound
@@ -255,13 +255,16 @@
         <label for="bLat">Latitude</label>
         <input type="range" id="bLat" min="-90" max="90" step="0.5" value="45">
         <output id="bLatLabel">45°N</output>
+        <div class="segmented" id="bYear" role="group" aria-label="Year"></div>
       </div>
       <div class="chart" id="chartBreakdown"></div>
       <p class="sub" id="breakdownStatus">Visible flares per night through the year, split by the inclination of the shells that
         make them. The model runs in the background: the curve appears coarse and sharpens over about fifteen seconds.</p>
     </div>
 
-    <p>Examples from the model (visible flares per night, <span class="span-short"></span>):</p>
+    <p>Examples from the model (visible flares per night). They follow one round of the seasons, from September
+      2026 to August 2027. The pages cover <span class="span-short"></span>: the same season in the other year
+      has the same broad shape, but its peaks fall on other nights, because the planes are elsewhere.</p>
     <ul>
       <li><strong>35°N.</strong> In early September 2026 the region is over the 53° shells' turning latitude,
         and those shells give 643 of 968. By October it has moved south over 43°: the 43° shells give 432 of
@@ -269,10 +272,11 @@
         about 180 to 220 each, 420 to 530 in all. In early March it crosses 43° again (the 43° shells up to
         439 on 11 March, about 840 in all). From mid-April to mid-May, and again from late July to the end of
         August, it is at 45°–55°N, over the 53° turning latitude, and those shells give about 770 to 1,290 of
-        1,100 to 1,400: the main peaks, 1,369 on 6 May and 1,394 on 8 August 2027. On 21 June the Sun goes
-        only 31.6° down, so only the lowest shells flare, for a short time near midnight: 75.</li>
-      <li><strong>45°N.</strong> In mid-October 2026 the region crosses 53°: the highest night of the year, 865
-        on 18 October, 691 of them from the 53° shells. In December and early January it is over the 43°
+        1,100 to 1,400: the main peaks, 1,369 on 6 May and 1,394 on 8 August 2027 (in 2026, 1,408 on 6 May and
+        1,321 on 2 August). On 21 June the Sun goes only 31.6° down, so only the lowest shells flare, for a
+        short time near midnight: 75.</li>
+      <li><strong>45°N.</strong> In mid-October 2026 the region crosses 53°: the highest night of 2026, 865
+        on 18 October, 691 of them from the 53° shells (the highest of 2027 is 874, on 29 December). In December and early January it is over the 43°
         turning latitude (up to 431 from the 43° shells on 21 December, 760 to 850 in all), and in late February
         it crosses 53° again (about 800 to 840, some 620 of them from the 53° shells). In late September and
         late March, when the region is at 60°N and beyond, the 70° and polar shells make most of the flares (16
@@ -285,11 +289,11 @@
       <li><strong>55°N.</strong> The 43° shells never reach the region, and the 53° shells only in midwinter
         (at most 114 a night, on 20 December). The polar shells make most of the flares (439 of 588 on 11
         October 2026, 430 of 584 on 28 February 2027), the 70° shells the rest (up to 217 on 16 February), and
-        there are none from 8 April to 31 August 2027.</li>
+        there are none from 8 April to 1 September 2027 (in 2026, from 8 April to 3 September).</li>
       <li><strong>The equator.</strong> The region stays within about 10° of the equator, far from every
-        turning latitude, and the Sun always goes deep. So the count is between 220 and 340 all year (the mean
-        is 287), and most of its change from night to night comes from the 70° shells' planes, which give from
-        about 1 to 46 a night as they pass through the region.</li>
+        turning latitude, and the Sun always goes deep. So the count is between 220 and 350 in both years (the
+        mean is 287), and most of its change from night to night comes from the 70° shells' planes, which give
+        from under 1 to 46 a night as they pass through the region.</li>
     </ul>
     <p>The same two effects shape each night. When the Sun goes deeper than a shell's window around midnight,
       those satellites are in the Earth's shadow, so the flares come in two groups, after dusk and before dawn.
@@ -391,8 +395,9 @@
         by the same rule: every shell in its measured planes, moved to the date at the planes' precession rate,
         and the polar planes at their fixed local times. The model takes the rate from the same code.</li>
       <li><a href="rateTable.json">rateTable.json</a> — the year table the rate page reads, built by
-        <code>tools/build-rate-table.mjs</code> from the model for the year <span class="span-short"></span>.
-        When the shell table is refreshed, the year moves with it and the table is built again.</li>
+        <code>tools/build-rate-table.mjs</code> from the model for <span class="span-short"></span>, both
+        calendar years. When the shell table is refreshed, the years move with it and the table is built
+        again.</li>
       <li>The flare statistics <a href="https://github.com/MickWest/Sitrec2/blob/main/tools/shf/stats/README.md"
          rel="noopener" target="_blank">README</a> describes the full scan that the model reproduces.</li>
     </ul>

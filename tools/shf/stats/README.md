@@ -132,8 +132,9 @@ constant. The satellite density is weighted by where the shell's orbital planes 
 that moment: every shell's measured planes (below), moved to the night at the shell's
 precession rate by the same rule as the synthetic constellation, and the Sun-synchronous
 planes at their fixed local times. A night's count therefore belongs to its date, and the
-page covers the year that starts in the month the constellation was measured (365 nights;
-the year moves when the table is refreshed). The page has no longitude, so each plane is
+page covers two calendar years, the year the constellation was measured in and the next
+(730 nights, shown one calendar year at a time with a year control; the years move when
+the table is refreshed). The page has no longitude, so each plane is
 spread over its day of drift against the Sun and the count is the mean over the observer's
 longitude (`expectedNight` takes `lon` for one longitude's night). The page
 `../rate/formula.html` explains it, with the measured numbers.
@@ -213,8 +214,8 @@ synthetic set 0.5 and 0.0: too few to measure a ratio, so those latitudes are no
 **Refreshing the table.** The constellation changes with every launch, so refresh the
 table when it is a few months old: download a fresh CelesTrak CSV (the supplemental set is
 preferred; the standard group also works) and run the measurement tool, then rebuild the
-rate page's year table (its year starts on the 1st of the month of the new table's
-reference epoch, so the rate page's dates move with it; about 18 minutes on 12 worker
+rate page's year table (its span is the calendar year of the new table's reference epoch
+and the next, so the rate page's years move with it; about 39 minutes on 12 worker
 threads), then the tests:
 
 ```bash
@@ -224,7 +225,7 @@ node tools/shf/tools/build-rate-table.mjs --workers 12
 (cd tools/shf && npm test)
 ```
 
-The rate page refuses a year table built for another shell table or year, so the two must
+The rate page refuses a year table built for another shell table or span, so the two must
 be refreshed together. `test-rate.mjs` compares the model with frozen scans of the
 constellation of 2026-09-30; after a refresh its simulated-year checks measure the new
 table against the old scans, so a difference there is the constellation's change, not a
