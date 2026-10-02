@@ -130,8 +130,10 @@ export const saveMethods = {
      * @returns {Promise<boolean>}
      */
     saveSitchFromMenu() {
+        const saveGeneration = Globals.loadGeneration;
         this.activateStorageFolder("server");
         return this.saveSitch().then(() => {
+            if (saveGeneration !== Globals.loadGeneration) return false;
             this.lastSaveAction = "server";
             console.log("Sitch saved as " + Sit.sitchName);
             return true;
@@ -184,6 +186,7 @@ export const saveMethods = {
      * @returns {Promise<void>} Resolves when save completes
      */
     saveSitch(local = false, directoryHandle = null, fileHandle = null) {
+        const saveGeneration = Globals.loadGeneration;
         // Once the user saves, versions should reflect their own user, not the source
         if (!local) {
             this.sourceUserID = null;
@@ -191,6 +194,7 @@ export const saveMethods = {
         if (Sit.sitchName === undefined) {
             const previousSitchName = Sit.sitchName;
             return this.inputSitchName().then(async () => {
+                if (saveGeneration !== Globals.loadGeneration) return;
                 const sitchName = Sit.sitchName;
                 const confirmed = await this.confirmOverwriteForNamedSave({
                     sitchName,
@@ -198,12 +202,14 @@ export const saveMethods = {
                     directoryHandle,
                     fileHandle
                 });
+                if (saveGeneration !== Globals.loadGeneration) return;
                 if (!confirmed) {
                     Sit.sitchName = previousSitchName;
                     throw "Save Cancelled";
                 }
                 return this.saveSitchNamed(sitchName, local, directoryHandle, fileHandle);  // return the Promise here
             }).then(() => {
+                if (saveGeneration !== Globals.loadGeneration) return;
                 if (!local) {
                     if (this.guiLoad) addOptionToGUIMenu(this.guiLoad, Sit.sitchName);
                     if (this.guiLoadAlphabetical) addOptionToGUIMenu(this.guiLoadAlphabetical, Sit.sitchName);
@@ -217,6 +223,7 @@ export const saveMethods = {
             });
         } else {
             return this.saveSitchNamed(Sit.sitchName, local, directoryHandle, fileHandle).then(() => {
+                if (saveGeneration !== Globals.loadGeneration) return;
                 console.log("Sitch saved as " + Sit.sitchName);
                 if (!local) {
                     return this.refreshVersions();
@@ -231,7 +238,9 @@ export const saveMethods = {
     refreshVersions() {
         // During early startup, Sit may not be initialized yet.
         if (!Sit?.sitchName) return Promise.resolve();
+        const generation = Globals.loadGeneration;
         return this.getVersions(Sit.sitchName).then((versions) => {
+            if (generation !== Globals.loadGeneration) return;
             this.updateVersionsDropdown(versions);
         }).catch((error) => {
             console.warn("Failed to refresh versions:", error);
@@ -259,19 +268,22 @@ export const saveMethods = {
      * @returns {Promise<void>}
      */
     saveSitchAs() {
+        const saveGeneration = Globals.loadGeneration;
         this.activateStorageFolder("server");
         const lastSitchName = Sit.sitchName;
         Sit.sitchName = undefined;
         return this.saveSitch()
             .then(() => {
+                if (saveGeneration !== Globals.loadGeneration) return;
                 this.lastSaveAction = "server";
                 console.log("Sitch saved under a new name.");
             })
             .catch((error) => {
+                if (saveGeneration !== Globals.loadGeneration) return;
                 Sit.sitchName = lastSitchName; // Restore the last sitch name if we cancel
                 console.log("Error or Cancel in saveSitchAs:", error);
             }).finally(() => {
-                this.guiFolder.close();
+                if (saveGeneration === Globals.loadGeneration) this.guiFolder.close();
             });
     },
 
@@ -284,6 +296,7 @@ export const saveMethods = {
      * @returns {Promise<void>} Resolves when save is complete
      */
     saveSitchNamed(sitchName, local = false, directoryHandle = null, fileHandle = null) {
+        const saveGeneration = Globals.loadGeneration;
 
         // and then save the sitch to the server where it will be versioned by data in a folder named for this sitch, for this user
         console.log("Saving sitch as " + sitchName)
@@ -304,6 +317,7 @@ export const saveMethods = {
         let saveSucceeded = false;
         return CustomManager.serialize(sitchName, todayDateTimeFilename, local, directoryHandle, fileHandle)
             .then(async (serializeResult) => {
+                if (saveGeneration !== Globals.loadGeneration) return;
                 if (local) {
                     if (directoryHandle) {
                         this.directoryHandle = directoryHandle;
@@ -312,7 +326,9 @@ export const saveMethods = {
                         this.localSitchEntry = serializeResult.fileHandle;
                     } else if (directoryHandle) {
                         try {
-                            this.localSitchEntry = await directoryHandle.getFileHandle(sitchName + ".json");
+                            const savedHandle = await directoryHandle.getFileHandle(sitchName + ".json");
+                            if (saveGeneration !== Globals.loadGeneration) return;
+                            this.localSitchEntry = savedHandle;
                         } catch (error) {
                             console.warn("Could not refresh local sitch file handle after save:", error);
                         }
@@ -324,18 +340,22 @@ export const saveMethods = {
                             console.warn("Saved locally, but failed to persist working folder info:", persistError);
                         }
                     }
+                    if (saveGeneration !== Globals.loadGeneration) return;
                     this.localSaveTargetArmed = true;
                 }
+                if (saveGeneration !== Globals.loadGeneration) return;
                 saveSucceeded = true;
                 Globals.sitchDirty = false;
                 updateDocumentTitle();
                 // After sitch is saved, upload the screenshot to the same folder
                 if (!local) {
                     return screenshotPromise.then(blob => {
+                        if (saveGeneration !== Globals.loadGeneration) return;
                         if (blob) {
                             return blob.arrayBuffer().then(buffer => {
                                 return this.rehoster.rehostFile(sitchName, buffer, screenshotFilename(), {skipHash: true});
                             }).then(url => {
+                                if (saveGeneration !== Globals.loadGeneration) return;
                                 console.log("Screenshot saved: " + url);
                                 return this.bumpScreenshotVersion(sitchName);
                             }).catch(err => {
@@ -356,6 +376,7 @@ export const saveMethods = {
                 if (elapsedMs < 500) {
                     await new Promise(resolve => setTimeout(resolve, 500 - elapsedMs));
                 }
+                if (saveGeneration !== Globals.loadGeneration) return;
                 if (saveSucceeded) {
                     this.guiFolder.close();
                 }
@@ -371,10 +392,12 @@ export const saveMethods = {
      * @returns {Promise<boolean>}
      */
     async saveLocal({recordAction = true} = {}) {
+        const saveGeneration = Globals.loadGeneration;
         this.activateStorageFolder("local");
         if (this.isDesktopLocalFsAvailable()) {
             if (!this.localSaveTargetArmed || !this.localSitchEntry) {
                 const ok = await this.saveLocalAs({recordAction: false});
+                if (saveGeneration !== Globals.loadGeneration) return false;
                 if (ok && recordAction) {
                     this.lastSaveAction = "local";
                 }
@@ -385,6 +408,7 @@ export const saveMethods = {
             if (!targetDirectoryHandle && this.localSitchEntry?.path) {
                 const desktopFs = getDesktopFileSystemBridge();
                 const directoryPath = await desktopFs.dirname(this.localSitchEntry.path);
+                if (saveGeneration !== Globals.loadGeneration) return false;
                 targetDirectoryHandle = createDesktopDirectoryHandle(directoryPath);
             }
 
@@ -396,6 +420,7 @@ export const saveMethods = {
 
         if (!this.directoryHandle && this._pendingHandle) {
             await this.reconnectWorkingFolder({loadSitch: false});
+            if (saveGeneration !== Globals.loadGeneration) return false;
             if (!this.directoryHandle) {
                 return false;
             }
@@ -407,15 +432,18 @@ export const saveMethods = {
                 return false;
             }
         }
+        if (saveGeneration !== Globals.loadGeneration) return false;
 
         if (!(await this.ensureWorkingFolderWriteAccess())) {
             return false;
         }
+        if (saveGeneration !== Globals.loadGeneration) return false;
 
         // After a New Sitch or a server-loaded sitch, Save Local should behave like Save Local As.
         const canOverwriteCurrentLocalTarget = this.localSaveTargetArmed && !!this.localSitchEntry;
         if (!canOverwriteCurrentLocalTarget) {
             const ok = await this.saveLocalAs({recordAction: false});
+            if (saveGeneration !== Globals.loadGeneration) return false;
             if (ok && recordAction) {
                 this.lastSaveAction = "local";
             }
@@ -438,12 +466,14 @@ export const saveMethods = {
         const targetFileHandle = targetDirectoryHandle ? null : this.localSitchEntry || null;
         try {
             await this.saveSitch(true, targetDirectoryHandle, targetFileHandle);
+            if (saveGeneration !== Globals.loadGeneration) return false;
             if (recordAction) {
                 this.lastSaveAction = "local";
             }
             this.updateLocalGUI();
             return true;
         } catch (error) {
+            if (saveGeneration !== Globals.loadGeneration) return false;
             if (assignedTemporaryName) {
                 Sit.sitchName = previousSitchName;
             }
@@ -461,9 +491,11 @@ export const saveMethods = {
      * @returns {Promise<boolean>}
      */
     async saveLocalAs({recordAction = true} = {}) {
+        const saveGeneration = Globals.loadGeneration;
         this.activateStorageFolder("local");
         if (this.isDesktopLocalFsAvailable()) {
             const selection = await this.getDesktopLocalSaveTarget();
+            if (saveGeneration !== Globals.loadGeneration) return false;
             if (!selection) {
                 return false;
             }
@@ -480,16 +512,19 @@ export const saveMethods = {
                 return false;
             }
         }
+        if (saveGeneration !== Globals.loadGeneration) return false;
 
         Sit.sitchName = undefined;
         try {
             await this.saveSitch(true, this.directoryHandle, null);
+            if (saveGeneration !== Globals.loadGeneration) return false;
             if (recordAction) {
                 this.lastSaveAction = "localAs";
             }
             this.updateLocalGUI();
             return true;
         } catch (error) {
+            if (saveGeneration !== Globals.loadGeneration) return false;
             Sit.sitchName = previousSitchName;
             if (!isAbortLikeError(error)) {
                 console.warn("Save Local As failed:", error);

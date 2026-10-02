@@ -387,18 +387,21 @@ export class CFileManager extends CManager {
     }
 
     async saveLocalDesktopToTarget(targetFileHandle, targetDirectoryHandle, {recordAction = true, actionName = "local"} = {}) {
+        const saveGeneration = Globals.loadGeneration;
         const previousSitchName = Sit.sitchName;
         const nextSitchName = this.getLocalSitchNameFromFilename(targetFileHandle?.name);
         Sit.sitchName = nextSitchName;
 
         try {
             await this.saveSitchNamed(nextSitchName, true, targetDirectoryHandle, targetFileHandle);
+            if (saveGeneration !== Globals.loadGeneration) return false;
             if (recordAction) {
                 this.lastSaveAction = actionName;
             }
             this.updateLocalGUI();
             return true;
         } catch (error) {
+            if (saveGeneration !== Globals.loadGeneration) return false;
             Sit.sitchName = previousSitchName;
             if (!isAbortLikeError(error)) {
                 console.warn(`${actionName === "localAs" ? "Save Local As" : "Save Local"} failed:`, error);
@@ -1257,6 +1260,7 @@ export class CFileManager extends CManager {
      * @returns {Promise<void>} Resolves when user enters a valid name (sets Sit.sitchName), rejects if cancelled
      */
     inputSitchName() {
+        const generation = Globals.loadGeneration;
         return promptForText({
             confirmLabel: "Save",
             defaultValue: Sit.sitchName ?? "",
@@ -1266,6 +1270,7 @@ export class CFileManager extends CManager {
                 ? "Enter a valid sitch name."
                 : "",
         }).then((sitchName) => {
+            if (generation !== Globals.loadGeneration) throw "Save Cancelled";
             if (sitchName === null) {
                 throw "Sitch Name Cancelled";
             }

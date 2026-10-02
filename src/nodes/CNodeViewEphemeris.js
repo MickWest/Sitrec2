@@ -1,6 +1,6 @@
 import {CNodeViewText} from "./CNodeViewText";
 import {altitudeAboveSphere, getAzElFromPositionAndForward} from "../SphericalMath";
-import {NodeMan} from "../Globals";
+import {GlobalDateTimeNode, NodeMan} from "../Globals";
 import {Raycaster, Sphere, Vector3} from "three";
 import {intersectSphere2} from "../threeUtils";
 import {wgs84} from "../LLA-ECEF-ENU";
@@ -137,11 +137,14 @@ export class CNodeViewEphemeris extends CNodeViewText {
     // Based on C++ pass predictor which uses 2-minute steps and looks for horizon crossings
     predictNextEvent(sat, currentDate, currentEl, lookCamera) {
         // Cache predictions to avoid recalculating every frame
-        const now = Date.now();
-        if (sat.lastPredictionTime && (now - sat.lastPredictionTime) < 10000) {
+        const now = currentDate.getTime();
+        const observerKey = lookCamera.camera.position.toArray().join(",");
+        if (sat.predictionObserver === observerKey && sat.lastPredictionTime && Math.abs(now - sat.lastPredictionTime) < 10000) {
             return sat.cachedNextEvent || '---';
         }
         
+        sat.cachedEventTime = undefined;
+        sat.predictionObserver = observerKey;
         const satellites = this.nightSkyNode.satellites;
         
         // Get the appropriate satrec for this satellite and date
@@ -194,6 +197,8 @@ export class CNodeViewEphemeris extends CNodeViewText {
             // For satellites currently below horizon (prevEl < 0), we're looking for AOS (el > 0)
             if ((prevEl < 0 && el >= 0) || (prevEl >= 0 && el < 0)) {
                 const isRising = el > prevEl;
+                sat.cachedEventTime = searchTime.getTime();
+                sat.cachedEventRising = isRising;
                 const diffMs = searchTime.getTime() - currentDate.getTime();
                 const diffSec = Math.floor(diffMs / 1000);
                 const minutes = Math.floor(diffSec / 60);
@@ -220,7 +225,7 @@ export class CNodeViewEphemeris extends CNodeViewText {
         return result;
     }
 
-    updateEphemeris() {
+    updateEphemeris(includeBelowHorizon = false) {
         if (!this.nightSkyNode || !this.nightSkyNode.satellites || !this.nightSkyNode.satellites.TLEData) {
             return;
         }
@@ -234,7 +239,7 @@ export class CNodeViewEphemeris extends CNodeViewText {
         }
 
         const cameraPos = lookCamera.camera.position;
-        const currentDate = new Date();
+        const currentDate = GlobalDateTimeNode.dateNow;
         const satData = [];
         
         // Get sun direction vector from satellites (same as used in main rendering)
@@ -244,6 +249,7 @@ export class CNodeViewEphemeris extends CNodeViewText {
             const sat = tleData.satData[i];
             
             if (!sat.visible || !sat.ecef) {
+                sat.cachedEventTime = undefined;
                 continue;
             }
 
@@ -258,6 +264,8 @@ export class CNodeViewEphemeris extends CNodeViewText {
             // But note: in C++ code, predictions happen for all satellites
             // that pass the initial filter, not just above horizon
             if (el < 0) {
+                if (includeBelowHorizon) this.predictNextEvent(sat, currentDate, el, lookCamera);
+                else { sat.cachedEventTime = undefined; sat.lastPredictionTime = undefined; }
                 continue;
             }
 

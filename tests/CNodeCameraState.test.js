@@ -193,7 +193,8 @@ test("sub sitches neither capture nor restore the camera data: it belongs to the
     nodes.set("lookCamera", camera);
     const node = new CNodeCameraState({id: "cameraState"});
     node.setTable(table());
-    const manager = subSitchManager({Globals, setRenderOne: jest.fn(), t: () => "", NodeMan: {
+    // No node here is a view, so a restore never changes the fullscreen view.
+    const manager = subSitchManager({Globals, setRenderOne: jest.fn(), t: () => "", ViewMan: {exists: () => false}, NodeMan: {
         get: (id) => nodes.get(id), exists: (id) => nodes.has(id), iterate: (callback) => nodes.forEach((n, id) => callback(id, n))}});
     // Its id matches the camera category, so only the node's own flag keeps it out.
     expect(manager.nodeMatchesCategory("cameraState", "Cameras")).toBe(true);

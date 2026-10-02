@@ -93,7 +93,7 @@ describe('the converted call sites use showPrompt', () => {
 
     const CONVERTED = [
         ['src/index.js', 'menus.objects.addObject.prompt'],
-        ['src/CustomManagerSubSitch.js', 'Enter new name for Sub Sitch:'],
+        ['src/CustomManagerSubSitch.js', 'Enter chapter name:'],
         ['src/CSitchBrowser.js', 'Enter label name:'],
         ['src/CTextExtraction.js', 'prompts.learnCharacter'],
         ['src/nodes/CNodeAnnotateOverlay.js', 'Annotation text:'],
