@@ -85,6 +85,8 @@ import {isSupportedModelFile} from "./ModelLoader";
 import {addOptionToGUIMenu} from "./lil-gui-extras";
 import {importSplineJSON, isSplineJSON} from "./SplineInterchange";
 import {importFOVJSON, isFOVJSON} from "./FOVInterchange";
+import {isCloudFieldJSON} from "./cloudField/CloudFieldFormat";
+import {importCloudField} from "./cloudField/CloudFieldImport";
 
 /**
  * Detects the type of a TXT file based on content patterns.
@@ -531,6 +533,17 @@ export const parseMethods = {
             // The keyframes now live in the fovEditor node, which the sitch
             // serializes itself — same reasoning as the spline files above.
             fileManagerEntry.skipSerialization = true;
+            return true;
+        }
+
+        if (fileManagerEntry.dataType === "cloudField") {
+            // Unlike spline/fov files, the file itself is kept in loadedFiles: the
+            // spheres live only in the file, and the node serializes just its settings.
+            const node = importCloudField(filename, parsedFile);
+            if (!node) {
+                fileManagerEntry.skipSerialization = true;
+                return false;
+            }
             return true;
         }
 
@@ -1600,6 +1613,10 @@ export const parseMethods = {
                     } else if (isFOVJSON(jsonParsed)) {
                         // .fov.json — camera zoom keyframes for the FOV Editor.
                         dataType = "fov";
+                        parsed = jsonParsed;
+                    } else if (isCloudFieldJSON(jsonParsed)) {
+                        // SitrecCloudField — soft emitting spheres (CNodeCloudField).
+                        dataType = "cloudField";
                         parsed = jsonParsed;
                     } else {
                         parsed = this.detectTrackFile(filename, jsonParsed);
