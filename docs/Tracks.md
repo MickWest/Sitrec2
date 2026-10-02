@@ -448,7 +448,7 @@ Each track's folder in the Contents menu provides these controls:
 | **Color Mode** | Radiosonde tracks only: color the track by **Temperature**, **Altitude** or **Pressure**, or **Flat (Line Color)** |
 | **Line Width** | Width of the track line in pixels (0.5-10) |
 | **Poly Color** | Color for the ground extension polygons |
-| **Extend To Ground** | Draw semi-transparent vertical walls from the track down to the terrain |
+| **Extend To Ground** | Draw semi-transparent vertical walls from the track down to the terrain. An imported track has a vertical line at each data point. A hand-drawn or balloon track has lines at least 20 pixels apart on screen; finer lines fade in as you zoom in |
 | **Display Step** | Frame spacing (1-100). Higher values skip frames for sparser display |
 | **Show in look view** | Hand-drawn tracks only: also draw the track in the look view (by default they show only in the main view) |
 | **Focus Camera Here** | Keep the main camera looking at this track and orbiting around it |

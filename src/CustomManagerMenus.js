@@ -193,7 +193,6 @@ export const menuMethods = {
             name: name,
             objectID: objectID,
             editMode: true,
-            color: 0x808080,
             startFrame: par.frame
         });
 
@@ -589,7 +588,6 @@ export const menuMethods = {
                     name: `Object Track`,
                     objectID: objectID,
                     editMode: true,
-                    color: 0x808080, // grey
                     startFrame: par.frame,
                     showInLook: sourceViewID === "lookView",
                 });
@@ -629,7 +627,6 @@ export const menuMethods = {
                     name: `Object Track`,
                     objectID: objectID,
                     editMode: true,
-                    color: 0x808080, // grey
                     constantSpeed: true,
                     altitudeLock: 0,
                     showInLook: sourceViewID === "lookView",

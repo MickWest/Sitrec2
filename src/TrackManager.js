@@ -2580,6 +2580,7 @@ class CTrackManager extends CManager {
             }),
             width: lineWidth,
             extendToGround: true, // Synthetic tracks extend to ground by default
+            wallLineSpacing: 20, // per-frame track: space the wall lines on screen
             // A synthetic track is user-drawn, not video-derived analysis data,
             // so it must not be greyed outside Sit.aFrame/bFrame — same as
             // imported and balloon tracks. Without this a sitch whose bFrame
@@ -3047,6 +3048,7 @@ class CTrackManager extends CManager {
             }),
             width: lineWidth,
             extendToGround: true,
+            wallLineSpacing: 20, // per-frame track: space the wall lines on screen
             // A balloon is a synthetic full-length track, not video-derived
             // analysis data, so it must not be greyed outside Sit.aFrame/bFrame
             // — same as imported tracks (see makeMotionTrack). Without this a

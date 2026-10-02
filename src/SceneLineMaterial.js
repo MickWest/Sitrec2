@@ -11,6 +11,15 @@ export function setLineViewHeight(renderer, height) {
     viewHeights.set(renderer, Math.max(1, height));
 }
 
+// Render-target pixels per display pixel, for the viewport now bound.
+export function displayPixelScale(renderer) {
+    renderer.getCurrentViewport(viewport);
+    // A headset has no CSS display box: use physical pixels per eye.
+    const displayHeight = renderer.xr?.isPresenting ? viewport.w
+        : viewHeights.get(renderer) ?? renderer.getSize(rendererSize).y;
+    return viewport.w / Math.max(1, displayHeight);
+}
+
 export class SceneLineMaterial extends LineMaterial {
     constructor(parameters = {}) {
         super({...parameters, transparent: true, depthWrite: false, alphaToCoverage: false});
@@ -200,10 +209,7 @@ export class SceneLineMaterial extends LineMaterial {
         renderer.getCurrentViewport(viewport);
         this.resolution.set(viewport.z, viewport.w);
         this.uniforms.lineViewportOrigin.value.set(viewport.x, viewport.y);
-        // A headset has no CSS display box: use physical pixels per eye.
-        const displayHeight = renderer.xr?.isPresenting ? viewport.w
-            : viewHeights.get(renderer) ?? renderer.getSize(rendererSize).y;
-        this.uniforms.linePixelWidth.value = this.linewidth * viewport.w / Math.max(1, displayHeight);
+        this.uniforms.linePixelWidth.value = this.linewidth * displayPixelScale(renderer);
         this.uniforms.lineInputSRGB.value = !ColorManagement.enabled;
     }
 }

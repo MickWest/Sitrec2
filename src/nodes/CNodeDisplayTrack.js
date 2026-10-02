@@ -3,7 +3,8 @@ import {triangulateTrackCap} from "../rendering/TrackCap";
 import {Globals, guiMenus, NodeMan, setRenderOne, Sit, TrackManager} from "../Globals";
 import {dispose, patchMaterialForLinearOutput} from "../threeExt";
 import {LineGeometry} from "../SceneLineGeometry";
-import {SceneLineMaterial} from "../SceneLineMaterial";
+import {displayPixelScale, SceneLineMaterial} from "../SceneLineMaterial";
+import {installTrackWallLines} from "../rendering/TrackWallLines";
 import {LineSegments2} from "three/addons/lines/LineSegments2.js";
 import {LineSegmentsGeometry} from "three/addons/lines/LineSegmentsGeometry.js";
 
@@ -67,6 +68,12 @@ export class CNodeDisplayTrack extends CNode3DGroup {
         } else {
             this.minWallStep = v.minWallStep;
         }
+
+        // Minimum distance in display pixels between the wall's vertical lines.
+        // When set, the lines are spaced on screen (see TrackWallLines.js) and not
+        // one per wall point. For per-frame tracks, where a line per point is a
+        // solid sheet. 0 keeps a line per wall point.
+        this.wallLineSpacing = v.wallLineSpacing ?? 0;
 
         this.ignoreAB = v.ignoreAB ?? false;
 
@@ -893,6 +900,9 @@ export class CNodeDisplayTrack extends CNode3DGroup {
         // bottom points on the sphere. We'll build a mesh that spans each top segment down.
         const linePoints = [];
         const groundPoints = [];
+        // Distance along the wall top to each point, for the screen-spaced lines.
+        const lineDistances = [];
+        const screenSpacedLines = this.wallLineSpacing > 0 && !this.showCap;
         assert(this.inputs.track !== undefined, "CNodeDisplayTrack: track input is undefined, id=" + this.id);
 
         // get the number of frames
@@ -922,6 +932,7 @@ export class CNodeDisplayTrack extends CNode3DGroup {
             // and this is not the last frame, then skip this point
             if (dist < this.minWallStep && f < frames-1) continue;
 
+            lineDistances.push(linePoints.length === 0 ? 0 : lineDistances.at(-1) + dist);
             lastPoint = trackPoint.position.clone();
 
             const A = trackPoint.position;
@@ -964,8 +975,12 @@ export class CNodeDisplayTrack extends CNode3DGroup {
         const vertices = [];
         const normals = [];
         const uvs = [];
+        const wallUs = [];
 
-        function addTriangle(p1, p2, p3) {
+        // u1..u3 are the [along-track, along-quad] distances of the three corners
+        // (see TrackWallLines.js). The cap has none.
+        function addTriangle(p1, p2, p3, u1 = [0, 0], u2 = [0, 0], u3 = [0, 0]) {
+            wallUs.push(...u1, ...u2, ...u3);
             // Vector edges for cross product
             const v1 = { x: p2.x - p1.x, y: p2.y - p1.y, z: p2.z - p1.z };
             const v2 = { x: p3.x - p1.x, y: p3.y - p1.y, z: p3.z - p1.z };
@@ -999,8 +1014,10 @@ export class CNodeDisplayTrack extends CNode3DGroup {
             const g2 = groundPoints[i + 1];
 
             // Two triangles form one quad
-            addTriangle(p1, p2, g2);
-            addTriangle(p1, g2, g1);
+            const u1 = [lineDistances[i], 0];
+            const u2 = [lineDistances[i + 1], lineDistances[i + 1] - lineDistances[i]];
+            addTriangle(p1, p2, g2, u1, u2, u2);
+            addTriangle(p1, g2, g1, u1, u2, u1);
         }
 
         if (this.showCap) {
@@ -1018,12 +1035,15 @@ export class CNodeDisplayTrack extends CNode3DGroup {
         geometry.setAttribute("position", new THREE.BufferAttribute(vFloat, 3));
         geometry.setAttribute("normal", new THREE.BufferAttribute(nFloat, 3));
         geometry.setAttribute("uv", new THREE.BufferAttribute(uvFloat, 2));
+        if (screenSpacedLines) {
+            geometry.setAttribute("wallU", new THREE.BufferAttribute(new Float32Array(wallUs), 2));
+        }
 
         geometry.computeBoundingSphere();
 
         // Make a material for the semi-transparent fill
         const FillMaterial = this.showCap ? THREE.MeshPhongMaterial : THREE.MeshBasicMaterial;
-        const mat = patchMaterialForLinearOutput(new FillMaterial({
+        const mat = new FillMaterial({
             color: polyColor,
             transparent: true,
             opacity: polyOpacity,  // TODO - make this a parameter
@@ -1032,12 +1052,28 @@ export class CNodeDisplayTrack extends CNode3DGroup {
             // don't write to depth buffer
             depthWrite: this.depthWrite,
             forceSinglePass: !this.showCap,
-        }));
+        });
+        if (screenSpacedLines) {
+            installTrackWallLines(mat, {
+                color: new Color(lineColor),
+                opacity: lineOpacity,
+                spacing: this.wallLineSpacing,
+                length: lineDistances.at(-1),
+                pixelScale: displayPixelScale,
+            });
+        }
+        patchMaterialForLinearOutput(mat);
 
         this.trackWall = new THREE.Mesh(geometry, mat);
         // Shift by midpoint
         this.trackWall.position.set(mid.x, mid.y, mid.z);
         this.group.add(this.trackWall);
+
+        // The wall material draws its own lines.
+        if (screenSpacedLines) {
+            this.propagateLayerMask();
+            return;
+        }
 
         //
         // Now create the vertical edges (the non-opaque vertical lines).
