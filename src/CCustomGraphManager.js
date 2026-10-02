@@ -24,8 +24,9 @@ import {viewMenuKey} from "./ViewUIBarMenus";
 import {CNodeCustomGraphView} from "./nodes/CNodeCustomGraphView";
 import {CNodeDisplayLOS} from "./nodes/CNodeDisplayLOS";
 import {shortObjectName} from "./nodes/CNode3DObject";
-import {trackGForce, trackHeading} from "./trackUtils";
-import {getLocalUpVector} from "./SphericalMath";
+import {altitudeHAE, getLocalUpVector, getLocalNorthVector, getLocalEastVector} from "./SphericalMath";
+import {objectFocusTrack} from "./CameraFocusUI";
+import {graphPosition, graphVelocity, graphGroundSpeed, graphVerticalSpeed, graphSlantRange, graphHeading, graphAcceleration} from "./CustomGraphMeasurements";
 import {getCelestialDirection} from "./CelestialMath";
 import {getHorizonExtractor} from "./CHorizonExtractor";
 import {getObjectTracker} from "./CObjectTracking";
@@ -34,7 +35,7 @@ import {getMotionAnalyzerForTesting} from "./CMotionAnalysisUI";
 const RAD2DEG = 180 / Math.PI;
 
 // One custom graph: a view + a subfolder of controls + the selected series tokens.
-class CCustomGraph {
+export class CCustomGraph {
     constructor(id, view) {
         this.id = id;
         this.view = view;
@@ -49,8 +50,10 @@ class CCustomGraph {
         this._storedY1 = "None";
         this._storedY2 = "None";
         this._storedY3 = "None";
-        // GUI-bound display fields (may fall back to None/frames while invalid).
-        this._gs = { x: "frames", y1: "None", y2: "None", y3: "None" };
+        // GUI fields retain saved selections, including unavailable sources.
+        this._entities = {x: "timeline", y1: "None", y2: "None", y3: "None"};
+        this._gs = {x: "frames", y1: "None", y2: "None", y3: "None"};
+        this._axisControls = [];
         this._xCtrl = this._y1Ctrl = this._y2Ctrl = this._y3Ctrl = this._removeCtrl = null;
         this._tabMirrorKeys = new Set();
         this._lastSeriesSig = null;
@@ -62,40 +65,53 @@ class CCustomGraph {
         return (this.title && this.title.length) ? this.title : ("Graph " + this.id);
     }
 
-    // Rebuild the X/Y1/Y2/Y3 selectors (+ trailing Remove button) from the
-    // current registry contents. Preserves the stored tokens.
+    // Entity selectors keep the measurement menus short. Persisted tokens are
+    // independent from each control, including while a source is unavailable.
     rebuildDropdowns() {
-        const f = this.folder;
-        if (!f) return;
-        for (const ctrl of [this._xCtrl, this._y1Ctrl, this._y2Ctrl, this._y3Ctrl, this._removeCtrl]) {
-            if (ctrl) ctrl.destroy();
+        const folder = this.folder;
+        if (!folder) return;
+        for (const control of this._axisControls) control.destroy();
+        this._axisControls = [];
+        this._removeCtrl?.destroy();
+        for (const axis of ["x", "y1", "y2", "y3"]) {
+            const storedProperty = "_stored" + axis.toUpperCase();
+            const token = this[storedProperty];
+            const entity = token !== "None" ? GraphDataManager.entityForSeries(token) : this._entities[axis];
+            this._entities[axis] = entity;
+            const entities = GraphDataManager.entities(axis !== "x", axis === "x");
+            if (!Object.values(entities).includes(entity)) entities[`${entity} (unavailable)`] = entity;
+            const measurements = GraphDataManager.measurements(entity, axis !== "x");
+            if (!Object.values(measurements).includes(token)) {
+                measurements[`${GraphDataManager.get(token)?.measurement ?? token.split(".").pop()} (unavailable)`] = token;
+            }
+            this._gs[axis] = token;
+            const axisLabel = t("graphControls." + (axis === "x" ? "xAxis" : axis + "Axis"));
+            const entityControl = folder.add(this._entities, axis, entities).name(axisLabel.replace(/ (\(.+\))$/, " entity $1") + (axis === "x" ? " entity" : ""))
+                .tooltip("Choose the object, track or analysis to measure")
+                .onChange(value => {
+                    const previous = GraphDataManager.get(this[storedProperty]);
+                    const options = GraphDataManager.measurements(value, axis !== "x");
+                    const keys = Object.values(options).filter(key => key !== "None");
+                    const previousMetric = previous?.measurementId ?? this[storedProperty].split(".").pop();
+                    this[storedProperty] = value === "None" ? "None" :
+                        keys.find(key => (GraphDataManager.get(key)?.measurementId ?? key.split(".").pop()) === previousMetric)
+                        ?? keys.find(key => key.endsWith(".speed")) ?? keys[0] ?? (axis === "x" ? "frames" : "None");
+                    this.rebuildDropdowns();
+                    this.updateGraph(true);
+                });
+            const measurementControl = folder.add(this._gs, axis, measurements).name(axis.toUpperCase() + " measure")
+                .tooltip("Choose a measurement for this axis; None hides this series")
+                .onChange(value => {
+                    // Changing one axis must never clear an unavailable selection
+                    // on a different axis.
+                    this[storedProperty] = value;
+                    this.updateGraph(true);
+                });
+            if (entity === "None") measurementControl.disable();
+            this._axisControls.push(entityControl, measurementControl);
+            this["_" + axis + "Ctrl"] = measurementControl;
         }
-
-        const xOptions = GraphDataManager.optionsX();
-        const yOptions = GraphDataManager.optionsY(true);
-        const validX = new Set(Object.values(xOptions));
-        const validY = new Set(Object.values(yOptions));
-
-        // Display fields validate against current options, but the stored tokens
-        // are NEVER overwritten here (they survive transient source absence).
-        this._gs.x  = validX.has(this._storedX)  ? this._storedX  : "frames";
-        this._gs.y1 = validY.has(this._storedY1) ? this._storedY1 : "None";
-        this._gs.y2 = validY.has(this._storedY2) ? this._storedY2 : "None";
-        this._gs.y3 = validY.has(this._storedY3) ? this._storedY3 : "None";
-
-        const onChange = () => {
-            this._storedX  = this._gs.x;
-            this._storedY1 = this._gs.y1;
-            this._storedY2 = this._gs.y2;
-            this._storedY3 = this._gs.y3;
-            this.updateGraph(true);
-        };
-
-        this._xCtrl  = f.add(this._gs, "x",  xOptions).name(t("graphControls.xAxis")).onChange(onChange);
-        this._y1Ctrl = f.add(this._gs, "y1", yOptions).name(t("graphControls.y1Axis")).onChange(onChange);
-        this._y2Ctrl = f.add(this._gs, "y2", yOptions).name(t("graphControls.y2Axis")).onChange(onChange);
-        this._y3Ctrl = f.add(this._gs, "y3", yOptions).name(t("graphControls.y3Axis")).onChange(onChange);
-        this._removeCtrl = f.add({ remove: () => CustomGraphManager.removeGraph(this.id) }, 'remove')
+        this._removeCtrl = folder.add({remove: () => CustomGraphManager.removeGraph(this.id)}, "remove")
             .name(t("graphControls.remove"));
         this.mirrorControlsToTabMenu();
     }
@@ -104,7 +120,8 @@ class CCustomGraph {
         const menu = this.view?.tabMenu;
         if (!menu || !this.folder) return;
         for (const controller of this.folder.controllers) {
-            const key = viewMenuKey(this.id, `graph:${controller.property}`);
+            const kind = controller.object === this._entities ? "entity:" : "";
+            const key = viewMenuKey(this.id, `graph:${kind}${controller.property}`);
             // Publishing replacement dropdowns rebuilds their existing mirrors.
             // Subscribe once so refreshing the sources never duplicates rows.
             controller.shareAs(key);
@@ -184,8 +201,10 @@ class CCustomGraph {
                 data.push({ x: xv, y: yv, frame: fr });
             }
             if (data.length === 0) return;
-            const s = { data, label: desc ? desc.label : key, yAxis };
-            if (desc && Number.isFinite(desc.min) && Number.isFinite(desc.max)) {
+            const hasFixedBounds = desc && Number.isFinite(desc.min) && Number.isFinite(desc.max);
+            const s = {data, label: GraphDataManager.seriesLabel(key), yAxis,
+                minimumRange: hasFixedBounds ? undefined : desc?.minimumRange};
+            if (hasFixedBounds) {
                 s.fixedMin = desc.min;
                 s.fixedMax = desc.max;
             } else if (xWindow && Number.isFinite(fullMin)) {
@@ -206,25 +225,42 @@ class CCustomGraph {
         // source exists in the menu but its analysis has not been computed yet).
         const anySelected = [this._storedY1, this._storedY2, this._storedY3].some(k => k && k !== "None");
         this.view.emptyMessage = series.length === 0
-            ? (anySelected ? "No data yet for the selected series — run its analysis/track first"
-                           : "Select a Y1, Y2 or Y3 series to plot")
+            ? (anySelected ? "No data for the selected measurement — restore its source or run its analysis"
+                           : "Select an entity and measurement for Y1, Y2 or Y3")
             : null;
 
+        const xDescriptor = GraphDataManager.get(this._storedX);
+        const yDescriptor = GraphDataManager.get(this._storedY1);
+        const spatialMetrics = new Set(["x", "y", "xSmooth", "ySmooth", "dx", "dy"]);
+        this.view.equalAspect = !!(xDescriptor && yDescriptor
+            && GraphDataManager.entityForSeries(this._storedX) === GraphDataManager.entityForSeries(this._storedY1)
+            && ["pointTrack", "analyzeMotion", "cameraMotion"].includes(xDescriptor.entity)
+            && spatialMetrics.has(xDescriptor.measurementId) && spatialMetrics.has(yDescriptor.measurementId)
+            && xDescriptor.units === yDescriptor.units);
+
+        // Include labels and axis mode, and compare every sampled X/Y value:
+        // editing an interior keyframe must refresh even when the endpoints stay.
         // Include the frame range so changing the in/out points re-plots in A→B mode.
-        const sig = "x:" + this._storedX + ":" + fMin + "-" + fMax + "|" + series.map(s => {
+        const sig = "x:" + this._storedX + ":" + GraphDataManager.seriesLabel(this._storedX) + ":" + this.view.equalAspect + ":" + this.view.emptyMessage + ":" + fMin + "-" + fMax + "|" + series.map(s => {
             const n = s.data.length;
             const mid = s.data[n >> 1];
-            return `${s.yAxis}:${s.label}:${n}:${s.data[0]?.y ?? ''}:${mid?.y ?? ''}:${s.data[n - 1]?.y ?? ''}:${s.fixedMin ?? ''}:${s.fixedMax ?? ''}`;
+            return `${s.yAxis}:${s.label}:${n}:${s.data[0]?.y ?? ''}:${mid?.y ?? ''}:${s.data[n - 1]?.y ?? ''}:${s.fixedMin ?? ''}:${s.fixedMax ?? ''}:${s.minimumRange ?? ''}`;
         }).join("||");
-        if (!force && sig === this._lastSeriesSig) return;
+        const sameData = this._lastSeriesData?.length === series.length && series.every((s, index) => {
+            const old = this._lastSeriesData[index].data;
+            return old.length === s.data.length && s.data.every((p, i) =>
+                p.frame === old[i].frame && p.x === old[i].x && p.y === old[i].y);
+        });
+        if (!force && sig === this._lastSeriesSig && sameData) return;
         this._lastSeriesSig = sig;
+        this._lastSeriesData = series;
 
         const frameX = (this._storedX === "frames" || this._storedX === "framesAB" || !this._storedX);
         this.view.isFrameX = frameX;
         this.view.fixedXRange = frameX ? xWindow : null;
         this.view.xLabel = frameX
             ? (ab ? "Frame (A→B)" : (this.lastSeconds > 0 ? `Frame (last ${this.lastSeconds}s)` : "Frame"))
-            : (GraphDataManager.get(this._storedX)?.label ?? "");
+            : GraphDataManager.seriesLabel(this._storedX);
         this.view.setSeries(series);
     }
 
@@ -238,6 +274,10 @@ class CCustomGraph {
                 ? this.view.dark : undefined,
             showLegend: this.view ? this.view.showLegend : true,
             show: this.view ? this.view.visible : true,
+            xEntity: this._entities.x,
+            y1Entity: this._entities.y1,
+            y2Entity: this._entities.y2,
+            y3Entity: this._entities.y3,
             xSeries: this._storedX,
             y1Series: this._storedY1,
             y2Series: this._storedY2,
@@ -247,7 +287,7 @@ class CCustomGraph {
     }
 }
 
-class CCustomGraphManager {
+export class CCustomGraphManager {
     constructor() {
         this.list = {};                  // id -> CCustomGraph
         this._nextId = 0;
@@ -255,6 +295,8 @@ class CCustomGraphManager {
         this._osdNameSig = undefined;    // membership signature for OSD keys
         this._trackIdSig = undefined;    // membership signature for track keys
         this._tracksChangedListener = null;
+        this._addGraphForEntityListener = null;
+        this._extraTrackIds = new Set();
         this._lastSourceRefresh = 0;
     }
 
@@ -272,6 +314,13 @@ class CCustomGraphManager {
             setRenderOne();
         };
         EventManager.addEventListener("tracksChanged", this._tracksChangedListener);
+        if (this._addGraphForEntityListener) {
+            EventManager.removeEventListener("addCustomGraphForEntity", this._addGraphForEntityListener);
+        }
+        this._addGraphForEntityListener = payload => {
+            if (payload?.entityId) this.addGraphForEntity(payload.entityId, {title: payload.title});
+        };
+        EventManager.addEventListener("addCustomGraphForEntity", this._addGraphForEntityListener);
 
         this.registerStaticSeries();
         this.refreshSources(true);
@@ -294,6 +343,8 @@ class CCustomGraphManager {
         this._osdArrays = {};
         this._osdNameSig = undefined;
         this._trackIdSig = undefined;
+        this._objectIdSig = undefined;
+        this._extraTrackIds.clear();
         this._losSig = undefined;
         this._footballAvail = undefined;
         this._sunDirArr = null;
@@ -301,6 +352,10 @@ class CCustomGraphManager {
         if (this._tracksChangedListener) {
             EventManager.removeEventListener("tracksChanged", this._tracksChangedListener);
             this._tracksChangedListener = null;
+        }
+        if (this._addGraphForEntityListener) {
+            EventManager.removeEventListener("addCustomGraphForEntity", this._addGraphForEntityListener);
+            this._addGraphForEntityListener = null;
         }
         // Drop our stale button reference; the controller itself is destroyed by
         // the non-perm menu teardown (menuBar.destroy(false)).
@@ -342,6 +397,7 @@ class CCustomGraphManager {
             top,
             width: 0.4,
             height: 0.4,
+            preserveGaps: true, equalAspect: false,
             draggable: true, resizable: true, freeAspect: true, shiftDrag: false,
         });
 
@@ -351,6 +407,17 @@ class CCustomGraphManager {
         graph._storedY1 = config.y1Series ?? "None";
         graph._storedY2 = config.y2Series ?? "None";
         graph._storedY3 = config.y3Series ?? "None";
+        for (const axis of ["x", "y1", "y2", "y3"]) {
+            graph._entities[axis] = config[axis + "Entity"] ?? GraphDataManager.entityForSeries(graph["_stored" + axis.toUpperCase()]);
+        }
+        // A saved standalone track is not necessarily in TrackManager. Retain
+        // its entity even when all its measurements were set to None.
+        for (const entity of Object.values(graph._entities)) {
+            if (entity?.startsWith("node.")) this._extraTrackIds.add(entity.slice(5));
+        }
+        for (const key of [graph._storedX, graph._storedY1, graph._storedY2, graph._storedY3]) {
+            if (key?.startsWith("node.")) this._extraTrackIds.add(key.slice(5, key.lastIndexOf(".")));
+        }
         graph.lastSeconds = config.lastSeconds ?? 0;
         view.title = graph.title;
 
@@ -396,6 +463,51 @@ class CCustomGraphManager {
         return graph;
     }
 
+    // Used by track and object menus. Resolve the live node each sample so
+    // changing an object's position controller or reloading a track stays live.
+    addGraphForEntity(nodeOrId, {title} = {}) {
+        const id = typeof nodeOrId === "string" ? nodeOrId : nodeOrId?.id;
+        const node = NodeMan.get(id, false);
+        let entity;
+        let name = title ?? node?.displayName ?? node?.menuName ?? id;
+        const imported = TrackManager.get(id, false) ?? TrackManager.trackForObject?.(id);
+        if (imported?.trackNode) {
+            entity = "track." + imported.trackID;
+            name = title ?? imported.displayName ?? imported.menuText ?? name;
+        } else {
+            TrackManager.iterate((trackId, ob) => {
+                if (!entity && ob.trackNode?.id === id) entity = "track." + trackId;
+            });
+            if (!entity && node?.exportTrackNode) entity = "object." + id;
+            if (!entity) {
+                // A displayed camera/traverse track may already drive an object
+                // with the same measurements. Reuse that entity instead of
+                // adding a second copy of every series under a node token.
+                NodeMan.iterate((objectId, object) => {
+                    if (entity || !object.exportTrackNode || TrackManager.trackForObject?.(objectId)) return;
+                    if (objectFocusTrack(object)?.id === id) {
+                        entity = "object." + objectId;
+                        name = title ?? object.displayName ?? object.menuName ?? name;
+                    }
+                });
+            }
+            if (!entity && node?.p) {
+                entity = "node." + id;
+                this._extraTrackIds.add(id);
+            }
+        }
+        if (!entity) return null;
+        this.refreshSources(true);
+        const graph = this.addGraph({
+            title: `${shortObjectName(name)} — Speed & altitude`,
+            y1Series: entity + ".speed", y2Series: entity + ".altitude",
+        });
+        graph.folder.open();
+        graph.view.tabMenu?.open();
+        graph.view.uiBar?.onMenuStateChange?.();
+        return graph;
+    }
+
     removeGraph(id) {
         const g = this.list[id];
         if (!g) return;
@@ -434,60 +546,79 @@ class CCustomGraphManager {
     registerStaticSeries() {
         const G = GraphDataManager;
 
+        const originalRegister = G.register.bind(G);
+        const register = (key, descriptor) => {
+            descriptor.measurement = descriptor.label
+                .replace(/^(CamMotion|Point Track|Analyze Motion|Horizon) /, "");
+            descriptor.measurementId = key.split(".").pop();
+            originalRegister(key, descriptor);
+        };
+
         // Camera Motion: cumulative + per-frame rotation, and image translation.
-        G.register("cameraMotion.rotCumulative", {
-            label: "CamMotion Rotation (cumulative)", group: "Camera Motion", units: "deg",
+        register("cameraMotion.rotCumulative", {
+            label: "CamMotion Rotation (cumulative)", group: "Camera Motion", entity: "cameraMotion", entityLabel: "CamMotion",
+            available: () => !!(Globals.cameraMotionData?.length || NodeMan.get("cameraMotionTrack", false)?.array?.length), units: "deg",
             getValue: f => {
                 const a = NodeMan.get("cameraMotionTrack", false)?.array?.[f]?.imageRot;
                 return (a != null) ? a * RAD2DEG : NaN;
             },
         });
-        G.register("cameraMotion.rotPerFrame", {
-            label: "CamMotion Rotation (per-frame)", group: "Camera Motion", units: "deg",
+        register("cameraMotion.rotPerFrame", {
+            label: "CamMotion Rotation (per-frame)", group: "Camera Motion", entity: "cameraMotion", entityLabel: "CamMotion",
+            available: () => !!(Globals.cameraMotionData?.length || NodeMan.get("cameraMotionTrack", false)?.array?.length), units: "deg",
             getValue: f => { const mo = Globals.cameraMotionData?.[f]; return mo ? mo.theta * RAD2DEG : NaN; },
         });
-        G.register("cameraMotion.dx", {
-            label: "CamMotion X", group: "Camera Motion", units: "px",
+        register("cameraMotion.dx", {
+            label: "CamMotion X", group: "Camera Motion", entity: "cameraMotion", entityLabel: "CamMotion",
+            available: () => !!(Globals.cameraMotionData?.length || NodeMan.get("cameraMotionTrack", false)?.array?.length), units: "px",
             getValue: f => Globals.cameraMotionData?.[f]?.dx ?? NaN,
         });
-        G.register("cameraMotion.dy", {
-            label: "CamMotion Y", group: "Camera Motion", units: "px",
+        register("cameraMotion.dy", {
+            label: "CamMotion Y", group: "Camera Motion", entity: "cameraMotion", entityLabel: "CamMotion",
+            available: () => !!(Globals.cameraMotionData?.length || NodeMan.get("cameraMotionTrack", false)?.array?.length), units: "px",
             getValue: f => Globals.cameraMotionData?.[f]?.dy ?? NaN,
         });
 
         // Point Track (single object tracker).
-        G.register("pointTrack.x", {
-            label: "Point Track X", group: "Point Track", units: "px",
+        register("pointTrack.x", {
+            label: "Point Track X", group: "Point Track", entity: "pointTrack", entityLabel: "Point Track",
+            available: () => !!(getObjectTracker()?.enabled || getObjectTracker()?.trackedPositions?.size), units: "px",
             getValue: f => getObjectTracker()?.getInterpolatedPosition(f)?.x ?? NaN,
         });
-        G.register("pointTrack.y", {
-            label: "Point Track Y", group: "Point Track", units: "px",
+        register("pointTrack.y", {
+            label: "Point Track Y", group: "Point Track", entity: "pointTrack", entityLabel: "Point Track",
+            available: () => !!(getObjectTracker()?.enabled || getObjectTracker()?.trackedPositions?.size), units: "px",
             getValue: f => getObjectTracker()?.getInterpolatedPosition(f)?.y ?? NaN,
         });
 
         // Analyze Motion: raw consensus + smoothed direction. Sparse by design
         // (only analyzed frames are populated; gaps are skipped when plotting).
         const am = () => getMotionAnalyzerForTesting();
-        G.register("analyzeMotion.x", {
-            label: "Analyze Motion X (raw)", group: "Analyze Motion", units: "px",
+        register("analyzeMotion.x", {
+            label: "Analyze Motion X (raw)", group: "Analyze Motion", entity: "analyzeMotion", entityLabel: "Analyze Motion",
+            available: () => !!am()?.resultCache?.size, units: "px",
             getValue: f => am()?.resultCache.get(f)?.flowData?.consensus?.dx ?? NaN,
         });
-        G.register("analyzeMotion.y", {
-            label: "Analyze Motion Y (raw)", group: "Analyze Motion", units: "px",
+        register("analyzeMotion.y", {
+            label: "Analyze Motion Y (raw)", group: "Analyze Motion", entity: "analyzeMotion", entityLabel: "Analyze Motion",
+            available: () => !!am()?.resultCache?.size, units: "px",
             getValue: f => am()?.resultCache.get(f)?.flowData?.consensus?.dy ?? NaN,
         });
-        G.register("analyzeMotion.xSmooth", {
-            label: "Analyze Motion X (smoothed)", group: "Analyze Motion", units: "px",
+        register("analyzeMotion.xSmooth", {
+            label: "Analyze Motion X (smoothed)", group: "Analyze Motion", entity: "analyzeMotion", entityLabel: "Analyze Motion",
+            available: () => !!am()?.resultCache?.size, units: "px",
             getValue: f => am()?.resultCache.get(f)?.smoothedDirection?.x ?? NaN,
         });
-        G.register("analyzeMotion.ySmooth", {
-            label: "Analyze Motion Y (smoothed)", group: "Analyze Motion", units: "px",
+        register("analyzeMotion.ySmooth", {
+            label: "Analyze Motion Y (smoothed)", group: "Analyze Motion", entity: "analyzeMotion", entityLabel: "Analyze Motion",
+            available: () => !!am()?.resultCache?.size, units: "px",
             getValue: f => am()?.resultCache.get(f)?.smoothedDirection?.y ?? NaN,
         });
 
         // Horizon Extractor: raw horizon angle (CW-positive degrees).
-        G.register("horizon.angle", {
-            label: "Horizon Angle", group: "Horizon", units: "deg",
+        register("horizon.angle", {
+            label: "Horizon Angle", group: "Horizon", entity: "horizon", entityLabel: "Horizon",
+            available: () => !!(getHorizonExtractor()?.enabled || getHorizonExtractor()?.keyframes?.size), units: "deg",
             getValue: f => getHorizonExtractor()?.getHorizonAt(f)?.angle ?? NaN,
         });
     }
@@ -500,9 +631,11 @@ class CCustomGraphManager {
         if (!force && now - this._lastSourceRefresh < 150) return;
         this._lastSourceRefresh = now;
         this.reregisterTracks();
+        this.reregisterObjects();
         this.reregisterOSD();
         this.reregisterLOS();
         this.reregisterFootball();
+        GraphDataManager.refreshAvailability();
     }
 
     // Ball g-force (football feature). Registered only while the ball is
@@ -518,7 +651,7 @@ class CCustomGraphManager {
         GraphDataManager.unregisterGroup("football.");
         if (avail) {
             GraphDataManager.register("football.gforce", {
-                label: "Ball G-Force", group: "Football", units: "g",
+                label: "Ball G-Force", measurement: "G-force", entity: "football", entityLabel: "Football", group: "Football", units: "g",
                 getValue: f => NodeMan.get("footballTrack", false)?.gForce?.[f] ?? NaN,
             });
         }
@@ -546,15 +679,15 @@ class CCustomGraphManager {
             const tag = multi ? " [" + node.id + "]" : "";
             const los = node.in.LOS;
             GraphDataManager.register("sunLOS." + node.id + ".angle", {
-                label: "Sun-LOS angle" + tag, group: "Sun", units: "deg",
+                label: "Sun-LOS angle" + tag, measurement: "LOS angle", entity: "sunLOS." + node.id, entityLabel: "Sun" + tag, group: "Sun", units: "deg",
                 getValue: f => this._sunLOSAngle(los, f, "total"),
             });
             GraphDataManager.register("sunLOS." + node.id + ".up", {
-                label: "Sun-LOS up" + tag, group: "Sun", units: "deg",
+                label: "Sun-LOS up" + tag, measurement: "LOS up", entity: "sunLOS." + node.id, entityLabel: "Sun" + tag, group: "Sun", units: "deg",
                 getValue: f => this._sunLOSAngle(los, f, "up"),
             });
             GraphDataManager.register("sunLOS." + node.id + ".left", {
-                label: "Sun-LOS left" + tag, group: "Sun", units: "deg",
+                label: "Sun-LOS left" + tag, measurement: "LOS left", entity: "sunLOS." + node.id, entityLabel: "Sun" + tag, group: "Sun", units: "deg",
                 getValue: f => this._sunLOSAngle(los, f, "left"),
             });
         }
@@ -599,45 +732,82 @@ class CCustomGraphManager {
         return Math.atan2(S.dot(camUp), S.dot(F)) * 180 / Math.PI;
     }
 
+    _measurementUnits() {
+        return {
+            speed: Units?.speedUnits ?? "m/s",
+            altitude: Units?.smallUnitsAbbrev ?? "m",
+            range: Units?.bigUnitsAbbrev ?? "m",
+            vertical: Units?.vsUnits ?? "m/s",
+        };
+    }
+
+    _lookCameraSource() {
+        const camera = NodeMan.get("lookCamera", false);
+        return camera ? objectFocusTrack(camera) : null;
+    }
+
+    _registerPositionSeries(entity, name, resolveSource) {
+        const units = this._measurementUnits();
+        const context = () => ({frames: Sit.frames, fps: Sit.fps, simSpeed: Sit.simSpeed ?? 1});
+        const register = (metric, measurement, unit, getValue, extra = {}) => GraphDataManager.register(entity + "." + metric, {
+            entity, entityLabel: name, group: "Tracks", measurementId: metric,
+            measurement, label: name + " " + measurement.toLowerCase(), units: unit, getValue, ...extra,
+        });
+        register("speed", "Ground speed", units.speed, f => graphGroundSpeed(resolveSource(), f, context(), getLocalUpVector) * (Units?.m2Speed ?? 1), {minimumRange: 10});
+        register("altitude", "Altitude HAE", units.altitude, f => {
+            const p = graphPosition(resolveSource(), f);
+            return p ? altitudeHAE(p) * (Units?.m2Small ?? 1) : NaN;
+        }, {minimumRange: 10});
+        register("speed3D", "3D speed", units.speed, f => graphVelocity(resolveSource(), f, context())?.velocity.length() * (Units?.m2Speed ?? 1), {minimumRange: 10});
+        register("verticalSpeed", "Vertical speed", units.vertical, f => graphVerticalSpeed(resolveSource(), f, context(), altitudeHAE) / (Units?.vs2mps ?? 1), {minimumRange: 10});
+        register("heading", "Heading", "deg", f => graphHeading(resolveSource(), f, context(),
+            getLocalUpVector, getLocalNorthVector, getLocalEastVector), {min: -180, max: 180});
+        register("gforce", "Acceleration", "g", f => graphAcceleration(resolveSource(), f, context()));
+        if (NodeMan.exists("lookCamera")) {
+            register("slantRange", "Slant range to look camera", units.range,
+                f => graphSlantRange(resolveSource(), this._lookCameraSource(), f) * (Units?.m2Big ?? 1));
+        }
+    }
+
     reregisterTracks() {
         const tracks = [];
         TrackManager.iterate((id, ob) => {
             if (!ob.trackNode) return;
-            const sn = shortObjectName(ob.displayName ?? ob.displayTargetSphere?.menuName
+            const name = shortObjectName(ob.displayName ?? ob.displayTargetSphere?.menuName
                 ?? ob.menuText ?? ob.trackNode.shortName ?? id);
-            tracks.push({id, node: ob.trackNode, sn});
+            tracks.push({id, name});
         });
-        // Objects may finish loading after the track sources are registered.
-        // Refresh labels too, without changing the serialized series keys.
-        const sig = JSON.stringify(tracks.map(({id, sn}) => [id, sn]));
+        const sig = JSON.stringify([tracks, this._measurementUnits(), NodeMan.exists("lookCamera")]);
         if (sig === this._trackIdSig) return;
         this._trackIdSig = sig;
-
         GraphDataManager.unregisterGroup("track.");
-        for (const {id, node, sn} of tracks) {
-            GraphDataManager.register("track." + id + ".heading", {
-                label: sn + " heading", group: "Tracks", units: "deg", min: -180, max: 180,
-                getValue: f => { const h = trackHeading(node, f); return Number.isFinite(h) ? h : NaN; },
+        for (const {id, name} of tracks) {
+            this._registerPositionSeries("track." + id, name, () => TrackManager.get(id, false)?.trackNode);
+        }
+    }
+
+    reregisterObjects() {
+        const objects = [];
+        NodeMan.iterate((id, node) => {
+            if (!node.exportTrackNode || TrackManager.trackForObject?.(id)) return;
+            objects.push({id, name: shortObjectName(node.displayName ?? node.menuName ?? id)});
+        });
+        const extraTracks = [...this._extraTrackIds].filter(id => NodeMan.exists(id));
+        const sig = JSON.stringify([objects, extraTracks, this._measurementUnits(), NodeMan.exists("lookCamera")]);
+        if (sig === this._objectIdSig) return;
+        this._objectIdSig = sig;
+        GraphDataManager.unregisterGroup("object.");
+        GraphDataManager.unregisterGroup("node.");
+        for (const {id, name} of objects) {
+            this._registerPositionSeries("object." + id, name, () => {
+                const object = NodeMan.get(id, false);
+                return object ? objectFocusTrack(object) : null;
             });
-            GraphDataManager.register("track." + id + ".speed", {
-                label: sn + " speed", group: "Tracks", units: Units ? Units.speedUnits : "m/s",
-                getValue: f => {
-                    let ff = f;
-                    if (ff < 1) ff = 1;
-                    if (ff > Sit.frames - 1) ff = Sit.frames - 1;
-                    const p1 = node.p(ff);
-                    const p0 = node.p(ff - 1);
-                    if (!p0 || !p1) return NaN;
-                    const v = p1.clone().sub(p0);
-                    const up = getLocalUpVector(p1);
-                    v.sub(up.clone().multiplyScalar(v.dot(up)));   // ground speed
-                    return v.length() * Sit.fps / (Sit.simSpeed ?? 1) * (Units ? Units.m2Speed : 1);
-                },
-            });
-            GraphDataManager.register("track." + id + ".gforce", {
-                label: sn + " g-force", group: "Tracks", units: "g",
-                getValue: f => trackGForce(TrackManager.get(id, false)?.trackNode, f),
-            });
+        }
+        for (const id of extraTracks) {
+            const node = NodeMan.get(id, false);
+            this._registerPositionSeries("node." + id, shortObjectName(node.displayName ?? node.menuName ?? id),
+                () => NodeMan.get(id, false));
         }
     }
 
@@ -663,7 +833,7 @@ class CCustomGraphManager {
         GraphDataManager.unregisterGroup("osd.");
         for (const name of names) {
             GraphDataManager.register("osd." + name, {
-                label: "OSD-" + name, group: "OSD",
+                label: "OSD-" + name, measurement: name, entity: "osd", entityLabel: "OSD", group: "OSD",
                 getValue: f => this._osdArrays[name]?.[f] ?? NaN,
             });
         }

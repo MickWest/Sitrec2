@@ -52,6 +52,10 @@ export class CNodeCustomGraphView extends CNodeOSDGraphView {
         // {min, max} to pin the frame-X axis to (rolling-window mode), or
         // null to autoscale the axis to the plotted data. Set by the manager.
         this.fixedXRange = null;
+        // The custom graph manager opts in only for compatible spatial pairs.
+        // Existing specialized graph subclasses retain their prior behavior.
+        this.equalAspect = v.equalAspect ?? true;
+        this.preserveGaps = v.preserveGaps ?? false;
         // Sized-scatter mode (setScatterData): the graph plots free-standing
         // {x, y, size} points instead of per-frame series — no frame coupling,
         // no equal-aspect forcing, dot AREA carries the third column.
@@ -157,6 +161,26 @@ export class CNodeCustomGraphView extends CNodeOSDGraphView {
         const x = margin + (graphX - this.minX) / (this.maxX - this.minX) * graphWidth;
         const y = margin + (maxY - graphY) / (maxY - minY) * graphHeight;
         return { x, y };
+    }
+
+    interpolateAtFrame(points, frame) {
+        if (!this.preserveGaps) return super.interpolateAtFrame(points, frame);
+        const exact = points.find(point => point.frame === frame);
+        if (exact) return {x: exact.x, y: exact.y};
+        let before, after;
+        for (const point of points) {
+            if (point.frame < frame && (!before || point.frame > before.frame)) before = point;
+            if (point.frame > frame && (!after || point.frame < after.frame)) after = point;
+        }
+        if (!before || !after || after.frame - before.frame !== 1) return null;
+        const fraction = frame - before.frame;
+        return {x: before.x + fraction * (after.x - before.x),
+            y: before.y + fraction * (after.y - before.y)};
+    }
+
+    interpolateSeriesAtFrame(series, frame) {
+        return this.preserveGaps ? this.interpolateAtFrame(series.data, frame)
+            : super.interpolateSeriesAtFrame(series, frame);
     }
 
     // Crosshair helpers (value-X drag mode) need 3-axis awareness.
@@ -434,9 +458,13 @@ export class CNodeCustomGraphView extends CNodeOSDGraphView {
         let allMinX = Infinity, allMaxX = -Infinity;
         const yB = { 1: { min: Infinity, max: -Infinity }, 2: { min: Infinity, max: -Infinity }, 3: { min: Infinity, max: -Infinity } };
         const fixed = { 1: null, 2: null, 3: null };
+        const minimumRange = { 1: 0, 2: 0, 3: 0 };
 
         for (const s of this.series) {
             const axis = s.yAxis || 1;
+            if (Number.isFinite(s.minimumRange)) {
+                minimumRange[axis] = Math.max(minimumRange[axis], s.minimumRange);
+            }
             if (Number.isFinite(s.fixedMin) && Number.isFinite(s.fixedMax)) {
                 fixed[axis] = { min: s.fixedMin, max: s.fixedMax };
             }
@@ -457,7 +485,14 @@ export class CNodeCustomGraphView extends CNodeOSDGraphView {
             const p = (b.max - b.min) * 0.05;
             return { min: b.min - p, max: b.max + p };
         };
-        const resolve = (axis, has) => fixed[axis] ? fixed[axis] : (has ? pad(yB[axis]) : { min: 0, max: 1 });
+        const resolve = (axis, has) => {
+            const bounds = fixed[axis] ?? (has ? pad(yB[axis]) : {min: 0, max: 1});
+            if (has && bounds.max - bounds.min < minimumRange[axis]) {
+                const middle = bounds.min + (bounds.max - bounds.min) / 2;
+                return {min: middle - minimumRange[axis] / 2, max: middle + minimumRange[axis] / 2};
+            }
+            return bounds;
+        };
 
         const hasY1 = this.series.some(s => (s.yAxis || 1) === 1);
         this.hasY2 = this.series.some(s => s.yAxis === 2);   // set BEFORE _rightMargin() use
@@ -465,8 +500,8 @@ export class CNodeCustomGraphView extends CNodeOSDGraphView {
 
         const y1 = resolve(1, hasY1), y2 = resolve(2, this.hasY2), y3 = resolve(3, this.hasY3);
 
-        if (!this.isFrameX) {
-            // value-X scatter: keep equal aspect (square units), like the OSD graph
+        if (!this.isFrameX && this.equalAspect) {
+            // compatible spatial value-X scatter: keep equal aspect (square units), like the OSD graph
             const margin = 60;
             const graphWidth = this.widthPx - margin - this._rightMargin();
             const graphHeight = this.heightPx - margin * 2;
@@ -557,7 +592,13 @@ export class CNodeCustomGraphView extends CNodeOSDGraphView {
 
         const xStep = this.calculateStep(this.maxX - this.minX, graphWidth);
         const y1Step = this.calculateStep(this.maxY - this.minY, graphHeight);
-        const formatLabel = (v) => Math.abs(v) < 1 ? v.toFixed(2) : Math.abs(v) < 10 ? v.toFixed(1) : Math.round(v).toString();
+        // Precision follows the tick interval, so a narrow altitude range
+        // does not repeat the same rounded number at every grid line.
+        const formatLabel = (v, step) => {
+            const decimals = Math.min(6, Math.max(0, -Math.floor(Math.log10(Math.abs(step)))));
+            const label = v.toFixed(decimals);
+            return Number(label) === 0 ? (0).toFixed(decimals) : label;
+        };
 
         // grid
         ctx.strokeStyle = c.grid;
@@ -574,9 +615,14 @@ export class CNodeCustomGraphView extends CNodeOSDGraphView {
         // x axis numeric labels
         ctx.fillStyle = c.text;
         ctx.textAlign = 'center';
+        let lastLabelEnd = -Infinity;
         for (let x = Math.ceil(this.minX / xStep) * xStep; x <= this.maxX; x += xStep) {
             const screen = this.graphToScreenAxis(x, this.minY, this.minY, this.maxY);
-            ctx.fillText(Math.round(x).toString(), screen.x, margin + graphHeight + 20);
+            const label = this.isFrameX ? Math.round(x).toString() : formatLabel(x, xStep);
+            const labelWidth = ctx.measureText(label).width;
+            if (screen.x - labelWidth / 2 < lastLabelEnd + 8) continue;
+            ctx.fillText(label, screen.x, margin + graphHeight + 20);
+            lastLabelEnd = screen.x + labelWidth / 2;
         }
 
         // Y1 labels (left), coloured per axis
@@ -584,7 +630,7 @@ export class CNodeCustomGraphView extends CNodeOSDGraphView {
         ctx.textAlign = 'right';
         for (let y = Math.ceil(this.minY / y1Step) * y1Step; y <= this.maxY; y += y1Step) {
             const screen = this.graphToScreenAxis(this.minX, y, this.minY, this.maxY);
-            ctx.fillText(formatLabel(y), margin - 5, screen.y + 4);
+            ctx.fillText(formatLabel(y, y1Step), margin - 5, screen.y + 4);
         }
 
         // Y2 labels (inner right)
@@ -594,7 +640,7 @@ export class CNodeCustomGraphView extends CNodeOSDGraphView {
             ctx.textAlign = 'left';
             for (let y = Math.ceil(this.minY2 / step) * step; y <= this.maxY2; y += step) {
                 const screen = this.graphToScreenAxis(this.maxX, y, this.minY2, this.maxY2);
-                ctx.fillText(formatLabel(y), margin + graphWidth + 5, screen.y + 4);
+                ctx.fillText(formatLabel(y, step), margin + graphWidth + 5, screen.y + 4);
             }
         }
 
@@ -606,7 +652,7 @@ export class CNodeCustomGraphView extends CNodeOSDGraphView {
             const xCol = margin + graphWidth + (this.hasY2 ? 45 : 5);
             for (let y = Math.ceil(this.minY3 / step) * step; y <= this.maxY3; y += step) {
                 const screen = this.graphToScreenAxis(this.maxX, y, this.minY3, this.maxY3);
-                ctx.fillText(formatLabel(y), xCol, screen.y + 4);
+                ctx.fillText(formatLabel(y, step), xCol, screen.y + 4);
             }
         }
 
@@ -649,21 +695,37 @@ export class CNodeCustomGraphView extends CNodeOSDGraphView {
                 ctx.lineWidth = 2;
                 ctx.setLineDash([]);
                 ctx.beginPath();
-                let started = false;
+                let previousFrame = null;
                 for (const pt of s.data) {
                     const screen = this.graphToScreenAxis(pt.x, pt.y, sMinY, sMaxY);
-                    if (!started) { ctx.moveTo(screen.x, screen.y); started = true; }
-                    else ctx.lineTo(screen.x, screen.y);
+                    if (previousFrame === null || (this.preserveGaps && pt.frame !== previousFrame + 1)) {
+                        ctx.moveTo(screen.x, screen.y);
+                    } else ctx.lineTo(screen.x, screen.y);
+                    previousFrame = pt.frame;
                 }
                 ctx.stroke();
+                // A lone sample has no segment to stroke. Show it as a point so
+                // partially completed analyses never look like an empty graph.
+                if (this.preserveGaps) {
+                    ctx.fillStyle = col;
+                    for (let i = 0; i < s.data.length; i++) {
+                        const point = s.data[i];
+                        if (s.data[i - 1]?.frame === point.frame - 1
+                            || s.data[i + 1]?.frame === point.frame + 1) continue;
+                        const screen = this.graphToScreenAxis(point.x, point.y, sMinY, sMaxY);
+                        ctx.beginPath(); ctx.arc(screen.x, screen.y, 3, 0, Math.PI * 2); ctx.fill();
+                    }
+                }
             } else {
                 ctx.strokeStyle = col; ctx.fillStyle = col; ctx.lineWidth = 1;
                 ctx.beginPath();
                 let prev = null;
                 for (const pt of s.data) {
                     const screen = this.graphToScreenAxis(pt.x, pt.y, sMinY, sMaxY);
-                    if (prev) { ctx.moveTo(prev.x, prev.y); ctx.lineTo(screen.x, screen.y); }
-                    prev = screen;
+                    if (prev && (!this.preserveGaps || pt.frame === prev.frame + 1)) {
+                        ctx.moveTo(prev.x, prev.y); ctx.lineTo(screen.x, screen.y);
+                    }
+                    prev = {...screen, frame: pt.frame};
                 }
                 ctx.stroke();
                 for (const pt of s.data) {

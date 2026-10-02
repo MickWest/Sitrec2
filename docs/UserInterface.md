@@ -153,15 +153,19 @@ A change converts the values already in the menus, so the sitch itself does not 
 
 ## Custom graphs
 
-**Show ▸ Graphs ▸ Add Custom Graph** opens a new graph window. Each graph has its own folder in **Show ▸ Graphs**, named **Graph 1**, **Graph 2**, and so on until you give it a **Title**. In the folder:
+**Show ▸ Graphs ▸ Add Custom Graph** opens a new graph window. Each graph has its own folder in **Show ▸ Graphs**, named from its graph ID until you give it a **Title**. The same controls are available from the graph window’s header menu. In the folder:
 
-- **X** — the horizontal axis: **Frame** (the whole clip), **Frame A→B** (only the In to Out frames), or any data series.
-- **Y1 (left)**, **Y2 (right)** and **Y3 (right)** — up to three data series, on a left axis and a right axis. **None** leaves a series out.
+- Choose an **entity**, then a **measurement** for each axis. **X** controls the horizontal axis; **Timeline** offers **Frame** (the whole clip) and **Frame A→B** (only the In to Out frames).
+- **Y1 (left)**, **Y2 (right)** and **Y3 (right)** — up to three measurements, on a left axis and two right axes. **None** leaves a series out. Changing one axis leaves the others alone.
 - **Show Last (secs)** — 0 plots the whole clip. Any other value plots only the last seconds up to the current frame, so the trace scrolls during playback.
 - **Show**, **Dark** and **Toggle Legend** — show or hide the graph, set its theme, and show or hide its legend.
 - **Remove** — deletes the graph.
 
-The data series available depend on what the sitch has. They include the heading, speed and g-force of each track, the Point Track position, camera motion and Motion Analysis results, the horizon angle, the angle between the Sun and the line of sight, and numeric values read from the video's on-screen display (OSD). The lists update when you add or remove a track or other source.
+Entities appear as their sources become available: tracks and objects, Point Track, CamMotion, Analyze Motion, Horizon, Sun, and numeric values read from the video's on-screen display (OSD). Their measurement lists include units and update as sources are added, removed or renamed. An unavailable saved selection stays selected so it can reconnect when its source returns.
+
+Tracks and objects offer ground speed, 3D speed, vertical speed, heading, acceleration in g, altitude above the WGS84 ellipsoid (HAE), and slant range from the look camera where applicable. Speed and altitude Y axes keep a minimum span of 10 in the displayed units, centered on the data. HAE is not height above terrain or mean sea level. Slant range uses the look camera's position at each frame. Object values follow the underlying position track before display-only ground-clamp adjustments. Acceleration is the magnitude of the second position derivative, expressed in g; it does not include a gravity offset.
+
+Choose **Add Custom Graph** from an object's menu or a track's editing/display menu to open a named graph with ground speed on the left and altitude on the right. You can then choose other measurements in its header menu.
 
 Custom graphs are available in a custom sitch and in other sitches you can modify, and they are saved with the sitch.
 

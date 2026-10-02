@@ -25,11 +25,13 @@
 //            call (never snapshot). Returns NaN for "no sample at this frame".
 //   min,max  OPTIONAL fixed range. If BOTH are finite the hosting axis uses them
 //            verbatim (no auto-range, no padding).
+//   minimumRange OPTIONAL minimum displayed Y-axis span for autoscaling.
 //   units    OPTIONAL units label string (informational).
 
 class CGraphDataManager {
     constructor() {
         this.series = new Map();   // key -> descriptor
+        this._availabilitySig = undefined;
         this.version = 0;          // bumped whenever the set of keys changes
     }
 
@@ -61,6 +63,71 @@ class CGraphDataManager {
         if (had) this.version++;
     }
 
+    // Source availability can change without membership changing (for example,
+    // turning on Point Track). Poll this once during a source refresh.
+    refreshAvailability() {
+        const sig = [...this.series.values()].filter(d => this.isAvailable(d)).map(d => d.key).join("|");
+        if (sig !== this._availabilitySig) {
+            this._availabilitySig = sig;
+            this.version++;
+        }
+    }
+
+    isAvailable(descriptor) {
+        try { return !descriptor.available || !!descriptor.available(); }
+        catch (e) { return false; }
+    }
+
+    entityForSeries(key) {
+        if (key === "frames" || key === "framesAB") return "timeline";
+        if (!key || key === "None") return "None";
+        const d = this.get(key);
+        if (d?.entity) return d.entity;
+        // Old saved tokens must remain recognizable when their source is absent.
+        if (/^(track|object|node|sunLOS)\./.test(key)) return key.slice(0, key.lastIndexOf("."));
+        return key.split(".")[0];
+    }
+
+    entities(includeNone = true, includeTimeline = false) {
+        const entities = new Map();
+        for (const d of this.series.values()) {
+            if (!this.isAvailable(d)) continue;
+            const id = this.entityForSeries(d.key);
+            if (!entities.has(id)) entities.set(id, {id, label: d.entityLabel ?? d.group ?? id});
+        }
+        const options = includeNone ? {"None": "None"} : {};
+        if (includeTimeline) options.Timeline = "timeline";
+        for (const e of [...entities.values()].sort((a, b) => a.label.localeCompare(b.label))) {
+            let label = e.label;
+            let suffix = 2;
+            while (Object.hasOwn(options, label)) label = `${e.label} (${suffix++})`;
+            options[label] = e.id;
+        }
+        return options;
+    }
+
+    measurements(entity, includeNone = true) {
+        const options = includeNone ? {"None": "None"} : {};
+        if (entity === "timeline") return {"Frame": "frames", "Frame A→B": "framesAB"};
+        for (const d of this.series.values()) {
+            if (this.entityForSeries(d.key) !== entity || !this.isAvailable(d)) continue;
+            const units = typeof d.units === "function" ? d.units() : d.units;
+            const base = (d.measurement ?? d.label) + (units ? ` (${units})` : "");
+            let label = base;
+            let suffix = 2;
+            while (Object.hasOwn(options, label)) label = `${base} (${suffix++})`;
+            options[label] = d.key;
+        }
+        return options;
+    }
+
+    seriesLabel(key) {
+        const d = this.get(key);
+        if (!d) return key;
+        const units = typeof d.units === "function" ? d.units() : d.units;
+        return d.label + (units ? ` (${units})` : "");
+    }
+
     get(key) { return this.series.get(key) || null; }
     has(key) { return this.series.has(key); }
 
@@ -68,7 +135,7 @@ class CGraphDataManager {
     // Grouped then label-sorted so the dropdown order is stable across rebuilds.
     optionsY(includeNone = true) {
         const o = includeNone ? { "None": "None" } : {};
-        const arr = [...this.series.values()].sort((a, b) =>
+        const arr = [...this.series.values()].filter(d => this.isAvailable(d)).sort((a, b) =>
             (a.group || "").localeCompare(b.group || "") || a.label.localeCompare(b.label));
         for (const d of arr) {
             // Short display names can coincide; keep every source selectable.

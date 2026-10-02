@@ -163,9 +163,8 @@ frame from In to Out:
 The angle and magnitude are the smoothed values (see **Smoothing** below). A frame with no
 result is written as 0.
 
-The same numbers are also available for custom graphs (**Show → Graphs → Add Custom Graph**), in
-the *Analyze Motion* group: **Analyze Motion X (raw)**, **Analyze Motion Y (raw)**,
-**Analyze Motion X (smoothed)** and **Analyze Motion Y (smoothed)**, all in pixels.
+The same numbers are also available for custom graphs (**Show → Graphs → Add Custom Graph**), by choosing
+the **Analyze Motion** entity, then **X (raw)**, **Y (raw)**, **X (smoothed)** or **Y (smoothed)**, all in pixels.
 
 ### Stabilize Video
 

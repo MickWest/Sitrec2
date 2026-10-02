@@ -1,6 +1,6 @@
 import {triangulateTrackCap} from "../rendering/TrackCap";
 //
-import {Globals, guiMenus, NodeMan, setRenderOne, Sit} from "../Globals";
+import {Globals, guiMenus, NodeMan, setRenderOne, Sit, TrackManager} from "../Globals";
 import {dispose, patchMaterialForLinearOutput} from "../threeExt";
 import {LineGeometry} from "../SceneLineGeometry";
 import {SceneLineMaterial} from "../SceneLineMaterial";
@@ -24,6 +24,7 @@ import {meanSeaLevelOffset} from "../EGM96Geoid";
 import {t} from "../i18n";
 import {CNodeContrail} from "./CNodeContrail";
 import {addCameraFocusControl, addCameraFollowControl} from "../CameraFocusUI";
+import {addCustomGraphControl} from "../CustomGraphUI";
 
 export class CNodeDisplayTrack extends CNode3DGroup {
     constructor(v) {
@@ -406,6 +407,10 @@ export class CNodeDisplayTrack extends CNode3DGroup {
             this.guiFolder.add(this, "gotoTrack").name(t("displayTrack.gotoTrack.label")).tooltip(t("displayTrack.gotoTrack.tooltip"));
             addCameraFocusControl(this, this.guiFolder, () => this.in.track);
             addCameraFollowControl(this, this.guiFolder, () => this.in.track);
+            addCustomGraphControl(this.guiFolder, () => ({
+                entityId: this.in.track.id,
+                title: TrackManager?.get(this.in.track.id, false)?.displayName ?? this.in.track.shortName ?? this.in.track.id,
+            }));
 
         }
 

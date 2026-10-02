@@ -1,6 +1,7 @@
 // Creating timed data and then tracks from pre-parsed track files
 // should be agnostic to the source of the data (KML/ADSB, CSV, KLVS, etc)
 import {addNameControl, notifyDisplayNameChanged} from "./DisplayName";
+import {addCustomGraphControl} from "./CustomGraphUI";
 import {CNodeScale} from "./nodes/CNodeScale";
 import {requestCameraFocusSync} from "./CameraFocusUI";
 import {showConfirm, showChoice} from "./showError";
@@ -3262,6 +3263,7 @@ class CTrackManager extends CManager {
         // Found by id whatever the title says (CNodeDisplayTrack, the Sitrec API).
         folder._lookupId = trackOb.trackID;
         folder.title(trackOb.displayName);
+        addCustomGraphControl(folder, () => ({entityId: trackOb.trackID, title: trackOb.displayName}));
         addNameControl(folder, trackOb, {
             property: "displayName",
             id: trackOb.trackID,

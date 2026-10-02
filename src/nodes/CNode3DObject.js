@@ -6,6 +6,7 @@ import {SceneLineSegments} from "../SceneLines";
 // - THREE.LineSegments (if wireframe or edges)
 
 import {CNode3DLight} from "./CNode3DLight";
+import {addCustomGraphControl} from "../CustomGraphUI";
 import {addCameraFocusControl, addCameraFollowControl, objectFocusTrack} from "../CameraFocusUI";
 import {CNode3DGroup} from "./CNode3DGroup";
 import {meanSeaLevelOffset} from "../EGM96Geoid";
@@ -379,6 +380,10 @@ export class CNode3DObject extends CNode3DGroup {
             .isCommon = true;
         addCameraFollowControl(this, this.gui, () => objectFocusTrack(this))
             .moveAfter("Focus Camera Here")
+            .isCommon = true;
+
+        addCustomGraphControl(this.gui, () => ({entityId: this.id, title: this.displayName ?? this.menuName}))
+            .moveAfter("Follow Camera Here")
             .isCommon = true;
 
         // Add export to KML button
