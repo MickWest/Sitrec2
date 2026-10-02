@@ -65,7 +65,7 @@
 // (2) and (3) exist because the bare law lofted the visible limb of the Earth
 // by 15 km, and the far limb by 63 km, for a camera at 237 km.
 
-import {Material, Matrix4, Vector3} from "three";
+import {Frustum, Material, Matrix4, Sphere, Vector3} from "three";
 import {zenithECEFFromPosition} from "./refraction";
 
 export const TERRESTRIAL_REFRACTION_DEFAULTS = {
@@ -391,6 +391,56 @@ export function liftWorldPoint(ctx, worldECEF, target = new Vector3()) {
     return liftCameraRelative(ctx, _liftRel, target).add(ctx.observer);
 }
 
+// Fixed-point passes for the inverse. Each pass shrinks the error by a factor of
+// the order of lift/H (the lift over the scale height), which grows with range.
+// Measured from a 3.5 km camera: six passes left 1.6 mm at 500 km, so ten are
+// used, which is far below a millimetre at any range a frustum is drawn to.
+const UNLIFT_PASSES = 10;
+
+/**
+ * The inverse of liftCameraRelative: where a point really IS, given the
+ * camera-relative offset it APPEARS at.
+ *
+ * The lift is along the zenith, so the real point and its image have the same
+ * horizontal range and differ only in height. The amount depends on the real
+ * height (through the air density along the path), which is the unknown, so it
+ * is solved by iteration from the apparent height.
+ *
+ * This is also the path of the light. A ray of constant curvature k/R falls
+ * below its tangent at the observer by k*s^2/(2R) at range s, which is the lift
+ * at s. So the points of a straight sight line, each un-lifted, are the curved
+ * ray that the observer actually looks along.
+ *
+ * A null context is the identity, so this is safe to call unconditionally.
+ */
+export function unliftCameraRelative(ctx, apparentRelECEF, target = new Vector3()) {
+    target.copy(apparentRelECEF);
+    if (!ctx) return target;
+    const apparentUp = target.dot(ctx.zenith);
+    _liftHoriz.copy(target).addScaledVector(ctx.zenith, -apparentUp);
+    const d = _liftHoriz.length();
+    if (!(d > 0)) return target;
+    const curvatureDrop = 0.5 * d * d / ctx.R;
+    let lift = 0;
+    for (let pass = 0; pass < UNLIFT_PASSES; pass++) {
+        const targetAlt = ctx.obsAlt + (apparentUp - lift) + curvatureDrop;
+        const kEff = ctx.k * pathDensityFactor(ctx.obsAlt, targetAlt, ctx.scaleHeightM);
+        lift = saturateLift(
+            terrestrialLift(d, kEff, ctx.R, ctx.maxBendRad), ctx.maxLiftM);
+    }
+    return target.addScaledVector(ctx.zenith, -lift);
+}
+
+/**
+ * Where a world point really is, given where it appears from that observer.
+ * The inverse of liftWorldPoint.
+ */
+export function unliftWorldPoint(ctx, apparentECEF, target = new Vector3()) {
+    if (!ctx) return target.copy(apparentECEF);
+    _liftRel.copy(apparentECEF).sub(ctx.observer);
+    return unliftCameraRelative(ctx, _liftRel, target).add(ctx.observer);
+}
+
 // GLSL counterpart. Operates in VIEW space — camera at the origin — deliberately:
 // scene coordinates are ECEF, ~6.4e6 m, where a float32 resolves about half a
 // metre. A 4 m lift added in world space would be quantised into nothing. In
@@ -677,7 +727,10 @@ const _asMaterials = m => (Array.isArray(m) ? m : [m]);
 //
 // Returns the number of materials newly installed, so the caller can tell a
 // settled scene from one that is still streaming in.
-export function sweepTerrestrialRefraction(root, occluderBit = -1) {
+//
+// `lofted`, when given, receives every object that is drawn lofted, for
+// cullLoftedObjects.
+export function sweepTerrestrialRefraction(root, occluderBit = -1, lofted = null) {
     if (!root) return 0;
     let installedCount = 0;
     const stack = [root];
@@ -687,6 +740,7 @@ export function sweepTerrestrialRefraction(root, occluderBit = -1) {
 
         const material = o.material;
         if (material) {
+            if (lofted) lofted.push(o);
             let opaque = false;
             for (const m of _asMaterials(material)) {
                 if (!m) continue;
@@ -710,4 +764,105 @@ export function sweepTerrestrialRefraction(root, occluderBit = -1) {
         for (let i = children.length - 1; i >= 0; i--) stack.push(children[i]);
     }
     return installedCount;
+}
+
+// ---------------------------------------------------------------------------
+// Frustum culling
+//
+// Three decides whether to draw an object from its bounding sphere at its
+// PHYSICAL position. The object is drawn lofted, so the two disagree by the
+// bend: an object can be in the picture while its physical position is outside
+// the frustum, and then it is not drawn. At an ordinary field of view that is a
+// sliver at the frame edge. At a narrow one it is the whole frame: a camera
+// aimed at an airliner 125 km away, with a 0.12 degree field of view, has the
+// aircraft's physical position 19% beyond the bottom edge, and every part with a
+// small bounding sphere (wings, tail, lights) disappeared while the long
+// fuselage stayed.
+//
+// So the decision is made here, with the lofted position, immediately before
+// each render: an object whose lofted sphere is in view is exempted from Three's
+// test for that render. Its own frustumCulled setting is kept and put back.
+// ---------------------------------------------------------------------------
+
+const _ownFrustumCulled = new WeakMap();
+const _cullFrustum = new Frustum();
+const _cullMatrix = new Matrix4();
+const _cullSphere = new Sphere();
+const _cullLifted = new Vector3();
+const SPRITE_RADIUS = Math.SQRT1_2;
+
+// The world bounding sphere Three's own frustum test uses for this object.
+function worldBoundingSphere(object, target) {
+    if (object.isSprite) {
+        target.center.set(0, 0, 0);
+        target.radius = SPRITE_RADIUS;
+    } else if (object.boundingSphere !== undefined) {
+        if (object.boundingSphere === null) object.computeBoundingSphere();
+        target.copy(object.boundingSphere);
+    } else {
+        const geometry = object.geometry;
+        if (!geometry) return false;
+        if (geometry.boundingSphere === null) geometry.computeBoundingSphere();
+        target.copy(geometry.boundingSphere);
+    }
+    target.applyMatrix4(object.matrixWorld);
+    return true;
+}
+
+// Put back each object's own frustumCulled setting.
+export function restoreLoftedCulling(objects) {
+    for (const object of objects) {
+        const own = _ownFrustumCulled.get(object);
+        if (own !== undefined) object.frustumCulled = own;
+    }
+}
+
+/**
+ * Exempt from Three's frustum test every object whose LOFTED bounding sphere is
+ * in this camera's view. Call immediately before the render with that camera.
+ *
+ * @param {Object3D[]} objects  from sweepTerrestrialRefraction's `lofted`
+ * @param {Camera}     camera   the camera about to render, matrixWorld current
+ * @param {object}     ctx      terrestrialLiftContext for that camera, or null
+ */
+export function cullLoftedObjects(objects, camera, ctx) {
+    if (!ctx || !camera || camera.isArrayCamera) {
+        restoreLoftedCulling(objects);
+        return;
+    }
+    // Inverted from matrixWorld for the reason updateTerrestrialRefractionUniforms gives.
+    _cullMatrix.copy(camera.matrixWorld).invert().premultiply(camera.projectionMatrix);
+    _cullFrustum.setFromProjectionMatrix(_cullMatrix);
+    // The four SIDE planes only. Near and far depend on the depth convention, and
+    // an object wrongly kept costs one clipped draw call.
+    const planes = _cullFrustum.planes;
+
+    for (const object of objects) {
+        let own = _ownFrustumCulled.get(object);
+        if (own === undefined) {
+            own = object.frustumCulled;
+            _ownFrustumCulled.set(object, own);
+        }
+        if (!own) continue;                 // the object asked never to be culled
+        if (!worldBoundingSphere(object, _cullSphere)) continue;
+
+        const center = _cullSphere.center;
+        const range = center.distanceTo(ctx.observer);
+        liftWorldPoint(ctx, center, _cullLifted);
+        const lift = _cullLifted.distanceTo(center);
+        // The far side of the object is lofted more than its centre: the lift goes
+        // as the square of the range, so across a radius r it changes by 2*r/range.
+        const radius = _cullSphere.radius * (1 + Math.min(1, 2 * lift / Math.max(range, 1)));
+
+        let drawnInView = true;
+        for (let side = 0; side < 4; side++) {
+            if (planes[side].distanceToPoint(_cullLifted) < -radius) {
+                drawnInView = false;
+                break;
+            }
+        }
+        // Not in view lofted: leave Three's own test in force. It may still draw
+        // the object from its physical position, which costs only a clipped draw.
+        object.frustumCulled = !drawnInView;
+    }
 }

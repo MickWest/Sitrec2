@@ -34,8 +34,49 @@ import {getFrustumFolder} from "../LOSFrustumMenu";
 import {CNodeLabel3D} from "./CNodeLabels3D";
 import {CNodeGUIColor} from "./CNodeGUIColor";
 import {SceneLineMaterial} from "../SceneLineMaterial";
+import {currentTerrestrialLiftContext} from "../atmosphere/refractionSettings";
+import {unliftCameraRelative} from "../atmosphere/terrestrialRefraction";
 
 const WHITE = new Color(1, 1, 1);
+
+// With terrestrial refraction on, the frustum follows the bent rays of its camera,
+// and it is drawn in pieces. Each view lofts the VERTICES of a line by an amount
+// that grows with the square of their range, so one long straight segment is only
+// right at its two ends: a 500 km edge seen from the far end was drawn 314 m too
+// high at 160 km, the whole half-height of a 0.22 degree frustum there. A 16 km
+// piece is wrong by less than a metre.
+const FRUSTUM_PIECE_LENGTH_M = 16000;
+const FRUSTUM_MAX_PIECES = 32;
+
+function frustumPieces(length) {
+    return Math.max(1, Math.min(FRUSTUM_MAX_PIECES, Math.ceil(length / FRUSTUM_PIECE_LENGTH_M)));
+}
+
+const _apparentStart = new Vector3();
+const _apparentEnd = new Vector3();
+const _apparentPoint = new Vector3();
+const _trueStart = new Vector3();
+const _trueEnd = new Vector3();
+
+// Segments are given in the camera's frame as the camera SEES them (straight sight
+// lines). Returns the same segments where the light really goes: each one cut into
+// pieces, and each point moved to the real position of what is seen there.
+function refractLineSegments(points, liftContext) {
+    const bent = [];
+    for (let s = 0; s < points.length; s += 6) {
+        _apparentStart.set(points[s], points[s + 1], points[s + 2]);
+        _apparentEnd.set(points[s + 3], points[s + 4], points[s + 5]);
+        const pieces = frustumPieces(_apparentStart.distanceTo(_apparentEnd));
+        unliftCameraRelative(liftContext, _apparentStart, _trueStart);
+        for (let piece = 1; piece <= pieces; piece++) {
+            _apparentPoint.lerpVectors(_apparentStart, _apparentEnd, piece / pieces);
+            unliftCameraRelative(liftContext, _apparentPoint, _trueEnd);
+            bent.push(_trueStart.x, _trueStart.y, _trueStart.z, _trueEnd.x, _trueEnd.y, _trueEnd.z);
+            _trueStart.copy(_trueEnd);
+        }
+    }
+    return bent;
+}
 
 export class CNodeDisplayCameraFrustumATFLIR extends CNode3DGroup {
     constructor(v) {
@@ -451,7 +492,9 @@ export class CNodeDisplayCameraFrustum extends CNode3DGroup {
             });
         }
         // world position of the far rectangle's centre (see rebuild(): d = radius - 2)
-        const far = this.group.localToWorld(new Vector3(0, 0, -(this.radius - 2)));
+        // (the real position of that centre, so that the label stays on a bent frustum)
+        const farLocal = unliftCameraRelative(this.liftContext, new Vector3(0, 0, -(this.radius - 2)));
+        const far = this.group.localToWorld(farLocal);
         this.distanceLabel.position.copy(far);
         this.distanceLabel.textPosition.copy(far);
         this.distanceLabel.changeText(Units.withUnits(this.radius, 2, "big"));
@@ -495,10 +538,11 @@ export class CNodeDisplayCameraFrustum extends CNode3DGroup {
         const bottom = color.clone().multiplyScalar(0.25);
         const faces = [side, bottom, side, top]; // same order as the faces in rebuild()
         const attr = this.sidesMesh.geometry.getAttribute("color");
+        const verticesPerFace = attr.count / 4;  // 3, or more when the frustum is bent
         for (let face = 0; face < 4; face++) {
-            for (let vertex = 0; vertex < 3; vertex++) {
+            for (let vertex = 0; vertex < verticesPerFace; vertex++) {
                 const c = faces[face];
-                attr.setXYZ(face * 3 + vertex, c.r, c.g, c.b);
+                attr.setXYZ(face * verticesPerFace + vertex, c.r, c.g, c.b);
             }
         }
         attr.needsUpdate = true;
@@ -560,7 +604,19 @@ export class CNodeDisplayCameraFrustum extends CNode3DGroup {
                 effectiveAspect = this.videoAspect;
             }
         }
-        const shape = [fov, effectiveAspect, this.radius, this.step, this.units, this.showFrustum, this.shadedFrustum, this.showFrustumEdges];
+        // Terrestrial refraction for THIS camera, with the zenith turned into the camera's
+        // frame, because the frustum is built in that frame. Null when refraction is off,
+        // and then everything below is the plain straight frustum.
+        let liftContext = currentTerrestrialLiftContext(this.camera.position);
+        if (liftContext) {
+            const toCameraFrame = this.camera.quaternion.clone().invert();
+            liftContext = {...liftContext, zenith: liftContext.zenith.clone().applyQuaternion(toCameraFrame)};
+        }
+        this.liftContext = liftContext;
+        const shape = [fov, effectiveAspect, this.radius, this.step, this.units, this.showFrustum, this.shadedFrustum, this.showFrustumEdges,
+            // The bent frustum also changes with the camera's height and attitude.
+            liftContext?.k ?? 0, liftContext?.obsAlt ?? 0, liftContext?.R ?? 0,
+            liftContext?.zenith.x ?? 0, liftContext?.zenith.y ?? 0, liftContext?.zenith.z ?? 0];
         if (!this.showQuad && !this.showVideoOnGround && this._lastFrustumShape
             && shape.every((value, i) => value === this._lastFrustumShape[i])) {
             if (this.line) this.line.material = this.matLine;
@@ -719,7 +775,8 @@ export class CNodeDisplayCameraFrustum extends CNode3DGroup {
 
         if (this.showFrustum && this.showFrustumEdges) {
             this.FrustumGeometry ??= new LineSegmentsGeometry();
-            const changed = updateLineSegmentPositions(this.FrustumGeometry, line_points);
+            const drawn_points = liftContext ? refractLineSegments(line_points, liftContext) : line_points;
+            const changed = updateLineSegmentPositions(this.FrustumGeometry, drawn_points);
             if (!this.line) {
                 this.line = new Line2(this.FrustumGeometry, this.matLine);
                 // Initializing a freshly-created helper must not request the
@@ -760,13 +817,41 @@ export class CNodeDisplayCameraFrustum extends CNode3DGroup {
         // Faces are in the order right, bottom, left, top (see updateSidesColors()).
         if (this.showFrustum && this.shadedFrustum) {
             const fw = line_points[3], fh = line_points[4], fd = line_points[5];
-            const sides = new Float32Array([
-                0, 0, 0,  fw,  fh, fd,  fw, -fh, fd,   // right
-                0, 0, 0,  fw, -fh, fd, -fw, -fh, fd,   // bottom
-                0, 0, 0, -fw, -fh, fd, -fw,  fh, fd,   // left
-                0, 0, 0, -fw,  fh, fd,  fw,  fh, fd,   // top
-            ]);
-            if (!this.sidesMesh) {
+            // Each side runs between two neighbouring corner edges. A straight frustum is
+            // one triangle a side. A bent one is a strip of the same pieces as its edges,
+            // so that the sides stay on the lines.
+            const cornerXY = [[fw, fh], [fw, -fh], [-fw, -fh], [-fw, fh]];
+            const pieces = liftContext ? frustumPieces(Math.hypot(fw, fh, fd)) : 1;
+            const edges = cornerXY.map(([cornerX, cornerY]) => {
+                const edge = [];
+                for (let piece = 0; piece <= pieces; piece++) {
+                    const along = piece / pieces;
+                    const point = new Vector3(cornerX * along, cornerY * along, fd * along);
+                    edge.push(liftContext ? unliftCameraRelative(liftContext, point, point.clone()) : point);
+                }
+                return edge;
+            });
+            const sides = new Float32Array(4 * (3 + 6 * (pieces - 1)) * 3);
+            let offset = 0;
+            const put = (point) => {
+                sides[offset++] = point.x; sides[offset++] = point.y; sides[offset++] = point.z;
+            };
+            for (let face = 0; face < 4; face++) {
+                const a = edges[face], b = edges[(face + 1) % 4];
+                put(a[0]); put(a[1]); put(b[1]);
+                for (let piece = 1; piece < pieces; piece++) {
+                    put(a[piece]); put(a[piece + 1]); put(b[piece + 1]);
+                    put(a[piece]); put(b[piece + 1]); put(b[piece]);
+                }
+            }
+            if (this.sidesMesh && this.sidesMesh.geometry.getAttribute("position").array.length !== sides.length) {
+                // The number of pieces changed, so the buffers must be made again.
+                const geometry = this.sidesMesh.geometry;
+                geometry.dispose();
+                geometry.setAttribute("position", new BufferAttribute(sides, 3));
+                geometry.setAttribute("color", new BufferAttribute(new Float32Array(sides.length), 3));
+                geometry.computeBoundingSphere();
+            } else if (!this.sidesMesh) {
                 const geometry = new BufferGeometry();
                 geometry.setAttribute("position", new BufferAttribute(sides, 3));
                 geometry.setAttribute("color", new BufferAttribute(new Float32Array(sides.length), 3));

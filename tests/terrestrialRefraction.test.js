@@ -83,8 +83,13 @@ import {
     terrestrialLiftContext,
     liftCameraRelative,
     liftWorldPoint,
+    unliftCameraRelative,
+    unliftWorldPoint,
+    cullLoftedObjects,
+    restoreLoftedCulling,
+    sweepTerrestrialRefraction,
 } from "../src/atmosphere/terrestrialRefraction";
-import {MeshBasicMaterial, PerspectiveCamera, ShaderLib, Vector3} from "three";
+import {Frustum, Group, Matrix4, Mesh, MeshBasicMaterial, PerspectiveCamera, ShaderLib, SphereGeometry, Vector3} from "three";
 import {readFileSync} from "fs";
 import path from "path";
 
@@ -687,6 +692,92 @@ describe("CPU twin of the shader lift", () => {
     });
 });
 
+// The inverse of the lift: where a point really is, given where it appears. A camera that
+// points at a target aims at the lifted position, and its frustum is drawn along the un-lifted
+// sight lines, so the two functions must agree or the frustum and the picture disagree.
+describe("inverse of the lift", () => {
+
+    // On the equator, so that the zenith is +X and a horizontal direction is +Y.
+    const observerAt = altitude => new Vector3(WGS84_A + altitude, 0, 0);
+    const OPTS = {enabled: true, k: 0.176, equatorRadius: WGS84_A, polarRadius: WGS84_B};
+    // An offset given as a horizontal range and a rise above the observer's tangent plane.
+    const offset = (range, rise) => new Vector3(rise, range, 0);
+
+    test("unlift takes a lifted point back to where it started", () => {
+        const ctx = terrestrialLiftContext(observerAt(3491), OPTS);
+        const offsets = [
+            offset(5500, 40),           // close
+            offset(37000, -11400),      // the camera-fit landmark geometry
+            offset(161717, -1956),      // the 160 km airliner case
+            offset(500000, -19000),     // the far end of a 500 km frustum
+        ];
+        for (const real of offsets) {
+            const apparent = liftCameraRelative(ctx, real, new Vector3());
+            expect(apparent.distanceTo(real)).toBeGreaterThan(0);
+            const back = unliftCameraRelative(ctx, apparent, new Vector3());
+            expect(back.distanceTo(real)).toBeLessThan(1e-3);
+        }
+    });
+
+    test("and lift takes an un-lifted point back, the other way round", () => {
+        const ctx = terrestrialLiftContext(observerAt(3491), OPTS);
+        const apparent = offset(161717, -1716);
+        const real = unliftCameraRelative(ctx, apparent, new Vector3());
+        expect(liftCameraRelative(ctx, real, new Vector3()).distanceTo(apparent)).toBeLessThan(1e-3);
+    });
+
+    test("only the height changes: the real point is straight below its image", () => {
+        const ctx = terrestrialLiftContext(observerAt(3491), OPTS);
+        const apparent = offset(161717, -1716);
+        const real = unliftCameraRelative(ctx, apparent, new Vector3());
+        expect(real.y).toBe(apparent.y);
+        expect(real.z).toBe(apparent.z);
+        expect(real.x).toBeLessThan(apparent.x);
+    });
+
+    test("the 160 km airliner case: the image is 0.085 degrees above the aircraft", () => {
+        // Measured on the test sitch: camera at 3.5 km, target 161.7 km away, and the target
+        // drawn three quarters of the way up a 0.224 degree field of view.
+        const ctx = terrestrialLiftContext(observerAt(3491), OPTS);
+        const real = offset(161717, -1956);
+        const apparent = liftCameraRelative(ctx, real, new Vector3());
+        const degrees = real.angleTo(apparent) * 180 / Math.PI;
+        expect(degrees).toBeGreaterThan(0.080);
+        expect(degrees).toBeLessThan(0.090);
+    });
+
+    test("a level sight line, un-lifted, is the ray: it falls k s^2 / 2R below the tangent", () => {
+        const k = 0.13;
+        const ctx = terrestrialLiftContext(observerAt(0), {...OPTS, k});
+        for (const range of [5000, 20000, 40000]) {
+            const real = unliftCameraRelative(ctx, offset(range, 0), new Vector3());
+            const fall = -real.x;
+            const surveying = k * range * range / (2 * ctx.R);
+            // A little less than the bare law: the ray climbs away from the curved surface
+            // into thinner air, and the bend angle saturates.
+            expect(fall).toBeLessThan(surveying);
+            expect(fall).toBeGreaterThan(0.97 * surveying);
+        }
+    });
+
+    test("a null context is the identity, and the observer's own position is not moved", () => {
+        const point = new Vector3(1000, 2000, 3000);
+        expect(unliftCameraRelative(null, point, new Vector3()).equals(point)).toBe(true);
+        expect(unliftWorldPoint(null, point, new Vector3()).equals(point)).toBe(true);
+        const ctx = terrestrialLiftContext(observerAt(3491), OPTS);
+        expect(unliftCameraRelative(ctx, new Vector3(0, 0, 0), new Vector3()).length()).toBe(0);
+    });
+
+    test("unliftWorldPoint is unliftCameraRelative taken about the observer", () => {
+        const observer = observerAt(3491);
+        const ctx = terrestrialLiftContext(observer, OPTS);
+        const apparent = offset(161717, -1716);
+        const viaWorld = unliftWorldPoint(ctx, observer.clone().add(apparent), new Vector3());
+        const viaRel = unliftCameraRelative(ctx, apparent, new Vector3()).add(observer);
+        expect(viaWorld.distanceTo(viaRel)).toBeLessThan(1e-3);
+    });
+});
+
 describe("shader patching", () => {
 
     const STOCK = `
@@ -877,5 +968,86 @@ void main() {
         expect(warn).toHaveBeenCalledTimes(1);
         expect(warn.mock.calls[0][0]).toContain("geometric position");
         warn.mockRestore();
+    });
+});
+
+// Three culls from an object's PHYSICAL bounding sphere, and the object is drawn lofted. With a
+// narrow field of view and a camera aimed at the lofted target, the physical position is outside
+// the frustum, and the parts of an aircraft with small bounding spheres were not drawn.
+describe("frustum culling uses the lofted position", () => {
+
+    const OPTS = {enabled: true, k: 0.176, equatorRadius: WGS84_A, polarRadius: WGS84_B};
+    // On the equator at 3.5 km, with an airliner 125 km away: the test sitch.
+    const CAMERA = new Vector3(WGS84_A + 3491, 0, 0);
+    const TARGET = new Vector3(WGS84_A + 3491 - 1200, 125000, 0);
+
+    function setup(verticalFovDegrees) {
+        const ctx = terrestrialLiftContext(CAMERA, OPTS);
+        const camera = new PerspectiveCamera(verticalFovDegrees, 16 / 9, 1, 1e7);
+        camera.position.copy(CAMERA);
+        camera.up.set(1, 0, 0);
+        camera.lookAt(liftWorldPoint(ctx, TARGET));     // aimed at the drawn target
+        camera.updateMatrixWorld();
+        const wing = new Mesh(new SphereGeometry(8), new MeshBasicMaterial());
+        wing.position.copy(TARGET);
+        wing.updateMatrixWorld();
+        return {ctx, camera, wing};
+    }
+
+    // What Three does: the physical sphere against the camera frustum.
+    function threeWouldDraw(camera, mesh) {
+        const frustum = new Frustum().setFromProjectionMatrix(
+            new Matrix4().multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse));
+        return frustum.intersectsObject(mesh);
+    }
+
+    test("the failure: at 0.118 degrees Three does not draw a wing that is in the picture", () => {
+        const {camera, wing} = setup(0.118);
+        expect(threeWouldDraw(camera, wing)).toBe(false);
+    });
+
+    test("the lofted test exempts it from Three's test, so it is drawn", () => {
+        const {ctx, camera, wing} = setup(0.118);
+        cullLoftedObjects([wing], camera, ctx);
+        expect(wing.frustumCulled).toBe(false);
+    });
+
+    test("an object that is not in the picture keeps Three's own test", () => {
+        const {ctx, camera, wing} = setup(0.118);
+        wing.position.z += 5000;            // 5 km to the side: 2.3 degrees off the boresight
+        wing.updateMatrixWorld();
+        cullLoftedObjects([wing], camera, ctx);
+        expect(wing.frustumCulled).toBe(true);
+    });
+
+    test("an object that asked never to be culled is left alone, both ways", () => {
+        const {ctx, camera, wing} = setup(0.118);
+        wing.frustumCulled = false;
+        wing.position.z += 5000;
+        wing.updateMatrixWorld();
+        cullLoftedObjects([wing], camera, ctx);
+        expect(wing.frustumCulled).toBe(false);
+        restoreLoftedCulling([wing]);
+        expect(wing.frustumCulled).toBe(false);
+    });
+
+    test("with refraction off, each object's own setting is put back", () => {
+        const {ctx, camera, wing} = setup(0.118);
+        cullLoftedObjects([wing], camera, ctx);
+        expect(wing.frustumCulled).toBe(false);
+        cullLoftedObjects([wing], camera, null);        // no context: refraction is off
+        expect(wing.frustumCulled).toBe(true);
+    });
+
+    test("the sweep collects the lofted objects, and skips an excluded subtree", () => {
+        const root = new Group();
+        const drawn = new Mesh(new SphereGeometry(1), new MeshBasicMaterial());
+        const excluded = new Group();
+        excluded.userData.sitrecNoTerrestrialRefraction = true;
+        excluded.add(new Mesh(new SphereGeometry(1), new MeshBasicMaterial()));
+        root.add(drawn, excluded);
+        const lofted = [];
+        sweepTerrestrialRefraction(root, -1, lofted);
+        expect(lofted).toEqual([drawn]);
     });
 });

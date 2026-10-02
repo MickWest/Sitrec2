@@ -20,7 +20,10 @@ jest.mock("../src/LLA-ECEF-ENU", () => ({}));
 jest.mock("../src/KeyBoardHandler", () => ({}));
 jest.mock("../src/threeExt", () => ({}));
 jest.mock("../src/CelestialMath", () => ({}));
-jest.mock("../src/atmosphere/refractionSettings", () => ({}));
+// Refraction off: the aim point is the target itself.
+jest.mock("../src/atmosphere/refractionSettings", () => ({
+    apparentPositionFrom: (observer, point) => point.clone(),
+}));
 jest.mock("../src/mouseMoveView", () => ({}));
 jest.mock("../src/JetUtils", () => ({}));
 jest.mock("../src/i18n", () => ({}));

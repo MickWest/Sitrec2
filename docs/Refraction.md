@@ -135,6 +135,23 @@ scene.
 
 ---
 
+## Cameras that point at a target
+
+When the camera is pointed at a track (Camera → Heading → *To Target*), it aims at where the
+target is *drawn*, so the target stays at the center of the view. At long range and narrow
+field of view the difference is large: from 3.5 km altitude, an aircraft 160 km away is drawn
+about 0.09° above its real position, which is most of the half-height of a 0.22° field of view.
+
+The camera's view frustum in the other views follows the bent sight lines. Its edges curve
+down with distance, as the light does, so the target is inside the frustum where the camera
+sees it.
+
+This aim is for the picture only. The line of sight that Sitrec calculates from this camera,
+and everything built on it (traverses, azimuth and elevation, the ground track), is still the
+straight line to the target.
+
+---
+
 ## What is *not* refracted
 
 Refraction changes where things are *drawn*, not the numbers Sitrec computes:
