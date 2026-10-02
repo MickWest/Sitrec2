@@ -9,6 +9,42 @@ lockstep with docs/WhatsNew.md.
 
 ---
 
+## Version 2.174.2 (2026-10-02)
+
+### New Features
+- **Add Custom Graph button on objects and tracks** (new `src/CustomGraphUI.js`, `src/CCustomGraphManager.js`, `src/nodes/CNode3DObject.js`, `src/TrackManager.js`, `src/nodes/CNodeDisplayTrack.js`).
+  - **Button.** `addCustomGraphControl(folder, entity)` adds an **Add Custom Graph** button (label from `menus.showHide.graphs.addCustom.label`) to a menu folder. It is in each object's folder in the Objects menu, after **Follow Camera Here** (`CNode3DObject`), and in each track's folder, which is in the Contents menu for a loaded track (`CTrackManager.initTrackDisplayName`, `CNodeDisplayTrack`). The two track call sites can get the same folder; `folder._addEntityGraphController` keeps it to one button. The button stays live when the folder's toggle is off (`keepLiveWhenFolderOff`).
+  - **Event.** The button resolves its entity and name at the click, then dispatches `addCustomGraphForEntity`. `CCustomGraphManager.setup()` listens for it and `dispose()` removes the listener. The event keeps the object and track nodes from importing the graph manager.
+  - **`addGraphForEntity`.** It finds the entity for the node, in this order: a `TrackManager` track (`track.<id>`), an object with `exportTrackNode` (`object.<id>`), an object that follows the given track (found with `objectFocusTrack`, so the series are not registered twice), else any node with `p()` (`node.<id>`, recorded in `_extraTrackIds`). It then adds a graph titled "<name> — Speed & altitude" with `<entity>.speed` on Y1 and `<entity>.altitude` on Y2, and opens the graph's folder and its header menu.
+- **Custom graphs: objects as sources and more motion measurements** (new `src/CustomGraphMeasurements.js`, `CCustomGraphManager._registerPositionSeries`, `reregisterTracks`, `reregisterObjects`).
+  - **Sources.** Tracks had heading, speed and g-force. Objects with `exportTrackNode` that are not tied to a `TrackManager` track are now sources too (`object.<id>.*`), sampled through `objectFocusTrack`, as are the standalone nodes in `_extraTrackIds` (`node.<id>.*`). Each source is resolved at each sample, so a changed position controller or a reloaded track stays live.
+  - **Measurements.** Each source has: **Ground speed** (`speed`), **Altitude HAE** (`altitude`, from `altitudeHAE`), **3D speed** (`speed3D`), **Vertical speed** (`verticalSpeed`), **Heading** (`heading`, fixed range −180 to 180), **Acceleration** (`gforce`, in g) and, when the sitch has a `lookCamera`, **Slant range to look camera** (`slantRange`, to the look camera's position at the same frame).
+  - **Units.** `_measurementUnits()` takes the labels from `Units` (`speedUnits`, `smallUnitsAbbrev`, `bigUnitsAbbrev`, `vsUnits`). The units and the presence of `lookCamera` are in the registration signatures, so a unit change registers the series again.
+  - **Sampling.** `graphVelocity` uses the frames `end − 1` and `end`, with `end` held to 1…count − 1, at the rate `Sit.fps / Sit.simSpeed`. A missing or non-finite position (`graphPosition`, which also checks `validPoint`) gives NaN, which the graph shows as a gap. `graphHeading` gives NaN when there is no horizontal motion. The track series no longer use `trackHeading` and `trackGForce` from `trackUtils.js`.
+  - **Tests.** `tests/CustomGraphMeasurements.test.js` and `tests/CustomGraphEntities.test.js`.
+
+### Improvements
+- **Custom graphs: entity and measurement lists for each axis** (`CCustomGraph.rebuildDropdowns`, `src/CGraphDataManager.js`).
+  - **Controls.** Each axis had one list of all series. It now has two controls: an entity list (**X entity**, **Y1 entity (left)**, **Y2 entity (right)**, **Y3 entity (right)**) and a measurement list (**X measure**, **Y1 measure**, **Y2 measure**, **Y3 measure**). The X entity list has **Timeline**, with **Frame** and **Frame A→B**. A Y entity of **None** disables its measurement list. Both controls are mirrored to the graph window's header menu (the entity control has the key `graph:entity:<axis>`).
+  - **Descriptors.** Each series now carries `entity`, `entityLabel`, `measurement` and `measurementId`. `CGraphDataManager` gains `entityForSeries`, `entities`, `measurements` and `seriesLabel`. Measurement labels, legend labels and the X axis label now include the units.
+  - **Entity change.** A new entity keeps the same measurement when it has one (`measurementId`), else its ground speed, else its first measurement.
+  - **Availability.** A descriptor can have an `available()` function. CamMotion shows when it has data, Point Track when it is on or has positions, Analyze Motion when it has results, and Horizon when it is on or has keyframes. `refreshAvailability()` runs in `refreshSources()` and increments `version` when the available set changes, so the lists rebuild.
+  - **Saved graphs.** `serialize()` adds `xEntity`, `y1Entity`, `y2Entity` and `y3Entity`. An older save without them gets the entity from its series token (`entityForSeries`). A selection whose source is not there stays in the list with "(unavailable)" and connects again when the source comes back.
+  - **Empty graph text.** Now "Select an entity and measurement for Y1, Y2 or Y3" and "No data for the selected measurement — restore its source or run its analysis".
+- **Custom graphs: minimum range on speed and altitude axes** (`CNodeCustomGraphView.autoScale`, `minimumRange` in the series descriptor). Ground speed, 3D speed, vertical speed and altitude have `minimumRange: 10`, in the displayed units. When the autoscaled range of a Y axis is less than this, the axis shows a range of 10 with the data at its center, so small variations do not fill the graph. A series with fixed `min` and `max` does not use it. The rolling-window mode (**Show Last (secs)**) obeys it too. Tests: `tests/CustomGraphScale.test.js`.
+- **Custom graphs: axis scaling, gaps and tick labels** (`src/nodes/CNodeCustomGraphView.js`, `CCustomGraph.updateGraph`).
+  - **Equal aspect.** A graph with a data series on X always had equal units on both axes. `equalAspect` is now on only when X and Y1 are pixel coordinates of the same Point Track, Analyze Motion or CamMotion entity, with the same units. Other pairs, such as speed against altitude, scale each axis separately. Other users of the view class keep the old behavior (`v.equalAspect ?? true`).
+  - **Gaps.** Custom graphs set `preserveGaps`. The line stops where frames have no sample and does not join across the gap, a sample with no neighbor is drawn as a dot, and the crosshair (`interpolateAtFrame`) gives no value inside a gap.
+  - **Tick labels.** `formatLabel(v, step)` sets the number of decimals from the tick interval, so a narrow range does not show the same number at each grid line. X labels on a data axis use the same format, and a label that would touch the one before it is not drawn.
+
+### Bug Fixes
+- **Fixed a saved selection being lost when another axis changes** (`CCustomGraph.rebuildDropdowns`). The four lists had one `onChange` that copied all four displayed values to the stored tokens. A selection whose source was not loaded was displayed as **None** (or **Frame** on X), so a change to any axis wrote that value over the stored token. Each control now writes only its own axis.
+- **Fixed a custom graph not updating after some data edits** (`CCustomGraph.updateGraph`). The change check compared a signature made from only the first, middle and last sample of each series, so an edit between them did not replot. It now also compares each sample (`_lastSeriesData`), and the signature includes the X label, `equalAspect`, the empty-graph text and `minimumRange`.
+- **Fixed the frame rate used for track g-force** (`graphAcceleration` in `src/CustomGraphMeasurements.js`). `trackGForce` took the frame interval from the track node's `fps`, which is 30 in `CNode` unless set, so the g-force was scaled wrong in a sitch with another frame rate. The value now uses `Sit.fps / Sit.simSpeed`, as ground speed did. It is the magnitude of the second position difference over three frames, in g, with no gravity offset.
+
+### Documentation
+- `docs/UserInterface.md` ("Custom graphs") and `docs/MotionAnalysis.md` describe the entity and measurement lists, the track and object measurements, the minimum range, and the **Add Custom Graph** button on objects and tracks.
+
 ## Version 2.174.1 (2026-10-01)
 
 ### Improvements

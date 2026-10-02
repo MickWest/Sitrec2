@@ -9,6 +9,24 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.174.2 (2026-10-02)
+
+### New Features
+- **Add Custom Graph on objects and tracks** (Objects → an object's folder; Contents → a track's folder): a new *Add Custom Graph* button opens a graph named for that object or track, with its ground speed on the left axis and its altitude on the right.
+- **More graph measurements** (Show → Graphs → *Add Custom Graph*): you can now graph objects as well as tracks. Each has ground speed, 3D speed, vertical speed, heading, acceleration in g, altitude above the WGS84 ellipsoid, and slant range to the look camera.
+
+### Improvements
+- **Custom graph axes** (Show → Graphs, and the menu in each graph window's header): each axis now has two lists in place of one long list. Choose the object, track or analysis first, then the measurement, which shows its units. Point Track, CamMotion, Analyze Motion and Horizon are in the list only when they have data.
+- Speed and altitude axes on a custom graph now keep a range of at least 10 units, so small variations do not fill the graph.
+- A custom graph with a measurement on its X axis now scales each axis separately, such as speed against altitude. Pixel positions from one source keep equal scales.
+- A custom graph line now stops where frames have no data, and a frame with data on its own shows as a dot. Axis numbers show enough decimals to be different at each grid line, and X axis numbers no longer overlap.
+- A saved graph selection whose source is not loaded now stays in the list, marked "(unavailable)", and connects again when the source comes back.
+
+### Bug Fixes
+- Fixed a custom graph losing a saved selection whose source was not loaded when you changed another axis.
+- Fixed a custom graph that did not update after some edits to the data it shows.
+- Fixed the track g-force on a custom graph being wrong in a sitch that is not at 30 frames per second.
+
 ## Version 2.174.1 (2026-10-01)
 
 ### Improvements
