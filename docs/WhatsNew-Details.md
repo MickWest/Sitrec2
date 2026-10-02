@@ -9,6 +9,26 @@ lockstep with docs/WhatsNew.md.
 
 ---
 
+## Version 2.174.3 (2026-10-02)
+
+### Improvements
+- **Palette colors for a track made with an object** (`src/CustomManagerMenus.js`).
+  - **Cause.** `TrackManager.addSyntheticTrack` uses `options.color` when it is given, else `nextPaletteColor()`, which gives the next entry of `TRACK_PALETTE`. Three callers passed `color: 0x808080`, so the track they made was always gray: `createObjectFromInput` (Objects → **Add Object**, and the `addObjectAtLLA` and `addObjectsAtLLA` API calls), `createTrackWithObject` (ground right-click menu → **Create Track with Object**) and `createInOutObjectTrack` (**Create In->Out Obj Track**).
+  - **Change.** The `color` option is removed from the three calls, so these tracks take the next palette color.
+  - **Not changed.** The object is still a gray sphere (`color: 0x808080` on its `CNode3DObject`). **Create Track (No Object)** and **Add Balloon** already used the palette. `TrackManager.serialize()` saves the color of each synthetic track and `deserialize()` passes it back, so a track in a saved sitch keeps the color it had, gray included.
+- **Extend To Ground: screen-spaced wall lines on hand-drawn and balloon tracks** (new `src/rendering/TrackWallLines.js`, `src/nodes/CNodeDisplayTrack.js`, `src/TrackManager.js`, `src/SceneLineMaterial.js`).
+  - **Before.** `CNodeDisplayTrack.makeTrackWall` drew one vertical line per wall point, as a separate `LineSegments2` (`trackLines`). Wall points are at least `minWallStep` apart (default 50 m). A hand-drawn or balloon track has a position at each frame, so a long one had a line about each 50 m, and the lines merged into a solid sheet.
+  - **Option.** `CNodeDisplayTrack` has a new `wallLineSpacing` option: the minimum distance between the wall's vertical lines, in display pixels. The default is 0, which keeps one line per wall point. `addSyntheticTrack` and `addBalloonTrack` set it to 20. A wall with a cap (`showCap`, a KML polygon) ignores it.
+  - **Shader.** With the option set, `installTrackWallLines` patches the wall's fill material (`MeshBasicMaterial`) through `onBeforeCompile`, and `trackLines` is not built. The fragment shader puts lines at power-of-two steps, in meters, of distance along the track. Each pixel uses the finest step that is at least `wallLineSpacing` display pixels wide. That level fades in as its spacing on screen goes from one to two times `wallLineSpacing`; the level with twice the step is at full strength. The lines are one display pixel wide and use the wall's line color and `lineOpacity`, as the separate lines did. Each end of the wall always has a line.
+  - **Geometry.** The wall geometry gets a `wallU` attribute with two values per vertex: the distance along the wall top from the start of the track, and the same distance from the start of the vertex's own quad. The shader takes the screen derivative (`dFdx`, `dFdy`) of the second value. Float32 cannot give the difference of the first value between two adjacent pixels far along a long track (at 500 km its step is 0.06 m).
+  - **Pixel scale.** `SceneLineMaterial.js` now exports `displayPixelScale(renderer)`: the render-target pixels per display pixel for the current viewport. This is the calculation `SceneLineMaterial` already did for line widths, moved into a function. The wall material calls it in `onBeforeRender`, so the spacing is in display pixels in each view, at each device pixel ratio and render scale, and in an export.
+  - **Order and cache key.** `installTrackWallLines` runs before `patchMaterialForLinearOutput`, because the lines must be composited before the output color conversion. The material has its own `customProgramCacheKey` (`sitrecTrackWallLines.v1`), so it does not share a shader program with a plain wall.
+  - **Scope.** The option is set in `addSyntheticTrack`, so it applies to each track that function makes. This includes a spline track loaded from a Sitrec Spline JSON file. Tracks from KML and other data files do not set the option and keep one line per wall point. The wall fill and the 50 m wall step are not changed.
+  - **Tests.** `tests/TrackWallLines.test.js` checks the patch of the stock basic mesh shader, the error when a shader anchor chunk is missing, and the uniforms, program key and per-view pixel scale.
+
+### Documentation
+- `docs/Tracks.md`: the **Extend To Ground** row now gives the line spacing for an imported track and for a hand-drawn or balloon track.
+
 ## Version 2.174.2 (2026-10-02)
 
 ### New Features

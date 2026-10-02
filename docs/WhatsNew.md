@@ -9,6 +9,12 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.174.3 (2026-10-02)
+
+### Improvements
+- **Track colors** (Objects → *Add Object*; ground right-click menu → *Create Track with Object* and *Create In->Out Obj Track*): a track made together with an object now takes the next color from the track palette, as a track made without an object does. Before, it was always gray. The object stays gray, and a track in a saved sitch keeps its color.
+- **Extend To Ground on hand-drawn and balloon tracks** (Contents → a track's folder → *Extend To Ground*): the vertical lines on the wall below the track are now at least 20 pixels apart on screen, and finer lines fade in as you zoom in, so the lines on a long track no longer merge into a solid sheet. An imported track still has one line at each data point.
+
 ## Version 2.174.2 (2026-10-02)
 
 ### New Features
