@@ -102,6 +102,7 @@ describeEntrypoint("docker/entrypoint.sh strips CRLF + quotes (compose env_file:
                 SITREC_CUSTOM_MAP_OSM_NAME: '"OpenStreetMap"\r',
                 SITREC_CUSTOM_MAP_OSM_URL: "https://tiles/{z}/{x}/{y}.png?token=a&style=b\r",
                 SITREC_ENABLE_DEFAULT_MAP_SOURCES: '"false"\r',
+                SITREC_CUSTOM_SOUNDING_WX_LEVEL_TAG: '"Level"\r',
                 DOCKER_MAP_TYPE: "CustomMap_OSM\r",
             },
         });
@@ -128,6 +129,10 @@ describeEntrypoint("docker/entrypoint.sh strips CRLF + quotes (compose env_file:
         expect(env.SITREC_CUSTOM_MAP_OSM_NAME).toBe("OpenStreetMap");
         expect(env.SITREC_ENABLE_DEFAULT_MAP_SOURCES).toBe("false");
         expect(env.DOCKER_MAP_TYPE).toBe("CustomMap_OSM");
+        // A custom sounding layout reaches both PHP (which serves it in the fetched
+        // config) and the page.
+        expect(php).toContain("SITREC_CUSTOM_SOUNDING_WX_LEVEL_TAG=Level\n");
+        expect(env.SITREC_CUSTOM_SOUNDING_WX_LEVEL_TAG).toBe("Level");
         // The '&' URL survives intact, with no matched <head> spliced into it.
         expect(env.SITREC_CUSTOM_MAP_OSM_URL).toBe("https://tiles/{z}/{x}/{y}.png?token=a&style=b");
         expect(env.SITREC_CUSTOM_MAP_OSM_URL).not.toContain("<head>");

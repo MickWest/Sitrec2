@@ -48,6 +48,10 @@ const en = {
                         label: "Vehicle Designer",
                         tooltip: "Build cars, trucks, aircraft, drones, balloons and sky lanterns with live sliders, searchable presets, and GLB model export",
                     },
+                    xmlWindAnalyzer: {
+                        label: "XML Wind Profile Analyzer",
+                        tooltip: "Find the position and the vertical wind profile in an XML weather file, and get the settings that make Sitrec read it",
+                    },
                 },
             },
             selectPlaceholder: "-Select-",
@@ -1118,6 +1122,25 @@ const en = {
                 tooltip: "Also list superseded model generations from your own API keys. "
                     + "Off, the AI Model list shows only each provider's newest family, "
                     + "which is usually the fastest and cheapest for what it can do.",
+            },
+            envOverride: {
+                label: "SITREC_ ENV Override…",
+                dialogTitle: "SITREC_ ENV Override",
+                tooltip: "Edit your own SITREC_ settings. Each line replaces the value this installation set in "
+                    + "shared.env, for you only, in this browser. Saved with your other settings.",
+                dialogMessage: "Lines in shared.env format, one setting on each line: SITREC_NAME=value. "
+                    + "A line here replaces the setting of the same name from this installation, as if the line "
+                    + "were at the end of shared.env. Only names that start with SITREC_ are used, and only for "
+                    + "what this browser reads: a setting that the server reads is not changed. "
+                    + "Most settings are read when Sitrec starts, so reload to see every change.",
+                placeholder: "# Example\nSITREC_CUSTOM_SOUNDING_WX_LEVEL_TAG=Level",
+                save: "Save",
+                saveAndReload: "Save and Reload",
+                ignoredMessage: "These lines are not used:",
+                ignoredReasons: {
+                    notSitrec: "the name does not start with SITREC_",
+                    secureBuild: "this build does not let a user change this setting",
+                },
             },
             apiKeys: {
                 label: "API Keys…",

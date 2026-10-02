@@ -51,6 +51,38 @@ describe("Extra Tools menu", () => {
         expect(typeof strings?.tooltip).toBe("string");
     });
 
+    // A perBuild tool is served from its build's own directory by docker/frontend_server.py,
+    // which serves files only: it has no directory index, so a link to "rate/" or "../" is a
+    // 404 there even though the same link works on the main site. Every link between the
+    // pages of such a tool must name the page.
+    test.each(EXTRA_TOOLS.filter(tool => tool.perBuild).map(tool => [tool.key, tool]))(
+        "%s (served per build) has no link to a bare directory", (key, tool) => {
+            const toolDir = path.join(TOOLS_DIR, path.dirname(tool.path));
+            const bare = [];
+            const scan = dir => {
+                for (const entry of fs.readdirSync(dir, {withFileTypes: true})) {
+                    const full = path.join(dir, entry.name);
+                    if (entry.isDirectory()) {
+                        if (entry.name !== "lib" && entry.name !== "tools") scan(full);
+                        continue;
+                    }
+                    if (!/\.(html|js)$/.test(entry.name)) continue;
+                    const text = fs.readFileSync(full, "utf8");
+                    // href="..." in markup, and .href = `...` / "..." / '...' in script. A link
+                    // with a scheme, or to another site ("//host/"), is not one of ours.
+                    for (const match of text.matchAll(/href\s*=\s*["'`]([^"'`#?]*)/g)) {
+                        const target = match[1];
+                        if (/^[a-z][a-z0-9+.-]*:|^\/\//i.test(target) || target.includes("${")) continue;
+                        if (target === "." || target === ".." || target.endsWith("/")) {
+                            bare.push(`${path.relative(TOOLS_DIR, full)}: href="${target}"`);
+                        }
+                    }
+                }
+            };
+            scan(toolDir);
+            expect(bare).toEqual([]);
+        });
+
     test("has no strings left over for a removed tool", () => {
         const keys = EXTRA_TOOLS.map(tool => tool.key).sort();
         expect(Object.keys(en.menus.main.extraTools.tools).sort()).toEqual(keys);

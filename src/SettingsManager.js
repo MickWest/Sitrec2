@@ -9,6 +9,13 @@ import {assert} from "./assert";
 import {getEnvBool} from "./envUtils";
 import {primeKeyCache} from "./BYOKKeyStore";
 
+// The longest "SITREC_ ENV Override" text that is kept. Mirrored in sitrecServer/settings.php.
+export const ENV_OVERRIDE_MAX_LENGTH = 20000;
+
+// The override text does not go in the settings cookie: a cookie holds about 4 KB and is
+// sent with every request. On the cookie path it is kept here in localStorage instead.
+const ENV_OVERRIDE_LOCAL_KEY = "sitrecEnvOverride";
+
 // The AI Effort setting's levels, lowest first. Mirrored in sitrecServer/settings.php.
 export const AI_EFFORT_VALUES = ["low", "medium", "high", "xhigh", "max"];
 
@@ -209,6 +216,13 @@ export function sanitizeSettings(settings) {
         sanitized.startupBuildings = settings.startupBuildings;
     }
 
+    // The "SITREC_ ENV Override" text (EnvOverride.js): shared.env lines, kept as the user
+    // typed them. It is only ever parsed as KEY=value lines, never run.
+    if (settings.envOverride !== undefined && typeof settings.envOverride === "string"
+        && settings.envOverride.length <= ENV_OVERRIDE_MAX_LENGTH) {
+        sanitized.envOverride = settings.envOverride;
+    }
+
     return sanitized;
 }
 
@@ -252,6 +266,24 @@ export async function saveSettingsToIndexedDB(settings) {
     }
 }
 
+function loadEnvOverrideFromLocalStorage() {
+    try {
+        const text = window.localStorage.getItem(ENV_OVERRIDE_LOCAL_KEY);
+        return typeof text === "string" && text.length <= ENV_OVERRIDE_MAX_LENGTH ? text : null;
+    } catch (e) {
+        return null;    // storage blocked
+    }
+}
+
+function saveEnvOverrideToLocalStorage(text) {
+    try {
+        if (text) window.localStorage.setItem(ENV_OVERRIDE_LOCAL_KEY, text);
+        else window.localStorage.removeItem(ENV_OVERRIDE_LOCAL_KEY);
+    } catch (e) {
+        console.warn("Failed to save the ENV override to local storage", e);
+    }
+}
+
 // Load settings from cookie
 export function loadSettingsFromCookie() {
     if (!SETTINGS_COOKIES_ENABLED) {
@@ -264,6 +296,8 @@ export function loadSettingsFromCookie() {
         try {
             const parsed = JSON.parse(cookieValue);
             const sanitized = sanitizeSettings(parsed);
+            const envOverride = loadEnvOverrideFromLocalStorage();
+            if (envOverride !== null) sanitized.envOverride = envOverride;
             console.log("Loaded settings from cookie:", sanitized);
             return sanitized;
         } catch (e) {
@@ -282,6 +316,9 @@ export function saveSettingsToCookie(settings) {
     
     try {
         const sanitized = sanitizeSettings(settings);
+        // The override text is too large for a cookie; it goes to localStorage.
+        saveEnvOverrideToLocalStorage(sanitized.envOverride);
+        delete sanitized.envOverride;
         setCookie("sitrecSettings", JSON.stringify(sanitized), 365); // Save for 1 year
         console.log("Saved settings to cookie:", sanitized);
     } catch (e) {
@@ -439,6 +476,8 @@ export async function initializeSettings() {
             startupLon: -118.3,
             startupAlt: 0,              // metres ABOVE GROUND. 0 = standing on the ground
             startupBuildings: false,    // 3D buildings on at startup (needs permission + a provider key)
+
+            envOverride: "",            // "SITREC_ ENV Override": shared.env lines (EnvOverride.js)
         };
     }
 

@@ -475,13 +475,15 @@ ${bodyContent}
             'CAN_REQUIRE_CONTEXT': JSON.stringify(true),
             'INCLUDE_IWER_EMULATOR': JSON.stringify(env.includeIWER !== false),
             '__SITREC_BUILD_DIR__': JSON.stringify(process.cwd()),
-            // Collect all SITREC_CUSTOM_MAP_* and SITREC_CUSTOM_ELEVATION_* vars from shared.env
+            // Collect all SITREC_CUSTOM_MAP_*, SITREC_CUSTOM_ELEVATION_* and
+            // SITREC_CUSTOM_SOUNDING_* vars from shared.env
             // as a JSON blob so serverless builds can iterate them at runtime (dotenv-webpack
             // only replaces literal process.env.X references, not dynamic key access).
             'process.env.SITREC_CUSTOM_SOURCES': JSON.stringify(JSON.stringify(
                 Object.fromEntries(
                     Object.entries(sharedEnvValues).filter(([k]) =>
                         k.startsWith('SITREC_CUSTOM_MAP_') || k.startsWith('SITREC_CUSTOM_ELEVATION_')
+                        || k.startsWith('SITREC_CUSTOM_SOUNDING_')
                     )
                 )
             )),

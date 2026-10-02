@@ -17,7 +17,13 @@ When you add, rename or remove a public tool, change all three of these together
 3. **`src/i18n/en.js`**: a `label` and a `tooltip` under
    `menus.main.extraTools.tools.<key>`.
 
-`tests/extraTools.test.js` fails if these disagree. Development and test pages (for
+A `perBuild` tool is served from its build's own directory (`/builds/<build-id>/tools/...`)
+by a server that serves files only and has no directory index. Every link between the pages
+of such a tool must name the page: `rate/index.html` and `../index.html`, never `rate/` or
+`../`. A bare directory link works on the main site and is a 404 in a build directory.
+
+`tests/extraTools.test.js` fails if these disagree, or if a `perBuild` tool has a link to
+a bare directory. Development and test pages (for
 example `px4-test.html`) get no card and no menu entry.
 
 ## Tile Download Scripts

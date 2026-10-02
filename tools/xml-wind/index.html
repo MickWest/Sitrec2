@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Finds the position and the vertical wind profile in an XML weather file of unknown layout, and proposes the settings that make Sitrec read it.">
+  <title>XML Wind Profile Analyzer</title>
+
+  <!-- Cache busting. These modules are served RAW (no bundler ever sees tools/), so a
+       browser can keep an old analyze.js next to a new app.js. The import map stamps the
+       whole module graph; __BUILD_V__ is substituted at build time by webpackCopyPatterns.js. -->
+  <script type="importmap">
+  {
+    "imports": {
+      "./analyze.js":        "./analyze.js?v=__BUILD_V__",
+      "./soundingLayout.js": "./soundingLayout.js?v=__BUILD_V__",
+      "./xmlObject.js":      "./xmlObject.js?v=__BUILD_V__",
+      "../src/envText.js":   "../src/envText.js?v=__BUILD_V__"
+    }
+  }
+  </script>
+  <style>
+    body { font-family: Arial, sans-serif; max-width: 1000px; margin: 30px auto; padding: 0 20px 60px; line-height: 1.5; color: #222; }
+    h1 { color: #333; border-bottom: 2px solid #007bff; padding-bottom: 10px; }
+    h2 { color: #007bff; margin: 34px 0 8px; font-size: 1.25em; }
+    p.lead { margin-top: 0; }
+    .private { background: #eef7ee; border-left: 4px solid #28a745; padding: 8px 14px; }
+    #drop { border: 2px dashed #9ab; border-radius: 8px; padding: 26px; text-align: center; background: #f8f9fa; margin: 18px 0; }
+    #drop.over { border-color: #007bff; background: #e9f2ff; }
+    button, .button { background: #007bff; color: #fff; border: 0; border-radius: 4px; padding: 7px 14px; font-size: 14px; cursor: pointer; }
+    button:hover { background: #0056b3; }
+    button.plain { background: #6c757d; }
+    button.plain:hover { background: #545b62; }
+    #status { font-weight: bold; }
+    #status.error { color: #b00020; }
+    table { border-collapse: collapse; width: 100%; margin: 8px 0; font-size: 14px; }
+    th, td { border: 1px solid #d5dbe1; padding: 5px 8px; text-align: left; vertical-align: top; }
+    th { background: #f1f4f7; }
+    td.number { text-align: right; font-variant-numeric: tabular-nums; }
+    code, .tag { font-family: Menlo, Consolas, monospace; font-size: 13px; }
+    .tag { color: #7a1fa2; }
+    .role { font-weight: bold; }
+    .guess { color: #9a5b00; }
+    .used { background: #eef7ee; }
+    .muted { color: #666; }
+    ul.notes li { margin: 6px 0; }
+    ul.notes li.warning { color: #b00020; font-weight: bold; }
+    textarea { width: 100%; box-sizing: border-box; font-family: Menlo, Consolas, monospace; font-size: 13px; padding: 8px; border: 1px solid #b8c0c8; border-radius: 4px; }
+    .row { display: flex; gap: 10px; align-items: center; margin: 8px 0; flex-wrap: wrap; }
+    .messages { color: #b00020; }
+    details { margin: 8px 0; }
+    summary { cursor: pointer; color: #007bff; }
+    footer { margin-top: 40px; text-align: center; color: #666; font-size: 14px; }
+    [hidden] { display: none !important; }
+  </style>
+</head>
+<body>
+
+<h1>XML Wind Profile Analyzer</h1>
+<p class="lead">Load an XML weather file. This tool looks for a <strong>position</strong> (latitude, longitude,
+elevation) and a <strong>vertical wind profile</strong> (one element for each altitude, with the wind in it),
+and proposes the settings that make Sitrec read the file as a wind profile.</p>
+<p class="private">The file is read in this browser tab. Nothing is uploaded or sent anywhere.</p>
+
+<div id="drop">
+  <p>Drop an <code>.xml</code> file here</p>
+  <div class="row" style="justify-content: center;">
+    <button id="chooseButton" type="button">Choose a file</button>
+    <button id="sampleButton" type="button" class="plain">Load the sample file</button>
+  </div>
+  <input id="fileInput" type="file" accept=".xml,text/xml,application/xml" hidden>
+</div>
+<p id="status">No file loaded.</p>
+
+<div id="results" hidden>
+  <h2>The file</h2>
+  <div id="fileSummary"></div>
+
+  <h2>Position</h2>
+  <div id="positions"></div>
+
+  <h2>Vertical wind profile</h2>
+  <div id="profile"></div>
+
+  <div id="settingsBlock">
+    <h2>Notes</h2>
+    <ul id="notes" class="notes"></ul>
+
+    <h2>Proposed settings</h2>
+    <p>These lines go in <code>shared.env</code>, or in the env file that the Sitrec container starts with.
+       To try them for yourself only, paste them into <strong>Sitrec &#9656; Settings &#9656; SITREC_ ENV Override</strong>.
+       A line marked <strong>CHECK</strong> is a guess or a default that you must confirm. You can edit the
+       settings here and check them again.</p>
+    <textarea id="settings" rows="16" spellcheck="false"></textarea>
+    <div class="row">
+      <button id="checkButton" type="button">Check these settings</button>
+      <button id="copySettingsButton" type="button" class="plain">Copy</button>
+    </div>
+
+    <h2>What Sitrec reads with these settings</h2>
+    <p class="muted">This uses the same reader as Sitrec. The values are converted to feet and knots, and to metres and m/s.</p>
+    <div id="check"></div>
+  </div>
+
+  <details id="othersBlock">
+    <summary>Other repeating elements in the file</summary>
+    <div id="others"></div>
+  </details>
+
+  <h2>Report</h2>
+  <p>A text account of what was found, to send to the person who sets up Sitrec. Without the values it has
+     the structure of the file: tag names, namespace addresses, unit names, counts and kinds of data. It has
+     no measurement, position, time or other text from the file. Read it before you send it: a tag name or a
+     namespace address can itself say where the file comes from.</p>
+  <div class="row">
+    <label><input id="includeValues" type="checkbox"> Include the values from the file</label>
+    <button id="copyReportButton" type="button" class="plain">Copy</button>
+  </div>
+  <textarea id="report" rows="18" readonly spellcheck="false"></textarea>
+</div>
+
+<footer>Part of <a href="../../">Sitrec</a> &middot; <a href="../">All tools</a></footer>
+
+<script type="module" src="app.js?v=__BUILD_V__"></script>
+</body>
+</html>

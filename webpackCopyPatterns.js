@@ -94,6 +94,17 @@ patterns.push({
     },
 });
 
+// And for the XML Wind Profile Analyzer: the stamp on its entry module and on an import
+// map covering the rest of its module graph.
+patterns.push({
+    from: "tools/xml-wind/index.html",
+    to: "./tools/xml-wind/index.html",
+    force: true,
+    transform(content) {
+        return content.toString().replace(/__BUILD_V__/g, String(BUILD_V));
+    },
+});
+
 // Vehicle Designer is a standalone module graph. Keep its renderer, controls and
 // exporter on the same installed Three.js version, including in offline builds.
 patterns.push({

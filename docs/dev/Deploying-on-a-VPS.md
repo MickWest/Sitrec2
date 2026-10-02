@@ -214,8 +214,8 @@ view everything and save to their own disk but cannot write to the server. Add a
 adding its line and restarting the service. `chmod 600` the file once it holds one.
 
 **Only the settings the entrypoint knows are forwarded.** `docker/entrypoint.sh` copies the
-variables on its `CLIENT_VARS` and `SERVER_VARS` lists, plus any `SITREC_CUSTOM_MAP_*` and
-`SITREC_CUSTOM_ELEVATION_*`, and silently ignores everything else. In the current release,
+variables on its `CLIENT_VARS` and `SERVER_VARS` lists, plus any `SITREC_CUSTOM_MAP_*`,
+`SITREC_CUSTOM_ELEVATION_*` and `SITREC_CUSTOM_SOUNDING_*`, and silently ignores everything else. In the current release,
 those lists cover every setting in `config/shared.env.example` that applies to a server
 build; settings marked serverless-only in the example are intentionally omitted. If a
 setting has no effect, check the entrypoint lists and the spelling in `sitrec.env` first.

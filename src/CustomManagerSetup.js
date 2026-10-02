@@ -96,8 +96,10 @@ import {CNodeTrackSwitch} from "./nodes/CNodeTrackSwitch";
 import {getNearbyWeatherBalloons, haversineKm, importSoundingDialog, loadStationList} from "./SondeFetch";
 import {
     WIND_SOURCES,
+    altitudeProfileForSourceKey,
     isTrackSourceKey,
     trackDataIdFromSourceKey,
+    trackSourceKey,
     windSourceByKey,
     windSourceLabelsToKeysWithTracks,
 } from "./nodes/WindSources";
@@ -679,7 +681,25 @@ export const setupMethods = {
         // the current source alone.)
         this._importSounding = async () => {
             const ok = await importSoundingDialog();
-            if (!ok || !this._windNode) return;
+            if (ok) this.useLoadedSoundingsAsWindSource();
+        };
+
+        // Make an imported track's own "Track: <name>" entry the wind source.
+        // TrackManager calls this when the user imports a custom XML wind profile.
+        // The entry is in the menu by now: notifyTracksChanged() ran just before,
+        // and its listener rebuilt the options.
+        this.useTrackAsWindSource = (trackDataId) => {
+            if (!this._windNode || !this._windSourceCtrl) return;
+            const sourceKey = trackSourceKey(trackDataId);
+            if (!Object.values(this._windSourceOptions).includes(sourceKey)) return;
+            // setValue fires onTargetSourceChange, which mirrors to local in
+            // shared mode and runs the load pipeline.
+            this._windSourceCtrl.setValue(sourceKey);
+        };
+
+        // Make the loaded soundings the wind source.
+        this.useLoadedSoundingsAsWindSource = () => {
+            if (!this._windNode) return;
             if (this._windNode.source !== "manual-soundings") {
                 // setValue("manual-soundings") on the source dropdown
                 // fires onTargetSourceChange (which mirrors to local in
@@ -905,9 +925,15 @@ export const setupMethods = {
 
         // Resolve a track-derived sourceKey to its TrackData id, or
         // null for non-track sources.
-        const resolveTrackSource = (sourceKey) => isTrackSourceKey(sourceKey)
-            ? trackDataIdFromSourceKey(sourceKey)
-            : null;
+        //
+        // Also null for the Track entry of a sounding track. That entry is read
+        // by altitude through the wind field, like a sounding source, so the
+        // wind nodes must NOT take the track's row for the current time (which
+        // is what a trackSource makes them do).
+        const resolveTrackSource = (sourceKey) =>
+            isTrackSourceKey(sourceKey) && !altitudeProfileForSourceKey(sourceKey)
+                ? trackDataIdFromSourceKey(sourceKey)
+                : null;
 
         // Apply a sourceKey to the localWind node's trackSource override.
         // For non-track sources, trackSource is null (the windField grid
@@ -937,6 +963,7 @@ export const setupMethods = {
             }
 
             const tdId = resolveTrackSource(sourceKey);
+            const isProfileTrack = !!altitudeProfileForSourceKey(sourceKey);
             if (tdId) {
                 // Track-driven: targetWind reads its from/knots from the
                 // track per frame. The wind field also fetches so the
@@ -950,7 +977,7 @@ export const setupMethods = {
             }
             // atmospheric / manual / track: auto-show + fetch pipeline.
             const autoShowSources = ["gfs", "uwyo", "igra2", "manual-soundings"];
-            const isTrack = !!tdId;
+            const isTrack = !!tdId || isProfileTrack;
             if ((autoShowSources.includes(sourceKey) || isTrack)
                 && !this._autoShownWindSources.has(sourceKey)
                 && !par.windShow) {
@@ -1065,6 +1092,12 @@ export const setupMethods = {
             // track behind the previous local selection is removed.
             // Force-sync here.
             applyLocalSource(wn.sourceLocal);
+            // A saved sitch can name a profile track as its source before that
+            // track has loaded, and the target wind then takes it as an ordinary
+            // track source. Now that the track set has changed, put that right.
+            if (altitudeProfileForSourceKey(wn.source) && NodeMan.exists("targetWind")) {
+                NodeMan.get("targetWind").trackSource = null;
+            }
         };
         // Setup runs once per sitch load; remove the previous binding
         // before re-registering so reloads don't accumulate listeners.
@@ -1116,6 +1149,7 @@ export const setupMethods = {
                 // local (no network on the drag tick).
                 const localSources = ["uwyo", "igra2", "manual-soundings", "manual"];
                 const isLocal = localSources.includes(wn.source)
+                    || !!altitudeProfileForSourceKey(wn.source)
                     || (wn.source === "gfs" && wn.hasGFSBracketCached(wn.windAltFt));
                 if (!isLocal) return;
                 wn.fetchWindForAltitude(wn.windAltFt);

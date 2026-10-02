@@ -215,6 +215,7 @@ Atmospheric sounding data from weather balloons:
 
 - **IGRA2** format (NOAA fixed-width text)
 - **UWYO** format (University of Wyoming, TEXT:LIST or TEXT:CSV)
+- **XML** wind profiles in a layout that the installation defines (see [Wind](Wind.md#xml-wind-profiles))
 
 These reconstruct 3D trajectories from atmospheric profiles and include wind, pressure, and temperature data. Sonde tracks display wind direction arrows, and their folder has a **Color Mode** menu that colors the track by **Temperature**, **Altitude** or **Pressure**, or **Flat (Line Color)** for a single color.
 

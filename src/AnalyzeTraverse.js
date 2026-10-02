@@ -1052,7 +1052,11 @@ function attachBalloonWindEvidence(hypotheses, dataset, originLat, originLon, pr
     const wf = NodeMan.get("windField", false);
     const wfUsable = analyzeTweaks.windMode !== "Zero wind"
         && wf && wf.source && typeof wf.sampleWindAtAltitude === "function";
-    const sourceClass = wfUsable ? (WIND_SOURCE_CLASSES[wf.source] ?? "unknown") : null;
+    // The Track entry of a sounding track is read as a sounding
+    // (wf._soundingSet), so it is the same class of evidence as one.
+    const sourceClass = wfUsable
+        ? (WIND_SOURCE_CLASSES[wf.source] ?? (wf._soundingSet?.() ? "observation" : "unknown"))
+        : null;
     // No measured column for a hand-set constant: it is an assumption, and
     // rendering it beside "measured" invites exactly the confusion the
     // evidence rating exists to prevent.
@@ -1156,7 +1160,11 @@ function attachBalloonWindEvidence(hypotheses, dataset, originLat, originLon, pr
                 // be read at all, the cap FAILS CLOSED: "supports" needs a
                 // reference that can be shown to bear the weight.
                 let profiles = [];
-                if (typeof wf._gatherSondeProfiles === "function") {
+                if (typeof wf._soundingSet === "function") {
+                    try {
+                        profiles = wf._soundingSet()?.profiles || [];
+                    } catch (e) { profiles = []; }
+                } else if (typeof wf._gatherSondeProfiles === "function") {
                     try {
                         profiles = wf._gatherSondeProfiles(
                             wf.source === "manual-soundings" ? null : wf.source) || [];

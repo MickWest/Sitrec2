@@ -75,6 +75,7 @@ describe("buildSecureClientEnv", () => {
 
         expect(isClientVisibleKey("SITREC_CUSTOM_MAP_INTERNAL_URL", names)).toBe(true);
         expect(isClientVisibleKey("SITREC_CUSTOM_ELEVATION_X_MAX_ZOOM", names)).toBe(true);
+        expect(isClientVisibleKey("SITREC_CUSTOM_SOUNDING_WX_LEVEL_TAG", names)).toBe(true);
         expect(isClientVisibleKey("CUSTOM_WIND_URL", names)).toBe(false);
 
         const env = buildSecureClientEnv({

@@ -68,7 +68,8 @@ import {CNodeTrackGUI} from "./nodes/CNodeControllerTrackGUI";
 import * as LAYER from "./LayerMasks";
 import {forceUpdateUIText} from "./nodes/CNodeViewUI";
 import {configParams} from "./runtimeConfig";
-import {showError, showConfirm, showChoice} from "./showError";
+import {showError, showConfirm, showChoice, showTextEditor} from "./showError";
+import {applyEnvOverride} from "./EnvOverride";
 import {
     hasAnyKey as byokHasAnyKey, hasCachedKey, isProviderConfigured, primeKeyCache,
 } from "./BYOKKeyStore";
@@ -79,7 +80,7 @@ import {showPostLoadFilterDialog} from "./TrackFilterDialog";
 import {textSitchToObject} from "./RegisterSitches";
 import {waitForExportFrameSettled} from "./ExportFrameSettler";
 import {parseObjectInput as parseObjectInputUtil} from "./utils/parseObjectInput";
-import {initializeSettings, SettingsSaver} from "./SettingsManager";
+import {ENV_OVERRIDE_MAX_LENGTH, initializeSettings, SettingsSaver} from "./SettingsManager";
 import {setGlobalTheme} from "./Theme";
 import {CNodeCurveEditor2} from "./nodes/CNodeCurveEdit2";
 import {CNodeViewDAG} from "./nodes/CNodeViewDAG";
@@ -319,6 +320,42 @@ export class CCustomManager {
 
     async initializeSettings() {
         await initializeSettings();
+        // The user's SITREC_ ENV Override goes into force as soon as the settings are
+        // loaded, before the sitch builds the menus and sources that read those settings.
+        const {ignored} = applyEnvOverride(Globals.settings.envOverride ?? "");
+        for (const {key, reason} of ignored) {
+            console.warn(`SITREC_ ENV Override: ${key} ignored (${reason})`);
+        }
+    }
+
+    // Settings > SITREC_ ENV Override: edit the override text, save it as a user setting,
+    // and put it into force. See EnvOverride.js for what an override can and cannot do.
+    async editEnvOverride() {
+        const edited = await showTextEditor(t("custom.settings.envOverride.dialogMessage"), {
+            title: t("custom.settings.envOverride.dialogTitle"),
+            defaultValue: Globals.settings.envOverride ?? "",
+            maxLength: ENV_OVERRIDE_MAX_LENGTH,
+            placeholder: t("custom.settings.envOverride.placeholder"),
+            buttons: [
+                {label: t("custom.settings.envOverride.save"), action: "save"},
+                {label: t("custom.settings.envOverride.saveAndReload"), action: "reload"},
+            ],
+        });
+        if (edited === null) return;
+
+        Globals.settings.envOverride = edited.text;
+        const {ignored} = applyEnvOverride(edited.text);
+        await this.saveGlobalSettings(true);
+
+        if (ignored.length > 0) {
+            const lines = ignored.map(({key, reason}) =>
+                `${key}: ${t("custom.settings.envOverride.ignoredReasons." + reason)}`);
+            await showChoice(t("custom.settings.envOverride.ignoredMessage") + "\n\n" + lines.join("\n"), {
+                title: t("custom.settings.envOverride.dialogTitle"),
+                options: [{label: "OK", value: true, primary: true}],
+            });
+        }
+        if (edited.action === "reload") window.location.reload();
     }
 
     /**
@@ -715,6 +752,11 @@ export class CCustomManager {
             .add({apiKeys: () => this.showApiKeyDialog()}, "apiKeys")
             .name(t("custom.settings.apiKeys.label"))
             .tooltip(t("custom.settings.apiKeys.tooltip"));
+
+        settingsFolder
+            .add({envOverride: () => this.editEnvOverride()}, "envOverride")
+            .name(t("custom.settings.envOverride.label"))
+            .tooltip(t("custom.settings.envOverride.tooltip"));
 
         // Add Center Sidebar toggle
         settingsFolder.add(Globals.settings, "centerSidebar")

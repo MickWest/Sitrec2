@@ -38,6 +38,30 @@ function secureBuildRejectsRuntimeValue(name, runtimeValue, buildTimeValue) {
     return false;
 }
 
+// The user's own overrides, from the "SITREC_ ENV Override" setting (EnvOverride.js).
+// They sit on top of both sources above, as if the lines were at the end of shared.env.
+let userEnvOverrides = {};
+
+/**
+ * Replace the user's overrides. EnvOverride.js is the only caller.
+ * @param {Object<string, string>} overrides - KEY -> value
+ */
+export function setUserEnvOverrides(overrides) {
+    userEnvOverrides = overrides ?? {};
+}
+
+/**
+ * True if a user override for `name` is used. Always true outside the secure build.
+ * In the secure build a user override is held to the same rule as a runtime one: it
+ * can tighten a security flag but never loosen it, and it cannot supply a credential.
+ * @param {string} name
+ * @param {string} override - the user's value
+ * @param {string|undefined} baseValue - the value in force without the override
+ */
+export function userOverrideAllowed(name, override, baseValue) {
+    return !(isSecureBuild && secureBuildRejectsRuntimeValue(name, override, baseValue));
+}
+
 /**
  * Get an environment variable, checking runtime overrides first.
  * @param {string} name - Variable name (e.g. "MAPBOX_TOKEN")
@@ -56,6 +80,12 @@ export function getEnv(name, fallback) {
     // In every other build isSecureBuild is a compile-time false and this is skipped.
     if (isSecureBuild && hasRuntimeValue && secureBuildRejectsRuntimeValue(name, value, fallback)) {
         value = fallback;
+    }
+
+    // The user's override, if there is one for this name and the build allows it.
+    if (Object.prototype.hasOwnProperty.call(userEnvOverrides, name)
+        && userOverrideAllowed(name, userEnvOverrides[name], value)) {
+        value = userEnvOverrides[name];
     }
 
     // Strip a trailing CR/newline. A Windows (CRLF) env file — passed via

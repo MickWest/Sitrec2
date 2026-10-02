@@ -118,7 +118,7 @@ function requestBreakdown() {
     if (workerReady) worker.postMessage(msg); else queued = msg;      // sent when the worker is ready
     $("bLatLabel").textContent = latLabel(lat);
     $("bLat").value = lat;
-    $("backLink").href = `./?lat=${formatLat(lat)}`;
+    $("backLink").href = `index.html?lat=${formatLat(lat)}`;
     $("breakdownStatus").textContent = `Computing the nights at ${latLabel(lat)}…`;
 }
 

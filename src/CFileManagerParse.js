@@ -23,10 +23,12 @@ import {
 import {CNodeArray} from "./nodes/CNodeArray";
 import {CTrackFileSTANAGCSV, isSTANAGCSV} from "./TrackFiles/CTrackFileSTANAGCSV";
 import {CTrackFileBOT, isBOTCSV} from "./TrackFiles/CTrackFileBOT";
+import {CTrackFileSoundingXML} from "./TrackFiles/CTrackFileSoundingXML";
 
 const trackFileClasses = [
     CTrackFileKML,
     CTrackFileSTANAG,
+    CTrackFileSoundingXML, // XML wind profile, layout from SITREC_CUSTOM_SOUNDING_* settings
     CTrackFileSRT,
     CTrackFileADSBTrace, // readsb/tar1090 trace_full JSON (adsb.lol) — object with icao/timestamp/trace
     CTrackFileJSON,
@@ -1512,8 +1514,9 @@ export const parseMethods = {
                 case "kml":
                 case "ksv":
                 case "xml": {
-                    const xmlParsed = parseXml(decoder.decode(buffer));
-                    parsed = this.detectTrackFile(filename, xmlParsed);
+                    const xmlText = decoder.decode(buffer);
+                    const xmlParsed = parseXml(xmlText);
+                    parsed = this.detectTrackFile(filename, xmlParsed, xmlText);
                     if (parsed) {
                         dataType = "trackfile";
                     } else {
@@ -1713,12 +1716,15 @@ export const parseMethods = {
         return getFileExtension(filename);
     },
 
-    detectTrackFile(filename, data) {
-        const matchingClasses = trackFileClasses.filter(TrackFileClass => TrackFileClass.canHandle(filename, data));
+    // sourceText: the file as text, when `data` is a parse of it (XML). A handler
+    // that identifies its format by a string in the raw file reads it; the rest
+    // ignore the extra argument.
+    detectTrackFile(filename, data, sourceText) {
+        const matchingClasses = trackFileClasses.filter(TrackFileClass => TrackFileClass.canHandle(filename, data, sourceText));
         assert(matchingClasses.length <= 1,
             `Multiple trackfile handlers matched for ${filename}: ${matchingClasses.map(c => c.name).join(', ')}`);
         if (matchingClasses.length === 1) {
-            return new matchingClasses[0](data);
+            return new matchingClasses[0](data, sourceText);
         }
         return null;
     },
