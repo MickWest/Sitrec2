@@ -256,6 +256,25 @@ test("a live render starts after the previous frame completes on the GPU; draws 
     expect(gl.deleteSync).toHaveBeenCalled();
 });
 
+test("framesInFlight lets a paced render start while fewer frames than that are still on the GPU", () => {
+    // Measured live: two frames in flight raised playback from 14 to 22 new frames per second, but each gain readback
+    // then waited about 15 ms behind the other frame, so the default stays one.
+    const {pipeline, inputs, clear, renderer} = fixture(), gl = pacingContext();
+    renderer.getContext = () => gl; pipeline.framesInFlight = 2;
+    try {
+        pipeline.render({...inputs, holdFrame: true, pace: true});
+        clear(); pipeline.render({...inputs, frame: 11, holdFrame: true, pace: true});
+        expect(pipeline._radiance).toHaveBeenCalledTimes(1); expect(pipeline.frameFences).toHaveLength(2);
+        clear(); pipeline.render({...inputs, frame: 12, holdFrame: true, pace: true});
+        expect(pipeline._radiance).not.toHaveBeenCalled(); expect(pipeline.lastFrame).toMatchObject({frame: 11, paced: true});
+        // Both fences signal: they are released, and the next render starts.
+        gl.signaled = true;
+        clear(); pipeline.render({...inputs, frame: 12, holdFrame: true, pace: true});
+        expect(pipeline._radiance).toHaveBeenCalledTimes(1); expect(pipeline.frameFences).toHaveLength(1);
+        expect(gl.deleteSync).toHaveBeenCalledTimes(2);
+    } finally {pipeline.dispose();}
+});
+
 test("a live render reads finished gain statistics before it queues the frame's passes", () => {
     // Found live: the read is a synchronous round trip to the GPU process; after the passes it waited up to 182 ms.
     const {pipeline, inputs} = fixture({automatic: true}), order = [], poll = pipeline.gainReadback.poll;

@@ -218,7 +218,8 @@ export class ThermalPipeline {
     }
 
     // Packed RGBA FFT of the near convolution (nearConvolutionPlan). Forward gathers the tiles from the scalar
-    // contrast image; inverse takes the filtered packed spectrum. Same radix-2 stages as _fft.
+    // contrast image; inverse takes the filtered packed spectrum. The radix-2 stages of _fft, two per pass (radix 4):
+    // 6 passes per 2048-point axis instead of 11. An odd stage count starts with one radix-2 pass.
     _fftPacked(texture, plan, inverse) {
         const width = plan.fftWidth, height = plan.fftHeight;
         const first = this._target("packedFftA", width, height), second = this._target("packedFftB", width, height);
@@ -226,13 +227,16 @@ export class ThermalPipeline {
         if (inverse) this._pass("fftReversePacked", shaders.fftReversePackedFragment, {tInput: texture, fftSize: [width, height]}, output);
         else this._pass("fftPack", shaders.fftPackFragment, {tInput: texture, fftSize: [width, height],
             sourceSize: plan.sourceSize, tileSize: [plan.tileWidth, plan.tileHeight], tiles: [plan.tilesX, plan.tilesY]}, output);
+        const pass = (name, fragment, axis, span) => {
+            const input = output;
+            output = input === first ? second : first;
+            this._pass(name, fragment, {tInput: input.texture, axis, span, inverse}, output);
+        };
         for (const axis of [0, 1]) {
             const size = axis === 0 ? width : height;
-            for (let span = 2; span <= size; span *= 2) {
-                const input = output;
-                output = input === first ? second : first;
-                this._pass("fftButterflyPacked", shaders.fftButterflyPackedFragment, {tInput: input.texture, axis, span, inverse}, output);
-            }
+            let span = 1;
+            if (Math.log2(size) % 2 === 1) pass("fftButterflyPacked", shaders.fftButterflyPackedFragment, axis, span = 2);
+            for (span *= 4; span <= size; span *= 4) pass("fftButterfly4Packed", shaders.fftButterfly4PackedFragment, axis, span);
         }
         return output;
     }
@@ -1248,20 +1252,18 @@ export class ThermalPipeline {
     _fenceFrame() {
         const gl = this.renderer.getContext?.();
         if (this.analysis || this.synchronous || typeof gl?.fenceSync !== "function") return;
-        if (this.frameFence) gl.deleteSync(this.frameFence);
-        this.frameFence = gl.fenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0);
-        this.frameFenceTime = performance.now();
+        (this.frameFences ??= []).push({fence: gl.fenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0), time: performance.now()});
     }
 
-    // Non-blocking: the browser updates a fence's status between tasks. An estimated 2 s bound keeps a lost context
-    // or a stalled GPU from holding the view; at most one more frame is then queued.
+    // True while framesInFlight paced frames are still on the GPU (1 by default). Non-blocking: the browser updates a
+    // fence's status between tasks. An estimated 2 s bound keeps a lost context or a stalled GPU from holding the view.
     _gpuBusy() {
-        const fence = this.frameFence;
-        if (!fence) return false;
+        const fences = this.frameFences;
+        if (!fences?.length) return false;
         const gl = this.renderer.getContext();
-        if (gl.getSyncParameter(fence, gl.SYNC_STATUS) !== gl.SIGNALED && performance.now() - this.frameFenceTime < 2000) return true;
-        gl.deleteSync(fence); this.frameFence = null;
-        return false;
+        while (fences.length && (gl.getSyncParameter(fences[0].fence, gl.SYNC_STATUS) === gl.SIGNALED ||
+            performance.now() - fences[0].time >= 2000)) gl.deleteSync(fences.shift().fence);
+        return fences.length >= (this.framesInFlight ?? 1);
     }
 
     _awaitGpu() {
@@ -1339,8 +1341,8 @@ export class ThermalPipeline {
     dispose() {
         clearTimeout(this.gainSettle); this.gainSettle = null;
         clearTimeout(this.gpuWait); this.gpuWait = null;
-        if (this.frameFence) this.renderer.getContext?.()?.deleteSync?.(this.frameFence);
-        this.frameFence = null;
+        for (const {fence} of this.frameFences ?? []) this.renderer.getContext?.()?.deleteSync?.(fence);
+        this.frameFences = [];
         this.gainReadback?.dispose(); this.gpuTimer?.dispose();
         this.opticsScheduler?.dispose(); this.rangeCache?.dispose(); this.skyCache?.dispose?.();
         this.pendingOptics = null; this.activeKernels = null; this.opticalCache = null; this.skyCache = null;

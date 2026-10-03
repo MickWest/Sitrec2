@@ -82,3 +82,58 @@ test("the live 640 × 512 detector at 4× packs four tiles into one 2048² trans
     // (1000 + 24 = 1024) keeps the single RG transform, since four tiles would still need 1024² at twice the bytes.
     expect(nearConvolutionPlan(1000, 1000, {low: [12, 12], high: [12, 12]}, {fftWidth: 1024, fftHeight: 1024}, true).packed).toBe(false);
 });
+
+// Mirror of _fftPacked's passes along one axis, with the index and twiddle rules of fftButterflyPackedFragment (radix 2,
+// first pass when the stage count is odd) and fftButterfly4PackedFragment (radix 4: two radix-2 stages per pass).
+function packedAxisPasses(values, inverse) {
+    const size = values.length, sign = inverse ? 1 : -1;
+    const rotate = ([a, b], [c, s]) => [a * c - b * s, a * s + b * c];
+    const twiddle = phase => [Math.cos(phase), Math.sin(phase)];
+    let x = values;
+    const radix2 = span => x.map((_, coordinate) => {
+        const half = span / 2, offset = coordinate % half, base = Math.floor(coordinate / span) * span;
+        const rotated = rotate(x[base + offset + half], twiddle(sign * 2 * Math.PI * offset / span));
+        const s = coordinate % span < half ? 1 : -1, scale = inverse ? .5 : 1, even = x[base + offset];
+        return [(even[0] + s * rotated[0]) * scale, (even[1] + s * rotated[1]) * scale];
+    });
+    const radix4 = span => x.map((_, coordinate) => {
+        const quarter = span / 4, base = Math.floor(coordinate / span) * span, offset = coordinate - base;
+        const r = offset % quarter, t = Math.floor(offset / quarter), odd = t === 1 || t === 3;
+        const [a0, a1, a2, a3] = [0, 1, 2, 3].map(k => x[base + r + k * quarter]);
+        const w1 = twiddle(sign * 2 * Math.PI * r / (2 * quarter)), w2 = twiddle(sign * 2 * Math.PI * r / span);
+        const b1 = rotate(a1, w1), b3 = rotate(a3, w1), d = odd ? -1 : 1;
+        const y0 = [a0[0] + d * b1[0], a0[1] + d * b1[1]], y2 = [a2[0] + d * b3[0], a2[1] + d * b3[1]];
+        const z = rotate(y2, odd ? (inverse ? [-w2[1], w2[0]] : [w2[1], -w2[0]]) : w2);
+        const s = t < 2 ? 1 : -1, scale = inverse ? .25 : 1;
+        return [(y0[0] + s * z[0]) * scale, (y0[1] + s * z[1]) * scale];
+    });
+    let span = 1;
+    if (Math.log2(size) % 2 === 1) x = radix2(span = 2);
+    for (span *= 4; span <= size; span *= 4) x = radix4(span);
+    return x;
+}
+
+test.each([2, 4, 8, 16, 32, 64, 2048])("the radix-4 pass sequence equals the DFT (%i points, forward and inverse)", size => {
+    const next = random(size + 7), reverse = value => {
+        let reversed = 0;
+        for (let bit = 1; bit < size; bit *= 2) { reversed = reversed * 2 + value % 2; value = Math.floor(value / 2); }
+        return reversed;
+    };
+    const input = Array.from({length: size}, () => [next() - .5, next() - .5]);
+    for (const inverse of [false, true]) {
+        // fftPackFragment and fftReversePackedFragment place element reverseBits(i) at index i.
+        const actual = packedAxisPasses(input.map((_, i) => input[reverse(i)]), inverse);
+        const sign = inverse ? 1 : -1, scale = inverse ? 1 / size : 1;
+        let error = 0, peak = 0;
+        for (let k = 0; k < size; k++) {
+            let re = 0, im = 0;
+            for (let n = 0; n < size; n++) {
+                const c = Math.cos(sign * 2 * Math.PI * k * n / size), s = Math.sin(sign * 2 * Math.PI * k * n / size);
+                re += input[n][0] * c - input[n][1] * s; im += input[n][0] * s + input[n][1] * c;
+            }
+            error = Math.max(error, Math.hypot(actual[k][0] - re * scale, actual[k][1] - im * scale));
+            peak = Math.max(peak, Math.hypot(re * scale, im * scale));
+        }
+        expect(error).toBeLessThan(1e-10 * peak);
+    }
+});

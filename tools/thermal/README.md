@@ -758,6 +758,8 @@ overlap-add pass sums the tiles. This is the same full linear convolution with z
 circular wrap, so only float rounding differs: a 640 × 512 detector at 4× needs one
 4096² transform, but four 1280 × 1024 tiles fit one 2048² transform (a quarter of the
 texels, half of the bytes). The layout is chosen only when its calculated cost is lower.
+Its transforms run two radix-2 stages per pass (radix 4), 6 passes per 2048-point axis
+instead of 11, with the same twiddles and scaling as the single transform.
 Analysis renders keep the single transform, so reference captures are unchanged, and the
 self-test compares the two (L2 difference within the float32 FFT bound, detector counts
 within one count) and checks the packed path against the CPU convolution. A power-of-two area reduction keeps the full far branch at **1024
@@ -1354,7 +1356,10 @@ previous one has completed on the GPU, as a fence reports; a draw before that sh
 last image, and the pipeline asks the host for a render when the fence signals. Without
 pacing a live view queued frames faster than the GPU finished them. Exports, screenshots
 and comparisons read the image right after rendering, so they leave pacing off and always
-get the frame they request.
+get the frame they request. `framesInFlight` (default 1) allows more paced frames on the
+GPU at once. Measured on the testbed with a 30 Hz loop, two raised playback from 14 to 22
+new frames per second, but each gain readback then waited about 15 ms behind the other
+frame, so the default stays one.
 
 Run `node tools/thermal/benchmark.mjs --moving` for measured CPU preparation on
 estimated transverse tracks at `250` and `822 m/s`, `300` frames at `30 Hz`, starting

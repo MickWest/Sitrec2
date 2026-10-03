@@ -216,6 +216,46 @@ export const fftButterflyPackedFragment = `
         result = value * (inverse ? 0.5 : 1.0);
     }
 `;
+// Two consecutive radix-2 stages of fftButterflyPackedFragment (block sizes span / 2 and span) in one pass. With
+// q = span / 4, an output at block offset r + q·t (t = 0..3) reads the four values at r, r + q, r + 2q, r + 3q. The
+// first stage pairs them with twiddle W(span / 2)^r; the second with W(span)^r, times ∓i for t = 1 and 3, because
+// W(span)^(r + q) = W(span)^r · W(span)^q and W(span)^q = ∓i. Inverse passes divide by 4 (2 per stage).
+export const fftButterfly4PackedFragment = `
+    uniform sampler2D tInput; // RGBA: two complex values that share each butterfly
+    uniform int axis; // 0=horizontal, 1=vertical
+    uniform int span; // samples per block after both stages; a power of two >= 4
+    uniform bool inverse; // true: positive phase and divide by four
+    out vec4 result; // RGBA: two complex spectra or tile convolutions
+    vec2 rotate(vec2 value, vec2 rotation) {
+        return vec2(value.x * rotation.x - value.y * rotation.y, value.x * rotation.y + value.y * rotation.x);
+    }
+    vec4 rotatePair(vec4 value, vec2 rotation) { return vec4(rotate(value.xy, rotation), rotate(value.zw, rotation)); }
+    void main() {
+        ivec2 pixel = ivec2(gl_FragCoord.xy);
+        int coordinate = axis == 0 ? pixel.x : pixel.y;
+        int quarter = span / 4;
+        int base = coordinate / span * span;
+        int offset = coordinate - base;
+        int r = offset % quarter, t = offset / quarter;
+        ivec2 step = axis == 0 ? ivec2(quarter, 0) : ivec2(0, quarter);
+        ivec2 first = pixel;
+        if (axis == 0) first.x = base + r; else first.y = base + r;
+        vec4 a0 = texelFetch(tInput, first, 0), a1 = texelFetch(tInput, first + step, 0);
+        vec4 a2 = texelFetch(tInput, first + 2 * step, 0), a3 = texelFetch(tInput, first + 3 * step, 0);
+        float direction = inverse ? 1.0 : -1.0;
+        float phase1 = direction * 6.283185307179586 * float(r) / float(2 * quarter);
+        float phase2 = direction * 6.283185307179586 * float(r) / float(span);
+        vec2 w1 = vec2(cos(phase1), sin(phase1)), w2 = vec2(cos(phase2), sin(phase2));
+        bool odd = t == 1 || t == 3;
+        vec4 b1 = rotatePair(a1, w1), b3 = rotatePair(a3, w1);
+        vec4 y0 = odd ? a0 - b1 : a0 + b1;
+        vec4 y2 = odd ? a2 - b3 : a2 + b3;
+        // w2 times -i (forward) or +i (inverse) for the odd quarters.
+        vec2 w = odd ? (inverse ? vec2(-w2.y, w2.x) : vec2(w2.y, -w2.x)) : w2;
+        vec4 z = rotatePair(y2, w);
+        result = (t < 2 ? y0 + z : y0 - z) * (inverse ? 0.25 : 1.0);
+    }
+`;
 export const multiplyPackedFragment = `
     uniform sampler2D tInput; // RGBA: two complex photon-radiance spectra
     uniform sampler2D tKernel; // RG: dimensionless optical transfer function
