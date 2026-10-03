@@ -44,6 +44,7 @@ export class CNodeCloudField extends CNode3DGroup {
     constructor(v) {
         super({...v, layers: v.layers ?? LAYER.MASK_WORLD});
         this.field = v.field;
+        this.isThermalCloud = "unresolvedThermal";
         this.name = v.name ?? this.field.name;
         this.gain = v.gain ?? this.field.display?.gain ?? 1;
         this.minEmission = v.minEmission ?? this.field.display?.minEmission ?? 0;

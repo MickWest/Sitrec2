@@ -1,6 +1,7 @@
+import {tagThermalMesh} from "./thermalTags.js";
 import * as THREE from "three";
 
-/** Editable visual envelopes in metres, +Y up. No flight or thermal simulation. */
+/** Editable visual envelopes in metres, +Y up. No flight simulation. */
 export function buildBalloon(p) {
     const root = new THREE.Group(); root.name = "Procedural balloon";
     const W=p.width, H=p.height, L=p.length, shape=p.balloonShape;
@@ -19,7 +20,7 @@ export function buildBalloon(p) {
         emissiveIntensity:lantern&&p.flame&&p.lightsEnabled?p.glow:0}));
     const mat=(name,color)=>new THREE.MeshStandardMaterial({name,color,roughness:.78});
     const rope=mat("Suspension cord","#8e8267"), basket=mat("Basket wicker","#ad7743"), frame=mat("Frame","#594d3c");
-    function mesh(name,geometry,material=frame) {const m=new THREE.Mesh(geometry,material);m.name=name;root.add(m);return m;}
+    function mesh(name,geometry,material=frame) {const m=new THREE.Mesh(geometry,material);m.name=name;tagThermalMesh(m,p);root.add(m);return m;}
     function box(name,size,position,material=basket) {const m=mesh(name,new THREE.BoxGeometry(...size),material);m.position.set(...position);return m;}
     function rod(name,a,b,r,material=rope) {
         const start=new THREE.Vector3(...a),end=new THREE.Vector3(...b),delta=end.clone().sub(start);

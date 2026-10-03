@@ -2,20 +2,57 @@
 //
 // These modules live in tools/ because the Diffraction PSF Studio is served as raw ES
 // modules with no bundler, but src/CameraPSF.js imports the format definition from the same
-// place so the encoder and the decoder cannot drift. They are pure - no THREE, no DOM, no
-// Sitrec globals - which is what makes them testable here at all.
+// place so the encoder and the decoder cannot drift. The engine is pure; the file-loading
+// check supplies image and renderer doubles to exercise the camera's existing import path.
 //
 // The assertions are deliberately physical rather than golden-value: an Airy pattern has a
 // first zero at a known radius, N spider vanes throw a known NUMBER of spikes in known
 // DIRECTIONS, and a convolution kernel conserves flux. A snapshot would pass just as happily
 // with the transform subtly wrong.
 
+import { createHash } from "node:crypto";
+import { inflateSync } from "node:zlib";
 import { FFT2D, fftshift } from "../tools/psf/fft.js";
 import { buildSpectralSamples, wavelengthToRGB } from "../tools/psf/cie.js";
 import { rasterStop, DEFAULT_STOP } from "../tools/psf/aperture.js";
-import { computePSF, DEFAULT_SPEC, describeSampling } from "../tools/psf/psf.js";
+import { computePSF, computeBandKernel, DEFAULT_SPEC, describeSampling } from "../tools/psf/psf.js";
 import { presetById, PRESETS } from "../tools/psf/presets.js";
-import { rgbeEncode, rgbeDecode, validatePSFFile } from "../tools/psf/psfFile.js";
+import { buildPSFFile, rgbeEncode, rgbeDecode, validatePSFFile } from "../tools/psf/psfFile.js";
+import { loadPSFFromFile, disposePSF } from "../src/CameraPSF.js";
+
+// Captured from the visible engine before band detection was added. Hash every Float32
+// channel plus the exact spec, peak and sampling metadata; elapsed time is not physics.
+const VISIBLE_BASELINES = {
+    default: "c4489e2938152b225603400b7e45b130c352dce974a874679126113632d709b6",
+    airy: "efc3671e9684c7aeca09ba0e24622d9324fbb807da0ae374e86532e98fd354c8",
+    newtonian: "bcb426b6eddc8ddd4768d2b296eb2ae7e264f18b19033ebfb8d440aa81affbef",
+    cass3: "a385a966b731bea982aad7ab8459bdb0d59e8af9af3e9e11738d482a3f3084e9",
+    iris6: "afade6523b3fa35dad4db3c84efa3739d5554a483e984e03b30398cafff35841",
+    squareIris: "49320c3130ef1e5a88ea8ac8a69c6a839bf5eeaedae6fac3aab5a02632c5b5ef",
+    segmented: "1f3c60b8f6e1269d5f938e14cf771c69c9acc133a5eb18a021d1bdd7e29fedcd",
+    apodised: "9d54cde63e3f74e96e9f399eba932ff4e434055290cad8a4da43004483eda457",
+    chandelier: "9080cace83c03c686098e61165587f8af14371ac7351e9f4b43902fca4de46d5",
+    defocusedBlackbody: "ddb02d712151250f8773ef8cd37f5370028b70080ae97c99579f3f7723cf3a0f",
+};
+
+test("existing visible specs and presets remain bit-identical", () => {
+    const extra = JSON.parse(JSON.stringify(DEFAULT_SPEC));
+    extra.n = 128;
+    extra.defocusUm = 200;
+    extra.combine = "intersect";
+    extra.stops[1].enabled = true;
+    Object.assign(extra.spectrum, { kind: "blackbody", steps: 8, kelvin: 3200 });
+    for (const [id, expected] of Object.entries(VISIBLE_BASELINES)) {
+        const spec = id === "default" ? DEFAULT_SPEC
+                   : id === "defocusedBlackbody" ? extra : presetById(id).spec;
+        const r = computePSF(spec);
+        const hash = createHash("sha256")
+            .update(new Uint8Array(r.rgb.buffer))
+            .update(JSON.stringify({ spec, peak: r.peak, sampling: r.sampling }))
+            .digest("hex");
+        expect({ id, hash }).toEqual({ id, hash: expected });
+    }
+});
 
 /** A small, monochromatic spec - fast enough to run many of them. */
 function specFor(stopOverrides, over = {}) {
@@ -290,6 +327,144 @@ describe("point spread function", () => {
     });
 });
 
+/** Average a thin radial band around a full circle, using the same bilinear sampler as rays. */
+function ring(result, radius) {
+    let sum = 0, count = 0;
+    for (let a = 0; a < 360; a += 10) {
+        for (const dr of [-0.15, 0, 0.15]) { sum += sampleAt(result, a, radius + dr); count++; }
+    }
+    return sum / count;
+}
+
+function firstBandZero(result, fill) {
+    const expected = 1.22 / fill;
+    let best = Infinity, radius = 0;
+    for (let r = expected * 0.7; r <= expected * 1.3; r += 0.025) {
+        const v = ring(result, r);
+        if (v < best) { best = v; radius = r; }
+    }
+    return radius * result.sampling.anglePerPixelRad;
+}
+
+describe("band detection", () => {
+    test("band PSFs have equal channels and unit flux, including defocus and long-wave infrared", () => {
+        for (const quantity of [undefined, "photon", "energy"]) {
+            for (const defocusUm of [0, 200]) {
+                const spec = presetById("chandelierIR").spec;
+                spec.n = 128;
+                spec.defocusUm = defocusUm;
+                Object.assign(spec.spectrum, { steps: 8, kind: "blackbody", kelvin: 300, quantity });
+                const r = computePSF(spec);
+                let sum = 0, mismatch = 0;
+                for (let i = 0; i < r.rgb.length; i += 3) {
+                    sum += r.rgb[i];
+                    if (r.rgb[i] !== r.rgb[i + 1] || r.rgb[i] !== r.rgb[i + 2]) mismatch++;
+                }
+                expect(sum).toBeCloseTo(1, 6);
+                expect(mismatch).toBe(0);
+            }
+        }
+        const spec = presetById("mwirAiry").spec;
+        spec.n = 128;
+        Object.assign(spec.spectrum, { nm0: 8000, nm1: 14000, steps: 8, kind: "blackbody", kelvin: 300 });
+        const r = computeBandKernel(spec);
+        expect(r.kernel.reduce((a, b) => a + b, 0)).toBeCloseTo(1, 6);
+        expect(r.anglePerPixelRad).toBeCloseTo(14000e-9 * spec.fill / spec.optics.apertureM, 12);
+    });
+
+    test("a 4000 nm Airy first zero is at 1.22 lambda/D on the sky", () => {
+        const spec = presetById("mwirAiry").spec;
+        spec.fill = 0.12;
+        Object.assign(spec.spectrum, { nm0: 4000, nm1: 4000, steps: 1 });
+        const r = computePSF(spec);
+        const predicted = 1.22 * 4000e-9 / spec.optics.apertureM;
+        expect(Math.abs(firstBandZero(r, spec.fill) / predicted - 1)).toBeLessThan(0.04);
+        expect(ring(r, 1.22 / spec.fill)).toBeLessThan(0.002);
+        expect(ring(r, 1.6 / spec.fill)).toBeGreaterThan(0.01);
+    });
+
+    test("the first dark ring scales in angle from 3000 nm to 5000 nm", () => {
+        const spec = presetById("mwirAiry").spec;
+        spec.fill = 0.12;
+        const zeros = [3000, 5000].map((nm) => {
+            Object.assign(spec.spectrum, { nm0: nm, nm1: nm, steps: 1 });
+            return firstBandZero(computePSF(spec), spec.fill);
+        });
+        expect(zeros[1] / zeros[0]).toBeCloseTo(5 / 3, 5);
+        expect(Math.abs(zeros[0] / (1.22 * 3000e-9 / spec.optics.apertureM) - 1)).toBeLessThan(0.04);
+    });
+
+    test("cooler blackbodies and photon detection weight the long end more strongly", () => {
+        const samples = (kelvin, quantity) =>
+            buildSpectralSamples(3000, 5000, 32, "blackbody", kelvin, "band", quantity);
+        const longFraction = (s) => {
+            let total = 0, long = 0;
+            for (let i = 0; i < s.nm.length; i++) {
+                const w = s.rgb[i * 3];
+                total += w;
+                if (s.nm[i] >= 4000) long += w;
+            }
+            return long / total;
+        };
+        for (const quantity of ["photon", "energy"]) {
+            expect(longFraction(samples(300, quantity))).toBeGreaterThan(longFraction(samples(800, quantity)));
+        }
+        for (const kelvin of [300, 800]) {
+            const energy = samples(kelvin, "energy"), photon = samples(kelvin, "photon");
+            expect(longFraction(photon)).toBeGreaterThan(longFraction(energy));
+            // Photon radiance is energy radiance times wavelength, up to a common constant.
+            const last = energy.nm.length - 1;
+            const energyRatio = energy.rgb[last * 3] / energy.rgb[0];
+            const photonRatio = photon.rgb[last * 3] / photon.rgb[0];
+            expect(photonRatio / energyRatio).toBeCloseTo(energy.nm[last] / energy.nm[0], 12);
+            expect(samples(kelvin).rgb).toEqual(photon.rgb);
+        }
+        const flat = buildSpectralSamples(3000, 5000, 8, "flat", 300, "band", "energy");
+        expect(new Set(flat.rgb)).toEqual(new Set([1]));
+    });
+
+    test("band focus uses the center wavelength; visible focus retains 550 nm", () => {
+        const spec = presetById("mwirAiry").spec;
+        expect(describeSampling(spec).criticalFocusUm).toBeCloseTo(2 * 4 * 25, 10);
+        spec.spectrum.detector = "visible";
+        expect(describeSampling(spec).criticalFocusUm).toBeCloseTo(2 * 0.55 * 25, 10);
+        delete spec.spectrum.detector;
+        expect(describeSampling(spec).criticalFocusUm).toBeCloseTo(2 * 0.55 * 25, 10);
+    });
+
+    test("computeBandKernel supplies a normalized scalar kernel without changing the spec", () => {
+        const spec = presetById("mwirCatadioptric").spec;
+        spec.n = 128;
+        spec.spectrum.steps = 8;
+        delete spec.spectrum.detector;
+        delete spec.spectrum.quantity;
+        const before = JSON.stringify(spec);
+        const r = computeBandKernel(spec);
+        const rgb = computePSF({ ...spec, spectrum: { ...spec.spectrum, detector: "band", quantity: "photon" } });
+        expect(r.kernel).toBeInstanceOf(Float32Array);
+        expect(r.n).toBe(spec.n);
+        expect(r.kernel.length).toBe(r.n * r.n);
+        expect(r.kernel.reduce((a, b) => a + b, 0)).toBeCloseTo(1, 6);
+        expect(r.peak).toBe(r.kernel.reduce((a, b) => Math.max(a, b), 0));
+        expect(r.anglePerPixelRad).toBe(rgb.sampling.anglePerPixelRad);
+        expect(r.kernel).toEqual(rgb.rgb.filter((_, i) => i % 3 === 0));
+        expect(JSON.stringify(spec)).toBe(before);
+        spec.stops.forEach((s) => { s.enabled = false; });
+        expect(() => computeBandKernel(spec)).toThrow(/nonzero pupil/);
+    });
+
+    test("an explicit visible detector is identical to the default", () => {
+        const spec = presetById("airy").spec;
+        spec.n = 128;
+        const a = computePSF(spec);
+        spec.spectrum.detector = "visible";
+        spec.spectrum.quantity = "photon";
+        const b = computePSF(spec);
+        expect(Buffer.from(a.rgb.buffer).equals(Buffer.from(b.rgb.buffer))).toBe(true);
+        expect(a.sampling).toEqual(b.sampling);
+    });
+});
+
 describe("presets", () => {
     test("every preset computes and produces a finite, normalised PSF", () => {
         for (const preset of PRESETS) {
@@ -313,7 +488,91 @@ describe("presets", () => {
     });
 });
 
+/** Decode the writer's unfiltered RGBA8 PNG, independently of the RGBE encoder. */
+function readPSFPNG(url) {
+    const bytes = Buffer.from(url.split(",")[1], "base64");
+    const width = bytes.readUInt32BE(16), height = bytes.readUInt32BE(20);
+    const data = [];
+    for (let p = 8; p < bytes.length;) {
+        const length = bytes.readUInt32BE(p);
+        if (bytes.toString("ascii", p + 4, p + 8) === "IDAT") data.push(bytes.subarray(p + 8, p + 8 + length));
+        p += length + 12;
+    }
+    const raw = inflateSync(Buffer.concat(data));
+    const rgba = new Uint8Array(width * height * 4);
+    for (let y = 0; y < height; y++) {
+        const start = y * (1 + width * 4);
+        expect(raw[start]).toBe(0);
+        rgba.set(raw.subarray(start + 1, start + 1 + width * 4), y * width * 4);
+    }
+    return { width, height, rgba };
+}
+
 describe("RGBE transport", () => {
+    test("visible and band version-1 files use the same camera load and decode path", async () => {
+        const oldReader = globalThis.FileReader, oldImage = globalThis.Image;
+        globalThis.FileReader = class {
+            readAsDataURL(blob) {
+                blob.arrayBuffer().then((data) => {
+                    this.result = `data:${blob.type};base64,${Buffer.from(data).toString("base64")}`;
+                    this.onload();
+                }, (error) => this.onerror(error));
+            }
+        };
+        globalThis.Image = class {
+            set src(url) { Object.assign(this, readPSFPNG(url)); queueMicrotask(() => this.onload()); }
+        };
+        try {
+            const files = [];
+            for (const id of ["chandelier", "chandelierIR"]) {
+                const spec = presetById(id).spec;
+                spec.n = 128;
+                spec.spectrum.steps = 8;
+                const result = computePSF(spec);
+                const file = await buildPSFFile(result, spec, { name: id, floorFraction: 0 });
+                const json = JSON.stringify(file);
+                expect(file.version).toBe(1);
+                expect(validatePSFFile(JSON.parse(json))).toBe(null);
+                expect(JSON.parse(json).spec).toEqual(spec);
+                const previousTarget = {};
+                let target = previousTarget, decoded, renders = 0;
+                const renderer = {
+                    getRenderTarget: () => target,
+                    setRenderTarget: (t) => { target = t; },
+                    render: (scene) => {
+                        renders++;
+                        const uniforms = scene.children[0].material.uniforms;
+                        const texture = uniforms.tRGBE.value;
+                        expect(texture.premultiplyAlpha).toBe(false);
+                        expect(texture.flipY).toBe(false);
+                        expect(uniforms.invPeak.value).toBe(1 / result.peak);
+                        decoded = rgbeDecode(texture.image.rgba, file.size, file.size);
+                    },
+                };
+                const loaded = await loadPSFFromFile({ text: async () => json }, renderer);
+                expect(renders).toBe(1);
+                expect(target).toBe(previousTarget);
+                expect(loaded.anglePerPixelRad).toBe(result.sampling.anglePerPixelRad);
+                expect(loaded.fieldRad).toBe(file.size * file.anglePerPixelRad);
+                let flux = 0, mismatch = 0;
+                for (let i = 0; i < decoded.length; i += 3) {
+                    flux += (decoded[i] + decoded[i + 1] + decoded[i + 2]) / 3;
+                    if (decoded[i] !== decoded[i + 1] || decoded[i] !== decoded[i + 2]) mismatch++;
+                }
+                expect(flux).toBeCloseTo(1, 2);  // RGBE quantization
+                if (id === "chandelierIR") expect(mismatch).toBe(0);
+                disposePSF(loaded);
+                files.push(file);
+            }
+            expect(files[1].spec.stops).toEqual(files[0].spec.stops);
+            expect(files[1].anglePerPixelRad / files[0].anglePerPixelRad)
+                .toBeCloseTo(files[1].spec.spectrum.nm1 / files[0].spec.spectrum.nm1, 12);
+        } finally {
+            if (oldReader === undefined) delete globalThis.FileReader; else globalThis.FileReader = oldReader;
+            if (oldImage === undefined) delete globalThis.Image; else globalThis.Image = oldImage;
+        }
+    });
+
     test("round-trips a real PSF to better than 1% per pixel across its whole range", () => {
         const spec = presetById("chandelier").spec;
         spec.n = 128;

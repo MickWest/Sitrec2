@@ -1,7 +1,7 @@
 import * as THREE from "three";
 import {OrbitControls} from "three/addons/controls/OrbitControls.js";
 
-const directions = {perspective:[-1.6,.7,1],front:[0,0,1],side:[-1,0,0],top:[0,1,.0001]};
+const directions = {perspective:[-1.6,.7,1],front:[0,0,1],rear:[0,0,-1],side:[-1,0,0],top:[0,1,.0001]};
 
 export function fitVehicleCamera(camera, controls, bounds, {view="perspective",direction=directions[view],paddingX=1.12,paddingY=1.18} = {}) {
     const sphere = bounds.getBoundingSphere(new THREE.Sphere());
@@ -47,18 +47,55 @@ export function createVehicleStudio(mount, {background="#dfe9f0",fov=36,damping=
     const controls = new OrbitControls(camera,renderer.domElement);
     controls.enableDamping = damping; controls.dampingFactor = .1; controls.autoRotateSpeed = .65;
     controls.addEventListener("change",onChange);
-    return {renderer,scene,camera,controls,
+    let thermal, thermalLoad, disposed = false, mode = "visible", model, frame = 0;
+    const studio = {renderer,scene,camera,controls,
+        get mode() {return mode;},
+        get thermal() {return thermal;},
+        setModel(value) {model = value;},
+        async loadThermal(options) {
+            if (thermal) return thermal;
+            if (!thermalLoad) thermalLoad = import(/* webpackChunkName: "vehicle-thermal" */ "./thermalPreview.js")
+                .then(({createVehicleThermalPreview}) => {
+                    if (disposed) return null;
+                    thermal = createVehicleThermalPreview({renderer, ...options}); return thermal;
+                }).finally(() => {thermalLoad = null;});
+            return thermalLoad;
+        },
+        setMode(value) {
+            if (!["visible", "ir"].includes(value) || (value === "ir" && !thermal)) throw new Error("Preview mode is not ready");
+            mode = value; controls.enabled = mode === "visible"; studio.resize();
+        },
+        // Only the editor camera is fitted; sensor range and aspect have separate ownership.
         fit(bounds,options) {fitVehicleCamera(camera,controls,bounds,options);},
+        render({mode: drawMode = mode, frame: nextFrame = frame} = {}) {
+            if (disposed) return;
+            frame = nextFrame;
+            if (drawMode === "ir") {
+                if (!thermal || !model) throw new Error("IR preview is not ready");
+                thermal.render(scene,model,frame);
+            } else renderer.render(scene,camera);
+        },
         resize() {
-            const width = mount.clientWidth, height = mount.clientHeight;
+            let width = mount.clientWidth, height = mount.clientHeight;
             if (!width || !height) return false;
+            if (mode === "ir") {
+                const aspect = thermal.settings.detectorWidth / thermal.settings.detectorHeight;
+                if (width / height > aspect) width = height * aspect; else height = width / aspect;
+            }
+            Object.assign(renderer.domElement.style, {width: `${width}px`, height: `${height}px`,
+                left: `${(mount.clientWidth - width) / 2}px`, top: `${(mount.clientHeight - height) / 2}px`});
             renderer.setSize(width,height,false); camera.aspect = width/height; camera.updateProjectionMatrix(); return true;
         },
         setNight(night) {
             renderer.setClearColor(night ? "#081421" : background);
             ambient.intensity = night ? .15 : 1.6; key.intensity = night ? .10 : 2.3; fill.intensity = night ? .08 : .85;
         },
-        thumbnail() {renderer.render(scene,camera); return captureVehicleThumbnail(renderer.domElement);},
-        dispose() {controls.dispose(); renderer.dispose(); renderer.domElement.remove();},
+        thumbnail() {
+            const savedMode = mode;
+            try {mode = "visible"; studio.resize(); studio.render({mode:"visible"}); return captureVehicleThumbnail(renderer.domElement);}
+            finally {mode = savedMode; studio.resize(); if (mode === "ir") studio.render();}
+        },
+        dispose() {disposed = true; thermal?.dispose(); controls.dispose(); renderer.dispose(); renderer.domElement.remove();},
     };
+    return studio;
 }

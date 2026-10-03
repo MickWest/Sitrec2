@@ -1,3 +1,4 @@
+import {setupThermalMenu} from "./rendering/ThermalLoader";
 import {showInteractionHelp} from "./InteractionHelp";
 /**
  * CCustomManager.setup() — main sitch setup pipeline.
@@ -1788,6 +1789,7 @@ export const setupMethods = {
         // hand-tuned chains.
         if (Sit.isCustom && NodeMan.exists("lookView")) {
             const lookView = NodeMan.get("lookView");
+            setupThermalMenu(lookView, guiMenus.effects);
             if (Array.isArray(lookView.effectPasses)) {
 
                 // The legacy FLIRShader flag joins the same folder. Its def

@@ -10,7 +10,7 @@ export function splitViewEffects(effects, opticsBeforeSensor) {
 }
 
 export function viewColorPolicy(view, sceneExposure = 1, skyExposure = 1) {
-    const active = view.id === "lookView" && !view.isIR && !view.isXRPresenting();
+    const active = view.id === "lookView" && view.renderMode !== "physicalThermal" && !view.isIR && !view.isXRPresenting();
     return {
         active,
         toneMapping: active && view.toneMappingEnabled,

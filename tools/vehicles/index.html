@@ -18,6 +18,19 @@
         "./exportGLB.js": "./exportGLB.js?v=__BUILD_V__",
         "./files.js": "./files.js?v=__BUILD_V__",
         "./catalog.js": "./catalog.js?v=__BUILD_V__",
+        "./thermalTags.js": "./thermalTags.js?v=__BUILD_V__",
+        "./thermalPreview.js": "./thermalPreview.js?v=__BUILD_V__",
+        "../thermal/ThermalPipeline.js": "../thermal/ThermalPipeline.js?v=__BUILD_V__",
+        "../thermal/thermalSchema.js": "../thermal/thermalSchema.js?v=__BUILD_V__",
+        "../thermal/sensorPresets.js": "../thermal/sensorPresets.js?v=__BUILD_V__",
+        "../thermal/signatures.js": "../thermal/signatures.js?v=__BUILD_V__",
+        "../thermal/radiometry.js": "../thermal/radiometry.js?v=__BUILD_V__",
+        "../thermal/atmosphere.js": "../thermal/atmosphere.js?v=__BUILD_V__",
+        "../thermal/turbulence.js": "../thermal/turbulence.js?v=__BUILD_V__",
+        "../thermal/sounding.js": "../thermal/sounding.js?v=__BUILD_V__",
+        "../thermal/sensorMath.js": "../thermal/sensorMath.js?v=__BUILD_V__",
+        "../thermal/shaders.js": "../thermal/shaders.js?v=__BUILD_V__",
+        "../thermal/selfTest.js": "../thermal/selfTest.js?v=__BUILD_V__",
         "./studio.js": "./studio.js?v=__BUILD_V__",
         "./preview.js": "./preview.js?v=__BUILD_V__",
         "./designer.js": "./designer.js?v=__BUILD_V__",
@@ -76,6 +89,11 @@
                 <div class="name-row"><label for="designName">Design name</label><button id="resetPreset" class="text-button">Reset preset</button></div>
                 <input id="designName" type="text" maxlength="100" value="My vehicle">
             </section>
+            <section class="preview-mode-panel">
+                <label for="renderMode">Preview mode</label>
+                <select id="renderMode"><option value="visible">Normal view</option><option value="ir">IR preview</option></select>
+            </section>
+            <div id="thermalPanel" hidden></div>
             <div id="parameterFolders"></div>
             <div class="sidebar-note">Dimensions in metres · angles in degrees.<br>Editable visual approximations.</div>
         </aside>
@@ -90,6 +108,7 @@
                 <button data-view="side" aria-pressed="false">Side</button>
                 <button data-view="top" aria-pressed="false">Top</button>
                 <button data-view="front" aria-pressed="false">Front</button>
+                <button data-view="rear" aria-pressed="false">Rear</button>
                 <span class="divider"></span><button id="fitView" title="Fit the vehicle in the view (F)">Fit <kbd>F</kbd></button>
             </div>
             <div class="preview-options">
@@ -103,6 +122,7 @@
                 <button id="fullscreen" title="Toggle browser fullscreen">⛶ <span class="sr-only">Fullscreen</span></button>
             </div>
             <div id="error" class="error" role="alert" hidden></div>
+            <div id="thermalReadout" hidden></div>
             <div class="preview-bottom">
                 <div class="metrics">
                     <div><span id="lengthLabel">FUSELAGE</span><strong id="lengthMetric">—</strong></div>

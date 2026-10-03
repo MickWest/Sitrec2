@@ -89,6 +89,7 @@ export class CNodeSynthClouds extends CNode3DGroup {
         super(v);
         
         this.cloudsID = v.id;
+        this.isThermalCloud = "grayAbsorbingSheet";
         this.name = v.name || v.id;
         
         this.centerLat = v.centerLat;

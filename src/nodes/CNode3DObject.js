@@ -1,3 +1,4 @@
+import {objectThermalState, setupObjectThermalMenu} from "../rendering/ThermalLoader";
 import {SceneLineSegments} from "../SceneLines";
 // CNode3DObject.js - CNode3DObject
 // a 3D object node - a sphere, cube, etc., with generated geometry and material from the input parameters
@@ -277,6 +278,9 @@ export class CNode3DObject extends CNode3DGroup {
             .tooltip(t("nodes3dObject.model.tooltip"));
 
         this.modelMenu.isCommon = true;
+        this.isThermalObject = true;
+        this.thermal = objectThermalState(v.thermal);
+        setupObjectThermalMenu(this);
         this.setupVehicleControls(v);
 
         // "Flock": draw this object as many birds, in formation about its track, in place
@@ -1095,6 +1099,7 @@ ${trackPlacemark}    </Document>
             model: this.selectModel,
             ...(this.proceduralModel ? {proceduralModel: copyProceduralModel(this.proceduralModel),
                 vehicleAnimation: this.vehicleAnimation, vehicleLightOverrides: this.captureVehicleOverrides()} : {}),
+            thermal: objectThermalState(this.thermal),
             common: commonCopy,
             geometryParams: this.geometryParams,
             materialParams: this.materialParams,
@@ -1107,6 +1112,7 @@ ${trackPlacemark}    </Document>
 
     modDeserialize(v) {
         super.modDeserialize(v)
+        Object.assign(this.thermal, objectThermalState(v.thermal));
         // Not linked: the track restores its own saved name.
         if (typeof v.displayName === "string" && v.displayName !== this.displayName) {
             this.setDisplayName(v.displayName, {linked: false});
@@ -2351,7 +2357,7 @@ ${trackPlacemark}    </Document>
             this.rebuildBoundingBox(false);
         }
 
-        this.updateEnvMap(view);
+        if (view.renderMode !== "physicalThermal") this.updateEnvMap(view);
 
         // Update gradient material uniforms with direction and extent data.
         // All modes use world-space positions so the gradient is consistent across

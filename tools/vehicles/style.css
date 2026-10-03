@@ -92,3 +92,17 @@ footer a {margin-left: auto; text-decoration: none; color: #9bafc3;}
 .preset-cycle select {flex: 1; min-width: 0;}
 .preset-cycle button {padding: 4px 10px; font-size: 23px;}
 @media (max-width: 760px) {.preview-options {max-width: calc(100% - 24px); flex-wrap: wrap; justify-content: flex-end; gap: 7px;}}
+
+.preview-mode-panel {padding: 16px 20px; border-bottom: 1px solid var(--line);}
+.preview-mode-panel label {display: block; margin-bottom: 8px;}
+.sensor-view-fields {padding-top: 18px;}
+.thermal-field {display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 7px;}
+.thermal-field input[type=number] {width: 108px;}
+.thermal-field small {display: block; width: 100%; color: #e4bb7a; font-size: 10px;}
+.thermal-preview {background: #0b1016;}
+.thermal-preview .preview-heading {color: #dbe4ef; text-shadow: 0 1px 3px black;}
+.thermal-preview .eyebrow, .thermal-preview .metrics, .thermal-preview .orbit-hint, .thermal-preview .viewbar,
+.thermal-preview .preview-options label {display: none;}
+.thermal-preview .preview-options {top: 75px; bottom: auto; margin: 0;}
+#thermalReadout {position: absolute; bottom: 16px; left: 16px; right: 16px; padding: 10px; color: #e1eeee; background: #101923e8; font-size: 11px; line-height: 1.7; pointer-events: none; font-variant-numeric: tabular-nums;}
+[hidden] {display: none !important;}

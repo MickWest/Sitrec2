@@ -1,3 +1,4 @@
+import {visibleVehicleBounds, tagThermalMesh, thermalPartition, addThermalOutlet} from "./thermalTags.js";
 import * as THREE from "three";
 
 const rad = Math.PI / 180, mix = THREE.MathUtils.lerp;
@@ -30,7 +31,7 @@ export function buildRoadVehicle(p) {
     const white = material("Headlamp lens", "#eff4e1", 0.3, {emissive: "#e7eacf", emissiveIntensity: 0.7});
     const red = material("Tail lamp lens", "#a81416", 0.35, {emissive: "#e62b20", emissiveIntensity: 0.6});
     const amber = material("Indicator lens", "#e69a17", 0.35, {emissive: "#ed9616", emissiveIntensity: 0.5});
-    function mesh(name, geometry, mat, parent = root) {const m = new THREE.Mesh(geometry, mat); m.name = name; parent.add(m); return m;}
+    function mesh(name, geometry, mat, parent = root) {const m = new THREE.Mesh(geometry, mat); m.name = name; tagThermalMesh(m,p); parent.add(m); return m;}
     function box(name, size, position, mat = paint, parent = root) {
         const m = mesh(name, new THREE.BoxGeometry(...size), mat, parent); m.position.set(...position); return m;
     }
@@ -57,7 +58,10 @@ export function buildRoadVehicle(p) {
     }
     shape.lineTo(-L / 2, bottom); shape.closePath();
     const lower = new THREE.ExtrudeGeometry(shape, {depth: W, bevelEnabled: false, curveSegments: 16});
-    lower.translate(0, 0, -W / 2); lower.rotateY(-Math.PI / 2); mesh("Body with wheel arches", lower, paint);
+    lower.translate(0, 0, -W / 2); lower.rotateY(-Math.PI / 2); const body = mesh("Body with wheel arches", lower, paint);
+    thermalPartition(body, point => point.y > belt * .95 && point.z > Math.max(cabFront, L * .15), "road_hood");
+    const thermalAnchors = [addThermalOutlet(root, {position: [W * .32, bottom * .8, -L / 2], radius: Math.min(.06, W * .025),
+        engineIndex: 0, zone: "road_exhaust", cavityZone: "road_exhaust"})];
     const bw = W * 0.47, rw = W * p.roofWidth / 200;
     const sides = {};
     for (const side of [-1, 1]) {
@@ -151,7 +155,7 @@ export function buildRoadVehicle(p) {
         for(const side of [-1,1])box("Emergency lamp",[W*0.32,0.09,0.18],[side*W*0.17,roof+0.12,(roofFront+roofRear)/2],side>0?red:blue);
     }
     if(p.roofSign)box("Taxi roof sign",[W*0.30,0.16,0.24],[0,roof+0.09,(roofFront+roofRear)/2],white);
-    root.updateMatrixWorld(true);const bounds=new THREE.Box3().setFromObject(root),size=bounds.getSize(new THREE.Vector3());let triangles=0;
-    root.traverse(o=>{if(o.isMesh)triangles+=(o.geometry.index?.count??o.geometry.attributes.position.count)/3;});
-    return {root,propellers,bounds,brandArea:{y:belt*0.73,z:(axles[0]+axles[1])/2,length:Math.max(0.4,axles[0]-axles[1]-r*2.2),height:Math.max(0.12,belt-bottom)},stats:{triangles,size,width:W,height:size.y,wheelbase:layout.wheelbase}};
+    root.updateMatrixWorld(true);const bounds=visibleVehicleBounds(root),size=bounds.getSize(new THREE.Vector3());let triangles=0;
+    root.traverse(o=>{if(o.isMesh && !o.userData.thermalOnly)triangles+=(o.geometry.index?.count??o.geometry.attributes.position.count)/3;});
+    return {root,propellers,bounds,thermalAnchors,brandArea:{y:belt*0.73,z:(axles[0]+axles[1])/2,length:Math.max(0.4,axles[0]-axles[1]-r*2.2),height:Math.max(0.12,belt-bottom)},stats:{triangles,size,width:W,height:size.y,wheelbase:layout.wheelbase}};
 }

@@ -168,6 +168,52 @@ export const PRESETS = [
     },
 ];
 
+// Band presets follow the visible starting points, which retain their original spectra.
+PRESETS.push(
+    {
+        id: "mwirAiry",
+        name: "Mid-wave infrared, unobstructed",
+        note: "An unobstructed 3–5 µm aperture with photon weighting. The 0.135 m entrance "
+            + "pupil is estimated for a mid-wave infrared turret; the 0.675 m focal length "
+            + "gives f/5. These are editable model values, not a measured instrument calibration.",
+        spec: spec({
+            fill: 0.22,
+            optics: { apertureM: 0.135, focalM: 0.675 },
+            spectrum: { detector: "band", quantity: "photon", nm0: 3000, nm1: 5000 },
+            stops: [{ shape: "circle", ...PLAIN }, { enabled: false }],
+        }),
+    },
+    {
+        id: "mwirCatadioptric",
+        name: "Mid-wave infrared, catadioptric",
+        note: "A general catadioptric infrared telescope in the 3–5 µm band, with photon "
+            + "weighting, a 30% central obstruction and four support vanes. The 0.135 m "
+            + "aperture and f/5 beam are illustrative model values.",
+        spec: spec({
+            fill: 0.22,
+            optics: { apertureM: 0.135, focalM: 0.675 },
+            spectrum: { detector: "band", quantity: "photon", nm0: 3000, nm1: 5000 },
+            stops: [{
+                shape: "circle", obstruction: 0.30,
+                vanes: { count: 4, rotationDeg: 45, width: 0.016, taper: 1, apodize: "none" },
+            }, { enabled: false }],
+        }),
+    },
+    {
+        id: "chandelierIR",
+        name: "Chandelier, infrared band",
+        note: "The same two-stop Chandelier geometry with a 3–5 µm photon-weighted band. "
+            + "The exported angular scale uses that infrared band and the model's 0.40 m "
+            + "aperture. The original Chandelier preset retains the visible band used in "
+            + "the published analysis.",
+        spec: (() => {
+            const s = cloneSpec(PRESETS.find((p) => p.id === "chandelier").spec);
+            Object.assign(s.spectrum, { detector: "band", quantity: "photon", nm0: 3000, nm1: 5000 });
+            return s;
+        })(),
+    },
+);
+
 export function presetById(id) {
     const p = PRESETS.find((x) => x.id === id);
     return p ? { ...p, spec: cloneSpec(p.spec) } : null;

@@ -6,9 +6,9 @@ import {createVehicleStudio} from "./studio.js";
 // One renderer for the selected vehicle; gallery tiles use ordinary JPEGs.
 export function createVehiclePreview(mount) {
     const studio = createVehicleStudio(mount,{fov:34,onChange:render});
-    const {renderer,scene,camera} = studio;
+    const {scene} = studio;
     let model, disposed = false;
-    function render() {if (!disposed) renderer.render(scene,camera);}
+    function render() {if (!disposed) studio.render({mode:"visible"});}
     function resize() {
         if (disposed || !studio.resize() || !model) return;
         studio.fit(model.bounds,{direction:[-1.6,.75,1]}); render();
@@ -18,7 +18,7 @@ export function createVehiclePreview(mount) {
         set(recipe) {
             const next = generateVehicle(recipe);
             if (model) disposeVehicle(model.root);
-            model = next; animateVehicleLights(model,0,false); scene.add(model.root); resize();
+            model = next; studio.setModel(model); animateVehicleLights(model,0,false); scene.add(model.root); resize();
         },
         thumbnail() {return studio.thumbnail();},
         dispose() {

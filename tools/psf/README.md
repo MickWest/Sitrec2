@@ -45,6 +45,59 @@ widest pattern. Every shorter wavelength is read from further out in the transfo
 exactly the statement that blue diffracts less — and rescaled by `(λ_ref/λ)²` so each wavelength
 carries the same total flux.
 
+### Visible color and single-channel bands
+
+`spectrum.detector` selects `"visible"` (the default when omitted) or `"band"`. Visible mode
+retains the color matching and white balance of the original engine. Band mode bypasses both:
+each wavelength contributes one scalar weight, repeated equally in the three stored channels.
+The finite kernel is normalized so each band channel sums to 1.
+
+The source `kind` is `"flat"` for constant spectral energy density per wavelength, or
+`"blackbody"` at `kelvin`. In band mode, `quantity: "photon"` (the default) multiplies that
+energy spectrum by wavelength, proportional to photon radiance `B_E λ/(hc)`. This represents a
+detector with constant quantum efficiency, such as an idealized InSb detector. `"energy"`
+uses the energy spectrum directly. Common factors cancel during normalization. A 300 K source
+weights the long end of 3–5 µm more strongly than an 800 K source; photon weighting adds a
+further preference for long wavelengths. No measured spectral response curve is included.
+
+`nm0` and `nm1` remain nanometers in every spec and file. The page displays and edits them in
+µm for band mode, up to 14 µm; the engine has no visible-band cutoff in this mode. Samples
+remain uniform bin centers, with one sample at the band center. Equal endpoints specify a
+monochromatic calculation.
+
+At fixed aperture diameter `D`, the Airy first-zero angle is `1.22 λ/D`. A 4 µm monochromatic
+pattern therefore has about 7.27 times the angular radius of a 550 nm pattern. The FFT grid
+pitch remains `nm1 * 1e-9 * fill / D`; changing only the Chandelier band from 350–780 nm to
+3–5 µm increases that pitch by `5000/780 ≈ 6.41`. The integrated pattern also depends on the
+relative bandwidth and spectral weights. `describeSampling` uses the band midpoint in
+`2 λ (f/D)²` for depth of focus, while visible mode retains its 550 nm reference.
+
+Choose the entrance-pupil diameter, not the housing diameter, and the transmitting detector
+band. Focal length sets focal-plane distances and defocus sensitivity; angular diffraction
+scale depends on aperture and wavelength. The new unobstructed infrared preset uses an
+estimated 0.135 m pupil, a 0.675 m focal length and a 3–5 µm band. The catadioptric variant
+adds an obstruction and vanes. `chandelierIR` copies the original two-stop geometry and optics
+and changes its spectral mode and band; the original preset is retained unchanged.
+
+### A scalar kernel for a renderer
+
+```js
+import { computeBandKernel } from "./psf.js";
+import { presetById } from "./presets.js";
+
+const spec = presetById("mwirAiry").spec;
+spec.spectrum.kind = "blackbody";
+spec.spectrum.kelvin = 300;
+const { n, kernel, anglePerPixelRad, peak } = computeBandKernel(spec);
+```
+
+This forces band detection without mutating `spec`. `kernel` is a row-major `Float32Array`
+of length `n*n`, centered at `(n/2, n/2)` and summing to 1 to Float32 precision; `peak` is its
+largest sample. Empty pupils or spectra throw because they cannot define a unit-sum kernel.
+The angular pitch is radians per kernel sample, not the detector's pixel pitch. Resample for
+the consumer's angular grid while conserving flux. One integrated kernel assumes the same
+source spectrum across the image; sources with different spectra need separate kernels.
+
 ---
 
 ## Modules
@@ -57,7 +110,7 @@ sees it. Every import has to resolve over plain HTTP.
 | `fft.js` | Radix-2 complex FFT, 1D and square 2D, plus `fftshift` |
 | `cie.js` | Wavelength → linear sRGB (CIE 1931, Wyman/Sloan/Shirley fit), source spectra |
 | `aperture.js` | Parametric pupil rasteriser: shape, obstruction, vanes, apodisation |
-| `psf.js` | The polychromatic PSF, and `describeSampling` |
+| `psf.js` | The polychromatic PSF, `computeBandKernel`, and `describeSampling` |
 | `presets.js` | The built-in starting points, and localStorage user presets |
 | `display.js` | Tone-mapping curves (gamma, log, asinh) |
 | `glare.js` | Exact FFT convolution of a scene with the PSF, for the preview |
@@ -141,16 +194,28 @@ The faintest structure anyone looks at — the background between the spikes —
 because a texture read hands back 0..1. Leaving that out decodes every pixel 255× too dark,
 which presents as "the glare does not work" rather than as a scale error.
 
+Band files keep **version 1** and the RGBE encoding. Their generator `spec.spectrum` carries
+`detector` and `quantity`; equal RGB channels preserve the scalar response through the existing
+camera decode. Old specs without these fields remain visible. `validatePSFFile` accepts both
+without a format migration or a change to the camera loader.
+
 ---
 
 ## Testing
 
-`tests/DiffractionPSF.test.js` covers the whole pure engine — 24 tests, ~2 s.
+Run the focused checks with `npx jest tests/DiffractionPSF.test.js`.
 
 The assertions are physical rather than golden-value, because a snapshot would pass just as
 happily with the transform subtly wrong: an Airy pattern has its first zero at `1.22λ/D`, N
 vanes throw a known *number* of spikes in known *directions*, a convolution kernel conserves
 flux, and blue's Airy zero lands inside red's at the predicted ratio.
+
+Band checks cover unit flux, equal channels, infrared Airy angles and wavelength scaling,
+blackbody and photon/energy weighting, focus scale, and export through the camera loader
+with image and renderer doubles. A separate compatibility check hashes every stored channel,
+spec, peak and sampling field against values captured from the visible engine for all original
+presets, the default spec and a defocused blackbody intersection. This checks exact preservation
+in addition to the physical assertions.
 
 One trap worth knowing if you extend them: sample the PSF **bilinearly**, and average over a
 radial band. Rounding a polar offset to whole pixels quantises the sampling radius by up to half

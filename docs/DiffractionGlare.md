@@ -74,6 +74,44 @@ anything you like from there, and **Save** it under your own name to keep it.
 | Segmented hexagon + 3 vanes | Hexagonal pupil plus vanes |
 | Apodised vanes | Serrated edges, and the feathers they produce |
 | Chandelier | A two-stop model of a gimballed camera housing |
+| Mid-wave infrared, unobstructed | 3–5 µm, with an estimated 0.135 m entrance pupil and f/5 beam |
+| Mid-wave infrared, catadioptric | The same band and aperture, with a central obstruction and four support vanes |
+| Chandelier, infrared band | The Chandelier two-stop model with a 3–5 µm angular scale |
+
+### Infrared bands
+
+Under **Spectrum**, choose **Detector ▸ Band (single channel)** for infrared. The wavelength
+controls then use **µm**, with endpoints up to 14 µm. The PSF is a single response shown in
+gray. **Visible color** retains the original visible color weighting and white balance, and
+remains the default for existing presets and saved specs.
+
+**Source ▸ Flat** gives equal spectral energy per wavelength. **Blackbody** weights the band
+using the temperature in kelvin. **Weighting ▸ Photon**, the band default, multiplies the energy
+spectrum by wavelength to represent a photon detector with constant quantum efficiency, such
+as an idealized InSb detector. **Energy** weights by spectral energy directly. A cooler
+blackbody puts more of its 3–5 µm signal toward the long end, and photon weighting increases
+that preference. The band response has no visible white balance.
+
+For a circular aperture, the first dark ring is at an angle of approximately **1.22 λ/D**,
+where λ is wavelength and D is entrance-pupil diameter in the same units. At the same aperture,
+4 µm light therefore makes a pattern about **7.27 times wider** than 550 nm light. The page
+pitches its computation grid for the band's longest wavelength. The infrared Chandelier
+preset exports pixels **5000/780 ≈ 6.41 times wider in angle** than the original preset.
+Broadband patterns also depend on the relative bandwidth and the source and detector weights.
+
+Set **Aperture (m)** to the optical entrance-pupil diameter; a turret's housing diameter is a
+different dimension. Set the band to the wavelengths transmitted by the optics and detected
+by the sensor. The unobstructed infrared preset's 0.135 m aperture is **estimated** for a
+mid-wave infrared turret, and its 0.675 m focal length gives f/5. The catadioptric preset is a
+general example. Change these model values when instrument measurements are available.
+Focal length changes focal-plane scale and defocus sensitivity; aperture and wavelength set
+angular diffraction size. Band mode uses the band center for the displayed depth of focus.
+
+The original Chandelier preset retains its 350–780 nm band to reproduce the published
+analysis. Choose **Chandelier, infrared band** for that geometry at a 3–5 µm scale, with its
+existing 0.40 m aperture assumption. Both export the same version-1 `.psf.json` format and
+use the same camera import. Band files store equal red, green and blue channels and keep
+wavelengths in nanometers internally.
 
 ### Controls worth understanding
 
@@ -201,7 +239,9 @@ narrow fields; the floor only stops planets disappearing outside them.
 ## What it does and does not model
 
 It models Fraunhofer diffraction from an aperture, polychromatically, with defocus. That covers
-the spikes, the rings, the feathers and their colour.
+the spikes, the rings, the feathers and their colour. Band mode integrates a single-channel
+optical response with the selected source spectrum and photon or energy weighting. It
+normalizes the kernel; it does not calculate absolute radiance, detector charge, or temperature.
 
 It does **not** model lens flare (internal reflections between elements), scattering from dust
 or scratches, sensor blooming or column bleed, or any smearing from the readout. Those produce

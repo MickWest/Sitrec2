@@ -1,3 +1,4 @@
+import {tagThermalMesh} from "./thermalTags.js";
 import * as THREE from "three";
 import {droneMotorLayout} from "./aerialParameters.js";
 
@@ -11,7 +12,7 @@ export function buildMultirotor(p) {
     const dark = material("Camera and motors", "#202932"), propPaint = material("Propellers", p.propColor);
     const glass = material("Camera glass", "#173c55", {metalness: .6, roughness: .12});
     function mesh(name, geometry, mat, parent = root) {
-        const object = new THREE.Mesh(geometry, mat); object.name = name; parent.add(object); return object;
+        const object = new THREE.Mesh(geometry, mat); object.name = name; tagThermalMesh(object, p); parent.add(object); return object;
     }
     function box(name, size, position, mat, parent = root) {
         const object = mesh(name, new THREE.BoxGeometry(...size), mat, parent); object.position.set(...position); return object;

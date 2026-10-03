@@ -25,6 +25,7 @@ const MODULE_VERSION = new URL(import.meta.url).search;
 let spec = presetById("chandelier").spec;
 let presetId = "chandelier";
 let result = null;              // the last completed PSF
+let resultSpec = null;          // the spec that produced it, kept with the export
 let userPresets = loadUserPresets();
 
 /** View state — how things are DISPLAYED, kept out of `spec` because none of it is physics
@@ -107,7 +108,7 @@ function makeRow(def, target, onChange) {
         }
         sel.onchange = () => { setPath(target(), def.p, def.int ? Number(sel.value) : sel.value); onChange(def); };
         row.appendChild(sel);
-        read = () => { sel.value = String(getPath(target(), def.p)); };
+        read = () => { sel.value = String(getPath(target(), def.p) ?? def.default); };
 
     } else if (def.t === "chk") {
         const cb = document.createElement("input");
@@ -128,14 +129,17 @@ function makeRow(def, target, onChange) {
 
         const push = (v) => {
             v = Math.min(def.max, Math.max(def.min, v));
-            setPath(target(), def.p, v);
+            setPath(target(), def.p, v * (def.scale ?? 1));
             rng.value = String(v); num.value = String(v);
             onChange(def);
         };
         rng.oninput = () => push(Number(rng.value));
         num.onchange = () => push(Number(num.value));
         row.appendChild(rng); row.appendChild(num);
-        read = () => { const v = getPath(target(), def.p); rng.value = String(v); num.value = String(v); };
+        read = () => {
+            const v = getPath(target(), def.p) / (def.scale ?? 1);
+            rng.value = String(v); num.value = String(v);
+        };
     }
 
     return { row, sync: read };
@@ -178,6 +182,7 @@ function syncControls() {
 const SHAPES = [["truncatedCircle", "Circle with flats"], ["circle", "Circle"],
                 ["square", "Square"], ["polygon", "Polygon"]];
 const APODS = [["none", "None (straight)"], ["sawtooth", "Serrated"], ["sine", "Wavy"]];
+const isBand = (s) => s.spectrum.detector === "band";
 
 /** One stop's controls. `i` selects which stop, so the two are literally the same schema. */
 function stopRows(i) {
@@ -256,15 +261,28 @@ const SCHEMA = [
     ], true],
 
     ["Spectrum", [
-        { t: "range", p: "spectrum.nm0", label: "From (nm)", min: 300, max: 1000, step: 5 },
-        { t: "range", p: "spectrum.nm1", label: "To (nm)", min: 320, max: 1400, step: 5,
+        { t: "sel", p: "spectrum.detector", label: "Detector", default: "visible",
+          opts: [["visible", "Visible color"], ["band", "Band (single channel)"]] },
+        { t: "range", p: "spectrum.nm0", label: "From (nm)", min: 300, max: 14000, step: 5,
+          hide: isBand },
+        { t: "range", p: "spectrum.nm1", label: "To (nm)", min: 300, max: 14000, step: 5, hide: isBand,
           hint: "The LONGEST wavelength sets the output pixel scale — it makes the widest pattern." },
+        { t: "range", p: "spectrum.nm0", label: "From (µm)", min: 0.3, max: 14, step: 0.01,
+          scale: 1000, hide: (s) => !isBand(s) },
+        { t: "range", p: "spectrum.nm1", label: "To (µm)", min: 0.3, max: 14, step: 0.01,
+          scale: 1000, hide: (s) => !isBand(s),
+          hint: "The longest wavelength sets the output pixel scale. Values are stored in nm." },
+        { t: "sel", p: "spectrum.quantity", label: "Weighting", default: "photon", hide: (s) => !isBand(s),
+          opts: [["photon", "Photon"], ["energy", "Energy"]],
+          hint: "Photon detectors such as InSb count photons: spectral energy is weighted by wavelength." },
         { t: "range", p: "spectrum.steps", label: "Samples", min: 1, max: 64, step: 1 },
         { t: "sel", p: "spectrum.kind", label: "Source",
           opts: [["flat", "Flat (Maskulator)"], ["blackbody", "Blackbody"]] },
-        { t: "range", p: "spectrum.kelvin", label: "Temp (K)", min: 800, max: 12000, step: 50,
+        { t: "range", p: "spectrum.kelvin", label: "Temp (K)", min: 100, max: 12000, step: 50,
           show: (s) => s.spectrum.kind === "blackbody" },
-        { t: "note", text: "Wavelength sets only the SCALE of the pattern, so a spike is a spectrum smeared along its own length. One sample gives a monochrome pattern; 32 is enough that the rainbow is smooth." },
+        { t: "derived", compute: (s) => ({ text: isBand(s)
+            ? "Band detection sums one response over the selected band, with no visible color or white balance. Flat means equal spectral energy per wavelength before detector weighting; Blackbody uses the source temperature. Longer wavelengths make wider patterns."
+            : "Visible detection weights wavelengths by visible color and balances the band to white. Wavelength sets the scale of the pattern. One sample gives a monochrome pattern; 32 gives a smooth rainbow." }) },
     ], true],
 ];
 
@@ -318,6 +336,8 @@ function setProgress(p) { $("progressBar").style.width = `${Math.round(p * 100)}
 
 let computeTimer = null;
 function scheduleCompute(delay = 220) {
+    ++jobId;                                // discard a worker reply during the debounce
+    $("exportPSF").disabled = true;
     drawPupil();                             // cheap, so it tracks the sliders live
     updateSamplingCaption();
     refreshDerived();
@@ -331,6 +351,7 @@ function compute() {
     if (worker) worker.terminate();
     worker = new Worker("psfWorker.js" + MODULE_VERSION, { type: "module" });
     const id = ++jobId;
+    const jobSpec = cloneSpec(spec);
 
     const heavy = spec.defocusUm !== 0;
     setStatus(heavy ? `computing ${spec.spectrum.steps} transforms…` : "computing…", "busy");
@@ -342,13 +363,15 @@ function compute() {
         if (m.type === "progress") { setProgress(m.p); return; }
         if (m.type === "error") { setStatus(m.message, "error"); setProgress(0); return; }
         result = { n: m.n, rgb: m.rgb, masks: m.masks, peak: m.peak, sampling: m.sampling, ms: m.ms };
+        resultSpec = jobSpec;
+        $("exportPSF").disabled = false;
         setProgress(1);
         setStatus(`${m.n}² in ${Math.round(m.ms)} ms`);
         drawPSF();
         rebuildGlare();
         setTimeout(() => setProgress(0), 400);
     };
-    worker.postMessage({ spec, id });
+    worker.postMessage({ spec: jobSpec, id });
 }
 
 // ── Drawing ─────────────────────────────────────────────────────────────────────
@@ -537,10 +560,10 @@ function download(blob, filename) {
 const slug = (s) => (s || "psf").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
 
 async function exportPSFFile() {
-    if (!result) return;
+    if (!result || $("exportPSF").disabled) return;
     setStatus("encoding…", "busy");
     try {
-        const file = await buildPSFFile(result, spec, {
+        const file = await buildPSFFile(result, resultSpec, {
             name: $("exportName").value.trim() || "Diffraction PSF",
             note: $("exportNote").value.trim(),
             floorFraction: Number($("exportFloor").value),
@@ -582,7 +605,17 @@ async function openSpecFile(file) {
 function init() {
     const mount = $("schemaMount");
     for (const [title, rows, collapsed] of SCHEMA) {
-        mount.appendChild(buildSection(title, rows, () => spec, () => scheduleCompute(), collapsed));
+        mount.appendChild(buildSection(title, rows, () => spec, (d) => {
+            // Keep an ordered band, including the monochromatic case where the ends meet.
+            if (d.p === "spectrum.nm0" && spec.spectrum.nm0 > spec.spectrum.nm1) {
+                spec.spectrum.nm1 = spec.spectrum.nm0;
+            }
+            if (d.p === "spectrum.nm1" && spec.spectrum.nm1 < spec.spectrum.nm0) {
+                spec.spectrum.nm0 = spec.spectrum.nm1;
+            }
+            if (d.t === "sel" || d.p === "spectrum.nm0" || d.p === "spectrum.nm1") syncControls();
+            scheduleCompute();
+        }, collapsed));
     }
 
     // View controls live under their own canvas rather than in the sidebar: they change how

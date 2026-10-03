@@ -1,5 +1,65 @@
 # Vehicle Designer
 
+## Infrared preview
+
+Choose **IR preview** under Preview mode. Start with **A340-600**, range
+**125000 m**, aspect azimuth **0°** and elevation **0°** for a direct rear view.
+Positive aspect elevation puts the sensor above the vehicle. Azimuth turns from
+the tail toward the port side. These are body-relative viewing angles; the
+atmospheric ray elevation and sensor altitude are independent environment inputs.
+The default MX-15 class sensor uses 675 mm focal length, a 640 × 512 detector
+and 0.915° vertical optical field: about **3.899 m per detector pixel at 125 km**.
+The image keeps the detector aspect ratio inside the available preview area.
+Optical field/focal length and digital zoom are separate. **Fit** never changes
+sensor range; use the range and aspect controls to change the physical view.
+
+The **Thermal** recipe folder contains propulsion/material profile, power,
+local ambient temperature, Mach and skin emissivity. These scalar parameters
+save with the existing version-1 design and GLB recipe metadata. Old designs
+receive defaults without changing their visible geometry. Camera, atmosphere,
+processing and display controls persist separately in this browser and do not
+travel with the design. The sensor menu is generated from the shared thermal
+schema, including units, tooltips and each preset value's published, measured,
+calculated or estimated status. An edited preset value is marked **Edited**.
+
+The picture comes from surface photon radiance, atmospheric transfer, diffraction
+and scatter, native detector sampling, exposure, noise and 14-bit conversion,
+then gain/level and 8-bit display processing. Choose manual, automatic, plateau
+equalization or fixed radiometric gain, black/white hot polarity, and radiance
+or detector-count diagnostics. Automatic gain is the initial preview setting.
+The readout shows the detector count under the pointer and the full detector
+frame's minimum, maximum and median. Pointer coordinates include digital zoom;
+statistics include pixels outside the displayed crop. **Snapshot** saves the
+selected mode. Library thumbnails and the preset picker use the normal view.
+
+Vehicle surface temperatures, emissivities and their equilibrium power response
+are family estimates. The A340 cavity uses the shared 720 K reference scenario;
+it is not a measured engine operating point. Jet outlets reuse the visible rear
+discs, with an estimated radius of 0.28 times nacelle diameter, and add a short
+nozzle wall/rim only for IR. The heated rear nacelle occupies its rear quarter.
+Propeller stacks and helicopter outlets are approximate placements derived from
+the generated engine/cabin dimensions. Road hood regions and exhaust outlets,
+electric motor/controller/battery covers, and balloon envelopes carry distinct
+zones. Internal brakes and concealed engine parts are not exposed as hot skins.
+Paint markings are omitted in IR so they do not add a second emitting surface.
+The existing lantern flame is a crude continuum proxy supplied by the shared
+signature model; it is not a resolved gas flame.
+
+Aperture, scatter, exposure and electronics remain estimates where the preset
+says so. The atmosphere is a reduced transfer model and the sky is a uniform
+brightness temperature. Plumes, trails, sensor nonuniformity, transient cooling
+and material spectra are not modeled here. Gain and blur can merge the four
+engine sources into two broad groups; a display match alone does not establish
+source size, temperature or detector saturation. No video-frame match is implied.
+The renderer requires WebGL 2 with floating-point color targets. Allocation or
+render errors appear above the image; reduce optical sampling/support if needed.
+
+On `localhost` and `local.metabunk.org` only, enabling IR exposes
+`window.vehicleThermal`: `pipeline`, current `settings` (including sensor range
+and aspect), `set(key, value)`, and `readDetectorCounts()`. It is removed when
+the editor closes and is not exposed on other hosts. Counts are native-grid
+14-bit values in bottom-row-first order.
+
 ## Use a procedural model in Sitrec
 
 Open an object's controls and select **Browse vehicles…**. The visual picker has
@@ -294,7 +354,16 @@ interior. Procedural lights include exportable point and spot lights as describe
 
 There are no runtime network services or CDN dependencies. The normal webpack
 build copies these files and a matching Three.js renderer, OrbitControls and
-GLTFExporter from the installed dependency. The resulting `tools/vehicles/`
-folder can also be hosted on its own static web server. Open it over HTTP(S), not
+GLTFExporter from the installed dependency. For a standalone copy, keep
+**all files in `tools/vehicles/`**, including the `vendor/` modules and license
+and the `thumbnails/` directory, plus the sibling **`tools/thermal/`** directory.
+Its runtime files are `ThermalPipeline.js`, `shaders.js`, `radiometry.js`,
+`atmosphere.js`, `signatures.js`, `sensorPresets.js`, `sensorMath.js` and
+`thermalSchema.js`; `selfTest.js` is optional for browser verification.
+Keep the two directories beside each other so relative imports resolve.
+Thermal code loads on first use, including in the embedded editor's separate
+webpack chunk. No new Three.js addons are required. The existing copy pattern
+carries both directories and stamps the complete import map.
+Open the standalone copy over HTTP(S), not
 `file://`, so browser module loading works. The import map versions the complete
 module graph, and the bundled dependency includes its license.

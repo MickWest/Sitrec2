@@ -1,3 +1,4 @@
+import {disposeThermalView, ensureThermalView, thermalRenderMode, thermalStatus, thermalUnavailable} from "../rendering/ThermalLoader";
 import {migrateViewColorSettings, splitViewEffects, viewColorPolicy} from "../rendering/ViewColorPipeline";
 import {SoftDepthPass} from "../rendering/SoftDepth";
 import {setLineViewHeight} from "../SceneLineMaterial";
@@ -134,6 +135,7 @@ export class CNodeView3D extends CNodeViewCanvas {
             this.tileLayers |= LAYER.MASK_LOOK;
         }
 
+        this.renderMode = thermalRenderMode(v.renderMode);
         const atmosphereDef = v.atmosphere ?? {};
         this.atmosphereEnabled = atmosphereDef.enabled ?? (atmosphereDef.desktopDefault === true && !Globals.isMobile);
         this.atmosphereVisibilityKm = atmosphereDef.visibilityKm ?? 250;
@@ -865,6 +867,9 @@ export class CNodeView3D extends CNodeViewCanvas {
      * Three.js automatically handles stereo rendering for VR headsets
      */
     renderXR(time, frame) {
+        if (this.renderMode === "physicalThermal") {
+            this.clearThermalOutput(); thermalStatus(this, "unavailable"); return;
+        }
         // console.log("XR: === START of renderXR === time:", time.toFixed(3), "view:", this.id);
 
         // Get lookCamera for settings like near/far planes
@@ -2052,6 +2057,7 @@ export class CNodeView3D extends CNodeViewCanvas {
         this._onContextLost = (e) => {
             e.preventDefault();
             this.contextLost = true;
+            disposeThermalView(this);
             console.warn(`[WebGL] Context LOST on view "${this.id}"`);
             // Drop JS-side render-target handles; their GL backing is gone.
             // The restore handler will recreate them. Until then, renderCanvas
@@ -2124,6 +2130,17 @@ export class CNodeView3D extends CNodeViewCanvas {
 
 
     renderTargetAndEffects() {
+        if (this.renderMode === "physicalThermal") {
+            if (thermalUnavailable(this, {fisheye: isFisheyeCamera(this.camera),
+                flatEarth: Globals.flatEarthRendering, panorama: isPanoramicCamera(this.camera)})) {
+                this.clearThermalOutput();
+                thermalStatus(this, "unavailable");
+                return;
+            }
+            // The thermal radiance pass applies the terrestrial vertex lift itself.
+            return this.renderTargetAndEffectsInternal();
+        }
+        if (this._thermalReadout) this._thermalReadout.style.display = "none";
         if (isPanoramicCamera(this.camera) && !this.isXRPresenting()) {
             return (this.panoramicRenderer ??= new PanoramicRenderer()).render(this);
         }
@@ -2139,7 +2156,38 @@ export class CNodeView3D extends CNodeViewCanvas {
         }
     }
 
+    clearThermalOutput() {
+        const target = this.renderer.getRenderTarget();
+        const color = this.renderer.getClearColor(new Color()), alpha = this.renderer.getClearAlpha();
+        try {
+            this.renderer.setRenderTarget(null); this.renderer.setClearColor(0, 1);
+            this.renderer.clear(true, true, true);
+        } finally {
+            this.renderer.setClearColor(color, alpha); this.renderer.setRenderTarget(target);
+        }
+    }
+
+    renderPhysicalThermal() {
+        if (!this._thermalAdapter) {
+            if (!this._thermalError) ensureThermalView(this);
+            this.clearThermalOutput();
+            return;
+        }
+        try {
+            this._thermalAdapter.render(GlobalScene, par.frame);
+            this._thermalError = null;
+        } catch (error) {
+            this._thermalError = error;
+            this.clearThermalOutput();
+            thermalStatus(this, "failed", {message: error.message});
+        }
+    }
+
     getPendingLoadState(viewIds = null) {
+        if (this.renderMode === "physicalThermal" && (!viewIds || viewIds.includes(this.id))) {
+            return {hasPending: !!this._thermalLoading, perView: {[this.id]: {thermal: !!this._thermalLoading}},
+                error: this._thermalError?.message};
+        }
         if (isPanoramicCamera(this.camera)) return null;
         if (!this.raytracedRefraction || (viewIds && !viewIds.includes(this.id))) return null;
         const pass = this.raytracedRefraction;
@@ -2394,6 +2442,7 @@ export class CNodeView3D extends CNodeViewCanvas {
                 if (globalProfiler) globalProfiler.push('#b3de69', 'lightingSetup');
                 // update lighting before rendering the sky
                 const lightingNode = NodeMan.get("lighting", true);
+                if (this.renderMode !== "physicalThermal") {
                 // if this is an IR viewport, then we need to render the IR ambient light
                 // instead of the normal ambient light.
 
@@ -2419,6 +2468,8 @@ export class CNodeView3D extends CNodeViewCanvas {
                 const sunNode = NodeMan.get("theSun", true);
                 if (sunNode !== undefined) {
                     sunNode.update();
+                }
+
                 }
 
                 const savedQuaternion = panoramaPass ? null : this.applyCameraOffset();
@@ -2498,6 +2549,17 @@ export class CNodeView3D extends CNodeViewCanvas {
                 let nightSkyForRestore = null;
                 let restoreTerrainMasks = null;
                 try {
+
+                if (this.renderMode === "physicalThermal") {
+                    if (this._matchVideoAspectFOV !== undefined) {
+                        this.camera.fov = this._matchVideoAspectFOV;
+                        this.camera.aspect = this._matchVideoAspectAspect;
+                        this.camera.updateProjectionMatrix();
+                    }
+                    if (globalProfiler) globalProfiler.pop();
+                    this.renderPhysicalThermal();
+                    return;
+                }
 
                 // [DBG] Render sky
                 if (Globals.renderDebugFlags.dbg_renderSky) {
@@ -2711,6 +2773,7 @@ export class CNodeView3D extends CNodeViewCanvas {
                         _panPatchedCamera.updateProjectionMatrix = _panOrigUpdatePM;
                     }
 
+                    if (this.renderMode === "physicalThermal") this.camera.updateProjectionMatrix();
                     this.camera.layers.mask = oldLayers;
                     if (restoreTerrainMasks) restoreTerrainMasks();
 
@@ -2719,7 +2782,7 @@ export class CNodeView3D extends CNodeViewCanvas {
                         this.camera.updateProjectionMatrix();
                     }
 
-                    if (this.isIR && this.effectsEnabled) {
+                    if (this.isIR && this.effectsEnabled && this.renderMode !== "physicalThermal") {
                         NodeMan.get("lighting").setIR(false);
                     }
                 }
@@ -3260,6 +3323,7 @@ export class CNodeView3D extends CNodeViewCanvas {
         this.getColorPolicy();
         return {
             ...super.modSerialize(),
+            renderMode: this.renderMode,
             focusTrackName: this.focusTrackName,
             lockTrackName: this.lockTrackName,
             effectsEnabled: this.effectsEnabled,
@@ -3282,6 +3346,7 @@ export class CNodeView3D extends CNodeViewCanvas {
 
     modDeserialize(v) {
         super.modDeserialize(v)
+        this.renderMode = thermalRenderMode(v.renderMode);
         if (v.focusTrackName !== undefined) this.focusTrackName = v.focusTrackName
         if (v.lockTrackName !== undefined) this.lockTrackName = v.lockTrackName
         if (v.effectsEnabled !== undefined) this.effectsEnabled = v.effectsEnabled
@@ -3320,6 +3385,7 @@ export class CNodeView3D extends CNodeViewCanvas {
     }
 
     dispose() {
+        disposeThermalView(this, true);
         // Also covers individual view removal outside a full sitch teardown.
         if (this.raytracedRefraction) {
             this.raytracedRefraction.tool.releasePass();
