@@ -7,7 +7,7 @@ import {OpticalKernelCache, opticalKernelError, OPTICS_L1_TOLERANCE, buildOptica
 import {normalizeSettings} from "../tools/thermal/thermalSchema.js";
 import {opticalKernels, scatterPlan, applyOptics} from "../tools/thermal/sensorMath.js";
 import {createAtmosphere, backgroundAtElevation, skyViewGeometry, sampleSkyElevationLUT,
-    brightnessErrorBound, createThermalRayGeometry} from "../tools/thermal/atmosphere.js";
+    brightnessErrorBound, createThermalRayGeometry, skyElevationRange} from "../tools/thermal/atmosphere.js";
 import {FencedReadback, ThermalGpuTimer} from "../tools/thermal/ThermalPipeline.js";
 import {SkyBackgroundCache} from "../tools/thermal/atmosphere.js";
 import {ThermalPipeline} from "../tools/thermal/ThermalPipeline.js";
@@ -182,6 +182,29 @@ test.each([null, [Math.cos(2.23 * Math.PI / 180), 0, -Math.sin(2.23 * Math.PI / 
         } finally {pipeline.dispose();}
     });
 
+test("an interactive view reads its centre sky value from the sky table instead of a new path integral", () => {
+    // Found live: the centre ray's 96-segment path integral ran on every moving frame (~40 ms) although the sky
+    // gradient draws the background from the validated table and ignores that value.
+    const reference = skyGradientReference(null);
+    const settings = {...reference.settings, pathElevationDeg: skyElevationRange(reference.view).centerRad * 180 / Math.PI};
+    const run = analysis => {
+        const pipeline = new ThermalPipeline({}, {analysis});
+        pipeline.resources = {textures: new Set(), surfaces: new Map(), materials: new Map(), targets: new Map()};
+        pipeline.skyView = reference.view;
+        pipeline._prepareAtmosphere(settings, null);
+        const deferred = pipeline.background.deferredRadiance;
+        pipeline._prepareSkyBackground(settings, reference.view);
+        return {pipeline, deferred, kelvin: pipeline.background.brightnessTemperatureK};
+    };
+    const live = run(false), offline = run(true);
+    try {
+        expect(live.deferred).toBe(true); expect(offline.deferred).toBe(false);
+        expect(live.pipeline.background.deferredRadiance).toBe(false);
+        // The sky shader's own lookup in the validated table: inside the table's stated 0.005 K bound of the integral.
+        expect(Math.abs(live.kelvin - offline.kelvin)).toBeLessThan(.005);
+    } finally {live.pipeline.dispose(); offline.pipeline.dispose();}
+});
+
 function fakeGl() {
     const gl = Object.fromEntries(["PIXEL_PACK_BUFFER_BINDING", "PACK_ALIGNMENT", "PACK_ROW_LENGTH", "PACK_SKIP_PIXELS",
         "PACK_SKIP_ROWS", "PIXEL_PACK_BUFFER", "STREAM_READ", "RGBA", "FLOAT", "SYNC_GPU_COMMANDS_COMPLETE",
@@ -199,6 +222,10 @@ test("gain readback polls without waiting, preserves tags and bounds allocation"
     expect(reader.enqueue(2, 1, {serial: 1, key: "first"})).toBe(true);
     expect(reader.enqueue(2, 1, {serial: 2, key: "second"})).toBe(true);
     expect(reader.enqueue(2, 1, {})).toBe(false);
+    // Found live: a pack-state query is a synchronous GPU-process round trip (110-128 ms behind queued passes). The
+    // read sets the state it needs and queries only the buffer binding, which the browser answers on the client side.
+    expect(gl.getParameter.mock.calls.every(([name]) => name === gl.PIXEL_PACK_BUFFER_BINDING)).toBe(true);
+    expect(gl.pixelStorei.mock.calls).toEqual(expect.arrayContaining([[gl.PACK_ROW_LENGTH, 0], [gl.PACK_SKIP_PIXELS, 0], [gl.PACK_SKIP_ROWS, 0]]));
     expect(reader.poll()).toBeNull(); expect(gl.getBufferSubData).not.toHaveBeenCalled();
     expect(gl.clientWaitSync.mock.calls.every(([, flags, timeout]) => flags === 0 && timeout === 0)).toBe(true);
     gl.clientWaitSync.mockReturnValue(gl.CONDITION_SATISFIED);

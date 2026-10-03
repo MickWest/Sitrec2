@@ -3,7 +3,8 @@ import {createThermalSceneAdapter, thermalCloudSheets, withThermalRefraction} fr
 import {createThermalViewAdapter} from "../src/rendering/ThermalViewAdapter";
 import {liftWorldPoint, terrestrialLiftContext, terrestrialRefractionUniforms} from "../src/atmosphere/terrestrialRefraction";
 import {backgroundAtElevation, createAtmosphere, createSkyElevationLUT, sampleSkyElevationLUT, cloudSampleGeometry,
-    cloudRadianceTable, evaluatePhotonPath, EARTH_RADIUS_M, thermalSeaDistance, createSeaSkyTable, createStatisticalSea, skyViewGeometry} from "../tools/thermal/atmosphere.js";
+    cloudRadianceTable, evaluatePhotonPath, EARTH_RADIUS_M, thermalSeaDistance, createSeaSkyTable, createStatisticalSea, skyViewGeometry,
+    RADIUS_REUSE_M} from "../tools/thermal/atmosphere.js";
 import {ThermalPipeline, cloudScreenBounds} from "../tools/thermal/ThermalPipeline.js";
 import {normalizeSettings} from "../tools/thermal/thermalSchema.js";
 import {createThermalDepthTable, createCloudRadianceDomain, blackbodyBands, brightnessErrorBound} from "../tools/thermal/atmosphere.js";
@@ -29,6 +30,25 @@ function fixture(enabled = true, extra = {}) {
     return {camera, options, adapter, settings, geometry: adapter.rayGeometry(settings)};
 }
 const apparentElevation = p => Math.atan2(p.y, Math.hypot(p.x, p.z));
+
+test("range and sky domains are not keyed to the drifting Earth radius; caches reuse them within RADIUS_REUSE_M", () => {
+    // Found live: the radius at the observer changes by centimetres per frame, so a key holding it changed on every
+    // frame and no range or sky domain was ever reused; rounding it then forced rebuilds at every step boundary.
+    const ellipsoid = {enabled: true, k: .13, equatorRadius: 6378137, polarRadius: 6356752.314245};
+    const at = position => {
+        const camera = new PerspectiveCamera(1, 1, 1, 300000); camera.position.copy(position); camera.updateMatrixWorld();
+        const geometry = createThermalSceneAdapter([], [], camera, ellipsoid).rayGeometry(normalizeSettings({sensorAltitudeM: 2500}));
+        return {domainKey: geometry.domainKey, key: geometry.key, radius: geometry.earthRadiusM};
+    };
+    // About 1.3 km steps in latitude from 45°, where the radius changes fastest (a few metres per step).
+    const samples = Array.from({length: 300}, (_, i) =>
+        at(new Vector3(6378137 + 2500, 0, 0).applyAxisAngle(new Vector3(0, 1, 0), -Math.PI / 4 - i * 2e-4)));
+    expect(Math.abs(samples.at(-1).radius - samples[0].radius)).toBeGreaterThan(300);
+    expect(new Set(samples.map(sample => sample.domainKey)).size).toBe(1);
+    // The frame's own geometry identity still follows the radius, so the pipeline asks its caches again.
+    expect(new Set(samples.map(sample => sample.key)).size).toBe(samples.length);
+    expect(RADIUS_REUSE_M).toBe(100);
+});
 
 test("the thermal view enables the shared refraction uniforms throughout its draw", () => {
     const {camera} = fixture(), view = {renderer: {}, camera, cameraNode: {}};

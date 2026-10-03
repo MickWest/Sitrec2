@@ -11,7 +11,7 @@ import {resolveSignatures} from "./signatures.js";
 import {normalizeSettings} from "./thermalSchema.js";
 import {displayCurveLUT, detectorWindowScale, detectorPresentation, temporalHistoryKey, electronsPerRadiance, fixedPatternMap, gaussianKernel, integrationTime, nextPow2, processingParameters, shadingResponsivity} from "./sensorMath.js";
 import {OpticalKernelCache, opticalKernelError, OPTICS_L1_TOLERANCE} from "./sensorMath.js";
-import {SkyBackgroundCache} from "./atmosphere.js";
+import {SkyBackgroundCache, thermalSeaDistance} from "./atmosphere.js";
 import {OpticsScheduler, coarseOpticalKernels} from "./sensorMath.js";
 import {RangeTableCache} from "./atmosphere.js";
 import * as shaders from "./shaders.js";
@@ -23,6 +23,55 @@ const COVERAGE_TILE = 4; // native pixels per tile side; bounds texture allocati
 // Estimated budget: every refinement tile redraws the whole scene at COVERAGE_SAMPLES per pixel, so one frame
 // refines at most this many tiles. The rest keep the normal supersampled radiance; the overflow is reported.
 const COVERAGE_TILE_LIMIT = 64;
+
+// The sky shader's lookup (rowRadiance in shaders.js): the bracketing samples by binary search, then clamped linear
+// interpolation. elevation in rad; returns photon radiance in the table's units.
+export function skyTableRadiance(table, elevation) {
+    const elevations = table.elevations, radiances = table.photonRadiances;
+    let lo = 0, hi = table.sampleCount - 1;
+    while (hi - lo > 1) {
+        const mid = (lo + hi) >> 1;
+        if (elevations[mid] <= elevation) lo = mid; else hi = mid;
+    }
+    const t = elevations[hi] > elevations[lo] ? Math.min(1, Math.max(0, (elevation - elevations[lo]) / (elevations[hi] - elevations[lo]))) : 1;
+    return radiances[lo] + t * (radiances[hi] - radiances[lo]);
+}
+
+/** Layout of the near-field optical convolution. All lengths are fine samples. reach is the kernel support
+ * {low: [x, y], high: [x, y]}: how far the combined core and scatter kernels extend toward lower and higher indices.
+ *
+ * The reference transforms the whole zero-padded image in one complex FFT (the plan's own reference sizes). Packed
+ * overlap-add cuts the image into up to 2 × 2 tiles. Each tile is padded by the kernel support, so its circular
+ * convolution equals its linear convolution, and the sum of the tiles' convolutions is the image's convolution
+ * (linearity): the same full linear convolution with zero circular wrap, which differs from the reference only by
+ * float rounding. Two real tiles form one complex image (real and imaginary parts), and the kernel is real, so one
+ * RGBA FFT carries four tiles. A live 640 × 512 detector at 4× needs 3328 × 2816 for one image, so 4096², but
+ * 1280 + 768 = 2048 per tile: one 2048² RGBA transform, a quarter of the texels and half of the bytes.
+ * mode: false keeps the reference; true selects the cheapest layout; {tiles: [x, y]} forces one (tests).
+ */
+export function nearConvolutionPlan(width, height, reach, reference, mode = true) {
+    const single = {packed: false, tilesX: 1, tilesY: 1, tileWidth: width, tileHeight: height,
+        fftWidth: reference.fftWidth, fftHeight: reference.fftHeight, reach};
+    if (!mode) return single;
+    const layout = (tilesX, tilesY) => {
+        const tileWidth = Math.ceil(width / tilesX), tileHeight = Math.ceil(height / tilesY);
+        return {packed: true, tilesX, tilesY, tileWidth, tileHeight, reach,
+            fftWidth: nextPow2(tileWidth + reach.low[0] + reach.high[0]),
+            fftHeight: nextPow2(tileHeight + reach.low[1] + reach.high[1])};
+    };
+    if (mode.tiles) return layout(...mode.tiles);
+    // Calculated cost of one transform: texels × butterfly stages × bytes per texel (RG 8, RGBA 16).
+    const cost = plan => plan.fftWidth * plan.fftHeight * Math.log2(plan.fftWidth * plan.fftHeight) * (plan.packed ? 16 : 8);
+    return [layout(2, 2), layout(2, 1), layout(1, 2)].reduce((best, plan) => cost(plan) < cost(best) ? plan : best, single);
+}
+
+/** Support of the near convolution's kernels (core, then scatter), as nearConvolutionPlan takes it. A kernel of
+ * width w is centered at floor(w / 2), as fftPrepareFragment centers it. */
+export function kernelReach(kernels) {
+    const low = axis => kernels.reduce((total, kernel) => total + Math.floor(kernel[axis] / 2), 0);
+    const high = axis => kernels.reduce((total, kernel) => total + kernel[axis] - 1 - Math.floor(kernel[axis] / 2), 0);
+    return {low: [low("width"), low("height")], high: [high("width"), high("height")]};
+}
 const scalarTexture = (values, width = values.length, height = 1) =>
     dataTexture(Float32Array.from(values), width, height, RedFormat);
 // rgba is row-major Float32 data; physical units are supplied by the owning pass.
@@ -51,11 +100,15 @@ function material(fragmentShader, values = {}, vertexShader = shaders.fullscreen
 
 export class ThermalPipeline {
     /** renderer is a shared WebGLRenderer. No GPU resources or Three objects yet. */
-    constructor(renderer, {analysis = true, synchronous = analysis, gpuTiming = false, createOpticsWorker, onReady = () => {}} = {}) {
+    constructor(renderer, {analysis = true, synchronous = analysis, gpuTiming = false, createOpticsWorker, onReady = () => {},
+        packedOptics = !analysis} = {}) {
         this.renderer = renderer;
         // Analysis explicitly requests same-render gain for reference captures.
         // Interactive rendering never performs a synchronous pixel readback.
         this.analysis = analysis;
+        // Near convolution layout (nearConvolutionPlan). Live views use packed overlap-add when it is cheaper; analysis
+        // keeps the single-FFT reference, so reference captures are unchanged and the self-test compares the two.
+        this.packedOptics = packedOptics;
         // Offline callers get a complete reference render by default. Live hosts
         // explicitly opt into asynchronous preparation and fenced gain.
         this.synchronous = synchronous;
@@ -108,7 +161,8 @@ export class ThermalPipeline {
             throw new Error(`Thermal ${name} requires ${width} × ${height} texels; GPU limit is ${maximum}. Reduce optical sampling or kernel support.`);
         let target = this.resources.targets.get(name);
         if (!target) {
-            const format = /Fft[AB]$|Spectrum$/.test(name) ? RGFormat : /Readback$/.test(name) ? RGBAFormat : RedFormat;
+            const format = /^packedFft[AB]$/.test(name) ? RGBAFormat : /Fft[AB]$|Spectrum$/.test(name) ? RGFormat :
+                /Readback$/.test(name) ? RGBAFormat : RedFormat;
             target = floatTarget(width, height, depth, format);
             this.resources.targets.set(name, target);
         } else if (target.width !== width || target.height !== height) target.setSize(width, height);
@@ -163,6 +217,41 @@ export class ThermalPipeline {
         return output;
     }
 
+    // Packed RGBA FFT of the near convolution (nearConvolutionPlan). Forward gathers the tiles from the scalar
+    // contrast image; inverse takes the filtered packed spectrum. Same radix-2 stages as _fft.
+    _fftPacked(texture, plan, inverse) {
+        const width = plan.fftWidth, height = plan.fftHeight;
+        const first = this._target("packedFftA", width, height), second = this._target("packedFftB", width, height);
+        let output = texture === first.texture ? second : first;
+        if (inverse) this._pass("fftReversePacked", shaders.fftReversePackedFragment, {tInput: texture, fftSize: [width, height]}, output);
+        else this._pass("fftPack", shaders.fftPackFragment, {tInput: texture, fftSize: [width, height],
+            sourceSize: plan.sourceSize, tileSize: [plan.tileWidth, plan.tileHeight], tiles: [plan.tilesX, plan.tilesY]}, output);
+        for (const axis of [0, 1]) {
+            const size = axis === 0 ? width : height;
+            for (let span = 2; span <= size; span *= 2) {
+                const input = output;
+                output = input === first ? second : first;
+                this._pass("fftButterflyPacked", shaders.fftButterflyPackedFragment, {tInput: input.texture, axis, span, inverse}, output);
+            }
+        }
+        return output;
+    }
+
+    _convolvePacked(texture, plan) {
+        const transformed = this._fftPacked(texture, plan, false);
+        const product = this.resources.targets.get(transformed === this.resources.targets.get("packedFftA") ? "packedFftB" : "packedFftA");
+        this._pass("multiplyPacked", shaders.multiplyPackedFragment,
+            {tInput: transformed.texture, tKernel: this.resources.targets.get("opticalSpectrum").texture}, product);
+        return this._fftPacked(product.texture, plan, true);
+    }
+
+    // The near convolution layout for these kernels at this image size; the spectrum is built at its FFT size.
+    _nearPlan(kernels, width, height) {
+        const plan = nearConvolutionPlan(width, height, kernelReach([kernels.core, kernels.scatter]),
+            kernels.split, this.packedOptics);
+        return {...plan, sourceSize: [width, height]};
+    }
+
     _prepareOptics(settings, width, height) {
         const synchronous = this.analysis || this.synchronous;
         const request = synchronous ? null : this.opticsScheduler.request(settings, width, height, this.atmosphere);
@@ -213,6 +302,8 @@ export class ThermalPipeline {
             try {completed = pending.steps.next().done;}
             catch (error) {this.pendingOptics = null; throw error;}
             if (completed) {
+                // Pending kernels have the active kernels' support (opticalKernelError is Infinity for any other
+                // split or kernel size, which installs immediately), so nearPlan and the FFT sizes stay valid.
                 if (pending.key === key && opticalKernelError(kernels, pending.kernels) <= tolerance) {
                     for (const name of ["opticalSpectrum", ...(pending.kernels.farScatter ? ["farSpectrum"] : [])]) {
                         const staging = `pending${name[0].toUpperCase()}${name.slice(1)}`;
@@ -241,7 +332,8 @@ export class ThermalPipeline {
 
     *_buildOptics(kernels, width, height, pending = false) {
         const name = value => pending ? `pending${value[0].toUpperCase()}${value.slice(1)}` : value;
-        this._prepareSpectrum(name("opticalSpectrum"), [kernels.core, kernels.scatter], kernels.split.fftWidth, kernels.split.fftHeight);
+        const plan = this._nearPlan(kernels, width, height);
+        this._prepareSpectrum(name("opticalSpectrum"), [kernels.core, kernels.scatter], plan.fftWidth, plan.fftHeight);
         yield;
         if (kernels.farScatter) {
             const fw = nextPow2(Math.ceil(width / kernels.split.factor) + kernels.farCore.width + kernels.farScatter.width - 2);
@@ -253,7 +345,8 @@ export class ThermalPipeline {
 
     _installOptics(kernels, key, width, height) {
         for (const step of this._buildOptics(kernels, width, height)) void step;
-        this.fftWidth = kernels.split.fftWidth; this.fftHeight = kernels.split.fftHeight;
+        this.nearPlan = this._nearPlan(kernels, width, height);
+        this.fftWidth = this.nearPlan.fftWidth; this.fftHeight = this.nearPlan.fftHeight;
         this.farWidth = kernels.farScatter ? nextPow2(Math.ceil(width / kernels.split.factor) + kernels.farCore.width + kernels.farScatter.width - 2) : 0;
         this.farHeight = kernels.farScatter ? nextPow2(Math.ceil(height / kernels.split.factor) + kernels.farCore.height + kernels.farScatter.height - 2) : 0;
         this.scatterSplit = {...kernels.split, farMass: kernels.farMass};
@@ -300,8 +393,9 @@ export class ThermalPipeline {
         const nearImage = this._target("nearOptics", radiance.width, radiance.height);
         this._pass("contrast", shaders.contrastFragment,
             {tInput: radiance.texture, tBackground: background.texture}, nearImage);
-        const near = this._convolve(nearImage.texture, radiance.width, radiance.height,
-            "opticalSpectrum", this.fftWidth, this.fftHeight);
+        const plan = this.nearPlan;
+        const near = plan.packed ? this._convolvePacked(nearImage.texture, plan) :
+            this._convolve(nearImage.texture, radiance.width, radiance.height, "opticalSpectrum", this.fftWidth, this.fftHeight);
         // The far branch must consume contrast before this scratch is overwritten.
         let farTexture = this.emptyTexture;
         this.farResult = null;
@@ -320,7 +414,10 @@ export class ThermalPipeline {
                 fftSize: [this.farWidth, this.farHeight], factor: this.scatterSplit.factor}, far);
             farTexture = far.texture;
         }
-        this._pass("copy", shaders.copyFragment, {tInput: near.texture}, nearImage);
+        if (plan.packed) this._pass("overlapAdd", shaders.overlapAddFragment, {tInput: near.texture,
+            fftSize: [plan.fftWidth, plan.fftHeight], sourceSize: plan.sourceSize, tileSize: [plan.tileWidth, plan.tileHeight],
+            tiles: [plan.tilesX, plan.tilesY], reachLow: plan.reach.low, reachHigh: plan.reach.high}, nearImage);
+        else this._pass("copy", shaders.copyFragment, {tInput: near.texture}, nearImage);
         this._pass("opticsSum", shaders.opticsSumFragment, {tInput: nearImage.texture,
             tFar: farTexture, hasFar: this.scatterSplit.farMass > 0, tBackground: background.texture}, optics);
     }
@@ -353,11 +450,22 @@ export class ThermalPipeline {
         // Center-ray reference and foreground transfer. The background elevation
         // table uses the same atmosphere, photon band and 96-segment quadrature.
         const accuracy = {segments: 96, quantity: "photon", band};
-        const skyKey = JSON.stringify([contentKey, geometry, band, this.rayGeometry?.key]);
+        // Interactive views with the sky gradient draw the background from the validated sky table and ignore this
+        // centre value, so its path integral (the slowest step of a moving frame) is deferred: _prepareSkyBackground
+        // reads it from that table, as the sky shader does (within the table's bound), or integrates it exactly when
+        // the table is a rough-sea table. Analysis and synchronous renders integrate it here as before.
+        const deferSky = !this.analysis && !this.synchronous && settings.skyGradient;
+        const skyKey = JSON.stringify([contentKey, geometry, band, this.rayGeometry?.key, deferSky]);
         if (settings.skySource === "atmosphere" && skyKey !== this.skyKey) {
             const mapped = this.rayGeometry?.ray(geometry.elevationRad, this.atmosphere.options.topAltitudeM);
-            this.skyRay = mapped ? (mapped.kind === "surface" ? mapped :
-                {...mapped, radiance: evaluatePhotonPath(mapped, this.atmosphere, accuracy).pathRadiance}) : clearSky(geometry, this.atmosphere, accuracy);
+            const atmosphere = this.atmosphere;
+            const exact = mapped ? () => ({...mapped, radiance: evaluatePhotonPath(mapped, atmosphere, accuracy).pathRadiance}) :
+                () => clearSky(geometry, atmosphere, accuracy);
+            // The surface test is geometric and cheap; only a sky ray's path integral is deferred.
+            const surfaceRay = mapped ? mapped.kind === "surface" :
+                Number.isFinite(thermalSeaDistance(geometry.sensorAltitudeM, Math.sin(geometry.elevationRad)));
+            this.skyRay = mapped?.kind === "surface" ? mapped :
+                deferSky && !surfaceRay ? {...(mapped ?? {kind: "sky"}), radiance: null, exact} : exact();
             this.skyKey = skyKey;
         }
         const sky = settings.skySource === "manual" ? null : this.skyRay;
@@ -372,11 +480,13 @@ export class ThermalPipeline {
             const physical = this.rayGeometry ? sky : geometry;
             const result = surface ? (settings.seaMode === "statistical" ? this._statisticalSea(settings).evaluate({...physical, azimuthRad}) :
                 seaBackground({...physical, temperatureK: settings.surfaceTemperatureK}, this.atmosphere, accuracy)) : sky;
-            const photonRadiance = result ? result.radiance.reduce((total, value) => total + value, 0) :
+            const deferred = !surface && sky?.radiance === null;
+            const photonRadiance = deferred ? null : result ? result.radiance.reduce((total, value) => total + value, 0) :
                 inBandRadiance(settings.skyTemperatureK, band).photon;
             this.background = Object.freeze({source: settings.skySource, kind: surface ? "sea" : sky ? "sky" : "manual",
-                photonRadiance, scaledPhotonRadiance: photonRadiance / PHOTON_SCALE,
-                brightnessTemperatureK: apparentTemperature(photonRadiance, {quantity: "photon", band}),
+                photonRadiance, scaledPhotonRadiance: deferred ? null : photonRadiance / PHOTON_SCALE,
+                brightnessTemperatureK: deferred ? null : apparentTemperature(photonRadiance, {quantity: "photon", band}),
+                deferredRadiance: deferred,
                 ...(surface ? {surfaceDistanceM: sky.distanceM, status: "estimated",
                     seaMode: settings.seaMode, skinTemperatureK: settings.seaMode === "statistical" ? settings.seaSkinTemperatureK : settings.surfaceTemperatureK,
                     reason: settings.seaMode === "statistical" ? "Estimated ensemble mean, gray water, directional clear sky, independent Smith hiding and black-cavity closure; no moving crest occlusion." :
@@ -398,10 +508,36 @@ export class ThermalPipeline {
         this.rangeLUT = rangeLUT;
         this.rangeReport = cachedRange ? this.rangeCache.report :
             {status: "calculated", transmissionError: 0, pathErrorK: 0, pending: !!this.rangeCache.pending};
-        for (const surface of this.resources.surfaces.values()) { surface.material.dispose(); this._removeTexture(surface.texture); }
-        this.resources.surfaces.clear();
+        // A new range table changes only each surface's small range texture. Keep the materials and recompute those
+        // textures from the cached source spectra, with the same arithmetic as a new surface; surfaces without a
+        // range texture do not depend on the table.
+        for (const surface of this.resources.surfaces.values()) {
+            if (!surface.spectrum || !surface.texture) continue;
+            const data = this._surfaceRangeData(surface.spectrum);
+            if (surface.texture.image?.data?.length === data.length) {
+                surface.texture.image.data.set(data); surface.texture.needsUpdate = true;
+            } else {
+                this._removeTexture(surface.texture);
+                surface.texture = this._ownTexture(dataTexture(data, this.rangeLUT.size, 1));
+                surface.material.uniforms.rangeTexture.value = surface.texture;
+            }
+            surface.material.uniforms.rangeMaxM.value = this.rangeLUT.maxRangeM;
+            surface.material.uniforms.rangeSamples.value = this.rangeLUT.size;
+        }
         this.atmosphereKey = key;
         return true;
+    }
+
+    // Per-sample surface source radiance (red) and reflected sunlight (green) along the current range table.
+    _surfaceRangeData({emission, reflectedSun}) {
+        const thermal = sourceRangeLUT(this.rangeLUT, emission);
+        const rgba = new Float32Array(this.rangeLUT.size * 4);
+        for (let sample = 0; sample < this.rangeLUT.size; sample++) {
+            rgba[sample * 4] = thermal[sample];
+            for (let band = 0; band < 12; band++) rgba[sample * 4 + 1] +=
+                reflectedSun[band] / PHOTON_SCALE * this.rangeLUT.transmission[sample * 12 + band];
+        }
+        return rgba;
     }
 
     _statisticalSea(settings) {
@@ -453,6 +589,17 @@ export class ThermalPipeline {
             }
         }
         this.skyGradient = gradient; this.roughSky = rough;
+        if (this.background?.deferredRadiance) {
+            // The deferred centre value (see _prepareAtmosphere): the sky shader's own lookup in the table just prepared,
+            // or the exact path integral where the table is a rough-sea table.
+            const band = {minUm: settings.bandMinUm, maxUm: settings.bandMaxUm};
+            const offset = (this.rayGeometry?.horizonRad ?? -Math.acos(6371000 / (6371000 + settings.sensorAltitudeM))) - this.skyTable.horizonRad;
+            const photonRadiance = gradient && !rough ? skyTableRadiance(this.skyTable, range.centerRad - offset) :
+                this.skyRay.exact().radiance.reduce((total, value) => total + value, 0);
+            this.background = Object.freeze({...this.background, deferredRadiance: false, photonRadiance,
+                scaledPhotonRadiance: photonRadiance / PHOTON_SCALE,
+                brightnessTemperatureK: apparentTemperature(photonRadiance, {quantity: "photon", band})});
+        }
         this.frameBackground = Object.freeze({...this.background, gradient,
             ...(rough ? {sea: {spectrum: this.statisticalSea.spectrum, hiding: this.statisticalSea.hiding,
                 environment: this.statisticalSea.environment, quadrature: this.statisticalSea.quadrature,
@@ -555,15 +702,7 @@ export class ThermalPipeline {
         let surface = this.resources.surfaces.get(key);
         if (!surface) {
             const spectrum = this._surfaceSpectrum(attributes, settings);
-            const {emission, reflectedSun} = spectrum;
-            const thermal = sourceRangeLUT(this.rangeLUT, emission);
-            const rgba = new Float32Array(this.rangeLUT.size * 4);
-            for (let sample = 0; sample < this.rangeLUT.size; sample++) {
-                rgba[sample * 4] = thermal[sample];
-                for (let band = 0; band < 12; band++) rgba[sample * 4 + 1] +=
-                    reflectedSun[band] / PHOTON_SCALE * this.rangeLUT.transmission[sample * 12 + band];
-            }
-            const texture = this._ownTexture(dataTexture(rgba, this.rangeLUT.size, 1));
+            const texture = this._ownTexture(dataTexture(this._surfaceRangeData(spectrum), this.rangeLUT.size, 1));
             const pass = material(shaders.radianceFragment, {rangeTexture: texture,
                 rangeMaxM: this.rangeLUT.maxRangeM, rangeSamples: this.rangeLUT.size,
                 sunViewDirection: sunDirection}, shaders.radianceVertex);
@@ -811,11 +950,13 @@ export class ThermalPipeline {
      * target is an output render target, null for the canvas; frame is an integer index.
      * reuseKey is an opaque string covering all image inputs; null disables reuse.
      * holdFrame: true during playback; a draw inside a frame that already rendered shows that frame's image.
+     * pace: true only when the host draws again on its next animation frame (GPU pacing, see below). A caller that
+     * reads the image after this call (export, screenshot, comparison) leaves it false and always gets its frame.
      * Analysis and synchronous renders always evaluate the complete pipeline.
      * All internal targets are Float32; final output is normalized 8-bit display drive.
      */
     render({scene, camera, settings: input = {}, sounding = null, skyUp = null, target = null, frame = 0,
-        radianceAdapter = null, presentation = null, psfRangeM = undefined, reuseKey = null, holdFrame = false}) {
+        radianceAdapter = null, presentation = null, psfRangeM = undefined, reuseKey = null, holdFrame = false, pace = false}) {
         const renderStart = performance.now();
         if (this.disposed) throw new Error("ThermalPipeline has been disposed");
         if (!scene || !camera) throw new TypeError("ThermalPipeline requires a scene and camera");
@@ -823,7 +964,12 @@ export class ThermalPipeline {
         this._initialize();
         // A sensor delivers one image per frame. During playback a host can draw several times inside one frame;
         // re-rendering would restart that frame's temporal filter and gain, so those draws show the frame's image.
-        const hold = holdFrame === true && !this.analysis && !this.synchronous && this.hasFrame &&
+        // GPU pacing: a live host asks for frames faster than the GPU completes them (about 200 ms of GPU time per
+        // frame, measured live), so submitted frames queued up and each synchronous WebGL call waited behind the
+        // queue. A paced render therefore starts only after the previous one has completed on the GPU. Until then a
+        // draw shows the last image, and the host is asked for a render when the fence signals.
+        const paced = pace === true && !this.analysis && !this.synchronous && this.hasFrame && this._gpuBusy();
+        const hold = paced || holdFrame === true && !this.analysis && !this.synchronous && this.hasFrame &&
             this.lastFrame?.frame === frame && !this.lastFrame.held;
         const reuseState = this._reuseState(frame), completed = this.completedReuse;
         const reuse = hold || typeof reuseKey === "string" && completed?.key === reuseKey &&
@@ -854,9 +1000,14 @@ export class ThermalPipeline {
             renderer.autoClear = false; renderer.shadowMap.enabled = false; renderer.xr.enabled = false;
             if (reuse) {
                 this._present(this.settings, presentation, target);
-                this.lastFrame.reused = true;
+                this.lastFrame.reused = true; this.lastFrame.paced = paced;
+                if (paced) this._awaitGpu();
                 return;
             }
+            // Read completed gain statistics before this frame's passes are queued. The read is a synchronous
+            // round trip to the GPU process; issued after the passes it waited for them (up to 182 ms live).
+            // A sample read before a render that returned early (caches not ready) stays until a newer one arrives.
+            this.earlyGainSample = this.gainReadback?.poll() ?? this.earlyGainSample ?? null;
             const width = settings.detectorWidth, height = settings.detectorHeight, factor = settings.supersample;
             const fineWidth = width * factor, fineHeight = height * factor;
             const thermalCamera = this._camera(camera, settings);
@@ -892,9 +1043,15 @@ export class ThermalPipeline {
             this._stage("skyTable", () => this._prepareSkyBackground(settings, skyView));
             const sky = this.background.scaledPhotonRadiance;
             this._stage("radiance", () => this._radiance(scene, thermalCamera, settings, radiance, sky));
-            const gl = renderer.getContext();
-            if (gl.checkFramebufferStatus(gl.FRAMEBUFFER) !== gl.FRAMEBUFFER_COMPLETE)
-                throw new Error("Thermal float framebuffer is incomplete; this GPU cannot allocate the requested radiance grid.");
+            // Checked once per allocation, as _pass does. The call waits for all queued GPU work, so checking on every
+            // frame stalled each interactive frame by the GPU's whole frame time (measured 43 ms per call).
+            const radianceSize = `${radiance.width},${radiance.height}`;
+            if (this.resources.checkedSizes?.get(radiance) !== radianceSize) {
+                const gl = renderer.getContext();
+                if (gl.checkFramebufferStatus(gl.FRAMEBUFFER) !== gl.FRAMEBUFFER_COMPLETE)
+                    throw new Error("Thermal float framebuffer is incomplete; this GPU cannot allocate the requested radiance grid.");
+                this.resources.checkedSizes?.set(radiance, radianceSize);
+            }
             const skyBackground = this._target("skyBackground", fineWidth, fineHeight);
             this._stage("sky", () => this._drawSky(thermalCamera, skyBackground, sky));
             this._stage("optics", () => this._optics(radiance, optics, skyBackground));
@@ -982,9 +1139,14 @@ export class ThermalPipeline {
                     systemBlurVerticalRmsUrad: settings.systemBlurVerticalRmsUrad,
                     jitterRmsUrad: settings.jitterRmsUrad, diffusionSigmaPx: settings.diffusionSigmaPx},
                 scatter: {...this.scatterSplit, farFFTWidth: this.scatterSplit.farMass ? this.farWidth : 0,
-                    farFFTHeight: this.scatterSplit.farMass ? this.farHeight : 0}};
+                    farFFTHeight: this.scatterSplit.farMass ? this.farHeight : 0,
+                    // fftWidth/fftHeight above are the single-image reference sizes; this is the layout that ran.
+                    nearConvolution: this.nearPlan ? {method: this.nearPlan.packed ? "packed overlap-add" : "single FFT",
+                        tiles: [this.nearPlan.tilesX, this.nearPlan.tilesY],
+                        fftWidth: this.nearPlan.fftWidth, fftHeight: this.nearPlan.fftHeight} : null}};
             this.settings = settings; this.hasFrame = true;
-            this.lastFrame.reused = false;
+            this.lastFrame.reused = false; this.lastFrame.paced = false;
+            this._fenceFrame();
             this.completedReuse = {key: typeof reuseKey === "string" ? reuseKey : null,
                 frame: this.lastFrame, state: this._reuseState(frame)};
         } finally {
@@ -1027,7 +1189,9 @@ export class ThermalPipeline {
             return processingParameters(codes, settings, reset ? null : this.window, deltaTimeS, width, height, presentation);
         }
         this.gainReadback ??= new FencedReadback(this.renderer.getContext());
-        const ready = this.gainReadback.poll();
+        // A sample completed during this frame's submission is newer than the one read at its start.
+        const ready = this.gainReadback.poll() ?? this.earlyGainSample ?? null;
+        this.earlyGainSample = null;
         // A re-render of the same frame or a backward seek recomputes the window from this frame's own
         // statistics, as an analysis render does. An advancing frame applies the newest unused sample of an
         // earlier frame (normally the previous render's). A sample applies once, in render order, never across
@@ -1078,6 +1242,37 @@ export class ThermalPipeline {
             this.imageState = state; this.imageStateEpochCount = (this.imageStateEpochCount ?? 0) + 1;
         }
         return this.imageStateEpochCount;
+    }
+
+    // Marks the end of a live frame's GPU work for pacing (see render). Analysis and synchronous renders never wait.
+    _fenceFrame() {
+        const gl = this.renderer.getContext?.();
+        if (this.analysis || this.synchronous || typeof gl?.fenceSync !== "function") return;
+        if (this.frameFence) gl.deleteSync(this.frameFence);
+        this.frameFence = gl.fenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0);
+        this.frameFenceTime = performance.now();
+    }
+
+    // Non-blocking: the browser updates a fence's status between tasks. An estimated 2 s bound keeps a lost context
+    // or a stalled GPU from holding the view; at most one more frame is then queued.
+    _gpuBusy() {
+        const fence = this.frameFence;
+        if (!fence) return false;
+        const gl = this.renderer.getContext();
+        if (gl.getSyncParameter(fence, gl.SYNC_STATUS) !== gl.SIGNALED && performance.now() - this.frameFenceTime < 2000) return true;
+        gl.deleteSync(fence); this.frameFence = null;
+        return false;
+    }
+
+    _awaitGpu() {
+        if (this.gpuWait != null) return;
+        const check = () => {
+            this.gpuWait = null;
+            if (this.disposed) return;
+            if (this._gpuBusy()) this.gpuWait = setTimeout(check, 8);
+            else this.onReady();
+        };
+        this.gpuWait = setTimeout(check, 8);
     }
 
     _settleGain() {
@@ -1143,6 +1338,9 @@ export class ThermalPipeline {
     }
     dispose() {
         clearTimeout(this.gainSettle); this.gainSettle = null;
+        clearTimeout(this.gpuWait); this.gpuWait = null;
+        if (this.frameFence) this.renderer.getContext?.()?.deleteSync?.(this.frameFence);
+        this.frameFence = null;
         this.gainReadback?.dispose(); this.gpuTimer?.dispose();
         this.opticsScheduler?.dispose(); this.rangeCache?.dispose(); this.skyCache?.dispose?.();
         this.pendingOptics = null; this.activeKernels = null; this.opticalCache = null; this.skyCache = null;
@@ -1282,13 +1480,15 @@ export class FencedReadback {
         if (this.pending.length >= 2) return false;
         const gl = this.gl, buffer = this.free.pop() ?? gl.createBuffer();
         const binding = gl.getParameter(gl.PIXEL_PACK_BUFFER_BINDING);
-        const pack = [gl.PACK_ALIGNMENT, gl.PACK_ROW_LENGTH, gl.PACK_SKIP_PIXELS, gl.PACK_SKIP_ROWS];
-        const saved = pack.map(name => gl.getParameter(name));
         let fence;
         try {
             gl.bindBuffer(gl.PIXEL_PACK_BUFFER, buffer);
             gl.bufferData(gl.PIXEL_PACK_BUFFER, width * height * 16, gl.STREAM_READ);
-            pack.forEach((name, i) => gl.pixelStorei(name, i ? 0 : 1));
+            // Set the pack state this read needs without querying it first. Chrome answers a pack-state query with a
+            // synchronous round trip to the GPU process, which waited 110-128 ms behind the queued optics passes
+            // (measured live). Zero is the WebGL default, which three.js restores in resetState and no other Sitrec
+            // code changes. RGBA/FLOAT rows are a multiple of 16 bytes, so every PACK_ALIGNMENT reads them unpadded.
+            for (const name of [gl.PACK_ROW_LENGTH, gl.PACK_SKIP_PIXELS, gl.PACK_SKIP_ROWS]) gl.pixelStorei(name, 0);
             gl.readPixels(0, 0, width, height, gl.RGBA, gl.FLOAT, 0);
             fence = gl.fenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0);
             if (!fence) throw new Error("Thermal gain fence allocation failed");
@@ -1300,7 +1500,6 @@ export class FencedReadback {
             gl.deleteBuffer(buffer);
             throw error;
         } finally {
-            pack.forEach((name, i) => gl.pixelStorei(name, saved[i]));
             gl.bindBuffer(gl.PIXEL_PACK_BUFFER, binding);
         }
     }

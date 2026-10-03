@@ -876,6 +876,37 @@ export async function runThermalSelfTest() {
             record(`${preset} fine FFT side within 4096`, 1,
                 Number(Math.max(pipeline.fftWidth, pipeline.fftHeight) <= 4096), 0);
         });
+        await test("Packed overlap-add optics against the single-FFT reference and CPU", () => {
+            // Forced 2 × 2 tiles at this small size. Sources at the tile corner (image centre) and near the image
+            // corners, where the tile convolutions overlap and the padding must absorb the wrap.
+            const packed = new ThermalPipeline(renderer, {analysis: true, packedOptics: {tiles: [2, 2]}});
+            const sources = new Scene();
+            for (const [x, y] of [[0.13, 0.21], [-15.4, -15.2], [15.1, 14.7], [-15.3, 9.8]]) {
+                const source = mesh(new CircleGeometry(0.125, 192), 800); source.position.set(x, y, 0); sources.add(source);
+            }
+            try {
+                for (const [label, extra] of [["near scatter", {opticsEnabled: true, scatterFraction: 0.07,
+                    scatterShoulderRad: 10e-6, scatterCutoffRad: 60e-6}],
+                ["dirty preset", {...SCATTER_PRESETS.dirty, scatterPreset: "dirty", atmosphereEnabled: true,
+                    skySource: "atmosphere", skyGradient: false, sensorAltitudeM: 1382, pathElevationDeg: 2.23}]]) {
+                    render(sources, extra, 25);
+                    packed.render({scene: sources, camera, settings: {...settings, ...extra}, target, frame: 25});
+                    record(`Packed ${label}: four tiles`, 4, packed.nearPlan.packed ? packed.nearPlan.tilesX * packed.nearPlan.tilesY : 0, 0);
+                    const a = pipeline.readStage("optics").image, b = packed.readStage("optics").image;
+                    const before = packed.readStage("radiance"), background = packed.background.scaledPhotonRadiance;
+                    // Estimated float32 FFT bound for both paths, as for the full detector below.
+                    record(`Packed ${label}: packed/reference optics L2 difference / reference contrast L2`, 0,
+                        Math.sqrt(sum(b.map((v, i) => (v - a[i]) ** 2)) / sum(a.map(v => (v - background) ** 2))), 1.4e-4);
+                    // The single transform's own CPU bound.
+                    const kernels = opticalKernels(packed.settings, before.width, before.height);
+                    const cpu = applyOptics(before.image, before.width, before.height, kernels, background);
+                    record(`Packed ${label}: GPU/CPU integrated absolute error / source contrast flux`, 0,
+                        sum(b.map((v, i) => Math.abs(v - cpu[i]))) / sum(before.image.map(v => v - background)), .001);
+                    record(`Packed ${label}: maximum detector count difference from the reference`, 0,
+                        maxError(packed.readDetectorCounts(), pipeline.readDetectorCounts()), 1);
+                }
+            } finally {packed.dispose();}
+        });
         await test("Enlargement sample alignment", () => {
             // Calculated unit impulse in a 9×9 field at 2× isolates both sampling phases.
             const input = new Float32Array(81); input[40] = 1;
@@ -963,6 +994,36 @@ export async function runThermalSelfTest() {
             record("Original surface material restored after failure", 1, Number(patch.material === original), 0);
             record("Original target restored after failure", 1, Number(renderer.getRenderTarget() === null), 0);
         });
+        await test("Packed optics at the full MX15 detector against the single-FFT reference", () => {
+            // Same analysis render except the near convolution: the automatic layout, as live views use it.
+            const configured = normalizeSettings({sensorPreset: "MX15", sensorAltitudeM: 1380});
+            const scene = new Scene(), camera = new PerspectiveCamera(configured.verticalFovDeg,
+                configured.detectorWidth / configured.detectorHeight, 1, 300000);
+            // Sources near the tile corner (image centre) and near two image corners, placed by the field of view.
+            const halfV = Math.tan(configured.verticalFovDeg * Math.PI / 360) * 2000;
+            const halfH = halfV * configured.detectorWidth / configured.detectorHeight;
+            for (const [x, y] of [[0.002, 0.003], [-0.85, -0.8], [0.9, 0.85]]) {
+                const object = mesh(new PlaneGeometry(halfV / 20, halfV / 40), 600);
+                object.position.set(x * halfH, y * halfV, -2000); scene.add(object);
+            }
+            const reference = new ThermalPipeline(renderer, {analysis: true});
+            const packed = new ThermalPipeline(renderer, {analysis: true, packedOptics: true});
+            try {
+                const inputs = {scene, camera, settings: configured, psfRangeM: 2000, frame: 3, target};
+                reference.render(inputs); packed.render(inputs);
+                record("Full detector: packed layout is four tiles of a 2048² transform", 1,
+                    Number(packed.nearPlan.packed && packed.fftWidth === 2048 && packed.fftHeight === 2048 &&
+                        packed.nearPlan.tilesX * packed.nearPlan.tilesY === 4), 0);
+                record("Full detector: reference layout is unchanged", 1, Number(!reference.nearPlan.packed), 0);
+                const a = reference.readStage("optics").image, b = packed.readStage("optics").image;
+                const background = reference.background.scaledPhotonRadiance;
+                // Estimated float32 FFT bound for both paths: (2 × 24 + 1) stages × (4√2 × 2⁻²⁴ + 1e-6 twiddle error) ≈ 7e-5.
+                record("Full detector: packed/reference optics L2 difference / reference contrast L2", 0,
+                    Math.sqrt(sum(b.map((v, i) => (v - a[i]) ** 2)) / sum(a.map(v => (v - background) ** 2))), 1.4e-4);
+                record("Full detector: packed/reference maximum detector count difference", 0,
+                    maxError(packed.readDetectorCounts(), reference.readDetectorCounts()), 1);
+            } finally {reference.dispose(); packed.dispose();}
+        });
         await test("Moving-camera CPU and GPU timing", async () => {
             pipeline.dispose(); // Release reference targets before the full detector benchmark.
             // Estimated transverse tracks at both requested speeds and ranges.
@@ -981,6 +1042,9 @@ export async function runThermalSelfTest() {
                 try {
                     for (let frame = 0; frame < 300; frame++) {
                         await new Promise(resolve => requestAnimationFrame(resolve));
+                        // A live pipeline starts a frame only after the previous one has completed on the GPU (GPU
+                        // pacing); a draw before that shows the last image. Every benchmark frame is a full render.
+                        while (measured._gpuBusy()) await new Promise(resolve => requestAnimationFrame(resolve));
                         const start = performance.now();
                         if (previousStart !== undefined) wall.push(start-previousStart);
                         previousStart = start;
@@ -989,7 +1053,7 @@ export async function runThermalSelfTest() {
                         const elevationRad = Math.atan2(object.position.y, Math.hypot(moving.position.x, initialRangeM));
                         const settings = {...configured, turbulenceR0M: integrateTurbulence({sensorAltitudeM: configured.sensorAltitudeM,
                             slantRangeM: rangeM, elevationRad}).r0ReferenceM};
-                        const inputs = {scene, camera: moving, settings, skyUp: [m[4], m[5], m[6]], psfRangeM: rangeM, frame, target};
+                        const inputs = {scene, camera: moving, settings, skyUp: [m[4], m[5], m[6]], psfRangeM: rangeM, frame, target, pace: true};
                         let ready = measured.render(inputs);
                         if (!frame) {
                             const initStart = performance.now();

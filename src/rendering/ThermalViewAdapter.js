@@ -153,9 +153,12 @@ export function createThermalViewAdapter(view) {
         // Playback can place par.frame between video frames (for example 126.5). The scene uses that exact
         // time; the detector's noise, temporal filter and gain count whole frames, so it gets the frame in progress.
         // While playing, further draws inside a frame that already rendered show that frame's image (holdFrame).
+        // GPU pacing (pace) applies only to the main loop's draws, which repeat on the next animation frame. An export,
+        // a screenshot or a pending comparison reads the image right after this render, so it always gets its frame.
         const inputs = {
             scene, camera, settings: configured, frame: Math.max(0, Math.floor(frame)), skyUp: geometry.skyUp,
             sounding, radianceAdapter, presentation: mapping, psfRangeM: geometry.rangeM ?? 0, holdFrame: !par.paused,
+            pace: Globals.inMainViewRender === true && !comparisonPipeline,
         };
         withThermalRefraction(camera, options, () => withThermalScene(objects, () => {
             // Resolve vehicle tags and visibility before recording the exact inputs. Only a paused view can reuse a

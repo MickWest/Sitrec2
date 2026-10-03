@@ -145,6 +145,121 @@ export const multiplyFragment = `
             source.x * kernel.y + source.y * kernel.x, 0.0, 1.0);
     }
 `;
+// Packed overlap-add near convolution (nearConvolutionPlan in ThermalPipeline.js). Up to four image tiles share one
+// RGBA FFT: R and G are the real and imaginary parts of one complex image (tiles (0,0) and (1,0)), B and A of another
+// (tiles (0,1) and (1,1)). The optical kernel is real, so each channel of the inverse transform is one tile's linear
+// convolution. The reference shaders above are unchanged.
+const packedReverseBits = `
+    int reverseBits(int value, int size) {
+        int reversed = 0;
+        for (int bit = 1; bit < size; bit *= 2) {
+            reversed = reversed * 2 + value % 2;
+            value /= 2;
+        }
+        return reversed;
+    }`;
+export const fftPackFragment = `
+    uniform sampler2D tInput; // R: radiance contrast, scaled photon radiance
+    uniform ivec2 fftSize; // padded pixels, powers of two
+    uniform ivec2 sourceSize; // image pixels
+    uniform ivec2 tileSize; // nominal tile pixels; tile (i, j) starts at (i, j) * tileSize
+    uniform ivec2 tiles; // tiles per axis, 1 or 2
+    out vec4 result; // RGBA: tiles (0,0), (1,0), (0,1), (1,1), zero padded, in bit-reversed order
+    ${packedReverseBits}
+    float tileValue(ivec2 tile, ivec2 local) {
+        ivec2 pixel = tile * tileSize + local;
+        if (any(greaterThanEqual(tile, tiles)) || any(greaterThanEqual(local, tileSize)) ||
+            any(greaterThanEqual(pixel, sourceSize))) return 0.0;
+        return texelFetch(tInput, pixel, 0).r;
+    }
+    void main() {
+        ivec2 pixel = ivec2(gl_FragCoord.xy);
+        ivec2 local = ivec2(reverseBits(pixel.x, fftSize.x), reverseBits(pixel.y, fftSize.y));
+        result = vec4(tileValue(ivec2(0, 0), local), tileValue(ivec2(1, 0), local),
+            tileValue(ivec2(0, 1), local), tileValue(ivec2(1, 1), local));
+    }
+`;
+export const fftReversePackedFragment = `
+    uniform sampler2D tInput; // RGBA: two complex spectra
+    uniform ivec2 fftSize; // padded pixels, powers of two
+    out vec4 result; // RGBA: the same spectra in bit-reversed order
+    ${packedReverseBits}
+    void main() {
+        ivec2 pixel = ivec2(gl_FragCoord.xy);
+        result = texelFetch(tInput, ivec2(reverseBits(pixel.x, fftSize.x), reverseBits(pixel.y, fftSize.y)), 0);
+    }
+`;
+export const fftButterflyPackedFragment = `
+    uniform sampler2D tInput; // RGBA: two complex values that share each butterfly
+    uniform int axis; // 0=horizontal, 1=vertical
+    uniform int span; // samples per butterfly block
+    uniform bool inverse; // true: positive phase and divide by two per stage
+    out vec4 result; // RGBA: two complex spectra or tile convolutions
+    vec2 rotate(vec2 value, vec2 rotation) {
+        return vec2(value.x * rotation.x - value.y * rotation.y, value.x * rotation.y + value.y * rotation.x);
+    }
+    void main() {
+        ivec2 pixel = ivec2(gl_FragCoord.xy);
+        int coordinate = axis == 0 ? pixel.x : pixel.y;
+        int halfSpan = span / 2;
+        int offset = coordinate % halfSpan;
+        int base = coordinate / span * span;
+        ivec2 lower = pixel;
+        if (axis == 0) lower.x = base + offset; else lower.y = base + offset;
+        ivec2 upper = lower + (axis == 0 ? ivec2(halfSpan, 0) : ivec2(0, halfSpan));
+        vec4 even = texelFetch(tInput, lower, 0);
+        vec4 odd = texelFetch(tInput, upper, 0);
+        float phase = (inverse ? 1.0 : -1.0) * 6.283185307179586 * float(offset) / float(span);
+        vec2 rotation = vec2(cos(phase), sin(phase));
+        vec4 rotated = vec4(rotate(odd.xy, rotation), rotate(odd.zw, rotation));
+        vec4 value = even + (coordinate % span < halfSpan ? rotated : -rotated);
+        result = value * (inverse ? 0.5 : 1.0);
+    }
+`;
+export const multiplyPackedFragment = `
+    uniform sampler2D tInput; // RGBA: two complex photon-radiance spectra
+    uniform sampler2D tKernel; // RG: dimensionless optical transfer function
+    out vec4 result; // RGBA: both spectra filtered
+    vec2 product(vec2 a, vec2 b) { return vec2(a.x * b.x - a.y * b.y, a.x * b.y + a.y * b.x); }
+    void main() {
+        ivec2 pixel = ivec2(gl_FragCoord.xy);
+        vec4 source = texelFetch(tInput, pixel, 0);
+        vec2 kernel = texelFetch(tKernel, pixel, 0).rg;
+        result = vec4(product(source.xy, kernel), product(source.zw, kernel));
+    }
+`;
+export const overlapAddFragment = `
+    uniform sampler2D tInput; // RGBA: each channel one tile's linear convolution, wrapped by fftSize
+    uniform ivec2 fftSize; // padded pixels
+    uniform ivec2 sourceSize; // image pixels
+    uniform ivec2 tileSize; // nominal tile pixels
+    uniform ivec2 tiles; // tiles per axis
+    uniform ivec2 reachLow; // kernel support toward lower pixel indices, pixels
+    uniform ivec2 reachHigh; // kernel support toward higher pixel indices, pixels
+    out vec4 result; // R: radiance contrast after the near optics, scaled photon radiance
+    // A tile's convolution is nonzero from reachLow before the tile to reachHigh after it; fftSize >= tile +
+    // reachLow + reachHigh, so that range maps to distinct wrapped texels.
+    bool covers(ivec2 tile, ivec2 pixel, out ivec2 wrapped) {
+        wrapped = ivec2(0);
+        if (any(greaterThanEqual(tile, tiles))) return false;
+        ivec2 origin = tile * tileSize;
+        ivec2 extent = min(tileSize, sourceSize - origin);
+        if (any(lessThanEqual(extent, ivec2(0)))) return false;
+        ivec2 local = pixel - origin;
+        if (any(lessThan(local, -reachLow)) || any(greaterThanEqual(local, extent + reachHigh))) return false;
+        wrapped = (local + fftSize) % fftSize;
+        return true;
+    }
+    void main() {
+        ivec2 pixel = ivec2(gl_FragCoord.xy), wrapped;
+        float sum = 0.0;
+        if (covers(ivec2(0, 0), pixel, wrapped)) sum += texelFetch(tInput, wrapped, 0).r;
+        if (covers(ivec2(1, 0), pixel, wrapped)) sum += texelFetch(tInput, wrapped, 0).g;
+        if (covers(ivec2(0, 1), pixel, wrapped)) sum += texelFetch(tInput, wrapped, 0).b;
+        if (covers(ivec2(1, 1), pixel, wrapped)) sum += texelFetch(tInput, wrapped, 0).a;
+        result = vec4(sum, 0.0, 0.0, 1.0);
+    }
+`;
 export const cropFragment = `
     uniform sampler2D tInput; // RG: inverse FFT; real part is radiance contrast
     uniform float background; // scaled photon radiance to restore

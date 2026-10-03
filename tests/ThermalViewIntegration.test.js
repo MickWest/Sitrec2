@@ -191,6 +191,13 @@ test("ECEF geometry supplies rolled local up, physical range and the shared turb
     expect(window.lookThermal.comparison.rmsCountDifference).toBeCloseTo(Math.sqrt(.5),12);
     // Playback can stop between video frames; the detector still receives a whole frame.
     adapter.render(new Scene(),126.5);expect(render.mock.calls.at(-1)[0].frame).toBe(126);
+    // GPU pacing only for the main loop's draws; a comparison (or an export) reads the image right after rendering.
+    expect(render.mock.calls.slice(0, 3).map(([inputs])=>inputs.pace)).toEqual([false,false,false]);
+    Globals.inMainViewRender=true;
+    try {
+        adapter.render(new Scene(),7);expect(render.mock.calls.at(-1)[0].pace).toBe(true);
+        window.lookThermal.compareWith(other);adapter.render(new Scene(),7);expect(render.mock.calls.at(-1)[0].pace).toBe(false);
+    } finally {Globals.inMainViewRender=false;}
     adapter.dispose();expect(window.lookThermal).toBeUndefined();
 });
 

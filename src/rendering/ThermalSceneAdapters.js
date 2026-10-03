@@ -108,14 +108,19 @@ export function createThermalSceneAdapter(objects, groundRoots, camera, refracti
         if (context) liftCameraRelative(context, point.applyMatrix4(rotation), point).applyMatrix4(inverseRotation);
         return point;
     };
-    const geometryDomainKey = JSON.stringify(context && [context.k, context.R,
-        context.maxBendRad, context.scaleHeightM, context.maxLiftM]);
-    const geometryKey = JSON.stringify([geometryDomainKey, context?.obsAlt]);
+    // The Earth radius at the observer changes by centimetres per frame as the camera moves, so it is not part of the
+    // domain key (in the key, no range or sky domain was ever reused). The ray geometry carries it; each domain records
+    // the radius it was built at and serves requests within RADIUS_REUSE_M of it (atmosphere.js). Rays use the current
+    // radius.
+    const geometryDomainKey = JSON.stringify(context && [context.k, context.maxBendRad, context.scaleHeightM, context.maxLiftM]);
+    // The identity of this frame's geometry keeps the exact radius, so the pipeline asks its caches again as it
+    // drifts and the caches decide reuse by the tolerance above.
+    const geometryKey = JSON.stringify([geometryDomainKey, context?.obsAlt, context?.R]);
     let rayGeometry;
     const atAltitude = altitude => {
         const local = {...context, obsAlt: altitude, zenith: new Vector3(0, 1, 0)}, point = new Vector3();
         return Object.assign(createThermalRayGeometry({sensorAltitudeM: altitude,
-            earthRadiusM: context.R, key: JSON.stringify([geometryDomainKey, altitude]),
+            earthRadiusM: context.R, key: JSON.stringify([geometryDomainKey, altitude, context.R]),
             lift: (d, z) => liftCameraRelative(local, point.set(d, z, 0), point).y - z}),
         {domainKey: geometryDomainKey, atAltitude});
     };

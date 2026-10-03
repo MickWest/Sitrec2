@@ -1389,6 +1389,14 @@ export function createThermalDepthTable(geometry, minElevationRad) {
 // Estimated shared scheduling policy: a 24 ms burst per 50 ms. Larger bursts
 // make progress between busy frames while retaining a similar average CPU budget.
 // A single queue prevents independent range and sky jobs from doubling a slice.
+// Estimated reuse span in Earth radius. The radius at the observer changes by centimetres per frame as the camera moves,
+// so it is not part of a domain key: a range or sky domain built at radius R serves requests within 100 m of R. At
+// 200 km that moves the path altitude by at most d²·δR/(2R²(1−k)) ≈ 6 cm and the horizon distance by δR/(2R) ≈ 8e-6
+// of itself, far inside the range and sky tolerances.
+export const RADIUS_REUSE_M = 100;
+const radiusOf = options => options.rayGeometry?.earthRadiusM ?? options.earthRadiusM ?? null;
+const radiusFits = (radius, built) => radius == null || built == null || Math.abs(radius - built) <= RADIUS_REUSE_M;
+
 const thermalBuildJobs = [];
 let thermalBuildTimer, thermalBuildRunning = false;
 function scheduleThermalBuild(owner, steps, publish) {
@@ -1462,8 +1470,9 @@ export class SkyBackgroundCache {
         const horizon = options.rayGeometry?.horizonRad ?? skyHorizon(options, h);
         const minQ = requested.minRad-horizon, maxQ = requested.maxRad-horizon;
         Object.assign(this.lastRequest, {minQ, maxQ});
+        const radius = radiusOf(options);
         const domain = [this.domain, this.previousDomain].find(d => d && Math.abs(h-d.h) <= d.dh &&
-            minQ >= d.minQ && maxQ <= d.maxQ);
+            minQ >= d.minQ && maxQ <= d.maxQ && radiusFits(radius, d.radius));
         const nearEdge = domain && (Math.abs(h-domain.h) > domain.dh/10 ||
             Math.min(minQ-domain.minQ, domain.maxQ-maxQ) < SKY_PADDING_RAD-.002);
         if ((!domain || nearEdge) && !this.pending && !this.disposed &&
@@ -1503,7 +1512,7 @@ export class SkyBackgroundCache {
         if (cached && h !== cached.sensorAltitudeM && !cached.altitudeDomain &&
             Math.abs(h-cached.sensorAltitudeM) <= .05 && (!options.rayGeometry || options.rayGeometry.atAltitude))
             this.validateAltitude(cached, atmosphere);
-        const altitudeFits = cached && (h === cached.sensorAltitudeM || cached.altitudeDomain &&
+        const altitudeFits = cached && radiusFits(radius, cached.radius) && (h === cached.sensorAltitudeM || cached.altitudeDomain &&
             h >= cached.altitudeDomain.minM && h <= cached.altitudeDomain.maxM);
         if (altitudeFits && requested.minRad-shift >= cached.minRad && requested.maxRad-shift <= cached.maxRad) {
             this.hits++; return cached;
@@ -1514,7 +1523,7 @@ export class SkyBackgroundCache {
         const table = createSkyElevationLUT({...options, elevationRange, toleranceK: .002, initialSamples: 17}, atmosphere);
         if (!table.interpolation.toleranceMet) throw new Error("Sky interpolation did not meet its brightness tolerance");
         this.fallbacks++;
-        this.cached = {...table, sensorAltitudeM: h, options};
+        this.cached = {...table, sensorAltitudeM: h, options, radius};
         return this.cached;
     }
     *build(options, atmosphere) {
@@ -1582,7 +1591,9 @@ export class SkyBackgroundCache {
         throw new Error("Sky altitude interpolation did not converge");
     }
     start(options, atmosphere) {
+        const radius = radiusOf(options);
         scheduleThermalBuild(this, this.build(options, atmosphere), domain => {
+            domain.radius = radius;
             const last = this.lastRequest;
             this.previousDomain = [this.domain, this.previousDomain].find(d => d && last &&
                 Math.abs(last.h-d.h) <= d.dh && last.minQ >= d.minQ && last.maxQ <= d.maxQ) ?? this.domain;
@@ -1660,19 +1671,24 @@ export class RangeTableCache {
         const velocity = dt > 0 ? (e-this.lastRequest.e)/dt : 0;
         const altitudeVelocity = dt > 0 ? (h-this.lastRequest.h)/dt : 0;
         this.lastRequest = {e, h, time: now};
-        const compatible = key === this.key && atmosphere === this.atmosphere;
-        if (this.pending && (this.pending.key !== key || this.pending.atmosphere !== atmosphere) && this.pending.steps) {
+        const compatible = key === this.key && atmosphere === this.atmosphere, radius = radiusOf(options);
+        if (this.pending && (this.pending.key !== key || this.pending.atmosphere !== atmosphere ||
+            !radiusFits(radius, this.pending.radius)) && this.pending.steps) {
             this.pending = null; this.error = null;
         }
-        const contains = cell => cell && Math.abs(h-cell.h) <= cell.dh && Math.abs(e-cell.e) <= cell.de;
+        const contains = cell => cell && Math.abs(h-cell.h) <= cell.dh && Math.abs(e-cell.e) <= cell.de && radiusFits(radius, cell.radius);
         const domain = compatible ? [this.domain, this.previousDomain].find(contains) : null;
         const fits = !!domain;
-        const angularEdge = fits && Math.abs(e-domain.e) > domain.de/40 && (e-domain.e)*velocity > 0;
-        const altitudeEdge = fits && Math.abs(h-domain.h) > domain.dh/10 && (h-domain.h)*altitudeVelocity > 0;
+        const leadMs = 1.5*(this.buildWallMs ?? 1000); // estimated scheduling margin
+        // Prefetch when the camera, at its current rate, would leave the domain within twice the build lead time.
+        // A fixed fraction of the half-width rebuilt continuously on a slow sweep (101 builds in 25 s live), and each
+        // build takes main-thread slices from the frames.
+        const exitMs = (offset, half, rate) => rate ? (half-Math.abs(offset))/Math.abs(rate) : Infinity;
+        const angularEdge = fits && (e-domain.e)*velocity > 0 && exitMs(e-domain.e, domain.de, velocity) < 2*leadMs;
+        const altitudeEdge = fits && (h-domain.h)*altitudeVelocity > 0 && exitMs(h-domain.h, domain.dh, altitudeVelocity) < 2*leadMs;
         if ((!fits || angularEdge || altitudeEdge) && !this.pending) {
             // Calculated motion prediction changes only the work domain, never a
             // physical ray. Retain overlapping completed domains during publication.
-            const leadMs = 1.5*(this.buildWallMs ?? 1000); // estimated scheduling margin
             const offset = fits ? clamp(velocity*leadMs, -domain.de*.4, domain.de*.4) : 0;
             const altitudeOffset = fits ? clamp(altitudeVelocity*leadMs, -domain.dh*.4, domain.dh*.4) : 0;
             // Advance one grid axis at a time. During a rapid bearing change,
@@ -1762,19 +1778,21 @@ export class RangeTableCache {
         throw new Error("Foreground transfer interpolation did not converge");
     }
     start(options, atmosphere, key, seed = this.domain) {
+        const radius = radiusOf(options);
         const reuse = this.key === key && this.atmosphere === atmosphere && seed &&
             Math.abs(options.elevationRad-seed.e) <= seed.de &&
-            Math.abs(options.sensorAltitudeM-seed.h) <= seed.dh ? seed : null;
+            Math.abs(options.sensorAltitudeM-seed.h) <= seed.dh && radiusFits(radius, seed.radius) ? seed : null;
         const job = scheduleThermalBuild(this, this.build(options, atmosphere, reuse), domain => {
             // A late or narrower prefetch must not evict the domain serving
             // the current pose. Keep that completed domain until its replacement fits.
             this.previousDomain = this.key === key && this.atmosphere === atmosphere ?
                 [this.domain, this.previousDomain].find(d => d && this.lastRequest &&
                     Math.abs(this.lastRequest.h-d.h) <= d.dh && Math.abs(this.lastRequest.e-d.e) <= d.de) ?? this.domain : null;
+            domain.radius = radius;
             this.domain = domain; this.key = key; this.atmosphere = atmosphere;
             this.builds = (this.builds ?? 0)+1; this.onReady();
         });
-        Object.assign(job, {key, atmosphere});
+        Object.assign(job, {key, atmosphere, radius});
     }
     dispose() {this.disposed = true; this.pending = this.domain = this.previousDomain = null;}
 }

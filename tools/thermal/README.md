@@ -35,7 +35,8 @@ browser or a bundler. The numeric modules do not depend on graphics or server AP
 | Processing | Normalized drive, signed during local enhancement |
 | Display | Integer-valued 8-bit codes, 0–255, before enlargement |
 
-Scalar GPU stages use **R32F** and complex FFT stages use **RG32F** render targets. `EXT_color_buffer_float` is required;
+Scalar GPU stages use **R32F** and complex FFT stages use **RG32F** render targets (the packed near
+convolution of live views uses **RGBA32F**, two complex values per texel). `EXT_color_buffer_float` is required;
 rendering throws if unavailable. Float textures use nearest sampling; interpolation
 is explicit in shaders, so float-linear-filter support is unnecessary. No tone mapper
 or color-space conversion is applied to radiance, counts, or already encoded display
@@ -749,7 +750,17 @@ value switches to `custom`. Explicit custom inputs should set `scatterPreset: "c
 
 A 0.02 rad skirt extends well beyond the native field. The near branch includes the
 unscattered delta and uses a fine FFT no larger than **4096 texels per side**, choosing
-2048 when it fits. A power-of-two area reduction keeps the full far branch at **1024
+2048 when it fits. Live views compute the same near convolution by packed overlap-add
+(`nearConvolutionPlan`): the image is cut into up to 2 × 2 tiles, each padded by the kernel
+support, and two real tiles form one complex image, so four tiles share one RGBA32F
+transform; the real kernel keeps each tile's convolution in its own channel, and an
+overlap-add pass sums the tiles. This is the same full linear convolution with zero
+circular wrap, so only float rounding differs: a 640 × 512 detector at 4× needs one
+4096² transform, but four 1280 × 1024 tiles fit one 2048² transform (a quarter of the
+texels, half of the bytes). The layout is chosen only when its calculated cost is lower.
+Analysis renders keep the single transform, so reference captures are unchanged, and the
+self-test compares the two (L2 difference within the float32 FFT bound, detector counts
+within one count) and checks the packed path against the CPU convolution. A power-of-two area reduction keeps the full far branch at **1024
 texels per side or less**. The near support aims for at least 0.001 rad and sixteen coarse
 samples, subject to the fine allocation limit. A complementary smoothstep over the
 outer half of the near radius avoids a discontinuity at the split. Both kernels share
@@ -1302,7 +1313,12 @@ photon transfer at interior angles and heights. Estimated numerical allocations 
 `300 K` for summed path emission, including a factor-two validation margin. Thus
 additional radiance error is bounded by `1e-4 * sum(source bands) + B'(300 K)*0.001 K`
 for any nonnegative source spectrum. Existing range interpolation remains unchanged.
-Profile content, band, maximum range and ray mapping invalidate the domain. New
+Profile content, band, maximum range and ray mapping invalidate the domain. The Earth
+radius at the observer changes by centimetres per frame as the camera moves, so it is not
+part of the key: each range and sky domain records the radius it was built at and serves
+requests within an estimated `100 m` of it, which moves a 200 km path's altitude by at
+most about 6 cm. A domain is prefetched when the camera, at its current rate, would leave
+it within twice the build lead time. New
 tables are constructed in estimated `4 ms` cooperative slices, yielding after each
 range node. Outside a valid range domain, the direct synchronous range table supplies
 the frame while the reusable domain is constructed. No missing table blanks the output.
@@ -1328,6 +1344,17 @@ gain-key change. When the held window did not come from the current frame's
 statistics, the pipeline asks its host for one more render once they are ready, so
 a view that renders on demand settles on them. Manual and radiometric gain require
 no readback. Analysis mode retains the same-render gain used by reference comparisons.
+A synchronous WebGL call (a state query, or reading a pixel buffer) waits for all GPU work
+queued before it; the readback therefore sets the pack state it needs without querying it,
+and a render reads completed samples before it queues its own passes.
+
+GPU pacing: a host that draws again on its next animation frame passes `pace: true`
+(Sitrec does so only for the main loop's draws). Such a render starts only after the
+previous one has completed on the GPU, as a fence reports; a draw before that shows the
+last image, and the pipeline asks the host for a render when the fence signals. Without
+pacing a live view queued frames faster than the GPU finished them. Exports, screenshots
+and comparisons read the image right after rendering, so they leave pacing off and always
+get the frame they request.
 
 Run `node tools/thermal/benchmark.mjs --moving` for measured CPU preparation on
 estimated transverse tracks at `250` and `822 m/s`, `300` frames at `30 Hz`, starting

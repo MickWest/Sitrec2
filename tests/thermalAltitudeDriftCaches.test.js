@@ -122,12 +122,24 @@ test('reference sky and range table generation remains deterministic during cach
 test.each([-50, -10, 10, 50])('range prefetch follows measured altitude motion (%s m/s)', speed => {
     const atmosphere = createAtmosphere(), options = {size: 8, maxRangeM: 200000,
         sensorAltitudeM: 1380, elevationRad: .04, band};
-    const cache = rangeCache(options, atmosphere), height = options.sensorAltitudeM+Math.sign(speed)*cache.domain.dh*.2;
-    cache.pending = null; cache.start = jest.fn();
-    cache.lastRequest = {e: options.elevationRad, h: height-speed*.1, time: performance.now()-100};
-    expect(cache.request({...options, sensorAltitudeM: height}, atmosphere)).not.toBeNull();
+    const cache = rangeCache(options, atmosphere), leadS = 1.5*(cache.buildWallMs ?? 1000)/1000;
+    const request = offset => {
+        const height = options.sensorAltitudeM+Math.sign(speed)*offset;
+        cache.pending = null; cache.start = jest.fn();
+        cache.lastRequest = {e: options.elevationRad, h: height-speed*.1, time: performance.now()-100};
+        expect(cache.request({...options, sensorAltitudeM: height}, atmosphere)).not.toBeNull();
+        return height;
+    };
+    // Near the edge (leaving within about one build lead time at this rate) a build starts: its domain moves from the
+    // old centre in the direction of motion (the centre is clamped, but the domain still covers the camera).
+    const height = request(Math.max(0, cache.domain.dh-Math.abs(speed)*leadS));
     const predicted = cache.start.mock.calls[0][0].sensorAltitudeM;
-    expect(Math.sign(predicted-height)).toBe(Math.sign(speed));
+    expect(Math.sign(predicted-cache.domain.h)).toBe(Math.sign(speed));
+    expect(Math.abs(height-predicted)).toBeLessThanOrEqual(cache.domain.dh);
+    // Far from the edge on a slow drift no build starts, so the cache does not rebuild continuously.
+    if (Math.abs(speed) === 10 && cache.domain.dh*.8/10 > 2*leadS) {
+        request(cache.domain.dh*.2); expect(cache.start).not.toHaveBeenCalled();
+    }
     cache.dispose();
 });
 

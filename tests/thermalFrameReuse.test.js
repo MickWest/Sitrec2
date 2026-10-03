@@ -214,3 +214,56 @@ test.each(["analysis", "synchronous"])("%s with a key uses the same passes and u
         }
     } finally {withKey.pipeline.dispose(); reference.pipeline.dispose();}
 });
+
+function pacingContext() {
+    const gl = {FRAMEBUFFER: 1, FRAMEBUFFER_COMPLETE: 2, checkFramebufferStatus: () => 2,
+        SYNC_GPU_COMMANDS_COMPLETE: 3, SYNC_STATUS: 4, SIGNALED: 5, UNSIGNALED: 6, signaled: false,
+        fenceSync: jest.fn(() => ({})), deleteSync: jest.fn()};
+    gl.getSyncParameter = jest.fn(() => gl.signaled ? gl.SIGNALED : gl.UNSIGNALED);
+    return gl;
+}
+
+test("a live render starts after the previous frame completes on the GPU; draws meanwhile show the last image", () => {
+    // Found live: frames were submitted faster than the GPU completed them (about 200 ms of GPU time each), so they
+    // queued up and every synchronous WebGL call waited behind the queue.
+    jest.useFakeTimers();
+    const {pipeline, inputs, clear, renderer} = fixture(), gl = pacingContext();
+    renderer.getContext = () => gl; pipeline.onReady = jest.fn();
+    try {
+        pipeline.render({...inputs, holdFrame: true, pace: true});
+        expect(gl.fenceSync).toHaveBeenCalledTimes(1);
+        const serial = pipeline.renderSerial;
+        // The next frame arrives while the GPU is busy: the draw shows the last image and evaluates nothing.
+        clear(); pipeline.render({...inputs, frame: 11, holdFrame: true, pace: true});
+        expect(pipeline._radiance).not.toHaveBeenCalled();
+        expect(pipeline.lastFrame).toMatchObject({frame: 10, reused: true, paced: true});
+        expect(pipeline.renderSerial).toBe(serial);
+        jest.advanceTimersByTime(40); expect(pipeline.onReady).not.toHaveBeenCalled();
+        // The fence signals: the host is asked for a render, which evaluates the new frame and fences it.
+        gl.signaled = true; jest.advanceTimersByTime(20);
+        expect(pipeline.onReady).toHaveBeenCalledTimes(1);
+        clear(); pipeline.render({...inputs, frame: 11, holdFrame: true, pace: true});
+        expect(pipeline._radiance).toHaveBeenCalledTimes(1);
+        expect(pipeline.lastFrame).toMatchObject({frame: 11, reused: false, paced: false});
+        expect(gl.fenceSync).toHaveBeenCalledTimes(2);
+        // A caller that reads the image after rendering (an export, a screenshot) does not ask for pacing: with the
+        // GPU still busy it gets the frame it requested.
+        gl.signaled = false;
+        clear(); pipeline.render({...inputs, frame: 12, holdFrame: true});
+        expect(pipeline._radiance).toHaveBeenCalledTimes(1);
+        expect(pipeline.lastFrame).toMatchObject({frame: 12, reused: false, paced: false});
+    } finally {pipeline.dispose(); jest.useRealTimers();}
+    expect(gl.deleteSync).toHaveBeenCalled();
+});
+
+test("a live render reads finished gain statistics before it queues the frame's passes", () => {
+    // Found live: the read is a synchronous round trip to the GPU process; after the passes it waited up to 182 ms.
+    const {pipeline, inputs} = fixture({automatic: true}), order = [], poll = pipeline.gainReadback.poll;
+    pipeline.gainReadback.poll = () => {order.push("poll"); return poll();};
+    pipeline._radiance = jest.fn(() => order.push("radiance"));
+    try {
+        pipeline.render(inputs); order.length = 0;
+        pipeline.render({...inputs, frame: 11});
+        expect(order.slice(0, 2)).toEqual(["poll", "radiance"]);
+    } finally {pipeline.dispose();}
+});
