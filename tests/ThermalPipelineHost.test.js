@@ -19,7 +19,7 @@ function fixture() {
         clear:jest.fn(),render:jest.fn(),getSize:v=>v.set(16,12),
         getContext:()=>({FRAMEBUFFER:1,FRAMEBUFFER_COMPLETE:2,checkFramebufferStatus:()=>2}),
     };
-    const pipeline = new ThermalPipeline(renderer);
+    const pipeline = new ThermalPipeline(renderer, {analysis: true});
     pipeline.resources={targets:new Map(),materials:new Map(),surfaces:new Map(),textures:new Set(),checkedSizes:new WeakMap()};
     pipeline.emptyTexture={}; pipeline.quad={geometry:{dispose() {}}};
     pipeline._prepareOptics=()=>{pipeline.scatterSplit={farMass:0};};
@@ -49,6 +49,21 @@ test("paused, revisited and backward frames recompute gain; advancing frames sti
     pipeline._read=()=>new Float32Array([2100,2200,2300,2400]);camera.position.x=20;
     pipeline.render({scene,camera,settings,frame:11});expect(pipeline.window.low).toBe(2100);
     pipeline._read=()=>codes;pipeline.render({scene,camera,settings,frame:3});expect(pipeline.window).toEqual(fresh);
+    pipeline.dispose();
+});
+
+test("interactive render restores the host and never performs a synchronous gain read", () => {
+    const {pipeline, settings, scene, camera, state} = fixture(), before = state();
+    pipeline.analysis = false;
+    pipeline._read = () => {throw new Error("synchronous frame read");};
+    pipeline.gainReadback = {poll: jest.fn(() => null), enqueue: jest.fn(() => true), dispose() {}};
+    pipeline.render({scene, camera, settings, frame: 10});
+    expect(pipeline.lastFrame.gain).toMatchObject({mode: "fenced", held: true, queued: true});
+    pipeline.gainReadback.poll.mockReturnValue({counts: new Float32Array([100, 200, 300, 400]),
+        key: pipeline.gainKey, serial: 1, frame: 10});
+    pipeline.render({scene, camera, settings, frame: 11});
+    expect(pipeline.lastFrame.gain).toMatchObject({mode: "fenced", held: false, latencyFrames: 1});
+    expect(state()).toEqual(before); expect(pipeline.gainReadback.enqueue).toHaveBeenCalledTimes(2);
     pipeline.dispose();
 });
 

@@ -4,12 +4,14 @@ import {
     Raycaster, ShaderMaterial, Vector2, Vector3, Vector4, WebGLRenderTarget,
 } from "three";
 import {apparentTemperature, grayBodyRadiance, inBandRadiance, PHOTON_SCALE, solarIrradiance} from "./radiometry.js";
-import {BANDS, clearSky, createAtmosphere, createRangeLUT, createSkyElevationLUT, seaBackground, evaluatePhotonPath,
+import {BANDS, clearSky, createAtmosphere, createRangeLUT, seaBackground, evaluatePhotonPath,
     skyElevationRange, skyViewGeometry, sourceRangeLUT} from "./atmosphere.js";
 import {atmosphereFromSounding} from "./sounding.js";
 import {resolveSignatures} from "./signatures.js";
 import {normalizeSettings} from "./thermalSchema.js";
-import {displayCurveLUT, detectorWindowScale, detectorPresentation, temporalHistoryKey, electronsPerRadiance, fixedPatternMap, gaussianKernel, integrationTime, nextPow2, opticalKernels, processingParameters, shadingResponsivity} from "./sensorMath.js";
+import {displayCurveLUT, detectorWindowScale, detectorPresentation, temporalHistoryKey, electronsPerRadiance, fixedPatternMap, gaussianKernel, integrationTime, nextPow2, processingParameters, shadingResponsivity} from "./sensorMath.js";
+import {OpticalKernelCache, opticalKernelError, OPTICS_L1_TOLERANCE} from "./sensorMath.js";
+import {SkyBackgroundCache} from "./atmosphere.js";
 import * as shaders from "./shaders.js";
 import {createStatisticalSea, createSeaSkyTable, seaRayAzimuth, cloudRadianceTable, createCloudRadianceDomain,
     sortCloudSheets, createThermalDepthTable} from "./atmosphere.js";
@@ -44,8 +46,15 @@ function material(fragmentShader, values = {}, vertexShader = shaders.fullscreen
 
 export class ThermalPipeline {
     /** renderer is a shared WebGLRenderer. No GPU resources or Three objects yet. */
-    constructor(renderer) {
+    constructor(renderer, {analysis = false, gpuTiming = false} = {}) {
         this.renderer = renderer;
+        // Analysis explicitly requests same-render gain for reference captures.
+        // Interactive rendering never performs a synchronous pixel readback.
+        this.analysis = analysis;
+        this.gpuTiming = gpuTiming;
+        this.renderSerial = 0;
+        this.opticalCache = new OpticalKernelCache();
+        this.skyCache = new SkyBackgroundCache();
         this.resources = null;
         this.lastFrame = null;
         this.window = null;
@@ -62,9 +71,20 @@ export class ThermalPipeline {
         this.quad.frustumCulled = false;
         this.quadCamera = new OrthographicCamera(-1, 1, 1, -1, 0, 1);
         this.emptyTexture = this._ownTexture(scalarTexture(new Float32Array([0])));
+        if (this.gpuTiming) this.gpuTimer = new ThermalGpuTimer(renderer.getContext());
     }
 
     _ownTexture(texture) { this.resources.textures.add(texture); return texture; }
+    _stage(name, operation) {
+        const start = performance.now();
+        // CPU-only preparation must not inflate a GPU query with idle time.
+        const timed = !["atmosphere", "prepareOptics", "skyTable", "gainStatistics"].includes(name) && this.gpuTimer?.begin(this.renderSerial, name);
+        try {return operation();}
+        finally {
+            if (timed) this.gpuTimer.end();
+            if (this.cpuStages) this.cpuStages[name] = (this.cpuStages[name] ?? 0) + performance.now() - start;
+        }
+    }
     _removeTexture(texture) {
         if (!texture) return;
         texture.dispose();
@@ -76,7 +96,7 @@ export class ThermalPipeline {
             throw new Error(`Thermal ${name} requires ${width} × ${height} texels; GPU limit is ${maximum}. Reduce optical sampling or kernel support.`);
         let target = this.resources.targets.get(name);
         if (!target) {
-            const format = /Fft[AB]$|Spectrum$/.test(name) ? RGFormat : RedFormat;
+            const format = /Fft[AB]$|Spectrum$/.test(name) ? RGFormat : /Readback$/.test(name) ? RGBAFormat : RedFormat;
             target = floatTarget(width, height, depth, format);
             this.resources.targets.set(name, target);
         } else if (target.width !== width || target.height !== height) target.setSize(width, height);
@@ -132,33 +152,79 @@ export class ThermalPipeline {
     }
 
     _prepareOptics(settings, width, height) {
-        const key = JSON.stringify([width, height, settings.supersample, settings.opticsEnabled,
-            settings.focalLengthM, settings.apertureM, settings.pixelPitchM, settings.bandMinUm,
-            settings.bandMaxUm, settings.psfTemperatureK, settings.opticsRadiusPx, settings.defocusM,
-            settings.psfRangeM, settings.psfRangeM > 0 ? [this.profileKey, settings.sensorAltitudeM, settings.pathElevationDeg] : null,
-            settings.turbulenceR0M, settings.jitterRmsUrad, settings.diffusionSigmaPx,
-            settings.systemBlurHorizontalRmsUrad, settings.systemBlurVerticalRmsUrad,
-            settings.scatterFraction, settings.scatterSlope, settings.scatterShoulderRad, settings.scatterCutoffRad]);
-        if (key === this.opticsKey) return;
-        // A failed allocation must not leave a valid key for partially replaced spectra.
-        this.opticsKey = null;
-        const kernels = opticalKernels(settings, width, height, this.atmosphere);
+        const kernels = this.opticalCache.candidate(settings, width, height, this.atmosphere);
+        const key = this.opticalCache.key;
+        const error = this.opticsKey === null ? Infinity : opticalKernelError(kernels, this.activeKernels);
+        const tolerance = this.analysis ? 0 : OPTICS_L1_TOLERANCE;
+        this.opticsReport = {status: "calculated", toleranceL1: tolerance, errorL1: error,
+            basisRebuilt: this.opticalCache.basisRebuilt, spectraRebuilt: false, pending: false};
         this.psfSpectrum = kernels.spectrum;
-        this.fftWidth = kernels.split.fftWidth;
-        this.fftHeight = kernels.split.fftHeight;
-        this.scatterSplit = {...kernels.split, farMass: kernels.farMass};
-        this._prepareSpectrum("opticalSpectrum", [kernels.core, kernels.scatter], this.fftWidth, this.fftHeight);
-        if (kernels.farScatter) {
-            this.farWidth = nextPow2(Math.ceil(width / kernels.split.factor) + kernels.farCore.width + kernels.farScatter.width - 2);
-            this.farHeight = nextPow2(Math.ceil(height / kernels.split.factor) + kernels.farCore.height + kernels.farScatter.height - 2);
-            this._prepareSpectrum("farSpectrum", [kernels.farCore, kernels.farScatter], this.farWidth, this.farHeight);
+        // Changed support has no valid stale-kernel certificate and rebuilds
+        // immediately. All other edits compare the actual finite kernels, even
+        // while a refresh is pending; no unbounded stale kernel is displayed.
+        if (error > tolerance) {
+            this.opticsKey = null; this.pendingOptics = null;
+            this._installOptics(kernels, key, width, height);
+            this.opticsReport.errorL1 = 0;
+        } else if (!this.analysis && error > tolerance / 2 && !this.pendingOptics) {
+            this.pendingOptics = {kernels, key, steps: this._buildOptics(kernels, width, height, true)};
         }
-        this.opticsKey = key;
+        if (this.pendingOptics) {
+            const pending = this.pendingOptics;
+            // Submit one complete spectrum per render. GPU work remains queued;
+            // the active spectra stay untouched until both branches are ready.
+            let completed;
+            try {completed = pending.steps.next().done;}
+            catch (error) {this.pendingOptics = null; throw error;}
+            if (completed) {
+                if (pending.key === key && opticalKernelError(kernels, pending.kernels) <= tolerance) {
+                    for (const name of ["opticalSpectrum", ...(pending.kernels.farScatter ? ["farSpectrum"] : [])]) {
+                        const staging = `pending${name[0].toUpperCase()}${name.slice(1)}`;
+                        const old = this.resources.targets.get(name);
+                        this.resources.targets.set(name, this.resources.targets.get(staging));
+                        if (old) this.resources.targets.set(staging, old); else this.resources.targets.delete(staging);
+                    }
+                    this.activeKernels = pending.kernels;
+                    this.opticsKey = pending.key;
+                    this.opticsReport.errorL1 = opticalKernelError(kernels, pending.kernels);
+                    this.opticsReport.spectraRebuilt = true;
+                }
+                this.pendingOptics = null;
+            }
+        }
+        this.opticsReport.pending = !!this.pendingOptics;
+        this.opticsReport.appliedRangeM = this.activeKernels.spectrum.rangeM;
+        this.opticsReport.requestedRangeM = kernels.spectrum.rangeM;
+    }
+
+    *_buildOptics(kernels, width, height, pending = false) {
+        const name = value => pending ? `pending${value[0].toUpperCase()}${value.slice(1)}` : value;
+        this._prepareSpectrum(name("opticalSpectrum"), [kernels.core, kernels.scatter], kernels.split.fftWidth, kernels.split.fftHeight);
+        yield;
+        if (kernels.farScatter) {
+            const fw = nextPow2(Math.ceil(width / kernels.split.factor) + kernels.farCore.width + kernels.farScatter.width - 2);
+            const fh = nextPow2(Math.ceil(height / kernels.split.factor) + kernels.farCore.height + kernels.farScatter.height - 2);
+            this._prepareSpectrum(name("farSpectrum"), [kernels.farCore, kernels.farScatter], fw, fh);
+            yield;
+        }
+    }
+
+    _installOptics(kernels, key, width, height) {
+        for (const step of this._buildOptics(kernels, width, height)) void step;
+        this.fftWidth = kernels.split.fftWidth; this.fftHeight = kernels.split.fftHeight;
+        this.farWidth = kernels.farScatter ? nextPow2(Math.ceil(width / kernels.split.factor) + kernels.farCore.width + kernels.farScatter.width - 2) : 0;
+        this.farHeight = kernels.farScatter ? nextPow2(Math.ceil(height / kernels.split.factor) + kernels.farCore.height + kernels.farScatter.height - 2) : 0;
+        this.scatterSplit = {...kernels.split, farMass: kernels.farMass};
+        this.activeKernels = kernels; this.opticsKey = key; this.opticsReport.spectraRebuilt = true;
     }
 
     _prepareSpectrum(name, kernels, fftWidth, fftHeight) {
+        return this._stage("kernelSpectrum", () => this._prepareSpectrumPasses(name, kernels, fftWidth, fftHeight));
+    }
+
+    _prepareSpectrumPasses(name, kernels, fftWidth, fftHeight) {
         const spectrum = this._target(name, fftWidth, fftHeight);
-        const pool = name === "farSpectrum" ? "far" : "fine";
+        const pool = /[fF]arSpectrum$/.test(name) ? "far" : "fine";
         let first = true;
         for (const kernel of kernels) {
             const texture = scalarTexture(kernel.data, kernel.width, kernel.height);
@@ -318,7 +384,7 @@ export class ThermalPipeline {
             if (key !== this.skyTableKey) {
                 const started = performance.now();
                 const table = rough ? createSeaSkyTable(view, this.seaWind, settings, this.atmosphere, this._statisticalSea(settings), this.rayGeometry) :
-                    createSkyElevationLUT({view, sensorAltitudeM: settings.sensorAltitudeM,
+                    this.skyCache.table({view, sensorAltitudeM: settings.sensorAltitudeM,
                     rayGeometry: this.rayGeometry,
                     temperatureK: settings.surfaceTemperatureK,
                     band: {minUm: settings.bandMinUm, maxUm: settings.bandMaxUm}}, this.atmosphere);
@@ -348,8 +414,8 @@ export class ThermalPipeline {
                 [this.background.photonRadiance, this.background.photonRadiance],
             sampleCount: gradient ? this.skyTable.sampleCount : 1,
             ...(gradient ? {interpolation: {...this.skyTable.interpolation,
-                ...(rough ? {altitudeErrorK: this.skyTable.altitudeDomain?.maxErrorK ?? 0,
-                    maxErrorK: this.skyTable.interpolation.maxErrorK + (this.skyTable.altitudeDomain?.maxErrorK ?? 0), toleranceK: .005} : {})},
+                altitudeErrorK: this.skyTable.altitudeDomain?.maxErrorK ?? 0,
+                maxErrorK: this.skyTable.interpolation.maxErrorK + (this.skyTable.altitudeDomain?.maxErrorK ?? 0), toleranceK: .005},
                 horizonElevationDeg: horizonRad * 180 / Math.PI} : {})});
     }
 
@@ -455,7 +521,7 @@ export class ThermalPipeline {
             azimuthRows: this.roughSky ? this.skyTable.rows.length : 1,
             azimuthRange: this.roughSky ? [this.skyTable.minAzimuth, this.skyTable.maxAzimuth] : [0, 1],
             skyUp: this.skyView.up, inverseProjection: camera?.projectionMatrixInverse ?? new Matrix4(),
-            skyElevationOffset: this.roughSky ? (this.rayGeometry?.horizonRad ?? -Math.acos(6371000 / (6371000 + this.skySensorAltitudeM))) - this.skyTable.horizonRad : 0,
+            skyElevationOffset: this.skyGradient ? (this.rayGeometry?.horizonRad ?? -Math.acos(6371000 / (6371000 + this.skySensorAltitudeM))) - this.skyTable.horizonRad : 0,
             orthographic: !!camera?.isOrthographicCamera};
     }
 
@@ -620,11 +686,14 @@ export class ThermalPipeline {
      */
     render({scene, camera, settings: input = {}, sounding = null, skyUp = null, target = null, frame = 0,
         radianceAdapter = null, presentation = null, psfRangeM = undefined}) {
+        const renderStart = performance.now();
         if (this.disposed) throw new Error("ThermalPipeline has been disposed");
         if (!scene || !camera) throw new TypeError("ThermalPipeline requires a scene and camera");
         if (!Number.isInteger(frame) || frame < 0 || frame > 4294967295) throw new RangeError("Thermal frame must be an unsigned 32-bit integer");
         const settings = normalizeSettings(psfRangeM === undefined ? input : {...input, psfRangeM});
         this._initialize();
+        this.renderSerial++; this.cpuStages = {};
+        this.gpuTimer?.poll();
         const renderer = this.renderer;
         const saved = {target: renderer.getRenderTarget(), cubeFace: renderer.getActiveCubeFace(), mip: renderer.getActiveMipmapLevel(),
             viewport: renderer.getViewport(new Vector4()), scissor: renderer.getScissor(new Vector4()),
@@ -652,55 +721,54 @@ export class ThermalPipeline {
             if (base.lengthSq() === 0) base.set(0, 0, 1);
             this.seaWind = this.radianceAdapter?.seaWind?.(settings) ?? base.applyAxisAngle(up, settings.seaWindDirectionRad).toArray();
             const pathSettings = {...settings, pathElevationDeg: axisElevationDeg};
-            this._prepareAtmosphere(pathSettings, sounding);
+            this._stage("atmosphere", () => this._prepareAtmosphere(pathSettings, sounding));
             // The optical spectrum uses the same profile and ray as scene transfer.
-            this._prepareOptics(pathSettings, fineWidth, fineHeight);
+            this._stage("prepareOptics", () => this._prepareOptics(pathSettings, fineWidth, fineHeight));
             const radiance = this._target("radiance", fineWidth, fineHeight, true);
             const optics = this._target("optics", fineWidth, fineHeight);
             const sampled = this._target("sampled", width, height);
             const counts = this._target("counts", width, height);
             const drive = this._target("drive", width, height);
             const display = this._target("display", width, height);
-            this._prepareSkyBackground(settings, skyView);
+            this._stage("skyTable", () => this._prepareSkyBackground(settings, skyView));
             const sky = this.background.scaledPhotonRadiance;
-            this._radiance(scene, thermalCamera, settings, radiance, sky);
+            this._stage("radiance", () => this._radiance(scene, thermalCamera, settings, radiance, sky));
             const gl = renderer.getContext();
             if (gl.checkFramebufferStatus(gl.FRAMEBUFFER) !== gl.FRAMEBUFFER_COMPLETE)
                 throw new Error("Thermal float framebuffer is incomplete; this GPU cannot allocate the requested radiance grid.");
             const skyBackground = this._target("skyBackground", fineWidth, fineHeight);
-            this._drawSky(thermalCamera, skyBackground, sky);
-            this._optics(radiance, optics, skyBackground);
-            this._pass("average", shaders.averageFragment, {tInput: optics.texture, factor,
-                fillFactor: settings.fillFactor, outputOrigin: [0, 0]}, sampled);
+            this._stage("sky", () => this._drawSky(thermalCamera, skyBackground, sky));
+            this._stage("optics", () => this._optics(radiance, optics, skyBackground));
+            this._stage("sample", () => this._pass("average", shaders.averageFragment, {tInput: optics.texture, factor,
+                fillFactor: settings.fillFactor, outputOrigin: [0, 0]}, sampled));
             const integrationTimeS = integrationTime(settings);
             this._prepareFixedPattern(settings);
-            this._pass("detector", shaders.detectorFragment, {tInput: sampled.texture,
+            this._stage("detector", () => this._pass("detector", shaders.detectorFragment, {tInput: sampled.texture,
                 exposureFactor: electronsPerRadiance(settings), darkCharge: settings.darkElectronsPerS * integrationTimeS,
                 tFixedPattern: this.fixedPatternTexture, imageSize: [width, height],
                 shadingAmplitude: settings.shadingK * shadingResponsivity(settings), shadingWidth: settings.shadingWidth,
                 wellElectrons: settings.wellElectrons, adcOffsetCounts: settings.adcOffsetCounts, readSigma: settings.readNoiseElectrons,
                 noiseEnabled: settings.noiseEnabled, shotEnabled: settings.shotNoiseEnabled,
-                frame, noiseSeed: settings.noiseSeed, imageWidth: width}, counts);
-            const codes = this._read(counts);
+                frame, noiseSeed: settings.noiseSeed, imageWidth: width}, counts));
             const historyKey = temporalHistoryKey(settings);
             const previous = this.temporalState;
             const temporalReset = !previous || previous.key !== historyKey || frame <= previous.frame;
             const memory = temporalReset ? 0 : settings.temporalFilterAlpha ** (frame - previous.frame);
             const filtered = this._target(previous?.target === this.resources.targets.get("temporalA") ? "temporalB" : "temporalA", width, height);
-            this._pass("temporal", shaders.temporalFragment, {tInput: counts.texture,
-                tPrevious: memory ? previous.target.texture : counts.texture, memory}, filtered);
-            const filteredCodes = this._read(filtered);
+            this._stage("temporal", () => this._pass("temporal", shaders.temporalFragment, {tInput: counts.texture,
+                tPrevious: memory ? previous.target.texture : counts.texture, memory}, filtered));
             const gainKey = JSON.stringify([historyKey, settings.agcDynamics, settings.agcTimeConstantS, width, height, settings.gainMode, settings.sensorPreset,
                 settings.gainRegion, settings.gainRegion === "displayed" ? [settings.digitalZoom, detectorPresentation(settings, presentation)] : null,
                 settings.lowPercentile, settings.highPercentile, settings.minimumWindowCounts]);
             const reset = gainKey !== this.gainKey || this.lastFrame === null || frame <= this.lastFrame.frame;
             const deltaTimeS = reset ? 0 : (frame - this.lastFrame.frame) / settings.frameRateHz;
-            const parameters = processingParameters(filteredCodes, settings, reset ? null : this.window, deltaTimeS, width, height, presentation);
+            const parameters = this._stage("gainStatistics", () => this._gainParameters(filtered, settings,
+                {gainKey, reset, deltaTimeS, width, height, presentation, frame}));
             this._removeTexture(this.plateauTexture);
             this.plateauTexture = parameters.lut ? this._ownTexture(scalarTexture(parameters.lut.values, 256, 64)) : null;
-            this._pass("processing", shaders.processingFragment, {tInput: filtered.texture,
+            this._stage("processing", () => this._pass("processing", shaders.processingFragment, {tInput: filtered.texture,
                 countWindow: [parameters.window.low, parameters.window.high], tPlateau: this.plateauTexture ?? this.emptyTexture,
-                usePlateau: !!parameters.lut && !parameters.lut.constant}, drive);
+                usePlateau: !!parameters.lut && !parameters.lut.constant}, drive));
             let mean = drive;
             if (settings.localAmount !== 0 && settings.localRadiusPx > 0) {
                 if (this.localRadius !== settings.localRadiusPx) {
@@ -713,8 +781,10 @@ export class ThermalPipeline {
                 mean = this._target("localVertical", width, height);
                 const uniforms = {imageSize: [width, height], tWeights: this.localWeights,
                     radius: Math.ceil(4 * settings.localRadiusPx)};
-                this._pass("localMean", shaders.localMeanFragment, {...uniforms, tInput: drive.texture, axis: 0}, horizontal);
-                this._pass("localMean", shaders.localMeanFragment, {...uniforms, tInput: horizontal.texture, axis: 1}, mean);
+                this._stage("localContrast", () => {
+                    this._pass("localMean", shaders.localMeanFragment, {...uniforms, tInput: drive.texture, axis: 0}, horizontal);
+                    this._pass("localMean", shaders.localMeanFragment, {...uniforms, tInput: horizontal.texture, axis: 1}, mean);
+                });
             }
             const curveKey = `${settings.sensorPreset}:${settings.displayCurve}`;
             if (this.displayCurveKey !== curveKey) {
@@ -723,11 +793,11 @@ export class ThermalPipeline {
                 this.displayCurveTexture = lut ? this._ownTexture(scalarTexture(lut)) : null;
                 this.displayCurveKey = curveKey;
             }
-            this._pass("display", shaders.displayFragment, {tInput: drive.texture, tMean: mean.texture,
+            this._stage("display", () => this._pass("display", shaders.displayFragment, {tInput: drive.texture, tMean: mean.texture,
                 localAmount: settings.localAmount, responseGamma: settings.responseGamma,
                 tDisplayCurve: this.displayCurveTexture ?? this.emptyTexture, useDisplayCurve: settings.displayCurve === "measured",
                 polarityAffine: [settings.polarityAffineGain, settings.polarityAffineOffset],
-                blackHot: settings.polarity === "blackHot"}, display);
+                blackHot: settings.polarity === "blackHot"}, display));
             const diagnostic = settings.diagnosticView;
             const source = diagnostic === "radiance" ? sampled : diagnostic === "detectorCounts" ? counts : display;
             const outputWindow = diagnostic === "radiance" ? [settings.radiometricLow, settings.radiometricHigh] :
@@ -735,20 +805,20 @@ export class ThermalPipeline {
             const mapping = detectorPresentation(settings, presentation);
             const outputSize = target ? new Vector2(target.width, target.height) :
                 (renderer.getDrawingBufferSize?.(new Vector2()) ?? renderer.getSize(new Vector2()));
-            this._pass("enlarge", shaders.enlargeFragment, {tInput: source.texture, imageSize: [width, height],
+            this._stage("output", () => this._pass("enlarge", shaders.enlargeFragment, {tInput: source.texture, imageSize: [width, height],
                 zoom: settings.digitalZoom, fieldScale: mapping.scale, fieldOffset: mapping.offset,
                 outputSize: [outputSize.x, outputSize.y], windowScale: detectorWindowScale(settings), linearSampling: settings.sampling !== "nearest",
-                sampleCentered: settings.sampling === "sampleCentered", outputWindow}, target);
+                sampleCentered: settings.sampling === "sampleCentered", outputWindow}, target));
             this.temporalState = {frame, key: historyKey, target: filtered};
-            this.filteredCounts = filteredCodes;
-            this.counts = codes;
             this.window = parameters.window; this.gainKey = gainKey; this.lastFrame = {frame, integrationTimeS,
+                opticsCache: this.opticsReport,
                 psfSpectrum: this.psfSpectrum, detectorWindow: settings.detectorWindow,
                 temporal: {alpha: settings.temporalFilterAlpha, memory, reset: temporalReset},
                 opticalSampling: settings.opticalSampling, atmosphere: this.atmosphereProfile,
                 clouds: this.cloudPass?.report ?? {sheets: 0, diagnostics: this.cloudDiagnostics},
                 background: this.frameBackground, backgroundTemperatureK: this.background.brightnessTemperatureK,
-                gain: {region: settings.gainRegion, statisticsCount: parameters.statisticsCount, window: {...parameters.window}},
+                gain: {region: settings.gainRegion, statisticsCount: parameters.statisticsCount, window: {...parameters.window},
+                    ...this.gainReport},
                 blur: {turbulence: "long-exposure Kolmogorov", turbulenceR0M: settings.turbulenceR0M,
                     referenceWavelengthM: 4e-6, systemBlurHorizontalRmsUrad: settings.systemBlurHorizontalRmsUrad,
                     systemBlurVerticalRmsUrad: settings.systemBlurVerticalRmsUrad,
@@ -763,7 +833,48 @@ export class ThermalPipeline {
             if (target) { target.viewport.copy(saved.outputViewport); target.scissorTest = saved.outputScissorTest; }
             renderer.setViewport(saved.viewport); renderer.setScissor(saved.scissor); renderer.setScissorTest(saved.scissorTest);
             renderer.setRenderTarget(saved.target, saved.cubeFace, saved.mip);
+            if (this.hasFrame) this.lastFrame.timing = {status: "measured", tier: this.analysis ? "analysis" : "interactive",
+                cpuMs: performance.now() - renderStart, stages: {...this.cpuStages},
+                // Estimated frame budget. CPU submission is not completed GPU time.
+                targetMs: 1000 / 30, gpuAvailable: !!this.gpuTimer?.extension,
+                stagesAreInclusive: true,
+                gpuSamples: this.gpuTimer?.samples.slice() ?? [], disjointSamples: this.gpuTimer?.disjointSamples ?? 0,
+                targetBytes: [...this.resources.targets.values()].reduce((total, t) => total + t.width * t.height *
+                    ((t.texture.format === RGBAFormat ? 16 : t.texture.format === RGFormat ? 8 : 4) + (t.depthBuffer ? 4 : 0)), 0)};
         }
+    }
+
+    _gainParameters(filtered, settings, {gainKey, reset, deltaTimeS, width, height, presentation, frame}) {
+        const needsStatistics = ["automatic", "plateau"].includes(settings.gainMode);
+        if (this.analysis || !needsStatistics) {
+            const codes = needsStatistics ? this._read(filtered) : new Float32Array(0);
+            this.gainReport = {mode: this.analysis ? "analysis" : "fixed", latencyFrames: 0, held: false};
+            return processingParameters(codes, settings, reset ? null : this.window, deltaTimeS, width, height, presentation);
+        }
+        this.gainReadback ??= new FencedReadback(this.renderer.getContext());
+        const ready = this.gainReadback.poll();
+        const usable = ready?.key === gainKey && ready.serial === this.renderSerial - 1 && ready.frame <= frame;
+        let parameters;
+        const historyValid = !reset && this.gainParametersKey === gainKey;
+        if (usable) {
+            parameters = processingParameters(ready.counts, settings, historyValid ? this.window : null,
+                deltaTimeS, width, height, presentation);
+            this.gainParameters = parameters; this.gainParametersKey = gainKey;
+        } else {
+            // No synchronous bootstrap. Hold the last valid window, or display
+            // the full ADC interval until the first fenced sample is available.
+            parameters = historyValid && this.gainParameters ? this.gainParameters :
+                {window: {low: 0, high: 16383}, lut: null, statisticsCount: 0};
+            if (!historyValid) this.gainParametersKey = null;
+        }
+        const staging = this._target("gainReadback", width, height);
+        const queued = this._stage("gainReadback", () => {
+            this._pass("readback", shaders.copyFragment, {tInput: filtered.texture}, staging);
+            return this.gainReadback.enqueue(width, height, {serial: this.renderSerial, key: gainKey, frame});
+        });
+        this.gainReport = {mode: "fenced", latencyFrames: usable ? 1 : null, held: !usable,
+            queued, missedDeadline: !usable && this.renderSerial > 1};
+        return parameters;
     }
 
     // Read R, bottom row first, no normalization or color conversion.
@@ -794,12 +905,12 @@ export class ThermalPipeline {
     /** Fresh Float32Array of integer 14-bit codes, native grid, bottom row first. */
     readDetectorCounts() {
         if (!this.hasFrame) throw new Error("No completed thermal frame to read");
-        return this.counts.slice();
+        return this._read(this.resources.targets.get("counts"));
     }
     /** Fresh native count image after the temporal recursion, before gain. */
     readFilteredCounts() {
         if (!this.hasFrame) throw new Error("No completed thermal frame to read");
-        return this.filteredCounts.slice();
+        return this._read(this.temporalState.target);
     }
     /** Diagnostic readback. name: radiance/optics (fine scaled photon radiance),
      * farScatter (fine signed contrast, only when the far branch is active),
@@ -814,6 +925,8 @@ export class ThermalPipeline {
         return {image: this._read(target), width: target.width, height: target.height};
     }
     dispose() {
+        this.gainReadback?.dispose(); this.gpuTimer?.dispose();
+        this.pendingOptics = null; this.activeKernels = null; this.opticalCache = null; this.skyCache = null;
         this.cloudPass?.dispose(); this.cloudPass = null;
         if (this.resources) {
             for (const target of this.resources.targets.values()) target.dispose();
@@ -935,5 +1048,110 @@ export class ThermalCloudPass {
     dispose() {
         this.material.dispose(); this.mesh.geometry.dispose();
         for (const entry of this.cache.values()) entry.texture.dispose(); this.cache.clear();
+    }
+}
+
+/** WebGL 2 pixel-pack readback. The fence is polled with zero timeout; no buffer
+ * is copied until signaled. Tags bind statistics to the submitted render, so a
+ * seek, resize or processing edit cannot consume unrelated samples.
+ */
+export class FencedReadback {
+    constructor(gl) { this.gl = gl; this.pending = []; this.free = []; }
+    enqueue(width, height, tag) {
+        // Estimated bounded queue: two in-flight frames. A busy GPU causes a
+        // reported missed statistic, never an unbounded queue or a blocking wait.
+        if (this.pending.length >= 2) return false;
+        const gl = this.gl, buffer = this.free.pop() ?? gl.createBuffer();
+        const binding = gl.getParameter(gl.PIXEL_PACK_BUFFER_BINDING);
+        const pack = [gl.PACK_ALIGNMENT, gl.PACK_ROW_LENGTH, gl.PACK_SKIP_PIXELS, gl.PACK_SKIP_ROWS];
+        const saved = pack.map(name => gl.getParameter(name));
+        let fence;
+        try {
+            gl.bindBuffer(gl.PIXEL_PACK_BUFFER, buffer);
+            gl.bufferData(gl.PIXEL_PACK_BUFFER, width * height * 16, gl.STREAM_READ);
+            pack.forEach((name, i) => gl.pixelStorei(name, i ? 0 : 1));
+            gl.readPixels(0, 0, width, height, gl.RGBA, gl.FLOAT, 0);
+            fence = gl.fenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0);
+            if (!fence) throw new Error("Thermal gain fence allocation failed");
+            this.pending.push({buffer, fence, width, height, tag});
+            gl.flush();
+            return true;
+        } catch (error) {
+            if (fence) gl.deleteSync(fence);
+            gl.deleteBuffer(buffer);
+            throw error;
+        } finally {
+            pack.forEach((name, i) => gl.pixelStorei(name, saved[i]));
+            gl.bindBuffer(gl.PIXEL_PACK_BUFFER, binding);
+        }
+    }
+    poll() {
+        const gl = this.gl; let latest = null;
+        while (this.pending.length) {
+            const item = this.pending[0], state = gl.clientWaitSync(item.fence, 0, 0);
+            if (state === gl.TIMEOUT_EXPIRED) break;
+            this.pending.shift();
+            gl.deleteSync(item.fence);
+            if (state === gl.WAIT_FAILED) {gl.deleteBuffer(item.buffer); throw new Error("Thermal gain fence failed");}
+            const binding = gl.getParameter(gl.PIXEL_PACK_BUFFER_BINDING);
+            try {
+                const rgba = new Float32Array(item.width * item.height * 4);
+                gl.bindBuffer(gl.PIXEL_PACK_BUFFER, item.buffer);
+                gl.getBufferSubData(gl.PIXEL_PACK_BUFFER, 0, rgba);
+                const counts = new Float32Array(item.width * item.height);
+                for (let pixel = 0; pixel < counts.length; pixel++) counts[pixel] = rgba[pixel * 4];
+                latest = {counts, ...item.tag};
+            } finally {
+                gl.bindBuffer(gl.PIXEL_PACK_BUFFER, binding);
+                this.free.push(item.buffer);
+            }
+        }
+        return latest;
+    }
+    dispose() {
+        for (const item of this.pending) {this.gl.deleteSync(item.fence); this.gl.deleteBuffer(item.buffer);}
+        for (const buffer of this.free) this.gl.deleteBuffer(buffer);
+        this.pending = []; this.free = [];
+    }
+}
+
+/** Nonblocking elapsed GPU queries, grouped by render and stage. Disjoint
+ * samples are discarded, never reported as timings. Enable only for diagnostics.
+ */
+export class ThermalGpuTimer {
+    constructor(gl) {
+        this.gl = gl; this.extension = gl.getExtension("EXT_disjoint_timer_query_webgl2");
+        this.pending = []; this.samples = []; this.disjointSamples = 0;
+    }
+    begin(frame, stage) {
+        const gl = this.gl, ext = this.extension;
+        if (!ext || this.pending.length >= 256 || gl.getQuery(ext.TIME_ELAPSED_EXT, gl.CURRENT_QUERY)) return false;
+        const query = gl.createQuery();
+        gl.beginQuery(ext.TIME_ELAPSED_EXT, query);
+        this.active = {query, frame, stage};
+        return true;
+    }
+    end() {
+        if (!this.active) return;
+        this.gl.endQuery(this.extension.TIME_ELAPSED_EXT);
+        this.pending.push(this.active); this.active = null;
+    }
+    poll() {
+        if (!this.extension) return;
+        const gl = this.gl;
+        const disjoint = gl.getParameter(this.extension.GPU_DISJOINT_EXT);
+        this.pending = this.pending.filter(item => {
+            if (!disjoint && !gl.getQueryParameter(item.query, gl.QUERY_RESULT_AVAILABLE)) return true;
+            if (disjoint) this.disjointSamples++;
+            else this.samples.push({frame: item.frame, stage: item.stage,
+                ms: gl.getQueryParameter(item.query, gl.QUERY_RESULT) / 1e6}); // calculated ns to ms
+            gl.deleteQuery(item.query); return false;
+        });
+        if (this.samples.length > 4096) this.samples.splice(0, this.samples.length - 4096);
+    }
+    dispose() {
+        this.end();
+        for (const item of this.pending) this.gl.deleteQuery(item.query);
+        this.pending = [];
     }
 }

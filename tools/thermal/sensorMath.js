@@ -230,7 +230,7 @@ export function gaussianKernel(sigmaPx, radiusPx = Math.ceil(4*sigmaPx), horizon
  * Padding prevents the opposite core edge from wrapping directly into the crop.
  * Tiny negative FFT/ringing residuals are clipped; retainedFraction reports loss.
  */
-export function filterKernelMTF(kernel, angularStepRad, mtf, radius = (kernel.width - 1) / 2) {
+export function filterKernelMTF(kernel, angularStepRad, mtf, radius = (kernel.width - 1) / 2, linear = false) {
     const size = 2 * radius + 1, n = nextPow2(2 * Math.max(size, kernel.width, kernel.height));
     const re = new Float64Array(n * n), im = new Float64Array(n * n);
     const cx = Math.floor(kernel.width / 2), cy = Math.floor(kernel.height / 2);
@@ -246,7 +246,11 @@ export function filterKernelMTF(kernel, angularStepRad, mtf, radius = (kernel.wi
     fft2(re, im, n, true);
     const data = new Float64Array(size * size);
     for (let y = -radius; y <= radius; y++) for (let x = -radius; x <= radius; x++)
-        data[(y + radius) * size + x + radius] = Math.max(0, re[((y + n) % n) * n + (x + n) % n]);
+        data[(y + radius) * size + x + radius] = linear ? re[((y + n) % n) * n + (x + n) % n] :
+            Math.max(0, re[((y + n) % n) * n + (x + n) % n]);
+    // Calculated signed, unnormalized response for linear spectral mixing. Clamp
+    // and normalize only AFTER mixing, as in the full polychromatic reference.
+    if (linear) return {width: size, height: size, data};
     return {...normalized(data, size), retainedFraction: sum(data), method: "padded MTF"};
 }
 
@@ -727,6 +731,11 @@ export function scatterPlan(settings, width = settings.detectorWidth * settings.
     const nearRadius = Math.min(fullRadius, available, Math.max(32, Math.ceil(0.001 / angularStep), 16 * factor));
     return {factor: nearRadius >= fullRadius ? 1 : factor, angularStep, nearRadius,
         nearCutoffRad: nearRadius * angularStep, fullRadius,
+        // Calculated zero-aliasing criterion for two finite-support convolutions:
+        // N >= field + (core width - 1) + (scatter width - 1), independently per axis.
+        requiredWidth: width + 2 * (coreRadius + nearRadius),
+        requiredHeight: height + 2 * (coreRadius + nearRadius),
+        accuracy: "full linear convolution; zero circular wrap within retained support",
         fftWidth: nextPow2(width + 2 * (coreRadius + nearRadius)),
         fftHeight: nextPow2(height + 2 * (coreRadius + nearRadius))};
 }
@@ -1004,4 +1013,92 @@ export function runSensorChain(input, width, height, settings, {frame = 0, effec
     const processed = processCounts(temporal.image, width / settings.supersample, height / settings.supersample,
         settings, previousTemporal && temporal.reset ? null : previousWindow, previousTemporal && temporal.reset ? 0 : deltaTimeS);
     return {image: processed.codes, counts, temporal, filteredCounts: temporal.image, sampled, optics, integrationTimeS: integrationTime(settings), ...processed};
+}
+
+// Estimated numerical budgets, not physical parameters. The kernel L1 bound
+// limits absolute image error to tolerance * maximum absolute scene contrast.
+// It also bounds absolute MTF error at every spatial frequency by the same value.
+export const OPTICS_L1_TOLERANCE = 1e-4;
+
+const opticalFields = ["supersample", "opticsEnabled", "focalLengthM", "apertureM", "pixelPitchM",
+    "bandMinUm", "bandMaxUm", "opticsRadiusPx", "defocusM", "turbulenceR0M", "jitterRmsUrad",
+    "diffusionSigmaPx", "systemBlurHorizontalRmsUrad", "systemBlurVerticalRmsUrad",
+    "scatterFraction", "scatterSlope", "scatterShoulderRad", "scatterCutoffRad"];
+
+/** Calculated wavelength responses. Linear Gaussian filtering commutes with
+ * spectral addition; signed samples retain that identity before the final clamp.
+ * Range, altitude, elevation and source temperature affect only photon weights.
+ */
+export function opticalBasis(settings, width, height, spectrum) {
+    const split = scatterPlan(settings, width, height);
+    const sensor = {focalM: settings.focalLengthM, apertureM: settings.apertureM, pitchM: settings.pixelPitchM};
+    const sigma = gaussianBlurRmsRad(settings);
+    const bands = spectrum.bins.map(({wavelengthM}) => {
+        let kernel = settings.opticsEnabled ? diffractionKernel(sensor, {radiusPx: settings.opticsRadiusPx,
+            defocusM: settings.defocusM, pupilGrid: 1024}, wavelengthM, settings.supersample) : deltaKernel();
+        if (settings.turbulenceR0M > 0) kernel = filterKernelMTF(kernel, split.angularStep,
+            frequency => turbulenceMTF(frequency, wavelengthM, settings.turbulenceR0M),
+            Math.ceil(settings.opticsRadiusPx * settings.supersample));
+        if (sigma.horizontal > 0 || sigma.vertical > 0) kernel = filterKernelMTF(kernel, split.angularStep,
+            (frequency, fx, fy) => Math.exp(-2 * Math.PI ** 2 *
+                ((sigma.horizontal * fx) ** 2 + (sigma.vertical * fy) ** 2)), opticalCoreRadius(settings), true);
+        return kernel;
+    });
+    return {bands, split, ...splitScatter(settings, split)};
+}
+
+export function mixOpticalBasis(basis, spectrum) {
+    const data = new Float64Array(basis.bands[0].data.length);
+    basis.bands.forEach((band, i) => {
+        const weight = spectrum.bins[i].weight;
+        for (let pixel = 0; pixel < data.length; pixel++) data[pixel] += band.data[pixel] * weight;
+    });
+    for (let pixel = 0; pixel < data.length; pixel++) data[pixel] = Math.max(0, data[pixel]);
+    const core = normalized(data, basis.bands[0].width);
+    return {core, spectrum, split: basis.split, scatter: basis.scatter, farScatter: basis.farScatter,
+        farMass: basis.farMass, farCore: basis.farScatter ? coarsenKernel(core, basis.split.factor) : null};
+}
+
+/** Calculated discrete L1 error of the actual finite kernels, including the
+ * coarse branch. Positive unit-mass convolutions and conservative deposition
+ * cannot amplify L1 error. No rounded range or assumed camera speed is used.
+ */
+export function opticalKernelError(a, b) {
+    if (!a || !b || a.split.factor !== b.split.factor || a.split.fftWidth !== b.split.fftWidth ||
+        a.split.fftHeight !== b.split.fftHeight || a.split.requiredWidth !== b.split.requiredWidth ||
+        a.split.requiredHeight !== b.split.requiredHeight) return Infinity;
+    const difference = (first, second) => {
+        if (first === second) return 0;
+        if (!first || !second || first.width !== second.width || first.height !== second.height) return Infinity;
+        let error = 0;
+        for (let i = 0; i < first.data.length; i++) error += Math.abs(first.data[i] - second.data[i]);
+        return error;
+    };
+    return difference(a.core, b.core) + difference(a.scatter, b.scatter) + difference(a.farScatter, b.farScatter);
+}
+
+export class OpticalKernelCache {
+    candidate(settings, width, height, atmosphere) {
+        const key = JSON.stringify([width, height, ...opticalFields.map(name => settings[name])]);
+        const spectrumKey = JSON.stringify([settings.psfRangeM, settings.sensorAltitudeM, settings.pathElevationDeg,
+            settings.psfTemperatureK, settings.bandMinUm, settings.bandMaxUm,
+            atmosphere ? null : [settings.atmosphereEnabled, settings.visibilityM,
+                settings.surfaceTemperatureK, settings.waterVaporDensityKgM3]]);
+        this.basisRebuilt = false;
+        if (key === this.key && spectrumKey === this.spectrumKey && atmosphere === this.atmosphere) return this.kernels;
+        const spectrum = psfSpectrum(settings, atmosphere);
+        this.basisRebuilt = key !== this.key;
+        if (this.basisRebuilt) this.basis = opticalBasis(settings, width, height, spectrum);
+        this.key = key; this.spectrumKey = spectrumKey; this.atmosphere = atmosphere;
+        this.kernels = mixOpticalBasis(this.basis, spectrum);
+        return this.kernels;
+    }
+}
+
+
+export function timingDistribution(values) {
+    const sorted = [...values].sort((a, b) => a - b);
+    const percentile = p => sorted[Math.max(0, Math.ceil(p * sorted.length) - 1)];
+    return {medianMs: percentile(.5), p95Ms: percentile(.95), p99Ms: percentile(.99),
+        maxMs: sorted.at(-1), meanMs: values.reduce((a, b) => a + b, 0) / values.length};
 }

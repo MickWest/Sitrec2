@@ -1,6 +1,7 @@
 import {CircleGeometry, DataTexture, FloatType, Float32BufferAttribute, DoubleSide, NearestFilter, NoColorSpace, Mesh, MeshBasicMaterial, OrthographicCamera, PerspectiveCamera, PlaneGeometry, Vector3,
     RGBAFormat, Scene, WebGLRenderer, WebGLRenderTarget} from "three";
 import {ThermalPipeline} from "./ThermalPipeline.js";
+import {timingDistribution} from "./sensorMath.js";
 import {cloudOpacity, opaqueCloudRadiance, thermalSeaDistance} from "./atmosphere.js";
 import {createStatisticalSea, seaRayAzimuth} from "./atmosphere.js";
 import {apparentTemperature, inBandRadiance, PHOTON_SCALE} from "./radiometry.js";
@@ -11,7 +12,7 @@ import {createThermalRayGeometry} from "./atmosphere.js";
 import {blackbodyBands, evaluatePhotonPath, clearSky, createAtmosphere, createSkyElevationLUT, sampleSkyElevationLUT, seaBackground,
     skyRayElevation, skyViewGeometry} from "./atmosphere.js";
 import {applyFarScatter, applyOptics, displayCodes, displayCurve, displayCurveLUT, enlargeImage, temporalFilter, detectorCounts, electronsPerRadiance, integrationTime,
-    opticalKernels, processCounts, processingParameters, sampleDetector, sum} from "./sensorMath.js";
+    opticalKernels, processCounts, processingParameters, sampleDetector, sum, windowImage, localEnhancement} from "./sensorMath.js";
 
 // Estimated horizon fixture: observer 21 m, dimensionless k=0.13. The reference
 // lift is calculated from the terrestrial projection's density and saturation
@@ -167,6 +168,7 @@ export function imageAxisVariances(image, width) {
  */
 export async function runThermalSelfTest() {
     const checks = [], geometries = new Set(), materials = new Set();
+    const performanceReport = {status: "not run", movingCamera: []};
     let renderer, pipeline, target;
     const record = (name, expected, measured, tolerance) => {
         const pass = Number.isFinite(measured) && Math.abs(measured - expected) <= tolerance;
@@ -192,7 +194,7 @@ export async function runThermalSelfTest() {
         renderer.debug.onShaderError = (gl, program, vertex, fragment) => {
             throw new Error(`Thermal shader failed: ${gl.getProgramInfoLog(program)}; vertex: ${gl.getShaderInfoLog(vertex)}; fragment: ${gl.getShaderInfoLog(fragment)}`);
         };
-        pipeline = new ThermalPipeline(renderer);
+        pipeline = new ThermalPipeline(renderer, {analysis: true, gpuTiming: true});
         target = new WebGLRenderTarget(32, 32, {type: FloatType, format: RGBAFormat});
         const settings = {...defaultSettings(), focalStep: "free", temporalFilterAlpha: 0, sampling: "linear",
             detectorWidth: 32, detectorHeight: 32,
@@ -555,6 +557,45 @@ export async function runThermalSelfTest() {
                 previous = expected; previousFrame = frame;
             }
         });
+        await test("Fenced gain uses exactly the previous render, with CPU parity", async () => {
+            const scene = new Scene();
+            for (let column = 0; column < 32; column++) {
+                const strip = mesh(new PlaneGeometry(1, 32), 280 + column);
+                strip.position.x = column - 15.5; scene.add(strip);
+            }
+            pipeline.analysis = false;
+            const originalRead = pipeline._read;
+            try {
+                for (const gainMode of ["automatic", "plateau"]) {
+                    const configured = normalizeSettings({...settings, gainMode, agcTimeConstantS: .12, plateauFactor: 4});
+                    let previousCodes, previousWindow;
+                    for (let frame = 0; frame < 4; frame++) {
+                        scene.children.forEach(object => {object.userData.thermal.temperatureK += .3;});
+                        pipeline._read = () => {throw new Error("Interactive render performed a synchronous readback");};
+                        try {render(scene, configured, frame);} finally {pipeline._read = originalRead;}
+                        // Diagnostic reads are outside render and also let this test
+                        // compare the completed GPU image against an independent CPU.
+                        const current = pipeline.readFilteredCounts();
+                        if (previousCodes) {
+                            const expected = processingParameters(previousCodes, configured, previousWindow,
+                                1 / configured.frameRateHz, 32, 32);
+                            record(`${gainMode} fenced gain frame ${frame}: one-render latency`, 1, pipeline.lastFrame.gain.latencyFrames, 0);
+                            record(`${gainMode} fenced gain frame ${frame}: low endpoint`, expected.window.low, pipeline.window.low, .002);
+                            record(`${gainMode} fenced gain frame ${frame}: high endpoint`, expected.window.high, pipeline.window.high, .002);
+                            let drive = windowImage(current, expected.window);
+                            if (expected.lut && !expected.lut.constant) drive = Float32Array.from(current,
+                                value => expected.lut.values[Math.round(Math.min(16383, Math.max(0, value)))]);
+                            const codes = displayCodes(localEnhancement(drive, 32, 32, configured.localAmount, configured.localRadiusPx), configured);
+                            record(`${gainMode} fenced GPU/CPU display error at frame ${frame}`, 0,
+                                maxError(pipeline.readStage("display").image, codes), 1);
+                            previousWindow = expected.window;
+                        }
+                        previousCodes = current;
+                        await new Promise(resolve => setTimeout(resolve, 0));
+                    }
+                }
+            } finally {pipeline.analysis = true; pipeline._read = originalRead;}
+        });
         await test("Rectangular detector with dark current, pedestal and low counts", () => {
             const view = new OrthographicCamera(-20, 20, 12, -12, .1, 100);
             view.position.z = 10;
@@ -867,6 +908,58 @@ export async function runThermalSelfTest() {
             record("Original surface material restored after failure", 1, Number(patch.material === original), 0);
             record("Original target restored after failure", 1, Number(renderer.getRenderTarget() === null), 0);
         });
+        await test("Moving-camera CPU and GPU timing", async () => {
+            pipeline.dispose(); // Release reference targets before the full detector benchmark.
+            // Estimated track: camera moves at 250 m/s for 300 frames at 30 Hz,
+            // tracking a 24 m by 8 m patch initially 2 km away. No detector or
+            // kernel support reduction is made to reach the timing target.
+            const scene = new Scene(), object = mesh(new PlaneGeometry(24, 8), 320);
+            object.position.set(0, 80, -2000); scene.add(object);
+            const configured = normalizeSettings({sensorPreset: "MX15", sensorAltitudeM: 1380});
+            const moving = new PerspectiveCamera(configured.verticalFovDeg,
+                configured.detectorWidth / configured.detectorHeight, 1, 300000);
+            for (const analysis of [false, true]) {
+                const measured = new ThermalPipeline(renderer, {analysis, gpuTiming: true});
+                const cpu = [], wall = [], stageCpu = {}, fftSizes = new Set(); let missed = 0, previousStart;
+                try {
+                    for (let frame = 0; frame < 300; frame++) {
+                        await new Promise(resolve => typeof requestAnimationFrame === "function" ? requestAnimationFrame(resolve) : setTimeout(resolve, 0));
+                        const start = performance.now();
+                        if (previousStart !== undefined) wall.push(start - previousStart);
+                        previousStart = start;
+                        moving.position.x = 250 * frame / 30; moving.lookAt(object.position); moving.updateMatrixWorld(true);
+                        const m = moving.matrixWorldInverse.elements;
+                        measured.render({scene, camera: moving, settings: configured, skyUp: [m[4], m[5], m[6]],
+                            psfRangeM: moving.position.distanceTo(object.position), frame, target});
+                        const timing = measured.lastFrame.timing;
+                        cpu.push(timing.cpuMs); missed += Number(measured.lastFrame.gain.missedDeadline ?? false);
+                        for (const [name, ms] of Object.entries(timing.stages)) (stageCpu[name] ??= []).push(ms);
+                        fftSizes.add(`${measured.fftWidth}x${measured.fftHeight}`);
+                    }
+                    // Diagnostic drain only; no wait occurs inside render().
+                    const deadline = performance.now() + 5000;
+                    while (measured.gpuTimer.pending.length && performance.now() < deadline) {
+                        await new Promise(resolve => setTimeout(resolve, 10)); measured.gpuTimer.poll();
+                    }
+                    const gpu = {};
+                    for (const sample of measured.gpuTimer.samples) (gpu[sample.stage] ??= []).push(sample.ms);
+                    performanceReport.movingCamera.push({tier: analysis ? "analysis" : "interactive", frames: cpu.length,
+                        speedMps: 250, firstFrameMs: cpu[0], cpu: timingDistribution(cpu), warmCpu: timingDistribution(cpu.slice(1)),
+                        wallCadence: timingDistribution(wall), stageCpu: Object.fromEntries(Object.entries(stageCpu).map(([name, samples]) => [name, timingDistribution(samples)])),
+                        gpuAvailable: !!measured.gpuTimer.extension,
+                        gpuStages: Object.fromEntries(Object.entries(gpu).map(([name, samples]) => [name, {...timingDistribution(samples), samples: samples.length}])),
+                        disjointSamples: measured.gpuTimer.disjointSamples, pendingQueries: measured.gpuTimer.pending.length,
+                        missedGainDeadlines: missed, fftSizes: [...fftSizes], targetBytes: measured.lastFrame.timing.targetBytes,
+                        targetMs: 1000 / 30, meetsCpuTarget: timingDistribution(cpu).medianMs <= 1000 / 30,
+                        meetsWallTarget: timingDistribution(wall).medianMs <= 1000 / 30});
+                    if (!analysis) record("Interactive moving gain meets one-render deadline after bootstrap", 0, missed, 0);
+                    if (measured.gpuTimer.extension && !measured.gpuTimer.disjointSamples)
+                        for (const stage of ["radiance", "sky", "optics", "sample", "detector", "temporal", "processing", "display", "output"])
+                            record(`GPU ${analysis ? "analysis" : "interactive"} timing includes ${stage}`, 1, Number((gpu[stage]?.length ?? 0) > 0), 0);
+                } finally {measured.dispose();}
+            }
+            performanceReport.status = "measured; CPU submission and GPU stage execution reported separately";
+        });
     } catch (error) {
         checks.push({name: "WebGL setup or float-target requirement", expected: "WebGL 2 and EXT_color_buffer_float",
             measured: error.message, tolerance: 0, pass: false});
@@ -876,5 +969,5 @@ export async function runThermalSelfTest() {
         for (const paint of materials) paint.dispose();
         renderer?.dispose(); renderer?.forceContextLoss();
     }
-    return {pass: checks.length > 0 && checks.every(check => check.pass), checks};
+    return {pass: checks.length > 0 && checks.every(check => check.pass), checks, performance: performanceReport};
 }

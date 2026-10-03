@@ -1241,3 +1241,61 @@ match CPU optics within **0.1% of source flux**, and match native samples within
 within **0.005**. These are calculated test geometries and estimated numerical
 acceptance tolerances. Jest checks the numeric references and uploaded shader inputs;
 only the browser self-test executes WebGL and establishes GPU parity.
+
+### Moving-camera execution
+
+Interactive rendering caches seven wavelength responses and recomputes photon weights
+at the actual camera altitude, elevation and source range. Gaussian filtering commutes
+with spectral addition; signed responses are mixed before clamping and normalization.
+The independent full-kernel tests allow a calculated floating-point difference of
+`2e-6` in integrated absolute weight. There is no changed optical or atmospheric model.
+
+Before every reuse, the complete finite kernel is compared with the requested one.
+The estimated numerical reuse budget is `1e-4` in integrated absolute weight (L1).
+Calculated consequences: maximum absolute image error is at most this budget times
+maximum absolute input contrast, and absolute modulation transfer error is bounded
+by the same budget. A refresh starts at half the budget and submits one GPU spectrum
+per render into separate targets. The previous spectra remain active only while the
+current comparison passes. A jump outside the budget rebuilds immediately. Initial
+wavelength construction and incompatible optical edits can still block the CPU.
+Turbulence edits compare the actual finite response; no unvalidated r0 rounding is used.
+
+The sky cache covers a padded elevation interval, preserving separate horizon limits.
+Its estimated numerical budget is `0.005 K` brightness equivalent: `0.002 K` angular
+interpolation and `0.001 K` altitude reuse, with the remainder reserved for numerical
+margin. Angular midpoints and both altitude endpoints are checked; altitude reuse
+adds a factor-two margin. These checks bound interpolation against the existing
+atmosphere, not the atmosphere's physical uncertainty.
+
+Automatic and plateau gain use one RGBA pixel-pack transfer with a fence. Polling
+uses zero timeout; only the previous rendered frame is eligible. On a missed deadline
+the last valid gain is held and `lastFrame.gain.missedDeadline` is set. Bootstrap uses
+the full ADC interval until valid statistics arrive. Manual and radiometric gain need
+no readback. Explicit diagnostic methods still read the current completed image.
+`new ThermalPipeline(renderer, {analysis: true})` selects same-render gain statistics
+and disables optical kernel reuse error, for reference captures. Both tiers retain
+the selected optical sampling and support.
+
+FFT sizes satisfy the calculated full linear-convolution condition separately on
+each axis: `N >= field + coreWidth - 1 + scatterWidth - 1`. Default field dimensions
+are `640*4 = 2560` by `512*4 = 2048` samples; core and near-scatter radii are `128`
+and `256` samples. Required dimensions are therefore `3328` by `2816`, giving
+`4096` by `4096` for radix-2 FFTs. Smaller fields select smaller transforms without
+discarding energy. Deferred replacement can retain one additional fine spectrum
+(`4096*4096*2*4 = 128 MiB`) and one coarse spectrum. Fenced gain retains one native
+RGBA target and at most two native pixel-pack buffers (`3*640*512*16 = 15 MiB`).
+
+Run `node tools/thermal/benchmark.mjs --moving` for calculated camera tracks at an
+estimated airliner speed of `250 m/s`, `300` frames at `30 Hz`, starting at `2 km`
+and `125 km`, in both tiers. Its measured distributions cover CPU preparation only;
+GPU work, scene traversal and gain are explicitly excluded. The unchanged exact
+foreground range table may dominate moving-camera CPU time.
+
+`runThermalSelfTest()` preserves same-render CPU/GPU comparisons, adds fenced gain
+comparisons with a one-render delay, and measures a full `300`-frame camera track in
+each tier. Fenced gain endpoints must agree within the estimated `0.002 count`
+numerical tolerance and display codes within `1 code`. It reports CPU submission,
+wall cadence, missed gain deadlines and per-stage GPU query distributions when
+`EXT_disjoint_timer_query_webgl2` is available; disjoint queries are discarded.
+The estimated interactive budget is `1000/30 ms`; a timing shortfall is reported,
+not hidden by changing sampling. Target storage counts exclude driver overhead.

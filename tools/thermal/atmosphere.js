@@ -1327,3 +1327,64 @@ export function createThermalDepthTable(geometry, minElevationRad) {
     return {data: Float32Array.from(nodes.flatMap(n => [n.q, n.distance, 0, 0])),
         sampleCount: nodes.length, horizonRad: horizon, maxErrorM};
 }
+
+/** Calculated angular cache: the entire padded interval is checked in photon
+ * radiance. A moving pose samples that interval, rather than freezing its center.
+ * Estimated padding .002 rad or 1/4 field keeps the validation domain local.
+ */
+export class SkyBackgroundCache {
+    table(options, atmosphere) {
+        const requested = skyElevationRange(options.view);
+        const key = JSON.stringify([options.temperatureK, options.band,
+            options.rayGeometry?.domainKey ?? options.rayGeometry?.key]);
+        const cached = key === this.key && atmosphere === this.atmosphere ? this.cached : null;
+        const h = options.sensorAltitudeM;
+        const shift = cached ? (options.rayGeometry?.horizonRad ?? thermalHorizon(h)) - cached.horizonRad : 0;
+        if (cached && h !== cached.sensorAltitudeM && !cached.altitudeDomain &&
+            Math.abs(h - cached.sensorAltitudeM) <= .05 && (!options.rayGeometry || options.rayGeometry.atAltitude))
+            this.validateAltitude(cached, atmosphere);
+        const altitudeFits = cached && (h === cached.sensorAltitudeM || cached.altitudeDomain &&
+            h >= cached.altitudeDomain.minM && h <= cached.altitudeDomain.maxM);
+        if (altitudeFits && requested.minRad - shift >= cached.minRad && requested.maxRad - shift <= cached.maxRad)
+            return cached;
+        const padding = Math.max(.002, (requested.maxRad - requested.minRad) / 8);
+        const elevationRange = {...requested, minRad: Math.max(-Math.PI / 2, requested.minRad - padding),
+            maxRad: Math.min(Math.PI / 2, requested.maxRad + padding)};
+        // Estimated allocation: .002 K angular + .001 K altitude, with remaining
+        // .002 K reserved for sampled-validation and Float32 upload roundoff.
+        const table = createSkyElevationLUT({...options, elevationRange, toleranceK: .002}, atmosphere);
+        if (!table.interpolation.toleranceMet) throw new Error("Sky interpolation did not meet its brightness tolerance");
+        this.cached = {...table, sensorAltitudeM: h, options};
+        this.key = key; this.atmosphere = atmosphere;
+        return this.cached;
+    }
+    validateAltitude(table, atmosphere) {
+        let span = Math.min(.05, table.sensorAltitudeM / 4);
+        for (let attempt = 0; span > 0 && attempt < 16; attempt++, span /= 2) {
+            let absolute = 0, minimum = Infinity;
+            for (const h of [table.sensorAltitudeM - span, table.sensorAltitudeM + span]) {
+                const rayGeometry = table.options.rayGeometry?.atAltitude(h);
+                const shift = (rayGeometry?.horizonRad ?? thermalHorizon(h)) - table.horizonRad;
+                for (let i = 0; i < table.sampleCount; i++) {
+                    const points = [table.elevations[i]];
+                    if (i && table.elevations[i] > table.elevations[i - 1]) points.push((table.elevations[i] + table.elevations[i - 1]) / 2);
+                    for (let e of points) {
+                        if (e === table.horizonRad) e += i && table.elevations[i - 1] === e ? 1e-8 : -1e-8;
+                        if (Math.abs(e + shift) > Math.PI / 2) continue;
+                        const a = backgroundAtElevation(e, table.options, atmosphere).photonRadiance;
+                        const b = backgroundAtElevation(e + shift, {...table.options, sensorAltitudeM: h, rayGeometry}, atmosphere).photonRadiance;
+                        absolute = Math.max(absolute, Math.abs(a - b));
+                        if (a || b) minimum = Math.min(minimum, a, b);
+                    }
+                }
+            }
+            const errorK = absolute === 0 ? 0 : 2 * brightnessErrorBound(absolute, minimum, table.options.band, .001);
+            if (errorK <= .001) {
+                table.altitudeDomain = {minM: table.sensorAltitudeM - span, maxM: table.sensorAltitudeM + span,
+                    maxErrorK: errorK, toleranceK: .001, status: "calculated"};
+                return;
+            }
+        }
+    }
+}
+

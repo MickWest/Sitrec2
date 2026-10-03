@@ -121,7 +121,7 @@ test("received PSF weights intersect atmospheric bands and shorten the reference
     console.log(`PSF photon mean: source ${(source.meanWavelengthM * 1e6).toFixed(6)} um; received ${(received.meanWavelengthM * 1e6).toFixed(6)} um at 125000 m`);
 });
 
-test("PSF range and profile invalidate optical spectra; kernel energy stays normalized", () => {
+test("PSF range and profile refresh weights while equal finite kernels retain spectra", () => {
     const settings = normalizeSettings({detectorWidth: 8, detectorHeight: 8, fieldMode: "focalLength",
         psfRangeM: 125000, sensorAltitudeM: 1382, pathElevationDeg: 2.23,
         opticsRadiusPx: 4, scatterPreset: "custom", scatterFraction: 0});
@@ -135,9 +135,14 @@ test("PSF range and profile invalidate optical spectra; kernel energy stays norm
     expect(pipeline.psfSpectrum.meanWavelengthM).toBeGreaterThan(first);
     pipeline.profileKey = "changed";
     pipeline.atmosphere = createAtmosphere({densityScale: 0});
-    pipeline._prepareOptics(settings, 32, 32); expect(pipeline._prepareSpectrum).toHaveBeenCalledTimes(3);
+    pipeline._prepareOptics(settings, 32, 32); expect(pipeline._prepareSpectrum).toHaveBeenCalledTimes(2);
+    expect(pipeline.opticsReport.errorL1).toBeLessThanOrEqual(pipeline.opticsReport.toleranceL1);
     close(pipeline.psfSpectrum.meanWavelengthM, psfSpectrum({...settings, psfRangeM: 0}).meanWavelengthM, 1e-15);
     close(sum(opticalKernels(settings).core.data), 1, 1e-7);
+    pipeline.atmosphere = createAtmosphere({densityScale: .5});
+    pipeline._prepareOptics(settings, 32, 32);
+    expect(pipeline._prepareSpectrum).toHaveBeenCalledTimes(3);
+    close(pipeline.psfSpectrum.meanWavelengthM, psfSpectrum(settings, pipeline.atmosphere).meanWavelengthM, 1e-15);
 });
 
 test("temporal filter advances once per forward frame and resets on repeats, seeks and sensor changes", () => {
