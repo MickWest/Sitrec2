@@ -190,7 +190,7 @@
     "pmtiles": "4.5.0",
     "proj4-fully-loaded": "^0.2.0",
     "regression": "^2.0.1",
-    "satellite.js": "^6.0.1",
+    "satellite.js": "^7.1.0",
     "seedrandom": "^3.0.5",
     "stats.js": "^0.17.0",
     "tesseract.js": "^7.0.0",
