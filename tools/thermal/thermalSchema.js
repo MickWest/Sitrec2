@@ -85,7 +85,7 @@ const definitions = [
     number("diffusionSigmaPx", "detector", "native pixel", 0, 0, 0.4, 0.01, "Charge diffusion", "Estimated Gaussian sigma before native sampling; zero disables. Pixel-area integration is separate."),
     number("defocusM", "optics", "m", 0, -0.002, 0.002, 1e-6, "Defocus", "Longitudinal detector displacement; computed as quadratic pupil phase."),
     choice("opticalSamplingMode", "optics", "nyquist", {nyquist: "Optical Nyquist", manual: "Manual"}, "Optical sampling policy", "Calculate sampling from the shortest wavelength and f-number within allocation limits. Editing the factor selects Manual."),
-    choice("supersample", "optics", 4, {2: "2 ×", 4: "4 ×", 8: "8 ×"}, "Optical sampling", "Fine radiance grid factor; calculated in Nyquist mode. Small mesh coverage is independently refined to 128 samples per detector pixel."),
+    choice("supersample", "optics", 4, {2: "2 ×", 4: "4 ×", 8: "8 ×"}, "Optical sampling", "Fine radiance grid factor; calculated in Nyquist mode. Small mesh coverage is independently refined to 128 samples per detector pixel (live views: up to 64 tiles per frame, overflow reported)."),
     number("detectorWidth", "detector", "pixel", 640, 1, 2048, 1, "Detector width", "Native sampling columns; independent of picture size."),
     number("detectorHeight", "detector", "pixel", 512, 1, 2048, 1, "Detector height", "Native sampling rows; independent of picture size."),
     number("pixelPitchM", "detector", "m", 20e-6, 1e-6, 100e-6, 0.01e-6, "Pixel pitch", "Geometric detector pixel spacing."),

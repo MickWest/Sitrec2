@@ -20,6 +20,9 @@ import {createStatisticalSea, createSeaSkyTable, seaRayAzimuth, cloudRadianceTab
 
 const COVERAGE_SAMPLES = 128; // samples per detector-pixel side for small meshes
 const COVERAGE_TILE = 4; // native pixels per tile side; bounds texture allocation
+// Estimated budget: every refinement tile redraws the whole scene at COVERAGE_SAMPLES per pixel, so one frame
+// refines at most this many tiles. The rest keep the normal supersampled radiance; the overflow is reported.
+const COVERAGE_TILE_LIMIT = 64;
 const scalarTexture = (values, width = values.length, height = 1) =>
     dataTexture(Float32Array.from(values), width, height, RedFormat);
 // rgba is row-major Float32 data; physical units are supplied by the owning pass.
@@ -63,7 +66,7 @@ export class ThermalPipeline {
         this.opticalCache = new OpticalKernelCache();
         this.opticsScheduler = new OpticsScheduler({createWorker: createOpticsWorker, onReady});
         this.rangeCache = new RangeTableCache(onReady);
-        this.skyCache = new SkyBackgroundCache();
+        this.skyCache = new SkyBackgroundCache(onReady);
         this.resources = null;
         this.lastFrame = null;
         this.window = null;
@@ -488,6 +491,49 @@ export class ThermalPipeline {
             ? resolved.resolveZone(nearest.zone) : resolved.airframe;
     }
 
+    _surfaceSpectrum(attributes, settings) {
+        const interactive = !this.analysis && !this.synchronous;
+        // Calculated reuse error is zero: all inputs to the spectral integration
+        // are matched exactly. Range transfer is always applied to the current LUT.
+        // Keep these CPU arrays separate from surfaces, which atmosphere updates dispose.
+        // Nonstandard solar inputs and invalid attributes take the original
+        // evaluation path, including its input validation.
+        const cacheable = interactive && attributes.solar === undefined && attributes.cosIncidence === undefined &&
+            Number.isFinite(attributes.temperatureK) && Number.isFinite(attributes.emissivity);
+        const key = cacheable ? JSON.stringify([attributes.temperatureK, attributes.emissivity,
+            settings.environmentTemperatureK, settings.solarScale, settings.bandMinUm, settings.bandMaxUm]) : null;
+        const cache = cacheable ? (this.resources.surfaceSpectra ??= new Map()) : null;
+        let spectrum = cache?.get(key);
+        if (!spectrum) {
+            const illuminationKey = JSON.stringify([settings.environmentTemperatureK, settings.bandMinUm, settings.bandMaxUm]);
+            let illumination = interactive ? this.resources.surfaceIllumination : null;
+            if (interactive && illumination?.key !== illuminationKey) {
+                illumination = {key: illuminationKey, bands: []};
+                this.resources.surfaceIllumination = illumination;
+            }
+            const emission = new Float64Array(12), reflectedSun = new Float64Array(12);
+            BANDS.forEach((band, index) => {
+                const minUm = Math.max(settings.bandMinUm, band.minM * 1e6);
+                const maxUm = Math.min(settings.bandMaxUm, band.maxM * 1e6);
+                if (maxUm <= minUm) return;
+                const response = {minUm, maxUm};
+                // Calculated zero-error reuse of the same environment and solar
+                // integrals across different temperatures and emissivities.
+                const incident = illumination?.bands[index];
+                const environment = incident?.environment ?? inBandRadiance(settings.environmentTemperatureK, response);
+                const gray = grayBodyRadiance({...attributes, environment}, response);
+                emission[index] = gray.total.photon;
+                const solar = incident?.solar ?? solarIrradiance({}, response);
+                reflectedSun[index] = (1 - attributes.emissivity) * solar.photon * settings.solarScale / Math.PI;
+                if (illumination && !incident) illumination.bands[index] = {environment, solar};
+            });
+            spectrum = {emission, reflectedSun};
+            cache?.set(key, spectrum);
+        }
+        spectrum.used = true;
+        return spectrum;
+    }
+
     _surface(attributes, original, settings, sunDirection) {
         if (attributes.sea) {
             const key = JSON.stringify(["statistical-sea", original.side, this.radianceAdapter?.materialKey]);
@@ -508,17 +554,8 @@ export class ThermalPipeline {
             settings.environmentTemperatureK, settings.solarScale, this.radianceAdapter?.materialKey]);
         let surface = this.resources.surfaces.get(key);
         if (!surface) {
-            const emission = new Float64Array(12), reflectedSun = new Float64Array(12);
-            BANDS.forEach((band, index) => {
-                const minUm = Math.max(settings.bandMinUm, band.minM * 1e6);
-                const maxUm = Math.min(settings.bandMaxUm, band.maxM * 1e6);
-                if (maxUm <= minUm) return;
-                const response = {minUm, maxUm};
-                const gray = grayBodyRadiance({...attributes,
-                    environment: inBandRadiance(settings.environmentTemperatureK, response)}, response);
-                emission[index] = gray.total.photon;
-                reflectedSun[index] = (1 - attributes.emissivity) * solarIrradiance({}, response).photon * settings.solarScale / Math.PI;
-            });
+            const spectrum = this._surfaceSpectrum(attributes, settings);
+            const {emission, reflectedSun} = spectrum;
             const thermal = sourceRangeLUT(this.rangeLUT, emission);
             const rgba = new Float32Array(this.rangeLUT.size * 4);
             for (let sample = 0; sample < this.rangeLUT.size; sample++) {
@@ -538,10 +575,11 @@ export class ThermalPipeline {
             } catch (error) {
                 pass.dispose(); this._removeTexture(texture); throw error;
             }
-            surface = {texture, material: pass};
+            surface = {texture, material: pass, spectrum};
             this.resources.surfaces.set(key, surface);
         }
         surface.used = true;
+        if (surface.spectrum) surface.spectrum.used = true;
         surface.material.uniforms.sunViewDirection.value = sunDirection;
         return surface.material;
     }
@@ -604,27 +642,43 @@ export class ThermalPipeline {
     // each tile, so foreground occlusion and background replacement remain correct.
     _coverageTiles(meshes, camera, settings) {
         const tiles = new Map();
+        // The surface skip and the tile budget bound the cost of an interactive frame. Analysis and offline renders
+        // keep the complete refinement, so their results do not change.
+        const interactive = !this.analysis && !this.synchronous;
         for (const mesh of meshes) {
             if (!mesh.geometry.attributes.position) continue;
+            // Ground and sea are extended backgrounds. Edge-on near the horizon a surface tile is thin enough to
+            // qualify, and each refinement tile redraws the whole scene, so surfaces are not refined interactively.
+            if (interactive && this.radianceAdapter?.isSurface?.(mesh)) continue;
             const bounds = new Box3().setFromBufferAttribute(mesh.geometry.attributes.position);
             const instances = mesh.isInstancedMesh ? mesh.count : 1;
             for (let instance = 0; instance < instances; instance++) {
                 const world = mesh.matrixWorld.clone();
                 if (mesh.isInstancedMesh) { const transform = new Matrix4(); mesh.getMatrixAt(instance, transform); world.multiply(transform); }
                 let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity, crossesNear = false;
+                let maxRangeM = 0, behind = 0, outLeft = 0, outRight = 0, outBelow = 0, outAbove = 0, outFar = 0;
+                // Combine transforms in CPU double precision before GPU-sized coordinates.
+                const toCamera = new Matrix4().multiplyMatrices(camera.matrixWorldInverse, world);
                 for (const x of [bounds.min.x, bounds.max.x]) for (const y of [bounds.min.y, bounds.max.y]) for (const z of [bounds.min.z, bounds.max.z]) {
-                    // Combine transforms in CPU double precision before GPU-sized coordinates.
-                    const corner = new Vector3(x, y, z).applyMatrix4(new Matrix4().multiplyMatrices(camera.matrixWorldInverse, world));
+                    const corner = new Vector3(x, y, z).applyMatrix4(toCamera);
                     if (-corner.z < camera.near) crossesNear = true;
-                    if (!this.radianceAdapter?.allowRangeClamping?.(mesh) && corner.length() > (this.rangeLUT?.maxRangeM ?? settings.atmosphereMaxRangeM) && settings.atmosphereEnabled)
-                        throw new RangeError(`Thermal mesh ${mesh.name || mesh.id} exceeds atmospheric range table (${this.rangeLUT?.maxRangeM ?? settings.atmosphereMaxRangeM} m)`);
+                    if (-corner.z <= 0) behind++;
+                    maxRangeM = Math.max(maxRangeM, corner.length());
                     this.radianceAdapter?.projectPoint?.(corner, camera);
                     corner.applyMatrix4(camera.projectionMatrix);
+                    outLeft += corner.x < -1; outRight += corner.x > 1; outBelow += corner.y < -1; outAbove += corner.y > 1; outFar += corner.z > 1;
                     const column = (corner.x + 1) * settings.detectorWidth / 2;
                     const row = (corner.y + 1) * settings.detectorHeight / 2;
                     minX = Math.min(minX, column); maxX = Math.max(maxX, column);
                     minY = Math.min(minY, row); maxY = Math.max(maxY, row);
                 }
+                // A mesh wholly outside the image (every corner beyond one edge, behind the camera or past the far
+                // plane, after the same apparent-position correction) draws nothing, so it needs neither coverage
+                // nor range validation: a far object elsewhere in the scene must not stop the frame. A box that
+                // straddles an edge or the camera plane is kept.
+                if (behind === 8 || (behind === 0 && [outLeft, outRight, outBelow, outAbove, outFar].includes(8))) continue;
+                if (!this.radianceAdapter?.allowRangeClamping?.(mesh) && maxRangeM > (this.rangeLUT?.maxRangeM ?? settings.atmosphereMaxRangeM) && settings.atmosphereEnabled)
+                    throw new RangeError(`Thermal mesh ${mesh.name || mesh.id} exceeds atmospheric range table (${this.rangeLUT?.maxRangeM ?? settings.atmosphereMaxRangeM} m)`);
                 if (crossesNear || Math.min(maxX - minX, maxY - minY) > 2) continue;
                 const left = Math.max(0, Math.floor((minX - 1) / COVERAGE_TILE) * COVERAGE_TILE);
                 const bottom = Math.max(0, Math.floor((minY - 1) / COVERAGE_TILE) * COVERAGE_TILE);
@@ -635,7 +689,9 @@ export class ThermalPipeline {
                         Math.min(COVERAGE_TILE, settings.detectorHeight - row)]);
             }
         }
-        return tiles.values();
+        const all = [...tiles.values()], limit = interactive ? COVERAGE_TILE_LIMIT : Infinity;
+        this.coverageReport = {tiles: all.length, refined: Math.min(all.length, limit), limit};
+        return all.slice(0, limit);
     }
 
     _radiance(scene, camera, settings, target, sky) {
@@ -644,6 +700,7 @@ export class ThermalPipeline {
         const sun = new Vector3(settings.sunDirectionX, settings.sunDirectionY, settings.sunDirectionZ)
             .normalize().transformDirection(camera.matrixWorldInverse);
         for (const surface of this.resources.surfaces.values()) surface.used = false;
+        for (const spectrum of this.resources.surfaceSpectra?.values() ?? []) spectrum.used = false;
         try {
             scene.background = null;
             scene.overrideMaterial = null;
@@ -724,26 +781,64 @@ export class ThermalPipeline {
             for (const [key, surface] of this.resources.surfaces) if (!surface.used) {
                 surface.material.dispose(); this._removeTexture(surface.texture); this.resources.surfaces.delete(key);
             }
+            // Bound CPU cache lifetime to spectra used by the current scene.
+            // dispose() releases these arrays with the owning resources object.
+            for (const [key, spectrum] of this.resources.surfaceSpectra ?? [])
+                if (!spectrum.used) this.resources.surfaceSpectra.delete(key);
+            if (!this.resources.surfaces.size) this.resources.surfaceIllumination = null;
             scene.background = savedBackground;
             scene.overrideMaterial = savedOverride;
             target.viewport.set(0, 0, target.width, target.height);
         }
     }
 
+    // Calculated reuse error: zero detector/display texels change. Only a completed,
+    // settled interactive sample is eligible; queued redundant gain readbacks do not
+    // need another settle once this frame's statistics have already been applied.
+    _reuseState(frame) {
+        if (this.analysis || this.synchronous || !this.hasFrame || !this.lastFrame ||
+            this.lastFrame.held || !this.resources?.targets.has("display") || this.pendingOptics || this.opticsScheduler?.pending ||
+            this.rangeCache?.pending || this.skyCache?.pending || this.gainSettle != null) return null;
+        // Automatic gain must have settled on this frame's statistics of the scene now shown (see _gainParameters).
+        if (["automatic", "plateau"].includes(this.settings?.gainMode) &&
+            (this.gainReport?.settled !== true || this.gainReport.statisticsFrame !== frame)) return null;
+        return [this.opticsScheduler?.domain, this.rangeCache?.domain, this.skyCache?.cached,
+            this.activeKernels, this.skyTable, this.gainParameters];
+    }
+
     /** scene geometry and camera positions are meters. settings use thermalSchema.js.
      * skyUp is optional local up in camera coordinates (array or Vector3).
      * target is an output render target, null for the canvas; frame is an integer index.
+     * reuseKey is an opaque string covering all image inputs; null disables reuse.
+     * holdFrame: true during playback; a draw inside a frame that already rendered shows that frame's image.
+     * Analysis and synchronous renders always evaluate the complete pipeline.
      * All internal targets are Float32; final output is normalized 8-bit display drive.
      */
     render({scene, camera, settings: input = {}, sounding = null, skyUp = null, target = null, frame = 0,
-        radianceAdapter = null, presentation = null, psfRangeM = undefined}) {
+        radianceAdapter = null, presentation = null, psfRangeM = undefined, reuseKey = null, holdFrame = false}) {
         const renderStart = performance.now();
         if (this.disposed) throw new Error("ThermalPipeline has been disposed");
         if (!scene || !camera) throw new TypeError("ThermalPipeline requires a scene and camera");
         if (!Number.isInteger(frame) || frame < 0 || frame > 4294967295) throw new RangeError("Thermal frame must be an unsigned 32-bit integer");
-        const settings = normalizeSettings(psfRangeM === undefined ? input : {...input, psfRangeM});
         this._initialize();
-        this.renderSerial++; this.cpuStages = {};
+        // A sensor delivers one image per frame. During playback a host can draw several times inside one frame;
+        // re-rendering would restart that frame's temporal filter and gain, so those draws show the frame's image.
+        const hold = holdFrame === true && !this.analysis && !this.synchronous && this.hasFrame &&
+            this.lastFrame?.frame === frame && !this.lastFrame.held;
+        const reuseState = this._reuseState(frame), completed = this.completedReuse;
+        const reuse = hold || typeof reuseKey === "string" && completed?.key === reuseKey &&
+            completed.frame === this.lastFrame && this.lastFrame.frame === frame &&
+            reuseState && completed.state && reuseState.every((value, i) => value === completed.state[i]);
+        const settings = reuse ? this.settings : normalizeSettings(psfRangeM === undefined ? input : {...input, psfRangeM});
+        if (!reuse) {
+            this.completedReuse = null;
+            if (this.lastFrame) this.lastFrame.reused = false;
+            this.renderSerial++;
+            // The host's scene identity for this interactive render; gain samples carry it so that statistics recorded
+            // before a paused edit never count as this scene's own. Analysis and synchronous renders ignore it.
+            this.renderSceneKey = typeof reuseKey === "string" && !this.analysis && !this.synchronous ? reuseKey : null;
+        }
+        this.cpuStages = {};
         this.gpuTimer?.poll();
         const renderer = this.renderer;
         const saved = {target: renderer.getRenderTarget(), cubeFace: renderer.getActiveCubeFace(), mip: renderer.getActiveMipmapLevel(),
@@ -757,6 +852,11 @@ export class ThermalPipeline {
             // Surface programs belong to their host adapter for the pipeline lifetime.
             this.radianceAdapter = radianceAdapter;
             renderer.autoClear = false; renderer.shadowMap.enabled = false; renderer.xr.enabled = false;
+            if (reuse) {
+                this._present(this.settings, presentation, target);
+                this.lastFrame.reused = true;
+                return;
+            }
             const width = settings.detectorWidth, height = settings.detectorHeight, factor = settings.supersample;
             const fineWidth = width * factor, fineHeight = height * factor;
             const thermalCamera = this._camera(camera, settings);
@@ -811,11 +911,20 @@ export class ThermalPipeline {
                 frame, noiseSeed: settings.noiseSeed, imageWidth: width}, counts));
             const historyKey = temporalHistoryKey(settings);
             const previous = this.temporalState;
-            const temporalReset = !previous || previous.key !== historyKey || frame <= previous.frame;
-            const memory = temporalReset ? 0 : settings.temporalFilterAlpha ** (frame - previous.frame);
-            const filtered = this._target(previous?.target === this.resources.targets.get("temporalA") ? "temporalB" : "temporalA", width, height);
+            // A re-render of the same frame and the same host scene (for example the render that settles the gain)
+            // repeats that frame's temporal step from the history it started from, so it shows the same image. An
+            // edited scene, a backward seek or a host without a scene identity still resets, so paused edits
+            // respond without ghosting.
+            const repeat = !!previous && previous.key === historyKey && frame === previous.frame &&
+                this.renderSceneKey != null && previous.sceneKey === this.renderSceneKey;
+            const temporalBase = repeat ? previous.base :
+                previous && previous.key === historyKey && frame > previous.frame ? {frame: previous.frame, target: previous.target} : null;
+            const temporalReset = !temporalBase;
+            const memory = temporalBase ? settings.temporalFilterAlpha ** (frame - temporalBase.frame) : 0;
+            const filtered = repeat ? previous.target :
+                this._target(previous?.target === this.resources.targets.get("temporalA") ? "temporalB" : "temporalA", width, height);
             this._stage("temporal", () => this._pass("temporal", shaders.temporalFragment, {tInput: counts.texture,
-                tPrevious: memory ? previous.target.texture : counts.texture, memory}, filtered));
+                tPrevious: memory ? temporalBase.target.texture : counts.texture, memory}, filtered));
             const gainKey = JSON.stringify([historyKey, settings.agcDynamics, settings.agcTimeConstantS, width, height, settings.gainMode, settings.sensorPreset,
                 settings.gainRegion, settings.gainRegion === "displayed" ? [settings.digitalZoom, detectorPresentation(settings, presentation)] : null,
                 settings.lowPercentile, settings.highPercentile, settings.minimumWindowCounts]);
@@ -858,9 +967,9 @@ export class ThermalPipeline {
                 polarityAffine: [settings.polarityAffineGain, settings.polarityAffineOffset],
                 blackHot: settings.polarity === "blackHot"}, display));
             this._present(settings, presentation, target);
-            this.temporalState = {frame, key: historyKey, target: filtered};
+            this.temporalState = {frame, key: historyKey, target: filtered, base: temporalBase, sceneKey: this.renderSceneKey};
             this.window = parameters.window; this.gainKey = gainKey; this.lastFrame = {frame, integrationTimeS,
-                opticsCache: this.opticsReport, rangeCache: this.rangeReport,
+                opticsCache: this.opticsReport, rangeCache: this.rangeReport, coverage: this.coverageReport ?? null,
                 psfSpectrum: this.psfSpectrum, detectorWindow: settings.detectorWindow,
                 temporal: {alpha: settings.temporalFilterAlpha, memory, reset: temporalReset},
                 opticalSampling: settings.opticalSampling, atmosphere: this.atmosphereProfile,
@@ -875,6 +984,9 @@ export class ThermalPipeline {
                 scatter: {...this.scatterSplit, farFFTWidth: this.scatterSplit.farMass ? this.farWidth : 0,
                     farFFTHeight: this.scatterSplit.farMass ? this.farHeight : 0}};
             this.settings = settings; this.hasFrame = true;
+            this.lastFrame.reused = false;
+            this.completedReuse = {key: typeof reuseKey === "string" ? reuseKey : null,
+                frame: this.lastFrame, state: this._reuseState(frame)};
         } finally {
             this.radianceAdapter = saved.radianceAdapter;
             renderer.autoClear = saved.autoClear; renderer.shadowMap.enabled = saved.shadow; renderer.xr.enabled = saved.xr;
@@ -916,28 +1028,70 @@ export class ThermalPipeline {
         }
         this.gainReadback ??= new FencedReadback(this.renderer.getContext());
         const ready = this.gainReadback.poll();
-        const usable = ready?.key === gainKey && ready.serial === this.renderSerial - 1 && ready.frame <= frame;
+        // A re-render of the same frame or a backward seek recomputes the window from this frame's own
+        // statistics, as an analysis render does. An advancing frame applies the newest unused sample of an
+        // earlier frame (normally the previous render's). A sample applies once, in render order, never across
+        // a gain-key change and never from a later frame.
+        const revisit = !!this.lastFrame && frame <= this.lastFrame.frame;
+        const usable = ready?.key === gainKey && ready.serial > (this.gainSample?.serial ?? 0) &&
+            (revisit ? ready.frame === frame : ready.frame <= frame);
+        const historyValid = !reset && this.gainHistoryKey === gainKey;
         let parameters;
-        const historyValid = !reset && this.gainParametersKey === gainKey;
         if (usable) {
+            // Elapsed time runs from the frame where the last sample applied, so held renders do not slow the response.
+            const elapsedS = historyValid ? (frame - this.gainSample.appliedFrame) / settings.frameRateHz : deltaTimeS;
             parameters = processingParameters(ready.counts, settings, historyValid ? this.window : null,
-                deltaTimeS, width, height, presentation);
-            this.gainParameters = parameters; this.gainParametersKey = gainKey;
+                elapsedS, width, height, presentation);
+            this.gainParameters = parameters; this.gainParametersKey = gainKey; this.gainHistoryKey = gainKey;
+            this.gainSample = {serial: ready.serial, frame: ready.frame, appliedFrame: frame};
         } else {
-            // No synchronous bootstrap. Hold the last valid window, or display
-            // the full ADC interval until the first fenced sample is available.
-            parameters = historyValid && this.gainParameters ? this.gainParameters :
+            // No synchronous bootstrap. Hold the last valid window, also through a re-render or a seek, where it
+            // is the best estimate until this frame's statistics arrive. Show the full ADC interval only before
+            // the first sample and after a gain-key change: a re-render must not switch to a different picture.
+            parameters = this.gainParametersKey === gainKey && this.gainParameters ? this.gainParameters :
                 {window: {low: 0, high: 16383}, lut: null, statisticsCount: 0};
-            if (!historyValid) this.gainParametersKey = null;
+            if (!historyValid) this.gainHistoryKey = null;
         }
+        const sceneTag = this.renderSceneKey == null ? null : `${this.renderSceneKey}#${this._imageStateEpoch()}`;
         const staging = this._target("gainReadback", width, height);
         const queued = this._stage("gainReadback", () => {
             this._pass("readback", shaders.copyFragment, {tInput: filtered.texture}, staging);
-            return this.gainReadback.enqueue(width, height, {serial: this.renderSerial, key: gainKey, frame});
+            return this.gainReadback.enqueue(width, height, {serial: this.renderSerial, key: gainKey, frame, scene: sceneTag});
         });
-        this.gainReport = {mode: "fenced", latencyFrames: usable ? 1 : null, held: !usable,
-            queued, missedDeadline: !usable && this.renderSerial > 1};
+        // Settled: the window came from statistics of this frame and, when the host identifies its scene, of the
+        // image now shown: the same scene and the same optics, range and sky state. A paused edit or newly arrived
+        // kernels change that identity, so samples taken before do not settle the view. A host that renders on
+        // demand may not render again, so ask for one more render once this render's samples are ready. Without a
+        // scene identity the frame match is the only test available.
+        const settled = !!usable && ready.frame === frame && (sceneTag == null || ready.scene === sceneTag);
+        if (!settled) this._settleGain();
+        this.gainReport = {mode: "fenced", latencyFrames: usable ? this.renderSerial - ready.serial : null, held: !usable,
+            queued, missedDeadline: !usable && this.renderSerial > 1, statisticsFrame: this.gainSample?.frame ?? null, settled};
         return parameters;
+    }
+
+    // Counts changes of the prepared state that shapes the image beyond the host's scene: kernels, interpolation
+    // domains and sky table. Any change starts a new epoch, so gain samples rendered before it cannot settle.
+    _imageStateEpoch() {
+        const state = [this.activeKernels, this.opticsScheduler?.domain, this.rangeCache?.domain, this.skyCache?.cached, this.skyTable];
+        if (!this.imageState || state.some((value, i) => value !== this.imageState[i])) {
+            this.imageState = state; this.imageStateEpochCount = (this.imageStateEpochCount ?? 0) + 1;
+        }
+        return this.imageStateEpochCount;
+    }
+
+    _settleGain() {
+        // Only the newest render waits; its sample is the one that settles the view.
+        clearTimeout(this.gainSettle);
+        const serial = this.renderSerial;
+        const check = () => {
+            this.gainSettle = null;
+            // A newer render has its own sample in flight; nothing is waiting any more.
+            if (this.disposed || this.renderSerial !== serial || !this.gainReadback?.pending?.length) return;
+            if (this.gainReadback.signaled?.()) this.onReady();
+            else this.gainSettle = setTimeout(check, 16);
+        };
+        this.gainSettle = setTimeout(check, 16);
     }
 
     // Read R, bottom row first, no normalization or color conversion.
@@ -988,8 +1142,9 @@ export class ThermalPipeline {
         return {image: this._read(target), width: target.width, height: target.height};
     }
     dispose() {
+        clearTimeout(this.gainSettle); this.gainSettle = null;
         this.gainReadback?.dispose(); this.gpuTimer?.dispose();
-        this.opticsScheduler?.dispose(); this.rangeCache?.dispose();
+        this.opticsScheduler?.dispose(); this.rangeCache?.dispose(); this.skyCache?.dispose?.();
         this.pendingOptics = null; this.activeKernels = null; this.opticalCache = null; this.skyCache = null;
         this.cloudPass?.dispose(); this.cloudPass = null;
         if (this.resources) {
@@ -1148,6 +1303,11 @@ export class FencedReadback {
             pack.forEach((name, i) => gl.pixelStorei(name, saved[i]));
             gl.bindBuffer(gl.PIXEL_PACK_BUFFER, binding);
         }
+    }
+    /** True when the oldest in-flight readback has completed; it is not consumed. */
+    signaled() {
+        const item = this.pending[0], gl = this.gl;
+        return !!item && gl.getSyncParameter(item.fence, gl.SYNC_STATUS) === gl.SIGNALED;
     }
     poll() {
         const gl = this.gl; let latest = null;

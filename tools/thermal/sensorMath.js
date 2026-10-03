@@ -353,7 +353,7 @@ export const DISPLAY_MAX = 255;
 export function validateImage(image, width = image?.length, height = 1) {
     if (!(image instanceof Float32Array) || image.length !== width * height || !image.length)
         throw new RangeError("Expected a nonempty Float32Array with matching image dimensions");
-    for (const value of image) if (!Number.isFinite(value)) throw new RangeError("Image contains a non-finite value");
+    for (let i = 0; i < image.length; i++) if (!Number.isFinite(image[i])) throw new RangeError("Image contains a non-finite value");
 }
 
 /** settings use the thermal schema's SI units. Return electrons/pixel/exposure per
@@ -511,6 +511,49 @@ export function detectorCounts(radiance, settings, frame = 0) {
 export function manualGainLevel(counts, gain = 1, level = ADC_MAX / 2) {
     return Float32Array.from(counts, value => clamp((value - level) * gain / ADC_MAX + 0.5));
 }
+// Calculated exact ordering: complement negative Float32 words and flip the
+// sign bit of nonnegative words. Unsigned keys then have the same order as the
+// numeric typed-array sort, including -0 before +0. Two 16-bit histogram passes
+// select both ranks in O(samples + 65536), without rounding fractional counts.
+// Scratch is private to these synchronous calls, fully cleared before reuse,
+// and never returned. Calculated reuse error is zero; no frame data is cached.
+const percentileHigh = new Float64Array(65536);
+const percentileLow = new Float64Array(65536);
+const percentileUpper = new Float64Array(65536);
+const percentileWord = new Uint32Array(1);
+const percentileValue = new Float32Array(percentileWord.buffer);
+
+function histogramRank(histogram, rank) {
+    let bin = 0;
+    while (rank >= histogram[bin]) rank -= histogram[bin++];
+    return {bin, rank};
+}
+
+function percentileCounts(counts, lowRank, highRank) {
+    const words = new Uint32Array(counts.buffer, counts.byteOffset, counts.length);
+    percentileHigh.fill(0);
+    for (let i = 0; i < words.length; i++) {
+        const word = words[i];
+        percentileHigh[(word & 0x80000000 ? ~word : word ^ 0x80000000) >>> 16]++;
+    }
+    const low = histogramRank(percentileHigh, lowRank);
+    const high = histogramRank(percentileHigh, highRank);
+    percentileLow.fill(0);
+    percentileUpper.fill(0);
+    for (let i = 0; i < words.length; i++) {
+        const word = words[i], key = word & 0x80000000 ? ~word : word ^ 0x80000000;
+        const bin = key >>> 16;
+        if (bin === low.bin) percentileLow[key & 65535]++;
+        else if (bin === high.bin) percentileUpper[key & 65535]++;
+    }
+    const lowKey = (low.bin << 16) | histogramRank(percentileLow, low.rank).bin;
+    const highKey = (high.bin << 16) | histogramRank(high.bin === low.bin ? percentileLow : percentileUpper, high.rank).bin;
+    percentileWord[0] = lowKey & 0x80000000 ? lowKey ^ 0x80000000 : ~lowKey;
+    const lowCount = percentileValue[0];
+    percentileWord[0] = highKey & 0x80000000 ? highKey ^ 0x80000000 : ~highKey;
+    return [lowCount, percentileValue[0]];
+}
+
 /** Count image -> low/high count endpoints. Percentiles in [0,1], times in seconds.
  * previous is null or {low,high}; a zero delta preserves an existing window exactly.
  */
@@ -520,9 +563,9 @@ export function automaticWindow(counts, {lowPercentile = 0.01, highPercentile = 
     if (!(lowPercentile >= 0 && highPercentile <= 1 && highPercentile > lowPercentile &&
         minimumSpan > 0 && Number.isFinite(minimumSpan) && timeConstantS >= 0 && Number.isFinite(timeConstantS) &&
         deltaTimeS >= 0 && Number.isFinite(deltaTimeS))) throw new RangeError("Invalid automatic window controls");
-    const sorted = counts.slice().sort();
-    const low = sorted[Math.floor(lowPercentile * (sorted.length - 1))];
-    const high = Math.max(sorted[Math.floor(highPercentile * (sorted.length - 1))], low + minimumSpan);
+    const [low, upper] = percentileCounts(counts, Math.floor(lowPercentile * (counts.length - 1)),
+        Math.floor(highPercentile * (counts.length - 1)));
+    const high = Math.max(upper, low + minimumSpan);
     const alpha = previous ? (deltaTimeS === 0 ? 0 : timeConstantS === 0 ? 1 : -Math.expm1(-deltaTimeS / timeConstantS)) : 1;
     if (previous && dynamics === "gainOffset") {
         // Calculated affine map: drive = gain * counts + offset. Video recovery
@@ -549,7 +592,11 @@ export function plateauLUT(drive, plateauFactor = 4, bins = 256, countLevels = f
     validateImage(drive);
     if (!(plateauFactor > 0 && Number.isFinite(plateauFactor) && Number.isInteger(bins) && bins >= 2)) throw new RangeError("Invalid plateau controls");
     const histogram = new Float64Array(bins), lut = new Float32Array(bins);
-    for (const value of drive) histogram[countLevels ? Math.round(clamp(value, 0, bins - 1)) : Math.floor(clamp(value) * (bins - 1))]++;
+    if (countLevels) {
+        for (let i = 0; i < drive.length; i++) histogram[Math.round(clamp(drive[i], 0, bins - 1))]++;
+    } else {
+        for (let i = 0; i < drive.length; i++) histogram[Math.floor(clamp(drive[i]) * (bins - 1))]++;
+    }
     const cap = plateauFactor * drive.length / bins;
     let total = 0, first = 0, found = false;
     for (let bin = 0; bin < bins; bin++) {

@@ -19,7 +19,7 @@
 import {Globals, guiMenus, setRenderOne, Sit} from "../Globals";
 import {GlobalScene} from "../LocalFrame";
 import {REFRACTION_DEFAULTS} from "./refraction";
-import {Vector3} from "three";
+import {Object3D, Vector3} from "three";
 import {
     cullLoftedObjects,
     liftWorldPoint,
@@ -123,6 +123,11 @@ export function installTerrestrialRefractionSceneHook(scene) {
             cullLoftedObjects(_loftedObjects, camera, terrestrialLiftContext(_cameraPosition, opts));
         }
     };
+    // The uniforms follow the camera and the refraction options, which a thermal reuse key includes; the sweep
+    // only changes frustum culling, which the thermal radiance pass turns off for every mesh. A thermal frame with
+    // unchanged inputs may therefore be reused through this hook.
+    scene.onBeforeRender.thermalReuseSafe = () => typeof previous !== "function" ||
+        previous === Object3D.prototype.onBeforeRender || previous.thermalReuseSafe?.() === true;
     _sceneHookInstalled = scene;
 }
 

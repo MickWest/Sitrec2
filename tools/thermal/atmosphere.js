@@ -592,6 +592,57 @@ export function createSkyElevationLUT({view, elevationRange, toleranceK, relativ
             validation: "interval midpoints; photons/(s m² sr)"}};
 }
 
+// Interactive cooperative construction uses the same integration. A calculated
+// coordinate translation lets altitude rows share identical angular knots, so
+// subtracting different horizons cannot create almost-duplicate validation nodes.
+// The reference builder above remains unchanged.
+function* cooperativeSkyElevationLUT({view, elevationRange, toleranceK, relativeTolerance = 2e-5, maxSamples = 2049, initialSamples = 65, coordinateOriginRad = 0, ...options}, atmosphere = createAtmosphere()) {
+    const range = elevationRange ?? skyElevationRange(view), {minRad, maxRad, centerRad} = range;
+    const radius = options.earthRadiusM ?? EARTH_RADIUS_M;
+    const horizonRad = (options.rayGeometry?.horizonRad ?? -Math.acos(radius / (radius + options.sensorAltitudeM)))-coordinateOriginRad;
+    const at = e => backgroundAtElevation(e+coordinateOriginRad, options, atmosphere).photonRadiance;
+    const nodes = [];
+    for (let i = 0; i < initialSamples; i++) {
+        const e = minRad + (maxRad - minRad) * i / (initialSamples - 1);
+        if (Math.abs(e - horizonRad) > 1e-12) {nodes.push({e, value: at(e)}); yield;}
+    }
+    if (Math.abs(centerRad - horizonRad) > 1e-12) {nodes.push({e: centerRad, value: at(centerRad)}); yield;}
+    if (horizonRad >= minRad && horizonRad <= maxRad) {
+        nodes.push({e: horizonRad, value: at(Math.max(-Math.PI / 2-coordinateOriginRad, horizonRad - 1e-8))}); yield;
+        nodes.push({e: horizonRad, value: at(Math.min(Math.PI / 2-coordinateOriginRad, horizonRad + 1e-8))}); yield;
+    }
+    nodes.sort((a, b) => a.e - b.e);
+    const unique = nodes.filter((node, i) => i === 0 || node.e !== nodes[i - 1].e || node.e === horizonRad);
+    const positive = unique.map(n => n.value).filter(value => value > 0);
+    // Vacuum sky is identically zero on its separate horizon branch. It has no
+    // interpolation error and must not supply a zero Planck slope for the sea.
+    const inverseSlope = toleranceK && positive.length ? brightnessErrorBound(1, Math.min(...positive) * .99,
+        options.band ?? {minUm: 3, maxUm: 5}, toleranceK) : 0;
+    let sampleCount = unique.length, maxRelativeError = 0, maxAbsoluteError = 0;
+    const refined = [unique[0]];
+    function* interval(a, b, depth) {
+        if (b.e === a.e) { refined.push(b); return; }
+        const e = (a.e + b.e) / 2, value = at(e); yield;
+        const error = Math.abs(value - (a.value + b.value) / 2), relative = error / Math.max(value, 1);
+        if ((toleranceK ? error * inverseSlope > toleranceK : relative > relativeTolerance) && sampleCount < maxSamples && depth < 20) {
+            sampleCount++;
+            const mid = {e, value}; yield* interval(a, mid, depth + 1); yield* interval(mid, b, depth + 1);
+        } else {
+            maxRelativeError = Math.max(maxRelativeError, relative);
+            maxAbsoluteError = Math.max(maxAbsoluteError, error); refined.push(b);
+        }
+    }
+    for (let i = 1; i < unique.length; i++) yield* interval(unique[i - 1], unique[i], 0);
+    const elevations = Float64Array.from(refined, node => node.e);
+    const photonRadiances = Float64Array.from(refined, node => node.value);
+    return {elevations, photonRadiances, sampleCount: refined.length, horizonRad, ...range,
+        photonRadianceRange: [Math.min(...photonRadiances), Math.max(...photonRadiances)],
+        interpolation: {status: "calculated", maxRelativeError, maxAbsoluteError, relativeTolerance,
+            ...(toleranceK ? {maxErrorK: maxAbsoluteError * inverseSlope, toleranceK} : {}),
+            toleranceMet: toleranceK ? maxAbsoluteError * inverseSlope <= toleranceK : maxRelativeError <= relativeTolerance,
+            validation: "interval midpoints; photons/(s m² sr)"}};
+}
+
 /** Linear radiance interpolation with an upper-bound search at the horizon. */
 export function sampleSkyElevationLUT(table, elevationRad) {
     const e = clamp(elevationRad, table.minRad, table.maxRad), {elevations, photonRadiances} = table;
@@ -1335,44 +1386,217 @@ export function createThermalDepthTable(geometry, minElevationRad) {
         sampleCount: nodes.length, horizonRad: horizon, maxErrorM};
 }
 
-/** Calculated angular cache: the entire padded interval is checked in photon
- * radiance. A moving pose samples that interval, rather than freezing its center.
- * Estimated padding .002 rad or 1/4 field keeps the validation domain local.
+// Estimated shared scheduling policy: a 24 ms burst per 50 ms. Larger bursts
+// make progress between busy frames while retaining a similar average CPU budget.
+// A single queue prevents independent range and sky jobs from doubling a slice.
+const thermalBuildJobs = [];
+let thermalBuildTimer, thermalBuildRunning = false;
+function scheduleThermalBuild(owner, steps, publish) {
+    const job = {owner, steps, publish, started: performance.now()};
+    owner.pending = job; thermalBuildJobs.push(job);
+    const advance = () => {
+        thermalBuildTimer = null; thermalBuildRunning = true;
+        const started = performance.now(), work = new Map();
+        do {
+            const next = thermalBuildJobs.shift();
+            if (!next) break;
+            const {owner} = next;
+            if (owner.disposed || owner.pending !== next) continue;
+            const before = performance.now();
+            try {
+                let result;
+                // Share CPU time, not yield counts: a sky validation step can
+                // contain more integrations than one range sample.
+                const quantum = Math.min(started+24, before+4);
+                do {result = next.steps.next();} while (!result.done && performance.now() < quantum);
+                if (result.done) {
+                    owner.pending = null; owner.buildWallMs = performance.now()-next.started;
+                    next.publish(result.value);
+                } else thermalBuildJobs.push(next);
+            } catch (error) {
+                owner.error = error; owner.errorKey = next.key; owner.errorAtmosphere = next.atmosphere;
+                owner.pending = null; owner.onReady?.();
+            }
+            work.set(owner, (work.get(owner) ?? 0)+performance.now()-before);
+        } while (thermalBuildJobs.length && performance.now()-started < 24);
+        for (const [owner, ms] of work) {
+            owner.workMs = (owner.workMs ?? 0)+ms; owner.maxSliceMs = Math.max(owner.maxSliceMs ?? 0, ms);
+        }
+        thermalBuildRunning = false;
+        if (thermalBuildJobs.length) {
+            thermalBuildTimer = setTimeout(advance, Math.max(1, 50-(performance.now()-started)));
+            thermalBuildTimer.unref?.();
+        }
+    };
+    if (!thermalBuildTimer && !thermalBuildRunning) {thermalBuildTimer = setTimeout(advance, 0); thermalBuildTimer.unref?.();}
+    return job;
+}
+
+const SKY_HEIGHTS = [-1, -1/3, 1/3, 1];
+const SKY_PADDING_RAD = .024; // estimated angular prefetch margin
+const skyHorizon = (options, h) => {
+    const radius = options.earthRadiusM ?? EARTH_RADIUS_M;
+    return -Math.acos(radius/(radius+h));
+};
+
+/** Validated angular and altitude interpolation in photon radiance. The
+ * reference table builder remains independent of cooperative interactive work.
  */
 export class SkyBackgroundCache {
+    constructor(onReady = () => {}) {this.onReady = onReady; this.builds = 0; this.fallbacks = 0; this.hits = 0;}
     table(options, atmosphere) {
         const requested = skyElevationRange(options.view);
-        const key = JSON.stringify([options.temperatureK, options.band,
-            options.rayGeometry?.domainKey ?? options.rayGeometry?.key]);
-        const cached = key === this.key && atmosphere === this.atmosphere ? this.cached : null;
-        const h = options.sensorAltitudeM;
-        const shift = cached ? (options.rayGeometry?.horizonRad ?? thermalHorizon(h)) - cached.horizonRad : 0;
+        const key = JSON.stringify([options.temperatureK, options.band, options.segments,
+            options.earthRadiusM, options.rayGeometry?.domainKey ?? options.rayGeometry?.key]);
+        const h = options.sensorAltitudeM, now = performance.now();
+        const compatible = key === this.key && atmosphere === this.atmosphere;
+        const dt = compatible && this.lastRequest && now - this.lastRequest.time;
+        const altitudeVelocity = dt > 0 ? (h-this.lastRequest.h)/dt : 0;
+        const velocity = dt > 0 ? (requested.centerRad-this.lastRequest.e)/dt : 0;
+        this.lastRequest = {h, e: requested.centerRad, time: now};
+        if (!compatible) {
+            this.pending = null;
+            this.domain = this.previousDomain = this.cached = this.sampled = null;
+            this.key = key; this.atmosphere = atmosphere; this.error = null;
+        }
+        const horizon = options.rayGeometry?.horizonRad ?? skyHorizon(options, h);
+        const minQ = requested.minRad-horizon, maxQ = requested.maxRad-horizon;
+        Object.assign(this.lastRequest, {minQ, maxQ});
+        const domain = [this.domain, this.previousDomain].find(d => d && Math.abs(h-d.h) <= d.dh &&
+            minQ >= d.minQ && maxQ <= d.maxQ);
+        const nearEdge = domain && (Math.abs(h-domain.h) > domain.dh/10 ||
+            Math.min(minQ-domain.minQ, domain.maxQ-maxQ) < SKY_PADDING_RAD-.002);
+        if ((!domain || nearEdge) && !this.pending && !this.disposed &&
+            (!options.rayGeometry || options.rayGeometry.atAltitude)) {
+            const lead = 1.5*(this.buildWallMs ?? 1000); // estimated publication margin, ms
+            const offset = domain ? clamp(altitudeVelocity*lead, -domain.dh/4, domain.dh/4) : 0;
+            // Estimated forecast caps keep validation from reaching a distant
+            // horizon branch merely because a previous busy build took longer.
+            const e = domain ? clamp(velocity*lead, -.004, .004) : 0;
+            const sensorAltitudeM = Math.max(0, h+offset);
+            this.start({...options, sensorAltitudeM,
+                rayGeometry: options.rayGeometry ? {...options.rayGeometry.atAltitude(sensorAltitudeM),
+                    atAltitude: height => options.rayGeometry.atAltitude(height)} : undefined,
+                elevationRange: {...requested, minRad: requested.minRad+e, maxRad: requested.maxRad+e,
+                    centerRad: requested.centerRad+e}}, atmosphere);
+        }
+        if (this.error) throw this.error;
+        if (domain) {
+            this.hits++;
+            if (this.sampled?.domain === domain && this.sampled.sensorAltitudeM === h) return this.sampled;
+            const weights = polynomialWeights(SKY_HEIGHTS, domain.dh ? (h-domain.h)/domain.dh : 0);
+            const elevations = Float64Array.from(domain.q, q => q+horizon);
+            const photonRadiances = Float64Array.from(domain.q, (_, i) =>
+                Math.max(0, weights.reduce((sum, w, j) => sum+w*domain.rows[j][i], 0)));
+            this.sampled = {domain, sensorAltitudeM: h, options, elevations, photonRadiances,
+                sampleCount: elevations.length, horizonRad: horizon, minRad: elevations[0], maxRad: elevations.at(-1),
+                centerRad: requested.centerRad, photonRadianceRange: [Math.min(...photonRadiances), Math.max(...photonRadiances)],
+                altitudeDomain: {minM: domain.h-domain.dh, maxM: domain.h+domain.dh,
+                    maxErrorK: domain.altitudeErrorK, toleranceK: .001, status: "validated"},
+                interpolation: {status: "validated", maxErrorK: domain.angularErrorK, toleranceK: .002,
+                    toleranceMet: true, validation: "angular midpoints; altitude interior probes; factor-two margin"}};
+            return this.sampled;
+        }
+        const cached = this.cached;
+        const shift = cached ? horizon - cached.horizonRad : 0;
+        // Preserve the validated small-shift fallback during cooperative warm-up.
         if (cached && h !== cached.sensorAltitudeM && !cached.altitudeDomain &&
-            Math.abs(h - cached.sensorAltitudeM) <= .05 && (!options.rayGeometry || options.rayGeometry.atAltitude))
+            Math.abs(h-cached.sensorAltitudeM) <= .05 && (!options.rayGeometry || options.rayGeometry.atAltitude))
             this.validateAltitude(cached, atmosphere);
         const altitudeFits = cached && (h === cached.sensorAltitudeM || cached.altitudeDomain &&
             h >= cached.altitudeDomain.minM && h <= cached.altitudeDomain.maxM);
-        if (altitudeFits && requested.minRad - shift >= cached.minRad && requested.maxRad - shift <= cached.maxRad)
-            return cached;
-        const padding = Math.max(.002, (requested.maxRad - requested.minRad) / 8);
-        const elevationRange = {...requested, minRad: Math.max(-Math.PI / 2, requested.minRad - padding),
-            maxRad: Math.min(Math.PI / 2, requested.maxRad + padding)};
-        // Estimated allocation: .002 K angular + .001 K altitude, with remaining
-        // .002 K reserved for sampled-validation and Float32 upload roundoff.
-        // Estimated coarse seed; adaptive validation retains the same radiance tolerance.
+        if (altitudeFits && requested.minRad-shift >= cached.minRad && requested.maxRad-shift <= cached.maxRad) {
+            this.hits++; return cached;
+        }
+        const padding = Math.max(.002, (requested.maxRad-requested.minRad)/8);
+        const elevationRange = {...requested, minRad: Math.max(-Math.PI/2, requested.minRad-padding),
+            maxRad: Math.min(Math.PI/2, requested.maxRad+padding)};
         const table = createSkyElevationLUT({...options, elevationRange, toleranceK: .002, initialSamples: 17}, atmosphere);
         if (!table.interpolation.toleranceMet) throw new Error("Sky interpolation did not meet its brightness tolerance");
+        this.fallbacks++;
         this.cached = {...table, sensorAltitudeM: h, options};
-        this.key = key; this.atmosphere = atmosphere;
         return this.cached;
     }
+    *build(options, atmosphere) {
+        const h = options.sensorAltitudeM, band = options.band ?? {minUm: 3, maxUm: 5};
+        const horizon = options.rayGeometry?.horizonRad ?? skyHorizon(options, h);
+        const requested = options.elevationRange ?? skyElevationRange(options.view);
+        // Estimated starting half-width 512 m; the angular padding is a work margin.
+        // The cubic altitude coordinate follows the exact horizon, with separate
+        // sea/sky endpoints. Validation halves the height span to the .001 K budget.
+        let dh = Math.min(512, h*.75);
+        for (let attempt = 0; attempt < 16; attempt++, dh /= 2) {
+            const heights = SKY_HEIGHTS.map(y => h+y*dh);
+            const geometries = heights.map(z => options.rayGeometry?.atAltitude(z));
+            const horizons = heights.map((z, i) => geometries[i]?.horizonRad ?? skyHorizon(options, z));
+            const minQ = Math.max(requested.minRad-horizon-SKY_PADDING_RAD, -Math.PI/2-Math.min(...horizons));
+            const maxQ = Math.min(requested.maxRad-horizon+SKY_PADDING_RAD, Math.PI/2-Math.max(...horizons));
+            const tables = [];
+            for (let j = 0; j < heights.length; j++) {
+                const elevationRange = {minRad: minQ, maxRad: maxQ,
+                    centerRad: clamp(requested.centerRad-horizon, minQ, maxQ)};
+                // Calculated cubic weight sum is at most 1.632; a factor of two
+                // reserves the original .002 K angular budget after blending.
+                const table = yield* cooperativeSkyElevationLUT({...options, sensorAltitudeM: heights[j], rayGeometry: geometries[j],
+                    elevationRange, coordinateOriginRad: horizons[j], toleranceK: .0006, initialSamples: 17}, atmosphere);
+                if (!table.interpolation.toleranceMet) throw new Error("Sky interpolation did not meet its brightness tolerance");
+                tables.push(table); yield;
+            }
+            const coords = [...new Set(tables.flatMap(t => Array.from(t.elevations)))].sort((a,b) => a-b);
+            // Duplicate the horizon once, preserving both one-sided limits.
+            if (minQ <= 0 && maxQ >= 0) coords.splice(coords.indexOf(0), 0, 0);
+            // Calculated upload limit: the shader's 12 binary-search steps
+            // resolve at most 4097 knots. Narrow height until the union fits.
+            if (coords.length > 4097) continue;
+            const side = i => coords[i] === 0 ? (i+1 < coords.length && coords[i+1] === 0 ? -1 : 1) : 0;
+            const rows = tables.map((t, j) => Float64Array.from(coords, (q, i) => {
+                if (side(i) === -1) return t.photonRadiances[Array.from(t.elevations).indexOf(t.horizonRad)];
+                return sampleSkyElevationLUT(t, q);
+            }));
+            const at = (q, branch, z, geometry, boundary) => backgroundAtElevation(q+boundary+branch*1e-8,
+                {...options, sensorAltitudeM: z, rayGeometry: geometry}, atmosphere).photonRadiance;
+            let absolute = 0, minimum = Infinity;
+            for (let i = 0; i < coords.length; i++) {
+                const probes = [[coords[i], side(i)]];
+                if (i && coords[i] > coords[i-1]) probes.push([(coords[i]+coords[i-1])/2, 0]);
+                for (const [q, branch] of probes) {
+                    const values = heights.map((z,j) => at(q, branch, z, geometries[j], horizons[j]));
+                    for (const y of [-.8, -.5, 0, .5, .8]) {
+                        const z = h+y*dh, geometry = options.rayGeometry?.atAltitude(z);
+                        const actual = at(q, branch, z, geometry, geometry?.horizonRad ?? skyHorizon(options, z));
+                        const weights = polynomialWeights(SKY_HEIGHTS, y);
+                        const predicted = weights.reduce((sum,w,j) => sum+w*values[j], 0);
+                        absolute = Math.max(absolute, Math.abs(actual-predicted));
+                        if (actual || predicted) minimum = Math.min(minimum, actual, predicted);
+                    }
+                    yield;
+                }
+            }
+            const altitudeErrorK = absolute === 0 ? 0 : 2*brightnessErrorBound(absolute, minimum, band, .001);
+            const positive = rows.flatMap(row => Array.from(row).filter(value => value > 0));
+            const angularErrorK = positive.length ? 2*brightnessErrorBound(
+                Math.max(...tables.map(t => t.interpolation.maxAbsoluteError)), Math.min(...positive)*.99, band, .002) : 0;
+            if (altitudeErrorK <= .001 && angularErrorK <= .002)
+                return {h, dh, minQ, maxQ, q: coords, rows, altitudeErrorK, angularErrorK};
+        }
+        throw new Error("Sky altitude interpolation did not converge");
+    }
+    start(options, atmosphere) {
+        scheduleThermalBuild(this, this.build(options, atmosphere), domain => {
+            const last = this.lastRequest;
+            this.previousDomain = [this.domain, this.previousDomain].find(d => d && last &&
+                Math.abs(last.h-d.h) <= d.dh && last.minQ >= d.minQ && last.maxQ <= d.maxQ) ?? this.domain;
+            this.domain = domain; this.builds++; this.onReady();
+        });
+    }
+    dispose() {this.disposed = true; this.pending = this.domain = this.previousDomain = null;}
     validateAltitude(table, atmosphere) {
         let span = Math.min(.05, table.sensorAltitudeM / 4);
         for (let attempt = 0; span > 0 && attempt < 16; attempt++, span /= 2) {
             let absolute = 0, minimum = Infinity;
             for (const h of [table.sensorAltitudeM - span, table.sensorAltitudeM + span]) {
                 const rayGeometry = table.options.rayGeometry?.atAltitude(h);
-                const shift = (rayGeometry?.horizonRad ?? thermalHorizon(h)) - table.horizonRad;
+                const shift = (rayGeometry?.horizonRad ?? skyHorizon(table.options, h)) - table.horizonRad;
                 for (let i = 0; i < table.sampleCount; i++) {
                     const points = [table.elevations[i]];
                     if (i && table.elevations[i] > table.elevations[i - 1]) points.push((table.elevations[i] + table.elevations[i - 1]) / 2);
@@ -1403,14 +1627,22 @@ export class SkyBackgroundCache {
 export const RANGE_TRANSMISSION_TOLERANCE = 1e-4;
 export const RANGE_PATH_TOLERANCE_K = .001;
 const ANGLES = [-1, -.6, -.2, .2, .6, 1]; // calculated equally spaced quintic nodes
+const HEIGHTS = [-1, -.6, -.2, .2, .6, 1]; // calculated quintic altitude nodes
+const polynomialWeights = (nodes, x) => nodes.map((node, i) =>
+    nodes.reduce((w, other, j) => i === j ? w : w*(x-other)/(node-other), 1));
 function blend(tables, x, y) {
-    const e = 2*x-1;
-    const angular = ANGLES.map((node, i) => ANGLES.reduce((w, other, j) => i === j ? w : w*(e-other)/(node-other), 1));
-    const weights = [...angular.map(w => w*(1-y)), ...angular.map(w => w*y)];
+    const angular = polynomialWeights(ANGLES, 2*x-1);
+    const weights = polynomialWeights(HEIGHTS, 2*y-1).flatMap(w => angular.map(a => a*w));
     const result = {...tables[0]};
-    for (const field of ["transmission", "pathRadiance"])
-        result[field] = Float32Array.from(tables[0][field], (_, i) => Math.max(0, Math.min(field === "transmission" ? 1 : Infinity,
-            weights.reduce((value, w, k) => value + w * tables[k][field][i], 0))));
+    for (const field of ["transmission", "pathRadiance"]) {
+        const arrays = tables.map(t => t[field]), output = new Float32Array(arrays[0].length);
+        for (let i = 0; i < output.length; i++) {
+            let value = 0;
+            for (let k = 0; k < weights.length; k++) value += weights[k]*arrays[k][i];
+            output[i] = Math.max(0, Math.min(field === "transmission" ? 1 : Infinity, value));
+        }
+        result[field] = output;
+    }
     return result;
 }
 
@@ -1418,48 +1650,101 @@ export class RangeTableCache {
     constructor(onReady = () => {}) {this.onReady = onReady;}
     request(options, atmosphere) {
         const key = JSON.stringify([options.surfaceLimited ? ["surface", options.rangeLimitM] : options.maxRangeM, options.size, options.band,
-            options.rayGeometry?.domainKey ?? options.rayGeometry?.key]);
+            options.rayGeometry?.domainKey ?? options.rayGeometry?.key, options.segments]);
+        if (this.error) {
+            if (this.errorKey === key && this.errorAtmosphere === atmosphere) throw this.error;
+            this.error = null;
+        }
         const h = options.sensorAltitudeM, e = options.elevationRad, now = performance.now();
-        const velocity = this.lastRequest && now > this.lastRequest.time ? (e-this.lastRequest.e)/(now-this.lastRequest.time) : 0;
-        this.lastRequest = {e, time: now};
+        const dt = this.lastRequest && now - this.lastRequest.time;
+        const velocity = dt > 0 ? (e-this.lastRequest.e)/dt : 0;
+        const altitudeVelocity = dt > 0 ? (h-this.lastRequest.h)/dt : 0;
+        this.lastRequest = {e, h, time: now};
         const compatible = key === this.key && atmosphere === this.atmosphere;
+        if (this.pending && (this.pending.key !== key || this.pending.atmosphere !== atmosphere) && this.pending.steps) {
+            this.pending = null; this.error = null;
+        }
         const contains = cell => cell && Math.abs(h-cell.h) <= cell.dh && Math.abs(e-cell.e) <= cell.de;
         const domain = compatible ? [this.domain, this.previousDomain].find(contains) : null;
         const fits = !!domain;
-        const nearEdge = fits && (Math.abs(h-domain.h) > domain.dh/2 || Math.abs(e-domain.e) > domain.de/10);
-        if ((!fits || nearEdge) && !this.pending) {
+        const angularEdge = fits && Math.abs(e-domain.e) > domain.de/40 && (e-domain.e)*velocity > 0;
+        const altitudeEdge = fits && Math.abs(h-domain.h) > domain.dh/10 && (h-domain.h)*altitudeVelocity > 0;
+        if ((!fits || angularEdge || altitudeEdge) && !this.pending) {
             // Calculated motion prediction changes only the work domain, never a
             // physical ray. Retain overlapping completed domains during publication.
-            const offset = fits ? clamp(velocity*(this.buildWallMs ?? 1000), -domain.de, domain.de) : 0;
-            this.start({...options, elevationRad: e+offset}, atmosphere, key);
+            const leadMs = 1.5*(this.buildWallMs ?? 1000); // estimated scheduling margin
+            const offset = fits ? clamp(velocity*leadMs, -domain.de*.4, domain.de*.4) : 0;
+            const altitudeOffset = fits ? clamp(altitudeVelocity*leadMs, -domain.dh*.4, domain.dh*.4) : 0;
+            // Advance one grid axis at a time. During a rapid bearing change,
+            // finish the overlapping angular strip before a height change can
+            // require a cold build near the surface.
+            this.start({...options, elevationRad: fits ? angularEdge ? clamp(e+offset, domain.e-.8*domain.de, domain.e+.8*domain.de) : domain.e : e,
+                sensorAltitudeM: fits ? angularEdge ? domain.h : clamp(h+altitudeOffset, domain.h-.8*domain.dh, domain.h+.8*domain.dh) : h}, atmosphere, key, domain);
         }
         if (this.error) throw this.error;
         if (!fits) return null;
-        const table = blend(domain.tables, (e-domain.e+domain.de)/(2*domain.de), domain.dh ? (h-domain.h+domain.dh)/(2*domain.dh) : 0);
-        this.report = {status: "calculated", validation: "all range nodes; angular and altitude quarter points; factor-two margin",
+        const table = blend(domain.tables, domain.de ? (e-domain.e+domain.de)/(2*domain.de) : .5, domain.dh ? (h-domain.h+domain.dh)/(2*domain.dh) : 0);
+        this.report = {status: "validated", validation: "all range nodes; angular and altitude interior probes; factor-two margin",
             transmissionError: domain.transmissionError, pathErrorK: domain.pathErrorK,
             pending: !!this.pending, builds: this.builds ?? 0};
         table.maxRangeM = options.maxRangeM;
         return table;
     }
-    *build(options, atmosphere) {
-        const e = options.elevationRad, h = options.sensorAltitudeM;
+    *build(options, atmosphere, reuse = null) {
+        let e = options.elevationRad, h = options.sensorAltitudeM;
         // Estimated initial work domain; only validated cells are published.
-        let de = this.domain?.de ?? .016, dh = options.rayGeometry && !options.rayGeometry.atAltitude ? 0 : Math.min(.05, h/4);
+        // Estimated starting half-widths: .016 rad and 1024 m, clipped to 3/4 of height.
+        // Quintic altitude interpolation is validated together with elevation;
+        // halving changes the work domain, never a physical value or tolerance.
+        let de = reuse?.de ?? .016, dh = options.rayGeometry && !options.rayGeometry.atAltitude ? 0 : reuse?.dh ?? Math.min(1024, h*.75);
+        if (h === 0 && e === 0) de = 0;
+        let grid;
+        if (reuse?.grid) {
+            // Calculated exact reuse: shift by whole interpolation nodes so the
+            // overlapping spectral tables keep their original ray coordinates.
+            const shift = (delta, step) => step ? clamp(Math.round(delta/step), -1, 1) : 0;
+            grid = {...reuse.grid, ei: reuse.grid.ei+shift(e-reuse.e, reuse.grid.stepE), hi: reuse.grid.hi+shift(h-reuse.h, reuse.grid.stepH)};
+            e = grid.e0+(grid.ei+(ANGLES.length-1)/2)*grid.stepE;
+            h = grid.h0+(grid.hi+2.5)*grid.stepH;
+            if (h < dh) {
+                // Keep the validated angular span when descent reaches the
+                // surface constraint. Halve only the altitude seed here.
+                while (dh > h && dh > 0) dh /= 2;
+                grid = null; reuse = null;
+            }
+        }
         const derivative = radianceDerivative(300, options.band).photon / PHOTON_SCALE;
-        const at = (x, y) => {
-            const altitude = h+y*dh, elevation = e+x*de;
+        const at = (x, y, coordinates) => {
+            const [elevation, altitude] = coordinates ?? [e+x*de, h+y*dh];
             const rayGeometry = dh && options.rayGeometry ? options.rayGeometry.atAltitude(altitude) : options.rayGeometry;
             const maxRangeM = options.surfaceLimited ? Math.min(options.rangeLimitM,
                 rayGeometry ? rayGeometry.sea(elevation)?.distanceM ?? Infinity : thermalSeaDistance(altitude, Math.sin(elevation))) : options.maxRangeM;
             return createRangeLUTSteps({...options, maxRangeM, atmosphere, elevationRad: elevation, sensorAltitudeM: altitude, rayGeometry});
         };
         for (let attempt = 0; attempt < 16; attempt++, de /= 2, dh /= 2) {
+            if (!options.surfaceLimited && HEIGHTS.some(y => {
+                const altitude = h+y*dh, rayGeometry = options.rayGeometry?.atAltitude?.(altitude) ?? options.rayGeometry;
+                return [e-de, e+de].some(elevation => (rayGeometry ? rayGeometry.sea(elevation)?.distanceM ?? Infinity :
+                    thermalSeaDistance(altitude, Math.sin(elevation))) < options.maxRangeM-1e-5);
+            })) {grid = null; reuse = null; continue;}
+            grid ??= {e0: e-de, h0: h-dh, ei: 0, hi: 0, stepE: 2*de/(ANGLES.length-1), stepH: 2*dh/(HEIGHTS.length-1)};
             const tables = [];
-            for (const y of [-1,1]) for (let i = 0; i < ANGLES.length; i++) tables.push(y === 1 && !dh ? tables[i] : yield* at(ANGLES[i],y));
+            for (let j = 0; j < HEIGHTS.length; j++) for (let i = 0; i < ANGLES.length; i++) {
+                const oldI = reuse ? grid.ei+i-reuse.grid.ei : -1, oldJ = reuse ? grid.hi+j-reuse.grid.hi : -1;
+                const old = oldI >= 0 && oldI < ANGLES.length && oldJ >= 0 && oldJ < HEIGHTS.length ? reuse.tables[oldJ*ANGLES.length+oldI] : null;
+                tables.push(old ?? (j && !dh ? tables[i] : yield* at(ANGLES[i], HEIGHTS[j],
+                    [grid.e0+(grid.ei+i)*grid.stepE, grid.h0+(grid.hi+j)*grid.stepH])));
+            }
             let transmissionError = 0, pathErrorK = 0;
-            for (const [x,y] of [[-.5,0],[0,0],[.5,0],[0,-.5],[0,.5],[-.5,-.5],[.5,.5]]) {
-                const exact = yield* at(x,y), predicted = blend(tables, (x+1)/2, (y+1)/2);
+            const checks = new Map();
+            // Validated at every angular/altitude cell midpoint, including the
+            // outer cells where polynomial interpolation has its largest weights.
+            for (let j = 0; j < HEIGHTS.length-1; j++) for (let k = 0; k < ANGLES.length-1; k++) {
+                const x = -1+2*(k+.5)/(ANGLES.length-1), y = -1+2*(j+.5)/(HEIGHTS.length-1), id = `${grid.ei+k},${grid.hi+j}`;
+                const exact = reuse?.checks?.get(id) ?? (yield* at(x,y,
+                    [grid.e0+(grid.ei+k+.5)*grid.stepE, grid.h0+(grid.hi+j+.5)*grid.stepH]));
+                checks.set(id, exact);
+                const predicted = blend(tables, (x+1)/2, (y+1)/2);
                 for (let sample = 0; sample < exact.size; sample++) {
                     let pathError = 0;
                     for (let b = 0; b < 12; b++) {
@@ -1471,31 +1756,25 @@ export class RangeTableCache {
                 }
             }
             if (transmissionError <= RANGE_TRANSMISSION_TOLERANCE && pathErrorK <= RANGE_PATH_TOLERANCE_K)
-                return {e,h,de,dh,tables,transmissionError,pathErrorK};
+                return {e,h,de,dh,grid,tables,checks,transmissionError,pathErrorK};
+            grid = null; reuse = null;
         }
         throw new Error("Foreground transfer interpolation did not converge");
     }
-    start(options, atmosphere, key) {
-        const job = {steps: this.build(options, atmosphere), started: performance.now()};
-        this.pending = job;
-        const advance = () => {
-            if (this.disposed || this.pending !== job) return;
-            const started = performance.now(), deadline = started+4; // estimated cooperative CPU slice, ms
-            try {
-                let result;
-                do {result = job.steps.next();} while (!result.done && performance.now() < deadline);
-                if (result.done) {
-                    this.previousDomain = this.key === key && this.atmosphere === atmosphere ? this.domain : null;
-                    this.domain = result.value; this.key = key; this.atmosphere = atmosphere;
-                    this.buildWallMs = performance.now()-job.started;
-                    this.builds = (this.builds ?? 0)+1; this.pending = null; this.onReady();
-                } else this.timer = setTimeout(advance, 0);
-            } catch (error) {this.error = error; this.pending = null; this.onReady();}
-            finally {
-                const ms = performance.now()-started; this.workMs = (this.workMs ?? 0)+ms; this.maxSliceMs = Math.max(this.maxSliceMs ?? 0, ms);
-            }
-        };
-        this.timer = setTimeout(advance, 0);
+    start(options, atmosphere, key, seed = this.domain) {
+        const reuse = this.key === key && this.atmosphere === atmosphere && seed &&
+            Math.abs(options.elevationRad-seed.e) <= seed.de &&
+            Math.abs(options.sensorAltitudeM-seed.h) <= seed.dh ? seed : null;
+        const job = scheduleThermalBuild(this, this.build(options, atmosphere, reuse), domain => {
+            // A late or narrower prefetch must not evict the domain serving
+            // the current pose. Keep that completed domain until its replacement fits.
+            this.previousDomain = this.key === key && this.atmosphere === atmosphere ?
+                [this.domain, this.previousDomain].find(d => d && this.lastRequest &&
+                    Math.abs(this.lastRequest.h-d.h) <= d.dh && Math.abs(this.lastRequest.e-d.e) <= d.de) ?? this.domain : null;
+            this.domain = domain; this.key = key; this.atmosphere = atmosphere;
+            this.builds = (this.builds ?? 0)+1; this.onReady();
+        });
+        Object.assign(job, {key, atmosphere});
     }
-    dispose() {this.disposed = true; clearTimeout(this.timer); this.pending = this.domain = this.previousDomain = null;}
+    dispose() {this.disposed = true; this.pending = this.domain = this.previousDomain = null;}
 }

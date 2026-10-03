@@ -206,7 +206,7 @@ test("gain readback polls without waiting, preserves tags and bounds allocation"
     reader.dispose(); expect(gl.deleteBuffer).toHaveBeenCalledTimes(2); expect(gl.deleteSync).toHaveBeenCalledTimes(2);
 });
 
-test("interactive gain never reads synchronously or applies statistics older than one render", () => {
+test("interactive gain never reads synchronously, applies each sample once and never another key's", () => {
     const pipeline = new ThermalPipeline({}, {analysis: false});
     pipeline._read = () => {throw new Error("synchronous readback");};
     pipeline._target = () => ({}); pipeline._pass = () => {};
@@ -224,7 +224,102 @@ test("interactive gain never reads synchronously or applies statistics older tha
     expect(pipeline.gainReport).toMatchObject({held: true, missedDeadline: true});
     pipeline.gainReadback.poll.mockReturnValue({counts: new Float32Array([999, 999, 999, 999]), key: "B", serial: 4, frame: 3});
     pipeline.renderSerial = 5;
-    expect(pipeline._gainParameters({}, settings, {...options, frame: 4}).statisticsCount).toBe(0);
+    // Another gain key's sample never applies; the last valid window holds.
+    expect(pipeline._gainParameters({}, settings, {...options, frame: 4}).window).toEqual({low: 100, high: 400});
+    expect(pipeline.gainReport.held).toBe(true);
+    clearTimeout(pipeline.gainSettle);
+});
+
+test("a re-rendered frame holds its window, then settles on that frame's own statistics", () => {
+    // Sitrec re-renders a paused frame whenever, for example, a terrain tile arrives. Before the fix a
+    // re-render without a ready sample showed the full ADC interval, so the picture jumped between two states.
+    jest.useFakeTimers();
+    const onReady = jest.fn();
+    const pipeline = new ThermalPipeline({}, {analysis: false, onReady});
+    try {
+        pipeline._read = () => {throw new Error("synchronous readback");};
+        pipeline._target = () => ({}); pipeline._pass = () => {};
+        const readback = {pending: [], poll: jest.fn(() => null), signaled: jest.fn(() => false),
+            enqueue: jest.fn(() => {readback.pending.push({}); return true;}), dispose() {}};
+        pipeline.gainReadback = readback;
+        const settings = compact({gainMode: "automatic", gainRegion: "detector", agcTimeConstantS: 0, lowPercentile: 0, highPercentile: 1});
+        const options = {gainKey: "A", reset: false, deltaTimeS: 1 / 30, width: 2, height: 2};
+        const sample = (counts, serial, frame) => readback.poll.mockReturnValueOnce({counts: new Float32Array(counts), key: "A", serial, frame});
+        pipeline.renderSerial = 1; pipeline._gainParameters({}, settings, {...options, reset: true, frame: 7});
+        pipeline.lastFrame = {frame: 7};
+        sample([100, 200, 300, 400], 1, 7); pipeline.renderSerial = 2;
+        expect(pipeline._gainParameters({}, settings, {...options, frame: 8}).window).toEqual({low: 100, high: 400});
+        pipeline.lastFrame = {frame: 8};
+        // Re-render of frame 8 before its sample is ready: hold the window, never the full ADC interval.
+        pipeline.renderSerial = 3;
+        expect(pipeline._gainParameters({}, settings, {...options, reset: true, frame: 8}).window).toEqual({low: 100, high: 400});
+        expect(pipeline.gainReport.held).toBe(true);
+        // Nothing else renders (paused): once the sample is ready, exactly one more render is requested.
+        readback.signaled.mockReturnValue(true);
+        jest.advanceTimersByTime(20);
+        expect(onReady).toHaveBeenCalledTimes(1);
+        // That render recomputes frame 8's window from its own statistics, as an analysis re-render does.
+        sample([500, 600, 700, 800], 3, 8); pipeline.renderSerial = 4;
+        expect(pipeline._gainParameters({}, settings, {...options, reset: true, frame: 8}).window).toEqual({low: 500, high: 800});
+        // Further re-renders with no new sample keep it.
+        pipeline.renderSerial = 5;
+        expect(pipeline._gainParameters({}, settings, {...options, reset: true, frame: 8}).window).toEqual({low: 500, high: 800});
+        // After a backward seek, a sample from a later frame never applies.
+        sample([1, 2, 3, 4], 5, 8); pipeline.renderSerial = 6;
+        expect(pipeline._gainParameters({}, settings, {...options, reset: true, frame: 2}).window).toEqual({low: 500, high: 800});
+    } finally {pipeline.dispose(); jest.useRealTimers();}
+});
+
+test("a paused edit does not settle on statistics recorded before it", () => {
+    // Found in review: with frame reuse, an edited paused frame could settle on the previous scene's statistics and
+    // then be re-presented with that stale window indefinitely.
+    jest.useFakeTimers();
+    const onReady = jest.fn();
+    const pipeline = new ThermalPipeline({}, {analysis: false, onReady});
+    try {
+        pipeline._read = () => {throw new Error("synchronous readback");};
+        pipeline._target = () => ({}); pipeline._pass = () => {};
+        const readback = {pending: [], poll: jest.fn(() => null), signaled: jest.fn(() => true),
+            enqueue: jest.fn(() => {readback.pending.push({}); return true;}), dispose() {}};
+        pipeline.gainReadback = readback;
+        const settings = compact({gainMode: "automatic", gainRegion: "detector", agcTimeConstantS: 0, lowPercentile: 0, highPercentile: 1});
+        const options = {gainKey: "A", reset: true, deltaTimeS: 0, width: 2, height: 2, frame: 8};
+        // A sample's scene tag is the host scene plus the pipeline's image-state epoch, as the real readback records.
+        const sample = (counts, serial, scene) => readback.poll.mockReturnValueOnce({counts: new Float32Array(counts), key: "A", serial,
+            frame: 8, scene: `${scene}#${pipeline._imageStateEpoch()}`});
+        pipeline.lastFrame = {frame: 8};
+        pipeline.renderSceneKey = "before"; sample([100, 200, 300, 400], 1, "before"); pipeline.renderSerial = 2;
+        pipeline._gainParameters({}, settings, options);
+        expect(pipeline.gainReport.settled).toBe(true);
+        // The edit changes the host's scene identity; the newest same-frame sample predates it.
+        pipeline.renderSceneKey = "after"; sample([100, 200, 300, 400], 2, "before"); pipeline.renderSerial = 3;
+        expect(pipeline._gainParameters({}, settings, options).window).toEqual({low: 100, high: 400});
+        expect(pipeline.gainReport.settled).toBe(false);
+        jest.advanceTimersByTime(20);
+        expect(onReady).toHaveBeenCalledTimes(1);
+        // The requested render applies the edited scene's own statistics and settles.
+        sample([500, 600, 700, 800], 3, "after"); pipeline.renderSerial = 4;
+        expect(pipeline._gainParameters({}, settings, options).window).toEqual({low: 500, high: 800});
+        expect(pipeline.gainReport.settled).toBe(true);
+    } finally {pipeline.dispose(); jest.useRealTimers();}
+});
+
+test("an advancing frame applies the newest unused sample even when the GPU lags a render", () => {
+    const pipeline = new ThermalPipeline({}, {analysis: false});
+    pipeline._read = () => {throw new Error("synchronous readback");};
+    pipeline._target = () => ({}); pipeline._pass = () => {};
+    const readback = {pending: [], poll: jest.fn(() => null), enqueue: jest.fn(() => true)};
+    pipeline.gainReadback = readback;
+    const settings = compact({gainMode: "automatic", gainRegion: "detector", agcTimeConstantS: 0, lowPercentile: 0, highPercentile: 1});
+    const options = {gainKey: "A", reset: false, deltaTimeS: 1 / 30, width: 2, height: 2};
+    pipeline.renderSerial = 1; pipeline._gainParameters({}, settings, {...options, reset: true, frame: 10});
+    pipeline.lastFrame = {frame: 10}; pipeline.renderSerial = 2; pipeline._gainParameters({}, settings, {...options, frame: 14});
+    // Two renders later, frame 10's sample is the newest ready one; before the fix it was refused.
+    readback.poll.mockReturnValueOnce({counts: new Float32Array([100, 200, 300, 400]), key: "A", serial: 1, frame: 10});
+    pipeline.lastFrame = {frame: 14}; pipeline.renderSerial = 3;
+    expect(pipeline._gainParameters({}, settings, {...options, frame: 18}).window).toEqual({low: 100, high: 400});
+    expect(pipeline.gainReport).toMatchObject({held: false, latencyFrames: 2});
+    clearTimeout(pipeline.gainSettle);
 });
 
 test("GPU timer discards disjoint samples and converts valid ns to ms", () => {

@@ -9,7 +9,7 @@ import {par} from "../par";
 import {ellipsoidAltitude, terrestrialOptsFrom} from "../atmosphere/terrestrialRefraction";
 import {t} from "../i18n";
 import {thermalStatus} from "./ThermalLoader";
-import {createThermalSceneAdapter, sceneVehicleThermal, thermalSceneAtmosphere, withThermalRefraction, withThermalScene} from "./ThermalSceneAdapters";
+import {createThermalReuseKey, createThermalSceneAdapter, sceneVehicleThermal, thermalSceneAtmosphere, withThermalRefraction, withThermalScene} from "./ThermalSceneAdapters";
 
 /** Estimated plausibility warning, not a certified operating limit. The 0.95
  * Mach threshold is a conservative subsonic transport-jet check; no speed is capped.
@@ -75,6 +75,9 @@ export function createThermalViewAdapter(view) {
         createOpticsWorker: () => import("./ThermalWorkerFactory.js").then(module => module.createOpticsWorker())});
     let controls, lastSettings, mapping, geometry, turbulence, turbulenceKey, comparisonPipeline, comparison;
     let atmosphere, atmosphereKey, vehicles = [];
+    // Estimated budget: a paused frame's key costs a few ms in a scene with hundreds of meshes, against ~80 ms for
+    // the full render it can save; a key that runs out of budget only disables reuse for that draw.
+    const reuseKey = createThermalReuseKey({budgetMs: 10});
     const settings = () => lastSettings ?? thermalSettings(view.cameraNode, Sit);
     function set(key, value) {
         const current = thermalSettings(view.cameraNode, Sit);
@@ -102,7 +105,9 @@ export function createThermalViewAdapter(view) {
         get vehicles() {return vehicles;},
         get comparison() {return comparison;},
         compareWith(otherPipeline) {comparisonPipeline = otherPipeline; comparison = null; setRenderOne(true);},
-        readDetectorCounts: () => pipeline.readDetectorCounts(), readStage: name => pipeline.readStage(name)};
+        readDetectorCounts: () => pipeline.readDetectorCounts(), readStage: name => pipeline.readStage(name),
+        // Why the last paused frame could not be reused (null when a key was built).
+        get reuseKeyNullReason() {return reuseKey.lastNullReason;}};
     const detachDebug = typeof window === "undefined" ? () => {} : attachThermalDebug(window, debug, "lookThermal");
     return {pipeline, set, render(scene, frame) {
         let configured = thermalSettings(view.cameraNode, Sit);
@@ -145,11 +150,18 @@ export function createThermalViewAdapter(view) {
         const groundRoots = [terrain?.getGroup(), terrain?.UI?.oceanSurfaceGroup, terrain?.UI?.buildingsNode?.group];
         const options = terrestrialOptsFrom(Sit, Globals);
         const radianceAdapter = createThermalSceneAdapter(objects, groundRoots, camera, options, clouds);
+        // Playback can place par.frame between video frames (for example 126.5). The scene uses that exact
+        // time; the detector's noise, temporal filter and gain count whole frames, so it gets the frame in progress.
+        // While playing, further draws inside a frame that already rendered show that frame's image (holdFrame).
         const inputs = {
-            scene, camera, settings: configured, frame, skyUp: geometry.skyUp,
-            sounding, radianceAdapter, presentation: mapping, psfRangeM: geometry.rangeM ?? 0,
+            scene, camera, settings: configured, frame: Math.max(0, Math.floor(frame)), skyUp: geometry.skyUp,
+            sounding, radianceAdapter, presentation: mapping, psfRangeM: geometry.rangeM ?? 0, holdFrame: !par.paused,
         };
         withThermalRefraction(camera, options, () => withThermalScene(objects, () => {
+            // Resolve vehicle tags and visibility before recording the exact inputs. Only a paused view can reuse a
+            // frame (during playback the frame changes, and draws inside one frame are held), so only then is a key built.
+            inputs.reuseKey = par.paused ? reuseKey({...inputs, viewCamera: view.camera, objects, groundRoots, clouds,
+                atmosphereKey, refractionOptions: options}) : null;
             const ready = pipeline.render(inputs);
             if (ready === false) return;
             if (comparisonPipeline) {
@@ -173,6 +185,8 @@ export function createThermalViewAdapter(view) {
             vertical: mapping.nativeVerticalFovDeg.toFixed(6), horizontal: mapping.nativeHorizontalFovDeg.toFixed(6),
             zoom: mapping.effectiveDigitalZoom.toFixed(3), r0: configured.turbulenceR0M.toPrecision(4)},
         [...(pipeline.lastFrame?.opticsCache?.message ? [pipeline.lastFrame.opticsCache.message] : []),
+        ...(pipeline.lastFrame?.coverage?.tiles > pipeline.lastFrame?.coverage?.refined ? [t("thermal.coverageLimited",
+            {refined: pipeline.lastFrame.coverage.refined, tiles: pipeline.lastFrame.coverage.tiles})] : []),
         ...(pipeline.lastFrame?.clouds?.diagnostics ?? []).map(d => t(`thermal.cloudDiagnostics.${d.code}`, {id: d.id})),
         ...(pipeline.lastFrame?.clouds?.sheets ? [t("thermal.cloudCost", {count: pipeline.lastFrame.clouds.visible,
             prepareMs: (pipeline.lastFrame.clouds.prepareMs + (pipeline.lastFrame.clouds.hostPrepareMs ?? 0)).toFixed(2), sortMs: pipeline.lastFrame.clouds.sortMs.toFixed(2),

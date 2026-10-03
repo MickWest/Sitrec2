@@ -8,7 +8,7 @@ test("foreground range cache bounds independent elevations, heights and nonnegat
     const steps = cache.build(options, atmosphere);
     let result; do {result = steps.next();} while (!result.done);
     cache.domain = result.value; cache.atmosphere = atmosphere;
-    cache.key = JSON.stringify([options.maxRangeM, options.size, options.band, undefined]);
+    cache.key = JSON.stringify([options.maxRangeM, options.size, options.band, undefined, options.segments]);
     // Disable prefetch only in this numeric reference test.
     cache.pending = {};
     const derivative = radianceDerivative(300, options.band).photon / PHOTON_SCALE;
@@ -48,7 +48,7 @@ test("surface-limited cache follows the moving first intersection without crossi
     const steps = cache.build(options, atmosphere);
     let result; do {result = steps.next();} while (!result.done);
     cache.domain = result.value; cache.atmosphere = atmosphere; cache.pending = {};
-    cache.key = JSON.stringify([["surface",options.rangeLimitM],options.size,options.band,undefined]);
+    cache.key = JSON.stringify([["surface",options.rangeLimitM],options.size,options.band,undefined,options.segments]);
     const moved = {...options, elevationRad: options.elevationRad + .37*cache.domain.de};
     moved.maxRangeM = thermalSeaDistance(moved.sensorAltitudeM,Math.sin(moved.elevationRad));
     const predicted = cache.request(moved,atmosphere), exact = createRangeLUT({...moved,atmosphere});

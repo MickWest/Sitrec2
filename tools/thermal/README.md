@@ -570,7 +570,12 @@ quarter-pixel nozzle receives roughly 32 raster samples across its diameter inst
 of disappearing between coarse samples. Overlapping tiles replace the same region;
 they never add another emitter. Mesh/instance bounds identify these tiles; tiny features
 inside a large mesh need separate zone meshes for this refinement. Animated deformation
-should keep conservative mesh bounds when using this coverage policy.
+should keep conservative mesh bounds when using this coverage policy. Meshes wholly
+outside the image are skipped in every mode (they draw nothing). Interactive views also
+skip ground and sea surfaces, which are extended backgrounds that edge-on near the horizon
+would otherwise spawn hundreds of tiles, and refine at most 64 tiles per frame (an
+estimated budget); `lastFrame.coverage` and the readout report any overflow. Analysis and
+offline renders keep the complete refinement.
 
 There is no after-render brightness renormalization of sources. Sum multiplied by sample
 area measures flux. The browser self-test compares a quarter-pixel disc with its analytic
@@ -1313,9 +1318,16 @@ angular approximation. Separate horizon limits and the existing `0.001 K` altitu
 validation are preserved.
 
 Automatic and plateau gain retain fenced, one-render-late readback. Polling never
-waits. On a missed deadline the last valid gain is held and diagnostics report the
-miss. Manual and radiometric gain require no readback. Analysis mode retains the
-same-render gain used by reference comparisons.
+waits. An advancing frame applies the newest unused sample of an earlier frame; each
+sample applies once, never across a gain-key change and never from a later frame. A
+re-render of the same frame, or a backward seek, recomputes the window from that
+frame's own statistics, as analysis mode does. Until a usable sample is ready the
+last valid window is held, through re-renders and seeks, and diagnostics report the
+miss; the full ADC interval is shown only before the first sample and after a
+gain-key change. When the held window did not come from the current frame's
+statistics, the pipeline asks its host for one more render once they are ready, so
+a view that renders on demand settles on them. Manual and radiometric gain require
+no readback. Analysis mode retains the same-render gain used by reference comparisons.
 
 Run `node tools/thermal/benchmark.mjs --moving` for measured CPU preparation on
 estimated transverse tracks at `250` and `822 m/s`, `300` frames at `30 Hz`, starting

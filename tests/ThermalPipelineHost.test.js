@@ -212,3 +212,31 @@ test("ECEF native coverage uses double precision and apparent lift while physica
     expect(()=>ThermalPipeline.prototype._coverageTiles.call(pipeline,[mesh],camera,{...sample,atmosphereMaxRangeM:100000})).toThrow(/range/i);
     pipeline.dispose();
 });
+
+test("coverage refinement skips meshes outside the image and surfaces, and bounds its tiles",()=>{
+    const {pipeline,settings}=fixture();
+    const sample={...settings,detectorWidth:640,detectorHeight:512,atmosphereMaxRangeM:200000,atmosphereEnabled:true};
+    const camera=new PerspectiveCamera(1,640/512,1,1e7);camera.updateMatrixWorld(true);
+    const tiles=meshes=>[...ThermalPipeline.prototype._coverageTiles.call(pipeline,meshes,camera,sample)];
+    const mesh=new Mesh(new BoxGeometry(10,10,10),new MeshBasicMaterial());
+    const at=(x,z)=>{mesh.position.set(x,0,z);mesh.updateMatrixWorld(true);return tiles([mesh]);};
+    // 250 km away and 5 degrees outside a 1 degree field: before the fix this stopped every frame.
+    expect(at(250000*Math.sin(5*Math.PI/180),-250000*Math.cos(5*Math.PI/180))).toEqual([]);
+    expect(at(0,250000)).toEqual([]); // behind the camera
+    expect(()=>at(0,-250000)).toThrow(/range/i); // in the image: still an explicit error
+    // A long, thin surface across the image (edge-on ground) would need ~160 full-scene tiles; interactively it gets none.
+    const strip=new Mesh(new BoxGeometry(2000,1,1),new MeshBasicMaterial());strip.position.set(0,0,-50000);strip.updateMatrixWorld(true);
+    pipeline.analysis=false;pipeline.synchronous=false;
+    pipeline.radianceAdapter={isSurface:candidate=>candidate===strip};
+    expect(tiles([strip])).toEqual([]);
+    // As a non-surface the same strip is refined, but never beyond the per-frame budget.
+    pipeline.radianceAdapter={};
+    const refined=tiles([strip]);
+    expect(pipeline.coverageReport.tiles).toBeGreaterThan(64);expect(refined).toHaveLength(64);
+    expect(pipeline.coverageReport).toMatchObject({refined:64,limit:64});
+    // Analysis renders keep the complete refinement, surfaces included, so their results do not change.
+    pipeline.analysis=true;pipeline.radianceAdapter={isSurface:candidate=>candidate===strip};
+    expect(tiles([strip]).length).toBe(pipeline.coverageReport.tiles);expect(pipeline.coverageReport.tiles).toBeGreaterThan(64);
+    for (const item of [mesh,strip]) {item.geometry.dispose();item.material.dispose();}
+    pipeline.dispose();
+});

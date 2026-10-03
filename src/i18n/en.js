@@ -12,6 +12,7 @@ const en = {
         "readout": "Native {{width}} × {{height}} · {{vertical}}° V × {{horizontal}}° H · digital zoom {{zoom}}× · r0 {{r0}} m · ground/sea estimated",
         "cloudDiagnostics": {"unresolvedThermal": "{{id}}: cloud field excluded; physical optical depth and temperature metadata are missing."},
         "cloudCost": "Clouds {{count}} · prepare {{prepareMs}} ms · sort {{sortMs}} ms · {{draws}} draws · absorption only; GPU timing unavailable",
+        "coverageLimited": "Small-target refinement: {{refined}} of {{tiles}} tiles this frame (estimated budget); the others use normal supersampling",
         "seaDiagnostic": "Sea: clear-sky thermal-only diagnostic · estimated ensemble mean · gray water · statistical hiding / black cavity · clouds and Sun are not reflected; no moving crests",
         "vehicleReadout": "{{id}} · {{altitudeM}} m · air {{airTemperatureK}} K ({{airSource}}) · Mach {{mach}} ({{machSource}}) · speed {{speedMps}} m/s ({{speedSource}}) · power {{power}} ({{powerSource}})",
         "vehicleSources": {
@@ -313,7 +314,7 @@ const en = {
             },
             "supersample": {
                 "label": "Optical sampling",
-                "tooltip": "Fine radiance grid factor; calculated in Nyquist mode. Small mesh coverage is independently refined to 128 samples per detector pixel.",
+                "tooltip": "Fine radiance grid factor; calculated in Nyquist mode. Small mesh coverage is independently refined to 128 samples per detector pixel (live views: up to 64 tiles per frame, overflow reported).",
                 "options": {
                     "2": "2 ×",
                     "4": "4 ×",
