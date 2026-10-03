@@ -1,5 +1,5 @@
 import {CircleGeometry, DataTexture, FloatType, Float32BufferAttribute, DoubleSide, NearestFilter, NoColorSpace, Mesh, MeshBasicMaterial, OrthographicCamera, PerspectiveCamera, PlaneGeometry, Vector3,
-    RGBAFormat, Scene, WebGLRenderer, WebGLRenderTarget} from "three";
+    RGBAFormat, RedFormat, Scene, WebGLRenderer, WebGLRenderTarget} from "three";
 import {ThermalPipeline} from "./ThermalPipeline.js";
 import {integrateTurbulence} from "./turbulence.js";
 import {buildOpticalDomain, timingDistribution} from "./sensorMath.js";
@@ -906,6 +906,83 @@ export async function runThermalSelfTest() {
                         maxError(packed.readDetectorCounts(), pipeline.readDetectorCounts()), 1);
                 }
             } finally {packed.dispose();}
+        });
+        await test("Live GPU gain statistics against processingParameters", () => {
+            const live = new ThermalPipeline(renderer, {analysis: false, createOpticsWorker: () => null});
+            // Noise on the 300 K plate and temporal filtering give a spread of fractional counts that changes every frame,
+            // so the second, advancing frame applies a real AGC step. The point scene's near-zero background gives a
+            // degenerate histogram (ties at one level) for the plateau's first-level and constant logic.
+            const cases = [["automatic", uniform, {gainMode: "automatic", agcTimeConstantS: .5}],
+                ["automatic gain-offset", uniform, {gainMode: "automatic", agcTimeConstantS: .5, agcDynamics: "gainOffset"}],
+                ["automatic displayed region", uniform, {gainMode: "automatic", agcTimeConstantS: .5, gainRegion: "displayed", digitalZoom: 2}],
+                ["plateau", uniform, {gainMode: "plateau", agcTimeConstantS: .5, plateauFactor: 4}],
+                ["plateau point scene", pointScene, {gainMode: "plateau", agcTimeConstantS: 0, plateauFactor: 4}]];
+            try {
+                for (const [label, scene, extra] of cases) {
+                    const configured = {...settings, noiseEnabled: true, temporalFilterAlpha: .3, lowPercentile: .01,
+                        highPercentile: .99, ...extra};
+                    let previous = null;
+                    for (const frame of [40, 41]) {
+                        live.render({scene, camera, settings: configured, target, frame});
+                        record(`GPU gain ${label} frame ${frame}: GPU statistics in use`, 1, Number(live.lastFrame.gain.mode === "gpu"), 0);
+                        if (live.lastFrame.gain.mode !== "gpu") break;
+                        const counts = live._read(live.temporalState.target), applied = live.settings;
+                        const cpu = processingParameters(counts, applied, previous, previous ? 1 / applied.frameRateHz : 0,
+                            applied.detectorWidth, applied.detectorHeight);
+                        const gpu = live.readGainState();
+                        // The case must exercise the AGC step: this frame's own target window differs from the previous.
+                        if (previous && applied.agcTimeConstantS > 0) record(`GPU gain ${label} frame ${frame}: target window moved, counts`, 1,
+                            Number(processingParameters(counts, applied, null, 0, applied.detectorWidth, applied.detectorHeight).window.low !== previous.low), 0);
+                        // A reset frame equals the window the reference processing shader receives (float32 uniforms: the CPU
+                        // window rounded once, as one float32 addition rounds). The AGC step is float32 here, float64 there.
+                        const tolerance = previous ? .01 : 0;
+                        record(`GPU gain ${label} frame ${frame}: window low difference, counts`, 0, Math.abs(gpu.low - Math.fround(cpu.window.low)), tolerance);
+                        record(`GPU gain ${label} frame ${frame}: window high difference, counts`, 0, Math.abs(gpu.high - Math.fround(cpu.window.high)), tolerance);
+                        if (applied.gainMode === "plateau") {
+                            record(`GPU gain ${label} frame ${frame}: constant plateau flag`, Number(cpu.lut.constant), Number(gpu.constantPlateau), 0);
+                            record(`GPU gain ${label} frame ${frame}: plateau table maximum difference`, 0,
+                                maxError(live._read(live.resources.targets.get("plateauTable")), cpu.lut.values), 1e-5);
+                        }
+                        previous = cpu.window;
+                    }
+                }
+            } finally {live.dispose();}
+        });
+        await test("GPU gain statistics on crafted counts", () => {
+            // Inputs a rendered scene cannot reach: values one float32 step below a half count, signed zeros and
+            // negatives, ties across a high-key bin edge (256 starts a new exponent), ranks 0 and n - 1, a constant field.
+            const live = new ThermalPipeline(renderer, {analysis: false, createOpticsWorker: () => null});
+            try {
+                live._initialize();
+                record("GPU gain statistics available", 1, Number(!!live.gpuGain), 0);
+                if (!live.gpuGain) return;
+                const crafted = [["half-count boundaries", [0, 0.4999999701976776, 1, 2.5, 3.499999761581421, 7, 7, 7.5]],
+                    ["signed zeros and negatives", [-0, 0, -1.5, -1e-30, 3, -7, 0, 2]],
+                    ["ties across a key-bin edge", Array.from({length: 64}, (_, i) => i < 40 ? 255.99998474121094 : 256)],
+                    ["constant field", new Array(16).fill(1234.5)]];
+                for (const [label, values] of crafted) for (const [gainMode, lowPercentile, highPercentile] of
+                    [["automatic", 0, 1], ["automatic", .25, .75], ["plateau", .01, .99]]) {
+                    const counts = Float32Array.from(values), width = counts.length;
+                    const applied = normalizeSettings({...settings, gainMode, lowPercentile, highPercentile, minimumWindowCounts: 1,
+                        plateauFactor: 4, detectorWidth: width, detectorHeight: 1});
+                    const texture = new DataTexture(counts, width, 1, RedFormat, FloatType);
+                    texture.minFilter = texture.magFilter = NearestFilter; texture.colorSpace = NoColorSpace; texture.needsUpdate = true;
+                    try {
+                        live.gainState = null;
+                        live._gpuGain({texture}, applied, {reset: true, deltaTimeS: 0, width, height: 1, presentation: null, frame: 0});
+                        const cpu = processingParameters(counts, applied, null, 0, width, 1), gpu = live.readGainState();
+                        const name = `Crafted ${label}, ${gainMode} ${lowPercentile}-${highPercentile}`;
+                        // Exact against the float32 window the reference processing shader receives.
+                        record(`${name}: window low difference, counts`, 0, Math.abs(gpu.low - Math.fround(cpu.window.low)), 0);
+                        record(`${name}: window high difference, counts`, 0, Math.abs(gpu.high - Math.fround(cpu.window.high)), 0);
+                        if (gainMode === "plateau") {
+                            record(`${name}: constant plateau flag`, Number(cpu.lut.constant), Number(gpu.constantPlateau), 0);
+                            record(`${name}: plateau table maximum difference`, 0,
+                                maxError(live._read(live.resources.targets.get("plateauTable")), cpu.lut.values), 1e-6);
+                        }
+                    } finally {texture.dispose();}
+                }
+            } finally {live.dispose(); renderer.setRenderTarget(null);}
         });
         await test("Enlargement sample alignment", () => {
             // Calculated unit impulse in a 9×9 field at 2× isolates both sampling phases.

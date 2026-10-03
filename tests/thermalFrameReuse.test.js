@@ -260,16 +260,16 @@ test("framesInFlight lets a paced render start while fewer frames than that are 
     // Measured live: two frames in flight raised playback from 14 to 22 new frames per second, but each gain readback
     // then waited about 15 ms behind the other frame, so the default stays one.
     const {pipeline, inputs, clear, renderer} = fixture(), gl = pacingContext();
-    renderer.getContext = () => gl; pipeline.framesInFlight = 2;
+    renderer.getContext = () => gl;
     try {
-        pipeline.render({...inputs, holdFrame: true, pace: true});
-        clear(); pipeline.render({...inputs, frame: 11, holdFrame: true, pace: true});
+        pipeline.render({...inputs, holdFrame: true, pace: true, framesInFlight: 2});
+        clear(); pipeline.render({...inputs, frame: 11, holdFrame: true, pace: true, framesInFlight: 2});
         expect(pipeline._radiance).toHaveBeenCalledTimes(1); expect(pipeline.frameFences).toHaveLength(2);
-        clear(); pipeline.render({...inputs, frame: 12, holdFrame: true, pace: true});
+        clear(); pipeline.render({...inputs, frame: 12, holdFrame: true, pace: true, framesInFlight: 2});
         expect(pipeline._radiance).not.toHaveBeenCalled(); expect(pipeline.lastFrame).toMatchObject({frame: 11, paced: true});
         // Both fences signal: they are released, and the next render starts.
         gl.signaled = true;
-        clear(); pipeline.render({...inputs, frame: 12, holdFrame: true, pace: true});
+        clear(); pipeline.render({...inputs, frame: 12, holdFrame: true, pace: true, framesInFlight: 2});
         expect(pipeline._radiance).toHaveBeenCalledTimes(1); expect(pipeline.frameFences).toHaveLength(1);
         expect(gl.deleteSync).toHaveBeenCalledTimes(2);
     } finally {pipeline.dispose();}
@@ -284,5 +284,31 @@ test("a live render reads finished gain statistics before it queues the frame's 
         pipeline.render(inputs); order.length = 0;
         pipeline.render({...inputs, frame: 11});
         expect(order.slice(0, 2)).toEqual(["poll", "radiance"]);
+    } finally {pipeline.dispose();}
+});
+
+test("live GPU gain uses each frame's own statistics: no readback, settled at once, AGC step only on advancing frames", () => {
+    // The GPU statistics remove the readback that waited behind queued GPU work (see _gpuGain).
+    const {pipeline, inputs, clear} = fixture({automatic: true});
+    pipeline.gpuGain = true; pipeline._scatter = jest.fn();
+    pipeline.gainReadback = {poll: jest.fn(() => null), enqueue: jest.fn(() => true), dispose() {}};
+    const settings = normalizeSettings({...inputs.settings, agcTimeConstantS: .5});
+    const last = name => pipeline._pass.mock.calls.filter(call => call[0] === name).at(-1)?.[2];
+    try {
+        pipeline.render({...inputs, settings});
+        expect(pipeline.gainReadback.enqueue).not.toHaveBeenCalled();
+        expect(pipeline.lastFrame.gain).toMatchObject({mode: "gpu", settled: true, statisticsFrame: 10, window: null});
+        expect(last("gainWindow")).toMatchObject({hasPrevious: false, alpha: 1});
+        expect(last("processingGainState")).toBeDefined(); expect(last("processing")).toBeUndefined();
+        // Ranks as percentileCounts: floor(p (n - 1)) over the 2 × 2 detector.
+        expect(last("gainSelect").ranks).toEqual([Math.floor(settings.lowPercentile * 3), Math.floor(settings.highPercentile * 3)]);
+        expect(pipeline._scatter).toHaveBeenCalledTimes(2);
+        clear(); pipeline.render({...inputs, settings, frame: 13});
+        expect(last("gainWindow").hasPrevious).toBe(true);
+        expect(last("gainWindow").alpha).toBeCloseTo(-Math.expm1(-(3 / settings.frameRateHz) / .5), 12);
+        // A re-render of the same frame starts from that frame's statistics, as an analysis render does.
+        clear(); pipeline.render({...inputs, settings, frame: 13, reuseKey: "edited"});
+        expect(last("gainWindow")).toMatchObject({hasPrevious: false, alpha: 1});
+        expect(pipeline.gainReadback.enqueue).not.toHaveBeenCalled();
     } finally {pipeline.dispose();}
 });

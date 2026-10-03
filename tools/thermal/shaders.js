@@ -457,6 +457,201 @@ export const processingFragment = `
         result = vec4(usePlateau ? plateauEqualization(counts) : windowImage(counts), 0.0, 0.0, 1.0);
     }
 `;
+// GPU gain statistics for live views (ThermalPipeline._gpuGain). They compute processingParameters' automatic window
+// and plateau table from the frame's own counts with no readback: the same order keys and two 16-bit radix passes
+// as percentileCounts (exact values), the same minimum span and AGC dynamics, and plateauLUT's capped histogram.
+// Histograms are point scatters with additive float blending; a bin b of a histogram is texel (b % width, b / width).
+const gainKeyFunctions = `
+    uint countKey(float value) {
+        uint word = floatBitsToUint(value);
+        return (word & 0x80000000u) != 0u ? ~word : word ^ 0x80000000u;
+    }
+    float keyCount(uint key) { return uintBitsToFloat((key & 0x80000000u) != 0u ? key ^ 0x80000000u : ~key); }
+    // Math.round of the clamped count, exactly: x - floor(x) is exact in float32, so the half-way test cannot round
+    // (floor(x + 0.5) put 0.49999997 on level 1).
+    int countLevel(float value) {
+        float x = clamp(value, 0.0, 16383.0), whole = floor(x);
+        return int(whole) + int(x - whole >= 0.5);
+    }`;
+export const gainScatterVertex = `
+    uniform sampler2D tCounts; // R: temporally filtered 14-bit counts
+    uniform ivec4 region; // statistics rectangle: left, bottom, width, height in native pixels
+    uniform int mode; // 0: high 16 order-key bits; 1: low 16 bits inside the two selected high bins; 2: plateau count level
+    uniform sampler2D tSelect; // mode 1: R, B = the high bins that hold the low and high ranks
+    uniform ivec2 histogramSize; // texels of one histogram copy
+    uniform int copies; // copies stacked vertically in the target; sample i adds to copy i % copies
+    ${gainKeyFunctions}
+    void main() {
+        ivec2 pixel = region.xy + ivec2(gl_VertexID % region.z, gl_VertexID / region.z);
+        float value = texelFetch(tCounts, pixel, 0).r;
+        int bin = -1;
+        if (mode == 2) bin = countLevel(value);
+        else {
+            uint key = countKey(value);
+            int high = int(key >> 16u);
+            if (mode == 0) bin = high;
+            else {
+                vec4 chosen = texelFetch(tSelect, ivec2(0), 0);
+                int low = int(key & 65535u);
+                // As percentileCounts: a value in both selected bins counts toward the low histogram only.
+                if (high == int(chosen.x)) bin = low;
+                else if (high == int(chosen.z)) bin = 65536 + low;
+            }
+        }
+        gl_PointSize = 1.0;
+        // Copies spread the additive blends: samples of a narrow count range share a few bins, and blends into one
+        // texel run one after another (measured live: 18 ms per frame for one copy).
+        vec2 texel = vec2(bin % histogramSize.x, bin / histogramSize.x + gl_VertexID % copies * histogramSize.y) + 0.5;
+        gl_Position = bin < 0 ? vec4(2.0, 2.0, 2.0, 1.0) :
+            vec4(texel / vec2(histogramSize.x, histogramSize.y * copies) * 2.0 - 1.0, 0.0, 1.0);
+    }
+`;
+export const gainCopiesFragment = `
+    uniform sampler2D tCopies; // R: histogram copies stacked vertically
+    uniform int copies; // copy count
+    uniform int height; // rows per copy
+    out vec4 result; // R: samples per bin, all copies
+    void main() {
+        ivec2 texel = ivec2(gl_FragCoord.xy);
+        float total = 0.0;
+        for (int copy = 0; copy < copies; copy++) total += texelFetch(tCopies, texel + ivec2(0, copy * height), 0).r;
+        result = vec4(total, 0.0, 0.0, 1.0);
+    }
+`;
+export const gainScatterFragment = `
+    out vec4 result; // R: one sample, summed by additive blending
+    void main() { result = vec4(1.0, 0.0, 0.0, 1.0); }
+`;
+export const gainRowsFragment = `
+    uniform sampler2D tHistogram; // R: samples per bin
+    uniform int width; // bins per row
+    uniform float cap; // plateau cap in samples per bin; zero for none
+    out vec4 result; // R: row sum after the cap; G: row sum without it
+    void main() {
+        int row = int(gl_FragCoord.x);
+        float capped = 0.0, raw = 0.0;
+        for (int x = 0; x < width; x++) {
+            float count = texelFetch(tHistogram, ivec2(x, row), 0).r;
+            raw += count; capped += cap > 0.0 ? min(count, cap) : count;
+        }
+        result = vec4(capped, raw, 0.0, 1.0);
+    }
+`;
+// histogramRank of percentileCounts over rows of 256 bins: the first bin whose count exceeds the remaining rank.
+const gainLocate = `
+    vec2 locate(float rank, int firstRow, int rows) {
+        int row = firstRow;
+        for (; row < firstRow + rows - 1; row++) {
+            float total = texelFetch(tRows, ivec2(row, 0), 0).g;
+            if (rank < total) break;
+            rank -= total;
+        }
+        int x = 0;
+        for (; x < 255; x++) {
+            float count = texelFetch(tHistogram, ivec2(x, row), 0).r;
+            if (rank < count) break;
+            rank -= count;
+        }
+        return vec2(float((row - firstRow) * 256 + x), rank);
+    }`;
+export const gainSelectFragment = `
+    uniform sampler2D tHistogram; // R: samples per high 16-bit key, 256 by 256
+    uniform sampler2D tRows; // G: samples per row
+    uniform vec2 ranks; // zero-based sample ranks of the low and high percentiles
+    out vec4 result; // R: high bin of the low rank, G: rank inside it; B, A: the same for the high rank
+    ${gainLocate}
+    void main() { result = vec4(locate(ranks.x, 0, 256), locate(ranks.y, 0, 256)); }
+`;
+export const gainWindowFragment = `
+    uniform sampler2D tSelect; // gainSelectFragment output
+    uniform sampler2D tHistogram; // R: low 16-bit key counts; rows 0-255 for the low rank's bin, 256-511 for the high's
+    uniform sampler2D tRows; // G: samples per row
+    uniform sampler2D tPrevious; // RGBA: previous window low, high in counts
+    uniform sampler2D tPlateauStats; // B: 1 when the plateau histogram is constant
+    uniform bool hasPrevious; // false after a reset: the window is this frame's target
+    uniform float alpha; // dimensionless AGC step, as automaticWindow
+    uniform bool gainOffset; // agcDynamics "gainOffset" instead of "endpoints"
+    uniform float minimumSpan; // counts
+    uniform bool usePlateauStats; // plateau gain mode
+    out vec4 result; // R, G: window low and high in counts; B: 1 for a constant plateau histogram
+    ${gainKeyFunctions}
+    ${gainLocate}
+    void main() {
+        vec4 chosen = texelFetch(tSelect, ivec2(0), 0);
+        uint lowKey = (uint(chosen.x) << 16u) | uint(locate(chosen.y, 0, 256).x);
+        uint highKey = (uint(chosen.z) << 16u) | uint(locate(chosen.w, chosen.z == chosen.x ? 0 : 256, 256).x);
+        float low = keyCount(lowKey), high = max(keyCount(highKey), low + minimumSpan);
+        if (hasPrevious) {
+            vec4 previous = texelFetch(tPrevious, ivec2(0), 0);
+            if (gainOffset) {
+                float oldGain = 1.0 / (previous.y - previous.x), targetGain = 1.0 / (high - low);
+                float gain = oldGain + alpha * (targetGain - oldGain);
+                float offset = -previous.x * oldGain + alpha * (-low * targetGain + previous.x * oldGain);
+                low = -offset / gain; high = (1.0 - offset) / gain;
+            } else {
+                low = previous.x + alpha * (low - previous.x);
+                high = previous.y + alpha * (high - previous.y);
+            }
+        }
+        result = vec4(low, high, usePlateauStats ? texelFetch(tPlateauStats, ivec2(0), 0).b : 0.0, 1.0);
+    }
+`;
+export const plateauStatsFragment = `
+    uniform sampler2D tHistogram; // R: samples per count level, 256 by 64
+    uniform sampler2D tRows; // R: capped, G: raw samples per row
+    uniform float cap; // samples per level
+    out vec4 result; // R: capped total; G: cumulative value at the first occupied level; B: 1 if constant
+    void main() {
+        float total = 0.0, before = 0.0;
+        int firstRow = -1;
+        for (int row = 0; row < 64; row++) {
+            vec4 sums = texelFetch(tRows, ivec2(row, 0), 0);
+            if (firstRow < 0 && sums.g > 0.0) { firstRow = row; before = total; }
+            total += sums.r;
+        }
+        float first = 0.0;
+        if (firstRow >= 0) for (int x = 0; x < 256; x++) {
+            float count = texelFetch(tHistogram, ivec2(x, firstRow), 0).r;
+            before += min(count, cap);
+            if (count > 0.0) { first = before; break; }
+        }
+        result = vec4(total, first, total <= first ? 1.0 : 0.0, 1.0);
+    }
+`;
+export const plateauTableFragment = `
+    uniform sampler2D tHistogram; // R: samples per count level, 256 by 64
+    uniform sampler2D tRows; // R: capped samples per row
+    uniform sampler2D tStats; // plateauStatsFragment output
+    uniform float cap; // samples per level
+    out vec4 result; // R: normalized capped cumulative histogram at this level, as plateauLUT
+    void main() {
+        ivec2 texel = ivec2(gl_FragCoord.xy);
+        float cumulative = 0.0;
+        for (int row = 0; row < texel.y; row++) cumulative += texelFetch(tRows, ivec2(row, 0), 0).r;
+        for (int x = 0; x <= texel.x; x++) cumulative += min(texelFetch(tHistogram, ivec2(x, texel.y), 0).r, cap);
+        vec4 stats = texelFetch(tStats, ivec2(0), 0);
+        float level = float(texel.y * 256 + texel.x);
+        result = vec4(stats.x > stats.y ? clamp((cumulative - stats.y) / (stats.x - stats.y), 0.0, 1.0) : level / 16383.0, 0.0, 0.0, 1.0);
+    }
+`;
+export const processingGainStateFragment = `
+    uniform sampler2D tInput; // R: 14-bit counts
+    uniform sampler2D tPlateau; // R: normalized CDF, 16384 detector levels in a 256 by 64 texture
+    uniform sampler2D tGainState; // gainWindowFragment output: window low, high in counts; constant plateau flag
+    uniform bool usePlateau; // plateau gain mode
+    out vec4 result; // R: normalized drive [0,1], as processingFragment
+    ${gainKeyFunctions}
+    void main() {
+        vec4 state = texelFetch(tGainState, ivec2(0), 0);
+        float counts = texelFetch(tInput, ivec2(gl_FragCoord.xy), 0).r;
+        float drive;
+        if (usePlateau && state.z < 0.5) {
+            int index = countLevel(counts);
+            drive = texelFetch(tPlateau, ivec2(index % 256, index / 256), 0).r;
+        } else drive = clamp((counts - state.x) / (state.y - state.x), 0.0, 1.0);
+        result = vec4(drive, 0.0, 0.0, 1.0);
+    }
+`;
 export const localMeanFragment = `
     uniform sampler2D tInput; // R: normalized drive
     uniform sampler2D tWeights; // R: unit-sum Gaussian, dimensionless

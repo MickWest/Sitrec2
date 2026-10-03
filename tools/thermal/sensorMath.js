@@ -714,15 +714,13 @@ export function processingParameters(counts, settings, previous = null, deltaTim
     return {window, lut, statisticsCount: statistics.length};
 }
 
-/** Native samples whose centers are in the continuous centered zoom rectangle.
- * A subpixel crop retains the nearest central sample(s). Estimated statistics
- * policy; independent of enlargement interpolation and unknown camera firmware.
+/** The statistics rectangle of gainStatistics, inclusive native pixel bounds {left, right, bottom, top}, or null
+ * when the statistics use the whole image. The GPU gain statistics scatter exactly these pixels.
  */
-export function gainStatistics(counts, width, height, settings, presentation = null) {
-    if (settings.gainRegion !== "displayed") return counts;
+export function gainStatisticsBounds(width, height, settings, presentation = null) {
+    if (settings.gainRegion !== "displayed") return null;
     presentation = detectorPresentation(settings, presentation);
-    if (settings.digitalZoom === 1 && presentation.scale.every(value => value === 1) && presentation.offset.every(value => value === 0) && detectorWindowScale(settings).every(value => value === 1)) return counts;
-    validateImage(counts, width, height);
+    if (settings.digitalZoom === 1 && presentation.scale.every(value => value === 1) && presentation.offset.every(value => value === 0) && detectorWindowScale(settings).every(value => value === 1)) return null;
     const bounds = (size, axis) => {
         const half = Math.max(size * (presentation?.scale[axis] ?? 1) / settings.digitalZoom / 2, 0.5);
         const center = size * (0.5 + (presentation?.offset[axis] ?? 0) / settings.digitalZoom);
@@ -732,6 +730,18 @@ export function gainStatistics(counts, width, height, settings, presentation = n
         return [clamp(Math.ceil(center - half - 0.5), first, last), clamp(Math.floor(center + half - 0.5), first, last)];
     };
     const [left, right] = bounds(width, 0), [bottom, top] = bounds(height, 1);
+    return {left, right, bottom, top};
+}
+
+/** Native samples whose centers are in the continuous centered zoom rectangle.
+ * A subpixel crop retains the nearest central sample(s). Estimated statistics
+ * policy; independent of enlargement interpolation and unknown camera firmware.
+ */
+export function gainStatistics(counts, width, height, settings, presentation = null) {
+    const region = gainStatisticsBounds(width, height, settings, presentation);
+    if (!region) return counts;
+    validateImage(counts, width, height);
+    const {left, right, bottom, top} = region;
     const result = new Float32Array((right - left + 1) * (top - bottom + 1));
     for (let y = bottom; y <= top; y++)
         result.set(counts.subarray(y * width + left, y * width + right + 1), (y - bottom) * (right - left + 1));

@@ -1,7 +1,7 @@
 import {
-    AddEquation, CustomBlending, OneFactor, OneMinusSrcAlphaFactor, Box3, Color, DataTexture, FloatType, GLSL3, Matrix4, Mesh, NearestFilter,
-    NoBlending, NoColorSpace, OrthographicCamera, PlaneGeometry, RGBAFormat, RedFormat, RGFormat,
-    Raycaster, ShaderMaterial, Vector2, Vector3, Vector4, WebGLRenderTarget,
+    AddEquation, CustomBlending, OneFactor, OneMinusSrcAlphaFactor, Box3, BufferGeometry, Color, DataTexture, Float32BufferAttribute,
+    FloatType, GLSL3, Matrix4, Mesh, NearestFilter, NoBlending, NoColorSpace, OrthographicCamera, PlaneGeometry, Points, RGBAFormat,
+    RedFormat, RGFormat, Raycaster, ShaderMaterial, Vector2, Vector3, Vector4, WebGLRenderTarget,
 } from "three";
 import {apparentTemperature, grayBodyRadiance, inBandRadiance, PHOTON_SCALE, solarIrradiance} from "./radiometry.js";
 import {BANDS, clearSky, createAtmosphere, createRangeLUT, seaBackground, evaluatePhotonPath,
@@ -9,7 +9,7 @@ import {BANDS, clearSky, createAtmosphere, createRangeLUT, seaBackground, evalua
 import {atmosphereFromSounding} from "./sounding.js";
 import {resolveSignatures} from "./signatures.js";
 import {normalizeSettings} from "./thermalSchema.js";
-import {displayCurveLUT, detectorWindowScale, detectorPresentation, temporalHistoryKey, electronsPerRadiance, fixedPatternMap, gaussianKernel, integrationTime, nextPow2, processingParameters, shadingResponsivity} from "./sensorMath.js";
+import {displayCurveLUT, detectorWindowScale, detectorPresentation, temporalHistoryKey, electronsPerRadiance, fixedPatternMap, gaussianKernel, integrationTime, nextPow2, processingParameters, shadingResponsivity, gainStatisticsBounds} from "./sensorMath.js";
 import {OpticalKernelCache, opticalKernelError, OPTICS_L1_TOLERANCE} from "./sensorMath.js";
 import {SkyBackgroundCache, thermalSeaDistance} from "./atmosphere.js";
 import {OpticsScheduler, coarseOpticalKernels} from "./sensorMath.js";
@@ -23,6 +23,9 @@ const COVERAGE_TILE = 4; // native pixels per tile side; bounds texture allocati
 // Estimated budget: every refinement tile redraws the whole scene at COVERAGE_SAMPLES per pixel, so one frame
 // refines at most this many tiles. The rest keep the normal supersampled radiance; the overflow is reported.
 const COVERAGE_TILE_LIMIT = 64;
+// Histogram copies for the GPU gain scatter (_gpuGain). Estimated: enough to spread a narrow count range; the copy
+// sum is exact (integer sample counts far below 2^24).
+const GAIN_HISTOGRAM_COPIES = 16;
 
 // The sky shader's lookup (rowRadiance in shaders.js): the bracketing samples by binary search, then clamped linear
 // interpolation. elevation in rad; returns photon radiance in the table's units.
@@ -101,7 +104,7 @@ function material(fragmentShader, values = {}, vertexShader = shaders.fullscreen
 export class ThermalPipeline {
     /** renderer is a shared WebGLRenderer. No GPU resources or Three objects yet. */
     constructor(renderer, {analysis = true, synchronous = analysis, gpuTiming = false, createOpticsWorker, onReady = () => {},
-        packedOptics = !analysis} = {}) {
+        packedOptics = !analysis, gpuGain = !analysis} = {}) {
         this.renderer = renderer;
         // Analysis explicitly requests same-render gain for reference captures.
         // Interactive rendering never performs a synchronous pixel readback.
@@ -109,6 +112,9 @@ export class ThermalPipeline {
         // Near convolution layout (nearConvolutionPlan). Live views use packed overlap-add when it is cheaper; analysis
         // keeps the single-FFT reference, so reference captures are unchanged and the self-test compares the two.
         this.packedOptics = packedOptics;
+        // Live automatic and plateau gain from GPU statistics (_gpuGain) when float blending is available; otherwise
+        // the fenced readback. Analysis keeps the CPU statistics.
+        this.gpuGainRequested = gpuGain && !analysis;
         // Offline callers get a complete reference render by default. Live hosts
         // explicitly opt into asynchronous preparation and fenced gain.
         this.synchronous = synchronous;
@@ -137,6 +143,7 @@ export class ThermalPipeline {
         this.quadCamera = new OrthographicCamera(-1, 1, 1, -1, 0, 1);
         this.emptyTexture = this._ownTexture(scalarTexture(new Float32Array([0])));
         if (this.gpuTiming) this.gpuTimer = new ThermalGpuTimer(renderer.getContext());
+        this.gpuGain = this.gpuGainRequested && renderer.extensions.has("EXT_float_blend");
     }
 
     _ownTexture(texture) { this.resources.textures.add(texture); return texture; }
@@ -155,14 +162,14 @@ export class ThermalPipeline {
         texture.dispose();
         this.resources.textures.delete(texture);
     }
-    _target(name, width, height, depth = false) {
+    _target(name, width, height, depth = false, explicitFormat = null) {
         const maximum = this.renderer.capabilities.maxTextureSize;
         if (width > maximum || height > maximum)
             throw new Error(`Thermal ${name} requires ${width} × ${height} texels; GPU limit is ${maximum}. Reduce optical sampling or kernel support.`);
         let target = this.resources.targets.get(name);
         if (!target) {
-            const format = /^packedFft[AB]$/.test(name) ? RGBAFormat : /Fft[AB]$|Spectrum$/.test(name) ? RGFormat :
-                /Readback$/.test(name) ? RGBAFormat : RedFormat;
+            const format = explicitFormat ?? (/^packedFft[AB]$/.test(name) ? RGBAFormat : /Fft[AB]$|Spectrum$/.test(name) ? RGFormat :
+                /Readback$/.test(name) ? RGBAFormat : RedFormat);
             target = floatTarget(width, height, depth, format);
             this.resources.targets.set(name, target);
         } else if (target.width !== width || target.height !== height) target.setSize(width, height);
@@ -956,11 +963,13 @@ export class ThermalPipeline {
      * holdFrame: true during playback; a draw inside a frame that already rendered shows that frame's image.
      * pace: true only when the host draws again on its next animation frame (GPU pacing, see below). A caller that
      * reads the image after this call (export, screenshot, comparison) leaves it false and always gets its frame.
+     * framesInFlight: paced frames allowed on the GPU at once (1 unless no synchronous readback remains, see _gpuGain).
      * Analysis and synchronous renders always evaluate the complete pipeline.
      * All internal targets are Float32; final output is normalized 8-bit display drive.
      */
     render({scene, camera, settings: input = {}, sounding = null, skyUp = null, target = null, frame = 0,
-        radianceAdapter = null, presentation = null, psfRangeM = undefined, reuseKey = null, holdFrame = false, pace = false}) {
+        radianceAdapter = null, presentation = null, psfRangeM = undefined, reuseKey = null, holdFrame = false, pace = false,
+        framesInFlight = 1}) {
         const renderStart = performance.now();
         if (this.disposed) throw new Error("ThermalPipeline has been disposed");
         if (!scene || !camera) throw new TypeError("ThermalPipeline requires a scene and camera");
@@ -972,6 +981,7 @@ export class ThermalPipeline {
         // frame, measured live), so submitted frames queued up and each synchronous WebGL call waited behind the
         // queue. A paced render therefore starts only after the previous one has completed on the GPU. Until then a
         // draw shows the last image, and the host is asked for a render when the fence signals.
+        if (pace === true) this.framesInFlight = framesInFlight;
         const paced = pace === true && !this.analysis && !this.synchronous && this.hasFrame && this._gpuBusy();
         const hold = paced || holdFrame === true && !this.analysis && !this.synchronous && this.hasFrame &&
             this.lastFrame?.frame === frame && !this.lastFrame.held;
@@ -1095,9 +1105,13 @@ export class ThermalPipeline {
                 {gainKey, reset, deltaTimeS, width, height, presentation, frame}));
             this._removeTexture(this.plateauTexture);
             this.plateauTexture = parameters.lut ? this._ownTexture(scalarTexture(parameters.lut.values, 256, 64)) : null;
-            this._stage("processing", () => this._pass("processing", shaders.processingFragment, {tInput: filtered.texture,
-                countWindow: [parameters.window.low, parameters.window.high], tPlateau: this.plateauTexture ?? this.emptyTexture,
-                usePlateau: !!parameters.lut && !parameters.lut.constant}, drive));
+            this._stage("processing", () => parameters.gpu ?
+                this._pass("processingGainState", shaders.processingGainStateFragment, {tInput: filtered.texture,
+                    tPlateau: parameters.gpu.table?.texture ?? this.emptyTexture, tGainState: parameters.gpu.state.texture,
+                    usePlateau: settings.gainMode === "plateau"}, drive) :
+                this._pass("processing", shaders.processingFragment, {tInput: filtered.texture,
+                    countWindow: [parameters.window.low, parameters.window.high], tPlateau: this.plateauTexture ?? this.emptyTexture,
+                    usePlateau: !!parameters.lut && !parameters.lut.constant}, drive));
             let mean = drive;
             if (settings.localAmount !== 0 && settings.localRadiusPx > 0) {
                 if (this.localRadius !== settings.localRadiusPx) {
@@ -1136,7 +1150,9 @@ export class ThermalPipeline {
                 opticalSampling: settings.opticalSampling, atmosphere: this.atmosphereProfile,
                 clouds: this.cloudPass?.report ?? {sheets: 0, diagnostics: this.cloudDiagnostics},
                 background: this.frameBackground, backgroundTemperatureK: this.background.brightnessTemperatureK,
-                gain: {region: settings.gainRegion, statisticsCount: parameters.statisticsCount, window: {...parameters.window},
+                // GPU gain keeps its window on the GPU (readGainState reads it for tests and diagnostics).
+                gain: {region: settings.gainRegion, statisticsCount: parameters.statisticsCount,
+                    window: parameters.window ? {...parameters.window} : null,
                     ...this.gainReport},
                 blur: {turbulence: "long-exposure Kolmogorov", turbulenceR0M: settings.turbulenceR0M,
                     referenceWavelengthM: 4e-6, systemBlurHorizontalRmsUrad: settings.systemBlurHorizontalRmsUrad,
@@ -1185,6 +1201,105 @@ export class ThermalPipeline {
             sampleCentered: settings.sampling === "sampleCentered", outputWindow}, target));
     }
 
+    // One additive point per sample into a cleared float histogram target (shaders.gainScatterVertex).
+    _scatter(uniforms, target, count) {
+        let pass = this.resources.materials.get("gainScatter");
+        if (!pass) {
+            pass = new ShaderMaterial({glslVersion: GLSL3, vertexShader: shaders.gainScatterVertex,
+                fragmentShader: shaders.gainScatterFragment,
+                uniforms: Object.fromEntries(Object.entries(uniforms).map(([key, value]) => [key, {value}])),
+                depthTest: false, depthWrite: false, toneMapped: false,
+                blending: CustomBlending, blendEquation: AddEquation, blendSrc: OneFactor, blendDst: OneFactor});
+            this.resources.materials.set("gainScatter", pass);
+        }
+        for (const [key, value] of Object.entries(uniforms)) pass.uniforms[key].value = value;
+        if (this.gainPoints?.geometry.attributes.position.count !== count) {
+            this.gainPoints?.geometry.dispose();
+            // The vertex shader indexes samples by gl_VertexID; the attribute only sets the draw count.
+            const geometry = new BufferGeometry();
+            geometry.setAttribute("position", new Float32BufferAttribute(new Float32Array(count), 1));
+            this.gainPoints = new Points(geometry, pass);
+            this.gainPoints.frustumCulled = false;
+        }
+        this.gainPoints.material = pass;
+        target.viewport.set(0, 0, target.width, target.height);
+        target.scissorTest = false;
+        this.renderer.setRenderTarget(target);
+        if (this.resources.checkedSizes.get(target) !== `${target.width},${target.height}`) {
+            const gl = this.renderer.getContext();
+            if (gl.checkFramebufferStatus(gl.FRAMEBUFFER) !== gl.FRAMEBUFFER_COMPLETE)
+                throw new Error(`Thermal float framebuffer allocation failed at ${target.width} × ${target.height}`);
+            this.resources.checkedSizes.set(target, `${target.width},${target.height}`);
+        }
+        this.renderer.setClearColor(0x000000, 0);
+        this.renderer.clear(true, false, false);
+        this.renderer.render(this.gainPoints, this.quadCamera);
+    }
+
+    // Live gain statistics on the GPU (needs EXT_float_blend): processingParameters' automatic window and plateau table
+    // from this frame's own counts, as analysis renders compute them, with no readback (a readback waits for queued GPU
+    // work; measured live, ~15 ms per read with two frames in flight). Percentile values are exact (the same order keys
+    // and radix passes as percentileCounts); the AGC step and plateau sums are float32 instead of float64.
+    _gpuGain(filtered, settings, {reset, deltaTimeS, width, height, presentation, frame}) {
+        const bounds = gainStatisticsBounds(width, height, settings, presentation) ??
+            {left: 0, right: width - 1, bottom: 0, top: height - 1};
+        const regionWidth = bounds.right - bounds.left + 1, regionHeight = bounds.top - bounds.bottom + 1;
+        const samples = regionWidth * regionHeight;
+        // Scatter into GAIN_HISTOGRAM_COPIES stacked copies, then add the copies into the named histogram target.
+        const scatter = (name, width, height, mode, select = this.emptyTexture) => {
+            const copies = this.gainHistogramCopies ?? GAIN_HISTOGRAM_COPIES;
+            const target = this._target(name, width, height), stacked = this._target(`${name}Copies`, width, height * copies);
+            this._scatter({tCounts: filtered.texture, region: [bounds.left, bounds.bottom, regionWidth, regionHeight], mode,
+                tSelect: select, histogramSize: [width, height], copies}, stacked, samples);
+            this._pass("gainCopies", shaders.gainCopiesFragment, {tCopies: stacked.texture, copies, height}, target);
+            return target;
+        };
+        const keyHigh = scatter("gainKeyHigh", 256, 256, 0);
+        const keyHighRows = this._target("gainKeyHighRows", 256, 1, false, RGFormat);
+        this._pass("gainRows", shaders.gainRowsFragment, {tHistogram: keyHigh.texture, width: 256, cap: 0}, keyHighRows);
+        const select = this._target("gainSelect", 1, 1, false, RGBAFormat);
+        this._pass("gainSelect", shaders.gainSelectFragment, {tHistogram: keyHigh.texture, tRows: keyHighRows.texture,
+            ranks: [Math.floor(settings.lowPercentile * (samples - 1)), Math.floor(settings.highPercentile * (samples - 1))]}, select);
+        const keyLow = scatter("gainKeyLow", 256, 512, 1, select.texture);
+        const keyLowRows = this._target("gainKeyLowRows", 512, 1, false, RGFormat);
+        this._pass("gainRows", shaders.gainRowsFragment, {tHistogram: keyLow.texture, width: 256, cap: 0}, keyLowRows);
+        const plateau = settings.gainMode === "plateau";
+        let stats = null, table = null;
+        if (plateau) {
+            const cap = settings.plateauFactor * samples / 16384, levels = scatter("plateauLevels", 256, 64, 2);
+            const rows = this._target("plateauRows", 64, 1, false, RGFormat);
+            this._pass("gainRows", shaders.gainRowsFragment, {tHistogram: levels.texture, width: 256, cap}, rows);
+            stats = this._target("plateauStats", 1, 1, false, RGBAFormat);
+            this._pass("plateauStats", shaders.plateauStatsFragment, {tHistogram: levels.texture, tRows: rows.texture, cap}, stats);
+            table = this._target("plateauTable", 256, 64);
+            this._pass("plateauTable", shaders.plateauTableFragment, {tHistogram: levels.texture, tRows: rows.texture,
+                tStats: stats.texture, cap}, table);
+        }
+        // As automaticWindow: no previous window after a reset; a zero time step keeps the previous window.
+        const previous = reset ? null : this.gainState;
+        const alpha = previous ? (deltaTimeS === 0 ? 0 : settings.agcTimeConstantS === 0 ? 1 :
+            -Math.expm1(-deltaTimeS / settings.agcTimeConstantS)) : 1;
+        const state = this._target(this.gainState === this.resources.targets.get("gainStateA") ? "gainStateB" : "gainStateA",
+            1, 1, false, RGBAFormat);
+        this._pass("gainWindow", shaders.gainWindowFragment, {tSelect: select.texture, tHistogram: keyLow.texture,
+            tRows: keyLowRows.texture, tPrevious: previous?.texture ?? this.emptyTexture, hasPrevious: !!previous, alpha,
+            gainOffset: settings.agcDynamics === "gainOffset", minimumSpan: settings.minimumWindowCounts,
+            tPlateauStats: stats?.texture ?? this.emptyTexture, usePlateauStats: plateau}, state);
+        this.gainState = state;
+        // This frame's own statistics: settled on the first render, so no readback and no settle render.
+        this.gainReport = {mode: "gpu", latencyFrames: 0, held: false, queued: false, missedDeadline: false,
+            statisticsFrame: frame, settled: true};
+        return {window: null, lut: null, gpu: {state, table}, statisticsCount: samples};
+    }
+
+    /** Tests and diagnostics: the live GPU gain state {low, high, constantPlateau}. A synchronous read. */
+    readGainState() {
+        if (!this.gainState) return null;
+        const rgba = new Float32Array(4);
+        this.renderer.readRenderTargetPixels(this.gainState, 0, 0, 1, 1, rgba);
+        return {low: rgba[0], high: rgba[1], constantPlateau: rgba[2] > .5};
+    }
+
     _gainParameters(filtered, settings, {gainKey, reset, deltaTimeS, width, height, presentation, frame}) {
         const needsStatistics = ["automatic", "plateau"].includes(settings.gainMode);
         if (this.analysis || !needsStatistics) {
@@ -1192,6 +1307,8 @@ export class ThermalPipeline {
             this.gainReport = {mode: this.analysis ? "analysis" : "fixed", latencyFrames: 0, held: false};
             return processingParameters(codes, settings, reset ? null : this.window, deltaTimeS, width, height, presentation);
         }
+        // Float32 ranks and bin sums are exact below 2^24 samples (the schema's largest detector, 2048², has 4.2 M).
+        if (this.gpuGain && width * height < 2 ** 24) return this._gpuGain(filtered, settings, {reset, deltaTimeS, width, height, presentation, frame});
         this.gainReadback ??= new FencedReadback(this.renderer.getContext());
         // A sample completed during this frame's submission is newer than the one read at its start.
         const ready = this.gainReadback.poll() ?? this.earlyGainSample ?? null;
@@ -1343,6 +1460,7 @@ export class ThermalPipeline {
         clearTimeout(this.gpuWait); this.gpuWait = null;
         for (const {fence} of this.frameFences ?? []) this.renderer.getContext?.()?.deleteSync?.(fence);
         this.frameFences = [];
+        this.gainPoints?.geometry.dispose(); this.gainPoints = null; this.gainState = null;
         this.gainReadback?.dispose(); this.gpuTimer?.dispose();
         this.opticsScheduler?.dispose(); this.rangeCache?.dispose(); this.skyCache?.dispose?.();
         this.pendingOptics = null; this.activeKernels = null; this.opticalCache = null; this.skyCache = null;

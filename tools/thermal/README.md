@@ -1335,7 +1335,18 @@ the `0.005 K` brightness bound rather than asserting bit equality with a differe
 angular approximation. Separate horizon limits and the existing `0.001 K` altitude
 validation are preserved.
 
-Automatic and plateau gain retain fenced, one-render-late readback. Polling never
+Live views compute automatic and plateau gain on the GPU when float blending is
+available (`EXT_float_blend`), from each frame's own counts, as analysis renders do,
+and with no readback. Point scatters build the histograms; the percentile values come
+from the same order keys and two 16-bit radix passes as the CPU, so they are exact; the
+minimum span, the AGC dynamics and the plateau table follow `processingParameters`
+(the AGC step and plateau sums in float32 instead of float64). The scatter adds into 16
+stacked copies of each histogram and then sums them: the counts of one frame fall in a
+narrow range, and additive blends into one texel run one after another (measured: 18.6 ms
+of GPU time per frame with one copy, 2.4 ms with 16). The self-test compares windows and
+tables with the CPU on fractional counts with ties, crops and both AGC dynamics.
+
+Without float blending, automatic and plateau gain use a fenced, one-render-late readback. Polling never
 waits. An advancing frame applies the newest unused sample of an earlier frame; each
 sample applies once, never across a gain-key change and never from a later frame. A
 re-render of the same frame, or a backward seek, recomputes the window from that
@@ -1357,9 +1368,11 @@ last image, and the pipeline asks the host for a render when the fence signals. 
 pacing a live view queued frames faster than the GPU finished them. Exports, screenshots
 and comparisons read the image right after rendering, so they leave pacing off and always
 get the frame they request. `framesInFlight` (default 1) allows more paced frames on the
-GPU at once. Measured on the testbed with a 30 Hz loop, two raised playback from 14 to 22
-new frames per second, but each gain readback then waited about 15 ms behind the other
-frame, so the default stays one.
+GPU at once. With a readback, two made each read wait about 15 ms behind the other frame;
+with the GPU gain statistics no read remains, so Sitrec's look view uses two while
+playing (one while paused, so a seek renders as soon as the GPU is free). Measured on the
+testbed with a 30 Hz loop: 14.3 → 21.5 new frames per second, a new frame on almost every
+loop tick, and no loop gap over 50 ms.
 
 Run `node tools/thermal/benchmark.mjs --moving` for measured CPU preparation on
 estimated transverse tracks at `250` and `822 m/s`, `300` frames at `30 Hz`, starting

@@ -159,6 +159,9 @@ export function createThermalViewAdapter(view) {
             scene, camera, settings: configured, frame: Math.max(0, Math.floor(frame)), skyUp: geometry.skyUp,
             sounding, radianceAdapter, presentation: mapping, psfRangeM: geometry.rangeM ?? 0, holdFrame: !par.paused,
             pace: Globals.inMainViewRender === true && !comparisonPipeline,
+            // Two frames in flight while playing, once no readback waits behind the other frame (GPU gain statistics,
+            // or a gain mode without statistics). Paused, a seek renders as soon as the GPU is free.
+            framesInFlight: !par.paused && (pipeline.gpuGain || !["automatic", "plateau"].includes(configured.gainMode)) ? 2 : 1,
         };
         withThermalRefraction(camera, options, () => withThermalScene(objects, () => {
             // Resolve vehicle tags and visibility before recording the exact inputs. Only a paused view can reuse a
