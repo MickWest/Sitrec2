@@ -125,7 +125,7 @@ test("PSF range and profile refresh weights while equal finite kernels retain sp
     const settings = normalizeSettings({detectorWidth: 8, detectorHeight: 8, fieldMode: "focalLength",
         psfRangeM: 125000, sensorAltitudeM: 1382, pathElevationDeg: 2.23,
         opticsRadiusPx: 4, scatterPreset: "custom", scatterFraction: 0});
-    const pipeline = new ThermalPipeline(null);
+    const pipeline = new ThermalPipeline(null, {analysis: true});
     pipeline.atmosphere = createAtmosphere(); pipeline.profileKey = "standard";
     pipeline._prepareSpectrum = jest.fn();
     pipeline._prepareOptics(settings, 32, 32);

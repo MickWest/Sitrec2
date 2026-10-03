@@ -311,6 +311,8 @@ test("look draw updates each inherited vehicle, reports used values and leaves r
     NodeMan.get.mockReturnValue(undefined); NodeMan.iterate.mockImplementation(fn=>{fn(node.id,node);fn(second.id,second);});
     const adapter=createThermalViewAdapter(view);
     jest.spyOn(adapter.pipeline,"render").mockImplementation(()=>{
+        adapter.pipeline.hasFrame = true;
+        adapter.pipeline.lastFrame = {opticsCache: {message: "Coarse optical preview; calculated kernel L1 bound: 2."}};
         const state=window.lookThermal.vehicles.find(v=>v.id===node.id);
         expect(mesh.userData.thermal.temperatureK).toBeCloseTo(recoveryTemperature(state.airTemperatureK,state.mach),10);
     });
@@ -319,6 +321,7 @@ test("look draw updates each inherited vehicle, reports used values and leaves r
         expect(window.lookThermal.vehicles).toHaveLength(2);
         expect(window.lookThermal.vehicles[1]).toMatchObject({id:"second",airTemperatureK:290,mach:.2,power:.6});
         expect(view._thermalReadout.textContent).toContain("air 267.35 K");
+        expect(view._thermalReadout.textContent).toContain("Coarse optical preview; calculated kernel L1 bound: 2.");
         expect(view._thermalReadout.textContent).toContain("ground speed; no wind at altitude");
         expect(view._thermalReadout.textContent).toContain("power 0.900 (climb reference, estimated)");
         node.group.position.x=Globals.equatorRadius+5000; adapter.render(new Scene(),31);

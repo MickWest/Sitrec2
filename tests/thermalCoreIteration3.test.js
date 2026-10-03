@@ -79,7 +79,7 @@ const sounding = () => parseSoundingCSV(SOUNDING_CSV, metadata);
 const band = {minUm: 3, maxUm: 5};
 const close = (actual, expected, tolerance) => expect(Math.abs(actual - expected)).toBeLessThanOrEqual(tolerance);
 const cpuPipeline = () => {
-    const pipeline = new ThermalPipeline(null);
+    const pipeline = new ThermalPipeline(null, {analysis: true});
     pipeline.resources = {surfaces: new Map()};
     return pipeline;
 };

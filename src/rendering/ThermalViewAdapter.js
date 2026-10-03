@@ -71,7 +71,8 @@ export function thermalGeometry(camera, target, radii = Globals) {
 }
 
 export function createThermalViewAdapter(view) {
-    const pipeline = new ThermalPipeline(view.renderer);
+    const pipeline = new ThermalPipeline(view.renderer, {analysis: false, onReady: () => setRenderOne(true),
+        createOpticsWorker: () => import("./ThermalWorkerFactory.js").then(module => module.createOpticsWorker())});
     let controls, lastSettings, mapping, geometry, turbulence, turbulenceKey, comparisonPipeline, comparison;
     let atmosphere, atmosphereKey, vehicles = [];
     const settings = () => lastSettings ?? thermalSettings(view.cameraNode, Sit);
@@ -149,7 +150,8 @@ export function createThermalViewAdapter(view) {
             sounding, radianceAdapter, presentation: mapping, psfRangeM: geometry.rangeM ?? 0,
         };
         withThermalRefraction(camera, options, () => withThermalScene(objects, () => {
-            pipeline.render(inputs);
+            const ready = pipeline.render(inputs);
+            if (ready === false) return;
             if (comparisonPipeline) {
                 const other = comparisonPipeline; comparisonPipeline = null;
                 // Native counts precede gain, so histories do not affect comparison.
@@ -166,10 +168,12 @@ export function createThermalViewAdapter(view) {
             }
         }, vehicleValues));
         lastSettings = configured;
+        if (pipeline.hasFrame === false) {thermalStatus(view, "loading"); return;}
         thermalStatus(view, "readout", {width: configured.detectorWidth, height: configured.detectorHeight,
             vertical: mapping.nativeVerticalFovDeg.toFixed(6), horizontal: mapping.nativeHorizontalFovDeg.toFixed(6),
             zoom: mapping.effectiveDigitalZoom.toFixed(3), r0: configured.turbulenceR0M.toPrecision(4)},
-        [...(pipeline.lastFrame?.clouds?.diagnostics ?? []).map(d => t(`thermal.cloudDiagnostics.${d.code}`, {id: d.id})),
+        [...(pipeline.lastFrame?.opticsCache?.message ? [pipeline.lastFrame.opticsCache.message] : []),
+        ...(pipeline.lastFrame?.clouds?.diagnostics ?? []).map(d => t(`thermal.cloudDiagnostics.${d.code}`, {id: d.id})),
         ...(pipeline.lastFrame?.clouds?.sheets ? [t("thermal.cloudCost", {count: pipeline.lastFrame.clouds.visible,
             prepareMs: (pipeline.lastFrame.clouds.prepareMs + (pipeline.lastFrame.clouds.hostPrepareMs ?? 0)).toFixed(2), sortMs: pipeline.lastFrame.clouds.sortMs.toFixed(2),
             draws: pipeline.lastFrame.clouds.drawCalls})] : []),

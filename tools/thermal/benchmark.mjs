@@ -1,6 +1,8 @@
+import {Worker} from 'node:worker_threads';
+import {integrateTurbulence} from './turbulence.js';
 import {PerspectiveCamera} from 'three';
 import {ThermalCloudPass, ThermalPipeline} from './ThermalPipeline.js';
-import {timingDistribution} from './sensorMath.js';
+import {timingDistribution, opticalFields} from './sensorMath.js';
 import {createAtmosphere, createStatisticalSea, createSeaSkyTable, skyViewGeometry, EARTH_RADIUS_M} from './atmosphere.js';
 import {normalizeSettings} from './thermalSchema.js';
 
@@ -54,53 +56,95 @@ clouds.dispose();
 
 if (!process.argv.includes("--moving")) benchmarkCloudSea();
 
-// Estimated airliner-speed fixture: 250 m/s, 300 delivered frames at 30 Hz.
+// Estimated track fixtures: 250 and 822 m/s, 300 delivered frames at 30 Hz.
 // Calculated observer-relative target positions produce changing camera bearing,
 // elevation and physical source range. Native detector and optical support are
 // unchanged. These timings include production CPU preparation and kernel reuse,
 // but exclude GPU work, scene traversal and gain readback/processing.
-function benchmarkMovingCamera(initialRangeM, analysis) {
+async function benchmarkMovingCamera(initialRangeM, analysis, speedMps) {
     const settings = normalizeSettings({sensorPreset: "MX15", sensorAltitudeM: 1380,
         psfRangeM: initialRangeM, pathElevationDeg: 2.27});
-    const pipeline = new ThermalPipeline({}, {analysis});
-    pipeline.resources = {surfaces: new Map(), textures: new Set(), targets: new Map()};
-    pipeline._prepareSpectrum = () => {}; // explicitly excluded GPU submission
+    const createOpticsWorker = () => {
+        const worker = new Worker(new URL('./opticsWorkerNode.mjs', import.meta.url));
+        worker.on('message', data => worker.onmessage?.({data}));
+        worker.on('error', error => worker.onerror?.(error));
+        return worker;
+    };
+    const pipeline = new ThermalPipeline({}, {analysis, createOpticsWorker});
+    pipeline.resources = {surfaces: new Map(), textures: new Set(), targets: new Map(), materials: new Map()};
+    pipeline._prepareSpectrum = name => {pipeline.resources.targets.set(name, {dispose() {}});}; // explicitly excluded GPU submission
     const camera = new PerspectiveCamera(settings.verticalFovDeg,
         settings.detectorWidth / settings.detectorHeight, 1, 500000);
-    const stages = {atmosphere: [], optics: [], sky: []}, times = [];
+    const stages = {atmosphere: [], optics: [], sky: []}, times = [], includingCooperative = [];
+    let previousRangeWork = 0;
     let skyBuilds = 0, spectraBuilds = 0, basisBuilds = 0, maxKernelError = 0, maxSkyErrorK = 0;
-    for (let frame = 0; frame < 300; frame++) {
-        const start = performance.now(), t = frame / 30;
-        const x = 250 * t, z = initialRangeM, y = initialRangeM * Math.tan(2.27 * Math.PI / 180);
+    const rebuilds = []; let previousSettings;
+    let nextFrameAt = performance.now();
+    let initializationMs = 0, waitingFrames = 0, maxRangeErrorK = 0, maxRangeTransmissionError = 0;
+    const frames = Number(process.argv.find(v => v.startsWith("--frames="))?.split("=")[1] ?? 300);
+    for (let frame = 0; frame < frames; frame++) {
+        if (!analysis && frame) await new Promise(resolve => setTimeout(resolve, Math.max(0, nextFrameAt-performance.now())));
+        let start = performance.now();
+        const t = frame / 30;
+        const x = speedMps * t, z = initialRangeM, y = initialRangeM * Math.tan(2.27 * Math.PI / 180);
         camera.lookAt(x, y, -z); camera.updateMatrixWorld(true);
         // Camera-coordinate up from the current tracking camera, with no rounded pose.
         const m = camera.matrixWorldInverse.elements, up = [m[4], m[5], m[6]];
         const elevation = Math.atan2(y, Math.hypot(x, z));
         const current = {...settings, psfRangeM: Math.hypot(x, y, z), pathElevationDeg: elevation * 180 / Math.PI};
+        current.turbulenceR0M = integrateTurbulence({sensorAltitudeM: current.sensorAltitudeM,
+            slantRangeM: current.psfRangeM, elevationRad: elevation}).r0ReferenceM;
         const view = skyViewGeometry(current, up, camera);
         pipeline.skyView = view; pipeline.seaWind = [1, 0, 0];
         let before = performance.now();
-        pipeline._prepareAtmosphere(current);
+        let atmosphereReady = pipeline._prepareAtmosphere(current);
         stages.atmosphere.push(performance.now() - before); before = performance.now();
-        pipeline._prepareOptics(current, settings.detectorWidth * settings.supersample, settings.detectorHeight * settings.supersample);
+        let opticsReady = pipeline._prepareOptics(current, settings.detectorWidth * settings.supersample, settings.detectorHeight * settings.supersample);
+        if (!frame && !analysis) {
+            while (!atmosphereReady || !opticsReady) {
+                await new Promise(resolve => setTimeout(resolve, 10));
+                atmosphereReady = pipeline._prepareAtmosphere(current);
+                opticsReady = pipeline._prepareOptics(current, settings.detectorWidth * settings.supersample, settings.detectorHeight * settings.supersample);
+            }
+            initializationMs = performance.now()-start;
+            previousRangeWork = pipeline.rangeCache.workMs ?? 0;
+            // Each poll is a separate preparation attempt. Start the first
+            // delivered-frame measurement after asynchronous initialization.
+            start = performance.now();
+            pipeline._prepareAtmosphere(current);
+            stages.atmosphere[0] = performance.now()-start; before = performance.now();
+            pipeline._prepareOptics(current, settings.detectorWidth*settings.supersample, settings.detectorHeight*settings.supersample);
+        }
+        waitingFrames += Number(!atmosphereReady || !opticsReady);
         stages.optics.push(performance.now() - before); before = performance.now();
         pipeline._prepareSkyBackground(current, view);
         stages.sky.push(performance.now() - before);
         times.push(performance.now() - start);
+        const rangeWork = pipeline.rangeCache.workMs ?? 0;
+        includingCooperative.push(times.at(-1)+rangeWork-previousRangeWork); previousRangeWork = rangeWork;
+        nextFrameAt = Math.max(start, performance.now()-1000/30) + 1000/30;
         skyBuilds += Number(pipeline.skyCacheRebuilt); spectraBuilds += Number(pipeline.opticsReport.spectraRebuilt);
         basisBuilds += Number(pipeline.opticsReport.basisRebuilt);
-        maxKernelError = Math.max(maxKernelError, pipeline.opticsReport.errorL1);
+        if (pipeline.opticsReport.basisRebuilt) rebuilds.push({frame, ms: stages.optics.at(-1),
+            basisKeyChanges: previousSettings ? opticalFields.filter(k => current[k] !== previousSettings[k]) : ["initial"]});
+        previousSettings = current;
+        maxKernelError = Math.max(maxKernelError, pipeline.opticsReport.errorL1 ?? 0);
+        maxRangeErrorK = Math.max(maxRangeErrorK, pipeline.rangeReport?.pathErrorK ?? 0);
+        maxRangeTransmissionError = Math.max(maxRangeTransmissionError, pipeline.rangeReport?.transmissionError ?? 0);
         maxSkyErrorK = Math.max(maxSkyErrorK, pipeline.frameBackground.interpolation?.maxErrorK ?? 0);
     }
     const output = {status: "measured CPU preparation; estimated synthetic motion", tier: analysis ? "analysis" : "interactive",
-        initialRangeM, speedMps: 250, frames: times.length, firstFrameMs: times[0],
-        allFrames: timingDistribution(times), warmFrames: timingDistribution(times.slice(1)),
+        initialRangeM, speedMps, initializationMs, waitingFrames, maxRangeErrorK, maxRangeTransmissionError, frames: times.length, firstFrameMs: times[0],
+        allFrames: timingDistribution(times), cpuIncludingCooperative: timingDistribution(includingCooperative), warmFrames: timingDistribution(times.slice(1)),
         stages: Object.fromEntries(Object.entries(stages).map(([key, values]) => [key, timingDistribution(values)])),
-        skyBuilds, spectraBuilds, basisBuilds, maxKernelError, maxSkyErrorK,
-        fft: pipeline.scatterSplit, targetMs: 1000 / 30,
-        cpuPreparationMeetsTarget: timingDistribution(times).medianMs <= 1000 / 30,
+        skyBuilds, spectraBuilds, basisBuilds, rebuilds, maxKernelError, maxSkyErrorK,
+        worker: {buildMs: pipeline.opticsScheduler.buildMs, basisBuilds: pipeline.opticsScheduler.domain?.builds},
+        rangeCacheBuilds: pipeline.rangeCache.builds,
+        cooperativeRangeWork: {cpuMs: pipeline.rangeCache.workMs, maxSliceMs: pipeline.rangeCache.maxSliceMs}, fft: pipeline.scatterSplit, targetMs: 1000 / 30,
+        cpuPreparationMeetsTarget: timingDistribution(includingCooperative).medianMs <= 33 && timingDistribution(includingCooperative).maxMs <= 50 && waitingFrames === 0 && maxKernelError <= 1e-4,
         realtimeEstablished: false, excluded: "GPU upload/draw/completion, scene traversal and gain; run the browser self-test for end-to-end results"};
-    for (const texture of pipeline.resources.textures) texture.dispose();
     console.log(JSON.stringify(output, null, 2));
+    pipeline.dispose();
 }
-for (const analysis of [false, true]) for (const rangeM of [2000, 125000]) benchmarkMovingCamera(rangeM, analysis);
+if (process.argv.includes("--moving"))
+    for (const speedMps of [250, 822].filter(v => !process.argv.includes("--fast-only") || v === 822)) for (const rangeM of [2000, 125000].filter(v => !process.argv.includes("--near-only") || v === 2000)) await benchmarkMovingCamera(rangeM, process.argv.includes("--analysis"), speedMps);

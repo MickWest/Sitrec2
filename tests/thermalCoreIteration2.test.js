@@ -190,7 +190,7 @@ test("surface air drives the atmospheric profile independently of object ambient
     close(standard.sample(1382).temperatureK, 288.15 - 0.0065 * 1382, 1e-12);
     close(warmer.sample(1382).temperatureK, 300 - 0.0065 * 1382, 1e-12);
     expect(warmer.sample(1382).pressurePa).toBeGreaterThan(standard.sample(1382).pressurePa);
-    const pipeline = new ThermalPipeline(null);
+    const pipeline = new ThermalPipeline(null, {analysis: true});
     pipeline.resources = {surfaces: new Map()};
     const settings = quiet({surfaceTemperatureK: 300, ambientTemperatureK: 240, atmosphereMaxRangeM: 1000});
     pipeline._prepareAtmosphere(settings);

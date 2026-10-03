@@ -16,7 +16,7 @@ const base = extra => normalizeSettings({fieldMode: "focalLength", detectorWidth
     opticsRadiusPx: 8, scatterPreset: "custom", scatterFraction: 0,
     turbulenceR0M: 0, jitterRmsUrad: 0, diffusionSigmaPx: 0, systemBlurRmsUrad: 0, ...extra});
 const cpuPipeline = () => {
-    const pipeline = new ThermalPipeline(null);
+    const pipeline = new ThermalPipeline(null, {analysis: true});
     pipeline.resources = {surfaces: new Map(), textures: new Set()};
     return pipeline;
 };

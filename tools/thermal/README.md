@@ -1244,58 +1244,95 @@ only the browser self-test executes WebGL and establishes GPU parity.
 
 ### Moving-camera execution
 
-Interactive rendering caches seven wavelength responses and recomputes photon weights
-at the actual camera altitude, elevation and source range. Gaussian filtering commutes
-with spectral addition; signed responses are mixed before clamping and normalization.
-The independent full-kernel tests allow a calculated floating-point difference of
-`2e-6` in integrated absolute weight. There is no changed optical or atmospheric model.
+`ThermalPipeline` defaults to synchronous analysis: optics, foreground transfer,
+sky tables and same-render gain are complete before `render()` returns. Live hosts
+select `{analysis: false}`; `{synchronous: true}` can retain deterministic CPU
+preparation while independently testing fenced gain. Worker URLs resolve against
+their owning module, without a document base. Unavailable constructors, evaluated
+bundles and worker load/message failures fall back to the same validated
+interpolation domain, built on the rendering thread once per optical structure and
+turbulence interval and then sampled each frame, so a moving camera does not rebuild
+the optical basis every frame. That build blocks its frame, so the self-test's
+moving-camera CPU gates apply only where a worker exists; elsewhere the timings are
+reported but not gated. Disposing a view terminates its worker and ignores late replies.
 
-Before every reuse, the complete finite kernel is compared with the requested one.
-The estimated numerical reuse budget is `1e-4` in integrated absolute weight (L1).
-Calculated consequences: maximum absolute image error is at most this budget times
-maximum absolute input contrast, and absolute modulation transfer error is bounded
-by the same budget. A refresh starts at half the budget and submits one GPU spectrum
-per render into separate targets. The previous spectra remain active only while the
-current comparison passes. A jump outside the budget rebuilds immediately. Initial
-wavelength construction and incompatible optical edits can still block the CPU.
-Turbulence edits compare the actual finite response; no unvalidated r0 rounding is used.
+Interactive optical construction runs in a module worker. The frame path only
+mixes the received photon spectrum with a cached finite response and submits GPU
+spectra. The basis key excludes the exact path-derived coherence diameter.
+Instead, cubic interpolation in turbulence strength `q = r0^(-5/3)` is checked
+against independent finite responses at each interval's quarter points and
+midpoint. An estimated factor-two validation margin is included. Interpolation
+uses at most one quarter of the estimated `1e-4` kernel L1 reuse allowance.
+Clamping and normalization are included in that comparison. Kernel support,
+wavelength integration and the atmospheric model are unchanged.
 
-The sky cache covers a padded elevation interval, preserving separate horizon limits.
-Its estimated numerical budget is `0.005 K` brightness equivalent: `0.002 K` angular
-interpolation and `0.001 K` altitude reuse, with the remainder reserved for numerical
-margin. Angular midpoints and both altitude endpoints are checked; altitude reuse
-adds a factor-two margin. These checks bound interpolation against the existing
-atmosphere, not the atmosphere's physical uncertainty.
+The calculated consequence of a kernel L1 bound is an absolute image error no
+greater than that bound times maximum absolute input contrast. Absolute modulation
+transfer error has the same bound. A replacement is prefetched inside the validated
+domain. Completed kernels and spectra remain active until replacements are ready;
+render never waits for the worker. Before the first response it draws a coarse
+preview containing residual Gaussian blur and scatter, with diffraction and
+turbulence explicitly omitted. This positive, normalized preview has a calculated
+universal kernel L1 bound of `2`, displayed in the readout along with the resulting
+radiance bound. This deliberately loose bound does not certify optical fidelity.
+The worker publishes the exact requested response before constructing the wider
+reuse domain. Wavelength diffraction, its forward transform and fixed Gaussian
+transfer are reused across validation samples; finite crops remain unchanged.
+Subsequent edits keep drawing with the last valid kernel. Changed image dimensions
+receive a new preview with matching support. The host's
+`onReady` callback requests another frame, including while playback is paused.
+Initialization time is reported separately by the benchmark.
 
-Automatic and plateau gain use one RGBA pixel-pack transfer with a fence. Polling
-uses zero timeout; only the previous rendered frame is eligible. On a missed deadline
-the last valid gain is held and `lastFrame.gain.missedDeadline` is set. Bootstrap uses
-the full ADC interval until valid statistics arrive. Manual and radiometric gain need
-no readback. Explicit diagnostic methods still read the current completed image.
-`new ThermalPipeline(renderer, {analysis: true})` selects same-render gain statistics
-and disables optical kernel reuse error, for reference captures. Both tiers retain
-the selected optical sampling and support.
+A discontinuous turbulence change can leave the validated interval before the
+worker completes. Compatible old support continues drawing with an explicitly
+reported universal L1 bound of `2`; `outsideValidatedDomain` distinguishes this
+transient from certified `1e-4` reuse. This bound is conservative and is **not** a
+claim of noise-level agreement. The moving GPU checks require that neither of the
+estimated benchmark tracks enters this fallback after initialization.
 
-FFT sizes satisfy the calculated full linear-convolution condition separately on
-each axis: `N >= field + coreWidth - 1 + scatterWidth - 1`. Default field dimensions
-are `640*4 = 2560` by `512*4 = 2048` samples; core and near-scatter radii are `128`
-and `256` samples. Required dimensions are therefore `3328` by `2816`, giving
-`4096` by `4096` for radix-2 FFTs. Smaller fields select smaller transforms without
-discarding energy. Deferred replacement can retain one additional fine spectrum
-(`4096*4096*2*4 = 128 MiB`) and one coarse spectrum. Fenced gain retains one native
-RGBA target and at most two native pixel-pack buffers (`3*640*512*16 = 15 MiB`).
+Foreground transfer uses a separate validated cache. At every range node, quintic
+angular interpolation and linear altitude interpolation are compared with direct
+photon transfer at interior angles and heights. Estimated numerical allocations are
+`1e-4` absolute transmission and the photon radiance equivalent of `0.001 K` at
+`300 K` for summed path emission, including a factor-two validation margin. Thus
+additional radiance error is bounded by `1e-4 * sum(source bands) + B'(300 K)*0.001 K`
+for any nonnegative source spectrum. Existing range interpolation remains unchanged.
+Profile content, band, maximum range and ray mapping invalidate the domain. New
+tables are constructed in estimated `4 ms` cooperative slices, yielding after each
+range node. Outside a valid range domain, the direct synchronous range table supplies
+the frame while the reusable domain is constructed. No missing table blanks the output.
+These are sampled numerical certificates, not bounds on physical model uncertainty.
 
-Run `node tools/thermal/benchmark.mjs --moving` for calculated camera tracks at an
-estimated airliner speed of `250 m/s`, `300` frames at `30 Hz`, starting at `2 km`
-and `125 km`, in both tiers. Its measured distributions cover CPU preparation only;
-GPU work, scene traversal and gain are explicitly excluded. The unchanged exact
-foreground range table may dominate moving-camera CPU time.
+The sky cache retains its estimated `0.005 K` budget. Interactive tables begin with
+an estimated `17`-node seed and refine to the same `0.002 K` angular tolerance;
+reference table generation retains its original `65`-node seed and exact elevation
+interval. Unchanged inputs retain the identical table and GPU upload. Analysis
+comparisons use that same reference table; interactive comparisons explicitly use
+the `0.005 K` brightness bound rather than asserting bit equality with a different
+angular approximation. Separate horizon limits and the existing `0.001 K` altitude
+validation are preserved.
 
-`runThermalSelfTest()` preserves same-render CPU/GPU comparisons, adds fenced gain
-comparisons with a one-render delay, and measures a full `300`-frame camera track in
-each tier. Fenced gain endpoints must agree within the estimated `0.002 count`
-numerical tolerance and display codes within `1 code`. It reports CPU submission,
-wall cadence, missed gain deadlines and per-stage GPU query distributions when
-`EXT_disjoint_timer_query_webgl2` is available; disjoint queries are discarded.
-The estimated interactive budget is `1000/30 ms`; a timing shortfall is reported,
-not hidden by changing sampling. Target storage counts exclude driver overhead.
+Automatic and plateau gain retain fenced, one-render-late readback. Polling never
+waits. On a missed deadline the last valid gain is held and diagnostics report the
+miss. Manual and radiometric gain require no readback. Analysis mode retains the
+same-render gain used by reference comparisons.
+
+Run `node tools/thermal/benchmark.mjs --moving` for measured CPU preparation on
+estimated transverse tracks at `250` and `822 m/s`, `300` frames at `30 Hz`, starting
+at `2000` and `125000 m`. Geometry-derived turbulence is recomputed on every frame.
+`--analysis --frames=12` reproduces exact-key construction cost without a long
+reference run. Reports include median, p95, maximum, initialization, cache misses,
+validation errors and worker construction. Timing never includes worker waiting in
+a frame's CPU cost. Cooperative work between frames is reported separately and included in
+`cpuIncludingCooperative`, which decides the CPU budget gate. GPU
+upload, execution, scene traversal and gain are excluded from this CPU harness.
+
+`runThermalSelfTest()` retains independent CPU/GPU radiometry comparisons and runs
+both speeds and ranges through the full native renderer. It must complete all
+frames, keep optical error at most `1e-4`, and show median CPU preparation at most
+`33 ms` with no preparation above `50 ms`. Fenced gain must meet its existing
+one-render latency and numerical comparison gates. Existing IB6830 lens-step,
+flux, counts and display tests remain required. GPU time comes from asynchronous
+`EXT_disjoint_timer_query_webgl2` stage queries when available; disjoint samples are
+discarded. CPU submission, wall cadence, worker initialization and GPU execution
+are separate quantities. A failed timing gate is reported without reducing sampling.

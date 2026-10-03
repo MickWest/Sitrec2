@@ -1,7 +1,7 @@
 import {BoxGeometry, Color, Group, Mesh, MeshBasicMaterial, PerspectiveCamera, Scene, Vector2, Vector4, WebGLRenderTarget} from "three";
 import {ThermalPipeline} from "../tools/thermal/ThermalPipeline.js";
 import {normalizeSettings} from "../tools/thermal/thermalSchema.js";
-import {displayCurveLUT, processingParameters} from "../tools/thermal/sensorMath.js";
+import {buildOpticalDomain, displayCurveLUT, processingParameters} from "../tools/thermal/sensorMath.js";
 import {thermalSceneAtmosphere} from "../src/rendering/ThermalSceneAdapters";
 
 // Exercise the real coordinator and scene/material scope with a renderer double.
@@ -19,7 +19,7 @@ function fixture() {
         clear:jest.fn(),render:jest.fn(),getSize:v=>v.set(16,12),
         getContext:()=>({FRAMEBUFFER:1,FRAMEBUFFER_COMPLETE:2,checkFramebufferStatus:()=>2}),
     };
-    const pipeline = new ThermalPipeline(renderer, {analysis: true});
+    const pipeline = new ThermalPipeline(renderer);
     pipeline.resources={targets:new Map(),materials:new Map(),surfaces:new Map(),textures:new Set(),checkedSizes:new WeakMap()};
     pipeline.emptyTexture={}; pipeline.quad={geometry:{dispose() {}}};
     pipeline._prepareOptics=()=>{pipeline.scatterSplit={farMass:0};};
@@ -65,6 +65,69 @@ test("interactive render restores the host and never performs a synchronous gain
     expect(pipeline.lastFrame.gain).toMatchObject({mode: "fenced", held: false, latencyFrames: 1});
     expect(state()).toEqual(before); expect(pipeline.gainReadback.enqueue).toHaveBeenCalledTimes(2);
     pipeline.dispose();
+});
+
+test("a paused interactive render keeps drawing with its last valid kernel during a worker rebuild", async () => {
+    const {pipeline, settings, scene, camera, state} = fixture(), before = state();
+    const worker = {postMessage: jest.fn(), terminate: jest.fn()};
+    pipeline.analysis = false; pipeline.synchronous = false;
+    pipeline.opticsScheduler.createWorker = () => worker;
+    pipeline._prepareOptics = ThermalPipeline.prototype._prepareOptics;
+    pipeline._prepareSpectrum = jest.fn();
+    const configured = {...settings, gainMode: "manual", opticsRadiusPx: 2};
+    try {
+        pipeline.render({scene, camera, settings: configured, frame: 10});
+        expect(pipeline.hasFrame).toBe(true);
+        expect(pipeline.lastFrame.opticsCache.quality).toBe("coarse");
+        await pipeline.opticsScheduler.workerPromise;
+        await Promise.resolve();
+        const message = worker.postMessage.mock.calls[0][0];
+        worker.onmessage({data: {id: message.id, domain: buildOpticalDomain(message.settings,
+            message.width, message.height, message.spectrum)}});
+        pipeline.render({scene, camera, settings: configured, frame: 11});
+        const kernel = pipeline.activeKernels;
+        pipeline._pass.mockClear();
+        pipeline.render({scene, camera, settings: {...configured, defocusM: 1e-5}, frame: 11});
+        expect(pipeline.activeKernels).toBe(kernel);
+        expect(pipeline.hasFrame).toBe(true);
+        expect(pipeline.lastFrame.opticsCache).toMatchObject({pending: true, quality: "retained", errorL1: 2});
+        expect(pipeline._pass.mock.calls.some(([name]) => name === "enlarge")).toBe(true);
+        expect(() => pipeline.readStage("display")).not.toThrow();
+        expect(state()).toEqual(before);
+    } finally {pipeline.dispose();}
+});
+
+test("deferred preparation redraws the completed display and preserves readback", () => {
+    const {pipeline, settings, scene, camera, state} = fixture(), before = state();
+    try {
+        pipeline.render({scene, camera, settings, frame: 10});
+        const display = pipeline.resources.targets.get("display"), previous = pipeline.lastFrame;
+        pipeline._prepareAtmosphere = () => false;
+        pipeline._pass.mockClear();
+        expect(pipeline.render({scene, camera, settings, frame: 10})).toBe(false);
+        expect(pipeline.hasFrame).toBe(true);
+        expect(pipeline.lastFrame).toBe(previous);
+        expect(pipeline.lastFrame.held).toBe(true);
+        expect(pipeline._pass.mock.calls.at(-1)[2].tInput).toBe(display.texture);
+        expect(() => pipeline.readStage("display")).not.toThrow();
+        expect(state()).toEqual(before);
+    } finally {pipeline.dispose();}
+});
+
+test("offline renders complete synchronously without constructing a worker", () => {
+    const {pipeline, settings, scene, camera} = fixture();
+    pipeline._prepareOptics = ThermalPipeline.prototype._prepareOptics;
+    pipeline._prepareSpectrum = jest.fn();
+    pipeline.opticsScheduler.createWorker = () => {throw Error("offline render requested a worker");};
+    try {
+        for (const frame of [0, 1, 1]) {
+            pipeline.render({scene, camera, settings: {...settings, opticsRadiusPx: 2,
+                atmosphereEnabled: true, atmosphereMaxRangeM: 2000}, frame});
+            expect(pipeline.hasFrame).toBe(true);
+            expect(pipeline.lastFrame.opticsCache).toMatchObject({pending: false, quality: "full", errorL1: 0});
+            expect(() => pipeline.readStage("display")).not.toThrow();
+        }
+    } finally {pipeline.dispose();}
 });
 
 test("display shader receives the CPU LUT and affine; curve changes release cached textures", () => {

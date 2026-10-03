@@ -18,7 +18,7 @@ const base = extra => normalizeSettings({detectorWidth: 32, detectorHeight: 24,
     turbulenceR0M: 0, jitterRmsUrad: 0, diffusionSigmaPx: 0, systemBlurHorizontalRmsUrad: 0, systemBlurVerticalRmsUrad: 0,
     displayCurve: "linear", shadingK: 0, fixedPatternFraction: 0, noiseEnabled: false, ...extra});
 const cpuPipeline = () => {
-    const pipeline = new ThermalPipeline({capabilities: {maxTextureSize: 8192}});
+    const pipeline = new ThermalPipeline({capabilities: {maxTextureSize: 8192}}, {analysis: true});
     pipeline.resources = {surfaces: new Map(), textures: new Set(), targets: new Map()};
     return pipeline;
 };

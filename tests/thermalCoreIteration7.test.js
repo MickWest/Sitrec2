@@ -168,7 +168,7 @@ test("measured paired defaults follow lens steps and preserve explicit edits", (
 
 test("each axis invalidates optical spectra and temporal history; display edits retain detector history", () => {
     const settings = base({systemBlurHorizontalRmsUrad: 12, systemBlurVerticalRmsUrad: 40});
-    const pipeline = new ThermalPipeline({}); pipeline._prepareSpectrum = jest.fn();
+    const pipeline = new ThermalPipeline({}, {analysis: true}); pipeline._prepareSpectrum = jest.fn();
     pipeline._prepareOptics(settings, 128, 128);
     expect(pipeline._prepareSpectrum).toHaveBeenCalledTimes(1);
     pipeline._prepareOptics(settings, 128, 128);

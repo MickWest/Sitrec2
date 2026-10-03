@@ -1,5 +1,9 @@
 import {PerspectiveCamera} from "three";
-import {OpticalKernelCache, opticalKernelError, OPTICS_L1_TOLERANCE} from "../tools/thermal/sensorMath.js";
+import {Worker as NodeWorker} from "node:worker_threads";
+import {readFileSync} from "node:fs";
+import {createDefaultOpticsWorker, OpticsScheduler} from "../tools/thermal/sensorMath.js";
+import {createOpticsWorker} from "../src/rendering/ThermalWorkerFactory.js";
+import {OpticalKernelCache, opticalKernelError, OPTICS_L1_TOLERANCE, buildOpticalDomain, sampleOpticalDomain, psfSpectrum} from "../tools/thermal/sensorMath.js";
 import {normalizeSettings} from "../tools/thermal/thermalSchema.js";
 import {opticalKernels, scatterPlan, applyOptics} from "../tools/thermal/sensorMath.js";
 import {createAtmosphere, backgroundAtElevation, skyViewGeometry, sampleSkyElevationLUT,
@@ -7,6 +11,7 @@ import {createAtmosphere, backgroundAtElevation, skyViewGeometry, sampleSkyEleva
 import {FencedReadback, ThermalGpuTimer} from "../tools/thermal/ThermalPipeline.js";
 import {SkyBackgroundCache} from "../tools/thermal/atmosphere.js";
 import {ThermalPipeline} from "../tools/thermal/ThermalPipeline.js";
+import {skyGradientReference} from "../tools/thermal/selfTest.js";
 
 const compact = extra => normalizeSettings({detectorWidth: 16, detectorHeight: 12,
     fieldMode: "focalLength", focalStep: "free", focalLengthM: .675,
@@ -72,9 +77,10 @@ test("retained default support requires 4096 while smaller fields choose smaller
 });
 
 test("every displayed moving kernel, including deferred refreshes, stays inside the current bound", () => {
-    const pipeline = new ThermalPipeline({});
-    pipeline.resources = {targets: new Map()}; pipeline._prepareSpectrum = jest.fn();
+    const pipeline = new ThermalPipeline({}, {analysis: false});
+    pipeline.resources = {targets: new Map(), materials: new Map(), textures: new Set(), surfaces: new Map()}; pipeline._prepareSpectrum = jest.fn(name => pipeline.resources.targets.set(name, {dispose() {}}));
     pipeline.atmosphere = createAtmosphere();
+    pipeline.opticsScheduler.domain = buildOpticalDomain(compact({}), 32, 24, psfSpectrum(compact({}), pipeline.atmosphere));
     let pending = 0, rebuilds = 0;
     for (let frame = 0; frame < 60; frame++) {
         // Estimated 250 m/s radial track, 30 delivered frames/s.
@@ -88,11 +94,13 @@ test("every displayed moving kernel, including deferred refreshes, stays inside 
     // A discontinuous camera seek has no right to keep a now-invalid kernel.
     const jump = compact({psfRangeM: 125000, pathElevationDeg: 2.27, sensorAltitudeM: 1380});
     pipeline._prepareOptics(jump, 32, 24);
-    expect(pipeline.opticsReport).toMatchObject({errorL1: 0, spectraRebuilt: true, pending: false});
+    expect(pipeline.opticsReport).toMatchObject({spectraRebuilt: true, pending: false});
+    expect(pipeline.opticsReport.errorL1).toBeLessThan(OPTICS_L1_TOLERANCE);
+    pipeline.dispose();
 });
 
 test("failed spectrum replacement cannot leave an apparently valid cache", () => {
-    const pipeline = new ThermalPipeline({});
+    const pipeline = new ThermalPipeline({}, {analysis: true});
     pipeline._prepareSpectrum = jest.fn();
     const settings = compact({});
     pipeline._prepareOptics(settings, 32, 24);
@@ -157,6 +165,23 @@ test("zero-radiance vacuum sky retains a finite altitude reuse bound", () => {
     expect(table.altitudeDomain.maxErrorK).toBe(0);
 });
 
+test.each([null, [Math.cos(2.23 * Math.PI / 180), 0, -Math.sin(2.23 * Math.PI / 180)]])(
+    "offline sky uses the exact reference table and unchanged inputs reuse identical values (%s)", up => {
+        const reference = skyGradientReference(up), pipeline = new ThermalPipeline({});
+        pipeline.resources = {textures: new Set(), surfaces: new Map(), materials: new Map(), targets: new Map()};
+        pipeline.atmosphere = reference.atmosphere;
+        try {
+            pipeline._prepareSkyBackground(reference.settings, reference.view);
+            const table = pipeline.skyTable, texture = pipeline.skyTableTexture;
+            expect(table.elevations).toEqual(reference.table.elevations);
+            expect(table.photonRadiances).toEqual(reference.table.photonRadiances);
+            pipeline._prepareSkyBackground(reference.settings, reference.view);
+            expect(pipeline.skyTable).toBe(table);
+            expect(pipeline.skyTableTexture).toBe(texture);
+            expect(pipeline.skyCacheRebuilt).toBe(false);
+        } finally {pipeline.dispose();}
+    });
+
 function fakeGl() {
     const gl = Object.fromEntries(["PIXEL_PACK_BUFFER_BINDING", "PACK_ALIGNMENT", "PACK_ROW_LENGTH", "PACK_SKIP_PIXELS",
         "PACK_SKIP_ROWS", "PIXEL_PACK_BUFFER", "STREAM_READ", "RGBA", "FLOAT", "SYNC_GPU_COMMANDS_COMPLETE",
@@ -182,7 +207,7 @@ test("gain readback polls without waiting, preserves tags and bounds allocation"
 });
 
 test("interactive gain never reads synchronously or applies statistics older than one render", () => {
-    const pipeline = new ThermalPipeline({});
+    const pipeline = new ThermalPipeline({}, {analysis: false});
     pipeline._read = () => {throw new Error("synchronous readback");};
     pipeline._target = () => ({}); pipeline._pass = () => {};
     pipeline.gainReadback = {poll: jest.fn(() => null), enqueue: jest.fn(() => true)};
@@ -213,3 +238,193 @@ test("GPU timer discards disjoint samples and converts valid ns to ms", () => {
     timer.begin(2, "optics"); timer.end(); gl.getParameter.mockReturnValue(true); timer.poll();
     expect(timer.samples).toHaveLength(1); expect(timer.disjointSamples).toBe(1); timer.dispose();
 });
+
+
+test("interactive construction displays a bounded coarse preview, retains output on edits and rejects late replies", async () => {
+    const worker = {postMessage: jest.fn(), terminate: jest.fn()};
+    const onReady = jest.fn(), pipeline = new ThermalPipeline({}, {analysis: false, createOpticsWorker: () => worker, onReady});
+    pipeline._prepareSpectrum = jest.fn(); pipeline.atmosphere = createAtmosphere();
+    pipeline.opticalCache.candidate = () => {throw Error("synchronous construction");};
+    const settings = compact({turbulenceR0M: 0});
+    expect(pipeline._prepareOptics(settings, 32, 24)).toBe(true);
+    expect(pipeline._prepareSpectrum).toHaveBeenCalled();
+    expect(pipeline.opticsReport).toMatchObject({quality: "coarse", errorL1: 2, pending: true});
+    expect(pipeline.opticsReport.message).toMatch(/Coarse.*bound/);
+    await pipeline.opticsScheduler.workerPromise;
+    await Promise.resolve();
+    const message = worker.postMessage.mock.calls[0][0];
+    worker.onmessage({data: {id: message.id, domain: buildOpticalDomain(settings, 32, 24, message.spectrum)}});
+    expect(pipeline._prepareOptics(settings, 32, 24)).toBe(true);
+    expect(pipeline.opticsReport.quality).toBe("full");
+    const installed = pipeline.activeKernels;
+    // An incompatible edit queues work and preserves the completed output.
+    expect(pipeline._prepareOptics({...settings, defocusM: 1e-5}, 32, 24)).toBe(true);
+    expect(pipeline.activeKernels).toBe(installed);
+    pipeline.dispose();
+    const calls = onReady.mock.calls.length;
+    worker.onmessage({data: {id: message.id, domain: {}}});
+    expect(onReady).toHaveBeenCalledTimes(calls); expect(worker.terminate).toHaveBeenCalledTimes(1);
+});
+
+test("worker URLs are module-relative even with an unusable document base", () => {
+    const originalWorker = global.Worker, originalDocument = global.document;
+    const worker = {};
+    global.document = {get baseURI() {throw new Error("no document base");}};
+    global.Worker = jest.fn(() => worker);
+    try {
+        expect(createDefaultOpticsWorker()).toBe(worker);
+        expect(createOpticsWorker()).toBe(worker);
+        for (const [url, options] of global.Worker.mock.calls) {
+            expect(url.pathname).toMatch(/\/tools\/thermal\/opticsWorker\.js$/);
+            expect(options).toEqual({type: "module"});
+        }
+        global.Worker.mockImplementation(() => {throw new Error("constructor unavailable");});
+        expect(createDefaultOpticsWorker()).toBeNull();
+        expect(createOpticsWorker()).toBeNull();
+        delete global.Worker;
+        expect(createDefaultOpticsWorker()).toBeNull();
+    } finally {
+        if (originalWorker === undefined) delete global.Worker; else global.Worker = originalWorker;
+        if (originalDocument === undefined) delete global.document; else global.document = originalDocument;
+    }
+});
+
+test("evaluated worker factories without a module URL return the synchronous fallback", () => {
+    for (const [path, name] of [["../tools/thermal/sensorMath.js", "createDefaultOpticsWorker"],
+        ["../src/rendering/ThermalWorkerFactory.js", "createOpticsWorker"]]) {
+        const source = readFileSync(new URL(path, import.meta.url), "utf8");
+        const factory = source.match(new RegExp(`export function ${name}\\(\\) \\{[\\s\\S]*?\\n\\}`))[0]
+            .replace("export ", "").replaceAll("import.meta.url", "undefined");
+        const Worker = jest.fn();
+        expect(new Function("Worker", "URL", `${factory}; return ${name}();`)(Worker, URL)).toBeNull();
+        expect(Worker).not.toHaveBeenCalled();
+    }
+});
+
+test("unavailable worker keeps one domain while turbulence moves inside it (no per-frame rebuild)", () => {
+    // A moving camera changes turbulenceR0M every frame; without a worker the scheduler must sample its domain,
+    // not rebuild the whole optical basis each frame (that made the GPU self-test take tens of minutes).
+    const scheduler = new OpticsScheduler({createWorker: () => null}), atmosphere = createAtmosphere();
+    try {
+        const first = compact({turbulenceR0M: 0.5});
+        const a = scheduler.request(first, 32, 24, atmosphere), domain = scheduler.domain;
+        const cell = domain.intervals.find(interval => interval.high > interval.low);
+        const qInside = cell.low + 0.37 * (cell.high - cell.low);
+        const b = scheduler.request(compact({turbulenceR0M: qInside ** (-3 / 5)}), 32, 24, atmosphere);
+        expect(scheduler.domain).toBe(domain);
+        expect(b.kernels).not.toBe(a.kernels);
+        expect(b).toMatchObject({fallback: true, pending: false});
+    } finally {scheduler.dispose();}
+});
+
+test.each([() => null, () => {throw new Error("invalid base URL");}])("unavailable worker builds exact kernels on the requesting thread", createWorker => {
+    const scheduler = new OpticsScheduler({createWorker}), settings = compact({}), atmosphere = createAtmosphere();
+    try {
+        const result = scheduler.request(settings, 32, 24, atmosphere);
+        expect(result).toMatchObject({fallback: true, pending: false});
+        expect(opticalKernelError(result.kernels, opticalKernels(settings, 32, 24, atmosphere))).toBeLessThan(2e-6);
+        expect(scheduler.request(settings, 32, 24, atmosphere).kernels).toBe(result.kernels);
+    } finally {scheduler.dispose();}
+});
+
+test.each(["rejected factory", "load", "message", "post"])("worker %s failure falls back without a rejected task or missing kernel", async failure => {
+    const worker = {postMessage: jest.fn(), terminate: jest.fn()};
+    if (failure === "post") worker.postMessage.mockImplementation(() => {throw new Error("post failed");});
+    const scheduler = new OpticsScheduler({createWorker: () => failure === "rejected factory" ? Promise.reject(Error("load failed")) : worker});
+    const settings = compact({}), atmosphere = createAtmosphere();
+    try {
+        scheduler.request(settings, 32, 24, atmosphere);
+        await scheduler.workerPromise;
+        await Promise.resolve();
+        if (failure === "load") worker.onerror({message: "load failed"});
+        if (failure === "message") worker.onmessageerror();
+        await Promise.resolve();
+        expect(scheduler.request(settings, 32, 24, atmosphere)).toMatchObject({fallback: true, pending: false});
+    } finally {scheduler.dispose();}
+});
+
+test("an early worker response does not evict the validated interval during prefetch", async () => {
+    const worker = {postMessage: jest.fn(), terminate: jest.fn()};
+    const scheduler = new OpticsScheduler({createWorker: () => worker}), atmosphere = createAtmosphere();
+    const settings = compact({turbulenceR0M: .574}), spectrum = psfSpectrum(settings, atmosphere);
+    const original = buildOpticalDomain(settings, 32, 24, spectrum);
+    scheduler.domain = original;
+    const next = {...settings, turbulenceR0M: .55};
+    try {
+        scheduler.request(next, 32, 24, atmosphere);
+        await scheduler.workerPromise;
+        await Promise.resolve();
+        const request = worker.postMessage.mock.calls[0][0];
+        buildOpticalDomain(next, 32, 24, spectrum, anchor => {
+            worker.onmessage({data: {id: request.id, domain: anchor, complete: false, buildMs: 1}});
+            const result = scheduler.request(settings, 32, 24, atmosphere);
+            expect(scheduler.domain).toBe(original);
+            expect(result.kernels).not.toBeNull();
+            expect(result.kernels.interpolationErrorL1).toBeLessThan(OPTICS_L1_TOLERANCE);
+            expect(result.pending).toBe(true);
+        });
+    } finally {scheduler.dispose();}
+});
+
+test("native worker publishes the requested full kernel before validating its reuse domain", async () => {
+    // Estimated long-range motion fixture; physical units follow the settings schema.
+    const settings = normalizeSettings({sensorPreset: "MX15", psfRangeM: 125000,
+        sensorAltitudeM: 1380, pathElevationDeg: 2.27, turbulenceR0M: .574});
+    const width = settings.detectorWidth * settings.supersample, height = settings.detectorHeight * settings.supersample;
+    const spectrum = psfSpectrum(settings), worker = new NodeWorker(new URL("../tools/thermal/opticsWorkerNode.mjs", import.meta.url));
+    const messages = [];
+    try {
+        await new Promise((resolve, reject) => {
+            worker.on("error", reject);
+            worker.on("message", message => {
+                if (message.error) {reject(new Error(message.error)); return;}
+                messages.push(message);
+                if (message.complete) resolve();
+            });
+            worker.postMessage({id: 1, settings, width, height, spectrum});
+        });
+        expect(messages).toHaveLength(2);
+        expect(messages[0].complete).toBe(false);
+        expect(messages[0].buildMs).toBeLessThan(messages[1].buildMs);
+        const anchor = sampleOpticalDomain(messages[0].domain, settings, spectrum);
+        const domain = sampleOpticalDomain(messages[1].domain, settings, spectrum);
+        expect(opticalKernelError(anchor, domain)).toBeLessThanOrEqual(domain.interpolationErrorL1 + 2e-6);
+        console.log(`Measured native worker: first full kernel ${messages[0].buildMs.toFixed(1)} ms; validated domain ${messages[1].buildMs.toFixed(1)} ms; ${messages[1].domain.builds} basis samples`);
+    } finally {await worker.terminate();}
+}, 120000);
+
+test("validated turbulence intervals match independent unsampled strengths and spectra", () => {
+    const atmosphere = createAtmosphere(), settings = compact({turbulenceR0M: .572});
+    const domain = buildOpticalDomain(settings, 32, 24, psfSpectrum(settings, atmosphere));
+    for (const cell of domain.intervals) for (const fraction of [.137, .419, .863]) {
+        const q = cell.low + fraction*(cell.high-cell.low);
+        for (const psfRangeM of [2000, 125000]) {
+            const current = {...settings, turbulenceR0M: q ** (-3/5), psfRangeM};
+            const actual = sampleOpticalDomain(domain, current, psfSpectrum(current, atmosphere));
+            const exact = opticalKernels(current, 32, 24, atmosphere);
+            expect(opticalKernelError(actual, exact)).toBeLessThanOrEqual(actual.interpolationErrorL1 + 2e-6);
+        }
+    }
+});
+
+
+test("IB6830 interactive interpolation preserves both full native lens-step kernels", () => {
+    // Estimated path fixtures: range/altitude/coherence diameter in m; elevation in degrees.
+    // Compare the unchanged full finite calculation at independent interpolation points.
+    const atmosphere = createAtmosphere(); let maximum = 0;
+    for (const focalStep of ["675", "1012"]) {
+        const initial = normalizeSettings({sensorPreset: "MX15", focalStep, psfRangeM: 125000,
+            sensorAltitudeM: 1380, pathElevationDeg: 2.27, turbulenceR0M: .574});
+        const width = initial.detectorWidth*initial.supersample, height = initial.detectorHeight*initial.supersample;
+        const domain = buildOpticalDomain(initial, width, height, psfSpectrum(initial, atmosphere));
+        for (const [psfRangeM, turbulenceR0M] of [[120000,.582], [145000,.55]]) {
+            const settings = {...initial, psfRangeM, turbulenceR0M};
+            const actual = sampleOpticalDomain(domain, settings, psfSpectrum(settings, atmosphere));
+            const error = opticalKernelError(actual, opticalKernels(settings,width,height,atmosphere));
+            maximum = Math.max(maximum,error);
+            expect(error).toBeLessThanOrEqual(actual.interpolationErrorL1+2e-6);
+            expect(error).toBeLessThan(OPTICS_L1_TOLERANCE/4);
+        }
+    }
+    console.log(`IB6830 interactive finite-kernel maximum L1 difference: ${maximum}`);
+}, 180000);

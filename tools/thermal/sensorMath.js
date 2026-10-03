@@ -230,18 +230,34 @@ export function gaussianKernel(sigmaPx, radiusPx = Math.ceil(4*sigmaPx), horizon
  * Padding prevents the opposite core edge from wrapping directly into the crop.
  * Tiny negative FFT/ringing residuals are clipped; retainedFraction reports loss.
  */
-export function filterKernelMTF(kernel, angularStepRad, mtf, radius = (kernel.width - 1) / 2, linear = false) {
+export function filterKernelMTF(kernel, angularStepRad, mtf, radius = (kernel.width - 1) / 2, linear = false, cache = null) {
     const size = 2 * radius + 1, n = nextPow2(2 * Math.max(size, kernel.width, kernel.height));
-    const re = new Float64Array(n * n), im = new Float64Array(n * n);
-    const cx = Math.floor(kernel.width / 2), cy = Math.floor(kernel.height / 2);
-    for (let y = 0; y < kernel.height; y++) for (let x = 0; x < kernel.width; x++)
-        re[((y - cy + n) % n) * n + (x - cx + n) % n] = kernel.data[y * kernel.width + x];
-    fft2(re, im, n);
+    const reused = cache?.source === kernel && cache.n === n;
+    const re = reused ? cache.re.slice() : new Float64Array(n * n);
+    const im = reused ? cache.im.slice() : new Float64Array(n * n);
+    if (!reused) {
+        const cx = Math.floor(kernel.width / 2), cy = Math.floor(kernel.height / 2);
+        for (let y = 0; y < kernel.height; y++) for (let x = 0; x < kernel.width; x++)
+            re[((y - cy + n) % n) * n + (x - cx + n) % n] = kernel.data[y * kernel.width + x];
+        fft2(re, im, n);
+        if (cache?.reuseTransform) Object.assign(cache, {source: kernel, n, re: re.slice(), im: im.slice()});
+    }
+    // Calculated reflection symmetry: the transfer uses absolute axis frequencies.
+    // Evaluate each quadrant sample once; fixed Gaussian transfer is shared across
+    // wavelength and turbulence samples, without combining the finite crops.
+    const side = n / 2 + 1;
+    let transfer = cache?.transfer;
+    if (!transfer || transfer.length !== side * side) {
+        transfer = new Float64Array(side * side);
+        for (let y = 0; y < side; y++) for (let x = 0; x < side; x++) {
+            const fx = x / (n * angularStepRad), fy = y / (n * angularStepRad);
+            transfer[y * side + x] = mtf(Math.hypot(fx, fy), fx, fy);
+        }
+        if (cache?.reuseTransfer) cache.transfer = transfer;
+    }
     for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) {
-        const fx = Math.min(x, n - x) / (n * angularStepRad);
-        const fy = Math.min(y, n - y) / (n * angularStepRad);
-        const transfer = mtf(Math.hypot(fx, fy), fx, fy), i = y * n + x;
-        re[i] *= transfer; im[i] *= transfer;
+        const value = transfer[Math.min(y, n - y) * side + Math.min(x, n - x)], i = y * n + x;
+        re[i] *= value; im[i] *= value;
     }
     fft2(re, im, n, true);
     const data = new Float64Array(size * size);
@@ -1020,7 +1036,7 @@ export function runSensorChain(input, width, height, settings, {frame = 0, effec
 // It also bounds absolute MTF error at every spatial frequency by the same value.
 export const OPTICS_L1_TOLERANCE = 1e-4;
 
-const opticalFields = ["supersample", "opticsEnabled", "focalLengthM", "apertureM", "pixelPitchM",
+export const opticalFields = ["supersample", "opticsEnabled", "focalLengthM", "apertureM", "pixelPitchM",
     "bandMinUm", "bandMaxUm", "opticsRadiusPx", "defocusM", "turbulenceR0M", "jitterRmsUrad",
     "diffusionSigmaPx", "systemBlurHorizontalRmsUrad", "systemBlurVerticalRmsUrad",
     "scatterFraction", "scatterSlope", "scatterShoulderRad", "scatterCutoffRad"];
@@ -1029,22 +1045,24 @@ const opticalFields = ["supersample", "opticsEnabled", "focalLengthM", "aperture
  * spectral addition; signed samples retain that identity before the final clamp.
  * Range, altitude, elevation and source temperature affect only photon weights.
  */
-export function opticalBasis(settings, width, height, spectrum) {
+export function opticalBasis(settings, width, height, spectrum, scatterBasis = null, work = null) {
     const split = scatterPlan(settings, width, height);
     const sensor = {focalM: settings.focalLengthM, apertureM: settings.apertureM, pitchM: settings.pixelPitchM};
     const sigma = gaussianBlurRmsRad(settings);
-    const bands = spectrum.bins.map(({wavelengthM}) => {
-        let kernel = settings.opticsEnabled ? diffractionKernel(sensor, {radiusPx: settings.opticsRadiusPx,
-            defocusM: settings.defocusM, pupilGrid: 1024}, wavelengthM, settings.supersample) : deltaKernel();
+    const bands = spectrum.bins.map(({wavelengthM}, index) => {
+        let kernel = work?.diffraction[index] ?? (settings.opticsEnabled ? diffractionKernel(sensor, {radiusPx: settings.opticsRadiusPx,
+            defocusM: settings.defocusM, pupilGrid: 1024}, wavelengthM, settings.supersample) : deltaKernel());
+        if (work) work.diffraction[index] = kernel;
         if (settings.turbulenceR0M > 0) kernel = filterKernelMTF(kernel, split.angularStep,
             frequency => turbulenceMTF(frequency, wavelengthM, settings.turbulenceR0M),
-            Math.ceil(settings.opticsRadiusPx * settings.supersample));
+            Math.ceil(settings.opticsRadiusPx * settings.supersample), false,
+            work ? (work.turbulence[index] ??= {reuseTransform: true}) : null);
         if (sigma.horizontal > 0 || sigma.vertical > 0) kernel = filterKernelMTF(kernel, split.angularStep,
             (frequency, fx, fy) => Math.exp(-2 * Math.PI ** 2 *
-                ((sigma.horizontal * fx) ** 2 + (sigma.vertical * fy) ** 2)), opticalCoreRadius(settings), true);
+                ((sigma.horizontal * fx) ** 2 + (sigma.vertical * fy) ** 2)), opticalCoreRadius(settings), true, work?.gaussian);
         return kernel;
     });
-    return {bands, split, ...splitScatter(settings, split)};
+    return {bands, split, ...(scatterBasis ?? splitScatter(settings, split))};
 }
 
 export function mixOpticalBasis(basis, spectrum) {
@@ -1101,4 +1119,218 @@ export function timingDistribution(values) {
     const percentile = p => sorted[Math.max(0, Math.ceil(p * sorted.length) - 1)];
     return {medianMs: percentile(.5), p95Ms: percentile(.95), p99Ms: percentile(.99),
         maxMs: sorted.at(-1), meanMs: values.reduce((a, b) => a + b, 0) / values.length};
+}
+
+// Calculated cubic response interpolation in turbulence strength q=r0^(-5/3), m^(-5/3).
+// Each interval is checked against independent finite kernels at its quarter,
+// midpoint and three-quarter points. The factor-two validation margin and
+// one-quarter allocation of the L1 budget are estimated numerical policies.
+export function opticalStructureKey(settings, width, height) {
+    return JSON.stringify([width, height, ...opticalFields.filter(name => name !== "turbulenceR0M").map(name => settings[name]),
+        scatterPlan(settings, width, height)]);
+}
+export const turbulenceStrength = r0 => r0 > 0 ? r0 ** (-5 / 3) : 0;
+export function interpolateOpticalBasis(a, b, fraction) {
+    if (!fraction) return a;
+    if (fraction === 1) return b;
+    return {...a, bands: a.bands.map((band, i) => ({...band,
+        data: Float64Array.from(band.data, (v, p) => v + fraction * (b.bands[i].data[p] - v))}))};
+}
+export function buildOpticalDomain(settings, width, height, spectrum, onAnchor = null) {
+    const q = turbulenceStrength(settings.turbulenceR0M), samples = new Map();
+    // Diffraction depends on wavelength and pupil, not turbulence strength.
+    // All validation samples share these finite responses.
+    const work = {diffraction: [], turbulence: [], gaussian: {reuseTransfer: true}};
+    let scatter;
+    const at = strength => {
+        if (!samples.has(strength)) {
+            const value = opticalBasis({...settings, turbulenceR0M: strength ? strength ** (-3 / 5) : 0}, width, height, spectrum, scatter, work);
+            scatter = {scatter: value.scatter, farScatter: value.farScatter, farMass: value.farMass};
+            samples.set(strength, value);
+        }
+        return samples.get(strength);
+    };
+    const key = opticalStructureKey(settings, width, height);
+    if (onAnchor) {
+        const basis = at(q);
+        onAnchor({key, anchor: q, intervals: [{low: q, high: q, a: basis, b: basis, errorL1: 0}], builds: 1});
+    }
+    // Estimated work-domain width in q; validation, never this width, decides reuse.
+    const span = Math.max(.4, q / 5), low = Math.max(q / 16, q - span), high = q + span;
+    if (!q) return {key: opticalStructureKey(settings, width, height), intervals: [{low: 0, high: 0, a: at(0), b: at(0), errorL1: 0}], builds: 1};
+    const intervals = [];
+    const validate = (low, high, depth = 0) => {
+        const bases = [0, 1/3, 2/3, 1].map(t => at(low+t*(high-low)));
+        const a = bases[0], b = bases[3];
+        const coefficients = a.bands.map((band, i) => {
+            const c = Array.from({length: 4}, () => new Float64Array(band.data.length));
+            for (let p = 0; p < band.data.length; p++) {
+                const [v0,v1,v2,v3] = bases.map(basis => basis.bands[i].data[p]);
+                c[0][p] = v0;
+                c[1][p] = (-11*v0+18*v1-9*v2+2*v3)/2;
+                c[2][p] = (18*v0-45*v1+36*v2-9*v3)/2;
+                c[3][p] = (-9*v0+27*v1-27*v2+9*v3)/2;
+            }
+            return c;
+        });
+        let maximum = 0;
+        for (const t of [.25, .5, .75]) {
+            const exact = at(low+t*(high-low));
+            for (let i = 0; i < a.bands.length; i++) {
+                let difference = 0, mass = 0;
+                const c = coefficients[i];
+                for (let p = 0; p < c[0].length; p++) {
+                    const predicted = c[0][p]+t*(c[1][p]+t*(c[2][p]+t*c[3][p]));
+                    difference += Math.abs(predicted-exact.bands[i].data[p]); mass += predicted;
+                }
+                // Clamping is nonexpansive; normalization adds at most 2/mass.
+                maximum = Math.max(maximum, 4*difference/mass);
+            }
+        }
+        if (maximum > OPTICS_L1_TOLERANCE/4) {
+            if (depth >= 12) throw new Error("Optical interpolation did not converge");
+            const mid = (low+high)/2; validate(low,mid,depth+1); validate(mid,high,depth+1);
+        } else intervals.push({low, high, a, b, coefficients, errorL1: maximum});
+    };
+    validate(low, high);
+    return {key: opticalStructureKey(settings, width, height), anchor: q, intervals, builds: samples.size};
+}
+export function sampleOpticalDomain(domain, settings, spectrum) {
+    const q = turbulenceStrength(settings.turbulenceR0M);
+    const interval = domain.intervals.find(cell => q >= cell.low && q <= cell.high);
+    if (!interval) return null;
+    const fraction = interval.high === interval.low ? 0 : (q - interval.low) / (interval.high - interval.low);
+    // Mix wavelength and strength weights together to avoid allocating a second basis.
+    const length = interval.a.bands[0].data.length;
+    const data = domain.scratch?.length === length ? domain.scratch : (domain.scratch = new Float64Array(length));
+    data.fill(0);
+    for (let i = 0; i < spectrum.bins.length; i++) {
+        const w = spectrum.bins[i].weight, c = interval.coefficients?.[i];
+        if (c) for (let p=0; p<data.length; p++) data[p] += w*(c[0][p]+fraction*(c[1][p]+fraction*(c[2][p]+fraction*c[3][p])));
+        else for (let p=0; p<data.length; p++) data[p] += w*interval.a.bands[i].data[p];
+    }
+    for (let p = 0; p < data.length; p++) data[p] = Math.max(0, data[p]);
+    const total = sum(data), basis = interval.a;
+    if (!(total > 0)) throw new Error("Kernel must have positive integral");
+    const output = domain.output?.length === length ? domain.output : (domain.output = new Float32Array(length));
+    for (let p = 0; p < length; p++) output[p] = data[p]/total;
+    const core = {width: basis.bands[0].width, height: basis.bands[0].height, data: output, rawSum: total};
+    return {core, spectrum, split: basis.split, scatter: basis.scatter, farScatter: basis.farScatter,
+        farMass: basis.farMass, farCore: basis.farScatter ? coarsenKernel(core, basis.split.factor) : null,
+        interpolationErrorL1: interval.errorL1};
+}
+
+export class OpticsScheduler {
+    constructor({createWorker, onReady = () => {}} = {}) {
+        this.createWorker = createWorker ?? createDefaultOpticsWorker;
+        this.fallback = new OpticalKernelCache();
+        this.onReady = onReady;
+        this.serial = 0;
+    }
+    request(settings, width, height, atmosphere) {
+        const key = opticalStructureKey(settings, width, height);
+        const synchronous = () => this.synchronousRequest(settings, width, height, atmosphere, key);
+        if (this.workerUnavailable) return synchronous();
+        const spectrum = psfSpectrum(settings, atmosphere);
+        const q = turbulenceStrength(settings.turbulenceR0M);
+        const completed = this.domain?.key === key ? this.domain : null;
+        const anchor = this.anchorDomain?.key === key ? this.anchorDomain : null;
+        const domain = completed?.intervals.some(cell => q >= cell.low && q <= cell.high) ? completed : anchor ?? completed;
+        const kernels = domain ? sampleOpticalDomain(domain, settings, spectrum) : null;
+        const low = domain?.intervals[0].low, high = domain?.intervals.at(-1).high;
+        // Estimated prefetch fraction measured from the build anchor, including asymmetric domains.
+        const needsBuild = !kernels || q !== 0 && (q < domain.anchor - (domain.anchor-low)/4 || q > domain.anchor + (high-domain.anchor)/4);
+        if (needsBuild) {
+            this.latest = {settings: {...settings}, width, height, spectrum, key};
+            if (!this.pending) this.start(this.latest);
+        }
+        if (this.workerUnavailable) return synchronous();
+        return {kernels, key, pending: !!this.pending, buildMs: this.buildMs,
+            firstKernelMs: this.firstKernelMs, builds: domain?.builds ?? 0};
+    }
+    /** Without a worker, build the worker's interpolation domain in this thread, once per optical structure
+     * and turbulence interval, and sample it each frame. The results match the worker path, and a moving
+     * camera, whose turbulence changes every frame, no longer rebuilds the whole optical basis every frame.
+     */
+    synchronousRequest(settings, width, height, atmosphere, key) {
+        const spectrum = psfSpectrum(settings, atmosphere);
+        const q = turbulenceStrength(settings.turbulenceR0M);
+        const covered = this.domain?.key === key && this.domain.intervals.some(cell => q >= cell.low && q <= cell.high);
+        if (!covered) {
+            const start = performance.now();
+            this.domain = buildOpticalDomain(settings, width, height, spectrum);
+            this.buildMs = performance.now() - start;
+        }
+        // Unchanged inputs return the same kernel object, so the pipeline does not upload it again.
+        const sampleKey = JSON.stringify([q, spectrum.bins.map(bin => bin.weight)]);
+        if (this.sampled?.domain === this.domain && this.sampled.sampleKey === sampleKey) return this.sampled.result;
+        const kernels = sampleOpticalDomain(this.domain, settings, spectrum);
+        const result = kernels
+            ? {kernels, key, pending: false, fallback: true, buildMs: this.buildMs, builds: this.domain.builds ?? 0}
+            : {kernels: this.fallback.candidate(settings, width, height, atmosphere), key, pending: false, fallback: true};
+        this.sampled = {domain: this.domain, sampleKey, result};
+        return result;
+    }
+    start(request) {
+        const id = ++this.serial;
+        this.pending = {...request, id};
+        const unavailable = () => {
+            if (this.disposed) return;
+            this.worker?.terminate(); this.worker = null;
+            this.workerUnavailable = true; this.pending = null; this.onReady();
+        };
+        if (!this.workerPromise) {
+            let created;
+            try {created = this.createWorker();} catch {unavailable(); return;}
+            if (!created) {unavailable(); return;}
+            this.workerPromise = Promise.resolve(created).then(worker => {
+                if (this.disposed) {worker?.terminate(); return null;}
+                if (!worker) {unavailable(); return null;}
+                this.worker = worker;
+                worker.onmessage = event => {
+                    if (this.disposed || event.data.id !== this.pending?.id) return;
+                    if (event.data.error) {unavailable(); return;}
+                    this.buildMs = event.data.buildMs;
+                    if (event.data.complete === false) {
+                        // An early point response must not evict the still-valid
+                        // interval during a prefetch for a moving camera.
+                        this.anchorDomain = event.data.domain;
+                        this.firstKernelMs ??= event.data.buildMs;
+                    } else {
+                        this.domain = event.data.domain; this.anchorDomain = null;
+                        this.pending = null;
+                    }
+                    this.onReady();
+                };
+                worker.onerror = event => {event.preventDefault?.(); unavailable();};
+                worker.onmessageerror = unavailable;
+                return worker;
+            }).catch(() => {unavailable(); return null;});
+        }
+        this.workerPromise.then(worker => !this.disposed && worker?.postMessage({id, settings: request.settings,
+            width: request.width, height: request.height, spectrum: request.spectrum}))
+            .catch(unavailable);
+    }
+    dispose() {this.disposed = true; this.serial++; this.pending = this.latest = this.domain = this.anchorDomain = this.sampled = null; this.worker?.terminate();}
+}
+
+/** Module-relative resolution works without a document or a navigable page URL.
+ * Evaluated bundles, unavailable workers and constructor restrictions use the
+ * same finite CPU calculation instead. Bundled hosts may supply an asset factory.
+ */
+export function createDefaultOpticsWorker() {
+    if (typeof Worker === "undefined") return null;
+    try {
+        return new Worker(new URL("./opticsWorker.js", import.meta.url), {type: "module"});
+    } catch {return null;}
+}
+
+/** Coarse startup response: residual Gaussian blur and scatter only. The omitted
+ * diffraction and turbulence are explicit. Calculated universal L1 bound = 2
+ * between positive unit-mass responses, so |image error| <= 2 * max |contrast|.
+ * This is a transient preview, not the validated interpolation tolerance.
+ */
+export function coarseOpticalKernels(settings, width, height, atmosphere) {
+    return {...opticalKernels({...settings, opticsEnabled: false, turbulenceR0M: 0}, width, height, atmosphere),
+        quality: "coarse", interpolationErrorL1: 2};
 }

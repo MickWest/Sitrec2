@@ -1,4 +1,4 @@
-import {H, C, PHOTON_SCALE, apparentTemperature, inBandRadiance} from "./radiometry.js";
+import {H, C, PHOTON_SCALE, apparentTemperature, inBandRadiance, radianceDerivative} from "./radiometry.js";
 
 /**
  * Dependency-free, reduced MWIR radiative-transfer model.
@@ -545,14 +545,14 @@ export function backgroundAtElevation(elevationRad, {sensorAltitudeM, temperatur
  * Horizon limits are evaluated 1e-8 rad inside each branch to avoid tangent-ray
  * roundoff. Duplicate horizon coordinates prevent blending sea into clear sky.
  */
-export function createSkyElevationLUT({view, elevationRange, toleranceK, relativeTolerance = 2e-5, maxSamples = 2049, ...options}, atmosphere = createAtmosphere()) {
+export function createSkyElevationLUT({view, elevationRange, toleranceK, relativeTolerance = 2e-5, maxSamples = 2049, initialSamples = 65, ...options}, atmosphere = createAtmosphere()) {
     const range = elevationRange ?? skyElevationRange(view), {minRad, maxRad, centerRad} = range;
     const radius = options.earthRadiusM ?? EARTH_RADIUS_M;
     const horizonRad = options.rayGeometry?.horizonRad ?? -Math.acos(radius / (radius + options.sensorAltitudeM));
     const at = e => backgroundAtElevation(e, options, atmosphere).photonRadiance;
     const nodes = [];
-    for (let i = 0; i <= 64; i++) {
-        const e = minRad + (maxRad - minRad) * i / 64;
+    for (let i = 0; i < initialSamples; i++) {
+        const e = minRad + (maxRad - minRad) * i / (initialSamples - 1);
         if (Math.abs(e - horizonRad) > 1e-12) nodes.push({e, value: at(e)});
     }
     if (Math.abs(centerRad - horizonRad) > 1e-12) nodes.push({e: centerRad, value: at(centerRad)});
@@ -629,7 +629,7 @@ export function evaluatePhotonPath(geometry, atmosphere, options = {}) {
  * Texture rows contain 12 transmissions (unitless) and 12 photon path radiances
  * scaled by 1e20. No midpoint-wavelength conversion of energy radiance is used.
  */
-export function createRangeLUT({maxRangeM, size = 128, sensorAltitudeM = 1500,
+export function* createRangeLUTSteps({maxRangeM, size = 128, sensorAltitudeM = 1500,
     elevationRad = 0, band = {minUm: 3, maxUm: 5}, atmosphere = createAtmosphere(), segments = 96, rayGeometry}) {
     number("maxRangeM", maxRangeM);
     if (!Number.isInteger(size) || size < 2) throw new RangeError("Range table needs at least two samples");
@@ -644,8 +644,15 @@ export function createRangeLUT({maxRangeM, size = 128, sensorAltitudeM = 1500,
             transmission[sample * N + bandIndex] = path.transmission[bandIndex];
             pathRadiance[sample * N + bandIndex] = path.pathRadiance[bandIndex] / PHOTON_SCALE;
         }
+        yield;
     }
     return {size, maxRangeM, transmission, pathRadiance};
+}
+
+export function createRangeLUT(options) {
+    const steps = createRangeLUTSteps(options);
+    let result; do {result = steps.next();} while (!result.done);
+    return result.value;
 }
 
 /** sourceBands: 12 physical photon radiances; output: scaled photon radiance by range.
@@ -1352,7 +1359,8 @@ export class SkyBackgroundCache {
             maxRad: Math.min(Math.PI / 2, requested.maxRad + padding)};
         // Estimated allocation: .002 K angular + .001 K altitude, with remaining
         // .002 K reserved for sampled-validation and Float32 upload roundoff.
-        const table = createSkyElevationLUT({...options, elevationRange, toleranceK: .002}, atmosphere);
+        // Estimated coarse seed; adaptive validation retains the same radiance tolerance.
+        const table = createSkyElevationLUT({...options, elevationRange, toleranceK: .002, initialSamples: 17}, atmosphere);
         if (!table.interpolation.toleranceMet) throw new Error("Sky interpolation did not meet its brightness tolerance");
         this.cached = {...table, sensorAltitudeM: h, options};
         this.key = key; this.atmosphere = atmosphere;
@@ -1388,3 +1396,106 @@ export class SkyBackgroundCache {
     }
 }
 
+
+// Estimated numerical allocations, additional to the unchanged range sampling:
+// |dL| <= 1e-4 * sum(source bands) + B'(300 K) * .001 K.
+// This covers every nonnegative source spectrum, including reflected sunlight.
+export const RANGE_TRANSMISSION_TOLERANCE = 1e-4;
+export const RANGE_PATH_TOLERANCE_K = .001;
+const ANGLES = [-1, -.6, -.2, .2, .6, 1]; // calculated equally spaced quintic nodes
+function blend(tables, x, y) {
+    const e = 2*x-1;
+    const angular = ANGLES.map((node, i) => ANGLES.reduce((w, other, j) => i === j ? w : w*(e-other)/(node-other), 1));
+    const weights = [...angular.map(w => w*(1-y)), ...angular.map(w => w*y)];
+    const result = {...tables[0]};
+    for (const field of ["transmission", "pathRadiance"])
+        result[field] = Float32Array.from(tables[0][field], (_, i) => Math.max(0, Math.min(field === "transmission" ? 1 : Infinity,
+            weights.reduce((value, w, k) => value + w * tables[k][field][i], 0))));
+    return result;
+}
+
+export class RangeTableCache {
+    constructor(onReady = () => {}) {this.onReady = onReady;}
+    request(options, atmosphere) {
+        const key = JSON.stringify([options.surfaceLimited ? ["surface", options.rangeLimitM] : options.maxRangeM, options.size, options.band,
+            options.rayGeometry?.domainKey ?? options.rayGeometry?.key]);
+        const h = options.sensorAltitudeM, e = options.elevationRad, now = performance.now();
+        const velocity = this.lastRequest && now > this.lastRequest.time ? (e-this.lastRequest.e)/(now-this.lastRequest.time) : 0;
+        this.lastRequest = {e, time: now};
+        const compatible = key === this.key && atmosphere === this.atmosphere;
+        const contains = cell => cell && Math.abs(h-cell.h) <= cell.dh && Math.abs(e-cell.e) <= cell.de;
+        const domain = compatible ? [this.domain, this.previousDomain].find(contains) : null;
+        const fits = !!domain;
+        const nearEdge = fits && (Math.abs(h-domain.h) > domain.dh/2 || Math.abs(e-domain.e) > domain.de/10);
+        if ((!fits || nearEdge) && !this.pending) {
+            // Calculated motion prediction changes only the work domain, never a
+            // physical ray. Retain overlapping completed domains during publication.
+            const offset = fits ? clamp(velocity*(this.buildWallMs ?? 1000), -domain.de, domain.de) : 0;
+            this.start({...options, elevationRad: e+offset}, atmosphere, key);
+        }
+        if (this.error) throw this.error;
+        if (!fits) return null;
+        const table = blend(domain.tables, (e-domain.e+domain.de)/(2*domain.de), domain.dh ? (h-domain.h+domain.dh)/(2*domain.dh) : 0);
+        this.report = {status: "calculated", validation: "all range nodes; angular and altitude quarter points; factor-two margin",
+            transmissionError: domain.transmissionError, pathErrorK: domain.pathErrorK,
+            pending: !!this.pending, builds: this.builds ?? 0};
+        table.maxRangeM = options.maxRangeM;
+        return table;
+    }
+    *build(options, atmosphere) {
+        const e = options.elevationRad, h = options.sensorAltitudeM;
+        // Estimated initial work domain; only validated cells are published.
+        let de = this.domain?.de ?? .016, dh = options.rayGeometry && !options.rayGeometry.atAltitude ? 0 : Math.min(.05, h/4);
+        const derivative = radianceDerivative(300, options.band).photon / PHOTON_SCALE;
+        const at = (x, y) => {
+            const altitude = h+y*dh, elevation = e+x*de;
+            const rayGeometry = dh && options.rayGeometry ? options.rayGeometry.atAltitude(altitude) : options.rayGeometry;
+            const maxRangeM = options.surfaceLimited ? Math.min(options.rangeLimitM,
+                rayGeometry ? rayGeometry.sea(elevation)?.distanceM ?? Infinity : thermalSeaDistance(altitude, Math.sin(elevation))) : options.maxRangeM;
+            return createRangeLUTSteps({...options, maxRangeM, atmosphere, elevationRad: elevation, sensorAltitudeM: altitude, rayGeometry});
+        };
+        for (let attempt = 0; attempt < 16; attempt++, de /= 2, dh /= 2) {
+            const tables = [];
+            for (const y of [-1,1]) for (let i = 0; i < ANGLES.length; i++) tables.push(y === 1 && !dh ? tables[i] : yield* at(ANGLES[i],y));
+            let transmissionError = 0, pathErrorK = 0;
+            for (const [x,y] of [[-.5,0],[0,0],[.5,0],[0,-.5],[0,.5],[-.5,-.5],[.5,.5]]) {
+                const exact = yield* at(x,y), predicted = blend(tables, (x+1)/2, (y+1)/2);
+                for (let sample = 0; sample < exact.size; sample++) {
+                    let pathError = 0;
+                    for (let b = 0; b < 12; b++) {
+                        const i = sample*12+b;
+                        transmissionError = Math.max(transmissionError, 2*Math.abs(exact.transmission[i]-predicted.transmission[i]));
+                        pathError += Math.abs(exact.pathRadiance[i]-predicted.pathRadiance[i]);
+                    }
+                    pathErrorK = Math.max(pathErrorK, 2*pathError/derivative);
+                }
+            }
+            if (transmissionError <= RANGE_TRANSMISSION_TOLERANCE && pathErrorK <= RANGE_PATH_TOLERANCE_K)
+                return {e,h,de,dh,tables,transmissionError,pathErrorK};
+        }
+        throw new Error("Foreground transfer interpolation did not converge");
+    }
+    start(options, atmosphere, key) {
+        const job = {steps: this.build(options, atmosphere), started: performance.now()};
+        this.pending = job;
+        const advance = () => {
+            if (this.disposed || this.pending !== job) return;
+            const started = performance.now(), deadline = started+4; // estimated cooperative CPU slice, ms
+            try {
+                let result;
+                do {result = job.steps.next();} while (!result.done && performance.now() < deadline);
+                if (result.done) {
+                    this.previousDomain = this.key === key && this.atmosphere === atmosphere ? this.domain : null;
+                    this.domain = result.value; this.key = key; this.atmosphere = atmosphere;
+                    this.buildWallMs = performance.now()-job.started;
+                    this.builds = (this.builds ?? 0)+1; this.pending = null; this.onReady();
+                } else this.timer = setTimeout(advance, 0);
+            } catch (error) {this.error = error; this.pending = null; this.onReady();}
+            finally {
+                const ms = performance.now()-started; this.workMs = (this.workMs ?? 0)+ms; this.maxSliceMs = Math.max(this.maxSliceMs ?? 0, ms);
+            }
+        };
+        this.timer = setTimeout(advance, 0);
+    }
+    dispose() {this.disposed = true; clearTimeout(this.timer); this.pending = this.domain = this.previousDomain = null;}
+}
