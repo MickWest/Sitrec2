@@ -2,7 +2,22 @@
 
 ## Infrared preview
 
-Choose **IR preview** under Preview mode. Start with **A340-600**, range
+Choose **IR preview** under Preview mode, then the **IR view**:
+
+- **Near** uses the normal view's camera: the same position, direction and field
+  of view, so both preview modes show the same picture. Drag to orbit, scroll to
+  zoom, use the view buttons, or type the **Distance to the vehicle**; the
+  camera is shared, so the normal view follows. The image keeps the selected
+  sensor's detector rows, pixel pitch and f-number at this field of view (the
+  focal length follows the field and the aperture follows the f-number); the
+  detector columns follow the preview's shape.
+- **Far** places the sensor at a range and aspect around the vehicle, as below.
+
+Both views use the real distance for the atmospheric path and as the
+point-response range (PSF source range). In the near view that range follows the
+distance once a zoom has stopped.
+
+For the far view, start with **A340-600**, range
 **125000 m**, aspect azimuth **0°** and elevation **0°** for a direct rear view.
 Positive aspect elevation puts the sensor above the vehicle. Azimuth turns from
 the tail toward the port side. These are body-relative viewing angles; the

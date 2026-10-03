@@ -10,6 +10,9 @@ import {attachThermalDebug, createThermalControls, createVehicleThermalPreview, 
 import {createVehicleStudio} from "../tools/vehicles/studio.js";
 import {mountVehicleDesigner} from "../tools/vehicles/designer.js";
 import {downloadVehicleBlob} from "../tools/vehicles/files.js";
+import {Box3, Group, PerspectiveCamera, Scene, Vector3} from "three";
+import {PRESETS} from "../tools/vehicles/vehicleParameters.js";
+import {createVehicleRecipe} from "../tools/vehicles/recipe.js";
 
 const mockDraws = [];
 jest.mock("../tools/thermal/ThermalPipeline.js", () => ({ThermalPipeline: jest.fn().mockImplementation(() => ({
@@ -74,6 +77,72 @@ test("camera settings persist separately, linked focal edits update field of vie
     const next = createVehicleThermalPreview(options);
     expect(next.view.rangeM).toBe(300000); expect(next.settings.focalLengthM).toBe(.135);
     expect(next.settings.gainMode).toBe("fixedRadiometric"); next.dispose();
+});
+
+test("the near IR view renders through the visible preview's camera with the sensor's rows, pitch and f-number", () => {
+    // The near view shows the same picture as the visible preview: same camera position, direction and field of view.
+    const renderer = {domElement: document.createElement("canvas")}, panel = document.createElement("div"), readout = document.createElement("div");
+    const viewCamera = new PerspectiveCamera(36, 1.6, .05, 3000); viewCamera.position.set(-40, 15, 30);
+    const orbit = {target: new Vector3(), update: jest.fn()};
+    const options = {renderer, panel, readout, onChange: jest.fn(), onError: jest.fn(), viewCamera, orbit};
+    const preview = createVehicleThermalPreview(options);
+    const preset = PRESETS.find(entry => entry.id === "a340-600");
+    const vehicle = {root: new Group(), recipe: createVehicleRecipe(preset.parameters, preset.name, preset.id),
+        bounds: new Box3(new Vector3(-30, -5, -35), new Vector3(30, 10, 35))};
+    const center = vehicle.bounds.getCenter(new Vector3()), last = () => preview.pipeline.render.mock.calls.at(-1)[0];
+    let now = 1000; jest.spyOn(performance, "now").mockImplementation(() => now);
+    try {
+        expect(preview.usesViewCamera).toBe(true);
+        preview.render(new Scene(), vehicle, 7);
+        const sensor = preview.settings, near = last().settings;
+        expect(last().camera).toBe(viewCamera);
+        expect(near.verticalFovDeg).toBeCloseTo(36, 9);
+        expect([near.detectorWidth, near.detectorHeight]).toEqual([Math.round(sensor.detectorHeight * 1.6), sensor.detectorHeight]);
+        expect(near.pixelPitchM).toBe(sensor.pixelPitchM); expect(near.digitalZoom).toBe(1);
+        expect(near.focalLengthM / near.apertureM).toBeCloseTo(sensor.focalLengthM / sensor.apertureM, 9);
+        expect(last().psfRangeM).toBeCloseTo(viewCamera.position.distanceTo(center), 9);
+        expect(readout.textContent).toContain("Near");
+        expect(panel.querySelector("input[max='300000'][step='100']").closest("label").hidden).toBe(true);
+        // The distance field moves the shared camera along its line from the vehicle's center.
+        const direction = viewCamera.position.clone().sub(center).normalize();
+        preview.set("nearDistanceM", 120);
+        expect(viewCamera.position.distanceTo(center)).toBeCloseTo(120, 9);
+        expect(viewCamera.position.clone().sub(center).normalize().dot(direction)).toBeCloseTo(1, 12);
+        expect(orbit.target.equals(center)).toBe(true); expect(orbit.update).toHaveBeenCalled();
+        // A changed distance becomes the point-response range once it has been still for 300 ms.
+        const previous = last().psfRangeM;
+        now += 10; preview.render(new Scene(), vehicle, 8);
+        expect(last().psfRangeM).toBe(previous); expect(readout.textContent).toContain("point response updating");
+        now += 300; preview.render(new Scene(), vehicle, 9);
+        expect(last().psfRangeM).toBeCloseTo(120, 9); expect(readout.textContent).not.toContain("updating");
+        // Far: the sensor's own camera at range, the range as the point-response range; the choice persists.
+        preview.set("irView", "far");
+        expect(preview.usesViewCamera).toBe(false);
+        preview.render(new Scene(), vehicle, 10);
+        expect(last().camera).not.toBe(viewCamera); expect(last().psfRangeM).toBe(preview.view.rangeM);
+        expect(last().settings).toBe(preview.settings); expect(readout.textContent).toContain("Far");
+        preview.dispose();
+        const restored = createVehicleThermalPreview(options);
+        expect(restored.view.irView).toBe("far"); restored.dispose();
+    } finally {performance.now.mockRestore?.();}
+});
+
+test("the near IR view keeps the visible camera, its orbit and the full canvas; the far view letterboxes and locks orbit", async () => {
+    const mount = document.createElement("div");
+    Object.defineProperty(mount, "clientWidth", {value: 1600}); Object.defineProperty(mount, "clientHeight", {value: 1000});
+    const studio = createVehicleStudio(mount);
+    try {
+        await studio.loadThermal({panel: document.createElement("div"), readout: document.createElement("div"), onChange: jest.fn(), onError: jest.fn()});
+        studio.setMode("ir");
+        expect(studio.sharesCamera).toBe(true); expect(studio.controls.enabled).toBe(true);
+        expect(studio.renderer.domElement.style.width).toBe("1600px"); expect(studio.camera.aspect).toBeCloseTo(1.6, 12);
+        studio.thermal.set("irView", "far"); studio.resize();
+        const {detectorWidth, detectorHeight} = studio.thermal.settings;
+        expect(studio.sharesCamera).toBe(false); expect(studio.controls.enabled).toBe(false);
+        expect(studio.renderer.domElement.style.width).toBe(`${1000 * detectorWidth / detectorHeight}px`);
+        studio.setMode("visible");
+        expect(studio.controls.enabled).toBe(true); expect(studio.camera.aspect).toBeCloseTo(1.6, 12);
+    } finally {studio.dispose();}
 });
 
 test("the shared editor lazily activates IR, snapshots it, uses visible thumbnails and restores IR", async () => {

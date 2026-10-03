@@ -56,20 +56,26 @@ let grid = new THREE.GridHelper(1, 20, "#a8bbca", "#c2d0da");
 grid.material.transparent = true; grid.material.opacity = 0.6; scene.add(grid);
 grid.userData.thermal = false;
 
+// The near IR view shares the normal view's camera, so it keeps the view buttons.
+function updatePreviewClasses() {
+    $("preview").classList.toggle("thermal-preview", studio.mode === "ir");
+    $("preview").classList.toggle("thermal-near", studio.mode === "ir" && studio.sharesCamera);
+}
+
 $("renderMode").addEventListener("change", async () => {
     try {
         if ($("renderMode").value === "ir") {
             status("Loading IR preview…");
             await studio.loadThermal({panel:$("thermalPanel"),readout:$("thermalReadout"),onError:error,
-                onChange() {thermalFailed = false; renderDirty = true; studio.resize();}});
+                onChange() {thermalFailed = false; renderDirty = true; studio.resize(); updatePreviewClasses();}});
         }
         if (disposed) return;
         const mode = $("renderMode").value;
         studio.setMode(mode); thermalFailed = false; renderDirty = true;
         $("thermalPanel").hidden = mode !== "ir"; $("thermalReadout").hidden = mode !== "ir";
-        $("preview").classList.toggle("thermal-preview", mode === "ir");
+        updatePreviewClasses();
         $("autoRotate").checked = false; controls.autoRotate = false;
-        renderer.domElement.setAttribute("aria-label", mode === "ir" ? "Infrared sensor image. Use range and aspect controls beside the image." : "3D vehicle. Drag to orbit, scroll to zoom, right-drag to pan.");
+        renderer.domElement.setAttribute("aria-label", mode === "ir" ? "Infrared image. Near view: drag to orbit, scroll to zoom, as in the normal view. Far view: use the range and aspect controls beside the image." : "3D vehicle. Drag to orbit, scroll to zoom, right-drag to pan.");
         error(""); status(mode === "ir" ? "IR sensor preview · estimated signature and camera values" : "Live preview");
     } catch (failure) {$("renderMode").value = studio.mode; error(`Could not load IR preview: ${failure.message}`);}
 }, events);
@@ -340,7 +346,7 @@ function animate(now) {
     if (disposed) return;
     const dt = Math.min((now - lastTime) / 1000, 0.05); lastTime = now;
     if (modelDirty) rebuild();
-    if (studio.mode === "visible") controls.update(dt);
+    if (studio.sharesCamera) controls.update(dt);
     if (studio.mode === "visible" && $("animateLights").checked && model.lamps?.length) {animateVehicleLights(model,now/1000,true);renderDirty=true;}
     if ($("animateProps").checked && model.propellers.length) {
         propellerTime += dt; poseVehicleSpinners(model.propellers,propellerTime,true);

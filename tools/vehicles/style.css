@@ -104,5 +104,8 @@ footer a {margin-left: auto; text-decoration: none; color: #9bafc3;}
 .thermal-preview .eyebrow, .thermal-preview .metrics, .thermal-preview .orbit-hint, .thermal-preview .viewbar,
 .thermal-preview .preview-options label {display: none;}
 .thermal-preview .preview-options {top: 75px; bottom: auto; margin: 0;}
+/* The near IR view uses the normal view's camera, so its view buttons apply (the panel note gives the orbit hint;
+   the hint's own place is under the readout). */
+.thermal-preview.thermal-near .viewbar {display: flex;}
 #thermalReadout {position: absolute; bottom: 16px; left: 16px; right: 16px; padding: 10px; color: #e1eeee; background: #101923e8; font-size: 11px; line-height: 1.7; pointer-events: none; font-variant-numeric: tabular-nums;}
 [hidden] {display: none !important;}

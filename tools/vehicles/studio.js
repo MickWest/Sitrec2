@@ -57,15 +57,17 @@ export function createVehicleStudio(mount, {background="#dfe9f0",fov=36,damping=
             if (!thermalLoad) thermalLoad = import(/* webpackChunkName: "vehicle-thermal" */ "./thermalPreview.js")
                 .then(({createVehicleThermalPreview}) => {
                     if (disposed) return null;
-                    thermal = createVehicleThermalPreview({renderer, ...options}); return thermal;
+                    thermal = createVehicleThermalPreview({renderer, viewCamera: camera, orbit: controls, ...options}); return thermal;
                 }).finally(() => {thermalLoad = null;});
             return thermalLoad;
         },
         setMode(value) {
             if (!["visible", "ir"].includes(value) || (value === "ir" && !thermal)) throw new Error("Preview mode is not ready");
-            mode = value; controls.enabled = mode === "visible"; studio.resize();
+            mode = value; studio.resize();
         },
-        // Only the editor camera is fitted; sensor range and aspect have separate ownership.
+        /** True when the IR preview draws through this camera (the near IR view), so orbit and zoom apply to it. */
+        get sharesCamera() {return mode === "visible" || !!thermal?.usesViewCamera;},
+        // Only the editor camera is fitted (the near IR view uses it); the far view's range and aspect are separate.
         fit(bounds,options) {fitVehicleCamera(camera,controls,bounds,options);},
         render({mode: drawMode = mode, frame: nextFrame = frame} = {}) {
             if (disposed) return;
@@ -76,9 +78,12 @@ export function createVehicleStudio(mount, {background="#dfe9f0",fov=36,damping=
             } else renderer.render(scene,camera);
         },
         resize() {
+            // The near IR view keeps the visible camera, its orbit and its full canvas; the far view letterboxes to
+            // the detector and has its own range and aspect controls.
+            controls.enabled = studio.sharesCamera;
             let width = mount.clientWidth, height = mount.clientHeight;
             if (!width || !height) return false;
-            if (mode === "ir") {
+            if (mode === "ir" && !thermal.usesViewCamera) {
                 const aspect = thermal.settings.detectorWidth / thermal.settings.detectorHeight;
                 if (width / height > aspect) width = height * aspect; else height = width / aspect;
             }
