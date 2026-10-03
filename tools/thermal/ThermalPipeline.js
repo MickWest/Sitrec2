@@ -9,7 +9,7 @@ import {BANDS, clearSky, createAtmosphere, createRangeLUT, createSkyElevationLUT
 import {atmosphereFromSounding} from "./sounding.js";
 import {resolveSignatures} from "./signatures.js";
 import {normalizeSettings} from "./thermalSchema.js";
-import {detectorWindowScale, detectorPresentation, temporalHistoryKey, electronsPerRadiance, fixedPatternMap, gaussianKernel, integrationTime, nextPow2, opticalKernels, processingParameters, shadingResponsivity} from "./sensorMath.js";
+import {displayCurveLUT, detectorWindowScale, detectorPresentation, temporalHistoryKey, electronsPerRadiance, fixedPatternMap, gaussianKernel, integrationTime, nextPow2, opticalKernels, processingParameters, shadingResponsivity} from "./sensorMath.js";
 import * as shaders from "./shaders.js";
 import {createStatisticalSea, createSeaSkyTable, seaRayAzimuth, cloudRadianceTable, createCloudRadianceDomain,
     sortCloudSheets, createThermalDepthTable} from "./atmosphere.js";
@@ -136,7 +136,8 @@ export class ThermalPipeline {
             settings.focalLengthM, settings.apertureM, settings.pixelPitchM, settings.bandMinUm,
             settings.bandMaxUm, settings.psfTemperatureK, settings.opticsRadiusPx, settings.defocusM,
             settings.psfRangeM, settings.psfRangeM > 0 ? [this.profileKey, settings.sensorAltitudeM, settings.pathElevationDeg] : null,
-            settings.turbulenceR0M, settings.jitterRmsUrad, settings.diffusionSigmaPx, settings.systemBlurRmsUrad,
+            settings.turbulenceR0M, settings.jitterRmsUrad, settings.diffusionSigmaPx,
+            settings.systemBlurHorizontalRmsUrad, settings.systemBlurVerticalRmsUrad,
             settings.scatterFraction, settings.scatterSlope, settings.scatterShoulderRad, settings.scatterCutoffRad]);
         if (key === this.opticsKey) return;
         // A failed allocation must not leave a valid key for partially replaced spectra.
@@ -715,8 +716,17 @@ export class ThermalPipeline {
                 this._pass("localMean", shaders.localMeanFragment, {...uniforms, tInput: drive.texture, axis: 0}, horizontal);
                 this._pass("localMean", shaders.localMeanFragment, {...uniforms, tInput: horizontal.texture, axis: 1}, mean);
             }
+            const curveKey = `${settings.sensorPreset}:${settings.displayCurve}`;
+            if (this.displayCurveKey !== curveKey) {
+                this._removeTexture(this.displayCurveTexture);
+                const lut = displayCurveLUT(settings);
+                this.displayCurveTexture = lut ? this._ownTexture(scalarTexture(lut)) : null;
+                this.displayCurveKey = curveKey;
+            }
             this._pass("display", shaders.displayFragment, {tInput: drive.texture, tMean: mean.texture,
                 localAmount: settings.localAmount, responseGamma: settings.responseGamma,
+                tDisplayCurve: this.displayCurveTexture ?? this.emptyTexture, useDisplayCurve: settings.displayCurve === "measured",
+                polarityAffine: [settings.polarityAffineGain, settings.polarityAffineOffset],
                 blackHot: settings.polarity === "blackHot"}, display);
             const diagnostic = settings.diagnosticView;
             const source = diagnostic === "radiance" ? sampled : diagnostic === "detectorCounts" ? counts : display;
@@ -740,7 +750,9 @@ export class ThermalPipeline {
                 background: this.frameBackground, backgroundTemperatureK: this.background.brightnessTemperatureK,
                 gain: {region: settings.gainRegion, statisticsCount: parameters.statisticsCount, window: {...parameters.window}},
                 blur: {turbulence: "long-exposure Kolmogorov", turbulenceR0M: settings.turbulenceR0M,
-                    referenceWavelengthM: 4e-6, systemBlurRmsUrad: settings.systemBlurRmsUrad, jitterRmsUrad: settings.jitterRmsUrad, diffusionSigmaPx: settings.diffusionSigmaPx},
+                    referenceWavelengthM: 4e-6, systemBlurHorizontalRmsUrad: settings.systemBlurHorizontalRmsUrad,
+                    systemBlurVerticalRmsUrad: settings.systemBlurVerticalRmsUrad,
+                    jitterRmsUrad: settings.jitterRmsUrad, diffusionSigmaPx: settings.diffusionSigmaPx},
                 scatter: {...this.scatterSplit, farFFTWidth: this.scatterSplit.farMass ? this.farWidth : 0,
                     farFFTHeight: this.scatterSplit.farMass ? this.farHeight : 0}};
             this.settings = settings; this.hasFrame = true;

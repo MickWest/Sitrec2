@@ -1,7 +1,8 @@
 import * as sensor from "../tools/thermal/sensorMath.js";
 import {defaultSettings, normalizeSettings} from "../tools/thermal/thermalSchema.js";
 const settings = {...defaultSettings(), opticsEnabled:false, scatterFraction:0, noiseEnabled:false,
-    exposureMode:"manual", adcOffsetCounts:0, systemBlurRmsUrad:0, shadingK:0, fixedPatternFraction:0,
+    exposureMode:"manual", adcOffsetCounts:0, systemBlurHorizontalRmsUrad:0, systemBlurVerticalRmsUrad:0,
+    displayCurve:"linear", shadingK:0, fixedPatternFraction:0,
     darkElectronsPerS:0, fillFactor:1, supersample:2};
 const close = (actual,expected,tolerance=1e-6) => expect(Math.abs(actual-expected)).toBeLessThanOrEqual(tolerance);
 const maximumError = (actual, expected) => Math.max(...actual.map((value,pixel)=>Math.abs(value-expected[pixel])));

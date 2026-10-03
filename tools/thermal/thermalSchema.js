@@ -79,7 +79,8 @@ const definitions = [
     number("scatterCutoffRad", "optics", "rad", 0.02, 1e-6, 0.3, 1e-6, "Scatter cutoff", "Finite support angle, required even for slopes at or below two."),
     number("turbulenceR0M", "optics", "m", 0, 0, 100, 0.001, "Turbulence coherence diameter", "Fried r0 at 4 um; zero disables. Wavelength-scaled long-exposure Kolmogorov MTF, with no finite-time correction."),
     choice("turbulenceMode", "optics", "manual", {manual: "Manual", geometry: "Camera to target"}, "Turbulence path", "A geometry-aware host integrates the estimated turbulence profile along the physical camera-to-target path. Manual uses the specified coherence diameter."),
-    number("systemBlurRmsUrad", "optics", "urad RMS/axis", 0, 0, 100, 0.1, "Residual system blur", "Independent Gaussian optical residual in angle, before sampling. Zero disables; excludes turbulence, exposure jitter and charge diffusion."),
+    number("systemBlurHorizontalRmsUrad", "optics", "urad RMS", 0, 0, 100, 0.1, "Horizontal residual blur", "Independent Gaussian residual along display x, in angle before sampling and detector noise. Excludes turbulence, exposure jitter and charge diffusion."),
+    number("systemBlurVerticalRmsUrad", "optics", "urad RMS", 0, 0, 100, 0.1, "Vertical residual blur", "Independent Gaussian residual along display y, in angle before sampling and detector noise. MX-15 long steps use about 40 µrad with the measured display curve; origin unresolved."),
     number("jitterRmsUrad", "optics", "urad RMS/axis", 0, 0, 100, 0.001, "Exposure jitter", "Estimated per-axis intra-exposure Gaussian RMS; excludes frame-to-frame centroid motion."),
     number("diffusionSigmaPx", "detector", "native pixel", 0, 0, 0.4, 0.01, "Charge diffusion", "Estimated Gaussian sigma before native sampling; zero disables. Pixel-area integration is separate."),
     number("defocusM", "optics", "m", 0, -0.002, 0.002, 1e-6, "Defocus", "Longitudinal detector displacement; computed as quadratic pupil phase."),
@@ -124,6 +125,10 @@ const definitions = [
     number("radiometricHigh", "processing", "1e20 photon/s/m²/sr", 0.8238587041668244, 0.001, 1e6, 0.01, "Radiometric high", "Defaults to available ADC signal headroom at the selected exposure; an explicit edit holds this radiance endpoint."),
     choice("polarity", "display", "whiteHot", {whiteHot: "White hot", blackHot: "Black hot"}, "Polarity", "Black hot is the exact 255-code inverse of white hot, including the response curve."),
     number("responseGamma", "display", "1", 1, 0.1, 5, 0.01, "Response gamma", "White-hot response = clamped drive^(1/gamma); invert after quantization."),
+    choice("displayCurve", "display", "linear", {linear: "Linear", measured: "Measured preset curve"}, "Display curve", "Fixed lookup response after the count window and gamma, before quantization and polarity. Use gamma 1 for the measured law; MX-15 U depth uncertainty ±20%."),
+    // Estimated gain-control range; offset range spans the full 8-bit code scale.
+    number("polarityAffineGain", "display", "1", 1, 0, 10, .01, "White-hot output gain", "Output affine after the curve: white = gain × warm-increasing code + offset. Default 1 preserves exact inversion; the optional IB6830 recording profile uses 1.05."),
+    number("polarityAffineOffset", "display", "code", 0, -255, 255, 1, "White-hot output offset", "Output offset in 8-bit codes before clipping and rounding. Default 0 preserves exact inversion; the optional IB6830 recording profile uses +55 codes."),
     number("digitalZoom", "display", "1", 1, 1, 16, 0.1, "Digital zoom", "Center crop after detector processing; does not alter optical field or counts."),
     choice("sampling", "display", "linear", {nearest: "Nearest neighbor", linear: "Linear (half-pixel)", sampleCentered: "Linear (sample-centered)"}, "Enlargement sampling", "Interpolate the final detector raster; float filtering is implemented explicitly."),
     choice("diagnosticView", "display", "display", {radiance: "Radiance", detectorCounts: "Detector counts", display: "Display"}, "Diagnostic view", "Radiance uses fixed radiometric endpoints; counts use 0–16383. Readbacks retain physical units."),
@@ -152,11 +157,15 @@ export function defaultSettings() { return normalizeSettings({}); }
  */
 export function normalizeSettings(input = {}) {
     if (!input || typeof input !== "object" || Array.isArray(input)) throw new TypeError("Thermal settings must be an object");
+    const legacyBlur = input.systemBlurRmsUrad;
+    if (legacyBlur !== undefined && (typeof legacyBlur !== "number" || !Number.isFinite(legacyBlur)))
+        throw new RangeError("systemBlurRmsUrad must be finite");
     const name = input.sensorPreset ?? "MX15";
     const preset = presetValues(name);
     const result = {};
     for (const parameter of THERMAL_PARAMETERS) {
-        const candidate = input[parameter.key] !== undefined ? input[parameter.key] : preset[parameter.key] ?? parameter.default;
+        const legacy = ["systemBlurHorizontalRmsUrad", "systemBlurVerticalRmsUrad"].includes(parameter.key) ? legacyBlur : undefined;
+        const candidate = input[parameter.key] !== undefined ? input[parameter.key] : legacy ?? preset[parameter.key] ?? parameter.default;
         let resolved = candidate;
         if (parameter.type === "number") {
             if (typeof candidate !== "number" || !Number.isFinite(candidate)) throw new RangeError(`${parameter.key} must be finite`);
@@ -166,6 +175,20 @@ export function normalizeSettings(input = {}) {
             if (typeof candidate !== "boolean") throw new TypeError(`${parameter.key} must be boolean`);
         } else if (!parameter.options.some(option => option.value === candidate)) throw new RangeError(`Invalid ${parameter.key}: ${candidate}`);
         result[parameter.key] = resolved;
+    }
+    if (result.displayCurve === "measured" && !SENSOR_PRESETS[name].displayCurveLUT)
+        throw new RangeError("No measured display curve for this sensor");
+    // Flat controls survive schema-based host saves. Expand the optional object
+    // shorthand once, so later menu edits and preset changes have one authority.
+    const affine = input.polarityAffine;
+    if (affine !== undefined && (!affine || typeof affine !== "object" || Array.isArray(affine) ||
+        !Number.isFinite(affine.gain) || affine.gain < 0 || !Number.isFinite(affine.offset)))
+        throw new RangeError("polarityAffine requires a finite nonnegative gain and finite offset in codes");
+    for (const [field, key] of [["gain", "polarityAffineGain"], ["offset", "polarityAffineOffset"]]) {
+        if (affine) {
+            const definition = THERMAL_PARAMETERS.find(p => p.key === key);
+            result[key] = Math.min(definition.max, Math.max(definition.min, affine[field]));
+        }
     }
     // A menu selection applies all four values; a numeric edit becomes Custom.
     const selected = SCATTER_PRESETS[result.scatterPreset];
@@ -195,10 +218,17 @@ export function normalizeSettings(input = {}) {
         result.pictureWidth = step.windowWidth.value * step.enlargement.value;
         result.pictureHeight = step.windowHeight.value * step.enlargement.value;
     }
-    const blurDefault = step?.systemBlurRmsUrad ?? {value: 0, unit: "urad RMS/axis", status: "estimated",
-        source: "No measured residual assigned to free optics"};
-    if (input.systemBlurRmsUrad === undefined || (input.presetMetadata?.systemBlurRmsUrad?.overridden === false &&
-        input.systemBlurRmsUrad === input.presetMetadata.systemBlurRmsUrad.value)) result.systemBlurRmsUrad = blurDefault.value;
+    const blurDefaults = {};
+    for (const key of ["systemBlurHorizontalRmsUrad", "systemBlurVerticalRmsUrad"]) {
+        const fallback = {value: 0, unit: "urad RMS", status: "estimated", source: "No measured residual assigned to free optics"};
+        // A legacy preset scalar, like a saved scalar, applies to both missing axes.
+        const blurDefault = step?.[key] ?? step?.systemBlurRmsUrad ?? (sensor.focalSteps ? fallback :
+            sensor.parameters[key] ?? sensor.parameters.systemBlurRmsUrad ?? fallback);
+        blurDefaults[key] = blurDefault;
+        if (legacyBlur === undefined && (input[key] === undefined ||
+            (input.presetMetadata?.[key]?.overridden === false && input[key] === input.presetMetadata[key].value)))
+            result[key] = blurDefault.value;
+    }
     result.detectorWindow = {width: Math.min(result.detectorWidth, step?.windowWidth.value ?? result.detectorWidth),
         height: Math.min(result.detectorHeight, step?.windowHeight.value ?? result.detectorHeight)};
     const halfHeightM = result.detectorHeight * result.pixelPitchM / 2;
@@ -239,7 +269,12 @@ export function normalizeSettings(input = {}) {
         result.presetMetadata[key] = {value: result[key], unit: definition.unit, status: "estimated", source,
             overridden: result[key] !== definition.default};
     }
-    result.presetMetadata.systemBlurRmsUrad = {...blurDefault, overridden: result.systemBlurRmsUrad !== blurDefault.value};
+    for (const [key, blurDefault] of Object.entries(blurDefaults)) {
+        const migrated = (legacyBlur !== undefined && input[key] === undefined) ||
+            input.presetMetadata?.[key]?.migratedFrom === "systemBlurRmsUrad";
+        result.presetMetadata[key] = {...blurDefault, overridden: migrated || result[key] !== blurDefault.value,
+            ...(migrated ? {migratedFrom: "systemBlurRmsUrad"} : {})};
+    }
     result.presetMetadata.focalStep.value = result.focalStep;
     result.presetMetadata.focalStep.selection = Object.fromEntries(
         ["fieldMode", "focalLengthM", "verticalFovDeg", "apertureM"].map(key => [key, result[key]]));

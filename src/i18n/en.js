@@ -283,6 +283,14 @@ const en = {
                 "label": "Exposure jitter",
                 "tooltip": "Estimated per-axis intra-exposure Gaussian RMS; excludes frame-to-frame centroid motion."
             },
+            "systemBlurHorizontalRmsUrad": {
+                "label": "Horizontal residual blur",
+                "tooltip": "Independent Gaussian residual along display x, in angle before sampling and detector noise. Excludes turbulence, exposure jitter and charge diffusion."
+            },
+            "systemBlurVerticalRmsUrad": {
+                "label": "Vertical residual blur",
+                "tooltip": "Independent Gaussian residual along display y, in angle before sampling and detector noise. MX-15 long steps use about 40 µrad with the measured display curve; origin unresolved."
+            },
             "systemBlurRmsUrad": {
                 "label": "Residual system blur",
                 "tooltip": "Independent Gaussian optical residual in angle, before sampling. Zero disables; excludes turbulence, exposure jitter and charge diffusion."
@@ -465,6 +473,22 @@ const en = {
                     "whiteHot": "White hot",
                     "blackHot": "Black hot"
                 }
+            },
+            "displayCurve": {
+                "label": "Display curve",
+                "tooltip": "Fixed lookup response after the count window and gamma, before quantization and polarity. Use gamma 1 for the measured law; MX-15 U depth uncertainty ±20%.",
+                "options": {
+                    "linear": "Linear",
+                    "measured": "Measured preset curve"
+                }
+            },
+            "polarityAffineGain": {
+                "label": "White-hot output gain",
+                "tooltip": "Output affine after the curve: white = gain × warm-increasing code + offset. Default 1 preserves exact inversion; the optional IB6830 recording profile uses 1.05."
+            },
+            "polarityAffineOffset": {
+                "label": "White-hot output offset",
+                "tooltip": "Output offset in 8-bit codes before clipping and rounding. Default 0 preserves exact inversion; the optional IB6830 recording profile uses +55 codes."
             },
             "responseGamma": {
                 "label": "Response gamma",

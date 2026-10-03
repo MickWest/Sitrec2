@@ -67,7 +67,7 @@ conservative elevation interval (frame diagonal plus margin), `photonRadianceRan
 physical photon radiance bounds, `sampleCount` the table size, and `interpolation` the
 measured midpoint interpolation error and whether its requested tolerance was met.
 `gradient` identifies the active sky policy. `gain` reports the statistics region,
-sample count and count-valued window. `blur` reports the four blur settings and the
+sample count and count-valued window. `blur` reports both residual axes, jitter, diffusion and the
 long-exposure turbulence convention. Settings' `presetMetadata` supplies their status
 and source. The scatter record
 reports the near cutoff, coarse reduction factor, far energy fraction, and FFT sizes. `drive` is the
@@ -661,23 +661,49 @@ or an exposure-time blur. The setting already describes blur about the exposure'
 centroid; changing exposure does not rescale it. Frame-to-frame wander and a sampled
 motion trajectory are separate effects and are not synthesized.
 
-`systemBlurRmsUrad` is a separate, per-axis Gaussian optical residual in **µrad RMS**,
-applied before detector sampling. Generic sensors and unmeasured short steps default
-to **0**. MX-15 **675 mm and 1012 mm** steps default to **30 µrad**, measured from the
-Chilean Navy IB6830 video (frames 10450–14200), with **25–35 µrad** sensitivity.
-Status: **measured from the IB6830 video; origin estimated (long-step optics focus or
-wavefront error)**. This value is specific to this recording, not a manufacturer tolerance.
+`systemBlurHorizontalRmsUrad` and `systemBlurVerticalRmsUrad` are independent
+Gaussian residual widths in **µrad RMS**, along detector/display **x and y**, before
+native sampling and detector noise. Generic sensors, free optics and unmeasured short
+steps default to **0**. MX-15 **675 mm and 1012 mm** steps use **0 horizontal / 40 vertical**
+with `displayCurve: "measured"`. The nominal horizontal zero is within the measured
+**≤8 µrad** bound; it is not a measurement of exactly zero blur. The approximately
+40 µrad vertical value is an estimated conversion of the measured **34 ±3 µrad** under
+a linear display law. Selecting Linear does not silently change a saved blur value.
 
-The measurement uses **41-frame sequences** centered at frames **10450, 11000 and 14200**.
-The extra shoulder broadening is persistent across each sequence and constant in angle
-across the 675/1012 mm optical steps. The inference is robust to display-window changes
-from **0.73 to 1.36 times** the matched span; it is not inferred from a single chosen
-contrast window. The physical origin remains estimated: focus and wavefront error cannot
-be separated from this compressed recording. Calculated native sigmas are
-`30e-6 × .675 / 20e-6 = 1.0125 pixels` and
-`30e-6 × 1.012 / 20e-6 = 1.518 pixels`. Zero gives the original kernel exactly.
-The residual excludes modeled turbulence, exposure jitter and charge diffusion; do not
-also add a defocus surrogate for the same measured residual.
+Status: **measured from the IB6830 video at both lens steps (seven lobe-shape measures;
+34 ±3 µrad under a linear display law, about 40 under the measured curve); horizontal
+bound ≤8 µrad; angle-fixed; acts before detector noise; origin unresolved (optical
+anisotropy leading, fast elevation vibration still possible; sensor and readout effects
+ruled out as ordinary fixed-pixel explanations)**. This empirical response belongs to
+one recording, not every unit in the sensor family.
+
+The measurement compares seven lobe-shape measures over **41-frame sequences** around
+frames **10450, 11000 and 14200**. Comparing consistent physical lobe estimators removes
+the apparent spacing discrepancy. The actual discrepancy is shape: the real lobes are
+rounder than an isotropically blurred model. Resolving the axes gives vertical
+**34 ±3 µrad at 675 mm** and **34 ±2 µrad at 1012 mm** under the linear law. Their common
+angular width, together with the horizontal bound at the longer step, supersedes the
+older isotropic inference and the proposed detector-fixed blur. With the measured curve,
+calculated native vertical sigmas are `40e-6 × .675 / 20e-6 = 1.35 pixels` and
+`40e-6 × 1.012 / 20e-6 = 2.024 pixels`.
+
+Optical anisotropy leads provisionally; it is not an identified focus or astigmatism
+coefficient. Resolved clean-frame motion explains only about **2–3 µrad**, calculated
+at an assumed **0.01625 s** exposure. Fast elevation vibration can average out of the
+recorded centroids and remains possible. Fixed sensor/readout row blur fails angular
+scaling; filtering the dominant detector noise would introduce a vertical correlation
+absent from the recording. Early sensor effects are not excluded by noise isotropy alone,
+but lack the required magnitude and lens-step scaling. A raw point-source exposure sweep
+at both steps, with focus state and synchronized two-axis motion telemetry, would
+separate these origins. No new focus or vibration mechanism is asserted here.
+
+A legacy saved or preset `systemBlurRmsUrad` maps to both missing axes. An explicit axis
+wins, including zero; normalization writes only the two-axis representation. A migrated
+scalar is preserved as an explicit value, including when its old provenance called it a
+preset default. Reselect the sensor preset to adopt the measured pair.
+The residual excludes modeled turbulence, exposure jitter and charge diffusion. Do not
+also add a defocus or full motion surrogate for that same measured residual. If explicit
+motion or temporal smearing supplies part of it, recalibrate the residual first.
 
 `diffusionSigmaPx` is Gaussian charge-spreading sigma in **native pixels**, after
 optics and before the native pixel-area footprint. MX-15 uses **0.2 pixel, estimated**,
@@ -690,11 +716,14 @@ pupil diffraction; these independent blur controls retain their own zero bypasse
 MTF filtering uses a CPU FFT padded to at least twice the kernel side, clips negative
 numerical residuals, crops to finite support and normalizes the retained flux. Support
 uses `opticsRadiusPx` for diffraction/turbulence and at least four combined Gaussian
-sigmas. Finite turbulence tails, like diffraction tails, are renormalized; increase
+sigmas of the wider axis. Finite turbulence tails, like diffraction tails, are renormalized; increase
 support for stronger turbulence or deep-wing fits. Every core is unit sum; finite
 image crop loss is still physical. Spatially invariant jitter, diffusion and scatter
-convolutions commute. System blur, diffusion and jitter are combined by adding their Gaussian variances
-in angular units, then folded into the core after spectral optics, then used by both scatter branches, so charge spreading and detector-area
+convolutions commute. For each axis, calculate
+`sigmaAxis² = (residualAxis × 1e-6)² + (jitter × 1e-6)² + (diffusion × pitch/focalLength)²`
+in rad². The transfer is `exp(-2 pi² (sigmaX² fx² + sigmaY² fy²))`, with frequencies
+in cycles/radian. It is applied once after the separately calculated turbulence and
+spectral diffraction, and feeds both scatter branches. Charge spreading and detector-area
 integration each occur once. All-zero blur controls reproduce the prior core exactly.
 
 The scatter kernel is `(1-fraction) × delta + fraction × skirt`, with
@@ -944,8 +973,58 @@ scalar texture on the GPU. Percentile endpoints affect automatic mode and the co
 plateau fallback, not the populated plateau histogram. Source: a published study of
 plateau equalization of digitized detector levels. Constant images retain their drive.
 Local enhancement adds signed Gaussian high-pass detail before clipping, allowing a
-lighter or darker ring around a clipped source. Response gamma precedes 8-bit rounding;
-black hot is `255-whiteHot`, giving an exact inverse even with nonlinear response.
+lighter or darker ring around a clipped source.
+
+### Fixed display curve and recording polarity
+
+The order is count window (or plateau drive), local enhancement, clipping to **0–1**,
+optional input gamma, fixed `displayCurve`, **8-bit quantization**, then polarity.
+`displayCurve: "linear"` is the generic identity; MX-15 carries and selects a measured
+lookup table (LUT). Keep `responseGamma: 1` to reproduce the measured law. Gamma remains
+an independent input remapping; a power law alone cannot produce this U-shaped gain.
+The curve is fixed and scene-independent; window selection remains separate. It does
+not turn automatic mode into histogram equalization.
+
+Status: **measured from the IB6830 video (target-independent noise and fixed-pattern
+gain); algorithm unidentified**. Across both lens steps the gain minimum stays near
+black-hot code **166**, while the scene histogram changes. Relative slopes at black-hot
+codes **58 / 166 / 234** are approximately **5.2 / 1 / 3.2**; the minimum slope is about
+**131 codes per unit drive**. The U depth has **±20% uncertainty in ln(gain)**, corresponding
+to ratio envelopes **3.7–7.2** and **2.5–4.0** at the warm and cold witnesses. These are
+measurement uncertainties, separate from numerical test tolerances.
+
+The **257 measured nodes** have uniform drive `u=i/256`. Store the warm-increasing
+response `A=(255-T)/255`, where T is the measured black-hot table, and interpolate
+linearly between Float32 nodes on both CPU and GPU. The supplied table's terminal
+**−1 black-hot code** is clipped to **0** to stay within the display range; interior
+nodes are unchanged. The published interface does not depend on external data files.
+
+`polarityAffine: {gain: 1, offset: 0}` is the default for every preset. Given the
+quantized warm-increasing code q, black-hot is exactly `255-q` and white-hot is
+`round(clamp(gain*q+offset, 0, 255))`. Thus default polarity inversion remains exact,
+including rounding ties. The affine is available as `polarityAffineGain` and
+`polarityAffineOffset` menu controls, saved by both hosts. `polarityAffine: {gain, offset}`
+is the API input shorthand; normalization expands it into the two saved controls,
+without retaining a duplicate object. Gain
+is dimensionless and nonnegative, with an estimated sensitivity-control range **0–10**;
+offset spans **−255 to +255 codes**, calculated from the full display range. Nonfinite
+values are rejected. An explicitly supplied object overrides the scalar controls.
+Subsequent menu edits and sensor-preset selections use only the saved controls.
+
+`POLARITY_PROFILES.IB6830` in `sensorPresets.js` documents the optional recording
+profile **gain 1.05 / offset +55 codes**, measured from the same sky field across a
+polarity switch, with uncertainty approximately **±0.01 / ±1 code**. It may be an
+operator setting and is **not a preset default**. Apply it explicitly:
+
+```js
+import {POLARITY_PROFILES} from "./sensorPresets.js";
+const recordedWhiteHot = {...settings, polarity: "whiteHot",
+    polarityAffine: {...POLARITY_PROFILES.IB6830.polarityAffine}};
+```
+
+The observed relation is white = `1.05 × (255-black) + 55`, followed by clipping.
+A single white-hot sequence has residual gain differences; the recording does not
+identify the underlying algorithm or establish transferability to another camera.
 
 Fixed radiometric mode maps the inferred received photon radiance to fixed endpoints
 using the exposure factor. Its default upper endpoint is calculated as
@@ -1013,7 +1092,7 @@ or a reference pupil at most **0.054 m** (`2 × 0.027 m`, calculated) for that s
 The evidence conflicts: source-lobe separation in the model favors holding f-number;
 excess noise relative to the source favors keeping the pupil at unchanged exposure.
 Exposure at the step is unknown and can change that comparison. Both policies remain
-explicit. The measured angular residual is exposed separately as `systemBlurRmsUrad`;
+explicit. The measured angular residual is exposed separately on the horizontal and vertical axes;
 it does not select a focus mechanism or settle the pupil-policy uncertainty.
 `focalStep: "free"` enables `fieldMode` and independent pupil edits. Presets without
 steps always use Free. Explicit legacy field/focal settings and edits to linked optics
@@ -1050,7 +1129,7 @@ values for authoring tags; empty models still use the documented ambient fallbac
 Run the core numeric tests and import check:
 
 ```sh
-npx jest tests/thermalRadiometry.test.js tests/thermalAtmosphere.test.js tests/thermalSensorMath.test.js tests/thermalSchema.test.js tests/thermalCoreIteration2.test.js tests/thermalCoreIteration3.test.js tests/thermalCoreIteration4.test.js tests/thermalCoreIteration5.test.js tests/thermalCoreIteration6.test.js tests/thermalSignatures.test.js tests/VehicleThermal.test.js tests/VehicleThermalControls.test.js tests/VehicleThermalRearView.test.js tests/ThermalViewIntegration.test.js tests/ThermalPipelineHost.test.js
+npx jest tests/thermalRadiometry.test.js tests/thermalAtmosphere.test.js tests/thermalSensorMath.test.js tests/thermalSchema.test.js tests/thermalCoreIteration2.test.js tests/thermalCoreIteration3.test.js tests/thermalCoreIteration4.test.js tests/thermalCoreIteration5.test.js tests/thermalCoreIteration6.test.js tests/thermalCoreIteration7.test.js tests/thermalSignatures.test.js tests/VehicleThermal.test.js tests/VehicleThermalControls.test.js tests/VehicleThermalRearView.test.js tests/ThermalViewIntegration.test.js tests/ThermalPipelineHost.test.js
 npm run check-three-imports
 ```
 
@@ -1149,3 +1228,16 @@ Serialized explicit values remain authoritative. Older records without reliable
 provenance cannot distinguish an intentional custom setting from a superseded preset
 default; they are not silently rewritten. Reselect the sensor/scatter/optical-step preset
 to adopt new defaults. This limitation is separate from the new parameter defaults.
+
+The measured-curve browser checks must show a monotonic **0–1** response, CPU/GPU
+normalized error **≤1e-6**, slope at black-hot code **166 = 131 ±3 codes/drive**, and
+relative slopes **58/166 = 5.2 ±0.12**, **234/166 = 3.2 ±0.10**. Linear and measured
+curves must agree with CPU display codes to **1 code**, including the optional
+recording affine; default white-hot plus black-hot must be exactly **255**.
+The two-axis blur checks at **0.675 and 1.012 m** must recover horizontal **0** and
+vertical **40 µrad RMS** within **0.15 µrad**, preserve contained flux within **0.2%**,
+match CPU optics within **0.1% of source flux**, and match native samples within
+**1e-5 of source flux**. The native vertical-width ratio must equal `1.012/.675`
+within **0.005**. These are calculated test geometries and estimated numerical
+acceptance tolerances. Jest checks the numeric references and uploaded shader inputs;
+only the browser self-test executes WebGL and establishes GPU parity.

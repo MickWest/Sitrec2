@@ -326,12 +326,24 @@ export const displayFragment = `
     uniform sampler2D tMean; // R: local mean normalized drive
     uniform float localAmount; // dimensionless enhancement strength
     uniform float responseGamma; // dimensionless positive exponent denominator
+    uniform sampler2D tDisplayCurve; // normalized warm-increasing LUT, uniform drive nodes
+    uniform bool useDisplayCurve;
+    uniform vec2 polarityAffine; // white-hot gain (unitless), offset (8-bit codes)
     uniform bool blackHot; // unitless switch
     out vec4 result; // R: integer-valued 8-bit display codes [0,255]
     float localEnhancement(float drive, float mean) { return drive + localAmount * (drive - mean); }
-    float responseCurve(float drive) { return pow(clamp(drive, 0.0, 1.0), 1.0 / responseGamma); }
+    float responseCurve(float drive) {
+        float response = pow(clamp(drive, 0.0, 1.0), 1.0 / responseGamma);
+        if (!useDisplayCurve) return response;
+        int last = textureSize(tDisplayCurve, 0).x - 1;
+        float coordinate = response * float(last);
+        int index = int(floor(coordinate));
+        return mix(texelFetch(tDisplayCurve, ivec2(index, 0), 0).r,
+            texelFetch(tDisplayCurve, ivec2(min(index + 1, last), 0), 0).r, fract(coordinate));
+    }
     float quantize8Bit(float drive) { return floor(drive * 255.0 + 0.5); }
-    float polarity(float code) { return blackHot ? 255.0 - code : code; }
+    float polarity(float code) { return blackHot ? 255.0 - code :
+        floor(clamp(polarityAffine.x * code + polarityAffine.y, 0.0, 255.0) + 0.5); }
     void main() {
         ivec2 pixel = ivec2(gl_FragCoord.xy);
         float drive = localEnhancement(texelFetch(tInput, pixel, 0).r, texelFetch(tMean, pixel, 0).r);

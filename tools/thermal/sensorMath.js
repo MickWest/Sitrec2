@@ -1,6 +1,7 @@
 import {PHOTON_SCALE, inBandRadiance, radianceDerivative} from "./radiometry.js";
 import {BANDS, createAtmosphere, evaluatePath} from "./atmosphere.js";
 import {turbulenceMTF} from "./turbulence.js";
+import {SENSOR_PRESETS} from "./sensorPresets.js";
 
 // Images are row-major Float32Array; dimensions and kernel coordinates are pixels.
 // Kernels are dimensionless, unit-sum weights. Convolution preserves input units.
@@ -237,8 +238,9 @@ export function filterKernelMTF(kernel, angularStepRad, mtf, radius = (kernel.wi
         re[((y - cy + n) % n) * n + (x - cx + n) % n] = kernel.data[y * kernel.width + x];
     fft2(re, im, n);
     for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) {
-        const frequency = Math.hypot(Math.min(x, n - x), Math.min(y, n - y)) / (n * angularStepRad);
-        const transfer = mtf(frequency), i = y * n + x;
+        const fx = Math.min(x, n - x) / (n * angularStepRad);
+        const fy = Math.min(y, n - y) / (n * angularStepRad);
+        const transfer = mtf(Math.hypot(fx, fy), fx, fy), i = y * n + x;
         re[i] *= transfer; im[i] *= transfer;
     }
     fft2(re, im, n, true);
@@ -253,10 +255,19 @@ export function filterKernelMTF(kernel, angularStepRad, mtf, radius = (kernel.wi
 // charge diffusion. Units fine pixels.
 export function opticalCoreRadius(settings) {
     const angularPixel = settings.pixelPitchM / settings.focalLengthM;
-    const sigmaPx = Math.hypot((settings.jitterRmsUrad ?? 0) * 1e-6 / angularPixel, settings.diffusionSigmaPx ?? 0,
-        (settings.systemBlurRmsUrad ?? 0) * 1e-6 / angularPixel);
+    const sigmaPx = Math.max(...Object.values(gaussianBlurRmsRad(settings))) / angularPixel;
     return Math.ceil(Math.max(settings.opticsEnabled || settings.turbulenceR0M > 0 ? settings.opticsRadiusPx : 0,
         4 * sigmaPx) * settings.supersample);
+}
+/** Combined RMS in rad per detector axis, from independent residual, exposure
+ * jitter and diffusion variances. Turbulence retains its separate spectral MTF.
+ * Legacy scalar inputs apply equally to x and y, only when that axis is absent.
+ */
+export function gaussianBlurRmsRad(settings) {
+    const jitter = (settings.jitterRmsUrad ?? 0) * 1e-6;
+    const diffusion = (settings.diffusionSigmaPx ?? 0) * settings.pixelPitchM / settings.focalLengthM;
+    return Object.fromEntries([["horizontal", "systemBlurHorizontalRmsUrad"], ["vertical", "systemBlurVerticalRmsUrad"]]
+        .map(([axis, key]) => [axis, Math.hypot((settings[key] ?? settings.systemBlurRmsUrad ?? 0) * 1e-6, jitter, diffusion)]));
 }
 /** Scatter redistributes a fraction tis of transmitted flux. Angular shoulder/cutoff are rad.
  * S(r) = [1+(theta/theta0)^2]^(-slope/2), zero beyond thetaMax.
@@ -580,13 +591,36 @@ export function quantize8Bit(normalizedDrive) {
 /** 8-bit codes -> 8-bit codes. Applied after response and quantization so inversion
  * is exact even at half-code ties and with a nonlinear response curve.
  */
-export function polarity(codes, mode = "whiteHot") {
+export function polarity(codes, mode = "whiteHot", affine = {gain: 1, offset: 0}) {
     if (!["whiteHot", "blackHot"].includes(mode)) throw new RangeError("Unknown polarity");
-    return Float32Array.from(codes, value => mode === "blackHot" ? DISPLAY_MAX - value : value);
+    return Float32Array.from(codes, value => mode === "blackHot" ? DISPLAY_MAX - value :
+        Math.floor(clamp(affine.gain * value + affine.offset, 0, DISPLAY_MAX) + 0.5));
+}
+/** Fixed, uniformly spaced LUT in warm-increasing normalized response. No image
+ * statistics enter here. Float32 nodes are shared with the GPU texture.
+ */
+export function displayCurveLUT(settings) {
+    if (!settings.displayCurve || settings.displayCurve === "linear") return null;
+    const lut = SENSOR_PRESETS[settings.sensorPreset ?? "MX15"]?.displayCurveLUT;
+    if (settings.displayCurve !== "measured" || !lut) throw new RangeError("No measured display curve for this sensor");
+    return Float32Array.from(lut);
+}
+/** Signed drive -> fixed tone response in [0,1]; gamma is an optional input
+ * remapping. Keep gamma=1 to reproduce the measured law after the count window.
+ */
+export function displayCurve(drive, settings) {
+    const response = responseCurve(drive, settings.responseGamma), lut = displayCurveLUT(settings);
+    if (!lut) return response;
+    return Float32Array.from(response, value => {
+        const coordinate = value * (lut.length - 1), index = Math.floor(coordinate);
+        const next = Math.min(index + 1, lut.length - 1), fraction = coordinate - index;
+        return lut[index] * (1 - fraction) + lut[next] * fraction;
+    });
 }
 /** Signed drive -> 8-bit display codes, Float32Array. */
 export function displayCodes(drive, settings) {
-    return polarity(quantize8Bit(responseCurve(drive, settings.responseGamma)), settings.polarity);
+    return polarity(quantize8Bit(displayCurve(drive, settings)), settings.polarity, settings.polarityAffine ??
+        {gain: settings.polarityAffineGain ?? 1, offset: settings.polarityAffineOffset ?? 0});
 }
 /** Count image and settings -> count window and optional dimensionless plateau LUT.
  * previous window is explicit caller-owned state; deltaTimeS is seconds.
@@ -864,7 +898,8 @@ export function temporalHistoryKey(settings) {
     const keys = ["sensorPreset", "focalStep", "pupilPolicy", "focalLengthM", "apertureM", "pixelPitchM",
         "detectorWidth", "detectorHeight", "supersample", "fillFactor", "bandMinUm", "bandMaxUm",
         "psfTemperatureK", "opticsEnabled", "opticsRadiusPx", "defocusM", "scatterFraction",
-        "scatterSlope", "scatterShoulderRad", "scatterCutoffRad", "jitterRmsUrad", "diffusionSigmaPx", "systemBlurRmsUrad", "adcOffsetCounts",
+        "scatterSlope", "scatterShoulderRad", "scatterCutoffRad", "jitterRmsUrad", "diffusionSigmaPx",
+        "systemBlurHorizontalRmsUrad", "systemBlurVerticalRmsUrad", "systemBlurRmsUrad", "adcOffsetCounts",
         "exposureMode", "integrationTimeS", "wellFillFraction", "wellFillReferenceK", "wellElectrons",
         "quantumEfficiency", "opticalTransmission", "darkElectronsPerS", "noiseEnabled", "shotNoiseEnabled",
         "readNoiseElectrons", "noiseSeed", "shadingK", "shadingWidth", "fixedPatternFraction",
@@ -919,10 +954,10 @@ export function opticalKernels(settings, width = settings.detectorWidth * settin
     // Diffusion is after the optical PSF and before pixel-area sampling. These
     // spatially invariant convolutions commute with scatter, so the same blurred
     // core can feed both scatter branches without another full-frame pass.
-    const sigmaRad = Math.hypot((settings.jitterRmsUrad ?? 0) * 1e-6, (settings.systemBlurRmsUrad ?? 0) * 1e-6,
-        (settings.diffusionSigmaPx ?? 0) * settings.pixelPitchM / settings.focalLengthM);
-    if (sigmaRad > 0) core = filterKernelMTF(core, split.angularStep,
-        frequency => Math.exp(-2 * Math.PI ** 2 * sigmaRad ** 2 * frequency ** 2), opticalCoreRadius(settings));
+    const sigma = gaussianBlurRmsRad(settings);
+    if (sigma.horizontal > 0 || sigma.vertical > 0) core = filterKernelMTF(core, split.angularStep,
+        (frequency, fx, fy) => Math.exp(-2 * Math.PI ** 2 *
+            ((sigma.horizontal * fx) ** 2 + (sigma.vertical * fy) ** 2)), opticalCoreRadius(settings));
     const scatter = splitScatter(settings, split);
     return {core, ...scatter, split, spectrum, farCore: scatter.farScatter ? coarsenKernel(core, split.factor) : null};
 }

@@ -15,8 +15,8 @@ const l1 = (a, b) => a.reduce((s, v, i) => s + Math.abs(v - b[i]), 0);
 const base = extra => normalizeSettings({detectorWidth: 32, detectorHeight: 24,
     fieldMode: "focalLength", opticalSamplingMode: "manual", supersample: 4,
     opticsRadiusPx: 8, scatterPreset: "custom", scatterFraction: 0,
-    turbulenceR0M: 0, jitterRmsUrad: 0, diffusionSigmaPx: 0, systemBlurRmsUrad: 0,
-    shadingK: 0, fixedPatternFraction: 0, noiseEnabled: false, ...extra});
+    turbulenceR0M: 0, jitterRmsUrad: 0, diffusionSigmaPx: 0, systemBlurHorizontalRmsUrad: 0, systemBlurVerticalRmsUrad: 0,
+    displayCurve: "linear", shadingK: 0, fixedPatternFraction: 0, noiseEnabled: false, ...extra});
 const cpuPipeline = () => {
     const pipeline = new ThermalPipeline({capabilities: {maxTextureSize: 8192}});
     pipeline.resources = {surfaces: new Map(), textures: new Set(), targets: new Map()};
@@ -165,20 +165,20 @@ test("system residual stays angular, conserves flux and has an exact zero bypass
     };
     const widths = [];
     for (const f of [.675, 1.012]) {
-        const settings = base({focalLengthM: f, opticsEnabled: false, systemBlurRmsUrad: 30});
+        const settings = base({focalLengthM: f, opticsEnabled: false, systemBlurHorizontalRmsUrad: 30, systemBlurVerticalRmsUrad: 30});
         const kernels = M.opticalKernels(settings), k = kernels.core;
         close(M.sum(k.data), 1, 1e-7);
         const impulse = new Float32Array(128 * 96); impulse[48 * 128 + 64] = 1;
         close(M.sum(M.applyOptics(impulse, 128, 96, kernels)), 1, 3e-7);
         close(rms(k) * settings.pixelPitchM / f * 1e6, 30, .03);
         widths.push(rms(k));
-        const zero = M.opticalKernels({...settings, systemBlurRmsUrad: 0}).core;
+        const zero = M.opticalKernels({...settings, systemBlurHorizontalRmsUrad: 0, systemBlurVerticalRmsUrad: 0}).core;
         expect(zero.data).toEqual(M.deltaKernel().data);
     }
     close(widths[1] / widths[0], 1.012 / .675, .002);
-    for (const focalStep of ["675", "1012"]) expect(normalizeSettings({focalStep}).systemBlurRmsUrad).toBe(30);
-    for (const focalStep of ["27", "135"]) expect(normalizeSettings({focalStep}).systemBlurRmsUrad).toBe(0);
-    expect(settingsForPreset("ATFLIR").systemBlurRmsUrad).toBe(0);
+    for (const focalStep of ["675", "1012"]) expect(normalizeSettings({focalStep}).systemBlurVerticalRmsUrad).toBe(40);
+    for (const focalStep of ["27", "135"]) expect(normalizeSettings({focalStep}).systemBlurVerticalRmsUrad).toBe(0);
+    expect(settingsForPreset("ATFLIR").systemBlurVerticalRmsUrad).toBe(0);
 });
 
 test("pupil throughput rejects numerical aperture above one", () => {
@@ -297,12 +297,12 @@ test("defocus converges when focal-plane spacing is halved as well as pupil reso
 });
 
 test("independent angular residual, jitter and diffusion add variances once", () => {
-    const settings = base({opticsEnabled: false, systemBlurRmsUrad: 30, jitterRmsUrad: 10, diffusionSigmaPx: .2});
+    const settings = base({opticsEnabled: false, systemBlurHorizontalRmsUrad: 30, systemBlurVerticalRmsUrad: 30, jitterRmsUrad: 10, diffusionSigmaPx: .2});
     const k = M.opticalKernels(settings).core, center = (k.width - 1) / 2;
     const variance = k.data.reduce((s, v, i) => s + v * ((i % k.width - center) / settings.supersample) ** 2, 0);
     const expected = ((30e-6) ** 2 + (10e-6) ** 2) * (settings.focalLengthM / settings.pixelPitchM) ** 2 + .2 ** 2;
     close(variance / expected, 1, .002);
-    expect(M.opticalKernels({...settings, systemBlurRmsUrad: 0}).core).toEqual(M.opticalKernels({...settings, systemBlurRmsUrad: undefined}).core);
+    expect(M.opticalKernels({...settings, systemBlurHorizontalRmsUrad: 0, systemBlurVerticalRmsUrad: 0}).core).toEqual(M.opticalKernels({...settings, systemBlurHorizontalRmsUrad: undefined, systemBlurVerticalRmsUrad: undefined}).core);
 });
 
 test("unequal-population browser reference separates each processing algorithm", () => {

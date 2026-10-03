@@ -4,13 +4,13 @@ import {ThermalPipeline} from "./ThermalPipeline.js";
 import {cloudOpacity, opaqueCloudRadiance, thermalSeaDistance} from "./atmosphere.js";
 import {createStatisticalSea, seaRayAzimuth} from "./atmosphere.js";
 import {apparentTemperature, inBandRadiance, PHOTON_SCALE} from "./radiometry.js";
-import {enlargeFragment} from "./shaders.js";
-import {SCATTER_PRESETS} from "./sensorPresets.js";
+import {displayFragment, enlargeFragment} from "./shaders.js";
+import {POLARITY_PROFILES, SCATTER_PRESETS} from "./sensorPresets.js";
 import {defaultSettings, normalizeSettings} from "./thermalSchema.js";
 import {createThermalRayGeometry} from "./atmosphere.js";
 import {blackbodyBands, evaluatePhotonPath, clearSky, createAtmosphere, createSkyElevationLUT, sampleSkyElevationLUT, seaBackground,
     skyRayElevation, skyViewGeometry} from "./atmosphere.js";
-import {applyFarScatter, applyOptics, enlargeImage, temporalFilter, detectorCounts, electronsPerRadiance, integrationTime,
+import {applyFarScatter, applyOptics, displayCodes, displayCurve, displayCurveLUT, enlargeImage, temporalFilter, detectorCounts, electronsPerRadiance, integrationTime,
     opticalKernels, processCounts, processingParameters, sampleDetector, sum} from "./sensorMath.js";
 
 // Estimated horizon fixture: observer 21 m, dimensionless k=0.13. The reference
@@ -60,7 +60,7 @@ export function opticalConvergenceCase() {
         fieldMode: "focalLength", opticalSamplingMode: "nyquist", opticsRadiusPx: 8,
         scatterPreset: "custom", scatterFraction: 0, psfTemperatureK: 750,
         skySource: "manual", skyTemperatureK: 0, atmosphereEnabled: false,
-        turbulenceR0M: 0, jitterRmsUrad: 0, diffusionSigmaPx: 0, systemBlurRmsUrad: 0,
+        turbulenceR0M: 0, jitterRmsUrad: 0, diffusionSigmaPx: 0, systemBlurHorizontalRmsUrad: 0, systemBlurVerticalRmsUrad: 0,
         shadingK: 0, fixedPatternFraction: 0, noiseEnabled: false});
     const points = [-19.27, -9.37, 9.37, 19.27].map(x => ({
         x: x / 125000 * settings.focalLengthM / settings.pixelPitchM + 0.13, y: 0.21}));
@@ -110,7 +110,7 @@ export function blurredPointSourceCase() {
 export function skyGradientReference(skyUp = null) {
     const settings = normalizeSettings({detectorWidth: 32, detectorHeight: 24,
         verticalFovDeg: 1.5, apertureM: .005, pathElevationDeg: 2.23, sensorAltitudeM: 1382,
-        opticsEnabled: false, turbulenceR0M: 0, jitterRmsUrad: 0, diffusionSigmaPx: 0, systemBlurRmsUrad: 0,
+        opticsEnabled: false, turbulenceR0M: 0, jitterRmsUrad: 0, diffusionSigmaPx: 0, systemBlurHorizontalRmsUrad: 0, systemBlurVerticalRmsUrad: 0,
         scatterPreset: "custom", scatterFraction: 0, shadingK: 0, fixedPatternFraction: 0,
         noiseEnabled: false, atmosphereEnabled: true, skySource: "atmosphere"});
     const view = skyViewGeometry(settings, skyUp), atmosphere = createAtmosphere();
@@ -133,6 +133,31 @@ export function processingModesReference() {
         const x = i % 32;
         return x < 30 ? 3800 + (x % 16) : x === 30 ? 12000 : 16000;
     });
+}
+
+/** Measured slope witnesses in black-hot codes. Interpolate the inverse of the
+ * fixed LUT only to locate probes; the rendered derivative remains independent.
+ * Calculated finite-difference interval 1e-4 drive resolves the local segment.
+ */
+export function measuredDisplayReference() {
+    const settings = {sensorPreset: "MX15", displayCurve: "measured", responseGamma: 1};
+    const lut = displayCurveLUT(settings), epsilon = 1e-4;
+    const probes = [58, 166, 234].map(code => {
+        const response = 1 - code / 255;
+        const index = lut.findIndex(value => value >= response) - 1;
+        const u = (index + (response - lut[index]) / (lut[index + 1] - lut[index])) / (lut.length - 1);
+        return {code, u};
+    });
+    return {settings, epsilon, probes, drive: Float32Array.from(probes.flatMap(({u}) => [u - epsilon, u + epsilon]))};
+}
+
+/** Flux-normalized central moments on a fine grid, in fine-pixel squared units. */
+export function imageAxisVariances(image, width) {
+    const flux = sum(image);
+    const mean = [sum(image.map((v, i) => v * (i % width))) / flux,
+        sum(image.map((v, i) => v * Math.floor(i / width))) / flux];
+    return [sum(image.map((v, i) => v * (i % width - mean[0]) ** 2)) / flux,
+        sum(image.map((v, i) => v * (Math.floor(i / width) - mean[1]) ** 2)) / flux];
 }
 
 /** Owns a detached canvas and renderer; does not touch a caller's scene or GL state.
@@ -173,9 +198,9 @@ export async function runThermalSelfTest() {
             detectorWidth: 32, detectorHeight: 32,
             opticsEnabled: false, scatterFraction: 0, atmosphereEnabled: false, supersample: 2,
             opticalSamplingMode: "manual", skySource: "manual",
-            turbulenceR0M: 0, jitterRmsUrad: 0, diffusionSigmaPx: 0, systemBlurRmsUrad: 0,
+            turbulenceR0M: 0, jitterRmsUrad: 0, diffusionSigmaPx: 0, systemBlurHorizontalRmsUrad: 0, systemBlurVerticalRmsUrad: 0,
             fillFactor: 1, skyTemperatureK: 0, environmentTemperatureK: 0, solarScale: 0,
-            noiseEnabled: false, darkElectronsPerS: 0, adcOffsetCounts: 0, localAmount: 0, responseGamma: 1,
+            noiseEnabled: false, darkElectronsPerS: 0, adcOffsetCounts: 0, localAmount: 0, responseGamma: 1, displayCurve: "linear",
             exposureMode: "manual", shadingK: 0, fixedPatternFraction: 0, scatterPreset: "custom",
             opticsRadiusPx: 4, gainMode: "manual", fixedGain: 1, fixedLevel: 8191.5};
         // Keep pitch/focal geometry fixed when varying detector crop dimensions.
@@ -487,7 +512,7 @@ export async function runThermalSelfTest() {
         await test("Sky gradient remains continuous at optical boundaries", () => {
             const reference = skyGradientReference();
             const configured = {...reference.settings, opticsEnabled: true, opticsRadiusPx: 8,
-                scatterPreset: "clean", jitterRmsUrad: 2.714, systemBlurRmsUrad: 30, diffusionSigmaPx: .2};
+                scatterPreset: "clean", jitterRmsUrad: 2.714, systemBlurHorizontalRmsUrad: 0, systemBlurVerticalRmsUrad: 40, diffusionSigmaPx: .2};
             const view = new PerspectiveCamera(configured.verticalFovDeg, 32 / 24, 1, 300000);
             pipeline.render({scene: new Scene(), camera: view, settings: configured, target});
             const before = pipeline.readStage("radiance"), after = pipeline.readStage("optics");
@@ -551,6 +576,84 @@ export async function runThermalSelfTest() {
             }
         });
         const ramp = new Scene();
+        await test("Measured display LUT and recording polarity affine", () => {
+            const reference = measuredDisplayReference();
+            const rampSize = 4096; // calculated 1/4095 drive spacing; 1024x4 texture
+            const drive = Float32Array.from({length: rampSize}, (_, i) => i / (rampSize - 1));
+            const texture = values => {
+                const rgba = new Float32Array(values.length * 4);
+                values.forEach((value, i) => {rgba[4 * i] = value; rgba[4 * i + 3] = 1;});
+                const t = new DataTexture(rgba, values.length === rampSize ? 1024 : values.length,
+                    values.length === rampSize ? 4 : 1, RGBAFormat, FloatType);
+                t.minFilter = t.magFilter = NearestFilter; t.colorSpace = NoColorSpace; t.needsUpdate = true;
+                return t;
+            };
+            const input = texture(drive), lut = texture(displayCurveLUT(reference.settings)), probes = texture(reference.drive);
+            try {
+                const output = pipeline._target("curveTest", 1024, 4);
+                const uniforms = {tInput: input, tMean: input, tDisplayCurve: lut, useDisplayCurve: true,
+                    responseGamma: 1, localAmount: 0, blackHot: false, polarityAffine: [1, 0]};
+                // Same production response function, read before integer rounding.
+                const responseFragment = displayFragment.replace("polarity(quantize8Bit(responseCurve(drive)))", "responseCurve(drive)");
+                pipeline._pass("curveResponseTest", responseFragment, uniforms, output);
+                const response = pipeline._read(output);
+                record("Measured curve GPU/CPU normalized response error", 0,
+                    maxError(response, displayCurve(drive, reference.settings)), 1e-6);
+                record("Measured curve GPU monotonicity", 1,
+                    Number(response.every((v, i) => i === 0 || v >= response[i - 1])), 0);
+                record("Measured curve cold endpoint", 0, response[0], 0);
+                record("Measured curve warm endpoint", 1, response[response.length - 1], 0);
+                const probeOutput = pipeline._target("curveSlopeTest", reference.drive.length, 1);
+                pipeline._pass("curveResponseTest", responseFragment, {...uniforms, tInput: probes, tMean: probes}, probeOutput);
+                const values = pipeline._read(probeOutput);
+                const slopes = reference.probes.map((_, i) => (values[2 * i + 1] - values[2 * i]) * 255 / (2 * reference.epsilon));
+                record("Measured curve slope at black-hot code 166, codes/drive", 131, slopes[1], 3);
+                record("Measured curve slope ratio 58/166", 5.2, slopes[0] / slopes[1], .12);
+                record("Measured curve slope ratio 234/166", 3.2, slopes[2] / slopes[1], .10);
+                for (const displayCurve of ["linear", "measured"]) {
+                    const images = {};
+                    for (const polarity of ["whiteHot", "blackHot"]) {
+                        const configured = {...reference.settings, displayCurve, polarity};
+                        pipeline._pass("curveCodesTest", displayFragment, {...uniforms,
+                            useDisplayCurve: displayCurve === "measured", blackHot: polarity === "blackHot"}, output);
+                        images[polarity] = pipeline._read(output);
+                        record(`${displayCurve} ${polarity} GPU/CPU code error`, 0,
+                            maxError(images[polarity], displayCodes(drive, configured)), 1);
+                    }
+                    record(`${displayCurve} GPU exact default polarity inverse`, 0,
+                        maxError(images.whiteHot.map((v, i) => v + images.blackHot[i]), new Float32Array(rampSize).fill(255)), 0);
+                    const affine = POLARITY_PROFILES.IB6830.polarityAffine;
+                    pipeline._pass("curveCodesTest", displayFragment, {...uniforms, useDisplayCurve: displayCurve === "measured",
+                        polarityAffine: [affine.gain, affine.offset]}, output);
+                    record(`${displayCurve} recording affine GPU/CPU code error`, 0, maxError(pipeline._read(output),
+                        displayCodes(drive, {...reference.settings, displayCurve, polarity: "whiteHot", polarityAffine: affine})), 1);
+                }
+            } finally {input.dispose(); lut.dispose(); probes.dispose();}
+        });
+        await test("Two-axis residual blur before native sampling", () => {
+            const widths = [];
+            point.position.set(.13, .21, 0);
+            for (const focalLengthM of [.675, 1.012]) {
+                const configured = {...normalizeSettings(settings), focalLengthM, supersample: 4,
+                    systemBlurHorizontalRmsUrad: 0, systemBlurVerticalRmsUrad: 40};
+                render(pointScene, configured);
+                const before = pipeline.readStage("radiance"), after = pipeline.readStage("optics");
+                const expected = applyOptics(before.image, before.width, before.height, opticalKernels(pipeline.settings));
+                const flux = sum(before.image);
+                record(`${focalLengthM} m anisotropic GPU/CPU optical flux-relative error`, 0,
+                    sum(after.image.map((v, i) => Math.abs(v - expected[i]))) / flux, .001);
+                record(`${focalLengthM} m anisotropic energy ratio`, 1, sum(after.image) / flux, .002);
+                const initial = imageAxisVariances(before.image, before.width), final = imageAxisVariances(after.image, after.width);
+                const rms = final.map((v, i) => Math.sqrt(Math.max(0, v - initial[i])) / configured.supersample);
+                for (const axis of [0, 1]) record(`${focalLengthM} m residual ${axis ? "vertical" : "horizontal"} RMS, urad`,
+                    axis ? 40 : 0, rms[axis] * configured.pixelPitchM / focalLengthM * 1e6, .15);
+                widths.push(rms[1]);
+                record(`${focalLengthM} m anisotropic GPU/CPU native sample error`, 0,
+                    maxError(pipeline.readStage("sampled").image,
+                        sampleDetector(expected, before.width, before.height, configured.supersample, configured.fillFactor)) / flux, 1e-5);
+            }
+            record("Angle-fixed vertical blur native-pixel lens-step ratio", 1.012 / .675, widths[1] / widths[0], .005);
+        });
         await test("14-bit ramp, processing and exact polarity", () => {
             const factor = electronsPerRadiance(settings);
             for (let column = 0; column < 32; column++) {

@@ -1,7 +1,7 @@
 import {BoxGeometry, Color, Group, Mesh, MeshBasicMaterial, PerspectiveCamera, Scene, Vector2, Vector4, WebGLRenderTarget} from "three";
 import {ThermalPipeline} from "../tools/thermal/ThermalPipeline.js";
 import {normalizeSettings} from "../tools/thermal/thermalSchema.js";
-import {processingParameters} from "../tools/thermal/sensorMath.js";
+import {displayCurveLUT, processingParameters} from "../tools/thermal/sensorMath.js";
 import {thermalSceneAtmosphere} from "../src/rendering/ThermalSceneAdapters";
 
 // Exercise the real coordinator and scene/material scope with a renderer double.
@@ -50,6 +50,31 @@ test("paused, revisited and backward frames recompute gain; advancing frames sti
     pipeline.render({scene,camera,settings,frame:11});expect(pipeline.window.low).toBe(2100);
     pipeline._read=()=>codes;pipeline.render({scene,camera,settings,frame:3});expect(pipeline.window).toEqual(fresh);
     pipeline.dispose();
+});
+
+test("display shader receives the CPU LUT and affine; curve changes release cached textures", () => {
+    const {pipeline, settings, scene, camera} = fixture();
+    const configured = {...settings, displayCurve: "measured", polarityAffine: {gain: 1.05, offset: 55},
+        systemBlurHorizontalRmsUrad: 8, systemBlurVerticalRmsUrad: 40};
+    const draw = extra => pipeline.render({scene, camera, settings: {...configured, ...extra}, frame: 3});
+    try {
+        draw();
+        const uniforms = pipeline._pass.mock.calls.find(([name]) => name === "display")[2];
+        const texture = uniforms.tDisplayCurve;
+        expect(texture.image.data).toEqual(displayCurveLUT(configured));
+        expect(uniforms).toMatchObject({useDisplayCurve: true, polarityAffine: [1.05, 55], blackHot: false});
+        expect(pipeline.lastFrame.blur).toMatchObject({systemBlurHorizontalRmsUrad: 8, systemBlurVerticalRmsUrad: 40});
+        const dispose = jest.spyOn(texture, "dispose");
+        draw({polarity: "blackHot"});
+        expect(pipeline.displayCurveTexture).toBe(texture);
+        draw({displayCurve: "linear"});
+        expect(dispose).toHaveBeenCalledTimes(1);
+        expect(pipeline.resources.textures.has(texture)).toBe(false);
+        expect(pipeline._pass.mock.calls.filter(([name]) => name === "display").at(-1)[2])
+            .toMatchObject({useDisplayCurve: false, tDisplayCurve: pipeline.emptyTexture});
+        draw();
+        expect(pipeline.displayCurveTexture).not.toBe(texture);
+    } finally {pipeline.dispose();}
 });
 
 test("host vehicle and pipeline use identical standard and sounding profiles, including edited contents",()=>{
