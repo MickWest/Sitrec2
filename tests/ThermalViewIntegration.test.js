@@ -165,8 +165,12 @@ test("procedural zone resolution is the Designer path; uniform and partial zone 
 test("ECEF geometry supplies rolled local up, physical range and the shared turbulence integral", () => {
     const camera = cameraFor(native());camera.position.set(6371000+1382,0,0);camera.up.set(1,0,0);
     const target = new Vector3(6371000+1382,125000,0);camera.lookAt(target);camera.rotateZ(Math.PI/2);camera.updateMatrixWorld(true);
-    const geometry = thermalGeometry(camera,target,Globals);
+    const geometry = thermalGeometry(camera,target,Globals,()=>0);
     expect(geometry.sensorAltitudeM).toBeCloseTo(1382,6);expect(geometry.rangeM).toBe(125000);
+    // Height above mean sea level: a geoid 38.46 m below the ellipsoid raises the camera by that much.
+    expect(thermalGeometry(camera,target,Globals,()=>-38.46).sensorAltitudeM).toBeCloseTo(1382+38.46,6);
+    const lowCamera = cameraFor(native());lowCamera.position.set(6371000-17.46,0,0);lowCamera.updateMatrixWorld(true);
+    expect(thermalGeometry(lowCamera,target,Globals,()=>-38.46).sensorAltitudeM).toBeCloseTo(21,6);
     expect(geometry.pathElevationDeg).toBeCloseTo(0,10);expect(Math.abs(geometry.skyUp.x)).toBeCloseTo(1,10);
     const expected = integrateTurbulence(geometry.path);
     const oceanSurfaceGroup=new Group(), water=new Mesh(new BoxGeometry(),new MeshBasicMaterial());oceanSurfaceGroup.add(water);
@@ -259,6 +263,9 @@ test("vehicle altitude samples standard air and changed surface settings; track 
     expect(track.p.mock.calls.every(([f]) => f >= 0 && f < track.frames)).toBe(true);
     const warmer = thermalSceneAtmosphere({...native(),surfaceTemperatureK:298.15});
     expect(sceneVehicleThermal(node,30,warmer,{sit}).airTemperatureK).toBeCloseTo(298.15 - .0065 * 3200,10);
+    // The profile is sampled at height above mean sea level, ellipsoid height minus the geoid height.
+    expect(sceneVehicleThermal(node,30,atmosphere,{sit,geoidHeight:()=>-38.46}).airTemperatureK)
+        .toBeCloseTo(288.15 - .0065 * (3200 + 38.46),10);
     expect(JSON.stringify(recipe)).toBe(before);
     expect(node.thermal).toEqual(objectThermalState());
     node.proceduralModel.recipe={...recipe,parameters:{...recipe.parameters,thermalAmbientK:340,thermalMach:4,thermalPower:.35}};

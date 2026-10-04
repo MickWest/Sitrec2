@@ -32,11 +32,12 @@ export function thermalSceneAtmosphere(settings, sounding) {
 }
 
 export function sceneVehicleThermal(node, frame, atmosphere, {sit = Sit, windField, radii = Globals,
-    atmosphereSource = "standard"} = {}) {
+    atmosphereSource = "standard", geoidHeight = meanSeaLevelOffset} = {}) {
     const root = node.group ?? node.model ?? node.object;
     const position = root.getWorldPosition(new Vector3());
-    // Calculated ellipsoid altitude, matching the thermal pipeline's host geometry.
-    const altitudeM = ellipsoidAltitude(position, radii.equatorRadius, radii.polarRadius);
+    // Calculated height above mean sea level, matching the thermal pipeline's host geometry (thermalGeometry).
+    const lla = ECEFToLLAVD_radii(position);
+    const altitudeM = ellipsoidAltitude(position, radii.equatorRadius, radii.polarRadius) - geoidHeight(lla.x, lla.y);
     const thermal = node.thermal ?? {}, recipe = node.proceduralModel.recipe;
     const airTemperatureK = thermal.airTemperatureK ?? atmosphere.sample(altitudeM).temperatureK;
     const track = node.getSourceTrack?.();
@@ -52,9 +53,8 @@ export function sceneVehicleThermal(node, frame, atmosphere, {sit = Sit, windFie
     let speedSource = hasTrackVelocity ? "groundSpeed" : "stationary";
     let windVelocity;
     if (windField?.sampleWindAtAltitude) {
-        const lla = ECEFToLLAVD_radii(position);
         // Wind fields use meters above mean sea level (CNodeContrail._windAt).
-        const wind = windField.sampleWindAtAltitude(lla.x, lla.y, altitudeM - meanSeaLevelOffset(lla.x, lla.y));
+        const wind = windField.sampleWindAtAltitude(lla.x, lla.y, altitudeM);
         if (Number.isFinite(wind?.u) && Number.isFinite(wind?.v)) {
             windVelocity = getLocalEastVector(position).multiplyScalar(wind.u)
                 .addScaledVector(getLocalNorthVector(position), wind.v);
@@ -396,7 +396,10 @@ export function thermalCloudSheets(nodes, camera, settings, atmosphere, projectP
             const center = local.applyMatrix4(transform), apparent = physical.clone().sub(observer);
             apparent.applyMatrix4(rotation);
             projectPoint(apparent);
-            const altitudeM = ellipsoidAltitude(physical, Globals.equatorRadius, Globals.polarRadius);
+            // Height above mean sea level, where the atmosphere profile begins (as in thermalGeometry).
+            const lla = ECEFToLLAVD_radii(physical);
+            const altitudeM = ellipsoidAltitude(physical, Globals.equatorRadius, Globals.polarRadius)
+                - meanSeaLevelOffset(lla.x, lla.y);
             sheets.push({id: `${node.id}:${i}`, center: center.toArray(), apparentCenter: apparent.toArray(),
                 size: [sizes[2 * i], sizes[2 * i + 1]], altitudeM,
                 temperatureK: atmosphere.sample(altitudeM).temperatureK,

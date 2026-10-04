@@ -167,7 +167,7 @@ dark, while the sea still emits. Manual sky is independent of that switch.
 `CNodeSynthClouds` registers `grayAbsorbingSheet`; its canonical offsets, dimensions,
 mask texture and stable `node:instance` identities feed a dedicated pass. The host
 converts physical centers to camera-relative coordinates in double precision, obtains
-ellipsoid altitude, and samples the shared atmospheric temperature profile there.
+height above mean sea level, and samples the shared atmospheric temperature profile there.
 Each physical sheet sample uses its own altitude for the **estimated local-equilibrium
 assumption**, including profile inversions; phase remains unknown. `temperaturePolicy:
 "isothermal"` is a distinct explicit override using `temperatureK`; merely supplying a
@@ -412,12 +412,11 @@ explicit user assumption, not a measurement.
 
 For each procedural vehicle in `inherit` mode, the host supplies fresh
 `{airTemperatureK, mach, power}` for every draw. Air temperature is calculated by
-sampling `thermalSceneAtmosphere` at the object's world-space ellipsoid altitude,
+sampling `thermalSceneAtmosphere` at the object's height above mean sea level,
 using the same profile construction as `ThermalPipeline._prepareAtmosphere`:
 standard atmosphere shifted by `surfaceTemperatureK`, or the supplied sounding
-with its existing interpolation/extrapolation assumptions. This retains the
-pipeline's altitude convention; wind-field sampling separately converts altitude
-to mean sea level with the geoid offset. Turning atmospheric extinction off does
+with its existing interpolation/extrapolation assumptions. Wind-field sampling
+uses the same height. Turning atmospheric extinction off does
 not remove the air temperature. For example, the standard profile at **3200 m**
 with its **288.15 K** surface reference gives **267.35 K**, calculated as
 `288.15 - 0.0065 * 3200` from `atmosphere.js` (U.S. Standard Atmosphere 1976).
@@ -484,7 +483,11 @@ region gain uses the actual native sample centers inside that possibly shifted,
 rectangular crop, not enlarged output pixels.
 
 The host passes `skyUp` in camera coordinates from geodetic local up, and derives
-sensor altitude and center-ray elevation every frame. With `turbulenceMode:
+sensor altitude and center-ray elevation every frame. Sensor altitude is height above
+mean sea level: ellipsoid height minus the EGM96 geoid height, because Sitrec places
+terrain and track altitudes relative to sea level. Where the geoid is 38.5 m below the
+ellipsoid, a camera 21 m above the sea has an ellipsoid height of −17.5 m; that value
+alone would put the camera below the thermal sea. With `turbulenceMode:
 "geometry"` (the Sitrec default), `integrateTurbulence` receives the physical
 camera-to-selected-target range and elevation. Its calculated Fried coherence
 diameter at **4 um** feeds `turbulenceR0M`; the Hufnagel–Valley profile remains an

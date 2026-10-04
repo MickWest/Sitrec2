@@ -7,6 +7,8 @@ import {VEHICLE_THERMAL_GROUP} from "../../tools/vehicles/thermalTags.js";
 import {Globals, markSitchDirty, NodeMan, setRenderOne, Sit} from "../Globals";
 import {par} from "../par";
 import {ellipsoidAltitude, terrestrialOptsFrom} from "../atmosphere/terrestrialRefraction";
+import {meanSeaLevelOffset} from "../EGM96Geoid";
+import {ECEFToLLAVD_radii} from "../LLA-ECEF-ENU";
 import {t} from "../i18n";
 import {thermalStatus} from "./ThermalLoader";
 import {createThermalReuseKey, createThermalSceneAdapter, sceneVehicleThermal, thermalSceneAtmosphere, withThermalRefraction, withThermalScene} from "./ThermalSceneAdapters";
@@ -55,13 +57,18 @@ export function thermalFieldMapping(camera, settings) {
         fieldMagnification: settings.digitalZoom / scale[1]};
 }
 
-export function thermalGeometry(camera, target, radii = Globals) {
+// Altitude is height above mean sea level (h_ellipsoid = h_MSL + N): the thermal sea and the atmosphere
+// profile begin at sea level, where Sitrec puts terrain and track altitudes. The ellipsoid can lie tens of
+// metres above or below it, more than the height of a ship's camera.
+export function thermalGeometry(camera, target, radii = Globals, geoidHeight = meanSeaLevelOffset) {
     camera.updateWorldMatrix(true, false);
     const position = new Vector3().setFromMatrixPosition(camera.matrixWorld);
     const up = new Vector3(position.x / radii.equatorRadius ** 2,
         position.y / radii.equatorRadius ** 2, position.z / radii.polarRadius ** 2).normalize();
     const skyUp = up.clone().transformDirection(camera.matrixWorldInverse);
-    const sensorAltitudeM = Math.max(0, ellipsoidAltitude(position, radii.equatorRadius, radii.polarRadius));
+    const lla = ECEFToLLAVD_radii(position);
+    const sensorAltitudeM = Math.max(0, ellipsoidAltitude(position, radii.equatorRadius, radii.polarRadius)
+        - geoidHeight(lla.x, lla.y));
     const pathElevationDeg = Math.asin(Math.max(-1, Math.min(1, -skyUp.z))) * 180 / Math.PI;
     const relative = target?.clone().sub(position);
     const rangeM = relative?.length();
