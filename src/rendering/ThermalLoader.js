@@ -1,5 +1,6 @@
 import {markSitchDirty, setRenderOne} from "../Globals";
 import {t} from "../i18n";
+import {effectiveRenderMode} from "./ViewRenderMode";
 
 export function thermalRenderMode(value) {
     return value === "physicalThermal" ? value : "visible";
@@ -21,7 +22,7 @@ export function thermalStatus(view, key, values = {}, details = []) {
         view.div.appendChild(label); view._thermalReadout = label;
     }
     view._thermalReadout.textContent = view.thermalStatus;
-    view._thermalReadout.style.display = view.renderMode === "physicalThermal" ? "" : "none";
+    view._thermalReadout.style.display = effectiveRenderMode(view) === "physicalThermal" ? "" : "none";
 }
 
 export function ensureThermalView(view) {
@@ -55,6 +56,8 @@ export function setupThermalMenu(view, parent) {
     folder.add(view, "renderMode", {[t("thermal.visible")]: "visible", [t("thermal.physicalThermal")]: "physicalThermal"})
         .name(t("thermal.mode")).listen().onChange(() => {
             view._thermalError = null;
+            // The saved choice, not this frame's route: a choice made on a visible-light frame of camera data
+            // still loads the sensor for the infrared frames.
             if (view.renderMode === "physicalThermal") ensureThermalView(view);
             else if (view._thermalReadout) view._thermalReadout.style.display = "none";
             markSitchDirty(); setRenderOne(true);

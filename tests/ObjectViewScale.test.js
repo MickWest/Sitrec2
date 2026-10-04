@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {parse} from '@babel/parser';
 import {Group, Quaternion} from 'three';
+import {effectiveRenderMode} from '../src/rendering/ViewRenderMode';
 
 // Exercise the real render lifecycle without importing the object's browser-only
 // loader/worker dependencies. Duplicate methods are significant: JavaScript
@@ -19,7 +20,8 @@ test('the object render lifecycle has no silently overwritten methods', () => {
 
 test.each([1, 3])('main-view scale %s preserves rotation, material updates and look-view size', exaggeration => {
     const Globals = {objectScaleMain: exaggeration};
-    const Lifecycle = new Function('Globals', `return class {${selected.map(node => source.slice(node.start, node.end)).join('\n')}}`)(Globals);
+    const Lifecycle = new Function('Globals', 'effectiveRenderMode',
+        `return class {${selected.map(node => source.slice(node.start, node.end)).join('\n')}}`)(Globals, effectiveRenderMode);
     const node = Object.assign(new Lifecycle(), {baseScale: 2, _viewScale: 2,
         group: new Group(), common: {rotateZ: 90}, updateEnvMap: jest.fn()});
     node.group.scale.setScalar(2);

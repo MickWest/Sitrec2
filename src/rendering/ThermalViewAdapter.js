@@ -1,6 +1,7 @@
 import {Vector3} from "three";
 import {ThermalPipeline} from "../../tools/thermal/ThermalPipeline.js";
 import {normalizeSettings, settingsForPreset, THERMAL_PARAMETERS} from "../../tools/thermal/thermalSchema.js";
+import {SENSOR_PRESETS} from "../../tools/thermal/sensorPresets.js";
 import {integrateTurbulence} from "../../tools/thermal/turbulence.js";
 import {attachThermalDebug, configureSensorCamera, createThermalControls, resolveVehicleThermal} from "../../tools/vehicles/thermalPreview.js";
 import {VEHICLE_THERMAL_GROUP} from "../../tools/vehicles/thermalTags.js";
@@ -29,6 +30,69 @@ export function thermalSettings(cameraNode, sit) {
     return normalizeSettings({gainMode: "automatic", polarity: "blackHot", turbulenceMode: "geometry", seaMode: "statistical",
         ...cameraNode.thermalSensor, ...sit.thermalEnvironment});
 }
+
+/** One row of per-frame camera data (a cameraState row) applied to the saved settings for one frame. Pure: it returns
+ * new settings and never writes the saved ones. Only an infrared row applies: its focal length selects the preset's
+ * lens step of that focal length, and its polarity, when the row gives one, replaces the saved polarity. A focal
+ * length that is not a lens step of the preset, or a step that the saved pupil policy cannot use, keeps the saved
+ * lens. Digital zoom is not applied here: it reaches the sensor once, through the look camera's field of view.
+ * report says what applied; it is null when the row does not apply. */
+export function thermalSettingsForCameraState(settings, state) {
+    if (state?.band !== "IR") return {settings, report: null};
+    const report = {row: state, lens: "saved", reason: null, message: null, polarity: state.polarity == null ? "saved" : "row"};
+    const polarity = state.polarity ?? settings.polarity;
+    const steps = SENSOR_PRESETS[settings.sensorPreset]?.focalSteps;
+    const step = String(state.focalLengthMm);
+    let focalStep = null;
+    if (!steps) report.reason = "noSteps";
+    else if (!Object.hasOwn(steps, step)) report.reason = "notStep";
+    else {
+        report.lens = "step";
+        if (step !== settings.focalStep) focalStep = step;
+    }
+    if (!focalStep && polarity === settings.polarity) return {settings, report};
+    try {
+        return {settings: normalizeSettings({...settings, polarity, ...(focalStep ? {focalStep} : {})}), report};
+    } catch (error) {
+        // For example Keep pupil at a short step: the pupil would exceed twice the focal length.
+        if (!(error instanceof RangeError) || !focalStep) throw error;
+        return {settings: polarity === settings.polarity ? settings : normalizeSettings({...settings, polarity}),
+            report: {...report, lens: "saved", reason: "invalid", message: error.message}};
+    }
+}
+
+// A lens step counts as validated when the preset holds a value measured at that step, that is, compared with a
+// recording made at it. Steps with only published or calculated values were never checked against a picture.
+export function lensStepValidated(settings) {
+    const step = SENSOR_PRESETS[settings.sensorPreset]?.focalSteps?.[settings.focalStep];
+    return !step || Object.values(step).some(value => value?.status === "measured");
+}
+
+const millimeters = meters => +(meters * 1000).toFixed(1);
+
+// Readout lines for per-frame camera data and the lens of this frame. building is {focalM, previousFocalM} while the
+// image still shows the previous lens's optics because those of the new lens are being built, otherwise null.
+function cameraDataLines(report, settings, building) {
+    const lines = [];
+    if (report) {
+        const row = report.row, polarity = t(`thermal.parameters.polarity.options.${settings.polarity}`);
+        lines.push(t("thermal.cameraData.row", {mode: row.mode, focal: row.focalLengthMm, frame: row.frame,
+            polarity: report.polarity === "saved" ? t("thermal.cameraData.savedPolarity", {polarity}) : polarity}));
+        if (report.reason) lines.push(t(`thermal.cameraData.${report.reason}`, {focal: row.focalLengthMm,
+            saved: millimeters(settings.focalLengthM), message: report.message}));
+    }
+    if (building) lines.push(t("thermal.cameraData.previousLens",
+        {focal: millimeters(building.focalM), previous: millimeters(building.previousFocalM)}));
+    if (!lensStepValidated(settings)) lines.push(t("thermal.unvalidatedStep", {focal: settings.focalStep}));
+    const sampling = settings.opticalSampling;
+    if (sampling?.nyquistMet === false) lines.push(t("thermal.nyquistNotMet", {factor: sampling.factor,
+        required: sampling.requiredFactor.toFixed(1), fNumber: (settings.focalLengthM / settings.apertureM).toFixed(2)}));
+    return lines;
+}
+
+// Optics that a driven lens step replaces. While the camera data drives them they show the driven values, and an
+// edit would change the saved lens behind them (an edit of the field also turns the saved step to Free).
+const DRIVEN_OPTICS = new Set(["focalStep", "focalLengthM", "verticalFovDeg", "fieldMode", "apertureM"]);
 
 export function saveThermalSettings(settings, cameraNode, sit) {
     const sensor = {}, environment = {};
@@ -82,6 +146,9 @@ export function createThermalViewAdapter(view) {
         createOpticsWorker: () => import("./ThermalWorkerFactory.js").then(module => module.createOpticsWorker())});
     let controls, lastSettings, mapping, geometry, turbulence, turbulenceKey, comparisonPipeline, comparison;
     let atmosphere, atmosphereKey, vehicles = [];
+    // What the camera data drives at the last drawn frame, and the focal length of the last frame drawn with validated
+    // optics (for the readout while a new lens builds).
+    let drive = {lens: false, polarity: false}, cameraData = null, validatedFocalM = null;
     // Estimated budget: a paused frame's key costs a few ms in a scene with hundreds of meshes, against ~80 ms for
     // the full render it can save; a key that runs out of budget only disables reuse for that draw.
     const reuseKey = createThermalReuseKey({budgetMs: 10});
@@ -103,13 +170,16 @@ export function createThermalViewAdapter(view) {
         saveThermalSettings(normalizeSettings(next), view.cameraNode, Sit);
         lastSettings = null; controls?.refresh(); markSitchDirty(); setRenderOne(true);
     }
+    const readOnly = parameter => parameter.owner === "geometry" ||
+        ((drive.lens && DRIVEN_OPTICS.has(parameter.key)) || (drive.polarity && parameter.key === "polarity")
+            ? t("thermal.cameraData.readOnly") : false);
     if (view._thermalFolder) {
-        controls = createThermalControls(view._thermalFolder, settings, set, {translate: t, readOnly: p => p.owner === "geometry"});
+        controls = createThermalControls(view._thermalFolder, settings, set, {translate: t, readOnly});
         controls.refresh();
     }
     const debug = {pipeline, get settings() {return settings();}, get mapping() {return mapping;},
         get geometry() {return geometry;}, get turbulence() {return turbulence;}, set,
-        get vehicles() {return vehicles;},
+        get vehicles() {return vehicles;}, get cameraData() {return cameraData;},
         get comparison() {return comparison;},
         compareWith(otherPipeline) {comparisonPipeline = otherPipeline; comparison = null; setRenderOne(true);},
         readDetectorCounts: () => pipeline.readDetectorCounts(), readStage: name => pipeline.readStage(name),
@@ -117,7 +187,12 @@ export function createThermalViewAdapter(view) {
         get reuseKeyNullReason() {return reuseKey.lastNullReason;}};
     const detachDebug = typeof window === "undefined" ? () => {} : attachThermalDebug(window, debug, "lookThermal");
     return {pipeline, set, render(scene, frame) {
-        let configured = thermalSettings(view.cameraNode, Sit);
+        // Per-frame camera data sets this frame's lens step and polarity; the saved settings stay unchanged.
+        cameraData = thermalSettingsForCameraState(thermalSettings(view.cameraNode, Sit),
+            NodeMan.get("cameraState", false)?.stateAt(frame) ?? null);
+        let configured = cameraData.settings;
+        const nextDrive = {lens: cameraData.report?.lens === "step", polarity: cameraData.report?.polarity === "row"};
+        if (nextDrive.lens !== drive.lens || nextDrive.polarity !== drive.polarity) {drive = nextDrive; controls?.refresh();}
         const targetFrame = par.trackToTrackStopAt > 0 ? Math.min(frame, par.trackToTrackStopAt) : frame;
         const target = NodeMan.get("targetTrackSwitchSmooth", false)?.p(targetFrame);
         geometry = thermalGeometry(view.camera, target);
@@ -194,10 +269,19 @@ export function createThermalViewAdapter(view) {
         }, vehicleValues));
         lastSettings = configured;
         if (pipeline.hasFrame === false) {thermalStatus(view, "loading"); return;}
+        // pipeline.settings belong to the image now shown (a held or reused draw keeps the earlier image). Retained full
+        // kernels ("retained") after a lens change are the previous lens's: they were installed on the last image drawn
+        // with validated optics. A coarse preview is a different state, which the optics message reports.
+        const optics = pipeline.lastFrame?.opticsCache, shown = pipeline.settings;
+        if (optics && shown && !optics.outsideValidatedDomain) validatedFocalM = shown.focalLengthM;
+        const building = optics?.outsideValidatedDomain && optics.quality === "retained" && shown &&
+            validatedFocalM !== null && validatedFocalM !== shown.focalLengthM
+            ? {focalM: shown.focalLengthM, previousFocalM: validatedFocalM} : null;
         thermalStatus(view, "readout", {width: configured.detectorWidth, height: configured.detectorHeight,
             vertical: mapping.nativeVerticalFovDeg.toFixed(6), horizontal: mapping.nativeHorizontalFovDeg.toFixed(6),
             zoom: mapping.effectiveDigitalZoom.toFixed(3), r0: configured.turbulenceR0M.toPrecision(4)},
-        [...(pipeline.lastFrame?.opticsCache?.message ? [pipeline.lastFrame.opticsCache.message] : []),
+        [...cameraDataLines(cameraData.report, configured, building),
+        ...(pipeline.lastFrame?.opticsCache?.message ? [pipeline.lastFrame.opticsCache.message] : []),
         ...(pipeline.lastFrame?.coverage?.tiles > pipeline.lastFrame?.coverage?.refined ? [t("thermal.coverageLimited",
             {refined: pipeline.lastFrame.coverage.refined, tiles: pipeline.lastFrame.coverage.tiles})] : []),
         ...(pipeline.lastFrame?.clouds?.diagnostics ?? []).map(d => t(`thermal.cloudDiagnostics.${d.code}`, {id: d.id})),

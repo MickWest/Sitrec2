@@ -4,7 +4,9 @@ import path from "node:path";
 import {parse} from "@babel/parser";
 import {BoxGeometry, Group, Mesh, MeshBasicMaterial, PerspectiveCamera, Scene, Vector2, Vector3} from "three";
 import {thermalRenderMode, thermalUnavailable, objectThermalState, setupThermalMenu} from "../src/rendering/ThermalLoader";
-import {createThermalViewAdapter, saveThermalSettings, setupThermalVehicleControls, thermalFieldMapping, thermalGeometry, thermalSettings} from "../src/rendering/ThermalViewAdapter";
+import {effectiveRenderMode} from "../src/rendering/ViewRenderMode";
+import {createThermalViewAdapter, lensStepValidated, saveThermalSettings, setupThermalVehicleControls, thermalFieldMapping, thermalGeometry,
+    thermalSettings, thermalSettingsForCameraState} from "../src/rendering/ThermalViewAdapter";
 import {createThermalSceneAdapter, sceneVehicleThermal, thermalSceneAtmosphere, thermalParticipation, withThermalRefraction, withThermalScene} from "../src/rendering/ThermalSceneAdapters";
 import {terrestrialRefractionUniforms, patchTerrestrialRefractionVertexShader, liftWorldPoint, terrestrialLiftContext} from "../src/atmosphere/terrestrialRefraction";
 import {THERMAL_PARAMETERS, normalizeSettings, settingsForPreset} from "../tools/thermal/thermalSchema.js";
@@ -19,7 +21,7 @@ import {PRESETS} from "../tools/vehicles/vehicleParameters.js";
 import {withThermalVehicle} from "../tools/vehicles/thermalPreview.js";
 import {recoveryTemperature, TURBOFAN_CLIMB_REFERENCE} from "../tools/thermal/signatures.js";
 import {meanSeaLevelOffset} from "../src/EGM96Geoid";
-import {Globals, NodeMan, Sit} from "../src/Globals";
+import {Globals, markSitchDirty, NodeMan, Sit} from "../src/Globals";
 import en from "../src/i18n/en.js";
 
 jest.mock("../src/Globals", () => ({Globals: {equatorRadius: 6371000, polarRadius: 6371000},
@@ -52,9 +54,9 @@ test("old modes default to visible; unsupported projections cannot select the th
 });
 
 test("the real view routes physical mode ahead of panorama and raytraced visible passes", () => {
-    const View = methods("src/nodes/CNodeView3D.js", "CNodeView3D", ["renderTargetAndEffects"], {
+    const View = methods("src/nodes/CNodeView3D.js", "CNodeView3D", ["thermalRouteUnavailable", "renderTargetAndEffects"], {
         thermalUnavailable, thermalStatus: jest.fn(), isPanoramicCamera: () => false, isFisheyeCamera: () => false,
-        Globals: {}, PanoramicRenderer: jest.fn(),
+        Globals: {}, PanoramicRenderer: jest.fn(), effectiveRenderMode,
     });
     const view = Object.assign(new View(), {id: "lookView", camera: cameraFor(native()), renderMode: "physicalThermal",
         renderTargetAndEffectsInternal: jest.fn(), clearThermalOutput: jest.fn(), isXRPresenting: () => false,
@@ -73,7 +75,7 @@ test("camera preparation precedes thermal draw; pan, compression and offset rest
     const video = {panOffsetX: .1, panOffsetY: .2, videoWidth: 1280, videoHeight: 1024};
     const scope = {NodeMan: {exists: key => key === "video", get: key => key === "video" ? video : {}},
         Globals: {renderDebugFlags: {}}, globalProfiler: null, Vector2, GlobalDaySkyScene: undefined,
-        setLineViewHeight() {}, resizeRenderTargetsToDrawingBuffer: () => new Vector2(640,512)};
+        setLineViewHeight() {}, resizeRenderTargetsToDrawingBuffer: () => new Vector2(640,512), effectiveRenderMode};
     const View = methods("src/nodes/CNodeView3D.js", "CNodeView3D", ["renderTargetAndEffectsInternal"], scope);
     const draw = jest.fn(() => {expect(camera.projectionMatrix.elements[8]).not.toBe(0);
         expect(camera.projectionMatrix.elements[5]).toBeLessThan(originalProjection.elements[5]); throw Error("draw");});
@@ -385,7 +387,7 @@ test("the closed menu performs no thermal initialization, and its fields remain 
 });
 
 test("thermal look pre-render skips RGB reflection capture while preserving visible main behavior",()=>{
-    const Lifecycle=methods("src/nodes/CNode3DObject.js","CNode3DObject",["preRender","applyViewScale","postRender"],{Globals:{objectScaleMain:1}});
+    const Lifecycle=methods("src/nodes/CNode3DObject.js","CNode3DObject",["preRender","applyViewScale","postRender"],{Globals:{objectScaleMain:1},effectiveRenderMode});
     const node=Object.assign(new Lifecycle(),{common:{},group:new Group(),baseScale:1,updateEnvMap:jest.fn()});
     node.preRender({id:"lookView",renderMode:"physicalThermal"});expect(node.updateEnvMap).not.toHaveBeenCalled();
     node.preRender({id:"mainView",renderMode:"visible"});expect(node.updateEnvMap).toHaveBeenCalledTimes(1);
@@ -406,4 +408,104 @@ test("shared schema controllers support setMenuValue/getMenuValue and keep coupl
         expect(settings.verticalFovDeg).toBeCloseTo(2*Math.atan(512*20e-6/(2*.8))*180/Math.PI,12);
         controls.refresh();expect(gui.controllersRecursive()).toHaveLength(THERMAL_PARAMETERS.length);
     } finally {controls.dispose();gui.destroy();Controller.prototype.tooltip=tooltip;}
+});
+
+// A synthetic camera-data row as the cameraState node returns it (frame, recorded mode, band, focal length in mm).
+const cameraRow = (focalLengthMm, extra = {}) => ({index: 0, frame: 30, mode: "IR", band: "IR", focalLengthMm, zoom: 1, polarity: null, ...extra});
+
+test("camera data selects each lens step's focal length, pupil and window for one frame and never edits the saved settings", () => {
+    const saved = normalizeSettings({...native(), polarity: "blackHot"}), before = JSON.stringify(saved);
+    // Preset lens steps; hold f-number scales the estimated reference pupil (0.150 m at 0.675 m) with focal length.
+    const steps = {27: [.027, .006, 640, 512], 135: [.135, .03, 640, 512], 675: [.675, .15, 640, 512], 1012: [1.012, .15 * 1.012 / .675, 480, 384]};
+    for (const [step, [focalLengthM, apertureM, width, height]] of Object.entries(steps)) {
+        const {settings, report} = thermalSettingsForCameraState(saved, cameraRow(Number(step)));
+        expect(report).toMatchObject({lens: "step", reason: null, polarity: "saved"});
+        expect(settings).toMatchObject({focalStep: step, polarity: "blackHot", detectorWindow: {width, height}});
+        expect(settings.focalLengthM).toBeCloseTo(focalLengthM, 12); expect(settings.apertureM).toBeCloseTo(apertureM, 12);
+        expect(settings.opticalSampling).toMatchObject({factor: 4, nyquistMet: true});
+    }
+    // The saved step and polarity: the same object, bit for bit. No data, or a visible-light row: unchanged too.
+    expect(thermalSettingsForCameraState(saved, cameraRow(675)).settings).toBe(saved);
+    expect(thermalSettingsForCameraState(saved, null)).toEqual({settings: saved, report: null});
+    expect(thermalSettingsForCameraState(saved, cameraRow(200, {mode: "EOW", band: "EO", zoom: 2})).settings).toBe(saved);
+    const white = thermalSettingsForCameraState(saved, cameraRow(1012, {polarity: "whiteHot"}));
+    expect(white.settings.polarity).toBe("whiteHot"); expect(white.report.polarity).toBe("row");
+    // Digital zoom reaches the sensor through the look camera's field of view, not twice.
+    expect(thermalSettingsForCameraState(saved, cameraRow(1012, {zoom: 2})).settings.digitalZoom).toBe(saved.digitalZoom);
+    expect(JSON.stringify(saved)).toBe(before);
+    expect([27, 135, 675, 1012].map(step => lensStepValidated({...saved, focalStep: String(step)}))).toEqual([false, false, true, true]);
+    expect(lensStepValidated({...saved, focalStep: "free"})).toBe(true);
+});
+
+test("a focal length that is no lens step, a preset without steps and an impossible pupil keep the saved lens", () => {
+    const saved = native();
+    const other = thermalSettingsForCameraState(saved, cameraRow(300, {polarity: "whiteHot"}));
+    expect(other.report).toMatchObject({lens: "saved", reason: "notStep"});
+    expect(other.settings).toMatchObject({focalStep: "675", focalLengthM: .675, polarity: "whiteHot"});
+    const noSteps = settingsForPreset("ATFLIR");
+    expect(thermalSettingsForCameraState(noSteps, cameraRow(1012))).toMatchObject({settings: noSteps, report: {reason: "noSteps"}});
+    // Keep pupil with a short step: the saved pupil exceeds twice the focal length (numerical aperture above 1).
+    const keep = normalizeSettings({...saved, pupilPolicy: "keepPupil"});
+    const wide = thermalSettingsForCameraState(keep, cameraRow(27, {polarity: "whiteHot"}));
+    expect(wide.report).toMatchObject({lens: "saved", reason: "invalid", message: expect.stringMatching(/numerical aperture/)});
+    expect(wide.settings).toMatchObject({focalStep: "675", polarity: "whiteHot"});
+    // Keep pupil at 135 mm is f/0.9: allowed, but the largest grid that fits cannot meet optical Nyquist.
+    expect(thermalSettingsForCameraState(keep, cameraRow(135)).settings.opticalSampling).toMatchObject({factor: 4, nyquistMet: false});
+});
+
+test("the look draw applies camera data per frame, reports it, locks the driven controls and saves nothing", () => {
+    window.matchMedia ??= () => ({matches:false,addEventListener(){},removeEventListener(){}});
+    const tooltip=Controller.prototype.tooltip;Controller.prototype.tooltip=function(text){this._tooltip=text;return this;};
+    const gui=new GUI({autoPlace:false});
+    const camera=cameraFor(native());camera.position.set(Globals.equatorRadius+100,0,0);camera.updateMatrixWorld(true);
+    const view={camera,cameraNode:{},renderer:{},renderMode:"physicalThermal",div:document.createElement("div"),_thermalFolder:gui};
+    let row=null, optics={outsideValidatedDomain:false,quality:"full",message:""};
+    NodeMan.get.mockImplementation(id=>id==="cameraState"?{stateAt:()=>row}:undefined); NodeMan.iterate.mockImplementation(()=>{});
+    Sit.thermalEnvironment={turbulenceMode:"manual"};
+    const adapter=createThermalViewAdapter(view);
+    const render=jest.spyOn(adapter.pipeline,"render").mockImplementation(inputs=>
+        Object.assign(adapter.pipeline,{hasFrame:true,settings:inputs.settings,lastFrame:{opticsCache:optics}}));
+    const controller=key=>gui.controllersRecursive().find(c=>c.property===key);
+    const readout=()=>view._thermalReadout.textContent, saved=()=>JSON.stringify([view.cameraNode,Sit.thermalEnvironment]);
+    const driven=["focalStep","focalLengthM","verticalFovDeg","fieldMode","apertureM"];
+    markSitchDirty.mockClear();
+    try {
+        const savedBefore=saved();
+        adapter.render(new Scene(),40);
+        const plain=render.mock.calls[0][0].settings;
+        expect(plain.focalStep).toBe("675"); expect(readout()).not.toContain("Camera data");
+        for (const key of [...driven,"polarity"]) expect(controller(key)._disabled).toBe(false);
+        // The new lens step's optics are not ready: the image keeps the previous lens's kernels and says so.
+        row=cameraRow(1012,{polarity:"whiteHot"}); optics={outsideValidatedDomain:true,quality:"retained",message:"Previous optical kernel retained while rebuilding."};
+        adapter.render(new Scene(),40);
+        const inputs=render.mock.calls[1][0];
+        expect(inputs.settings).toMatchObject({focalStep:"1012",focalLengthM:1.012,polarity:"whiteHot",detectorWindow:{width:480,height:384}});
+        expect(inputs.presentation.nativeVerticalFovDeg).toBeCloseTo(2*Math.atan(512*20e-6/(2*1.012))*180/Math.PI,12);
+        // The look camera keeps its field (the 675 mm native field here), so the 1012 mm detector covers 675/1012 of it.
+        expect(inputs.presentation.scale[1]).toBeCloseTo(1.012/.675,12);
+        expect(readout()).toContain("Camera data: IR · 1012 mm · White hot · row at frame 30");
+        expect(readout()).toContain("The 1012 mm optics are still being built; until they are ready, this frame uses the optics of the previous lens (675 mm).");
+        for (const key of [...driven,"polarity"]) {
+            expect(controller(key)._disabled).toBe(true); expect(controller(key)._tooltip).toContain("Set by the per-frame camera data");
+        }
+        expect(controller("pupilPolicy")._disabled).toBe(false); expect(controller("sensorAltitudeM")._disabled).toBe(true);
+        optics={outsideValidatedDomain:false,quality:"full",message:""};
+        adapter.render(new Scene(),40); expect(readout()).not.toContain("previous lens");
+        // A wide step without measured values, and a row without polarity (the saved polarity applies).
+        row=cameraRow(135); adapter.render(new Scene(),41);
+        expect(readout()).toContain("Camera data: IR · 135 mm · Black hot (saved) · row at frame 30");
+        expect(readout()).toContain("Lens step 135 mm has no measured values in this sensor preset, so this frame is outside the validated lens steps.");
+        expect(controller("polarity")._disabled).toBe(false); expect(controller("focalStep")._disabled).toBe(true);
+        // A focal length that is no lens step keeps the saved lens, which stays editable.
+        row=cameraRow(300); adapter.render(new Scene(),42);
+        expect(render.mock.calls.at(-1)[0].settings.focalStep).toBe("675");
+        expect(readout()).toContain("The camera data's 300 mm is not a lens step of this sensor preset; the saved lens (675 mm) is kept.");
+        expect(controller("focalStep")._disabled).toBe(false);
+        // Without data the frame's settings are bit-identical to the first draw.
+        row=null; adapter.render(new Scene(),40);
+        expect(JSON.stringify(render.mock.calls.at(-1)[0].settings)).toBe(JSON.stringify(plain));
+        expect(saved()).toBe(savedBefore); expect(markSitchDirty).not.toHaveBeenCalled();
+        expect(window.lookThermal.cameraData).toEqual({settings:expect.any(Object),report:null});
+    } finally {adapter.dispose();gui.destroy();Controller.prototype.tooltip=tooltip;Sit.thermalEnvironment=undefined;
+        NodeMan.get.mockReset();NodeMan.iterate.mockImplementation(()=>{});}
 });

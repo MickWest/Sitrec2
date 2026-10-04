@@ -21,6 +21,7 @@ import {getDocumentTitle} from "../utils";
 import {t} from "../i18n";
 import {defaultViewDark, setAllViewsDark} from "../Theme";
 import {convertThemeColor} from "../ThemeColors";
+import {effectiveRenderMode} from "../rendering/ViewRenderMode";
 import {
     getCenterSidebarAdjustment,
     getLeftSidebar,
@@ -930,7 +931,8 @@ class CNodeView extends CNode {
         // Sync the zoom on this camera to the video zoom
         // check if it's flagged, and we actually have a videoZoom UI control
         if (NodeMan.exists("videoZoom")) {
-            if (this.renderMode !== "physicalThermal" && this.effectsEnabled && this.syncPixelZoomWithVideo && NodeMan.get("pixelZoomNode").enabled) {
+            const physicalThermal = effectiveRenderMode(this) === "physicalThermal";
+            if (!physicalThermal && this.effectsEnabled && this.syncPixelZoomWithVideo && NodeMan.get("pixelZoomNode").enabled) {
                 var videoZoom = NodeMan.get("videoZoom")
                 var pixelZoom = NodeMan.get("pixelZoom");
                 const totalZoom = videoZoom.v0 / 100;
@@ -966,7 +968,7 @@ class CNodeView extends CNode {
                 this.camera.zoom = Math.min(totalZoom, pixelMatchZoom);
                 pixelZoom.value = Math.max(100, totalZoom / this.camera.zoom * 100);
             }
-            else if (this.syncVideoZoom || (this.renderMode === "physicalThermal" && this.syncPixelZoomWithVideo)) {
+            else if (this.syncVideoZoom || (physicalThermal && this.syncPixelZoomWithVideo)) {
                 var videoZoom = NodeMan.get("videoZoom")
                 this.camera.zoom = videoZoom.v0 / 100;
             }

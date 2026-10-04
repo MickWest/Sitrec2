@@ -155,6 +155,8 @@ export function withThermalVehicle(model, draw, values = {}) {
     }
 }
 
+// readOnly(parameter) is truthy for a field the host does not let the user edit; a string is shown in the tooltip.
+// The menu host evaluates it again on every refresh, so a host can make a field read only for a while.
 export function createThermalControls(mount, getSettings, set, {translate = null, readOnly = () => false} = {}) {
     // Both widget hosts walk the same descriptors and use the same edit callback.
     if (mount.addFolder) {
@@ -177,8 +179,9 @@ export function createThermalControls(mount, getSettings, set, {translate = null
         return {refresh() {
             const settings = getSettings();
             for (const {control, parameter} of fields) {
-                const metadata = settings.presetMetadata?.[parameter.key];
-                control.tooltip(`${translate(parameter.tooltipKey)}\n${translate(`thermal.status.${metadata?.status ?? parameter.status ?? "estimated"}`)}${metadata?.source ? ` · ${metadata.source}` : ""}`);
+                const metadata = settings.presetMetadata?.[parameter.key], reason = readOnly(parameter);
+                control.disable(!!reason);
+                control.tooltip(`${translate(parameter.tooltipKey)}\n${translate(`thermal.status.${metadata?.status ?? parameter.status ?? "estimated"}`)}${metadata?.source ? ` · ${metadata.source}` : ""}${typeof reason === "string" ? `\n${reason}` : ""}`);
                 control.updateDisplay();
             }
         }, dispose() {folders.forEach(folder => folder.destroy());}};

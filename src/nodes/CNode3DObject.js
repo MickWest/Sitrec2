@@ -1,4 +1,5 @@
 import {objectThermalState, setupObjectThermalMenu} from "../rendering/ThermalLoader";
+import {effectiveRenderMode} from "../rendering/ViewRenderMode";
 import {SceneLineSegments} from "../SceneLines";
 // CNode3DObject.js - CNode3DObject
 // a 3D object node - a sphere, cube, etc., with generated geometry and material from the input parameters
@@ -2357,7 +2358,7 @@ ${trackPlacemark}    </Document>
             this.rebuildBoundingBox(false);
         }
 
-        if (view.renderMode !== "physicalThermal") this.updateEnvMap(view);
+        if (effectiveRenderMode(view) !== "physicalThermal") this.updateEnvMap(view);
 
         // Update gradient material uniforms with direction and extent data.
         // All modes use world-space positions so the gradient is consistent across
@@ -2416,6 +2417,10 @@ ${trackPlacemark}    </Document>
 
     updateEnvMap(view) {
         if (!this._perViewEnvMaps || !view.renderer) return;
+
+        // isIR for this frame: per-frame camera data can change it at any frame, and an export runs node pre-renders
+        // before the view's renderCanvas, which is where it is otherwise refreshed.
+        view.updateIsIR?.();
 
         const {renderTarget, cubeCamera} = this.getOrCreateEnvMap(view.renderer);
 

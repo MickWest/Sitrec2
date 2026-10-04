@@ -1,3 +1,5 @@
+import {effectiveRenderMode} from "./ViewRenderMode";
+
 // Optical operations consume radiance. Display/sensor operations may clip it.
 const opticalEffects = new Set(["hBlur", "vBlur", "DiffractionGlare"]);
 
@@ -10,7 +12,7 @@ export function splitViewEffects(effects, opticsBeforeSensor) {
 }
 
 export function viewColorPolicy(view, sceneExposure = 1, skyExposure = 1) {
-    const active = view.id === "lookView" && view.renderMode !== "physicalThermal" && !view.isIR && !view.isXRPresenting();
+    const active = view.id === "lookView" && effectiveRenderMode(view) !== "physicalThermal" && !view.isIR && !view.isXRPresenting();
     return {
         active,
         toneMapping: active && view.toneMappingEnabled,

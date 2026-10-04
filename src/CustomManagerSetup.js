@@ -2287,6 +2287,8 @@ export const setupMethods = {
 
         this.setupWescamMXUI();
 
+        this.setupCameraState();
+
         this.setupATFLIRUI();
 
         this.setupOSDDataSeriesController();

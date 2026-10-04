@@ -1,7 +1,7 @@
 import {PerspectiveCamera} from "three";
 import {Worker as NodeWorker} from "node:worker_threads";
 import {readFileSync} from "node:fs";
-import {createDefaultOpticsWorker, OpticsScheduler} from "../tools/thermal/sensorMath.js";
+import {createDefaultOpticsWorker, OpticsScheduler, OPTICS_DOMAIN_CACHE_BYTES, opticalDomainBytes, opticalStructureKey} from "../tools/thermal/sensorMath.js";
 import {createOpticsWorker} from "../src/rendering/ThermalWorkerFactory.js";
 import {OpticalKernelCache, opticalKernelError, OPTICS_L1_TOLERANCE, buildOpticalDomain, sampleOpticalDomain, psfSpectrum} from "../tools/thermal/sensorMath.js";
 import {normalizeSettings} from "../tools/thermal/thermalSchema.js";
@@ -386,6 +386,87 @@ test("interactive construction displays a bounded coarse preview, retains output
     const calls = onReady.mock.calls.length;
     worker.onmessage({data: {id: message.id, domain: {}}});
     expect(onReady).toHaveBeenCalledTimes(calls); expect(worker.terminate).toHaveBeenCalledTimes(1);
+});
+
+// A worker stand-in that answers each posted build with the real domain, on request.
+function domainWorker() {
+    const worker = {postMessage: jest.fn(), terminate: jest.fn()};
+    worker.complete = () => {
+        const message = worker.postMessage.mock.calls.at(-1)[0];
+        worker.onmessage({data: {id: message.id, complete: true, buildMs: 1,
+            domain: buildOpticalDomain(message.settings, 32, 24, message.spectrum)}});
+    };
+    return worker;
+}
+const settle = async scheduler => {await scheduler.workerPromise; await Promise.resolve(); await Promise.resolve();};
+
+test("completed domains are kept per lens within a byte budget: A, B, then A again builds nothing, and the least recently used is evicted", async () => {
+    expect(OPTICS_DOMAIN_CACHE_BYTES).toBe(128 * 2 ** 20);
+    const worker = domainWorker(), atmosphere = createAtmosphere();
+    // Three lens focal lengths: each is a different optical structure.
+    const [a, b, c] = [.675, 1.012, .135].map(focalLengthM => compact({focalLengthM}));
+    const bytes = [a, b, c].map(lens => opticalDomainBytes(buildOpticalDomain(lens, 32, 24, psfSpectrum(lens, atmosphere))));
+    // A budget that holds any two of these domains, but not all three.
+    const budget = 2 * Math.max(...bytes);
+    expect(bytes[0] + bytes[1] + bytes[2]).toBeGreaterThan(budget);
+    const scheduler = new OpticsScheduler({createWorker: () => worker, domainBudgetBytes: budget});
+    const key = settings => opticalStructureKey(settings, 32, 24);
+    try {
+        for (const lens of [a, b]) {scheduler.request(lens, 32, 24, atmosphere); await settle(scheduler); worker.complete();}
+        expect(worker.postMessage).toHaveBeenCalledTimes(2); expect(scheduler.retainedBytes).toBe(bytes[0] + bytes[1]);
+        const back = scheduler.request(a, 32, 24, atmosphere);
+        await settle(scheduler);
+        expect(back).toMatchObject({pending: false}); expect(back.kernels).not.toBeNull();
+        expect(opticalKernelError(back.kernels, opticalKernels(a, 32, 24, atmosphere))).toBeLessThan(2e-6);
+        expect(scheduler.domain.key).toBe(key(a)); expect(worker.postMessage).toHaveBeenCalledTimes(2);
+        // A was used after B, so a third lens evicts B, and B then needs a new build.
+        scheduler.request(c, 32, 24, atmosphere); await settle(scheduler); worker.complete();
+        expect([...scheduler.domains.keys()]).toEqual([key(a), key(c)]);
+        expect(scheduler.retainedBytes).toBe(bytes[0] + bytes[2]);
+        expect(scheduler.request(b, 32, 24, atmosphere)).toMatchObject({kernels: null, pending: true});
+        await settle(scheduler); expect(worker.postMessage).toHaveBeenCalledTimes(4);
+    } finally {scheduler.dispose(); expect(scheduler.domains.size).toBe(0);}
+});
+
+test("the domain in current use stays even when it alone is larger than the budget", async () => {
+    const worker = domainWorker(), atmosphere = createAtmosphere();
+    const scheduler = new OpticsScheduler({createWorker: () => worker, domainBudgetBytes: 1});
+    const [a, b] = [.675, 1.012].map(focalLengthM => compact({focalLengthM}));
+    try {
+        for (const lens of [a, b]) {scheduler.request(lens, 32, 24, atmosphere); await settle(scheduler); worker.complete();}
+        expect([...scheduler.domains.keys()]).toEqual([opticalStructureKey(b, 32, 24)]);
+        expect(scheduler.request(b, 32, 24, atmosphere).kernels).not.toBeNull();
+        expect(scheduler.request(a, 32, 24, atmosphere)).toMatchObject({kernels: null, pending: true});
+    } finally {scheduler.dispose();}
+});
+
+test("a cached domain serves only turbulence strengths inside its validated intervals", async () => {
+    const worker = domainWorker(), atmosphere = createAtmosphere();
+    const scheduler = new OpticsScheduler({createWorker: () => worker});
+    const a = compact({turbulenceR0M: .574}), b = compact({focalLengthM: 1.012, turbulenceR0M: .574});
+    try {
+        for (const lens of [a, b]) {scheduler.request(lens, 32, 24, atmosphere); await settle(scheduler); worker.complete();}
+        expect(scheduler.request(a, 32, 24, atmosphere).kernels).not.toBeNull();
+        await settle(scheduler); expect(worker.postMessage).toHaveBeenCalledTimes(2);
+        // A much stronger path (r0 0.2 m) lies outside A's intervals: A is rebuilt there, under the same key.
+        const strong = {...a, turbulenceR0M: .2};
+        expect(scheduler.request(strong, 32, 24, atmosphere)).toMatchObject({kernels: null, pending: true});
+        await settle(scheduler); expect(worker.postMessage).toHaveBeenCalledTimes(3);
+        worker.complete();
+        expect(scheduler.domains.size).toBe(2);
+        expect(scheduler.request(strong, 32, 24, atmosphere).kernels).not.toBeNull();
+    } finally {scheduler.dispose();}
+});
+
+test("without a worker, a return to an earlier lens reuses its domain instead of rebuilding on the main thread", () => {
+    const scheduler = new OpticsScheduler({createWorker: () => null}), atmosphere = createAtmosphere();
+    const a = compact({}), b = compact({focalLengthM: 1.012});
+    try {
+        scheduler.request(a, 32, 24, atmosphere); const domainA = scheduler.domain;
+        scheduler.request(b, 32, 24, atmosphere); expect(scheduler.domain).not.toBe(domainA);
+        const back = scheduler.request(a, 32, 24, atmosphere);
+        expect(scheduler.domain).toBe(domainA); expect(back).toMatchObject({fallback: true, pending: false});
+    } finally {scheduler.dispose();}
 });
 
 test("worker URLs are module-relative even with an unusable document base", () => {

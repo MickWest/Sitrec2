@@ -14,6 +14,17 @@ const en = {
         "cloudCost": "Clouds {{count}} · prepare {{prepareMs}} ms · sort {{sortMs}} ms · {{draws}} draws · absorption only; GPU timing unavailable",
         "coverageLimited": "Small-target refinement: {{refined}} of {{tiles}} tiles this frame (estimated budget); the others use normal supersampling",
         "seaDiagnostic": "Sea: clear-sky thermal-only diagnostic · estimated ensemble mean · gray water · statistical hiding / black cavity · clouds and Sun are not reflected; no moving crests",
+        "cameraData": {
+            "row": "Camera data: {{mode}} · {{focal}} mm · {{polarity}} · row at frame {{frame}}",
+            "savedPolarity": "{{polarity}} (saved)",
+            "notStep": "The camera data's {{focal}} mm is not a lens step of this sensor preset; the saved lens ({{saved}} mm) is kept.",
+            "noSteps": "This sensor preset has no lens steps; the saved lens ({{saved}} mm) is kept for the camera data's {{focal}} mm.",
+            "invalid": "The {{focal}} mm lens step does not work with the saved pupil policy ({{message}}); the saved lens ({{saved}} mm) is kept.",
+            "previousLens": "The {{focal}} mm optics are still being built; until they are ready, this frame uses the optics of the previous lens ({{previous}} mm).",
+            "readOnly": "Set by the per-frame camera data at this frame (Camera > Camera Data > Drive Look View). The saved value applies where the camera data does not set it."
+        },
+        "unvalidatedStep": "Lens step {{focal}} mm has no measured values in this sensor preset, so this frame is outside the validated lens steps. Foreground transfer uses the center-ray range table, a narrow-field model.",
+        "nyquistNotMet": "Optical sampling {{factor}}× is below the Nyquist factor {{required}}× at f/{{fNumber}}; fine diffraction detail is undersampled.",
         "vehicleReadout": "{{id}} · {{altitudeM}} m · air {{airTemperatureK}} K ({{airSource}}) · Mach {{mach}} ({{machSource}}) · speed {{speedMps}} m/s ({{speedSource}}) · power {{power}} ({{powerSource}})",
         "vehicleSources": {
             "standard": "standard atmosphere, calculated",
@@ -3166,6 +3177,33 @@ const en = {
             label: "Random Seed",
             tooltip: "Change for a different (but still repeatable) wobble pattern",
         },
+    },
+
+    cameraState: {
+        folder: "Camera Data",
+        source: {
+            label: "Source",
+            tooltip: "The camera data file these rows came from. The sitch saves the rows, so a file that has only camera data is not uploaded.",
+        },
+        rows: {
+            label: "Rows",
+            tooltip: "Each row is a change of mode, focal length, digital zoom or polarity, and holds until the next row's frame.",
+            value: "{{rows}} rows, frames {{first}} to {{last}}",
+        },
+        modes: {
+            label: "Modes",
+            tooltip: "Each sensor mode in the data and the band it is drawn in: IR for a mode that starts with IR, MWIR or LWIR, otherwise EO (visible).",
+        },
+        driveLookView: {
+            label: "Drive Look View",
+            tooltip: "Use this data, frame by frame, for the look view's band (infrared or visible light), the lens step and polarity of the thermal sensor, and the mode, focal length and digital zoom on the MX overlay. The field of view does not follow the data: it comes from the Camera FOV setting. Off: they keep their saved settings.",
+        },
+        remove: {
+            label: "Remove Camera Data",
+            tooltip: "Remove these rows from the sitch. Drop the file again to get them back.",
+        },
+        noNode: "Can't use camera data from \"{{file}}\": this sitch has no look camera.",
+        importError: "Can't read camera data from \"{{file}}\": {{message}}",
     },
 
     spriteGroup: {

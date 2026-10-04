@@ -1,5 +1,6 @@
 import {disposeThermalView, ensureThermalView, thermalRenderMode, thermalStatus, thermalUnavailable} from "../rendering/ThermalLoader";
 import {migrateViewColorSettings, splitViewEffects, viewColorPolicy} from "../rendering/ViewColorPipeline";
+import {effectiveRenderMode, frameEffectPasses, frameRenderModeFor} from "../rendering/ViewRenderMode";
 import {SoftDepthPass} from "../rendering/SoftDepth";
 import {setLineViewHeight} from "../SceneLineMaterial";
 import {par} from "../par";
@@ -867,6 +868,7 @@ export class CNodeView3D extends CNodeViewCanvas {
      * Three.js automatically handles stereo rendering for VR headsets
      */
     renderXR(time, frame) {
+        // The saved mode: the thermal sensor has no headset route, and per-frame camera data does not drive a headset.
         if (this.renderMode === "physicalThermal") {
             this.clearThermalOutput(); thermalStatus(this, "unavailable"); return;
         }
@@ -2129,10 +2131,15 @@ export class CNodeView3D extends CNodeViewCanvas {
     }
 
 
+    // True when the thermal sensor cannot draw this view's camera (see thermalUnavailable).
+    thermalRouteUnavailable() {
+        return thermalUnavailable(this, {fisheye: isFisheyeCamera(this.camera),
+            flatEarth: Globals.flatEarthRendering, panorama: isPanoramicCamera(this.camera)});
+    }
+
     renderTargetAndEffects() {
-        if (this.renderMode === "physicalThermal") {
-            if (thermalUnavailable(this, {fisheye: isFisheyeCamera(this.camera),
-                flatEarth: Globals.flatEarthRendering, panorama: isPanoramicCamera(this.camera)})) {
+        if (effectiveRenderMode(this) === "physicalThermal") {
+            if (this.thermalRouteUnavailable()) {
                 this.clearThermalOutput();
                 thermalStatus(this, "unavailable");
                 return;
@@ -2141,6 +2148,9 @@ export class CNodeView3D extends CNodeViewCanvas {
             return this.renderTargetAndEffectsInternal();
         }
         if (this._thermalReadout) this._thermalReadout.style.display = "none";
+        // A physical thermal view on a visible-light frame of camera data (frameRenderMode) loads the sensor now, so
+        // that its first infrared frame is not drawn black while the module loads.
+        if (this.frameRenderMode && !this._thermalError && !this.thermalRouteUnavailable()) ensureThermalView(this);
         if (isPanoramicCamera(this.camera) && !this.isXRPresenting()) {
             return (this.panoramicRenderer ??= new PanoramicRenderer()).render(this);
         }
@@ -2184,8 +2194,23 @@ export class CNodeView3D extends CNodeViewCanvas {
     }
 
     getPendingLoadState(viewIds = null) {
-        if (this.renderMode === "physicalThermal" && (!viewIds || viewIds.includes(this.id))) {
-            return {hasPending: !!this._thermalLoading, perView: {[this.id]: {thermal: !!this._thermalLoading}},
+        if (effectiveRenderMode(this) === "physicalThermal" && (!viewIds || viewIds.includes(this.id))) {
+            // An export also waits for this frame's thermal image: drawn for this frame (a draw that the main loop's
+            // GPU pacing held, or one whose atmosphere was not ready, shows an earlier image), with no spectrum refresh
+            // still being staged and kernels inside their validated domain (not the previous lens while a new lens
+            // step builds, nor the coarse preview). Not on the scheduler's pending flag, which a prefetch build also
+            // sets while the shown kernels are validated. With fenced gain it waits for this frame's own statistics.
+            // Only a view that draws the thermal route has such an image to wait for: a hidden view, a camera the
+            // sensor cannot draw or a failed render keeps its last state, which no later draw would clear.
+            const draws = this.visible && this._effectivelyVisible !== false && !this._thermalError &&
+                !this.thermalRouteUnavailable();
+            const pipeline = draws ? this._thermalAdapter?.pipeline : null, shown = pipeline?.lastFrame;
+            const image = !!pipeline && (!pipeline.hasFrame || shown?.frame !== Math.max(0, Math.floor(par.frame)) ||
+                shown.held === true);
+            const optics = !!pipeline && (!!pipeline.pendingOptics || pipeline.opticsReport?.outsideValidatedDomain === true);
+            const gain = pipeline?.gainReport?.mode === "fenced" && pipeline.gainReport.settled !== true;
+            const thermal = !!this._thermalLoading;
+            return {hasPending: thermal || image || optics || gain, perView: {[this.id]: {thermal, image, optics, gain}},
                 error: this._thermalError?.message};
         }
         if (isPanoramicCamera(this.camera)) return null;
@@ -2442,7 +2467,8 @@ export class CNodeView3D extends CNodeViewCanvas {
                 if (globalProfiler) globalProfiler.push('#b3de69', 'lightingSetup');
                 // update lighting before rendering the sky
                 const lightingNode = NodeMan.get("lighting", true);
-                if (this.renderMode !== "physicalThermal") {
+                const physicalThermal = effectiveRenderMode(this) === "physicalThermal";
+                if (!physicalThermal) {
                 // if this is an IR viewport, then we need to render the IR ambient light
                 // instead of the normal ambient light.
 
@@ -2550,7 +2576,7 @@ export class CNodeView3D extends CNodeViewCanvas {
                 let restoreTerrainMasks = null;
                 try {
 
-                if (this.renderMode === "physicalThermal") {
+                if (physicalThermal) {
                     if (this._matchVideoAspectFOV !== undefined) {
                         this.camera.fov = this._matchVideoAspectFOV;
                         this.camera.aspect = this._matchVideoAspectAspect;
@@ -2773,7 +2799,7 @@ export class CNodeView3D extends CNodeViewCanvas {
                         _panPatchedCamera.updateProjectionMatrix = _panOrigUpdatePM;
                     }
 
-                    if (this.renderMode === "physicalThermal") this.camera.updateProjectionMatrix();
+                    if (physicalThermal) this.camera.updateProjectionMatrix();
                     this.camera.layers.mask = oldLayers;
                     if (restoreTerrainMasks) restoreTerrainMasks();
 
@@ -2782,7 +2808,7 @@ export class CNodeView3D extends CNodeViewCanvas {
                         this.camera.updateProjectionMatrix();
                     }
 
-                    if (this.isIR && this.effectsEnabled && this.renderMode !== "physicalThermal") {
+                    if (this.isIR && this.effectsEnabled && !physicalThermal) {
                         NodeMan.get("lighting").setIR(false);
                     }
                 }
@@ -2801,7 +2827,7 @@ export class CNodeView3D extends CNodeViewCanvas {
     renderEffectsAndOutput(currentRenderTarget, colorPolicy) {
         if (globalProfiler) globalProfiler.push('#bebada', 'effectsPasses');
         const effects = this.effectsEnabled && Globals.renderDebugFlags.dbg_renderEffects
-            ? splitViewEffects(this.effectPasses, colorPolicy.opticsBeforeSensor)
+            ? splitViewEffects(frameEffectPasses(this), colorPolicy.opticsBeforeSensor)
             : {optical: [], sensor: []};
         const drawEffect = effectNode => {
             const effectPass = effectNode.pass;
@@ -3576,8 +3602,27 @@ export class CNodeView3D extends CNodeViewCanvas {
         return this._panoramaCamera ?? this.cameraNode.camera;
     }
 
+    // Per-frame camera data (node "cameraState") records the state of the camera that made the video, and the look
+    // camera is the one that reproduces it, so only the look view follows the data; the main view and other views
+    // keep their saved mode. Computed from the current frame on every read, so node pre-renders, this view's render
+    // and an export see the same frame. Transient: never saved and never marks the sitch changed. The menu still
+    // edits renderMode.
+    get frameCameraState() {
+        return this.id === "lookView" ? NodeMan.get("cameraState", false)?.stateAt(par.frame) ?? null : null;
+    }
+
+    get frameBand() {
+        return this.frameCameraState?.band ?? null;
+    }
+
+    get frameRenderMode() {
+        return frameRenderModeFor(this.renderMode, this.frameBand);
+    }
+
     updateIsIR() {
         this.isIR = false;
+        // A visible-light frame has no infrared look (renderEffectsAndOutput skips those passes).
+        if (this.frameBand === "EO") return;
         for (const key in this.effectPasses) {
             const ep = this.effectPasses[key];
             if (ep.effectName === "FLIRShader" && ep.enabled) {

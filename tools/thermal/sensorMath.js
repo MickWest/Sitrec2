@@ -1277,12 +1277,68 @@ export function sampleOpticalDomain(domain, settings, spectrum) {
         interpolationErrorL1: interval.errorL1};
 }
 
+// Completed optical domains kept by OpticsScheduler, so a return to an earlier lens step (or other optical structure)
+// reuses its domain instead of showing the previous lens while the worker rebuilds it. The cache is bounded by the
+// bytes the domains keep, because a domain grows with the number of turbulence intervals it needs. Measured in Node 22
+// on one thread of a desktop CPU, for the stepped MX-15 class preset (2560 × 2048 fine grid, 257 × 257 kernels, seven
+// bands):
+//   one turbulence interval (r0 0.57 m at all four lens steps; r0 0.05–0.1 m at 27 and 135 mm): 21–23 MiB, built in
+//   7.6–7.7 s, the first full kernel after 1.4–1.6 s;
+//   two intervals (r0 0.05–0.1 m at 675 and 1012 mm): 40–41 MiB, built in 14–16 s;
+//   no turbulence: 3.6–5.5 MiB, 0.6–0.8 s.
+// Estimated budget: 128 MiB. It keeps all four steps in both measured cases (89 MiB with one interval each, 124 MiB
+// with two at the long steps); stronger turbulence evicts the least recently used domain. The domain in current use is
+// always kept, even when it alone is larger than the budget.
+export const OPTICS_DOMAIN_CACHE_BYTES = 128 * 2 ** 20;
+
+// The bytes a completed domain keeps: its basis kernels and interpolation coefficients, the arrays the optics worker
+// transfers to the main thread (opticsWorker.js).
+export function opticalDomainBytes(domain) {
+    const buffers = new Set();
+    for (const cell of domain?.intervals ?? []) {
+        for (const basis of [cell.a, cell.b])
+            for (const kernel of [...basis.bands, basis.scatter, basis.farScatter]) if (kernel) buffers.add(kernel.data.buffer);
+        for (const band of cell.coefficients ?? []) for (const coefficient of band) buffers.add(coefficient.buffer);
+    }
+    let bytes = 0;
+    for (const buffer of buffers) bytes += buffer.byteLength;
+    return bytes;
+}
+const domainBytes = new WeakMap();
+
 export class OpticsScheduler {
-    constructor({createWorker, onReady = () => {}} = {}) {
+    constructor({createWorker, onReady = () => {}, domainBudgetBytes = OPTICS_DOMAIN_CACHE_BYTES} = {}) {
         this.createWorker = createWorker ?? createDefaultOpticsWorker;
         this.fallback = new OpticalKernelCache();
         this.onReady = onReady;
         this.serial = 0;
+        // Completed domains by structure key, least recently used first. this.domain is the one in current use.
+        this.domains = new Map();
+        this.domainBudgetBytes = domainBudgetBytes;
+    }
+    // The bytes the cached domains keep.
+    get retainedBytes() {
+        let total = 0;
+        for (const domain of this.domains.values()) total += domainBytes.get(domain);
+        return total;
+    }
+    // Make a completed domain the most recently used, then evict the least recently used others until the cache fits
+    // its budget.
+    _remember(domain) {
+        if (!domainBytes.has(domain)) domainBytes.set(domain, opticalDomainBytes(domain));
+        this.domains.delete(domain.key); this.domains.set(domain.key, domain);
+        let total = this.retainedBytes;
+        for (const [key, cached] of this.domains) {
+            if (total <= this.domainBudgetBytes || cached === domain) break;
+            this.domains.delete(key); total -= domainBytes.get(cached);
+        }
+    }
+    // The completed domain for this structure key, made current and most recently used. A cached domain still serves
+    // only turbulence strengths inside its validated intervals; outside them the request builds a new domain.
+    _completed(key) {
+        const domain = this.domain?.key === key ? this.domain : this.domains.get(key) ?? null;
+        if (domain) {this.domain = domain; this._remember(domain);}
+        return domain;
     }
     request(settings, width, height, atmosphere) {
         const key = opticalStructureKey(settings, width, height);
@@ -1290,7 +1346,7 @@ export class OpticsScheduler {
         if (this.workerUnavailable) return synchronous();
         const spectrum = psfSpectrum(settings, atmosphere);
         const q = turbulenceStrength(settings.turbulenceR0M);
-        const completed = this.domain?.key === key ? this.domain : null;
+        const completed = this._completed(key);
         const anchor = this.anchorDomain?.key === key ? this.anchorDomain : null;
         const domain = completed?.intervals.some(cell => q >= cell.low && q <= cell.high) ? completed : anchor ?? completed;
         const kernels = domain ? sampleOpticalDomain(domain, settings, spectrum) : null;
@@ -1312,11 +1368,12 @@ export class OpticsScheduler {
     synchronousRequest(settings, width, height, atmosphere, key) {
         const spectrum = psfSpectrum(settings, atmosphere);
         const q = turbulenceStrength(settings.turbulenceR0M);
-        const covered = this.domain?.key === key && this.domain.intervals.some(cell => q >= cell.low && q <= cell.high);
+        const covered = this._completed(key)?.intervals.some(cell => q >= cell.low && q <= cell.high);
         if (!covered) {
             const start = performance.now();
             this.domain = buildOpticalDomain(settings, width, height, spectrum);
             this.buildMs = performance.now() - start;
+            this._remember(this.domain);
         }
         // Unchanged inputs return the same kernel object, so the pipeline does not upload it again.
         const sampleKey = JSON.stringify([q, spectrum.bins.map(bin => bin.weight)]);
@@ -1355,6 +1412,7 @@ export class OpticsScheduler {
                         this.firstKernelMs ??= event.data.buildMs;
                     } else {
                         this.domain = event.data.domain; this.anchorDomain = null;
+                        this._remember(this.domain);
                         this.pending = null;
                     }
                     this.onReady();
@@ -1368,7 +1426,10 @@ export class OpticsScheduler {
             width: request.width, height: request.height, spectrum: request.spectrum}))
             .catch(unavailable);
     }
-    dispose() {this.disposed = true; this.serial++; this.pending = this.latest = this.domain = this.anchorDomain = this.sampled = null; this.worker?.terminate();}
+    dispose() {
+        this.disposed = true; this.serial++; this.pending = this.latest = this.domain = this.anchorDomain = this.sampled = null;
+        this.domains.clear(); this.worker?.terminate();
+    }
 }
 
 /** Module-relative resolution works without a document or a navigable page URL.

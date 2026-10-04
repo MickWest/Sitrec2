@@ -3,19 +3,27 @@
  *
  * detectCSVType takes a parsed CSV (array of arrays) and returns a string
  * identifying the format: "Airdata", "MISB_FULL", "MISB1", "STANAG_CSV",
- * "CUSTOM1", "CUSTOM_FLL", "FR24CSV", "AZIMUTH", "ELEVATION", "HEADING",
- * "FOV", "FEATURES", or "Unknown".
+ * "CUSTOM1", "CUSTOM_FLL", "FR24CSV", "CAMERA_STATE", "AZIMUTH", "ELEVATION",
+ * "HEADING", "FOV", "FEATURES", or "Unknown".
  *
  * Since CFileManager has a deep dependency chain (Three.js, DOM, etc.),
  * we re-implement the detection logic from source and test it directly.
  * This is intentional — it tests the SPECIFICATION (header patterns),
  * not the import chain. If someone changes detectCSVType and this test
- * breaks, they'll know to update both.
+ * breaks, they'll know to update both. The camera-state checks at the end
+ * also run the real function, with the real predicates of the formats it
+ * must not take files from.
  */
 
 import fs from 'fs';
 import path from 'path';
 import {isSTANAGCSV} from '../src/TrackFiles/CTrackFileSTANAGCSV';
+import {isCameraStateCSV} from '../src/CameraStateTable';
+import {detectCSVType as realDetectCSVType} from '../src/TrackFiles/TrackCSV';
+import {isCustom1} from '../src/ParseCustom1CSV';
+import {setSit} from '../src/Globals';
+import csvParser from '../src/utils/CSVParser';
+import {legacyCameraDataFiles} from './fixtures/legacyCameraDataFiles';
 
 // Extract detectCSVType source and re-implement it for testing
 // This avoids the deep CFileManager import chain
@@ -50,6 +58,8 @@ function detectCSVType(csv, options = {}) {
     if (isSTANAGCSV(csv)) return "STANAG_CSV";
     if (isCustom1(csv)) return "CUSTOM1";
     if (isFR24CSV(csv)) return "FR24CSV";
+    // Real predicate (dependency-free). After the track formats, before Az/El/FOV.
+    if (isCameraStateCSV(csv)) return "CAMERA_STATE";
     if ((csv[0][0].toLowerCase() === "frame" || csv[0][0].toLowerCase() === "time") && csv[0][1].toLowerCase() === "az") return "AZIMUTH";
     if ((csv[0][0].toLowerCase() === "frame" || csv[0][0].toLowerCase() === "time") && csv[0][1].toLowerCase() === "el") return "ELEVATION";
     if ((csv[0][0].toLowerCase() === "frame" || csv[0][0].toLowerCase() === "time") && csv[0][1].toLowerCase() === "heading") return "HEADING";
@@ -206,5 +216,55 @@ describe('detectCSVType', () => {
             // If isCustom1 returns true, it should win over AZIMUTH
             expect(detectCSVType(csv, {isCustom1: () => true})).toBe("CUSTOM1");
         });
+
+        test('CAMERA_STATE is checked after the track formats and before FOV', () => {
+            const camera = [["Frame", "Zoom", "Mode", "FL"]];
+            expect(detectCSVType(camera)).toBe("CAMERA_STATE");
+            expect(detectCSVType(camera, {isCustom1: () => true})).toBe("CUSTOM1");
+            expect(detectCSVType(camera, {isFR24CSV: () => true})).toBe("FR24CSV");
+        });
+    });
+});
+
+// The real function, with the real predicates. Sit is set so that the
+// "Unknown" path (which reads Sit.isCustom) can run.
+describe('camera state detection (real detectCSVType)', () => {
+    beforeAll(() => setSit({isCustom: false}));
+
+    const header = ["Frame", "Mode", "FL", "Zoom", "", ""];
+
+    test('a camera data header is CAMERA_STATE, Zoom and Polarity optional', () => {
+        expect(realDetectCSVType([header, ["0", "IR", "675", "1", "", ""]])).toBe("CAMERA_STATE");
+        expect(realDetectCSVType([["frame", "mode", "fl"], ["0", "IR", "675"]])).toBe("CAMERA_STATE");
+        expect(realDetectCSVType([["Frame", "Mode", "FL", "Zoom", "Polarity"]])).toBe("CAMERA_STATE");
+    });
+
+    test('Frame,Zoom stays a FOV file; a Zoom column beside Mode and FL does not', () => {
+        expect(realDetectCSVType([["Frame", "Zoom"], ["0", "1.5"]])).toBe("FOV");
+        expect(realDetectCSVType([["Frame", "FOV"], ["0", "1.5"]])).toBe("FOV");
+        expect(realDetectCSVType([["Frame", "Zoom", "Mode", "FL"], ["0", "1", "IR", "675"]])).toBe("CAMERA_STATE");
+        expect(realDetectCSVType([["Time", "Az"], ["0", "10"]])).toBe("AZIMUTH");
+    });
+
+    test('camera data with angle columns is CAMERA_STATE; the import also feeds the angles (CameraStateImport.test.js)', () => {
+        expect(realDetectCSVType([["Frame", "Az", "El", "Mode", "FL"], ["0", "10", "1", "IR", "675"]])).toBe("CAMERA_STATE");
+        expect(realDetectCSVType([["Frame", "FOV", "Mode", "FL"], ["0", "0.9", "IR", "675"]])).toBe("CAMERA_STATE");
+    });
+
+    test('Custom1 does not claim the camera data header', () => {
+        expect(isCustom1([header])).toBe(false);
+    });
+
+    test('a track file that also carries Mode and FL columns stays a track', () => {
+        const track = [["time", "lat", "lon", "alt", "Frame", "Mode", "FL"],
+            ["2020-01-01T00:00:00Z", "34", "-118", "1000", "0", "IR", "675"]];
+        expect(isCustom1(track)).toBe(true);
+        expect(realDetectCSVType(track)).toBe("CUSTOM1");
+    });
+
+    test.each(legacyCameraDataFiles())('the built-in camera data file of $name is CAMERA_STATE', ({csvPath}) => {
+        // Decoded as the app decodes it: TextDecoder removes the byte-order mark.
+        const text = new TextDecoder('utf-8').decode(fs.readFileSync(csvPath));
+        expect(realDetectCSVType(csvParser.toArrays(text))).toBe("CAMERA_STATE");
     });
 });
