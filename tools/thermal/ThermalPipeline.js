@@ -1,7 +1,7 @@
 import {
     AddEquation, CustomBlending, OneFactor, OneMinusSrcAlphaFactor, Box3, BufferGeometry, Color, DataTexture, Float32BufferAttribute,
     FloatType, GLSL3, Matrix4, Mesh, NearestFilter, NoBlending, NoColorSpace, OrthographicCamera, PlaneGeometry, Points, RGBAFormat,
-    RedFormat, RGFormat, Raycaster, ShaderMaterial, Vector2, Vector3, Vector4, WebGLRenderTarget,
+    RedFormat, RGFormat, Raycaster, ShaderMaterial, Sphere, Vector2, Vector3, Vector4, WebGLRenderTarget,
 } from "three";
 import {apparentTemperature, grayBodyRadiance, inBandRadiance, PHOTON_SCALE, solarIrradiance} from "./radiometry.js";
 import {BANDS, clearSky, createAtmosphere, createRangeLUT, seaBackground, evaluatePhotonPath,
@@ -1218,6 +1218,9 @@ export class ThermalPipeline {
             // The vertex shader indexes samples by gl_VertexID; the attribute only sets the draw count.
             const geometry = new BufferGeometry();
             geometry.setAttribute("position", new Float32BufferAttribute(new Float32Array(count), 1));
+            // The renderer's depth sort asks for a bounding sphere even with culling off; a one-component
+            // attribute has no positions to bound, so computing one gives NaN and a console error.
+            geometry.boundingSphere = new Sphere(new Vector3(), 1);
             this.gainPoints = new Points(geometry, pass);
             this.gainPoints.frustumCulled = false;
         }
