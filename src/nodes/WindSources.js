@@ -16,7 +16,7 @@
 //              auto-fetches when this source is selected and no profiles
 //              of that kind are already loaded
 
-import {Globals} from "../Globals";
+import {Globals, NodeMan} from "../Globals";
 import {isSecureBuild} from "../configUtils";
 
 const BUILT_IN_WIND_SOURCES = [
@@ -102,6 +102,24 @@ export function trackDataIdFromSourceKey(key) {
     return isTrackSourceKey(key)
         ? key.slice(TRACK_SOURCE_PREFIX.length)
         : null;
+}
+
+// A Track entry normally means "the wind in the track's row for the current time"
+// (CNodeWind.trackWindAt). That is right for aircraft telemetry, where a row is the
+// wind at the platform at that moment. It is wrong for a sounding (IGRA2, UWYO, or a
+// vertical wind profile file): there the row for the current time is the wind where
+// the BALLOON is, and what is wanted is the wind at the altitude of the target. A
+// sounding track's entry is read BY ALTITUDE instead, from the profile node that
+// TrackManager builds beside the track, exactly as the sounding sources are - but
+// from that one profile alone, with no blend.
+//
+// Returns that profile node (CNodeAtmosphericProfile with windByAltitude set), or
+// null for any other key - including a profile track that has not loaded yet.
+export function altitudeProfileForSourceKey(key) {
+    const trackDataId = trackDataIdFromSourceKey(key);
+    if (!trackDataId || !trackDataId.startsWith("TrackData_")) return null;
+    const profile = NodeMan.get("atmosphericProfile_" + trackDataId.slice("TrackData_".length), false);
+    return profile?.windByAltitude ? profile : null;
 }
 
 // Build the labels→keys map for both source dropdowns, including any

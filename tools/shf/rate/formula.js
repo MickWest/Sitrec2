@@ -91,10 +91,10 @@ const openedYear = year;
 function backHref() {
     const today = new Date();
     const month = linkDate ? Number(linkDate[2]) - 1 : today.getMonth(), date = linkDate ? Number(linkDate[3]) : today.getDate();
-    if (!linkDate && year === openedYear) return `./?lat=${formatLat(lat)}`;
+    if (!linkDate && year === openedYear) return `index.html?lat=${formatLat(lat)}`;
     const last = new Date(Date.UTC(year.year, month + 1, 0)).getUTCDate();
     const pad = (v) => String(v).padStart(2, "0");
-    return `./?lat=${formatLat(lat)}&date=${year.year}-${pad(month + 1)}-${pad(Math.min(date, last))}`;
+    return `index.html?lat=${formatLat(lat)}&date=${year.year}-${pad(month + 1)}-${pad(Math.min(date, last))}`;
 }
 
 const worker = new Worker("rateWorker.js" + VERSION, { type: "module" });

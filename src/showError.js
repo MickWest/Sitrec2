@@ -477,6 +477,83 @@ export function showPrompt(message, {title = "Enter Value", defaultValue = "", o
     });
 }
 
+/**
+ * Show a styled editor for a block of text: the multi-line counterpart of showPrompt.
+ * Resolves to {text, action} when one of the buttons is chosen, or to null on
+ * Cancel/Escape/backdrop-click. Enter makes a new line, as in any text area.
+ * @param {string} message - Body text above the editor
+ * @param {object} [opts]
+ * @param {string} [opts.title="Edit Text"]
+ * @param {string} [opts.defaultValue=""]
+ * @param {number} [opts.maxLength] - Longest text the editor accepts
+ * @param {string} [opts.placeholder=""]
+ * @param {string} [opts.cancelLabel="Cancel"]
+ * @param {Array<{label: string, action: string}>} [opts.buttons] - The buttons that
+ *        accept the text, left to right (default one "OK" button with action "ok")
+ * @returns {Promise<{text: string, action: string}|null>}
+ */
+export function showTextEditor(message, {title = "Edit Text", defaultValue = "", maxLength = undefined, placeholder = "",
+    cancelLabel = "Cancel", buttons = [{label: "OK", action: "ok"}]} = {}) {
+    return new Promise((resolve) => {
+        // No user to type in validation/regression runs — resolve to null (cancelled).
+        if (Globals.validationMode) {
+            console.log("showTextEditor (suppressed dialog): " + message);
+            resolve(null);
+            return;
+        }
+
+        const {overlay, modal} = buildModalShell(title, message);
+        modal.style.maxWidth = '820px';
+        modal.style.width = '80vw';
+
+        const textArea = document.createElement('textarea');
+        textArea.value = defaultValue;
+        textArea.rows = 16;
+        textArea.spellcheck = false;
+        textArea.placeholder = placeholder;
+        if (maxLength) textArea.maxLength = maxLength;
+        textArea.style.cssText = `
+            width: 100%; box-sizing: border-box; padding: 8px 10px; margin-bottom: 14px;
+            font-family: Menlo, Consolas, monospace; font-size: 13px; line-height: 1.4;
+            border: 1px solid #ccc; border-radius: 4px; resize: vertical; white-space: pre;
+        `;
+        modal.appendChild(textArea);
+
+        const cleanup = (result) => {
+            if (overlay.parentNode) document.body.removeChild(overlay);
+            resolve(result);
+        };
+
+        // Escape on the text area cancels. Other keys stay with the text area: the global
+        // keyboard shortcuts do not act while a text input has the focus.
+        textArea.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') { e.preventDefault(); cleanup(null); }
+        });
+
+        const btnRow = document.createElement('div');
+        btnRow.style.cssText = `display: flex; gap: 8px; justify-content: flex-end;`;
+        const mkBtn = (label, color, onClick) => {
+            const b = document.createElement('button');
+            b.textContent = label;
+            b.style.cssText = `padding: 8px 16px; border: none; border-radius: 4px; cursor: pointer;
+                color: white; font-weight: bold; font-family: inherit; background: ${color};`;
+            b.onclick = onClick;
+            return b;
+        };
+        btnRow.appendChild(mkBtn(cancelLabel, '#757575', () => cleanup(null)));
+        for (const button of buttons) {
+            btnRow.appendChild(mkBtn(button.label, '#1976d2', () => cleanup({text: textArea.value, action: button.action})));
+        }
+        modal.appendChild(btnRow);
+
+        // Backdrop click dismisses.
+        overlay.addEventListener('mousedown', (e) => { if (e.target === overlay) cleanup(null); });
+
+        document.body.appendChild(overlay);
+        textArea.focus();
+    });
+}
+
 const shownErrors = new Set();
 
 /**

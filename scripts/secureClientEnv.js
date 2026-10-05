@@ -44,9 +44,10 @@ const SECURE_FORCED_VALUES = {
 // the page either. Server-only values (forum paths, upload directories, custom feed
 // addresses) otherwise reach the bundle as string literals, which the egress audit then
 // reports and which an assessor would read as disclosure. The entrypoint also forwards
-// any SITREC_CUSTOM_MAP_* / SITREC_CUSTOM_ELEVATION_* name, and so does this.
+// any SITREC_CUSTOM_MAP_* / SITREC_CUSTOM_ELEVATION_* / SITREC_CUSTOM_SOUNDING_* name,
+// and so does this.
 const ENTRYPOINT_PATH = require("path").resolve(__dirname, "..", "docker", "entrypoint.sh");
-const CUSTOM_SOURCE_KEY_RE = /^SITREC_CUSTOM_(MAP|ELEVATION)_/;
+const CUSTOM_SOURCE_KEY_RE = /^SITREC_CUSTOM_(MAP|ELEVATION|SOUNDING)_/;
 
 function loadClientVarNames(entrypointText) {
     const text = entrypointText ?? require("fs").readFileSync(ENTRYPOINT_PATH, "utf8");

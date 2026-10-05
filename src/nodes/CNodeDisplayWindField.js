@@ -32,7 +32,7 @@ import {
     WIND_LEVEL_TABLE,
     windDirFromBearing,
 } from "./WindHelpers";
-import {isTrackSourceKey, trackDataIdFromSourceKey} from "./WindSources";
+import {altitudeProfileForSourceKey, isTrackSourceKey, trackDataIdFromSourceKey} from "./WindSources";
 import {isSecureBuild} from "../configUtils";
 import {MISB} from "../MISBUtils";
 import {installTerrestrialRefractionOnMaterial} from "../atmosphere/terrestrialRefraction";
@@ -321,10 +321,9 @@ export class CNodeDisplayWindField extends CNode3DGroup {
         const altFt = altM * 3.28084;
 
         // Sounding-based: per-profile getAtAltitude + IDW.
-        if (this.source === "uwyo" || this.source === "igra2"
-            || this.source === "manual-soundings") {
-            const profiles = this._gatherSondeProfiles(
-                this.source === "manual-soundings" ? null : this.source);
+        const soundingSet = this._soundingSet();
+        if (soundingSet) {
+            const profiles = soundingSet.profiles;
             // A station only contributes at altitudes where it actually MEASURED
             // wind. Above its top valid-wind level it drops OUT of the blend
             // rather than holding a lower-altitude wind that would pollute a
@@ -1406,9 +1405,9 @@ export class CNodeDisplayWindField extends CNode3DGroup {
         try {
             if (this.source === "gfs" || this.source === "custom") {
                 await this._fillFromGridSource(altFt);
-            } else if (this.source === "uwyo"
-                    || this.source === "igra2"
-                    || this.source === "manual-soundings") {
+            } else if (this._soundingSet()) {
+                // Includes the Track entry of a sounding track, so this comes
+                // before the plain track branch below.
                 await this._fillFromSoundings(altFt, this.source);
             } else if (this.source === "openmeteo") {
                 await this._fillFromOpenMeteo(altFt);
@@ -1557,14 +1556,30 @@ export class CNodeDisplayWindField extends CNode3DGroup {
     // Map internal source key → {profiles, label}. Separated so sampleAtLLA
     // and _fillFromSoundings share the same filter semantics.
     _resolveSoundingProfiles(sourceKey) {
+        // manual-soundings — any loaded profile, regardless of origin
+        return this._soundingSet(sourceKey)
+            ?? {profiles: this._gatherSondeProfiles(null), label: "Manual Soundings"};
+    }
+
+    // The profiles a source reads BY ALTITUDE, with a label for the status text,
+    // or null for a source that is not read that way. The one test for "is this
+    // a sounding source": the three built-in sounding sources, and the Track
+    // entry of a sounding track, which uses that one profile alone.
+    _soundingSet(sourceKey = this.source) {
         if (sourceKey === "uwyo") {
             return {profiles: this._gatherSondeProfiles("uwyo"), label: "UWYO"};
         }
         if (sourceKey === "igra2") {
             return {profiles: this._gatherSondeProfiles("igra2"), label: "IGRA2"};
         }
-        // manual-soundings — any loaded profile, regardless of origin
-        return {profiles: this._gatherSondeProfiles(null), label: "Manual Soundings"};
+        if (sourceKey === "manual-soundings") {
+            return {profiles: this._gatherSondeProfiles(null), label: "Manual Soundings"};
+        }
+        const profile = altitudeProfileForSourceKey(sourceKey);
+        if (profile) {
+            return {profiles: [profile], label: profile.id.replace(/^atmosphericProfile_/, "")};
+        }
+        return null;
     }
 
     // ── Open-Meteo: fetch at target/local and tile globally ─────────
@@ -1768,10 +1783,9 @@ export class CNodeDisplayWindField extends CNode3DGroup {
     // _lastDateCycle, so those coarse fields alone can't detect it. Empty for
     // non-sounding sources (GFS async arrival is covered by _windDataVersion).
     sondeProfileSignature() {
-        if (this.source !== "uwyo" && this.source !== "igra2"
-            && this.source !== "manual-soundings") return "";
-        const profiles = this._gatherSondeProfiles(
-            this.source === "manual-soundings" ? null : this.source);
+        const soundingSet = this._soundingSet();
+        if (!soundingSet) return "";
+        const profiles = soundingSet.profiles;
         let topSum = 0;
         for (const p of profiles) topSum += (p.topWindAlt ?? 0);
         return `${profiles.length}:${Math.round(topSum)}`;
@@ -1860,9 +1874,7 @@ export class CNodeDisplayWindField extends CNode3DGroup {
         if (this._isGridSource()) {
             return await this._sampleGFSAtLLA(lat, lon, altM);
         }
-        if (this.source === "uwyo"
-            || this.source === "igra2"
-            || this.source === "manual-soundings") {
+        if (this._soundingSet()) {
             return this._sampleSoundingsAtLLA(lat, lon, altM, this.source);
         }
         if (this.source === "openmeteo") {
@@ -2417,7 +2429,9 @@ export class CNodeDisplayWindField extends CNode3DGroup {
         // first picked the source. Threshold avoids a rebuild every
         // frame for track jitter — same intent as the altitude-lock
         // 50 ft snap below.
-        if (isTrackSourceKey(this.source) && this.windU && !this.fetching) {
+        // (Not for a sounding track: that is read by altitude, see _soundingSet.)
+        if (isTrackSourceKey(this.source) && !altitudeProfileForSourceKey(this.source)
+            && this.windU && !this.fetching) {
             const trackId = trackDataIdFromSourceKey(this.source);
             if (trackId && NodeMan.exists(trackId)) {
                 const td = NodeMan.get(trackId);

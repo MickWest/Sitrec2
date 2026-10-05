@@ -12,6 +12,7 @@ import {Color, Vector3} from "three";
 import {getFileExtension, scaleF2M} from "./utils";
 import {getEnv} from "./envUtils";
 import {
+    CustomManager,
     FileManager,
     GlobalDateTimeNode,
     Globals,
@@ -739,6 +740,10 @@ class CTrackManager extends CManager {
         // See frameLoadedTracks() at the end of this method.
         this.pendingFramingTracks = [];
 
+        // The TrackData id of the last track this import made from a custom XML wind
+        // profile (CTrackFileSoundingXML), or null. See the end of this method.
+        let importedCustomWindProfileTrack = null;
+
         console.log("-----------------------------------------------------")
         console.log("addTracks called with ", trackFiles)
         console.log("-----------------------------------------------------")
@@ -1106,6 +1111,9 @@ class CTrackManager extends CManager {
                         && loadedTrackFileForKind.isSondeTrack
                         && loadedTrackFileForKind.isSondeTrack());
                     trackOb.isSondeTrack = isSondeTrack;
+                    if (isSondeTrack && loadedTrackFileForKind.getSondeData(0)?.source === "xml") {
+                        importedCustomWindProfileTrack = trackDataNode.id;
+                    }
 
                     // The track's DECLARED role, if its source file states one
                     // (STANAG, MISB and BOT do; a plain KML or CSV does not).
@@ -1247,6 +1255,15 @@ class CTrackManager extends CManager {
         // options on its source dropdowns when a track with WindSpeed/
         // WindDirection columns shows up.
         this.notifyTracksChanged();
+
+        // A custom XML wind profile is a file the user loads in order to USE its
+        // wind, so an import of one selects its own "Track: <name>" entry as the
+        // wind source (that entry is read by altitude for such a file). Not while a
+        // saved sitch loads its files: the sitch has its own saved wind source,
+        // and the user can have changed it after the import.
+        if (importedCustomWindProfileTrack && !Globals.deserializing) {
+            CustomManager?.useTrackAsWindSource?.(importedCustomWindProfileTrack);
+        }
     }
 
 
@@ -1486,6 +1503,9 @@ class CTrackManager extends CManager {
                 stationId: sonde0?.station?.id ?? "",
                 stationName: sonde0?.station?.name ?? "",
                 source: normSource,
+                // Every sounding: its Track entry in the Wind Source menu reads
+                // the profile at the target's altitude, not the row for the time.
+                windByAltitude: true,
             });
         }
     }

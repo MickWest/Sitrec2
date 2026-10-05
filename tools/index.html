@@ -183,6 +183,22 @@
         <a href="vehicles/">Open Vehicle Designer</a>
     </div>
 
+    <div class="tool">
+        <h3>XML Wind Profile Analyzer</h3>
+        <p>Looks through an XML weather file of unknown layout for a position and a vertical wind profile, and proposes the settings that make Sitrec read the file as a wind profile.</p>
+        <ul>
+            <li>Finds latitude, longitude and elevation, and the element that repeats once for each altitude</li>
+            <li>Says which field is the altitude, pressure, temperature, wind direction and wind speed, and on what evidence</li>
+            <li>Proposes the <code>SITREC_CUSTOM_SOUNDING_*</code> settings, then reads the file with them using Sitrec's own reader</li>
+            <li>Makes a report of the file structure (tag names, namespaces, units) with no measurements or positions in it</li>
+            <li>Reads the file in the browser; nothing is uploaded</li>
+        </ul>
+        <a href="xml-wind/">Open XML Wind Profile Analyzer</a>
+        <p style="margin-top: 10px;">
+            <a href="xml-wind/sample.xml" class="sample-link" download>Download Sample XML</a> for testing
+        </p>
+    </div>
+
     <h2>Usage</h2>
     <ol>
         <li>For LOS Viewer: Export LOS data from Sitrec using the "CSV" button on any LOS node</li>

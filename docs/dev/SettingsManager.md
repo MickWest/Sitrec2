@@ -166,6 +166,7 @@ The defaults below are defined in `initializeSettings()`. Accepted values are de
 | `showAttribution` | Boolean coercion | `true` | Show map/elevation attribution |
 | `showFilename` | Boolean coercion | `true` | Show the current video filename overlay |
 | `language` | Lowercase two-letter code | `en` | Interface language |
+| `envOverride` | Text of 20,000 characters or fewer | `""` | The user's SITREC_ ENV Override (see below) |
 
 The performance defaults intentionally match `PERFORMANCE_PRESETS.Balanced` in
 `src/CustomSupport.js`. Regression mode explicitly repeats that preset so screenshots are not
@@ -186,6 +187,29 @@ saved units, camera, and terrain state also win over these preferences.
 | `startupLon` | Finite number, clamped to -180..180 | `-118.3` | Start longitude |
 | `startupAlt` | Finite number, clamped to 0..100000 | `0` | Metres above ground |
 | `startupBuildings` | Boolean coercion | `false` | Enable available 3D buildings for a new sitch |
+
+### SITREC_ ENV Override
+
+`envOverride` is text in `shared.env` format, edited in **Settings ▸ SITREC_ ENV Override…**.
+`applyEnvOverride()` in `src/EnvOverride.js` puts it into force straight after
+`initializeSettings()`, and again when the user saves the editor.
+
+- The text is read by `parseEnvText()` in `tools/src/envText.js`, by the same rule as
+  `scripts/envFile.js` uses for `shared.env` itself. `tests/EnvOverride.test.js` holds the two
+  equal.
+- Only names that start with `SITREC_` are used. Each one replaces the installation's value for
+  both kinds of reader: `getEnv()` in `src/envUtils.js` looks at the user's values last, and the
+  value is also written into `Globals.env`. A line removed from the text stops overriding; the
+  installation's value is put back.
+- It changes only what the browser reads. The server stores the text and returns it; PHP never
+  reads it as configuration, so a setting that the server uses is not changed.
+- In the secure build it is held to the same rule as a run-time value (`secureFlags.js`): it can
+  set a security flag to `false` but not to anything else, and it cannot supply a credential.
+- A reader that runs before the settings load does not see the override. The readers that
+  matter (map, elevation, satellite and wind sources, and the custom sounding layouts) are built
+  with the sitch, after that point.
+- The text is not written to the settings cookie, which holds about 4 KB and is sent with every
+  request. On the cookie path it is kept in `localStorage` under `sitrecEnvOverride`.
 
 ## Validation and Server Contract
 

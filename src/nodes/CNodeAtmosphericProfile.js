@@ -19,6 +19,10 @@ export class CNodeAtmosphericProfile extends CNode {
         this.stationName = v.stationName ?? "";
         // "uwyo" | "igra2" | "manual" — lets the wind field filter by source.
         this.source = v.source ?? "manual";
+        // True for a sounding's profile (TrackManager sets it): the track's
+        // "Track: <name>" wind source is read by altitude, not by time
+        // (see altitudeProfileForSourceKey in WindSources.js).
+        this.windByAltitude = v.windByAltitude ?? false;
         this.stationLat = null;
         this.stationLon = null;
         this.levels = []; // sorted by altitude: [{alt, temp, pressure, rh, windDir, windSpeed}]

@@ -87,7 +87,7 @@ Available sources:
 | **Manual Soundings** | Soundings *you* dragged in (a UWYO `.csv`/`.txt` or an IGRA2 `.txt`). | When you want curated profiles instead of automatic nearest-station fetches. |
 | **open-meteo** | Per-track-point fetches from the Open-Meteo public API (no key, rate-limited). | Useful for one-off lookups; not great for filling a whole grid. |
 | **Manual** | A single uniform wind defined by **Target Wind From / Knots**. | Quick experiments, sitches without specific weather, or when the real data is missing/wrong. |
-| **Track: \<name\>** | If your sitch has a track file with embedded wind columns (MISB-formatted WindDirection / WindSpeed), each loaded track shows up as its own option. The wind value comes straight from the track row at the current frame. WindSpeed is read as metres per second, the MISB standard unit, and shown in knots. | Aircraft data files (e.g. military pod metadata) that already contain wind telemetry. If no track has those columns, no Track: entry appears. |
+| **Track: \<name\>** | If your sitch has a track file with embedded wind columns (MISB-formatted WindDirection / WindSpeed), each loaded track shows up as its own option. For a telemetry track the wind value comes straight from the track row at the current frame. For a sounding track (IGRA2, UWYO, or an XML wind profile) the entry reads that one profile at the altitude of the target, and of the camera for Local Wind, with no blend with other soundings. WindSpeed is read as metres per second, the MISB standard unit, and shown in knots. | Aircraft data files (e.g. military pod metadata) that already contain wind telemetry; or one particular sounding, used alone. If no track has those columns, no Track: entry appears. |
 
 #### Manual source vs. manual override
 
@@ -99,6 +99,22 @@ These are easy to confuse — they share the same four GUI sliders.
 #### Manual Soundings
 
 A pass-through. Drag a UWYO `.csv`/`.txt` or an IGRA2 `.txt` (a zipped `.txt.zip` is auto-extracted) onto the page; Sitrec parses it and adds it to the loaded-soundings pool. Picking **Manual Soundings** uses *only* what you've dropped in (no auto-fetch). Useful when you want curated profiles rather than nearest-station fetches.
+
+##### XML wind profiles
+
+An installation can also teach Sitrec to read its own XML weather files. The file must hold a position (latitude, longitude, elevation) and a vertical profile: one element for each reporting altitude, with the altitude, wind direction and wind speed inside it. Air pressure and temperature are read too if they are there; everything else in the file is ignored.
+
+The person who runs the installation describes the file layout once, with `SITREC_CUSTOM_SOUNDING_<NAME>_*` settings: the element names for the level and for each field, and the units. The settings and an example are in `config/shared.env.example`, under **Custom Sounding Files**. With a container, put them in the env file that the container starts with. A namespace prefix on an element name (`<xyz:Value>`) does not matter.
+
+Sitrec identifies the format of a dropped file by itself. A layout has a list of substrings (`_XMLNS_CONTAINS`); if any one of them is in a namespace declaration in the file (`xmlns="..."` or `xmlns:prefix="..."`), the file is that format. An optional second list (`_FILE_CONTAINS`) is looked for anywhere in the file text, and one match there is also enough.
+
+To find the settings for a file, open **Sitrec ▸ Extra Tools ▸ XML Wind Profile Analyzer** and load the file. The tool finds the position and the levels, proposes the settings, and shows what Sitrec reads with them. It reads the file in the browser and uploads nothing. It can also make a report of the file structure (tag names, namespace addresses and unit names, with no measurements, positions or times) to send to the person who sets up Sitrec.
+
+To try settings without a change to the installation, paste them into **Sitrec ▸ Settings ▸ SITREC_ ENV Override…** and save. They then apply to you only, and you can import the file at once.
+
+To use a file, drag the `.xml` file onto the page, or use **File ▸ Import File**. It appears as a sounding track at the position in the file, named after the file. Sitrec also sets **Wind Source** to the file's own entry, **Track: \<filename\>**, so Target Wind comes from that profile at once, at the target's altitude. You can select a different source afterwards. When you open a saved sitch, its saved wind source is kept.
+
+Sitrec reads one position and one profile from a file. Wind direction is taken as degrees true. If the file has no time (or no time setting), the profile takes the start time of the sitch. If a file does nothing when you drop it, open the browser console. A layout with an unknown unit or a missing setting is reported there by name, and so is a file that was identified as a layout but has no position and levels where the settings say they are. If the console has neither message, no layout identified the file: check the two lists against the file.
 
 **Selecting GFS, UWYO, IGRA2, Manual Soundings or a Track: source for the first time** auto-toggles **Show Wind Lines** on once and triggers the data load — both happen in one step, so the streamlines appear as soon as the data arrives. If you turn the lines off explicitly, that auto-show won't fire again for that source in the same session.
 

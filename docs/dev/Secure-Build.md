@@ -49,7 +49,7 @@ The build reads `config/shared.env` (or the file `SITREC_SHARED_ENV` names) exac
 | `SITREC_ENABLE_DEFAULT_TLE_SOURCES` | `false` | the built-in satellite element-set sources are off |
 | `USE_S3_PRESIGNED_URLS` | `false` | no direct browser-to-object-storage transfers |
 
-Only settings the browser is meant to see are embedded at all. The list is the container entrypoint's `CLIENT_VARS` block in `docker/entrypoint.sh`, read at build time so there is one source of truth, plus any `SITREC_CUSTOM_MAP_*` or `SITREC_CUSTOM_ELEVATION_*` name. A server-only setting (a forum path, an upload directory, a custom feed address) is not compiled into the page, blanked or otherwise. Within that list everything else in `shared.env` passes through as a benign setting: banner text, default map type, the custom source definitions, the local host name.
+Only settings the browser is meant to see are embedded at all. The list is the container entrypoint's `CLIENT_VARS` block in `docker/entrypoint.sh`, read at build time so there is one source of truth, plus any `SITREC_CUSTOM_MAP_*`, `SITREC_CUSTOM_ELEVATION_*` or `SITREC_CUSTOM_SOUNDING_*` name. A server-only setting (a forum path, an upload directory, a custom feed address) is not compiled into the page, blanked or otherwise. Within that list everything else in `shared.env` passes through as a benign setting: banner text, default map type, the custom source definitions, the local host name.
 
 Deliberately **not** forced: `SAVE_TO_SERVER`, `SAVE_TO_S3` and `SETTINGS_SERVER_ENABLED`. The secure deployment saves through its own server, and the server decides where a file may go. The build removes the browser's ability to reach anything other than that server; it does not remove the save feature.
 

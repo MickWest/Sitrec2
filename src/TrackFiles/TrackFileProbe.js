@@ -167,7 +167,7 @@ export async function probeTrackFile(filename, file) {
         case "kml":
         case "ksv":
         case "xml":
-            return detectTrackFile(filename, parseXml(text));
+            return detectTrackFile(filename, parseXml(text), text);
         case "srt":
         case "txt":
             return detectTrackFile(filename, text);
@@ -234,9 +234,9 @@ async function probeKMZ(file) {
  * throw on malformed input. Either is fatal mid-sweep and neither is worth
  * stopping a browse for, so an unclaimable file is simply not a track file here.
  */
-function detectTrackFile(filename, data) {
+function detectTrackFile(filename, data, sourceText) {
     try {
-        return FileManager?.detectTrackFile?.(filename, data) ?? null;
+        return FileManager?.detectTrackFile?.(filename, data, sourceText) ?? null;
     } catch (e) {
         return null;
     }

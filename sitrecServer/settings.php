@@ -219,6 +219,15 @@ function sanitizeSettings($settings) {
         $sanitized['startupBuildings'] = $settings['startupBuildings'];
     }
 
+    // The "SITREC_ ENV Override" text: shared.env lines the browser applies to its own
+    // SITREC_* settings. Stored as text and returned as text. PHP never reads it as
+    // configuration. The limit mirrors ENV_OVERRIDE_MAX_LENGTH in SettingsManager.js: that
+    // one is 20000 characters, and this is the same text in bytes (up to four for each).
+    if (isset($settings['envOverride']) && is_string($settings['envOverride'])
+        && strlen($settings['envOverride']) <= 80000) {
+        $sanitized['envOverride'] = $settings['envOverride'];
+    }
+
     return $sanitized;
 }
 

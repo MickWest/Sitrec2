@@ -9,6 +9,7 @@ import {V3} from "../threeUtils";
 import {t} from "../i18n";
 import {MISB} from "../MISBUtils";
 import {knotsFromMISBWindSpeed, normalizeWindTimestampMs} from "./WindHelpers";
+import {altitudeProfileForSourceKey, trackSourceKey} from "./WindSources";
 
 export class CNodeWind extends CNode {
     constructor(v, _guiMenu) {
@@ -179,6 +180,10 @@ export class CNodeWind extends CNode {
     // returns the CURRENT playhead wind, which silently repeated one wind value
     // across the entire analysed clip for track-driven winds.
     trackWindAt(f) {
+        // A sounding's track is read by altitude, through the wind field. The row
+        // for the current time is the wind where the balloon is, not the wind at
+        // this node's altitude, so it is never this node's wind.
+        if (this.trackSource && altitudeProfileForSourceKey(trackSourceKey(this.trackSource))) return null;
         if (this.trackSource && NodeMan.exists(this.trackSource)) {
             const td = NodeMan.get(this.trackSource);
             const misb = td?.misb;
