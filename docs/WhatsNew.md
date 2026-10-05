@@ -9,6 +9,14 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.175.1 (2026-10-05)
+
+### Improvements
+- **Thermal Readout window** (Effects → Physical thermal → *Show readout*, or Show → Views → *Thermal Readout*): the readout of the physical thermal view is no longer on the image. It is now in a separate window that you can move, resize and pop out, and you can select and copy its text. The window is closed by default. The sitch saves whether it is open, and its position and size.
+
+### Bug Fixes
+- Fixed the Notes window not letting you select and copy its text when the notes contain links. A drag to select the text no longer starts editing.
+
 ## Version 2.175.0 (2026-10-04)
 
 ### New Features

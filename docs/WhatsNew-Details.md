@@ -9,6 +9,26 @@ lockstep with docs/WhatsNew.md.
 
 ---
 
+## Version 2.175.1 (2026-10-05)
+
+### Improvements
+- **Thermal readout in a separate text window** (`814631b2`; new `src/nodes/CNodeViewThermalReadout.js`; `src/rendering/ThermalLoader.js`, `src/CustomManagerSetup.js`, `src/nodes/CNodeView3D.js`, `src/i18n/en.js`).
+  - **Before.** In 2.175.0, `thermalStatus()` drew the readout as a `div` in the lower left of the look view (`view._thermalReadout`, with `pointer-events: none`). The text covered part of the thermal image, and you could not select or copy it.
+  - **Now.** `thermalStatus(view, key, values, details)` still builds `view.thermalStatus` from the status line and the detail lines. It then sends the text to the `thermalReadoutView` node with `setText()`. Nothing is drawn over the image, and the `_thermalReadout` element is removed.
+  - **The window.** `CNodeViewThermalReadout` extends `CNodeViewText`. `CCustomManager.setup()` creates it as `thermalReadoutView` just before `setupThermalMenu`, only in a custom sitch (`Sit.isCustom`) that has a `lookView`, and only if the node does not exist. It starts hidden (`visible: false`) at left 0.50, top 0.70, width 0.48 and height 0.25, and it is draggable, resizable and free-aspect. From `CNodeViewText` it can also dock to a side and pop out into a browser window (⧉). It stays open when a file is dropped (`hideOnFileDrop: false`). Its header title menu has no *Clear* item (`addTabButtons()` is empty), because the text is live. The text is read-only.
+  - **Menus.** `setupThermalMenu(view, parent, readoutView)` adds **Show readout** (`thermal.readoutView.show`) to **Effects → Physical thermal**, with the tooltip "Show the thermal sensor readout in a separate window. You can select and copy the text." (`thermal.readoutView.showTooltip`). The checkbox is bound to the view's `visible` flag. This is the same flag as the entry **Show → Views → Thermal Readout**, which `CNodeView` makes automatically from `menuName` (`thermal.readoutView.title`).
+  - **Saved state.** The sitch saves the window through the normal `CNodeView` mods: `visible`, `left`, `top`, `width`, `height`, `headerPinned`, a side dock and an explicit theme. The text is not saved. Because `setup()` creates the node on each custom load, a sitch saved before this version needs no migration, and it opens with the window closed.
+  - **No thermal image.** `setText(null)` shows `thermal.readoutView.idle`: "The Look View does not show a physical thermal image now." The window shows this text when it is created. The new `clearThermalStatus(view)` replaces the old code that hid the overlay, so `ThermalLoader.js` no longer imports `effectiveRenderMode`. It sets `view.thermalStatus = null` and shows the idle text again when:
+    - `CNodeView3D.renderTargetAndEffects` draws a frame on the visible route (Render mode *Visible*, or a visible-light frame of Camera Data) while a thermal status is set;
+    - Render mode changes to *Visible*;
+    - `disposeThermalView` runs while a thermal status is set.
+  - **Selection.** The readout text changes on each thermal frame (for example, the cloud timings), and a replacement of the text removes a selection. Thus `showText()` does not replace the text while a selection that is not collapsed is anchored in `outputArea`. A `selectionchange` listener shows the latest text when the selection ends. `popOut()` and `dockWindow()` move the listener to the document that holds the text (the popup or the page), and `dockWindow()` also shows the latest text immediately. `dispose()` removes the listener.
+  - **Tests.** `tests/ThermalViewIntegration.test.js` reads `view.thermalStatus` in place of the old element. `tests/ViewRenderMode.test.js` checks that a visible-light frame calls `clearThermalStatus(view)` and that an infrared frame does not.
+  - Only `en.js` has the new strings.
+
+### Bug Fixes
+- **Fixed the Notes window not letting you select and copy text when the notes contain links** (`814631b2`; `src/nodes/CNodeNotes.js`). When the notes contain a link, `CNodeNotes` shows them in `linkOverlay`, a read-only display with clickable links. The page sets `user-select: none` on `html, body` (`src/extra.css.js`), and the overlay did not override it, so its text could not be selected in the page. Also, the `click` at the end of a drag called `showTextArea()` and started editing. The overlay now sets `user-select: text` and `-webkit-user-select: text`. Its click handler does nothing when the document has a selection that is not collapsed and that is anchored inside the overlay. A plain click on text that is not a link still starts editing.
+
 ## Version 2.175.0 (2026-10-04)
 
 ### New Features
