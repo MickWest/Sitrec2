@@ -43,6 +43,8 @@ export function describeSampling(spec) {
     const n = spec.n;
     const pupilPx = spec.fill * n;
     const lambdaRefNm = spec.spectrum.nm1;
+    const focusM = spec.spectrum.detector === "band"
+        ? ((spec.spectrum.nm0 + spec.spectrum.nm1) / 2) * 1e-9 : 550e-9;
     const D = spec.optics.apertureM, f = spec.optics.focalM;
 
     // dx is the pupil-plane sample pitch; the transform's angular pitch is lambda/(n*dx).
@@ -60,7 +62,7 @@ export function describeSampling(spec) {
         imagePixelPitchUm: anglePerPixelRad * f * 1e6,
         fNumber: f / D,
         // Rayleigh quarter-wave depth of focus, the scale on which `defocusUm` matters.
-        criticalFocusUm: 2 * 550e-9 * (f / D) * (f / D) * 1e6,
+        criticalFocusUm: 2 * focusM * (f / D) * (f / D) * 1e6,
         undersampledCore: airyRadiusPx < 1.5,
     };
 }
@@ -180,7 +182,7 @@ export function computePSF(spec, onProgress = null) {
     const fft2d = new FFT2D(n);
     const samples = buildSpectralSamples(
         spec.spectrum.nm0, spec.spectrum.nm1, spec.spectrum.steps,
-        spec.spectrum.kind, spec.spectrum.kelvin);
+        spec.spectrum.kind, spec.spectrum.kelvin, spec.spectrum.detector, spec.spectrum.quantity);
 
     const rgb = new Float64Array(n * n * 3);
     const masks = [];
@@ -230,4 +232,21 @@ export function computePSF(spec, onProgress = null) {
 
     const now = (typeof performance !== "undefined" ? performance : Date).now();
     return { n, rgb: out, masks, peak, sampling: describeSampling(spec), ms: now - t0 };
+}
+
+/** A single-channel optics kernel, centered at (n/2, n/2), with unit sum to Float32 precision.
+ *  Forces band detection without mutating the caller's spec; quantity defaults to photons.
+ *  An empty pupil or spectrum cannot define a normalized kernel and is rejected. */
+export function computeBandKernel(spec) {
+    const result = computePSF({ ...spec, spectrum: { ...spec.spectrum, detector: "band" } });
+    if (!(result.peak > 0) || !Number.isFinite(result.peak)) {
+        throw new Error("A band kernel needs a nonzero pupil and spectrum");
+    }
+    const kernel = new Float32Array(result.n * result.n);
+    let peak = 0;
+    for (let i = 0; i < kernel.length; i++) {
+        kernel[i] = result.rgb[i * 3];
+        if (kernel[i] > peak) peak = kernel[i];
+    }
+    return { n: result.n, kernel, anglePerPixelRad: result.sampling.anglePerPixelRad, peak };
 }

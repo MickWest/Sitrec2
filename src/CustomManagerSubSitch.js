@@ -226,6 +226,8 @@ export const subSitchMethods = {
     },
 
     shouldIncludeNodeForSave(nodeId) {
+        // A node can belong to the whole sitch rather than to each sub sitch.
+        if (NodeMan.get(nodeId, false)?.excludeFromSubSitches) return false;
         for (const category in this.subIncludes) {
             if (this.subSaveEnabled[category] && this.nodeMatchesCategory(nodeId, category)) {
                 return true;
@@ -235,6 +237,7 @@ export const subSitchMethods = {
     },
 
     shouldIncludeNodeForLoad(nodeId) {
+        if (NodeMan.get(nodeId, false)?.excludeFromSubSitches) return false;
         for (const category in this.subIncludes) {
             if (this.subLoadEnabled[category] && this.nodeMatchesCategory(nodeId, category)) {
                 return true;

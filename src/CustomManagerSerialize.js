@@ -512,6 +512,7 @@ export const serializeMethods = {
         ]
 
         const SitNeeded = [
+            "thermalEnvironment",
             "file",
             "starScale",
             "planetScale",

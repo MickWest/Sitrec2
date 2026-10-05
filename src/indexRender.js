@@ -192,6 +192,14 @@ function getViewProfileColor(viewKey) {
     return colors[colorIndex];
 }
 
+// The main loop draws each view again on its next animation frame, so here a view may show its last image for one
+// draw instead of queueing more GPU work: the physical thermal view's GPU pacing reads this flag. Exports, screenshots
+// and other callers of renderCanvas draw outside it and always get the frame they request.
+function renderViewInMainLoop(view) {
+    Globals.inMainViewRender = true;
+    try { view.renderCanvas(par.frame); } finally { Globals.inMainViewRender = false; }
+}
+
 /**
  * GPU Queue Backlog Prevention
  * Flushes GPU command buffers and detects saturation
@@ -537,7 +545,7 @@ export function renderMain(elapsed) {
                 if (typeof window !== 'undefined' && window._profileNodes) {
                     if (!window._renderTimings) window._renderTimings = {};
                     const t0 = performance.now();
-                    view.renderCanvas(par.frame)
+                    renderViewInMainLoop(view)
                     const dt = performance.now() - t0;
                     const id = key + ".renderCanvas";
                     if (!window._renderTimings[id]) window._renderTimings[id] = {total: 0, count: 0, max: 0};
@@ -545,7 +553,7 @@ export function renderMain(elapsed) {
                     window._renderTimings[id].count++;
                     if (dt > window._renderTimings[id].max) window._renderTimings[id].max = dt;
                 } else {
-                    view.renderCanvas(par.frame)
+                    renderViewInMainLoop(view)
                 }
                 if (globalProfiler) globalProfiler.pop();
 

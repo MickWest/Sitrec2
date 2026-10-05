@@ -1,4 +1,543 @@
 const en = {
+    thermal: {
+        "title": "Physical thermal",
+        "mode": "Render mode",
+        "visible": "Visible",
+        "physicalThermal": "Physical MWIR thermal",
+        "loading": "Loading thermal sensor…",
+        "unavailable": "Physical thermal unavailable for this projection or view.",
+        "failed": "Physical thermal unavailable: {{message}}",
+        "noTarget": "Select a target track or choose manual turbulence.",
+        "readOnly": "This thermal value is calculated from scene geometry.",
+        "readout": "Native {{width}} × {{height}} · {{vertical}}° V × {{horizontal}}° H · digital zoom {{zoom}}× · r0 {{r0}} m · ground/sea estimated",
+        "cloudDiagnostics": {"unresolvedThermal": "{{id}}: cloud field excluded; physical optical depth and temperature metadata are missing."},
+        "cloudCost": "Clouds {{count}} · prepare {{prepareMs}} ms · sort {{sortMs}} ms · {{draws}} draws · absorption only; GPU timing unavailable",
+        "coverageLimited": "Small-target refinement: {{refined}} of {{tiles}} tiles this frame (estimated budget); the others use normal supersampling",
+        "seaDiagnostic": "Sea: clear-sky thermal-only diagnostic · estimated ensemble mean · gray water · statistical hiding / black cavity · clouds and Sun are not reflected; no moving crests",
+        "cameraData": {
+            "row": "Camera data: {{mode}} · {{focal}} mm · {{polarity}} · row at frame {{frame}}",
+            "savedPolarity": "{{polarity}} (saved)",
+            "notStep": "The camera data's {{focal}} mm is not a lens step of this sensor preset; the saved lens ({{saved}} mm) is kept.",
+            "noSteps": "This sensor preset has no lens steps; the saved lens ({{saved}} mm) is kept for the camera data's {{focal}} mm.",
+            "invalid": "The {{focal}} mm lens step does not work with the saved pupil policy ({{message}}); the saved lens ({{saved}} mm) is kept.",
+            "previousLens": "The {{focal}} mm optics are still being built; until they are ready, this frame uses the optics of the previous lens ({{previous}} mm).",
+            "readOnly": "Set by the per-frame camera data at this frame (Camera > Camera Data > Drive Look View). The saved value applies where the camera data does not set it."
+        },
+        "unvalidatedStep": "Lens step {{focal}} mm has no measured values in this sensor preset, so this frame is outside the validated lens steps. Foreground transfer uses the center-ray range table, a narrow-field model.",
+        "nyquistNotMet": "Optical sampling {{factor}}× is below the Nyquist factor {{required}}× at f/{{fNumber}}; fine diffraction detail is undersampled.",
+        "vehicleReadout": "{{id}} · {{altitudeM}} m · air {{airTemperatureK}} K ({{airSource}}) · Mach {{mach}} ({{machSource}}) · speed {{speedMps}} m/s ({{speedSource}}) · power {{power}} ({{powerSource}})",
+        "vehicleSources": {
+            "standard": "standard atmosphere, calculated",
+            "sounding": "sounding profile, calculated",
+            "groundSpeed": "ground speed; no wind at altitude",
+            "stationary": "stationary; no track velocity",
+            "windField": "airspeed; wind at altitude",
+            "objectWind": "airspeed; bound object wind",
+            "override": "user override",
+            "recipe": "recipe, estimated",
+            "climbReference": "climb reference, estimated"
+        },
+        "groups": {
+            "scene": "Environment",
+            "optics": "Optics",
+            "detector": "Detector",
+            "processing": "Processing",
+            "display": "Display"
+        },
+        "status": {
+            "estimated": "Estimated",
+            "published": "Published",
+            "calculated": "Calculated",
+            "measured": "Measured"
+        },
+        "object": {
+            "title": "Thermal surface",
+            "inherit": "Inherit vehicle zones / ambient",
+            "uniform": "Uniform surface",
+            "temperatureK": "Temperature · K",
+            "emissivity": "Emissivity · 1",
+            "zones": "Zone overrides",
+            "reset": "Inherit zone",
+            "vehicleState": "Vehicle thermal state",
+            "fromScene": "From scene",
+            "override": "Override",
+            "source": "Source",
+            "airTemperatureK": "Air temperature · K",
+            "mach": "Mach · 1",
+            "power": "Power · 1",
+            "airTemperatureKTooltip": "From scene samples the thermal atmosphere at this object's altitude each frame. An override changes only this instance.",
+            "machTooltip": "From scene divides track airspeed by the speed of sound at the air temperature used here. Without wind at this altitude it uses ground speed.",
+            "powerTooltip": "From scene keeps recipe power, or the estimated climb reference when absent. Power is a family load coordinate, not calibrated throttle."
+        },
+        "parameters": {
+            "cloudOpticalDepth": {"label": "Cloud absorption depth", "tooltip": "Estimated core absorption depth: alpha = 1 − exp(−depth × mask). Scattering is omitted."},
+            "seaMode": {"options": {"smooth": "Smooth comparison", "statistical": "Statistical rough sea"}, "label": "Sea state model", "tooltip": "Statistical ensemble mean from wind slopes and independent swell; no moving crests or geometric occlusion."},
+            "seaWindMps": {"label": "Sea wind at 10 m", "tooltip": "Estimated surface wind in m/s. It is independent of aircraft-altitude wind."},
+            "seaWindDirectionRad": {"label": "Sea wind toward azimuth", "tooltip": "Clockwise from local north in radians; direction affects reflected sky."},
+            "seaSkinTemperatureK": {"label": "Sea skin temperature", "tooltip": "Estimated radiating skin in K; independent of air or bulk water temperature."},
+            "seaSwellHeightM": {"label": "Swell significant height", "tooltip": "Independent optional swell height in m; zero omits swell. All slopes are statistically averaged."},
+            "seaSwellPeriodS": {"label": "Swell period", "tooltip": "Estimated monochromatic deep-water swell period in s; not recovered from wind."},
+            "seaSwellDirectionRad": {"label": "Swell toward azimuth", "tooltip": "Independent swell direction, clockwise from local north in radians."},
+            "agcDynamics": {
+                "label": "Gain dynamics",
+                "tooltip": "Choose exponential relaxation of count endpoints or of the affine display gain and offset.",
+                "options": {
+                    "endpoints": "Window endpoints",
+                    "gainOffset": "Display gain and offset"
+                }
+            },
+            "temporalFilterAlpha": {
+                "label": "Temporal noise memory",
+                "tooltip": "Previous filtered-count weight per delivered frame: y = (1-alpha)x + alpha yPrevious. Zero is off; repeated/backward frames reset."
+            },
+            "psfRangeM": {
+                "label": "PSF source range",
+                "tooltip": "Source blackbody spectrum weighted by path transmission at this range; zero disables path weighting. A host may override per frame."
+            },
+            "pupilReferenceM": {
+                "label": "Pupil at reference step",
+                "tooltip": "Estimated MX-15 pupil at 675 mm, range 0.120–0.180 m. Sets aperture at each optical step."
+            },
+            "pupilPolicy": {
+                "label": "Stepped pupil policy",
+                "tooltip": "Hold f-number scales the reference pupil with focal length; Keep pupil retains its diameter. Neither policy is measured.",
+                "options": {
+                    "holdFNumber": "Hold f-number (estimated)",
+                    "keepPupil": "Keep pupil (estimated)"
+                }
+            },
+            "focalStep": {
+                "label": "Focal step",
+                "tooltip": "Preset optical lens step, pupil policy and displayed detector window. Free uses fieldMode; presets without steps always use Free.",
+                "options": {
+                    "27": "27 mm",
+                    "135": "135 mm",
+                    "675": "675 mm",
+                    "1012": "1012 mm",
+                    "free": "Free optical field"
+                }
+            },
+            "sensorPreset": {
+                "label": "Sensor preset",
+                "tooltip": "Conditional sensor model; inspect the status and source of each value.",
+                "options": {
+                    "MX15": "MX-15 class (stepped optics)",
+                    "ATFLIR": "ATFLIR (conditional narrow)",
+                    "OMAHA": "USS Omaha candidate (SAFIRE III)"
+                }
+            },
+            "ambientTemperatureK": {
+                "label": "Ambient temperature",
+                "tooltip": "Air temperature and untagged surface fallback."
+            },
+            "surfaceTemperatureK": {
+                "label": "Surface air temperature",
+                "tooltip": "Sea-level air temperature for the atmospheric profile; independent of air around the object."
+            },
+            "groundTemperatureK": {
+                "label": "Ground / sea temperature",
+                "tooltip": "Estimated uniform temperature of terrain and water tiles."
+            },
+            "groundEmissivity": {
+                "label": "Ground / sea emissivity",
+                "tooltip": "Estimated opaque blackbody fallback for terrain and water tiles."
+            },
+            "skySource": {
+                "label": "Sky source",
+                "tooltip": "Elevation-dependent background from the range-table atmosphere, or a manual brightness temperature.",
+                "options": {
+                    "atmosphere": "Atmosphere",
+                    "manual": "Manual temperature"
+                }
+            },
+            "skyGradient": {
+                "label": "Sky elevation gradient",
+                "tooltip": "Use each camera ray elevation for atmospheric sky and sea; disable for a uniform center-ray background."
+            },
+            "skyTemperatureK": {
+                "label": "Sky brightness temperature",
+                "tooltip": "Equivalent blackbody radiance for the background in manual sky mode only."
+            },
+            "objectTemperatureK": {
+                "label": "Object temperature",
+                "tooltip": "Suggested temperature for authoring generic surface tags. Untagged meshes use ambient."
+            },
+            "emissivity": {
+                "label": "Object emissivity",
+                "tooltip": "Suggested emissivity for authoring tags; the remaining opaque fraction reflects the environment."
+            },
+            "environmentTemperatureK": {
+                "label": "Reflected environment",
+                "tooltip": "Cosine-weighted hemispheric incident radiance expressed as blackbody temperature."
+            },
+            "solarScale": {
+                "label": "Direct solar illumination",
+                "tooltip": "Estimated transmission of the 5772 K solar continuum; zero disables sunlight."
+            },
+            "sunDirectionX": {
+                "label": "Sun direction X",
+                "tooltip": "World direction toward the sun, normalized with Y and Z."
+            },
+            "sunDirectionY": {
+                "label": "Sun direction Y",
+                "tooltip": "World direction toward the sun."
+            },
+            "sunDirectionZ": {
+                "label": "Sun direction Z",
+                "tooltip": "World direction toward the sun."
+            },
+            "atmosphereEnabled": {
+                "label": "Atmosphere",
+                "tooltip": "Apply the estimated 12-band transmission and thermal path emission."
+            },
+            "sensorAltitudeM": {
+                "label": "Sensor altitude",
+                "tooltip": "Altitude above the spherical surface for the atmospheric ray."
+            },
+            "pathElevationDeg": {
+                "label": "Atmospheric elevation",
+                "tooltip": "Center ray elevation; one narrow-field range table is used for all pixels."
+            },
+            "atmosphereMaxRangeM": {
+                "label": "Atmosphere range",
+                "tooltip": "Maximum lookup range. Geometry beyond this range is rejected."
+            },
+            "visibilityM": {
+                "label": "Visibility",
+                "tooltip": "Estimated visible meteorological range used for the aerosol profile."
+            },
+            "waterVaporDensityKgM3": {
+                "label": "Surface water vapor",
+                "tooltip": "Estimated surface density with a 2000 m scale height; capped at saturation."
+            },
+            "bandMinUm": {
+                "label": "Band lower limit",
+                "tooltip": "Flat photon response begins here; atmosphere supports 3–5 um."
+            },
+            "bandMaxUm": {
+                "label": "Band upper limit",
+                "tooltip": "Flat photon response ends here; must exceed the lower limit."
+            },
+            "apertureM": {
+                "label": "Aperture diameter",
+                "tooltip": "Entrance pupil diameter for diffraction and photon collection."
+            },
+            "fieldMode": {
+                "label": "Optical field control",
+                "tooltip": "The other field is calculated using detector height and pitch.",
+                "options": {
+                    "fieldOfView": "Vertical field of view",
+                    "focalLength": "Focal length"
+                }
+            },
+            "focalLengthM": {
+                "label": "Focal length",
+                "tooltip": "Effective focal length; linked to field of view and pitch."
+            },
+            "verticalFovDeg": {
+                "label": "Vertical field of view",
+                "tooltip": "Native optical field before digital zoom."
+            },
+            "opticalTransmission": {
+                "label": "Optical transmission",
+                "tooltip": "Photon throughput excluding atmosphere and detector quantum efficiency."
+            },
+            "opticsEnabled": {
+                "label": "Diffraction",
+                "tooltip": "Apply the normalized polychromatic circular pupil core."
+            },
+            "psfTemperatureK": {
+                "label": "PSF spectral temperature",
+                "tooltip": "Estimated common source spectrum for photon weighting of seven wavelength bins."
+            },
+            "opticsRadiusPx": {
+                "label": "Core support radius",
+                "tooltip": "Finite core radius in detector pixels; omitted tails are renormalized."
+            },
+            "scatterPreset": {
+                "label": "Scatter preset",
+                "tooltip": "Estimated sensitivity cases; selecting a preset sets fraction, shoulder, slope and cutoff. Editing one selects Custom.",
+                "options": {
+                    "clean": "Clean window",
+                    "dirty": "Dirty window",
+                    "custom": "Custom"
+                }
+            },
+            "scatterFraction": {
+                "label": "Scatter fraction",
+                "tooltip": "Estimated fraction redistributed into the normalized skirt."
+            },
+            "scatterSlope": {
+                "label": "Scatter slope",
+                "tooltip": "Estimated far-wing exponent in [1+(angle/shoulder)²]^(-slope/2)."
+            },
+            "scatterShoulderRad": {
+                "label": "Scatter shoulder",
+                "tooltip": "Estimated transition angle from flat core to power-law skirt."
+            },
+            "scatterCutoffRad": {
+                "label": "Scatter cutoff",
+                "tooltip": "Finite support angle, required even for slopes at or below two."
+            },
+            "turbulenceR0M": {
+                "label": "Turbulence coherence diameter",
+                "tooltip": "Fried r0 at 4 um; zero disables. Wavelength-scaled long-exposure Kolmogorov MTF, with no finite-time correction."
+            },
+            "turbulenceMode": {
+                "label": "Turbulence path",
+                "tooltip": "A geometry-aware host integrates the estimated turbulence profile along the physical camera-to-target path. Manual uses the specified coherence diameter.",
+                "options": {
+                    "manual": "Manual",
+                    "geometry": "Camera to target"
+                }
+            },
+            "jitterRmsUrad": {
+                "label": "Exposure jitter",
+                "tooltip": "Estimated per-axis intra-exposure Gaussian RMS; excludes frame-to-frame centroid motion."
+            },
+            "systemBlurHorizontalRmsUrad": {
+                "label": "Horizontal residual blur",
+                "tooltip": "Independent Gaussian residual along display x, in angle before sampling and detector noise. Excludes turbulence, exposure jitter and charge diffusion."
+            },
+            "systemBlurVerticalRmsUrad": {
+                "label": "Vertical residual blur",
+                "tooltip": "Independent Gaussian residual along display y, in angle before sampling and detector noise. MX-15 long steps use about 40 µrad with the measured display curve; origin unresolved."
+            },
+            "systemBlurRmsUrad": {
+                "label": "Residual system blur",
+                "tooltip": "Independent Gaussian optical residual in angle, before sampling. Zero disables; excludes turbulence, exposure jitter and charge diffusion."
+            },
+            "diffusionSigmaPx": {
+                "label": "Charge diffusion",
+                "tooltip": "Estimated Gaussian sigma before native sampling; zero disables. Pixel-area integration is separate."
+            },
+            "defocusM": {
+                "label": "Defocus",
+                "tooltip": "Longitudinal detector displacement; computed as quadratic pupil phase."
+            },
+            "opticalSamplingMode": {
+                "label": "Optical sampling policy",
+                "tooltip": "Calculate sampling from the shortest wavelength and f-number within allocation limits. Editing the factor selects Manual.",
+                "options": {
+                    "nyquist": "Optical Nyquist",
+                    "manual": "Manual"
+                }
+            },
+            "supersample": {
+                "label": "Optical sampling",
+                "tooltip": "Fine radiance grid factor; calculated in Nyquist mode. Small mesh coverage is independently refined to 128 samples per detector pixel (live views: up to 64 tiles per frame, overflow reported).",
+                "options": {
+                    "2": "2 ×",
+                    "4": "4 ×",
+                    "8": "8 ×"
+                }
+            },
+            "detectorWidth": {
+                "label": "Detector width",
+                "tooltip": "Native sampling columns; independent of picture size."
+            },
+            "detectorHeight": {
+                "label": "Detector height",
+                "tooltip": "Native sampling rows; independent of picture size."
+            },
+            "pixelPitchM": {
+                "label": "Pixel pitch",
+                "tooltip": "Geometric detector pixel spacing."
+            },
+            "exposureMode": {
+                "label": "Exposure policy",
+                "tooltip": "Calculate integration from a reference blackbody and mean dark current, or use manual integration time.",
+                "options": {
+                    "wellFill": "Reference well fill",
+                    "manual": "Manual"
+                }
+            },
+            "wellFillFraction": {
+                "label": "Reference well fraction",
+                "tooltip": "Target fraction of full well before dark subtraction; 50% is a detector NETD comparison condition."
+            },
+            "wellFillReferenceK": {
+                "label": "Exposure reference temperature",
+                "tooltip": "Unshaded blackbody temperature at the detector input, before integration."
+            },
+            "shadingK": {
+                "label": "Edge shading",
+                "tooltip": "Estimated edge-minus-center signal at a fixed 300 K reference; zero disables the detector-fixed shading map."
+            },
+            "shadingWidth": {
+                "label": "Shading width",
+                "tooltip": "Radial width in native detector half-widths; digital zoom crops this fixed signal."
+            },
+            "fixedPatternFraction": {
+                "label": "Residual fixed pattern",
+                "tooltip": "Estimated pixel offset RMS as a fraction of ADC range; fixed across frames, independent of temporal noise switch. Zero disables."
+            },
+            "integrationTimeS": {
+                "label": "Integration time",
+                "tooltip": "Photon collection time in manual exposure mode only; reference well-fill mode reports its calculated time."
+            },
+            "quantumEfficiency": {
+                "label": "Quantum efficiency",
+                "tooltip": "Mean collected electrons per transmitted photon."
+            },
+            "fillFactor": {
+                "label": "Fill factor",
+                "tooltip": "Active square area fraction; affects sampling and electron collection once each."
+            },
+            "wellElectrons": {
+                "label": "Well capacity",
+                "tooltip": "Charge limit before read noise; also the ideal 14-bit ADC full scale."
+            },
+            "noiseEnabled": {
+                "label": "Detector noise",
+                "tooltip": "Frame-seeded Poisson shot noise and Gaussian read noise."
+            },
+            "shotNoiseEnabled": {
+                "label": "Shot noise",
+                "tooltip": "Exact Poisson below 64 expected electrons; Gaussian approximation above."
+            },
+            "readNoiseElectrons": {
+                "label": "Read noise",
+                "tooltip": "Gaussian charge uncertainty added after well clipping."
+            },
+            "adcOffsetCounts": {
+                "label": "ADC pedestal",
+                "tooltip": "Estimated electronic offset before quantization. Raw counts retain it; manual and radiometric windows remove it, adaptive modes absorb it in their statistics."
+            },
+            "darkElectronsPerS": {
+                "label": "Dark current",
+                "tooltip": "Mean is removed after well clipping; dark shot noise remains."
+            },
+            "noiseSeed": {
+                "label": "Noise seed",
+                "tooltip": "Combined with pixel index and frame for reproducible noise."
+            },
+            "gainMode": {
+                "label": "Gain mode",
+                "tooltip": "Choose a fixed count window, adaptive statistics, capped histogram or fixed photon scale.",
+                "options": {
+                    "manual": "Manual",
+                    "automatic": "Automatic",
+                    "plateau": "Plateau equalization",
+                    "fixedRadiometric": "Fixed radiometric"
+                }
+            },
+            "gainRegion": {
+                "label": "Gain statistics region",
+                "tooltip": "Automatic window and plateau histogram use the native detector or centers inside the digital zoom crop.",
+                "options": {
+                    "detector": "Whole detector",
+                    "displayed": "Displayed crop"
+                }
+            },
+            "fixedGain": {
+                "label": "Fixed gain",
+                "tooltip": "Manual display drive = (counts - level) × gain / 16383 + 0.5."
+            },
+            "fixedLevel": {
+                "label": "Fixed level",
+                "tooltip": "Count mapped to middle gray before response and polarity."
+            },
+            "lowPercentile": {
+                "label": "Lower percentile",
+                "tooltip": "Lower adaptive count-window quantile."
+            },
+            "highPercentile": {
+                "label": "Upper percentile",
+                "tooltip": "Upper adaptive count-window quantile."
+            },
+            "agcTimeConstantS": {
+                "label": "Gain time constant",
+                "tooltip": "Exponential settling time; zero responds immediately."
+            },
+            "frameRateHz": {
+                "label": "Frame rate",
+                "tooltip": "Converts frame deltas to seconds for adaptive gain; repeated frames recompute the current window without smoothing."
+            },
+            "minimumWindowCounts": {
+                "label": "Minimum window",
+                "tooltip": "Prevents unstable gain on a nearly uniform frame."
+            },
+            "plateauFactor": {
+                "label": "Histogram plateau",
+                "tooltip": "Cap per bin = factor × pixel count / 256; discarded counts are not redistributed."
+            },
+            "localAmount": {
+                "label": "Local enhancement",
+                "tooltip": "Signed unsharp detail before output clipping; produces opposite-sign rings."
+            },
+            "localRadiusPx": {
+                "label": "Local radius",
+                "tooltip": "Gaussian sigma in detector pixels; finite support is four sigma."
+            },
+            "radiometricLow": {
+                "label": "Radiometric low",
+                "tooltip": "Fixed lower photon-radiance endpoint, recovered from counts using the exposure factor."
+            },
+            "radiometricHigh": {
+                "label": "Radiometric high",
+                "tooltip": "Fixed upper photon-radiance endpoint; detector clipping still applies."
+            },
+            "polarity": {
+                "label": "Polarity",
+                "tooltip": "Black hot is the exact 255-code inverse of white hot, including the response curve.",
+                "options": {
+                    "whiteHot": "White hot",
+                    "blackHot": "Black hot"
+                }
+            },
+            "displayCurve": {
+                "label": "Display curve",
+                "tooltip": "Fixed lookup response after the count window and gamma, before quantization and polarity. Use gamma 1 for the measured law; MX-15 U depth uncertainty ±20%.",
+                "options": {
+                    "linear": "Linear",
+                    "measured": "Measured preset curve"
+                }
+            },
+            "polarityAffineGain": {
+                "label": "White-hot output gain",
+                "tooltip": "Output affine after the curve: white = gain × warm-increasing code + offset. Default 1 preserves exact inversion; the optional IB6830 recording profile uses 1.05."
+            },
+            "polarityAffineOffset": {
+                "label": "White-hot output offset",
+                "tooltip": "Output offset in 8-bit codes before clipping and rounding. Default 0 preserves exact inversion; the optional IB6830 recording profile uses +55 codes."
+            },
+            "responseGamma": {
+                "label": "Response gamma",
+                "tooltip": "White-hot response = clamped drive^(1/gamma); invert after quantization."
+            },
+            "digitalZoom": {
+                "label": "Digital zoom",
+                "tooltip": "Center crop after detector processing; does not alter optical field or counts."
+            },
+            "sampling": {
+                "label": "Enlargement sampling",
+                "tooltip": "Interpolate the final detector raster; float filtering is implemented explicitly.",
+                "options": {
+                    "nearest": "Nearest neighbor",
+                    "linear": "Linear (half-pixel)",
+                    "sampleCentered": "Linear (sample-centered)"
+                }
+            },
+            "diagnosticView": {
+                "label": "Diagnostic view",
+                "tooltip": "Radiance uses fixed radiometric endpoints; counts use 0–16383. Readbacks retain physical units.",
+                "options": {
+                    "radiance": "Radiance",
+                    "detectorCounts": "Detector counts",
+                    "display": "Display"
+                }
+            },
+            "pictureWidth": {
+                "label": "Reference picture width",
+                "tooltip": "Preset presentation metadata; the supplied output target determines actual size."
+            },
+            "pictureHeight": {
+                "label": "Reference picture height",
+                "tooltip": "Preset presentation metadata; does not change native sampling."
+            }
+        }
+    },
     menus: {
         main: {
             title: "Sitrec",
@@ -2661,6 +3200,33 @@ const en = {
             label: "Random Seed",
             tooltip: "Change for a different (but still repeatable) wobble pattern",
         },
+    },
+
+    cameraState: {
+        folder: "Camera Data",
+        source: {
+            label: "Source",
+            tooltip: "The camera data file these rows came from. The sitch saves the rows, so a file that has only camera data is not uploaded.",
+        },
+        rows: {
+            label: "Rows",
+            tooltip: "Each row is a change of mode, focal length, digital zoom or polarity, and holds until the next row's frame.",
+            value: "{{rows}} rows, frames {{first}} to {{last}}",
+        },
+        modes: {
+            label: "Modes",
+            tooltip: "Each sensor mode in the data and the band it is drawn in: IR for a mode that starts with IR, MWIR or LWIR, otherwise EO (visible).",
+        },
+        driveLookView: {
+            label: "Drive Look View",
+            tooltip: "Use this data, frame by frame, for the look view's band (infrared or visible light), the lens step and polarity of the thermal sensor, and the mode, focal length and digital zoom on the MX overlay. The field of view does not follow the data: it comes from the Camera FOV setting. Off: they keep their saved settings.",
+        },
+        remove: {
+            label: "Remove Camera Data",
+            tooltip: "Remove these rows from the sitch. Drop the file again to get them back.",
+        },
+        noNode: "Can't use camera data from \"{{file}}\": this sitch has no look camera.",
+        importError: "Can't read camera data from \"{{file}}\": {{message}}",
     },
 
     spriteGroup: {

@@ -95,6 +95,7 @@ import {CNodeAutoTrackLOS} from "./nodes/CNodeAutoTrackLOS";
 import {CNodeVideoInfoUI} from "./nodes/CNodeVideoInfoUI";
 import {CNodeSimInfoUI} from "./nodes/CNodeSimInfoUI";
 import {CNodeWescamMXUI} from "./nodes/CNodeWescamMXUI";
+import {CNodeCameraState} from "./nodes/CNodeCameraState";
 import {CNodeATFLIRUI} from "./nodes/CNodeATFLIRUI";
 import {CNodeOSDDataSeriesController} from "./nodes/CNodeOSDDataSeriesController";
 import {CNodeGUIFlag, CNodeGUIValue} from "./nodes/CNodeGUIValue";
@@ -1245,6 +1246,17 @@ export class CCustomManager {
             visible: false,
             passThrough: true,
         });
+    }
+
+    // Per-frame camera state (mode, focal length, digital zoom, polarity) from a
+    // dropped camera data CSV, read by the MX overlay and the look view. Made
+    // empty here, for every canMod sitch like the overlay above, so it exists
+    // before a save's mods are applied; an empty node saves nothing.
+    setupCameraState() {
+        if (NodeMan.exists("cameraState")) return;
+        if (!NodeMan.exists("lookView") || !NodeMan.exists("lookCamera")) return;
+
+        new CNodeCameraState({id: "cameraState"});
     }
 
     // Register here so older saved custom sitches also get the optional view.

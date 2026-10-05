@@ -12,6 +12,12 @@
 //    TGT  lat / lon / altitude, LOS bearing and slant range
 // Everything else is drawn dimmed, as static placeholder text, the same way
 // CNodeMQ9UI handles the parts of the MQ-9 OSD we don't simulate.
+//
+// With per-frame camera data (the "cameraState" node, from a dropped camera
+// data CSV) the mode, focal length and digital zoom show the recording's own
+// values instead: the mode text in the full HUD color, the focal length as
+// displayed rather than a 35mm equivalent, and a "2.0X"-style zoom line under
+// it only when the zoom is not 1, as the real display does.
 
 import {CNodeViewUI} from "./CNodeViewUI";
 import {getAzElFromPositionAndForward, getCompassHeading} from "../SphericalMath";
@@ -39,6 +45,11 @@ const METERS_PER_NM = 1852;
 
 const MONTHS = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN",
                 "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"];
+
+// Placeholder text is drawn in this color, which renderCanvas dims.
+const GRAY = '#888888';
+// The mode readout when no camera data says otherwise.
+const MODE_PLACEHOLDER = "EON";
 
 // The OSD is laid out on this character grid. The counts come from measuring a
 // 2670x1494 MX frame: cells are ~33 x 40 px, i.e. 80 columns by 37 rows.
@@ -117,30 +128,32 @@ export class CNodeWescamMXUI extends CNodeViewUI {
         // sensorHeightMM in the sitch if a different sensor is wanted.
         this.sensorHeightMM = v.sensorHeightMM ?? 24;
 
-        const grey = '#888888';
+        const gray = GRAY;
 
         // ---- top block ----------------------------------------------------
         this.dateText = this.addGridText(1, 1, "01JAN2000");
-        this.addGridText(13, 1, "AUTO", grey);
-        this.addGridText(20, 1, "VIC", grey);
-        this.addGridText(41, 1, "EON", grey, 'center');
+        this.addGridText(13, 1, "AUTO", gray);
+        this.addGridText(20, 1, "VIC", gray);
+        this.modeText = this.addGridText(41, 1, MODE_PLACEHOLDER, gray, 'center');
         this.focalText = this.addGridText(61, 1, "1000", '#FFFFFF', 'right');
-        this.addGridText(63, 1, "COL", grey);
-        this.addGridText(72, 1, "AUTO", grey, 'right');
-        this.addGridText(78, 1, "∞", grey);
+        this.addGridText(63, 1, "COL", gray);
+        this.addGridText(72, 1, "AUTO", gray, 'right');
+        this.addGridText(78, 1, "∞", gray);
 
         this.timeText = this.addGridText(1, 2, "00:00:00");
-        this.addGridText(20, 2, "CENT", grey);
-        this.addGridText(63, 2, "LOW", grey);
-        this.addGridText(72, 2, "50", grey, 'right');
+        this.addGridText(20, 2, "CENT", gray);
+        // digital zoom, blank unless camera data gives a zoom other than 1
+        this.zoomText = this.addGridText(61, 2, "", '#FFFFFF', 'right');
+        this.addGridText(63, 2, "LOW", gray);
+        this.addGridText(72, 2, "50", gray, 'right');
 
         this.tzText = this.addGridText(1, 3, "UTC+0.0");
 
         // ---- bottom block -------------------------------------------------
-        this.addGridText(1, 31, "LI:DISARM", grey);
-        this.addGridText(1, 32, "LI:LOW", grey);
-        this.addGridText(73, 32, "MAN", grey);
-        this.addGridText(77, 32, "NONE", grey);
+        this.addGridText(1, 31, "LI:DISARM", gray);
+        this.addGridText(1, 32, "LI:LOW", gray);
+        this.addGridText(73, 32, "MAN", gray);
+        this.addGridText(77, 32, "NONE", gray);
 
         this.addGridText(2, 34, "ACFT");
         this.addGridText(80, 34, "TGT", '#FFFFFF', 'right');
@@ -223,6 +236,26 @@ export class CNodeWescamMXUI extends CNodeViewUI {
         this.tzText.text = `UTC${tzOffset < 0 ? '-' : '+'}${Math.abs(tzOffset).toFixed(1)}`;
     }
 
+    // Mode, focal length and digital zoom. From the camera data when the
+    // cameraState node has a row for this frame: the mode as recorded, the focal
+    // length in whole mm as displayed ("675", "1012", "200"), and the zoom only
+    // when it is not 1. Otherwise the dimmed placeholder mode and a focal
+    // length from the vertical FOV, as a 35mm-equivalent value.
+    updateCameraTexts(frame, vFOV) {
+        const state = NodeMan.get("cameraState", false)?.stateAt(frame) ?? null;
+        if (state) {
+            this.modeText.text = state.mode;
+            this.modeText.color = '#FFFFFF';
+            this.focalText.text = `${Math.round(state.focalLengthMm)}`;
+            this.zoomText.text = state.zoom !== 1 ? `${state.zoom.toFixed(1)}X` : "";
+        } else {
+            this.modeText.text = MODE_PLACEHOLDER;
+            this.modeText.color = GRAY;
+            this.focalText.text = `${Math.round((this.sensorHeightMM / 2) / Math.tan(radians(vFOV) / 2))}`;
+            this.zoomText.text = "";
+        }
+    }
+
     renderCanvas(frame) {
         if (this.overlayView && !this.overlayView.visible) return;
 
@@ -252,9 +285,7 @@ export class CNodeWescamMXUI extends CNodeViewUI {
 
         this.updateDateTime();
 
-        // Focal length from the vertical FOV, as a 35mm-equivalent value.
-        const vFOV = camera.fov;
-        this.focalText.text = `${Math.round((this.sensorHeightMM / 2) / Math.tan(radians(vFOV) / 2))}`;
+        this.updateCameraTexts(frame, camera.fov);
 
         // ACFT block
         const lla = ECEFToLLAVD_radii(camera.position);
@@ -344,7 +375,8 @@ export class CNodeWescamMXUI extends CNodeViewUI {
         c.font = `${fontSize}px ${WESCAM_FONT}`;
         c.textBaseline = 'top';
         for (const t of this.gridTexts) {
-            c.fillStyle = t.color === '#888888' ? dimHUDColor : hudColor;
+            if (t.text === "") continue;
+            c.fillStyle = t.color === GRAY ? dimHUDColor : hudColor;
             c.textAlign = t.align;
             let x;
             if (t.align === 'right') {

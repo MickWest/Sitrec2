@@ -96,7 +96,8 @@
         The <code>.psf.json</code> carries the PSF as an RGBE-encoded PNG — three 8-bit
         mantissas and a shared exponent, holding the full ~13 decades of range — plus the
         generator spec, so reopening it here restores every control. Sitrec imports the same
-        file into a camera.
+        file into a camera. Band detection stores the same single-channel response in all
+        three channels, using the selected band's angular scale.
       </p>
       <p class="note">
         The range floor discards pixels below a fraction of the peak. Most of the file is the

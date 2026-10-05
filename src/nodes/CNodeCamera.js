@@ -27,6 +27,7 @@ export class CNodeCamera extends CNode3D {
         super(v);
 
         this.isCamera = true;
+        this.thermalSensor = v.thermalSensor ? JSON.parse(JSON.stringify(v.thermalSensor)) : undefined;
         this.celestialLock = null; // {type:"named", object:"Moon"} or {type:"radec", ra:hours, dec:degrees}
 
         // "Free Look Camera" - the user flies this camera by hand with the view's own
@@ -158,6 +159,7 @@ export class CNodeCamera extends CNode3D {
             // The whole file, image included - a few hundred kB. Storing only a reference
             // would mean a shared sitch arrives with its optics missing, which is worse:
             // the glare is part of what the scenario is claiming about the camera.
+            ...(this.thermalSensor ? {thermalSensor: JSON.parse(JSON.stringify(this.thermalSensor))} : {}),
             psfFile: this.psfFile,
             psfGlare: {...this.psfGlare},
         }
@@ -165,6 +167,7 @@ export class CNodeCamera extends CNode3D {
 
     modDeserialize(v) {
         super.modDeserialize(v);
+        this.thermalSensor = v.thermalSensor ? JSON.parse(JSON.stringify(v.thermalSensor)) : undefined;
         this.startPosLLA = v.startPosLLA;
         this.lookAtLLA = v.lookAtLLA;
         this.upLLA = v.upLLA;

@@ -47,6 +47,9 @@ export class CNodeLOSFromCamera extends CNodeLOS {
         // Controllers may have changed since the previous sample. Only a
         // controller actually applied on this pass may supply size evidence.
         this.dummyCamera.userData.angularSize = null;
+        // The same rule for the refraction aim: only a controller applied on this
+        // pass may say that the camera is aimed off the geometric direction.
+        this.dummyCamera.userData.geometricAim = null;
         cameraNode._object = this.dummyCamera; // _object is the camera object
         // patch so this does not count as a controller update (recursion check)
         // applyControllersCount will be incremented by the cameraNode.update call
@@ -83,6 +86,15 @@ export class CNodeLOSFromCamera extends CNodeLOS {
         up.setFromMatrixColumn(camera.matrixWorld, 1);
         var right = new Vector3();
         right.setFromMatrixColumn(camera.matrixWorld, 0);
+        // A camera that points at a target is aimed at where refraction DRAWS the
+        // target. The line of sight is a calculation, and calculations are geometric,
+        // so turn it back to the straight line to the target itself.
+        const geometricAim = camera.userData.geometricAim;
+        if (geometricAim) {
+            fwd.applyQuaternion(geometricAim);
+            up.applyQuaternion(geometricAim);
+            right.applyQuaternion(geometricAim);
+        }
         const vFOV = camera.fov;
         if (isNaN(fwd.x) || isNaN(fwd.y) || isNaN(fwd.z)) {
             console.error("CNodeLOSFromCamera: heading (fwd) is NaN, id=" + this.id + ", f=" + f);

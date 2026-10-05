@@ -20,7 +20,7 @@ const events = {signal: lifecycle.signal};
 const STORAGE_KEY = "sitrec-vehicle-designer-v1";
 let params = {...PRESETS[0].parameters}, activePreset = PRESETS[0].id, designName = PRESETS[0].name;
 let modified = false, model, modelDirty = true, renderDirty = true, saveTimer, currentView = "perspective";
-let lastBuildMs = 0, disposed = false, frameId, propellerTime = 0;
+let lastBuildMs = 0, disposed = false, frameId, propellerTime = 0, thermalFailed = false, sensorFrame = 0;
 const fieldControls = new Map();
 let matchingPresets = [];
 
@@ -51,9 +51,41 @@ if (options.initialRecipe) {
 }
 
 const studio = createVehicleStudio($("canvasMount"),{background:"#e4ebf2",damping:true,onChange:() => {renderDirty = true;}});
-const {renderer,scene,camera,controls} = studio;
+const {renderer,scene,controls} = studio;
 let grid = new THREE.GridHelper(1, 20, "#a8bbca", "#c2d0da");
 grid.material.transparent = true; grid.material.opacity = 0.6; scene.add(grid);
+grid.userData.thermal = false;
+
+// The near IR view shares the normal view's camera, so it keeps the view buttons.
+function updatePreviewClasses() {
+    $("preview").classList.toggle("thermal-preview", studio.mode === "ir");
+    $("preview").classList.toggle("thermal-near", studio.mode === "ir" && studio.sharesCamera);
+}
+
+$("renderMode").addEventListener("change", async () => {
+    try {
+        if ($("renderMode").value === "ir") {
+            status("Loading IR preview…");
+            await studio.loadThermal({panel:$("thermalPanel"),readout:$("thermalReadout"),onError:error,
+                onChange() {thermalFailed = false; renderDirty = true; studio.resize(); updatePreviewClasses();}});
+        }
+        if (disposed) return;
+        const mode = $("renderMode").value;
+        studio.setMode(mode); thermalFailed = false; renderDirty = true;
+        $("thermalPanel").hidden = mode !== "ir"; $("thermalReadout").hidden = mode !== "ir";
+        updatePreviewClasses();
+        $("autoRotate").checked = false; controls.autoRotate = false;
+        renderer.domElement.setAttribute("aria-label", mode === "ir" ? "Infrared image. Near view: drag to orbit, scroll to zoom, as in the normal view. Far view: use the range and aspect controls beside the image." : "3D vehicle. Drag to orbit, scroll to zoom, right-drag to pan.");
+        error(""); status(mode === "ir" ? "IR sensor preview · estimated signature and camera values" : "Live preview");
+    } catch (failure) {$("renderMode").value = studio.mode; error(`Could not load IR preview: ${failure.message}`);}
+}, events);
+
+function render() {
+    try {studio.render({frame:sensorFrame}); thermalFailed = false; return true;}
+    catch (failure) {
+        thermalFailed = true; renderer.clear(); error(`IR preview failed: ${failure.message}`); return false;
+    }
+}
 
 function updateName() {
     $("aircraftName").textContent = designName + (modified ? " · edited" : "");
@@ -211,7 +243,7 @@ function rebuild() {
     const replacement = generateVehicle(createVehicleRecipe(params,designName,activePreset || null));
     propellerTime = 0;
     if (model) disposeVehicle(model.root);
-    model = replacement; scene.add(model.root);
+    model = replacement; studio.setModel(model); scene.add(model.root); thermalFailed = false;
     animateVehicleLights(model,0,false);
     setWireframe(model.root, $("wireframe").checked);
     const road = isRoad(params), drone=isMultirotor(params),balloon=isBalloon(params), aerial=drone||balloon;
@@ -298,7 +330,7 @@ $("exportGLB").addEventListener("click", async () => {
 });
 
 $("screenshot").addEventListener("click", () => {
-    if (modelDirty) rebuild(); renderer.render(scene, camera);
+    if (modelDirty) rebuild(); if (!render()) return;
     renderer.domElement.toBlob(blob => {if (blob) downloadVehicleBlob(blob, `${filename()}.png`);}, "image/png");
 });
 
@@ -314,13 +346,17 @@ function animate(now) {
     if (disposed) return;
     const dt = Math.min((now - lastTime) / 1000, 0.05); lastTime = now;
     if (modelDirty) rebuild();
-    controls.update(dt);
-    if ($("animateLights").checked && model.lamps?.length) {animateVehicleLights(model,now/1000,true);renderDirty=true;}
+    if (studio.sharesCamera) controls.update(dt);
+    if (studio.mode === "visible" && $("animateLights").checked && model.lamps?.length) {animateVehicleLights(model,now/1000,true);renderDirty=true;}
     if ($("animateProps").checked && model.propellers.length) {
         propellerTime += dt; poseVehicleSpinners(model.propellers,propellerTime,true);
         renderDirty = true;
     }
-    if (renderDirty) {renderer.render(scene, camera); renderDirty = false;}
+    if (studio.mode === "ir" && !thermalFailed) {
+        const nextFrame = Math.floor(now / 1000 * studio.thermal.settings.frameRateHz) >>> 0;
+        if (nextFrame !== sensorFrame) {sensorFrame = nextFrame; renderDirty = true;}
+    }
+    if (renderDirty) {render(); renderDirty = false;}
     frameId = requestAnimationFrame(animate);
 }
 frameId = requestAnimationFrame(animate);

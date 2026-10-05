@@ -19,8 +19,12 @@
 import {Globals, guiMenus, setRenderOne, Sit} from "../Globals";
 import {GlobalScene} from "../LocalFrame";
 import {REFRACTION_DEFAULTS} from "./refraction";
+import {Object3D, Vector3} from "three";
 import {
+    cullLoftedObjects,
+    liftWorldPoint,
     resolveTerrestrialK,
+    restoreLoftedCulling,
     sweepTerrestrialRefraction,
     TERRESTRIAL_REFRACTION_DEFAULTS,
     terrestrialLiftContext,
@@ -79,6 +83,10 @@ let _sceneHookInstalled = null;
 const SWEEP_INTERVAL_MS = 500;
 let _lastSweepMs = -1e9;
 
+// The objects the last sweep found drawn lofted, for the frustum test below.
+let _loftedObjects = [];
+const _cameraPosition = new Vector3();
+
 export function installTerrestrialRefractionSceneHook(scene) {
     if (!scene || _sceneHookInstalled === scene) return;
     const previous = scene.onBeforeRender;
@@ -89,12 +97,37 @@ export function installTerrestrialRefractionSceneHook(scene) {
         const opts = terrestrialOptsFrom(Sit, Globals);
         updateTerrestrialRefractionUniforms(camera, opts);
 
-        if (!opts.enabled) return;
+        // Fisheye and Flat Earth are not pinhole projections. Each switches frustum
+        // culling off for every object while it is on, and puts it back itself. That
+        // setting is theirs until then: to write it here made objects outside the
+        // pinhole frame disappear until their next sweep.
+        const projectionOwnsCulling = !!(Globals.fisheye?.enabled || Globals.flatEarthRendering);
+
+        if (!opts.enabled) {
+            // This render draws nothing lofted (refraction is off, or the ray-traced
+            // pass has taken this view over), so Three's own frustum test is right.
+            if (!projectionOwnsCulling) restoreLoftedCulling(_loftedObjects);
+            return;
+        }
         const now = performance.now();
-        if (now - _lastSweepMs < SWEEP_INTERVAL_MS) return;
-        _lastSweepMs = now;
-        sweepTerrestrialRefraction(this);
+        if (now - _lastSweepMs >= SWEEP_INTERVAL_MS) {
+            _lastSweepMs = now;
+            const lofted = [];
+            sweepTerrestrialRefraction(this, -1, lofted);
+            _loftedObjects = lofted;
+        }
+        // Three is about to decide what to draw from each object's PHYSICAL position.
+        // Decide it from the lofted position, for this camera.
+        if (camera && !projectionOwnsCulling) {
+            _cameraPosition.setFromMatrixPosition(camera.matrixWorld);
+            cullLoftedObjects(_loftedObjects, camera, terrestrialLiftContext(_cameraPosition, opts));
+        }
     };
+    // The uniforms follow the camera and the refraction options, which a thermal reuse key includes; the sweep
+    // only changes frustum culling, which the thermal radiance pass turns off for every mesh. A thermal frame with
+    // unchanged inputs may therefore be reused through this hook.
+    scene.onBeforeRender.thermalReuseSafe = () => typeof previous !== "function" ||
+        previous === Object3D.prototype.onBeforeRender || previous.thermalReuseSafe?.() === true;
     _sceneHookInstalled = scene;
 }
 
@@ -146,6 +179,16 @@ export function currentRefractionOpts() {
 // context, no work" rather than an identity transform.
 export function currentTerrestrialLiftContext(observerECEF) {
     return terrestrialLiftContext(observerECEF, terrestrialOptsFrom(Sit, Globals));
+}
+
+// Where to AIM a camera so that a world point lands on its boresight.
+//
+// The scene is drawn lofted, so a camera aimed at a point's geometric position
+// looks below where that point is drawn: 0.085 degrees at 160 km from a 3.5 km
+// camera, which is three quarters of the half-height of a 0.22 degree field of
+// view. Aim at this instead. With refraction off it returns the point unchanged.
+export function apparentPositionFrom(observerECEF, worldECEF, target = new Vector3()) {
+    return liftWorldPoint(currentTerrestrialLiftContext(observerECEF), worldECEF, target);
 }
 
 // Grey out whichever of the two ways to set k is not in force, so the folder can

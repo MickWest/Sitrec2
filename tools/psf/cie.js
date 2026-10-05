@@ -72,8 +72,14 @@ export function spectrumWeight(nm, spectrum, kelvin) {
  *  Returns { nm, rgb } where rgb[i] is the 3-vector this wavelength contributes per unit of
  *  diffracted intensity, normalised so that the FULL band integrates to neutral white. That
  *  normalisation is what makes an undiffracted white source render white rather than the
- *  green cast you get from summing raw colour matching functions. */
-export function buildSpectralSamples(nm0, nm1, steps, spectrum = "flat", kelvin = 5500) {
+ *  green cast you get from summing raw colour matching functions.
+ *
+ *  `band` detection instead repeats one scalar weight in all three channels, with no color
+ *  matching or white balance. The source is spectral ENERGY density per wavelength; a photon
+ *  detector weights it by lambda/(hc). Only relative weights matter, so lambda in nm suffices
+ *  and the common unit conversion and 1/(hc) cancel in the PSF normalization. */
+export function buildSpectralSamples(nm0, nm1, steps, spectrum = "flat", kelvin = 5500,
+                                     detector = "visible", quantity = "photon") {
     const nm = new Float64Array(steps);
     const rgb = new Float64Array(steps * 3);
     const sum = [0, 0, 0];
@@ -82,11 +88,14 @@ export function buildSpectralSamples(nm0, nm1, steps, spectrum = "flat", kelvin 
         // Sample at bin CENTRES. Sampling at the endpoints double-counts the band edges and,
         // with a small `steps`, visibly biases the tint of the outer spike toward deep red.
         const l = steps === 1 ? 0.5 * (nm0 + nm1) : nm0 + ((i + 0.5) * (nm1 - nm0)) / steps;
-        const w = spectrumWeight(l, spectrum, kelvin);
-        const c = wavelengthToRGB(l);
+        const w = spectrumWeight(l, spectrum, kelvin)
+                * (detector === "band" && quantity === "photon" ? l : 1);
+        const c = detector === "band" ? [1, 1, 1] : wavelengthToRGB(l);
         nm[i] = l;
         for (let k = 0; k < 3; k++) { rgb[i * 3 + k] = c[k] * w; sum[k] += c[k] * w; }
     }
+
+    if (detector === "band") return { nm, rgb };
 
     // White balance: scale each channel so the summed band is neutral. Anchored on the
     // brightest channel so the result only ever darkens channels, never invents energy.

@@ -1,3 +1,4 @@
+import {visibleVehicleBounds, tagThermalMesh, thermalPartition, addThermalOutlet, addSeparateFlowThermalOutlet} from "./thermalTags.js";
 import * as THREE from "three";
 import {normalizeParameters, usesCanopy, usesAirlinerWindscreen} from "./aircraftSchema.js";
 
@@ -46,12 +47,12 @@ export function buildAircraft(input) {
     const cabinGlass = material("Cabin glazing", "#14212d", {roughness: 0.48, metalness: 0.05, side: THREE.DoubleSide});
     const dark = material("Intakes and tires", "#18222c", {roughness: 0.85});
     const metal = material("Metal", "#a8b5c2", {metalness: 0.7, roughness: 0.32});
-    const propellers = [];
+    const propellers = [], thermalAnchors = [];
     const R = p.diameter / 2, H = R * p.bodyHeight, L = p.length;
 
     function mesh(name, geometry, mat, parent = root) {
         const object = new THREE.Mesh(geometry, mat);
-        object.name = name;
+        object.name = name; tagThermalMesh(object, p);
         parent.add(object);
         return object;
     }
@@ -535,7 +536,7 @@ export function buildAircraft(input) {
         const r = p.engineDiameter / 2, length = p.engineLength;
         const cross = (radius, angle, z) => [Math.cos(angle) * radius, Math.max(Math.sin(angle), -1 + p.engineFlatness) * radius, z];
         // A continuous lip with a dark recessed inlet and a visible fan.
-        mesh("Nacelle", surface(20, 32, (u, v) => {
+        const nacelleMesh = mesh("Nacelle", surface(20, 32, (u, v) => {
             const radius = r * (0.82 + 0.18 * Math.sin(Math.PI * u)) * (u > 0.75 ? mix(1, 0.7, (u - 0.75) * 4) : 1);
             return cross(radius, v * Math.PI * 2, length * (0.5 - u));
         }), nacelle, group);
@@ -544,6 +545,13 @@ export function buildAircraft(input) {
         mesh("Intake", surface(1, 40, (u, v) => cross(r * 0.745 * u, v * Math.PI * 2, length / 2 - r * 0.15)), dark, group);
         const nozzle = mesh("Exhaust", new THREE.CircleGeometry(r * 0.56, 24), dark, group); nozzle.position.z = -length / 2; nozzle.rotation.y = Math.PI;
         if (p.engineType === "jet") {
+            thermalPartition(nacelleMesh, point => point.z < -length * .25, "hot_outlet");
+            if (p.bodyStyle !== "jet") {
+                // The visible exhaust disk stays in the normal model; the separate
+                // fan/core surfaces replace it only during the thermal draw.
+                nozzle.userData.thermalHidden = true;
+                thermalAnchors.push(addSeparateFlowThermalOutlet(group, {position: nozzle.position.toArray(), nacelleDiameter: p.engineDiameter, engineIndex: index}));
+            } else thermalAnchors.push(addThermalOutlet(group, {position: nozzle.position.toArray(), radius: r * .56, engineIndex: index, cavity: nozzle}));
             ellipsoid("Fan hub", 0, 0, length / 2, r * 0.22, r * 0.22, r * 0.25, metal, group);
             for (let i = 0; i < 24; i++) {
                 const blade = mesh("Fan blade", new THREE.BoxGeometry(r * 0.035, r * 0.52, r * 0.025), metal, group);
@@ -552,6 +560,11 @@ export function buildAircraft(input) {
                 blade.rotation.z = -a + 0.24;
             }
         } else {
+            // The artistic rear disc is not a combustion outlet on a propeller engine.
+            nozzle.userData.thermalHidden = true;
+            thermalAnchors.push(addThermalOutlet(group, {position: [r * .9, -r * .55, -length * .25], radius: r * .12,
+                axis: [.7, -.7, 0], engineIndex: index, zone: p.engineType === "prop" ? "piston_stack" : "jet_nozzle",
+                cavityZone: p.engineType === "prop" ? "piston_stack" : "jet_cavity"}));
             const prop = new THREE.Group(); prop.name = "Propeller"; prop.position.z = length / 2 + r * 0.22; group.add(prop); propellers.push(prop);
             ellipsoid("Spinner", 0, 0, 0, r * 0.43, r * 0.43, r * 0.7, paint, prop);
             for (let i = 0; i < p.propBlades; i++) {
@@ -575,6 +588,9 @@ export function buildAircraft(input) {
             ellipsoid("Nozzle shoulder",side*r*0.25,0,0,r,r,r*1.2,paint,group);
             const nozzle=mesh("Vectoring exhaust",new THREE.CylinderGeometry(r*0.9,r,r*1.5,20,1,true),metal,group);nozzle.rotation.x=Math.PI/2;nozzle.position.set(side*r*0.45,0,-r*0.65);
             const opening=mesh("Vectoring exhaust opening",new THREE.CircleGeometry(r*0.99,20),dark,group);opening.rotation.y=Math.PI;opening.position.set(side*r*0.45,0,-r*1.39);
+            // Front vectoring ports carry bypass flow; only the rear pair is hot.
+            group.traverse(part => {if (part.isMesh) {part.userData.thermalEngineIndex = side > 0 ? 0 : 1;
+                if (i === 0) part.userData.thermal = {zone: "painted_skin"};}});
         }
     } else if (p.engineType !== "none" && p.engineMount === "integrated") {
         for (let i = 0; i < p.engineCount; i++) {
@@ -592,6 +608,8 @@ export function buildAircraft(input) {
             }), paint);
             const outlet = mesh(`Exhaust opening ${i + 1}`, new THREE.CircleGeometry(r * 0.84, 24), dark);
             outlet.position.set(x, -H * 0.1, -L / 2 + 0.005); outlet.rotation.y = Math.PI;
+            outlet.userData.thermalEngineIndex = i;
+            thermalAnchors.push({parent: root, position: outlet.position.toArray(), axis: [0, 0, -1], radius: r * .84, engineIndex: i, cavity: outlet});
             mesh(`Exhaust rim ${i + 1}`, surface(1, 32, (u, v) =>
                 ring(v * Math.PI * 2, r * mix(0.85, 0.83, u), -L / 2 + u * 0.006), true), metal);
         }
@@ -607,7 +625,7 @@ export function buildAircraft(input) {
             let x, y, z, attach;
             if (["wing", "paired"].includes(p.engineMount)) {
                 x = p.engineMount === "paired" ? p.span / 2 * Math.min(0.85, p.engineSpacing / 100 + Math.floor(pair / 2) * 0.31) + (pair % 2 - 0.5) * p.engineDiameter * 1.04 :
-                    p.span / 2 * Math.min(0.9, p.engineSpacing / 100 + pair * 0.25);
+                    p.span / 2 * Math.min(0.9, (p.engineSpacing + pair * p.engineStep) / 100);
                 const chord = p.rootChord * chordFactor(x / (p.span / 2), p.taper, p.wingPlanform === "cranked");
                 attach = [side * x, wingY + Math.tan(p.dihedral * rad) * x, wingZ - Math.tan(p.sweep * rad) * x + (p.rootChord - chord) / 4];
                 y = attach[1] - p.engineDiameter * p.engineDrop;
@@ -678,6 +696,7 @@ export function buildAircraft(input) {
             nac.position.set(side * p.span / 2, wingY + Math.tan(p.dihedral * rad) * p.span / 2, wingZ);
             nac.rotation.x = p.rotorTilt * rad; root.add(nac);
             ellipsoid("Rotor nacelle", 0, 0, 0, p.engineDiameter / 2, p.engineLength / 2, p.engineDiameter / 2, nacelle, nac);
+            thermalAnchors.push(addThermalOutlet(nac, {position: [0, -p.engineLength / 2, 0], axis: [0, -1, 0], radius: p.engineDiameter * .16, engineIndex: side > 0 ? 0 : 1}));
             rotor("Tilt rotor", 0, p.engineLength / 2, 0, p.rotorDiameter, p.rotorBlades, side, nac);
         } else {
             const locations = p.rotorLayout === "tandem" ? [[L * 0.31, 0], [-L * 0.33, p.rotorHeight * 0.65]] : [[rotorZ, 0]];
@@ -705,6 +724,16 @@ export function buildAircraft(input) {
                     rod("Ducted tail support",[0,tailY,tailZ],[0,tailY,z],R*0.13,paint);
                 }
             }
+        }
+    }
+    if (p.rotorLayout !== "none" && p.rotorLayout !== "tiltrotor") {
+        const fuselage = root.getObjectByName("Fuselage");
+        const sections = thermalPartition(fuselage, point => point.y > H * .55 && point.z < L * .10 && point.z > -L * .10, "helicopter_engine_bay");
+        if (sections.length) thermalPartition(sections[1], point => point.y > H * .12 && point.z < -L * .10 && point.z > -L * .28, "exhaust_heated_boom");
+        if (!thermalAnchors.length) for (let engineIndex = 0; engineIndex < p.engineCount; engineIndex++) {
+            const side = p.engineCount === 1 ? 1 : engineIndex % 2 ? -1 : 1;
+            thermalAnchors.push(addThermalOutlet(root, {position: [side * R * .85, H * .6, -L * .10 - Math.floor(engineIndex / 2) * p.engineDiameter],
+                axis: [side * .6, .2, -1], radius: Math.min(p.engineDiameter * .14, R * .2), engineIndex}));
         }
     }
     if (p.radarStyle !== "none") {
@@ -743,13 +772,13 @@ export function buildAircraft(input) {
     }
 
     root.updateMatrixWorld(true);
-    const bounds = new THREE.Box3().setFromObject(root);
+    const bounds = visibleVehicleBounds(root);
     const size = bounds.getSize(new THREE.Vector3());
     const wingBounds = new THREE.Box3();
     root.children.filter(object => /^(Wing |Winglet |Blended winglet |Lower winglet |Raked tip )/.test(object.name)).forEach(object => wingBounds.expandByObject(object));
     const wingspan = wingBounds.getSize(new THREE.Vector3()).x;
     let triangles = 0;
-    root.traverse(object => { if (object.isMesh) triangles += (object.geometry.index?.count ?? object.geometry.attributes.position.count) / 3; });
+    root.traverse(object => { if (object.isMesh && !object.userData.thermalOnly) triangles += (object.geometry.index?.count ?? object.geometry.attributes.position.count) / 3; });
     const area = !p.wings ? 0 : p.wingPlanform === "flying" ? p.span * L * 0.48 : p.span * p.rootChord / 2 * (p.wingPlanform === "cranked" ? 1.65 * 0.34 + (0.65 + p.taper) * 0.66 : 1 + p.taper);
     const wingLight = side => {
         const lens = root.getObjectByName(`Navigation lens ${side}`);
@@ -769,7 +798,7 @@ export function buildAircraft(input) {
         cabinLeft: sidePoint(0.24,H*0.1,1,R*0.025),cabinRight: sidePoint(0.24,H*0.1,-1,R*0.025),
         tail: bodyPoint(0.993,Math.PI/2,R*0.01),upper:bodyPoint(0.44,Math.PI/2,R*0.025),lower:bodyPoint(0.50,-Math.PI/2,R*0.025),
         nose:bodyPoint(0.08,-Math.PI/2,R*0.025),gear:[0,-H-p.gearHeight*0.65,L*0.32],leftLanding:landing(1),rightLanding:landing(-1)};
-    return {root, propellers, bounds, lightAnchors, brandSurface:(u,level,side)=>sidePoint(THREE.MathUtils.clamp(u,0.02,0.98),H*level,side,R*0.012), stats: {triangles, size, wingspan, area, aspectRatio: area ? p.span ** 2 / area : 0}};
+    return {root, propellers, bounds, thermalAnchors, lightAnchors, brandSurface:(u,level,side)=>sidePoint(THREE.MathUtils.clamp(u,0.02,0.98),H*level,side,R*0.012), stats: {triangles, size, wingspan, area, aspectRatio: area ? p.span ** 2 / area : 0}};
 }
 
 export function disposeAircraft(root) {

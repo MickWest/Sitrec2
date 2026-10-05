@@ -75,6 +75,7 @@ export const PARAMETER_GROUPS = [
         number("engineDiameter", "Nacelle diameter · m", 0.2, 4.5, 0.01, 2.1),
         number("engineLength", "Nacelle length · m", 0.3, 9, 0.01, 3.6),
         number("engineSpacing", "Position · % half-span", 16, 75, 0.1, 34),
+        number("engineStep", "Next engine out · % half-span", 10, 50, 0.1, 25),
         number("engineOffset", "Forward offset · m", -4, 6, 0.01, 1),
         number("engineDrop", "Below wing · diameters", 0.1, 1.2, 0.01, 0.65),
         number("engineFlatness", "Flatten underside", 0, 0.35, 0.01, 0),

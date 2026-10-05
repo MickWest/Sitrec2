@@ -179,8 +179,11 @@ export const AIRLINER_PRESETS = [
     model("a330-900", "A330-900neo", "Airbus · A330 / A340", a330neo, 63.69, 64.0, airbus("a330/a330-900"), "Long neo fuselage, larger engines, mask and curved tips."),
     model("a340-300", "A340-300 · four engines", "Airbus · A330 / A340", a330, 63.69, 60.3, airbusPlanning, "Four smaller CFM56-style nacelles on the original wing.",
         {engineCount: 4, engineDiameter: 2.1, engineLength: 4.4, engineSpacing: 27, finHeight: 11.2}),
+    // Engine centers at ±9.37 m and ±19.27 m from the centerline, as given in the published
+    // aircraft planning document (inner engine-center span 18.74 m, outer 38.54 m).
+    // engineSpacing and engineStep place the nacelles there.
     model("a340-600", "A340-600 · stretched four-engine", "Airbus · A330 / A340", a330, 75.36, 63.45, airbusPlanning, "Long fuselage, larger wing and four Trent-style nacelles.",
-        {rootChord: 13.2, engineCount: 4, engineDiameter: 2.95, engineLength: 5.5, engineSpacing: 28, finHeight: 12.1, finChord: 11, tailSpan: 22.6}),
+        {rootChord: 13.2, engineCount: 4, engineDiameter: 2.95, engineLength: 5.5, engineSpacing: 30.5, engineStep: 32.2, finHeight: 12.1, finChord: 11, tailSpan: 22.6}),
     model("a350-900", "A350-900 · cockpit mask", "Airbus · A350 / A380", a350, 66.8, 64.75, airbus("a350/a350-900"), "Dark cockpit surround, curved tips and large Trent-style nacelles."),
     model("a350-1000", "A350-1000 · cockpit mask", "Airbus · A350 / A380", a350, 73.78, 64.75, airbus("a350/a350-1000"), "Stretched fuselage and larger nacelles.", {diameter: 5.94, engineDiameter: 4.05, engineLength: 6.4}),
     model("a380", "A380-800 · full double deck", "Airbus · A350 / A380", a380, 72.73, 79.75, airbusPlanning, "Full-length upper deck, four engines and tip fences."),

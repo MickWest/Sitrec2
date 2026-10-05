@@ -44,6 +44,7 @@ import {isCustom1, isFR24CSV, parseCustom1CSV, parseCustomFLLCSV, parseFR24CSV}
     from "../ParseCustom1CSV";
 import {isFeaturesCSV} from "../ParseUtils";
 import {stripDuplicateTimes} from "../ParseUtils";
+import {isCameraStateCSV} from "../CameraStateTable";
 import {Sit} from "../Globals";
 import {showError} from "../showError";
 
@@ -57,8 +58,8 @@ import {showError} from "../showError";
  * that are surveying files rather than importing one — see below.
  *
  * Returns "Airdata", "MISB_FULL", "MISB1", "STANAG_CSV", "BOT_CSV",
- * "CUSTOM1", "CUSTOM_FLL", "FR24CSV", "AZIMUTH", "ELEVATION", "HEADING",
- * "FOV", "FEATURES", or "Unknown".
+ * "CUSTOM1", "CUSTOM_FLL", "FR24CSV", "CAMERA_STATE", "AZIMUTH", "ELEVATION",
+ * "HEADING", "FOV", "FEATURES", or "Unknown".
  */
 export function detectCSVType(csvRows, {reportUnknown = true} = {}) {
 
@@ -100,6 +101,15 @@ export function detectCSVType(csvRows, {reportUnknown = true} = {}) {
 
     if (isFR24CSV(csvRows)) {
         return "FR24CSV";
+    }
+
+    // Per-frame camera state (Frame, Mode, FL; see CameraStateTable.js). After
+    // the track formats, so a track file that also carries those columns stays
+    // a track, and before the Az/El/FOV checks, so a "Frame,Zoom,Mode,FL" file
+    // is not read as a FOV column. A camera state file that also has Az, El,
+    // Heading or FOV columns feeds the angle import too (handleParsedFile).
+    if (isCameraStateCSV(csvRows)) {
+        return "CAMERA_STATE";
     }
 
     if ((csvRows[0][0].toLowerCase() === "frame" || csvRows[0][0].toLowerCase() === "time")

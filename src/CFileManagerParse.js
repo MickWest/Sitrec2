@@ -89,6 +89,19 @@ import {importSplineJSON, isSplineJSON} from "./SplineInterchange";
 import {importFOVJSON, isFOVJSON} from "./FOVInterchange";
 import {isCloudFieldJSON} from "./cloudField/CloudFieldFormat";
 import {importCloudField} from "./cloudField/CloudFieldImport";
+import {importCameraStateCSV} from "./nodes/CNodeCameraState";
+
+// The header row of each camera state CSV, keyed by its parsed rows. parseAsset
+// removes that header exactly as it does for an unrecognized CSV, because a
+// built-in sitch reads the same file by row index (wescamFOV in
+// SituationSetup.js) and its rows must not change. handleParsedFile gets the
+// header back from here; a WeakMap leaves the rows array itself untouched.
+const cameraStateHeaders = new WeakMap();
+
+// Columns of the angle import in handleParsedFile. A camera state CSV that has
+// one of them also feeds that import; its Zoom column is the digital zoom, so
+// it is never read as a field of view.
+const ANGLE_COLUMNS = ["Az", "El", "Heading", "FOV"];
 
 /**
  * Detects the type of a TXT file based on content patterns.
@@ -538,6 +551,25 @@ export const parseMethods = {
             return true;
         }
 
+        if (fileManagerEntry.dataType === "CAMERA_STATE") {
+            // Per-frame mode, focal length, digital zoom and polarity. The rows
+            // now live in the cameraState node, which saves them in its own
+            // mod, so a file with only camera data is not uploaded — as for the
+            // fov files above.
+            const header = cameraStateHeaders.get(parsedFile);
+            const rows = header ? [header, ...parsedFile] : parsedFile;
+            if (!ANGLE_COLUMNS.some(name => findColumn(rows, name, true) !== -1)) {
+                fileManagerEntry.skipSerialization = true;
+                return importCameraStateCSV(filename, rows) !== null;
+            }
+            // The file also has angle or FOV columns. The csv branch below imports
+            // them as from an angle file, so the file stays in the sitch for them.
+            // A reload imports only those: the node's mod restores the rows and
+            // the Drive Look View setting, which a new import would replace.
+            if (!Globals.deserializing) importCameraStateCSV(filename, rows);
+            parsedFile = rows;
+        }
+
         if (fileManagerEntry.dataType === "cloudField") {
             // Unlike spline/fov files, the file itself is kept in loadedFiles: the
             // spheres live only in the file, and the node serializes just its settings.
@@ -622,10 +654,11 @@ export const parseMethods = {
         }
 
         if (fileExt === "csv") {
-            if (fileManagerEntry.dataType === "AZIMUTH" || fileManagerEntry.dataType === "ELEVATION" || fileManagerEntry.dataType === "HEADING" || fileManagerEntry.dataType === "FOV" || fileManagerEntry.dataType === "Unknown" || fileManagerEntry.dataType === undefined) {
+            if (fileManagerEntry.dataType === "AZIMUTH" || fileManagerEntry.dataType === "ELEVATION" || fileManagerEntry.dataType === "HEADING" || fileManagerEntry.dataType === "FOV" || fileManagerEntry.dataType === "CAMERA_STATE" || fileManagerEntry.dataType === "Unknown" || fileManagerEntry.dataType === undefined) {
                 const azCol = findColumn(parsedFile, "Az", true);
                 const elCol = findColumn(parsedFile, "El", true);
-                const zoomCol = findColumn(parsedFile, "Zoom", true);
+                // In camera data, Zoom is the digital zoom (see ANGLE_COLUMNS).
+                const zoomCol = fileManagerEntry.dataType === "CAMERA_STATE" ? -1 : findColumn(parsedFile, "Zoom", true);
                 const fovCol = findColumn(parsedFile, "FOV", true);
                 const headingCol = findColumn(parsedFile, "Heading", true);
 
@@ -1507,8 +1540,10 @@ export const parseMethods = {
 
                     parsed = csv.toArrays(text);
                     dataType = detectCSVType(parsed);
-                    if (dataType === "Unknown") {
-                        parsed.shift();
+                    if (dataType === "Unknown" || dataType === "CAMERA_STATE") {
+                        // Both lose the header row here; see cameraStateHeaders.
+                        const header = parsed.shift();
+                        if (dataType === "CAMERA_STATE") cameraStateHeaders.set(parsed, header);
                     } else {
                         // ONE dispatch for every track-shaped CSV, shared with
                         // BOTBench's bulk ingest — see TrackCSV.js. Types that

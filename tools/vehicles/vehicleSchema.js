@@ -1,4 +1,5 @@
 import {PARAMETER_GROUPS as AIRCRAFT_GROUPS, normalizeParameters as normalizeAircraft, readParameterFile as readAircraftFile} from "./aircraftSchema.js";
+import {VEHICLE_THERMAL_GROUP, vehicleThermalDefaults} from "./thermalTags.js";
 import {LIGHT_GROUP} from "./vehicleLights.js";
 import {BRAND_GROUP} from "./vehicleLivery.js";
 import {DRONE_GROUPS, BALLOON_GROUPS, isMultirotor, isBalloon} from "./aerialParameters.js";
@@ -43,12 +44,12 @@ export function parameterGroups(p) {
     const groups=isMultirotor(p)?DRONE_GROUPS:isBalloon(p)?BALLOON_GROUPS:isRoad(p)?ROAD_GROUPS:AIRCRAFT_GROUPS;
     const lightFields=isBalloon(p)?["lightsEnabled","lightGain"]:isMultirotor(p)?["lightsEnabled","positionLights","landingLights","strobeLights","beaconLights","lightGain","flashPeriod","flashDuration"]:null;
     const lights=lightFields?{...LIGHT_GROUP,note:isBalloon(p)?"Warm light follows the flame. Envelope glow is set in Basket, tether & glow.":"Editable status LEDs and auxiliary lights. Colors are generic visual defaults, not flight-status telemetry.",fields:LIGHT_GROUP.fields.filter(f=>lightFields.includes(f.key)).map(f=>({...f,label:({positionLights:"Motor status LEDs",landingLights:"Downward auxiliary light",strobeLights:"White strobe",beaconLights:"Red beacon"})[f.key]??f.label}))}:LIGHT_GROUP;
-    return [...groups,BRAND_GROUP,lights];
+    return [...groups,BRAND_GROUP,lights,VEHICLE_THERMAL_GROUP];
 }
 function lightParameters(input) {
     const result={};
-    for(const f of [...LIGHT_GROUP.fields,...BRAND_GROUP.fields]) {
-        const v=input[f.key];
+    for(const f of [...LIGHT_GROUP.fields,...BRAND_GROUP.fields,...VEHICLE_THERMAL_GROUP.fields]) {
+        const v=input[f.key] ?? vehicleThermalDefaults(input)[f.key];
         if(f.type==="number")result[f.key]=Number.isFinite(v)?Math.max(f.min,Math.min(f.max,v)):f.value;
         else if(f.type==="select")result[f.key]=Object.hasOwn(f.options,v)?v:f.value;
         else if(f.type==="color")result[f.key]=typeof v==="string"&&/^#[0-9a-f]{6}$/i.test(v)?v:f.value;
