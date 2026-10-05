@@ -16,7 +16,7 @@ import {OpticsScheduler, coarseOpticalKernels} from "./sensorMath.js";
 import {RangeTableCache} from "./atmosphere.js";
 import * as shaders from "./shaders.js";
 import {createStatisticalSea, createSeaSkyTable, seaRayAzimuth, cloudRadianceTable, createCloudRadianceDomain,
-    sortCloudSheets, createThermalDepthTable} from "./atmosphere.js";
+    sortCloudSheets, createThermalDepthTable, EARTH_RADIUS_M, RADIUS_REUSE_M} from "./atmosphere.js";
 
 const COVERAGE_SAMPLES = 128; // samples per detector-pixel side for small meshes
 const COVERAGE_TILE = 4; // native pixels per tile side; bounds texture allocation
@@ -1514,11 +1514,16 @@ export class ThermalCloudPass {
         const sortMs = performance.now() - sortStart;
         const p = this.pipeline, band = {minUm: settings.bandMinUm, maxUm: settings.bandMaxUm};
         const domainKey = JSON.stringify([p.profileKey, band]);
+        // Domains are built on the ray geometry's sphere, so refracted samples interpolate validated cells instead
+        // of integrating an exact path each; a moving camera keeps its radius within RADIUS_REUSE_M for long spans.
+        const earthRadiusM = p.rayGeometry?.earthRadiusM ?? EARTH_RADIUS_M;
         if (domainKey !== this.domainKey || this.domainAtmosphere !== p.atmosphere) {
             for (const entry of this.cache.values()) entry.texture.dispose(); this.cache.clear();
-            this.domains = [false, true].map(isothermal => createCloudRadianceDomain(p.atmosphere, band, {isothermal}));
+            this.domains = null;
             this.domainKey = domainKey; this.domainAtmosphere = p.atmosphere;
         }
+        if (!this.domains || Math.abs(earthRadiusM - this.domains[0].earthRadiusM) > RADIUS_REUSE_M)
+            this.domains = [false, true].map(isothermal => createCloudRadianceDomain(p.atmosphere, band, {isothermal, earthRadiusM}));
         const beforeEvaluations = this.domains.reduce((n, d) => n + d.evaluations, 0);
         const used = new Set(); let evaluations = 0, maxErrorK = 0, uploadedBytes = 0, visible = 0;
         for (const sheet of this.sheets) {

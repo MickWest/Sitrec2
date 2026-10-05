@@ -9,7 +9,8 @@ import {windSlopeCovariance, waveSpectrumMoments, roughSeaFacets, smithEscape, c
 import {defaultSettings, normalizeSettings, THERMAL_PARAMETERS} from "../tools/thermal/thermalSchema.js";
 import {cloudScreenBounds, ThermalCloudPass} from "../tools/thermal/ThermalPipeline.js";
 import {cloudFragment} from "../tools/thermal/shaders.js";
-import {createCloudRadianceDomain, cloudSampleGeometry, thermalSeaDistance, EARTH_RADIUS_M, CHANNEL_WEIGHTS, seaReflectance} from "../tools/thermal/atmosphere.js";
+import {createCloudRadianceDomain, cloudSampleGeometry, thermalSeaDistance, EARTH_RADIUS_M, CHANNEL_WEIGHTS, seaReflectance,
+    RADIUS_REUSE_M} from "../tools/thermal/atmosphere.js";
 import {ThermalPipeline} from "../tools/thermal/ThermalPipeline.js";
 import {thermalCloudSheets, createThermalSceneAdapter} from "../src/rendering/ThermalSceneAdapters";
 import {registerTransparentCamera} from "../src/rendering/CloudSort";
@@ -364,6 +365,24 @@ test('moving sheets reuse a validated profile/band domain instead of freezing a 
         close(kelvin(domain.sample(moved)), kelvin(opaqueCloudRadiance(moved, atmosphere, {band}).photonRadiance), .001);
     }
     expect(domain.evaluations).toBe(before);
+});
+
+test('refracted samples reuse a domain built on their sphere; outside the radius span they are exact', () => {
+    // Estimated fixture: a local radius 7.3 km below the mean sphere and a cirrus point 176 km away.
+    const atmosphere = createAtmosphere(), radius = EARTH_RADIUS_M - 7300;
+    const domain = createCloudRadianceDomain(atmosphere, band, {earthRadiusM: radius});
+    const ray = {sensorAltitudeM: 1382, slantRangeM: 176000, elevationRad: .0376, visibilityResolved: true, earthRadiusM: radius};
+    domain.sample(ray); const before = domain.evaluations;
+    for (let i = 0; i < 10; i++) {
+        // A moving camera: its local radius drifts within the reuse span.
+        const moved = {...ray, sensorAltitudeM: ray.sensorAltitudeM + .1 * i, slantRangeM: ray.slantRangeM + i,
+            elevationRad: ray.elevationRad + i * 1e-6, earthRadiusM: radius + 9 * i};
+        close(kelvin(domain.sample(moved)), kelvin(opaqueCloudRadiance(moved, atmosphere, {band}).photonRadiance), .001);
+    }
+    expect(domain.evaluations).toBe(before);
+    const far = {...ray, earthRadiusM: radius + 2 * RADIUS_REUSE_M};
+    expect(domain.sample(far)).toBe(opaqueCloudRadiance(far, atmosphere, {band}).photonRadiance);
+    expect(domain.evaluations).toBe(before + 1);
 });
 
 test('thermal horizon and cloud projection share refraction independently of ocean mesh coverage', () => {

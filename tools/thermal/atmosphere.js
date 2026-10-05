@@ -29,10 +29,10 @@ export function thermalSeaDistance(sensorAltitudeM, sineElevation, radiusM = EAR
 
 // Calculated lower elevation of a visible endpoint at range r. Beyond the
 // tangent range the horizon, rather than the far sphere intersection, limits it.
-export function cloudMinimumElevation(altitudeM, rangeM) {
-    const radial = EARTH_RADIUS_M + altitudeM;
-    const tangent = Math.sqrt(altitudeM * (2 * EARTH_RADIUS_M + altitudeM));
-    return rangeM >= tangent ? -Math.acos(EARTH_RADIUS_M / radial) :
+export function cloudMinimumElevation(altitudeM, rangeM, radiusM = EARTH_RADIUS_M) {
+    const radial = radiusM + altitudeM;
+    const tangent = Math.sqrt(altitudeM * (2 * radiusM + altitudeM));
+    return rangeM >= tangent ? -Math.acos(radiusM / radial) :
         Math.asin(clamp(-(tangent * tangent + rangeM * rangeM) / (2 * radial * Math.max(rangeM, Number.MIN_VALUE)), -1, 1));
 }
 
@@ -790,17 +790,19 @@ export function brightnessErrorBound(absoluteError, minimumRadiance, band, inter
  * a factor-two margin. Failed cells split along their largest measured curvature.
  * The elevation coordinate is clearance above the first-hit visibility limit:
  * every atmospheric integration is a physical, unobstructed path.
+ * earthRadiusM is the sphere the domain is built on; it serves samples within
+ * RADIUS_REUSE_M of it, as the range and sky domains do.
  */
-export function createCloudRadianceDomain(atmosphere, band, {isothermal = false, toleranceK = .001} = {}) {
+export function createCloudRadianceDomain(atmosphere, band, {isothermal = false, toleranceK = .001, earthRadiusM = EARTH_RADIUS_M} = {}) {
     const widths = isothermal ? [100, 1000, .02, 8] : [100, 1000, .02];
     const roots = new Map(), exact = new Map();
-    const domain = {evaluations: 0, maxErrorK: 0, toleranceK, cells: 0};
+    const domain = {evaluations: 0, maxErrorK: 0, toleranceK, cells: 0, earthRadiusM};
     const at = coordinates => {
         const key = coordinates.join(",");
         if (exact.has(key)) return exact.get(key);
         const [sensorAltitudeM, slantRangeM, clearance, temperatureK] = coordinates;
-        const elevationRad = Math.min(Math.PI / 2, cloudMinimumElevation(sensorAltitudeM, slantRangeM) + clearance);
-        const value = opaqueCloudRadiance({sensorAltitudeM, slantRangeM, elevationRad}, atmosphere,
+        const elevationRad = Math.min(Math.PI / 2, cloudMinimumElevation(sensorAltitudeM, slantRangeM, earthRadiusM) + clearance);
+        const value = opaqueCloudRadiance({sensorAltitudeM, slantRangeM, elevationRad, earthRadiusM}, atmosphere,
             {band, temperatureK: isothermal ? temperatureK : undefined}).photonRadiance;
         domain.evaluations++; exact.set(key, value);
         return value;
@@ -844,15 +846,16 @@ export function createCloudRadianceDomain(atmosphere, band, {isothermal = false,
         else domain.maxErrorK = Math.max(domain.maxErrorK, cell.errorK);
         return cell;
     }
-    domain.sample = ({sensorAltitudeM, slantRangeM, elevationRad, temperatureK, visibilityResolved, earthRadiusM = EARTH_RADIUS_M}) => {
-        const clearance = elevationRad - cloudMinimumElevation(sensorAltitudeM, slantRangeM);
+    domain.sample = ({sensorAltitudeM, slantRangeM, elevationRad, temperatureK, visibilityResolved, earthRadiusM: sampleRadiusM = EARTH_RADIUS_M}) => {
+        const clearance = elevationRad - cloudMinimumElevation(sensorAltitudeM, slantRangeM, sampleRadiusM);
         // A lifted endpoint may be visible beyond the geometric tangent. Its
         // straight transfer chord is outside the unobstructed cache domain;
         // cache exact evaluations rather than extrapolating a validated cell.
-        if (visibilityResolved && (clearance < 0 || earthRadiusM !== EARTH_RADIUS_M)) {
-            const key = JSON.stringify([sensorAltitudeM, slantRangeM, elevationRad, temperatureK, earthRadiusM]);
+        // A sample on a sphere outside this domain's radius reuse span is exact too.
+        if (visibilityResolved && (clearance < 0 || Math.abs(sampleRadiusM - earthRadiusM) > RADIUS_REUSE_M)) {
+            const key = JSON.stringify([sensorAltitudeM, slantRangeM, elevationRad, temperatureK, sampleRadiusM]);
             if (!exact.has(key)) {
-                exact.set(key, opaqueCloudRadiance({sensorAltitudeM, slantRangeM, elevationRad, earthRadiusM, visibilityResolved}, atmosphere,
+                exact.set(key, opaqueCloudRadiance({sensorAltitudeM, slantRangeM, elevationRad, earthRadiusM: sampleRadiusM, visibilityResolved}, atmosphere,
                     {band, temperatureK: isothermal ? temperatureK : undefined}).photonRadiance);
                 domain.evaluations++;
             }
@@ -861,7 +864,10 @@ export function createCloudRadianceDomain(atmosphere, band, {isothermal = false,
             return value;
         }
         if (clearance < -1e-10) throw new RangeError("Cloud sample is behind the foreground sea");
-        const point = [sensorAltitudeM, slantRangeM, Math.max(0, clearance)];
+        // Within the reuse span the domain's sphere stands in for the sample's (see RADIUS_REUSE_M).
+        const domainClearance = sampleRadiusM === earthRadiusM ? clearance
+            : elevationRad - cloudMinimumElevation(sensorAltitudeM, slantRangeM, earthRadiusM);
+        const point = [sensorAltitudeM, slantRangeM, Math.max(0, domainClearance)];
         if (isothermal) point.push(temperatureK);
         const lo = point.map((v, d) => Math.floor(v / widths[d]) * widths[d]);
         const key = lo.join(",");
