@@ -9,6 +9,250 @@ lockstep with docs/WhatsNew.md.
 
 ---
 
+## Version 2.175.0 (2026-10-04)
+
+### New Features
+- **Physical mid-wave infrared view** (`f1635f2b`; with `f9c27e62`, `dcad8c6d`, `170d949d`, `3c00c46c`, `dbf8e9fb`, `65023416`, `82408d7b`, `1db3f3a8`, `bc93016e`, `8616601a`; new `tools/thermal/`, `src/rendering/ThermalLoader.js`, `ThermalViewAdapter.js`, `ThermalSceneAdapters.js`, `ThermalWorkerFactory.js`; `src/nodes/CNodeView3D.js`, `CNodeView.js`, `CNodeCamera.js`, `src/CustomManagerSetup.js`).
+  - **Menu.** In a custom sitch (`Sit.isCustom`) that has a look view, `setup()` calls `setupThermalMenu(lookView, guiMenus.effects)`. This adds the folder **Effects → Physical thermal**.
+    - Its **Render mode** is **Visible** or **Physical MWIR thermal**. The choice is `CNodeView3D.renderMode` (`"visible"` or `"physicalThermal"`), and the view saves it.
+    - The other controls come from `THERMAL_PARAMETERS` in `tools/thermal/thermalSchema.js`. They are in the groups Environment, Optics, Detector, Processing and Display.
+    - Each value shows its status (**Measured**, **Calculated**, **Estimated** or **Published**) and its source.
+    - The camera node saves the sensor settings (`CNodeCamera.thermalSensor`). The sitch saves the scene settings (`Sit.thermalEnvironment`).
+  - **Loading.** The thermal code is a separate lazy chunk (`physical-thermal`).
+    - `ensureThermalView` imports `ThermalViewAdapter.js` only when you select the mode or open the folder. A sitch in visible mode loads none of it.
+    - The view shows "Physical thermal unavailable for this projection or view." in these cases: a view other than `lookView`, an orthographic camera, fisheye, flat Earth, a panorama, or XR.
+  - **Image chain.** `ThermalPipeline` runs on the GPU. In order:
+    - the in-band photon radiance of each surface;
+    - atmospheric transmission and path emission along each line of sight, from a standard atmosphere or from a sounding that the sitch supplies (`Sit.thermalEnvironment.sounding`);
+    - diffraction and scatter;
+    - turbulence along the camera-to-target path (the default, which needs a target track) or from a manual coherence diameter;
+    - native detector sampling, exposure, shot and read noise, and a 14-bit ADC;
+    - gain (**Manual**, **Automatic**, **Plateau equalization**, **Fixed radiometric**), a temporal noise filter, local enhancement, response gamma, the display curve and polarity;
+    - the 8-bit display.
+  - **Detector and readout.**
+    - The detector grid is native and does not change with the view size. Digital zoom is a center crop after processing.
+    - Optical sampling is calculated from the Nyquist limit at the short edge of the band.
+    - A readout in the lower left of the view gives the native size, the field of view, the digital zoom, r0 and the state of each vehicle.
+  - **Sensor presets.** `tools/thermal/sensorPresets.js` has three presets.
+    - The default is **MX-15 class (stepped optics)**, with lens steps of 27, 135, 675 and 1012 mm, and a free optical field. Its residual blur, gain response, temporal noise filter and display curve come from measurements of real airborne infrared video.
+    - `f9c27e62` adds **Display curve**: **Linear**, or **Measured preset curve**, which is a fixed lookup table after the count window and gamma.
+    - `f9c27e62` also splits the residual blur into **Horizontal residual blur** and **Vertical residual blur** (`systemBlurHorizontalRmsUrad`, `systemBlurVerticalRmsUrad`). The MX-15 class 675 mm and 1012 mm steps use 0 µrad horizontal and 40 µrad vertical. A save that has one `systemBlurRmsUrad` value uses it on both axes.
+    - **White-hot output gain** and **White-hot output offset** are optional. Their defaults keep white hot the exact inverse of black hot.
+  - **Refraction and altitude.**
+    - With terrestrial refraction on, the thermal radiance pass applies the same vertex lift as the visible render. Each object is therefore at the same place in both renders.
+    - `1db3f3a8` measures camera, object and cloud altitudes above mean sea level (ellipsoid height minus the EGM96 geoid height), not above the WGS84 ellipsoid. Before, a camera near the sea could be below the thermal sea, and the view stopped with "Turbulence path crosses the surface".
+  - **Live speed.** These commits change only the live view. Offline and analysis renders still prepare all data before they draw, and they give the same results.
+    - `dcad8c6d` keeps the optics kernels and the sky table while their error stays inside a bound. It reads the gain statistics one frame late.
+    - `170d949d` builds the optics kernels in a worker (`tools/thermal/opticsWorker.js`, `createOpticsWorker`). The view shows a coarse preview with a label until the first full kernel is ready. The atmosphere range table is built in small steps between frames.
+    - `3c00c46c` shows the same frame again when a paused view must draw again and nothing that the frame depends on has changed. Scene hooks declare this with `thermalReuseSafe`.
+    - `3c00c46c` also keeps one image for each video frame during playback, so the noise does not flicker. It keeps the range and sky tables valid while the camera altitude changes, and it refines at most 64 small-target tiles in each live frame.
+    - `dbf8e9fb` starts a live frame only after the GPU has finished the previous one. This uses `Globals.inMainViewRender`, which `renderViewInMainLoop` in `src/indexRender.js` sets. Exports and screenshots still get each frame that they request.
+    - `dbf8e9fb` also does the near optical convolution in 2 × 2 tiles that share one smaller FFT.
+    - `65023416` uses radix-4 FFT passes.
+    - `82408d7b` calculates automatic and plateau gain on the GPU from the counts of each frame, so no pixel readback is left.
+    - `8616601a` builds the cloud radiance domain on the same Earth radius as the ray geometry. With refraction on, a moving camera no longer rebuilds every cloud table on each frame.
+    - `bc93016e` gives the gain pass's point geometry a fixed bounding sphere. This stops a console error about a NaN bounding sphere.
+    - In development measurements, the median live frame went from about one second to about 80 ms (`dcad8c6d`). Playback later reached about 21 new thermal frames per second (`82408d7b`).
+  - **Tests.**
+    - `runThermalSelfTest()` in `tools/thermal/selfTest.js` compares each GPU stage, the clouds and the sea with CPU references.
+    - Jest: `tests/thermal*.test.js`, `tests/ThermalViewIntegration.test.js`, `tests/ThermalPipelineHost.test.js` and `tests/VehicleThermal*.test.js`.
+- **Thermal surfaces, clouds and sea** (`f1635f2b`, `9960ab44`; `src/rendering/ThermalLoader.setupObjectThermalMenu`, `ThermalViewAdapter.setupThermalZoneControls`, `thermalMachWarning`, `src/nodes/CNode3DObject.js`, `CNodeSynthClouds.js`, `CNodeCloudField.js`).
+  - **Objects.** Each `CNode3DObject` is a thermal object (`isThermalObject`). Its folder in the Objects menu has a **Thermal surface** folder with these controls:
+    - a mode: **Inherit vehicle zones / ambient** or **Uniform surface**;
+    - **Temperature · K** and **Emissivity · 1**;
+    - **Zone overrides**, for each zone of a designed vehicle;
+    - **Vehicle thermal state**, where **Air temperature**, **Mach** and **Power** are each **From scene** or **Override**.
+  - **Values from the scene.**
+    - The air temperature is the thermal atmosphere at the altitude of the object.
+    - Mach is the track airspeed divided by the speed of sound. The airspeed uses the wind at that altitude when there is one, and otherwise the ground speed.
+    - Power is the recipe value, or an estimated climb reference.
+    - The object saves these values in its `thermal` field.
+  - **Zones.** A designed vehicle gets its zones (for example jet nozzles and hot cavities) from its engine positions (`tools/vehicles/thermalTags.js`).
+  - **Speed warning.** `thermalMachWarning` adds a warning to the readout when a transport jet has a scene-derived Mach above 0.95. It is a check for airliners only, and it does not limit a speed.
+  - **Clouds.**
+    - Synthetic clouds (`CNodeSynthClouds`, `isThermalCloud = "grayAbsorbingSheet"`) have the air temperature of their altitude, and they absorb the radiance from behind them. There is no scattering.
+    - Cloud Field files (`CNodeCloudField`, `"unresolvedThermal"`) are not drawn in the thermal view, and the readout gives the reason: they have no physical optical depth or temperature.
+  - **Sea.**
+    - **Sea state model** is **Statistical rough sea** (the default) or **Smooth comparison**.
+    - The statistical model gives the emission of the sea and its reflection of the sky from wind and swell slopes. It has no moving crests.
+    - `9960ab44` adds `tools/thermal/seaWaves.js`, a seeded linear random sea for a wave horizon later. Nothing uses it yet.
+- **Vehicle Designer IR preview** (`f1635f2b`, `d28cdb66`; `tools/vehicles/thermalPreview.js`, `thermalTags.js`, `studio.js`, `designer.js`, `index.html`).
+  - **Preview mode** → **IR preview** shows the design through the same `ThermalPipeline`.
+  - **IR view** → **Near** uses the camera of the normal view. Orbit, zoom, the view buttons and **Distance to the vehicle · m** move the shared camera. The image keeps the detector rows, pixel pitch and f-number of the selected sensor at that field of view.
+  - **IR view** → **Far** puts the sensor at **Sensor range**, **Aspect azimuth** and **Aspect elevation**.
+  - Both views use the real distance for the atmospheric path and for the PSF source range.
+  - A **Thermal** recipe folder (`VEHICLE_THERMAL_GROUP`) has propulsion/material profile, engine power, flight Mach, local ambient and skin emissivity. These save with the design and with the GLB recipe.
+  - The readout gives the 14-bit count under the pointer, and the minimum, maximum and median of the detector.
+- **Infrared bands in the Diffraction PSF Studio** (`f1635f2b`; `tools/psf/app.js`, `psf.js`, `cie.js`, `presets.js`, `docs/DiffractionGlare.md`).
+  - Spectrum → **Detector** → **Band (single channel)** calculates one response over a wavelength band in µm, up to 14 µm.
+  - **Source** is Flat or Blackbody. **Weighting** is Photon (the band default) or Energy.
+  - New presets: **Mid-wave infrared, unobstructed**, **Mid-wave infrared, catadioptric** and **Chandelier, infrared band**.
+  - Band files store equal red, green and blue channels in the same version-1 `.psf.json`. The camera import (Camera → Camera Tweaks → Diffraction Glare) does not change.
+- **Camera Data: per-frame camera state** (`a7262d76`; new `src/CameraStateTable.js`, `src/nodes/CNodeCameraState.js`, `src/rendering/ViewRenderMode.js`; `src/CFileManagerParse.js`, `src/TrackFiles/TrackCSV.detectCSVType`, `src/nodes/CNodeView3D.js`, `CNodeWescamMXUI.js`, `ThermalViewAdapter.thermalSettingsForCameraState`).
+  - **File.** A CSV with the columns `Frame`, `Mode` and `FL` (required), and `Zoom` and `Polarity` (optional).
+    - Header names are matched without regard to case.
+    - `detectCSVType` returns `CAMERA_STATE` after the track formats and before the Az/El/FOV checks.
+    - Each row holds until the frame of the next row.
+    - A mode that starts with IR, MWIR or LWIR is infrared. Any other mode is visible light (EO).
+  - **Menu.** `setupCameraState()` makes the `cameraState` node in each sitch that has a look view and a look camera. **Camera → Camera Data** shows **Source**, **Rows**, **Modes**, **Drive Look View** (on after a drop) and **Remove Camera Data**.
+  - **Saving.**
+    - The node saves the rows in its own mod, so a file that has only camera data is not uploaded.
+    - `excludeFromSubSitches` keeps the node out of sub-sitch saves.
+    - A file that also has `Az`, `El`, `Heading` or `FOV` columns also goes to the angle import. In that import, `Zoom` is the digital zoom and is never read as a field of view.
+    - The built-in sitch that reads the same kind of file by row index (`wescamFOV`) still gets the same rows.
+  - **Look view.** With **Drive Look View** on, `CNodeView3D.frameCameraState` gives the row for the current frame. Only the look view uses it, and it is never saved.
+    - On a visible-light frame, `frameRenderModeFor` changes a saved **Physical MWIR thermal** mode to the visible render for that frame.
+    - On a visible-light frame, `frameEffectPasses` also skips the `FLIRShader` and `Thermal` effect passes, in either mode.
+    - On an infrared frame, the saved mode stays. `thermalSettingsForCameraState` selects the lens step of the preset for the row's focal length, and the row's polarity. The saved settings do not change, and the controls that the data sets become read-only.
+    - A focal length that is not a lens step of the preset keeps the saved lens, and a readout line says so.
+    - Completed lens-step optics stay in an LRU cache with an estimated budget of 128 MiB. An export waits for the optics and gain of the frame that it captures.
+  - **MX overlay.** `CNodeWescamMXUI.updateCameraTexts` shows the mode of the row in the full HUD color and the focal length as displayed. It shows a zoom line such as "2.0X" when the zoom is not 1. The field of view still comes from the Camera FOV setting.
+  - **Tests.** `tests/CameraStateTable.test.js`, `CNodeCameraState.test.js`, `CameraStateImport.test.js`, `ViewRenderMode.test.js`, `WescamMXUICameraState.test.js` and `detectCSVType.test.js`.
+- **Cloud Field files** (`827460b9`; new `src/cloudField/CloudFieldFormat.js`, `CloudFieldImport.js`, `src/nodes/CNodeCloudField.js`; `src/CFileManagerParse.js`, `docs/Tracks.md`).
+  - **Format.** A JSON file with `"type": "SitrecCloudField"` and `version` 1. It holds:
+    - an origin: latitude, longitude, and height above the ellipsoid;
+    - `headingDeg` for the +y axis of the local frame;
+    - sphere rows `[x, y, z, radius, emission]`;
+    - an optional wind (`fromDeg`, `knots`, `epochFrame`);
+    - the profile `thinEmission`;
+    - optional `display` start values.
+  - **Import.** `isCloudFieldJSON` claims the file in the JSON branch of `parseAsset`. `normalizeCloudField` checks it, and `showError` reports a file that it rejects. If you drop the same file again, the new field replaces the old one.
+  - **Rendering.** `CNodeCloudField` draws one instanced icosahedron hull for each sphere, back faces only. It calculates the optically thin line integral, emission × (1 − b²/R²)², in view space, so the limited Float32 precision of ECEF coordinates does not matter. The whole field drifts with its wind from `epochFrame`.
+  - **Folder.** **Objects → Cloud Field: \<name\>** has these controls:
+    - **Visible**;
+    - **Brightness**;
+    - **Minimum Emission**, which hides fainter spheres;
+    - **Refraction**, which moves each sphere by the terrestrial refraction lift at its center (turn it off for a field fitted to video);
+    - **Color**;
+    - **Blend**: **Add** brightens, as on a white-hot display, and **Subtract** uses reverse-subtract blending, as on a black-hot display;
+    - **Wind From (°)** and **Wind (knots)**.
+  - **Saving.** The file stays in `loadedFiles`, and the node saves only its settings.
+  - **Tests.** `tests/cloudFieldFormat.test.js`.
+- **Photo backdrops** (`18d81208`; new `src/photoBackdrop/PhotoBackdropFormat.js`, `PhotoBackdropImport.js`, `src/nodes/CNodePhotoBackdrop.js`; `docs/Tracks.md`).
+  - **Format.** A `SitrecPhotoBackdrop` JSON file holds:
+    - a picture as a data URL, linear in azimuth (`azMin`–`azMax`, clockwise from true north) and in elevation (`elMin`–`elMax`);
+    - the camera origin, with altitude above mean sea level;
+    - optional `terrainMask` and `coverageMask` images;
+    - `range` (default 15000 m) and `fillColor`.
+  - **Look view.**
+    - The picture is drawn behind everything without depth, like a skybox (layer `MASK_LOOK`).
+    - It is at the angles where the pixels were photographed, in the same local frame that Camera Heading → Custom Az/El uses.
+    - With a terrain mask, the ground writes depth at `range`, so it hides objects that are farther away.
+  - **Main view.** The photographed part (`coverageMask`) is drawn as a curved panel at `range`.
+  - **Folder.** **Objects → Photo Backdrop: \<name\>** has these controls:
+    - **Show Photo**;
+    - **Ground Hides Objects**;
+    - **Range (m)**;
+    - **Fill** and **Fill Color**;
+    - **Show in Main View** and **Main View Opacity**;
+    - **Hide Terrain in Look View** (on by default);
+    - an option that keeps the picture centered on the look camera (`followCamera`, on by default).
+  - **Refraction.** Terrestrial refraction does not bend the picture.
+  - **Tests.** `tests/PhotoBackdropFormat.test.js`.
+- **Timeline markers** (`18d81208`; new `src/TimelineMarkers.js`, `src/TimelineMenu.js`; `src/nodes/CNodeFrameSlider.js`, `src/KeyBoardHandler.js`, `src/CustomManagerSerialize.js`, `src/CSitrecAPI.js`).
+  - **Display.** A marker is `{frame, label}`, with one marker for each frame. It shows as a cyan flag at the top of the frame slider, with a faint line down the bar. Hover shows its name and frame. A click goes to its frame.
+  - **Right-click menu** (`showTimelineMenu`):
+    - **Add Marker at Current Frame** and **Add Marker Here**;
+    - on a flag: **Label**, **Go to Marker** and **Delete Marker**;
+    - a **Go to Marker** folder that lists every marker;
+    - **Delete All Markers**, which asks you to confirm;
+    - **Reset In/Out**.
+  - **Undo.** Each marker change, and Reset In/Out, can be undone.
+  - **Keys.** `<` and `>` (Shift+, and Shift+.) now step through `timelineStops`: the markers, the In and Out frames, and the `KeyframeRegistry` keyframes.
+  - **Saving.** Markers are saved as `timelineMarkers`. A sitch change clears them.
+  - **API.** New calls: `listTimelineMarkers`, `addTimelineMarker`, `setTimelineMarkers`, `removeTimelineMarker`, `clearTimelineMarkers` and `resetInOut`. `listTimelineMarkers` is a read-only call, and its result goes back to the AI assistant.
+  - **Tests.** `tests/TimelineMarkers.test.js`.
+- **Milliradian reticle overlay** (`18d81208`; new `src/nodes/CNodeMradReticleUI.js`, `src/ReticleClock.js`).
+  - `setupMradReticleUI` makes a hidden overlay on the look view for each sitch that has a look view and a look camera. **Show → Views → MradReticleUI** turns it on.
+  - It draws the ranging reticle of a handheld thermal imager. The ticks are true milliradians, from the field of view of the look camera.
+  - It uses the wide reticle (±15 mrad, labels 5, 10 and 15) when the field is about 21.8 mrad or more. Below that it uses the narrow ±3 mrad reticle.
+  - The clock uses the form "MM/DD/YY HH:MM:SS".
+  - **View → Reticle OSD** has **Show Clock** and **Clock at Start**. Clock at Start is what the camera clock read at the start of the sitch. When it is empty, the clock shows the local time of the sitch.
+  - **Tests.** `tests/ReticleClock.test.js`.
+- **Hide Outside Track Data** (`18d81208`; `CNode3DObject.applyTrackDataVisibility`, `trackDataSpan`, `CNodeTrackFromMISB.getDataFrameSpan`).
+  - A new checkbox in the folder of each object in the Objects menu.
+  - When it is on, the object and its label are hidden on frames before the first data point of the track and after the last. The span includes the time offsets of the track.
+  - When it is off, the object stays at the nearest data point, as before.
+  - It only hides. The Visible flags do not change, and the hidden state is not saved.
+  - `updateEnvMap` now puts back the visibility that the object had before the cube-camera pass. Before, it always made the object visible.
+  - **Tests.** `tests/HideOutsideTrackData.test.js`.
+- **XML wind profiles** (`bd8dd93a`; new `src/TrackFiles/CTrackFileSoundingXML.js`, `src/ParseSoundingXML.js`, `tools/xml-wind/soundingLayout.js`; `CFileManagerParse.detectTrackFile`, `TrackManager.addTracks`, `config/shared.env.example`, `docs/Wind.md`).
+  - **Layouts.** An installation describes each XML layout with `SITREC_CUSTOM_SOUNDING_<NAME>_*` settings:
+    - the element names for the level and for each field;
+    - the units, which are fixed for each installation;
+    - `_XMLNS_CONTAINS` and `_FILE_CONTAINS` substrings that identify the file.
+  - **Import.**
+    - `detectTrackFile(filename, data, sourceText)` now passes the raw file text to each handler.
+    - A matched file becomes a sounding track (`SondeData` with `source: "xml"`).
+    - `TrackManager.addTracks` then calls `CustomManager.useTrackAsWindSource`, which selects the file's own **Track: \<file\>** entry in Wind Source. It does not do this while a saved sitch loads.
+  - **Delivery.** The settings get to the browser in the same way as the custom map sources: from the server configuration; from the `SITREC_CUSTOM_SOURCES` build-time blob in a serverless build; and through `docker/entrypoint.sh` and `scripts/secureClientEnv.js`.
+  - **Tests.** `tests/ParseSoundingXML.test.js`.
+- **XML Wind Profile Analyzer** (`bd8dd93a`; new `tools/xml-wind/`; `src/extraTools.js`, `src/i18n/en.js`, `tools/index.html`).
+  - **Sitrec → Extra Tools → XML Wind Profile Analyzer** loads an XML file, or a sample file.
+  - It finds the position and the repeating profile element, and proposes the `shared.env` lines. A guess has a `CHECK` mark.
+  - It shows what Sitrec reads with those lines, with the same `soundingLayout.js` code that Sitrec uses.
+  - It makes a report of the file structure. By default the report has no values, positions or times.
+  - The file is read in the browser, and nothing is uploaded.
+  - **Tests.** `tests/XmlWindAnalyzer.test.js` and `tests/extraTools.test.js`.
+- **SITREC_ ENV Override** (`bd8dd93a`; new `src/EnvOverride.js`, `tools/src/envText.js`; `src/envUtils.getEnv`, `src/SettingsManager.js`, `CCustomManager.editEnvOverride`, `showError.showTextEditor`, `sitrecServer/settings.php`).
+  - **Editor.** **Sitrec → Settings → SITREC_ ENV Override…** opens a text editor (`showTextEditor`) for lines in `shared.env` format. It has the buttons **Save** and **Save and Reload**.
+  - **How it applies.**
+    - `applyEnvOverride` puts the `SITREC_` lines into force after `initializeSettings()`, and again on each save.
+    - `getEnv()` reads these values last, and they are also written into `Globals.env`.
+    - When you remove a line, the installation's value comes back.
+  - **Ignored lines.**
+    - A line whose name does not start with `SITREC_` is ignored.
+    - In the secure build, `userOverrideAllowed` ignores a line that would loosen a security flag or supply a credential.
+    - After a save, the ignored lines are listed.
+  - **Storage.**
+    - The text (20,000 characters or fewer) is saved with the other user settings. On the cookie path it goes to `localStorage` (`sitrecEnvOverride`).
+    - The server stores the text and returns it. PHP never reads it as configuration.
+  - **Tests.** `tests/EnvOverride.test.js` and `tests/EnvOverrideServerBoundary.test.js`.
+
+### Improvements
+- **Vehicle Designer views and engine placement** (`f1635f2b`; `tools/vehicles/studio.js`, `index.html`, `aircraftSchema.js`, `aircraft.js`, `airlinerPresets.js`).
+  - There is a new **Rear** view button.
+  - The new aircraft parameter **Next engine out · % half-span** (`engineStep`) sets the spanwise distance from one engine pair to the next. Before, this distance was fixed at 25. The default is 25, so other designs do not change.
+  - The A340-600 preset now puts its engine centers at the published positions, ±9.37 m and ±19.27 m (`engineSpacing` 30.5, `engineStep` 32.2).
+
+### Bug Fixes
+- **Refraction: camera aim and frustum** (`3e286e5c`; `src/nodes/CNodeControllerVarious.js`, `CNodeLOSFromCamera.js`, `CNodeDisplayCameraFrustum.js`, `src/atmosphere/terrestrialRefraction.js`, `refractionSettings.js`, `docs/Refraction.md`).
+  - **Cause.** Terrestrial refraction lifts each vertex by k·d²/(2R). `CNodeControllerTrackToTrack` (Camera → Heading → **To Target**) and `CNodeControllerLookAtTrack` aimed at the geometric position. A distant target was therefore drawn above the center of the view, and near the top at a narrow field of view.
+  - **Aim.** `lookAtDrawnPosition` now looks at `apparentPositionFrom()` (`liftWorldPoint`). It stores the rotation back to the geometric direction in `camera.userData.geometricAim`.
+  - **Line of sight.** `CNodeLOSFromCamera` applies that rotation. The calculated line of sight is still the straight line to the target, so traverses and the ground track do not change.
+  - **Frustum.** `CNodeDisplayCameraFrustum` now builds its edges and sides from points on the straight sight line with the lift removed (`unliftCameraRelative`, ten fixed-point passes), in pieces of 16 km or less. The frustum follows the bent rays and contains the target.
+  - **Tests.** `tests/toTargetRefractionAim.test.js` and `tests/terrestrialRefraction.test.js`.
+- **Refraction: missing parts at a narrow field of view** (`3e286e5c`; `src/atmosphere/refractionSettings.js`, `terrestrialRefraction.js`).
+  - **Cause.** Three culls an object from its bounding sphere at the position before the lift. At a very narrow field of view, small parts of a distant aircraft, such as the wings and the tail, were therefore not drawn.
+  - **Change.** The scene hook now collects the lofted objects in `sweepTerrestrialRefraction`. `cullLoftedObjects` exempts an object from the test for that render when its lofted sphere is in view, and `restoreLoftedCulling` puts the setting back.
+  - **Limits.** It does not change culling while fisheye or flat Earth is on. With refraction off, nothing changes.
+  - **Tests.** `tests/refractionSettings.test.js`.
+- **The Track: wind source of a sounding is read by altitude** (`bd8dd93a`; `src/nodes/WindSources.altitudeProfileForSourceKey`, `CNodeDisplayWindField._soundingSet`, `CNodeWind.trackWindAt`, `src/CustomManagerSetup.js`, `src/TrackManager.js`, `src/AnalyzeTraverse.js`).
+  - **Cause.** The **Track: \<name\>** entry of a sounding track (IGRA2, UWYO or XML) read the track row for the current time. That row is the wind where the balloon is.
+  - **Change.**
+    - `TrackManager` now marks the `CNodeAtmosphericProfile` of each sounding with `windByAltitude`.
+    - `_soundingSet()` treats that entry as a sounding source with that one profile and no blend. It is read at the altitude of the target, and at the altitude of the camera for Local Wind.
+    - The wind nodes get no `trackSource` for this entry, and `trackWindAt` returns null for it.
+  - **Not changed.** Telemetry tracks still read by time.
+  - **Traverse.** The balloon-wind evidence of a traverse rates this entry as an observation, as it does for other sounding sources.
+- **Custom Az/El with a field of view from a track** (`18d81208`; `CNodeControllerCustomAzEl.apply` in `src/nodes/CNodeControllerPTZUI.js`).
+  - **Cause.** The fallback PTZ controller is disabled while Custom Az/El drives the camera, so its `apply()` did not refresh `fov` from `fovSwitch`. A field of view from a track or from an imported FOV column stayed at the value it had when the source last changed.
+  - **Change.** `apply()` now calls `fallback.applyFOVOnly(f, objectNode)` first.
+- **Starlink Flare Predictor links** (`bd8dd93a`, merge `d1cc8a6b`; `tools/shf/index.html`, `tools/shf/rate/index.html`, `formula.html`, `formula.js`).
+  - **Cause.** Links to a bare directory (`rate/`, `../`, `./`) gave 404 on a server with no directory index, such as a build directory.
+  - **Change.** The links now name `index.html`.
+  - **Merge.** The merge keeps the back link that keeps the date (`backHref`, from the year-control work in 2.174.1), with `index.html`.
+
+### Documentation
+- `docs/Tracks.md`: the Sitrec Cloud Field and Sitrec Photo Backdrop file formats, XML wind profiles, and Hide Outside Track Data.
+- `docs/Wind.md` and `docs/Wind-Internals.md`: XML wind profiles, and the Track: entry of a sounding.
+- `docs/UserInterface.md` and `docs/dev/SettingsManager.md`: SITREC_ ENV Override.
+- `docs/TimeAndSync.md` and `docs/KeyboardShortcuts.md`: timeline markers, the right-click menu of the timeline, and the new `<` and `>` stops.
+- `docs/Refraction.md`: a new section, "Cameras that point at a target".
+- `docs/DiffractionGlare.md`: infrared bands and the infrared presets.
+- `config/shared.env.example`, `docs/dev/Secure-Build.md` and `docs/dev/Deploying-on-a-VPS.md`: `SITREC_CUSTOM_SOUNDING_*`.
+- Tool READMEs: `tools/thermal/README.md` (new), `tools/xml-wind/README.md` (new), `tools/vehicles/README.md`, `tools/psf/README.md` and `tools/README.md`.
+
 ## Version 2.174.3 (2026-10-02)
 
 ### Improvements

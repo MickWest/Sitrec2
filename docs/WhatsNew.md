@@ -9,6 +9,33 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.175.0 (2026-10-04)
+
+### New Features
+- **Physical infrared camera** (Effects → Physical thermal → *Render mode* → *Physical MWIR thermal*): in a custom sitch, the look view can now show a physical mid-wave infrared (3–5 µm) image. The image comes from the temperature and emissivity of each surface, the air along each line of sight, and a model of the camera's optics, detector, gain and display. Each setting shows if it is measured, calculated, estimated or published. The default sensor is an MX-15 class camera with 27, 135, 675 and 1012 mm lens steps, and some of its values are measured from real infrared video. Sitrec loads this only when you select it.
+- **Thermal surfaces** (Objects → an object's folder → *Thermal surface*): set the temperature and emissivity of an object, or change the hot zones of a designed vehicle, such as its engine nozzles. The air temperature, Mach number and engine power come from the scene, and you can override each one. In the thermal view, synthetic clouds have the air temperature of their height and hide what is behind them. The sea comes from a model of a rough sea.
+- **IR preview** (Sitrec → Extra Tools → Vehicle Designer → *Preview mode* → *IR preview*): see a design through the same infrared camera. Use *Near* for the camera of the normal view, or *Far* for a range and angle that you set.
+- **Infrared bands** (Sitrec → Extra Tools → Diffraction PSF Studio → Spectrum → *Detector* → *Band (single channel)*): make the diffraction pattern for an infrared band. There are three new mid-wave infrared presets.
+- **Camera Data** (Camera → Camera Data): drop a CSV file that gives the mode, focal length, digital zoom and polarity of the video camera for each frame. With *Drive Look View* on, the look view draws visible-light frames without infrared effects. The thermal view uses the lens step and polarity of each infrared frame, and the WESCAM MX overlay shows the mode, focal length and zoom.
+- **Cloud Field files** (Objects → *Cloud Field*): drop a Sitrec Cloud Field file to add a cloud of soft, glowing spheres at a position and height. The cloud drifts with one wind. Its folder sets Brightness, Minimum Emission, Refraction, Color, Blend (*Add* for a white-hot display, *Subtract* for black-hot) and the wind.
+- **Photo backdrops** (Objects → *Photo Backdrop*): drop a Sitrec Photo Backdrop file, which is a mosaic of photos from a camera that only turns. The look view shows the photos behind the scene, at the angles where they were taken, so you do not need a terrain model.
+- **Timeline markers** (right-click the playback bar): add, name, go to and delete named frames, which show as flags on the bar. The < and > keys now also stop at markers and at the In and Out frames. Markers are saved with the sitch. The same menu has *Reset In/Out*.
+- **Milliradian reticle** (Show → Views → *MradReticleUI*; settings in View → Reticle OSD): shows the ranging reticle and the clock of a handheld thermal imager on the look view. The scale follows the field of view of the look camera, so you can read the size of an object from it.
+- **Hide Outside Track Data** (Objects → an object's folder): hides the object on frames before the first data point of its track and after the last.
+- **XML wind profiles** (File → Import File, or drop the file): an installation can describe the layout of its own XML weather files in its settings. A dropped file then becomes a sounding, and its own *Track:* entry becomes the Wind Source (Physics → Wind).
+- **XML Wind Profile Analyzer** (Sitrec → Extra Tools): finds the position and the wind profile in an unknown XML weather file, and proposes the settings. It reads the file in your browser and uploads nothing.
+- **SITREC_ ENV Override** (Sitrec → Settings → *SITREC_ ENV Override…*): give your own values for the SITREC_ settings of the installation. They apply only to you, and they change only what your browser reads.
+
+### Improvements
+- **Vehicle Designer** (Sitrec → Extra Tools): there is a new *Rear* view button, and a new *Next engine out* setting for the distance between engine pairs. The A340-600 preset now has its engines at the published positions.
+
+### Bug Fixes
+- Fixed a camera that points at a target (Camera → Heading → *To Target*) showing the target above the center of the view when refraction is on (View → Atmospheric Refraction). At a narrow field of view the target was near the top. The frustum of the camera in the other views now follows the bent sight lines. The calculated line of sight does not change.
+- Fixed the wings and tail of a distant aircraft not showing at a very narrow field of view when refraction is on.
+- Fixed the *Track:* entry of a weather balloon sounding (Physics → Wind → *Wind Source*) giving the wind where the balloon was at the current time. It now gives the wind of the sounding at the altitude of the target.
+- Fixed Camera → Heading → *Custom Az/El* keeping an old field of view when the field of view comes from a track or a data file.
+- Fixed links between the Starlink Flare Predictor pages that did not open on some installations.
+
 ## Version 2.174.3 (2026-10-02)
 
 ### Improvements
