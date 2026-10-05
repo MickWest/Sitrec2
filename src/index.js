@@ -166,6 +166,7 @@ import {TileUsageTracker} from "./TileUsageTracker";
 import {debugLog} from "./DebugLog";
 import {getEnvBool} from "./envUtils";
 import {FeatureManager} from "./CFeatureManager";
+import {TimelineMarkers} from "./TimelineMarkers";
 import {CustomGraphManager} from "./CCustomGraphManager";
 import {MeasurementManager} from "./CMeasurementManager";
 import {resetVideoQPGraph} from "./VideoQPGraph";
@@ -213,6 +214,13 @@ let contextMenuWasOpen = false;
 // when the prefetch failed (the use site falls back to its own fetch).
 let prefetchedSitchesText = null;
 document.addEventListener('contextmenu', (event) => {
+    // The frame slider (a range input with a canvas over it) opens its own
+    // timeline menu (CNodeFrameSlider): block the browser's menu and let the
+    // event reach the slider.
+    if (event.target.closest?.('[data-timeline-menu]')) {
+        event.preventDefault();
+        return;
+    }
     if (event.target.tagName === 'CANVAS') {
         event.preventDefault();
         event.stopPropagation();
@@ -3419,6 +3427,9 @@ function disposeEverything() {
 
     // dispose of any feature manager managed nodes
     FeatureManager.disposeAll();
+
+    // timeline markers belong to the sitch being left
+    TimelineMarkers.clear();
 
     // forget the user measurements (their nodes went with NodeMan.disposeAll above)
     MeasurementManager.disposeAll();

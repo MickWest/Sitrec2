@@ -45,6 +45,7 @@ import {isAdmin, SITREC_APP, SITREC_SHARE_APP, SITREC_SERVER} from "./configUtil
 import {CNodeDisplayTrack} from "./nodes/CNodeDisplayTrack";
 import {DebugArrowAB, elevationAtLL} from "./threeExt";
 import {FeatureManager} from "./CFeatureManager";
+import {TimelineMarkers} from "./TimelineMarkers";
 import {CustomGraphManager} from "./CCustomGraphManager";
 import {MeasurementManager} from "./CMeasurementManager";
 import {deserializeVideoQPGraph, serializeVideoQPGraph} from "./VideoQPGraph";
@@ -673,6 +674,10 @@ export const serializeMethods = {
 
         // Serialize feature markers from FeatureManager
         out.featureMarkers = FeatureManager.serialize()
+
+        // Timeline markers (named frames on the frame slider). undefined when there
+        // are none, so the field is left out.
+        out.timelineMarkers = TimelineMarkers.serialize()
 
         // Serialize user-created custom graphs
         out.customGraphs = CustomGraphManager.serialize()
@@ -1319,6 +1324,9 @@ export const serializeMethods = {
             if (sitchData.featureMarkers) {
                 FeatureManager.deserialize(sitchData.featureMarkers)
             }
+
+            // Timeline markers: a sitch without the field has none.
+            TimelineMarkers.deserialize(sitchData.timelineMarkers)
 
             // Recreate custom graphs BEFORE applying mods, so each graph view
             // exists with its deterministic id and its saved geometry/visibility

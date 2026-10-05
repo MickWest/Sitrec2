@@ -8,6 +8,8 @@ import {EventManager} from "../CEventManager";
 import {KeyframeRegistry} from "../CKeyframeRegistry";
 import {lastSitFrame} from "../UpdateSitFrames";
 import {CValueBox} from "../CValueBox";
+import {TimelineMarkers} from "../TimelineMarkers";
+import {markerDisplayName, showTimelineMenu} from "../TimelineMenu";
 
 export class CNodeFrameSlider extends CNode {
     constructor(v) {
@@ -71,8 +73,16 @@ export class CNodeFrameSlider extends CNode {
         this.hoveringKeyframe = null;
         this.lastHoveringKeyframe = null;
         // One-shot frame to snap to on the first 'input' tick after a
-        // mousedown that landed near a keyframe diamond. Null otherwise.
+        // mousedown that landed near a keyframe diamond or a marker flag.
+        // Null otherwise.
         this.pendingKeyframeSnap = null;
+
+        // Timeline markers (TimelineMarkers): cyan flags along the top of the
+        // strip. Clicking a flag jumps to it; the right-click menu edits them.
+        this.markerFrames = [];
+        this.lastMarkerVersion = -1;
+        this.hoveringMarker = null;
+        this.lastHoveringMarker = null;
 
         this.setupFrameSlider();
     }
@@ -95,6 +105,26 @@ export class CNodeFrameSlider extends CNode {
         this.needsCanvasRedraw = true;
     }
 
+    setHoveredMarker(frame) {
+        if (this.hoveringMarker === frame) return;
+        this.hoveringMarker = frame;
+        this.needsCanvasRedraw = true;
+    }
+
+    // Canvas x of a frame, and the frame at a canvas x. The padding matches
+    // the drawing in update().
+    frameToCanvasX(frame) {
+        const padding = 5;
+        return padding + (this.canvas.offsetWidth - 2 * padding) * frame / Sit.frames;
+    }
+
+    canvasXToFrame(x) {
+        const padding = 5;
+        const drawableWidth = this.canvas.offsetWidth - 2 * padding;
+        const frame = Math.round(Math.max(0, Math.min(drawableWidth, x - padding)) / drawableWidth * Sit.frames);
+        return Math.max(0, Math.min(Sit.frames - 1, frame));
+    }
+
     setupFrameSlider() {
         this.sliderContainer = document.createElement('div');
 
@@ -110,7 +140,7 @@ export class CNodeFrameSlider extends CNode {
         // Block transport input while an analysis owns the playhead, including
         // touch and A/B-limit dragging. Pin and audio remain available.
         for (const type of ['pointerdown', 'pointermove', 'mousedown', 'mousemove',
-            'touchstart', 'touchmove', 'touchend', 'click', 'dblclick', 'input', 'keydown']) {
+            'touchstart', 'touchmove', 'touchend', 'click', 'dblclick', 'input', 'keydown', 'contextmenu']) {
             this.sliderContainer.addEventListener(type, event => {
                 if (!par.playbackLocked || this.pinButton?.contains(event.target) ||
                     this.audioButton?.contains(event.target)) return;
@@ -346,6 +376,10 @@ export class CNodeFrameSlider extends CNode {
                 };
                 
                 const getNearLimit = (mouseX, mouseY, threshold = this.dragThreshold) => {
+                    // A marker flag wins in its band at the top of the bar, so a
+                    // marker on the In or Out frame stays clickable; the limit
+                    // line can still be dragged lower down.
+                    if (this.getNearMarker(mouseX, mouseY) !== null) return null;
                     const aPixel = frameToPixel(Sit.aFrame);
                     const bPixel = frameToPixel(Sit.bFrame);
                     const currentFramePixel = frameToPixel(par.frame);
@@ -388,15 +422,21 @@ export class CNodeFrameSlider extends CNode {
                 
                 const nearLimit = getNearLimit(mouseX, mouseY);
                 const nearKF = this.getNearKeyframe(mouseX, mouseY);
+                const nearMarker = (nearLimit || nearKF !== null || sliderDragging) ? null : this.getNearMarker(mouseX, mouseY);
 
-                // Keyframe clicks flow through to the native range input so
-                // its own drag state machine owns the interaction; only the
-                // A/B limits steal pointer events.
+                // Keyframe and marker clicks flow through to the native range
+                // input so its own drag state machine owns the interaction;
+                // only the A/B limits steal pointer events.
                 this.canvas.style.pointerEvents = nearLimit ? 'auto' : 'none';
 
                 // Hover detection lives here because the canvas is
-                // pointer-events:none over keyframes.
+                // pointer-events:none over keyframes and markers.
                 this.setHoveredKeyframe(nearKF);
+                this.setHoveredMarker(nearMarker);
+                // Name the marker under the pointer in the read-out. The range
+                // input's own mousemove (which runs first) shows the current
+                // frame otherwise.
+                if (nearMarker !== null) this.showMarkerDisplay(nearMarker);
             }
         });
 
@@ -412,7 +452,8 @@ export class CNodeFrameSlider extends CNode {
             // proceeds, so the rest of the drag is byte-identical to a
             // click on bare track.
             const {x, y} = this.getMousePos(event);
-            this.pendingKeyframeSnap = this.getNearKeyframe(x, y);
+            const nearKF = this.getNearKeyframe(x, y);
+            this.pendingKeyframeSnap = nearKF !== null ? nearKF : this.getNearMarker(x, y);
         });
 
         this.sliderInput.addEventListener('input', () => {
@@ -569,6 +610,9 @@ export class CNodeFrameSlider extends CNode {
 
         // Helper function to check if mouse is near a limit line or handle
         const getNearLimit = (mouseX, mouseY, threshold = this.dragThreshold) => {
+            // A marker flag wins in its band at the top of the bar (see the
+            // copy in setupFrameSlider).
+            if (this.getNearMarker(mouseX, mouseY) !== null) return null;
             const aPixel = frameToPixel(Sit.aFrame);
             const bPixel = frameToPixel(Sit.bFrame);
             const currentFramePixel = frameToPixel(par.frame);
@@ -624,6 +668,7 @@ export class CNodeFrameSlider extends CNode {
                 // Update cursor and hover state based on proximity to limits
                 const nearLimit = getNearLimit(mousePos.x, mousePos.y);
                 const nearKF = (nearLimit) ? null : this.getNearKeyframe(mousePos.x, mousePos.y);
+                const nearMarker = (nearLimit || nearKF !== null) ? null : this.getNearMarker(mousePos.x, mousePos.y);
                 const newHoveringA = (nearLimit === 'A');
                 const newHoveringB = (nearLimit === 'B');
 
@@ -634,10 +679,11 @@ export class CNodeFrameSlider extends CNode {
                 this.hoveringALimit = newHoveringA;
                 this.hoveringBLimit = newHoveringB;
                 this.setHoveredKeyframe(nearKF);
+                this.setHoveredMarker(nearMarker);
 
                 if (nearLimit) {
                     this.canvas.style.cursor = 'ew-resize';
-                } else if (nearKF !== null) {
+                } else if (nearKF !== null || nearMarker !== null) {
                     this.canvas.style.cursor = 'pointer';
                 } else {
                     this.canvas.style.cursor = 'default';
@@ -699,12 +745,13 @@ export class CNodeFrameSlider extends CNode {
 
         // Mouse leave event (only reset hover states, don't stop dragging)
         this.canvas.addEventListener('mouseleave', (event) => {
-            if (this.hoveringALimit || this.hoveringBLimit || this.hoveringKeyframe !== null) {
+            if (this.hoveringALimit || this.hoveringBLimit || this.hoveringKeyframe !== null || this.hoveringMarker !== null) {
                 this.needsCanvasRedraw = true;
             }
             this.hoveringALimit = false;
             this.hoveringBLimit = false;
             this.hoveringKeyframe = null;
+            this.hoveringMarker = null;
             // Don't stop dragging on mouse leave - let global mouse up handle it
         });
 
@@ -748,6 +795,21 @@ export class CNodeFrameSlider extends CNode {
             this.needsCanvasRedraw = true;
             setRenderOne(true);
             EventManager.dispatchEvent("abFrameChanged");
+        });
+
+        // Right-click: the timeline menu (markers, Reset In/Out) instead of the
+        // browser's own menu. index.js lets this event through to here. While
+        // an analysis owns the playhead, the capture blocker in
+        // setupFrameSlider stops it first, so no menu opens.
+        this.sliderDiv.dataset.timelineMenu = "true";
+        this.sliderDiv.addEventListener('contextmenu', (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            if (this.draggingALimit || this.draggingBLimit || !Sit.frames) return;
+            const {x} = getMousePos(event);
+            const markerFrame = this.getNearMarker(x, null);
+            this.hideFrameDisplay();
+            showTimelineMenu(event, this.canvasXToFrame(x), markerFrame !== null ? TimelineMarkers.get(markerFrame) : null);
         });
     }
 
@@ -896,7 +958,8 @@ export class CNodeFrameSlider extends CNode {
         const hoverStateChanged = (
             this.hoveringALimit !== this.lastHoveringALimit ||
             this.hoveringBLimit !== this.lastHoveringBLimit ||
-            this.hoveringKeyframe !== this.lastHoveringKeyframe
+            this.hoveringKeyframe !== this.lastHoveringKeyframe ||
+            this.hoveringMarker !== this.lastHoveringMarker
         );
         const dragStateChanged = (
             this.draggingALimit !== this.lastDraggingALimit ||
@@ -912,10 +975,15 @@ export class CNodeFrameSlider extends CNode {
             this.keyframeFrames = KeyframeRegistry.getAllFrames();
             this.lastKeyframeSignature = kfSig;
         }
+        const markersChanged = (TimelineMarkers.version !== this.lastMarkerVersion);
+        if (markersChanged) {
+            this.markerFrames = TimelineMarkers.frames();
+            this.lastMarkerVersion = TimelineMarkers.version;
+        }
 
         // Only redraw if something changed or explicitly marked for redraw
         if (!this.needsCanvasRedraw && !sizeChanged && !aFrameChanged && !bFrameChanged &&
-            !hoverStateChanged && !dragStateChanged && !keyframesChanged) {
+            !hoverStateChanged && !dragStateChanged && !keyframesChanged && !markersChanged) {
             return; // Skip expensive canvas operations
         }
 
@@ -927,6 +995,7 @@ export class CNodeFrameSlider extends CNode {
         this.lastHoveringALimit = this.hoveringALimit;
         this.lastHoveringBLimit = this.hoveringBLimit;
         this.lastHoveringKeyframe = this.hoveringKeyframe;
+        this.lastHoveringMarker = this.hoveringMarker;
         this.lastDraggingALimit = this.draggingALimit;
         this.lastDraggingBLimit = this.draggingBLimit;
         this.needsCanvasRedraw = false;
@@ -1058,6 +1127,33 @@ export class CNodeFrameSlider extends CNode {
         ctx.arc(bPixel, 6, bHandleRadius, 0, 2 * Math.PI);
         ctx.fill();
 
+        // Timeline markers: a faint full-height line and a flag hanging from
+        // the top edge (keyframe diamonds use the bottom edge, A/B handles sit
+        // at y = 6). The one under the cursor is brightened.
+        if (this.markerFrames.length > 0 && Sit.frames > 0) {
+            for (const f of this.markerFrames) {
+                if (f < 0 || f > Sit.frames) continue;
+                const x = padding + (drawableWidth * f / Sit.frames);
+                const hovered = (this.hoveringMarker === f);
+                ctx.strokeStyle = hovered ? 'rgba(160, 232, 255, 0.9)' : 'rgba(64, 200, 255, 0.45)';
+                ctx.lineWidth = 1;
+                ctx.beginPath();
+                ctx.moveTo(x, 0);
+                ctx.lineTo(x, this.canvas.height);
+                ctx.stroke();
+                const half = hovered ? 5 : 4;
+                ctx.beginPath();
+                ctx.moveTo(x - half, 0);
+                ctx.lineTo(x + half, 0);
+                ctx.lineTo(x, half * 1.6);
+                ctx.closePath();
+                ctx.fillStyle = hovered ? '#a0e8ff' : '#40c8ff';
+                ctx.fill();
+                ctx.strokeStyle = 'rgba(0, 0, 0, 0.85)';
+                ctx.stroke();
+            }
+        }
+
         // Draw keyframe diamonds last so they sit on top of A/B lines. They
         // live at the bottom of the slider strip (clear of the white range-
         // input thumb in the middle and the A/B handles at the top), and the
@@ -1131,6 +1227,40 @@ export class CNodeFrameSlider extends CNode {
             }
         }
         return bestFrame;
+    }
+
+    // The frame of the marker flag nearest the pointer, or null. mouseY null
+    // means any height (the right-click menu); otherwise only the top band
+    // where the flags hang, so a click lower down still scrubs normally.
+    getNearMarker(mouseX, mouseY) {
+        const frames = TimelineMarkers.frames();
+        if (frames.length === 0 || !Sit.frames) return null;
+        if (mouseY !== null && mouseY > 12) return null;
+        // As for keyframes, the playhead thumb wins where it covers a flag.
+        const thumbX = this.frameToCanvasX(par.frame);
+        const thumbHalfWidth = 7;
+        const overThumb = mouseY !== null && mouseY >= 7 && Math.abs(mouseX - thumbX) <= thumbHalfWidth;
+        const xTolerance = 6;
+        let bestFrame = null;
+        let bestDist = xTolerance + 1;
+        for (const f of frames) {
+            const x = this.frameToCanvasX(f);
+            const dx = Math.abs(mouseX - x);
+            if (dx <= xTolerance && dx < bestDist) {
+                if (overThumb && Math.abs(x - thumbX) <= thumbHalfWidth) continue;
+                bestDist = dx;
+                bestFrame = f;
+            }
+        }
+        return bestFrame;
+    }
+
+    // Read-out for a hovered marker: its name, then its frame and video time.
+    showMarkerDisplay(frame) {
+        const marker = TimelineMarkers.get(frame);
+        if (!marker || !this.frameDisplayBox) return;
+        const frameLine = this.getFrameDisplayText(frame).split('\n')[0];
+        this.frameDisplayBox.show(markerDisplayName(marker) + '\n' + frameLine, this.frameDisplayX(frame));
     }
 
     updateFrameSlider() {

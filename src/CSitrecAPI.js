@@ -38,6 +38,8 @@ import {renderedRect} from "./ViewUtils";
 import {areControlsHidden, toggleControlsVisibility} from "./PageStructure";
 import {closeFullscreen, isFullscreen, openFullscreen} from "./utils";
 import {forceUpdateUIText} from "./nodes/CNodeViewUI";
+import {TimelineMarkers} from "./TimelineMarkers";
+import {editTimelineMarkers, resetInOut} from "./TimelineMenu";
 
 // Find a 3D object's folder in the Objects menu by what a script names it: the object's id
 // (which never changes, so a script still finds an object the user renamed), then its exact
@@ -167,6 +169,7 @@ const TRANSIENT_CALLS = new Set([
     "getShareLink",
     "getSitchState",
     "exportSitchState",
+    "listTimelineMarkers",
 ]);
 
 // The same list read as a SECURITY question: "is this safe to run, unattended, on behalf
@@ -224,6 +227,7 @@ export const CHAT_MODEL_RESULT_CALLS = new Set([
     "exportSitchState",
     "getNearbyWeatherBalloons",
     "compareSondeTrajectory",
+    "listTimelineMarkers",
 ]);
 
 class CSitrecAPI {
@@ -584,6 +588,73 @@ class CSitrecAPI {
                         timezoneOffsetHours: GlobalDateTimeNode.getTimeZoneOffset(),
                         note: "Real-world current date/time. Distinct from the simulation time.",
                     };
+                }
+            },
+
+            listTimelineMarkers: {
+                doc: "List the timeline markers: named frames shown as flags on the frame slider. Returns [{frame, label}] sorted by frame, plus the In/Out (A-B) frames and the frame count.",
+                fn: () => ({markers: TimelineMarkers.list(), inFrame: Sit.aFrame, outFrame: Sit.bFrame, frames: Sit.frames}),
+            },
+
+            addTimelineMarker: {
+                doc: "Add a timeline marker (a named frame on the frame slider), or relabel the marker already at that frame. Undoable.",
+                params: {
+                    frame: "Frame number (0-based). Optional - defaults to the current frame",
+                    label: "Optional label shown when hovering the marker",
+                },
+                fn: (v) => {
+                    const frame = v?.frame === undefined || v?.frame === null ? Math.round(par.frame) : Math.round(Number(v.frame));
+                    if (!Number.isFinite(frame) || frame < 0 || frame > Sit.frames - 1) {
+                        return {success: false, error: `frame must be between 0 and ${Sit.frames - 1}`};
+                    }
+                    const marker = editTimelineMarkers("Add timeline marker", () => TimelineMarkers.add(frame, v?.label ?? ""));
+                    return {success: true, marker};
+                }
+            },
+
+            setTimelineMarkers: {
+                doc: "Add several timeline markers in one undoable step. With replace true, the given list replaces all existing markers.",
+                params: {
+                    markers: "Array of {frame, label}",
+                    replace: "Optional boolean - true removes the existing markers first (default false)",
+                },
+                fn: (v) => {
+                    const list = Array.isArray(v?.markers) ? v.markers : [];
+                    const bad = list.filter(m => !Number.isFinite(Number(m?.frame)) || Number(m.frame) < 0 || Number(m.frame) > Sit.frames - 1);
+                    if (bad.length) {
+                        return {success: false, error: `${bad.length} marker(s) outside frames 0-${Sit.frames - 1}`, bad};
+                    }
+                    editTimelineMarkers("Set timeline markers", () => {
+                        if (v?.replace) TimelineMarkers.clear();
+                        for (const m of list) TimelineMarkers.add(m.frame, m.label ?? "");
+                    });
+                    return {success: true, markers: TimelineMarkers.list()};
+                }
+            },
+
+            removeTimelineMarker: {
+                doc: "Remove the timeline marker at a frame. Undoable.",
+                params: {frame: "Frame number of the marker"},
+                fn: (v) => {
+                    const removed = editTimelineMarkers("Delete timeline marker", () => TimelineMarkers.remove(Number(v?.frame)));
+                    return removed ? {success: true} : {success: false, error: `no marker at frame ${v?.frame}`};
+                }
+            },
+
+            clearTimelineMarkers: {
+                doc: "Remove every timeline marker. Undoable.",
+                fn: () => {
+                    const count = TimelineMarkers.count();
+                    editTimelineMarkers("Delete all timeline markers", () => TimelineMarkers.clear());
+                    return {success: true, removed: count};
+                }
+            },
+
+            resetInOut: {
+                doc: "Reset the In/Out (A-B) range to the whole sitch: In to frame 0, Out to the last frame. Undoable.",
+                fn: () => {
+                    resetInOut();
+                    return {success: true, inFrame: Sit.aFrame, outFrame: Sit.bFrame};
                 }
             },
 

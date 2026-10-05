@@ -993,6 +993,11 @@ export class CNodeControllerCustomAzEl extends CNodeControllerAzElZoom {
         }
 
         if (this.fallback) {
+            // The fallback (PTZ) controller is disabled while this one drives the
+            // camera, so its apply() no longer refreshes its fov from fovSwitch.
+            // Refresh it here, or a track-driven FOV (an imported fov column)
+            // latches at whatever value it had when the source was last switched.
+            this.fallback.applyFOVOnly?.(f, objectNode);
             this.az = this.fallback.az;
             this.el = this.fallback.el;
             this.fov = this.fallback.fov;

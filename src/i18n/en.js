@@ -613,6 +613,26 @@ const en = {
         deleteFeature: "Delete Pin",
         done: "Done",
     },
+    timelineMarkers: {
+        menuTitle: "Timeline: Frame {{frame}}",
+        markerTitle: "Marker: {{name}}",
+        unnamed: "Frame {{frame}}",
+        label: "Label",
+        goToMarker: "Go to Marker",
+        deleteMarker: "Delete Marker",
+        addAtCurrent: "Add Marker at Current Frame ({{frame}})",
+        addHere: "Add Marker Here ({{frame}})",
+        goToFolder: "Go to Marker ({{count}})",
+        goToEntry: "{{name}} — frame {{frame}}",
+        deleteAll: "Delete All Markers",
+        deleteAllConfirm: "Delete all {{count}} timeline markers?",
+        deleteAllTitle: "Delete Markers",
+        resetInOut: "Reset In/Out",
+        undoAdd: "Add timeline marker",
+        undoRename: "Rename timeline marker",
+        undoDelete: "Delete timeline marker",
+        undoDeleteAll: "Delete all timeline markers",
+    },
     panoramaExport: {
         exportLookPanorama: {
             label: "Export Look Panorama",
@@ -1387,6 +1407,19 @@ const en = {
         windFrom: { label: "Wind From (°)", tooltip: "True direction the wind comes from. The whole field drifts with it" },
         windKnots: { label: "Wind (knots)", tooltip: "Drift speed of the whole field" },
     },
+    photoBackdrop: {
+        folder: { label: "Photo Backdrop: {{name}}" },
+        visible: { label: "Visible" },
+        showSky: { label: "Show Photo", tooltip: "Draw the picture behind everything in the look view" },
+        occlude: { label: "Ground Hides Objects", tooltip: "The ground in the picture hides objects farther away than Range" },
+        range: { label: "Range (m)", tooltip: "How far away the ground in the picture is taken to be. Only decides which objects it hides; the picture itself does not move" },
+        fill: { label: "Fill", tooltip: "Fill the rest of the look view with one color" },
+        fillColor: { label: "Fill Color" },
+        showInMain: { label: "Show in Main View", tooltip: "Draw the photographed part of the picture in the main view, Range metres from the camera, where the ground in it is assumed to be" },
+        mainOpacity: { label: "Main View Opacity" },
+        hideTerrain: { label: "Hide Terrain in Look View", tooltip: "The picture already shows the real ground, so hide the terrain model while the look view draws" },
+        followCamera: { label: "Centre on Look Camera", tooltip: "Keep the picture centred on the look camera, so its angles stay exact if the camera is a few metres from where the photos were taken" },
+    },
     synthBuilding: {
         name: { label: "Name" },
         visible: { label: "Visible" },
@@ -2108,6 +2141,12 @@ const en = {
                 + "view and only its range changes. Use it for tracks that were fitted to "
                 + "lines of sight, where the direction is measured and the range is not. "
                 + "Falls back to lifting straight up when the sightline is too flat to help.",
+        },
+        hideOutsideTrackData: {
+            label: "Hide Outside Track Data",
+            tooltip: "Hide the object on frames before its track's first data point and after "
+                + "its last. Without this, the object stays at the nearest data point, so a "
+                + "track that covers only part of the sitch leaves a marker where there is no data.",
         },
         exportToKML: {
             label: "Export to KMZ with Track",

@@ -208,14 +208,32 @@ timeline is on the right.
 turns off Live Mode. While you drag or hover, a box above the bar shows the frame number,
 the time in seconds from the start, and the time of day in the selected time zone.
 
-**In and Out markers.** The **green** line is the In frame and the **red** line is the Out
+**In and Out lines.** The **green** line is the In frame and the **red** line is the Out
 frame. Each has a small circle at the top. Put the pointer near a line (the cursor becomes a
-double arrow), then drag it. In always stays before Out. **Ctrl/Cmd+Z** undoes a marker
-drag.
+double arrow), then drag it. In always stays before Out. **Ctrl/Cmd+Z** undoes the drag.
 
-**Resetting the markers.** Double-click the timeline to the left of the In marker to put In
-back to frame 0. Double-click to the right of the Out marker to put Out back on the last
-frame.
+**Resetting In and Out.** Double-click the timeline to the left of the In line to put In
+back to frame 0. Double-click to the right of the Out line to put Out back on the last
+frame. **Reset In/Out** in the right-click menu does both.
+
+**Timeline markers.** A marker is a named frame. It shows as a **cyan** flag at the top of
+the timeline, with a faint line down the bar. Put the pointer on a flag to see its name and
+frame. Click a flag to go to that frame. Where a marker is on the In or Out line, the flag
+takes the click; drag the line lower down. `<` and `>` (Shift+`,` / Shift+`.`) go to the
+previous / next marker. Markers are saved with the sitch.
+
+**The right-click menu.** Right-click the timeline for:
+
+| Item | What it does |
+|---|---|
+| **Add Marker at Current Frame** | Adds a marker at the current frame |
+| **Add Marker Here** | Adds a marker at the frame under the pointer |
+| **Label**, **Go to Marker**, **Delete Marker** | Shown when you right-click a flag: name the marker, go to it, or delete it |
+| **Go to Marker** (folder) | Every marker, by name and frame. Click one to go there |
+| **Delete All Markers** | Deletes every marker, after you confirm |
+| **Reset In/Out** | Puts In on frame 0 and Out on the last frame |
+
+**Ctrl/Cmd+Z** undoes each change to the markers, and Reset In/Out.
 
 **Keyframe markers.** Some tools mark keyframes on the timeline as yellow diamonds. Click a
 diamond to go to that frame.
@@ -231,7 +249,7 @@ movement is one frame.
 | `←` / `→` | Tap: one frame back / forward. Hold: move backward / forward at normal speed, and pause playback |
 | `↑` / `↓` | Hold: move **backward** (`↑`) / **forward** (`↓`) at 10× normal speed. Pauses playback |
 | `,` / `.` | One frame back / forward, and pause |
-| `<` / `>` (Shift+`,` / Shift+`.`) | Previous / next keyframe, where a tool has marked them. Does nothing if there are none |
+| `<` / `>` (Shift+`,` / Shift+`.`) | Previous / next stop on the timeline: a timeline marker, the In or Out frame, or a keyframe that a tool has marked. Does nothing if there is no stop in that direction |
 | `I` / `O` | Set the In / Out frame to the current frame |
 | `G` | **Go To.** Type a frame number to go there and pause, or a date and/or time (`15:20`, `17:33 UTC`, `Jan 6, 2020`) to set the Now Time. Fields that you do not type stay the same. A time is read in the zone the Time menu shows, unless you add `UTC` |
 | `;` / `'` (hold) | Move the Start Time back / forward by one second for each screen update. Hold `Shift` as well for ×10, or `Alt` for ×1000 |

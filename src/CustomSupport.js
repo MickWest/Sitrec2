@@ -95,6 +95,7 @@ import {CNodeVideoInfoUI} from "./nodes/CNodeVideoInfoUI";
 import {CNodeSimInfoUI} from "./nodes/CNodeSimInfoUI";
 import {CNodeWescamMXUI} from "./nodes/CNodeWescamMXUI";
 import {CNodeATFLIRUI} from "./nodes/CNodeATFLIRUI";
+import {CNodeMradReticleUI} from "./nodes/CNodeMradReticleUI";
 import {CNodeOSDDataSeriesController} from "./nodes/CNodeOSDDataSeriesController";
 import {CNodeGUIFlag, CNodeGUIValue} from "./nodes/CNodeGUIValue";
 import {CNodeControllerCameraBankRoll} from "./nodes/CNodeControllerCameraBankRoll";
@@ -1218,6 +1219,21 @@ export class CCustomManager {
             passThrough: true,
             defaultFontSize: 3.5,
             defaultFontColor: "hud",
+        });
+    }
+
+    // Milliradian reticle and clock of a handheld thermal imager. Registered here,
+    // like the ATFLIR display, so older saved custom sitches also get the view.
+    setupMradReticleUI() {
+        if (NodeMan.exists("MradReticleUI")) return;
+        if (!NodeMan.exists("lookView") || !NodeMan.exists("lookCamera")) return;
+
+        new CNodeMradReticleUI({
+            id: "MradReticleUI",
+            camera: "lookCamera",
+            relativeTo: "lookView",
+            visible: false,
+            passThrough: true,
         });
     }
 

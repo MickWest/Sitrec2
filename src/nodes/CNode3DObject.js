@@ -354,6 +354,13 @@ export class CNode3DObject extends CNode3DGroup {
         this.forceAboveSurfaceAlongLOSController.isCommon = true;
         this.syncForceAboveSurfaceGUI();
 
+        this.hideOutsideTrackData = v.hideOutsideTrackData ?? false;
+        this.addSimpleSerial("hideOutsideTrackData");
+        this.gui.add(this, "hideOutsideTrackData").name(t("nodes3dObject.hideOutsideTrackData.label")).listen()
+            .onChange(() => setRenderOne(true))
+            .tooltip(t("nodes3dObject.hideOutsideTrackData.tooltip"))
+            .isCommon = true;
+
         const visibleController = this.gui.add(this, "visible").name("Visible").listen().onChange((v) => {
             this.show(v);
             setRenderOne(true);
@@ -2416,6 +2423,9 @@ ${trackPlacemark}    </Document>
         this.material.envMap = renderTarget.texture;
         this.applyEnvMapToModel(renderTarget.texture);
 
+        // Hidden while the cube camera renders around it, then restored to what it was:
+        // the object may be hidden (Visible off, or Hide Outside Track Data).
+        const wasVisible = this.group.visible;
         this.group.visible = false;
 
         cubeCamera.position.setFromMatrixPosition(this.group.matrixWorld);
@@ -2443,7 +2453,7 @@ ${trackPlacemark}    </Document>
         view.renderer.setRenderTarget(savedRenderTarget);
         GlobalScene.background = savedBackground;
 
-        this.group.visible = true;
+        this.group.visible = wasVisible;
     }
 
     // Find the source track that drives this object's position via controllers
@@ -2629,6 +2639,7 @@ ${trackPlacemark}    </Document>
 
     update(f) {
         super.update(f);
+        this.applyTrackDataVisibility(f);
         this.updateVehicleAnimation(f);
         if (this.flockEnabled) this.flock.update(f);
 
@@ -2638,6 +2649,37 @@ ${trackPlacemark}    </Document>
         // }
 
        // this.rebuildBoundingBox(false);
+    }
+
+    // The sitch frames this object's track has data for, {first, last} (fractional, inclusive),
+    // from the first node in its source chain that records them (CNodeTrackFromMISB, which
+    // every CSV/KML/MISB track is built on), including that track's time offsets. null when
+    // the track has no valid data; undefined when there is no track, or it records no span.
+    trackDataSpan() {
+        let node = this.getSourceTrack();
+        for (let depth = 0; node && depth < 8; depth++) {
+            if (node.getDataFrameSpan !== undefined) return node.getDataFrameSpan();
+            node = node.in?.source ?? node.in?.track;
+        }
+        return undefined;
+    }
+
+    // "Hide Outside Track Data": hide the object and its label on frames the track has no
+    // data for. Only hides: the Visible checkbox (this.visible, and the label's own flag)
+    // still decides everything else, and turning the option off restores what they say.
+    // The flags are not changed, so nothing about the hiding is saved with the sitch.
+    applyTrackDataVisibility(f) {
+        let outside = false;
+        if (this.hideOutsideTrackData) {
+            const span = this.trackDataSpan();
+            outside = span === undefined ? false
+                : span === null || f < span.first || f > span.last;
+        } else if (!this._hiddenOutsideTrackData) {
+            return;
+        }
+        this._hiddenOutsideTrackData = outside;
+        this.group.visible = this.visible && !outside;
+        if (this.label?.group) this.label.group.visible = this.label.visible !== false && !outside;
     }
 
     // "Main View Scale" (Globals.objectScaleMain) makes objects bigger in the MAIN view only —

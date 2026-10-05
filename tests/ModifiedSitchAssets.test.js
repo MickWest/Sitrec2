@@ -29,7 +29,7 @@ function save({local = false, custom = false} = {}) {
         TrackManager: {iterate: () => {}, serialize: empty, serializeBalloons: empty, serializeDisplayNames: () => ({})},
         Globals: {menuBar: {modSerialize: empty}},
         GlobalScene: {children: []}, par: {}, Units: {modSerialize: empty},
-        FeatureManager: manager, CustomGraphManager: manager, MeasurementManager: manager,
+        FeatureManager: manager, TimelineMarkers: manager, CustomGraphManager: manager, MeasurementManager: manager,
         Synth3DManager: manager, LayoutMan: manager,
         serializeMotionAnalysis: empty, serializeAutoTracking: empty, serializeHorizonExtractor: empty,
         serializeScriptedVideo: empty, serializeLongExposure: empty, serializeVideoFormatEffects: empty,
