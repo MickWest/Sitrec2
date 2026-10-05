@@ -141,6 +141,8 @@ class CNodeNotes extends CNodeView {
             white-space: pre-wrap;
             word-wrap: break-word;
             border-radius: 0 0 8px 8px;
+            user-select: text;
+            -webkit-user-select: text;
         `;
         this.div.appendChild(this.linkOverlay);
 
@@ -201,6 +203,9 @@ class CNodeNotes extends CNodeView {
         });
 
         this.linkOverlay.addEventListener('click', (e) => {
+            // A drag that selected text (to copy it) is not a click to edit.
+            const selection = this.linkOverlay.ownerDocument.getSelection();
+            if (selection && !selection.isCollapsed && this.linkOverlay.contains(selection.anchorNode)) return;
             if (e.target.tagName !== 'A') {
                 this.showTextArea();
                 this.textArea.focus();

@@ -10,6 +10,12 @@ const en = {
         "noTarget": "Select a target track or choose manual turbulence.",
         "readOnly": "This thermal value is calculated from scene geometry.",
         "readout": "Native {{width}} × {{height}} · {{vertical}}° V × {{horizontal}}° H · digital zoom {{zoom}}× · r0 {{r0}} m · ground/sea estimated",
+        "readoutView": {
+            "title": "Thermal Readout",
+            "show": "Show readout",
+            "showTooltip": "Show the thermal sensor readout in a separate window. You can select and copy the text.",
+            "idle": "The Look View does not show a physical thermal image now."
+        },
         "cloudDiagnostics": {"unresolvedThermal": "{{id}}: cloud field excluded; physical optical depth and temperature metadata are missing."},
         "cloudCost": "Clouds {{count}} · prepare {{prepareMs}} ms · sort {{sortMs}} ms · {{draws}} draws · absorption only; GPU timing unavailable",
         "coverageLimited": "Small-target refinement: {{refined}} of {{tiles}} tiles this frame (estimated budget); the others use normal supersampling",

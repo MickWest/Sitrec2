@@ -68,21 +68,22 @@ test("only the look view follows the camera data; visible-light frames drop the 
 test("an infrared frame takes the thermal route and a visible-light frame the visible route, in the real dispatcher", () => {
     const {par, NodeMan} = cameraData();
     let cameraUnavailable = false;
-    const unavailable = jest.fn(() => cameraUnavailable), ensureThermalView = jest.fn();
+    const unavailable = jest.fn(() => cameraUnavailable), ensureThermalView = jest.fn(), clearThermalStatus = jest.fn();
     const View = methods("src/nodes/CNodeView3D.js", "CNodeView3D", [...FRAME_GETTERS, "thermalRouteUnavailable",
         "renderTargetAndEffects"], {NodeMan, par, frameRenderModeFor, effectiveRenderMode, thermalUnavailable: unavailable,
-        thermalStatus: jest.fn(), ensureThermalView, isPanoramicCamera: () => false, isFisheyeCamera: () => false,
-        Globals: {}, PanoramicRenderer: jest.fn()});
+        thermalStatus: jest.fn(), clearThermalStatus, ensureThermalView, isPanoramicCamera: () => false,
+        isFisheyeCamera: () => false, Globals: {}, PanoramicRenderer: jest.fn()});
     const restore = jest.fn();
     const view = Object.assign(new View(), {id: "lookView", renderMode: "physicalThermal", camera: {},
         renderTargetAndEffectsInternal: jest.fn(), clearThermalOutput: jest.fn(), isXRPresenting: () => false,
-        raytracedRefraction: {begin: jest.fn(() => restore)}, _thermalReadout: {style: {display: ""}}});
+        raytracedRefraction: {begin: jest.fn(() => restore)}, thermalStatus: "readout"});
     view.renderTargetAndEffects();
     expect(unavailable).toHaveBeenCalledTimes(1); expect(view.renderTargetAndEffectsInternal).toHaveBeenLastCalledWith();
-    expect(view.raytracedRefraction.begin).not.toHaveBeenCalled(); expect(view._thermalReadout.style.display).toBe("");
+    expect(view.raytracedRefraction.begin).not.toHaveBeenCalled(); expect(clearThermalStatus).not.toHaveBeenCalled();
     expect(ensureThermalView).not.toHaveBeenCalled();
+    // A visible-light frame clears the thermal readout.
     par.frame = 20; view.renderTargetAndEffects();
-    expect(view._thermalReadout.style.display).toBe("none");
+    expect(clearThermalStatus).toHaveBeenCalledTimes(1); expect(clearThermalStatus).toHaveBeenLastCalledWith(view);
     expect(view.renderTargetAndEffectsInternal).toHaveBeenLastCalledWith(view.raytracedRefraction);
     expect(restore).toHaveBeenCalledTimes(1);
     // The visible-light frame of a physical thermal view loads the sensor for the next infrared frame...
@@ -260,8 +261,9 @@ test("no direct renderMode comparison remains outside the helper", () => {
     expect(direct).toEqual([]);
     // The allowed readers still exist, so this list cannot silently go stale.
     expect([...new Set(comparisons.map(entry => entry.replace(/ \(line \d+\)$/, "")))].sort()).toEqual([...SAVED_MODE_READERS].sort());
-    // And the readers named in the change use the helper.
+    // And the readers named in the change use the helper. ThermalLoader.js no longer reads the frame's mode:
+    // CNodeView3D.renderTargetAndEffects clears the thermal readout on a visible-light frame.
     for (const file of ["src/nodes/CNodeView3D.js", "src/nodes/CNodeView.js", "src/nodes/CNode3DObject.js",
-        "src/rendering/ThermalLoader.js", "src/rendering/ViewColorPipeline.js"])
+        "src/rendering/ViewColorPipeline.js"])
         expect(fs.readFileSync(path.join(ROOT, file), "utf8")).toMatch(/effectiveRenderMode\((this|view)\)/);
 });

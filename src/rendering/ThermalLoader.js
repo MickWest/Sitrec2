@@ -1,6 +1,5 @@
-import {markSitchDirty, setRenderOne} from "../Globals";
+import {markSitchDirty, NodeMan, setRenderOne} from "../Globals";
 import {t} from "../i18n";
-import {effectiveRenderMode} from "./ViewRenderMode";
 
 export function thermalRenderMode(value) {
     return value === "physicalThermal" ? value : "visible";
@@ -11,18 +10,16 @@ export function thermalUnavailable(view, {fisheye = false, flatEarth = false, pa
         view.isXRPresenting?.() || fisheye || flatEarth || panorama;
 }
 
+// The text goes to the Thermal Readout view (CNodeViewThermalReadout), not over the image.
 export function thermalStatus(view, key, values = {}, details = []) {
     view.thermalStatus = [t(`thermal.${key}`, values), ...details].join("\n");
-    if (!view.div) return;
-    if (!view._thermalReadout) {
-        const label = document.createElement("div");
-        Object.assign(label.style, {position: "absolute", bottom: "4px", left: "4px", color: "white",
-            background: "#000b", padding: "3px", pointerEvents: "none", fontSize: "11px", zIndex: "5",
-            whiteSpace: "pre-line"});
-        view.div.appendChild(label); view._thermalReadout = label;
-    }
-    view._thermalReadout.textContent = view.thermalStatus;
-    view._thermalReadout.style.display = effectiveRenderMode(view) === "physicalThermal" ? "" : "none";
+    NodeMan.get("thermalReadoutView", false)?.setText(view.thermalStatus);
+}
+
+// The view does not draw a physical thermal image now (visible mode, or a visible-light frame).
+export function clearThermalStatus(view) {
+    view.thermalStatus = null;
+    NodeMan.get("thermalReadoutView", false)?.setText(null);
 }
 
 export function ensureThermalView(view) {
@@ -47,10 +44,10 @@ export function disposeThermalView(view, permanent = false) {
     view._thermalAdapter?.dispose(); view._thermalAdapter = null;
     view._thermalLoading = null; view._thermalError = null;
     view._thermalDisposed = permanent;
-    view._thermalReadout?.remove(); view._thermalReadout = null;
+    if (view.thermalStatus) clearThermalStatus(view);
 }
 
-export function setupThermalMenu(view, parent) {
+export function setupThermalMenu(view, parent, readoutView) {
     const folder = parent.addFolder(t("thermal.title")).close();
     view._thermalFolder = folder;
     folder.add(view, "renderMode", {[t("thermal.visible")]: "visible", [t("thermal.physicalThermal")]: "physicalThermal"})
@@ -59,9 +56,16 @@ export function setupThermalMenu(view, parent) {
             // The saved choice, not this frame's route: a choice made on a visible-light frame of camera data
             // still loads the sensor for the infrared frames.
             if (view.renderMode === "physicalThermal") ensureThermalView(view);
-            else if (view._thermalReadout) view._thermalReadout.style.display = "none";
+            else clearThermalStatus(view);
             markSitchDirty(); setRenderOne(true);
         });
+    // The same flag as the view's entry in Show/Hide > Views. The view saves it with the sitch.
+    if (readoutView) {
+        folder.add(readoutView, "visible").name(t("thermal.readoutView.show")).listen().onChange(value => {
+            readoutView.visible = undefined; // force update
+            readoutView.setVisible(value);
+        }).tooltip(t("thermal.readoutView.showTooltip"));
+    }
     // Opening the settings is also an explicit first use. Closed, visible-mode
     // startup imports neither the schema's physics dependencies nor GPU code.
     folder.onOpenClose(changed => {

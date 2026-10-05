@@ -66,6 +66,7 @@ import {initializeSettings, SettingsSaver} from "./SettingsManager";
 import {CNodeCurveEditor2} from "./nodes/CNodeCurveEdit2";
 import {CNodeViewDAG} from "./nodes/CNodeViewDAG";
 import {CNodeNotes} from "./nodes/CNodeNotes";
+import {CNodeViewThermalReadout} from "./nodes/CNodeViewThermalReadout";
 import {createCustomModalWithCopy, saveFilePrompted, saveFileToDirectory, saveFileToHandle} from "./FileUtils";
 import {deserializeMotionAnalysis, serializeMotionAnalysis} from "./CMotionAnalysisUI";
 import {deserializeAutoTracking, serializeAutoTracking} from "./CObjectTracking";
@@ -1823,7 +1824,20 @@ export const setupMethods = {
         // hand-tuned chains.
         if (Sit.isCustom && NodeMan.exists("lookView")) {
             const lookView = NodeMan.get("lookView");
-            setupThermalMenu(lookView, guiMenus.effects);
+            if (!NodeMan.exists("thermalReadoutView")) {
+                new CNodeViewThermalReadout({
+                    id: "thermalReadoutView",
+                    visible: false,
+                    left: 0.50,
+                    top: 0.70,
+                    width: 0.48,
+                    height: 0.25,
+                    draggable: true,
+                    resizable: true,
+                    freeAspect: true,
+                });
+            }
+            setupThermalMenu(lookView, guiMenus.effects, NodeMan.get("thermalReadoutView"));
             if (Array.isArray(lookView.effectPasses)) {
 
                 // The legacy FLIRShader flag joins the same folder. Its def

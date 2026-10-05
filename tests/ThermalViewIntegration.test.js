@@ -338,10 +338,10 @@ test("look draw updates each inherited vehicle, reports used values and leaves r
         adapter.render(new Scene(),30);
         expect(window.lookThermal.vehicles).toHaveLength(2);
         expect(window.lookThermal.vehicles[1]).toMatchObject({id:"second",airTemperatureK:290,mach:.2,power:.6});
-        expect(view._thermalReadout.textContent).toContain("air 267.35 K");
-        expect(view._thermalReadout.textContent).toContain("Coarse optical preview; calculated kernel L1 bound: 2.");
-        expect(view._thermalReadout.textContent).toContain("ground speed; no wind at altitude");
-        expect(view._thermalReadout.textContent).toContain("power 0.900 (climb reference, estimated)");
+        expect(view.thermalStatus).toContain("air 267.35 K");
+        expect(view.thermalStatus).toContain("Coarse optical preview; calculated kernel L1 bound: 2.");
+        expect(view.thermalStatus).toContain("ground speed; no wind at altitude");
+        expect(view.thermalStatus).toContain("power 0.900 (climb reference, estimated)");
         node.group.position.x=Globals.equatorRadius+5000; adapter.render(new Scene(),31);
         expect(window.lookThermal.vehicles[0].airTemperatureK).toBeCloseTo(288.15-.0065*5000,10);
         second.thermal.mode="uniform";adapter.render(new Scene(),32);
@@ -466,7 +466,7 @@ test("the look draw applies camera data per frame, reports it, locks the driven 
     const render=jest.spyOn(adapter.pipeline,"render").mockImplementation(inputs=>
         Object.assign(adapter.pipeline,{hasFrame:true,settings:inputs.settings,lastFrame:{opticsCache:optics}}));
     const controller=key=>gui.controllersRecursive().find(c=>c.property===key);
-    const readout=()=>view._thermalReadout.textContent, saved=()=>JSON.stringify([view.cameraNode,Sit.thermalEnvironment]);
+    const readout=()=>view.thermalStatus, saved=()=>JSON.stringify([view.cameraNode,Sit.thermalEnvironment]);
     const driven=["focalStep","focalLengthM","verticalFovDeg","fieldMode","apertureM"];
     markSitchDirty.mockClear();
     try {

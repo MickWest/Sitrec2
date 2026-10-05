@@ -1,4 +1,4 @@
-import {disposeThermalView, ensureThermalView, thermalRenderMode, thermalStatus, thermalUnavailable} from "../rendering/ThermalLoader";
+import {clearThermalStatus, disposeThermalView, ensureThermalView, thermalRenderMode, thermalStatus, thermalUnavailable} from "../rendering/ThermalLoader";
 import {migrateViewColorSettings, splitViewEffects, viewColorPolicy} from "../rendering/ViewColorPipeline";
 import {effectiveRenderMode, frameEffectPasses, frameRenderModeFor} from "../rendering/ViewRenderMode";
 import {SoftDepthPass} from "../rendering/SoftDepth";
@@ -2147,7 +2147,7 @@ export class CNodeView3D extends CNodeViewCanvas {
             // The thermal radiance pass applies the terrestrial vertex lift itself.
             return this.renderTargetAndEffectsInternal();
         }
-        if (this._thermalReadout) this._thermalReadout.style.display = "none";
+        if (this.thermalStatus) clearThermalStatus(this);
         // A physical thermal view on a visible-light frame of camera data (frameRenderMode) loads the sensor now, so
         // that its first infrared frame is not drawn black while the module loads.
         if (this.frameRenderMode && !this._thermalError && !this.thermalRouteUnavailable()) ensureThermalView(this);
