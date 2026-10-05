@@ -167,15 +167,29 @@ export class CNodeTrackFromMISB extends CNodeTrack {
 
     }
 
-    getValue(frameFloat) {
-        // Apply time offsets to the frame before retrieving value
-        // - timeOffset: manual fine-tuning slider (seconds)
-        // - trackStartTime: absolute start time override (computed to seconds)
+    // The time offsets getValue() applies, in frames:
+    // - timeOffset: manual fine-tuning slider (seconds)
+    // - trackStartTime: absolute start time override (computed to seconds)
+    getTimeOffsetFrames() {
         const misb = this.in.misb;
         const manualOffset = misb.timeOffset ?? 0;
         const startTimeOffset = misb.getTrackStartTimeOffsetSeconds?.() ?? 0;
-        const totalOffsetFrames = (manualOffset + startTimeOffset) * Sit.fps;
-        return super.getValue(frameFloat + totalOffsetFrames);
+        return (manualOffset + startTimeOffset) * Sit.fps;
+    }
+
+    getValue(frameFloat) {
+        // Apply time offsets to the frame before retrieving value
+        return super.getValue(frameFloat + this.getTimeOffsetFrames());
+    }
+
+    // dataFrameSpan in sitch frames: moved by the same offsets getValue() applies. Read
+    // live, because the offset slider changes the offset without a recalculate. null when
+    // there is no valid data; undefined before the first recalculate.
+    getDataFrameSpan() {
+        const span = this.dataFrameSpan;
+        if (!span) return span;
+        const offsetFrames = this.getTimeOffsetFrames();
+        return {first: span.first - offsetFrames, last: span.last - offsetFrames};
     }
 
 
@@ -486,6 +500,28 @@ export class CNodeTrackFromMISB extends CNodeTrack {
         let fovSlot = -1;
         let fovValue = undefined;
 
+        // The time span the data actually covers, as frame numbers of this array:
+        // fractional, inclusive, half a frame wider each side, and NOT limited to the
+        // array, as the data can start before frame 0 or end after the last frame.
+        // Outside it the positions below, and getValue()'s reads past either end of the
+        // array, are extrapolated. getDataFrameSpan() moves it by the time offsets
+        // getValue() applies; CNode3DObject's "Hide Outside Track Data" reads that.
+        // null when there is no valid data.
+        let dataFirstMS = Infinity, dataLastMS = -Infinity;
+        for (let i = 0; i < points; i++) {
+            if (this.validArray[i] && Number.isFinite(lookupTimes[i])) {
+                dataFirstMS = Math.min(dataFirstMS, lookupTimes[i]);
+                dataLastMS = Math.max(dataLastMS, lookupTimes[i]);
+            }
+        }
+        this.dataFrameSpan = null;
+        if (dataFirstMS <= dataLastMS && !usePESPTS) {
+            // the exact inverse of the wall-clock msNow below
+            const toFrame = ms => (ms - msStart) * Sit.fps / msPerFrameNumerator;
+            this.dataFrameSpan = {first: toFrame(dataFirstMS) - 0.5, last: toFrame(dataLastMS) + 0.5};
+        }
+        const halfFrameMS = 500 * Sit.simSpeed / Sit.fps;
+
         for (var f=0;f<Sit.frames;f++) {
             // For PES-PTS mode, msNow is the video frame's PTS in ms,
             // relative to the first frame — same origin as pesTimeArray.
@@ -503,6 +539,11 @@ export class CNodeTrackFromMISB extends CNodeTrack {
                 }
             } else {
                 msNow = msStart + (f * msPerFrameNumerator) / Sit.fps;
+            }
+            // PES-PTS times have no closed-form frame, so record the frames they cover
+            if (usePESPTS && msNow >= dataFirstMS - halfFrameMS && msNow <= dataLastMS + halfFrameMS) {
+                this.dataFrameSpan ??= {first: f - 0.5, last: f + 0.5};
+                this.dataFrameSpan.last = f + 0.5;
             }
             // advance the slot if needed
             while (slot < points-1) {

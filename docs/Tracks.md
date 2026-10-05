@@ -391,6 +391,58 @@ Sitrec shows the scene in sRGB, which lifts faint light. A field fitted to a lin
 video display therefore looks hazier in Sitrec than in the video. Raise **Minimum
 Emission** to hide the weakest spheres.
 
+### Sitrec Photo Backdrop (.json)
+
+A photo backdrop is a picture of the background around a camera that only turns. Each
+pixel has an azimuth and an elevation. Because the camera does not move, the background
+depends only on where the camera points. A mosaic of photos from that camera, laid out
+by azimuth and elevation, therefore matches every photo in the look view, and no terrain
+model is needed. Drop the file on Sitrec. A **Photo Backdrop** folder appears in the
+**Objects** menu. The file is kept with the sitch, and the folder's settings are saved
+with it.
+
+```json
+{
+  "type": "SitrecPhotoBackdrop",
+  "version": 1,
+  "name": "Ridge",
+  "image": "data:image/png;base64,...",
+  "terrainMask": "data:image/png;base64,...",
+  "coverageMask": "data:image/png;base64,...",
+  "origin": {"lat": 33.525, "lon": -106.093, "altMSL": 1429.5},
+  "azMin": 75.6, "azMax": 87.8, "elMin": 1.9, "elMax": 4.7,
+  "range": 15000,
+  "fillColor": "#888888"
+}
+```
+
+- **image**: the picture, as a PNG, JPEG or WebP data URL. The left edge of column 0 is
+  at `azMin` and the right edge of the last column is at `azMax`. The top edge of row 0
+  is at `elMax` and the bottom edge of the last row is at `elMin`. Both axes are linear
+  in degrees. Azimuth is clockwise from true north. Elevation is above the local
+  horizontal at the camera. These are the same angles that **Camera Heading ▸ Custom
+  Az/El** uses.
+- **origin**: where the camera stood, with altitude above mean sea level.
+- **terrainMask** (optional): an image the same size as the picture. White is ground and
+  black is sky. The ground hides objects that are farther away than `range` metres.
+- **coverageMask** (optional): an image the same size as the picture. White marks the
+  pixels that came from a photo. The main view draws only those pixels.
+- **range** (optional, default 15000): how far away the ground is taken to be. In the look
+  view this decides only which objects the ground hides; the picture itself does not move.
+  The main view draws the picture this far from the camera.
+- **fillColor** (optional): one color for the rest of the look view.
+
+In the look view the backdrop is drawn behind everything, at the angles the pixels were
+photographed at. In the main view it is a curved panel **Range (m)** metres from the camera, at
+those same angles, so you can see where the photographed ground is assumed to be. The folder has
+**Show Photo**, **Ground Hides Objects**, **Range (m)**, **Fill**, **Fill Color**, **Show in Main
+View**, **Main View Opacity**, **Hide Terrain in Look View** and **Centre on Look Camera**. **Hide Terrain in Look View** is on by default: the picture already shows the real
+ground, so the terrain model is not drawn in the look view. The main view still shows it. When
+**Centre on Look Camera** is on, the picture stays centred on the look camera, so its
+angles stay exact when the camera track is a few metres from `origin`. The picture
+already shows where things appeared, so terrestrial refraction does not bend it. Turn off
+**Enable Refraction** if the objects were also placed where they appeared in the photos.
+
 ## Importing Tracks
 
 There are two ways to get a track into Sitrec:
@@ -427,6 +479,10 @@ The menu item appears only in browsers that can pick a folder. To open the Track
 3. The 3D view centers over the track
 4. A colored track line appears in the scene
 5. Track controls appear in the **Contents** menu on the right
+
+If a track's data covers only part of the sitch, its object stays at the nearest data point on
+the frames before the first point and after the last. To hide the object on those frames, turn on
+**Hide Outside Track Data** in the object's folder in the **Objects** menu.
 
 ![A loaded track with default settings](docimages/Close-up-of-single-track-defaults.jpg)
 

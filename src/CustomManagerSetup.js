@@ -2325,6 +2325,8 @@ export const setupMethods = {
 
         this.setupATFLIRUI();
 
+        this.setupMradReticleUI();
+
         this.setupOSDDataSeriesController();
 
         setupHorizonExtractorMenu();

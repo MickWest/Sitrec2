@@ -89,6 +89,8 @@ import {importSplineJSON, isSplineJSON} from "./SplineInterchange";
 import {importFOVJSON, isFOVJSON} from "./FOVInterchange";
 import {isCloudFieldJSON} from "./cloudField/CloudFieldFormat";
 import {importCloudField} from "./cloudField/CloudFieldImport";
+import {isPhotoBackdropJSON} from "./photoBackdrop/PhotoBackdropFormat";
+import {importPhotoBackdrop} from "./photoBackdrop/PhotoBackdropImport";
 import {importCameraStateCSV} from "./nodes/CNodeCameraState";
 
 // The header row of each camera state CSV, keyed by its parsed rows. parseAsset
@@ -574,6 +576,17 @@ export const parseMethods = {
             // Unlike spline/fov files, the file itself is kept in loadedFiles: the
             // spheres live only in the file, and the node serializes just its settings.
             const node = importCloudField(filename, parsedFile);
+            if (!node) {
+                fileManagerEntry.skipSerialization = true;
+                return false;
+            }
+            return true;
+        }
+
+        if (fileManagerEntry.dataType === "photoBackdrop") {
+            // Kept in loadedFiles like a cloud field: the picture lives only in the file,
+            // and the node serializes just its settings.
+            const node = importPhotoBackdrop(filename, parsedFile);
             if (!node) {
                 fileManagerEntry.skipSerialization = true;
                 return false;
@@ -1655,6 +1668,10 @@ export const parseMethods = {
                     } else if (isCloudFieldJSON(jsonParsed)) {
                         // SitrecCloudField — soft emitting spheres (CNodeCloudField).
                         dataType = "cloudField";
+                        parsed = jsonParsed;
+                    } else if (isPhotoBackdropJSON(jsonParsed)) {
+                        // SitrecPhotoBackdrop — a registered photo background (CNodePhotoBackdrop).
+                        dataType = "photoBackdrop";
                         parsed = jsonParsed;
                     } else {
                         parsed = this.detectTrackFile(filename, jsonParsed);

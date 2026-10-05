@@ -2,7 +2,8 @@
 // it cares about (manual horizon keyframes, auto-tracker hits, motion-analysis
 // events, etc.) registers a provider here. The frame slider then renders the
 // union of those frames as yellow diamonds, and `<`/`>` (Shift+,/Shift+.)
-// step through them.
+// step through them, together with the timeline markers and the In/Out frames
+// (KeyBoardHandler navigationStops, TimelineMarkers.js).
 //
 // Providers expose a getFrames() callback returning an iterable of frame
 // numbers. The registry polls on each slider redraw and on each navigation

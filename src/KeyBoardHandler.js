@@ -4,8 +4,16 @@ import {closeFullscreen, openFullscreen} from "./utils";
 import {Vector3} from "three";
 import {EventManager} from "./CEventManager";
 import {KeyframeRegistry} from "./CKeyframeRegistry";
+import {nextStop, prevStop, timelineStops, TimelineMarkers} from "./TimelineMarkers";
 import {updateFrameSlider} from "./nodes/CNodeFrameSlider";
 import {exitTrackEditMode, hasOpenContextMenu} from "./TrackEditMode";
+
+// The frames Shift+, / Shift+. stop at: timeline markers, the In and Out
+// frames, and every keyframe published to the KeyframeRegistry.
+function navigationStops() {
+    return timelineStops([TimelineMarkers.frames(), KeyframeRegistry.getAllFrames(), Sit.aFrame, Sit.bFrame],
+        Sit.frames - 1);
+}
 
 /* Usage examples
 
@@ -469,14 +477,14 @@ export function initKeyboard() {
                 break;
 
             // , / .  → single-step back/forward
-            // < / >  (Shift+, / Shift+.) → previous / next registered keyframe.
-            // The registry is the union of all tools that have published
-            // keyframes (e.g. horizon extractor). If no provider yields a
-            // bracketing frame, do nothing — feels less surprising than
-            // silently falling back to single-step.
+            // < / >  (Shift+, / Shift+.) → previous / next timeline stop: a
+            // timeline marker, the In or Out frame, or a keyframe some tool
+            // has published (e.g. horizon extractor). If none brackets the
+            // current frame, do nothing — feels less surprising than silently
+            // falling back to single-step.
             case 'Comma':
                 if (e.shiftKey) {
-                    const prev = KeyframeRegistry.prevFrame(Math.floor(par.frame));
+                    const prev = prevStop(navigationStops(), Math.floor(par.frame));
                     if (prev !== undefined) {
                         par.frame = prev;
                         par.paused = true;
@@ -492,7 +500,7 @@ export function initKeyboard() {
 
             case 'Period':
                 if (e.shiftKey) {
-                    const next = KeyframeRegistry.nextFrame(Math.floor(par.frame));
+                    const next = nextStop(navigationStops(), Math.floor(par.frame));
                     if (next !== undefined) {
                         par.frame = next;
                         par.paused = true;
