@@ -106,6 +106,66 @@ strip_env_comment() {
 }
 
 # ---------------------------------------------------------------------------
+# Helper: rootless Podman pre-check. Two host settings make an image pull fail
+# while Podman unpacks the layers, with an error that does not say why:
+#
+#  - Podman's image store is on a network file system (NFS, SMB/CIFS and the
+#    like), as it is when the home directory is a network mount. Rootless Podman
+#    then records the owner and mode of every unpacked file in a user extended
+#    attribute, and a share without user extended attributes fails the pull with
+#    "processing tar file(lsetxattr /etc: operation not supported)".
+#  - The account has no subordinate ID range in /etc/subuid and /etc/subgid, so
+#    Podman can map only the user's own ID, and the image's files that other
+#    users own fail with "potentially insufficient UIDs or GIDs available in
+#    user namespace".
+#
+# It only warns: some shares do support user extended attributes, so the pull
+# still runs. Keep in step with the copy in install.sh.
+# ---------------------------------------------------------------------------
+check_podman_storage() {
+    case "$COMPOSE" in docker*|dry-run) return 0 ;; esac
+    # On macOS and Windows the image store is inside the podman machine VM.
+    [ "$(uname -s)" = "Linux" ] || return 0
+    local info rootless uidmap gidmap graphroot fstype=""
+    local help_url="https://github.com/MickWest/Sitrec2/blob/main/docs/dev/Installing-and-configuring.md#using-podman-instead-of-docker"
+    info=$(podman info --format '{{.Host.Security.Rootless}} {{range .Host.IDMappings.UIDMap}}{{.Size}},{{end}} {{range .Host.IDMappings.GIDMap}}{{.Size}},{{end}} {{.Store.GraphRoot}}' 2>/dev/null) || return 0
+    read -r rootless uidmap gidmap graphroot <<< "$info"
+    [ "$rootless" = "true" ] || return 0
+
+    if [ -d "$graphroot" ]; then
+        fstype=$(stat -f -c %T "$graphroot" 2>/dev/null || true)
+    fi
+    case "$fstype" in
+        nfs*|smb*|cifs|ceph|afs|k-afs|gpfs|lustre|novell|ocfs2|panfs|prl_fs|snfs|vboxsf|vxfs|acfs|ibrix)
+            echo "[sitrec] WARNING: Podman keeps its images on a network file system ($fstype):"
+            echo "[sitrec]   $graphroot"
+            echo "[sitrec] Rootless Podman must then write a user extended attribute on each file"
+            echo "[sitrec] it unpacks. If the share does not support that, the pull fails with"
+            echo "[sitrec]   processing tar file(lsetxattr /etc: operation not supported)"
+            echo "[sitrec] To fix it, keep the images on a local disk. Set graphroot in"
+            echo "[sitrec] ~/.config/containers/storage.conf to a local directory you own:"
+            echo "[sitrec]   [storage]"
+            echo "[sitrec]   driver = \"overlay\""
+            echo "[sitrec]   graphroot = \"/path/on/a/local/disk/containers/storage\""
+            echo "[sitrec] Then run this command again. Details, including SELinux labels:"
+            echo "[sitrec]   $help_url"
+            ;;
+    esac
+
+    if [ "$uidmap" = "1," ] || [ "$gidmap" = "1," ]; then
+        echo "[sitrec] WARNING: your account has no subordinate ID range in /etc/subuid and"
+        echo "[sitrec] /etc/subgid, so Podman can map only your own user ID. Other users own"
+        echo "[sitrec] some files in the image, so the pull fails with"
+        echo "[sitrec]   potentially insufficient UIDs or GIDs available in user namespace"
+        echo "[sitrec] To fix it, an administrator gives your account a free range, for example:"
+        echo "[sitrec]   sudo usermod --add-subuids 100000-165535 --add-subgids 100000-165535 $(id -un)"
+        echo "[sitrec] Then run 'podman system migrate' and run this command again. Details:"
+        echo "[sitrec]   $help_url"
+    fi
+    return 0
+}
+
+# ---------------------------------------------------------------------------
 # Helper: switch the image tag in docker-compose.yml
 # ---------------------------------------------------------------------------
 switch_version() {
@@ -113,6 +173,7 @@ switch_version() {
     sed -i.bak "s|image: ${IMAGE}:.*|image: ${IMAGE}:${tag}|" docker-compose.yml
     rm -f docker-compose.yml.bak
     echo "[sitrec] Switched to ${IMAGE}:${tag}"
+    check_podman_storage
     $COMPOSE pull
     $COMPOSE down
     $COMPOSE up -d
@@ -141,6 +202,7 @@ case "${1:-help}" in
         # this, pull would re-fetch the same older tag in a loop.
         sed -i.bak "s|image: ${IMAGE}:.*|image: ${IMAGE}:latest|" docker-compose.yml
         rm -f docker-compose.yml.bak
+        check_podman_storage
         $COMPOSE pull
         $COMPOSE down
         $COMPOSE up -d
@@ -463,6 +525,7 @@ for t in tags:
         fi
 
         # Build the derived image. --pull refreshes the base for the chosen tag.
+        check_podman_storage
         $RUNTIME_CMD build --pull -f "$DF" -t "$TARGET" "$BUILD_DIR"
         echo "[sitrec] Built $TARGET"
 

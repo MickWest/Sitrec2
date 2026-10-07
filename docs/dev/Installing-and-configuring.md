@@ -698,6 +698,16 @@ kubectl rollout restart deployment/sitrec
   ```
 - **GHCR access:** If you get "403 Forbidden" pulling the image, clear stale credentials with `podman logout ghcr.io` and retry.
 - **Rootless by default:** Podman runs without root privileges. This is normally transparent, but if you see permission errors on mounted volumes, ensure the directories exist before starting the container.
+- **`processing tar file(lsetxattr /etc: operation not supported)` during a pull, install or bake:** Podman's image store is on a network file system, usually because your home directory is an NFS or SMB mount. On such a store, rootless Podman records the owner and mode of every unpacked file in a `user.containers.override_stat` extended attribute, and the share does not support user extended attributes. The image is not the cause; every image fails the same way. To confirm, run `podman info --format '{{.Store.GraphRoot}}'`, then `stat -f -c %T` on the path it prints: `nfs`, `cifs` or `smb2` is a network share. To fix it, move the image store to a local disk. Put this in `~/.config/containers/storage.conf`, with a local directory you own in place of the example path, and run the command again:
+  ```toml
+  [storage]
+  driver = "overlay"
+  graphroot = "/path/on/a/local/disk/containers/storage"
+  ```
+  Do not use `/tmp` or `/var/tmp`: many systems delete old files there, which damages the store. On an SELinux host, an administrator gives the new directory the labels of the default store: `sudo semanage fcontext -a -e /var/lib/containers/storage /path/on/a/local/disk/containers/storage`, then `sudo restorecon -R -v /path/on/a/local/disk/containers/storage`. Alternatively, an administrator sets `rootless_storage_path` in `/etc/containers/storage.conf` to a local path for all users.
+- **`potentially insufficient UIDs or GIDs available in user namespace` during a pull:** your account has no subordinate ID range in `/etc/subuid` and `/etc/subgid`. Local accounts made by `useradd` get a range automatically; accounts from a network directory (LDAP, Active Directory) often do not. Rootless Podman can then map only your own user ID, and other users own some files in the image. An administrator adds a free range, for example `sudo usermod --add-subuids 100000-165535 --add-subgids 100000-165535 <user>`, and then you run `podman system migrate`.
+
+On Linux, `install.sh` and `./sitrec.sh` (`pull`, `versions`, `bake`) check for both conditions and print a warning before they pull.
 
 **Daily usage** — the management scripts handle Docker/Podman differences automatically:
 
