@@ -4,6 +4,7 @@ import {PbfReader} from "pbf";
 import {buildingStyle, encodeCompact, ROAD_CLASSES, stableHash} from "./CityLightsData";
 import {CITY_LIGHTS_RELEASE, cityLightsTiles} from "./CityLightsRegion";
 import {rasterCityLights} from "./CityLightsRaster";
+import {rasterThermalGround} from "./ThermalGroundRaster";
 
 const sources = Object.fromEntries(["buildings", "transportation"].map(theme => [theme,
     new PMTiles(`https://overturemaps-extras-us-west-2.s3.us-west-2.amazonaws.com/tiles/${CITY_LIGHTS_RELEASE}/${theme}.pmtiles`),
@@ -62,14 +63,15 @@ async function processQueue() {
         while (queue.size) {
             const [view, request] = queue.entries().next().value;
             queue.delete(view);
-            const {id, region, roadFraction, pathFraction} = request;
+            const {id, region, roadFraction, pathFraction, thermalGround} = request;
             const cancelled = () => latest.get(view) !== id;
             const progress = text => {if (!cancelled()) self.postMessage({view, id, progress: text});};
             try {
                 const source = await loadRegion(region, cancelled, progress);
                 if (!source || cancelled()) continue;
-                progress("Preparing city lights…");
-                const result = await rasterCityLights(source, roadFraction, pathFraction, cancelled);
+                progress(thermalGround ? "Preparing thermal ground mask…" : "Preparing city lights…");
+                // The thermal ground mask (road, building and path coverage) reuses the same region data.
+                const result = thermalGround ? rasterThermalGround(source) : await rasterCityLights(source, roadFraction, pathFraction, cancelled);
                 if (result && !cancelled()) self.postMessage({view, id, ...result}, [result.pixels]);
             } catch (error) {
                 if (!cancelled()) self.postMessage({view, id, error: error.message});

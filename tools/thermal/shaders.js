@@ -100,8 +100,9 @@ export const radianceFragment = `
 // transfer, optics and detection. The source map keeps its normal UV transform
 // and color-space decoding; lighting, tone mapping and display polarity are absent.
 export const terrainRadianceVertex = radianceVertex
-    .replace("#include <common>", "#include <common>\n#include <uv_pars_vertex>\n#include <color_pars_vertex>")
-    .replace("void main() {", "void main() {\n#include <uv_vertex>\n#include <color_vertex>");
+    .replace("#include <common>", "#include <common>\n#include <uv_pars_vertex>\n#include <color_pars_vertex>\n#ifdef GROUND_MASK\nout vec3 vWorldPosition; // ECEF, m\n#endif")
+    .replace("void main() {", "void main() {\n#include <uv_vertex>\n#include <color_vertex>")
+    .replace("vViewPosition = mvPosition.xyz;", "vViewPosition = mvPosition.xyz;\n#ifdef GROUND_MASK\nvWorldPosition = (modelMatrix * vec4(transformed, 1.0)).xyz;\n#endif");
 export const terrainRadianceFragment = `
     #include <logdepthbuf_pars_fragment>
     #include <uv_pars_fragment>
@@ -113,8 +114,15 @@ export const terrainRadianceFragment = `
     uniform int rangeSamples; // samples per temperature row
     uniform int temperatureSamples; // temperature rows
     uniform vec3 sunViewDirection; // camera-space direction toward the Sun
+    uniform sampler2D groundMask; // R road, G building footprint, B paved path: covered fraction
+    uniform vec4 groundMaskRect; // Web Mercator x0, y0 and texels-to-unit scales of the mask square
+    uniform vec3 upView; // local up in camera space
+    uniform vec2 ellipsoid; // equatorial radius (m), first eccentricity squared
     in vec3 vViewPosition; // m
     in vec3 vViewNormal;
+    #ifdef GROUND_MASK
+        in vec3 vWorldPosition; // ECEF, m
+    #endif
     out vec4 result; // R: scaled photon radiance
     vec2 rangeSource(int lower, float fraction, int row) {
         return mix(texelFetch(rangeTexture, ivec2(lower, row), 0).rg,
@@ -129,15 +137,62 @@ export const terrainRadianceFragment = `
         #if defined(USE_COLOR) || defined(USE_COLOR_ALPHA)
             color *= vColor.rgb;
         #endif
-        // Estimated T = reference + span * (0.5 - sRGB luminance).
         vec3 srgb = sRGBTransferOETF(vec4(clamp(color, 0.0, 1.0), 1.0)).rgb;
         float brightness = clamp(dot(srgb, vec3(0.2126, 0.7152, 0.0722)), 0.0, 1.0);
-        float row = (1.0 - brightness) * float(temperatureSamples - 1);
-        int lowerRow = min(temperatureSamples - 2, int(floor(row)));
         float position = (rangeMaxM > 0.0 ? sqrt(clamp(length(vViewPosition) / rangeMaxM, 0.0, 1.0)) : 0.0) * float(rangeSamples - 1);
         int lower = min(rangeSamples - 2, int(floor(position)));
-        vec2 source = mix(rangeSource(lower, position - float(lower), lowerRow),
-            rangeSource(lower, position - float(lower), lowerRow + 1), row - float(lowerRow));
+        float fraction = position - float(lower);
+        #ifdef MATERIAL_CLASSES
+            // Estimated material class weights from the imagery color; rows: grass, trees, asphalt, concrete, roof, soil.
+            // Vegetation: the excess-green indices of the 3D-tile tree detector (ExG > 0.10 or ExGR > 0), with soft
+            // edges; dark green is tree canopy, lighter green grass. Soil: a red-over-blue cast. The neutral rest by
+            // brightness: dark asphalt, mid concrete, bright roof. Shadows and dark roofs read as asphalt, and water as
+            // dark or blue; imagery does not measure material.
+            vec3 chroma = srgb / (srgb.r + srgb.g + srgb.b + 1e-6);
+            float exg = 2.0 * chroma.g - chroma.r - chroma.b;
+            float exgr = exg - (1.4 * chroma.r - chroma.g);
+            float vegetation = max(smoothstep(-0.03, 0.03, exgr), smoothstep(0.07, 0.13, exg));
+            float soil = (1.0 - vegetation) * smoothstep(0.04, 0.10, chroma.r - chroma.b);
+            float neutral = 1.0 - vegetation - soil;
+            float dark = 1.0 - smoothstep(0.25, 0.45, brightness), bright = smoothstep(0.55, 0.75, brightness);
+            float trees = vegetation * (1.0 - smoothstep(0.18, 0.30, brightness));
+            float weights[6] = float[6](vegetation - trees, trees, neutral * dark, neutral * (1.0 - dark - bright), neutral * bright, soil);
+            #ifdef GROUND_MASK
+                // Mapped coverage replaces the color classes where it applies; a road under tree canopy stays trees.
+                // Geodetic latitude of a near-surface point, then the Web Mercator square of the mask.
+                float lon = atan(vWorldPosition.y, vWorldPosition.x);
+                float lat = atan(vWorldPosition.z, length(vWorldPosition.xy) * (1.0 - ellipsoid.y));
+                vec2 mercator = vec2(lon * 0.159154943 + 0.5, 0.5 - log(tan(0.785398163 + lat * 0.5)) * 0.159154943);
+                vec2 maskUv = vec2(fract(mercator.x - groundMaskRect.x) * groundMaskRect.z, (mercator.y - groundMaskRect.y) * groundMaskRect.w);
+                if (all(greaterThanEqual(maskUv, vec2(0.0))) && all(lessThanEqual(maskUv, vec2(1.0)))) {
+                    vec3 mapped = texture(groundMask, maskUv).rgb;
+                    float road = mapped.r * (1.0 - vegetation), path = mapped.b * (1.0 - vegetation) * (1.0 - road);
+                    float roof = mapped.g * (1.0 - road - path), rest = max(0.0, 1.0 - road - path - roof);
+                    for (int row = 0; row < 6; row++) weights[row] *= rest;
+                    weights[2] += road; weights[3] += path; weights[4] += roof;
+                }
+            #endif
+            #ifdef BUILDING_SURFACES
+                // 3D buildings: walls are concrete. Up-facing surfaces keep the color and mapped classes, because
+                // photogrammetric tiles carry streets and fields in the same meshes as roofs.
+                // The geometric normal from screen-space derivatives: photogrammetric tiles often carry no normals.
+                vec3 facet = normalize(cross(dFdx(vViewPosition), dFdy(vViewPosition)));
+                if (dot(facet, vViewPosition) > 0.0) facet = -facet;
+                float up = dot(facet, upView);
+                // Steep facets of tree canopy in the same meshes stay vegetation.
+                float wall = (1.0 - smoothstep(0.5, 0.8, up)) * (1.0 - vegetation);
+                for (int row = 0; row < 6; row++) weights[row] *= 1.0 - wall;
+                weights[3] += wall;
+            #endif
+            vec2 source = vec2(0.0);
+            for (int row = 0; row < 6; row++) source += weights[row] * rangeSource(lower, fraction, min(row, temperatureSamples - 1));
+        #else
+            // Estimated T = reference + span * (0.5 - sRGB luminance).
+            float row = (1.0 - brightness) * float(temperatureSamples - 1);
+            int lowerRow = min(temperatureSamples - 2, int(floor(row)));
+            vec2 source = mix(rangeSource(lower, fraction, lowerRow),
+                rangeSource(lower, fraction, lowerRow + 1), row - float(lowerRow));
+        #endif
         vec3 normal = normalize(vViewNormal) * (gl_FrontFacing ? 1.0 : -1.0);
         result = vec4(source.r + source.g * max(0.0, dot(normal, sunViewDirection)), 0.0, 0.0, 1.0);
     }
@@ -827,7 +882,9 @@ export const gainWindowFragment = `
         vec4 chosen = texelFetch(tSelect, ivec2(0), 0);
         uint lowKey = (uint(chosen.x) << 16u) | uint(locate(chosen.y, 0, 256).x);
         uint highKey = (uint(chosen.z) << 16u) | uint(locate(chosen.w, chosen.z == chosen.x ? 0 : 256, 256).x);
-        float low = keyCount(lowKey), high = max(keyCount(highKey), low + minimumSpan);
+        // A minimum span (a camera's maximum gain) widens a narrower window equally about its middle.
+        float low = keyCount(lowKey), high = keyCount(highKey);
+        if (high - low < minimumSpan) { float middle = 0.5 * (low + high); low = middle - 0.5 * minimumSpan; high = middle + 0.5 * minimumSpan; }
         if (hasPrevious) {
             vec4 previous = texelFetch(tPrevious, ivec2(0), 0);
             if (gainOffset) {

@@ -1,8 +1,4 @@
-import {
-    AddEquation, BackSide, CustomBlending, FrontSide, OneFactor, OneMinusSrcAlphaFactor, Box3, BufferGeometry, Color, DataTexture, Float32BufferAttribute,
-    FloatType, GLSL3, Matrix4, Mesh, NearestFilter, NoBlending, NoColorSpace, OrthographicCamera, PlaneGeometry, Points, RGBAFormat,
-    RedFormat, RGFormat, Raycaster, Scene, ShaderMaterial, Sphere, Vector2, Vector3, Vector4, WebGLRenderTarget,
-} from "three";
+import {AddEquation, BackSide, CustomBlending, FrontSide, OneFactor, OneMinusSrcAlphaFactor, Box3, BufferGeometry, Color, DataTexture, Float32BufferAttribute, FloatType, GLSL3, Matrix4, Mesh, NearestFilter, NoBlending, NoColorSpace, OrthographicCamera, PlaneGeometry, Points, RGBAFormat, RedFormat, RGFormat, Raycaster, Scene, ShaderMaterial, Sphere, Vector2, Vector3, Vector4, WebGLRenderTarget, } from "three";
 import {apparentTemperature, grayBodyRadiance, inBandRadiance, PHOTON_SCALE, solarIrradiance} from "./radiometry.js";
 import {BANDS, clearSky, createAtmosphere, createRangeLUT, seaBackground, evaluatePhotonPath,
     skyElevationRange, skyViewGeometry, sourceRangeLUT, createSkyElevationLUT, reflectedEnvironmentTable} from "./atmosphere.js";
@@ -13,7 +9,7 @@ import {displayCurveLUT, detectorWindowScale, detectorPresentation, temporalHist
 import {OpticalKernelCache, opticalKernelError, OPTICS_L1_TOLERANCE} from "./sensorMath.js";
 import {SkyBackgroundCache, SeaSkyBackgroundCache, sampleSeaSkyTable, thermalSeaDistance} from "./atmosphere.js";
 import {OpticsScheduler, coarseOpticalKernels} from "./sensorMath.js";
-import {RangeTableCache} from "./atmosphere.js";
+import {ENVIRONMENT_NORMAL_SINES, RangeTableCache} from "./atmosphere.js";
 import * as shaders from "./shaders.js";
 import {createStatisticalSea, createSeaSkyTable, seaRayAzimuth, cloudRadianceTable, createCloudRadianceDomain,
     sortCloudSheets, createThermalDepthTable, EARTH_RADIUS_M, RADIUS_REUSE_M} from "./atmosphere.js";
@@ -551,7 +547,7 @@ export class ThermalPipeline {
     }
 
     _optics(radiance, optics, background, sample = null) {
-        this.deferredOptics = null;
+        this.deferredOptics = null; this.opticsFused = false;
         // Reuse the near image as contrast scratch until its forward FFT is done.
         const nearImage = this._target("nearOptics", radiance.width, radiance.height);
         this._pass("contrast", shaders.contrastFragment,
@@ -605,7 +601,7 @@ export class ThermalPipeline {
                 hasFar:this.scatterSplit.farMass>0,tBackground:background.texture,factor:sample.settings.supersample,
                 fillFactor:sample.settings.fillFactor,outputOrigin:[0,0]};
             this._pass("samplePackedOptics", shaders.samplePackedOpticsFragment, uniforms, sample.target);
-            this.deferredOptics = {near,plan,nearImage,farTexture,background,optics};
+            this.deferredOptics = {near,plan,nearImage,farTexture,background,optics}; this.opticsFused = true;
             return true;
         }
         if (plan.packed) this._pass("overlapAdd", shaders.overlapAddFragment, {tInput: near.texture,
@@ -757,15 +753,19 @@ export class ThermalPipeline {
 
     // Reflected environment by orientation at a surface's altitude, cached per atmosphere, altitude and ground.
     _environmentTable(altitudeM, settings) {
+        // The ground below: the host's estimate (material classes: their mean at the profile's sea-level air
+        // temperature), else the uniform ground setting.
+        const ground = this.radianceAdapter?.environmentGround?.(this.atmosphere) ??
+            {temperatureK: settings.groundTemperatureK, emissivity: settings.groundEmissivity};
         // Inputs only: the atmosphere profile's identity (not the per-frame geometry key), altitude, ground and band.
-        const key = JSON.stringify([this.profileKey, altitudeM, settings.groundTemperatureK, settings.groundEmissivity,
+        const key = JSON.stringify([this.profileKey, altitudeM, ground.temperatureK, ground.emissivity,
             settings.bandMinUm, settings.bandMaxUm]);
         const cache = this.environmentTables ??= new Map();
         let rows = cache.get(key);
         if (!rows) {
             if (cache.size > 32) cache.clear();
-            rows = reflectedEnvironmentTable({altitudeM, groundTemperatureK: settings.groundTemperatureK,
-                groundEmissivity: settings.groundEmissivity, band: {minUm: settings.bandMinUm, maxUm: settings.bandMaxUm}}, this.atmosphere);
+            rows = reflectedEnvironmentTable({altitudeM, groundTemperatureK: ground.temperatureK,
+                groundEmissivity: ground.emissivity, band: {minUm: settings.bandMinUm, maxUm: settings.bandMaxUm}}, this.atmosphere);
             cache.set(key, rows);
         }
         return {rows, key};
@@ -812,6 +812,29 @@ export class ThermalPipeline {
         return table;
     }
 
+    // Material classes: one row per class, at the air temperature of the profile at the tile's altitude plus the
+    // class offset, with the class emissivity. A level surface reflects the sky hemisphere above it (Sky and ground)
+    // or the manual environment. The shader mixes the rows by the class weights of each imagery texel.
+    _terrainClassTable(attributes, settings) {
+        const altitudeM = attributes.terrainAltitudeM ?? 0, classes = attributes.terrainClasses;
+        const airK = this.atmosphere.sample(altitudeM).temperatureK;
+        const sky = settings.environmentSource === "skyGround" ? this._environmentTable(altitudeM, settings) : null;
+        const environment = sky ? {environmentBands: sky.rows[ENVIRONMENT_NORMAL_SINES.length - 1], environmentKey: `${sky.key}|up`} : {};
+        const key = JSON.stringify(["classes", this.profileKey, altitudeM, classes.map(c => [c.offsetK, c.emissivity]),
+            environment.environmentKey ?? settings.environmentTemperatureK, settings.solarScale, settings.bandMinUm, settings.bandMaxUm]);
+        const tables = this.resources.terrainTables ??= new Map();
+        let table = tables.get(key);
+        if (!table) {
+            const spectra = classes.map(c => this._surfaceSpectrum({temperatureK: airK + c.offsetK, emissivity: c.emissivity,
+                ...environment}, settings));
+            table = {spectra, texture: null, key, airK};
+            this._updateTerrainTable(table); tables.set(key, table);
+        }
+        table.used = true;
+        for (const spectrum of table.spectra) spectrum.used = true;
+        return table;
+    }
+
     _terrainSurface(attributes, original, settings, sunDirection, mesh) {
         const map = original.map && mesh?.geometry.attributes[original.map.channel ? `uv${original.map.channel}` : "uv"]
             ? original.map : null;
@@ -819,17 +842,26 @@ export class ThermalPipeline {
         // No source color: retain the uniform fallback, rather than inventing a
         // cool temperature from the default white Three.js material.
         if (!map && !vertexColors && (!original.color || original.color.r === 1 && original.color.g === 1 && original.color.b === 1)) return null;
-        const table = this._terrainTable(attributes, settings);
+        const classes = !!attributes.terrainClasses?.length;
+        // Mapped roads and buildings, and 3D building walls, refine the class weights (material classes only).
+        const mask = classes ? attributes.terrainMask ?? null : null, building = classes && !!attributes.buildingSurfaces;
+        const table = classes ? this._terrainClassTable(attributes, settings) : this._terrainTable(attributes, settings);
+        // One class material per table: meshes that share an imagery material can lie at different altitudes.
         const key = JSON.stringify(["terrain-color", original.uuid, !!map, map?.channel, vertexColors, original.side,
-            attributes.temperatureK, settings.groundTemperatureSpanK, attributes.emissivity,
-            settings.environmentTemperatureK, settings.solarScale, this.radianceAdapter?.materialKey]);
+            ...(classes ? ["classes", table.key, !!mask, building] : [attributes.temperatureK, settings.groundTemperatureSpanK,
+                attributes.emissivity, settings.environmentTemperatureK, settings.solarScale]), this.radianceAdapter?.materialKey]);
         let surface = this.resources.surfaces.get(key);
         if (!surface) {
             const pass = material(shaders.terrainRadianceFragment, {rangeTexture: table.texture,
                 rangeMaxM: this.rangeLUT.maxRangeM, rangeSamples: this.rangeLUT.size,
                 temperatureSamples: table.spectra.length, sunViewDirection: sunDirection,
-                terrainMap: map, mapTransform: map?.matrix, terrainColor: original.color ?? new Color(1, 1, 1)}, shaders.terrainRadianceVertex);
+                terrainMap: map, mapTransform: map?.matrix, terrainColor: original.color ?? new Color(1, 1, 1),
+                groundMask: mask?.texture ?? null, groundMaskRect: new Vector4(...(mask?.rect ?? [0, 0, 1, 1])),
+                upView: new Vector3(0, 1, 0), ellipsoid: new Vector2(6378137, 0.00669437999014)}, shaders.terrainRadianceVertex);
             pass.map = map; pass.vertexColors = vertexColors;
+            if (classes) pass.defines = {...pass.defines, MATERIAL_CLASSES: ""};
+            if (mask) pass.defines = {...pass.defines, GROUND_MASK: ""};
+            if (building) pass.defines = {...pass.defines, BUILDING_SURFACES: ""};
             pass.side = original.side; pass.depthTest = pass.depthWrite = true;
             try { this.radianceAdapter?.prepareMaterial?.(pass); }
             catch (error) { pass.dispose(); throw error; }
@@ -841,12 +873,15 @@ export class ThermalPipeline {
         if (pass.map !== map) {pass.map = map; pass.needsUpdate = true;}
         pass.visible = original.visible; pass.side = original.side;
         pass.uniforms.rangeTexture.value = table.texture;
+        pass.uniforms.temperatureSamples.value = table.spectra.length;
         pass.uniforms.rangeMaxM.value = this.rangeLUT.maxRangeM;
         pass.uniforms.rangeSamples.value = this.rangeLUT.size;
         pass.uniforms.sunViewDirection.value = sunDirection;
         pass.uniforms.terrainMap.value = map;
         pass.uniforms.mapTransform.value = map?.matrix;
         pass.uniforms.terrainColor.value = original.color ?? new Color(1, 1, 1);
+        if (mask) {pass.uniforms.groundMask.value = mask.texture; pass.uniforms.groundMaskRect.value.fromArray(mask.rect);}
+        if (building && this.upView) pass.uniforms.upView.value.copy(this.upView);
         surface.used = true;
         return pass;
     }
@@ -973,10 +1008,13 @@ export class ThermalPipeline {
         // Sky and ground: the outer face's reflection comes from per-orientation rows (environmentRows, by normal
         // elevation, added in the shader), and the interior and diffuse terms use the vertical-wall value.
         const rows = !volume ? attributes.environmentRows ?? null : null;
+        // environmentBands: one reflected environment for the whole surface (a level ground class reflects the sky
+        // hemisphere above it), in place of the manual temperature.
+        const bands = !rows && !volume ? attributes.environmentBands ?? null : null;
         const cacheable = interactive && attributes.solar === undefined && attributes.cosIncidence === undefined &&
             Number.isFinite(attributes.temperatureK) && Number.isFinite(attributes.emissivity) && Number.isFinite(transmittance);
         const key = cacheable ? JSON.stringify([attributes.temperatureK, attributes.emissivity, transmittance, imageTransmittance, interior, volume,
-            rows ? attributes.environmentKey : settings.environmentTemperatureK, settings.solarScale, settings.bandMinUm, settings.bandMaxUm]) : null;
+            rows || bands ? attributes.environmentKey : settings.environmentTemperatureK, settings.solarScale, settings.bandMinUm, settings.bandMaxUm]) : null;
         const cache = cacheable ? (this.resources.surfaceSpectra ??= new Map()) : null;
         let spectrum = cache?.get(key);
         if (!spectrum) {
@@ -996,7 +1034,7 @@ export class ThermalPipeline {
                 // integrals across different temperatures and emissivities.
                 const incident = illumination?.bands[index];
                 const manual = incident?.environment ?? inBandRadiance(settings.environmentTemperatureK, response);
-                const environment = rows ? {energy: 0, photon: rows[2][index]} : manual;
+                const environment = rows ? {energy: 0, photon: rows[2][index]} : bands ? {energy: 0, photon: bands[index]} : manual;
                 const opening = attributes.emissivity + transmittance;
                 const own = interior && opening > 0 ? inBandRadiance(attributes.temperatureK, response) : null;
                 const reflected = own ? {energy: (attributes.emissivity * own.energy + transmittance * environment.energy) / opening,
@@ -1374,11 +1412,14 @@ export class ThermalPipeline {
                     object.frustumCulled = false; // apparent positions can be outside the physical frustum
                 }
                 const originals = Array.isArray(object.material) ? object.material : [object.material];
-                // Sky and ground: the surface's altitude (from the host; the sensor's otherwise), in 25 m steps.
-                const surfaceAttributes = settings.environmentSource === "skyGround" && !attributes.sea && !attributes.terrainColor &&
-                    !this.radianceAdapter?.isSurface?.(object) ?
-                    {...attributes, environmentAltitudeM: Math.max(0, Math.round((this.radianceAdapter?.surfaceAltitudeM?.(object) ??
-                        settings.sensorAltitudeM) / 25) * 25)} : attributes;
+                // Sky and ground, and ground material classes: the surface's altitude (from the host; the sensor's
+                // otherwise), in 25 m steps.
+                const altitudeM = () => Math.max(0, Math.round((this.radianceAdapter?.surfaceAltitudeM?.(object) ??
+                    settings.sensorAltitudeM) / 25) * 25);
+                const surfaceAttributes = attributes.terrainColor && attributes.terrainClasses?.length ?
+                    {...attributes, terrainAltitudeM: attributes.terrainAltitudeM ?? altitudeM()} :
+                    settings.environmentSource === "skyGround" && !attributes.sea && !attributes.terrainColor &&
+                    !this.radianceAdapter?.isSurface?.(object) ? {...attributes, environmentAltitudeM: altitudeM()} : attributes;
                 const replacements = originals.map(original => this._surface(surfaceAttributes, original, settings, sun, object));
                 // Three.js splits each material group of a transparent double-sided mesh into its own back and front
                 // pass, which would draw a near wall of one group before a far wall of the next. One shared layer

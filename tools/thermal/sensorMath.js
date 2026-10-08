@@ -563,9 +563,13 @@ export function automaticWindow(counts, {lowPercentile = 0.01, highPercentile = 
     if (!(lowPercentile >= 0 && highPercentile <= 1 && highPercentile > lowPercentile &&
         minimumSpan > 0 && Number.isFinite(minimumSpan) && timeConstantS >= 0 && Number.isFinite(timeConstantS) &&
         deltaTimeS >= 0 && Number.isFinite(deltaTimeS))) throw new RangeError("Invalid automatic window controls");
-    const [low, upper] = percentileCounts(counts, Math.floor(lowPercentile * (counts.length - 1)),
+    const [lower, upper] = percentileCounts(counts, Math.floor(lowPercentile * (counts.length - 1)),
         Math.floor(highPercentile * (counts.length - 1)));
-    const high = Math.max(upper, low + minimumSpan);
+    // The minimum span acts like a camera's maximum gain: a narrower window widens equally about its middle, so a
+    // low-contrast scene stays at mid-gray. A wider window is used exactly.
+    const middle = (lower + upper) / 2;
+    const low = upper - lower >= minimumSpan ? lower : middle - minimumSpan / 2;
+    const high = upper - lower >= minimumSpan ? upper : middle + minimumSpan / 2;
     const alpha = previous ? (deltaTimeS === 0 ? 0 : timeConstantS === 0 ? 1 : -Math.expm1(-deltaTimeS / timeConstantS)) : 1;
     if (previous && dynamics === "gainOffset") {
         // Calculated affine map: drive = gain * counts + offset. Video recovery

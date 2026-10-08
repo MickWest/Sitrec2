@@ -713,6 +713,7 @@ export const ZONE_TABLE = [
         "id": "lantern_envelope",
         "vehicle_class": "balloon",
         "radiator_kind": "thin_layer",
+        "power_input": "canopy",
         "temperature_K": {
             "min": 283,
             "max": 358,
@@ -1233,6 +1234,10 @@ export function resolveSignatures(recipe = {}, ambientK = 293, mach, power) {
     const ambient = finite(ambientK, 293, 0, 3000, "ambientK");
     const speed = finite(mach ?? thermal.mach, profile?.mach ?? 0, 0, 5, "mach");
     const powerFraction = finite(power ?? thermal.powerFraction, profile?.power_fraction ?? 0, 0, 1, "power");
+    // A heated canopy (power_input "canopy") can be set apart from the flame: the same fraction scale, by default the
+    // burn power. Its heating depends on the canopy's size and air flow as well as on the flame.
+    const canopyPowerFraction = thermal.canopyPowerFraction == null ? powerFraction :
+        finite(thermal.canopyPowerFraction, powerFraction, 0, 1, "canopyPower");
     const hasPlainData = thermal.temperatureK !== undefined || thermal.emissivity !== undefined;
     const fallback = !profile && !hasPlainData;
     if (fallback) diagnostics.push("No thermal data: ambient temperature and emissivity 1.");
@@ -1268,7 +1273,8 @@ export function resolveSignatures(recipe = {}, ambientK = 293, mach, power) {
         const separateFlow = id.startsWith("turbofan_");
         const referencePower = separateFlow ? TURBOFAN_CLIMB_REFERENCE.powerFraction : profile.power_fraction;
         const zoneRecovery = separateFlow ? recoveryTemperature(TURBOFAN_CLIMB_REFERENCE.ambientK, TURBOFAN_CLIMB_REFERENCE.mach) : referenceRecovery;
-        const ratio = referencePower > 0 ? powerFraction / referencePower : 0;
+        const zonePower = zone.power_input === "canopy" ? canopyPowerFraction : powerFraction;
+        const ratio = referencePower > 0 ? zonePower / referencePower : 0;
         // A flame proxy keeps its temperature; its effective emissivity (radiant intensity) is proportional to power.
         if (zone.power_scaling === "intensity") {
             // volume: a gas emitter that reflects nothing and transmits 1 - e of what is behind it; with zero

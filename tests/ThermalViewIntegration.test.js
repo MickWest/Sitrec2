@@ -275,7 +275,7 @@ test("vehicle altitude samples standard air and changed surface settings; track 
         expect(state.speedMps).toBeCloseTo(200,10);
         expect(state.mach).toBeCloseTo(200 / Math.sqrt(1.4 * 287.05287 * state.airTemperatureK),10);
         expect(state.power).toBe(TURBOFAN_CLIMB_REFERENCE.powerFraction);
-        expect(state.sources).toEqual({airTemperatureK:"standard",mach:"groundSpeed",power:"climbReference"});
+        expect(state.sources).toEqual({airTemperatureK:"standard",mach:"groundSpeed",power:"climbReference",canopyPower:"burnPower"});
     }
     expect(track.p.mock.calls.every(([f]) => f >= 0 && f < track.frames)).toBe(true);
     const warmer = thermalSceneAtmosphere({...native(),surfaceTemperatureK:298.15});

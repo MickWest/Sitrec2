@@ -11,6 +11,8 @@ const en = {
         "readOnly": "This thermal value is calculated from scene geometry.",
         "controlReasons": {
             "terrainColor": "Used only with Ground temperature source = Terrain color estimate.",
+            "materialClasses": "Used only with Ground temperature source = Material classes.",
+            "groundAutomatic": "Used only with Ground condition = From sun and time; the other conditions are clear or overcast.",
             "statisticalSea": "Used only with atmospheric sky and the statistical sea model.",
             "swell": "Set a nonzero swell height to use this control.",
             "manualSky": "Used only with Sky source = Manual temperature.",
@@ -37,6 +39,11 @@ const en = {
         },
         "readout": "Native {{width}} × {{height}} · {{vertical}}° V × {{horizontal}}° H · digital zoom {{zoom}}× · r0 {{r0}} m · ground/sea estimated",
         "sunGeometry": "Sun: azimuth {{azimuth}}° · elevation {{elevation}}° · from scene date, time and location",
+        "groundMapReadout": "Mapped ground: {{roads}} roads, {{paths}} paths, {{buildings}} buildings over {{km}} km ({{metres}} m per texel).",
+        "groundMapLoading": "Mapped ground: loading road and building data…",
+        "groundMapUnavailable": "Mapped ground unavailable: {{message}}. Imagery colors are used.",
+        "groundClassesReadout": "Ground material classes ({{condition}}, {{climate}}; air {{air}} K): {{classes}} K. Estimated from imagery colors; visible imagery does not measure material.",
+        "groundClasses": {"grass": "grass", "trees": "trees", "asphalt": "asphalt", "concrete": "concrete", "roof": "roofs", "soil": "soil"},
         "terrainTemperatureEstimate": "Terrain color temperatures estimated: {{low}}–{{high}} K; darker colors warmer. Visible imagery is not a temperature measurement.",
         "readoutView": {
             "title": "Thermal Readout",
@@ -69,6 +76,7 @@ const en = {
         },
         "nyquistNotMet": "Optical sampling {{factor}}× is below the Nyquist factor {{required}}× at f/{{fNumber}}; fine diffraction detail is undersampled.",
         "vehicleReadout": "{{id}} · {{altitudeM}} m · air {{airTemperatureK}} K ({{airSource}}) · Mach {{mach}} ({{machSource}}) · speed {{speedMps}} m/s ({{speedSource}}) · power {{power}} ({{powerSource}})",
+        "canopyReadout": "· canopy heating {{canopyPower}} (user override)",
         "vehicleSources": {
             "standard": "standard atmosphere, calculated",
             "sounding": "sounding profile, calculated",
@@ -78,7 +86,8 @@ const en = {
             "objectWind": "airspeed; bound object wind",
             "override": "user override",
             "recipe": "recipe, estimated",
-            "climbReference": "climb reference, estimated"
+            "climbReference": "climb reference, estimated",
+            "burnPower": "follows burn power"
         },
         "groups": {
             "scene": "Environment",
@@ -109,9 +118,12 @@ const en = {
             "airTemperatureK": "Air temperature · K",
             "mach": "Mach · 1",
             "power": "Power · 1",
+            "canopyPower": "Canopy heating · 1",
+            "followsPower": "Follows burn power",
+            "canopyPowerTooltip": "Sky lantern canopy heating as a burn fraction, separate from the flame. Follows burn power by default. A larger or wind-cooled canopy is heated less by the same flame; 0 leaves the canopy at the air temperature.",
             "airTemperatureKTooltip": "From scene samples the thermal atmosphere at this object's altitude each frame. An override changes only this instance.",
             "machTooltip": "From scene divides track airspeed by the speed of sound at the air temperature used here. Without wind at this altitude it uses ground speed.",
-            "powerTooltip": "From scene keeps recipe power, or the estimated climb reference when absent. Power is a family load coordinate, not calibrated throttle. For a sky lantern it is the burn fraction: the canopy temperature and the flame intensity follow it, and 0 is after flame-out."
+            "powerTooltip": "From scene keeps recipe power, or the estimated climb reference when absent. Power is a family load coordinate, not calibrated throttle. For a sky lantern it is the burn fraction: the flame intensity follows it, and so does the canopy heating unless Canopy heating is set apart; 0 is after flame-out."
         },
         "parameters": {
             "cloudOpticalDepth": {"label": "Cloud absorption depth", "tooltip": "Estimated core absorption depth: alpha = 1 − exp(−depth × mask). Scattering is omitted."},
@@ -174,6 +186,11 @@ const en = {
                 "label": "Ambient fallback temperature",
                 "tooltip": "Fallback temperature for untagged object surfaces. Vehicle air temperature comes from the atmosphere or the object's override."
             },
+            "atmosphereProfile": {
+                "label": "Atmosphere profile",
+                "tooltip": "Standard: the standard atmosphere shape with the surface air temperature and water vapor below. Loaded sounding: the measured temperature and humidity of a weather balloon loaded into the scene (Import Sounding or Get Nearby Weather Balloons), the launch nearest the scene time.",
+                "options": {"standard": "Standard profile", "sounding": "Loaded sounding"}
+            },
             "surfaceTemperatureK": {
                 "label": "Surface air temperature",
                 "tooltip": "Sea-level air temperature for the standard atmospheric profile. A loaded sounding supplies the profile instead. This value also sets the water temperature in the Smooth comparison sea model."
@@ -184,8 +201,30 @@ const en = {
             },
             "groundTemperatureMode": {
                 "label": "Ground temperature source",
-                "tooltip": "Estimate temperature from unlit terrain colors, or use a uniform temperature. Visible imagery does not measure temperature.",
-                "options": {"color": "Terrain color estimate", "uniform": "Uniform temperature"}
+                "tooltip": "Terrain color estimate: darker colors are warmer. Material classes: each imagery color is classed as vegetation, asphalt, concrete, roof or soil; each class is at the air temperature plus a researched offset for the time of day and has its own emissivity. Uniform: one temperature. Visible imagery does not measure temperature or material.",
+                "options": {"color": "Terrain color estimate", "materials": "Material classes", "uniform": "Uniform temperature"}
+            },
+            "groundCondition": {
+                "label": "Ground condition",
+                "tooltip": "Sets each material class's temperature relative to the air. Automatic uses the scene's sun elevation and the time since sunset, for a clear sky. Choose Day, overcast for a cloudy day.",
+                "options": {"automatic": "From sun and time", "day": "Day, clear", "overcast": "Day, overcast", "evening": "Evening", "night": "Late night"}
+            },
+            "groundClimate": {
+                "label": "Ground climate",
+                "tooltip": "Dry air lets surfaces cool further at night and heat further by day than humid air. Automatic uses the surface dew point and relative humidity of the atmosphere profile: a dew point of 18 °C or more is warm humid, under 35% relative humidity is dry.",
+                "options": {"automatic": "From humidity", "humid": "Warm humid", "temperate": "Temperate", "dry": "Dry"}
+            },
+            "groundCloudFraction": {
+                "label": "Cloud cover",
+                "tooltip": "Fraction of the sky covered by cloud, for the automatic ground condition. From a weather report: FEW 0.2, SCT 0.45, BKN 0.75, OVC 1. Cloud reduces night cooling and day heating."
+            },
+            "groundMapData": {
+                "label": "Mapped roads and buildings",
+                "tooltip": "Loads open map road and building data around the target over the network, as City lights does. Road surfaces are asphalt, footpaths concrete and building footprints roofs; roads under tree canopy stay trees. Walls of 3D buildings are concrete. Elsewhere the imagery colors decide. Road widths are typical for each road class, not mapped."
+            },
+            "groundWindMps": {
+                "label": "Surface wind",
+                "tooltip": "Near-surface wind speed in m/s, for the material classes. Wind mixes surfaces toward the air temperature by day and night. A weather report gives the wind at 10 m in knots: 1 kt = 0.514 m/s."
             },
             "groundTemperatureSpanK": {
                 "label": "Terrain color temperature span",
@@ -517,7 +556,7 @@ const en = {
             },
             "minimumWindowCounts": {
                 "label": "Minimum window",
-                "tooltip": "Prevents unstable gain on a nearly uniform frame."
+                "tooltip": "Like a camera's maximum gain: a scene with less spread than this is widened equally about its middle, so low contrast stays mid-gray. The default only steadies a nearly uniform frame. For the MX-15 preset near 295 K, about 250 counts per kelvin at the sensor."
             },
             "plateauFactor": {
                 "label": "Histogram plateau",

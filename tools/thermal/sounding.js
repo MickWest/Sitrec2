@@ -67,6 +67,21 @@ export function parseIGRASounding(text, metadata = {}) {
         releaseTime: header.slice(27, 31).trim(), rawHeader: header}, "igra2");
 }
 
+/** Levels already parsed by a host (for example a radiosonde import), as objects with the CSV column names above and
+ * the same units. Absent values are null. Validation is the same as for the CSV parser.
+ */
+export function soundingFromRecords(records, metadata = {}) {
+    if (!Array.isArray(records)) throw new TypeError("Expected an array of sounding records");
+    const value = (record, name) => {
+        const entry = record[name];
+        if (entry === null || entry === undefined) return null;
+        if (!Number.isFinite(entry)) throw new RangeError(`Invalid sounding ${name}`);
+        return entry;
+    };
+    return parsed(records.map(record => level(String(record.level_type),
+        ...COLUMNS.slice(1).map(name => value(record, name)))), metadata, "records");
+}
+
 // Published constants in SI: dry-air R = 287.05 J/(kg K), water-vapor R =
 // 461.5 J/(kg K), standard gravity = 9.80665 m/s² (meteorological convention).
 const RD = 287.05, RV = 461.5, G = 9.80665;

@@ -1,7 +1,7 @@
 import {Box3, Frustum, Matrix4, Object3D, Ray, Vector3} from "three";
 import {withThermalVehicle} from "../../tools/vehicles/thermalPreview.js";
 import {createAtmosphere, createThermalRayGeometry} from "../../tools/thermal/atmosphere.js";
-import {atmosphereFromSounding} from "../../tools/thermal/sounding.js";
+import {atmosphereFromSounding, soundingFromRecords} from "../../tools/thermal/sounding.js";
 import {TURBOFAN_CLIMB_REFERENCE} from "../../tools/thermal/signatures.js";
 import {Globals, Sit} from "../Globals";
 import {airDataFromTAS} from "../AirData";
@@ -29,6 +29,62 @@ export function thermalSceneAtmosphere(settings, sounding) {
     const options = {visibilityM: settings.visibilityM, densityScale: settings.atmosphereEnabled ? 1 : 0};
     return sounding ? atmosphereFromSounding(sounding, options).atmosphere : createAtmosphere({...options,
         surfaceTemperatureK: settings.surfaceTemperatureK, surfaceWaterVaporDensityKgM3: settings.waterVaporDensityKgM3});
+}
+
+// Mandatory pressure levels of the radiosonde code (hPa); other pressure reports are significant levels.
+const STANDARD_PRESSURES_HPA = new Set([1000, 925, 850, 700, 500, 400, 300, 250, 200, 150, 100, 70, 50, 30, 20, 10]);
+const convertedSoundings = new WeakMap();
+
+// A radiosonde parsed by Sitrec's sonde import (levels in hPa, degrees C, dew point) as a thermal sounding. The first
+// pressure report is the surface. Levels without pressure (wind-only or GPS rows) become non-pressure levels, which the
+// atmosphere ignores. Cached per parsed sonde, so the result is stable between frames.
+export function thermalSoundingFromSonde(sonde) {
+    if (!sonde?.levels) return null;
+    let sounding = convertedSoundings.get(sonde);
+    if (sounding === undefined) {
+        const finite = value => Number.isFinite(value) ? value : null;
+        let surface = true;
+        const records = sonde.levels.map(row => {
+            const pressure = finite(row.pressure), temperature = finite(row.temp), dewpoint = finite(row.dewpoint);
+            const type = pressure === null ? "30" : surface ? "21" : STANDARD_PRESSURES_HPA.has(pressure) ? "10" : "20";
+            if (pressure !== null) surface = false;
+            // A dew point up to 0.5 K above the temperature is rounding in saturated air; a larger one is an invalid
+            // report, dropped so that the relative humidity is used.
+            const rawDepression = temperature !== null && dewpoint !== null ? temperature - dewpoint : null;
+            const depression = rawDepression === null || rawDepression < -0.5 ? null : Math.max(0, rawDepression);
+            return {level_type: type, pressure_Pa: pressure === null ? null : pressure * 100,
+                geopotential_height_m: finite(row.height), temperature_C: temperature,
+                relative_humidity_pct: finite(row.rh),
+                dewpoint_depression_C: depression,
+                wind_dir_deg: finite(row.windDir), wind_speed_m_s: finite(row.windSpeed)};
+        });
+        try {
+            sounding = soundingFromRecords(records, {stationId: sonde.station?.id ?? null,
+                time: sonde.datetime instanceof Date ? sonde.datetime.toISOString() : null,
+                ...(Number.isFinite(sonde.station?.elev) && sonde.station.elev !== 0 ? {stationElevationM: sonde.station.elev} : {})});
+            // A profile without pressure and temperature levels cannot set the atmosphere (a wind-only file). Build
+            // the atmosphere once, so that a profile it rejects falls back to the standard one instead of failing the view.
+            if (!sounding.levels.some(level => level.pressurePa > 0 && level.temperatureK !== null)) sounding = null;
+            else atmosphereFromSounding(sounding);
+        } catch (error) {
+            console.warn(`Thermal: sounding ${sonde.station?.id ?? ""} not usable: ${error.message}`);
+            sounding = null;
+        }
+        convertedSoundings.set(sonde, sounding);
+    }
+    return sounding;
+}
+
+// The loaded sounding launched nearest to timeMs, from parsed sonde data ({datetime, levels}); null without one.
+export function nearestThermalSounding(sondes, timeMs) {
+    let best = null, bestDelta = Infinity;
+    for (const sonde of sondes) {
+        const sounding = thermalSoundingFromSonde(sonde);
+        if (!sounding) continue;
+        const delta = sonde.datetime instanceof Date && Number.isFinite(timeMs) ? Math.abs(sonde.datetime.getTime() - timeMs) : Infinity;
+        if (!best || delta < bestDelta) {best = sounding; bestDelta = delta;}
+    }
+    return best;
 }
 
 export function sceneVehicleThermal(node, frame, atmosphere, {sit = Sit, windField, radii = Globals,
@@ -79,11 +135,14 @@ export function sceneVehicleThermal(node, frame, atmosphere, {sit = Sit, windFie
     const sceneMach = airDataFromTAS(speedMps, null, airTemperatureK).mach;
     // Estimated fallback load coordinate, sourced from the signature schema.
     const power = thermal.power ?? recipe.parameters.thermalPower ?? TURBOFAN_CLIMB_REFERENCE.powerFraction;
-    return {id: node.id, frame, altitudeM, airTemperatureK, mach: thermal.mach ?? sceneMach, power,
+    // A heated canopy follows the burn power unless it is set apart.
+    const canopyPower = thermal.canopyPower ?? power;
+    return {id: node.id, frame, altitudeM, airTemperatureK, mach: thermal.mach ?? sceneMach, power, canopyPower,
         speedMps, groundSpeedMps, speedSource, hasTrackVelocity,
         sources: {airTemperatureK: thermal.airTemperatureK != null ? "override" : atmosphereSource,
             mach: thermal.mach != null ? "override" : speedSource,
-            power: thermal.power != null ? "override" : recipe.parameters.thermalPower != null ? "recipe" : "climbReference"}};
+            power: thermal.power != null ? "override" : recipe.parameters.thermalPower != null ? "recipe" : "climbReference",
+            canopyPower: thermal.canopyPower != null ? "override" : "burnPower"}};
 }
 
 export function withThermalScene(objects, draw, values = new Map(), index = 0) {
@@ -93,13 +152,18 @@ export function withThermalScene(objects, draw, values = new Map(), index = 0) {
     return root && node.proceduralModel ? withThermalVehicle({root, recipe: node.proceduralModel.recipe}, next, values.get(node)) : next();
 }
 
-export function createThermalSceneAdapter(objects, groundRoots, camera, refractionOptions, clouds = []) {
+// groundClasses: the resolved material classes [{id, offsetK, emissivity}] for Ground temperature source = Material classes.
+// groundMask: {texture, rect} of mapped road, building and path coverage (Web Mercator square), or null.
+// groundAltitudeM: one terrain height (m above sea level) for the classes' air temperature in this frame, or undefined.
+export function createThermalSceneAdapter(objects, groundRoots, camera, refractionOptions, clouds = [],
+    {groundClasses = null, groundMask = null, groundAltitudeM = undefined} = {}) {
     const roots = new Map();
     for (const node of objects) {
         const root = node.model ?? node.object;
         if (root) roots.set(root, {kind: "object", node});
     }
-    for (const [index, root] of groundRoots.entries()) if (root) roots.set(root, {kind: index === 1 ? "sea" : "ground"});
+    // Root 2 holds 3D buildings: with material classes their walls are concrete and their roofs are roofs.
+    for (const [index, root] of groundRoots.entries()) if (root) roots.set(root, {kind: index === 1 ? "sea" : "ground", buildings: index === 2});
     const observer = new Vector3().setFromMatrixPosition(camera.matrixWorld);
     const context = terrestrialLiftContext(observer, refractionOptions);
     const rotation = new Matrix4().extractRotation(camera.matrixWorld);
@@ -156,10 +220,20 @@ export function createThermalSceneAdapter(objects, groundRoots, camera, refracti
         },
         projectPoint,
         isSea: mesh => thermalParticipation(mesh, roots)?.kind === "sea",
+        // With material classes, surfaces reflect a ground at the classes' mean offset from the profile's sea-level
+        // air temperature and their mean emissivity (estimated), not the uniform ground setting.
+        environmentGround: atmosphere => groundClasses?.length ? {
+            temperatureK: atmosphere.sample(0).temperatureK + groundClasses.reduce((sum, c) => sum + c.offsetK, 0) / groundClasses.length,
+            emissivity: groundClasses.reduce((sum, c) => sum + c.emissivity, 0) / groundClasses.length} : null,
         // Height of a surface above mean sea level (m), where the atmosphere profile begins (as in thermalGeometry),
         // for the sky-and-ground reflected environment.
         surfaceAltitudeM: mesh => {
-            const position = new Vector3().setFromMatrixPosition(mesh.matrixWorld), lla = ECEFToLLAVD_radii(position);
+            // The centre of the geometry, not the mesh origin: a terrain tile's origin need not lie on its surface.
+            const geometry = mesh.geometry;
+            if (geometry && !geometry.boundingSphere) geometry.computeBoundingSphere();
+            const position = geometry?.boundingSphere ? geometry.boundingSphere.center.clone().applyMatrix4(mesh.matrixWorld) :
+                new Vector3().setFromMatrixPosition(mesh.matrixWorld);
+            const lla = ECEFToLLAVD_radii(position);
             return altitudeHAE(position) - meanSeaLevelOffset(lla.x, lla.y);
         },
         attributes(mesh, settings) {
@@ -169,7 +243,11 @@ export function createThermalSceneAdapter(objects, groundRoots, camera, refracti
             if (binding.kind === "ground" || binding.kind === "sea") return {temperatureK: settings.groundTemperatureK,
                 emissivity: settings.groundEmissivity,
                 ...(binding.kind === "ground" && settings.groundTemperatureMode === "color" && settings.groundTemperatureSpanK > 0
-                    ? {terrainColor: true} : {})};
+                    ? {terrainColor: true} : {}),
+                ...(binding.kind === "ground" && settings.groundTemperatureMode === "materials" && groundClasses?.length
+                    ? {terrainColor: true, terrainClasses: groundClasses, ...(groundMask?.texture ? {terrainMask: groundMask} : {}),
+                        ...(Number.isFinite(groundAltitudeM) ? {terrainAltitudeM: groundAltitudeM} : {}),
+                        ...(binding.buildings ? {buildingSurfaces: true} : {})} : {})};
             const thermal = binding.node.thermal;
             if (thermal?.mode === "uniform") return {temperatureK: thermal.temperatureK, emissivity: thermal.emissivity};
             const zone = mesh.userData.thermal?.zone;
@@ -201,7 +279,8 @@ export function createThermalReuseKey({budgetMs = 2} = {}) {
     let failure = null;
     const fail = why => {failure = why; return unavailable;};
     const key = ({scene, camera, viewCamera = camera, settings, frame, objects = [], groundRoots = [], clouds = [],
-        sounding = null, atmosphereKey = null, refractionOptions = {}, presentation = null, skyUp = null, psfRangeM = 0}) => {
+        sounding = null, atmosphereKey = null, refractionOptions = {}, presentation = null, skyUp = null, psfRangeM = 0,
+        groundClasses = null}) => {
         const start = performance.now();
         failure = null;
         const check = () => {if (performance.now() - start > budgetMs) throw fail("time budget");};
@@ -260,7 +339,7 @@ export function createThermalReuseKey({budgetMs = 2} = {}) {
             const roots = new Map();
             for (const node of objects) if (node.model ?? node.object) roots.set(node.model ?? node.object, {kind: "object", node});
             for (const [i, root] of groundRoots.entries()) if (root) roots.set(root, {kind: i === 1 ? "sea" : "ground"});
-            const parts = [encode([frame, settings, sounding, atmosphereKey, refractionOptions, presentation, skyUp, psfRangeM,
+            const parts = [encode([frame, settings, sounding, atmosphereKey, refractionOptions, presentation, skyUp, psfRangeM, groundClasses,
                 identity(scene), scene.visible, camera.matrixWorld.elements, camera.matrixWorldInverse.elements,
                 camera.projectionMatrix.elements, camera.layers.mask, camera.near, camera.far,
                 camera.coordinateSystem, camera.reversedDepth, viewCamera.matrixWorld.elements, viewCamera.projectionMatrix.elements])];

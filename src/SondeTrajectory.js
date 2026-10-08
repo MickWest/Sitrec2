@@ -66,6 +66,19 @@ export function greatCircleDestination(lat, lon, bearing, distance) {
 }
 
 /**
+ * The whole frame whose data row a display reads at playback frame f. Playback can sit between video frames
+ * (f = 126.5), but a track's rows exist only at whole frames, and the frame can run past the end of a short track.
+ *
+ * @param {number} f - playback frame, possibly fractional
+ * @param {number} frames - number of rows in the track
+ * @returns {number} a valid row index, or -1 for an empty track
+ */
+export function sondeRowFrame(f, frames) {
+    if (!(frames > 0)) return -1;
+    return Math.max(0, Math.min(frames - 1, Math.floor(Number.isFinite(f) ? f : 0)));
+}
+
+/**
  * Estimate balloon radius at a given pressure, modeling ideal gas expansion.
  *
  * A weather balloon expands as it ascends due to decreasing atmospheric pressure.

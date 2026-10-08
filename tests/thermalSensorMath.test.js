@@ -127,7 +127,8 @@ test("automatic percentiles use an explicit exponential time constant", () => {
         minimumSpan:1,timeConstantS:2,deltaTimeS:2},initial);
     close(next.low,10+100*(1-Math.exp(-1)),1e-12);
     expect(sensor.automaticWindow(input,{deltaTimeS:0},initial)).toEqual(initial);
-    expect(sensor.automaticWindow(new Float32Array([100,100]),{minimumSpan:32})).toEqual({low:100,high:132});
+    // A uniform frame widens equally about its level, like a camera's maximum gain.
+    expect(sensor.automaticWindow(new Float32Array([100,100]),{minimumSpan:32})).toEqual({low:84,high:116});
 });
 test("plateau equalization has the known capped histogram CDF", () => {
     // Histogram [6,2,1,1], cap=2.5, clipped [2.5,2,1,1]. CDF-min -> [0,.5,.75,1].

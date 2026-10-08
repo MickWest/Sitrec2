@@ -106,7 +106,7 @@ export function detectorPixelAt(x, y, rect, settings) {
     return {column, row, index: row * settings.detectorWidth + column};
 }
 
-export function resolveVehicleThermal(recipe, {airTemperatureK, mach, power} = {}) {
+export function resolveVehicleThermal(recipe, {airTemperatureK, mach, power, canopyPower} = {}) {
     const p = recipe.parameters, override = PRESET_OVERRIDES[recipe.presetId];
     let profile = p.thermalProfile === "auto" ? override?.profile : p.thermalProfile;
     if (!profile) {
@@ -122,7 +122,7 @@ export function resolveVehicleThermal(recipe, {airTemperatureK, mach, power} = {
         else if (["car", "truck"].includes(p.vehicleType)) profile = /electric|ev-/.test(recipe.presetId ?? "") ? "electric" : "road_combustion";
     }
     return resolveSignatures({...recipe, thermal: {profile, powerFraction: power ?? p.thermalPower, mach: mach ?? p.thermalMach,
-        skinEmissivityMWIR: p.thermalEmissivity}}, airTemperatureK ?? p.thermalAmbientK);
+        canopyPowerFraction: canopyPower ?? null, skinEmissivityMWIR: p.thermalEmissivity}}, airTemperatureK ?? p.thermalAmbientK);
 }
 
 // Changes are scoped to one draw; a failed pipeline cannot leave the visible editor altered.
@@ -159,6 +159,8 @@ export function withThermalVehicle(model, draw, values = {}) {
 // The menu host evaluates it again on every refresh, so a host can make a field read only for a while.
 const CONTROL_REASONS = {
     terrainColor: "Used only with Ground temperature source = Terrain color estimate.",
+    materialClasses: "Used only with Ground temperature source = Material classes.",
+    groundAutomatic: "Used only with Ground condition = From sun and time; the other conditions are clear or overcast.",
     statisticalSea: "Used only with atmospheric sky and the statistical sea model.",
     swell: "Set a nonzero swell height to use this control.",
     manualSky: "Used only with Sky source = Manual temperature.",
@@ -184,6 +186,8 @@ const CONTROL_REASONS = {
 export function thermalControlReason(key, settings) {
     const s = settings, statisticalSea = s.skySource === "atmosphere" && s.seaMode === "statistical";
     if (key === "groundTemperatureSpanK" && s.groundTemperatureMode !== "color") return "terrainColor";
+    if (["groundCondition", "groundClimate", "groundCloudFraction", "groundWindMps", "groundMapData"].includes(key) && s.groundTemperatureMode !== "materials") return "materialClasses";
+    if (key === "groundCloudFraction" && s.groundCondition !== "automatic") return "groundAutomatic";
     if (key === "seaMode" && s.skySource !== "atmosphere") return "atmosphericSky";
     if (["seaWindMps", "seaWindDirectionRad", "seaSkinTemperatureK", "seaSwellHeightM", "seaSwellPeriodS", "seaSwellDirectionRad"].includes(key) && !statisticalSea) return "statisticalSea";
     if (["seaSwellPeriodS", "seaSwellDirectionRad"].includes(key) && s.seaSwellHeightM === 0) return "swell";
