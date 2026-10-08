@@ -712,44 +712,63 @@ export const ZONE_TABLE = [
     {
         "id": "lantern_envelope",
         "vehicle_class": "balloon",
-        "radiator_kind": "surface",
+        "radiator_kind": "thin_layer",
+        "power_input": "canopy",
         "temperature_K": {
-            "min": 310,
-            "max": 390,
+            "min": 283,
+            "max": 358,
             "default": 333,
-            "status": "assumed family envelope unless explicit measured anchor is cited"
+            "status": "estimated from a calculated side-wall heat balance at 293 K air: +40 K at full burn (range +25 to +65 K), -10 to +5 K after flame-out"
         },
         "emissivity_3_5": {
-            "min": 0.5,
-            "max": 0.95,
-            "default": 0.85,
-            "status": "assumed MWIR prior, material and angle dependent"
+            "min": 0.3,
+            "max": 0.6,
+            "default": 0.45,
+            "status": "estimated: e = 1 - r - t for 15-30 g/m2 tissue, calculated by scaling published heavier-paper MWIR data"
         },
-        "scaling": "Convective heating from interior plus absorbed flame radiation; cool after flame-out.",
+        "transmittance_3_5": {
+            "min": 0.15,
+            "max": 0.45,
+            "default": 0.3,
+            "status": "estimated by a calculated two-flux scaling of published heavier-paper MWIR data; no tissue measurement found"
+        },
+        "direct_transmittance_3_5": {
+            "min": 0.005,
+            "max": 0.15,
+            "default": 0.03,
+            "status": "estimated: the unscattered, image-forming part of the transmittance, from published paper scattering lengths scaled to 4 um"
+        },
+        "diffuse_lobe": {
+            "fraction": 0.5,
+            "hwhm_deg": 20,
+            "status": "estimated: about half of the scattered transmittance in a forward lobe of 15-30 deg half-width, the rest Lambertian"
+        },
+        "scaling": "Convective heating from the interior air; follows burn power within seconds and is near air temperature after flame-out.",
         "source_ids": [
             "LANTERN",
             "BALLOONFILM",
             "PRIOR"
         ],
-        "notes": "333 K interior-air source value merely anchors an assumed envelope scenario."
+        "notes": "Thin diffuse paper: emits, reflects and transmits, so the flame behind it is seen through it. Uniform side-wall value; the real crown is hotter and the lower skirt cooler."
     },
     {
         "id": "lantern_flame",
         "vehicle_class": "balloon",
         "radiator_kind": "continuum_volume_proxy",
+        "power_scaling": "intensity",
         "temperature_K": {
-            "min": 1000,
-            "max": 1800,
+            "min": 1400,
+            "max": 1900,
             "default": 1400,
-            "status": "assumed family envelope unless explicit measured anchor is cited"
+            "status": "estimated: the temperature at which the proxy's effective emissivity was calculated; published small wax flames are 1400-1900 K. Fixed, not scaled by burn power"
         },
         "emissivity_3_5": {
             "min": 0.02,
-            "max": 0.4,
-            "default": 0.12,
-            "status": "assumed MWIR prior, material and angle dependent"
+            "max": 0.12,
+            "default": 0.05,
+            "status": "estimated: calculated effective value for the 0.05 x 0.125 m proxy from the 3-5 um intensity of a 1 kW fuel cell; scales with burn power"
         },
-        "scaling": "Fuel-dependent gas lines plus soot continuum; emitting area and optical thickness evolve with burning.",
+        "scaling": "Radiant intensity is proportional to heat release; the flame temperature does not fall with power. Gray proxy: a real flame emits much of its band power in the CO2 band, which a long path removes.",
         "source_ids": [
             "FLAME",
             "PRIOR"
@@ -1166,6 +1185,13 @@ const PROFILE_ZONES = {
     lantern: ["lantern_envelope", "lantern_flame"], hotair: ["hotair_envelope"],
     road_combustion: ["road_hood", "road_exhaust", "road_tire", "road_brake"],
 };
+// A scattering thin layer (lantern paper): the image-forming part of its transmittance and the angular spread of the
+// scattered part. A layer without these fields transmits as an image (directTransmittance = transmittance).
+function diffuser(zone) {
+    return zone.direct_transmittance_3_5 ? {directTransmittance: zone.direct_transmittance_3_5.default,
+        lobeFraction: zone.diffuse_lobe?.fraction ?? 0, lobeHwhmDeg: zone.diffuse_lobe?.hwhm_deg ?? 0} : {};
+}
+
 function finite(value, fallback, min, max, name) {
     if (value === undefined) return fallback;
     if (typeof value !== "number" || !Number.isFinite(value)) throw new RangeError(`${name} must be finite`);
@@ -1208,15 +1234,25 @@ export function resolveSignatures(recipe = {}, ambientK = 293, mach, power) {
     const ambient = finite(ambientK, 293, 0, 3000, "ambientK");
     const speed = finite(mach ?? thermal.mach, profile?.mach ?? 0, 0, 5, "mach");
     const powerFraction = finite(power ?? thermal.powerFraction, profile?.power_fraction ?? 0, 0, 1, "power");
+    // A heated canopy (power_input "canopy") can be set apart from the flame: the same fraction scale, by default the
+    // burn power. Its heating depends on the canopy's size and air flow as well as on the flame.
+    const canopyPowerFraction = thermal.canopyPowerFraction == null ? powerFraction :
+        finite(thermal.canopyPowerFraction, powerFraction, 0, 1, "canopyPower");
     const hasPlainData = thermal.temperatureK !== undefined || thermal.emissivity !== undefined;
     const fallback = !profile && !hasPlainData;
     if (fallback) diagnostics.push("No thermal data: ambient temperature and emissivity 1.");
     if (profileName && !profile) diagnostics.push(`Unknown profile ${profileName}; use the generic surface.`);
     const skinK = profile ? recoveryTemperature(ambient, speed) : ambient;
+    const emissivity = finite(thermal.emissivity ?? thermal.skinEmissivityMWIR, profile?.skin_emissivity ?? 1, 0, 1, "emissivity");
+    // Plain thin-layer attributes (a resolved zone copied onto a mesh) keep their transmittance.
+    const transmittance = profile ? 0 : thermal.volume === true ? 1 - emissivity :
+        Math.min(1 - emissivity, finite(thermal.transmittance, 0, 0, 1, "transmittance"));
     const airframe = {
-        temperatureK: finite(thermal.temperatureK, skinK, 0, 3000, "temperatureK"),
-        emissivity: finite(thermal.emissivity ?? thermal.skinEmissivityMWIR,
-            profile?.skin_emissivity ?? 1, 0, 1, "emissivity"),
+        temperatureK: finite(thermal.temperatureK, skinK, 0, 3000, "temperatureK"), emissivity,
+        ...(transmittance > 0 ? {transmittance} : {}), ...(!profile && thermal.volume === true ? {volume: true} : {}),
+        ...(!profile && transmittance > 0 && Number.isFinite(thermal.directTransmittance) ?
+            {directTransmittance: Math.min(transmittance, Math.max(0, thermal.directTransmittance))} : {}),
+        ...(!profile && transmittance > 0 && thermal.lobeFraction !== undefined ? {lobeFraction: thermal.lobeFraction, lobeHwhmDeg: thermal.lobeHwhmDeg} : {}),
         status: "estimated", fallback,
         source: profile ? "Recovery temperature; estimated material emissivity" :
             hasPlainData ? "Explicit surface attributes" : "Ambient blackbody fallback",
@@ -1237,7 +1273,17 @@ export function resolveSignatures(recipe = {}, ambientK = 293, mach, power) {
         const separateFlow = id.startsWith("turbofan_");
         const referencePower = separateFlow ? TURBOFAN_CLIMB_REFERENCE.powerFraction : profile.power_fraction;
         const zoneRecovery = separateFlow ? recoveryTemperature(TURBOFAN_CLIMB_REFERENCE.ambientK, TURBOFAN_CLIMB_REFERENCE.mach) : referenceRecovery;
-        const ratio = referencePower > 0 ? powerFraction / referencePower : 0;
+        const zonePower = zone.power_input === "canopy" ? canopyPowerFraction : powerFraction;
+        const ratio = referencePower > 0 ? zonePower / referencePower : 0;
+        // A flame proxy keeps its temperature; its effective emissivity (radiant intensity) is proportional to power.
+        if (zone.power_scaling === "intensity") {
+            // volume: a gas emitter that reflects nothing and transmits 1 - e of what is behind it; with zero
+            // emissivity (flame-out) it is not drawn.
+            const emissivity = Math.min(1, zone.emissivity_3_5.default * ratio);
+            zones[id] = {temperatureK: referenceK, emissivity, transmittance: 1 - emissivity, volume: true,
+                status: "estimated", source: zone.source ?? "Flame proxy; intensity proportional to burn power", fallback: false};
+            continue;
+        }
         let temperatureK = skinK + (referenceK - zoneRecovery) * ratio ** 0.7;
         if (id === "afterburner_liner") {
             const reheat = override.afterburner_allowed === false ? 0 :
@@ -1245,6 +1291,8 @@ export function resolveSignatures(recipe = {}, ambientK = 293, mach, power) {
             temperatureK = zones.jet_cavity.temperatureK + reheat * Math.max(0, referenceK - zones.jet_cavity.temperatureK);
         }
         zones[id] = {temperatureK, emissivity: zone.emissivity_3_5.default,
+            ...(zone.transmittance_3_5 ? {transmittance: zone.transmittance_3_5.default} : {}),
+            ...diffuser(zone),
             status: "estimated", source: zone.source ?? "Family zone prior and equilibrium power interpolation", fallback: false};
     }
     for (const [id, values] of Object.entries(thermal.zones ?? {})) {
@@ -1258,11 +1306,17 @@ export function resolveSignatures(recipe = {}, ambientK = 293, mach, power) {
             continue;
         }
         const base = zones[id] ?? (zone ? {temperatureK: zone.temperature_K.default,
-            emissivity: zone.emissivity_3_5.default, status: "estimated", fallback: false,
-            source: "Estimated zone prior"} : airframe);
-        zones[id] = {...base,
-            temperatureK: finite(values.temperatureK, base.temperatureK, 0, 3000, "zone temperatureK"),
-            emissivity: finite(values.emissivity, base.emissivity, 0, 1, "zone emissivity")};
+            emissivity: zone.emissivity_3_5.default,
+            ...(zone.transmittance_3_5 ? {transmittance: zone.transmittance_3_5.default} : {}), ...diffuser(zone),
+            status: "estimated", fallback: false, source: "Estimated zone prior"} : airframe);
+        const emissivity = finite(values.emissivity, base.emissivity, 0, 1, "zone emissivity");
+        // A thin layer cannot transmit more than its emissivity leaves.
+        const transmittance = base.volume ? 1 - emissivity :
+            Math.min(1 - emissivity, finite(values.transmittance, base.transmittance ?? 0, 0, 1, "zone transmittance"));
+        const {transmittance: _baseTransmittance, directTransmittance: _baseDirect, ...opaque} = base;
+        zones[id] = {...opaque, temperatureK: finite(values.temperatureK, base.temperatureK, 0, 3000, "zone temperatureK"),
+            emissivity, ...(transmittance > 0 ? {transmittance} : {}),
+            ...(transmittance > 0 && base.directTransmittance !== undefined ? {directTransmittance: Math.min(transmittance, base.directTransmittance)} : {})};
     }
     return {profile: profileName ?? null, zones, airframe: zones.airframe, fallback, diagnostics,
         resolveZone(id) {

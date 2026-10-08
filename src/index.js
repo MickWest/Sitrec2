@@ -136,7 +136,7 @@ import {glareSprite, targetSphere} from "./JetStuffVars";
 import {CCustomManager} from "./CustomSupport";
 import {EventManager} from "./CEventManager";
 import {CNodeView3D} from "./nodes/CNodeView3D";
-import {shouldSleepAnimationLoop as shouldSleepRenderLoopState} from "./renderLoopControl";
+import {renderCadence, shouldSleepAnimationLoop as shouldSleepRenderLoopState} from "./renderLoopControl";
 import {getApproximateLocationFromIP} from "./GeoLocation";
 import {customSitchLoadHint} from "./errorHints";
 import {LLAToECEF} from "./LLA-ECEF-ENU";
@@ -2792,14 +2792,17 @@ function animate(newtime) {
     if (Globals.settings && Globals.settings.fpsLimit) {
         rafFps = Globals.settings.fpsLimit;
     }
-    rafInterval = 1000 / rafFps;
-
     if (shouldSleepAnimationLoop()) {
         return;
     }
+
+    const cadence = renderCadence({renderFps: rafFps, sourceFps: Sit.fps,
+        adaptiveFps: frameRateController.getCurrentFPS(), playing: Sit.animated && !par.paused,
+        logicTime: then, renderTime: thenRender});
+    rafInterval = cadence.interval;
     
     // Check if enough time has elapsed for RAF to do anything (fpsLimit gate)
-    const elapsedSinceRender = now - thenRender;
+    const elapsedSinceRender = now - cadence.origin;
     if (elapsedSinceRender < rafInterval) {
         // Not yet time, reschedule and return early
         scheduleAnimationLoop(rafInterval - elapsedSinceRender);
@@ -2875,8 +2878,9 @@ function animate(newtime) {
     // GPU queue backlog prevention: flush GPU command buffers and check for saturation
     flushGPUAndCheckBacklog();
 
-    // Update render timer
-    thenRender = now;
+    // Keep the render cadence anchored to its clock. Resetting to the late timer callback added its overshoot to
+    // every period (a 30 Hz limit delivered about 28 Hz even with time to spare). Drop missed periods, retain phase.
+    thenRender = now - (elapsedSinceRender % rafInterval);
     
     // Schedule next RAF call (runs frequently, but does nothing until rafInterval elapses)
     scheduleAnimationLoop(0);

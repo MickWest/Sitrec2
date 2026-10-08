@@ -205,7 +205,7 @@ test("ocean roots use the directional sea boundary, and registered land stays a 
     const adapter = createThermalSceneAdapter([], [land, sea], camera, {enabled: false});
     const settings = normalizeSettings({seaMode: "statistical"});
     expect(adapter.attributes(sea, settings)).toEqual({sea: true});
-    expect(adapter.attributes(land, settings)).toEqual({temperatureK: settings.groundTemperatureK, emissivity: settings.groundEmissivity});
+    expect(adapter.attributes(land, settings)).toEqual({temperatureK: settings.groundTemperatureK, emissivity: settings.groundEmissivity, terrainColor:true});
     expect(adapter.seaWind(settings).every(Number.isFinite)).toBe(true);
     const pipeline = new ThermalPipeline({}); pipeline.resources = {surfaces: new Map()};
     pipeline.skyView = {up: [0, 1, 0]}; pipeline.background = {scaledPhotonRadiance: 1};

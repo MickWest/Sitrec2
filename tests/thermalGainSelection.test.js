@@ -8,8 +8,11 @@ function referenceWindow(counts, {lowPercentile = 0.01, highPercentile = 0.99,
         minimumSpan > 0 && Number.isFinite(minimumSpan) && timeConstantS >= 0 && Number.isFinite(timeConstantS) &&
         deltaTimeS >= 0 && Number.isFinite(deltaTimeS))) throw new RangeError("Invalid automatic window controls");
     const sorted = counts.slice().sort();
-    const low = sorted[Math.floor(lowPercentile * (sorted.length - 1))];
-    const high = Math.max(sorted[Math.floor(highPercentile * (sorted.length - 1))], low + minimumSpan);
+    const lower = sorted[Math.floor(lowPercentile * (sorted.length - 1))];
+    const upper = sorted[Math.floor(highPercentile * (sorted.length - 1))];
+    // A narrower window than the minimum span widens equally about its middle.
+    const low = upper - lower >= minimumSpan ? lower : (lower + upper) / 2 - minimumSpan / 2;
+    const high = upper - lower >= minimumSpan ? upper : (lower + upper) / 2 + minimumSpan / 2;
     const alpha = previous ? (deltaTimeS === 0 ? 0 : timeConstantS === 0 ? 1 : -Math.expm1(-deltaTimeS / timeConstantS)) : 1;
     if (previous && dynamics === "gainOffset") {
         // Calculated affine map: drive = gain * counts + offset. Video recovery

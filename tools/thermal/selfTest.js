@@ -1181,9 +1181,14 @@ export async function runThermalSelfTest() {
                         record(`${prefix}: maximum CPU preparation at most 50 ms`, 1, Number(timingDistribution(preparation).maxMs <= 50), 0);
                     } else record(`${prefix}: timing gates need a worker; this host has none (timings reported, not gated)`, 1, 1, 0);
                     record(`${prefix}: gain meets one-render deadline`, 0, missed, 0);
-                    if (measured.gpuTimer.extension && !measured.gpuTimer.disjointSamples)
-                        for (const stage of ["radiance", "sky", "optics", "sample", "detector", "temporal", "processing", "display", "output"])
+                    if (measured.gpuTimer.extension && !measured.gpuTimer.disjointSamples) {
+                        // A live packed optics pass writes the sampled image itself (fused sampling): the "optics"
+                        // timing then contains the sampling, and there is no separate "sample" stage.
+                        const fused = !!measured.opticsFused;
+                        if (fused) record(`${prefix}: sampling fused into the optics stage`, 1, Number(!gpu.sample?.length && (gpu.optics?.length ?? 0) > 0), 0);
+                        for (const stage of ["radiance", "sky", "optics", ...(fused ? [] : ["sample"]), "detector", "temporal", "processing", "display", "output"])
                             record(`${prefix}: GPU timing includes ${stage}`, 1, Number((gpu[stage]?.length ?? 0)>0), 0);
+                    }
                 } finally {measured.dispose(); object.geometry.dispose(); object.material.dispose();}
             }
             performanceReport.status = "measured; CPU submission and GPU stage execution reported separately";

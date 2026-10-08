@@ -11,7 +11,7 @@
 
 import {CNode3DObject} from "./CNode3DObject";
 import {MISB} from "../MISBFields";
-import {balloonDiameter} from "../SondeTrajectory";
+import {balloonDiameter, sondeRowFrame} from "../SondeTrajectory";
 import {Globals} from "../Globals";
 import * as LAYER from "../LayerMasks";
 
@@ -48,8 +48,10 @@ export class CNodeDisplayBalloonSphere extends CNode3DObject {
         let diameter = this.baseDiameter;
         let pressure = null;
 
-        if (this.in.track) {
-            const trackValue = this.in.track.getValueFrame(f);
+        // The pressure row at the whole frame in progress: playback frames can be fractional or past the track's end.
+        const row = this.in.track ? sondeRowFrame(f, this.in.track.frames) : -1;
+        if (row >= 0) {
+            const trackValue = this.in.track.getValueFrame(row);
             if (trackValue && trackValue.misbRow) {
                 const p = trackValue.misbRow[MISB.StaticPressure];
                 if (p != null && p > 0) pressure = p;

@@ -37,18 +37,164 @@ export const radianceFragment = `
     uniform float rangeMaxM; // m, quadratic table endpoint
     uniform int rangeSamples; // texel count, unitless
     uniform vec3 sunViewDirection; // normalized camera-space direction toward sun
+    uniform float transmittance; // thin-layer transmittance, unitless; 0 = opaque
+    uniform int innerRow; // texture row for back faces: 1 = a thin shell's inner side, 0 = same as front
+    uniform vec4 diffuser; // x scattered transmittance, y reflectance, z forward-lobe fraction, w lobe Gaussian sigma (rad)
+    uniform vec4 glowSource; // xyz flame centre in camera space (m); w in-band intensity at the sensor (scaled photon radiance x m^2); 0 = none
+    uniform int environmentRow; // first of five reflected-environment rows by normal elevation (sine -1, -0.5, 0, 0.5, 1); 0 = none
+    uniform vec3 upView; // local up in camera space
     in vec3 vViewPosition; // m
     in vec3 vViewNormal; // unitless
-    out vec4 result; // R: scaled photon radiance; G/B unused, A=1
+    out vec4 result; // R: scaled photon radiance; G/B unused; A = 1 - transmittance (premultiplied blend weight)
     void main() {
         #include <logdepthbuf_fragment>
         float position = (rangeMaxM > 0.0 ? sqrt(clamp(length(vViewPosition) / rangeMaxM, 0.0, 1.0)) : 0.0) * float(rangeSamples - 1);
         int lower = min(rangeSamples - 2, int(floor(position)));
-        vec2 source = mix(texelFetch(rangeTexture, ivec2(lower, 0), 0).rg,
-            texelFetch(rangeTexture, ivec2(lower + 1, 0), 0).rg, position - float(lower));
+        // Back faces use innerRow. Three.js draws a transparent double-sided material as a BackSide pass (FLIP_SIDED,
+        // with the winding reversed, so gl_FrontFacing is true there) and then a FrontSide pass.
+        #if defined(FLIP_SIDED)
+            int row = innerRow;
+        #elif defined(DOUBLE_SIDED)
+            int row = gl_FrontFacing ? 0 : innerRow;
+        #else
+            int row = 0;
+        #endif
+        vec2 source = mix(texelFetch(rangeTexture, ivec2(lower, row), 0).rg,
+            texelFetch(rangeTexture, ivec2(lower + 1, row), 0).rg, position - float(lower));
         vec3 normal = normalize(vViewNormal) * (gl_FrontFacing ? 1.0 : -1.0);
         float radiance = source.r + source.g * max(0.0, dot(normal, sunViewDirection));
-        result = vec4(radiance, 0.0, 0.0, 1.0);
+        if (environmentRow > 0 && row == 0) {
+            // Sky and ground: the outer face reflects the environment for its orientation (linear in the normal's up sine).
+            float x = (clamp(dot(normal, upView), -1.0, 1.0) + 1.0) * 2.0;
+            int k = min(3, int(floor(x)));
+            float fraction = position - float(lower);
+            float a = mix(texelFetch(rangeTexture, ivec2(lower, environmentRow + k), 0).r,
+                texelFetch(rangeTexture, ivec2(lower + 1, environmentRow + k), 0).r, fraction);
+            float b = mix(texelFetch(rangeTexture, ivec2(lower, environmentRow + k + 1), 0).r,
+                texelFetch(rangeTexture, ivec2(lower + 1, environmentRow + k + 1), 0).r, fraction);
+            radiance += mix(a, b, x - float(k));
+        }
+        if (glowSource.w > 0.0) {
+            // A flame inside a scattering shell lights the inside of each wall: E = I cos(incidence) / d^2. The outer
+            // face shows the scattered transmission (a Lambertian part and a forward lobe around the flame direction);
+            // the inner face reflects it diffusely. The camera-facing normal is outward on the outer face.
+            vec3 toward = vViewPosition - glowSource.xyz;
+            float d2 = max(dot(toward, toward), 1e-4);
+            vec3 ray = toward * inversesqrt(d2);
+            bool inner = innerRow > 0 && row == innerRow;
+            vec3 outward = inner ? -normal : normal;
+            float irradiance = glowSource.w * max(dot(outward, ray), 0.0) / d2;
+            if (inner) radiance += diffuser.y * irradiance / 3.14159265;
+            else {
+                vec3 view = normalize(-vViewPosition);
+                float psi = acos(clamp(dot(ray, view), -1.0, 1.0)), sigma2 = max(diffuser.w * diffuser.w, 1e-6);
+                float lobe = exp(-0.5 * psi * psi / sigma2) / (6.28318531 * sigma2) / max(dot(normal, view), 0.05);
+                radiance += diffuser.x * irradiance * ((1.0 - diffuser.z) / 3.14159265 + diffuser.z * lobe);
+            }
+        }
+        result = vec4(radiance, 0.0, 0.0, 1.0 - transmittance);
+    }
+`;
+
+// Terrain colors supply an explicitly estimated temperature, before atmospheric
+// transfer, optics and detection. The source map keeps its normal UV transform
+// and color-space decoding; lighting, tone mapping and display polarity are absent.
+export const terrainRadianceVertex = radianceVertex
+    .replace("#include <common>", "#include <common>\n#include <uv_pars_vertex>\n#include <color_pars_vertex>\n#ifdef GROUND_MASK\nout vec3 vWorldPosition; // ECEF, m\n#endif")
+    .replace("void main() {", "void main() {\n#include <uv_vertex>\n#include <color_vertex>")
+    .replace("vViewPosition = mvPosition.xyz;", "vViewPosition = mvPosition.xyz;\n#ifdef GROUND_MASK\nvWorldPosition = (modelMatrix * vec4(transformed, 1.0)).xyz;\n#endif");
+export const terrainRadianceFragment = `
+    #include <logdepthbuf_pars_fragment>
+    #include <uv_pars_fragment>
+    #include <color_pars_fragment>
+    uniform sampler2D terrainMap; // unlit terrain RGB, decoded to linear by the renderer
+    uniform vec3 terrainColor; // linear material color
+    uniform sampler2D rangeTexture; // RG: thermal+environment and reflected sunlight, rows ordered by temperature
+    uniform float rangeMaxM; // m
+    uniform int rangeSamples; // samples per temperature row
+    uniform int temperatureSamples; // temperature rows
+    uniform vec3 sunViewDirection; // camera-space direction toward the Sun
+    uniform sampler2D groundMask; // R road, G building footprint, B paved path: covered fraction
+    uniform vec4 groundMaskRect; // Web Mercator x0, y0 and texels-to-unit scales of the mask square
+    uniform vec3 upView; // local up in camera space
+    uniform vec2 ellipsoid; // equatorial radius (m), first eccentricity squared
+    in vec3 vViewPosition; // m
+    in vec3 vViewNormal;
+    #ifdef GROUND_MASK
+        in vec3 vWorldPosition; // ECEF, m
+    #endif
+    out vec4 result; // R: scaled photon radiance
+    vec2 rangeSource(int lower, float fraction, int row) {
+        return mix(texelFetch(rangeTexture, ivec2(lower, row), 0).rg,
+            texelFetch(rangeTexture, ivec2(lower + 1, row), 0).rg, fraction);
+    }
+    void main() {
+        #include <logdepthbuf_fragment>
+        vec3 color = terrainColor;
+        #ifdef USE_MAP
+            color *= texture(terrainMap, vMapUv).rgb;
+        #endif
+        #if defined(USE_COLOR) || defined(USE_COLOR_ALPHA)
+            color *= vColor.rgb;
+        #endif
+        vec3 srgb = sRGBTransferOETF(vec4(clamp(color, 0.0, 1.0), 1.0)).rgb;
+        float brightness = clamp(dot(srgb, vec3(0.2126, 0.7152, 0.0722)), 0.0, 1.0);
+        float position = (rangeMaxM > 0.0 ? sqrt(clamp(length(vViewPosition) / rangeMaxM, 0.0, 1.0)) : 0.0) * float(rangeSamples - 1);
+        int lower = min(rangeSamples - 2, int(floor(position)));
+        float fraction = position - float(lower);
+        #ifdef MATERIAL_CLASSES
+            // Estimated material class weights from the imagery color; rows: grass, trees, asphalt, concrete, roof, soil.
+            // Vegetation: the excess-green indices of the 3D-tile tree detector (ExG > 0.10 or ExGR > 0), with soft
+            // edges; dark green is tree canopy, lighter green grass. Soil: a red-over-blue cast. The neutral rest by
+            // brightness: dark asphalt, mid concrete, bright roof. Shadows and dark roofs read as asphalt, and water as
+            // dark or blue; imagery does not measure material.
+            vec3 chroma = srgb / (srgb.r + srgb.g + srgb.b + 1e-6);
+            float exg = 2.0 * chroma.g - chroma.r - chroma.b;
+            float exgr = exg - (1.4 * chroma.r - chroma.g);
+            float vegetation = max(smoothstep(-0.03, 0.03, exgr), smoothstep(0.07, 0.13, exg));
+            float soil = (1.0 - vegetation) * smoothstep(0.04, 0.10, chroma.r - chroma.b);
+            float neutral = 1.0 - vegetation - soil;
+            float dark = 1.0 - smoothstep(0.25, 0.45, brightness), bright = smoothstep(0.55, 0.75, brightness);
+            float trees = vegetation * (1.0 - smoothstep(0.18, 0.30, brightness));
+            float weights[6] = float[6](vegetation - trees, trees, neutral * dark, neutral * (1.0 - dark - bright), neutral * bright, soil);
+            #ifdef GROUND_MASK
+                // Mapped coverage replaces the color classes where it applies; a road under tree canopy stays trees.
+                // Geodetic latitude of a near-surface point, then the Web Mercator square of the mask.
+                float lon = atan(vWorldPosition.y, vWorldPosition.x);
+                float lat = atan(vWorldPosition.z, length(vWorldPosition.xy) * (1.0 - ellipsoid.y));
+                vec2 mercator = vec2(lon * 0.159154943 + 0.5, 0.5 - log(tan(0.785398163 + lat * 0.5)) * 0.159154943);
+                vec2 maskUv = vec2(fract(mercator.x - groundMaskRect.x) * groundMaskRect.z, (mercator.y - groundMaskRect.y) * groundMaskRect.w);
+                if (all(greaterThanEqual(maskUv, vec2(0.0))) && all(lessThanEqual(maskUv, vec2(1.0)))) {
+                    vec3 mapped = texture(groundMask, maskUv).rgb;
+                    float road = mapped.r * (1.0 - vegetation), path = mapped.b * (1.0 - vegetation) * (1.0 - road);
+                    float roof = mapped.g * (1.0 - road - path), rest = max(0.0, 1.0 - road - path - roof);
+                    for (int row = 0; row < 6; row++) weights[row] *= rest;
+                    weights[2] += road; weights[3] += path; weights[4] += roof;
+                }
+            #endif
+            #ifdef BUILDING_SURFACES
+                // 3D buildings: walls are concrete. Up-facing surfaces keep the color and mapped classes, because
+                // photogrammetric tiles carry streets and fields in the same meshes as roofs.
+                // The geometric normal from screen-space derivatives: photogrammetric tiles often carry no normals.
+                vec3 facet = normalize(cross(dFdx(vViewPosition), dFdy(vViewPosition)));
+                if (dot(facet, vViewPosition) > 0.0) facet = -facet;
+                float up = dot(facet, upView);
+                // Steep facets of tree canopy in the same meshes stay vegetation.
+                float wall = (1.0 - smoothstep(0.5, 0.8, up)) * (1.0 - vegetation);
+                for (int row = 0; row < 6; row++) weights[row] *= 1.0 - wall;
+                weights[3] += wall;
+            #endif
+            vec2 source = vec2(0.0);
+            for (int row = 0; row < 6; row++) source += weights[row] * rangeSource(lower, fraction, min(row, temperatureSamples - 1));
+        #else
+            // Estimated T = reference + span * (0.5 - sRGB luminance).
+            float row = (1.0 - brightness) * float(temperatureSamples - 1);
+            int lowerRow = min(temperatureSamples - 2, int(floor(row)));
+            vec2 source = mix(rangeSource(lower, fraction, lowerRow),
+                rangeSource(lower, fraction, lowerRow + 1), row - float(lowerRow));
+        #endif
+        vec3 normal = normalize(vViewNormal) * (gl_FrontFacing ? 1.0 : -1.0);
+        result = vec4(source.r + source.g * max(0.0, dot(normal, sunViewDirection)), 0.0, 0.0, 1.0);
     }
 `;
 
@@ -145,6 +291,41 @@ export const multiplyFragment = `
             source.x * kernel.y + source.y * kernel.x, 0.0, 1.0);
     }
 `;
+// The same two-stage DIT butterfly as the packed variant, specialized to a single RG complex image.
+export const fftButterfly4Fragment = `
+    uniform sampler2D tInput;
+    uniform int axis;
+    uniform int span;
+    uniform bool inverse;
+    out vec4 result;
+    vec2 rotate(vec2 value, vec2 rotation) {
+        return vec2(value.x * rotation.x - value.y * rotation.y, value.x * rotation.y + value.y * rotation.x);
+    }
+    void main() {
+        ivec2 pixel = ivec2(gl_FragCoord.xy);
+        int coordinate = axis == 0 ? pixel.x : pixel.y;
+        int quarter = span / 4;
+        int base = coordinate / span * span;
+        int offset = coordinate - base;
+        int r = offset % quarter, t = offset / quarter;
+        ivec2 step = axis == 0 ? ivec2(quarter, 0) : ivec2(0, quarter);
+        ivec2 first = pixel;
+        if (axis == 0) first.x = base + r; else first.y = base + r;
+        vec2 a0 = texelFetch(tInput, first, 0).rg, a1 = texelFetch(tInput, first + step, 0).rg;
+        vec2 a2 = texelFetch(tInput, first + 2 * step, 0).rg, a3 = texelFetch(tInput, first + 3 * step, 0).rg;
+        float direction = inverse ? 1.0 : -1.0;
+        float phase1 = direction * 6.283185307179586 * float(r) / float(2 * quarter);
+        float phase2 = direction * 6.283185307179586 * float(r) / float(span);
+        vec2 w1 = vec2(cos(phase1), sin(phase1)), w2 = vec2(cos(phase2), sin(phase2));
+        bool odd = t == 1 || t == 3;
+        vec2 b1 = rotate(a1, w1), b3 = rotate(a3, w1);
+        vec2 y0 = odd ? a0 - b1 : a0 + b1;
+        vec2 y2 = odd ? a2 - b3 : a2 + b3;
+        vec2 w = odd ? (inverse ? vec2(-w2.y, w2.x) : vec2(w2.y, -w2.x)) : w2;
+        vec2 z = rotate(y2, w);
+        result = vec4((t < 2 ? y0 + z : y0 - z) * (inverse ? 0.25 : 1.0), 0.0, 1.0);
+    }
+`;
 // Packed overlap-add near convolution (nearConvolutionPlan in ThermalPipeline.js). Up to four image tiles share one
 // RGBA FFT: R and G are the real and imaginary parts of one complex image (tiles (0,0) and (1,0)), B and A of another
 // (tiles (0,1) and (1,1)). The optical kernel is real, so each channel of the inverse transform is one tile's linear
@@ -162,19 +343,21 @@ export const fftPackFragment = `
     uniform sampler2D tInput; // R: radiance contrast, scaled photon radiance
     uniform ivec2 fftSize; // padded pixels, powers of two
     uniform ivec2 sourceSize; // image pixels
+    uniform ivec2 sourceOrigin; // cropped contrast origin in the full image, pixels
     uniform ivec2 tileSize; // nominal tile pixels; tile (i, j) starts at (i, j) * tileSize
     uniform ivec2 tiles; // tiles per axis, 1 or 2
+    uniform bool naturalOrder;
     out vec4 result; // RGBA: tiles (0,0), (1,0), (0,1), (1,1), zero padded, in bit-reversed order
     ${packedReverseBits}
     float tileValue(ivec2 tile, ivec2 local) {
         ivec2 pixel = tile * tileSize + local;
         if (any(greaterThanEqual(tile, tiles)) || any(greaterThanEqual(local, tileSize)) ||
             any(greaterThanEqual(pixel, sourceSize))) return 0.0;
-        return texelFetch(tInput, pixel, 0).r;
+        return texelFetch(tInput, pixel + sourceOrigin, 0).r;
     }
     void main() {
         ivec2 pixel = ivec2(gl_FragCoord.xy);
-        ivec2 local = ivec2(reverseBits(pixel.x, fftSize.x), reverseBits(pixel.y, fftSize.y));
+        ivec2 local = naturalOrder ? pixel : ivec2(reverseBits(pixel.x, fftSize.x), reverseBits(pixel.y, fftSize.y));
         result = vec4(tileValue(ivec2(0, 0), local), tileValue(ivec2(1, 0), local),
             tileValue(ivec2(0, 1), local), tileValue(ivec2(1, 1), local));
     }
@@ -256,22 +439,124 @@ export const fftButterfly4PackedFragment = `
         result = (t < 2 ? y0 + z : y0 - z) * (inverse ? 0.25 : 1.0);
     }
 `;
+// Two descending decimation-in-frequency stages. Their output is in binary-reversed order, accepted directly
+// by the inverse DIT passes after filtering. Horizontal work outside the packed tiles is exactly zero.
+export const fftDifPackedFragment = `
+    uniform sampler2D tInput;
+    uniform int axis;
+    uniform int span;
+    uniform int sourceRows;
+    uniform bool radix4;
+    out vec4 result;
+    vec2 rotate(vec2 a,vec2 w) {return vec2(a.x*w.x-a.y*w.y,a.x*w.y+a.y*w.x);}
+    vec4 pair(vec4 a,vec2 w) {return vec4(rotate(a.xy,w),rotate(a.zw,w));}
+    void main() {
+        ivec2 pixel=ivec2(gl_FragCoord.xy);
+        if(axis==0 && pixel.y>=sourceRows) {result=vec4(0);return;}
+        int coordinate=axis==0 ? pixel.x : pixel.y;
+        int part=radix4 ? span/4 : span/2;
+        int base=coordinate/span*span,offset=(coordinate-base)%part,t=(coordinate-base)/part;
+        ivec2 first=pixel,step=axis==0 ? ivec2(part,0) : ivec2(0,part);
+        if(axis==0) first.x=base+offset;else first.y=base+offset;
+        vec4 a=texelFetch(tInput,first,0),b=texelFetch(tInput,first+step,0);
+        float phase=-6.283185307179586*float(offset)/float(span);
+        vec2 w=vec2(cos(phase),sin(phase));
+        if(!radix4) {result=t==0 ? a+b : pair(a-b,w);return;}
+        vec4 c=texelFetch(tInput,first+2*step,0),d=texelFetch(tInput,first+3*step,0);
+        vec4 even=a+c,odd=b+d;
+        vec2 w2=vec2(cos(2.0*phase),sin(2.0*phase));
+        if(t<2) {result=t==0 ? even+odd : pair(even-odd,w2);}
+        else {
+            vec4 y=pair(a-c,w),z=pair(b-d,vec2(w.y,-w.x));
+            result=t==2 ? y+z : pair(y-z,w2);
+        }
+    }
+`;
 export const multiplyPackedFragment = `
     uniform sampler2D tInput; // RGBA: two complex photon-radiance spectra
     uniform sampler2D tKernel; // RG: dimensionless optical transfer function
+    uniform ivec2 fftSize;
+    uniform bool reversedKernel;
     out vec4 result; // RGBA: both spectra filtered
+    ${packedReverseBits}
     vec2 product(vec2 a, vec2 b) { return vec2(a.x * b.x - a.y * b.y, a.x * b.y + a.y * b.x); }
     void main() {
         ivec2 pixel = ivec2(gl_FragCoord.xy);
         vec4 source = texelFetch(tInput, pixel, 0);
-        vec2 kernel = texelFetch(tKernel, pixel, 0).rg;
+        ivec2 kernelPixel = reversedKernel ? ivec2(reverseBits(pixel.x, fftSize.x), reverseBits(pixel.y, fftSize.y)) : pixel;
+        vec2 kernel = texelFetch(tKernel, kernelPixel, 0).rg;
         result = vec4(product(source.xy, kernel), product(source.zw, kernel));
+    }
+`;
+
+// Three descending radix-2 stages. Four sum/difference pairs form the eight-point DFT; its frequency index is
+// bit-reversed so the inverse DIT consumes it directly. All storage and arithmetic remain Float32.
+export const fftDif8PackedFragment = `
+    uniform sampler2D tInput;
+    uniform int axis,span,sourceRows;
+    out vec4 result;
+    vec2 rotate(vec2 a,vec2 w) {return vec2(a.x*w.x-a.y*w.y,a.x*w.y+a.y*w.x);}
+    vec4 pair(vec4 a,vec2 w) {return vec4(rotate(a.xy,w),rotate(a.zw,w));}
+    vec2 root(int n) {
+        n=n%8;
+        if(n==0)return vec2(1,0);if(n==1)return vec2(.7071067811865475,-.7071067811865475);
+        if(n==2)return vec2(0,-1);if(n==3)return vec2(-.7071067811865475,-.7071067811865475);
+        if(n==4)return vec2(-1,0);if(n==5)return vec2(-.7071067811865475,.7071067811865475);
+        if(n==6)return vec2(0,1);return vec2(.7071067811865475,.7071067811865475);
+    }
+    void main() {
+        ivec2 pixel=ivec2(gl_FragCoord.xy);
+        if(axis==0 && pixel.y>=sourceRows){result=vec4(0);return;}
+        int coordinate=axis==0?pixel.x:pixel.y,q=span/8,base=coordinate/span*span;
+        int r=(coordinate-base)%q,t=(coordinate-base)/q;
+        int k=((t&1)<<2)|(t&2)|((t&4)>>2);
+        ivec2 first=pixel,step=axis==0?ivec2(q,0):ivec2(0,q);
+        if(axis==0)first.x=base+r;else first.y=base+r;
+        vec4 sum=vec4(0);
+        for(int j=0;j<4;j++) {
+            vec4 a=texelFetch(tInput,first+j*step,0),b=texelFetch(tInput,first+(j+4)*step,0);
+            sum+=pair((k&1)==0?a+b:a-b,root(j*k));
+        }
+        float phase=-6.283185307179586*float(r*k)/float(span);
+        result=pair(sum,vec2(cos(phase),sin(phase)));
+    }
+`;
+
+export const fftInverse8PackedFragment = `
+    uniform sampler2D tInput;
+    uniform int axis,span;
+    out vec4 result;
+    vec2 rotate(vec2 a,vec2 w) {return vec2(a.x*w.x-a.y*w.y,a.x*w.y+a.y*w.x);}
+    vec4 pair(vec4 a,vec2 w) {return vec4(rotate(a.xy,w),rotate(a.zw,w));}
+    vec2 root(int n) {
+        n=n%8;
+        if(n==0)return vec2(1,0);if(n==1)return vec2(.7071067811865475,.7071067811865475);
+        if(n==2)return vec2(0,1);if(n==3)return vec2(-.7071067811865475,.7071067811865475);
+        if(n==4)return vec2(-1,0);if(n==5)return vec2(-.7071067811865475,-.7071067811865475);
+        if(n==6)return vec2(0,-1);return vec2(.7071067811865475,-.7071067811865475);
+    }
+    void main() {
+        ivec2 pixel=ivec2(gl_FragCoord.xy);
+        int coordinate=axis==0?pixel.x:pixel.y,q=span/8,base=coordinate/span*span;
+        int r=(coordinate-base)%q,t=(coordinate-base)/q;
+        ivec2 first=pixel,step=axis==0?ivec2(q,0):ivec2(0,q);
+        if(axis==0)first.x=base+r;else first.y=base+r;
+        float phase=6.283185307179586*float(r)/float(span);
+        vec2 w=vec2(cos(phase),sin(phase)),power=vec2(1,0);
+        vec4 sum=vec4(0);
+        for(int k=0;k<8;k++) {
+            int j=((k&1)<<2)|(k&2)|((k&4)>>2);
+            sum+=pair(texelFetch(tInput,first+j*step,0),rotate(power,root(t*k)));
+            power=rotate(power,w);
+        }
+        result=sum*.125;
     }
 `;
 export const overlapAddFragment = `
     uniform sampler2D tInput; // RGBA: each channel one tile's linear convolution, wrapped by fftSize
     uniform ivec2 fftSize; // padded pixels
     uniform ivec2 sourceSize; // image pixels
+    uniform ivec2 sourceOrigin; // cropped contrast origin in the full image, pixels
     uniform ivec2 tileSize; // nominal tile pixels
     uniform ivec2 tiles; // tiles per axis
     uniform ivec2 reachLow; // kernel support toward lower pixel indices, pixels
@@ -291,7 +576,7 @@ export const overlapAddFragment = `
         return true;
     }
     void main() {
-        ivec2 pixel = ivec2(gl_FragCoord.xy), wrapped;
+        ivec2 pixel = ivec2(gl_FragCoord.xy) - sourceOrigin, wrapped;
         float sum = 0.0;
         if (covers(ivec2(0, 0), pixel, wrapped)) sum += texelFetch(tInput, wrapped, 0).r;
         if (covers(ivec2(1, 0), pixel, wrapped)) sum += texelFetch(tInput, wrapped, 0).g;
@@ -395,8 +680,9 @@ export const farUpsampleFragment = `
     uniform sampler2D tInput; // inverse padded FFT, signed far contrast
     uniform ivec2 fftSize; // coarse FFT samples, with negative offsets at the end
     uniform float factor; // fine samples per coarse sample
+    uniform bool haloInput; // packed convolution has an explicit one-pixel coarse border
     out vec4 result; // fine-grid signed far contrast
-    float readPixel(ivec2 pixel) { return texelFetch(tInput, (pixel + fftSize) % fftSize, 0).r; }
+    float readPixel(ivec2 pixel) { return texelFetch(tInput, haloInput ? pixel+ivec2(1) : (pixel + fftSize) % fftSize, 0).r; }
     void main() {
         vec2 source = gl_FragCoord.xy / factor - 0.5;
         ivec2 lower = ivec2(floor(source));
@@ -427,6 +713,22 @@ export const opticsSumFragment = `
         result = vec4(max(0.0, value), 0.0, 0.0, 1.0);
     }
 `;
+
+// Assemble the packed convolution and integrate the SAME fine samples over the active detector area in one
+// native-grid pass. No kernel truncation or reduced sampling; only two intermediate float images are omitted.
+export const samplePackedOpticsFragment = overlapAddFragment
+    .replace("out vec4 result;", "// output is declared by the detector sampler\n//")
+    .replace("void main() {\n        ivec2 pixel = ivec2(gl_FragCoord.xy) - sourceOrigin, wrapped;", "float nearAt(ivec2 pixel) {\n        pixel -= sourceOrigin;\n        ivec2 wrapped;")
+    .replace("result = vec4(sum, 0.0, 0.0, 1.0);", "return sum;") + `
+    uniform sampler2D tBackground, tFar;
+    uniform bool hasFar;
+    float radianceAt(ivec2 pixel) {
+        float value=nearAt(pixel)+texelFetch(tBackground,pixel,0).r;
+        if(hasFar) value+=texelFetch(tFar,pixel,0).r;
+        return max(0.0,value);
+    }
+` + averageFragment.replace("uniform sampler2D tInput; // R: scaled photon radiance", "")
+    .replace("texelFetch(tInput, pixel * factor + ivec2(column, row), 0).r", "radianceAt(pixel * factor + ivec2(column, row))");
 // Counts remain floating point after temporal averaging; no second ADC rounding.
 export const temporalFragment = `
     uniform sampler2D tInput;
@@ -580,7 +882,9 @@ export const gainWindowFragment = `
         vec4 chosen = texelFetch(tSelect, ivec2(0), 0);
         uint lowKey = (uint(chosen.x) << 16u) | uint(locate(chosen.y, 0, 256).x);
         uint highKey = (uint(chosen.z) << 16u) | uint(locate(chosen.w, chosen.z == chosen.x ? 0 : 256, 256).x);
-        float low = keyCount(lowKey), high = max(keyCount(highKey), low + minimumSpan);
+        // A minimum span (a camera's maximum gain) widens a narrower window equally about its middle.
+        float low = keyCount(lowKey), high = keyCount(highKey);
+        if (high - low < minimumSpan) { float middle = 0.5 * (low + high); low = middle - 0.5 * minimumSpan; high = middle + 0.5 * minimumSpan; }
         if (hasPrevious) {
             vec4 previous = texelFetch(tPrevious, ivec2(0), 0);
             if (gainOffset) {
@@ -758,7 +1062,7 @@ export const enlargeFragment = `
 export const skyFragment = `
     uniform float sky;
     uniform float skyElevationOffset; // rad; exact horizon shift within a validated height domain
-    uniform bool useGradient, orthographic, directionalSea, projectedSea;
+    uniform bool useGradient, orthographic, directionalSea, projectedSea, cubicSeaAzimuth, packedSeaAzimuth;
     uniform sampler2D tSky; // elevation rad, photon radiance/1e20, row sample count
     uniform int skySamples, azimuthRows;
     uniform vec3 skyUp, seaWind; // unit directions in camera coordinates
@@ -777,6 +1081,17 @@ export const skyFragment = `
         float t=b.r>a.r ? clamp((elevation-a.r)/(b.r-a.r),0.0,1.0) : 1.0;
         return mix(a.g,b.g,t);
     }
+    vec4 packedRadiances(float elevation, int row) {
+        int lo=0,hi=int(texelFetch(tSky,ivec2(0,row),0).b)-1;
+        for (int i=0;i<12;i++) {
+            if (hi-lo<=1) break;
+            int mid=(lo+hi)/2;
+            if (texelFetch(tSky,ivec2(2*mid,row),0).r<=elevation) lo=mid; else hi=mid;
+        }
+        float a=texelFetch(tSky,ivec2(2*lo,row),0).r,b=texelFetch(tSky,ivec2(2*hi,row),0).r;
+        float t=b>a ? clamp((elevation-a)/(b-a),0.0,1.0) : 1.0;
+        return mix(texelFetch(tSky,ivec2(2*lo+1,row),0),texelFetch(tSky,ivec2(2*hi+1,row),0),t);
+    }
     void main() {
         float value=sky;
         if (useGradient) {
@@ -789,7 +1104,16 @@ export const skyFragment = `
                 float span=azimuthRange.y-azimuthRange.x;
                 float p=span>0.0 ? clamp((azimuth-azimuthRange.x)/span,0.0,1.0)*float(azimuthRows-1) : 0.0;
                 int lo=min(azimuthRows-2,int(floor(p)));
-                value=mix(rowRadiance(elevation,lo),rowRadiance(elevation,lo+1),p-float(lo));
+                if (cubicSeaAzimuth) {
+                    int first=clamp(lo-1,0,azimuthRows-4);
+                    float x=p-float(first);
+                    vec4 w=vec4(-(x-1.0)*(x-2.0)*(x-3.0)/6.0,x*(x-2.0)*(x-3.0)/2.0,
+                        -x*(x-1.0)*(x-3.0)/2.0,x*(x-1.0)*(x-2.0)/6.0);
+                    vec4 source=packedSeaAzimuth ? packedRadiances(elevation,lo) :
+                        vec4(rowRadiance(elevation,first),rowRadiance(elevation,first+1),
+                            rowRadiance(elevation,first+2),rowRadiance(elevation,first+3));
+                    value=max(0.0,dot(w,source));
+                } else value=mix(rowRadiance(elevation,lo),rowRadiance(elevation,lo+1),p-float(lo));
             } else value=rowRadiance(elevation,0);
         }
         result=vec4(value,0.0,0.0,1.0);

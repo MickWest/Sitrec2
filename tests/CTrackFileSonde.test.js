@@ -1,3 +1,4 @@
+import {sondeRowFrame} from "../src/SondeTrajectory";
 import {CTrackFileSonde} from '../src/TrackFiles/CTrackFileSonde';
 import {MISB} from '../src/MISBFields';
 
@@ -306,3 +307,14 @@ describe('CTrackFileSonde MISB pressure for balloon scaling', () => {
         expect(pressures[0]).toBeGreaterThan(900); // near surface
     });
 });
+
+describe("sondeRowFrame", () => {
+    test("a fractional or late playback frame reads a valid whole row", () => {
+        expect(sondeRowFrame(2743.4595, 3000)).toBe(2743);
+        expect(sondeRowFrame(2743.4595, 2000)).toBe(1999);
+        expect(sondeRowFrame(-3, 10)).toBe(0);
+        expect(sondeRowFrame(NaN, 10)).toBe(0);
+        expect(sondeRowFrame(5, 0)).toBe(-1);
+    });
+});
+

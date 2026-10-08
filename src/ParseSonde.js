@@ -214,7 +214,9 @@ export function parseIGRA2(text, soundingIndex = 0) {
         const height   = (gphRaw != null && !isMissing(gphRaw)) ? gphRaw : null;
         const temp     = (tempRaw != null && !isMissing(tempRaw)) ? tempRaw / 10 : null;
         const rh       = (rhRaw != null && !isMissing(rhRaw)) ? rhRaw / 10 : null;
-        const dewpoint = (dpdpRaw != null && !isMissing(dpdpRaw)) ? dpdpRaw / 10 : null;
+        // IGRA2 reports the dew-point DEPRESSION (temperature minus dew point), not the dew point.
+        const depression = (dpdpRaw != null && !isMissing(dpdpRaw)) ? dpdpRaw / 10 : null;
+        const dewpoint = (temp !== null && depression !== null) ? temp - depression : null;
         const windDir  = (wdirRaw != null && !isMissing(wdirRaw)) ? wdirRaw : null;
         const windSpeed = (wspdRaw != null && !isMissing(wspdRaw)) ? wspdRaw / 10 : null;
 

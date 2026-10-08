@@ -1,5 +1,5 @@
-import {BoxGeometry, Color, Group, Mesh, MeshBasicMaterial, PerspectiveCamera, Scene, Vector2, Vector4, WebGLRenderTarget} from "three";
-import {ThermalPipeline} from "../tools/thermal/ThermalPipeline.js";
+import {BoxGeometry, BufferGeometry, Color, Float32BufferAttribute, Group, Matrix4, Mesh, MeshBasicMaterial, PerspectiveCamera, Scene, Vector2, Vector4, WebGLRenderTarget} from "three";
+import {projectedSurfaceBounds, projectedSurfaceOutside, ThermalPipeline} from "../tools/thermal/ThermalPipeline.js";
 import {normalizeSettings} from "../tools/thermal/thermalSchema.js";
 import {buildOpticalDomain, displayCurveLUT, processingParameters} from "../tools/thermal/sensorMath.js";
 import {thermalSceneAtmosphere} from "../src/rendering/ThermalSceneAdapters";
@@ -24,9 +24,9 @@ function fixture() {
     pipeline.emptyTexture={}; pipeline.quad={geometry:{dispose() {}}};
     pipeline._prepareOptics=()=>{pipeline.scatterSplit={farMass:0};};
     pipeline._optics=()=>{};pipeline._prepareFixedPattern=()=>{};
-    pipeline._prepareSkyBackground=()=>{pipeline.background={scaledPhotonRadiance:0};pipeline.skyView={up:[0,1,0]};};
+    pipeline._prepareSkyBackground=()=>{pipeline.background={scaledPhotonRadiance:0};};
     pipeline._pass=jest.fn();
-    pipeline._coverageTiles=()=>[];
+    pipeline._coverageTiles=()=>{pipeline.coverageBounds=new Map();return [];};
     pipeline._read=()=>new Float32Array([100,200,300,400]);
     const settings=normalizeSettings({detectorWidth:2,detectorHeight:2,fieldMode:"focalLength",focalLengthM:.1,
         atmosphereEnabled:false,skySource:"manual",gainMode:"automatic",gainRegion:"detector",agcTimeConstantS:1});
@@ -229,6 +229,15 @@ test("coverage refinement skips meshes outside the image and surfaces, and bound
     pipeline.analysis=false;pipeline.synchronous=false;
     pipeline.radianceAdapter={isSurface:candidate=>candidate===strip};
     expect(tiles([strip])).toEqual([]);
+    expect(pipeline.coverageBounds.get(strip)).toHaveLength(4);
+    // A flat ground tile straddles the camera but lies wholly below a narrow, upward-pointing field.
+    const ground=new Mesh(new BoxGeometry(2000,1,2000),new MeshBasicMaterial());
+    ground.position.set(0,-100,0);ground.updateMatrixWorld(true);
+    camera.rotation.x=.04;camera.updateMatrixWorld(true);
+    expect(tiles([ground])).toEqual([]);
+    expect(pipeline.coverageBounds.get(ground)).toEqual([]);
+    ground.geometry.dispose();ground.material.dispose();
+    camera.rotation.x=0;camera.updateMatrixWorld(true);
     // As a non-surface the same strip is refined, but never beyond the per-frame budget.
     pipeline.radianceAdapter={};
     const refined=tiles([strip]);
@@ -238,5 +247,76 @@ test("coverage refinement skips meshes outside the image and surfaces, and bound
     pipeline.analysis=true;pipeline.radianceAdapter={isSurface:candidate=>candidate===strip};
     expect(tiles([strip]).length).toBe(pipeline.coverageReport.tiles);expect(pipeline.coverageReport.tiles).toBeGreaterThan(64);
     for (const item of [mesh,strip]) {item.geometry.dispose();item.material.dispose();}
+    pipeline.dispose();
+});
+
+test("cached coverage geometry follows position uploads and retains a near-plane occluder",()=>{
+    const {pipeline,settings}=fixture(), camera=new PerspectiveCamera(10,1,1,10000);
+    camera.updateMatrixWorld(true);
+    const mesh=new Mesh(new BoxGeometry(2,2,2),new MeshBasicMaterial());
+    mesh.position.z=-1;mesh.updateMatrixWorld(true);
+    const run=()=>ThermalPipeline.prototype._coverageTiles.call(pipeline,[mesh],camera,{...settings,atmosphereEnabled:false});
+    run();expect(pipeline.coverageBounds.get(mesh)).toBeNull();
+    const first=pipeline.geometryBounds.get(mesh.geometry).bounds;
+    run();expect(pipeline.geometryBounds.get(mesh.geometry).bounds).toBe(first);
+    mesh.geometry.attributes.position.setX(0,20);mesh.geometry.attributes.position.needsUpdate=true;
+    run();expect(pipeline.geometryBounds.get(mesh.geometry).bounds).not.toBe(first);
+    expect(pipeline.geometryBounds.get(mesh.geometry).bounds.max.x).toBe(20);
+    mesh.geometry.dispose();mesh.material.dispose();pipeline.dispose();
+});
+
+test("surface vertex clipping excludes a loose-box false positive, keeps an intersecting triangle and applies apparent lift",()=>{
+    const camera=new PerspectiveCamera(10,1,1,10000);camera.updateMatrixWorld(true);
+    const geometry=new BufferGeometry();
+    // Its box combines y=-10 with z=-150 (inside the field); all actual vertices are below the bottom plane.
+    geometry.setAttribute("position",new Float32BufferAttribute([-10,-20,-150,10,-20,-150,0,-10,-50],3));
+    const position=geometry.attributes.position;
+    expect(projectedSurfaceOutside(position,new Matrix4(),camera,null,640,512)).toBe(true);
+    expect(projectedSurfaceBounds(geometry,new Matrix4(),camera,null,640,512)).toEqual([]);
+    expect(projectedSurfaceOutside(position,new Matrix4(),camera,p=>{p.y+=15;},640,512)).toBe(false);
+    position.setY(2,0);
+    expect(projectedSurfaceOutside(position,new Matrix4(),camera,null,640,512)).toBe(false);
+    const bounds=projectedSurfaceBounds(geometry,new Matrix4(),camera,null,640,512);
+    expect(bounds[0]).toBeLessThan(320);expect(bounds[2]).toBeGreaterThan(320);
+    expect(bounds[1]).toBeLessThan(0);expect(bounds[3]).toBeGreaterThan(256);
+    geometry.dispose();
+});
+
+test("surface triangle clipping keeps an image-spanning triangle whose vertices are all offscreen",()=>{
+    const camera=new PerspectiveCamera(10,1,1,10000),geometry=new BufferGeometry();
+    geometry.setAttribute("position",new Float32BufferAttribute([-2,-2,-10,2,-2,-10,0,2,-10],3));
+    const bounds=projectedSurfaceBounds(geometry,new Matrix4(),camera,null,640,512);
+    expect(bounds[0]).toBeLessThan(0);expect(bounds[1]).toBeLessThan(0);
+    expect(bounds[2]).toBeGreaterThan(640);expect(bounds[3]).toBeGreaterThan(512);
+    geometry.dispose();
+});
+
+test("sea depth skips an all-sky view, keeps a horizon crossing and respects the apparent horizon",()=>{
+    const {pipeline,settings,scene,camera}=fixture(),configured={...settings,skySource:"atmosphere",sensorAltitudeM:1000};
+    const run=e=>{
+        pipeline._pass.mockClear();
+        pipeline.render({scene,camera,settings:configured,frame:1,skyUp:[0,Math.cos(e),-Math.sin(e)]});
+        return pipeline._pass.mock.calls.some(([name])=>name==="seaDepth");
+    };
+    expect(run(0)).toBe(false);
+    const horizon=-Math.acos(6371000/(6371000+1000));
+    expect(run(horizon)).toBe(true);expect(run(-.05)).toBe(true);
+    pipeline._prepareSkyBackground=()=>{pipeline.background={scaledPhotonRadiance:0};pipeline.rayGeometry={horizonRad:.01};};
+    expect(run(0)).toBe(true);
+    pipeline.dispose();
+});
+
+test.each([2048,16384])("GPU histogram stacks fit a %i-pixel texture limit",maximum=>{
+    const {pipeline,renderer,settings}=fixture();
+    pipeline.analysis=false;renderer.capabilities.maxTextureSize=maximum;
+    pipeline._scatter=jest.fn();
+    pipeline._gpuGain({texture:{}},{...settings,gainMode:"automatic"},
+        {reset:true,deltaTimeS:0,width:2,height:2,presentation:null,frame:0});
+    for(const [uniforms,target,samples] of pipeline._scatter.mock.calls) {
+        expect(target.height).toBeLessThanOrEqual(maximum);
+        expect(uniforms.copies).toBe(Math.min(32,Math.floor(maximum/uniforms.histogramSize[1])));
+        expect(samples).toBe(4);
+    }
+    expect(pipeline._scatter).toHaveBeenCalledTimes(2);
     pipeline.dispose();
 });

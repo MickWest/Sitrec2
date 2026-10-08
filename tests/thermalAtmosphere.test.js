@@ -216,3 +216,14 @@ test("photon transmission reports photon totals without NaN energy metadata", ()
     expect(result.observedRadianceWm2Sr).toBeUndefined();
     expect(result.observedRadiance).toBe(result.observedRadiancePhotons);
 });
+test("cached path sources preserve exact band quadrature through long atmospheric paths", () => {
+    const atmosphere = createAtmosphere();
+    for (const quantity of ["energy", "photon"]) for (const elevationRad of [0, .04, .3]) {
+        const geometry = {sensorAltitudeM: 1382, slantRangeM: 200000, elevationRad};
+        const cached = evaluatePath(geometry, atmosphere, {segments: 96, quantity});
+        const exact = evaluatePath(geometry, atmosphere, {segments: 96, quantity, exactSource: true});
+        expect(cached.transmission).toEqual(exact.transmission);
+        for (let i = 0; i < cached.pathRadiance.length; i++)
+            expect(Math.abs(cached.pathRadiance[i] / exact.pathRadiance[i] - 1)).toBeLessThan(1e-7);
+    }
+});

@@ -9,7 +9,42 @@ const en = {
         "failed": "Physical thermal unavailable: {{message}}",
         "noTarget": "Select a target track or choose manual turbulence.",
         "readOnly": "This thermal value is calculated from scene geometry.",
+        "controlReasons": {
+            "terrainColor": "Used only with Ground temperature source = Terrain color estimate.",
+            "materialClasses": "Used only with Ground temperature source = Material classes.",
+            "groundAutomatic": "Used only with Ground condition = From sun and time; the other conditions are clear or overcast.",
+            "statisticalSea": "Used only with atmospheric sky and the statistical sea model.",
+            "swell": "Set a nonzero swell height to use this control.",
+            "manualSky": "Used only with Sky source = Manual temperature.",
+            "manualEnvironment": "Used only with Reflected environment source = Manual temperature.",
+            "atmosphericSky": "Used only with Sky source = Atmosphere.",
+            "exposure": "Calculated by the reference well-fill exposure policy. Select Manual to edit.",
+            "wellFill": "Used only with Exposure policy = Reference well fill.",
+            "noise": "Enable Detector noise to use this control.",
+            "noiseSeed": "Used for detector noise or a nonzero residual fixed pattern.",
+            "shading": "Set nonzero Edge shading to use this control.",
+            "scatter": "Set a nonzero Scatter fraction to use this control.",
+            "lensStep": "Used only with a preset Focal step.",
+            "sampling": "Calculated by the Optical Nyquist policy. Select Manual to edit.",
+            "manualGain": "Used only with Gain mode = Manual.",
+            "adaptiveGain": "Used only with Automatic or Plateau gain.",
+            "plateau": "Used only with Gain mode = Plateau equalization.",
+            "localEnhancement": "Set nonzero Local enhancement to use this control.",
+            "radiometric": "Used only with Fixed radiometric gain or the Radiance diagnostic view.",
+            "diffraction": "Enable Diffraction to use this control.",
+            "wavelengthBlur": "Used only with Diffraction or nonzero turbulence blur.",
+            "whiteHot": "Used only with White hot polarity.",
+            "turbulence": "Calculated along the camera-to-target path. Select Manual turbulence to edit.",
+            "sounding": "The loaded sounding supplies temperature and water vapor. This fallback applies without a sounding."
+        },
         "readout": "Native {{width}} × {{height}} · {{vertical}}° V × {{horizontal}}° H · digital zoom {{zoom}}× · r0 {{r0}} m · ground/sea estimated",
+        "sunGeometry": "Sun: azimuth {{azimuth}}° · elevation {{elevation}}° · from scene date, time and location",
+        "groundMapReadout": "Mapped ground: {{roads}} roads, {{paths}} paths, {{buildings}} buildings over {{km}} km ({{metres}} m per texel).",
+        "groundMapLoading": "Mapped ground: loading road and building data…",
+        "groundMapUnavailable": "Mapped ground unavailable: {{message}}. Imagery colors are used.",
+        "groundClassesReadout": "Ground material classes ({{condition}}, {{climate}}; air {{air}} K): {{classes}} K. Estimated from imagery colors; visible imagery does not measure material.",
+        "groundClasses": {"grass": "grass", "trees": "trees", "asphalt": "asphalt", "concrete": "concrete", "roof": "roofs", "soil": "soil"},
+        "terrainTemperatureEstimate": "Terrain color temperatures estimated: {{low}}–{{high}} K; darker colors warmer. Visible imagery is not a temperature measurement.",
         "readoutView": {
             "title": "Thermal Readout",
             "show": "Show readout",
@@ -30,8 +65,18 @@ const en = {
             "readOnly": "Set by the per-frame camera data at this frame (Camera > Camera Data > Drive Look View). The saved value applies where the camera data does not set it."
         },
         "unvalidatedStep": "Lens step {{focal}} mm has no measured values in this sensor preset, so this frame is outside the validated lens steps. Foreground transfer uses the center-ray range table, a narrow-field model.",
+        "viewLens": {
+            "title": "Lens source",
+            "view": "Follow camera field (estimated)",
+            "sensor": "Selected thermal lens",
+            "tooltip": "Without recorded infrared camera data, choose the closest preset lens step from the camera field before display zoom. This estimates an optical step; it does not measure one. Select the thermal lens manually to keep its optics fixed. Recorded infrared camera data takes priority.",
+            "readOnly": "Estimated from the camera field. Select Lens source = Selected thermal lens to edit the optics.",
+            "estimate": "Lens: {{focal}} mm estimated from the {{field}}° camera field before display zoom; no recorded lens data.",
+            "invalid": "The estimated {{focal}} mm step does not work with the selected pupil policy ({{message}}); the selected thermal lens is kept."
+        },
         "nyquistNotMet": "Optical sampling {{factor}}× is below the Nyquist factor {{required}}× at f/{{fNumber}}; fine diffraction detail is undersampled.",
         "vehicleReadout": "{{id}} · {{altitudeM}} m · air {{airTemperatureK}} K ({{airSource}}) · Mach {{mach}} ({{machSource}}) · speed {{speedMps}} m/s ({{speedSource}}) · power {{power}} ({{powerSource}})",
+        "canopyReadout": "· canopy heating {{canopyPower}} (user override)",
         "vehicleSources": {
             "standard": "standard atmosphere, calculated",
             "sounding": "sounding profile, calculated",
@@ -41,7 +86,8 @@ const en = {
             "objectWind": "airspeed; bound object wind",
             "override": "user override",
             "recipe": "recipe, estimated",
-            "climbReference": "climb reference, estimated"
+            "climbReference": "climb reference, estimated",
+            "burnPower": "follows burn power"
         },
         "groups": {
             "scene": "Environment",
@@ -62,6 +108,7 @@ const en = {
             "uniform": "Uniform surface",
             "temperatureK": "Temperature · K",
             "emissivity": "Emissivity · 1",
+            "transmittance": "Transmittance · 1",
             "zones": "Zone overrides",
             "reset": "Inherit zone",
             "vehicleState": "Vehicle thermal state",
@@ -71,9 +118,12 @@ const en = {
             "airTemperatureK": "Air temperature · K",
             "mach": "Mach · 1",
             "power": "Power · 1",
+            "canopyPower": "Canopy heating · 1",
+            "followsPower": "Follows burn power",
+            "canopyPowerTooltip": "Sky lantern canopy heating as a burn fraction, separate from the flame. Follows burn power by default. A larger or wind-cooled canopy is heated less by the same flame; 0 leaves the canopy at the air temperature.",
             "airTemperatureKTooltip": "From scene samples the thermal atmosphere at this object's altitude each frame. An override changes only this instance.",
             "machTooltip": "From scene divides track airspeed by the speed of sound at the air temperature used here. Without wind at this altitude it uses ground speed.",
-            "powerTooltip": "From scene keeps recipe power, or the estimated climb reference when absent. Power is a family load coordinate, not calibrated throttle."
+            "powerTooltip": "From scene keeps recipe power, or the estimated climb reference when absent. Power is a family load coordinate, not calibrated throttle. For a sky lantern it is the burn fraction: the flame intensity follows it, and so does the canopy heating unless Canopy heating is set apart; 0 is after flame-out."
         },
         "parameters": {
             "cloudOpticalDepth": {"label": "Cloud absorption depth", "tooltip": "Estimated core absorption depth: alpha = 1 − exp(−depth × mask). Scattering is omitted."},
@@ -133,20 +183,56 @@ const en = {
                 }
             },
             "ambientTemperatureK": {
-                "label": "Ambient temperature",
-                "tooltip": "Air temperature and untagged surface fallback."
+                "label": "Ambient fallback temperature",
+                "tooltip": "Fallback temperature for untagged object surfaces. Vehicle air temperature comes from the atmosphere or the object's override."
+            },
+            "atmosphereProfile": {
+                "label": "Atmosphere profile",
+                "tooltip": "Standard: the standard atmosphere shape with the surface air temperature and water vapor below. Loaded sounding: the measured temperature and humidity of a weather balloon loaded into the scene (Import Sounding or Get Nearby Weather Balloons), the launch nearest the scene time.",
+                "options": {"standard": "Standard profile", "sounding": "Loaded sounding"}
             },
             "surfaceTemperatureK": {
                 "label": "Surface air temperature",
-                "tooltip": "Sea-level air temperature for the atmospheric profile; independent of air around the object."
+                "tooltip": "Sea-level air temperature for the standard atmospheric profile. A loaded sounding supplies the profile instead. This value also sets the water temperature in the Smooth comparison sea model."
             },
             "groundTemperatureK": {
-                "label": "Ground / sea temperature",
-                "tooltip": "Estimated uniform temperature of terrain and water tiles."
+                "label": "Ground temperature",
+                "tooltip": "Estimated terrain reference temperature. Color mode spans equally above and below it. Uncolored terrain and water tiles with a manual sky use this fallback."
+            },
+            "groundTemperatureMode": {
+                "label": "Ground temperature source",
+                "tooltip": "Terrain color estimate: darker colors are warmer. Material classes: each imagery color is classed as vegetation, asphalt, concrete, roof or soil; each class is at the air temperature plus a researched offset for the time of day and has its own emissivity. Uniform: one temperature. Visible imagery does not measure temperature or material.",
+                "options": {"color": "Terrain color estimate", "materials": "Material classes", "uniform": "Uniform temperature"}
+            },
+            "groundCondition": {
+                "label": "Ground condition",
+                "tooltip": "Sets each material class's temperature relative to the air. Automatic uses the scene's sun elevation and the time since sunset, for a clear sky. Choose Day, overcast for a cloudy day.",
+                "options": {"automatic": "From sun and time", "day": "Day, clear", "overcast": "Day, overcast", "evening": "Evening", "night": "Late night"}
+            },
+            "groundClimate": {
+                "label": "Ground climate",
+                "tooltip": "Dry air lets surfaces cool further at night and heat further by day than humid air. Automatic uses the surface dew point and relative humidity of the atmosphere profile: a dew point of 18 °C or more is warm humid, under 35% relative humidity is dry.",
+                "options": {"automatic": "From humidity", "humid": "Warm humid", "temperate": "Temperate", "dry": "Dry"}
+            },
+            "groundCloudFraction": {
+                "label": "Cloud cover",
+                "tooltip": "Fraction of the sky covered by cloud, for the automatic ground condition. From a weather report: FEW 0.2, SCT 0.45, BKN 0.75, OVC 1. Cloud reduces night cooling and day heating."
+            },
+            "groundMapData": {
+                "label": "Mapped roads and buildings",
+                "tooltip": "Loads open map road and building data around the target over the network, as City lights does. Road surfaces are asphalt, footpaths concrete and building footprints roofs; roads under tree canopy stay trees. Walls of 3D buildings are concrete. Elsewhere the imagery colors decide. Road widths are typical for each road class, not mapped."
+            },
+            "groundWindMps": {
+                "label": "Surface wind",
+                "tooltip": "Near-surface wind speed in m/s, for the material classes. Wind mixes surfaces toward the air temperature by day and night. A weather report gives the wind at 10 m in knots: 1 kt = 0.514 m/s."
+            },
+            "groundTemperatureSpanK": {
+                "label": "Terrain color temperature span",
+                "tooltip": "Estimated warm-to-cool span in K: black is warmer and white is cooler, around Ground temperature. Uses unlit sRGB luminance. Imagery shadows and colors are not measured temperatures. Zero gives uniform ground temperature."
             },
             "groundEmissivity": {
-                "label": "Ground / sea emissivity",
-                "tooltip": "Estimated opaque blackbody fallback for terrain and water tiles."
+                "label": "Ground emissivity",
+                "tooltip": "Estimated opaque terrain emissivity. Also used by water tiles with a manual sky; atmospheric sea emissivity comes from Fresnel reflection."
             },
             "skySource": {
                 "label": "Sky source",
@@ -172,13 +258,21 @@ const en = {
                 "label": "Object emissivity",
                 "tooltip": "Suggested emissivity for authoring tags; the remaining opaque fraction reflects the environment."
             },
+            "environmentSource": {
+                "label": "Reflected environment source",
+                "tooltip": "Manual: every surface reflects one temperature. Sky and ground: each surface reflects the clear sky above and the ground below, weighted by the way it faces, calculated at its own altitude.",
+                "options": {
+                    "manual": "Manual temperature",
+                    "skyGround": "Sky and ground"
+                }
+            },
             "environmentTemperatureK": {
                 "label": "Reflected environment",
                 "tooltip": "Cosine-weighted hemispheric incident radiance expressed as blackbody temperature."
             },
             "solarScale": {
-                "label": "Direct solar illumination",
-                "tooltip": "Estimated transmission of the 5772 K solar continuum; zero disables sunlight."
+                "label": "Solar transmission",
+                "tooltip": "Estimated direct solar transmission (0–1). Sun direction follows scene date, time and location. Adds diffuse reflected sunlight to opaque surfaces; does not heat them or scatter sunlight in clouds. Zero disables this contribution."
             },
             "sunDirectionX": {
                 "label": "Sun direction X",
@@ -462,7 +556,7 @@ const en = {
             },
             "minimumWindowCounts": {
                 "label": "Minimum window",
-                "tooltip": "Prevents unstable gain on a nearly uniform frame."
+                "tooltip": "Like a camera's maximum gain: a scene with less spread than this is widened equally about its middle, so low contrast stays mid-gray. The default only steadies a nearly uniform frame. For the MX-15 preset near 295 K, about 250 counts per kelvin at the sensor."
             },
             "plateauFactor": {
                 "label": "Histogram plateau",
@@ -3372,6 +3466,22 @@ const en = {
         fixedHeading: {
             label: "Fixed Heading°",
             tooltip: "Compass heading (true) the model points at in 'Fixed Heading' mode, instead of pointing along its track. Use it for an object that translates without turning — crabbing sideways, drifting, or holding an attitude while it moves.",
+        },
+        tiltAngle: {
+            label: "Tilt°",
+            tooltip: "Fixed lean of the object from vertical, added after the banking mode. The top leans toward Tilt Direction. An estimated input: for example a sky lantern or a balloon pushed over by wind or by its tether.",
+        },
+        tiltDirection: {
+            label: "Tilt Direction°",
+            tooltip: "Compass direction (true) toward which the top of the object leans, for both the fixed tilt and the sway.",
+        },
+        swayAmplitude: {
+            label: "Sway°",
+            tooltip: "Amplitude of a pendulum-like swing about the fixed tilt, in the plane of Tilt Direction. An estimated input: there is no measured value for a given object. Zero turns the sway off.",
+        },
+        swayPeriod: {
+            label: "Sway Period (s)",
+            tooltip: "Time for one full swing of the sway.",
         },
         angularTraverse: {
             label: "Angular Traverse",

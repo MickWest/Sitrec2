@@ -471,6 +471,37 @@ sea mode the explicitly registered ocean-surface root is replaced by the analyti
 directional sea boundary and its full-frame spherical depth. Mixed terrain tiles retain the ground
 fallback; no water classification is inferred from visible colors.
 
+`groundTemperatureMode` selects how colored terrain gets its temperature. `color` maps unlit sRGB
+luminance to `groundTemperatureK ± groundTemperatureSpanK / 2` (darker is warmer), an illustrative
+proxy. `materials` classes each imagery texel as grass, trees, asphalt, concrete, roof or soil with
+soft weights (excess-green vegetation indices, a red-over-blue soil cast, neutral brightness) and
+mixes one radiance row per class (`groundMaterials.js`, shader define `MATERIAL_CLASSES`). Each
+class is at the profile air temperature at its tile's altitude (25 m steps) plus an **estimated**
+offset, with its own emissivity, and reflects the up-facing hemispheric environment with
+`environmentSource: "skyGround"`. The offset follows the sun: the clear-day excess scales with
+`sin(elevation)` and `1 - 0.75 n^3.4`; stored heat of heavy classes decays after sunset with
+`exp(-t / tau)`; the night deficit scales with `1 - 0.84 n`, wind `12.6 / (10.7 + 3.8 V)` and
+climate; day and night forms blend by the sunlight fraction, continuous through sunset and
+sunrise. The host supplies sun elevation, the elevation 1.5 h earlier and hours since the last
+sunset; `groundCondition`, `groundClimate`, `groundCloudFraction` and `groundWindMps` select or
+override them. Imagery color does not measure material: shadows and dark roofs read as asphalt.
+`uniform` uses `groundTemperatureK` everywhere.
+
+With `groundMapData`, the host rasterizes open map road, footpath and building-footprint data (the City
+lights vector tiles, in its worker) into a Web Mercator coverage mask around the target (2048 texels over
+8-32 km; estimated widths per road class). Attribute `terrainMask: {texture, rect}` and define `GROUND_MASK`
+make the terrain shader compute each fragment's geodetic position from ECEF and move class weight to
+asphalt (roads, not under vegetation), concrete (footpaths) and roof (footprints). `buildingSurfaces`
+(define `BUILDING_SURFACES`) marks 3D map tiles: facets steeper than about 37 degrees that are not vegetation
+become concrete walls, using screen-space derivative normals. In materials mode the host sets one
+`terrainAltitudeM` per frame (the terrain below the target, 25 m steps), and `environmentGround` gives the
+reflected environment's ground: the classes' mean offset from the profile's sea-level air temperature and
+their mean emissivity, instead of `groundTemperatureK`.
+
+A heated canopy zone (`power_input: "canopy"`, the sky lantern envelope) takes `canopyPowerFraction` when
+it is supplied (`thermal.canopyPower` on a Sitrec object), else the burn power; the flame proxy always
+follows the burn power.
+
 The native detector and optical field never follow pane zoom or export size.
 For detector height H, pitch p and focal length f, native vertical field is
 `2 atan(H p / (2 f))`. The prepared camera projection maps output coordinates back
@@ -849,6 +880,13 @@ const {atmosphere, contentKey, assumptions} = atmosphereFromSounding(sounding);
 pipeline.render({scene, camera, settings, sounding, target: null, frame: 0});
 ```
 
+`soundingFromRecords(records, metadata)` accepts levels already parsed by a host, as objects with
+the CSV column names and units below, with the same validation. In Sitrec,
+`thermalSoundingFromSonde` converts a radiosonde loaded by the Wind menu (hPa, degrees C, dew point)
+to these records; `atmosphereProfile: "sounding"` selects the loaded launch nearest the scene time.
+A dew point up to 0.5 K above the temperature is clamped to saturation; a larger one is dropped so
+that relative humidity is used. A profile the atmosphere rejects falls back to the standard one.
+
 The CSV columns are `level_type, pressure_Pa, geopotential_height_m, temperature_C,
 relative_humidity_pct, dewpoint_depression_C, wind_dir_deg, wind_speed_m_s`. Column order
 can vary; all eight names are required. Blanks remain null, and wind-only levels are
@@ -970,6 +1008,8 @@ window with dynamic and static texture treated separately. An old matched window
 not a calibration after changing the temporal filter.
 
 Manual gain/level is a fixed count window. Automatic mode estimates percentile endpoints.
+A window narrower than `minimumWindowCounts` widens equally about its middle, like a camera's
+maximum gain, so a low-contrast scene stays mid-gray; a wider window is used exactly.
 `agcDynamics: "endpoints"` relaxes them with `1-exp(-dt/timeConstant)`. MX-15 instead uses
 `"gainOffset"`: form `g = 1/(high-low)` and `b = -low*g`, relax g and b, then recover the
 window as `low = -b/g`, `high = (1-b)/g`. Its **0.12 s estimated** constant, sensitivity

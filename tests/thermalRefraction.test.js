@@ -13,6 +13,7 @@ import {thermalRefractionHorizonFixture} from "../tools/thermal/selfTest.js";
 import {apparentTemperature, PHOTON_SCALE} from "../tools/thermal/radiometry.js";
 
 jest.mock("../src/Globals", () => ({Globals: {equatorRadius: 6371000, polarRadius: 6371000},
+    GlobalDateTimeNode: {dateNow: new Date("2014-11-11T16:55:00Z")},
     Sit: {lat: 0, lon: 0, fps: 30, terrestrialRefraction: true, terrestrialRefractionOverrideK: true, terrestrialRefractionK: .13,
         thermalEnvironment: {turbulenceMode: "manual"}}, NodeMan: {get: () => undefined, iterate() {}}}));
 jest.mock("../src/par", () => ({par: {frame: 0}}));

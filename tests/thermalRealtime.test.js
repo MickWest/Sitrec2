@@ -76,8 +76,8 @@ test("retained default support requires 4096 while smaller fields choose smaller
     }
 });
 
-test("every displayed moving kernel, including deferred refreshes, stays inside the current bound", () => {
-    const pipeline = new ThermalPipeline({}, {analysis: false});
+test.each([OPTICS_L1_TOLERANCE,.001])("every displayed moving kernel, including deferred refreshes, stays inside L1=%s", tolerance => {
+    const pipeline = new ThermalPipeline({}, {analysis: false,opticsToleranceL1:tolerance});
     pipeline.resources = {targets: new Map(), materials: new Map(), textures: new Set(), surfaces: new Map()}; pipeline._prepareSpectrum = jest.fn(name => pipeline.resources.targets.set(name, {dispose() {}}));
     pipeline.atmosphere = createAtmosphere();
     pipeline.opticsScheduler.domain = buildOpticalDomain(compact({}), 32, 24, psfSpectrum(compact({}), pipeline.atmosphere));
@@ -87,7 +87,7 @@ test("every displayed moving kernel, including deferred refreshes, stays inside 
         const settings = compact({psfRangeM: 2000 + 250 * frame / 30, pathElevationDeg: 2.27, sensorAltitudeM: 1380});
         pipeline._prepareOptics(settings, 32, 24);
         const error = opticalKernelError(pipeline.activeKernels, opticalKernels(settings, 32, 24, pipeline.atmosphere));
-        expect(error).toBeLessThanOrEqual(OPTICS_L1_TOLERANCE + 2e-6);
+        expect(error).toBeLessThanOrEqual(tolerance + 2e-6);
         pending += Number(pipeline.opticsReport.pending); rebuilds += Number(pipeline.opticsReport.spectraRebuilt);
     }
     expect(pending).toBeGreaterThan(0); expect(rebuilds).toBeLessThan(60);
@@ -203,6 +203,28 @@ test("an interactive view reads its centre sky value from the sky table instead 
         // The sky shader's own lookup in the validated table: inside the table's stated 0.005 K bound of the integral.
         expect(Math.abs(live.kelvin - offline.kelvin)).toBeLessThan(.005);
     } finally {live.pipeline.dispose(); offline.pipeline.dispose();}
+});
+
+test("a published range domain updates a stationary view without a camera or settings change", () => {
+    const pipeline = new ThermalPipeline({}, {analysis: false, synchronous: false});
+    pipeline.resources = {textures: new Set(), surfaces: new Map(), materials: new Map(), targets: new Map()};
+    const settings = compact({skySource: "manual", sensorAltitudeM: 1382, pathElevationDeg: 2.3});
+    const table = {size: 2, maxRangeM: settings.atmosphereMaxRangeM,
+        transmission: new Float32Array(24).fill(.5), pathRadiance: new Float32Array(24)};
+    pipeline.rangeCache.request = jest.fn(() => table);
+    pipeline.rangeCache.report = {status: "validated"};
+    try {
+        pipeline._prepareAtmosphere(settings);
+        expect(pipeline.rangeCache.request).toHaveBeenCalledTimes(1);
+        pipeline._prepareAtmosphere(settings);
+        expect(pipeline.rangeCache.request).toHaveBeenCalledTimes(1);
+        const replacement = {...table, transmission: new Float32Array(24).fill(.6)};
+        pipeline.rangeCache.request.mockReturnValue(replacement);
+        pipeline.rangeCache.builds = 1;
+        pipeline._prepareAtmosphere(settings);
+        expect(pipeline.rangeCache.request).toHaveBeenCalledTimes(2);
+        expect(pipeline.rangeLUT).toBe(replacement);
+    } finally {pipeline.dispose();}
 });
 
 function fakeGl() {

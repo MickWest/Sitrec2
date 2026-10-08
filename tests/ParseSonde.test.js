@@ -227,6 +227,13 @@ describe('parseIGRA2', () => {
         expect(result.levels[2].windDir).toBe(270);
     });
 
+    test('converts the dew-point depression to a dew point', () => {
+        const result = parseIGRA2(sampleIGRA2);
+        // First level: TEMP -53 (-5.3 C), DPDP 259 (25.9 K) -> dew point -31.2 C
+        expect(result.levels[0].dewpoint).toBeCloseTo(-31.2, 1);
+        expect(result.levels[1].dewpoint).toBeCloseTo(-5.5 - 25.6, 1);
+    });
+
     test('handles missing values (-9999)', () => {
         const result = parseIGRA2(sampleIGRA2);
         // Levels 2+ have missing RH (-9999)

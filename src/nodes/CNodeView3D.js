@@ -2177,14 +2177,14 @@ export class CNodeView3D extends CNodeViewCanvas {
         }
     }
 
-    renderPhysicalThermal() {
+    renderPhysicalThermal(baseVerticalFovDeg = this.camera.fov) {
         if (!this._thermalAdapter) {
             if (!this._thermalError) ensureThermalView(this);
             this.clearThermalOutput();
             return;
         }
         try {
-            this._thermalAdapter.render(GlobalScene, par.frame);
+            this._thermalAdapter.render(GlobalScene, par.frame, baseVerticalFovDeg);
             this._thermalError = null;
         } catch (error) {
             this._thermalError = error;
@@ -2583,7 +2583,7 @@ export class CNodeView3D extends CNodeViewCanvas {
                         this.camera.updateProjectionMatrix();
                     }
                     if (globalProfiler) globalProfiler.pop();
-                    this.renderPhysicalThermal();
+                    this.renderPhysicalThermal(oldFOV);
                     return;
                 }
 

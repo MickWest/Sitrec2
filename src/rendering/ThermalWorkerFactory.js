@@ -6,3 +6,10 @@ export function createOpticsWorker() {
         return new Worker(new URL("../../tools/thermal/opticsWorker.js", import.meta.url), {type: "module"});
     } catch {return null;}
 }
+
+export function createAtmosphereWorker() {
+    if (typeof Worker === "undefined") return null;
+    try {
+        return new Worker(new URL("../../tools/thermal/atmosphereWorker.js", import.meta.url), {type: "module"});
+    } catch {return null;}
+}

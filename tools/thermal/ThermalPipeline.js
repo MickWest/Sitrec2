@@ -1,19 +1,15 @@
-import {
-    AddEquation, CustomBlending, OneFactor, OneMinusSrcAlphaFactor, Box3, BufferGeometry, Color, DataTexture, Float32BufferAttribute,
-    FloatType, GLSL3, Matrix4, Mesh, NearestFilter, NoBlending, NoColorSpace, OrthographicCamera, PlaneGeometry, Points, RGBAFormat,
-    RedFormat, RGFormat, Raycaster, ShaderMaterial, Sphere, Vector2, Vector3, Vector4, WebGLRenderTarget,
-} from "three";
+import {AddEquation, BackSide, CustomBlending, FrontSide, OneFactor, OneMinusSrcAlphaFactor, Box3, BufferGeometry, Color, DataTexture, Float32BufferAttribute, FloatType, GLSL3, Matrix4, Mesh, NearestFilter, NoBlending, NoColorSpace, OrthographicCamera, PlaneGeometry, Points, RGBAFormat, RedFormat, RGFormat, Raycaster, Scene, ShaderMaterial, Sphere, Vector2, Vector3, Vector4, WebGLRenderTarget, } from "three";
 import {apparentTemperature, grayBodyRadiance, inBandRadiance, PHOTON_SCALE, solarIrradiance} from "./radiometry.js";
 import {BANDS, clearSky, createAtmosphere, createRangeLUT, seaBackground, evaluatePhotonPath,
-    skyElevationRange, skyViewGeometry, sourceRangeLUT, createSkyElevationLUT} from "./atmosphere.js";
+    skyElevationRange, skyViewGeometry, sourceRangeLUT, createSkyElevationLUT, reflectedEnvironmentTable} from "./atmosphere.js";
 import {atmosphereFromSounding} from "./sounding.js";
 import {resolveSignatures} from "./signatures.js";
 import {normalizeSettings} from "./thermalSchema.js";
 import {displayCurveLUT, detectorWindowScale, detectorPresentation, temporalHistoryKey, electronsPerRadiance, fixedPatternMap, gaussianKernel, integrationTime, nextPow2, processingParameters, shadingResponsivity, gainStatisticsBounds} from "./sensorMath.js";
 import {OpticalKernelCache, opticalKernelError, OPTICS_L1_TOLERANCE} from "./sensorMath.js";
-import {SkyBackgroundCache, thermalSeaDistance} from "./atmosphere.js";
+import {SkyBackgroundCache, SeaSkyBackgroundCache, sampleSeaSkyTable, thermalSeaDistance} from "./atmosphere.js";
 import {OpticsScheduler, coarseOpticalKernels} from "./sensorMath.js";
-import {RangeTableCache} from "./atmosphere.js";
+import {ENVIRONMENT_NORMAL_SINES, RangeTableCache} from "./atmosphere.js";
 import * as shaders from "./shaders.js";
 import {createStatisticalSea, createSeaSkyTable, seaRayAzimuth, cloudRadianceTable, createCloudRadianceDomain,
     sortCloudSheets, createThermalDepthTable, EARTH_RADIUS_M, RADIUS_REUSE_M} from "./atmosphere.js";
@@ -25,7 +21,7 @@ const COVERAGE_TILE = 4; // native pixels per tile side; bounds texture allocati
 const COVERAGE_TILE_LIMIT = 64;
 // Histogram copies for the GPU gain scatter (_gpuGain). Estimated: enough to spread a narrow count range; the copy
 // sum is exact (integer sample counts far below 2^24).
-const GAIN_HISTOGRAM_COPIES = 16;
+const GAIN_HISTOGRAM_COPIES = 32;
 
 // The sky shader's lookup (rowRadiance in shaders.js): the bracketing samples by binary search, then clamped linear
 // interpolation. elevation in rad; returns photon radiance in the table's units.
@@ -38,6 +34,10 @@ export function skyTableRadiance(table, elevation) {
     }
     const t = elevations[hi] > elevations[lo] ? Math.min(1, Math.max(0, (elevation - elevations[lo]) / (elevations[hi] - elevations[lo]))) : 1;
     return radiances[lo] + t * (radiances[hi] - radiances[lo]);
+}
+
+export function seaTableRadiance(table,elevation,azimuth) {
+    return sampleSeaSkyTable(table,elevation,azimuth);
 }
 
 /** Layout of the near-field optical convolution. All lengths are fine samples. reach is the kernel support
@@ -75,6 +75,86 @@ export function kernelReach(kernels) {
     const high = axis => kernels.reduce((total, kernel) => total + kernel[axis] - 1 - Math.floor(kernel[axis] / 2), 0);
     return {low: [low("width"), low("height")], high: [high("width"), high("height")]};
 }
+
+// The coarse scatter image can miss a power-of-two boundary by only a few samples. Pack two horizontal real
+// tiles into one RG transform when that reduces work; the full core and scatter support remains unchanged.
+export function farConvolutionPlan(width,height,reach,enabled=true) {
+    const single={packed:false,sourceSize:[width,height],fftWidth:nextPow2(width+reach.low[0]+reach.high[0]),
+        fftHeight:nextPow2(height+reach.low[1]+reach.high[1]),reach};
+    if(!enabled)return single;
+    const tileWidth=Math.ceil(width/2),packed={...single,packed:true,singleComplex:true,pool:"packedFarFft",
+        tilesX:2,tilesY:1,tileWidth,tileHeight:height,fftWidth:nextPow2(tileWidth+reach.low[0]+reach.high[0])};
+    const cost=p=>p.fftWidth*p.fftHeight*Math.log2(p.fftWidth*p.fftHeight);
+    return cost(packed)<cost(single)?packed:single;
+}
+
+/** Lower-left native-pixel rectangle outside which scene contrast is exactly zero. Unknown/near-plane bounds
+ * keep the full image. Include entire coverage patches: their sky averaging can differ from the fine-grid sky. */
+export function contrastSourceRegion(meshBounds, coverageTiles, cloudBounds, width, height) {
+    let left = width, bottom = height, right = 0, top = 0;
+    const include = bounds => {
+        left = Math.min(left, bounds[0]); bottom = Math.min(bottom, bounds[1]);
+        right = Math.max(right, bounds[2]); top = Math.max(top, bounds[3]);
+    };
+    for (const bounds of meshBounds) {
+        if (!bounds || bounds.some(v => !Number.isFinite(v))) return [0,0,width,height];
+        if (bounds.length) include(bounds);
+    }
+    for (const [x,y,w,h] of [...coverageTiles,...cloudBounds]) include([x,y,x+w,y+h]);
+    // One native-pixel guard includes edge rasterization and projection rounding.
+    const x = Math.max(0,Math.floor(left)-1), y = Math.max(0,Math.floor(bottom)-1);
+    const w = Math.min(width,Math.ceil(right)+1)-x, h = Math.min(height,Math.ceil(top)+1)-y;
+    return w > 0 && h > 0 ? [x,y,w,h] : [0,0,width,height];
+}
+
+// Terrain skirts have loose boxes that cross the camera although every actual vertex is below the image.
+// Thermal surface vertices use this same apparent projection; a triangle cannot enter a homogeneous clip plane
+// that excludes all its vertices. Test only ambiguous surface boxes, with a one-pixel guard, and stop early.
+export function projectedSurfaceOutside(position, toCamera, camera, projectPoint, width, height) {
+    let mask = 31;
+    const point = new Vector3(), clip = new Vector4();
+    for (let i=0;i<position.count && mask;i++) {
+        point.fromBufferAttribute(position,i).applyMatrix4(toCamera);
+        projectPoint?.(point);
+        clip.set(point.x,point.y,point.z,1).applyMatrix4(camera.projectionMatrix);
+        const dx=2*Math.abs(clip.w)/width, dy=2*Math.abs(clip.w)/height;
+        mask &= (clip.x < -clip.w-dx ? 1:0) | (clip.x > clip.w+dx ? 2:0) |
+            (clip.y < -clip.w-dy ? 4:0) | (clip.y > clip.w+dy ? 8:0) | (clip.w < -1 ? 16:0);
+    }
+    return !!mask;
+}
+
+// Clip ambiguous surface triangles against the four side planes BEFORE perspective division. This retains
+// near/far geometry conservatively (the GPU's depth clip can only remove it), including logarithmic-depth hosts.
+export function projectedSurfaceBounds(geometry, toCamera, camera, projectPoint, width, height) {
+    const position=geometry.attributes.position, points=[], point=new Vector3();
+    for(let i=0;i<position.count;i++) {
+        point.fromBufferAttribute(position,i).applyMatrix4(toCamera);projectPoint?.(point);
+        points.push(new Vector4(point.x,point.y,point.z,1).applyMatrix4(camera.projectionMatrix));
+    }
+    const distance=(v,side)=>side===0?v.w*(1+2/width)+v.x:side===1?v.w*(1+2/width)-v.x:
+        side===2?v.w*(1+2/height)+v.y:v.w*(1+2/height)-v.y;
+    const index=geometry.index, count=index?.count ?? position.count;
+    let left=Infinity,bottom=Infinity,right=-Infinity,top=-Infinity;
+    for(let i=0;i+2<count;i+=3) {
+        let polygon=[0,1,2].map(j=>points[index?index.getX(i+j):i+j]);
+        for(let side=0;side<4 && polygon.length;side++) {
+            const clipped=[];
+            for(let j=0;j<polygon.length;j++) {
+                const a=polygon[j],b=polygon[(j+1)%polygon.length],da=distance(a,side),db=distance(b,side);
+                if(da>=0)clipped.push(a);
+                if((da>=0)!==(db>=0))clipped.push(a.clone().lerp(b,da/(da-db)));
+            }
+            polygon=clipped;
+        }
+        for(const v of polygon) {
+            if(v.w<=1e-7 || ![v.x,v.y,v.w].every(Number.isFinite))return null;
+            const x=(v.x/v.w+1)*width/2,y=(v.y/v.w+1)*height/2;
+            left=Math.min(left,x);bottom=Math.min(bottom,y);right=Math.max(right,x);top=Math.max(top,y);
+        }
+    }
+    return left===Infinity ? [] : [left-1,bottom-1,right+1,top+1];
+}
 const scalarTexture = (values, width = values.length, height = 1) =>
     dataTexture(Float32Array.from(values), width, height, RedFormat);
 // rgba is row-major Float32 data; physical units are supplied by the owning pass.
@@ -103,8 +183,8 @@ function material(fragmentShader, values = {}, vertexShader = shaders.fullscreen
 
 export class ThermalPipeline {
     /** renderer is a shared WebGLRenderer. No GPU resources or Three objects yet. */
-    constructor(renderer, {analysis = true, synchronous = analysis, gpuTiming = false, createOpticsWorker, onReady = () => {},
-        packedOptics = !analysis, gpuGain = !analysis} = {}) {
+    constructor(renderer, {analysis = true, synchronous = analysis, gpuTiming = false, createOpticsWorker, createAtmosphereWorker, onReady = () => {},
+        packedOptics = !analysis, gpuGain = !analysis, opticsToleranceL1 = OPTICS_L1_TOLERANCE} = {}) {
         this.renderer = renderer;
         // Analysis explicitly requests same-render gain for reference captures.
         // Interactive rendering never performs a synchronous pixel readback.
@@ -112,6 +192,7 @@ export class ThermalPipeline {
         // Near convolution layout (nearConvolutionPlan). Live views use packed overlap-add when it is cheaper; analysis
         // keeps the single-FFT reference, so reference captures are unchanged and the self-test compares the two.
         this.packedOptics = packedOptics;
+        this.opticsToleranceL1 = opticsToleranceL1;
         // Live automatic and plateau gain from GPU statistics (_gpuGain) when float blending is available; otherwise
         // the fenced readback. Analysis keeps the CPU statistics.
         this.gpuGainRequested = gpuGain && !analysis;
@@ -124,8 +205,10 @@ export class ThermalPipeline {
         this.renderSerial = 0;
         this.opticalCache = new OpticalKernelCache();
         this.opticsScheduler = new OpticsScheduler({createWorker: createOpticsWorker, onReady});
-        this.rangeCache = new RangeTableCache(onReady);
+        this.rangeCache = new RangeTableCache(onReady, {createWorker: createAtmosphereWorker});
         this.skyCache = new SkyBackgroundCache(onReady);
+        this.seaSkyCache = new SeaSkyBackgroundCache(onReady,{createWorker:createAtmosphereWorker});
+        this.seaSkyCacheEnabled = true;
         this.resources = null;
         this.lastFrame = null;
         this.window = null;
@@ -149,8 +232,9 @@ export class ThermalPipeline {
     _ownTexture(texture) { this.resources.textures.add(texture); return texture; }
     _stage(name, operation) {
         const start = performance.now();
+        if (this.gpuTiming && !this.gpuTimer) this.gpuTimer = new ThermalGpuTimer(this.renderer.getContext());
         // CPU-only preparation must not inflate a GPU query with idle time.
-        const timed = !["atmosphere", "prepareOptics", "skyTable", "gainStatistics"].includes(name) && this.gpuTimer?.begin(this.renderSerial, name);
+        const timed = this.gpuTiming && !["atmosphere", "prepareOptics", "skyTable", "gainStatistics"].includes(name) && this.gpuTimer?.begin(this.renderSerial, name);
         try {return operation();}
         finally {
             if (timed) this.gpuTimer.end();
@@ -214,11 +298,19 @@ export class ThermalPipeline {
             fftSize: [width, height], sourceSize, kernelCenter: center, mode, background}, output);
         for (const axis of [0, 1]) {
             const size = axis === 0 ? width : height;
-            for (let span = 2; span <= size; span *= 2) {
+            const pass = (span, radix4) => {
                 const input = output;
                 output = input === first ? second : first;
-                this._pass("fftButterfly", shaders.fftButterflyFragment,
+                this._pass(radix4 ? "fftButterfly4" : "fftButterfly", radix4 ? shaders.fftButterfly4Fragment : shaders.fftButterflyFragment,
                     {tInput: input.texture, axis, span, inverse: mode === 2}, output);
+            };
+            if (this.analysis || this.radix4Optics === false) {
+                for (let span = 2; span <= size; span *= 2) pass(span, false);
+            } else {
+                // Fuse pairs of the original radix-2 stages without resampling either the image or the kernel.
+                let span = 1;
+                if (Math.log2(size) % 2) pass(span = 2, false);
+                for (span *= 4; span <= size; span *= 4) pass(span, true);
             }
         }
         return output;
@@ -229,11 +321,29 @@ export class ThermalPipeline {
     // 6 passes per 2048-point axis instead of 11. An odd stage count starts with one radix-2 pass.
     _fftPacked(texture, plan, inverse) {
         const width = plan.fftWidth, height = plan.fftHeight;
-        const first = this._target("packedFftA", width, height), second = this._target("packedFftB", width, height);
+        const pool = plan.pool ?? (plan.singleComplex ? "packedSingleFft" : "packedFft");
+        const first = this._target(`${pool}A`, width, height), second = this._target(`${pool}B`, width, height);
+        const dif = this.difPackedOptics !== false;
+        const bounded = dif && !inverse && this.boundedPackedFft !== false;
+        const horizontalViewport = bounded ? [0, 0, width, plan.tileHeight] : null;
+        // Horizontal butterflies never mix rows. Clear the zero padding once in each ping-pong target, then draw
+        // only occupied rows until the vertical transform. This omits exactly-zero work without changing samples.
+        if (bounded && plan.tileHeight < height) {
+            const renderer = this.renderer, clear = renderer.getClearColor(new Color()), alpha = renderer.getClearAlpha();
+            renderer.setClearColor(0, 0);
+            for (const target of [first, second]) {
+                target.scissor.set(0, plan.tileHeight, width, height - plan.tileHeight); target.scissorTest = true;
+                renderer.setRenderTarget(target); renderer.clear(true, false, false); target.scissorTest = false;
+            }
+            renderer.setClearColor(clear, alpha); renderer.setScissorTest(false);
+        }
         let output = texture === first.texture ? second : first;
-        if (inverse) this._pass("fftReversePacked", shaders.fftReversePackedFragment, {tInput: texture, fftSize: [width, height]}, output);
+        if (inverse && dif) output = texture === first.texture ? first : second;
+        else if (inverse) this._pass("fftReversePacked", shaders.fftReversePackedFragment, {tInput: texture, fftSize: [width, height]}, output);
         else this._pass("fftPack", shaders.fftPackFragment, {tInput: texture, fftSize: [width, height],
-            sourceSize: plan.sourceSize, tileSize: [plan.tileWidth, plan.tileHeight], tiles: [plan.tilesX, plan.tilesY]}, output);
+            naturalOrder: dif,
+            sourceOrigin: plan.sourceOrigin ?? [0,0],
+            sourceSize: plan.sourceSize, tileSize: [plan.tileWidth, plan.tileHeight], tiles: [plan.tilesX, plan.tilesY]}, output, horizontalViewport);
         const pass = (name, fragment, axis, span) => {
             const input = output;
             output = input === first ? second : first;
@@ -241,6 +351,25 @@ export class ThermalPipeline {
         };
         for (const axis of [0, 1]) {
             const size = axis === 0 ? width : height;
+            if (dif && !inverse) {
+                for (let span = size; span >= 2;) {
+                    const input = output; output = input === first ? second : first;
+                    const radix8 = span >= 8 && this.radix8PackedOptics !== false;
+                    this._pass(radix8 ? "fftDif8Packed" : "fftDifPacked", radix8 ? shaders.fftDif8PackedFragment : shaders.fftDifPackedFragment,
+                        {tInput: input.texture, axis, span, sourceRows: plan.tileHeight, ...(!radix8 ? {radix4: span >= 4} : {})},
+                        output, axis === 0 ? horizontalViewport : null);
+                    span /= radix8 ? 8 : 4;
+                }
+                continue;
+            }
+            if (inverse && this.radix8PackedOptics !== false) {
+                let span = 1;
+                const remainder = Math.log2(size) % 3;
+                if (remainder === 1) pass("fftButterflyPacked", shaders.fftButterflyPackedFragment, axis, span = 2);
+                if (remainder === 2) pass("fftButterfly4Packed", shaders.fftButterfly4PackedFragment, axis, span = 4);
+                for (span *= 8; span <= size; span *= 8) pass("fftInverse8Packed", shaders.fftInverse8PackedFragment, axis, span);
+                continue;
+            }
             let span = 1;
             if (Math.log2(size) % 2 === 1) pass("fftButterflyPacked", shaders.fftButterflyPackedFragment, axis, span = 2);
             for (span *= 4; span <= size; span *= 4) pass("fftButterfly4Packed", shaders.fftButterfly4PackedFragment, axis, span);
@@ -248,11 +377,13 @@ export class ThermalPipeline {
         return output;
     }
 
-    _convolvePacked(texture, plan) {
+    _convolvePacked(texture, plan, spectrumName = "opticalSpectrum") {
         const transformed = this._fftPacked(texture, plan, false);
-        const product = this.resources.targets.get(transformed === this.resources.targets.get("packedFftA") ? "packedFftB" : "packedFftA");
+        const pool = plan.pool ?? (plan.singleComplex ? "packedSingleFft" : "packedFft");
+        const product = this.resources.targets.get(transformed === this.resources.targets.get(`${pool}A`) ? `${pool}B` : `${pool}A`);
         this._pass("multiplyPacked", shaders.multiplyPackedFragment,
-            {tInput: transformed.texture, tKernel: this.resources.targets.get("opticalSpectrum").texture}, product);
+            {tInput: transformed.texture, tKernel: this.resources.targets.get(spectrumName).texture,
+                fftSize: [plan.fftWidth,plan.fftHeight], reversedKernel: this.difPackedOptics !== false}, product);
         return this._fftPacked(product.texture, plan, true);
     }
 
@@ -261,6 +392,11 @@ export class ThermalPipeline {
         const plan = nearConvolutionPlan(width, height, kernelReach([kernels.core, kernels.scatter]),
             kernels.split, this.packedOptics);
         return {...plan, sourceSize: [width, height]};
+    }
+
+    _farPlan(kernels,width,height) {
+        return kernels.farScatter ? farConvolutionPlan(Math.ceil(width/kernels.split.factor),Math.ceil(height/kernels.split.factor),
+            kernelReach([kernels.farCore,kernels.farScatter]),!this.analysis && !this.synchronous && this.packedFarOptics!==false) : null;
     }
 
     _prepareOptics(settings, width, height) {
@@ -285,8 +421,11 @@ export class ThermalPipeline {
             kernels = coarseOpticalKernels(settings, width, height, this.atmosphere);
         }
         const interpolationError = kernels.interpolationErrorL1 ?? 0;
-        const error = this.opticsKey === null ? Infinity : opticalKernelError(kernels, this.activeKernels) + interpolationError;
-        const tolerance = synchronous ? 0 : OPTICS_L1_TOLERANCE;
+        const farPlan=this._farPlan(kernels,width,height);
+        const changedFarGrid=farPlan && (farPlan.fftWidth!==this.farWidth || farPlan.fftHeight!==this.farHeight ||
+            farPlan.packed!==this.farPlan?.packed);
+        const error = this.opticsKey === null || changedFarGrid ? Infinity : opticalKernelError(kernels, this.activeKernels) + interpolationError;
+        const tolerance = synchronous ? 0 : this.opticsToleranceL1;
         this.opticsReport = {status: "calculated", toleranceL1: tolerance, errorL1: error,
             basisRebuilt: synchronous && this.opticalCache.basisRebuilt, spectraRebuilt: false, pending: false,
             interpolationErrorL1: interpolationError, workerPending: request?.pending ?? false, workerBuildMs: request?.buildMs,
@@ -307,7 +446,7 @@ export class ThermalPipeline {
         }
         if (this.pendingOptics) {
             const pending = this.pendingOptics;
-            // Submit one complete spectrum per render. GPU work remains queued;
+            // Submit one kernel transform per render. GPU work remains queued;
             // the active spectra stay untouched until both branches are ready.
             let completed;
             try {completed = pending.steps.next().done;}
@@ -344,13 +483,21 @@ export class ThermalPipeline {
     *_buildOptics(kernels, width, height, pending = false) {
         const name = value => pending ? `pending${value[0].toUpperCase()}${value.slice(1)}` : value;
         const plan = this._nearPlan(kernels, width, height);
-        this._prepareSpectrum(name("opticalSpectrum"), [kernels.core, kernels.scatter], plan.fftWidth, plan.fftHeight);
-        yield;
+        const prepare = function* (pipeline, spectrumName, components, fw, fh) {
+            if (pending) {
+                for (let i=0;i<components.length;i++) {
+                    pipeline._prepareSpectrum(name(spectrumName),[components[i]],fw,fh,i>0);
+                    yield;
+                }
+            } else {
+                pipeline._prepareSpectrum(name(spectrumName),components,fw,fh);
+                yield;
+            }
+        };
+        yield* prepare(this,"opticalSpectrum",[kernels.core,kernels.scatter],plan.fftWidth,plan.fftHeight);
         if (kernels.farScatter) {
-            const fw = nextPow2(Math.ceil(width / kernels.split.factor) + kernels.farCore.width + kernels.farScatter.width - 2);
-            const fh = nextPow2(Math.ceil(height / kernels.split.factor) + kernels.farCore.height + kernels.farScatter.height - 2);
-            this._prepareSpectrum(name("farSpectrum"), [kernels.farCore, kernels.farScatter], fw, fh);
-            yield;
+            const far=this._farPlan(kernels,width,height);
+            yield* prepare(this,"farSpectrum",[kernels.farCore,kernels.farScatter],far.fftWidth,far.fftHeight);
         }
     }
 
@@ -358,21 +505,21 @@ export class ThermalPipeline {
         for (const step of this._buildOptics(kernels, width, height)) void step;
         this.nearPlan = this._nearPlan(kernels, width, height);
         this.fftWidth = this.nearPlan.fftWidth; this.fftHeight = this.nearPlan.fftHeight;
-        this.farWidth = kernels.farScatter ? nextPow2(Math.ceil(width / kernels.split.factor) + kernels.farCore.width + kernels.farScatter.width - 2) : 0;
-        this.farHeight = kernels.farScatter ? nextPow2(Math.ceil(height / kernels.split.factor) + kernels.farCore.height + kernels.farScatter.height - 2) : 0;
+        this.farPlan=this._farPlan(kernels,width,height);
+        this.farWidth=this.farPlan?.fftWidth ?? 0;this.farHeight=this.farPlan?.fftHeight ?? 0;
         this.scatterSplit = {...kernels.split, farMass: kernels.farMass};
         this.activeKernels = this._retainKernels(kernels); this.opticsKey = key; this.opticsReport.spectraRebuilt = true;
         this.opticsSize = [width, height];
     }
 
-    _prepareSpectrum(name, kernels, fftWidth, fftHeight) {
-        return this._stage("kernelSpectrum", () => this._prepareSpectrumPasses(name, kernels, fftWidth, fftHeight));
+    _prepareSpectrum(name, kernels, fftWidth, fftHeight, accumulate = false) {
+        return this._stage("kernelSpectrum", () => this._prepareSpectrumPasses(name, kernels, fftWidth, fftHeight, accumulate));
     }
 
-    _prepareSpectrumPasses(name, kernels, fftWidth, fftHeight) {
+    _prepareSpectrumPasses(name, kernels, fftWidth, fftHeight, accumulate = false) {
         const spectrum = this._target(name, fftWidth, fftHeight);
         const pool = /[fF]arSpectrum$/.test(name) ? "far" : "fine";
-        let first = true;
+        let first = !accumulate;
         for (const kernel of kernels) {
             const texture = scalarTexture(kernel.data, kernel.width, kernel.height);
             try {
@@ -399,12 +546,25 @@ export class ThermalPipeline {
         return this._fft(product.texture, fftWidth, fftHeight, 2, [fftWidth, fftHeight], [0, 0], 0, pool);
     }
 
-    _optics(radiance, optics, background) {
+    _optics(radiance, optics, background, sample = null) {
+        this.deferredOptics = null; this.opticsFused = false;
         // Reuse the near image as contrast scratch until its forward FFT is done.
         const nearImage = this._target("nearOptics", radiance.width, radiance.height);
         this._pass("contrast", shaders.contrastFragment,
             {tInput: radiance.texture, tBackground: background.texture}, nearImage);
-        const plan = this.nearPlan;
+        let plan = this.nearPlan;
+        if (plan.packed && sample && !this.analysis && !this.synchronous && this.croppedPackedOptics !== false && this.contrastRegion) {
+            const [x,y,w,h] = this.contrastRegion.map(v => v * sample.settings.supersample);
+            // Two real tiles fit one RG complex transform. Keep the already prepared FFT dimensions and full
+            // finite optical support, so changing this source rectangle never invalidates the kernel spectrum.
+            const tileWidth = Math.ceil(w/2);
+            if (tileWidth+plan.reach.low[0]+plan.reach.high[0] <= plan.fftWidth &&
+                h+plan.reach.low[1]+plan.reach.high[1] <= plan.fftHeight) {
+                plan = {...plan,singleComplex:true,tilesX:2,tilesY:1,tileWidth,tileHeight:h,
+                    sourceSize:[w,h],sourceOrigin:[x,y]};
+            }
+        }
+        this.frameNearPlan = plan;
         const near = plan.packed ? this._convolvePacked(nearImage.texture, plan) :
             this._convolve(nearImage.texture, radiance.width, radiance.height, "opticalSpectrum", this.fftWidth, this.fftHeight);
         // The far branch must consume contrast before this scratch is overwritten.
@@ -418,14 +578,34 @@ export class ThermalPipeline {
                     {tInput: reduced.texture, sourceSize: [reduced.width, reduced.height], background: 0}, output);
                 reduced = output;
             }
-            this.farResult = this._convolve(reduced.texture, reduced.width, reduced.height,
+            if(this.farPlan?.packed) {
+                const plan=this.farPlan,filtered=this._convolvePacked(reduced.texture,plan,"farSpectrum");
+                // Bilinear expansion samples one coarse pixel outside each image edge. Keep that halo rather than
+                // clamping it, so edge scattering matches the original zero-padded linear convolution.
+                this.farResult=this._target("farCoarse",reduced.width+2,reduced.height+2);
+                this._pass("overlapAdd",shaders.overlapAddFragment,{tInput:filtered.texture,fftSize:[plan.fftWidth,plan.fftHeight],
+                    sourceSize:plan.sourceSize,sourceOrigin:[1,1],tileSize:[plan.tileWidth,plan.tileHeight],tiles:[plan.tilesX,plan.tilesY],
+                    reachLow:plan.reach.low,reachHigh:plan.reach.high},this.farResult);
+            } else this.farResult = this._convolve(reduced.texture, reduced.width, reduced.height,
                 "farSpectrum", this.farWidth, this.farHeight);
             const far = this._target("farScatter", radiance.width, radiance.height);
             this._pass("farUpsample", shaders.farUpsampleFragment, {tInput: this.farResult.texture,
-                fftSize: [this.farWidth, this.farHeight], factor: this.scatterSplit.factor}, far);
+                fftSize: [this.farWidth, this.farHeight], haloInput:!!this.farPlan?.packed,factor: this.scatterSplit.factor}, far);
             farTexture = far.texture;
         }
+        if (plan.packed && sample && !this.analysis && this.fusedSampling !== false) {
+            const uniforms = {tInput: near.texture, fftSize: [plan.fftWidth,plan.fftHeight], sourceSize: plan.sourceSize,
+                sourceOrigin:plan.sourceOrigin ?? [0,0],
+                tileSize: [plan.tileWidth,plan.tileHeight],tiles: [plan.tilesX,plan.tilesY],
+                reachLow:plan.reach.low,reachHigh:plan.reach.high,tFar:farTexture,
+                hasFar:this.scatterSplit.farMass>0,tBackground:background.texture,factor:sample.settings.supersample,
+                fillFactor:sample.settings.fillFactor,outputOrigin:[0,0]};
+            this._pass("samplePackedOptics", shaders.samplePackedOpticsFragment, uniforms, sample.target);
+            this.deferredOptics = {near,plan,nearImage,farTexture,background,optics}; this.opticsFused = true;
+            return true;
+        }
         if (plan.packed) this._pass("overlapAdd", shaders.overlapAddFragment, {tInput: near.texture,
+            sourceOrigin:plan.sourceOrigin ?? [0,0],
             fftSize: [plan.fftWidth, plan.fftHeight], sourceSize: plan.sourceSize, tileSize: [plan.tileWidth, plan.tileHeight],
             tiles: [plan.tilesX, plan.tilesY], reachLow: plan.reach.low, reachHigh: plan.reach.high}, nearImage);
         else this._pass("copy", shaders.copyFragment, {tInput: near.texture}, nearImage);
@@ -444,6 +624,8 @@ export class ThermalPipeline {
     _prepareAtmosphere(settings, sounding = null) {
         this.seaEnvironmentRebuilt = false;
         const options = {visibilityM: settings.visibilityM, densityScale: settings.atmosphereEnabled ? 1 : 0};
+        this.workerAtmosphere = {sounding, options:{...options, surfaceWaterVaporDensityKgM3:settings.waterVaporDensityKgM3,
+            surfaceTemperatureK:settings.surfaceTemperatureK}};
         const measured = sounding ? atmosphereFromSounding(sounding, options) : null;
         const contentKey = measured?.contentKey ?? JSON.stringify(["standard-v1", options,
             settings.surfaceTemperatureK, settings.waterVaporDensityKgM3]);
@@ -489,9 +671,9 @@ export class ThermalPipeline {
         if (backgroundKey !== this.backgroundKey) {
             const azimuthRad = this.skyView && this.seaWind ? seaRayAzimuth([0, 0, -1], this.skyView.up, this.seaWind) : 0;
             const physical = this.rayGeometry ? sky : geometry;
-            const result = surface ? (settings.seaMode === "statistical" ? this._statisticalSea(settings).evaluate({...physical, azimuthRad}) :
+            const deferred = deferSky && (surface && settings.seaMode === "statistical" && this.seaSkyCacheEnabled || !surface && sky?.radiance === null);
+            const result = deferred ? null : surface ? (settings.seaMode === "statistical" ? this._statisticalSea(settings).evaluate({...physical, azimuthRad}) :
                 seaBackground({...physical, temperatureK: settings.surfaceTemperatureK}, this.atmosphere, accuracy)) : sky;
-            const deferred = !surface && sky?.radiance === null;
             const photonRadiance = deferred ? null : result ? result.radiance.reduce((total, value) => total + value, 0) :
                 inBandRadiance(settings.skyTemperatureK, band).photon;
             this.background = Object.freeze({source: settings.skySource, kind: surface ? "sea" : sky ? "sky" : "manual",
@@ -507,10 +689,21 @@ export class ThermalPipeline {
         // A surface background limits foreground transfer to the first intersection.
         const maxRangeM = Math.min(settings.atmosphereMaxRangeM, this.background.surfaceDistanceM ?? Infinity);
         const synchronous = this.analysis || this.synchronous;
-        const key = JSON.stringify([synchronous, contentKey, geometry, band, maxRangeM, this.rayGeometry?.key]);
-        if (this.atmosphereKey === key) return true;
+        // Publishing a worker domain must update a stationary view as well as a moving one. The pose can be
+        // unchanged when the first domain finishes after the user seeks to a different frame.
+        const key = JSON.stringify([synchronous, contentKey, geometry, band, maxRangeM, this.rayGeometry?.key,
+            synchronous ? null : this.rangeCache.builds ?? 0]);
+        if (this.atmosphereKey === key) {
+            if (this.rangeReport) this.rangeReport.pending = !!this.rangeCache.pending;
+            return true;
+        }
         const vacuum = !settings.atmosphereEnabled || maxRangeM === 0;
         const rangeOptions = {maxRangeM, ...geometry, band, atmosphere: this.atmosphere, rayGeometry: this.rayGeometry,
+            // Start near the validated live domain rather than spending six failed builds halving a 1024 m seed.
+            // These only size the work cache; the same interior probes and error limits decide publication.
+            initialHalfElevationRad: Math.abs(geometry.elevationRad) > .04 ? .016 : .0005, initialHalfAltitudeM: 32,
+            workerAtmosphere: {sounding, options: {...options, surfaceWaterVaporDensityKgM3: settings.waterVaporDensityKgM3,
+                surfaceTemperatureK: settings.surfaceTemperatureK}},
             surfaceLimited: Number.isFinite(this.background.surfaceDistanceM), rangeLimitM: settings.atmosphereMaxRangeM};
         const cachedRange = !vacuum && !synchronous ? this.rangeCache.request(rangeOptions, this.atmosphere) : null;
         const rangeLUT = vacuum ? {size: 2, maxRangeM,
@@ -524,24 +717,62 @@ export class ThermalPipeline {
         // range texture do not depend on the table.
         for (const surface of this.resources.surfaces.values()) {
             if (!surface.spectrum || !surface.texture) continue;
-            const data = this._surfaceRangeData(surface.spectrum);
+            const data = this._surfaceTextureData(surface.spectrum, surface.innerSpectrum);
             if (surface.texture.image?.data?.length === data.length) {
                 surface.texture.image.data.set(data); surface.texture.needsUpdate = true;
             } else {
                 this._removeTexture(surface.texture);
-                surface.texture = this._ownTexture(dataTexture(data, this.rangeLUT.size, 1));
+                surface.texture = this._ownTexture(dataTexture(data, this.rangeLUT.size, data.length / (this.rangeLUT.size * 4)));
                 surface.material.uniforms.rangeTexture.value = surface.texture;
             }
             surface.material.uniforms.rangeMaxM.value = this.rangeLUT.maxRangeM;
             surface.material.uniforms.rangeSamples.value = this.rangeLUT.size;
+        }
+        for (const table of this.resources.terrainTables?.values() ?? []) {
+            this._updateTerrainTable(table);
         }
         this.atmosphereKey = key;
         return true;
     }
 
     // Per-sample surface source radiance (red) and reflected sunlight (green) along the current range table.
-    _surfaceRangeData({emission, reflectedSun}) {
-        const thermal = sourceRangeLUT(this.rangeLUT, emission);
+    // Row 0: the surface; row 1 (thin shells only): the inner face, chosen in the shader for back faces.
+    // Then (sky and ground) five rows of reflected environment by normal elevation, transferred without path radiance.
+    _surfaceTextureData(spectrum, innerSpectrum = null) {
+        const rows = [this._surfaceRangeData(spectrum), ...(innerSpectrum ? [this._surfaceRangeData(innerSpectrum)] : []),
+            ...(spectrum.environmentRows ?? []).map(bands => {
+                const thermal = sourceRangeLUT(this.rangeLUT, bands, 0), rgba = new Float32Array(this.rangeLUT.size * 4);
+                thermal.forEach((value, sample) => { rgba[sample * 4] = value; });
+                return rgba;
+            })];
+        if (rows.length === 1) return rows[0];
+        const data = new Float32Array(rows[0].length * rows.length);
+        rows.forEach((row, index) => data.set(row, index * row.length));
+        return data;
+    }
+
+    // Reflected environment by orientation at a surface's altitude, cached per atmosphere, altitude and ground.
+    _environmentTable(altitudeM, settings) {
+        // The ground below: the host's estimate (material classes: their mean at the profile's sea-level air
+        // temperature), else the uniform ground setting.
+        const ground = this.radianceAdapter?.environmentGround?.(this.atmosphere) ??
+            {temperatureK: settings.groundTemperatureK, emissivity: settings.groundEmissivity};
+        // Inputs only: the atmosphere profile's identity (not the per-frame geometry key), altitude, ground and band.
+        const key = JSON.stringify([this.profileKey, altitudeM, ground.temperatureK, ground.emissivity,
+            settings.bandMinUm, settings.bandMaxUm]);
+        const cache = this.environmentTables ??= new Map();
+        let rows = cache.get(key);
+        if (!rows) {
+            if (cache.size > 32) cache.clear();
+            rows = reflectedEnvironmentTable({altitudeM, groundTemperatureK: ground.temperatureK,
+                groundEmissivity: ground.emissivity, band: {minUm: settings.bandMinUm, maxUm: settings.bandMaxUm}}, this.atmosphere);
+            cache.set(key, rows);
+        }
+        return {rows, key};
+    }
+
+    _surfaceRangeData({emission, reflectedSun, transmittance = 0}) {
+        const thermal = sourceRangeLUT(this.rangeLUT, emission, 1 - transmittance);
         const rgba = new Float32Array(this.rangeLUT.size * 4);
         for (let sample = 0; sample < this.rangeLUT.size; sample++) {
             rgba[sample * 4] = thermal[sample];
@@ -549,6 +780,110 @@ export class ThermalPipeline {
                 reflectedSun[band] / PHOTON_SCALE * this.rangeLUT.transmission[sample * 12 + band];
         }
         return rgba;
+    }
+
+    _updateTerrainTable(table) {
+        const data = new Float32Array(this.rangeLUT.size * table.spectra.length * 4);
+        table.spectra.forEach((spectrum, row) => data.set(this._surfaceRangeData(spectrum), row * this.rangeLUT.size * 4));
+        if (table.texture?.image.data.length === data.length) {
+            table.texture.image.data.set(data); table.texture.needsUpdate = true;
+        } else {
+            this._removeTexture(table.texture);
+            table.texture = this._ownTexture(dataTexture(data, this.rangeLUT.size, table.spectra.length));
+        }
+    }
+
+    _terrainTable(attributes, settings) {
+        // Calculated spectral lookup with at most 0.25 K between rows. Share the
+        // physical table across all imagery tiles; only their RGB samplers differ.
+        const key = JSON.stringify([attributes.temperatureK, settings.groundTemperatureSpanK, attributes.emissivity,
+            settings.environmentTemperatureK, settings.solarScale, settings.bandMinUm, settings.bandMaxUm]);
+        const tables = this.resources.terrainTables ??= new Map();
+        let table = tables.get(key);
+        if (!table) {
+            const span = settings.groundTemperatureSpanK, rows = Math.ceil(span / .25) + 1;
+            const spectra = Array.from({length: rows}, (_, row) => this._surfaceSpectrum({...attributes,
+                temperatureK: attributes.temperatureK - span / 2 + span * row / (rows - 1)}, settings));
+            table = {spectra, texture: null};
+            this._updateTerrainTable(table); tables.set(key, table);
+        }
+        table.used = true;
+        for (const spectrum of table.spectra) spectrum.used = true;
+        return table;
+    }
+
+    // Material classes: one row per class, at the air temperature of the profile at the tile's altitude plus the
+    // class offset, with the class emissivity. A level surface reflects the sky hemisphere above it (Sky and ground)
+    // or the manual environment. The shader mixes the rows by the class weights of each imagery texel.
+    _terrainClassTable(attributes, settings) {
+        const altitudeM = attributes.terrainAltitudeM ?? 0, classes = attributes.terrainClasses;
+        const airK = this.atmosphere.sample(altitudeM).temperatureK;
+        const sky = settings.environmentSource === "skyGround" ? this._environmentTable(altitudeM, settings) : null;
+        const environment = sky ? {environmentBands: sky.rows[ENVIRONMENT_NORMAL_SINES.length - 1], environmentKey: `${sky.key}|up`} : {};
+        const key = JSON.stringify(["classes", this.profileKey, altitudeM, classes.map(c => [c.offsetK, c.emissivity]),
+            environment.environmentKey ?? settings.environmentTemperatureK, settings.solarScale, settings.bandMinUm, settings.bandMaxUm]);
+        const tables = this.resources.terrainTables ??= new Map();
+        let table = tables.get(key);
+        if (!table) {
+            const spectra = classes.map(c => this._surfaceSpectrum({temperatureK: airK + c.offsetK, emissivity: c.emissivity,
+                ...environment}, settings));
+            table = {spectra, texture: null, key, airK};
+            this._updateTerrainTable(table); tables.set(key, table);
+        }
+        table.used = true;
+        for (const spectrum of table.spectra) spectrum.used = true;
+        return table;
+    }
+
+    _terrainSurface(attributes, original, settings, sunDirection, mesh) {
+        const map = original.map && mesh?.geometry.attributes[original.map.channel ? `uv${original.map.channel}` : "uv"]
+            ? original.map : null;
+        const vertexColors = !!(original.vertexColors && mesh?.geometry.attributes.color);
+        // No source color: retain the uniform fallback, rather than inventing a
+        // cool temperature from the default white Three.js material.
+        if (!map && !vertexColors && (!original.color || original.color.r === 1 && original.color.g === 1 && original.color.b === 1)) return null;
+        const classes = !!attributes.terrainClasses?.length;
+        // Mapped roads and buildings, and 3D building walls, refine the class weights (material classes only).
+        const mask = classes ? attributes.terrainMask ?? null : null, building = classes && !!attributes.buildingSurfaces;
+        const table = classes ? this._terrainClassTable(attributes, settings) : this._terrainTable(attributes, settings);
+        // One class material per table: meshes that share an imagery material can lie at different altitudes.
+        const key = JSON.stringify(["terrain-color", original.uuid, !!map, map?.channel, vertexColors, original.side,
+            ...(classes ? ["classes", table.key, !!mask, building] : [attributes.temperatureK, settings.groundTemperatureSpanK,
+                attributes.emissivity, settings.environmentTemperatureK, settings.solarScale]), this.radianceAdapter?.materialKey]);
+        let surface = this.resources.surfaces.get(key);
+        if (!surface) {
+            const pass = material(shaders.terrainRadianceFragment, {rangeTexture: table.texture,
+                rangeMaxM: this.rangeLUT.maxRangeM, rangeSamples: this.rangeLUT.size,
+                temperatureSamples: table.spectra.length, sunViewDirection: sunDirection,
+                terrainMap: map, mapTransform: map?.matrix, terrainColor: original.color ?? new Color(1, 1, 1),
+                groundMask: mask?.texture ?? null, groundMaskRect: new Vector4(...(mask?.rect ?? [0, 0, 1, 1])),
+                upView: new Vector3(0, 1, 0), ellipsoid: new Vector2(6378137, 0.00669437999014)}, shaders.terrainRadianceVertex);
+            pass.map = map; pass.vertexColors = vertexColors;
+            if (classes) pass.defines = {...pass.defines, MATERIAL_CLASSES: ""};
+            if (mask) pass.defines = {...pass.defines, GROUND_MASK: ""};
+            if (building) pass.defines = {...pass.defines, BUILDING_SURFACES: ""};
+            pass.side = original.side; pass.depthTest = pass.depthWrite = true;
+            try { this.radianceAdapter?.prepareMaterial?.(pass); }
+            catch (error) { pass.dispose(); throw error; }
+            surface = {material: pass, texture: null}; this.resources.surfaces.set(key, surface);
+        }
+        if (map?.matrixAutoUpdate) map.updateMatrix();
+        const pass = surface.material;
+        // Three.js selects the same map channel and sRGB decoding as RGB rendering.
+        if (pass.map !== map) {pass.map = map; pass.needsUpdate = true;}
+        pass.visible = original.visible; pass.side = original.side;
+        pass.uniforms.rangeTexture.value = table.texture;
+        pass.uniforms.temperatureSamples.value = table.spectra.length;
+        pass.uniforms.rangeMaxM.value = this.rangeLUT.maxRangeM;
+        pass.uniforms.rangeSamples.value = this.rangeLUT.size;
+        pass.uniforms.sunViewDirection.value = sunDirection;
+        pass.uniforms.terrainMap.value = map;
+        pass.uniforms.mapTransform.value = map?.matrix;
+        pass.uniforms.terrainColor.value = original.color ?? new Color(1, 1, 1);
+        if (mask) {pass.uniforms.groundMask.value = mask.texture; pass.uniforms.groundMaskRect.value.fromArray(mask.rect);}
+        if (building && this.upView) pass.uniforms.upView.value.copy(this.upView);
+        surface.used = true;
+        return pass;
     }
 
     _statisticalSea(settings) {
@@ -578,14 +913,17 @@ export class ThermalPipeline {
         const rough = gradient && settings.seaMode === "statistical" && range.minRad < horizonRad;
         if (gradient) {
             const key = JSON.stringify([this.analysis || this.synchronous, this.profileKey, settings.sensorAltitudeM, range, this.seaSettingsKey, rough ? [this.seaWind, view] : null,
-                settings.surfaceTemperatureK, settings.bandMinUm, settings.bandMaxUm, this.rayGeometry?.key]);
+                settings.surfaceTemperatureK, settings.bandMinUm, settings.bandMaxUm, this.rayGeometry?.key,
+                this.seaSkyCacheEnabled,this.seaSkyCache.builds]);
             if (key !== this.skyTableKey) {
                 const started = performance.now();
                 const options = {view, sensorAltitudeM: settings.sensorAltitudeM,
                     rayGeometry: this.rayGeometry,
                     temperatureK: settings.surfaceTemperatureK,
                     band: {minUm: settings.bandMinUm, maxUm: settings.bandMaxUm}};
-                const table = rough ? createSeaSkyTable(view, this.seaWind, settings, this.atmosphere, this._statisticalSea(settings), this.rayGeometry) :
+                const table = rough ? (!this.analysis && !this.synchronous && this.seaSkyCacheEnabled ?
+                    this.seaSkyCache.table(view,this.seaWind,settings,this.atmosphere,this._statisticalSea(settings),this.rayGeometry,this.workerAtmosphere) :
+                    createSeaSkyTable(view, this.seaWind, settings, this.atmosphere, this._statisticalSea(settings), this.rayGeometry)) :
                     this.analysis || this.synchronous ? createSkyElevationLUT(options, this.atmosphere) : this.skyCache.table(options, this.atmosphere);
                 const data = table.data ?? new Float32Array(table.sampleCount * 4);
                 if (!rough) table.elevations.forEach((value, i) => {
@@ -593,7 +931,7 @@ export class ThermalPipeline {
                 });
                 if (table !== this.skyTable) {
                     this._removeTexture(this.skyTableTexture);
-                    this.skyTableTexture = this._ownTexture(dataTexture(data, table.width ?? table.sampleCount, table.rows?.length ?? 1));
+                    this.skyTableTexture = this._ownTexture(dataTexture(data, table.width ?? table.sampleCount, table.textureHeight ?? table.rows?.length ?? 1));
                     this.skyBuildMs = performance.now() - started; this.skyCacheRebuilt = true;
                 }
                 this.skyTable = table; this.skyTableKey = key;
@@ -605,7 +943,8 @@ export class ThermalPipeline {
             // or the exact path integral where the table is a rough-sea table.
             const band = {minUm: settings.bandMinUm, maxUm: settings.bandMaxUm};
             const offset = (this.rayGeometry?.horizonRad ?? -Math.acos(6371000 / (6371000 + settings.sensorAltitudeM))) - this.skyTable.horizonRad;
-            const photonRadiance = gradient && !rough ? skyTableRadiance(this.skyTable, range.centerRad - offset) :
+            const photonRadiance = gradient && rough ? seaTableRadiance(this.skyTable,range.centerRad,
+                seaRayAzimuth([0,0,-1],view.up,this.seaWind)) : gradient ? skyTableRadiance(this.skyTable, range.centerRad - offset) :
                 this.skyRay.exact().radiance.reduce((total, value) => total + value, 0);
             this.background = Object.freeze({...this.background, deferredRadiance: false, photonRadiance,
                 scaledPhotonRadiance: photonRadiance / PHOTON_SCALE,
@@ -656,10 +995,26 @@ export class ThermalPipeline {
         // Keep these CPU arrays separate from surfaces, which atmosphere updates dispose.
         // Nonstandard solar inputs and invalid attributes take the original
         // evaluation path, including its input validation.
+        // interior: the inner face of a thin closed shell. It reflects the interior, not the scene environment, and
+        // receives no direct sun. Inside a shell of one layer every wall emits e B(T), reflects r of the interior and
+        // transmits t of the outside, so the interior radiance is L = (e B(T) + t L_env) / (e + t) (calculated).
+        // volume: a gas emitter (a flame proxy) reflects neither the environment nor the sun.
+        const transmittance = attributes.transmittance ?? 0, interior = !!attributes.interior, volume = !!attributes.volume;
+        // A scattering layer (lantern paper) passes only directTransmittance as an image (the blend weight); the
+        // scattered rest adds the diffuse light from the other side: the interior's average radiance on the outer
+        // face, the outside environment on the inner face (the flame's own glow is added per fragment in the shader).
+        const imageTransmittance = Math.min(transmittance, attributes.directTransmittance ?? transmittance);
+        const scattered = transmittance - imageTransmittance;
+        // Sky and ground: the outer face's reflection comes from per-orientation rows (environmentRows, by normal
+        // elevation, added in the shader), and the interior and diffuse terms use the vertical-wall value.
+        const rows = !volume ? attributes.environmentRows ?? null : null;
+        // environmentBands: one reflected environment for the whole surface (a level ground class reflects the sky
+        // hemisphere above it), in place of the manual temperature.
+        const bands = !rows && !volume ? attributes.environmentBands ?? null : null;
         const cacheable = interactive && attributes.solar === undefined && attributes.cosIncidence === undefined &&
-            Number.isFinite(attributes.temperatureK) && Number.isFinite(attributes.emissivity);
-        const key = cacheable ? JSON.stringify([attributes.temperatureK, attributes.emissivity,
-            settings.environmentTemperatureK, settings.solarScale, settings.bandMinUm, settings.bandMaxUm]) : null;
+            Number.isFinite(attributes.temperatureK) && Number.isFinite(attributes.emissivity) && Number.isFinite(transmittance);
+        const key = cacheable ? JSON.stringify([attributes.temperatureK, attributes.emissivity, transmittance, imageTransmittance, interior, volume,
+            rows || bands ? attributes.environmentKey : settings.environmentTemperatureK, settings.solarScale, settings.bandMinUm, settings.bandMaxUm]) : null;
         const cache = cacheable ? (this.resources.surfaceSpectra ??= new Map()) : null;
         let spectrum = cache?.get(key);
         if (!spectrum) {
@@ -678,21 +1033,68 @@ export class ThermalPipeline {
                 // Calculated zero-error reuse of the same environment and solar
                 // integrals across different temperatures and emissivities.
                 const incident = illumination?.bands[index];
-                const environment = incident?.environment ?? inBandRadiance(settings.environmentTemperatureK, response);
-                const gray = grayBodyRadiance({...attributes, environment}, response);
-                emission[index] = gray.total.photon;
+                const manual = incident?.environment ?? inBandRadiance(settings.environmentTemperatureK, response);
+                const environment = rows ? {energy: 0, photon: rows[2][index]} : bands ? {energy: 0, photon: bands[index]} : manual;
+                const opening = attributes.emissivity + transmittance;
+                const own = interior && opening > 0 ? inBandRadiance(attributes.temperatureK, response) : null;
+                const reflected = own ? {energy: (attributes.emissivity * own.energy + transmittance * environment.energy) / opening,
+                    photon: (attributes.emissivity * own.photon + transmittance * environment.photon) / opening} :
+                    rows ? {energy: 0, photon: 0} : environment;
+                const gray = grayBodyRadiance({...attributes, environment: volume ? {energy: 0, photon: 0} : reflected}, response);
+                // The interior average radiance seen by the outer face's other side, or the outside environment.
+                const insideAverage = scattered > 0 && !interior ? (attributes.emissivity * inBandRadiance(attributes.temperatureK, response).photon +
+                    transmittance * environment.photon) / (attributes.emissivity + transmittance) : 0;
+                emission[index] = gray.total.photon + scattered * (interior ? environment.photon : insideAverage);
                 const solar = incident?.solar ?? solarIrradiance({}, response);
-                reflectedSun[index] = (1 - attributes.emissivity) * solar.photon * settings.solarScale / Math.PI;
-                if (illumination && !incident) illumination.bands[index] = {environment, solar};
+                reflectedSun[index] = interior || volume ? 0 : (1 - attributes.emissivity - transmittance) * solar.photon * settings.solarScale / Math.PI;
+                if (illumination && !incident) illumination.bands[index] = {environment: manual, solar};
             });
-            spectrum = {emission, reflectedSun};
+            // The outer face reflects r of each orientation's environment.
+            const reflectance = Math.max(0, 1 - attributes.emissivity - transmittance);
+            const environmentRows = rows && !interior && reflectance > 0 ? rows.map(row => row.map(value => reflectance * value)) : null;
+            spectrum = {emission, reflectedSun, transmittance: imageTransmittance, environmentRows};
             cache?.set(key, spectrum);
         }
         spectrum.used = true;
         return spectrum;
     }
 
-    _surface(attributes, original, settings, sunDirection) {
+    _floatBlend() {
+        return !!this.renderer?.extensions?.has?.("EXT_float_blend");
+    }
+
+    // Band transmission at a distance, sampled exactly as the radiance shader samples a surface's range texture.
+    _rangeTransmission(distanceM) {
+        const {size, maxRangeM, transmission} = this.rangeLUT, bands = new Float64Array(12);
+        const position = (maxRangeM > 0 ? Math.sqrt(Math.min(1, Math.max(0, distanceM / maxRangeM))) : 0) * (size - 1);
+        const lower = Math.min(size - 2, Math.floor(position)), fraction = position - lower;
+        for (let band = 0; band < 12; band++)
+            bands[band] = transmission[lower * 12 + band] * (1 - fraction) + transmission[(lower + 1) * 12 + band] * fraction;
+        return bands;
+    }
+
+    // In-band photon intensity (photons s^-1 sr^-1 per band) of a gas volume seen from the side: e B_b(T) times the
+    // ellipse inscribed in its world-scaled bounding box (the flame proxy is an ellipsoid).
+    _volumeIntensity(mesh, attributes, settings) {
+        if (!mesh.geometry.boundingBox) mesh.geometry.computeBoundingBox();
+        const size = mesh.geometry.boundingBox.getSize(new Vector3()).multiply(mesh.getWorldScale(new Vector3()));
+        const area = Math.PI / 4 * Math.max(size.x, size.z) * size.y;
+        const key = JSON.stringify([attributes.temperatureK, attributes.emissivity, area, settings.bandMinUm, settings.bandMaxUm]);
+        const cache = this.volumeIntensityCache ??= new Map();
+        let bands = cache.get(key);
+        if (!bands) {
+            if (cache.size > 64) cache.clear();
+            bands = new Float64Array(12);
+            BANDS.forEach((band, index) => {
+                const minUm = Math.max(settings.bandMinUm, band.minM * 1e6), maxUm = Math.min(settings.bandMaxUm, band.maxM * 1e6);
+                if (maxUm > minUm) bands[index] = attributes.emissivity * inBandRadiance(attributes.temperatureK, {minUm, maxUm}).photon * area;
+            });
+            cache.set(key, bands);
+        }
+        return Float64Array.from(bands);
+    }
+
+    _surface(attributes, original, settings, sunDirection, mesh) {
         if (attributes.sea) {
             const key = JSON.stringify(["statistical-sea", original.side, this.radianceAdapter?.materialKey]);
             let surface = this.resources.surfaces.get(key);
@@ -708,29 +1110,61 @@ export class ThermalPipeline {
             for (const [key, value] of Object.entries(this._skyUniforms(null, this.background.scaledPhotonRadiance))) surface.material.uniforms[key].value = value;
             surface.used = true; return surface.material;
         }
-        const key = JSON.stringify([attributes.temperatureK, attributes.emissivity, original.side, original.visible,
-            settings.environmentTemperatureK, settings.solarScale, this.radianceAdapter?.materialKey]);
+        if (attributes.terrainColor) {
+            const terrain = this._terrainSurface(attributes, original, settings, sunDirection, mesh);
+            if (terrain) return terrain;
+        }
+        // A thin layer that transmits t blends over what is behind it: out = source + t * behind (premultiplied,
+        // alpha = 1 - t), after the opaque surfaces and without writing depth. Three.js draws a transparent double-
+        // sided material back faces first, so a convex shell composites in order around an opaque inner part.
+        // Without float blending the layer is drawn opaque (reflectance 1 - e); _radiance reports that.
+        if ((attributes.transmittance ?? 0) > 0 && !this._floatBlend()) attributes = {...attributes, transmittance: 0};
+        const transmittance = attributes.transmittance ?? 0;
+        const imageTransmittance = Math.min(transmittance, attributes.directTransmittance ?? transmittance);
+        // diffuser: x scattered transmittance, y reflectance, z forward-lobe fraction, w lobe Gaussian sigma (rad).
+        const diffuser = [transmittance - imageTransmittance, Math.max(0, 1 - attributes.emissivity - transmittance),
+            attributes.lobeFraction ?? 0, (attributes.lobeHwhmDeg ?? 0) * Math.PI / 180 / Math.sqrt(2 * Math.LN2)];
+        // Sky and ground: reflected environment by orientation at the surface's altitude (_radiance supplies it).
+        if (attributes.environmentAltitudeM !== undefined && !attributes.volume &&
+            (Math.max(0, 1 - attributes.emissivity - transmittance) > 0 || transmittance > 0)) {
+            const table = this._environmentTable(attributes.environmentAltitudeM, settings);
+            attributes = {...attributes, environmentRows: table.rows, environmentKey: table.key};
+        }
+        const key = JSON.stringify([attributes.temperatureK, attributes.emissivity, transmittance, imageTransmittance, diffuser,
+            !!attributes.volume, original.side, original.visible, attributes.environmentKey ?? settings.environmentTemperatureK,
+            settings.solarScale, this.radianceAdapter?.materialKey]);
         let surface = this.resources.surfaces.get(key);
         if (!surface) {
             const spectrum = this._surfaceSpectrum(attributes, settings);
-            const texture = this._ownTexture(dataTexture(this._surfaceRangeData(spectrum), this.rangeLUT.size, 1));
+            // A thin shell's back faces are its inner side (outward winding): through the near wall the camera sees
+            // the far wall's inner face, which reflects the interior.
+            const innerSpectrum = transmittance > 0 && !attributes.volume ? this._surfaceSpectrum({...attributes, interior: true}, settings) : null;
+            const textureData = this._surfaceTextureData(spectrum, innerSpectrum);
+            const texture = this._ownTexture(dataTexture(textureData, this.rangeLUT.size, textureData.length / (this.rangeLUT.size * 4)));
             const pass = material(shaders.radianceFragment, {rangeTexture: texture,
                 rangeMaxM: this.rangeLUT.maxRangeM, rangeSamples: this.rangeLUT.size,
-                sunViewDirection: sunDirection}, shaders.radianceVertex);
+                sunViewDirection: sunDirection, transmittance: imageTransmittance, innerRow: innerSpectrum ? 1 : 0,
+                diffuser: new Vector4(...diffuser), glowSource: new Vector4(0, 0, 0, 0),
+                environmentRow: spectrum.environmentRows ? (innerSpectrum ? 2 : 1) : 0, upView: new Vector3(0, 1, 0)}, shaders.radianceVertex);
             pass.side = original.side;
             pass.visible = original.visible;
-            pass.depthTest = pass.depthWrite = true;
+            pass.depthTest = true;
+            pass.depthWrite = transmittance === 0;
+            if (transmittance > 0) Object.assign(pass, {transparent: true, blending: CustomBlending,
+                blendEquation: AddEquation, blendSrc: OneFactor, blendDst: OneMinusSrcAlphaFactor});
             try {
                 this.radianceAdapter?.prepareMaterial?.(pass);
             } catch (error) {
                 pass.dispose(); this._removeTexture(texture); throw error;
             }
-            surface = {texture, material: pass, spectrum};
+            surface = {texture, material: pass, spectrum, innerSpectrum};
             this.resources.surfaces.set(key, surface);
         }
         surface.used = true;
         if (surface.spectrum) surface.spectrum.used = true;
+        if (surface.innerSpectrum) surface.innerSpectrum.used = true;
         surface.material.uniforms.sunViewDirection.value = sunDirection;
+        if (this.upView) surface.material.uniforms.upView?.value.copy(this.upView);
         return surface.material;
     }
 
@@ -757,6 +1191,8 @@ export class ThermalPipeline {
         return {sky, useGradient: this.skyGradient, projectedSea: !!this.rayGeometry,
             tSky: this.skyTableTexture ?? this.emptyTexture, skySamples: this.skyTable?.sampleCount ?? 1,
             directionalSea: this.roughSky ?? false, seaWind: this.seaWind ?? [1, 0, 0],
+            cubicSeaAzimuth: !!this.roughSky && this.skyTable.azimuthOrder === 3,
+            packedSeaAzimuth: this.skyTable?.packedAzimuth ?? false,
             azimuthRows: this.roughSky ? this.skyTable.rows.length : 1,
             azimuthRange: this.roughSky ? [this.skyTable.minAzimuth, this.skyTable.maxAzimuth] : [0, 1],
             skyUp: this.skyView.up, inverseProjection: camera?.projectionMatrixInverse ?? new Matrix4(),
@@ -777,30 +1213,94 @@ export class ThermalPipeline {
     _drawRadiance(scene, camera, target, sky) {
         this._drawSky(camera, target, sky);
         this.renderer.clear(false, true, false);
-        if (this.thermalSeaEnabled) {
+        if (this.thermalSeaEnabled && this.seaDepthVisible !== false) {
             this._pass("seaDepth", shaders.seaDepthFragment, {inverseProjection: camera.projectionMatrixInverse,
                 cameraProjection: camera.projectionMatrix, skyUp: this.skyView.up,
                 sensorAltitudeM: this.thermalSensorAltitudeM, cameraFar: camera.far,
                 orthographic: !!camera.isOrthographicCamera,
                 logarithmicDepth: !!this.renderer.capabilities?.logarithmicDepthBuffer, ...this._seaGeometryUniforms()}, target);
         }
-        this.renderer.render(scene, camera);
-        this.cloudPass?.draw(camera, target, this.forceCloudShaderComposite);
+        // Only the layers this draw includes (a coverage patch draws the roots that overlap it).
+        const roots = new Set(scene.children), included = mesh => {
+            for (let object = mesh; object; object = object.parent) if (roots.has(object)) return true;
+            return false;
+        };
+        const layers = this.transmissiveLayers?.filter(({mesh}) => mesh.visible && included(mesh));
+        if (!layers?.length) {
+            this.renderer.render(scene, camera);
+            this.cloudPass?.draw(camera, target, this.forceCloudShaderComposite);
+            return;
+        }
+        // A transmitting layer writes no depth, so composite back to front: the opaque surfaces, then the cloud
+        // sheets and the layers interleaved by camera depth (layers far to near; each layer still depth tested
+        // against the opaque surfaces).
+        const hidden = [...layers.map(({mesh}) => mesh), ...layers.flatMap(({volumes = []}) => volumes)].filter(mesh => mesh.visible);
+        for (const mesh of hidden) mesh.visible = false;
+        try {
+            this.renderer.render(scene, camera);
+        } finally {
+            for (const mesh of hidden) mesh.visible = true;
+        }
+        const sheetDepth = sheet => -(sheet.apparentCenter ?? sheet.center)[2];
+        const layerScene = this.transmissiveScene ??= new Scene();
+        layerScene.matrixWorldAutoUpdate = false;
+        const draw = meshes => {
+            layerScene.children = meshes;
+            try {
+                this.renderer.render(layerScene, camera);
+            } finally {
+                layerScene.children = [];
+            }
+        };
+        this.cloudPass?.draw(camera, target, this.forceCloudShaderComposite, sheet => sheetDepth(sheet) > layers[0].depthM);
+        layers.forEach(({mesh, depthM, volumes, glow}, index) => {
+            const materials = [mesh.material].flat();
+            if (glow) {
+                const center = glow.world.clone().applyMatrix4(camera.matrixWorldInverse), transmission = this._rangeTransmission(center.length());
+                const intensity = glow.bands.reduce((sum, value, band) => sum + value * transmission[band], 0) / PHOTON_SCALE;
+                for (const material of materials) material.uniforms.glowSource?.value.set(center.x, center.y, center.z, intensity);
+            }
+            if (volumes?.length) {
+                // The shell's far wall, the volumes inside it, then its near wall.
+                const sides = materials.map(material => material.side);
+                const setSide = side => materials.forEach((material, i) => {
+                    material.side = side ?? sides[i]; material.needsUpdate = true;
+                });
+                try {
+                    setSide(BackSide); draw([mesh]);
+                    draw(volumes);
+                    setSide(FrontSide); draw([mesh]);
+                } finally {
+                    setSide(null);
+                }
+            } else draw([mesh]);
+            if (glow) for (const material of materials) material.uniforms.glowSource?.value.set(0, 0, 0, 0);
+            const nearer = layers[index + 1]?.depthM ?? -Infinity;
+            this.cloudPass?.draw(camera, target, this.forceCloudShaderComposite, sheet => sheetDepth(sheet) <= depthM && sheetDepth(sheet) > nearer);
+        });
     }
 
     // Mesh bounds projected to detector pixels. Refinement draws the whole scene at
     // each tile, so foreground occlusion and background replacement remain correct.
     _coverageTiles(meshes, camera, settings) {
         const tiles = new Map();
+        this.coverageBounds = new Map();
         // The surface skip and the tile budget bound the cost of an interactive frame. Analysis and offline renders
         // keep the complete refinement, so their results do not change.
         const interactive = !this.analysis && !this.synchronous;
         for (const mesh of meshes) {
             if (!mesh.geometry.attributes.position) continue;
-            // Ground and sea are extended backgrounds. Edge-on near the horizon a surface tile is thin enough to
-            // qualify, and each refinement tile redraws the whole scene, so surfaces are not refined interactively.
-            if (interactive && this.radianceAdapter?.isSurface?.(mesh)) continue;
-            const bounds = new Box3().setFromBufferAttribute(mesh.geometry.attributes.position);
+            // Extended surfaces still need conservative screen bounds, but never sub-pixel refinement.
+            const surface = interactive && this.radianceAdapter?.isSurface?.(mesh);
+            const position = mesh.geometry.attributes.position;
+            const cache = this.geometryBounds ??= new WeakMap();
+            let entry = cache.get(mesh.geometry);
+            if (!entry || entry.position !== position || entry.version !== position.version) {
+                entry = {position, version:position.version, bounds:new Box3().setFromBufferAttribute(position)};
+                cache.set(mesh.geometry,entry);
+            }
+            const bounds = entry.bounds;
+            this.coverageBounds.set(mesh, []);
             const instances = mesh.isInstancedMesh ? mesh.count : 1;
             for (let instance = 0; instance < instances; instance++) {
                 const world = mesh.matrixWorld.clone();
@@ -809,14 +1309,19 @@ export class ThermalPipeline {
                 let maxRangeM = 0, behind = 0, outLeft = 0, outRight = 0, outBelow = 0, outAbove = 0, outFar = 0;
                 // Combine transforms in CPU double precision before GPU-sized coordinates.
                 const toCamera = new Matrix4().multiplyMatrices(camera.matrixWorldInverse, world);
+                const clip = new Vector4();
                 for (const x of [bounds.min.x, bounds.max.x]) for (const y of [bounds.min.y, bounds.max.y]) for (const z of [bounds.min.z, bounds.max.z]) {
                     const corner = new Vector3(x, y, z).applyMatrix4(toCamera);
                     if (-corner.z < camera.near) crossesNear = true;
                     if (-corner.z <= 0) behind++;
                     maxRangeM = Math.max(maxRangeM, corner.length());
                     this.radianceAdapter?.projectPoint?.(corner, camera);
+                    clip.set(corner.x,corner.y,corner.z,1).applyMatrix4(camera.projectionMatrix);
+                    // Homogeneous clip planes also work for terrain boxes straddling the camera. Dividing by a
+                    // negative w flips the screen-side test and previously kept many wholly offscreen tiles.
+                    outLeft += clip.x < -clip.w; outRight += clip.x > clip.w;
+                    outBelow += clip.y < -clip.w; outAbove += clip.y > clip.w; outFar += clip.z > clip.w;
                     corner.applyMatrix4(camera.projectionMatrix);
-                    outLeft += corner.x < -1; outRight += corner.x > 1; outBelow += corner.y < -1; outAbove += corner.y > 1; outFar += corner.z > 1;
                     const column = (corner.x + 1) * settings.detectorWidth / 2;
                     const row = (corner.y + 1) * settings.detectorHeight / 2;
                     minX = Math.min(minX, column); maxX = Math.max(maxX, column);
@@ -826,10 +1331,23 @@ export class ThermalPipeline {
                 // plane, after the same apparent-position correction) draws nothing, so it needs neither coverage
                 // nor range validation: a far object elsewhere in the scene must not stop the frame. A box that
                 // straddles an edge or the camera plane is kept.
-                if (behind === 8 || (behind === 0 && [outLeft, outRight, outBelow, outAbove, outFar].includes(8))) continue;
+                if (behind === 8 || [outLeft, outRight, outBelow, outAbove, outFar].includes(8)) continue;
+                if (surface && !mesh.isInstancedMesh &&
+                    projectedSurfaceOutside(position,toCamera,camera,this.radianceAdapter?.projectPoint,
+                        settings.detectorWidth,settings.detectorHeight)) continue;
+                if(surface && crossesNear && !mesh.isInstancedMesh) {
+                    this.coverageBounds.set(mesh,projectedSurfaceBounds(mesh.geometry,toCamera,camera,
+                        this.radianceAdapter?.projectPoint,settings.detectorWidth,settings.detectorHeight));
+                    continue;
+                }
+                const previous = this.coverageBounds.get(mesh);
+                if (crossesNear) this.coverageBounds.set(mesh, null);
+                else if (previous !== null) this.coverageBounds.set(mesh, previous.length ?
+                    [Math.min(previous[0],minX-1),Math.min(previous[1],minY-1),Math.max(previous[2],maxX+1),Math.max(previous[3],maxY+1)] :
+                    [minX-1,minY-1,maxX+1,maxY+1]);
                 if (!this.radianceAdapter?.allowRangeClamping?.(mesh) && maxRangeM > (this.rangeLUT?.maxRangeM ?? settings.atmosphereMaxRangeM) && settings.atmosphereEnabled)
                     throw new RangeError(`Thermal mesh ${mesh.name || mesh.id} exceeds atmospheric range table (${this.rangeLUT?.maxRangeM ?? settings.atmosphereMaxRangeM} m)`);
-                if (crossesNear || Math.min(maxX - minX, maxY - minY) > 2) continue;
+                if (surface || crossesNear || Math.min(maxX - minX, maxY - minY) > 2) continue;
                 const left = Math.max(0, Math.floor((minX - 1) / COVERAGE_TILE) * COVERAGE_TILE);
                 const bottom = Math.max(0, Math.floor((minY - 1) / COVERAGE_TILE) * COVERAGE_TILE);
                 const right = Math.min(settings.detectorWidth, Math.ceil(maxX + 1));
@@ -845,21 +1363,30 @@ export class ThermalPipeline {
     }
 
     _radiance(scene, camera, settings, target, sky) {
-        const changed = [], meshes = [];
+        const changed = [], meshes = [], transmissive = new Set(), volumes = new Map();
         const savedBackground = scene.background, savedOverride = scene.overrideMaterial;
         const sun = new Vector3(settings.sunDirectionX, settings.sunDirectionY, settings.sunDirectionZ)
             .normalize().transformDirection(camera.matrixWorldInverse);
         for (const surface of this.resources.surfaces.values()) surface.used = false;
+        for (const table of this.resources.terrainTables?.values() ?? []) table.used = false;
         for (const spectrum of this.resources.surfaceSpectra?.values() ?? []) spectrum.used = false;
         try {
             scene.background = null;
             scene.overrideMaterial = null;
             scene.updateMatrixWorld(true);
+            // Local up in camera space for the sky-and-ground environment: the host's (ECEF) sky up, else world +Y.
+            this.upView = this.radianceAdapter && this.skyView?.up ? new Vector3().fromArray(this.skyView.up) :
+                new Vector3(0, 1, 0).transformDirection(camera.matrixWorldInverse);
             const cloudHostStart = performance.now();
             const clouds = this.radianceAdapter?.cloudSheets?.(camera, settings, this.atmosphere);
             const hostPrepareMs = performance.now() - cloudHostStart;
             this.thermalSeaEnabled = settings.skySource === "atmosphere";
             this.thermalSensorAltitudeM = settings.sensorAltitudeM;
+            const horizon=this.rayGeometry?.horizonRad ?? -Math.acos(EARTH_RADIUS_M/(EARTH_RADIUS_M+settings.sensorAltitudeM));
+            // skyElevationRange encloses the full image diagonal plus a margin. Every coverage patch is inside it.
+            // Above the apparent horizon the sea-depth shader discards every fragment; the cleared depth is exact.
+            const view=skyViewGeometry(settings,this.skyView?.up ?? null,camera);
+            this.seaDepthVisible=settings.sensorAltitudeM<=0 || skyElevationRange(view).minRad<=horizon+1e-6;
             this.cloudDiagnostics = clouds?.diagnostics ?? [];
             scene.traverse(object => {
                 if (object.isLine || object.isLine2 || object.isLineSegments2 || object.isWireframe || object.isPoints || object.isSprite || object.isLight ||
@@ -873,7 +1400,8 @@ export class ThermalPipeline {
                 const attributes = this.radianceAdapter?.attributes?.(object, settings) ?? this._attributes(object, scene, settings);
                 changed.push({object, visible: object.visible, material: object.material,
                     frustumCulled: object.frustumCulled, onBeforeRender: object.onBeforeRender, onAfterRender: object.onAfterRender});
-                if (attributes === false) { object.visible = false; return; }
+                // A gas emitter with no emissivity (an extinguished flame) is absent, not a mirror.
+                if (attributes === false || attributes.volume && !(attributes.emissivity > 0)) { object.visible = false; return; }
                 // The analytic mean sea supplies full-frame radiance and depth.
                 // Its boundary cannot depend on host ocean mesh tessellation.
                 if ((attributes.sea || this.radianceAdapter?.isSea?.(object)) && this.thermalSeaEnabled) {object.visible = false; return;}
@@ -884,26 +1412,92 @@ export class ThermalPipeline {
                     object.frustumCulled = false; // apparent positions can be outside the physical frustum
                 }
                 const originals = Array.isArray(object.material) ? object.material : [object.material];
-                const replacements = originals.map(original => this._surface(attributes, original, settings, sun));
-                object.material = Array.isArray(object.material) ? replacements : replacements[0];
+                // Sky and ground, and ground material classes: the surface's altitude (from the host; the sensor's
+                // otherwise), in 25 m steps.
+                const altitudeM = () => Math.max(0, Math.round((this.radianceAdapter?.surfaceAltitudeM?.(object) ??
+                    settings.sensorAltitudeM) / 25) * 25);
+                const surfaceAttributes = attributes.terrainColor && attributes.terrainClasses?.length ?
+                    {...attributes, terrainAltitudeM: attributes.terrainAltitudeM ?? altitudeM()} :
+                    settings.environmentSource === "skyGround" && !attributes.sea && !attributes.terrainColor &&
+                    !this.radianceAdapter?.isSurface?.(object) ? {...attributes, environmentAltitudeM: altitudeM()} : attributes;
+                const replacements = originals.map(original => this._surface(surfaceAttributes, original, settings, sun, object));
+                // Three.js splits each material group of a transparent double-sided mesh into its own back and front
+                // pass, which would draw a near wall of one group before a far wall of the next. One shared layer
+                // material draws the whole shell as one back pass and one front pass.
+                const oneLayer = (attributes.transmittance ?? 0) > 0 && replacements.every(material => material === replacements[0]);
+                object.material = Array.isArray(object.material) && !oneLayer ? replacements : replacements[0];
                 meshes.push(object);
+                if ((attributes.transmittance ?? 0) > 0) transmissive.add(object);
+                if (attributes.volume) volumes.set(object, attributes);
             });
+            this.transmissionReport = transmissive.size ?
+                {layers: transmissive.size, composition: this._floatBlend() ? "floatBlend" : "opaqueFallback"} : null;
+            // Blended layers are interleaved with the cloud sheets by camera depth (_drawRadiance), far to near. A gas
+            // volume (a flame) inside a shell (a lantern canopy) is drawn between the shell's back and front faces.
+            // Without float blending they are opaque and keep the normal order.
+            this.transmissiveLayers = null;
+            if (transmissive.size && this._floatBlend()) {
+                const entries = [...transmissive].map(mesh => {
+                    if (!mesh.geometry.boundingSphere) mesh.geometry.computeBoundingSphere();
+                    const sphere = mesh.geometry.boundingSphere.clone().applyMatrix4(mesh.matrixWorld);
+                    return {mesh, sphere, depthM: -sphere.center.clone().applyMatrix4(camera.matrixWorldInverse).z};
+                });
+                const shells = entries.filter(entry => !volumes.has(entry.mesh)), layers = [...shells];
+                for (const entry of entries.filter(entry => volumes.has(entry.mesh))) {
+                    const shell = shells.find(candidate => candidate.sphere.containsPoint(entry.sphere.center));
+                    if (!shell) { layers.push(entry); continue; }
+                    (shell.volumes ??= []).push(entry.mesh);
+                    // The volume lights the inside of a scattering shell (the flame glow): its in-band intensity
+                    // I_b = e B_b(T) A from the side, at the intensity-weighted centre of the shell's volumes.
+                    const bands = this._volumeIntensity(entry.mesh, volumes.get(entry.mesh), settings), total = bands.reduce((a, b) => a + b, 0);
+                    if (total > 0) {
+                        const glow = shell.glow ??= {world: new Vector3(), bands: new Float64Array(12), total: 0};
+                        glow.world.multiplyScalar(glow.total).addScaledVector(entry.sphere.center, total).divideScalar(glow.total + total);
+                        bands.forEach((value, band) => { glow.bands[band] += value; });
+                        glow.total += total;
+                    }
+                }
+                this.transmissiveLayers = layers.sort((a, b) => b.depthM - a.depthM);
+            }
             if (clouds?.sheets.length || this.cloudPass) {
                 this.cloudPass ??= new ThermalCloudPass(this);
                 const raycaster = new Raycaster(), origin = new Vector3().setFromMatrixPosition(camera.matrixWorld);
                 raycaster.layers.mask = camera.layers.mask;
-                const firstHitM = meshes.length && !this.rayGeometry ? point => {
+                // Cloud samples are rejected behind the first OPAQUE surface; a thin layer transmits them.
+                const occluders = meshes.filter(mesh => !transmissive.has(mesh));
+                const firstHitM = occluders.length && !this.rayGeometry ? point => {
                     const direction = new Vector3(...point).transformDirection(camera.matrixWorld);
                     raycaster.set(origin, direction); raycaster.far = Math.hypot(...point);
-                    return raycaster.intersectObjects(meshes, false)[0]?.distance ?? Infinity;
+                    return raycaster.intersectObjects(occluders, false)[0]?.distance ?? Infinity;
                 } : undefined;
                 this.cloudPass.prepare(clouds?.sheets ?? [], camera, settings, clouds?.diagnostics ?? [], firstHitM);
                 this.cloudPass.report.hostPrepareMs = hostPrepareMs;
             }
-            this._drawRadiance(scene, camera, target, sky);
+            // Borrow the participating roots for drawing only. Their parent links and world transforms stay in
+            // the host scene. Coverage patches no longer walk thousands of hidden sprites and helpers each time.
+            const drawScene = this.radianceScene ??= new Scene();
+            drawScene.matrixWorldAutoUpdate = false;
+            const rootsFor = selected => {
+                const included = new Set(selected);
+                return selected.filter(mesh => {
+                    for (let parent = mesh.parent; parent; parent = parent.parent) if (included.has(parent)) return false;
+                    return true;
+                });
+            };
+            const coverageTiles = this._coverageTiles(meshes, camera, settings);
+            const overlaps = (mesh,column,row,width,height) => {
+                const bounds = this.coverageBounds.get(mesh);
+                return !bounds || bounds.length && bounds[0] <= column+width && bounds[2] >= column &&
+                    bounds[1] <= row+height && bounds[3] >= row;
+            };
+            drawScene.children = rootsFor(meshes.filter(mesh => overlaps(mesh,0,0,settings.detectorWidth,settings.detectorHeight)));
+            this._drawRadiance(drawScene, camera, target, sky);
             const cropCamera = camera.clone(false);
             cropCamera.matrixAutoUpdate = false; cropCamera.matrixWorldAutoUpdate = false;
-            for (const [column, row, width, height] of this._coverageTiles(meshes, camera, settings)) {
+            for (const [column, row, width, height] of coverageTiles) {
+                // Keep every possible occluder; only discard boxes wholly outside this patch. Unknown bounds,
+                // extended backgrounds, and boxes crossing the camera are retained. No samples are removed.
+                drawScene.children = rootsFor(meshes.filter(mesh => overlaps(mesh,column,row,width,height)));
                 const scaleX = settings.detectorWidth / width, scaleY = settings.detectorHeight / height;
                 const centerX = (column + width / 2) * 2 / settings.detectorWidth - 1;
                 const centerY = (row + height / 2) * 2 / settings.detectorHeight - 1;
@@ -912,13 +1506,20 @@ export class ThermalPipeline {
                 cropCamera.projectionMatrix.multiplyMatrices(crop, camera.projectionMatrix);
                 cropCamera.projectionMatrixInverse.copy(cropCamera.projectionMatrix).invert();
                 const patch = this._target("coverage", width * COVERAGE_SAMPLES, height * COVERAGE_SAMPLES, true);
-                this._drawRadiance(scene, cropCamera, patch, sky);
+                this._drawRadiance(drawScene, cropCamera, patch, sky);
                 const factor = COVERAGE_SAMPLES / settings.supersample;
                 this._pass("average", shaders.averageFragment, {tInput: patch.texture, factor, fillFactor: 1,
                     outputOrigin: [column * settings.supersample, row * settings.supersample]}, target,
                 [column * settings.supersample, row * settings.supersample, width * settings.supersample, height * settings.supersample]);
             }
+            const bounds = meshes.map(mesh => mesh.isSkinnedMesh || mesh.geometry.morphAttributes?.position?.length ?
+                null : this.coverageBounds.get(mesh));
+            const cloudBounds = (this.cloudPass?.sheets ?? []).map(sheet => cloudScreenBounds(sheet,camera,
+                settings.detectorWidth,settings.detectorHeight)).filter(Boolean);
+            this.contrastRegion = contrastSourceRegion(bounds,coverageTiles,cloudBounds,settings.detectorWidth,settings.detectorHeight);
         } finally {
+            if (this.radianceScene) this.radianceScene.children = [];
+            this.transmissiveLayers = null;
             for (const entry of changed) {
                 entry.object.visible = entry.visible;
                 if (entry.material !== undefined) entry.object.material = entry.material;
@@ -930,6 +1531,9 @@ export class ThermalPipeline {
             }
             for (const [key, surface] of this.resources.surfaces) if (!surface.used) {
                 surface.material.dispose(); this._removeTexture(surface.texture); this.resources.surfaces.delete(key);
+            }
+            for (const [key, table] of this.resources.terrainTables ?? []) if (!table.used) {
+                this._removeTexture(table.texture); this.resources.terrainTables.delete(key);
             }
             // Bound CPU cache lifetime to spectra used by the current scene.
             // dispose() releases these arrays with the owning resources object.
@@ -948,11 +1552,11 @@ export class ThermalPipeline {
     _reuseState(frame) {
         if (this.analysis || this.synchronous || !this.hasFrame || !this.lastFrame ||
             this.lastFrame.held || !this.resources?.targets.has("display") || this.pendingOptics || this.opticsScheduler?.pending ||
-            this.rangeCache?.pending || this.skyCache?.pending || this.gainSettle != null) return null;
+            this.rangeCache?.pending || this.skyCache?.pending || this.seaSkyCache?.pending || this.gainSettle != null) return null;
         // Automatic gain must have settled on this frame's statistics of the scene now shown (see _gainParameters).
         if (["automatic", "plateau"].includes(this.settings?.gainMode) &&
             (this.gainReport?.settled !== true || this.gainReport.statisticsFrame !== frame)) return null;
-        return [this.opticsScheduler?.domain, this.rangeCache?.domain, this.skyCache?.cached,
+        return [this.opticsScheduler?.domain, this.rangeCache?.domain, this.skyCache?.cached,this.seaSkyCache?.domain,this.seaSkyCacheEnabled,
             this.activeKernels, this.skyTable, this.gainParameters];
     }
 
@@ -1068,8 +1672,8 @@ export class ThermalPipeline {
             }
             const skyBackground = this._target("skyBackground", fineWidth, fineHeight);
             this._stage("sky", () => this._drawSky(thermalCamera, skyBackground, sky));
-            this._stage("optics", () => this._optics(radiance, optics, skyBackground));
-            this._stage("sample", () => this._pass("average", shaders.averageFragment, {tInput: optics.texture, factor,
+            const fused = this._stage("optics", () => this._optics(radiance, optics, skyBackground, {target:sampled,settings}));
+            if (!fused) this._stage("sample", () => this._pass("average", shaders.averageFragment, {tInput: optics.texture, factor,
                 fillFactor: settings.fillFactor, outputOrigin: [0, 0]}, sampled));
             const integrationTimeS = integrationTime(settings);
             this._prepareFixedPattern(settings);
@@ -1144,7 +1748,7 @@ export class ThermalPipeline {
             this._present(settings, presentation, target);
             this.temporalState = {frame, key: historyKey, target: filtered, base: temporalBase, sceneKey: this.renderSceneKey};
             this.window = parameters.window; this.gainKey = gainKey; this.lastFrame = {frame, integrationTimeS,
-                opticsCache: this.opticsReport, rangeCache: this.rangeReport, coverage: this.coverageReport ?? null,
+                opticsCache: this.opticsReport, rangeCache: this.rangeReport, coverage: this.coverageReport ?? null, transmission: this.transmissionReport ?? null,
                 psfSpectrum: this.psfSpectrum, detectorWindow: settings.detectorWindow,
                 temporal: {alpha: settings.temporalFilterAlpha, memory, reset: temporalReset},
                 opticalSampling: settings.opticalSampling, atmosphere: this.atmosphereProfile,
@@ -1250,7 +1854,10 @@ export class ThermalPipeline {
         const samples = regionWidth * regionHeight;
         // Scatter into GAIN_HISTOGRAM_COPIES stacked copies, then add the copies into the named histogram target.
         const scatter = (name, width, height, mode, select = this.emptyTexture) => {
-            const copies = this.gainHistogramCopies ?? GAIN_HISTOGRAM_COPIES;
+            // More independent integer accumulators avoid contention on nearly uniform thermal skies. Their
+            // sum is unchanged; cap the stack for devices with smaller texture limits.
+            const copies = Math.max(1,Math.min(this.gainHistogramCopies ?? GAIN_HISTOGRAM_COPIES,
+                Math.floor((this.renderer.capabilities?.maxTextureSize ?? 16384)/height)));
             const target = this._target(name, width, height), stacked = this._target(`${name}Copies`, width, height * copies);
             this._scatter({tCounts: filtered.texture, region: [bounds.left, bounds.bottom, regionWidth, regionHeight], mode,
                 tSelect: select, histogramSize: [width, height], copies}, stacked, samples);
@@ -1361,7 +1968,7 @@ export class ThermalPipeline {
     // Counts changes of the prepared state that shapes the image beyond the host's scene: kernels, interpolation
     // domains and sky table. Any change starts a new epoch, so gain samples rendered before it cannot settle.
     _imageStateEpoch() {
-        const state = [this.activeKernels, this.opticsScheduler?.domain, this.rangeCache?.domain, this.skyCache?.cached, this.skyTable];
+        const state = [this.activeKernels, this.opticsScheduler?.domain, this.rangeCache?.domain, this.skyCache?.cached,this.seaSkyCache?.domain,this.seaSkyCacheEnabled,this.skyTable];
         if (!this.imageState || state.some((value, i) => value !== this.imageState[i])) {
             this.imageState = state; this.imageStateEpochCount = (this.imageStateEpochCount ?? 0) + 1;
         }
@@ -1455,8 +2062,25 @@ export class ThermalPipeline {
         if (!this.hasFrame || !["radiance", "optics", "sampled", "drive", "display", "farScatter"].includes(name) ||
             (name === "farScatter" && !this.scatterSplit?.farMass))
             throw new RangeError(`Thermal stage is unavailable: ${name}`);
-        const target = this.resources.targets.get(name);
-        return {image: this._read(target), width: target.width, height: target.height};
+        const renderer=this.renderer, saved={target:renderer.getRenderTarget(),face:renderer.getActiveCubeFace(),mip:renderer.getActiveMipmapLevel(),viewport:renderer.getViewport(new Vector4()),
+            scissor:renderer.getScissor(new Vector4()),scissorTest:renderer.getScissorTest()};
+        try {
+            if(name==="optics" && this.deferredOptics) {
+                const {near,plan,nearImage,farTexture,background,optics}=this.deferredOptics;
+                this._pass("overlapAdd",shaders.overlapAddFragment,{tInput:near.texture,fftSize:[plan.fftWidth,plan.fftHeight],
+                    sourceOrigin:plan.sourceOrigin ?? [0,0],
+                    sourceSize:plan.sourceSize,tileSize:[plan.tileWidth,plan.tileHeight],tiles:[plan.tilesX,plan.tilesY],
+                    reachLow:plan.reach.low,reachHigh:plan.reach.high},nearImage);
+                this._pass("opticsSum",shaders.opticsSumFragment,{tInput:nearImage.texture,tFar:farTexture,
+                    hasFar:this.scatterSplit.farMass>0,tBackground:background.texture},optics);
+                this.deferredOptics=null;
+            }
+            const target = this.resources.targets.get(name);
+            return {image: this._read(target), width: target.width, height: target.height};
+        } finally {
+            renderer.setRenderTarget(saved.target,saved.face,saved.mip);renderer.setViewport(saved.viewport);
+            renderer.setScissor(saved.scissor);renderer.setScissorTest(saved.scissorTest);
+        }
     }
     dispose() {
         clearTimeout(this.gainSettle); this.gainSettle = null;
@@ -1465,7 +2089,7 @@ export class ThermalPipeline {
         this.frameFences = [];
         this.gainPoints?.geometry.dispose(); this.gainPoints = null; this.gainState = null;
         this.gainReadback?.dispose(); this.gpuTimer?.dispose();
-        this.opticsScheduler?.dispose(); this.rangeCache?.dispose(); this.skyCache?.dispose?.();
+        this.opticsScheduler?.dispose(); this.rangeCache?.dispose(); this.skyCache?.dispose?.(); this.seaSkyCache?.dispose();
         this.pendingOptics = null; this.activeKernels = null; this.opticalCache = null; this.skyCache = null;
         this.cloudPass?.dispose(); this.cloudPass = null;
         if (this.resources) {
@@ -1510,7 +2134,9 @@ export class ThermalCloudPass {
     prepare(sheets, camera, settings, diagnostics = [], firstHitM) {
         this.sensorAltitudeM = settings.sensorAltitudeM;
         const start = performance.now(), sortStart = start;
-        this.sheets = sortCloudSheets(sheets).map(sheet => ({...sheet}));
+        // The same conservative projection test was previously applied after sorting. Cull first so thousands of
+        // offscreen sheets need neither sorting/copying nor another visit during each coverage-patch draw.
+        this.sheets = sortCloudSheets(sheets.filter(sheet => cloudScreenBounds(sheet, camera, 1, 1))).map(sheet => ({...sheet}));
         const sortMs = performance.now() - sortStart;
         const p = this.pipeline, band = {minUm: settings.bandMinUm, maxUm: settings.bandMaxUm};
         const domainKey = JSON.stringify([p.profileKey, band]);
@@ -1532,7 +2158,6 @@ export class ThermalCloudPass {
             if (sheet.opticalDepth === 0 && sheet.maskSemantics !== "calibratedOpacity") continue;
             const maskData = sheet.mask?.image?.data;
             if (maskData && maskData.every((value, i) => i % 4 !== 3 || value === 0)) continue;
-            if (!cloudScreenBounds(sheet, camera, 1, 1)) continue;
             used.add(sheet.id);
             const key = JSON.stringify([domainKey, sheet.center, sheet.apparentCenter, sheet.size, sheet.temperaturePolicy, sheet.temperatureK, settings.sensorAltitudeM, p.skyView.up, p.rayGeometry?.key]);
             let cached = this.cache.get(sheet.id);
@@ -1558,14 +2183,15 @@ export class ThermalCloudPass {
             scattering: "absorptionOnly", temperature: "airAtAltitudeOrExplicitIsothermal", path: "straightSpherical",
             status: "calculated", gpuMs: null};
     }
-    draw(camera, target, forceShaderComposite = false) {
+    // include(sheet) selects a subset, so thin transmitting layers can be composited between farther and nearer sheets.
+    draw(camera, target, forceShaderComposite = false, include = null) {
         const p = this.pipeline, renderer = p.renderer, started = performance.now();
         const fallback = forceShaderComposite || !renderer.extensions.has("EXT_float_blend");
         this.report.composition = fallback ? "boundedShader" : "floatBlend";
         this.material.blending = fallback ? NoBlending : CustomBlending;
         this.mesh.layers.mask = camera.layers.mask;
         for (const sheet of this.sheets) {
-            if (!sheet.table) continue;
+            if (!sheet.table || include && !include(sheet)) continue;
             const bounds = cloudScreenBounds(sheet, camera, target.width, target.height);
             if (!bounds) continue;
             let behind;
