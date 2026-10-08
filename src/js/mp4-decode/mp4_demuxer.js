@@ -567,7 +567,8 @@ export class MP4Demuxer {
         throw new Error(
           `Unsupported MOV/MP4 video codec: ${codecName} (${codec})${dimensions}. ` +
           `Sitrec can load browser-decodable H.264/HEVC MP4/MOV files, but this file's video track is not exposed to WebCodecs. ` +
-          `Convert it with: ffmpeg -i input.mov -c:v libx264 -pix_fmt yuv420p -c:a aac -movflags +faststart output.mp4`
+          `Convert it with: ffmpeg -i input.mov -c:v libx264 -pix_fmt yuv420p -c:a aac -movflags +faststart+use_metadata_tags output.mp4 ` +
+          `(use_metadata_tags keeps the recording time and location)`
         );
       }
       throw new Error("No video track found in file. If this is a MOV/MP4, it may contain only unsupported data tracks or metadata.");

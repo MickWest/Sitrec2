@@ -9,6 +9,18 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.175.2 (2026-10-08)
+
+### Improvements
+- **Time and location from more video files** (File → Import File, or drop a video into a new sitch): Sitrec now sets the Start Time and the camera position from Android videos (Pixel, Samsung and others) and from ffmpeg conversions that kept them, as it already did for iPhone videos, and it takes the Start Time from the creation time of other video files. Android videos record the time the recording stopped, so Sitrec subtracts the length of the video, and the time can be a few seconds late. Samsung videos also give the local time zone.
+- The message for a video that browsers cannot decode, such as Apple ProRes, now gives an ffmpeg command that keeps the recording time and location.
+- **Podman pull warnings** (self-hosted installs on Linux): before a rootless Podman pull, the install script and the management script now warn if the image store is on a network share or your account has no subordinate ID range. These are the two usual causes of a pull that fails with an unclear error. The warning tells you how to fix the host, and the installation guide explains both errors.
+
+### Bug Fixes
+- Fixed the altitude in a video file (for example, from an iPhone) being used as height above the ground. The camera now goes to that height above sea level.
+- Fixed a video's location being ignored when the file has no altitude. The camera now goes 2 m above the ground, as for a photo.
+- Fixed *Geolocate from browser* (Camera → Location), and a video with a location, setting the camera height in feet instead of metres when altitudes are shown in feet.
+
 ## Version 2.175.1 (2026-10-05)
 
 ### Improvements

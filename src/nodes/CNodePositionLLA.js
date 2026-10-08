@@ -300,14 +300,15 @@ export class CNodePositionLLA extends CNodeTrack {
     }
 
 
-    gotoLLA(lat, lon, alt=2) {
+    // alt is metres above ground level, or above sea level when agl is false
+    gotoLLA(lat, lon, alt=2, agl=true) {
 
         this._LLA = [lat, lon, alt];
         this.guiLat.value = lat
         this.guiLon.value = lon
-        this.guiAlt.value = alt; // set altitude to 3m above ground
+        this.guiAlt.setValueWithUnits(alt, "metric", "small", true);
 
-        this.agl = true; // set AGL to true, so we adjust the altitude above ground level
+        this.agl = agl;
 
         this.recalculateCascade();
         markSitchDirty();

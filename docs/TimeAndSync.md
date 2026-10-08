@@ -30,7 +30,9 @@ Simulation Speed is normally 1, so frame 300 at 30 fps is 10 seconds after the s
 
 When you load a video into a new (custom) sitch, Sitrec sets Sitch Frames to the number of
 frames in the video, and sets Video FPS from the video file. Without a video, a new sitch
-has 900 frames at 30 fps, which is 30 seconds.
+has 900 frames at 30 fps, which is 30 seconds. If the video file records when and where it was
+made, as most phone videos do, Sitrec also sets the Start Time and the camera position. See
+[Time and location in a video file](LoadingVideo.md#time-and-location-in-a-video-file).
 
 The **Sitch Duration** is Sitch Frames ÷ fps. If you change the fps, the number of frames
 stays the same and the duration changes.

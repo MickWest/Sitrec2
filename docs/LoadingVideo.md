@@ -89,6 +89,35 @@ pitch and roll, and the vertical field of view. If the image has a GPS position,
 **Video → Set Camera To EXIF GPS** applies the EXIF camera settings again, for example after
 you have moved the camera.
 
+### Time and location in a video file
+
+Phones write the time and place of a recording into the video file. When you load such a
+video into a new sitch, Sitrec sets the Start Time and puts the camera at that place. It does
+this only if the camera position and the time have not been set yet.
+
+| File | Location | Start Time |
+|---|---|---|
+| iPhone `.MOV` | Latitude, longitude and altitude above sea level | When the recording started, in the phone's local time |
+| iPhone `.mp4` (exported or shared) | Latitude, longitude and altitude above sea level | When the recording started, in the phone's local time |
+| Android (Pixel, Samsung and others) | Latitude and longitude, no altitude | The file gives the time the recording **stopped**. Sitrec subtracts the length of the video. The result can be a few seconds late. Samsung files also give the local time zone |
+| Files written by ffmpeg | The location copied from the original, if any | The file's creation time, if it has one, in UTC |
+
+If the file has no altitude, or an altitude of exactly 0, the camera goes 2 m above the
+ground, with **Above Ground Level** on. Otherwise the camera goes to the file's altitude above
+sea level.
+
+A video that was edited, trimmed or converted can carry the time of that change, not the
+time of the recording. If the video shows a clock or a known event, use it to check the Start
+Time. See [Time and Sync](TimeAndSync.md).
+
+When you convert a phone video with ffmpeg, add `-movflags +use_metadata_tags`. Without it,
+ffmpeg does not copy the iPhone's time and location keys to the new file. For example, an
+iPhone video recorded in Apple ProRes must be converted, because browsers cannot decode ProRes:
+
+```
+ffmpeg -i input.mov -c:v libx264 -pix_fmt yuv420p -c:a aac -movflags +faststart+use_metadata_tags output.mp4
+```
+
 ### Seeing what you loaded
 
 **Video → Show EXIF/Metadata** opens a panel with the file's size, frame rate, codec and

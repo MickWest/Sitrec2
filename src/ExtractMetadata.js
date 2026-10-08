@@ -1,452 +1,231 @@
+// Reads the capture time and location that phones and cameras write into the header of an
+// MP4 or QuickTime (MOV) file, from the box tree MP4Box has parsed.
+//
+// Where each kind of file keeps them (every layout below was checked against real files):
+//
+//   iPhone .MOV         moov/meta 'mdta' keys: com.apple.quicktime.creationdate (local time with
+//                       its UTC offset, start of recording) and com.apple.quicktime.location.ISO6709
+//                       (latitude, longitude and altitude in metres above sea level).
+//   iPhone .mp4 export  moov/udta 'date' (the same date text) and a 3GPP 'loci' box.
+//                       Its mvhd time is when the file was EXPORTED, not when it was filmed.
+//   Android (Pixel,     moov/udta '©xyz' (ISO 6709 text, no altitude) and moov/meta 'mdta' keys
+//   Samsung, ...)       named com.android.*. Samsung adds com.samsung.android.utc_offset.
+//                       The only time is the mvhd creation time, and that is the END of the
+//                       recording — see startFromMvhd().
+//   ffmpeg              .mp4: udta 'loci'. .mov: udta '©xyz'. With -movflags use_metadata_tags,
+//                       udta/meta 'mdta' keys. mvhd creation time is 0 when no time was carried
+//                       over.
+//
+// Returns {latitude, longitude, altitude, creationDate, locationSource, creationDateSource}.
+// altitude is metres above sea level, or null when the file has none. creationDate is an
+// ISO 8601 string for the START of the recording, with the local UTC offset when the file gives
+// one. Anything not found is null.
+
+const MP4_EPOCH_MS = Date.UTC(1904, 0, 1);
+
 export function extractAllMetaData(boxes) {
-    //dumpAllBoxData(boxes);
-
-    const udta = findBox(boxes, ['moov', 'udta']);
-    const meta = findBox(boxes, ['moov', 'meta']) || findBox(boxes, ['moov', 'udta', 'meta']);
-    const mvhd = findBox(boxes, ['moov', 'mvhd']);
-    const moov = findBox(boxes, ['moov']);
-
-    //const meta = Array.isArray(metaBox) ? metaBox[0] : metaBox;
-
-    console.log("UDTA:", udta);
-    console.log("META:", meta);
-    console.log("MVHD:", mvhd);
-
-    const appleMeta = moov?.find(b => b.type === 'meta' && b.data && b.data.byteLength > 0);
-    const metaMap = appleMeta?.data ? parseMetaData(appleMeta) : new Map();
-  //  console.log("Apple-style meta map:", metaMap);
-
-    const gps =
-        debugWrap("ISO6709", () => extractFromISO6709Map(metaMap)) ||
-        debugWrap("XYZ", () => extractFromXYZ(meta)) ||
-        debugWrap("LocationInformation", () => extractFromLocationInformation(udta)) ||
-        debugWrap("LOCI", () => extractFromLoci(udta));
-
-    const date =
-        debugWrap("QuicktimeCreationDateMap", () => extractFromQuickTimeCreationDateMap(metaMap)) ||
-        debugWrap("DateTimeOriginal", () => extractFromDateTimeOriginal(meta)) ||
-        debugWrap("QuicktimeCreationDate", () => extractFromQuickTimeCreationDate(meta)) ||
-        debugWrap("DateBox", () => extractFromDateBox(udta)) ||
-        debugWrap("Day", () => extractFromDay(meta)) ||
-        debugWrap("Mvhd", () => extractFromMvhd(mvhd));
-
-    return {
-        latitude: gps?.latitude ?? null,
-        longitude: gps?.longitude ?? null,
-        altitude: gps?.altitude ?? null,
-        creationDate: date ?? null,
+    const result = {
+        latitude: null, longitude: null, altitude: null, creationDate: null,
+        locationSource: null, creationDateSource: null,
     };
-}
 
-// dump lines of 16 hex bytes and their ASCII representation
-// useful for debugging binary data
-function hexDump(buffer) {
-    while (buffer.length > 0) {
-        const line = buffer.slice(0, 16);
-        const hex = line.toString('hex').match(/.{1,2}/g).join(' ');
-        const ascii = line.toString('ascii').replace(/[^\x20-\x7E]/g, '.');
-        console.log(`${hex.padEnd(48)} | ${ascii}`);
-        buffer = buffer.slice(16);
-    }
-
-
-}
-
-// a reader class to parse a byte buffer
-// has an offset and a method to read bytes
-class ByteReader {
-    constructor(buffer) {
-        this.buffer = buffer;
-        this.offset = 0;
-    }
-
-    readUInt32BE() {
-        if (typeof this.buffer.readUInt32BE === 'function') {
-            const value = this.buffer.readUInt32BE(this.offset);
-            this.offset += 4;
-            return value;
-        } else {
-            // Fallback for Uint8Array or ArrayBuffer
-            const value =
-                (this.buffer[this.offset] << 24) |
-                (this.buffer[this.offset + 1] << 16) |
-                (this.buffer[this.offset + 2] << 8) |
-                (this.buffer[this.offset + 3]);
-            this.offset += 4;
-            return value >>> 0;
-        }
-    }
-
-    readByte() {
-        const value = this.buffer[this.offset];
-        this.offset += 1;
-        return value;
-    }
-
-    readString(length) {
-        const bytes = this.buffer.slice(this.offset, this.offset + length);
-        const str = new TextDecoder('utf-8').decode(bytes);
-        this.offset += length;
-        return str;
-    }
-
-    readNullTerminatedString() {
-        let str = '';
-        while (this.offset < this.buffer.length) {
-            const byte = this.buffer[this.offset++];
-            if (byte === 0) break; // null terminator
-            str += String.fromCharCode(byte);
-        }
-        return str;
-    }
-
-    readBytes(length) {
-        const bytes = this.buffer.slice(this.offset, this.offset + length);
-        this.offset += length;
-        return bytes;
-    }
-
-    skipBytes(length) {
-        if (this.offset + length > this.buffer.length) {
-            throw new Error("Attempt to skip beyond buffer length");
-        }
-        this.offset += length;
-    }
-
-    hasMore() {
-        return this.offset < this.buffer.length;
-    }
-}
-
-function parseMetaData(meta) {
-    let buffer = meta.data;
-    let reader = new ByteReader(buffer);
-
-    const hdlr = reader.readString(4);
-    if (hdlr !== 'hdlr') {
-        console.warn("Expected 'hdlr' atom, found:", hdlr);
-        return new Map();
-    }
-
-    const version = reader.readByte();
-    const flags = reader.readBytes(3);
-    const predefined = reader.readBytes(4); // predefined bytes, usually 0
-    const handlerType = reader.readString(4);
-
-    if (handlerType !== 'mdta') {
-        console.warn("Expected 'mdta' handler type, found:", handlerType);
-        return new Map();
-    }
-
-    reader.readBytes(12); // skip reserved bytes (3 const uint32s)
-
-    const humanReadableName = reader.readNullTerminatedString();
-    console.log("Human-readable name:", humanReadableName);
-
-    //const keysAtom = reader.readString(40);
-
-   //console.log("Keys Atom:", keysAtom);
-
-    reader.readByte();
-
-    const atomSize = reader.readUInt32BE();
-    const atomType = reader.readString(4);
-
-    console.log("Atom Type:", atomType, "Size:", atomSize);
-
-    // parsing keys will give us an array of keys
-    // that we can later use as the key for the values in ilst
-    if (atomType !== 'keys') {
-        console.warn("Expected 'keys' atom, found:", atomType);
-        return new Map();
-    }
-
-    reader.skipBytes(4); // skip version and flags
-
-    const keyCount = reader.readUInt32BE();
-    console.log("Key Count:", keyCount);
-    const keys = [];
-    for (let i = 0; i < keyCount; i++) {
-        const keySize = reader.readUInt32BE();
-        const namespace = reader.readString(4); // usually 'mdta'
-        const key = reader.readString(keySize - 8); // -8 for the size and namespace bytes
-        keys.push(key);
-        console.log("Key:", key);
-    }
-
-    // see: https://developer.apple.com/documentation/quicktime-file-format/metadata_item_list_atom
-
-    const ilstAtomSize = reader.readUInt32BE();
-    const ilstAtomType = reader.readString(4);
-    console.log("ILST Atom Type:", ilstAtomType, "Size:", ilstAtomSize);
-
-    const kv = new Map();
-    if (ilstAtomType !== 'ilst') {
-        console.warn("Expected 'ilst' atom, found:", ilstAtomType);
-        return kv;
-    }
-
-    const endOffset = reader.offset + ilstAtomSize - 8; // -8 for the size and type bytes
-    while (reader.offset < endOffset && reader.hasMore()) {
-
-        // EXAMPLE
-        // 0000001D  DataSize 29 bytes (correct, entire atom size, including these 4 bytes)
-        // 00000004  index = 4 (the index of the key in the keys array, correct)
-        // 00000015  type, not sure what this is, but it seems to be the type of the data
-        // 64617461  type of atom, should be 'data'
-        // 00000001  ??
-        // 00000000  ??
-        // 4170706C 65
-
-
-
-
-        const dataSize = reader.readUInt32BE();
-        const nextOffset = reader.offset + dataSize - 4;
-        const dataIndex = reader.readUInt32BE();
-        const dataType = reader.readUInt32BE(4);
-        console.log("Data Type:", dataType, "Index", dataIndex, "Size:", dataSize);
-
-        const actualType = reader.readString(4);
-        if (actualType !== 'data') {
-            console.warn("Expected 'data' atom, found:", actualType);
-            reader.skipBytes(dataSize - 12); // skip to the next atom
-            continue;
-        }
-
-        // not sure about this
-        reader.skipBytes(8);
-
-        // THIS IS NOT RIGHT, PROBABLY NEED TO BE SKIPPIN
-        // SOME MORE OPTIONAL ATOMS HERE, AND THE ABOVE IS SUS
-
-        kv[keys[dataIndex-1]] = reader.readString(dataSize - 24);
-
-
-
-    }
-
-    console.log("Extracted Key-Value Pairs:", kv);
-
-
-   // debugger;
-
-    return kv;
-
-}
-
-
-
-
-function extractFromISO6709Map(metaMap) {
-    const str = metaMap['com.apple.quicktime.location.ISO6709'];
-    if (!str) return null;
-    const m = str.match(/^([+-][0-9.]+)([+-][0-9.]+)([+-][0-9.]+)?/);
-    if (!m) return null;
-
-    return {
-        latitude: parseFloat(m[1]),
-        longitude: parseFloat(m[2]),
-        altitude: m[3] ? parseFloat(m[3]) : null,
-    };
-}
-
-function extractFromQuickTimeCreationDateMap(metaMap) {
-    const raw = metaMap['com.apple.quicktime.creationdate'];
-    if (!raw) return null;
-    return raw;
-}
-
-function extractFromQuickTimeCreationDate(ilst) {
-    const box = ilst?.find(b => b.type === 'com.apple.quicktime.creationdate');
-    const raw = box?.boxes?.find(b => b.type === 'data')?.data;
-    if (!raw) return null;
-    return decodeText(raw);
-}
-
-// ... existing helper and extractor functions remain unchanged below
-
-
-function dumpAllBoxData(boxes, path = []) {
-    for (const box of boxes) {
-        const fullPath = [...path, box.type].join('/');
-        if (box.data) {
-            const text = decodeText(box.data);
-            const float32 = new Float32Array(box.data.buffer, box.data.byteOffset, Math.floor(box.data.byteLength / 4));
-            const float64 = new Float64Array(box.data.buffer, box.data.byteOffset, Math.floor(box.data.byteLength / 8));
-            console.group(`Box: ${fullPath}`);
-            console.log("Raw Bytes:", box.data);
-            console.log("As String:", text);
-            console.log("As Float32Array:", Array.from(float32));
-            console.log("As Float64Array:", Array.from(float64));
-            console.groupEnd();
-        }
-        if (box.boxes) dumpAllBoxData(box.boxes, [...path, box.type]);
-    }
-}
-
-function debugWrap(label, fn) {
+    // The metadata is optional, so a box we cannot read must never stop the video loading.
     try {
-        const result = fn();
-        console.log(`✔ ${label}:`, result);
-        return result;
+        const moov = boxes?.find(box => box.type === "moov");
+        const moovChildren = moov?.boxes ?? [];
+        const udta = moovChildren.find(box => box.type === "udta")?.boxes ?? [];
+        const mvhd = moovChildren.find(box => box.type === "mvhd");
+
+        const items = new Map();
+        for (const meta of [...moovChildren, ...udta].filter(box => box.type === "meta")) {
+            readMetaItems(boxPayload(meta), items);
+        }
+        const udtaBox = type => udta.find(box => box.type === type);
+
+        const location =
+            locationFromISO6709(items.get("com.apple.quicktime.location.ISO6709"), "QuickTime location key") ??
+            locationFromISO6709(userDataText(udtaBox("©xyz")), "udta ©xyz") ??
+            locationFromISO6709(items.get("©xyz"), "ilst ©xyz") ??
+            locationFromLoci(boxPayload(udtaBox("loci")));
+
+        if (location) {
+            result.latitude = location.latitude;
+            result.longitude = location.longitude;
+            result.altitude = location.altitude;
+            result.locationSource = location.source;
+        }
+
+        const date =
+            dateFromText(items.get("com.apple.quicktime.creationdate"), "QuickTime creationdate key") ??
+            dateFromText(textOf(boxPayload(udtaBox("date"))), "udta date") ??
+            dateFromText(userDataText(udtaBox("©day")), "udta ©day") ??
+            dateFromText(items.get("©day"), "ilst ©day") ??
+            startFromMvhd(mvhd, items);
+
+        if (date) {
+            result.creationDate = date.creationDate;
+            result.creationDateSource = date.source;
+        }
     } catch (e) {
-        console.warn(`✖ ${label} failed:`, e);
-        return null;
+        console.warn("Video metadata could not be read:", e);
     }
+
+    console.log("Video metadata:", result);
+    return result;
 }
 
-function findBox(boxes, path) {
-    let current = boxes;
-    for (const name of path) {
-        const next = current?.find(b => b.type === name);
-        if (!next) return null;
-        current = next.boxes;
-    }
-    return current?.__box || current;
-}
-
-function decodeText(uint8arr) {
-    return new TextDecoder().decode(uint8arr).replace(/\0/g, '').trim();
-}
-
-function extractFromLocationInformation(udta) {
-    const box = udta?.find(
-        b =>
-            b.type === 'com.apple.quicktime.location' ||
-            b.type === 'LocationInformation'
-    );
+// MP4Box keeps the raw payload of a box it does not fully handle in box.data. For a box it
+// treats as a FullBox (it does so for 'meta') it reads the 4-byte version/flags header first and
+// keeps only what follows. Put those 4 bytes back, so every payload starts where the file's does.
+function boxPayload(box) {
     if (!box?.data) return null;
+    if (box.version === undefined) return box.data;
+    const bytes = new Uint8Array(box.data.byteLength + 4);
+    bytes[0] = box.version;
+    bytes[1] = (box.flags >> 16) & 0xff;
+    bytes[2] = (box.flags >> 8) & 0xff;
+    bytes[3] = box.flags & 0xff;
+    bytes.set(box.data, 4);
+    return bytes;
+}
 
-    const str = decodeText(box.data);
-    const match = str.match(/Lat=([-0-9.]+)\s+Lon=([-0-9.]+)\s+Alt=([-0-9.]+)/);
+function fourCC(bytes, offset) {
+    return String.fromCharCode(bytes[offset], bytes[offset + 1], bytes[offset + 2], bytes[offset + 3]);
+}
+
+function textOf(bytes, start = 0, end = bytes?.byteLength) {
+    if (!bytes) return null;
+    return new TextDecoder().decode(bytes.subarray(start, end)).replace(/\0/g, "").trim();
+}
+
+// The boxes inside bytes[start, end). Each is {type, start, end} with start/end bounding its payload.
+function childBoxes(bytes, start = 0, end = bytes.byteLength) {
+    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    const children = [];
+    let offset = start;
+    while (offset + 8 <= end) {
+        const size = view.getUint32(offset);
+        if (size < 8 || offset + size > end) break;
+        children.push({type: fourCC(bytes, offset + 4), start: offset + 8, end: offset + size});
+        offset += size;
+    }
+    return children;
+}
+
+// Adds the items of a 'meta' box to items: by key name for QuickTime 'mdta' metadata, and by
+// four-character code (such as '©day') for iTunes-style 'mdir' metadata. The first value found
+// for a name is kept.
+function readMetaItems(bytes, items) {
+    if (!bytes || bytes.byteLength < 8) return;
+    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+
+    // QuickTime writes 'meta' as a plain box. ISO files write it with a version/flags header.
+    const start = fourCC(bytes, 4) === "hdlr" ? 0 : 4;
+
+    let handler = null;
+    let keys = [];
+    for (const box of childBoxes(bytes, start)) {
+        if (box.type === "hdlr") {
+            // version/flags, pre_defined, then the handler type
+            handler = fourCC(bytes, box.start + 8);
+        } else if (box.type === "keys") {
+            keys = [];
+            const count = view.getUint32(box.start + 4);
+            let offset = box.start + 8;
+            for (let i = 0; i < count; i++) {
+                const size = view.getUint32(offset);
+                keys.push(textOf(bytes, offset + 8, offset + size));   // after size and namespace
+                offset += size;
+            }
+        } else if (box.type === "ilst") {
+            for (const item of childBoxes(bytes, box.start, box.end)) {
+                // An 'mdta' item's type field is the 1-based index of its key.
+                const name = handler === "mdta" ? keys[view.getUint32(item.start - 4) - 1] : item.type;
+                const data = childBoxes(bytes, item.start, item.end).find(box => box.type === "data");
+                if (name && data && !items.has(name)) {
+                    // The data box starts with a type indicator (1 = UTF-8 text) and a locale.
+                    // Only text values are read. Other items are recorded by name, with null.
+                    const isText = (view.getUint32(data.start) & 0xffffff) === 1;
+                    items.set(name, isText ? textOf(bytes, data.start + 8, data.end) : null);
+                }
+            }
+        }
+    }
+}
+
+// QuickTime user-data text, as in udta '©xyz': a 16-bit length and a 16-bit language code
+// before the text.
+function userDataText(box) {
+    const bytes = boxPayload(box);
+    if (!bytes || bytes.byteLength < 4) return null;
+    const length = (bytes[0] << 8) | bytes[1];
+    return textOf(bytes, 4, 4 + length);
+}
+
+// ISO 6709 in decimal degrees: "+38.1234-121.1234+077.123/" (Apple) or "+53.5765-2.8823/"
+// (Android, which writes no altitude).
+function locationFromISO6709(text, source) {
+    const match = text?.match(/^([+-]\d+(?:\.\d+)?)([+-]\d+(?:\.\d+)?)([+-]\d+(?:\.\d+)?)?/);
     if (!match) return null;
-
     return {
         latitude: parseFloat(match[1]),
         longitude: parseFloat(match[2]),
-        altitude: parseFloat(match[3]),
+        altitude: match[3] !== undefined ? parseFloat(match[3]) : null,
+        source,
     };
 }
 
-function extractFromISO6709(ilst) {
-    const box = ilst?.find(
-        b => b.type === 'com.apple.quicktime.location.ISO6709'
-    );
-    const raw = box?.boxes?.find(b => b.type === 'data')?.data;
-    if (!raw) return null;
-
-    const str = decodeText(raw);
-    const m = str.match(/^([+-][0-9.]+)([+-][0-9.]+)([+-][0-9.]+)?/);
-    if (!m) return null;
-
+// 3GPP TS 26.244 'loci': version/flags, language, a null-terminated place name, a role byte,
+// then longitude, latitude and altitude (metres, sea level = 0) as 16.16 fixed point.
+function locationFromLoci(bytes) {
+    if (!bytes || bytes.byteLength < 20) return null;
+    let offset = 6;
+    while (offset < bytes.byteLength && bytes[offset] !== 0) offset++;
+    offset += 2;    // the terminator and the role
+    if (offset + 12 > bytes.byteLength) return null;
+    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
     return {
-        latitude: parseFloat(m[1]),
-        longitude: parseFloat(m[2]),
-        altitude: m[3] ? parseFloat(m[3]) : null,
+        longitude: view.getInt32(offset) / 65536,
+        latitude: view.getInt32(offset + 4) / 65536,
+        altitude: view.getInt32(offset + 8) / 65536,
+        source: "udta loci",
     };
 }
 
-function extractFromXYZ(ilst) {
-    const box = ilst?.find(b => b.type === '©xyz');
-    const raw = box?.boxes?.find(b => b.type === 'data')?.data;
-    if (!raw) return null;
-
-    const str = decodeText(raw);
-    const m = str.match(/^([+-][0-9.]+)([+-][0-9.]+)([+-][0-9.]+)?/);
-    if (!m) return null;
-
-    return {
-        latitude: parseFloat(m[1]),
-        longitude: parseFloat(m[2]),
-        altitude: m[3] ? parseFloat(m[3]) : null,
-    };
+// "2025-10-20T21:35:53-0700" -> "2025-10-20T21:35:53-07:00". The ECMAScript date format needs
+// the colon in the offset; without it, parsing is up to the browser.
+function dateFromText(text, source) {
+    if (!text || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(text)) return null;
+    const creationDate = text.replace(/([+-]\d{2})(\d{2})$/, "$1:$2");
+    if (Number.isNaN(Date.parse(creationDate))) return null;
+    return {creationDate, source};
 }
 
-function extractFromLoci(udta) {
-    const box = udta?.find(b => b.type === 'loci');
-    if (!box?.data || box.data.byteLength < 20) return null;
+// The mvhd creation time is seconds since 1904, in UTC. A writer with no time (ffmpeg) leaves 0.
+//
+// Android's MPEG4Writer, which the camera apps record through, stamps mvhd with the wall-clock
+// time at the moment it writes the moov box, and it writes that box in stop(). So for an Android
+// recording the time is the END of the recording, and the start is that minus the duration.
+// The writer adds com.android.* keys to the file, which is how we tell. The result is a few
+// seconds late, never early: mvhd holds whole seconds, and the moov box is written after the last
+// frame. Against a filmed clock (Pixel 7 Pro) it was 1.3 to 2.3 s late; against the start time in
+// Pixel and Samsung file names (which are themselves up to ~1.4 s late), 0.1 to 3 s.
+function startFromMvhd(mvhd, items) {
+    if (!mvhd?.creation_time) return null;
+    let ms = MP4_EPOCH_MS + mvhd.creation_time * 1000;
+    let source = "mvhd creation time";
 
-    const dv = new DataView(box.data.buffer, box.data.byteOffset, box.data.byteLength);
-    let o = 0;
-
-    const version = dv.getUint8(o); o += 1;
-    o += 3; // flags
-
-    const langBits = dv.getUint16(o); o += 2;
-    const langCode = String.fromCharCode(
-        ((langBits >> 10) & 0x1F) + 0x60,
-        ((langBits >> 5) & 0x1F) + 0x60,
-        (langBits & 0x1F) + 0x60
-    );
-
-    let name = "";
-    while (o < box.data.byteLength && box.data[o] !== 0) {
-        name += String.fromCharCode(box.data[o]);
-        o++;
-    }
-    o++; // null terminator
-
-    const role = dv.getUint8(o); o += 1;
-
-    const lon_fixed = dv.getInt32(o, false); o += 4;
-    const lat_fixed = dv.getInt32(o, false); o += 4;
-    const alt_fixed = dv.getInt32(o, false); o += 4;
-
-    const lon = lon_fixed / 65536;
-    const lat = lat_fixed / 65536;
-    const alt = alt_fixed / 65536;
-
-    let body = "";
-    while (o < box.data.byteLength && box.data[o] !== 0) {
-        body += String.fromCharCode(box.data[o]);
-        o++;
-    }
-    o++; // null terminator
-
-    let notes = "";
-    while (o < box.data.byteLength && box.data[o] !== 0) {
-        notes += String.fromCharCode(box.data[o]);
-        o++;
+    if ([...items.keys()].some(key => key.startsWith("com.android."))) {
+        ms -= mvhd.duration / mvhd.timescale * 1000;
+        source = "Android mvhd creation time (end of recording) minus the duration";
     }
 
-    return {
-        language: langCode,
-        name,
-        role,
-        latitude: lat,
-        longitude: lon,
-        altitude: alt,
-        body,
-        notes,
-    };
-}
-
-function extractFromDateTimeOriginal(ilst) {
-    const box = ilst?.find(b => b.type === 'com.apple.quicktime.datetimeoriginal');
-    const raw = box?.boxes?.find(b => b.type === 'data')?.data;
-    if (!raw) return null;
-
-    const text = decodeText(raw);
-    return text.replace(/^(\d{4}):(\d{2}):(\d{2})/, '$1-$2-$3');
-}
-
-function extractFromDateBox(udta) {
-    const box = udta?.find(b => b.type === 'date');
-    if (!box?.data) return null;
-    return decodeText(box.data);
-}
-
-function extractFromDay(ilst) {
-    const box = ilst?.find(b => b.type === '©day');
-    const raw = box?.boxes?.find(b => b.type === 'data')?.data;
-    if (!raw) return null;
-    return decodeText(raw);
-}
-
-function extractFromMvhd(mvhdBox) {
-    if (!mvhdBox?.creation_time) return null;
-    const epochOffset = Date.UTC(1904, 0, 1) / 1000;
-    const unixSec = mvhdBox.creation_time - epochOffset;
-    return new Date(unixSec * 1000).toISOString();
+    // Samsung records the phone's time zone, which lets us show the local time.
+    const offset = items.get("com.samsung.android.utc_offset")?.match(/^([+-])(\d{2}):?(\d{2})$/);
+    if (!offset) {
+        return {creationDate: new Date(ms).toISOString(), source};
+    }
+    const offsetMinutes = (offset[1] === "-" ? -1 : 1) * (Number(offset[2]) * 60 + Number(offset[3]));
+    const local = new Date(ms + offsetMinutes * 60000).toISOString().slice(0, -1);
+    return {creationDate: `${local}${offset[1]}${offset[2]}:${offset[3]}`, source};
 }

@@ -2120,18 +2120,26 @@ export const setupMethods = {
 
             if (Sit.metadata && !Globals.sitchEstablished) {
                 const meta = Sit.metadata;
-                // got lat, lon, alt?
-                if (meta.latitude && meta.longitude && meta.altitude) {
+                if (meta.latitude !== null && meta.longitude !== null) {
                     const camera = NodeMan.get("fixedCameraPosition");
-                    camera.gotoLLA(meta.latitude, meta.longitude, meta.altitude)
-                    // and set sitchEstablished to true
+                    // The file's altitude is above sea level. Android writes none, and a writer
+                    // with no height (ffmpeg's 'loci') puts a bare 0, so then stand the camera on
+                    // the ground — the same rule as a dropped photo.
+                    if (meta.altitude) {
+                        // A recorded altitude is absolute, so, as for a photo, do not let the
+                        // look camera's clamp lift it onto the terrain/3D-tile surface
+                        // (see applyImportedImageCameraPositionInternal in EXIFUtils.js).
+                        const lookCamera = NodeMan.get("lookCamera", false) ?? NodeMan.get("mainCamera", false);
+                        if (lookCamera) lookCamera.forceAboveSurface = false;
+                        camera.gotoLLA(meta.latitude, meta.longitude, meta.altitude, false);
+                    } else {
+                        camera.gotoLLA(meta.latitude, meta.longitude);
+                    }
                     setSitchEstablished(true);
                 }
 
-                // got date and time?
+                // creationDate is the start of the recording; see ExtractMetadata.js
                 if (meta.creationDate) {
-                    // parse the date and time
-                    // set the GlobalDateTimeNode to this date
                     GlobalDateTimeNode.setStartDateTime(meta.creationDate);
                     // dropped video's embedded date establishes the slider reset target
                     GlobalDateTimeNode.establishDateTimeDefaults();

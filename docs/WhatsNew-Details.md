@@ -9,6 +9,116 @@ lockstep with docs/WhatsNew.md.
 
 ---
 
+## Version 2.175.2 (2026-10-08)
+
+### Improvements
+- **Time and location from more video files** (the release commit; `src/ExtractMetadata.js` rewritten, `src/CustomManagerSetup.js`, new `tests/ExtractMetadata.test.js`).
+  - **Where it runs.** `MP4Demuxer.onReady` (`src/js/mp4-decode/mp4_demuxer.js`) calls `extractAllMetaData(this.file.boxes)` on the box tree that MP4Box parsed, and stores the result in `Sit.metadata`. The `videoLoaded` listener in `setup()` (`src/CustomManagerSetup.js`) applies it in a custom sitch, only while `Globals.sitchEstablished` is false. It sets the camera position (`fixedCameraPosition.gotoLLA`) and the Start Time (`GlobalDateTimeNode.setStartDateTime`, then `establishDateTimeDefaults`).
+  - **Before.** When the new test fixtures are run through the 2.175.1 parser, only the iPhone `.MOV` and iPhone `.mp4` layouts give a time and a location. The Pixel, Samsung, ffmpeg `use_metadata_tags` and `mvhd`-only layouts give nothing. The ffmpeg `.mp4` layout gives its `loci` location with altitude 0, and setup then ignored it. The causes:
+    - The `mvhd` fallback never ran. `findBox()` returned the child list of the box that it found, and `mvhd` has no children, so `extractFromMvhd` always got `undefined`. Its 1904-epoch arithmetic also had the wrong sign.
+    - `©xyz` was looked for among the children of `moov/meta`. Android writes it in `moov/udta` as QuickTime user-data text: a 16-bit length, a 16-bit language code, then the text.
+    - `parseMetaData` read the `mdta` keys at fixed offsets.
+      - iPhone and Android both write `moov/meta` as a plain QuickTime box, with no version/flags header (on Android, `MPEG4Writer::writeMoovLevelMetaBox`). MP4Box parses every `meta` as a FullBox, so it takes the 4-byte size of `hdlr` as version and flags. Thus both payloads start with `hdlr`, as the parser expected.
+      - After the handler type, the parser skipped 12 reserved bytes, read a null-terminated name, then read one more byte. That fits Apple's 2-byte name field (a 34-byte `hdlr`). Android's name field is 1 byte (a 33-byte `hdlr`), so the extra byte took the first byte of the size of the `keys` box.
+      - The next reads gave a wrong size, made from the last three bytes of the real size and the letter `k`, and the type `eys`. The parser logged "Expected 'keys' atom, found: eys" and returned an empty map.
+    - The parser read only a `meta` that is a direct child of `moov`. Thus it never read the ISO `meta` (with a version/flags header) that ffmpeg writes in `udta` with `use_metadata_tags`.
+    - Setup required `meta.latitude && meta.longitude && meta.altitude` to be truthy, so a file with no altitude, or altitude 0, did not move the camera (see Bug Fixes).
+  - **Now.** `extractAllMetaData` returns `{latitude, longitude, altitude, creationDate, locationSource, creationDateSource}`. A value that is not found is `null`. `altitude` is metres above sea level. `creationDate` is an ISO 8601 string for the start of the recording, with the local UTC offset when the file gives one. The two `*Source` fields name the box that gave each value, and the result is logged as "Video metadata:". The whole read is in a `try`/`catch`, so a box that cannot be read never stops the video load.
+    - **Meta items.** `readMetaItems` reads every `meta` box in `moov` and in `moov/udta` into one map, and keeps the first value of each name.
+      - `boxPayload` puts back the 4 bytes that MP4Box took as version/flags.
+      - The parser finds whether the box is plain QuickTime (`hdlr` at byte 4) or ISO (the form that ffmpeg writes in `udta`).
+      - It walks the child boxes by their sizes (`childBoxes`), so the length of the `hdlr` name does not matter.
+      - With an `mdta` handler, the type of each `ilst` item is the 1-based index of its key in `keys`. With another handler (iTunes-style `mdir`), the name is the four-character code, for example `©day`.
+      - Only UTF-8 text values (data type 1) are read. Other items are stored by name with `null`, so a non-text `com.android.*` key still identifies an Android file.
+    - **Location**, first match wins:
+      1. the key `com.apple.quicktime.location.ISO6709` (iPhone `.MOV`; ffmpeg with `use_metadata_tags`);
+      2. `udta ©xyz` (Android; ffmpeg `.mov`);
+      3. an `ilst ©xyz` item;
+      4. the 3GPP `udta loci` box (iPhone `.mp4` export; ffmpeg `.mp4`), whose longitude, latitude and altitude are 16.16 fixed point.
+
+      ISO 6709 text with no altitude (Android) gives `altitude: null`.
+    - **Start time**, first match wins:
+      1. the key `com.apple.quicktime.creationdate`;
+      2. `udta date` (iPhone `.mp4` export, whose `mvhd` time is the export time, not the recording time);
+      3. `udta ©day`;
+      4. an `ilst ©day` item;
+      5. `startFromMvhd`.
+
+      `dateFromText` accepts text that starts `YYYY-MM-DDTHH:MM` and writes a `±HHMM` offset as `±HH:MM`, the ECMAScript date form; without the colon, parsing depends on the browser. Text that does not parse is rejected.
+    - **`mvhd` time.** `startFromMvhd` reads the creation time as seconds since 1904, in UTC. A value of 0 (ffmpeg with no time) means no time.
+      - **Android.** If a key starts with `com.android.`, the time is the end of the recording: Android's `MPEG4Writer` stamps `mvhd` with the wall-clock time when it writes `moov` in `stop()`. The function then subtracts `duration / timescale`. The result is a few seconds late, never early. Against a filmed clock on a Pixel 7 Pro it was 1.3 to 2.3 s late.
+      - **Samsung.** If the key `com.samsung.android.utc_offset` is present, the start is written in that offset (for example `2025-11-04T18:19:39.500+09:00`). Otherwise it is written in UTC.
+      - `setStartDateTime` takes the time zone from the offset in the string (`getOffsetFromDateTimeString`).
+    - **Removed code.** These extractors never matched, so they are removed:
+      - `extractFromLocationInformation` looked for box types that are not four-character codes.
+      - `extractFromXYZ`, `extractFromDay`, `extractFromQuickTimeCreationDate` and `extractFromDateTimeOriginal` searched the direct children of `meta` (`hdlr`, `keys`, `ilst`), not the items in `ilst`.
+  - **Tests.** `tests/ExtractMetadata.test.js` (8 tests) builds each layout byte by byte and parses it with the bundled MP4Box, as for a dropped video. The layouts are:
+    - Pixel;
+    - Android identified from a non-text key;
+    - Samsung with its UTC offset;
+    - iPhone `.MOV`;
+    - iPhone `.mp4` export;
+    - ffmpeg `.mp4` with `loci` and `mvhd` 0;
+    - ffmpeg `use_metadata_tags`;
+    - a file with only `mvhd`.
+- **Conversion command keeps the time and location** (the release commit; `src/js/mp4-decode/mp4_demuxer.js`). In `MP4Demuxer.getConfig()`, a file whose video track WebCodecs does not expose throws "Unsupported MOV/MP4 video codec: …". The codec is named "Apple ProRes" for `apcn`, `apch`, `apcs`, `apco`, `ap4h` and `ap4x`. The suggested command is now `ffmpeg -i input.mov -c:v libx264 -pix_fmt yuv420p -c:a aac -movflags +faststart+use_metadata_tags output.mp4`, followed by "(use_metadata_tags keeps the recording time and location)". As `docs/LoadingVideo.md` now says, without that flag ffmpeg does not copy the iPhone's time and location keys to the new file. With it, ffmpeg writes them as `mdta` keys in `udta/meta`, which `extractAllMetaData` now reads.
+- **Podman pull warnings** (`b4baa789`; `install.sh`, `sitrec.sh`, `docs/dev/Installing-and-configuring.md`, new `tests/podmanStorageCheck.test.js`).
+  - **Problem.** On some Linux hosts, a rootless Podman pull fails while it unpacks the layers, and the error does not give the cause. Two host settings cause it:
+    - The image store (graphroot) is on a network file system, for example a home directory on NFS or SMB. Rootless Podman with fuse-overlayfs then sets `force_mask` by itself and writes a `user.containers.override_stat` extended attribute on each unpacked file. A share without user extended attributes refuses this: `processing tar file(lsetxattr /etc: operation not supported)`. The image is not the cause: no layer of 2.175.1 (amd64 or arm64), or of its base images, carries an extended attribute.
+    - The account has no subordinate ID range in `/etc/subuid` or `/etc/subgid`: `potentially insufficient UIDs or GIDs available in user namespace`.
+  - **The check.** `check_podman_storage` is in both scripts, and the two copies must stay the same.
+    - It runs only for Podman: `RUNTIME=podman` in `install.sh`; in `sitrec.sh`, not when `COMPOSE` is `docker*` or `dry-run`.
+    - It runs only on Linux. On macOS and Windows the store is inside the podman machine VM.
+    - It reads `podman info`: the rootless flag, the UID and GID map sizes, and `Store.GraphRoot`. It does nothing if Podman is not rootless or if `podman info` fails.
+    - **Network store warning.** If `stat -f -c %T` on the graphroot gives a network file system type (`nfs*`, `smb*`, `cifs`, `ceph`, `afs`, `gpfs`, `lustre` and similar), it prints a warning with a `~/.config/containers/storage.conf` example that sets `graphroot` to a local disk.
+    - **Subordinate ID warning.** If the UID map or the GID map is one entry of size 1, it prints a warning with an example `usermod --add-subuids … --add-subgids …` command, then `podman system migrate`.
+    - Both warnings link to the Podman section of the installation guide.
+  - **Where it runs.**
+    - `install.sh`: right after it prints the runtime, before a bake or an install.
+    - `sitrec.sh pull`, and `versions` (through `switch_version`): before `$COMPOSE pull`.
+    - `sitrec.sh bake`: before `build --pull`.
+
+    It only warns and always returns 0, because NFS 4.2 with xattr support works.
+  - **Docs.** The Podman section of `docs/dev/Installing-and-configuring.md` has two new troubleshooting items.
+    - Network store: how to confirm the store is on a share (`podman info --format '{{.Store.GraphRoot}}'`, then `stat -f -c %T`), and the `storage.conf` fix. Do not use `/tmp` or `/var/tmp`. On SELinux, label the new directory with `semanage fcontext -a -e` and `restorecon`. An alternative is the system-wide `rootless_storage_path`.
+    - Subordinate IDs: the `usermod` fix.
+  - **Tests.** `tests/podmanStorageCheck.test.js` (6 tests) runs both scripts with stub `podman`, `uname` and `stat` commands:
+    - NFS and no subordinate range, for `install.sh`;
+    - a local disk with no warning;
+    - rootful Podman and a non-Linux host, both skipped;
+    - a CIFS share under `sitrec.sh bake`;
+    - Docker skipped by `sitrec.sh`.
+
+### Bug Fixes
+- **Fixed a video's altitude being used as height above the ground** (the release commit; `src/CustomManagerSetup.js`, `src/nodes/CNodePositionLLA.js`).
+  - **Before.** `gotoLLA(lat, lon, alt=2)` always set `agl = true`. So the altitude from an iPhone file, which is metres above sea level, put the camera that height above the ground.
+  - **Now.** When `meta.altitude` is truthy, setup calls `gotoLLA(lat, lon, altitude, false)`.
+    - With `agl` false, `CNodePositionLLA.recalculate()` treats the value as MSL and adds the geoid offset (`meanSeaLevelOffset`) to get the ellipsoid height.
+    - **Above Ground Level** (Camera → Location) is off.
+    - Setup also sets `forceAboveSurface = false` on `lookCamera`, or on `mainCamera` if there is no `lookCamera`. Thus `CNodeControllerTrackPosition` does not lift the camera onto the terrain or 3D-tile surface. A photo uses the same rule (`applyImportedImageCameraPositionInternal` in `src/EXIFUtils.js`).
+- **Fixed a video's location being ignored when the file gives no altitude** (the release commit; `src/CustomManagerSetup.js`).
+  - **Before.** The `videoLoaded` listener required `meta.latitude && meta.longitude && meta.altitude` to be truthy. So it skipped Android files (ISO 6709 with no altitude), ffmpeg `loci` (which writes a bare 0), and a latitude or longitude of exactly 0.
+  - **Now.** It requires `latitude !== null && longitude !== null`.
+    - With no altitude, or altitude 0, it calls `gotoLLA(lat, lon)`. The camera goes 2 m above the ground with **Above Ground Level** on. This is the same 2 m (`DEFAULT_AGL_METRES`) that `src/EXIFUtils.js` uses for a photo with no usable altitude.
+    - Unlike the photo path, this branch does not change `forceAboveSurface`.
+    - In both cases setup calls `setSitchEstablished(true)`.
+- **Fixed `gotoLLA` setting the camera height in feet instead of metres when altitudes are shown in feet** (the release commit; `src/nodes/CNodePositionLLA.js`).
+  - **Before.** `gotoLLA` wrote `alt` (metres) straight into `this.guiAlt.value`. That field holds the value in the current small unit, which is feet in Nautical (the default), Imperial and Feet units. `recalculate()` takes the height from `this.guiAlt.getValue()`, which converts from the display unit to metres. Thus the camera went `alt` feet, not `alt` metres, and the field showed the metre number as feet. For example, **Geolocate from browser** gave 3 ft (0.91 m) in place of 3 m.
+  - **Now.** `gotoLLA(lat, lon, alt = 2, agl = true)` calls `this.guiAlt.setValueWithUnits(alt, "metric", "small", true)`, as the Lookup path of the same node already did. The new optional `agl` parameter sets `this.agl`; before, `gotoLLA` always set it to `true`. `alt` is metres above the ground, or above sea level when `agl` is false.
+  - **Callers.** All callers get the fix:
+    - video metadata (above);
+    - **Geolocate from browser** (Camera → Location; 3 m above the ground);
+    - the Sitrec API `gotoLLA` call (`src/CSitrecAPI.js`, also reached from `src/CClientNLU.js`);
+    - the camera moves in `src/Football.js` and `src/Nimitz.js`.
+
+### Documentation
+- **Time and location in a video file** (`docs/LoadingVideo.md`, new section; `docs/TimeAndSync.md`).
+  - The section has a table of what each kind of file gives: iPhone `.MOV`, iPhone `.mp4` (exported or shared), Android, and files written by ffmpeg.
+  - It gives the rule for no altitude or altitude 0: the camera goes 2 m above the ground, with Above Ground Level on.
+  - It warns that an edited, trimmed or converted video can carry the time of that change, not the time of the recording.
+  - It gives the ffmpeg command with `-movflags +faststart+use_metadata_tags` for an Apple ProRes video.
+  - `docs/TimeAndSync.md` now says that a video that records when and where it was made also sets the Start Time and the camera position, and links to the new section.
+
 ## Version 2.175.1 (2026-10-05)
 
 ### Improvements
