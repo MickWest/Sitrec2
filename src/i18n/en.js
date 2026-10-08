@@ -804,6 +804,7 @@ const en = {
                 savingLoading: "Saving and Loading Sitches",
                 tracks: "Tracks and Data Sources",
                 kmlDataSources: "Where to Get Flight Data",
+                recordedFireballs: "Recorded Fireballs",
                 objectReferences: "Reference Objects",
                 gis: "GIS, Geodesy and Altitude",
                 terrain: "Terrain and Elevation",

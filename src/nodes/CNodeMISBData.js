@@ -40,6 +40,7 @@ export class CNodeMISBDataTrack extends CNodeEmptyArray {
 
         // For tracks with relative timestamps (e.g., seconds from 0), store metadata
         // to enable user override of start time via GUI
+        this.fireballObservedInterval = v.fireballObservedInterval ?? false;
         if (v.trackFile && v.trackFile.isRelativeTime) {
             this.isRelativeTime = true;
             this.parsingBaseTime = v.trackFile.parsingBaseTime;
@@ -1714,12 +1715,12 @@ export class CNodeMISBDataTrack extends CNodeEmptyArray {
         if (alt < -1000) return false
         if (alt > 36000000) return false
 
-        if (lat === 0) {
+        if (lat === 0 && !this.fireballObservedInterval) {
             if (this.lastValidSlot === undefined || Math.abs(this.getLat(this.lastValidSlot)) > 1.0) {
                 return false;
             }
         }
-        if (lon === 0) {
+        if (lon === 0 && !this.fireballObservedInterval) {
             if (this.lastValidSlot === undefined || Math.abs(this.getLon(this.lastValidSlot)) > 1.0) {
                 return false;
             }
@@ -2142,14 +2143,14 @@ export class CNodeMISBDataTrack extends CNodeEmptyArray {
         if (alt > 36000000) return false
 
         // check for zeros, as they are likely to be invalid
-        if (lat ===0 ) {
+        if (lat ===0 && !this.fireballObservedInterval) {
             // check if the last valid slot's lat was near zero, if so we allow this
             if (this.lastValidSlot === undefined || Math.abs(this.getLat(this.lastValidSlot)) > 1.0) {
                 return false;
             }
         }
 
-        if (lon ===0 ) {
+        if (lon ===0 && !this.fireballObservedInterval) {
             // check if the last valid slot's lon was near zero, if so we allow this
             if (this.lastValidSlot === undefined || Math.abs(this.getLon(this.lastValidSlot)) > 1.0) {
                 return false;
@@ -2217,4 +2218,3 @@ export function removeLOSNodeColumnNodes(trackID) {
     NodeMan.disposeRemove(trackID+"sensorEl")
     NodeMan.disposeRemove(trackID+"sensorRoll")
 }
-

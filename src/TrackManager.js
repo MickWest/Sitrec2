@@ -202,6 +202,7 @@ export function syncGlobalSphereResize() {
     control.setValue(max, true);              // true = quietly, no onChange
 }
 import {CTrackFile} from "./TrackFiles/CTrackFile";
+import {addFireballTrackControls} from "./FireballUI";
 import {CTrackFileSonde} from "./TrackFiles/CTrackFileSonde";
 import {CNodeDisplayBalloonSphere} from "./nodes/CNodeDisplayBalloonSphere";
 import {CNodeSondeColor} from "./nodes/CNodeSondeColor";
@@ -594,6 +595,7 @@ class CTrackManager extends CManager {
             // HAE sources (e.g. STANAG cs="WGS_84") report ellipsoidal altitude; flag it so
             // the pipeline skips the MSL->HAE geoid add. Default false keeps MSL sources as-is.
             altitudeIsHAE: (trackFile instanceof CTrackFile) && trackFile.isAltitudeHAE(trackIndex),
+            fireballObservedInterval: !!trackFile.fireball,
         });
 
         return true;
@@ -619,7 +621,7 @@ class CTrackManager extends CManager {
 
         // right now we only smooth the track if it's a custom situation
         // otherwise we just use the raw interpolated data
-        if (Sit.name !== "custom") {
+        if (Sit.name !== "custom" || FileManager.get(sourceFile)?.fireball) {
             return new CNodeTrackFromMISB({
                 id: trackID,
                 misb: dataID,
@@ -1021,6 +1023,8 @@ class CTrackManager extends CManager {
                     // track folder in Contents menu
                     trackOb.guiFolder = guiFolder;
                     TrackManager.initTrackDisplayName(trackOb);
+                    const fireball = FileManager.get(trackFileName)?.fireball;
+                    if (fireball) addFireballTrackControls(trackOb.guiFolder, fireball);
 
 
                     const dummy = {
@@ -1183,6 +1187,10 @@ class CTrackManager extends CManager {
                         id: trackID + "_GUI",
                         metaTrack: trackOb,
                     })
+                    if (fireball) {
+                        trackOb.gui.showTrackInLook = true;
+                        trackOb.gui.setTrackVisibility(true);
+                    }
 
                     // For primary tracks (not center tracks), check for spurious data points
                     // and offer to enable filtering. Done after all nodes are set up so
@@ -1190,7 +1198,8 @@ class CTrackManager extends CManager {
                     // Only prompt for manually imported/drag-and-drop files, not when
                     // loading from a saved sitch. For saved sitches, filterEnabled is
                     // restored via deserialization.
-                    if (trackIndex === 0 && !Globals.deserializing) {
+                    // Atmospheric deceleration is not an aircraft bad-point artifact.
+                    if (!fireball && trackIndex === 0 && !Globals.deserializing) {
                         const trackFile = FileManager.get(trackFileName);
                         const rocketDetection = detectRocketLikeTrack(trackFileName, trackDataNode.misb, trackFile);
 

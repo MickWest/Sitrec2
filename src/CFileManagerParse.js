@@ -24,8 +24,10 @@ import {CNodeArray} from "./nodes/CNodeArray";
 import {CTrackFileSTANAGCSV, isSTANAGCSV} from "./TrackFiles/CTrackFileSTANAGCSV";
 import {CTrackFileBOT, isBOTCSV} from "./TrackFiles/CTrackFileBOT";
 import {CTrackFileSoundingXML} from "./TrackFiles/CTrackFileSoundingXML";
+import {CTrackFileFireball} from "./TrackFiles/CTrackFileFireball";
 
 const trackFileClasses = [
+    CTrackFileFireball,
     CTrackFileKML,
     CTrackFileSTANAG,
     CTrackFileSoundingXML, // XML wind profile, layout from SITREC_CUSTOM_SOUNDING_* settings

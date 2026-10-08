@@ -163,6 +163,11 @@ export const helpDocs = [
         chatDesc: "Where to GET flight data, and which export option to choose. Read this for 'how do I find out if it was a plane', 'how do I get ADS-B data', 'how do I download a flight track', or any question naming ADS-B Exchange, FlightRadar24, FlightAware, Planefinder or RadarBox. Names the exact export button per service, explains ADS-B Exchange's three altitude options and which one to pick, warns that pasting a live map URL does not import a track, and covers the KML/KMZ structures Sitrec understands.",
     },
     {
+        file: "docs/RecordedFireballs", labelKey: "menus.help.documentation.recordedFireballs",
+        section: "data", menuId: "file", role: "reference",
+        chatDesc: "Was it a meteor or fireball? How do I find a recorded fireball near my time and place and load its path? Covers File → Recorded fireballs…, importing a Global Meteor Network (GMN) trajectory summary file, searching by time window, radius and magnitude, jumping to the observed start or the estimated peak, why the peak time is an estimate, heights above the WGS84 ellipsoid, the .fireball.json format for measured samples, and why no match does not rule out a meteor.",
+    },
+    {
         file: "docs/SavingAndLoading", labelKey: "menus.help.documentation.savingLoading",
         section: "data", menuId: "file", role: "reference",
         chatDesc: "Saving, loading, and sharing sitches — versioned server/S3 saves vs fast local-folder saves, what a saved sitch does and does not capture, and how to hand an analysis to someone else so they can reproduce it.",

@@ -90,6 +90,7 @@ import {convertTiffBufferToPngImage} from "./TIFFUtils";
 import {extractFlightClubInfo, flightClubToCSVStrings, isFlightClubJSON} from "./ParseFlightClubJSON";
 import {CSitchBrowser} from "./CSitchBrowser";
 import {CTrackBrowser} from "./CTrackBrowser";
+import {openFireballBrowser} from "./FireballUI";
 import {ViewMan} from "./CViewManager";
 import {isResolvableSitrecReference, resolveURLForFetch, toCanonicalSitrecRef} from "./SitrecObjectResolver";
 import {getEnv, getEnvBool} from "./envUtils";
@@ -227,6 +228,7 @@ export class CFileManager extends CManager {
 
 
             this.guiFolder.add(this, "importFile").name(t("file.importFile.label")).perm().tooltip(t("file.importFile.tooltip"));
+            this.guiFolder.add({openFireballBrowser}, "openFireballBrowser").name("Recorded fireballs…").perm();
 
             // Settings that change what importing DOES, as opposed to the
             // commands above that do it. `perm` so the folder and its state

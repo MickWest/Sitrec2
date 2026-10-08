@@ -593,16 +593,25 @@ export class CNodeTrackFromMISB extends CNodeTrack {
                 assert(0, "Time data is not increasing slot =" + slot + " time=" + lookupTimes[slot] + " next time=" + lookupTimes[slot+1]);
 
            // assert(slot < points, "not enough data, or a bug in your code - Time wrong? id=" + this.id)
+            // A recorded fireball has no evidence outside its observed interval.
+            // Hold its endpoints rather than extrapolate an atmospheric path.
+            if (misb.fireballObservedInterval) msNow = Math.max(lookupTimes[0], Math.min(lookupTimes[points - 1], msNow));
             const fraction = (msNow - lookupTimes[slot]) / (lookupTimes[slot + 1] - lookupTimes[slot])
 
      //       assert(fraction >= 0 && fraction <= 1, "CNodeTrackFromMISB:recalculate(): fraction out of range: " + fraction + " slot = " + slot + " msNow = " + msNow + " timeArray[slot] = " + this.timeArray[slot] + " timeArray[slot+1] = " + this.timeArray[slot+1] + " id=" + this.id)
 
-            const lat = interpolate(this.latArray[slot], this.latArray[slot +1], fraction);
-            const lon = interpolate(this.lonArray[slot], this.lonArray[slot +1], fraction);
+            let lat = interpolate(this.latArray[slot], this.latArray[slot +1], fraction);
+            let lon = interpolate(this.lonArray[slot], this.lonArray[slot +1], fraction);
 
             let pos;
             let alt;
-            if (useAGLPath && terrainNode) {
+            if (misb.fireballObservedInterval) {
+                // Straight, constant-speed segment between measured ECEF positions.
+                // This also avoids longitude-wrap artifacts at the antimeridian.
+                pos = misb.getPosition(slot).clone().lerp(misb.getPosition(slot + 1), fraction);
+                const lla = ECEFToLLAVD_radii(pos);
+                lat = lla.x; lon = lla.y; alt = lla.z;
+            } else if (useAGLPath && terrainNode) {
                 // Cached AGL path. Probe the cache to get the ground point at
                 // (lat, lon) plus the per-frame AGL offset. The cache hands out
                 // monotonic-upgrade values (always the highest-zoom terrain seen),
@@ -715,6 +724,4 @@ export class CNodeTrackFromMISB extends CNodeTrack {
     }
 
 }
-
-
 

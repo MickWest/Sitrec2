@@ -364,7 +364,7 @@ export class CNodeDisplayTrack extends CNode3DGroup {
 
                 new CNodeGUIValue({
                     id: this.id + "altitudeLock",
-                    value: 0,
+                    value: track.fireballObservedInterval ? -1 : 0,
                     start: -1,
                     end: 1000,
                     step: 1,

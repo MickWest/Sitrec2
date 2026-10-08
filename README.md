@@ -30,6 +30,7 @@ assistant — so if you add a doc, add it there.
 
 - [Loading and Filtering Tracks - Formats, importing, filtering, and display](docs/Tracks.md)
 - [Where to Get Flight Data - ADS-B Exchange, FlightRadar24, FlightAware and friends](docs/KMLDataSources.md)
+- [Recorded Fireballs - Finding a Global Meteor Network fireball and loading its path](docs/RecordedFireballs.md)
 - [Saving and Loading Sitches - Server saves and local folder workflow](docs/SavingAndLoading.md)
 - [Custom Models and 3D Objects - Add your own planes](docs/CustomModels.md)
 - [Reference Objects](docs/ObjectReferences.md)

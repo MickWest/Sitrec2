@@ -17,8 +17,10 @@ jest.mock("../../src/EGM96Geoid", () => {
 import {CNode} from "../../src/nodes/CNode";
 import {CNodeManager} from "../../src/nodes/CNodeManager";
 import {CNodeTrackFromMISB} from "../../src/nodes/CNodeTrackFromMISB";
+import {CNodeMISBDataTrack} from "../../src/nodes/CNodeMISBData";
 import {MISB, MISBFields} from "../../src/MISBFields";
 import {setGlobalDateTimeNode, setNodeMan, setSit} from "../../src/Globals";
+import {LLAToECEF, ECEFToLLAVD_radii} from "../../src/LLA-ECEF-ENU";
 
 class TestDateTimeNode extends CNode {
     constructor(startTimeMs) {
@@ -48,6 +50,7 @@ class TestMISBDataNode extends CNode {
     getLon(i) { return this.misb[i][MISB.SensorLongitude]; }
     getRawAlt(i) { return this.misb[i][MISB.SensorTrueAltitude]; }
     getTime(i) { return this.misb[i][MISB.UnixTimeStamp]; }
+    getPosition(i) { return LLAToECEF(this.getLat(i), this.getLon(i), this.getRawAlt(i)); }
     isValid(i) { return this.misb[i] !== undefined; }
     isTerrainDependent() { return false; }
     isAGLLockActive() { return false; }
@@ -88,6 +91,30 @@ describe("CNodeTrackFromMISB timing source selection", () => {
                 getFrameTimeMs: frame => [0, 1000, 3000, 6000][frame] ?? null,
             },
         });
+    });
+
+    test("recorded fireballs interpolate in ECEF across the dateline and hold endpoints", () => {
+        const data = new TestMISBDataNode([
+            makeMISBRow(1_001_000, 0, 179.99, 100000),
+            makeMISBRow(1_003_000, 0, -179.99, 80000),
+        ]);
+        data.fireballObservedInterval = true;
+        const track = new CNodeTrackFromMISB({id: "fireball", misb: "trackData"});
+        const a=data.getPosition(0), b=data.getPosition(1);
+        expect(track.array[0].position.distanceTo(a)).toBeLessThan(0.001);
+        expect(track.array[2].position.distanceTo(a.clone().lerp(b,0.5))).toBeLessThan(0.001);
+        expect(Math.abs(ECEFToLLAVD_radii(track.array[2].position).y)).toBeCloseTo(180,3);
+        expect(track.array[3].position.distanceTo(b)).toBeLessThan(0.001);
+    });
+
+    test("validated fireball endpoints at zero coordinates remain valid and use HAE", () => {
+        const data = new CNodeMISBDataTrack({id: 'zeroFireball', misb: [
+            makeMISBRow(1_001_000, 0, 0, 100000),
+            makeMISBRow(1_003_000, 0.1, 0.1, 80000),
+        ], fireballObservedInterval: true, altitudeIsHAE: true});
+        expect(data.isValid(0)).toBe(true);
+        expect(data._isValidBasic(0)).toBe(true);
+        expect(data.getAltHAE(0)).toBe(100000);
     });
 
     test("ignores video PTS for MISB-shaped tracks without per-record PES PTS", () => {
