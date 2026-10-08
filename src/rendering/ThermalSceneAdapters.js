@@ -122,7 +122,10 @@ export function createThermalSceneAdapter(objects, groundRoots, camera, refracti
         return Object.assign(createThermalRayGeometry({sensorAltitudeM: altitude,
             earthRadiusM: context.R, key: JSON.stringify([geometryDomainKey, altitude, context.R]),
             lift: (d, z) => liftCameraRelative(local, point.set(d, z, 0), point).y - z}),
-        {domainKey: geometryDomainKey, atAltitude});
+        {domainKey: geometryDomainKey, atAltitude,
+            workerSpec: {sensorAltitudeM: altitude, earthRadiusM: context.R, k: context.k,
+                maxBendRad: context.maxBendRad, scaleHeightM: context.scaleHeightM, maxLiftM: context.maxLiftM,
+                domainKey: geometryDomainKey}});
     };
     return {
         materialKey: "terrestrialProjection",
@@ -158,7 +161,9 @@ export function createThermalSceneAdapter(objects, groundRoots, camera, refracti
             if (!binding) return false;
             if (binding.kind === "sea" && settings.seaMode === "statistical") return {sea: true};
             if (binding.kind === "ground" || binding.kind === "sea") return {temperatureK: settings.groundTemperatureK,
-                emissivity: settings.groundEmissivity};
+                emissivity: settings.groundEmissivity,
+                ...(binding.kind === "ground" && settings.groundTemperatureMode === "color" && settings.groundTemperatureSpanK > 0
+                    ? {terrainColor: true} : {})};
             const thermal = binding.node.thermal;
             if (thermal?.mode === "uniform") return {temperatureK: thermal.temperatureK, emissivity: thermal.emissivity};
             const zone = mesh.userData.thermal?.zone;
@@ -323,7 +328,19 @@ export function createThermalReuseKey({budgetMs = 2} = {}) {
                         return values;
                     }), geometry.drawRange.start,
                     geometry.drawRange.count === Infinity ? "all" : geometry.drawRange.count,
-                    materials.map(material => [material.side, material.visible])]));
+                    materials.map(material => {
+                        const state = [material.side, material.visible];
+                        if (binding.kind === "ground" && settings.groundTemperatureMode === "color" && settings.groundTemperatureSpanK > 0) {
+                            const map = material.map;
+                            if (map?.isVideoTexture) throw fail("animated terrain texture");
+                            if (map?.matrixAutoUpdate) map.updateMatrix();
+                            state.push(material.color?.toArray(), material.vertexColors, identity(map), map?.version,
+                                identity(map?.source), map?.source?.version, map?.channel, map?.matrix.elements,
+                                map && [map.wrapS, map.wrapT, map.minFilter, map.magFilter, map.anisotropy,
+                                    map.flipY, map.colorSpace, map.format, map.type]);
+                        }
+                        return state;
+                    })]));
             });
             for (const node of clouds) {
                 check();

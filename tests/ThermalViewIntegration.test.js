@@ -6,7 +6,7 @@ import {BoxGeometry, Group, Mesh, MeshBasicMaterial, PerspectiveCamera, Scene, V
 import {thermalRenderMode, thermalUnavailable, objectThermalState, setupThermalMenu} from "../src/rendering/ThermalLoader";
 import {effectiveRenderMode} from "../src/rendering/ViewRenderMode";
 import {createThermalViewAdapter, lensStepValidated, saveThermalSettings, setupThermalVehicleControls, thermalFieldMapping, thermalGeometry,
-    thermalSettings, thermalSettingsForCameraState} from "../src/rendering/ThermalViewAdapter";
+    thermalSettings, thermalSettingsForCameraState, thermalSettingsForViewField, thermalSolarGeometry, THERMAL_LOOK_HIDDEN} from "../src/rendering/ThermalViewAdapter";
 import {createThermalSceneAdapter, sceneVehicleThermal, thermalSceneAtmosphere, thermalParticipation, withThermalRefraction, withThermalScene} from "../src/rendering/ThermalSceneAdapters";
 import {terrestrialRefractionUniforms, patchTerrestrialRefractionVertexShader, liftWorldPoint, terrestrialLiftContext} from "../src/atmosphere/terrestrialRefraction";
 import {THERMAL_PARAMETERS, normalizeSettings, settingsForPreset} from "../tools/thermal/thermalSchema.js";
@@ -21,10 +21,12 @@ import {PRESETS} from "../tools/vehicles/vehicleParameters.js";
 import {withThermalVehicle} from "../tools/vehicles/thermalPreview.js";
 import {recoveryTemperature, TURBOFAN_CLIMB_REFERENCE} from "../tools/thermal/signatures.js";
 import {meanSeaLevelOffset} from "../src/EGM96Geoid";
+import {getCelestialDirection} from "../src/CelestialMath";
 import {Globals, markSitchDirty, NodeMan, Sit} from "../src/Globals";
 import en from "../src/i18n/en.js";
 
 jest.mock("../src/Globals", () => ({Globals: {equatorRadius: 6371000, polarRadius: 6371000},
+    GlobalDateTimeNode: {dateNow: new Date("2014-11-11T16:55:00Z")},
     NodeMan: {get: jest.fn(), iterate: jest.fn()}, Sit: {fps: 30, lat: 0, lon: 0}, markSitchDirty: jest.fn(), setRenderOne: jest.fn()}));
 jest.mock("../src/EGM96Geoid", () => ({meanSeaLevelOffset: jest.fn(() => 0)}));
 jest.mock("../src/par", () => ({par: {frame: 7, trackToTrackStopAt: 0}}));
@@ -85,6 +87,7 @@ test("camera preparation precedes thermal draw; pan, compression and offset rest
         getColorPolicy: () => ({}), applyCameraOffset: () => "offset", removeCameraOffset: jest.fn(), renderPhysicalThermal: draw});
     expect(() => view.renderTargetAndEffectsInternal()).toThrow("draw");
     expect(draw).toHaveBeenCalledTimes(1); expect(view.removeCameraOffset).toHaveBeenCalledWith("offset");
+    expect(draw).toHaveBeenCalledWith(native().verticalFovDeg);
     expect(camera.updateProjectionMatrix).toBe(originalUpdate); expect(camera.projectionMatrix).toEqual(originalProjection);
 });
 
@@ -120,6 +123,16 @@ test("schema owners round trip without storing derived geometry or moving enviro
     expect(objectThermalState(JSON.parse(JSON.stringify(instance)))).toEqual(instance);
 });
 
+test("thermal sunlight follows scene time and observer location independently of saved XYZ values", () => {
+    const position = new Vector3(1653239, -5037239, -3536562);
+    const morning = new Date("2014-11-11T12:00:00Z"), afternoon = new Date("2014-11-11T17:00:00Z");
+    const a = thermalSolarGeometry(position, morning), b = thermalSolarGeometry(position, afternoon);
+    expect(a.direction.distanceTo(getCelestialDirection("Sun", morning, position))).toBeLessThan(1e-12);
+    expect(b.direction.distanceTo(getCelestialDirection("Sun", afternoon, position))).toBeLessThan(1e-12);
+    expect(a.direction.distanceTo(b.direction)).toBeGreaterThan(.5);
+    expect([...THERMAL_LOOK_HIDDEN]).toEqual(expect.arrayContaining(["sunDirectionX", "sunDirectionY", "sunDirectionZ", "objectTemperatureK", "emissivity"]));
+});
+
 test("real camera and view deserializers keep old saves visible and omit an unused sensor", () => {
     const Camera = methods("src/nodes/CNodeCamera.js", "CNodeCamera", ["modDeserialize"], {}, class {modDeserialize() {}});
     const camera = Object.assign(new Camera(), {camera: cameraFor(native()),resetCamera: jest.fn()});
@@ -145,7 +158,9 @@ test("explicit participation grants objects and terrain, independent of mesh nam
     ground.userData.thermal = false; expect(thermalParticipation(mesh,roots)).toBe(false);
     delete ground.userData.thermal;
     const adapter = createThermalSceneAdapter([], [ground], cameraFor(native()), {enabled:false});
-    expect(adapter.attributes(mesh,native())).toEqual({temperatureK:288.15,emissivity:1});
+    expect(adapter.attributes(mesh,native())).toEqual({temperatureK:288.15,emissivity:1,terrainColor:true});
+    expect(adapter.attributes(mesh,{...native(),groundTemperatureMode:"uniform"})).toEqual({temperatureK:288.15,emissivity:1});
+    expect(adapter.attributes(mesh,{...native(),groundTemperatureSpanK:0})).toEqual({temperatureK:288.15,emissivity:1});
 });
 
 test("procedural zone resolution is the Designer path; uniform and partial zone overrides restore", () => {
@@ -413,6 +428,43 @@ test("shared schema controllers support setMenuValue/getMenuValue and keep coupl
 // A synthetic camera-data row as the cameraState node returns it (frame, recorded mode, band, focal length in mm).
 const cameraRow = (focalLengthMm, extra = {}) => ({index: 0, frame: 30, mode: "IR", band: "IR", focalLengthMm, zoom: 1, polarity: null, ...extra});
 
+test("backward and forward field changes select the estimated optical step without changing saved optics", () => {
+    const saved = native(), before = JSON.stringify(saved);
+    // Agua's editor uses 4 and 0.8 degrees. Native detector coverage must stay
+    // comparable across these fields, rather than shrinking fivefold at 4 deg.
+    for (const [field, step] of [[.8, "675"], [4, "135"], [.4, "1012"], [20, "27"], [4, "135"], [.8, "675"]]) {
+        const {settings, report} = thermalSettingsForViewField(saved, field);
+        expect(settings.focalStep).toBe(step);
+        expect(report).toEqual({focalLengthMm: Number(step), verticalFovDeg: field, reason: null});
+        const coverage = settings.detectorWindow.height * settings.pixelPitchM /
+            (2 * settings.focalLengthM * Math.tan(field * Math.PI / 360));
+        expect(coverage).toBeGreaterThan(1); expect(coverage).toBeLessThan(1.1);
+    }
+    expect(JSON.stringify(saved)).toBe(before);
+    for (const field of [NaN, 0, 180]) expect(thermalSettingsForViewField(saved, field)).toEqual({settings: saved, report: null});
+    const free = normalizeSettings({...saved, focalStep: "free"}), fixed = settingsForPreset("ATFLIR");
+    expect(thermalSettingsForViewField(free, 4).settings.focalStep).toBe("135");
+    expect(thermalSettingsForViewField(fixed, 4)).toEqual({settings:fixed, report:null});
+    const keep = normalizeSettings({...saved, pupilPolicy: "keepPupil"});
+    expect(thermalSettingsForViewField(keep, 20)).toMatchObject({settings: keep,
+        report: {focalLengthMm: 27, reason: expect.stringMatching(/numerical aperture/)}});
+});
+
+test("lens source survives sensor saves and the camera round trip", () => {
+    const camera = {thermalSensor: {lensSource: "sensor"}}, sit = {};
+    saveThermalSettings(native(), camera, sit);
+    expect(camera.thermalSensor.lensSource).toBe("sensor");
+    expect(sit.thermalEnvironment.lensSource).toBeUndefined();
+    const Camera = methods("src/nodes/CNodeCamera.js", "CNodeCamera", ["modSerialize", "modDeserialize"], {
+        Vector3, ECEFToLLAVD_radii: position => position,
+    }, class {modSerialize() {return {};} modDeserialize() {}});
+    const node = Object.assign(new Camera(), {camera: cameraFor(native()), resetCamera() {}, psfGlare: {}, thermalSensor: camera.thermalSensor});
+    const saved = JSON.parse(JSON.stringify(node.modSerialize()));
+    node.thermalSensor = undefined; node.modDeserialize(saved);
+    expect(node.thermalSensor).toEqual(camera.thermalSensor);
+    expect(node.thermalSensor).not.toBe(camera.thermalSensor);
+});
+
 test("camera data selects each lens step's focal length, pupil and window for one frame and never edits the saved settings", () => {
     const saved = normalizeSettings({...native(), polarity: "blackHot"}), before = JSON.stringify(saved);
     // Preset lens steps; hold f-number scales the estimated reference pupil (0.150 m at 0.675 m) with focal length.
@@ -474,7 +526,9 @@ test("the look draw applies camera data per frame, reports it, locks the driven 
         adapter.render(new Scene(),40);
         const plain=render.mock.calls[0][0].settings;
         expect(plain.focalStep).toBe("675"); expect(readout()).not.toContain("Camera data");
-        for (const key of [...driven,"polarity"]) expect(controller(key)._disabled).toBe(false);
+        for (const key of driven) expect(controller(key)._disabled).toBe(true);
+        expect(controller("polarity")._disabled).toBe(false);
+        expect(readout()).toContain("675 mm estimated");
         // The new lens step's optics are not ready: the image keeps the previous lens's kernels and says so.
         row=cameraRow(1012,{polarity:"whiteHot"}); optics={outsideValidatedDomain:true,quality:"retained",message:"Previous optical kernel retained while rebuilding."};
         adapter.render(new Scene(),40);
@@ -508,4 +562,45 @@ test("the look draw applies camera data per frame, reports it, locks the driven 
         expect(window.lookThermal.cameraData).toEqual({settings:expect.any(Object),report:null});
     } finally {adapter.dispose();gui.destroy();Controller.prototype.tooltip=tooltip;Sit.thermalEnvironment=undefined;
         NodeMan.get.mockReset();NodeMan.iterate.mockImplementation(()=>{});}
+});
+
+test("field-following lens uses the base field, respects camera data and permits a persistent manual lens", () => {
+    const camera = cameraFor(native()); camera.position.set(Globals.equatorRadius + 100, 0, 0); camera.updateMatrixWorld(true);
+    const view = {camera, cameraNode: {}, renderer: {}, div: document.createElement("div")};
+    let row = null;
+    NodeMan.get.mockImplementation(id => id === "cameraState" ? {stateAt: () => row} : undefined);
+    NodeMan.iterate.mockImplementation(() => {}); Sit.thermalEnvironment = {turbulenceMode: "manual"};
+    const adapter = createThermalViewAdapter(view);
+    const render = jest.spyOn(adapter.pipeline, "render").mockImplementation(inputs => Object.assign(adapter.pipeline,
+        {hasFrame: true, settings: inputs.settings, lastFrame: {opticsCache: {outsideValidatedDomain: false}}}));
+    try {
+        camera.fov = 4; camera.zoom = 3; camera.aspect = 2; camera.updateProjectionMatrix();
+        camera.projectionMatrix.elements[8] = .2; camera.projectionMatrix.elements[5] /= 2;
+        adapter.render(new Scene(), 444, 4);
+        expect(render.mock.calls.at(-1)[0].settings.focalStep).toBe("135");
+        expect(window.lookThermal.fieldLens.report.verticalFovDeg).toBe(4);
+        expect(view.cameraNode.thermalSensor).toBeUndefined();
+        adapter.set("groundTemperatureSpanK", 12);
+        expect(view.cameraNode.thermalSensor.lensSource).toBe("view");
+        adapter.render(new Scene(), 444, 4);
+        expect(render.mock.calls.at(-1)[0].settings.focalStep).toBe("135");
+        adapter.set("lensSource", "sensor");
+        expect(view.cameraNode.thermalSensor).toMatchObject({focalStep: "135", lensSource: "sensor"});
+        adapter.set("lensSource", "view");
+        row = cameraRow(1012); adapter.render(new Scene(), 444, 4);
+        expect(render.mock.calls.at(-1)[0].settings.focalStep).toBe("1012");
+        expect(window.lookThermal.fieldLens).toBeNull();
+        row = null; adapter.set("lensSource", "sensor"); adapter.render(new Scene(), 444, 4);
+        expect(render.mock.calls.at(-1)[0].settings.focalStep).toBe("135");
+        adapter.set("groundTemperatureSpanK", 12);
+        expect(view.cameraNode.thermalSensor.lensSource).toBe("sensor");
+        adapter.set("lensSource", "view"); adapter.render(new Scene(), 444, 4);
+        expect(render.mock.calls.at(-1)[0].settings.focalStep).toBe("135");
+        adapter.set("focalStep", "675"); adapter.render(new Scene(), 444, 4);
+        expect(render.mock.calls.at(-1)[0].settings.focalStep).toBe("675");
+        expect(view.cameraNode.thermalSensor.lensSource).toBe("sensor");
+        adapter.set("focalStep", "free"); adapter.set("lensSource", "view"); adapter.render(new Scene(), 444, 4);
+        expect(render.mock.calls.at(-1)[0].settings.focalStep).toBe("135");
+        expect(() => adapter.set("lensSource", "invalid")).toThrow(/lens source/);
+    } finally {adapter.dispose(); Sit.thermalEnvironment = undefined; NodeMan.get.mockReset(); NodeMan.iterate.mockImplementation(() => {});}
 });

@@ -157,7 +157,61 @@ export function withThermalVehicle(model, draw, values = {}) {
 
 // readOnly(parameter) is truthy for a field the host does not let the user edit; a string is shown in the tooltip.
 // The menu host evaluates it again on every refresh, so a host can make a field read only for a while.
-export function createThermalControls(mount, getSettings, set, {translate = null, readOnly = () => false} = {}) {
+const CONTROL_REASONS = {
+    terrainColor: "Used only with Ground temperature source = Terrain color estimate.",
+    statisticalSea: "Used only with atmospheric sky and the statistical sea model.",
+    swell: "Set a nonzero swell height to use this control.",
+    manualSky: "Used only with Sky source = Manual temperature.",
+    atmosphericSky: "Used only with Sky source = Atmosphere.",
+    exposure: "Calculated by the reference well-fill exposure policy. Select Manual to edit.",
+    wellFill: "Used only with Exposure policy = Reference well fill.",
+    noise: "Enable Detector noise to use this control.",
+    noiseSeed: "Used for detector noise or a nonzero residual fixed pattern.",
+    shading: "Set nonzero Edge shading to use this control.",
+    scatter: "Set a nonzero Scatter fraction to use this control.",
+    lensStep: "Used only with a preset Focal step.",
+    sampling: "Calculated by the Optical Nyquist policy. Select Manual to edit.",
+    manualGain: "Used only with Gain mode = Manual.",
+    adaptiveGain: "Used only with Automatic or Plateau gain.",
+    plateau: "Used only with Gain mode = Plateau equalization.",
+    localEnhancement: "Set nonzero Local enhancement to use this control.",
+    radiometric: "Used only with Fixed radiometric gain or the Radiance diagnostic view.",
+    diffraction: "Enable Diffraction to use this control.",
+    wavelengthBlur: "Used only with Diffraction or nonzero turbulence blur.",
+    whiteHot: "Used only with White hot polarity.",
+};
+export function thermalControlReason(key, settings) {
+    const s = settings, statisticalSea = s.skySource === "atmosphere" && s.seaMode === "statistical";
+    if (key === "groundTemperatureSpanK" && s.groundTemperatureMode !== "color") return "terrainColor";
+    if (key === "seaMode" && s.skySource !== "atmosphere") return "atmosphericSky";
+    if (["seaWindMps", "seaWindDirectionRad", "seaSkinTemperatureK", "seaSwellHeightM", "seaSwellPeriodS", "seaSwellDirectionRad"].includes(key) && !statisticalSea) return "statisticalSea";
+    if (["seaSwellPeriodS", "seaSwellDirectionRad"].includes(key) && s.seaSwellHeightM === 0) return "swell";
+    if (key === "skyTemperatureK" && s.skySource !== "manual") return "manualSky";
+    if (key === "skyGradient" && s.skySource !== "atmosphere") return "atmosphericSky";
+    if (key === "integrationTimeS" && s.exposureMode !== "manual") return "exposure";
+    if (["wellFillFraction", "wellFillReferenceK"].includes(key) && s.exposureMode !== "wellFill") return "wellFill";
+    if (["shotNoiseEnabled", "readNoiseElectrons"].includes(key) && !s.noiseEnabled) return "noise";
+    if (key === "noiseSeed" && !s.noiseEnabled && s.fixedPatternFraction === 0) return "noiseSeed";
+    if (key === "shadingWidth" && s.shadingK === 0) return "shading";
+    if (["scatterSlope", "scatterShoulderRad", "scatterCutoffRad"].includes(key) && s.scatterFraction === 0) return "scatter";
+    if (key === "defocusM" && !s.opticsEnabled) return "diffraction";
+    if (["opticsRadiusPx", "psfTemperatureK"].includes(key) && !s.opticsEnabled && s.turbulenceR0M === 0) return "wavelengthBlur";
+    if (["pupilReferenceM", "pupilPolicy"].includes(key) && s.focalStep === "free") return "lensStep";
+    if (key === "supersample" && s.opticalSamplingMode !== "manual") return "sampling";
+    if (["fixedGain", "fixedLevel"].includes(key) && s.gainMode !== "manual") return "manualGain";
+    if (["gainRegion", "lowPercentile", "highPercentile", "minimumWindowCounts", "agcDynamics", "agcTimeConstantS"].includes(key) && !["automatic", "plateau"].includes(s.gainMode)) return "adaptiveGain";
+    if (key === "plateauFactor" && s.gainMode !== "plateau") return "plateau";
+    if (key === "localRadiusPx" && s.localAmount === 0) return "localEnhancement";
+    if (["radiometricLow", "radiometricHigh"].includes(key) && s.gainMode !== "fixedRadiometric" && s.diagnosticView !== "radiance") return "radiometric";
+    if (["polarityAffineGain", "polarityAffineOffset"].includes(key) && s.polarity !== "whiteHot") return "whiteHot";
+    return null;
+}
+
+export function createThermalControls(mount, getSettings, set, {translate = null, readOnly = () => false, hidden = () => false} = {}) {
+    const reasonFor = (parameter, settings) => readOnly(parameter) || (() => {
+        const reason = thermalControlReason(parameter.key, settings);
+        return reason ? (translate ? translate(`thermal.controlReasons.${reason}`) : CONTROL_REASONS[reason]) : false;
+    })();
     // Both widget hosts walk the same descriptors and use the same edit callback.
     if (mount.addFolder) {
         const fields = [], state = {}, folders = [];
@@ -165,6 +219,7 @@ export function createThermalControls(mount, getSettings, set, {translate = null
             const folder = mount.addFolder(translate(`thermal.groups.${group}`)).close();
             folders.push(folder);
             for (const parameter of parameters) {
+                if (hidden(parameter)) continue;
                 Object.defineProperty(state, parameter.key, {enumerable: true,
                     get: () => getSettings()[parameter.key], set: value => set(parameter.key, value)});
                 const options = parameter.options && Object.fromEntries(parameter.options.map(option =>
@@ -179,7 +234,7 @@ export function createThermalControls(mount, getSettings, set, {translate = null
         return {refresh() {
             const settings = getSettings();
             for (const {control, parameter} of fields) {
-                const metadata = settings.presetMetadata?.[parameter.key], reason = readOnly(parameter);
+                const metadata = settings.presetMetadata?.[parameter.key], reason = reasonFor(parameter, settings);
                 control.disable(!!reason);
                 control.tooltip(`${translate(parameter.tooltipKey)}\n${translate(`thermal.status.${metadata?.status ?? parameter.status ?? "estimated"}`)}${metadata?.source ? ` · ${metadata.source}` : ""}${typeof reason === "string" ? `\n${reason}` : ""}`);
                 control.updateDisplay();
@@ -192,6 +247,7 @@ export function createThermalControls(mount, getSettings, set, {translate = null
         summary.textContent = group[0].toUpperCase() + group.slice(1); folder.open = ["detector", "processing", "display"].includes(group);
         body.className = "folder-fields"; folder.append(summary, body); mount.append(folder);
         for (const parameter of parameters) {
+            if (hidden(parameter)) continue;
             const row = document.createElement("div"), label = document.createElement("label"), provenance = document.createElement("small");
             row.className = "field thermal-field";
             label.textContent = `${parameter.label} · ${parameter.unit}`;
@@ -216,6 +272,9 @@ export function createThermalControls(mount, getSettings, set, {translate = null
         for (const [key, {input, provenance, parameter}] of fields) {
             if (parameter.type === "boolean") input.checked = settings[key]; else input.value = settings[key];
             const metadata = settings.presetMetadata[key];
+            const reason = reasonFor(parameter, settings);
+            input.disabled = !!reason;
+            input.title = `${parameter.tooltip}${typeof reason === "string" ? `\n${reason}` : ""}`;
             provenance.textContent = metadata ? `${metadata.overridden ? "Edited · preset " : ""}${metadata.status}` : parameter.status ?? "Model setting · estimated default";
             provenance.title = metadata?.source ?? parameter.tooltip;
         }

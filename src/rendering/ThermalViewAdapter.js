@@ -3,9 +3,11 @@ import {ThermalPipeline} from "../../tools/thermal/ThermalPipeline.js";
 import {normalizeSettings, settingsForPreset, THERMAL_PARAMETERS} from "../../tools/thermal/thermalSchema.js";
 import {SENSOR_PRESETS} from "../../tools/thermal/sensorPresets.js";
 import {integrateTurbulence} from "../../tools/thermal/turbulence.js";
+import {integrationTime} from "../../tools/thermal/sensorMath.js";
 import {attachThermalDebug, configureSensorCamera, createThermalControls, resolveVehicleThermal} from "../../tools/vehicles/thermalPreview.js";
 import {VEHICLE_THERMAL_GROUP} from "../../tools/vehicles/thermalTags.js";
-import {Globals, markSitchDirty, NodeMan, setRenderOne, Sit} from "../Globals";
+import {GlobalDateTimeNode, Globals, markSitchDirty, NodeMan, setRenderOne, Sit} from "../Globals";
+import {getCelestialDirection} from "../CelestialMath";
 import {par} from "../par";
 import {ellipsoidAltitude, terrestrialOptsFrom} from "../atmosphere/terrestrialRefraction";
 import {meanSeaLevelOffset} from "../EGM96Geoid";
@@ -61,6 +63,27 @@ export function thermalSettingsForCameraState(settings, state) {
     }
 }
 
+// Without recorded lens data, infer the closest preset step from the unzoomed
+// camera field. This is an estimate, not an optical measurement. Presentation
+// zoom, pan, aspect and compression must not select a different physical lens.
+export function thermalSettingsForViewField(settings, verticalFovDeg) {
+    const steps = SENSOR_PRESETS[settings.sensorPreset]?.focalSteps;
+    if (!steps || !(verticalFovDeg > 0 && verticalFovDeg < 180))
+        return {settings, report: null};
+    const tangent = Math.tan(verticalFovDeg * Math.PI / 360);
+    const error = key => Math.abs(Math.log(tangent / (steps[key].windowHeight.value *
+        settings.pixelPitchM / (2 * steps[key].focalLengthM.value))));
+    const step = Object.keys(steps).reduce((best, key) => error(key) < error(best) ? key : best,
+        Object.hasOwn(steps, settings.focalStep) ? settings.focalStep : Object.keys(steps)[0]);
+    try {
+        return {settings: step === settings.focalStep ? settings : normalizeSettings({...settings, focalStep: step}),
+            report: {focalLengthMm: Number(step), verticalFovDeg, reason: null}};
+    } catch (error) {
+        if (!(error instanceof RangeError)) throw error;
+        return {settings, report: {focalLengthMm: Number(step), verticalFovDeg, reason: error.message}};
+    }
+}
+
 // A lens step counts as validated when the preset holds a value measured at that step, that is, compared with a
 // recording made at it. Steps with only published or calculated values were never checked against a picture.
 export function lensStepValidated(settings) {
@@ -93,6 +116,19 @@ function cameraDataLines(report, settings, building) {
 // Optics that a driven lens step replaces. While the camera data drives them they show the driven values, and an
 // edit would change the saved lens behind them (an edit of the field also turns the saved step to Free).
 const DRIVEN_OPTICS = new Set(["focalStep", "focalLengthM", "verticalFovDeg", "fieldMode", "apertureM"]);
+// These are generic authoring defaults or presentation metadata, not Look View controls.
+export const THERMAL_LOOK_HIDDEN = new Set(["objectTemperatureK", "emissivity", "pictureWidth", "pictureHeight",
+    "sunDirectionX", "sunDirectionY", "sunDirectionZ"]);
+
+export function thermalSolarGeometry(position, date, radii = Globals, direction = getCelestialDirection) {
+    const sun = direction("Sun", date, position)?.normalize();
+    if (!sun) throw new Error("Cannot calculate the thermal Sun direction for this scene time.");
+    const up = new Vector3(position.x / radii.equatorRadius ** 2,
+        position.y / radii.equatorRadius ** 2, position.z / radii.polarRadius ** 2).normalize();
+    const east = new Vector3(-position.y, position.x, 0).normalize(), north = new Vector3().crossVectors(up, east);
+    return {direction: sun, elevationDeg: Math.asin(Math.max(-1, Math.min(1, sun.dot(up)))) * 180 / Math.PI,
+        azimuthDeg: (Math.atan2(sun.dot(east), sun.dot(north)) * 180 / Math.PI + 360) % 360};
+}
 
 export function saveThermalSettings(settings, cameraNode, sit) {
     const sensor = {}, environment = {};
@@ -101,6 +137,8 @@ export function saveThermalSettings(settings, cameraNode, sit) {
         if (parameter.owner === "environment") environment[parameter.key] = settings[parameter.key];
     }
     sensor.presetMetadata = settings.presetMetadata;
+    // Look View host policy; standalone sensor settings do not contain it.
+    if (cameraNode.thermalSensor?.lensSource) sensor.lensSource = cameraNode.thermalSensor.lensSource;
     // Sounding data is supplied by the host, never a URL fetched by the renderer.
     if (sit.thermalEnvironment?.sounding) environment.sounding = sit.thermalEnvironment.sounding;
     cameraNode.thermalSensor = sensor; sit.thermalEnvironment = environment;
@@ -142,19 +180,36 @@ export function thermalGeometry(camera, target, radii = Globals, geoidHeight = m
 }
 
 export function createThermalViewAdapter(view) {
-    const pipeline = new ThermalPipeline(view.renderer, {analysis: false, onReady: () => setRenderOne(true),
-        createOpticsWorker: () => import("./ThermalWorkerFactory.js").then(module => module.createOpticsWorker())});
+    // Unit-mass kernel L1 error bounds radiance error by 0.1% of maximum scene contrast. Retaining this certified
+    // response longer avoids frequent spectrum rebuilds; synchronous captures still use the exact current kernel.
+    const pipeline = new ThermalPipeline(view.renderer, {analysis: false, opticsToleranceL1: .001, onReady: () => setRenderOne(true),
+        createOpticsWorker: () => import("./ThermalWorkerFactory.js").then(module => module.createOpticsWorker()),
+        createAtmosphereWorker: () => import("./ThermalWorkerFactory.js").then(module => module.createAtmosphereWorker())});
     let controls, lastSettings, mapping, geometry, turbulence, turbulenceKey, comparisonPipeline, comparison;
-    let atmosphere, atmosphereKey, vehicles = [];
+    let atmosphere, atmosphereKey, vehicles = [], solar;
     // What the camera data drives at the last drawn frame, and the focal length of the last frame drawn with validated
     // optics (for the readout while a new lens builds).
-    let drive = {lens: false, polarity: false}, cameraData = null, validatedFocalM = null;
+    let drive = {lens: false, polarity: false, field: false}, cameraData = null, fieldLens = null, validatedFocalM = null;
     // Estimated budget: a paused frame's key costs a few ms in a scene with hundreds of meshes, against ~80 ms for
     // the full render it can save; a key that runs out of budget only disables reuse for that draw.
     const reuseKey = createThermalReuseKey({budgetMs: 10});
     const settings = () => lastSettings ?? thermalSettings(view.cameraNode, Sit);
+    const lensSource = () => {
+        const saved = view.cameraNode.thermalSensor;
+        // Keep explicitly authored optics in old saves. Unconfigured sensors
+        // follow the host field; subsequent edits store that host policy.
+        return saved?.lensSource ?? (saved && [...DRIVEN_OPTICS].some(key => Object.hasOwn(saved,key)) ? "sensor" : "view");
+    };
     function set(key, value) {
-        const current = thermalSettings(view.cameraNode, Sit);
+        if (key === "lensSource") {
+            if (!["view", "sensor"].includes(value)) throw new RangeError("Invalid thermal lens source");
+            if (value === "sensor" && drive.field && lastSettings) saveThermalSettings(lastSettings, view.cameraNode, Sit);
+            view.cameraNode.thermalSensor = {...view.cameraNode.thermalSensor, lensSource: value};
+            drive.field = false;
+            lastSettings = null; controls?.refresh(); markSitchDirty(); setRenderOne(true);
+            return;
+        }
+        const current = thermalSettings(view.cameraNode, Sit), source = lensSource();
         let next;
         if (key === "sensorPreset") {
             const preset = settingsForPreset(value);
@@ -162,40 +217,67 @@ export function createThermalViewAdapter(view) {
                 .map(p => [p.key, preset[p.key]])), presetMetadata: preset.presetMetadata, turbulenceMode: current.turbulenceMode};
         } else {
             const parameter = THERMAL_PARAMETERS.find(p => p.key === key);
-            if (!parameter || parameter.owner === "geometry") throw new Error(t("thermal.readOnly"));
+            if (!parameter || parameter.owner === "geometry" || parameter.key.startsWith("sunDirection") || key === "psfRangeM")
+                throw new Error(t("thermal.readOnly"));
             next = {...current, [key]: value};
             if (key === "focalLengthM") next.fieldMode = "focalLength";
             if (key === "verticalFovDeg") next.fieldMode = "fieldOfView";
         }
         saveThermalSettings(normalizeSettings(next), view.cameraNode, Sit);
+        view.cameraNode.thermalSensor.lensSource = source;
+        // Explicit optical edits remain authoritative, including API edits.
+        if (DRIVEN_OPTICS.has(key)) {view.cameraNode.thermalSensor.lensSource = "sensor"; drive.field = false;}
         lastSettings = null; controls?.refresh(); markSitchDirty(); setRenderOne(true);
     }
-    const readOnly = parameter => parameter.owner === "geometry" ||
-        ((drive.lens && DRIVEN_OPTICS.has(parameter.key)) || (drive.polarity && parameter.key === "polarity")
-            ? t("thermal.cameraData.readOnly") : false);
+    const readOnly = parameter => {
+        if (parameter.owner === "geometry" || parameter.key === "psfRangeM") return t("thermal.readOnly");
+        if ((drive.lens && DRIVEN_OPTICS.has(parameter.key)) || (drive.polarity && parameter.key === "polarity"))
+            return t("thermal.cameraData.readOnly");
+        if (drive.field && DRIVEN_OPTICS.has(parameter.key)) return t("thermal.viewLens.readOnly");
+        if (parameter.key === "turbulenceR0M" && settings().turbulenceMode === "geometry") return t("thermal.controlReasons.turbulence");
+        const smoothSea = settings().skySource === "atmosphere" && settings().seaMode === "smooth";
+        if (Sit.thermalEnvironment?.sounding && (parameter.key === "waterVaporDensityKgM3" ||
+            parameter.key === "surfaceTemperatureK" && !smoothSea))
+            return t("thermal.controlReasons.sounding");
+        return false;
+    };
     if (view._thermalFolder) {
-        controls = createThermalControls(view._thermalFolder, settings, set, {translate: t, readOnly});
+        controls = createThermalControls(view._thermalFolder, settings, set,
+            {translate: t, readOnly, hidden: parameter => THERMAL_LOOK_HIDDEN.has(parameter.key)});
+        const optics = view._thermalFolder.folders.find(folder => folder._title === t("thermal.groups.optics"));
+        const policy = {get lensSource() {return lensSource();}, set lensSource(value) {set("lensSource", value);}};
+        optics.add(policy, "lensSource", {[t("thermal.viewLens.view")]: "view", [t("thermal.viewLens.sensor")]: "sensor"})
+            .name(t("thermal.viewLens.title")).listen().tooltip(t("thermal.viewLens.tooltip"));
         controls.refresh();
     }
     const debug = {pipeline, get settings() {return settings();}, get mapping() {return mapping;},
         get geometry() {return geometry;}, get turbulence() {return turbulence;}, set,
+        get solar() {return solar;},
         get vehicles() {return vehicles;}, get cameraData() {return cameraData;},
+        get fieldLens() {return fieldLens;},
         get comparison() {return comparison;},
         compareWith(otherPipeline) {comparisonPipeline = otherPipeline; comparison = null; setRenderOne(true);},
         readDetectorCounts: () => pipeline.readDetectorCounts(), readStage: name => pipeline.readStage(name),
         // Why the last paused frame could not be reused (null when a key was built).
         get reuseKeyNullReason() {return reuseKey.lastNullReason;}};
     const detachDebug = typeof window === "undefined" ? () => {} : attachThermalDebug(window, debug, "lookThermal");
-    return {pipeline, set, render(scene, frame) {
+    return {pipeline, set, render(scene, frame, baseVerticalFovDeg = view.camera.fov) {
         // Per-frame camera data sets this frame's lens step and polarity; the saved settings stay unchanged.
         cameraData = thermalSettingsForCameraState(thermalSettings(view.cameraNode, Sit),
             NodeMan.get("cameraState", false)?.stateAt(frame) ?? null);
         let configured = cameraData.settings;
-        const nextDrive = {lens: cameraData.report?.lens === "step", polarity: cameraData.report?.polarity === "row"};
-        if (nextDrive.lens !== drive.lens || nextDrive.polarity !== drive.polarity) {drive = nextDrive; controls?.refresh();}
+        fieldLens = !cameraData.report && lensSource() === "view" ? thermalSettingsForViewField(configured, baseVerticalFovDeg) : null;
+        if (fieldLens) configured = fieldLens.settings;
+        const nextDrive = {lens: cameraData.report?.lens === "step", polarity: cameraData.report?.polarity === "row",
+            field: !!fieldLens?.report && !fieldLens.report.reason};
+        const refreshControls = Object.keys(nextDrive).some(key => nextDrive[key] !== drive[key]) ||
+            lastSettings?.focalStep !== configured.focalStep;
+        drive = nextDrive;
         const targetFrame = par.trackToTrackStopAt > 0 ? Math.min(frame, par.trackToTrackStopAt) : frame;
         const target = NodeMan.get("targetTrackSwitchSmooth", false)?.p(targetFrame);
         geometry = thermalGeometry(view.camera, target);
+        // Use the astronomical Sun, independent of visible-light overrides or Moon lighting.
+        solar = thermalSolarGeometry(geometry.position, GlobalDateTimeNode?.dateNow ?? new Date(Sit.nowTime ?? Sit.startTime));
         if (configured.turbulenceMode === "geometry") {
             if (!geometry.path) throw new Error(t("thermal.noTarget"));
             const key = JSON.stringify(geometry.path);
@@ -203,7 +285,10 @@ export function createThermalViewAdapter(view) {
             configured.turbulenceR0M = Number.isFinite(turbulence.r0ReferenceM) ? turbulence.r0ReferenceM : 0;
         }
         configured = normalizeSettings({...configured, sensorAltitudeM: geometry.sensorAltitudeM,
-            pathElevationDeg: geometry.pathElevationDeg, frameRateHz: Sit.fps});
+            pathElevationDeg: geometry.pathElevationDeg, frameRateHz: Sit.fps, psfRangeM: geometry.rangeM ?? 0,
+            sunDirectionX: solar.direction.x, sunDirectionY: solar.direction.y, sunDirectionZ: solar.direction.z});
+        // Show the exposure actually used, rather than the dormant saved manual exposure.
+        if (configured.exposureMode === "wellFill") configured.integrationTimeS = integrationTime(configured);
         mapping = thermalFieldMapping(view.camera, configured);
         const camera = view.camera.clone(false);
         configureSensorCamera(camera, null, configured);
@@ -268,6 +353,7 @@ export function createThermalViewAdapter(view) {
             }
         }, vehicleValues));
         lastSettings = configured;
+        if (refreshControls) controls?.refresh();
         if (pipeline.hasFrame === false) {thermalStatus(view, "loading"); return;}
         // pipeline.settings belong to the image now shown (a held or reused draw keeps the earlier image). Retained full
         // kernels ("retained") after a lens change are the previous lens's: they were installed on the last image drawn
@@ -281,6 +367,14 @@ export function createThermalViewAdapter(view) {
             vertical: mapping.nativeVerticalFovDeg.toFixed(6), horizontal: mapping.nativeHorizontalFovDeg.toFixed(6),
             zoom: mapping.effectiveDigitalZoom.toFixed(3), r0: configured.turbulenceR0M.toPrecision(4)},
         [...cameraDataLines(cameraData.report, configured, building),
+        ...(fieldLens?.report ? [fieldLens.report.reason ? t("thermal.viewLens.invalid", {
+            focal: fieldLens.report.focalLengthMm, message: fieldLens.report.reason}) : t("thermal.viewLens.estimate", {
+            focal: fieldLens.report.focalLengthMm, field: fieldLens.report.verticalFovDeg.toFixed(3)})] : []),
+        t("thermal.sunGeometry", {azimuth: solar.azimuthDeg.toFixed(2), elevation: solar.elevationDeg.toFixed(2)}),
+        ...(configured.groundTemperatureMode === "color" && configured.groundTemperatureSpanK > 0 ?
+            [t("thermal.terrainTemperatureEstimate", {
+                low: (configured.groundTemperatureK - configured.groundTemperatureSpanK / 2).toFixed(2),
+                high: (configured.groundTemperatureK + configured.groundTemperatureSpanK / 2).toFixed(2)})] : []),
         ...(pipeline.lastFrame?.opticsCache?.message ? [pipeline.lastFrame.opticsCache.message] : []),
         ...(pipeline.lastFrame?.coverage?.tiles > pipeline.lastFrame?.coverage?.refined ? [t("thermal.coverageLimited",
             {refined: pipeline.lastFrame.coverage.refined, tiles: pipeline.lastFrame.coverage.tiles})] : []),

@@ -17,6 +17,9 @@ const boolean = (key, group, def, label, tooltip) => parameter(key, group, "bool
 // Estimated environmental defaults and numerical control limits. The optical
 // depth is -ln(0.01), a residual-contrast policy, not a measured cloud property.
 const environmentSources = {
+    groundTemperatureMode: "Estimated visual proxy from unlit terrain colors; visible imagery does not measure surface temperature",
+    groundTemperatureK: "Estimated terrain reference; the standard-atmosphere sea-level value is not an observed ground temperature",
+    groundTemperatureSpanK: "Estimated illustrative 10 K span, adjustable 0–30 K; darker sRGB luminance maps to warmer ground, not measured thermal contrast",
     cloudOpticalDepth: "Gray absorbing column: q=-ln(0.01); estimated 1% residual-contrast policy",
     seaMode: "Estimated diagnostic mean surface; statistical visible normals (published study)",
     seaWindMps: "Estimated U10 preview 5 m/s; sensitivity 2–10 m/s; Cox–Munk slope statistics (published measurement)",
@@ -36,19 +39,21 @@ const definitions = [
     number("seaSwellPeriodS", "scene", "s", 13, 1, 30, .1, "Swell period", "Estimated deep-water monochromatic sensitivity case; does not infer wind-wave development."),
     number("seaSwellDirectionRad", "scene", "rad", 0, 0, 2 * Math.PI, .01, "Swell toward azimuth", "Independent swell direction, clockwise from local north."),
     choice("sensorPreset", "detector", "MX15", Object.fromEntries(Object.entries(SENSOR_PRESETS).map(([key, preset]) => [key, preset.label])), "Sensor preset", "Conditional sensor model; inspect the status and source of each value."),
-    number("ambientTemperatureK", "scene", "K", 293, 150, 350, 1, "Ambient temperature", "Air temperature and untagged surface fallback."),
-    number("surfaceTemperatureK", "scene", "K", 288.15, 150, 350, 0.1, "Surface air temperature", "Sea-level air temperature for the atmospheric profile; independent of air around the object."),
+    number("ambientTemperatureK", "scene", "K", 293, 150, 350, 1, "Ambient fallback temperature", "Fallback for untagged surfaces and thermal signatures without a scene air temperature. Tracked vehicles use the air profile at their altitude."),
+    number("surfaceTemperatureK", "scene", "K", 288.15, 150, 350, 0.1, "Surface air temperature", "Sea-level air temperature for the standard profile, overridden by a loaded sounding. Also sets water temperature in the Smooth comparison sea model."),
     // Estimated ground/sea fallback, using the U.S. Standard Atmosphere 1976
     // sea-level temperature as a reference, not an observed surface temperature.
-    number("groundTemperatureK", "scene", "K", 288.15, 150, 350, 0.1, "Ground / sea temperature", "Estimated uniform temperature of terrain and water tiles."),
-    number("groundEmissivity", "scene", "1", 1, 0, 1, 0.01, "Ground / sea emissivity", "Estimated opaque blackbody fallback for terrain and water tiles."),
+    choice("groundTemperatureMode", "scene", "color", {color: "Terrain color estimate", uniform: "Uniform temperature"}, "Ground temperature source", "Estimate temperature from terrain texture, vertex color and material color, or use a uniform temperature. Visible imagery does not measure temperature."),
+    number("groundTemperatureK", "scene", "K", 288.15, 150, 350, 0.1, "Ground temperature", "Estimated terrain reference temperature. Color mode spans equally above and below this value; uncolored terrain and manual-sky water use this fallback."),
+    number("groundTemperatureSpanK", "scene", "K", 10, 0, 30, 0.1, "Terrain color temperature span", "Estimated warm-to-cool span: black is warmer and white is cooler. Uses unlit sRGB luminance; imagery shadows and colors are not measured temperatures. Zero gives uniform ground temperature."),
+    number("groundEmissivity", "scene", "1", 1, 0, 1, 0.01, "Ground emissivity", "Estimated opaque terrain emissivity. Atmospheric water uses its sea model; manual-sky water uses this fallback."),
     choice("skySource", "scene", "atmosphere", {atmosphere: "Atmosphere", manual: "Manual temperature"}, "Sky source", "Elevation-dependent background from the range-table atmosphere, or a manual brightness temperature."),
     boolean("skyGradient", "scene", true, "Sky elevation gradient", "Use each camera ray elevation for atmospheric sky and sea; disable for a uniform center-ray background."),
     number("skyTemperatureK", "scene", "K", 240, 0, 1000, 1, "Sky brightness temperature", "Equivalent blackbody radiance for the background in manual sky mode only."),
     number("objectTemperatureK", "scene", "K", 500, 0, 3000, 1, "Object temperature", "Suggested temperature for authoring generic surface tags. Untagged meshes use ambient."),
     number("emissivity", "scene", "1", 0.85, 0, 1, 0.01, "Object emissivity", "Suggested emissivity for authoring tags; the remaining opaque fraction reflects the environment."),
     number("environmentTemperatureK", "scene", "K", 240, 0, 1500, 1, "Reflected environment", "Cosine-weighted hemispheric incident radiance expressed as blackbody temperature."),
-    number("solarScale", "scene", "1", 0, 0, 1, 0.01, "Direct solar illumination", "Estimated transmission of the 5772 K solar continuum; zero disables sunlight."),
+    number("solarScale", "scene", "1", 0, 0, 1, 0.01, "Solar transmission", "Estimated transmission of the 5772 K solar continuum for diffuse reflection by opaque surfaces. Look View uses the scene's actual Sun direction. Zero disables reflection; no surface heating or cloud scattering is modeled."),
     number("sunDirectionX", "scene", "1", 0, -1, 1, 0.01, "Sun direction X", "World direction toward the sun, normalized with Y and Z."),
     number("sunDirectionY", "scene", "1", 1, -1, 1, 0.01, "Sun direction Y", "World direction toward the sun."),
     number("sunDirectionZ", "scene", "1", 0, -1, 1, 0.01, "Sun direction Z", "World direction toward the sun."),

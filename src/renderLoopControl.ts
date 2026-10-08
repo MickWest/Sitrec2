@@ -18,6 +18,18 @@ type SleepAnimationLoopArgs = {
     forceRender?: boolean;
 };
 
+export function renderCadence({renderFps, sourceFps, adaptiveFps, playing, logicTime, renderTime}: {
+    renderFps: number; sourceFps: number; adaptiveFps: number; playing: boolean;
+    logicTime: number; renderTime: number;
+}): {interval: number; origin: number} {
+    // A 30 Hz cap includes 29.97 Hz video. Sharing the logic clock prevents
+    // a draw just before the next source frame, followed by a skipped frame.
+    // Higher display rates still render between source frames as before.
+    const sourceClock = playing && renderFps <= sourceFps * 1.01;
+    return {interval: 1000 / (sourceClock ? Math.min(renderFps, sourceFps, adaptiveFps) : renderFps),
+        origin: sourceClock ? logicTime : renderTime};
+}
+
 export function hasPausedBackgroundWork(nodeList: NodeList): boolean {
     if (!nodeList) {
         return false;

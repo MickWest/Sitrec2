@@ -60,6 +60,32 @@ test("the generated menu covers every schema parameter once, in its schema group
     control.dispose(); expect(mount.children).toHaveLength(0);
 });
 
+test("inactive controls explain their required mode and become editable when that mode is selected", () => {
+    const mount=document.createElement("div"); let settings=settingsForPreset("MX15");
+    const controls=createThermalControls(mount,()=>settings,jest.fn()); controls.refresh();
+    const field=key=>mount.querySelector(`[data-thermal-key="${key}"]`);
+    expect(field("groundTemperatureSpanK").disabled).toBe(false);
+    settings={...settings,groundTemperatureMode:"uniform"};controls.refresh();
+    expect(field("groundTemperatureSpanK").disabled).toBe(true);
+    expect(field("groundTemperatureSpanK").title).toContain("Terrain color estimate");
+    expect(field("skyTemperatureK").disabled).toBe(true); expect(field("skyTemperatureK").title).toContain("Manual temperature");
+    expect(field("integrationTimeS").disabled).toBe(true); expect(field("plateauFactor").disabled).toBe(true);
+    settings={...settings,skySource:"manual",exposureMode:"manual",gainMode:"plateau"};controls.refresh();
+    expect(field("seaMode").disabled).toBe(true);
+    expect(field("skyTemperatureK").disabled).toBe(false);expect(field("integrationTimeS").disabled).toBe(false);
+    expect(field("plateauFactor").disabled).toBe(false); expect(field("wellFillFraction").disabled).toBe(true);
+    settings={...settings,noiseEnabled:false,localAmount:0,scatterFraction:0};controls.refresh();
+    expect(field("shotNoiseEnabled").disabled).toBe(true);expect(field("scatterSlope").disabled).toBe(true);
+    expect(field("localRadiusPx").disabled).toBe(true);
+    settings={...settings,opticsEnabled:false,turbulenceR0M:0,polarity:"blackHot"};controls.refresh();
+    expect(field("defocusM").disabled).toBe(true);expect(field("psfTemperatureK").disabled).toBe(true);
+    expect(field("polarityAffineGain").disabled).toBe(true);
+    settings={...settings,opticsEnabled:true,polarity:"whiteHot"};controls.refresh();
+    expect(field("defocusM").disabled).toBe(false);expect(field("psfTemperatureK").disabled).toBe(false);
+    expect(field("polarityAffineGain").disabled).toBe(false);
+    controls.dispose();
+});
+
 test("camera settings persist separately, linked focal edits update field of view, and local debug handles dispose", () => {
     const renderer = {domElement: document.createElement("canvas")}, panel = document.createElement("div"), readout = document.createElement("div");
     const options = {renderer, panel, readout, onChange: jest.fn(), onError: jest.fn()};

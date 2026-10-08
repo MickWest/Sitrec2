@@ -12,6 +12,7 @@ import {ThermalPipeline} from "../tools/thermal/ThermalPipeline.js";
 import en from "../src/i18n/en.js";
 
 jest.mock("../src/Globals", () => ({Globals: {equatorRadius: 6371000, polarRadius: 6371000},
+    GlobalDateTimeNode: {dateNow: new Date("2014-11-11T16:55:00Z")},
     NodeMan: {get: jest.fn(), iterate: jest.fn()}, Sit: {fps: 30, lat: 0, lon: 0}, markSitchDirty: jest.fn(), setRenderOne: jest.fn()}));
 jest.mock("../src/EGM96Geoid", () => ({meanSeaLevelOffset: () => 0}));
 jest.mock("../src/par", () => ({par: {frame: 0, trackToTrackStopAt: 0}}));

@@ -9,7 +9,34 @@ const en = {
         "failed": "Physical thermal unavailable: {{message}}",
         "noTarget": "Select a target track or choose manual turbulence.",
         "readOnly": "This thermal value is calculated from scene geometry.",
+        "controlReasons": {
+            "terrainColor": "Used only with Ground temperature source = Terrain color estimate.",
+            "statisticalSea": "Used only with atmospheric sky and the statistical sea model.",
+            "swell": "Set a nonzero swell height to use this control.",
+            "manualSky": "Used only with Sky source = Manual temperature.",
+            "atmosphericSky": "Used only with Sky source = Atmosphere.",
+            "exposure": "Calculated by the reference well-fill exposure policy. Select Manual to edit.",
+            "wellFill": "Used only with Exposure policy = Reference well fill.",
+            "noise": "Enable Detector noise to use this control.",
+            "noiseSeed": "Used for detector noise or a nonzero residual fixed pattern.",
+            "shading": "Set nonzero Edge shading to use this control.",
+            "scatter": "Set a nonzero Scatter fraction to use this control.",
+            "lensStep": "Used only with a preset Focal step.",
+            "sampling": "Calculated by the Optical Nyquist policy. Select Manual to edit.",
+            "manualGain": "Used only with Gain mode = Manual.",
+            "adaptiveGain": "Used only with Automatic or Plateau gain.",
+            "plateau": "Used only with Gain mode = Plateau equalization.",
+            "localEnhancement": "Set nonzero Local enhancement to use this control.",
+            "radiometric": "Used only with Fixed radiometric gain or the Radiance diagnostic view.",
+            "diffraction": "Enable Diffraction to use this control.",
+            "wavelengthBlur": "Used only with Diffraction or nonzero turbulence blur.",
+            "whiteHot": "Used only with White hot polarity.",
+            "turbulence": "Calculated along the camera-to-target path. Select Manual turbulence to edit.",
+            "sounding": "The loaded sounding supplies temperature and water vapor. This fallback applies without a sounding."
+        },
         "readout": "Native {{width}} × {{height}} · {{vertical}}° V × {{horizontal}}° H · digital zoom {{zoom}}× · r0 {{r0}} m · ground/sea estimated",
+        "sunGeometry": "Sun: azimuth {{azimuth}}° · elevation {{elevation}}° · from scene date, time and location",
+        "terrainTemperatureEstimate": "Terrain color temperatures estimated: {{low}}–{{high}} K; darker colors warmer. Visible imagery is not a temperature measurement.",
         "readoutView": {
             "title": "Thermal Readout",
             "show": "Show readout",
@@ -30,6 +57,15 @@ const en = {
             "readOnly": "Set by the per-frame camera data at this frame (Camera > Camera Data > Drive Look View). The saved value applies where the camera data does not set it."
         },
         "unvalidatedStep": "Lens step {{focal}} mm has no measured values in this sensor preset, so this frame is outside the validated lens steps. Foreground transfer uses the center-ray range table, a narrow-field model.",
+        "viewLens": {
+            "title": "Lens source",
+            "view": "Follow camera field (estimated)",
+            "sensor": "Selected thermal lens",
+            "tooltip": "Without recorded infrared camera data, choose the closest preset lens step from the camera field before display zoom. This estimates an optical step; it does not measure one. Select the thermal lens manually to keep its optics fixed. Recorded infrared camera data takes priority.",
+            "readOnly": "Estimated from the camera field. Select Lens source = Selected thermal lens to edit the optics.",
+            "estimate": "Lens: {{focal}} mm estimated from the {{field}}° camera field before display zoom; no recorded lens data.",
+            "invalid": "The estimated {{focal}} mm step does not work with the selected pupil policy ({{message}}); the selected thermal lens is kept."
+        },
         "nyquistNotMet": "Optical sampling {{factor}}× is below the Nyquist factor {{required}}× at f/{{fNumber}}; fine diffraction detail is undersampled.",
         "vehicleReadout": "{{id}} · {{altitudeM}} m · air {{airTemperatureK}} K ({{airSource}}) · Mach {{mach}} ({{machSource}}) · speed {{speedMps}} m/s ({{speedSource}}) · power {{power}} ({{powerSource}})",
         "vehicleSources": {
@@ -133,20 +169,29 @@ const en = {
                 }
             },
             "ambientTemperatureK": {
-                "label": "Ambient temperature",
-                "tooltip": "Air temperature and untagged surface fallback."
+                "label": "Ambient fallback temperature",
+                "tooltip": "Fallback temperature for untagged object surfaces. Vehicle air temperature comes from the atmosphere or the object's override."
             },
             "surfaceTemperatureK": {
                 "label": "Surface air temperature",
-                "tooltip": "Sea-level air temperature for the atmospheric profile; independent of air around the object."
+                "tooltip": "Sea-level air temperature for the standard atmospheric profile. A loaded sounding supplies the profile instead. This value also sets the water temperature in the Smooth comparison sea model."
             },
             "groundTemperatureK": {
-                "label": "Ground / sea temperature",
-                "tooltip": "Estimated uniform temperature of terrain and water tiles."
+                "label": "Ground temperature",
+                "tooltip": "Estimated terrain reference temperature. Color mode spans equally above and below it. Uncolored terrain and water tiles with a manual sky use this fallback."
+            },
+            "groundTemperatureMode": {
+                "label": "Ground temperature source",
+                "tooltip": "Estimate temperature from unlit terrain colors, or use a uniform temperature. Visible imagery does not measure temperature.",
+                "options": {"color": "Terrain color estimate", "uniform": "Uniform temperature"}
+            },
+            "groundTemperatureSpanK": {
+                "label": "Terrain color temperature span",
+                "tooltip": "Estimated warm-to-cool span in K: black is warmer and white is cooler, around Ground temperature. Uses unlit sRGB luminance. Imagery shadows and colors are not measured temperatures. Zero gives uniform ground temperature."
             },
             "groundEmissivity": {
-                "label": "Ground / sea emissivity",
-                "tooltip": "Estimated opaque blackbody fallback for terrain and water tiles."
+                "label": "Ground emissivity",
+                "tooltip": "Estimated opaque terrain emissivity. Also used by water tiles with a manual sky; atmospheric sea emissivity comes from Fresnel reflection."
             },
             "skySource": {
                 "label": "Sky source",
@@ -177,8 +222,8 @@ const en = {
                 "tooltip": "Cosine-weighted hemispheric incident radiance expressed as blackbody temperature."
             },
             "solarScale": {
-                "label": "Direct solar illumination",
-                "tooltip": "Estimated transmission of the 5772 K solar continuum; zero disables sunlight."
+                "label": "Solar transmission",
+                "tooltip": "Estimated direct solar transmission (0–1). Sun direction follows scene date, time and location. Adds diffuse reflected sunlight to opaque surfaces; does not heat them or scatter sunlight in clouds. Zero disables this contribution."
             },
             "sunDirectionX": {
                 "label": "Sun direction X",

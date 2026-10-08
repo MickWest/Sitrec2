@@ -6,6 +6,7 @@ import {Globals, NodeMan, Sit} from "../src/Globals";
 import {par} from "../src/par";
 
 jest.mock("../src/Globals", () => ({Globals: {equatorRadius: 6378137, polarRadius: 6356752.314245},
+    GlobalDateTimeNode: {dateNow: new Date("2014-11-11T16:55:00Z")},
     NodeMan: {get: jest.fn(), iterate: jest.fn()}, Sit: {fps: 30}, markSitchDirty: jest.fn(), setRenderOne: jest.fn()}));
 jest.mock("../src/EGM96Geoid", () => ({meanSeaLevelOffset: () => 0}));
 jest.mock("../src/par", () => ({par: {frame: 10, trackToTrackStopAt: 0}}));
@@ -61,6 +62,9 @@ test.each([
     ["material side", f => {f.object.material.side = 2;}],
     ["material visibility", f => {f.object.material.visible = false;}],
     ["ground detail", f => {f.ground.geometry = new BoxGeometry(20, 20, 20);}],
+    ["terrain material color", f => {f.ground.material.color.setRGB(.2,.3,.4);}],
+    ["terrain vertex color mode", f => {f.ground.material.vertexColors = true;}],
+    ["terrain texture arrival", f => {f.ground.material.map = new DataTexture(new Uint8Array([80,90,100,255]),1,1);}],
     ["sea detail", f => {f.sea.geometry.attributes.position.needsUpdate = true;}],
     ["building matrix", f => {f.building.position.y++;}],
     ["inside tile arrival", f => {f.inputs.groundRoots[0].add(f.mesh());}],
