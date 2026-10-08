@@ -78,6 +78,14 @@ jobs:
         env:
           PUPPETEER_SKIP_DOWNLOAD: true
 
+      # Help → Documentation → "Download MCP Bridge" links to
+      # tools/SitrecBridge/dist/SitrecBridge.zip. webpackCopyPatterns.js copies it into dist/
+      # only when it exists, and nothing else builds it, so without this step the link is 404.
+      - name: Build the downloadable Bridge zip
+        run: |
+          npm ci --prefix tools/SitrecBridge
+          npm run build --prefix tools/SitrecBridge
+
       - name: Build production bundle
         run: npx webpack --config webpack.prod.js
         env:
