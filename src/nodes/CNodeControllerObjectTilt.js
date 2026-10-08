@@ -3,7 +3,7 @@ import {guiMenus, NodeMan, setRenderOne, Sit} from "../Globals";
 import {trackAcceleration, trackDirection, trackVelocity} from "../trackUtils";
 import {V3} from "../threeUtils";
 import {assert} from "../assert";
-import {Matrix4} from "three";
+import {Matrix4, Quaternion} from "three";
 import {radians} from "../utils";
 import {getLocalEastVector, getLocalNorthVector, getLocalUpVector} from "../SphericalMath";
 import {CNodeSmoothedPositionTrack} from "./CNodeSmoothedPositionTrack";
@@ -45,6 +45,14 @@ export class CNodeControllerObjectTilt extends CNodeController {
         // Compass heading (degrees true) the model holds when tiltType is "fixedHeading",
         // i.e. when the object's attitude is independent of its direction of travel.
         this.fixedHeading = v.fixedHeading ?? 0
+        // Tilt and sway, added after the banking mode: the top leans toward tiltDirection (degrees true) by
+        // tiltAngle + swayAmplitude * sin(2 pi t / swayPeriod). Estimated scene inputs with no measured
+        // default (a sky lantern or balloon swinging in gusts); all zero leaves the orientation unchanged.
+        this.tiltAngle = v.tiltAngle ?? 0
+        this.tiltDirection = v.tiltDirection ?? 0
+        this.swayAmplitude = v.swayAmplitude ?? 0
+        this.swayPeriod = v.swayPeriod ?? 2
+        this._swayRotation = null;
         this._savedQuaternion = null;
 
 
@@ -141,6 +149,17 @@ export class CNodeControllerObjectTilt extends CNodeController {
             .listen(() => { setRenderOne(true) })
         this.fixedHeadingGui.isCommon = true;
         this._updateFixedHeadingGui();
+
+        for (const gui of this.swayGuis ?? []) gui.destroy();
+        this.swayGuis = [["tiltAngle", 0, 90, 0.5], ["tiltDirection", 0, 360, 1], ["swayAmplitude", 0, 45, 0.5], ["swayPeriod", 0.2, 20, 0.1]]
+            .map(([key, min, max, step]) => {
+                const gui = parent.add(this, key, min, max, step)
+                    .name(t(`misc.${key}.label`))
+                    .tooltip(t(`misc.${key}.tooltip`))
+                    .listen(() => { setRenderOne(true) })
+                gui.isCommon = true;
+                return gui;
+            });
     }
 
     // The heading only means anything in "fixedHeading" mode, so it is only shown there.
@@ -167,6 +186,10 @@ export class CNodeControllerObjectTilt extends CNodeController {
             ...super.modSerialize(),
             tiltType: this.tiltType,
             fixedHeading: this.fixedHeading,
+            tiltAngle: this.tiltAngle,
+            tiltDirection: this.tiltDirection,
+            swayAmplitude: this.swayAmplitude,
+            swayPeriod: this.swayPeriod,
         }
     }
 
@@ -174,7 +197,15 @@ export class CNodeControllerObjectTilt extends CNodeController {
         super.modDeserialize(v)
         this.tiltType = v.tiltType
         if (v.fixedHeading !== undefined) this.fixedHeading = v.fixedHeading
+        for (const key of ["tiltAngle", "tiltDirection", "swayAmplitude", "swayPeriod"])
+            if (v[key] !== undefined) this[key] = v[key]
         this._updateFixedHeadingGui()
+    }
+
+    // The lean in degrees at frame f: the fixed tilt plus a sinusoidal sway in scene time (frames x simSpeed / fps).
+    leanAt(f) {
+        const seconds = f * (Sit.simSpeed ?? 1) / Sit.fps
+        return this.tiltAngle + this.swayAmplitude * Math.sin(2 * Math.PI * seconds / this.swayPeriod)
     }
 
     // Point the model at a compass bearing rather than along its track, so an object can
@@ -219,7 +250,27 @@ export class CNodeControllerObjectTilt extends CNodeController {
         }
     }
 
-    apply(f, objectNode ) {
+    apply(f, objectNode) {
+        const object = objectNode._object;
+        // Remove last frame's lean first: some banking paths keep or restore the previous orientation.
+        if (object !== undefined && this._swayRotation) {
+            object.quaternion.premultiply(this._swayRotation.invert());
+            this._swayRotation = null;
+        }
+        this.applyBanking(f, objectNode);
+        if (object === undefined || f < 0) return;
+        const lean = radians(this.leanAt(f));
+        if (lean === 0) return;
+        // Rotate about the horizontal axis up x d through the object's origin, so the top leans toward d.
+        const pos = object.position, up = getLocalUpVector(pos), d = radians(this.tiltDirection);
+        const toward = getLocalNorthVector(pos).multiplyScalar(Math.cos(d)).add(getLocalEastVector(pos).multiplyScalar(Math.sin(d)));
+        this._swayRotation = new Quaternion().setFromAxisAngle(V3().crossVectors(up, toward).normalize(), lean);
+        object.quaternion.premultiply(this._swayRotation);
+        object.updateMatrix();
+        object.updateMatrixWorld();
+    }
+
+    applyBanking(f, objectNode ) {
 
         const object = objectNode._object;
 

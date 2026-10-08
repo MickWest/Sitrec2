@@ -52,6 +52,8 @@ const definitions = [
     number("skyTemperatureK", "scene", "K", 240, 0, 1000, 1, "Sky brightness temperature", "Equivalent blackbody radiance for the background in manual sky mode only."),
     number("objectTemperatureK", "scene", "K", 500, 0, 3000, 1, "Object temperature", "Suggested temperature for authoring generic surface tags. Untagged meshes use ambient."),
     number("emissivity", "scene", "1", 0.85, 0, 1, 0.01, "Object emissivity", "Suggested emissivity for authoring tags; the remaining opaque fraction reflects the environment."),
+    choice("environmentSource", "scene", "manual", {manual: "Manual temperature", skyGround: "Sky and ground"}, "Reflected environment source",
+        "Manual: every surface reflects one temperature. Sky and ground: each surface reflects the clear sky above and the ground below, weighted by the way it faces, calculated at its own altitude."),
     number("environmentTemperatureK", "scene", "K", 240, 0, 1500, 1, "Reflected environment", "Cosine-weighted hemispheric incident radiance expressed as blackbody temperature."),
     number("solarScale", "scene", "1", 0, 0, 1, 0.01, "Solar transmission", "Estimated transmission of the 5772 K solar continuum for diffuse reflection by opaque surfaces. Look View uses the scene's actual Sun direction. Zero disables reflection; no surface heating or cloud scattering is modeled."),
     number("sunDirectionX", "scene", "1", 0, -1, 1, 0.01, "Sun direction X", "World direction toward the sun, normalized with Y and Z."),

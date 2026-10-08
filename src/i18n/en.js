@@ -14,6 +14,7 @@ const en = {
             "statisticalSea": "Used only with atmospheric sky and the statistical sea model.",
             "swell": "Set a nonzero swell height to use this control.",
             "manualSky": "Used only with Sky source = Manual temperature.",
+            "manualEnvironment": "Used only with Reflected environment source = Manual temperature.",
             "atmosphericSky": "Used only with Sky source = Atmosphere.",
             "exposure": "Calculated by the reference well-fill exposure policy. Select Manual to edit.",
             "wellFill": "Used only with Exposure policy = Reference well fill.",
@@ -98,6 +99,7 @@ const en = {
             "uniform": "Uniform surface",
             "temperatureK": "Temperature · K",
             "emissivity": "Emissivity · 1",
+            "transmittance": "Transmittance · 1",
             "zones": "Zone overrides",
             "reset": "Inherit zone",
             "vehicleState": "Vehicle thermal state",
@@ -109,7 +111,7 @@ const en = {
             "power": "Power · 1",
             "airTemperatureKTooltip": "From scene samples the thermal atmosphere at this object's altitude each frame. An override changes only this instance.",
             "machTooltip": "From scene divides track airspeed by the speed of sound at the air temperature used here. Without wind at this altitude it uses ground speed.",
-            "powerTooltip": "From scene keeps recipe power, or the estimated climb reference when absent. Power is a family load coordinate, not calibrated throttle."
+            "powerTooltip": "From scene keeps recipe power, or the estimated climb reference when absent. Power is a family load coordinate, not calibrated throttle. For a sky lantern it is the burn fraction: the canopy temperature and the flame intensity follow it, and 0 is after flame-out."
         },
         "parameters": {
             "cloudOpticalDepth": {"label": "Cloud absorption depth", "tooltip": "Estimated core absorption depth: alpha = 1 − exp(−depth × mask). Scattering is omitted."},
@@ -216,6 +218,14 @@ const en = {
             "emissivity": {
                 "label": "Object emissivity",
                 "tooltip": "Suggested emissivity for authoring tags; the remaining opaque fraction reflects the environment."
+            },
+            "environmentSource": {
+                "label": "Reflected environment source",
+                "tooltip": "Manual: every surface reflects one temperature. Sky and ground: each surface reflects the clear sky above and the ground below, weighted by the way it faces, calculated at its own altitude.",
+                "options": {
+                    "manual": "Manual temperature",
+                    "skyGround": "Sky and ground"
+                }
             },
             "environmentTemperatureK": {
                 "label": "Reflected environment",
@@ -3417,6 +3427,22 @@ const en = {
         fixedHeading: {
             label: "Fixed Heading°",
             tooltip: "Compass heading (true) the model points at in 'Fixed Heading' mode, instead of pointing along its track. Use it for an object that translates without turning — crabbing sideways, drifting, or holding an attitude while it moves.",
+        },
+        tiltAngle: {
+            label: "Tilt°",
+            tooltip: "Fixed lean of the object from vertical, added after the banking mode. The top leans toward Tilt Direction. An estimated input: for example a sky lantern or a balloon pushed over by wind or by its tether.",
+        },
+        tiltDirection: {
+            label: "Tilt Direction°",
+            tooltip: "Compass direction (true) toward which the top of the object leans, for both the fixed tilt and the sway.",
+        },
+        swayAmplitude: {
+            label: "Sway°",
+            tooltip: "Amplitude of a pendulum-like swing about the fixed tilt, in the plane of Tilt Direction. An estimated input: there is no measured value for a given object. Zero turns the sway off.",
+        },
+        swayPeriod: {
+            label: "Sway Period (s)",
+            tooltip: "Time for one full swing of the sway.",
         },
         angularTraverse: {
             label: "Angular Traverse",

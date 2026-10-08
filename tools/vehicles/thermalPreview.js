@@ -162,6 +162,7 @@ const CONTROL_REASONS = {
     statisticalSea: "Used only with atmospheric sky and the statistical sea model.",
     swell: "Set a nonzero swell height to use this control.",
     manualSky: "Used only with Sky source = Manual temperature.",
+    manualEnvironment: "Used only with Reflected environment source = Manual temperature.",
     atmosphericSky: "Used only with Sky source = Atmosphere.",
     exposure: "Calculated by the reference well-fill exposure policy. Select Manual to edit.",
     wellFill: "Used only with Exposure policy = Reference well fill.",
@@ -187,6 +188,7 @@ export function thermalControlReason(key, settings) {
     if (["seaWindMps", "seaWindDirectionRad", "seaSkinTemperatureK", "seaSwellHeightM", "seaSwellPeriodS", "seaSwellDirectionRad"].includes(key) && !statisticalSea) return "statisticalSea";
     if (["seaSwellPeriodS", "seaSwellDirectionRad"].includes(key) && s.seaSwellHeightM === 0) return "swell";
     if (key === "skyTemperatureK" && s.skySource !== "manual") return "manualSky";
+    if (key === "environmentTemperatureK" && s.environmentSource === "skyGround") return "manualEnvironment";
     if (key === "skyGradient" && s.skySource !== "atmosphere") return "atmosphericSky";
     if (key === "integrationTimeS" && s.exposureMode !== "manual") return "exposure";
     if (["wellFillFraction", "wellFillReferenceK"].includes(key) && s.exposureMode !== "wellFill") return "wellFill";

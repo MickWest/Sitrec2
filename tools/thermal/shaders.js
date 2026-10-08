@@ -37,18 +37,62 @@ export const radianceFragment = `
     uniform float rangeMaxM; // m, quadratic table endpoint
     uniform int rangeSamples; // texel count, unitless
     uniform vec3 sunViewDirection; // normalized camera-space direction toward sun
+    uniform float transmittance; // thin-layer transmittance, unitless; 0 = opaque
+    uniform int innerRow; // texture row for back faces: 1 = a thin shell's inner side, 0 = same as front
+    uniform vec4 diffuser; // x scattered transmittance, y reflectance, z forward-lobe fraction, w lobe Gaussian sigma (rad)
+    uniform vec4 glowSource; // xyz flame centre in camera space (m); w in-band intensity at the sensor (scaled photon radiance x m^2); 0 = none
+    uniform int environmentRow; // first of five reflected-environment rows by normal elevation (sine -1, -0.5, 0, 0.5, 1); 0 = none
+    uniform vec3 upView; // local up in camera space
     in vec3 vViewPosition; // m
     in vec3 vViewNormal; // unitless
-    out vec4 result; // R: scaled photon radiance; G/B unused, A=1
+    out vec4 result; // R: scaled photon radiance; G/B unused; A = 1 - transmittance (premultiplied blend weight)
     void main() {
         #include <logdepthbuf_fragment>
         float position = (rangeMaxM > 0.0 ? sqrt(clamp(length(vViewPosition) / rangeMaxM, 0.0, 1.0)) : 0.0) * float(rangeSamples - 1);
         int lower = min(rangeSamples - 2, int(floor(position)));
-        vec2 source = mix(texelFetch(rangeTexture, ivec2(lower, 0), 0).rg,
-            texelFetch(rangeTexture, ivec2(lower + 1, 0), 0).rg, position - float(lower));
+        // Back faces use innerRow. Three.js draws a transparent double-sided material as a BackSide pass (FLIP_SIDED,
+        // with the winding reversed, so gl_FrontFacing is true there) and then a FrontSide pass.
+        #if defined(FLIP_SIDED)
+            int row = innerRow;
+        #elif defined(DOUBLE_SIDED)
+            int row = gl_FrontFacing ? 0 : innerRow;
+        #else
+            int row = 0;
+        #endif
+        vec2 source = mix(texelFetch(rangeTexture, ivec2(lower, row), 0).rg,
+            texelFetch(rangeTexture, ivec2(lower + 1, row), 0).rg, position - float(lower));
         vec3 normal = normalize(vViewNormal) * (gl_FrontFacing ? 1.0 : -1.0);
         float radiance = source.r + source.g * max(0.0, dot(normal, sunViewDirection));
-        result = vec4(radiance, 0.0, 0.0, 1.0);
+        if (environmentRow > 0 && row == 0) {
+            // Sky and ground: the outer face reflects the environment for its orientation (linear in the normal's up sine).
+            float x = (clamp(dot(normal, upView), -1.0, 1.0) + 1.0) * 2.0;
+            int k = min(3, int(floor(x)));
+            float fraction = position - float(lower);
+            float a = mix(texelFetch(rangeTexture, ivec2(lower, environmentRow + k), 0).r,
+                texelFetch(rangeTexture, ivec2(lower + 1, environmentRow + k), 0).r, fraction);
+            float b = mix(texelFetch(rangeTexture, ivec2(lower, environmentRow + k + 1), 0).r,
+                texelFetch(rangeTexture, ivec2(lower + 1, environmentRow + k + 1), 0).r, fraction);
+            radiance += mix(a, b, x - float(k));
+        }
+        if (glowSource.w > 0.0) {
+            // A flame inside a scattering shell lights the inside of each wall: E = I cos(incidence) / d^2. The outer
+            // face shows the scattered transmission (a Lambertian part and a forward lobe around the flame direction);
+            // the inner face reflects it diffusely. The camera-facing normal is outward on the outer face.
+            vec3 toward = vViewPosition - glowSource.xyz;
+            float d2 = max(dot(toward, toward), 1e-4);
+            vec3 ray = toward * inversesqrt(d2);
+            bool inner = innerRow > 0 && row == innerRow;
+            vec3 outward = inner ? -normal : normal;
+            float irradiance = glowSource.w * max(dot(outward, ray), 0.0) / d2;
+            if (inner) radiance += diffuser.y * irradiance / 3.14159265;
+            else {
+                vec3 view = normalize(-vViewPosition);
+                float psi = acos(clamp(dot(ray, view), -1.0, 1.0)), sigma2 = max(diffuser.w * diffuser.w, 1e-6);
+                float lobe = exp(-0.5 * psi * psi / sigma2) / (6.28318531 * sigma2) / max(dot(normal, view), 0.05);
+                radiance += diffuser.x * irradiance * ((1.0 - diffuser.z) / 3.14159265 + diffuser.z * lobe);
+            }
+        }
+        result = vec4(radiance, 0.0, 0.0, 1.0 - transmittance);
     }
 `;
 

@@ -177,17 +177,21 @@ export function diffuseSolarRadiance(irradiance, reflectance, cosIncidence = 1) 
     return scale(irradiance, reflectance * Math.max(0, cosIncidence) / Math.PI);
 }
 
-/** Opaque diffuse gray surface, constant emissivity over this band.
+/** Diffuse gray surface, constant emissivity over this band.
  * environment is cosine-weighted hemispheric incident radiance: E_environment/pi.
  * It excludes direct sun if solar is supplied. All pairs MUST use the same band/response.
- * Specular surfaces and transmitting media require a different reflection model.
+ * A thin layer may also transmit: emissivity + reflectance + transmittance = 1. The result
+ * is the layer's own emitted and reflected radiance only; the caller adds transmittance times
+ * the radiance behind it. Specular surfaces require a different reflection model.
  */
-export function grayBodyRadiance({temperatureK, emissivity, environment = zero(), solar = zero(),
+export function grayBodyRadiance({temperatureK, emissivity, transmittance = 0, environment = zero(), solar = zero(),
     cosIncidence = 1}, band = {}) {
-    fraction(emissivity, "emissivity"); pair(environment, "environment");
+    fraction(emissivity, "emissivity"); fraction(transmittance, "transmittance"); pair(environment, "environment");
+    if (emissivity + transmittance > 1 + 1e-12) throw new RangeError("emissivity + transmittance must not exceed 1");
+    const reflectance = Math.max(0, 1 - emissivity - transmittance);
     const emitted = scale(inBandRadiance(temperatureK, band), emissivity);
-    const reflectedEnvironment = scale(environment, 1 - emissivity);
-    const reflectedSolar = diffuseSolarRadiance(solar, 1 - emissivity, cosIncidence);
+    const reflectedEnvironment = scale(environment, reflectance);
+    const reflectedSolar = diffuseSolarRadiance(solar, reflectance, cosIncidence);
     return {emitted, reflectedEnvironment, reflectedSolar, total: {
         energy: emitted.energy + reflectedEnvironment.energy + reflectedSolar.energy,
         photon: emitted.photon + reflectedEnvironment.photon + reflectedSolar.photon,

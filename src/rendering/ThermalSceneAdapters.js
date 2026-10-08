@@ -7,7 +7,7 @@ import {Globals, Sit} from "../Globals";
 import {airDataFromTAS} from "../AirData";
 import {ECEFToLLAVD_radii} from "../LLA-ECEF-ENU";
 import {meanSeaLevelOffset} from "../EGM96Geoid";
-import {getLocalEastVector, getLocalNorthVector} from "../SphericalMath";
+import {altitudeHAE, getLocalEastVector, getLocalNorthVector} from "../SphericalMath";
 import {ellipsoidAltitude, terrestrialLiftContext, liftCameraRelative, installTerrestrialRefractionOnMaterial} from "../atmosphere/terrestrialRefraction";
 import {terrestrialRefractionUniforms, updateTerrestrialRefractionUniforms} from "../atmosphere/terrestrialRefraction";
 
@@ -156,6 +156,12 @@ export function createThermalSceneAdapter(objects, groundRoots, camera, refracti
         },
         projectPoint,
         isSea: mesh => thermalParticipation(mesh, roots)?.kind === "sea",
+        // Height of a surface above mean sea level (m), where the atmosphere profile begins (as in thermalGeometry),
+        // for the sky-and-ground reflected environment.
+        surfaceAltitudeM: mesh => {
+            const position = new Vector3().setFromMatrixPosition(mesh.matrixWorld), lla = ECEFToLLAVD_radii(position);
+            return altitudeHAE(position) - meanSeaLevelOffset(lla.x, lla.y);
+        },
         attributes(mesh, settings) {
             const binding = thermalParticipation(mesh, roots);
             if (!binding) return false;
@@ -168,7 +174,14 @@ export function createThermalSceneAdapter(objects, groundRoots, camera, refracti
             if (thermal?.mode === "uniform") return {temperatureK: thermal.temperatureK, emissivity: thermal.emissivity};
             const zone = mesh.userData.thermal?.zone;
             const override = thermal?.zones?.[zone];
-            return override ? {...mesh.userData.thermal, ...override} : undefined;
+            if (!override) return undefined;
+            // A thin layer cannot transmit more than its emissivity leaves (a raised or older emissivity override);
+            // a gas volume (a flame) transmits exactly 1 - emissivity.
+            const merged = {...mesh.userData.thermal, ...override};
+            if (merged.volume) merged.transmittance = 1 - merged.emissivity;
+            else if (merged.transmittance !== undefined) merged.transmittance = Math.max(0, Math.min(merged.transmittance, 1 - merged.emissivity));
+            if (merged.directTransmittance !== undefined) merged.directTransmittance = Math.min(merged.directTransmittance, merged.transmittance ?? 0);
+            return merged;
         },
     };
 }

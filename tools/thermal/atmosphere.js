@@ -558,6 +558,43 @@ export function backgroundAtElevation(elevationRad, {sensorAltitudeM, temperatur
     return {kind: result.kind, photonRadiance: sum(result.radiance)};
 }
 
+/** Azimuth integral of the cosine factor for a surface whose normal is at elevation beta, seen along elevation e:
+ * integral over a in [0, 2 pi) of max(0, sin e sin beta + cos e cos beta cos a). Exact. */
+export function hemisphereAzimuthWeight(elevationRad, normalElevationRad) {
+    const A = Math.sin(elevationRad) * Math.sin(normalElevationRad), B = Math.cos(elevationRad) * Math.cos(normalElevationRad);
+    if (A >= B) return 2 * Math.PI * A;
+    if (A <= -B) return 0;
+    return 2 * (A * Math.acos(-A / B) + Math.sqrt(B * B - A * A));
+}
+
+/** Sines of the normal elevations of a reflected-environment table: facing down, -30, vertical, +30 deg, facing up. */
+export const ENVIRONMENT_NORMAL_SINES = Object.freeze([-1, -0.5, 0, 0.5, 1]);
+
+/** Reflected environment by surface orientation (calculated): for each normal elevation in ENVIRONMENT_NORMAL_SINES,
+ * the cosine-weighted hemispheric photon radiance per band that a diffuse surface at altitudeM receives: clear sky above
+ * the horizon (clearSky) and gray ground of groundTemperatureK and groundEmissivity below it, through its slant path.
+ * The ground's own reflection is omitted. Elevation is sampled at midpoints; 48 samples agree with 360 within 0.02 K. */
+export function reflectedEnvironmentTable({altitudeM, groundTemperatureK, groundEmissivity = 1, band = {minUm: 3, maxUm: 5},
+    samples = 48}, atmosphere) {
+    const accuracy = {segments: 64, quantity: "photon", band}, sensorAltitudeM = Math.max(1, altitudeM);
+    const ground = blackbodyBands(groundTemperatureK, {quantity: "photon", band}).map(value => value * groundEmissivity);
+    const sampled = Array.from({length: samples}, (_, i) => {
+        const elevationRad = -Math.PI / 2 + (i + 0.5) * Math.PI / samples;
+        const sky = clearSky({sensorAltitudeM, elevationRad}, atmosphere, accuracy);
+        const radiance = sky.kind === "sky" ? sky.radiance :
+            transmitRadiance(evaluatePath({sensorAltitudeM, elevationRad, slantRangeM: sky.distanceM}, atmosphere, accuracy), ground).observed;
+        return {elevationRad, radiance: Float64Array.from(radiance)};
+    });
+    return ENVIRONMENT_NORMAL_SINES.map(sine => {
+        const normalElevationRad = Math.asin(sine), result = new Float64Array(N);
+        for (const {elevationRad, radiance} of sampled) {
+            const weight = Math.cos(elevationRad) * hemisphereAzimuthWeight(elevationRad, normalElevationRad) / samples;
+            for (let band = 0; band < N; band++) result[band] += radiance[band] * weight;
+        }
+        return result;
+    });
+}
+
 /** Adaptive photon-radiance/elevation table. Calculated numerical policy: 65
  * initial nodes across the diagonal interval, plus the exact axis and separate
  * sea/sky horizon endpoints. Bisect intervals with midpoint relative error above
@@ -730,14 +767,16 @@ export function createRangeLUT(options) {
 /** sourceBands: 12 physical photon radiances; output: scaled photon radiance by range.
  * The shader linearly interpolates these samples at sqrt(rangeM/maxRangeM)*(size-1).
  */
-export function sourceRangeLUT(rangeLUT, sourceBands) {
+/** Sensor radiance of a source seen at each table range. A thin layer that transmits t of what lies behind it
+ * passes pathWeight = 1 - t: the renderer adds t times the radiance already behind it, which carries its own path. */
+export function sourceRangeLUT(rangeLUT, sourceBands, pathWeight = 1) {
     spectrum("sourceBands", sourceBands);
     return Float32Array.from({length: rangeLUT.size}, (_, sample) => {
         let radiance = 0;
         for (let bandIndex = 0; bandIndex < N; bandIndex++) {
             const index = sample * N + bandIndex;
             radiance += sourceBands[bandIndex] / PHOTON_SCALE * rangeLUT.transmission[index]
-                + rangeLUT.pathRadiance[index];
+                + pathWeight * rangeLUT.pathRadiance[index];
         }
         return radiance;
     });

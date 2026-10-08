@@ -415,8 +415,12 @@ export function setupThermalZoneControls(node, folder) {
         const resolved = signature.resolveZone(zone);
         if (!Number.isFinite(resolved.temperatureK) || !Number.isFinite(resolved.emissivity)) continue;
         const group = parent.addFolder(zone).close(), state = {};
-        for (const key of ["temperatureK", "emissivity"]) {
-            Object.defineProperty(state, key, {get: () => node.thermal.zones[zone]?.[key] ?? resolved[key],
+        // Thin layers (a lantern canopy) also transmit. The scene adapter limits transmittance to 1 - emissivity;
+        // the control shows that effective value.
+        const value = key => node.thermal.zones[zone]?.[key] ?? resolved[key];
+        // A gas volume (a flame) transmits 1 - emissivity by definition, so it has no separate control.
+        for (const key of ["temperatureK", "emissivity", ...(resolved.transmittance !== undefined && !resolved.volume ? ["transmittance"] : [])]) {
+            Object.defineProperty(state, key, {get: () => key === "transmittance" ? Math.min(value(key), 1 - value("emissivity")) : value(key),
                 set: value => {node.thermal.zones[zone] = {...node.thermal.zones[zone], [key]: value}; markSitchDirty(); setRenderOne(true);}});
             // Same ranges and steps as the shared schema's objectTemperatureK and emissivity.
             const [min, max, step] = key === "temperatureK" ? [0, 3000, 1] : [0, 1, 0.01];
