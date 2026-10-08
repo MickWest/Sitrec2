@@ -9,6 +9,22 @@ lockstep with docs/WhatsNew.md.
 
 ---
 
+## Version 2.175.3 (2026-10-08)
+
+A dependency-only security maintenance release. Only `package-lock.json` and `tools/SitrecBridge/package-lock.json` change. No application code and no `package.json` range changes.
+
+### Security
+- **Six dependencies updated for open npm advisories** (`9439c46a`, a targeted `npm update --package-lock-only`). This fixes two critical and four high advisories:
+  - **proxy-addr 2.0.7 → 2.0.8** (critical, GHSA-jqcg-44mw-7w3h: IP spoofing through an IPv4-mapped IPv6 address in a trusted subnet), in the root and in `tools/SitrecBridge`. It comes in through `express`, which `standalone-server.js`, `standalone-serverless.js`, `test-viewer.js`, webpack-dev-server and the MCP SDK use. proxy-addr's subnet matching applies only when Express `trust proxy` is set, and no Sitrec code sets it.
+  - **shell-quote 1.10.0 → 1.12.0** (critical, GHSA-pqg4-j6r4-53mv: command injection in `quote()`). It comes in through webpack-dev-server → `launch-editor`, so only the development server (`npm start`) uses it.
+  - **compression 1.8.1 → 1.8.2** (high, GHSA-vc2v-76pw-4v95: memory-leak denial of service when a response closes early). Only webpack-dev-server uses it.
+  - **source-map-js 1.2.1 → 1.2.2** (high, GHSA-68fv-2mgg-jv7q: event-loop denial of service from indexed source-map section offsets). It comes in through `postcss` (`css-loader`, at build time) and `css-tree` (`jsdom`, in tests).
+  - **sharp 0.35.4 → 0.35.5**, with the `@img/sharp-*` platform packages at 0.35.5 and `@img/sharp-libvips-*` at 1.3.4 (high, GHSA-wq5f-xc86-pv6w: CVE-2026-96889 in the bundled librsvg). `sharp` is a devDependency that only `tools/equirect2tiles.js` uses.
+  - **@modelcontextprotocol/sdk 1.30.0 → 1.32.1** (high, GHSA-6qxp-vccf-f47h: the SDK's OAuth client could send credentials to an authorization server that the MCP server chose), in the root and in `tools/SitrecBridge`. `tools/SitrecBridge/mcp-server.js` and `tools/sitrec-comms/mcp-server.js` use only the SDK's `Server` and `StdioServerTransport`, not its OAuth client.
+  - **Result.** `npm audit` now reports 0 advisories in `tools/SitrecBridge` (4 critical before) and 0 in the root production tree (`--omit=dev`; 4 critical before: the MCP SDK and, through it, `express`, `express-rate-limit` and `proxy-addr`). The advisories that remain in the root are all in development tooling: `braces` (through `micromatch`, `chokidar` and `http-proxy-middleware`, under webpack-dev-server) and `sprintf-js` (through `argparse` and `js-yaml`, under Jest's `babel-plugin-istanbul`). They have no fixed release, and npm's forced fix would downgrade those tools.
+  - **Lockfile notes.** `npm audit fix` also moved Jest to 30.5.2. That fixed no advisory and left nested duplicate Jest packages, so it was not kept. The `libc` fields of the four `@biomejs/cli-linux*` packages, which npm 11.6.4 removes, stay in the lockfile so that Linux installs get the correct binary.
+  - **What does not change.** No file in `src/` imports any of the six packages, so none of them is part of the browser app. The Docker runtime images take only the built `dist/` and the PHP `vendor/` tree, so they carry no `node_modules`. The desktop app has its own lockfile (`apps/video-viewer/package-lock.json`), which does not change. The downloadable Bridge (Help → Documentation → *Download MCP Bridge*) is a single esbuild bundle made by `tools/SitrecBridge/build-dist.mjs`, and it gets the new versions the next time it is built.
+
 ## Version 2.175.2 (2026-10-08)
 
 ### Improvements
