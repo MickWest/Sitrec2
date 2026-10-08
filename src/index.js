@@ -1506,6 +1506,10 @@ async function checkFornewSitchObject() {
         } catch (error) {
             console.error("Error loading requested sitch object:", error);
         } finally {
+            if (CustomManager.chapterRevertRequest === requestedSitchObject) {
+                CustomManager.chapterRevertRequest = null;
+                CustomManager.chapterBusy = false;
+            }
             // Only clear if no newer request replaced it while we were loading.
             if (Globals.newSitchObject === requestedSitchObject) {
                 Globals.newSitchObject = undefined;

@@ -842,6 +842,13 @@ export const serializeMethods = {
      * @returns {Promise<{savedName?: string, fileHandle?: FileSystemFileHandle}|void>}
      */
     async serialize(name, version, local = false, directoryHandle = null, fileHandle = null) {
+        const chapterSaveGeneration = Globals.loadGeneration;
+        const checkChapterSaveGeneration = () => {
+            if (chapterSaveGeneration !== Globals.loadGeneration) throw new Error("Sitch changed while saving; save cancelled.");
+        };
+        const baselineAfterSave = (str) => {
+            if (chapterSaveGeneration === Globals.loadGeneration) this.markChapterBaseline(str);
+        };
         console.log("Serializing custom sitch")
 
         assert(Sit.canMod || Sit.isCustom, "one of Sit.canMod or Sit.isCustom must be true to serialize a sitch")
@@ -856,6 +863,7 @@ export const serializeMethods = {
             // This enables portable local sitches without manual file shuffling.
             if (directoryHandle) {
                 await FileManager.rehostDynamicLinksLocal(directoryHandle, true);
+                checkChapterSaveGeneration();
             }
 
             // Save the stringified sitch using localStaticURL paths when present.
@@ -864,6 +872,7 @@ export const serializeMethods = {
             // timing — so no special TS rewriting is needed here. Reload
             // fetches the substreams + sidecars and reconstructs pesPTSus[]
             // without ever re-demuxing the parent TS.
+            checkChapterSaveGeneration();
             const str = this.getCustomSitchString(true);
 
             const blob = new Blob([str]);
@@ -872,6 +881,8 @@ export const serializeMethods = {
             if (fileHandle) {
                 // Save directly into a previously selected file
                 return saveFileToHandle(blob, fileHandle).then(() => {
+                    baselineAfterSave(str);
+                    if (chapterSaveGeneration !== Globals.loadGeneration) return {savedName: filename};
                     Sit.sitchName = fileHandle.name.replace(".json", "");
                     console.log("Saved to existing local file handle as " + fileHandle.name);
                     return {savedName: fileHandle.name, fileHandle};
@@ -881,6 +892,8 @@ export const serializeMethods = {
             if (directoryHandle) {
                 // Save directly into the working folder
                 return saveFileToDirectory(blob, directoryHandle, filename).then(() => {
+                    baselineAfterSave(str);
+                    if (chapterSaveGeneration !== Globals.loadGeneration) return {savedName: filename};
                     Sit.sitchName = name;
                     console.log("Saved to working folder as " + filename);
                     return {savedName: filename};
@@ -890,6 +903,8 @@ export const serializeMethods = {
             // Fall back to save-file picker dialog
             return new Promise((resolve, reject) => {
                 saveFilePrompted(blob, filename).then(({name: savedName, fileHandle: savedFileHandle}) => {
+                    baselineAfterSave(str);
+                    if (chapterSaveGeneration !== Globals.loadGeneration) { resolve({savedName, fileHandle: savedFileHandle}); return; }
                     console.log("Saved as " + savedName)
                     // change sit.name to the filename
                     // with .sitch.js removed
@@ -908,6 +923,7 @@ export const serializeMethods = {
         console.log("ABOUT TO REHOST DYNAMIC LINKS FOR SERIALIZE")
         return FileManager.rehostDynamicLinks(true).then(async () => {
 
+            checkChapterSaveGeneration();
             console.log("GETTING CUSTOM SITCH STRING AFTER REHOSTING DYNAMIC LINKS")
             // get the string again, now that dynamic links have been rehosted
             const str = this.getCustomSitchString();
@@ -923,6 +939,7 @@ export const serializeMethods = {
                     const currentResponse = await fetch(currentFetchURL);
                     const currentContent = await currentResponse.text();
                     if (currentContent === str) {
+                        baselineAfterSave(str);
                         console.log("No changes to save - content identical to current version");
                         return;
                     }
@@ -931,6 +948,7 @@ export const serializeMethods = {
                 }
             }
 
+            checkChapterSaveGeneration();
             return FileManager.rehoster.rehostFile(name, str, version + ".js").then((staticRef) => {
                 console.log("✓ Sitch rehosted as " + staticRef);
 
@@ -951,6 +969,8 @@ export const serializeMethods = {
                     console.error("  If this persists, check browser DevTools Network tab for 304 responses");
                 }
 
+                baselineAfterSave(str);
+                if (chapterSaveGeneration !== Globals.loadGeneration) return;
                 this.staticURL = staticRef;
                 FileManager.loadURL = staticRef;
 
@@ -1955,6 +1975,7 @@ export const serializeMethods = {
             }
         }
 
+        this.markChapterBaseline();
         Globals.deserializing = false;
         Globals.sitchDirty = false;
         setRenderOne(3);
