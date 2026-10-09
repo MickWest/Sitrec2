@@ -68,7 +68,7 @@ export function generateWobbleOffsets(params, frames, fps) {
                 aimY = Math.sin(missA) * missR;
                 // per-correction speed jitter; floor keeps a degenerate
                 // correctionSpeed slider value from freezing the state machine
-                corrSpeed = Math.max(0.05, p.correctionSpeed * (0.75 + 0.5 * rand()));
+                corrSpeed = Math.max(p.minCorrectionSpeed ?? 0.05, p.correctionSpeed * (0.75 + 0.5 * rand()));
             }
         } else {
             const dx = aimX - ex, dy = aimY - ey;

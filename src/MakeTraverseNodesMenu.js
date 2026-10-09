@@ -5,6 +5,7 @@
 import {CNodeSwitch} from "./nodes/CNodeSwitch";
 import {guiMenus, NodeMan, Sit} from "./Globals";
 import {addAnalyzeButton, addAnalyzeTweaks} from "./AnalyzeTraverse";
+import {addLOSErrorButton} from "./LOSErrorAnalysisUI";
 import {EventManager} from "./CEventManager";
 import {MONTE_CARLO_IDS, monteCarloName} from "./MonteCarloLOS";
 
@@ -69,6 +70,7 @@ export function MakeTraverseNodesMenu(id, traverseInputs, defaultTraverse, idExt
 
     // One-button multi-method analysis of the LOS (report + best solutions)
     addAnalyzeButton(guiMenus.traverse);
+    addLOSErrorButton(guiMenus.traverse);
     // Tweaks subfolder: Min/Max analysis distance + hypothesis checkboxes
     addAnalyzeTweaks(guiMenus.traverse);
 

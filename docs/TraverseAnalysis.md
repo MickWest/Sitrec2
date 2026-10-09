@@ -6,6 +6,9 @@ shows.
 
 For how each individual method computes a path, see [Traverse Methods](TraverseMethods.md).
 
+To characterize recorded pointing against a known target and generate fresh
+operator-style or statistical errors, see [LOS Error Analysis](LOSErrorAnalysis.md).
+
 ---
 
 ## Physically Plausible Analysis (the Analyze button and the extra fits)

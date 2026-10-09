@@ -1466,7 +1466,7 @@ function truthCandidateLabel(node) {
 // exists for sitch-built reference paths that never go through TrackManager —
 // notably the legacy Aguadilla Lantern/UAP spline editors, which are
 // hand-authored solutions worth scoring the analysis against.
-function truthTrackOptions() {
+export function truthTrackOptions() {
     const options = {};
     if (TrackManager) {
         TrackManager.iterate((key, trackOb) => {
@@ -2894,7 +2894,7 @@ function uniformRangeList(loMeters, hiMeters, count = 44) {
     return ranges;
 }
 
-function resolveLOSNode() {
+export function resolveLOSNode() {
     const jetLOS = NodeMan.get("JetLOS", false);
     if (jetLOS) return jetLOS;
     const constAir = NodeMan.get("LOSTraverseConstantAirSpeed", false);
