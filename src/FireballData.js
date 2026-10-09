@@ -81,9 +81,11 @@ export function parseGMNSummary(text, sourceURL = GMN_SOURCE) {
     return { events, rejected };
 }
 // The only hosts a fireball panel links to; each has an entry in scripts/egress-allowlist.json.
-// A fireball file may name any source URL as provenance, so any other URL is shown as text:
-// a link to it would send a request to a host that only the file chose.
-export const FIREBALL_LINK_HOSTS = ["globalmeteornetwork.org", "creativecommons.org"];
+// A fireball file may name any source URL as provenance, so a source URL becomes a link only
+// on GMN_HOST and is otherwise shown as text: a link to it would send a request to a host that
+// only the file chose. The license host is for the panel's own fixed license link.
+export const GMN_HOST = "globalmeteornetwork.org";
+export const FIREBALL_LINK_HOSTS = [GMN_HOST, "creativecommons.org"];
 function parseURL(url) {
     try {
         return new URL(url);
@@ -91,9 +93,9 @@ function parseURL(url) {
         return null;
     }
 }
-export function isFireballLinkURL(url) {
+export function isFireballLinkURL(url, hosts = FIREBALL_LINK_HOSTS) {
     const parsed = parseURL(url);
-    return parsed?.protocol === "https:" && FIREBALL_LINK_HOSTS.includes(parsed.hostname);
+    return parsed?.protocol === "https:" && hosts.includes(parsed.hostname);
 }
 function validSourceURL(url) {
     const parsed = parseURL(url);

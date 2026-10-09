@@ -6,6 +6,7 @@ import {
     nearbyFireballs,
     fireballPeak,
     isFireballLinkURL,
+    GMN_HOST,
 } from "./FireballData";
 import { GlobalDateTimeNode, NodeMan, Sit, setRenderOne } from "./Globals";
 import { DragDropHandler } from "./DragDropHandler";
@@ -73,8 +74,8 @@ function paragraph(root, text) {
     root.append(p);
     return p;
 }
-function link(root, label, url) {
-    if (!isFireballLinkURL(url)) {
+function link(root, label, url, hosts) {
+    if (!isFireballLinkURL(url, hosts)) {
         if (typeof url === "string" && url) paragraph(root, `${label}: ${url}`);
         return;
     }
@@ -95,7 +96,7 @@ function describe(root, event) {
         root,
         `${event.source.network} · ${event.source.license}. ${event.pathMethod}. Heights: metres above WGS84 ellipsoid. UTC timestamps render to milliseconds; printed digits do not establish measurement accuracy. No light curve is synthesized. Positions between samples are interpolated; the marker holds the endpoint outside the observed interval and does not represent continued flight.`,
     );
-    link(root, "Original source", event.source.url);
+    link(root, "Original source", event.source.url, [GMN_HOST]);
     if (event.source.license === "CC BY 4.0") link(root, "CC BY 4.0", "https://creativecommons.org/licenses/by/4.0/");
     if (event.source.network === "Global Meteor Network")
         link(root, "GMN conventions", "https://globalmeteornetwork.org/data/media/GMN_orbit_data_columns.pdf");

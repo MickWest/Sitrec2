@@ -68,3 +68,9 @@ test("a GMN source URL stays a link", () => {
     expect(a.href).toBe(url);
     expect(a.rel).toBe("noopener noreferrer");
 });
+test("a source URL on the license host is text too: only GMN source URLs become links", () => {
+    showFireballDetails(sampleEvent("https://creativecommons.org/anything?id=7", "Other network"));
+    const dialog = document.querySelector("dialog");
+    expect([...dialog.querySelectorAll("a")].some(a => a.textContent === "Original source")).toBe(false);
+    expect(dialog.textContent).toContain("Original source: https://creativecommons.org/anything?id=7");
+});
