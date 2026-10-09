@@ -1,6 +1,8 @@
 // Creating timed data and then tracks from pre-parsed track files
 // should be agnostic to the source of the data (KML/ADSB, CSV, KLVS, etc)
-import {addNameControl, notifyDisplayNameChanged} from "./DisplayName";
+import {addNameControl, deduplicateNames, notifyDisplayNameChanged, uniqueDisplayName} from "./DisplayName";
+import {nextSequentialName} from "./utils/parseObjectInput";
+import {addAltitudeLockControls, lockHeightAt} from "./AltitudeLockGUI";
 import {addCustomGraphControl} from "./CustomGraphUI";
 import {CNodeScale} from "./nodes/CNodeScale";
 import {requestCameraFocusSync} from "./CameraFocusUI";
@@ -236,6 +238,18 @@ function disposeDirectTrackDependentControllers(trackNode) {
     }
 }
 
+
+
+// The x on screen of the menu button just clicked: a lil-gui button keeps focus after a click.
+// A panel opened from a button in a folder goes beside it. The middle of the window otherwise.
+function clickedButtonX() {
+    const element = document.activeElement;
+    if (element?.closest?.(".lil-gui")) {
+        const rect = element.getBoundingClientRect();
+        return rect.left + rect.width / 2;
+    }
+    return window.innerWidth / 2;
+}
 
 class CMetaTrack {
     constructor(trackFileName, trackDataNode, trackNode, trackIndex = 0) {
@@ -1029,7 +1043,8 @@ class CTrackManager extends CManager {
 
                     const dummy = {
                         removeTrack : async () => {
-                            if (await showConfirm(`Remove track "${shortName}"?`, {title: "Remove Track"})) {
+                            // "Delete", as on every other track; the loaded file is not changed.
+                            if (await showConfirm(`Delete track "${trackOb.displayName ?? shortName}"?`, {title: "Delete Track"})) {
                                 TrackManager.disposeRemove(trackID);
                             }
                         },
@@ -1061,7 +1076,7 @@ class CTrackManager extends CManager {
                         }
                     }
 
-                    trackOb.guiFolder.add(dummy, "removeTrack").name(t("trackManager.removeTrack"));
+                    trackOb.guiFolder.add(dummy, "removeTrack").name(t("trackManager.deleteTrack"));
 
                     if (trackNode.frames >= 2) {
                         const splineName = shortName + "_sp";
@@ -2110,6 +2125,9 @@ class CTrackManager extends CManager {
             // perhaps we need a track manager to keep track of all the tracks
 
             // HERE WE ARE!!!!
+
+            // The options were added under the short name; show the display name instead.
+            if (trackOb) this.relabelTrackOptions(trackOb);
         }
 
         // if the track had FOV data, and there's an fov drop target, then add it
@@ -2420,7 +2438,7 @@ class CTrackManager extends CManager {
      */
     addSyntheticTrack(options) {
         const trackNumber = this.size();
-        const name = options.name || `Track ${trackNumber + 1}`;
+        const name = options.name || this.nextTrackName();
         const curveType = options.curveType || "chordal";
         const editMode = options.editMode !== undefined ? options.editMode : true;
         const colorHex = options.color;
@@ -2485,6 +2503,12 @@ class CTrackManager extends CManager {
         // IMPORTANT: Don't change the folder title yet! getFolder() looks up by innerText,
         // so we need to keep it as trackID until after CNodeDisplayTrack finds it
         const guiFolder = guiMenus.contents.addFolder(trackID);
+
+        // The folder's groups. Name, Edit Track, the camera buttons and the actions stay at the
+        // top level (the order is set at the end of this method); the rest is grouped here.
+        const pathFolder = guiFolder.addFolder(t("trackManager.pathFolder"));
+        const smoothingFolder = guiFolder.addFolder(t("trackManager.smoothingFolder")).close();
+        const displayFolder = guiFolder.addFolder(t("trackManager.displayFolder")).close();
         
         // Create unsmoothed spline editor node (the raw data track)
         // Pass skipGUI: true to prevent it from creating its own GUI in physics menu
@@ -2520,7 +2544,7 @@ class CTrackManager extends CManager {
             end: 200,
             step: 1,
             desc: "Smoothing window",
-        }, guiFolder);
+        }, smoothingFolder);
 
         new CNodeGUIValue({
             id: trackID + "_tensionValue",
@@ -2529,7 +2553,7 @@ class CTrackManager extends CManager {
             end: 1,
             step: 0.01,
             desc: "Catmull Tension",
-        }, guiFolder);
+        }, smoothingFolder);
 
         new CNodeGUIValue({
             id: trackID + "_intervalsValue",
@@ -2538,7 +2562,7 @@ class CTrackManager extends CManager {
             end: 100,
             step: 1,
             desc: "Catmull Intervals",
-        }, guiFolder);
+        }, smoothingFolder);
 
         new CNodeGUIValue({
             id: trackID + "_polyOrderValue",
@@ -2547,7 +2571,7 @@ class CTrackManager extends CManager {
             end: 5,
             step: 1,
             desc: "SavGol Poly Order",
-        }, guiFolder);
+        }, smoothingFolder);
 
         new CNodeGUIValue({
             id: trackID + "_edgeOrderValue",
@@ -2556,7 +2580,7 @@ class CTrackManager extends CManager {
             end: 5,
             step: 1,
             desc: "Edge Fit Order",
-        }, guiFolder);
+        }, smoothingFolder);
 
         new CNodeGUIValue({
             id: trackID + "_fitWindowValue",
@@ -2565,7 +2589,7 @@ class CTrackManager extends CManager {
             end: 400,
             step: 1,
             desc: "Edge Fit Window",
-        }, guiFolder);
+        }, smoothingFolder);
         
         // Create smoothed track node that wraps the unsmoothed spline editor
         const smoothedTrackNode = new CNodeSmoothedPositionTrack({
@@ -2579,10 +2603,12 @@ class CTrackManager extends CManager {
             edgeOrder: trackID + "_edgeOrderValue",
             fitWindow: trackID + "_fitWindowValue",
             isDynamicSmoothing: true,
-            guiFolder: guiFolder,
+            guiFolder: smoothingFolder,
             copyData: false,
             exportable: false,
         });
+        // The method decides which of the values above apply, so it comes first.
+        smoothedTrackNode.smoothingMethodController?.moveToFirst();
         
         // Convert hex color to RGB array for display track. A serialised track
         // always carries its colour, so only a brand-new one falls through to
@@ -2599,6 +2625,7 @@ class CTrackManager extends CManager {
         // Create display track for visualization
         // Don't use skipGUI - let it create its controls in the folder we just created
         // It will find the folder by looking up this.in.track.id (which is trackID)
+        const beforeDisplayTrack = new Set(guiFolder.children);
         const displayTrack = new CNodeDisplayTrack({
             id: displayTrackID,
             track: trackID,
@@ -2618,6 +2645,15 @@ class CTrackManager extends CManager {
             ignoreAB: true,
             // skipGUI: false (default) - let it add controls to the folder
         });
+
+        // Its line, wall and contrail controls go in Display. Its camera buttons and Add Custom
+        // Graph stay at the top level, as in an object's folder.
+        const topLevelProperties = ["gotoTrack", "focusCameraHere", "followCameraHere", "addCustomGraph"];
+        for (const child of [...guiFolder.children]) {
+            if (!beforeDisplayTrack.has(child) && !topLevelProperties.includes(child.property)) {
+                child.moveToFolder(displayFolder);
+            }
+        }
         
         // Create the track object - use smoothedTrackNode as the primary track node
         const trackOb = this.add(trackID, new CMetaTrack(null, smoothedTrackNode, smoothedTrackNode));
@@ -2633,6 +2669,9 @@ class CTrackManager extends CManager {
         trackOb.trackColor = trackColor;
         trackOb.curveType = curveType;
         trackOb.editMode = editMode; // Store initial edit mode state
+        // Closing a panel normally unticks its edit-mode checkbox. Track edit mode has its own
+        // ways out (Esc, Exit Edit Mode), so closing the track's panel leaves it on.
+        trackOb.keepEditModeOnMenuClose = true;
         trackOb.constantSpeed = false; // Default to time-based interpolation
         trackOb.extrapolateTrack = true; // Default to extrapolating beyond control points
         trackOb.objectID = options.objectID || null; // Store associated object ID
@@ -2692,7 +2731,7 @@ class CTrackManager extends CManager {
         
         // Add constant speed checkbox to the GUI folder
         // This checkbox controls whether the track uses constant speed interpolation
-        guiFolder.add(trackOb, 'constantSpeed').name(t("trackManager.constantSpeed")).onChange((value) => {
+        pathFolder.add(trackOb, 'constantSpeed').name(t("trackManager.constantSpeed")).onChange((value) => {
             splineEditorNode.constantSpeed = value;
             splineEditorNode.recalculateCascade();
             console.log(`Constant speed ${value ? 'enabled' : 'disabled'} for track: ${shortName}`);
@@ -2700,15 +2739,22 @@ class CTrackManager extends CManager {
         
         // Add extrapolate track checkbox to the GUI folder
         // This checkbox controls whether the track extrapolates beyond first/last control points
-        guiFolder.add(trackOb, 'extrapolateTrack').name(t("trackManager.extrapolateTrack")).onChange((value) => {
+        pathFolder.add(trackOb, 'extrapolateTrack').name(t("trackManager.extrapolateTrack")).onChange((value) => {
             splineEditorNode.extrapolateTrack = value;
             splineEditorNode.recalculateCascade();
             console.log(`Extrapolate track ${value ? 'enabled' : 'disabled'} for track: ${shortName}`);
         });
         
-        // Add curve type dropdown
-        const curveTypeOptions = ['linear', 'catmull', 'centripetal', 'chordal'];
-        guiFolder.add(trackOb, 'curveType', curveTypeOptions).name(t("trackManager.curveType")).onChange((value) => {
+        // Add curve type dropdown: plain names, with the kind of spline in brackets. The values
+        // are the ones a sitch saves.
+        const curveTypeOptions = {
+            [t("trackManager.curveTypes.linear")]: "linear",
+            [t("trackManager.curveTypes.chordal")]: "chordal",
+            [t("trackManager.curveTypes.centripetal")]: "centripetal",
+            [t("trackManager.curveTypes.catmull")]: "catmull",
+        };
+        pathFolder.add(trackOb, 'curveType', curveTypeOptions).name(t("trackManager.curveType"))
+            .tooltip(t("trackManager.curveTypeTooltip")).onChange((value) => {
             splineEditorNode.setCurveType(value);
             console.log(`Curve type changed to ${value} for track: ${shortName}`);
         });
@@ -2734,32 +2780,48 @@ class CTrackManager extends CManager {
             // pruneUnusedFlagged() (which runs whenever any track is removed) would
             // delete it — the control would vanish from a spline that still exists.
             // disposeSyntheticTrack removes it by name instead.
-        }, guiFolder);
+        }, pathFolder);
 
+        // The lock height. -1 is off: Lock Altitude (AltitudeLockGUI) switches it, and hides
+        // this control while the lock is off. The id is unchanged, so saved sitches load.
         trackOb.altitudeLock = -1;
+        let altLockControls = null;
         const altLockNode = new CNodeGUIValue({
             id: trackID + "_altitudeLock",
             value: -1,
             start: -1,
             end: 1000,
             step: 1,
-            desc: "Alt Lock (-1 = off)",
+            desc: "Lock Height",
             unitType: "small",
             onChange: (v) => {
                 trackOb.altitudeLock = v;
                 splineEditorNode.setAltitudeLock(v);
+                altLockControls?.update();
             },
             elastic: true,
             elasticMin: 1000,
             elasticMax: 100000,
             // Same reason as Alt offset above — it was prunable, so removing any
             // other track silently deleted this spline's Alt Lock control.
-        }, guiFolder);
+        }, pathFolder);
 
         trackOb.altitudeLockAGL = true;
-        guiFolder.add(trackOb, 'altitudeLockAGL').name(t("trackManager.altLockAGL")).listen().onChange((value) => {
-            splineEditorNode.setAltitudeLockAGL(value);
+        altLockControls = addAltitudeLockControls(pathFolder, {
+            heightNode: altLockNode,
+            isOn: () => trackOb.altitudeLock >= 0,
+            // The first control point's height, so switching the lock on holds the track there.
+            currentHeight: () => {
+                const first = splineEditor.positions[0];
+                return first ? lockHeightAt(first, trackOb.altitudeLockAGL) : 0;
+            },
+            getAGL: () => trackOb.altitudeLockAGL,
+            setAGL: (value) => {
+                trackOb.altitudeLockAGL = value;
+                splineEditorNode.setAltitudeLockAGL(value);
+            },
         });
+        trackOb.updateAltitudeLockControls = () => altLockControls.update();
 
         // Set through the slider rather than the fields: the slider holds display units,
         // and its onChange is what conforms the control points to the lock.
@@ -2780,7 +2842,7 @@ class CTrackManager extends CManager {
         if (showInLook) {
             displayTrack.setLayerBit(LAYER.LOOK, true);
         }
-        guiFolder.add(trackOb, "showInLook").name(t("misc.showInLookView.label")).listen().onChange((value) => {
+        displayFolder.add(trackOb, "showInLook").name(t("misc.showInLookView.label")).listen().onChange((value) => {
             displayTrack.setLayerBit(LAYER.LOOK, value);
             setRenderOne(true);
         });
@@ -2799,15 +2861,30 @@ class CTrackManager extends CManager {
         // (set above) and the smoothed wrapper node to exist.
         splineEditorNode.addTrackExportButtons();
 
-        // Add delete button to the folder
+        // Add delete button to the folder. A track with an object asks about the object too: it
+        // can stay without the track, and its own Delete Object removes it later.
         const dummy = {
             deleteTrack: async () => {
-                if (await showConfirm(`Delete synthetic track "${trackOb.displayName ?? shortName}"?`, {title: "Delete Track"})) {
+                const name = trackOb.displayName ?? shortName;
+                const object = trackOb.objectID ? NodeMan.get(trackOb.objectID, false) : null;
+                if (object) {
+                    const choice = await showChoice(`Delete track "${name}"?`, {
+                        title: "Delete Track",
+                        options: [
+                            {label: `Delete Track and "${object.displayName}"`, value: "both", primary: true},
+                            {label: "Delete Track Only", value: "track"},
+                            {label: "Cancel", value: null, cancel: true},
+                        ],
+                    });
+                    if (!choice) return;
+                    if (choice === "both") CustomManager.deleteObject(object);
+                    this.disposeSyntheticTrack(trackID);
+                } else if (await showConfirm(`Delete track "${name}"?`, {title: "Delete Track"})) {
                     this.disposeSyntheticTrack(trackID);
                 }
             }
         };
-        guiFolder.add(dummy, "deleteTrack").name(t("trackManager.deleteTrack"));
+        const deleteController = guiFolder.add(dummy, "deleteTrack").name(t("trackManager.deleteTrack"));
         
         // Add to drop targets if configured
         if (Sit.dropTargets !== undefined && Sit.dropTargets["track"] !== undefined) {
@@ -2826,6 +2903,8 @@ class CTrackManager extends CManager {
                 }
             }
         }
+        // The options were added under the short name; show the display name instead.
+        this.relabelTrackOptions(trackOb);
         
         // Associate with object if provided
         if (options.objectID) {
@@ -2845,6 +2924,8 @@ class CTrackManager extends CManager {
                     guiFolder: objectNode.gui,
                 });
 
+                this.linkTrackAndObject(trackOb, objectNode);
+
                 console.log(`Associated object ${options.objectID} with track ${trackID} and added controllers`);
             } else {
                 console.warn(`Object ${options.objectID} not found`);
@@ -2854,6 +2935,18 @@ class CTrackManager extends CManager {
         // Enable edit mode if requested
         if (editMode) {
             splineEditor.setEnable(true);
+        }
+
+        // The order on screen. The main action and the links come first, as in an object's
+        // folder; the groups in the middle; Export and Delete last.
+        const topLevel = (property) => guiFolder.controllers.find(c => c.property === property);
+        for (const item of [
+            topLevel("displayName"), editModeController, trackOb.showObjectController,
+            topLevel("gotoTrack"), topLevel("focusCameraHere"), topLevel("followCameraHere"),
+            pathFolder, smoothingFolder, displayFolder,
+            topLevel("addCustomGraph"), topLevel("exportSpline"), deleteController,
+        ]) {
+            item?.moveToEnd();
         }
         
         console.log(`Created synthetic track: ${trackID} (${name})`);
@@ -2882,6 +2975,9 @@ class CTrackManager extends CManager {
         }
 
         this.usedShortNames.delete(trackOb.menuText);
+
+        // An object kept by "Delete Track Only" loses its Show Track Menu button.
+        if (trackOb.objectID) this.detachObject(trackOb);
 
         disposeDirectTrackDependentControllers(trackOb.smoothedTrackNode ?? NodeMan.get(trackID, false));
         
@@ -3087,9 +3183,11 @@ class CTrackManager extends CManager {
         });
 
 
-        // the balloon itself: a 0.5 m radius sphere riding the track
+        // the balloon itself: a 0.5 m radius sphere riding the track. It is an object with its
+        // own name; a saved name comes back from its mod.
         const objectNode = new CNode3DObject({
             id: objectID,
+            displayName: CustomManager.getNextObjectName(),
             geometry: "sphere",
             radius: 0.5,
             color: 0xf0f0f0,
@@ -3109,6 +3207,7 @@ class CTrackManager extends CManager {
         trackOb.trackColor = trackColor;
         trackOb.objectID = objectID;
         this.initTrackDisplayName(trackOb, options.displayName);
+        this.linkTrackAndObject(trackOb, objectNode);
 
         // Show-in-look-view toggle (same semantics as synthetic tracks)
         trackOb.showInLook = !!options.showInLook;
@@ -3146,6 +3245,8 @@ class CTrackManager extends CManager {
                 }
             }
         }
+        // The options were added under the short name; show the display name instead.
+        this.relabelTrackOptions(trackOb);
 
         console.log(`Created balloon track: ${trackID} (${shortName}) at ${options.startLat}, ${options.startLon}`);
 
@@ -3285,10 +3386,10 @@ class CTrackManager extends CManager {
      * @param {string} [name] - defaults to the shortName
      */
     initTrackDisplayName(trackOb, name) {
-        trackOb.displayName = String(name ?? trackOb.menuText);
-        // The object made with the track ("Add Object", a balloon) takes the same name. An
-        // imported track's sphere is made later, from the same shortName.
-        this.objectForTrack(trackOb)?.setDisplayName?.(trackOb.displayName, {linked: false});
+        // Unique among the tracks, so the camera and target track lists can tell them apart.
+        // The object made with the track keeps its own name ("Object N"). An imported track's
+        // marker sphere is made later, from the same shortName.
+        trackOb.displayName = this.uniqueTrackName(String(name ?? trackOb.menuText), trackOb);
         const folder = trackOb.guiFolder;
         if (!folder) return;
         // Found by id whatever the title says (CNodeDisplayTrack, the Sitrec API).
@@ -3300,12 +3401,19 @@ class CTrackManager extends CManager {
             id: trackOb.trackID,
             first: true,
             onRename: (value) => this.setTrackDisplayName(trackOb, value, {fromControl: true}),
+            // Checked when the edit is finished, not per key: "Track 1" is typed through
+            // "Track ", which another track may not have, on the way to a name it does have.
+            onFinishChange: (value) => {
+                const unique = this.uniqueTrackName(value, trackOb);
+                if (unique !== value) this.setTrackDisplayName(trackOb, unique);
+            },
         });
     }
 
     /**
-     * Rename a track. Only the display name changes. Its 3D object shares the name, so it is
-     * renamed too (linked=false stops the object renaming the track back).
+     * Rename a track. Only the display name changes. An imported track's marker sphere shares
+     * the name, so it is renamed too (linked=false stops the sphere renaming the track back).
+     * An object made with the track has its own name and is not renamed.
      */
     setTrackDisplayName(trackOb, name, {linked = true, fromControl = false} = {}) {
         name = String(name ?? "");
@@ -3317,9 +3425,8 @@ class CTrackManager extends CManager {
         // The spline's own name, used when it is exported.
         if (trackOb.splineEditorNode) trackOb.splineEditorNode.menuText = name;
         this.relabelTrackOptions(trackOb);
-        if (linked) {
-            const object = this.objectForTrack(trackOb);
-            object?.setDisplayName?.(name, {linked: false});
+        if (linked && this.sharesNameWithObject(trackOb)) {
+            this.objectForTrack(trackOb)?.setDisplayName?.(name, {linked: false});
         }
         if (!fromControl) notifyDisplayNameChanged(trackOb.trackID);
         setRenderOne(true);
@@ -3344,6 +3451,68 @@ class CTrackManager extends CManager {
         return trackOb.displayTargetSphere ?? null;
     }
 
+    /**
+     * Show Object Menu in the track's folder and Show Track Menu in the object's. The track is
+     * in Contents and the object in Objects, so without these the user has to find the other
+     * one. A panel opened from one of them goes beside the button that was clicked.
+     */
+    linkTrackAndObject(trackOb, objectNode) {
+        trackOb.showObjectController = trackOb.guiFolder.add({
+            showObjectMenu: () => CustomManager.showNodeEditMenu(objectNode, clickedButtonX(), 0),
+        }, "showObjectMenu").name(t("trackManager.showObjectMenu.label"))
+            .tooltip(t("trackManager.showObjectMenu.tooltip"))
+            .moveAfter(t("displayName.label"));
+
+        objectNode.showTrackController = objectNode.gui.add({
+            showTrackMenu: () => CustomManager.showTrackMenu(
+                {trackID: trackOb.trackID, guiFolder: trackOb.guiFolder, trackOb}, clickedButtonX(), 0),
+        }, "showTrackMenu").name(t("nodes3dObject.showTrackMenu.label"))
+            .tooltip(t("nodes3dObject.showTrackMenu.tooltip"))
+            .moveAfter(t("displayName.label"));
+        // Common, so a model or geometry rebuild of the folder keeps it; live while hidden.
+        objectNode.showTrackController.isCommon = true;
+        objectNode.showTrackController.keepLiveWhenFolderOff?.();
+    }
+
+    // Undo linkTrackAndObject, for an object deleted on its own or kept by Delete Track Only.
+    detachObject(trackOb) {
+        const objectNode = NodeMan.get(trackOb.objectID, false);
+        trackOb.showObjectController?.destroy();
+        trackOb.showObjectController = null;
+        objectNode?.showTrackController?.destroy();
+        if (objectNode) objectNode.showTrackController = null;
+        trackOb.objectID = null;
+    }
+
+    // True when the track and its object have one name: an imported track and its marker
+    // sphere. A synthetic or balloon track and the object made with it (objectID) are two
+    // things, "Track N" and "Object N", each with its own name.
+    sharesNameWithObject(trackOb) {
+        return !trackOb.objectID;
+    }
+
+    // Every name a track carries: its display name and its short name.
+    trackNamesInUse() {
+        const names = [];
+        this.iterate((id, trackOb) => names.push(trackOb.displayName, trackOb.menuText));
+        return names;
+    }
+
+    // The next "Track N", one past the highest in use. A track made with an object gets its
+    // name from CustomManager.getNextTrackAndObjectNames instead, so the two share a number.
+    nextTrackName() {
+        return nextSequentialName(this.trackNamesInUse(), "Track");
+    }
+
+    // `name` if no other track has it, else the first free "name-N".
+    uniqueTrackName(name, trackOb) {
+        const others = [];
+        this.iterate((id, other) => {
+            if (other !== trackOb && other.displayName !== undefined) others.push(other.displayName);
+        });
+        return others.includes(name) ? uniqueDisplayName(name, others) : name;
+    }
+
     trackForObject(objectID) {
         let found = null;
         this.iterate((id, trackOb) => {
@@ -3366,11 +3535,20 @@ class CTrackManager extends CManager {
 
     // Not linked: each object restores its own saved name from its mod.
     applyDisplayNames(names) {
-        if (!names || typeof names !== "object") return;
-        for (const [id, name] of Object.entries(names)) {
-            const trackOb = this.get(id, false);
-            if (trackOb && typeof name === "string") this.setTrackDisplayName(trackOb, name, {linked: false});
+        if (names && typeof names === "object") {
+            for (const [id, name] of Object.entries(names)) {
+                const trackOb = this.get(id, false);
+                if (trackOb && typeof name === "string") this.setTrackDisplayName(trackOb, name, {linked: false});
+            }
         }
+        // A sitch saved before names had to be unique can give two tracks one name. The first
+        // keeps it; each later one gets the first free "name-N".
+        const tracks = [];
+        this.iterate((id, trackOb) => tracks.push(trackOb));
+        const unique = deduplicateNames(tracks.map(trackOb => trackOb.displayName));
+        tracks.forEach((trackOb, i) => {
+            if (unique[i] !== trackOb.displayName) this.setTrackDisplayName(trackOb, unique[i], {linked: false});
+        });
     }
 
     serialize() {
@@ -3481,6 +3659,9 @@ class CTrackManager extends CManager {
                     const objData = trackData.objectData;
                     const objectNode = new CNode3DObject({
                         id: objData.id,
+                        // Its saved name comes back from its mod. A sitch saved before
+                        // objects had names has none, so start it as "Object N", not its id.
+                        displayName: CustomManager.getNextObjectName(),
                         geometry: objData.geometry,
                         radius: objData.radius,
                         color: objData.color,
@@ -3569,6 +3750,8 @@ class CTrackManager extends CManager {
                         if (altLockNode) {
                             altLockNode.value = trackOb.altitudeLock;
                         }
+                        // Show or hide the lock height and Height From for the restored lock.
+                        trackOb.updateAltitudeLockControls?.();
                         
                         // Ensure edit mode is disabled after deserialization
                         // Transform controls should not be visible when loading a saved situation

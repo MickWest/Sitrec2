@@ -426,7 +426,13 @@ GUI.prototype.mirrorFolderFrom = function (sourceFolder, opts = {}) {
         if (child.controllers !== undefined) {
             const folder = this.addFolder(child._title);
             folder.mirrorFolderFrom(child, opts);
-            folder.open();
+            // Open or closed as the source folder is, so a group that is closed in the menu (a
+            // track's Smoothing, an object's Material) is closed in its panel too. A toggle in
+            // the copy goes to the source, so a rebuild of the copy keeps it.
+            folder.open(!child._closed);
+            folder.onOpenClose((changed) => {
+                if (changed === folder && child._closed !== folder._closed) child.open(!folder._closed);
+            });
             folder.show(!child._hidden);
         } else {
             const twin = child.mirrorTo(this, opts);

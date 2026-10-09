@@ -133,6 +133,17 @@ export const mirrorMethods = {
     },
 
     /**
+     * The folder showNodeEditMenu mirrors for a node. guiFolder is the real lil-gui folder on
+     * most nodes; CNode3DObject keeps its folder in `gui` instead. `gui` may be a plain string
+     * on some nodes (CNodeDisplayTrack carries "contents"), so it only counts when it is an object.
+     * @param {CNode} node
+     * @returns {GUI|null}
+     */
+    nodeEditFolder(node) {
+        return node?.guiFolder || (node?.gui && typeof node.gui === "object" ? node.gui : null);
+    },
+
+    /**
      * Open a node's edit window: its GUI folder mirrored into a draggable standalone menu,
      * positioned clear of the point it was invoked from.
      *
@@ -145,10 +156,7 @@ export const mirrorMethods = {
      * @returns {GUI|null} the menu, or null if the node has no GUI or creation was blocked
      */
     showNodeEditMenu(node, clientX, clientY) {
-        // guiFolder is the real lil-gui folder; `gui` may be a plain string on some nodes
-        // (CNodeDisplayTrack carries "contents"), so it only counts when it is an object.
-        const guiToMirror = node?.guiFolder
-            || (node?.gui && typeof node.gui === "object" ? node.gui : null);
+        const guiToMirror = this.nodeEditFolder(node);
         if (!node || !guiToMirror) {
             console.log(`Node ${node?.id} not found or has no GUI folder`);
             return null;
@@ -157,8 +165,9 @@ export const mirrorMethods = {
         const menuTitle = node.menuName || guiToMirror._title || node.id;
 
         // dismissOnOutsideClick=false: interacting with the scene — which is the whole
-        // point while the move widget is up — must not close the menu.
-        const standaloneMenu = Globals.menuBar.createStandaloneMenu(menuTitle, clientX, clientY, false);
+        // point while the move widget is up — must not close the menu. The "object" slot lets
+        // it stay open beside a track's panel.
+        const standaloneMenu = Globals.menuBar.createStandaloneMenu(menuTitle, clientX, clientY, false, false, "object");
         if (!standaloneMenu) return null;    // blocked by an open persistent menu
 
         this.setupDynamicMirroring(guiToMirror, standaloneMenu);
@@ -174,15 +183,64 @@ export const mirrorMethods = {
         };
 
         standaloneMenu.open();
+        this.placePanel(standaloneMenu, clientX);
+        return standaloneMenu;
+    },
 
-        // Opened at the cursor, which is on top of the object it edits — and with the move
-        // widget the object is now something you want to SEE while the menu is up. Shift it
-        // clear of the click horizontally, then drop it to a fixed row under the menu bar so
-        // it is always in the same out-of-the-way place. Done after open() so the width and
-        // title height read are the populated menu's.
-        Globals.menuBar.placeMenuBesidePoint(standaloneMenu, clientX);
-        Globals.menuBar.pinMenuBelowBar(standaloneMenu);
+    /**
+     * Put a track or object panel in its place. Opened at the cursor, it would cover the thing
+     * it edits — and with the move widget, that thing is what you want to SEE while the panel is
+     * up. So shift it clear of the click horizontally, then drop it to a fixed row under the
+     * menu bar, so every such panel is in the same out-of-the-way place; then move it aside if
+     * the other panel is already there. Call after open(), so the width and title height read
+     * are the populated panel's.
+     *
+     * @param {GUI} panel
+     * @param {number} clientX - viewport x the panel was opened at
+     */
+    placePanel(panel, clientX) {
+        Globals.menuBar.placeMenuBesidePoint(panel, clientX);
+        Globals.menuBar.pinMenuBelowBar(panel);
+        Globals.menuBar.placeMenuClearOfPanels(panel);
+    },
 
+    /**
+     * Open a track's menu: its GUI folder mirrored into a draggable standalone menu, placed
+     * like an object's (placePanel). Right-clicking a track in a 3D view and every Show Track
+     * Menu button come here.
+     *
+     * @param {{trackID: string, guiFolder: GUI, trackOb: Object}} track - guiFolder is given
+     *        separately because a display track found by picking supplies its own folder
+     * @param {number} clientX - viewport x to open at
+     * @param {number} clientY - viewport y to open at
+     * @returns {GUI|null} the menu, or null if the track has no folder or creation was blocked
+     */
+    showTrackMenu(track, clientX, clientY) {
+        if (!track.guiFolder) return null;
+
+        // Refresh smoothing parameter visibility before creating the menu
+        const trackOb = track.trackOb;
+        const smoothedNode = trackOb?.smoothedTrackNode || trackOb?.trackNode;
+        if (smoothedNode?.isDynamicSmoothing) {
+            smoothedNode._updateParameterVisibility();
+        }
+
+        const trackMenuTitle = () => `Track: ${trackOb?.displayName || trackOb?.menuText || track.trackID}`;
+
+        // dismissOnOutsideClick=false so dragging control points doesn't close the menu. The
+        // "track" slot lets it stay open beside an object's panel.
+        const standaloneMenu = Globals.menuBar.createStandaloneMenu(trackMenuTitle(), clientX, clientY, false, false, "track");
+        if (!standaloneMenu) return null;    // blocked by an open persistent menu
+
+        this.setupDynamicMirroring(track.guiFolder, standaloneMenu);
+        titleFollowsDisplayName(standaloneMenu, track.trackID, trackMenuTitle);
+
+        standaloneMenu.refreshMirror = () => {
+            this.updateMirror(standaloneMenu);
+        };
+
+        standaloneMenu.open();
+        this.placePanel(standaloneMenu, clientX);
         return standaloneMenu;
     },
 

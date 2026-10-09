@@ -1069,10 +1069,11 @@ class CSitrecAPI {
                 },
                 fn: (v) => {
                     try {
-                        const name = v.name || CustomManager.getNextObjectName();
                         const alt = v.alt ?? 0;
-                        const { objectNode, trackOb } = CustomManager.createObjectFromInput(
-                            name, v.lat, v.lon, alt, v.alt !== undefined
+                        // Without a name, the object and its track get matching
+                        // "Object N" / "Track N"; `name` is the one the object got.
+                        const { objectNode, trackOb, name } = CustomManager.createObjectFromInput(
+                            v.name, v.lat, v.lon, alt, v.alt !== undefined
                         );
                         if (objectNode) {
                             return { 
@@ -1108,17 +1109,14 @@ class CSitrecAPI {
                     }
                     const results = v.objects.map((ob, i) => {
                         try {
-                            // Passed through for parity with addObjectAtLLA. NOTE: neither
-                            // actually names anything — createObjectFromInput generates
-                            // `syntheticObject_<timestamp>` for the id and the track gets an
-                            // auto-name, so `name` reaches addSyntheticTrack and is not used.
-                            // No `namePrefix` is offered here because documenting numbering
-                            // that does not happen would just mislead the model into
-                            // addressing objects by names they do not have.
-                            const name = ob.name || CustomManager.getNextObjectName();
+                            // The same as addObjectAtLLA: `name` is the object's display name
+                            // (its folder title in the Objects menu); the id stays
+                            // `syntheticObject_<timestamp>`. Without a name, the object and its
+                            // track get matching "Object N" / "Track N". No `namePrefix` is
+                            // offered, because auto-names are already numbered.
                             const alt = ob.alt ?? 0;
-                            const {objectNode} = CustomManager.createObjectFromInput(
-                                name, ob.lat, ob.lon, alt, ob.alt !== undefined
+                            const {objectNode, name} = CustomManager.createObjectFromInput(
+                                ob.name, ob.lat, ob.lon, alt, ob.alt !== undefined
                             );
                             return objectNode
                                 ? {success: true, name, lat: ob.lat, lon: ob.lon, alt}

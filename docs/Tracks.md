@@ -231,8 +231,8 @@ National Imagery Transmission Format files with embedded metadata.
 
 Sitrec's own interchange format for a **hand-drawn** track — the control points of a
 spline, not a per-frame path. Dropping one in creates a synthetic track, identical to
-one made with the ground right-click menu's **Create Track with Object** or **Create Track
-(No Object)**, with the control points already placed and editable.
+one made with the ground right-click menu's **Add Moving Object** or **Add Flight Path**,
+with the control points already placed and editable.
 
 Turn on **Edit Track** in the track's folder to edit it. Edit mode is modal: while it is
 on, a label at the top of each 3D view names the track, and right-click acts only on that
@@ -248,8 +248,14 @@ track. Press **Escape**, or choose **Exit Edit Mode** from either menu, to leave
   path, which splits the segment without moving it). When the playhead is on a control
   point, it offers **Move Point N Here** instead. All three support undo.
 
-Only one of these menus is on screen at a time. Other tracks and objects do not open
-their menus until you exit edit mode.
+Both menus also have **Show Track Menu**, which opens the track's menu, and **Show Object
+Menu** when an object rides the track, which opens the object's menu. You stay in edit mode.
+An item is not shown when its menu is already open. The track's menu and the object's menu
+can be open at the same time, side by side below the menu bar. Closing the track's menu does
+not end edit mode.
+
+Only one of the two right-click menus is on screen at a time. Other tracks and objects do not
+open their menus until you exit edit mode.
 
 This is how a hand-authored solution moves between sitches as a data file instead of
 being hard-coded in a `Sit*.js`. Write one out with the **Export Spline** button, found
@@ -527,25 +533,41 @@ Each loaded track gets its own folder in the **Contents** menu. You can:
 
 - **Show/hide** individual tracks with the visibility checkbox
 - **Recolor** tracks using the Line Color picker (the folder label color updates to match)
-- **Remove** a track with the **Remove Track** button (with confirmation). A hand-drawn track has a **Delete Track** button instead
+- **Delete** a track with the **Delete Track** button (with confirmation). This removes the track from the sitch; the file you loaded does not change
 - **Highlight** a track by hovering over its folder label (the track line turns white temporarily)
-- **Center camera** on a track using the "Go to track" button
+- **Center camera** on a track using the **Go to Track** button
 
 ## Track Display Controls
 
 ![Track display controls in the Contents menu](docimages/tracks-contents-menu.jpg)
 
-Each track's folder in the Contents menu provides these controls:
+Each track's folder in the Contents menu provides these controls.
+
+A hand-drawn track's folder puts them in groups. At the top are **Name**, **Edit Track**,
+**Show Object Menu** (when an object rides the track), **Go to Track**, **Focus Camera Here**
+and **Follow Camera Here**. Then come three groups: **Path** (Constant Speed, Extrapolate Track,
+Curve Type and the altitude controls; open), **Smoothing** (Smoothing Method first, then its
+values; closed) and **Display** (the line, wall, contrail and look-view controls; closed). At
+the end are **Add Custom Graph**, **Export Spline** and **Delete Track**. When the track has an
+object, **Delete Track** asks whether to delete the object too; the object can stay without the
+track. Right-click the track line to open the folder as a menu below the menu bar.
+
+**Curve Type** sets how a hand-drawn track goes through its points: **Straight lines**,
+**Smooth (chordal)** (the default, with round turns), **Smooth (centripetal)** (never makes a
+loop or a sharp point between points) or **Smooth (Catmull-Rom)** (can overshoot or loop where
+points are unevenly spaced).
 
 ### Name
 
-**Name**, at the top of the folder, is the name shown for the track: the folder title, the track's menus, the camera and target track lists, graphs and measurements. You can change it at any time, and it is saved with the sitch. A track and the 3D object that rides on it (an object from **Add Object**, a balloon, or an imported track's sphere) share one name, so renaming one renames the other; the object's **Name** is at the top of its folder in the Objects menu. Renaming changes only what you see. The track's short name (such as `synth_01_d`) stays the same underneath, so choices saved in the sitch, such as which track is the target, keep working.
+**Name**, at the top of the folder, is the name shown for the track: the folder title, the track's menus, the camera and target track lists, graphs and measurements. You can change it at any time, and it is saved with the sitch. Renaming changes only what you see. The track's short name (such as `synth_01_d`) stays the same underneath, so choices saved in the sitch, such as which track is the target, keep working.
+
+Every track has its own name. A track you make in Sitrec is named **Track 1**, **Track 2** and so on, and an object is named **Object 1**, **Object 2** and so on. A track made with an object, and that object, get the same number: one more than the highest track or object number in use, so a number can be skipped (with *Track 1*, *Object 1* and *Track 2*, the next pair is *Track 3* and *Object 3*). Each can be renamed on its own. The object's **Name** is at the top of its folder in the Objects menu. An imported track and its sphere share one name, so renaming one renames the other. If you give a track a name that another track has, Sitrec adds `-1` (or the next free number) when you finish typing. A sitch saved with two tracks of one name loads with the later one renamed in the same way.
 
 ### Visibility and Appearance
 
 | Control | Description |
 |---------|-------------|
-| **visible** | Show or hide this track |
+| **Show Track Line** | Show or hide this track |
 | **Line Color** | Color picker for the track line |
 | **Color Mode** | Radiosonde tracks only: color the track by **Temperature**, **Altitude** or **Pressure**, or **Flat (Line Color)** |
 | **Line Width** | Width of the track line in pixels (0.5-10) |
@@ -574,19 +596,20 @@ Contrails simulate the visual appearance of condensation trails behind aircraft,
 | Control | Range | Description |
 |---------|-------|-------------|
 | **Alt offset** | -1000 to +1000 m | Manual altitude adjustment, applied in the source's own datum |
-| **Alt Lock** | -1 to 100,000 ft | Force a fixed altitude (-1 = off). Shown in your display units; stored in metres |
-| **Alt Lock AGL** | on/off | On: the lock is height above the ground below. **Off: the lock is HAE** (height above the WGS84 ellipsoid), *not* MSL |
+| **Lock Altitude** | on/off | Hold the whole track at one height. When you switch it on, the lock height starts at the track's height at that time (for a hand-drawn track, the height of its first point) |
+| **Lock Height** | 0 to 100,000 ft | The height of the lock. Shown only while **Lock Altitude** is on. Shown in your display units; stored in metres |
+| **Height From** | Ground / Ellipsoid (HAE) | **Ground**: the height above the ground below. **Ellipsoid (HAE)**: the height above the WGS84 ellipsoid, *not* MSL. Shown only while **Lock Altitude** is on |
 
 > **Dragging a locked hand-drawn track.** When a hand-drawn track has its altitude locked, the
 > lock sets the height of all of its keyframes. Drag a keyframe's up/down arrows, or the object
-> that rides the track, and you change the **Alt Lock** value: the full track moves up or down
+> that rides the track, and you change the **Lock Height**: the full track moves up or down
 > as one, and no keyframe is added. A sideways drag keeps the keyframe at the lock height. The
-> lock does not go below 0. Right-click the ground → **Create In->Out Obj Track** to make such a
+> lock does not go below 0. Right-click the ground → **Add Moving Object (In→Out)** to make such a
 > track: an object on a straight track from the clicked point, with keyframes at the In and
 > Out frames, **Constant Speed** on, and the altitude locked at ground level.
 
-> **The altitude lock is HAE, not MSL.** Locking an object to "10,000 ft" with *Alt Lock AGL*
-> off puts it at 10,000 ft above the ellipsoid, which in Los Angeles is about 10,115 ft above
+> **The altitude lock is HAE, not MSL.** Locking an object to "10,000 ft" with **Height From**
+> set to **Ellipsoid (HAE)** puts it at 10,000 ft above the ellipsoid, which in Los Angeles is about 10,115 ft above
 > sea level. Over the contiguous US the geoid is below the ellipsoid everywhere, by about 8 m
 > (near Yellowstone) to about 40 m (the North Carolina coast); see
 > [GIS, Geodesy and Altitude](GIS.md) for the value at your location.
@@ -762,8 +785,8 @@ file back as a track. Seconds at which the track has no position (a constant-alt
 traverse where the line of sight never reaches that altitude) break the line rather
 than being joined across.
 
-A spline track — one made from the ground right-click menu (**Create Track with Object**,
-**Create In->Out Obj Track** or **Create Track (No Object)**), dropped in as a
+A spline track — one made from the ground right-click menu (**Add Moving Object**,
+**Add Moving Object (In→Out)** or **Add Flight Path**), dropped in as a
 `.spline.json`, or built into a sitch — gets all four: its control points *and* the per-frame track it generates,
 in CSV, MISB CSV and KML. The per-frame formats export the **smoothed** track, so they
 match the line drawn on screen and reflect the track's Smoothing window, altitude offset

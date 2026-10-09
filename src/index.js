@@ -1970,9 +1970,9 @@ async function initializeOnce() {
                 return;
             }
             
-            const name = parsed.name || CustomManager.getNextObjectName();
+            // Without a name, the object and its track get matching "Object N" / "Track N".
             const { objectNode, trackOb } = CustomManager.createObjectFromInput(
-                name, parsed.lat, parsed.lon, parsed.alt, parsed.hasExplicitAlt
+                parsed.name, parsed.lat, parsed.lon, parsed.alt, parsed.hasExplicitAlt
             );
             
             CustomManager.positionCameraToViewObject(parsed.lat, parsed.lon, parsed.alt);

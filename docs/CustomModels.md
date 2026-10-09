@@ -4,7 +4,7 @@ To experiment with this functionality, start with the model inspector, found at 
 
 Once in the Model Inspector, you will get the default object, and two views on that object. You can double-click on a view to make it full screen. 
 
-Most of the object-specific adjustments are done with the "Objects" menu. Each object has its own folder there, starting with **Name**: the name shown for the object in menus, labels and lists. An object and the track it rides share one name, so renaming one renames the other. For convenience, you can drag this off the menu bar to keep it open. Here I've also opened the "Time" menu, which is used for setting the sun direction.
+Most of the object-specific adjustments are done with the "Objects" menu. Each object has its own folder there, starting with **Name**: the name shown for the object in menus, labels and lists. An object you make in Sitrec is named **Object 1**, **Object 2** and so on, and has its own name, separate from the name of the track it rides. The folder also has **Show Track Menu** when the object rides a track, and **Delete Object** at the end. For convenience, you can drag this off the menu bar to keep it open. Here I've also opened the "Time" menu, which is used for setting the sun direction.
 
 ![model-inspector-with-menus.jpg](docimages/model-inspector-with-menus.jpg)
 

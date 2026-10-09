@@ -32,7 +32,9 @@ jest.mock('../src/Globals', () => ({
         menuBar: null
     },
     // Standalone menus call this on destroy() to re-enable keyboard shortcuts.
-    setMouseOverGUI: jest.fn()
+    setMouseOverGUI: jest.fn(),
+    // A checkbox change asks for a render.
+    setRenderOne: jest.fn()
 }));
 
 jest.mock('../src/CViewManager', () => ({
@@ -820,5 +822,176 @@ describe('CGuiMenuBar.pinMenuBelowBar', () => {
         menuBar.pinMenuBelowBar(gui);
         expect(parseFloat(gui._standaloneContainer.style.top)).toBeGreaterThan(menuBar.barHeight);
         gui.destroy();
+    });
+});
+
+// A track's panel and an object's panel can be open together (createStandaloneMenu's panelSlot).
+describe('CGuiMenuBar panel slots', () => {
+    let menuBar;
+    const originalInnerWidth = window.innerWidth;
+    const panel = (title, slot = null) => menuBar.createStandaloneMenu(title, 400, 100, false, false, slot);
+
+    beforeEach(() => {
+        document.body.innerHTML = '';
+        menuBar = new CGuiMenuBar();
+        const { Globals } = require('../src/Globals');
+        Globals.menuBar = menuBar;
+    });
+
+    afterEach(() => {
+        if (menuBar) menuBar.destroy();
+        Object.defineProperty(window, 'innerWidth', {value: originalInnerWidth, configurable: true, writable: true});
+        document.body.innerHTML = '';
+    });
+
+    test('a track panel and an object panel stay open together; each replaces only its own kind', () => {
+        const track1 = panel('Track: A', 'track');
+        const object = panel('Object 1', 'object');
+        expect(track1.domElement.isConnected).toBe(true);
+        expect(object.domElement.isConnected).toBe(true);
+        expect([...menuBar.persistentMenus]).toEqual([track1, object]);
+
+        const track2 = panel('Track: B', 'track');
+        expect(track1.domElement.isConnected).toBe(false);
+        expect(object.domElement.isConnected).toBe(true);
+        expect(menuBar.activePersistentMenu).toBe(track2);
+    });
+
+    test('a persistent menu without a slot replaces every panel, as before', () => {
+        const track = panel('Track: A', 'track');
+        const object = panel('Object 1', 'object');
+        const building = panel('Edit: Tower');
+        expect(track.domElement.isConnected).toBe(false);
+        expect(object.domElement.isConnected).toBe(false);
+        expect([...menuBar.persistentMenus]).toEqual([building]);
+        // ...and a slotted panel replaces it in turn.
+        panel('Track: A', 'track');
+        expect(building.domElement.isConnected).toBe(false);
+    });
+
+    test('closing the newest panel falls back to the one still open', () => {
+        const track = panel('Track: A', 'track');
+        const object = panel('Object 1', 'object');
+        object.destroy();
+        expect(menuBar.activePersistentMenu).toBe(track);
+        track.destroy();
+        expect(menuBar.activePersistentMenu).toBeNull();
+        expect(menuBar.persistentMenus.size).toBe(0);
+    });
+
+    test('a context menu is still refused over a panel unless it asks to coexist', () => {
+        panel('Track: A', 'track');
+        panel('Object 1', 'object');
+        expect(menuBar.createStandaloneMenu('Ground', 10, 10, true)).toBeNull();
+        expect(menuBar.createStandaloneMenu('Point', 10, 10, true, true)).not.toBeNull();
+    });
+
+    test('closing a panel unticks an edit-mode checkbox, unless its owner keeps edit mode', () => {
+        const building = {editMode: true};
+        const track = {editMode: true, keepEditModeOnMenuClose: true};
+        const first = panel('Edit: Tower');
+        first.add(building, 'editMode');
+        first.destroy();
+        expect(building.editMode).toBe(false);
+
+        const second = panel('Track: A', 'track');
+        second.add(track, 'editMode');
+        second.destroy();
+        expect(track.editMode).toBe(true);
+    });
+
+    describe('placeMenuClearOfPanels', () => {
+        // jsdom lays nothing out, so give each panel a 240 x 300 box at its style.left.
+        const sized = (gui) => {
+            const div = gui._standaloneContainer;
+            div.getBoundingClientRect = () => {
+                const left = parseFloat(div.style.left);
+                return {left, right: left + 240, top: 50, bottom: 350, width: 240, height: 300};
+            };
+            return gui;
+        };
+        const leftOf = (gui) => parseFloat(gui._standaloneContainer.style.left);
+
+        beforeEach(() => {
+            Object.defineProperty(window, 'innerWidth', {value: 1900, configurable: true, writable: true});
+        });
+
+        test('moves a panel just right of the panel it would cover', () => {
+            const track = sized(panel('Track: A', 'track'));
+            const object = sized(panel('Object 1', 'object'));
+            menuBar.placeMenuClearOfPanels(object);
+            expect(leftOf(track)).toBe(400);
+            expect(leftOf(object)).toBe(400 + 240 + 4);
+            expect(object.originalLeft).toBe(644);
+        });
+
+        test('goes to the left when the right side has no room', () => {
+            const track = sized(panel('Track: A', 'track'));
+            track._standaloneContainer.style.left = '1500px';
+            const object = sized(panel('Object 1', 'object'));
+            object._standaloneContainer.style.left = '1550px';
+            menuBar.placeMenuClearOfPanels(object);
+            expect(leftOf(object)).toBe(1500 - 240 - 4);
+        });
+
+        test('leaves a panel that covers nothing where it is', () => {
+            sized(panel('Track: A', 'track'));
+            const object = sized(panel('Object 1', 'object'));
+            object._standaloneContainer.style.left = '900px';
+            menuBar.placeMenuClearOfPanels(object);
+            expect(leftOf(object)).toBe(900);
+        });
+    });
+});
+
+describe('moveToFolder and addHeading', () => {
+    let menuBar;
+
+    beforeEach(() => {
+        document.body.innerHTML = '';
+        menuBar = new CGuiMenuBar();
+        const { Globals } = require('../src/Globals');
+        Globals.menuBar = menuBar;
+    });
+
+    afterEach(() => {
+        if (menuBar) menuBar.destroy();
+        document.body.innerHTML = '';
+    });
+
+    test('moves a control into another folder in lil-gui\'s lists as well as on screen', () => {
+        const root = menuBar.createStandaloneMenu('Track: A', 400, 100, false);
+        const display = root.addFolder('Display');
+        const visible = root.add({visible: true}, 'visible');
+        visible.moveToFolder(display);
+        expect(visible.parent).toBe(display);
+        expect(root.controllers).not.toContain(visible);
+        expect(root.children).not.toContain(visible);
+        expect(display.controllers).toContain(visible);
+        expect(display.children).toContain(visible);
+        expect(visible.domElement.parentElement).toBe(display.$children);
+        root.destroy();
+    });
+
+    test('moves a folder into another folder the same way', () => {
+        const root = menuBar.createStandaloneMenu('Track: A', 400, 100, false);
+        const display = root.addFolder('Display');
+        const contrail = root.addFolder('Contrail');
+        contrail.moveToFolder(display);
+        expect(contrail.parent).toBe(display);
+        expect(root.folders).not.toContain(contrail);
+        expect(display.folders).toContain(contrail);
+        expect(contrail.domElement.parentElement).toBe(display.$children);
+        root.destroy();
+    });
+
+    test('a heading is a line of text in order with the items, not a control', () => {
+        const menu = menuBar.createStandaloneMenu('Ground', 10, 10, true);
+        const heading = menu.addHeading('Add');
+        menu.add({dropPin() {}}, 'dropPin');
+        expect(heading.textContent).toBe('Add');
+        expect(menu.controllers).toHaveLength(1);
+        expect(menu.$children.firstChild).toBe(heading);
+        menu.destroy();
     });
 });

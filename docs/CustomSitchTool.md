@@ -144,7 +144,7 @@ You might not see the plane in the main view, but if you zoom in it's there.
 
 ### Camera Heading: To Target
 
-The camera can also point towards a target. This can be fixed, or moving. A moving target would normally be another track (see later) but can also be set (in the Target menu) to "fixedTarget". You can then adjust the Latitude, Longitude and Altitude to a particular spot. This can be done by editing the numbers directly, or by holding down the "X" key while pointing at a spot on the ground. 
+The camera can also point towards a target. This can be fixed, or moving. A moving target would normally be another track (see later) but can also be set (in the Target menu) to "Manual". You can then adjust the Latitude, Longitude and Altitude to a particular spot. This can be done by editing the numbers directly, or by holding down the "X" key while pointing at a spot on the ground. 
 
 When moving the target (or, later, the camera) the altitude is kept constant. Press the Shift key in addition to "X" to drop the target to 7 ft above the ground. For example:
 ![traverse-target-on-pier.jpg](docimages/traverse-target-on-pier.jpg)
@@ -176,7 +176,7 @@ You can also place things straight onto the map. **Right-click the ground** in t
 - **Set Camera Above** / **Set Camera on Ground** — move a fixed camera to that point, at its current altitude or at eye level on the ground.
 - **Set Target Above** / **Set Target on Ground** — the same for a fixed target.
 - **Add 3D Object** — put an object that stays in one place, for example a known landmark or a candidate object.
-- **Create Track with Object**, **Create In->Out Obj Track** and **Create Track (No Object)** — draw a new track by hand, starting at that point.
+- **Add Moving Object**, **Add Moving Object (In→Out)** and **Add Flight Path** — draw a new track by hand, starting at that point.
 
 The same menu also adds pins, balloons, buildings, clouds, ground overlays and grids. See [Adding Objects and Tracks](SceneObjects.md) for all of it.
 

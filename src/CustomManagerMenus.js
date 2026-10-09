@@ -28,7 +28,7 @@ import {
 import {isKeyHeld, toggler} from "./KeyBoardHandler";
 import {ECEFToLLAVD_radii, LLAToECEF} from "./LLA-ECEF-ENU";
 import {par} from "./par";
-import {exitTrackEditMode} from "./TrackEditMode";
+import {exitTrackEditMode, trackAndObjectMenuActions} from "./TrackEditMode";
 import {makeCreateObjectUndoAction} from "./undoCreateObject";
 import {GlobalScene} from "./LocalFrame";
 import {refreshLabelsAfterLoading} from "./nodes/CNodeLabels3D";
@@ -50,7 +50,7 @@ import {configParams} from "./runtimeConfig";
 import {showPostLoadFilterDialog} from "./TrackFilterDialog";
 import {textSitchToObject} from "./RegisterSitches";
 import {waitForExportFrameSettled} from "./ExportFrameSettler";
-import {nextSequentialObjectName, parseObjectInput as parseObjectInputUtil} from "./utils/parseObjectInput";
+import {nextPairNumber, nextSequentialObjectName, parseObjectInput as parseObjectInputUtil} from "./utils/parseObjectInput";
 import {initializeSettings, SettingsSaver} from "./SettingsManager";
 import {CNodeCurveEditor2} from "./nodes/CNodeCurveEdit2";
 import {CNodeViewDAG} from "./nodes/CNodeViewDAG";
@@ -109,22 +109,18 @@ export const menuMethods = {
     },
 
     /**
-     * Generate the next sequential object name (Object 1, Object 2, etc.)
-     * Checks existing objects to find the highest number and increments
-     * @returns {string} Next sequential object name
+     * Every name an object could be carrying, for numbering new ones.
+     * @returns {string[]}
      */
-    getNextObjectName() {
-        // Collect every name an already-created object could be carrying.
+    objectNamesInUse() {
         // NodeMan is a CManager: it has iterate(), not getAllNodes(), and its
         // this.list entries are {data, original} wrappers rather than the nodes
         // themselves - iterate() hands us the node.
         //
-        // menuText, not menuName, is where the name lands: createObjectFromInput()
-        // passes it to TrackManager.addSyntheticTrack(), which sets it as menuText
-        // on the spline editor node. The node ids are timestamped
-        // (syntheticObject_<ms>), so scanning ids alone would never see an
-        // "Object N" and the counter would be stuck at 1 forever. menuName is a
-        // sitch-level property (Sit.menuName), not a node one.
+        // An object's name is its displayName. The node ids are timestamped
+        // (syntheticObject_<ms>), so scanning ids alone would never see an "Object N"
+        // and the counter would be stuck at 1 forever. menuText is kept for sitches
+        // saved before objects had display names.
         const names = [];
         NodeMan.iterate((id, node) => {
             names.push(id);
@@ -137,19 +133,46 @@ export const menuMethods = {
             }
         });
 
-        return nextSequentialObjectName(names);
+        return names;
+    },
+
+    /**
+     * Generate the next sequential object name (Object 1, Object 2, etc.), for an object made
+     * on its own. One past the highest number in use.
+     * @returns {string} Next sequential object name
+     */
+    getNextObjectName() {
+        return nextSequentialObjectName(this.objectNamesInUse());
+    },
+
+    /**
+     * Names for a track and the object made with it: "Track N" and "Object N" with the SAME N,
+     * one past the highest number that any track or object has, so the two can be matched by
+     * their number. A number is skipped when one sequence is ahead: with Track 1, Object 1 and
+     * Track 2, the next pair is Track 3 and Object 3.
+     * @returns {{trackName: string, objectName: string}}
+     */
+    getNextTrackAndObjectNames() {
+        const n = nextPairNumber(this.objectNamesInUse(), TrackManager.trackNamesInUse());
+        return {trackName: `Track ${n}`, objectName: `Object ${n}`};
     },
 
     /**
      * Create a 3D object and track from parsed input
-     * @param {string} name - Object name
+     * @param {string} [name] - Object name. Without one, the object and its track get matching
+     *        names, "Object N" and "Track N" (getNextTrackAndObjectNames).
      * @param {number} lat - Latitude in decimal degrees
      * @param {number} lon - Longitude in decimal degrees
      * @param {number} alt - Altitude in meters (or 0 if not explicit)
      * @param {boolean} hasExplicitAlt - Whether altitude was explicitly provided
-     * @returns {Object} Object with {objectNode, trackOb, objectID, trackID}
+     * @returns {Object} Object with {objectNode, trackOb, objectID, trackID, ownedNodeIds, name},
+     *          name being the object's name
      */
     createObjectFromInput(name, lat, lon, alt, hasExplicitAlt) {
+        // The track has the pair's number even when the object has a name of its own.
+        const pairNames = this.getNextTrackAndObjectNames();
+        name = name || pairNames.objectName;
+
         // If altitude not explicitly provided, use terrain elevation
         let finalAlt = alt;
         if (!hasExplicitAlt) {
@@ -177,9 +200,10 @@ export const menuMethods = {
         // timestamp - so the sweep can never reach an unrelated node.
         const preObjectNodeIDs = new Set(Object.keys(NodeMan.list));
 
-        // Create the 3D object
+        // Create the 3D object. The name is the object's; its track's is pairNames.trackName.
         const objectNode = new CNode3DObject({
             id: objectID,
+            displayName: name,
             geometry: "sphere",
             radius: 5,
             color: 0x808080,
@@ -190,7 +214,7 @@ export const menuMethods = {
         // Create track and associate with object
         const trackOb = TrackManager.addSyntheticTrack({
             startPoint: ecefPosition,
-            name: name,
+            name: pairNames.trackName,
             objectID: objectID,
             editMode: true,
             startFrame: par.frame
@@ -233,7 +257,7 @@ export const menuMethods = {
             }));
         }
 
-        return { objectNode, trackOb, objectID, trackID, ownedNodeIds };
+        return { objectNode, trackOb, objectID, trackID, ownedNodeIds, name };
     },
 
     /**
@@ -405,10 +429,13 @@ export const menuMethods = {
         // The object the "... with Object" track items put on their new track: a grey 5m
         // sphere with phong material. The timestamped id goes through UniqueName (see
         // createObjectFromInput for why).
-        const createTrackObject = () => {
+        // The object for Add Moving Object and its In→Out form, named objectName: "Object N"
+        // with the number of its track's "Track N" (getNextTrackAndObjectNames).
+        const createTrackObject = (objectName) => {
             const objectID = NodeMan.UniqueName(`syntheticObject_${Date.now()}`);
             new CNode3DObject({
                 id: objectID,
+                displayName: objectName,
                 geometry: "sphere",
                 radius: 5, // 5 meters
                 color: 0x808080, // grey
@@ -477,7 +504,6 @@ export const menuMethods = {
                 // Create a track at the clicked point using TrackManager
                 TrackManager.addSyntheticTrack({
                     startPoint: groundPoint,
-                    name: "New Track",
                     editMode: true,
                     startFrame: par.frame,
                     showInLook: sourceViewID === "lookView",
@@ -579,13 +605,14 @@ export const menuMethods = {
             },
 
             createTrackWithObject: () => {
-                const objectID = createTrackObject();
+                const {trackName, objectName} = this.getNextTrackAndObjectNames();
+                const objectID = createTrackObject(objectName);
 
                 // Create track and associate with object using TrackManager
                 // Controllers (TrackPosition and ObjectTilt) are added automatically by addSyntheticTrack
                 const trackOb = TrackManager.addSyntheticTrack({
                     startPoint: groundPoint,
-                    name: `Object Track`,
+                    name: trackName,
                     objectID: objectID,
                     editMode: true,
                     startFrame: par.frame,
@@ -608,7 +635,8 @@ export const menuMethods = {
             // Out on the frame slider. The two cannot share a place: a constant-speed track
             // of zero length divides by zero.
             createInOutObjectTrack: () => {
-                const objectID = createTrackObject();
+                const {trackName, objectName} = this.getNextTrackAndObjectNames();
+                const objectID = createTrackObject(objectName);
 
                 // minCount 2: two keyframes at the same frame would make one replace the other
                 const {frame0, frame1} = abFrameRange(Sit.frames, 2);
@@ -624,7 +652,7 @@ export const menuMethods = {
                         [frame0, groundPoint.x, groundPoint.y, groundPoint.z],
                         [frame1, outPoint.x, outPoint.y, outPoint.z],
                     ],
-                    name: `Object Track`,
+                    name: trackName,
                     objectID: objectID,
                     editMode: true,
                     constantSpeed: true,
@@ -892,48 +920,45 @@ export const menuMethods = {
         // Add location text as custom HTML (bright and selectable)
         menu.addHTML(locationText, "Location");
 
-        // Add menu items
+        // The items in groups, each under a heading.
+        menu.addHeading(t("custom.contextMenu.groupCameraTarget"));
         menu.add(menuData, "setCameraAbove").name(t("custom.contextMenu.setCameraAbove"));
         menu.add(menuData, "setCameraOnGround").name(t("custom.contextMenu.setCameraOnGround"));
         menu.add(menuData, "setTargetAbove").name(t("custom.contextMenu.setTargetAbove"));
         menu.add(menuData, "setTargetOnGround").name(t("custom.contextMenu.setTargetOnGround"));
 
-        // Add feature marker option
-        menu.add(menuData, "dropPin").name(t("custom.contextMenu.dropPin"));
-
-        // Add synthetic track options
-        menu.add(menuData, "addFixedObject").name(t("custom.contextMenu.addFixedObject"));
-        menu.add(menuData, "createTrackWithObject").name(t("custom.contextMenu.createTrackWithObject"));
-        menu.add(menuData, "createInOutObjectTrack").name(t("custom.contextMenu.createInOutObjectTrack"));
-        menu.add(menuData, "createSyntheticTrack").name(t("custom.contextMenu.createTrackNoObject"));
-
-        // Add simulated balloon target
-        menu.add(menuData, "addBalloon").name(t("custom.contextMenu.addBalloon", {defaultValue: "Add Balloon"}));
-
-        // Add building creation option
-        menu.add(menuData, "addBuilding").name(t("custom.contextMenu.addBuilding"));
-
-        // Add clouds options
+        // Clouds or an overlay under the pointer can be edited from here.
+        if (cloudsAtPoint || overlayAtPoint) {
+            menu.addHeading(t("custom.contextMenu.groupEdit"));
+        }
         if (cloudsAtPoint) {
             const cloudsLabel = cloudsAtPoint.name || cloudsAtPoint.id;
             const cloudsMenuLabel = cloudsAtPoint.editMode ? `Exit Edit: ${cloudsLabel}` : `Edit Clouds: ${cloudsLabel}`;
             menu.add(menuData, "editClouds").name(cloudsMenuLabel);
         }
-        menu.add(menuData, "addClouds").name(t("custom.contextMenu.addClouds"));
-
-        // Add ground overlay/grid options
         if (overlayAtPoint) {
             const overlayLabel = overlayAtPoint.name || overlayAtPoint.id;
             const kindLabel = overlayAtPoint.kindName === "grid" ? "Grid" : "Overlay";
             const menuLabel = overlayAtPoint.editMode ? `Exit Edit: ${overlayLabel}` : `Edit ${kindLabel}: ${overlayLabel}`;
             menu.add(menuData, "editOverlay").name(menuLabel);
         }
+
+        menu.addHeading(t("custom.contextMenu.groupAdd"));
+        menu.add(menuData, "dropPin").name(t("custom.contextMenu.dropPin"));
+        menu.add(menuData, "addFixedObject").name(t("custom.contextMenu.addFixedObject"));
+        menu.add(menuData, "createTrackWithObject").name(t("custom.contextMenu.createTrackWithObject"));
+        menu.add(menuData, "createInOutObjectTrack").name(t("custom.contextMenu.createInOutObjectTrack"));
+        menu.add(menuData, "createSyntheticTrack").name(t("custom.contextMenu.createTrackNoObject"));
+        menu.add(menuData, "addBalloon").name(t("custom.contextMenu.addBalloon", {defaultValue: "Add Balloon"}));
+        menu.add(menuData, "addBuilding").name(t("custom.contextMenu.addBuilding"));
+        menu.add(menuData, "addClouds").name(t("custom.contextMenu.addClouds"));
         menu.add(menuData, "addOverlay").name(t("custom.contextMenu.addGroundOverlay"));
         menu.add(menuData, "addGrid").name(t("custom.contextMenu.addGroundGrid"));
 
         if (NodeMan.exists("terrainUI")) {
             const terrainUI = NodeMan.get("terrainUI");
             if (!terrainUI.dynamic) {
+                menu.addHeading(t("custom.contextMenu.groupTerrain"));
                 menu.add(menuData, "centerTerrain").name(t("custom.contextMenu.centerTerrain"));
             }
 
@@ -942,6 +967,7 @@ export const menuMethods = {
         // Add Google Maps link if extraHelpLinks is enabled. The secure build never offers
         // the external map link; the Google Earth entry only writes a local KML file.
         if (configParams?.extraHelpLinks) {
+            menu.addHeading(t("custom.contextMenu.groupExternal"));
             if (!isSecureBuild) {
                 menu.add(menuData, "googleMapsHere").name(t("custom.contextMenu.googleMapsHere"));
             }
@@ -954,7 +980,8 @@ export const menuMethods = {
      * (PointEditor.showPointMenuAtEvent owns that). Its items depend on whether the playhead
      * is on a control point: with none there, it can add one; with one there, it can move it.
      * Items that cannot apply are shown disabled rather than hidden, so the menu never goes
-     * blank. Deleting is only in the point menu, on the point the user picked.
+     * blank. Deleting is only in the point menu, on the point the user picked. Both menus
+     * also open the track's menu and its object's menu, which edit mode otherwise blocks.
      *
      * @param {number} mouseX - Screen X coordinate
      * @param {number} mouseY - Screen Y coordinate
@@ -968,7 +995,7 @@ export const menuMethods = {
         }
 
         const splineEditor = trackOb.splineEditor;
-        const shortName = trackOb.menuText || trackOb.trackID;
+        const shortName = trackOb.displayName || trackOb.menuText || trackOb.trackID;
         const frame = Math.round(par.frame);
         const hasPointAtFrame = splineEditor.frameNumbers.includes(frame);
 
@@ -1008,6 +1035,9 @@ export const menuMethods = {
             if (!groundPoint) here.disable();
             const onTrack = menu.add(menuData, "addPointOnTrack").name(t("custom.contextMenu.addPointOnTrack", {frame}));
             if (!trackPositionAtFrame()) onTrack.disable();
+        }
+        for (const {label, action} of trackAndObjectMenuActions(trackOb, mouseX, mouseY)) {
+            menu.add({run: run(action)}, "run").name(label);
         }
         menu.add(menuData, "exitEditMode").name(t("custom.contextMenu.exitEditMode"));
         menu.open();

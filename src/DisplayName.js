@@ -10,7 +10,8 @@
 //  - notifyDisplayNameChanged() sends the one event that everything which SHOWS a name listens
 //    for (measurements, custom graphs, track switches, open edit menus), so a rename path never
 //    has to know who displays the name.
-//  - uniqueDisplayName() makes "Name-2" style names for duplicates.
+//  - uniqueDisplayName() makes "Name-2" style names for duplicates, and deduplicateNames()
+//    applies it to a list.
 //
 // Leaf module: it imports only the event manager and i18n, so any node class can use it.
 
@@ -83,6 +84,26 @@ export function uniqueDisplayName(name, existingNames) {
         counter++;
     } while (taken.has(candidate));
     return candidate;
+}
+
+/**
+ * Make a list of names unique, in order: the first of each name keeps it, and each later copy
+ * gets the first "name-N" that no name in the list has. Undefined entries are left alone.
+ * @param {Array<string|undefined>} names
+ * @returns {Array<string|undefined>} the names, with the copies renamed
+ */
+export function deduplicateNames(names) {
+    const all = new Set(names);
+    const seen = new Set();
+    return names.map(name => {
+        if (name === undefined) return name;
+        if (seen.has(name)) {
+            name = uniqueDisplayName(name, all);
+            all.add(name);
+        }
+        seen.add(name);
+        return name;
+    });
 }
 
 /**

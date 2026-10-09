@@ -303,6 +303,26 @@ describe("changes that bypass every controller", () => {
         expect(popup.controllers[0].$input.value).toBe("7");
     });
 
+    test("a whole-folder mirror keeps each sub-folder open or closed, and a toggle reaches the source", () => {
+        const source = makeGUI().addFolder("Track 1");
+        const path = source.addFolder("Path");
+        path.add({speed: 1}, "speed");
+        const smoothing = source.addFolder("Smoothing").close();
+        smoothing.add({window: 0}, "window");
+
+        const popup = makeGUI();
+        popup.mirrorFolderFrom(source);
+        const [pathCopy, smoothingCopy] = popup.folders;
+        expect(pathCopy._closed).toBe(false);
+        expect(smoothingCopy._closed).toBe(true);
+
+        // Opened in the panel: the source opens too, so a rebuild of the panel keeps it open.
+        smoothingCopy.open();
+        expect(smoothing._closed).toBe(false);
+        pathCopy.close();
+        expect(path._closed).toBe(true);
+    });
+
     test("polling the twin's own menu repairs a display the mirror could not have seen", () => {
         const state = {flag: false};
         registerMirrorSource("k", makeGUI().add(state, "flag").listen());

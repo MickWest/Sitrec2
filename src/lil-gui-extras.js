@@ -695,6 +695,39 @@ GUI.prototype.moveAfter = function (name) {
     return this; // Return the folder to allow method chaining
 }
 
+// Move a control into another folder, as its last item. Unlike moveToFirst/moveAfter, which
+// move only the element on screen, this also moves it in lil-gui's own lists (children,
+// controllers), which the Sitrec API walks to find a control by its menu path. For grouping
+// controls that another class made, such as a display track's, into a sub-folder.
+Controller.prototype.moveToFolder = function (folder) {
+    const from = this.parent;
+    if (from === folder) return this;
+    from.children.splice(from.children.indexOf(this), 1);
+    from.controllers.splice(from.controllers.indexOf(this), 1);
+    this.parent = folder;
+    folder.children.push(this);
+    folder.controllers.push(this);
+    folder.$children.appendChild(this.domElement);
+    from._triggerMirrorRefresh();
+    folder._triggerMirrorRefresh();
+    return this;
+};
+
+// The same for a folder.
+GUI.prototype.moveToFolder = function (folder) {
+    const from = this.parent;
+    if (from === folder) return this;
+    from.children.splice(from.children.indexOf(this), 1);
+    from.folders.splice(from.folders.indexOf(this), 1);
+    this.parent = folder;
+    folder.children.push(this);
+    folder.folders.push(this);
+    folder.$children.appendChild(this.domElement);
+    from._triggerMirrorRefresh();
+    folder._triggerMirrorRefresh();
+    return this;
+};
+
 // Helper method to trigger refresh of mirrored GUIs
 GUI.prototype._triggerMirrorRefresh = function () {
     // Dispatch a custom event that mirroring systems can listen for
@@ -753,6 +786,19 @@ GUI.prototype.addExternalLink = function (text, url) {
 
 // Add a custom HTML element to the GUI
 // This creates a controller-like element that can contain arbitrary HTML
+// A group heading in a menu: a short line of dim text with a rule above it, which splits a long
+// context menu into groups. Not a control, so it takes no clicks and nothing finds or mirrors it.
+GUI.prototype.addHeading = function (text) {
+    const heading = document.createElement("div");
+    heading.className = "menu-group-heading";
+    heading.textContent = text;
+    // currentColor at reduced opacity, so it suits the light and the dark theme.
+    heading.style.cssText = "padding:5px 8px 2px;font-size:10px;text-transform:uppercase;"
+        + "letter-spacing:0.05em;opacity:0.6;border-top:1px solid currentColor;pointer-events:none;";
+    this.$children.appendChild(heading);
+    return heading;
+};
+
 GUI.prototype.addHTML = function (html, labelText = '') {
     // Create a wrapper div that looks like a controller
     const wrapper = document.createElement('div');
@@ -861,7 +907,10 @@ export class CGuiMenuBar {
         this.baseZIndex = 5000; // Base z-index for menu divs
         this.browserMode = false; // When true, prevent undocking/dragging menus
 
-        // Track the currently active persistent menu (dismissOnOutsideClick = false)
+        // Every open persistent menu (dismissOnOutsideClick = false), and the most recently
+        // opened one. Usually there is one; a track's panel and an object's panel can be open
+        // together (see panelSlot in createStandaloneMenu).
+        this.persistentMenus = new Set();
         this.activePersistentMenu = null;
 
         // Track the currently active context menu (dismissOnOutsideClick = true)
@@ -1125,7 +1174,7 @@ export class CGuiMenuBar {
         // slots, so their .listen() controllers must be polled here too —
         // otherwise mirrored edit menus never repaint when code changes the
         // bound values (e.g. dragging an overlay/grid's 3D handles).
-        this.activePersistentMenu?.updateListeners();
+        for (const menu of this.persistentMenus) menu.updateListeners();
         this.activeContextMenu?.updateListeners();
 
         // Every OTHER root that wants .listen() to mean something — per-view header menus,
@@ -1652,9 +1701,8 @@ export class CGuiMenuBar {
     }
 
     restoreToBar(newGUI) {
-        if (this.activePersistentMenu && this.activePersistentMenu._parentGUI === newGUI) {
-            this.activePersistentMenu.destroy();
-            this.activePersistentMenu = null;
+        for (const menu of [...this.persistentMenus]) {
+            if (menu._parentGUI === newGUI) menu.destroy();
         }
 
         if (isInLeftSidebar(newGUI)) {
@@ -2253,6 +2301,40 @@ export class CGuiMenuBar {
         gui.originalTop = top;
     }
 
+    /**
+     * Move a floating panel sideways so it does not cover another floating panel.
+     *
+     * A track's panel and an object's panel can be open together, and pinMenuBelowBar puts
+     * both at the same height, so the second one would land on the first. Try just right of
+     * the panel it covers, then just left of it; if neither fits on screen, leave it.
+     *
+     * @param {GUI} gui - a menu from createStandaloneMenu(), already placed
+     */
+    placeMenuClearOfPanels(gui) {
+        const containerDiv = gui?._standaloneContainer;
+        if (!containerDiv) return;
+        const others = [...this.persistentMenus].filter(other => other !== gui
+            && other.mode === "DETACHED" && other._standaloneContainer?.isConnected);
+        if (others.length === 0) return;
+
+        const rect = containerDiv.getBoundingClientRect();
+        if (!(rect.width > 0)) return;
+        // style.left is in the menu bar's space; the rects are in the viewport's.
+        const originX = rect.left - (parseFloat(containerDiv.style.left) || 0);
+        const gap = 4;
+        const coveredAt = (left) => others.map(other => other._standaloneContainer.getBoundingClientRect())
+            .find(b => left < b.right && left + rect.width > b.left && rect.top < b.bottom && rect.bottom > b.top);
+
+        const covered = coveredAt(rect.left);
+        if (!covered) return;
+        const left = [covered.right + gap, covered.left - rect.width - gap]
+            .find(x => x >= 0 && x + rect.width <= window.innerWidth && !coveredAt(x));
+        if (left === undefined) return;
+
+        containerDiv.style.left = (left - originX) + "px";
+        gui.originalLeft = left - originX;
+    }
+
     applyModeStyles(gui) {
         const titleElement = gui.$title;
 
@@ -2770,7 +2852,10 @@ export class CGuiMenuBar {
     // but is not attached to the menu bar itself
     // dismissOnOutsideClick: if true, clicking outside the menu will dismiss it (for context menus)
     // Point menus can coexist with the persistent panel for the object being edited.
-    createStandaloneMenu(title, x = 100, y = 100, dismissOnOutsideClick = false, allowWithPersistentMenu = false) {
+    // panelSlot: for a persistent menu, the kind of panel it is ("track", "object"). A panel
+    // with a slot replaces only the open panel in the same slot, so a track's panel and an
+    // object's panel can be on screen together. A persistent menu without one replaces them all.
+    createStandaloneMenu(title, x = 100, y = 100, dismissOnOutsideClick = false, allowWithPersistentMenu = false, panelSlot = null) {
         // If a persistent menu is already open, don't allow creating new context menus
         // This prevents right-clicking from opening menus while editing
         if (this.activePersistentMenu && dismissOnOutsideClick && !allowWithPersistentMenu) {
@@ -2812,12 +2897,13 @@ export class CGuiMenuBar {
         // Mark if this is a persistent menu (doesn't dismiss on outside click)
         gui.isPersistent = !dismissOnOutsideClick;
 
-        // If this is a persistent menu, track it as the active persistent menu
+        // If this is a persistent menu, close what it replaces and track it
         if (gui.isPersistent) {
-            // Close any existing persistent menu before opening a new one
-            if (this.activePersistentMenu) {
-                this.activePersistentMenu.destroy();
+            gui._panelSlot = panelSlot;
+            for (const other of [...this.persistentMenus]) {
+                if (!panelSlot || !other._panelSlot || other._panelSlot === panelSlot) other.destroy();
             }
+            this.persistentMenus.add(gui);
             this.activePersistentMenu = gui;
         } else {
             // If this is a context menu, track it as the active context menu
@@ -3052,8 +3138,11 @@ export class CGuiMenuBar {
                         if (child.controllers) {
                             // It's a folder, recurse
                             findEditModeControllers(child);
-                        } else if (child.property === 'editMode' && child.getValue() === true) {
-                            // It's an editMode controller that's enabled - disable it
+                        } else if (child.property === 'editMode' && child.getValue() === true
+                            && !child.object?.keepEditModeOnMenuClose) {
+                            // It's an editMode controller that's enabled - disable it.
+                            // Track edit mode is exempt: it has its own way out (Esc, Exit Edit
+                            // Mode), so closing the track's panel does not end it.
                             child.setValue(false);
                         }
                     }
@@ -3085,9 +3174,12 @@ export class CGuiMenuBar {
             if (gui._outsideContextMenuHandler) {
                 document.removeEventListener('contextmenu', gui._outsideContextMenuHandler);
             }
-            // Clear the active persistent menu reference if this was it
-            if (gui.isPersistent && this.activePersistentMenu === gui) {
-                this.activePersistentMenu = null;
+            // Forget it, and fall back to the persistent menu opened before it, if one is open
+            if (gui.isPersistent) {
+                this.persistentMenus.delete(gui);
+                if (this.activePersistentMenu === gui) {
+                    this.activePersistentMenu = [...this.persistentMenus].at(-1) ?? null;
+                }
             }
             // Clear the active context menu reference if this was it
             if (!gui.isPersistent && this.activeContextMenu === gui) {

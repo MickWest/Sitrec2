@@ -1,5 +1,5 @@
 // Tests for the node leaks left behind when a synthetic track is torn down —
-// by the "Remove Track" button, and by undoing an "Add Object".
+// by the "Delete Track" button, and by undoing an "Add Object".
 //
 // Measured live before the fix: creating one object added 28 nodes and undoing it
 // left 8 registered in NodeMan. Two independent causes, one per describe block below.

@@ -3,6 +3,7 @@
 
 import {
     addNameControl,
+    deduplicateNames,
     DISPLAY_NAME_CHANGED,
     displayTitle,
     titleFollowsDisplayName,
@@ -17,6 +18,23 @@ describe("uniqueDisplayName", () => {
         expect(uniqueDisplayName("Tower", ["Tower", "Tower-1"])).toBe("Tower-2");
         expect(uniqueDisplayName("Tower-1", ["Tower-1"])).toBe("Tower-2");
         expect(uniqueDisplayName("Tower-4", ["Tower-4", "Tower-5"])).toBe("Tower-6");
+    });
+});
+
+describe("deduplicateNames", () => {
+    test("the first of each name keeps it; later copies get a free name-N", () => {
+        expect(deduplicateNames(["Object Track", "Object Track", "Track 3"]))
+            .toEqual(["Object Track", "Object Track-1", "Track 3"]);
+        expect(deduplicateNames(["A", "A", "A"])).toEqual(["A", "A-1", "A-2"]);
+    });
+
+    test("never gives a copy a name that another entry already has", () => {
+        expect(deduplicateNames(["A", "A", "A-1"])).toEqual(["A", "A-2", "A-1"]);
+    });
+
+    test("leaves unique and undefined names alone", () => {
+        expect(deduplicateNames(["Track 1", undefined, "Track 2", undefined]))
+            .toEqual(["Track 1", undefined, "Track 2", undefined]);
     });
 });
 

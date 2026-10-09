@@ -22,7 +22,7 @@ import {getInteractiveViewAt, mouseToNDC, setRaycasterFromView} from "./ViewUtil
 import {Globals, NodeMan, setRenderOne, Sit} from "./Globals";
 import {par} from "./par";
 import {goToFrame} from "./GoTo";
-import {exitTrackEditMode} from "./TrackEditMode";
+import {exitTrackEditMode, trackAndObjectMenuActions} from "./TrackEditMode";
 import {radians} from "./utils";
 import {undoManager as UndoManager} from "./UndoManager";
 import * as LAYER from "./LayerMasks";
@@ -451,8 +451,9 @@ export class PointEditor {
                 if (this.enable) this.deletePointWithUndo(this.splineHelperObjects.indexOf(object));
             },
         }];
-        // Sitch-defined editors (agua's lantern) have no edit mode to leave.
+        // Sitch-defined editors (agua's lantern) have no track menu and no edit mode to leave.
         if (Globals.editingTrack?.splineEditor === this) {
+            actions.push(...trackAndObjectMenuActions(Globals.editingTrack, event.clientX, event.clientY));
             actions.push({label: "Exit Edit Mode", action: () => exitTrackEditMode()});
         }
         showPointContextMenu(event, `Point: Frame ${frame}`, actions);

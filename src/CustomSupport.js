@@ -45,6 +45,8 @@ import {
     Units,
     withTestUser
 } from "./Globals";
+import {ownedSubNodeIds} from "./UserObjects";
+import {requestCameraFocusSync} from "./CameraFocusUI";
 import {isKeyHeld, toggler} from "./KeyBoardHandler";
 import {registerMirrorSource, syncMirroredSource} from "./MenuMirror";
 import {LayoutMan} from "./CLayoutManager";
@@ -469,6 +471,38 @@ export class CCustomManager {
         // Finally unlink and dispose the object itself. Using unlinkDisposeRemove
         // avoids leaving controller inputs or other graph edges attached.
         NodeMan.unlinkDisposeRemove(nodeId);
+    }
+
+    /**
+     * Delete a 3D object the user made (its Delete Object button, or Delete Track's "Delete
+     * Track and Object"). Closes its panel, detaches it from its track (the track stays), and
+     * removes every node it made: its sub-nodes (`<id>_size`, its controllers, ...), the
+     * object, and a fixed object's position node.
+     * @param {CNode3DObject} node
+     */
+    deleteObject(node) {
+        const id = node?.id;
+        if (!id || !NodeMan.exists(id)) return;
+
+        for (const menu of [...(Globals.menuBar?.persistentMenus ?? [])]) {
+            if (menu._mirrorSource === node.gui) menu.destroy();
+        }
+        this.clearEditingObject(node);
+
+        const trackOb = TrackManager.trackForObject(id);
+        if (trackOb?.objectID === id) TrackManager.detachObject(trackOb);
+
+        const positionID = node.fixedObjectPositionID;
+        // Sub-nodes first, the object last, so no node is disposed holding a link to a
+        // disposed object (the same order as the create-object undo).
+        for (const subId of ownedSubNodeIds(id, Object.keys(NodeMan.list))) {
+            if (NodeMan.exists(subId)) NodeMan.unlinkDisposeRemove(subId);
+        }
+        this.disposeObjectWithControllers(id);
+        if (positionID && NodeMan.exists(positionID)) NodeMan.unlinkDisposeRemove(positionID);
+
+        requestCameraFocusSync();
+        setRenderOne(true);
     }
 
     setupSettingsMenu() {

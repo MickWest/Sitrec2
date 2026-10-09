@@ -200,7 +200,7 @@ Less common adjustments.
 | **xOffset**, **yOffset** | 0 | Shift the look camera off-center, horizontally or vertically. Useful when the tracked object is not at the center of the video frame. |
 | **Near Plane (m)** | 0.1 | Near clipping distance of the look camera. Sometimes useful for very close objects, or to cut out near objects. |
 | **Diffraction Glare** (folder) | — | Adds glare from an imported point spread function. See [Diffraction Glare](DiffractionGlare.md). |
-| **Orbit Target** | fixedCamera | What the Orbit position circles. **fixedCamera** is the Manual camera position (**Cam [C] Lat/Lon**). Imported tracks are added to the list. |
+| **Orbit Target** | Manual Camera | What the Orbit position circles. **Manual Camera** is the Manual camera position (**Cam [C] Lat/Lon**). Imported tracks are added to the list. |
 | **Orbit Radius (m)** | 5000 | Radius of the circle, in meters. |
 | **Orbit Altitude (m)** | 1000 | Altitude of the camera while orbiting, in meters above the WGS84 ellipsoid (HAE). This is not sea level; the two differ by the local geoid offset, up to about 100 m. |
 | **Start Angle (°)** | 0 | Compass bearing from the center to the camera at frame 0. 0 is north, 90 is east. |
@@ -271,20 +271,20 @@ is measured at it.
 | **Lookup** | (empty) | Type a place name or coordinates to move the fixed target there. |
 | **Geolocate from browser** | — | Sets the fixed target from your browser's location. |
 | **Go To the above position** | — | Moves the terrain and the main view to the target position. |
-| **Target Track** | fixedTarget | What the target is. See the choices below. |
+| **Target Track** | Manual | What the target is. See the choices below. |
 | **Stop At** | 0 | Appears once **Camera Heading** is **To Target**. After this frame, the camera keeps aiming at where the target was at this frame, even if the target track continues. Use it to simulate losing lock on a moving target. 0 turns it off. |
 
 **Target Track** choices:
 
 | Choice | What it does |
 |---|---|
-| **fixedTarget** | The target stays at **Target [X] Lat/Lon/Alt** for the whole sitch. |
-| **fixedTarget + Wind** | The target starts at **Target [X] Lat/Lon/Alt** and drifts with the target wind (**Physics → Wind**). The target wind is 0 knots by default, so set a wind first. |
+| **Manual** | The target stays at **Target [X] Lat/Lon/Alt** for the whole sitch. |
+| **Manual + Wind** | The target starts at **Target [X] Lat/Lon/Alt** and drifts with the target wind (**Physics → Wind**). The target wind is 0 knots by default, so set a wind first. |
 | *An imported track* | Each imported track is added here. The second track you import is selected as the target. |
 
 Holding **X** with the pointer over a 3D view moves the fixed target to the point under the
 pointer, and keeps its altitude. **Shift+X** puts it 7 ft above the ground. The Target
-Lat/Lon/Alt only have an effect when **Target Track** is **fixedTarget** or **fixedTarget +
+Lat/Lon/Alt only have an effect when **Target Track** is **Manual** or **Manual +
 Wind**.
 
 ---
@@ -317,7 +317,7 @@ Wind**.
    to that height, for example 1.7 m for a standing person.
 4. Aim the camera in one of two ways:
    - Leave **Camera Heading** on **Manual** and set **Pan (Az)** and **Tilt (El)**.
-   - Or set **Target Track** to **fixedTarget**, hold **X** over the thing the camera looks
+   - Or set **Target Track** to **Manual**, hold **X** over the thing the camera looks
      at, and set **Camera Heading** to **To Target**.
 5. Set the field of view with **VFOV (deg)**, or type the phone's or camera's 35mm
    equivalent focal length into **35mm Equiv (mm)**. With a video loaded, the aspect ratio
@@ -328,10 +328,10 @@ Wind**.
 1. Put the center of the orbit somewhere the camera can circle:
    - To circle a fixed place, set **Position** to **Manual** and hold **C** over the place
      (or type it into **Lookup**). Leave **Camera Tweaks → Orbit Target** on
-     **fixedCamera**.
+     **Manual Camera**.
    - To circle a moving object, choose its track in **Orbit Target**.
 2. Point the target at the same place: hold **X** over it with **Target Track** on
-   **fixedTarget**, or choose the same track in **Target Track**.
+   **Manual**, or choose the same track in **Target Track**.
 3. Set **Orbit Radius (m)**, **Orbit Altitude (m)**, **Start Angle (°)** and **Orbit
    Period (s)** in **Camera → Camera Tweaks**.
 4. Set **Camera → Location → Position** to **Orbit**.
@@ -361,5 +361,5 @@ ground. Near the center, check that the camera is not below the terrain.
 - [Keyboard Shortcuts](KeyboardShortcuts.md): C and X, WASD walking, and PageUp/PageDown
   for camera height
 - [User Interface](UserInterface.md): Free Look, and the look view's header menu
-- [Wind](Wind.md): the local and target winds used by Flight Sim and fixedTarget + Wind
+- [Wind](Wind.md): the local and target winds used by Flight Sim and Manual + Wind
 - [Ground Track](GroundTrack.md): lines of sight from points on the ground

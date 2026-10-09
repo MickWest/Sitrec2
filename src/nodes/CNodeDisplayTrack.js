@@ -20,6 +20,8 @@ import {convertColorInput} from "../ConvertColorInputs";
 import {par} from "../par";
 import {hexColor, V3} from "../threeUtils";
 import {CNodeGUIValue} from "./CNodeGUIValue";
+import {addAltitudeLockControls, lockHeightAt} from "../AltitudeLockGUI";
+import {isAltitudeLockActive} from "../AltitudeLock";
 import {ECEFToLLAVD_radii, haversineDistanceKM, interpolateGreatCircle, LLAToECEF} from "../LLA-ECEF-ENU";
 import {meanSeaLevelOffset} from "../EGM96Geoid";
 import {t} from "../i18n";
@@ -181,7 +183,7 @@ export class CNodeDisplayTrack extends CNode3DGroup {
             });
 
             // toggle for visibility with optional linked data track
-            this.guiFolder.add(this, "visible").tooltip(t("displayTrack.visible.tooltip")).listen().onChange(() => {
+            this.guiFolder.add(this, "visible").name(t("displayTrack.visible.label")).tooltip(t("displayTrack.visible.tooltip")).listen().onChange(() => {
                 // The data track is the same track drawn from the unsmoothed data, so this one
                 // checkbox is its checkbox too.
                 if (this.in.dataTrackDisplay !== undefined) {
@@ -362,17 +364,21 @@ export class CNodeDisplayTrack extends CNode3DGroup {
 
                 track.altitudeOffset = 0;
 
-                new CNodeGUIValue({
+                // The lock height (-1 = off). Lock Altitude (AltitudeLockGUI) switches it, and
+                // hides it while the lock is off. The id is unchanged, so saved sitches load.
+                let altLockControls = null;
+                const altLockNode = new CNodeGUIValue({
                     id: this.id + "altitudeLock",
                     value: track.fireballObservedInterval ? -1 : 0,
                     start: -1,
                     end: 1000,
                     step: 1,
-                    desc: "Alt Lock (-1 = off)",
+                    desc: "Lock Height",
                     unitType: "small",
                     onChange: (v) => {
                         track.altitudeLock = v;
                         track.recalculateCascade()
+                        altLockControls?.update();
                     },
                     elastic: true,
                     elasticMin: 1000,
@@ -381,10 +387,21 @@ export class CNodeDisplayTrack extends CNode3DGroup {
                 }, this.guiFolder)
 
                 track.altitudeLockAGL = true;
-                this.guiFolder.add(track, "altitudeLockAGL").name(t("displayTrack.altLockAGL.label")).listen()
-                    .onChange(() => {
-                        track.recalculateCascade()
-                    })
+                altLockControls = addAltitudeLockControls(this.guiFolder, {
+                    heightNode: altLockNode,
+                    isOn: () => isAltitudeLockActive(track),
+                    // Where the track is now, so switching the lock on holds it there.
+                    currentHeight: () => {
+                        const position = this.in.track.p(par.frame);
+                        return position ? lockHeightAt(position, track.altitudeLockAGL) : 0;
+                    },
+                    getAGL: () => track.altitudeLockAGL,
+                    setAGL: (value) => {
+                        track.altitudeLockAGL = value;
+                        track.recalculateCascade();
+                    },
+                });
+                this.updateAltitudeLockControls = () => altLockControls.update();
 
                 track.timeOffset = 0;
 

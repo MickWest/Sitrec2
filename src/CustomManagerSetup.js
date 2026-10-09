@@ -2395,6 +2395,8 @@ export const setupMethods = {
                 inputs: {
                     "fixedCamera": NodeMan.get("fixedCameraPosition"),
                 },
+                // Display-only; the stored choice key is unchanged.
+                labels: {"fixedCamera": "Manual Camera"},
                 desc: "Orbit Target",
                 gui: "cameraTweaks",
             });
@@ -2464,6 +2466,14 @@ export const setupMethods = {
                 cameraTrackSwitch.addOption("orbitCamera", NodeMan.get("orbitCameraPosition"), "Orbit");
             }
         }
+
+        // The target's own fixed positions show as "Manual", as the camera's does ("Manual" in
+        // Camera Track), not as their node ids. Display only: the stored choice keys stay the
+        // same, so saved sitches still select them. Labelled here rather than in SitCustom.js,
+        // because a saved custom sitch can override the definition there.
+        const targetTrackSwitch = NodeMan.get("targetTrackSwitch", false);
+        targetTrackSwitch?.setOptionLabel?.("fixedTarget", "Manual");
+        targetTrackSwitch?.setOptionLabel?.("fixedTarget + Wind", "Manual + Wind");
 
         // FloodSim is now a Scenario (Physics → Scenarios → Flood Sim) and is
         // only created when the user enables it — see scenarios/FloodSimScenario.

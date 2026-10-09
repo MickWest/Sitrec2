@@ -1225,6 +1225,36 @@ const en = {
         altLockAGL: "Alt Lock AGL",
         exportSpline: "Export Spline",
         deleteTrack: "Delete Track",
+        pathFolder: "Path",
+        smoothingFolder: "Smoothing",
+        displayFolder: "Display",
+        curveTypes: {
+            linear: "Straight lines",
+            chordal: "Smooth (chordal)",
+            centripetal: "Smooth (centripetal)",
+            catmull: "Smooth (Catmull-Rom)",
+        },
+        curveTypeTooltip: "How the track goes through its points.\n"
+            + "Straight lines: straight from point to point.\n"
+            + "Chordal: smooth, with round turns. The default.\n"
+            + "Centripetal: smooth, and never makes a loop or a sharp point between points.\n"
+            + "Catmull-Rom: smooth, but can overshoot or loop where points are unevenly spaced.",
+        showObjectMenu: {
+            label: "Show Object Menu",
+            tooltip: "Open the menu of the object that moves along this track",
+        },
+    },
+    altitudeLock: {
+        lock: {
+            label: "Lock Altitude",
+            tooltip: "Hold the whole track at one height. Moving a point up or down moves the lock height",
+        },
+        heightFrom: {
+            label: "Height From",
+            tooltip: "Measure the lock height from the ground below the track, or from the WGS84 ellipsoid (HAE)",
+            ground: "Ground",
+            ellipsoid: "Ellipsoid (HAE)",
+        },
     },
     gpuMonitor: {
         enabled: "Monitor Enabled",
@@ -1922,9 +1952,9 @@ const en = {
             setTargetOnGround: "Set Target on Ground",
             dropPin: "Drop Pin",
             addFixedObject: "Add 3D Object",
-            createTrackWithObject: "Create Track with Object",
-            createInOutObjectTrack: "Create In->Out Obj Track",
-            createTrackNoObject: "Create Track (No Object)",
+            createTrackWithObject: "Add Moving Object",
+            createInOutObjectTrack: "Add Moving Object (In→Out)",
+            createTrackNoObject: "Add Flight Path",
             addBalloon: "Add Balloon",
             addBuilding: "Add Building",
             addClouds: "Add Clouds",
@@ -1933,10 +1963,17 @@ const en = {
             centerTerrain: "Center Terrain square here",
             googleMapsHere: "Google Maps Here",
             googleEarthHere: "Google Earth Here",
+            groupCameraTarget: "Camera and Target",
+            groupEdit: "Edit",
+            groupAdd: "Add",
+            groupTerrain: "Terrain",
+            groupExternal: "External Maps",
             editTrackTitle: "Edit: {{name}}",
             addPointHere: "Add Point Here (Frame {{frame}})",
             addPointOnTrack: "Add Point on Track (Frame {{frame}})",
             movePointHere: "Move Point {{frame}} Here",
+            showTrackMenu: "Show Track Menu",
+            showObjectMenu: "Show Object Menu",
             exitEditMode: "Exit Edit Mode",
             editingBadge: "Editing: {{name}} — Esc to exit",
         },
@@ -2632,6 +2669,7 @@ const en = {
 
     displayTrack: {
         visible: {
+            label: "Show Track Line",
             tooltip: "Show or hide this track",
         },
         extendToGround: {
@@ -2682,7 +2720,7 @@ const en = {
             label: "Alt Lock AGL",
         },
         gotoTrack: {
-            label: "Go to track",
+            label: "Go to Track",
             tooltip: "Center the main camera on this track's location",
         },
     },
@@ -2780,6 +2818,19 @@ const en = {
     },
 
     nodes3dObject: {
+        deleteObject: {
+            label: "Delete Object",
+            tooltip: "Remove this object from the sitch. Its track, if it has one, stays",
+            confirm: "Delete object \"{{name}}\"?",
+        },
+        showTrackMenu: {
+            label: "Show Track Menu",
+            tooltip: "Open the menu of the track this object moves along",
+        },
+        meshDetail: {
+            label: "Mesh Detail",
+            tooltip: "How many segments the shape is made of. More segments look smoother and draw more slowly",
+        },
         modelOrGeometry: {
             label: "Model or Geometry",
             tooltip: "Select whether to use a 3D Model or a generated geometry for this object",

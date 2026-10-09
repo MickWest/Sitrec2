@@ -1,4 +1,4 @@
-import {nextSequentialObjectName, parseObjectInput} from '../src/utils/parseObjectInput';
+import {highestSequentialNumber, nextPairNumber, nextSequentialName, nextSequentialObjectName, parseObjectInput} from '../src/utils/parseObjectInput';
 import {menuMethods} from '../src/CustomManagerMenus';
 import {CNodeManager} from '../src/nodes/CNodeManager';
 import {setNodeMan} from '../src/Globals';
@@ -275,5 +275,34 @@ describe('CCustomManager.getNextObjectName', () => {
     test('tolerates nodes with no menuText', () => {
         nodeMan.add("bare", {id: "bare"});
         expect(() => menuMethods.getNextObjectName()).not.toThrow();
+    });
+});
+
+describe('nextSequentialName', () => {
+    test('numbers tracks separately from objects', () => {
+        const names = ["Object 1", "Object 4", "Track 2", "Track 7"];
+        expect(nextSequentialName(names, "Track")).toBe("Track 8");
+        expect(nextSequentialName(names, "Object")).toBe("Object 5");
+        expect(nextSequentialName(["Object 3"], "Track")).toBe("Track 1");
+    });
+
+    test('defaults to Object, and ignores names that only start with the prefix', () => {
+        expect(nextSequentialName(["Object 2", "Objects 9", "Track 1 copy"])).toBe("Object 3");
+        expect(nextSequentialName(["Track 1 copy", "MyTrack 5"], "Track")).toBe("Track 1");
+    });
+});
+
+describe('nextPairNumber', () => {
+    test('a track and its object share one number, one past the highest of either', () => {
+        // Track 1 + Object 1, then a track on its own (Track 2): the next pair is 3, skipping Object 2.
+        expect(nextPairNumber(["Object 1"], ["Track 1", "Track 2"])).toBe(3);
+        // An object on its own got ahead: Object 4 → the next pair is Track 5 and Object 5.
+        expect(nextPairNumber(["Object 1", "Object 4"], ["Track 1"])).toBe(5);
+        expect(nextPairNumber([], [])).toBe(1);
+    });
+
+    test('renamed and short names do not count', () => {
+        expect(nextPairNumber(["Drone", "syntheticObject_123"], ["Path A", "synth_01_d"])).toBe(1);
+        expect(highestSequentialNumber(["Track 7", "Track 7-1"], "Track")).toBe(7);
     });
 });

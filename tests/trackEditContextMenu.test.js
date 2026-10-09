@@ -6,10 +6,12 @@ import {Vector3} from "three";
 window.matchMedia ??= () => ({matches: false, addEventListener() {}, removeEventListener() {}});
 jest.mock("../src/Globals", () => {
     const state = {isMobile: true};
-    const custom = {showTrackEditingMenu: jest.fn()};
+    const custom = {showTrackEditingMenu: jest.fn(), showTrackMenu: jest.fn(), showNodeEditMenu: jest.fn()};
+    const tracks = {objectForTrack: jest.fn(() => null)};
     const inert = new Proxy({}, {get: (_, key) => key === "then" ? undefined : inert});
     return new Proxy({}, {get: (_, key) => key === "Globals" ? state
         : key === "CustomManager" ? custom
+        : key === "TrackManager" ? tracks
         : key === "NodeMan" ? {iterate() {}, get: () => null, exists: () => false}
         : () => inert});
 });
@@ -17,11 +19,13 @@ jest.mock("../src/UndoManager", () => ({undoManager: {add: jest.fn()}}));
 jest.mock("../src/CViewManager", () => ({ViewMan: {iterateVisibleIncludingOverlays() {}, screenOffsetX: 0}}));
 jest.mock("../src/raycastGround", () => ({raycastLocalGround: jest.fn()}));
 
-const {Globals, CustomManager} = require("../src/Globals");
+const {Globals, CustomManager, TrackManager} = require("../src/Globals");
 const {par} = require("../src/par");
 const {raycastLocalGround} = require("../src/raycastGround");
 const ViewUtils = require("../src/ViewUtils");
 const {menuMethods} = require("../src/CustomManagerMenus");
+// The real rule for which folder an object's menu mirrors, so the fakes below cannot drift from it.
+CustomManager.nodeEditFolder = require("../src/CustomManagerMirror").mirrorMethods.nodeEditFolder;
 const {mouseMethods} = require("../src/nodes/CNodeView3DMouse");
 const {exitTrackEditMode, hasOpenContextMenu} = require("../src/TrackEditMode");
 
@@ -58,7 +62,7 @@ test("with the playhead off a point, the edit menu adds a point here or on the t
     menuMethods.showTrackEditingMenu(10, 20, ground);
 
     expect(createStandaloneMenu.mock.calls[0].slice(3)).toEqual([true, true]);
-    expect(labels()).toEqual(["Add Point Here (Frame 40)", "Add Point on Track (Frame 40)", "Exit Edit Mode"]);
+    expect(labels()).toEqual(["Add Point Here (Frame 40)", "Add Point on Track (Frame 40)", "Show Track Menu", "Exit Edit Mode"]);
     expect(actions.every(a => a.enabled)).toBe(true);
 
     actions[0].run();
@@ -73,7 +77,7 @@ test("with the playhead on a point, the edit menu moves that point, and never de
     const ground = new Vector3(1, 2, 3);
     menuMethods.showTrackEditingMenu(10, 20, ground);
 
-    expect(labels()).toEqual(["Move Point 100 Here", "Exit Edit Mode"]);
+    expect(labels()).toEqual(["Move Point 100 Here", "Show Track Menu", "Exit Edit Mode"]);
     actions[0].run();
     expect(trackOb.splineEditor.insertPointWithUndo).toHaveBeenCalledWith(100, ground);
 });
@@ -82,8 +86,54 @@ test("over the sky, ground placement is disabled rather than hidden", () => {
     editedTrack();
     par.frame = 40;
     menuMethods.showTrackEditingMenu(10, 20, null);
-    expect(labels()).toEqual(["Add Point Here (Frame 40)", "Add Point on Track (Frame 40)", "Exit Edit Mode"]);
-    expect(actions.map(a => a.enabled)).toEqual([false, true, true]);
+    expect(labels()).toEqual(["Add Point Here (Frame 40)", "Add Point on Track (Frame 40)", "Show Track Menu", "Exit Edit Mode"]);
+    expect(actions.map(a => a.enabled)).toEqual([false, true, true, true]);
+});
+
+test("the edit menu opens the track's menu, and its object's menu when it has one, in edit mode", () => {
+    const trackOb = Object.assign(editedTrack(), {trackID: "synthTrack", guiFolder: {}});
+    const object = {id: "synthObject", gui: {}};
+    TrackManager.objectForTrack.mockReturnValueOnce(object);
+    par.frame = 40;
+    menuMethods.showTrackEditingMenu(10, 20, null);
+    expect(TrackManager.objectForTrack).toHaveBeenCalledWith(trackOb);
+    expect(labels()).toEqual(["Add Point Here (Frame 40)", "Add Point on Track (Frame 40)",
+        "Show Track Menu", "Show Object Menu", "Exit Edit Mode"]);
+
+    actions[2].run();
+    expect(menu.destroy).toHaveBeenCalledTimes(1);
+    expect(CustomManager.showTrackMenu).toHaveBeenCalledWith(
+        {trackID: "synthTrack", guiFolder: trackOb.guiFolder, trackOb}, 10, 20);
+    actions[3].run();
+    expect(CustomManager.showNodeEditMenu).toHaveBeenCalledWith(object, 10, 20);
+    expect(trackOb.setEditMode).not.toHaveBeenCalled();
+});
+
+test("a menu that is already open gets no item; the track's and the object's can be open together", () => {
+    const trackOb = Object.assign(editedTrack(), {trackID: "synthTrack", guiFolder: {}});
+    const object = {id: "synthObject", gui: {}};
+    TrackManager.objectForTrack.mockReturnValue(object);
+    par.frame = 40;
+    const trackPanel = {_mirrorSource: trackOb.guiFolder, destroy: jest.fn()};
+    const objectPanel = {_mirrorSource: object.gui, destroy: jest.fn()};
+    const showWith = (...panels) => {
+        actions = [];
+        Globals.menuBar.persistentMenus = new Set(panels);
+        menuMethods.showTrackEditingMenu(10, 20, null);
+        return labels().slice(2, -1);   // between the point items and Exit Edit Mode
+    };
+    try {
+        expect(showWith(trackPanel)).toEqual(["Show Object Menu"]);
+        CustomManager.showNodeEditMenu.mockClear();
+        actions[2].run();
+        // The object's panel opens beside the track's; nothing closes it.
+        expect(trackPanel.destroy).not.toHaveBeenCalled();
+        expect(CustomManager.showNodeEditMenu).toHaveBeenCalledWith(object, 10, 20);
+
+        expect(showWith(objectPanel)).toEqual(["Show Track Menu"]);
+        expect(showWith(trackPanel, objectPanel)).toEqual([]);
+        expect(showWith()).toEqual(["Show Track Menu", "Show Object Menu"]);
+    } finally { TrackManager.objectForTrack.mockReturnValue(null); }
 });
 
 test("Exit Edit Mode goes through the track's own setter", () => {

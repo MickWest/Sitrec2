@@ -40,10 +40,10 @@ You can select and copy this text.
 | **Set Target on Ground** | Moves the target's fixed position to the clicked point, on the ground | The target position |
 | **Drop Pin** | Places a labelled pin (a feature marker) and opens its edit window with the label text selected, ready to type | See [Pins](#pins) |
 | **Add 3D Object** | Places a grey 5 m sphere that stays in one place. It has no track | **Objects** menu, as *Object 1*, *Object 2*, ... |
-| **Create Track with Object** | Starts a new hand-drawn track at the clicked point, at the current frame, with a grey 5 m sphere riding on it. The track opens in edit mode | Track in **Contents**, object in **Objects** |
-| **Create In->Out Obj Track** | Makes a straight track with an object riding on it, from the In frame to the Out frame. See [In->Out tracks](#in-out-tracks) | Track in **Contents**, object in **Objects** |
-| **Create Track (No Object)** | Starts a new hand-drawn track called *New Track* at the clicked point, at the current frame, in edit mode | **Contents** |
-| **Add Balloon** | Adds a balloon that launches from the clicked point, rises and drifts with the wind. See [Balloons](#balloons) | **Contents**, as *Balloon*, *Balloon_1*, ... |
+| **Add Moving Object** | Starts a new hand-drawn track at the clicked point, at the current frame, with a grey 5 m sphere riding on it. The track opens in edit mode | Track in **Contents** and object in **Objects**, with the same number: *Track 3* and *Object 3*, one more than the highest track or object number |
+| **Add Moving Object (In→Out)** | Makes a straight track with an object riding on it, from the In frame to the Out frame. See [In→Out tracks](#in-out-tracks) | Track in **Contents**, object in **Objects**, named as above |
+| **Add Flight Path** | Starts a new hand-drawn track, with no object, at the clicked point, at the current frame, in edit mode | **Contents**, as *Track 1*, *Track 2*, ... |
+| **Add Balloon** | Adds a balloon that launches from the clicked point, rises and drifts with the wind. See [Balloons](#balloons) | **Contents**, as *Balloon*, *Balloon_1*, ...; its sphere in **Objects**, as *Object N* |
 | **Add Building** | Adds a 15 × 15 m building, 4 m high, centered on the clicked point, and opens its editor | **Objects**, as *Building: Building 1* |
 | **Add Clouds** | Adds a round layer of clouds at 10,000 ft, 500 m in radius, centered above the clicked point, and opens its editor | **Objects**, as *Clouds: Clouds 1* |
 | **Add Ground Overlay** | Adds an image overlay draped on the ground, 0.02° square, centered on the clicked point, and opens its editor. It has no image until you give it one | **Objects**, as *Overlay: Overlay 1* |
@@ -55,7 +55,10 @@ You can select and copy this text.
 **Google Maps Here** and **Google Earth Here** are shown only on installations that enable extra
 help links.
 
-Two more items can appear, between the others, when you right-click inside something that
+The menu shows its items in groups, each under a heading: **Camera and Target**, **Add**,
+**Terrain** and **External Maps**.
+
+Two more items can appear, under an **Edit** heading, when you right-click inside something that
 already exists:
 
 - **Edit Clouds: *name*** when the clicked point is under a cloud layer (within its radius)
@@ -75,7 +78,7 @@ the main view. You can change this later with **Show in look view** in the track
 
 ### In->Out tracks
 
-**Create In->Out Obj Track** makes a track with two keyframes:
+**Add Moving Object (In→Out)** makes a track with two keyframes:
 
 - the first at the **In** frame, at the point you clicked
 - the second at the **Out** frame, level with the first and 200 screen pixels to its right in the
@@ -83,8 +86,8 @@ the main view. You can change this later with **Show in look view** in the track
 
 Both ends are therefore on screen and easy to grab, and left to right matches In to Out on the
 timeline. **Constant Speed** is on, so the object moves at a steady speed between the keyframes.
-**Alt Lock** is set to 0 above ground, so the whole track stays at one height: drag the object or
-either keyframe up, and the whole track rises.
+**Lock Altitude** is on, at 0 above the ground, so the whole track stays at one height: drag the
+object or either keyframe up, and the whole track rises.
 
 Set the In and Out frames before you use it, with **Time → In Frame [I]** and
 **Time → Out Frame [O]**, or the **I** and **O** keys at those frames. See
@@ -97,10 +100,12 @@ hand. It starts in edit mode. To add, move and delete points, and to leave edit 
 edit-mode notes under [Sitrec Spline](Tracks.md#sitrec-spline-splinejson) in
 [Loading and Filtering Tracks](Tracks.md).
 
-A synthetic track's folder in **Contents** has **Edit Track**, **Constant Speed**,
-**Extrapolate Track**, **Curve Type**, **Alt offset**, **Alt Lock (-1 = off)**, **Alt Lock AGL**,
-**Show in look view**, **Export Spline** and **Delete Track**, in addition to the usual display
-controls described in [Track Display Controls](Tracks.md#track-display-controls).
+A synthetic track's folder in **Contents** starts with **Name**, **Edit Track** and, when an
+object rides the track, **Show Object Menu**. Its other controls are in the **Path**,
+**Smoothing** and **Display** groups, and **Export Spline** and **Delete Track** are at the end.
+See [Track Display Controls](Tracks.md#track-display-controls). The object's folder in
+**Objects** has **Show Track Menu**. The track's menu and the object's menu can be open at the
+same time.
 
 ### Balloons
 
@@ -139,6 +144,12 @@ open ground can be hard to find. While the window is open you can drag the objec
 widget that appears when the pointer is near it. The window holds the same controls as the
 object's folder in the **Objects** menu: geometry or model, size, material and so on. See
 [Custom Models and 3D Objects](CustomModels.md).
+
+In the folder, the size of a generated shape (for example **Radius (m)**) is just below
+**Geometry**, and its segment counts are in the closed **Mesh Detail** group. Sizes are in
+meters in every sitch. **Delete Object**, at the end of the folder, removes an object you made;
+objects that the sitch itself defines, such as the traverse object, have no delete button, and
+a balloon's sphere goes with its balloon.
 
 ---
 
@@ -412,7 +423,7 @@ off. The rotation is not restored.
 |---|---|---|
 | Hand-drawn track | **Contents → *track name*** | **Delete Track** (asks first) |
 | Balloon | **Contents → *Balloon*** | **Delete Track** (asks first) |
-| 3D object, including the object on a track | **Objects → *object name*** | No delete button. Undo removes an object just after you add it |
+| 3D object, including the object on a track | **Objects → *object name*** | **Delete Object** (asks first). **Delete Track** on the object's track asks whether to delete the object too. A balloon's sphere has no **Delete Object**: **Delete Track** on the balloon removes both |
 | Building | **Objects → Building: *name*** | **Delete Building**, or **Delete** / **Backspace** in edit mode. **Objects → Remove all Buildings** removes them all |
 | Cloud layer | **Objects → Clouds: *name*** | **Delete Clouds**, or **Delete** / **Backspace** in edit mode |
 | Ground overlay | **Objects → Overlay: *name*** | **Delete Overlay**, or **Delete** / **Backspace** in edit mode |

@@ -4,15 +4,21 @@ import {BoxGeometry, Scene, Vector3} from "three";
 window.matchMedia ??= () => ({matches: false, addEventListener() {}, removeEventListener() {}});
 jest.mock("../src/Globals", () => {
     const state = {isMobile: true};
+    const custom = {showTrackMenu: jest.fn(), showNodeEditMenu: jest.fn()};
+    const tracks = {objectForTrack: jest.fn(() => null)};
     const inert = new Proxy({}, {get: (_, key) => key === "then" ? undefined : inert});
-    return new Proxy({}, {get: (_, key) => key === "Globals" ? state : () => inert});
+    return new Proxy({}, {get: (_, key) => key === "Globals" ? state
+        : key === "CustomManager" ? custom
+        : key === "TrackManager" ? tracks
+        : () => inert});
 });
 jest.mock("../src/UndoManager", () => ({undoManager: {add: jest.fn()}}));
 jest.mock("../src/CViewManager", () => ({ViewMan: {iterateVisibleIncludingOverlays() {}, screenOffsetX: 0}}));
 
-const {Globals} = require("../src/Globals");
+const {Globals, CustomManager, TrackManager} = require("../src/Globals");
 const {undoManager} = require("../src/UndoManager");
 const {PointEditor} = require("../src/PointEditor");
+CustomManager.nodeEditFolder = require("../src/CustomManagerMirror").mirrorMethods.nodeEditFolder;
 const {CNodeFitCameraPoints} = require("../src/nodes/CNodeFitCameraPoints");
 const {viewInteractionAdapter} = require("../src/ViewInteraction");
 const {InteractionRouter} = require("../src/InteractionRouter");
@@ -83,7 +89,7 @@ test("a stale point menu cannot delete a different point after the original is r
     expect(undoManager.add).not.toHaveBeenCalled();
 });
 
-test("the track point menu offers Go to Frame, and Exit Edit Mode only for the edited track", () => {
+test("the track point menu offers Go to Frame, and the track menu and Exit Edit Mode only for the edited track", () => {
     const editor = trackEditor();
     Globals.editingTrack = null;
     editor.showPointMenuAtEvent({clientX: 20, clientY: 30});
@@ -95,10 +101,54 @@ test("the track point menu offers Go to Frame, and Exit Edit Mode only for the e
     Globals.editingTrack = trackOb;
     try {
         editor.showPointMenuAtEvent({clientX: 20, clientY: 30});
-        expect(actions.map(a => a.label)).toEqual(["Go to Frame 0", "Delete Point", "Exit Edit Mode"]);
+        expect(actions.map(a => a.label)).toEqual(["Go to Frame 0", "Delete Point", "Show Track Menu", "Exit Edit Mode"]);
         item("Exit Edit Mode").run();
         expect(trackOb.setEditMode).toHaveBeenCalledWith(false);
         expect(editor.numPoints).toBe(3);
+    } finally { Globals.editingTrack = null; }
+});
+
+test("the edited track's point menu opens its object's menu when an object rides the track", () => {
+    const editor = trackEditor();
+    const trackOb = {trackID: "synthTrack", guiFolder: {}, splineEditor: editor, setEditMode: jest.fn()};
+    const object = {id: "synthObject", gui: {}};
+    Globals.editingTrack = trackOb;
+    TrackManager.objectForTrack.mockReturnValueOnce(object);
+    try {
+        editor.showPointMenuAtEvent({clientX: 20, clientY: 30});
+        expect(actions.map(a => a.label)).toEqual(
+            ["Go to Frame 0", "Delete Point", "Show Track Menu", "Show Object Menu", "Exit Edit Mode"]);
+        item("Show Track Menu").run();
+        expect(CustomManager.showTrackMenu).toHaveBeenCalledWith(
+            {trackID: "synthTrack", guiFolder: trackOb.guiFolder, trackOb}, 20, 30);
+        item("Show Object Menu").run();
+        expect(CustomManager.showNodeEditMenu).toHaveBeenCalledWith(object, 20, 30);
+        expect(trackOb.setEditMode).not.toHaveBeenCalled();
+        expect(editor.numPoints).toBe(3);
+    } finally { Globals.editingTrack = null; }
+});
+
+test("the point menu has no Show Track Menu item while the track's menu is open", () => {
+    const editor = trackEditor();
+    const trackOb = {trackID: "synthTrack", guiFolder: {}, splineEditor: editor, setEditMode: jest.fn()};
+    Globals.editingTrack = trackOb;
+    Globals.menuBar.persistentMenus = new Set([{_mirrorSource: trackOb.guiFolder}]);
+    try {
+        editor.showPointMenuAtEvent({clientX: 20, clientY: 30});
+        expect(actions.map(a => a.label)).toEqual(["Go to Frame 0", "Delete Point", "Exit Edit Mode"]);
+    } finally { Globals.editingTrack = null; }
+});
+
+test("the point menu has no Show Object Menu item while the object's menu is open", () => {
+    const editor = trackEditor();
+    const trackOb = {trackID: "synthTrack", guiFolder: {}, splineEditor: editor, setEditMode: jest.fn()};
+    const object = {id: "synthObject", gui: {}};
+    Globals.editingTrack = trackOb;
+    TrackManager.objectForTrack.mockReturnValueOnce(object);
+    Globals.menuBar.persistentMenus = new Set([{_mirrorSource: object.gui}]);
+    try {
+        editor.showPointMenuAtEvent({clientX: 20, clientY: 30});
+        expect(actions.map(a => a.label)).toEqual(["Go to Frame 0", "Delete Point", "Show Track Menu", "Exit Edit Mode"]);
     } finally { Globals.editingTrack = null; }
 });
 

@@ -57,7 +57,8 @@ import {
     WebGLCubeRenderTarget,
     WireframeGeometry
 } from "three";
-import {FileManager, GlobalDateTimeNode, Globals, guiMenus, markShadowCastersDirty, NodeMan, setRenderOne, Sit, TrackManager} from "../Globals";
+import {CustomManager, FileManager, GlobalDateTimeNode, Globals, guiMenus, markShadowCastersDirty, NodeMan, setRenderOne, Sit, TrackManager} from "../Globals";
+import {isUserMadeObjectId} from "../UserObjects";
 import {addNameControl, notifyDisplayNameChanged} from "../DisplayName";
 import {assert} from "../assert";
 import {
@@ -75,7 +76,7 @@ import {CNodeLabel3D, CNodeMeasureAB} from "./CNodeLabels3D";
 import {ECEFToLLAVD_radii} from "../LLA-ECEF-ENU";
 import {getLocalUpVector} from "../SphericalMath";
 import {escapeXML} from "../utils";
-import {showError} from "../showError";
+import {showConfirm, showError} from "../showError";
 import {colladaSafeId, describeTrackSamples, kmlColorFromHex, sampleTrackAtOneHertz, trackPlacemarkXML} from "../ExportObjectKMZ";
 
 import {findRootTrack} from "../FindRootTrack";
@@ -198,6 +199,31 @@ export function shortObjectName(fullName, max = 30) {
         + "..." + s.substring(s.length - Math.floor(keep / 2));
 }
 
+
+// Labels for the parameter keys that a plain split would get wrong or leave unclear.
+const PARAM_LABELS = {
+    rotateX: "Rotate X°",
+    rotateY: "Rotate Y°",
+    rotateZ: "Rotate Z°",
+    material: "Material Type",
+    ior: "Index of Refraction",
+};
+
+// Parameters that are sizes. A geometry's dimensions are meters in every sitch, whatever the
+// units setting, so their labels say so. (The same keys addParams makes elastic.)
+const SIZE_PARAMS = ["radius", "length", "height", "width", "depth", "tube", "innerRadius",
+    "outerRadius", "totalLength", "radiusTop", "radiusBottom"];
+
+// The label for a geometry or material parameter key: "widthSegments" → "Width Segments",
+// "radius" → "Radius (m)". The key is still the control's property, which the Sitrec API
+// also matches, so menu paths that use the key keep working.
+function paramLabel(key) {
+    if (PARAM_LABELS[key]) return PARAM_LABELS[key];
+    const words = key.replace(/([a-z])([A-Z])/g, "$1 $2");
+    const label = words.charAt(0).toUpperCase() + words.slice(1);
+    return SIZE_PARAMS.includes(key) ? label + " (m)" : label;
+}
+
 export class CNode3DObject extends CNode3DGroup {
     constructor(v) {
         v.layers ??= LAYER.MASK_LOOKRENDER;
@@ -245,6 +271,11 @@ export class CNode3DObject extends CNode3DGroup {
         this.common.material = v.material ?? "lambert";
         this.materialFolder = this.gui.addFolder("Material").close();
         this.materialFolder.isCommon = true; //temp patch - not needed?  not a controller???
+        // The geometry's segment counts (see arrangeGeometryControls). Empty and hidden until a
+        // geometry with segments is built.
+        this.meshDetailFolder = this.gui.addFolder(t("nodes3dObject.meshDetail.label")).close();
+        this.meshDetailFolder.tooltip(t("nodes3dObject.meshDetail.tooltip"));
+        this.meshDetailFolder.hide();
         this.addParams(commonMaterialParams, this.common, this.materialFolder, true);
         this.rebuildMaterial();
 
@@ -403,6 +434,18 @@ export class CNode3DObject extends CNode3DGroup {
             .tooltip(t("nodes3dObject.exportToKML.tooltip"))
             .isCommon = true;
 
+        // Delete Object, for an object the user made. An object a sitch defines (the traverse
+        // object, a camera's model) has nodes that depend on it, so it gets none. Kept last:
+        // see addControllerNode and the geometry rebuild.
+        if (isUserMadeObjectId(this.id)) {
+            this.deleteController = this.gui.add({deleteObject: () => this.confirmDelete()}, "deleteObject")
+                .name(t("nodes3dObject.deleteObject.label"))
+                .tooltip(t("nodes3dObject.deleteObject.tooltip"));
+            this.deleteController.isCommon = true;
+            // A hidden object can still be deleted.
+            this.deleteController.keepLiveWhenFolderOff();
+        }
+
         // Reflection Analysis state. The "Reflection Analysis" GUI folder is
         // hidden - it was never used. The methods in CNode3DObjectReflection.js
         // stay callable from the console, and dispose() still needs
@@ -460,10 +503,25 @@ export class CNode3DObject extends CNode3DGroup {
     }
 
 
+    async confirmDelete() {
+        const ok = await showConfirm(t("nodes3dObject.deleteObject.confirm", {name: this.displayName}),
+            {title: t("nodes3dObject.deleteObject.label")});
+        if (ok) CustomManager.deleteObject(this);
+    }
+
+    // A controller can add controls (ObjectTilt adds Banking, Tilt and Sway); Delete Object
+    // stays below them.
+    addControllerNode(node) {
+        super.addControllerNode(node);
+        this.deleteController?.moveToEnd();
+        return this;
+    }
+
     /**
      * Rename the object. Only the display name changes; the id stays.
-     * An object that rides a track shares its name with the track, so the track is renamed too
-     * (linked=false stops the track renaming this object back).
+     * An imported track's marker sphere shares its name with the track, so the track is renamed
+     * too (linked=false stops the track renaming this object back). An object made with a track
+     * ("Object N" on "Track N") has its own name.
      */
     setDisplayName(name, {linked = true, fromControl = false} = {}) {
         name = String(name ?? "");
@@ -478,7 +536,9 @@ export class CNode3DObject extends CNode3DGroup {
         if (this.label && this.label.text === oldMenuName) this.label.changeText(this.menuName);
         if (linked) {
             const trackOb = TrackManager?.trackForObject?.(this.id);
-            if (trackOb) TrackManager.setTrackDisplayName(trackOb, name, {linked: false});
+            if (trackOb && TrackManager.sharesNameWithObject(trackOb)) {
+                TrackManager.setTrackDisplayName(trackOb, name, {linked: false});
+            }
         }
         if (!fromControl) notifyDisplayNameChanged(this.id);
         setRenderOne(true);
@@ -1285,7 +1345,7 @@ ${trackPlacemark}    </Document>
                     color3 = new Color(passedColor);
                 }
                 toHere[key] = "#" + color3.getHexString();
-                controller = gui.addColor(toHere, key).name(key).listen()
+                controller = gui.addColor(toHere, key).name(paramLabel(key)).listen()
                     .onChange((v) => {
                         this.rebuild();
                         setRenderOne(true)
@@ -1300,7 +1360,7 @@ ${trackPlacemark}    </Document>
                 // is the firsts value in the array a number?
                 if (typeof params[0] === "number") {
                     // and make a gui slider for the parameter
-                    controller = gui.add(toHere, key, params[1], params[2], params[3]).name(key).listen()
+                    controller = gui.add(toHere, key, params[1], params[2], params[3]).name(paramLabel(key)).listen()
                         .onChange((v) => {
                             this.rebuild();
                             setRenderOne(true)
@@ -1315,7 +1375,7 @@ ${trackPlacemark}    </Document>
                 } else {
                     // assume it's a string, so a drop-down
                     // make a drop-down for the parameter
-                    controller = gui.add(toHere, key, params).name(key).listen()
+                    controller = gui.add(toHere, key, params).name(paramLabel(key)).listen()
                         .onChange((v) => {
                             if (key === "geometry") {
                                 this.modelOrGeometry = "geometry"
@@ -1328,7 +1388,7 @@ ${trackPlacemark}    </Document>
             } else {
                 // if it's not an array, then it's a boolean
                 // so make a checkbox
-                controller = gui.add(toHere, key).name(key).listen()
+                controller = gui.add(toHere, key).name(paramLabel(key)).listen()
                     .onChange((v) => {
                         this.rebuild();
                         setRenderOne(true);
@@ -1549,10 +1609,13 @@ ${trackPlacemark}    </Document>
 
             // and re-create them
             this.geometryParams = {}
+            const beforeParams = new Set(this.gui.controllers);
             this.addParams(geometryParams, this.geometryParams, this.gui);
+            this.arrangeGeometryControls(this.gui.controllers.filter(c => !beforeParams.has(c)));
 
             // move the material folder to the end after adding geometry parameters
             this.materialFolder.moveToEnd();
+            this.deleteController?.moveToEnd();
 
             this.lastGeometry = common.geometry;
         }
@@ -2223,6 +2286,29 @@ ${trackPlacemark}    </Document>
                 }
             }
         }
+        // The geometry's segment counts are in Mesh Detail; they go with the rest.
+        if (gui === this.gui && this.meshDetailFolder) {
+            this.destroyNonCommonUI(this.meshDetailFolder);
+            this.meshDetailFolder.hide();
+        }
+    }
+
+    // Put a new geometry's controls in place: its size just below Geometry, so the shape and
+    // its size are together, and its segment counts in the closed Mesh Detail folder after them.
+    arrangeGeometryControls(controllers) {
+        let anchor = this.gui.controllers.find(c => c.property === "geometry")?.domElement;
+        if (!anchor) return;
+        for (const controller of controllers) {
+            if (/segments$|^detail$/i.test(controller.property)) {
+                controller.moveToFolder(this.meshDetailFolder);
+            } else {
+                anchor.after(controller.domElement);
+                anchor = controller.domElement;
+            }
+        }
+        anchor.after(this.meshDetailFolder.domElement);
+        this.meshDetailFolder.show(this.meshDetailFolder.controllers.length > 0);
+        this.gui._triggerMirrorRefresh();
     }
 
     destroyObject() {

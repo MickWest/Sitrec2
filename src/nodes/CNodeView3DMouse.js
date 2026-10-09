@@ -12,7 +12,6 @@
  * Installed on CNodeView3D.prototype via Object.assign (see CNodeView3D.js).
  */
 
-import {titleFollowsDisplayName} from "../DisplayName";
 import {
     CustomManager,
     GlobalDateTimeNode,
@@ -1072,44 +1071,10 @@ export const mouseMethods = {
         return closestObject;
     },
 
-    // Helper method to show track menu (extracted to avoid duplication)
+    // Mirror the track's GUI folder from the Contents menu at the click
     showTrackMenu(closestTrack, event) {
         console.log(`Found track near mouse: ${closestTrack.trackID}`);
-
-        // Mirror the track's GUI folder from the Contents menu
-        if (closestTrack.guiFolder) {
-            // Refresh smoothing parameter visibility before creating the menu
-            const trackOb = closestTrack.trackOb;
-            const smoothedNode = trackOb?.smoothedTrackNode || trackOb?.trackNode;
-            if (smoothedNode?.isDynamicSmoothing) {
-                smoothedNode._updateParameterVisibility();
-            }
-
-            const trackMenuTitle = () => `Track: ${trackOb?.displayName || trackOb?.menuText || closestTrack.trackID}`;
-            const menuTitle = trackMenuTitle();
-
-            // Create a standalone menu and mirror the track's GUI folder
-            // Use dismissOnOutsideClick=false so dragging control points doesn't close the menu
-            const standaloneMenu = Globals.menuBar.createStandaloneMenu(menuTitle, event.clientX, event.clientY, false);
-
-            // If menu creation was blocked (persistent menu is open), return early
-            if (!standaloneMenu) {
-                return;
-            }
-
-            // Set up dynamic mirroring for the track's GUI folder
-            CustomManager.setupDynamicMirroring(closestTrack.guiFolder, standaloneMenu);
-            titleFollowsDisplayName(standaloneMenu, closestTrack.trackID, trackMenuTitle);
-
-            // Add a method to manually refresh the mirror
-            standaloneMenu.refreshMirror = () => {
-                CustomManager.updateMirror(standaloneMenu);
-            };
-
-            // Open the menu by default
-            standaloneMenu.open();
-            console.log(`Created standalone menu for track: ${closestTrack.trackID}`);
-        }
+        CustomManager.showTrackMenu(closestTrack, event.clientX, event.clientY);
     },
 
     // Wrapper: pick with the displayed camera orientation (see _refreshCursorFromMouse),

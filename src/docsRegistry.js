@@ -155,7 +155,7 @@ export const helpDocs = [
     {
         file: "docs/Tracks", labelKey: "menus.help.documentation.tracks",
         section: "data", menuId: "contents", role: "reference",
-        chatDesc: "Importing and working with tracks (aircraft ADS-B/KML/KMZ, drone CSV/SRT, MISB/KLV, FlightRadar24, GeoJSON, ASTERIX radar, balloon): how a track is created from data, importing via drag-and-drop or the File menu, the Generic CSV column format, filtering bad data and why that filter encodes a physical assumption, what smoothing costs you, altitude handling and the altitude lock's datum, multi-track (camera+target) setups, and exporting. Read this for 'how do I make/have a track of azimuth/elevation (az/el)' — covered under 'Camera Angle Tracks': a CSV of frame-or-time plus az/el/heading/fov columns that drives the camera's pointing angles.",
+        chatDesc: "Importing and working with tracks (aircraft ADS-B/KML/KMZ, drone CSV/SRT, MISB/KLV, FlightRadar24, GeoJSON, ASTERIX radar, balloon): how a track is created from data, importing via drag-and-drop or the File menu, the Generic CSV column format, filtering bad data and why that filter encodes a physical assumption, what smoothing costs you, altitude handling and the altitude lock's datum (Lock Altitude, Height From), hand-drawn tracks and their menu (Edit Track, Path, Smoothing and Display groups, Show Object Menu), track and object names (Track N / Object N), multi-track (camera+target) setups, and exporting. Read this for 'how do I make/have a track of azimuth/elevation (az/el)' — covered under 'Camera Angle Tracks': a CSV of frame-or-time plus az/el/heading/fov columns that drives the camera's pointing angles.",
     },
     {
         file: "docs/KMLDataSources", labelKey: "menus.help.documentation.kmlDataSources",
@@ -185,7 +185,7 @@ export const helpDocs = [
     {
         file: "docs/SceneObjects", labelKey: "menus.help.documentation.sceneObjects",
         section: "data", menuId: "objects", role: "reference",
-        chatDesc: "How do I add a building, clouds, a ground overlay image or a measurement grid to my sitch, and how do I edit or delete them? What does each item in the right-click ground menu do, such as Drop Pin, Add 3D Object, Create Track with Object or Add Balloon? How do I line up a map or satellite image with the ground?",
+        chatDesc: "How do I add a building, clouds, a ground overlay image or a measurement grid to my sitch, and how do I edit or delete them? What does each item in the right-click ground menu do, such as Drop Pin, Add 3D Object, Add Moving Object or Add Balloon? How do I delete a 3D object? How do I line up a map or satellite image with the ground?",
     },
 
     // ── The world ───────────────────────────────────────────────────────────

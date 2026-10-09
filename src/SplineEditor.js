@@ -16,7 +16,7 @@ export class   SplineEditor extends PointEditor{
         // segments per arc (between control points) for rendering
         this.ARC_SEGMENTS = 200;
         // One. A track can be whittled down to a single control point — that is exactly
-        // what "Create Track with Object" produces — because everything that reads the
+        // what "Add Moving Object" produces — because everything that reads the
         // curve falls back to linear below four points (see isLinear) and to the lone
         // position below two. The old value of 4 was there because CatmullRomCurve3
         // needs four points to be meaningful, which is now handled by not using it.

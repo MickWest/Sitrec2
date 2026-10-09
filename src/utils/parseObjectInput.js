@@ -83,22 +83,23 @@ export function parseObjectInput(inputString) {
 }
 
 /**
- * Pick the next free "Object N" name given every name already in use.
+ * The highest N among names of the form "<prefix> N", or 0 when there are none.
  *
- * Split out from CCustomManager.getNextObjectName so the numbering rule can be
- * tested without a live node graph; the manager method supplies the names.
+ * Split out from CCustomManager.getNextObjectName and TrackManager.nextTrackName so the
+ * numbering rule can be tested without a live node graph; the managers supply the names.
  *
- * @param {Iterable<string>} existingNames - names already in use (node ids,
- *        menuText, anything a previously created object could be carrying).
- *        Non-string and empty entries are ignored.
- * @returns {string} "Object <highest+1>", or "Object 1" when none are in use.
+ * @param {Iterable<string>} existingNames - names already in use. Non-string and empty
+ *        entries are ignored.
+ * @param {string} [prefix="Object"] - "Object" for 3D objects, "Track" for tracks
+ * @returns {number}
  */
-export function nextSequentialObjectName(existingNames) {
+export function highestSequentialNumber(existingNames, prefix = "Object") {
+    const pattern = new RegExp(`^${prefix} (\\d+)$`);
     let maxNumber = 0;
 
     for (const name of existingNames ?? []) {
         if (typeof name !== "string") continue;
-        const match = name.match(/^Object (\d+)$/);
+        const match = name.match(pattern);
         if (match) {
             const number = parseInt(match[1], 10);
             if (number > maxNumber) {
@@ -107,5 +108,38 @@ export function nextSequentialObjectName(existingNames) {
         }
     }
 
-    return `Object ${maxNumber + 1}`;
+    return maxNumber;
+}
+
+/**
+ * Pick the next free "<prefix> N" name given every name already in use: one more than the
+ * highest N in use, so a name freed by a delete is not handed out again.
+ * @param {Iterable<string>} existingNames - see highestSequentialNumber
+ * @param {string} [prefix="Object"]
+ * @returns {string} "<prefix> <highest+1>", or "<prefix> 1" when none are in use.
+ */
+export function nextSequentialName(existingNames, prefix = "Object") {
+    return `${prefix} ${highestSequentialNumber(existingNames, prefix) + 1}`;
+}
+
+/**
+ * The number for a track and the object made with it, so that they are "Track N" and
+ * "Object N" with the same N: one past the highest number that any track or object has. A
+ * number is skipped when one sequence is ahead (Track 1, Object 1, Track 2 → 3).
+ * @param {Iterable<string>} objectNames - names the objects carry
+ * @param {Iterable<string>} trackNames - names the tracks carry
+ * @returns {number}
+ */
+export function nextPairNumber(objectNames, trackNames) {
+    return Math.max(highestSequentialNumber(objectNames, "Object"),
+        highestSequentialNumber(trackNames, "Track")) + 1;
+}
+
+/**
+ * Pick the next free "Object N" name given every name already in use.
+ * @param {Iterable<string>} existingNames - see nextSequentialName
+ * @returns {string} "Object <highest+1>", or "Object 1" when none are in use.
+ */
+export function nextSequentialObjectName(existingNames) {
+    return nextSequentialName(existingNames, "Object");
 }
