@@ -604,3 +604,45 @@ test("field-following lens uses the base field, respects camera data and permits
         expect(() => adapter.set("lensSource", "invalid")).toThrow(/lens source/);
     } finally {adapter.dispose(); Sit.thermalEnvironment = undefined; NodeMan.get.mockReset(); NodeMan.iterate.mockImplementation(() => {});}
 });
+
+test("conditional free-focal CSV optics keep electronic zoom separate and reject an unsafe pupil", () => {
+    const saved = settingsForPreset("ATFLIR");
+    for (const focal of [785.760916597, 183.305, 91.589]) {
+        const one = thermalSettingsForCameraState(saved, cameraRow(focal), {useFreeFocal: true});
+        const two = thermalSettingsForCameraState(saved, cameraRow(focal, {zoom: 2}), {useFreeFocal: true});
+        expect(one.report).toMatchObject({lens: "free", reason: "freeFocal"});
+        expect(one.settings.focalLengthM).toBeCloseTo(focal / 1000, 10);
+        expect(two.settings).toEqual(one.settings);
+        expect(one.settings.apertureM).toBe(saved.apertureM);
+        expect(one.settings.digitalZoom).toBe(saved.digitalZoom);
+    }
+    expect(thermalSettingsForCameraState(saved, cameraRow(183.305)).report.reason).toBe("noSteps");
+    const invalid = thermalSettingsForCameraState(saved, cameraRow(50), {useFreeFocal: true});
+    expect(invalid.report).toMatchObject({lens: "saved", reason: "invalid"});
+    expect(invalid.settings.focalLengthM).toBe(saved.focalLengthM);
+    const tv = thermalSettingsForCameraState(saved, cameraRow(183.305, {mode: "TV", band: "EO"}), {useFreeFocal: true});
+    expect(tv).toEqual({settings: saved, report: null});
+});
+
+test("ATFLIR adapter consumes opt-in CSV optical focal length across forward and backward lens changes", () => {
+    const camera = cameraFor(native()); camera.position.set(Globals.equatorRadius + 100, 0, 0); camera.updateMatrixWorld(true);
+    const sensor = settingsForPreset("ATFLIR");
+    const view = {camera, cameraNode: {thermalSensor: sensor}, renderer: {}, div: document.createElement("div")};
+    const state = {useFreeFocal: true, stateAt: frame => cameraRow(frame >= 20 ? 91.589 : frame >= 10 ? 183.305 : 785.760916597,
+        {zoom: frame === 1 ? 2 : 1})};
+    NodeMan.get.mockImplementation(id => id === "cameraState" ? state : undefined);
+    NodeMan.iterate.mockImplementation(() => {}); Sit.thermalEnvironment = {turbulenceMode: "manual"};
+    const adapter = createThermalViewAdapter(view);
+    const render = jest.spyOn(adapter.pipeline, "render").mockImplementation(inputs => Object.assign(adapter.pipeline,
+        {hasFrame: true, settings: inputs.settings, lastFrame: {opticsCache: {outsideValidatedDomain: false}}}));
+    try {
+        for (const [frame, fov, focal] of [[0, .7, .785760916597], [1, .35, .785760916597], [10, 3, .183305], [20, 6, .091589], [0, .7, .785760916597]]) {
+            camera.fov = fov; camera.updateProjectionMatrix();
+            adapter.render(new Scene(), frame, fov);
+            expect(render.mock.calls.at(-1)[0].settings.focalLengthM).toBeCloseTo(focal, 10);
+            expect(window.lookThermal.cameraData.report).toMatchObject({lens: "free", reason: "freeFocal"});
+        }
+        expect(view.cameraNode.thermalSensor).toBe(sensor);
+        expect(sensor.focalLengthM).toBeCloseTo(.785760916597, 10);
+    } finally {adapter.dispose(); Sit.thermalEnvironment = undefined; NodeMan.get.mockReset(); NodeMan.iterate.mockImplementation(() => {});}
+});

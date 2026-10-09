@@ -32,6 +32,23 @@ function drainAsserts() {
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
+// Screenshots render synchronously after the main loop has restored per-view transforms.
+// Mirror its node lifecycle so object rotations, scale and visibility reach the draw.
+function renderScreenshotView(view, frame) {
+    if (!view.camera || !view.renderer) return view.renderCanvas?.(frame);
+    const nodes = window.NodeMan;
+    const postNodes = nodes?.getPostRenderNodes?.() ?? [];
+    view.camera.updateMatrix?.();
+    view.camera.updateMatrixWorld?.();
+    view.updateIsIR?.();
+    try {
+        for (const node of nodes?.getPreRenderNodes?.() ?? []) node.preRender(view);
+        return view.renderCanvas(frame);
+    } finally {
+        for (const node of postNodes) node.postRender(view);
+    }
+}
+
 // Tools pages (under /tools/) are standalone apps — always considered "ready"
 const isToolsPage = /\/sitrec\/tools\//.test(window.location.pathname);
 
@@ -276,18 +293,7 @@ const handlers = {
                 return { error: `View '${viewId}' has a zero-sized canvas` };
             }
             try {
-                // ONE call, the same one the frame loop makes (see indexRender.js). renderCanvas()
-                // IS the whole render for a 3D view: it calls renderTargetAndEffects(), which calls
-                // renderSky() itself (CNodeView3D.js). The old code drove all three by hand, and
-                // measurably wrecked the look view: sampling its canvas before and after gave
-                // correct sky and terrain first — (100,153,174), (166,121,99) — and uniform R=G=B
-                // grey after. Only the look view, which is the one carrying the IR/video effects
-                // chain. The mechanism inside that chain was NOT pinned down, so no claim is made
-                // here about which pass does it; what is established is that the extra calls cause
-                // it and that a single renderCanvas() does not. Note the old code did not merely
-                // return a wrong image — it wrote one to the LIVE canvas, where it stayed until
-                // something else asked for a repaint.
-                if (typeof viewNode.renderCanvas === "function") viewNode.renderCanvas(frame);
+                renderScreenshotView(viewNode, frame);
             } catch (e) {
                 return { error: `Render error during screenshot: ${e.message}` };
             }
@@ -340,7 +346,7 @@ const handlers = {
                     const alpha = childView.transparency !== undefined ? childView.transparency : 1;
                     if (alpha <= 0) return;
                     if (!(childView.canvas.width > 0) || !(childView.canvas.height > 0)) return;
-                    childView.renderCanvas(frame);
+                    renderScreenshotView(childView, frame);
                     outCtx.globalAlpha = alpha;
                     // Placed by its own offset within the parent, in CSS pixels scaled to backing
                     // pixels — a HUD does not necessarily fill the view.
@@ -395,7 +401,7 @@ const handlers = {
 
             // Re-render and composite each view bottom-up, its overlays right after it
             for (const v of nonOverlays) {
-                v.renderCanvas(frame);
+                renderScreenshotView(v, frame);
                 if (v.canvas) {
                     ctx.drawImage(v.canvas, v.leftPx - minX, (v.topPx - ViewMan.topPx) - minY, v.widthPx, v.heightPx);
                 }
@@ -404,7 +410,7 @@ const handlers = {
                     const alpha = ov.transparency !== undefined ? ov.transparency : 1;
                     if (alpha <= 0 || !ov.canvas) continue;
                     if (ov.canvas.style.display === "none" || ov.canvas.style.visibility === "hidden") continue;
-                    ov.renderCanvas(frame);
+                    renderScreenshotView(ov, frame);
                     ctx.globalAlpha = alpha;
                     ctx.drawImage(ov.canvas, v.leftPx - minX, (v.topPx - ViewMan.topPx) - minY, v.widthPx, v.heightPx);
                     ctx.globalAlpha = 1;

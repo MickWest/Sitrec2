@@ -86,6 +86,9 @@ class CDragDropHandler {
      * @returns {Promise<string>} Resolves 'secondView' | 'add' | 'replace', rejects if cancelled
      */
     async showSecondVideoChoiceDialog(filename) {
+        // Automated video imports replace the primary video, using the same
+        // disposal/upload path as the interactive Replace Video choice.
+        if (typeof window !== "undefined" && window._mcpDebug) return "replace";
         const options = [];
         // Only offer the side-by-side option when a secondary view exists.
         if (NodeMan.exists("video2")) {
@@ -326,6 +329,12 @@ class CDragDropHandler {
             this.reservedImportNames.add(file.name);
             return file;
         }
+
+        // A repeated automated video drop must also pass the filename gate.
+        // Keep other file collisions interactive; transport streams use the
+        // data-import path rather than the primary-video replacement path.
+        if (typeof window !== "undefined" && window._mcpDebug && file.type.startsWith("video/") &&
+            !/\.(ts|m2ts|mts)$/i.test(file.name)) return file;
 
         const choice = await showChoice(`"${file.name}" has already been imported. What would you like to do?`, {
             title: 'Name Already Used',

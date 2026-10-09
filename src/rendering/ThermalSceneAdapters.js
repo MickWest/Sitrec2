@@ -161,6 +161,8 @@ export function createThermalSceneAdapter(objects, groundRoots, camera, refracti
     for (const node of objects) {
         const root = node.model ?? node.object;
         if (root) roots.set(root, {kind: "object", node});
+        if (node.solarSurface?.enabled && node._solarSurfacePatches?.group)
+            roots.set(node._solarSurfacePatches.group, {kind: "object", node});
     }
     // Root 2 holds 3D buildings: with material classes their walls are concrete and their roofs are roofs.
     for (const [index, root] of groundRoots.entries()) if (root) roots.set(root, {kind: index === 1 ? "sea" : "ground", buildings: index === 2});
@@ -249,6 +251,7 @@ export function createThermalSceneAdapter(objects, groundRoots, camera, refracti
                         ...(Number.isFinite(groundAltitudeM) ? {terrainAltitudeM: groundAltitudeM} : {}),
                         ...(binding.buildings ? {buildingSurfaces: true} : {})} : {})};
             const thermal = binding.node.thermal;
+            if (binding.node.solarSurface?.enabled && mesh.userData.solarSurfacePatch) return mesh.userData.thermal;
             if (thermal?.mode === "uniform") return {temperatureK: thermal.temperatureK, emissivity: thermal.emissivity};
             const zone = mesh.userData.thermal?.zone;
             const override = thermal?.zones?.[zone];
@@ -337,7 +340,12 @@ export function createThermalReuseKey({budgetMs = 2} = {}) {
                 }
             }
             const roots = new Map();
-            for (const node of objects) if (node.model ?? node.object) roots.set(node.model ?? node.object, {kind: "object", node});
+            for (const node of objects) {
+                const root = node.model ?? node.object;
+                if (root) roots.set(root, {kind: "object", node});
+                if (node.solarSurface?.enabled && node._solarSurfacePatches?.group)
+                    roots.set(node._solarSurfacePatches.group, {kind: "object", node});
+            }
             for (const [i, root] of groundRoots.entries()) if (root) roots.set(root, {kind: i === 1 ? "sea" : "ground"});
             const parts = [encode([frame, settings, sounding, atmosphereKey, refractionOptions, presentation, skyUp, psfRangeM, groundClasses,
                 identity(scene), scene.visible, camera.matrixWorld.elements, camera.matrixWorldInverse.elements,
@@ -362,6 +370,13 @@ export function createThermalReuseKey({budgetMs = 2} = {}) {
                     if (!Number.isFinite(parent.renderOrder)) throw fail("render order");
                     ancestry.push([parent.renderOrder, parent.userData?.thermal == null ? null : encode(parent.userData.thermal)]);
                 }
+                // Only active, participating solar geometry invalidates detector reuse.
+                // Enabled settings on hidden objects or unsupported model/flock nodes do not draw bands.
+                if (binding.kind === "object" && binding.node.solarSurface?.enabled &&
+                    binding.node.modelOrGeometry === "geometry" && !binding.node.flockEnabled &&
+                    mesh.userData.solarSurfacePatch &&
+                    (Array.isArray(mesh.material) ? mesh.material : [mesh.material]).some(material => material?.visible))
+                    throw fail("solar surface bands");
                 const geometry = mesh.geometry, position = geometry?.attributes?.position;
                 if (!position || position.isGLBufferAttribute || mesh.isSkinnedMesh || mesh.isInstancedMesh ||
                     mesh.isBatchedMesh || Object.keys(geometry.morphAttributes).length) throw fail("batched or morph geometry");

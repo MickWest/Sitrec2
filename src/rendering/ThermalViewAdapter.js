@@ -40,14 +40,28 @@ export function thermalSettings(cameraNode, sit) {
  * lens step of that focal length, and its polarity, when the row gives one, replaces the saved polarity. A focal
  * length that is not a lens step of the preset, or a step that the saved pupil policy cannot use, keeps the saved
  * lens. Digital zoom is not applied here: it reaches the sensor once, through the look camera's field of view.
+ * Sensors without steps can opt into conditional free focal length, retaining the selected aperture and detector.
  * report says what applied; it is null when the row does not apply. */
-export function thermalSettingsForCameraState(settings, state) {
+export function thermalSettingsForCameraState(settings, state, {useFreeFocal = false} = {}) {
     if (state?.band !== "IR") return {settings, report: null};
     const report = {row: state, lens: "saved", reason: null, message: null, polarity: state.polarity == null ? "saved" : "row"};
     const polarity = state.polarity ?? settings.polarity;
     const steps = SENSOR_PRESETS[settings.sensorPreset]?.focalSteps;
     const step = String(state.focalLengthMm);
     let focalStep = null;
+    if (!steps && useFreeFocal) {
+        try {
+            const configured = normalizeSettings({...settings, polarity, focalStep: "free",
+                fieldMode: "focalLength", focalLengthM: state.focalLengthMm / 1000});
+            if (Math.abs(configured.focalLengthM - state.focalLengthMm / 1000) > 1e-9)
+                throw new RangeError("CSV focal length is outside the supported optical field");
+            return {settings: configured, report: {...report, lens: "free", reason: "freeFocal"}};
+        } catch (error) {
+            if (!(error instanceof RangeError)) throw error;
+            return {settings: polarity === settings.polarity ? settings : normalizeSettings({...settings, polarity}),
+                report: {...report, reason: "invalid", message: error.message}};
+        }
+    }
     if (!steps) report.reason = "noSteps";
     else if (!Object.hasOwn(steps, step)) report.reason = "notStep";
     else {
@@ -305,15 +319,16 @@ export function createThermalViewAdapter(view) {
     const detachDebug = typeof window === "undefined" ? () => {} : attachThermalDebug(window, debug, "lookThermal");
     return {pipeline, set, render(scene, frame, baseVerticalFovDeg = view.camera.fov) {
         // Per-frame camera data sets this frame's lens step and polarity; the saved settings stay unchanged.
+        const cameraState = NodeMan.get("cameraState", false);
         cameraData = thermalSettingsForCameraState(thermalSettings(view.cameraNode, Sit),
-            NodeMan.get("cameraState", false)?.stateAt(frame) ?? null);
+            cameraState?.stateAt(frame) ?? null, {useFreeFocal: cameraState?.useFreeFocal === true});
         let configured = cameraData.settings;
         fieldLens = !cameraData.report && lensSource() === "view" ? thermalSettingsForViewField(configured, baseVerticalFovDeg) : null;
         if (fieldLens) configured = fieldLens.settings;
-        const nextDrive = {lens: cameraData.report?.lens === "step", polarity: cameraData.report?.polarity === "row",
+        const nextDrive = {lens: ["step", "free"].includes(cameraData.report?.lens), polarity: cameraData.report?.polarity === "row",
             field: !!fieldLens?.report && !fieldLens.report.reason};
         const refreshControls = Object.keys(nextDrive).some(key => nextDrive[key] !== drive[key]) ||
-            lastSettings?.focalStep !== configured.focalStep;
+            lastSettings?.focalStep !== configured.focalStep || lastSettings?.focalLengthM !== configured.focalLengthM;
         drive = nextDrive;
         const targetFrame = par.trackToTrackStopAt > 0 ? Math.min(frame, par.trackToTrackStopAt) : frame;
         const target = NodeMan.get("targetTrackSwitchSmooth", false)?.p(targetFrame);

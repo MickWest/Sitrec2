@@ -88,3 +88,21 @@ test("Drive Look View off, or the data removed, brings back the placeholder", ()
     overlay.updateCameraTexts(5, VFOV_600);
     expect(texts()).toEqual(["EON", GRAY, "600", ""]);
 });
+
+test("manual modes update the overlay without inventing recorded focal lengths, with CSV disabled too", () => {
+    const node = cameraData("Frame,Mode,FL,Zoom\n0,IR,675,1\n");
+    node.setModeKey(10, "TV");
+    node.setModeKey(20, "IR");
+    overlay.updateCameraTexts(10, VFOV_600);
+    expect(texts()).toEqual(["TV", WHITE, "675", ""]);
+    node.driveLookView = false;
+    overlay.updateCameraTexts(20, VFOV_600);
+    expect(texts()).toEqual(["IR", WHITE, "600", ""]);
+    overlay.updateCameraTexts(10, VFOV_600);
+    expect(texts()).toEqual(["TV", WHITE, "600", ""]);
+    node.clear();
+    overlay.updateCameraTexts(10, VFOV_600);
+    expect(texts()).toEqual(["TV", WHITE, "600", ""]);
+    overlay.updateCameraTexts(0, VFOV_600);
+    expect(texts()).toEqual(["EON", GRAY, "600", ""]);
+});

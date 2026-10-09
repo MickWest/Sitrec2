@@ -114,3 +114,29 @@ test('recorded pressure drives barometric altitude independently of geometric ca
     expect(ui.readouts.altitudeSource).toBe('MSL height');
     expect(ui.textAlt1000s.text + ui.textAlt000.text).toBe(String(Math.round(7600 / .3048)));
 });
+
+test('ATFLIR mode follows CSV and independent manual switches when seeking in either direction', () => {
+    const {ui} = hud();
+    ui.textElements.mode = {};
+    const nodes = new Map();
+    setNodeMan({add: (id, node) => nodes.set(id, node), get: id => nodes.get(id), exists: id => nodes.has(id)});
+    const {CNodeCameraState} = require('../src/nodes/CNodeCameraState');
+    const {parseCameraStateCSV} = require('../src/CameraStateTable');
+    const node = new CNodeCameraState({id: 'cameraState', gui: false});
+    node.setTable(parseCameraStateCSV([['Frame', 'Mode', 'FL'], [0, 'IR', 675], [10, 'TV', 200], [20, 'MWIR', 675]]));
+    for (const [frame, mode] of [[20, 'IR'], [10, 'TV'], [0, 'IR']]) {
+        ui.updateCameraMode(frame);
+        expect(ui.textElements.mode.text).toBe(mode);
+    }
+    node.setModeKey(5, 'TV');
+    node.setModeKey(15, 'IR');
+    for (const drive of [true, false]) {
+        node.driveLookView = drive;
+        for (const [frame, mode] of [[20, 'IR'], [5, 'TV'], [0, 'IR']]) {
+            ui.updateCameraMode(frame);
+            expect(ui.textElements.mode.text).toBe(mode);
+        }
+    }
+    expect(ui.textElements.fov).toEqual({});
+    expect(ui.textElements.zoom).toEqual({});
+});

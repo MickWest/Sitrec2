@@ -312,3 +312,25 @@ test("live GPU gain uses each frame's own statistics: no readback, settled at on
         expect(pipeline.gainReadback.enqueue).not.toHaveBeenCalled();
     } finally {pipeline.dispose();}
 });
+
+test("IR to TV to IR renders the returning IR frame and resets temporal memory on backward seeking", () => {
+    const {pipeline, inputs, clear} = fixture();
+    const settings = normalizeSettings({...inputs.settings, temporalFilterAlpha: .3});
+    const temporal = () => pipeline._pass.mock.calls.filter(call => call[0] === "temporal").at(-1)[2];
+    try {
+        pipeline.render({...inputs, settings, frame: 10});
+        const initial = pipeline.lastFrame;
+        // TV frames use the visible dispatcher and do not submit a thermal image.
+        clear();
+        expect(pipeline.lastFrame).toBe(initial);
+        pipeline.render({...inputs, settings, frame: 20});
+        expect(pipeline._radiance).toHaveBeenCalledTimes(1);
+        expect(pipeline.lastFrame).toMatchObject({frame: 20, reused: false});
+        expect(temporal().memory).toBeCloseTo(.3 ** 10, 12);
+        clear();
+        pipeline.render({...inputs, settings, frame: 10});
+        expect(pipeline._radiance).toHaveBeenCalledTimes(1);
+        expect(pipeline.lastFrame).toMatchObject({frame: 10, reused: false});
+        expect(temporal().memory).toBe(0);
+    } finally {pipeline.dispose();}
+});

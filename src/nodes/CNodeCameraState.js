@@ -15,10 +15,12 @@
 // empty node writes no mod.
 
 import {CNode} from "./CNode";
+import {par} from "../par";
 import {guiMenus, markSitchDirty, NodeMan, setRenderOne} from "../Globals";
 import {showError} from "../showError";
 import {t} from "../i18n";
 import {
+    cameraBand,
     cameraStateAt,
     cameraStateFromSaved,
     cameraStateModes,
@@ -43,6 +45,10 @@ export class CNodeCameraState extends CNode {
 
         this.table = emptyCameraStateTable();
         this.driveLookView = false;
+        this.useFreeFocal = false;
+        this.modeKeys = [];
+        this.modeSummary = "";
+        this.modeEditor = {frame: 0, mode: "IR"};
 
         // Read-only text for the menu, refreshed by updateMenu().
         this.menuText = {source: "", rows: "", modes: ""};
@@ -62,7 +68,38 @@ export class CNodeCameraState extends CNode {
     // focalLengthMm, zoom, polarity}), or null when nothing should be driven.
     stateAt(frame) {
         if (!this.driveLookView || !this.hasData()) return null;
-        return cameraStateAt(this.table, frame);
+        const state = cameraStateAt(this.table, frame);
+        const mode = this.modeAt(frame);
+        return mode ? {...state, mode, band: cameraBand(mode)} : state;
+    }
+
+    // Independent mode keys hold until the next key. Before the first key,
+    // the CSV (or saved view mode) applies. Lookup never depends on playback order.
+    modeAt(frame) {
+        if (!Number.isFinite(frame)) return null;
+        for (let i = this.modeKeys.length - 1; i >= 0; i--) {
+            if (this.modeKeys[i].frame <= frame) return this.modeKeys[i].mode;
+        }
+        return null;
+    }
+
+    effectiveModeAt(frame) {
+        return this.modeAt(frame) ?? this.stateAt(frame)?.mode ?? null;
+    }
+
+    setModeKey(frame, mode) {
+        if (!Number.isInteger(frame) || frame < 0 || !["IR", "TV"].includes(mode)) {
+            throw new Error("Mode keys need a nonnegative whole frame and IR or TV");
+        }
+        this.modeKeys = this.modeKeys.filter(key => key.frame !== frame);
+        this.modeKeys.push({frame, mode});
+        this.modeKeys.sort((a, b) => a.frame - b.frame);
+        this.changed();
+    }
+
+    removeModeKey(frame) {
+        this.modeKeys = this.modeKeys.filter(key => key.frame !== frame);
+        this.changed();
     }
 
     // Replace the table with new data (a dropped file). New data drives the
@@ -87,16 +124,29 @@ export class CNodeCameraState extends CNode {
 
     modSerialize() {
         const out = super.modSerialize();
+        if (this.modeKeys.length) out.modeKeys = this.modeKeys.map(key => ({...key}));
         if (!this.hasData()) return out;
         return {
             ...out,
             cameraState: cameraStateToSaved(this.table),
             driveLookView: this.driveLookView,
+            ...(this.useFreeFocal ? {useFreeFocal: true} : {}),
         };
     }
 
     modDeserialize(v) {
         super.modDeserialize(v);
+        this.useFreeFocal = v.useFreeFocal === true;
+        this.modeKeys = [];
+        if (Array.isArray(v.modeKeys)) {
+            for (const key of v.modeKeys) {
+                if (Number.isInteger(key?.frame) && key.frame >= 0 && ["IR", "TV"].includes(key.mode)) {
+                    this.modeKeys = this.modeKeys.filter(existing => existing.frame !== key.frame);
+                    this.modeKeys.push({frame: key.frame, mode: key.mode});
+                }
+            }
+            this.modeKeys.sort((a, b) => a.frame - b.frame);
+        }
         if (v.cameraState !== undefined) {
             try {
                 this.table = cameraStateFromSaved(v.cameraState);
@@ -118,6 +168,19 @@ export class CNodeCameraState extends CNode {
     // been fitted.
     setupMenu(parent) {
         if (!parent) return;
+        const modes = this.modeFolder = parent.addFolder("IR/TV Mode Switches").close();
+        modes.add(this.modeEditor, "frame", 0, undefined, 1).name("Frame").listen();
+        modes.add(this.modeEditor, "mode", ["IR", "TV"]).name("Mode")
+            .tooltip("Manual keys override CSV modes from their frame onward, even when Drive Look View is off. Lens and polarity still come from active CSV data or saved settings.");
+        modes.add(this, "modeSummary").name("Switches").listen().disable();
+        const actions = {
+            current: () => { this.modeEditor.frame = Math.floor(par.frame); },
+            set: () => this.setModeKey(this.modeEditor.frame, this.modeEditor.mode),
+            removeSwitch: () => this.removeModeKey(this.modeEditor.frame),
+        };
+        modes.add(actions, "current").name("Use Current Frame");
+        modes.add(actions, "set").name("Add / Replace Switch");
+        modes.add(actions, "removeSwitch").name("Remove Switch");
         const folder = this.guiFolder = parent.addFolder(t("cameraState.folder")).close();
 
         const readOnly = (property, key) => folder.add(this.menuText, property)
@@ -137,12 +200,17 @@ export class CNodeCameraState extends CNode {
                 markSitchDirty();
             });
 
+        folder.add(this, "useFreeFocal").name("Use CSV Free Focal Length (Conditional)").listen()
+            .tooltip("For sensors without lens steps, use CSV FL as optical focal length with the selected aperture and detector. This is a conditional model, not calibration. CSV Zoom remains electronic; set framing separately with Camera FOV.")
+            .onChange(() => this.changed());
+
         folder.add({remove: () => this.clear()}, "remove")
             .name(t("cameraState.remove.label"))
             .tooltip(t("cameraState.remove.tooltip"));
     }
 
     updateMenu() {
+        this.modeSummary = this.modeKeys.map(key => `${key.frame}: ${key.mode}`).join(", ");
         const rows = this.table.rows;
         this.menuText.source = this.table.sourceName ?? "";
         this.menuText.rows = rows.length === 0 ? "" : t("cameraState.rows.value", {
@@ -157,6 +225,8 @@ export class CNodeCameraState extends CNode {
     }
 
     dispose() {
+        this.modeFolder?.destroy();
+        this.modeFolder = null;
         if (this.guiFolder) {
             this.guiFolder.destroy();
             this.guiFolder = null;

@@ -3612,7 +3612,8 @@ export class CNodeView3D extends CNodeViewCanvas {
     }
 
     get frameBand() {
-        return this.frameCameraState?.band ?? null;
+        const mode = this.id === "lookView" ? NodeMan.get("cameraState", false)?.modeAt?.(par.frame) : null;
+        return mode ? (mode === "IR" ? "IR" : "EO") : this.frameCameraState?.band ?? null;
     }
 
     get frameRenderMode() {

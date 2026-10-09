@@ -17,6 +17,9 @@ export function frameRenderModeFor(renderMode, band) {
 const INFRARED_LOOK_EFFECTS = new Set(["FLIRShader", "Thermal"]);
 
 export function frameEffectPasses(view) {
-    if (view.frameBand !== "EO") return view.effectPasses;
-    return Object.values(view.effectPasses).filter(effect => !INFRARED_LOOK_EFFECTS.has(effect.effectName));
+    const band = view.frameBand;
+    const effects = Object.values(view.effectPasses);
+    if (band !== "EO" && !effects.some(effect => effect.effectName === "Greyscale" && effect.tvOnly)) return view.effectPasses;
+    return effects.filter(effect => (band !== "EO" || !INFRARED_LOOK_EFFECTS.has(effect.effectName)) &&
+        !(effect.effectName === "Greyscale" && effect.tvOnly && band !== "EO"));
 }
