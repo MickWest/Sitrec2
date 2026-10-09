@@ -9,6 +9,15 @@ lockstep with docs/WhatsNew.md.
 
 ---
 
+## Version 2.176.1 (2026-10-08)
+
+An egress-contract maintenance release. Only `scripts/egress-allowlist.json` changes. Only the User Data Egress Check and its tests use that file, and no build includes it. There are no application code changes, so the app is the same as in 2.176.0. Because of the egress check result below, the production site was not updated to 2.176.0, so 2.176.1 is the first production release of the 2.176.0 features. The GitHub Pages copy, which deploys on each release tag, was published from 2.176.0.
+
+### Security
+- **The Overture Maps destination's contract now names the thermal ground mask** (`scripts/egress-allowlist.json`, the `overturemaps-extras-us-west-2.s3.us-west-2.amazonaws.com` entry).
+  - **Why.** 2.176.0 (`11dbb077`) added *Mapped roads and buildings* in Effects → Physical thermal → Environment. When *Ground temperature source* is *Material classes* and that control is on, `ThermalViewAdapter.js` creates a `ThermalGroundMask`. It starts its own `CityLightsWorker`, which reads the Overture `buildings` and `transportation` PMTiles from this bucket for the region around the target (or below the camera if there is no target). These requests do not depend on City Lights. Because the entry's `trigger` named only City Lights with a mapped method, the User Data Egress Check on the 2.176.0 push returned ATTENTION. Its scan was clear (no unlisted destination, nothing over contract). Its review found that the new thermal setting sends tile coordinates to this destination without the trigger that the entry names.
+  - **Change.** `purpose` now ends "for City Lights and the thermal ground mask". `trigger` adds "or while the physical thermal view uses Material classes with Mapped roads and buildings on". `mayReceive` stays `coarse-area` (tile coordinates or a bounding box of the viewed area). Both features send only that, so the data class does not change.
+
 ## Version 2.176.0 (2026-10-08)
 
 ### New Features
