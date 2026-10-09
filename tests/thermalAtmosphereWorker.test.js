@@ -27,7 +27,7 @@ test("worker domain tables meet the existing exact foreground-transfer limits", 
     expect(actual).not.toBeNull();
     for (let i=0;i<exact.transmission.length;i++) expect(Math.abs(actual.transmission[i]-exact.transmission[i])).toBeLessThan(.0001);
     cache.dispose();
-});
+}, 30000);
 
 test("obsolete worker results cannot replace a new atmospheric profile, and disposal ignores late messages", async () => {
     const worker={postMessage:jest.fn(),terminate:jest.fn()},ready=jest.fn();

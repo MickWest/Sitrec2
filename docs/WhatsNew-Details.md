@@ -9,6 +9,147 @@ lockstep with docs/WhatsNew.md.
 
 ---
 
+## Version 2.176.0 (2026-10-08)
+
+### New Features
+- **Recorded fireballs browser** (`737be5da`; new `src/FireballData.js`, `src/FireballUI.js`, `src/TrackFiles/CTrackFileFireball.js`, `docs/RecordedFireballs.md`; `src/CFileManager.js`, `src/CFileManagerParse.js`, `src/TrackManager.js`, `src/nodes/CNodeTrackFromMISB.js`, `src/nodes/CNodeMISBData.js`, `src/nodes/CNodeDisplayTrack.js`, `src/docsRegistry.js`, `src/i18n/en.js`, `README.md`).
+  - **Menu.** **File → Recorded fireballs…** is next to *Import File*. Its label is a literal string, not an i18n key. It calls `openFireballBrowser()`, which opens a modal dialog. Sitrec fetches nothing automatically and bundles no archive. You download a Global Meteor Network (GMN) daily or monthly trajectory summary `.txt` (the dialog links to both GMN directories). Then you import it together with the exact HTTPS `globalmeteornetwork.org` `.txt` URL it came from. That URL is stored as provenance, and an import with a URL of any other form is refused. The other accepted import is a `sitrec-fireball-v1` JSON file of measured samples. Files over 100 MB are refused. A generation counter stops a slow earlier import from replacing a later one.
+  - **Parsing.** `parseGMNSummary()` reads the semicolon summary. It accepts LF, CR-LF, LF-CR and CR line endings; the published file uses LF-CR. Each row becomes an event with two samples, the begin and end endpoints, plus the peak absolute magnitude, the peak height and the quality fields (stations, convergence angle, median fit error, field-of-view flags, endpoint sigmas). Rows that cannot be used are counted as rejected. `validateFireball()` checks both forms: UTC times that end in `Z` and increase, valid coordinates, and heights in meters above the WGS84 ellipsoid.
+  - **Search.** `nearbyFireballs()` keeps events where all of these are true:
+    - the begin UTC is within the time window of the search UTC (default ±24 h);
+    - the great-circle distance to the nearest supplied sample is within the radius (default 1000 km);
+    - the peak absolute magnitude is no fainter than the cutoff (default −3). Events with unknown brightness are kept.
+
+    Results are sorted by time difference, then distance, and at most 100 are shown. The search starts from the sitch's current UTC and `Sit.lat`/`Sit.lon`.
+  - **Loading.** *Load observed path* sends the event through `DragDropHandler.uploadDroppedFile` as a `.fireball.json` file, so a dropped `.fireball.json` loads the same way. `CTrackFileFireball` is first in `trackFileClasses`. It maps the samples to MISB rows and returns `isAltitudeHAE() = true`, so no geoid correction is applied. It also returns `syncsSitchDuration() = true` and is not a closest-approach candidate.
+  - **Track behavior.** For these tracks, `TrackManager` sets `fireballObservedInterval` on the MISB data node and always builds an unsmoothed `CNodeTrackFromMISB`, also in a custom sitch.
+    - Positions are interpolated in a straight line between ECEF positions, which also prevents longitude wrap at the antimeridian.
+    - Time is clamped to the observed interval, so outside it the marker stays at the first or last point.
+    - `CNodeMISBData` accepts a zero latitude or longitude.
+    - The altitude lock in `CNodeDisplayTrack` starts at −1 (off), and the track is shown in the look view.
+    - The bad-data filter and rocket-track prompts are skipped, because atmospheric deceleration is not a bad data point.
+  - **Track controls.** `addFireballTrackControls()` adds three controls to the track's folder in **Contents** (named *Fireball <id>*): *Jump to observed start*, *Jump to estimated peak*, and *Fireball source & limits*. The peak control is *Jump to measured peak* for a JSON file that gives `recordedPeakUTC` or sample magnitudes. It shows as a disabled *Peak time unavailable* when there is no usable peak. A jump pauses playback. Inside the timeline it goes to the nearest frame. Outside the timeline it sets frame 0 and moves the sitch start time to that UTC.
+  - **Peak time.** A GMN summary has no peak time. `fireballPeak()` estimates it as begin time + (begin height − peak height) / (begin height − end height) × duration. This assumes constant speed, and the result is labeled as an estimate.
+  - **Help.** New page *Recorded Fireballs* in Help → Documentation (`docs/RecordedFireballs.md`, registered in `docsRegistry.js`, label key `menus.help.documentation.recordedFireballs`), also linked from the README. It explains the data, its coverage limits, the JSON format, and why no match does not rule out a meteor. Tests: `tests/FireballData.test.js`, `tests/FireballUI.test.js`, `tests/nodes/CNodeTrackFromMISB.test.js`. The fixtures are short GMN extracts (CC BY 4.0).
+- **Sitch Chapters replace Sub Sitches** (`5404fc78`, merged in `5ffcb442`; `src/CustomManagerSubSitch.js`, `src/CustomManagerSerialize.js`, `src/index.js`; `tests/sitchChapters.test.js`). This is a custom-sitch feature.
+  - **Menu.** The File-menu folder *Sub Sitches* is now **Sitch Chapters**, and *File Tweaks* is still moved after it. It contains, in this order:
+    - *Add chapter*, *Rename chapter*, *Delete chapter*;
+    - *Revert sitch to last save / load*;
+    - *Restore chapter from server version…* and *Restore chapter from saved file…*;
+    - a list of chapter cards (click a card to switch);
+    - the timeline-event controls (see the next entry);
+    - *Advanced: capture scope* and *Advanced: restore scope* (formerly *Sub Saving Details* and *Sub Loading Details*).
+
+    The menu items *Update Current Sub*, *Update Current and Add New Sub*, *Discard and Add New* and the sync-details button are removed. New chapters are named "Chapter N".
+  - **Capture and switch.** `captureSubSitchState()` now also stores `par.frame` and the chapter's timeline events, and it deep-copies each node's mod data (`structuredClone`).
+    - The Cameras scope now includes `fovUI`, `fovSwitch` and `anglesSwitch` (and the misspelled legacy id `angelsSwitch`). When a chapter saved before this change is restored, a `fovUI` value is made from its saved PTZ or look-camera FOV. Without this, the next controller update put back the zoom of the chapter you left.
+    - Switching now saves the outgoing chapter first. Before, edits were lost unless you selected *Update Current*.
+    - A restore clears fullscreen ownership, restores the views, then calls `ViewMan.restoreFullscreenFromMods()`. It also sets the frame from the chapter.
+    - If a switch or delete throws, the outgoing state is restored and an error is shown.
+    - Chapter edits call `markSitchDirty()`. A `chapterBusy` flag stops repeated clicks while a prompt is open. `Globals.loadGeneration` checks discard prompt results that arrive after another sitch has loaded.
+  - **Revert.** After each successful save and after each load, `markChapterBaseline()` records the serialized sitch. *Revert sitch to last save / load* asks for confirmation, then reloads that baseline through `setNewSitchObject`. This reverts the whole sitch, not only the chapters.
+  - **Restore one chapter.** You select a server version (`FileManager.getVersions`) or a saved `.json`/`.js` file, then a chapter in it. That chapter's state is loaded into the current chapter, and the other chapters do not change. Your previous state is kept as "<name> (before restore)". That recovery chapter has `captureAll = true`, so it keeps every node's settings, including those outside the capture scope.
+  - **Loading older saves.** `deserializeSubSitches()` clamps an out-of-range `currentSubIndex` and clears events that the save does not have.
+- **Timeline events** (`5404fc78`; `src/CustomManagerSubSitch.js`, `src/nodes/CNodeViewEphemeris.js`). Each chapter has a list of named frames under File → Sitch Chapters.
+  - *Add event at current frame…* asks for a name. Clicking an event goes to its frame. *Edit* renames it, moves it to another whole frame in the sitch range, or deletes it (leave the name empty, then confirm).
+  - *Add predicted satellite rise / set* calls `updateEphemeris(true)` on the Satellite Ephemeris node. `predictNextEvent()` now records `cachedEventTime` and `cachedEventRising` for each satellite, including satellites below the horizon. Each crossing is converted to a frame through `Sit.fps` and `Sit.simSpeed`, and crossings outside the playback range are dropped. The rest are added once each, named "<satellite> · rise|set (estimated, 30 s samples)". If none are found, the error message tells you to open Satellite Ephemeris with satellite data loaded.
+  - The events are saved with the sitch, inside each chapter's state.
+- **Ground material classes in the physical thermal view** (`11dbb077`; new `tools/thermal/groundMaterials.js`, `src/rendering/ThermalGroundMask.js`, `src/citylights/ThermalGroundRaster.js`; `tools/thermal/thermalSchema.js`, `tools/thermal/ThermalPipeline.js`, `tools/thermal/shaders.js`, `src/rendering/ThermalViewAdapter.js`, `src/rendering/ThermalSceneAdapters.js`, `src/citylights/CityLightsWorker.js`, `src/i18n/en.js`, `tools/thermal/README.md`).
+  - **Controls.** All are in Effects → Physical thermal → Environment. *Ground temperature source* has a new option, *Material classes* (`groundTemperatureMode: "materials"`). The new controls are:
+    - *Ground condition*: *From sun and time* (default), *Day, clear*, *Day, overcast*, *Evening*, *Late night*;
+    - *Ground climate*: *From humidity* (default), *Warm humid*, *Temperate*, *Dry*;
+    - *Cloud cover* (default 0.3, used only with the automatic condition);
+    - *Surface wind* (default 2 m/s);
+    - *Mapped roads and buildings* (default off).
+
+    These controls are disabled, with the reason in the tooltip, unless *Material classes* is selected.
+  - **Classification.** The terrain shader (define `MATERIAL_CLASSES`) gives each imagery texel soft weights for grass, trees, asphalt, concrete, roof and soil. It uses excess-green vegetation indices, a red-over-blue soil cast and neutral brightness. It then mixes one radiance row per class. Imagery color does not measure material: shadows and dark roofs read as asphalt.
+  - **Temperature.** In `groundClassOffset()`, each class is the profile air temperature plus an estimated offset, with its own 3–5 µm emissivity (from 0.80 for soil to 0.98 for trees). The air temperature is taken at the terrain height below the target (or below the camera if there is no target), in 25 m steps.
+    - By day, a clear-day excess (by class and climate) scales with sin(sun elevation), with the cloud factor 1 − 0.75 n^3.4, and with the wind factor 12.6 / (10.7 + 3.8 V).
+    - After sunset, the stored heat of heavy classes (asphalt, concrete, soil) decays as exp(−t/τ). Heavy classes follow the sun 1.5 h late.
+    - At night, a radiative deficit scales with climate, with 1 − 0.84 n and with wind.
+    - The day and night forms blend continuously through sunset and sunrise.
+    - `hoursSinceSunset()` finds the last sunset by a 15-minute backward search, refined by bisection. *From humidity* selects the climate from the profile's surface dew point and relative humidity (`groundClimateFromSurface`).
+  - **Mapped ground.** With *Mapped roads and buildings* on, `ThermalGroundMask` uses the City lights worker to load the open map road and building data around the target over the network. `rasterThermalGround()` draws a 2048-texel Web Mercator coverage mask: roads (asphalt, at typical widths for each road class), footpaths (concrete) and building footprints (roof). Define `GROUND_MASK` moves the class weights to match the mask, but roads under tree canopy stay trees. On 3D building tiles (define `BUILDING_SURFACES`), steep facets that are not vegetation become concrete walls, using screen-space derivative normals because those tiles often have no normals. The readout shows the mapped counts, the loading state, or why the data is not available.
+  - **Reflected ground.** With *Reflected environment source* = *Sky and ground*, object surfaces now reflect a ground at the classes' mean offset and mean emissivity (`environmentGround`), not the uniform *Ground temperature*.
+  - The readout lists the condition, the climate, the air temperature and each class temperature, and labels them as estimates.
+- **Weather balloon soundings set the thermal atmosphere** (`11dbb077`; `src/rendering/ThermalSceneAdapters.js`, `src/rendering/ThermalViewAdapter.js`, `tools/thermal/sounding.js`, `tools/thermal/thermalSchema.js`; `tests/thermalSondeSounding.test.js`).
+  - New control: Effects → Physical thermal → Environment → *Atmosphere profile*, with *Standard profile* (default) or *Loaded sounding*.
+  - With *Loaded sounding*, `activeThermalSounding()` collects the soundings that are loaded as sonde tracks (for example from Wind → *Import Sounding…*). `nearestThermalSounding()` selects the launch nearest to the sitch time. A sounding embedded in `Sit.thermalEnvironment` still takes priority.
+  - `thermalSoundingFromSonde()` converts the parsed levels (hPa, °C, dew point) to records for the new `soundingFromRecords()`. The result is cached for each sonde.
+    - The first pressure level is the surface. Rows without pressure become non-pressure levels, which the atmosphere ignores.
+    - A dew point up to 0.5 K above the temperature is clamped to saturation; a larger one is dropped, so the relative humidity is used.
+    - A profile that the atmosphere rejects falls back to the standard profile.
+  - While a sounding is active, *Surface air temperature* and the water-vapor control are disabled, with the reason shown. Vehicle air temperatures also come from the sounding.
+- **Terrain color temperatures** (`fe2f9107`; `tools/thermal/thermalSchema.js`, `tools/thermal/shaders.js` `terrainRadianceVertex`/`terrainRadianceFragment`, `tools/thermal/ThermalPipeline.js`, `src/rendering/ThermalSceneAdapters.js`, `src/rendering/ThermalViewAdapter.js`; `tests/thermalTerrainTemperature.test.js`).
+  - New control *Ground temperature source*: *Terrain color estimate* (the default) or *Uniform temperature*. New control *Terrain color temperature span*: default 10 K, range 0–30 K.
+  - Colored ground gets T = *Ground temperature* + span × (0.5 − luminance). Luminance is the unlit sRGB luminance of the terrain texture times the material color. Values go through a shared temperature-to-range lookup table, so darker ground is warmer. A span of 0, uncolored terrain and water use the uniform value.
+  - The paused-frame reuse key includes the terrain texture identity and version. An animated (video) terrain texture disables reuse.
+  - The readout line "Terrain color temperatures estimated: low–high K…" says that visible imagery is not a temperature measurement.
+  - Saved thermal settings that have no `groundTemperatureMode` get the new default. Thus terrain in an existing thermal sitch now varies with the imagery color. Select *Uniform temperature* for the previous behavior.
+  - Label changes in the same commit: *Ground / sea temperature* → *Ground temperature*, *Ground / sea emissivity* → *Ground emissivity*, *Ambient temperature* → *Ambient fallback temperature*, *Direct solar illumination* → *Solar transmission*.
+- **Tilt and Sway for objects** (`72137483`; `src/nodes/CNodeControllerObjectTilt.js`, `src/i18n/en.js` `misc.tiltAngle`/`tiltDirection`/`swayAmplitude`/`swayPeriod`; `tests/objectTiltSway.test.js`).
+  - Four new controls appear next to *Banking* (in the object's folder when the controller is attached to an object, otherwise in Physics): *Tilt°* (0–90), *Tilt Direction°* (0–360, true), *Sway°* (0–45) and *Sway Period (s)* (0.2–20, default 2).
+  - `apply()` first removes the lean of the last frame, then runs the banking code (now `applyBanking()`). Then it rotates the object about the horizontal axis up × d, so that its top leans toward the tilt direction by `leanAt(f)` = tilt + sway × sin(2πt / period). Time t is scene time (frame × `Sit.simSpeed` / `Sit.fps`).
+  - The values are serialized with the controller. All values zero leaves the orientation unchanged.
+- **Reflected environment source** (`72137483`; `tools/thermal/atmosphere.js` `reflectedEnvironmentTable`/`hemisphereAzimuthWeight`, `tools/thermal/ThermalPipeline.js`, `src/rendering/ThermalSceneAdapters.js` `surfaceAltitudeM`; `tests/thermalSkyGroundEnvironment.test.js`).
+  - New control in Effects → Physical thermal → Environment, with *Manual temperature* (the default, so existing sitches do not change) or *Sky and ground*.
+  - *Sky and ground* calculates, for five surface-normal elevations, the cosine-weighted hemispheric radiance of the clear sky above and the gray ground below, each through its own path. It uses 48 elevation samples. The result is cached by atmosphere profile, ground and altitude, in 25 m steps from each surface's height above sea level.
+  - *Reflected environment* is disabled, with the reason shown, while *Sky and ground* is selected.
+
+### Improvements
+- **Physical thermal view plays at about 30 frames per second** (`fe2f9107`; new `tools/thermal/atmosphereWorker.js`; `src/rendering/ThermalWorkerFactory.js` `createAtmosphereWorker`, `tools/thermal/atmosphere.js`, `tools/thermal/ThermalPipeline.js`, `tools/thermal/shaders.js`, `src/rendering/ThermalViewAdapter.js`, `src/rendering/ThermalSceneAdapters.js`).
+  - **Before.** Playback fell to 1 or 2 frames per second after the first few seconds.
+  - **Atmosphere and sea tables.** Range-table atmosphere domains (`RangeTableCache`) and a new `SeaSkyBackgroundCache` are now built and checked in a worker. The sea cache uses cubic interpolation in observer height. Builds start ahead of time when the camera, at its measured rate of height, elevation and bearing change, would leave the current domain within twice the build lead time.
+  - **GPU work.**
+    - FFT passes are packed: radix-4 and radix-8 butterflies, decimation in frequency, and two real tiles in one complex transform (`farConvolutionPlan`).
+    - Conservative visibility bounds crop the optics input to the region that has scene contrast (`contrastSourceRegion`, `projectedSurfaceOutside`, `projectedSurfaceBounds`).
+    - Pending kernel spectra are built one kernel transform per render.
+    - Source radiance is cached at 0.01 K knots.
+    - `GAIN_HISTOGRAM_COPIES` goes from 16 to 32.
+  - **Optics tolerance.** The live view allows an optics kernel L1 error of 0.001 (`opticsToleranceL1`; the default stays 1e-4), which limits the radiance error to 0.1% of maximum scene contrast. Synchronous captures still use the exact kernel.
+  - **Measured results (from the commit message).** The worst display relative RMS difference from the exact path is 0.13%, and native counts differ by at most one. Playback was 29.6 fps over two minutes on a sea sweep and 29.95 fps on an aircraft test bed. In `11dbb077` the GPU self-test (`tools/thermal/selfTest.js`) accepts an optics pass that also writes the sampled image, which is now the normal live path.
+- **Sky lantern flame visible through its paper canopy** (`72137483`, `11dbb077`; `tools/thermal/signatures.js`, `tools/thermal/radiometry.js`, `tools/thermal/ThermalPipeline.js`, `tools/thermal/shaders.js`, `src/rendering/ThermalSceneAdapters.js`, `src/rendering/ThermalViewAdapter.js`; `tests/thermalTransmissiveLayer.test.js`, `tests/thermalLanternCanopy.test.js`).
+  - **Canopy.** `lantern_envelope` is now a `thin_layer`. Its values are estimated by scaling published data for heavier paper:
+    - emissivity 0.45 (0.3–0.6) and transmittance 0.30 (0.15–0.45);
+    - an image-forming (direct) transmittance of 0.03;
+    - half of the scattered part in a forward lobe with a 20° half-width at half maximum;
+    - temperature default 333 K, range 283–358 K.
+  - **Flame.** `lantern_flame` keeps 1400 K. Its effective emissivity (default 0.05, previously 0.12) is proportional to burn power (`power_scaling: "intensity"`). It is a gas volume: it reflects nothing, transmits 1 − e, and is not drawn after flame-out.
+  - **Rendering.** `grayBodyRadiance()` takes a transmittance, so reflectance = 1 − e − t.
+    - Thin layers are drawn after opaque surfaces, with a premultiplied blend (alpha = 1 − direct transmittance) and no depth write. They are interleaved by depth with cloud sheets.
+    - A volume inside a shell is drawn between the shell's back and front faces. The inner face reflects the interior radiance (e B + t L) / (e + t).
+    - The scattered transmittance adds the flame's irradiance I cos θ / d² for each fragment.
+    - Without float blending, layers are drawn opaque.
+  - **Controls.**
+    - Under Thermal surface → Zone overrides, a zone that transmits now has a *Transmittance* control, limited to 1 − emissivity.
+    - The *Power* tooltip now explains the burn fraction.
+    - With `11dbb077`, a lantern object has a new *Canopy heating* control under Thermal surface → Vehicle thermal state (`canopyPower`, Source *Follows burn power* or *Override*), which `resolveSignatures()` applies through `canopyPowerFraction` to zones with `power_input: "canopy"`. The vehicle readout shows an override.
+- **Thermal Sun direction from the scene, and clearer thermal controls** (`fe2f9107`; `src/rendering/ThermalViewAdapter.js` `thermalSolarGeometry`/`THERMAL_LOOK_HIDDEN`, `tools/vehicles/thermalPreview.js` `thermalControlReason`, `src/i18n/en.js` `thermal.controlReasons.*`, `thermal.sunGeometry`).
+  - **Sun.** Each frame, `thermalSolarGeometry()` takes the astronomical Sun (`getCelestialDirection("Sun", …)`) at `GlobalDateTimeNode.dateNow` and the camera position. It writes `sunDirectionX/Y/Z`, and the readout shows the azimuth and elevation. Visible-light lighting overrides are ignored. *Solar transmission* still defaults to 0.
+  - **Hidden controls.** The look view's Physical thermal menu no longer shows *Object temperature*, *Object emissivity*, *Picture width*, *Picture height* and *Sun direction X/Y/Z*. They stay in the settings and in the Vehicle Designer IR preview.
+  - **Disabled controls.** In both the look view and the Vehicle Designer IR preview, a control that does not apply in the current mode is disabled, and its tooltip gives the reason (for example "Used only with Gain mode = Manual.").
+  - **Calculated values.** *PSF source range* is now read only and is set from the camera-to-target range each frame. With well-fill exposure, *Integration time* shows the exposure that is actually used.
+- **Minimum window works like a camera's maximum gain** (`11dbb077`; `tools/thermal/sensorMath.js` `automaticWindow`, `src/i18n/en.js`). With Automatic and Plateau gain, a percentile window narrower than *Minimum window* (Effects → Physical thermal → Processing) now widens equally about its middle. Before, the window was extended upward from the low percentile. A low-contrast scene therefore stays mid-gray. A wider window is used exactly. The tooltip now gives about 250 counts per kelvin for the MX-15 preset near 295 K.
+
+### Bug Fixes
+- **Fixed a wide camera field in the thermal view showing a small image with black around it** (`fe2f9107`; `src/rendering/ThermalViewAdapter.js` `thermalSettingsForViewField`, `src/nodes/CNodeView3D.js`, `src/i18n/en.js` `thermal.viewLens.*`).
+  - With no recorded infrared camera-data row, the thermal view selects the preset lens step whose native vertical field is closest (by log tangent ratio) to the camera's vertical field before display zoom. `CNodeView3D` now passes the field before zoom to `renderPhysicalThermal()`.
+  - New control: Effects → Physical thermal → Optics → *Lens source*, with *Follow camera field (estimated)* or *Selected thermal lens*. It is stored as `thermalSensor.lensSource`. Saves that already contain optics values default to *Selected thermal lens*, and an edit of an optics control switches to it.
+  - The readout says which lens step was estimated. If the pupil policy rejects that step, the selected lens is kept and the readout says so. Recorded camera data still takes priority.
+- **Fixed a 30 fps Frame Rate Limit giving about 28 fps** (`fe2f9107`; `src/renderLoopControl.ts` `renderCadence`, `src/index.js` `animate`; `tests/renderLoopControl.test.js`). The fix applies to all sitches.
+  - Before, `thenRender` was reset to the late timer callback, so each overshoot was added to every period.
+  - It now keeps its phase: `now − (elapsed % interval)`.
+  - During playback, when *Frame Rate Limit* (Sitrec → Settings → Performance Tweaks) is at or below 1.01 × the source frame rate, the render interval is 1 / min(limit, source fps, adaptive fps), measured from the logic clock. This prevents a draw just before the next source frame followed by a skipped frame. Higher limits still render between source frames.
+- **Fixed Next Event in the Satellite Ephemeris table using the computer's clock** (`5404fc78`; `src/nodes/CNodeViewEphemeris.js`). `updateEphemeris()` used `new Date()`. It now uses `GlobalDateTimeNode.dateNow`, so the AOS/LOS countdown (Show → Celestial → Satellite Ephemeris) is counted from the sitch time. The 10-second prediction cache is now keyed on sitch time and observer position, so a seek or a camera move clears it.
+- **Fixed a save that was still running when another sitch loaded changing the new sitch** (`5404fc78`; `src/CFileManagerSave.js`, `src/CFileManager.js`, `src/CustomManagerSerialize.js`; `tests/sitchChapters.test.js`).
+  - The server and local save paths now capture `Globals.loadGeneration` when they start and check it after each await. This covers `saveSitch`, `saveSitchNamed`, `saveSitchAs`, `saveSitchFromMenu`, `saveLocal`, `saveLocalAs`, `saveLocalDesktopToTarget`, `inputSitchName`, `refreshVersions` and `serialize`.
+  - A stale save can no longer rename the new sitch, clear its unsaved-changes state, arm its local save target, add to the load menu, close the menu, or show its own error.
+  - `serialize()` throws "Sitch changed while saving; save cancelled." if the sitch changes during asset rehosting, before it serializes.
+- **Fixed a weather balloon display stopping at playback frames between video frames** (`11dbb077`; `src/SondeTrajectory.js` `sondeRowFrame`, `src/nodes/CNodeDisplayBalloonSphere.js`). The balloon-size update now reads the pressure row of the whole frame in progress, clamped to the track's rows. Before, it read the raw playback frame, which can be fractional or past the end of a short track.
+- **Fixed IGRA2 soundings storing the dew-point depression as the dew point** (`11dbb077`; `src/ParseSonde.js` `parseIGRA2`; `tests/ParseSonde.test.js`). IGRA2 reports temperature minus dew point. `parseIGRA2` now stores temperature − depression. Before this release nothing used that field; the new thermal sounding conversion reads it.
+- **Fixed the Download MCP Bridge link in the Docker image** (`e44f509c`; `.github/workflows/docker.yml`). Help → Documentation → *Download MCP Bridge* links to `tools/SitrecBridge/dist/SitrecBridge.zip`. `webpackCopyPatterns.js` copies that file only when it exists, and no step of the Docker image workflow built it, so in the image published to GitHub Container Registry the link gave a 404. The `build-js` job now runs `npm ci` and `npm run build` in `tools/SitrecBridge` before the production webpack build. The same commit moves the dev-only `http-cache-semantics` from 4.2.0 to 4.3.0 in `apps/video-viewer/package-lock.json`; this does not affect any shipped build.
+
 ## Version 2.175.3 (2026-10-08)
 
 A dependency-only security maintenance release. Only `package-lock.json` and `tools/SitrecBridge/package-lock.json` change. No application code and no `package.json` range changes.

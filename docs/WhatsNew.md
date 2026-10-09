@@ -9,6 +9,32 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.176.0 (2026-10-08)
+
+### New Features
+- **Recorded fireballs** (File → Recorded fireballs…): find a fireball that the Global Meteor Network recorded near the time and place of your sitch, and load its path as a track. Import a trajectory summary file that you download from the Global Meteor Network, or a JSON file of measured samples. Then search by time window, radius and brightness. The track's folder in Contents has *Jump to observed start* and *Jump to estimated peak*. A new help page, *Recorded Fireballs* (Help → Documentation), explains the data and its limits.
+- **Sitch Chapters** (File → Sitch Chapters, which replaces Sub Sitches): each chapter keeps its own views, cameras, time, frame and timeline events, and you click a chapter's card to switch to it. Your edits to a chapter are now kept when you switch. You can revert the sitch to its last save or load. You can also restore one chapter from a server version or a saved file, and Sitrec keeps your current state in a recovery chapter.
+- **Timeline events** (File → Sitch Chapters → *Add event at current frame…*): give a frame a name, such as "flash begins", and click the event to go back to it. *Add predicted satellite rise / set* adds the estimated rise and set times of satellites from the Satellite Ephemeris table.
+- **Ground material classes** (Effects → Physical thermal → Environment → *Ground temperature source* → *Material classes*): the thermal view sorts the map imagery colors into grass, trees, asphalt, concrete, roofs and soil. Each class gets the air temperature plus an estimated offset that changes with the sun, the time since sunset, cloud, wind and climate. *Mapped roads and buildings* uses open map data for roads and buildings where it is available.
+- **Terrain color temperatures** (Effects → Physical thermal → Environment → *Ground temperature source*): the new default, *Terrain color estimate*, makes darker ground warmer over an adjustable span. To use one temperature for all the ground, as before, select *Uniform temperature*.
+- **Weather balloon data in the thermal view** (Effects → Physical thermal → Environment → *Atmosphere profile* → *Loaded sounding*): a sounding that you load from the Wind menu sets the temperature and humidity of the thermal atmosphere.
+- **Tilt and Sway** (Objects → an object's folder, next to Banking): make an object lean, for example a sky lantern or a balloon, and make it swing like a pendulum.
+- **Reflected environment source** (Effects → Physical thermal → Environment): *Sky and ground* calculates what each surface reflects from the sky above it and the ground below it, at its own altitude. The default, *Manual temperature*, does not change existing sitches.
+
+### Improvements
+- **Faster thermal view**: the physical thermal view now plays at about 30 frames per second in the test sitches. It no longer slows to 1 or 2 frames per second after a few seconds.
+- **Sky lanterns in the thermal view**: the flame now shows as a small round glow through the paper canopy. The burn power sets the brightness of the flame and the heating of the canopy. A new *Canopy heating* control (an object's folder → Thermal surface → Vehicle thermal state) sets the canopy heating separately.
+- The thermal view now gets the Sun's direction from the sitch date, time and camera position. Seven thermal controls that have no effect in the look view are removed. A control that does not apply in the current mode is disabled, and its tooltip gives the reason.
+- *Minimum window* (Effects → Physical thermal → Processing) now works like a camera's maximum gain, so a low-contrast scene stays mid-gray.
+
+### Bug Fixes
+- Fixed the thermal view showing a small image with black around it for a wide camera field when the sitch has no recorded camera data. A new *Lens source* control (Effects → Physical thermal → Optics) selects the lens step nearest to the camera field, or keeps the lens that you select.
+- Fixed a *Frame Rate Limit* of 30 (Sitrec → Settings → Performance Tweaks) giving only about 28 frames per second.
+- Fixed *Next Event* in the Satellite Ephemeris table (Show → Celestial → Satellite Ephemeris) using your computer's clock instead of the sitch time.
+- Fixed a save that was still in progress when you loaded another sitch changing the new sitch, for example its name.
+- Fixed a weather balloon display that stopped at playback frames between video frames.
+- Fixed the *Download MCP Bridge* link (Help → Documentation) not working in the published Docker image.
+
 ## Version 2.175.2 (2026-10-08)
 
 ### Improvements

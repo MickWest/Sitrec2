@@ -248,9 +248,6 @@ satellites that are shown, highest first:
 
 The **Only VIS** checkbox, on by default, limits the table to satellites in the VIS state.
 
-Note that **Next Event** is currently counted from your computer's clock, not from the sitch
-time. It is only meaningful when the sitch is set to the present.
-
 ### Sky Plot
 
 **Show → Celestial → Sky Plot** draws the same satellites as the Satellite Ephemeris table on a
