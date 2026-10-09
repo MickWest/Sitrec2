@@ -38,6 +38,8 @@ Import or drop `.fireball.json` with this explicit format. Replace the illustrat
 }
 ```
 
+`source.url` must be an `https://` address without a user name or password. Sitrec shows it as a link only when it is on globalmeteornetwork.org; any other source URL appears as plain text that you can copy.
+
 Samples must have increasing UTC times ending in `Z`, latitude/longitude in degrees and ellipsoidal altitude in metres. Optional `recordedPeakUTC` must be within the samples' interval and must come from the cited source. Otherwise the lowest supplied `absoluteMagnitude` identifies the brightest measured sample, explicitly labeled sampling limited. No source brightness means no peak action and unknown brightness in search. The format declaration records the importer's claim; it is not independent source verification.
 
 The bundled test extract consists of two real rows from GMN's 2018 yearly file, attributed to Global Meteor Network under CC BY 4.0. It is a test fixture, not an archive. Example IDs: `20181231103455_6R0hP` and `20181231114855_x32yo`.

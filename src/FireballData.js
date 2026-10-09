@@ -80,15 +80,34 @@ export function parseGMNSummary(text, sourceURL = GMN_SOURCE) {
     }
     return { events, rejected };
 }
+// The only hosts a fireball panel links to; each has an entry in scripts/egress-allowlist.json.
+// A fireball file may name any source URL as provenance, so any other URL is shown as text:
+// a link to it would send a request to a host that only the file chose.
+export const FIREBALL_LINK_HOSTS = ["globalmeteornetwork.org", "creativecommons.org"];
+function parseURL(url) {
+    try {
+        return new URL(url);
+    } catch {
+        return null;
+    }
+}
+export function isFireballLinkURL(url) {
+    const parsed = parseURL(url);
+    return parsed?.protocol === "https:" && FIREBALL_LINK_HOSTS.includes(parsed.hostname);
+}
+function validSourceURL(url) {
+    const parsed = parseURL(url);
+    return parsed?.protocol === "https:" && !parsed.username && !parsed.password;
+}
 export function validateFireball(event) {
     if (
         event?.kind !== "sitrec-fireball-v1" ||
         !event.id ||
         !event.source?.network ||
-        !/^https?:\/\//.test(event.source?.url) ||
+        !validSourceURL(event.source?.url) ||
         !event.source?.license
     )
-        throw new Error("Fireball needs ID, network, source URL and license.");
+        throw new Error("Fireball needs ID, network, HTTPS source URL and license.");
     if (event.altitudeReference !== "WGS84 ellipsoid")
         throw new Error("Altitude must explicitly use WGS84 ellipsoid, metres.");
     if (

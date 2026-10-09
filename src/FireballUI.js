@@ -5,6 +5,7 @@ import {
     validateFireball,
     nearbyFireballs,
     fireballPeak,
+    isFireballLinkURL,
 } from "./FireballData";
 import { GlobalDateTimeNode, NodeMan, Sit, setRenderOne } from "./Globals";
 import { DragDropHandler } from "./DragDropHandler";
@@ -73,7 +74,10 @@ function paragraph(root, text) {
     return p;
 }
 function link(root, label, url) {
-    if (!/^https?:\/\//.test(url)) return;
+    if (!isFireballLinkURL(url)) {
+        if (typeof url === "string" && url) paragraph(root, `${label}: ${url}`);
+        return;
+    }
     const a = document.createElement("a");
     a.textContent = label;
     a.href = url;

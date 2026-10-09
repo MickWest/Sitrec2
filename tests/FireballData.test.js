@@ -1,6 +1,6 @@
 import fs from "fs";
 import path from "path";
-import { parseGMNSummary, fireballPeak, nearbyFireballs, validateFireball } from "../src/FireballData";
+import { parseGMNSummary, fireballPeak, nearbyFireballs, validateFireball, isFireballLinkURL } from "../src/FireballData";
 import { CTrackFileFireball } from "../src/TrackFiles/CTrackFileFireball";
 import { MISB } from "../src/MISBFields";
 const source = "https://globalmeteornetwork.org/data/traj_summary_data/traj_summary_yearly_2018.txt";
@@ -40,6 +40,23 @@ test("validation rejects ambiguous altitude, UTC and duplicate samples", () => {
     expect(() => validateFireball({ ...events[0], samples: [events[0].samples[0], events[0].samples[0]] })).toThrow();
     expect(() => validateFireball({ ...events[0], recordedPeakUTC: "2030-01-01T00:00:00Z" })).toThrow();
     expect(() => parseGMNSummary("not GMN")).toThrow();
+});
+test.each(["http://globalmeteornetwork.org/data/x.txt", "https://user:pw@example.org/report", "not a url", "javascript:alert(1)", ""])(
+    "validation refuses the source URL %p",
+    (url) => {
+        expect(() => validateFireball({ ...events[0], source: { ...events[0].source, url } })).toThrow(/HTTPS source URL/);
+    },
+);
+test("validation accepts an HTTPS source URL on any host, as provenance", () => {
+    expect(() => validateFireball({ ...events[0], source: { ...events[0].source, url: "https://example.org/report" } })).not.toThrow();
+});
+test("only HTTPS URLs on the reviewed hosts become links", () => {
+    expect(isFireballLinkURL("https://globalmeteornetwork.org/data/traj_summary_data/")).toBe(true);
+    expect(isFireballLinkURL("https://creativecommons.org/licenses/by/4.0/")).toBe(true);
+    expect(isFireballLinkURL("https://example.org/report")).toBe(false);
+    expect(isFireballLinkURL("https://globalmeteornetwork.org.example.org/")).toBe(false);
+    expect(isFireballLinkURL("http://globalmeteornetwork.org/data/")).toBe(false);
+    expect(isFireballLinkURL(undefined)).toBe(false);
 });
 test("search filters actual UTC, location and magnitude including brighter than minus nine", () => {
     const e = events[0],
