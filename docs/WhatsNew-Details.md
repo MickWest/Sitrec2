@@ -9,6 +9,110 @@ lockstep with docs/WhatsNew.md.
 
 ---
 
+## Version 2.177.0 (2026-10-09)
+
+### New Features
+- **LOS Error Analysis** (`fe36732c`; new `src/LOSErrorAnalysisUI.js`, `src/LOSErrorData.js`, `src/LOSErrorModel.js`, `docs/LOSErrorAnalysis.md`; `src/MakeTraverseNodesMenu.js`, `src/AnalyzeTraverse.js`, `src/TrackingWobbleMath.js`, `docs/TraverseAnalysis.md`; release commit: `src/docsRegistry.js`, `src/i18n/en.js`, `README.md`).
+  - **Menu.** `addLOSErrorButton()` adds **Analyze LOS Error…** to the Traverse menu, after the Analyze button, in every sitch where `MakeTraverseNodesMenu` builds that menu. The panel labels are literal strings, not i18n keys. `openLOSErrorAnalysis()` opens a draggable panel (`#los-error-analysis`, `dataset.interactionNative = "true"`). It closes on *Close*, on Escape, or when another sitch loads (it polls `Globals.loadGeneration` every 500 ms). It does not run the traverse solvers and does not change the scene.
+  - **Inputs.**
+    - *Truth track* lists `truthTrackOptions()` and defaults to `resolveTruthTrack()`. `truthTrackOptions()` is now exported from `AnalyzeTraverse.js`.
+    - *Pointing LOS* is *Current traverse LOS* (`resolveLOSNode()`, now exported), or any node that has `cameraTrack`, `sensorAz` and `platformHeading` inputs, listed as *Recorded angles: <id>*.
+    - *Original Hz override (optional)*.
+    - *Noise model*: *Operator: drift, reaction, correction* (default) or *Statistical: Gaussian autoregression*.
+
+    The interval is A–B (`abFrameRange`).
+  - **Sampling.** `collectLOSErrorSamples()` runs inside `withUnfilteredAnalysisAngles`.
+    - **Recorded-angle MISB LOS.** It evaluates every original record at its record time. It uses the six raw attitude columns (platform heading/pitch/roll and sensor relative az/el/roll) through `misbSightlineHeading`. In PTS pairing mode it inverts the same PES/video PTS lookup that the position node uses.
+    - **Positions.** Platform and truth positions come from the current scene tracks, so smoothing, edits and time offsets affect the residual.
+    - **Other LOS sources.** These are sampled on scene frames and labelled "original recording cadence unverified". The override selects the nearest existing scene frames, and it cannot be higher than the scene rate.
+    - **Excluded samples.** Samples outside coverage, or with invalid geometry, missing attitude or non-increasing time, are counted and reported.
+  - **Error measure.**
+    - `angularResidual()` gives the exact angular separation between the measured direction and the platform-to-truth bearing, as a log-map H/V offset in degrees. The horizontal axis is local up × bearing, which is ambiguous near zenith and nadir.
+    - `cadence()` uses the median positive interval and counts each interval over 1.5× that median as a gap.
+    - `sampleAtRate()` makes the 10 Hz and 1 Hz views. It selects the nearest original samples, anchored at the first valid sample, with no averaging, interpolation or gap fill. A rate above the original rate is unavailable.
+    - `summarizeErrors()` gives mean bias, demeaned σ, radial RMS/p95/p99, step RMS, H/V correlation, skewness, excess kurtosis, autocorrelation at fixed lags up to one third of the clip, and a stationarity check over successive thirds.
+    - The panel has a comparison table and three Plotly charts: error against time, the radial cumulative distribution, and demeaned autocorrelation against log lag.
+  - **Models.**
+    - **Operator.** This needs at least 20 valid samples. `fitOperatorErrorModel()` first removes an effective following delay. `estimateTrackingDelay()` caps that delay at 2 s and uses it only when it explains at least 10% of the demeaned variance. The fit then scores 54 candidates (3 drift × 3 correction × 3 reaction × 2 accuracy) over the first 90 s, with two fixed calibration seeds each. The score uses the p95/RMS shape, step RMS and autocorrelation up to 5 s. The amplitude is scaled to the measured RMS above a white-jitter floor that comes from second differences. If the lag-one autocorrelation is below 0.12 on both axes, the fit returns a jitter-only model.
+    - **Simulation.** It uses `generateWobbleOffsets` at max(10 Hz, sample rate). `TrackingWobbleMath.js` gains an optional `minCorrectionSpeed`. The model passes 0. Existing callers keep the 0.05 floor.
+    - **Statistical.** `fitErrorModel()` fits a Burg-lattice AR process to each axis, with correlated innovations. BIC chooses the order, up to min(20, n/20, about 2 s of lags).
+    - **Short clips.** With fewer than 20 samples, both choices give an amplitude-only model (bias plus independent Gaussian samples), labelled as a short-clip approximation.
+  - **Realizations.**
+    - `generateErrors(model, times, seed, geometry)` burns in, then samples one internal realization at the requested times, so 10 Hz and 1 Hz come from the same realization. It refuses a rate above the calibration rate.
+    - Each analysis, and each model import, generates a fresh realization. It is drawn as dashed lines at 50% opacity over the solid measured lines, and the table adds synthetic rows.
+    - Controls: *Noise amplitude multiplier* (0–100), *Include measured mean bias*, *New seed*, *Generate with seed*, *Fresh seed*, operator tuning fields, and an *Edit model parameters (advanced)* JSON editor.
+  - **Export and import.**
+    - *Export parameter model* saves `LOSNoiseModel.json` through `validateErrorModel`/`serializeErrorModel` (schema `sitrec-los-error-model`, version 1). It holds only aggregate parameters and rates: no geometry, dates, names, seeds or measured samples.
+    - *Import model* accepts files up to 100 kB.
+    - *Export synthetic LOS CSV* saves `SyntheticLOS.csv` (`syntheticLOSCSV`). It holds the time, the platform and target ECEF positions in meters, and new ECEF unit LOS directions from `directionWithError()`. It holds no measured pointing.
+    - All analysis runs in the browser and sends nothing.
+  - **Help.** New page *LOS Error Analysis* in Help → Documentation (`docs/LOSErrorAnalysis.md`). It is registered in `docsRegistry.js` (section `analysis`, `menuId: "traverse"`), with label key `menus.help.documentation.losErrorAnalysis`. It is linked from the README and from `docs/TraverseAnalysis.md`. Tests: `tests/LOSErrorAnalysisUI.test.js`, `tests/LOSErrorData.test.js`, `tests/LOSErrorModel.test.js`.
+- **Delete Object, and Delete Track asks about the track's object** (`83092aca`; new `src/UserObjects.js`; `src/nodes/CNode3DObject.js`, `src/CustomSupport.js`, `src/TrackManager.js`).
+  - **Which objects.** `CNode3DObject` adds *Delete Object* (`nodes3dObject.deleteObject`) at the end of an object's folder only when `isUserMadeObjectId(id)` is true. That is a `syntheticObject_<ms>` id, from Add 3D Object, Objects → Add Object, Add Moving Object or Add Moving Object (In→Out). An object that the sitch defines (the traverse object, a camera model) gets no button. Nor does a balloon's sphere (`balloonObject_`): Delete Track on the balloon removes both.
+  - **Button.** It is `isCommon` and `keepLiveWhenFolderOff()`. It stays last after a controller adds controls (an `addControllerNode` override) and after a geometry rebuild.
+  - **Delete.** It asks "Delete object "<name>"?" and then calls the new `CustomManager.deleteObject()`, which:
+    - closes any panel that mirrors the object and clears its editing state;
+    - detaches the object from its track (`TrackManager.detachObject`; the track stays);
+    - removes the owned sub-nodes from `ownedSubNodeIds()`, skipping ids that continue with a digit, which belong to another object made in the same millisecond;
+    - removes the object with its controllers (`disposeObjectWithControllers`), then a fixed object's position node.
+
+    Before this, an object had no delete button. Only undo, just after adding it, removed it.
+  - **Delete Track.** On a hand-drawn track that has an object, Delete Track now shows a `showChoice`: *Delete Track and "<object>"*, *Delete Track Only* or *Cancel*. A track with no object still asks for a plain confirmation. `disposeSyntheticTrack()` now calls `detachObject()`, so an object kept by *Delete Track Only* loses its *Show Track Menu* button.
+
+### Improvements
+- **Track and object names** (`83092aca`; `src/CustomManagerMenus.js`, `src/TrackManager.js`, `src/utils/parseObjectInput.js`, `src/DisplayName.js`, `src/CSitrecAPI.js`, `src/index.js`).
+  - **Numbering.** `getNextTrackAndObjectNames()` uses `nextPairNumber()`: max(highest "Object N", highest "Track N") + 1. So with *Track 1*, *Object 1* and *Track 2*, the next pair is *Track 3* / *Object 3*.
+    - It is used by Add Moving Object, Add Moving Object (In→Out) and Objects → Add Object (`createObjectFromInput`). The track gets the pair's track name even when you give the object a name.
+    - Add Flight Path, and any other synthetic track without a name, uses `nextTrackName()`. Before, Add Flight Path made "New Track" and other unnamed tracks used `Track ${size+1}`. Every Add Moving Object track was "Object Track", and its object took the track's name.
+    - A balloon's sphere, and an object restored from a save that has no name, start as `getNextObjectName()`.
+  - **Separate names.** `initTrackDisplayName()` no longer gives the track's name to its object. `sharesNameWithObject(trackOb)` is true only when there is no `objectID`, that is, an imported track and its marker sphere. Only that pair is still renamed together (`setTrackDisplayName`, `CNode3DObject.setDisplayName`).
+  - **Unique track names.** `uniqueTrackName()` runs when a track is created and when a rename finishes (`onFinishChange`, not on each key). It adds `-1`, `-2`… (`uniqueDisplayName`). After a load, `applyDisplayNames()` runs `deduplicateNames()`, so an older save with two tracks of one name (for example several "Object Track") loads as "name", "name-1"….
+  - **Track lists.** `relabelTrackOptions()` now runs when an imported, synthetic or balloon track is created. The camera and target track lists therefore show the new track's display name at once.
+  - **API.** `addObjectAtLLA` and `addObjects` now give `name` to the object as its display name. Without a name, the object and its track get matching names. The returned `name` is the object's name.
+- **A track's menu and its object's menu can be open together** (`83092aca`; `src/lil-gui-extras.js`, `src/CustomManagerMirror.js`, `src/TrackEditMode.js`, `src/PointEditor.js`, `src/CustomManagerMenus.js`, `src/nodes/CNodeView3DMouse.js`, `src/TrackManager.js`).
+  - **Panel slots.** `createStandaloneMenu()` takes a new `panelSlot`.
+    - Open persistent menus are kept in `menuBar.persistentMenus`. A new persistent menu with a slot closes only menus in the same slot or with no slot. A persistent menu with no slot still closes all of them.
+    - `activePersistentMenu` is the newest menu, and it falls back to the previous one when that menu closes.
+    - `updateListeners` and `restoreToBar` now handle every persistent menu.
+  - **Placement.** `showNodeEditMenu()` uses the slot "object". The new `CustomManager.showTrackMenu()`, moved from `CNodeView3DMouse.showTrackMenu`, uses the slot "track". Both call `placePanel()`: beside the click, pinned below the menu bar, then moved right (or left) by `placeMenuClearOfPanels()` if they would cover another panel. Right-clicking a track line therefore opens its menu in that row below the menu bar, not at the pointer.
+  - **Show buttons.** `linkTrackAndObject()` adds *Show Object Menu* to the track's folder and *Show Track Menu* to the object's folder, both after *Name*. Each opens the other panel beside the clicked button (`clickedButtonX`). It runs for hand-drawn tracks with an object and for balloons. `detachObject()` removes both buttons.
+  - **Edit-mode menus.** `trackAndObjectMenuActions()` adds *Show Track Menu* and *Show Object Menu* (`custom.contextMenu.showTrackMenu` / `showObjectMenu`) before *Exit Edit Mode*. They appear in the edit-mode ground menu and in the point menu. An item is left out when its panel is already open (`isPanelShowing`). The edit menu title now uses the display name.
+  - **Closing the panel.** `trackOb.keepEditModeOnMenuClose = true`, so closing the track's panel no longer unticks *Edit Track*. Esc and *Exit Edit Mode* still end edit mode.
+- **Altitude lock controls** (`83092aca`; new `src/AltitudeLockGUI.js`; `src/TrackManager.js`, `src/nodes/CNodeDisplayTrack.js`).
+  - **Controls.** `addAltitudeLockControls()` puts a *Lock Altitude* checkbox and a *Height From* choice (*Ground* / *Ellipsoid (HAE)*) around the height control, which is now named *Lock Height*. The height and *Height From* show only while the lock is on. These replace *Alt Lock (-1 = off)* and the *Alt Lock AGL* checkbox, on hand-drawn and imported tracks.
+  - **Switching on and off.** Switching on sets the height to the track's current height, measured as *Height From* says (`lockHeightAt`), in whole display units and not below 0. For a hand-drawn track that is the first control point. For other tracks it is the position at the current frame. Switching off sets -1.
+  - **Saved sitches.** The `CNodeGUIValue` ids (`<trackID>_altitudeLock`, `<displayTrackID>altitudeLock`) and -1 = off are unchanged, so saved sitches load. Visibility is applied again after `modDeserialize` and after a synthetic track is deserialized (`updateAltitudeLockControls`).
+- **Clearer track and object folders** (`83092aca`; `src/TrackManager.js`, `src/nodes/CNode3DObject.js`, `src/nodes/CNodeDisplayTrack.js`, `src/lil-gui-extras.js`, `src/i18n/en.js`).
+  - **Hand-drawn track folder.**
+    - Top: *Name*, *Edit Track*, *Show Object Menu*, *Go to Track*, *Focus Camera Here*, *Follow Camera Here*.
+    - *Path* (open): *Constant Speed*, *Extrapolate Track*, *Curve Type*, *Alt offset* and the altitude lock.
+    - *Smoothing* (closed): *Smoothing Method* moved first, then its values.
+    - *Display* (closed): the display track's line, wall and contrail controls, and *Show in look view*.
+    - End: *Add Custom Graph*, *Export Spline*, *Delete Track*.
+  - **Moving controls.** The new `Controller.moveToFolder` / `GUI.moveToFolder` move a control in lil-gui's `children`/`controllers`/`folders` lists as well as on screen. The Sitrec API finds controls by walking those lists, so it follows the move. The qualified API paths of the regrouped track controls change.
+  - **Curve Type.** The options are *Straight lines*, *Smooth (chordal)*, *Smooth (centripetal)* and *Smooth (Catmull-Rom)*, with a tooltip. The saved values are unchanged.
+  - **Object folder.** `paramLabel()` gives readable labels to geometry and material parameters ("Width Segments", "Radius (m)" for size keys, "Rotate X°", "Material Type", "Index of Refraction"). The property keys are unchanged, so API paths still work. `arrangeGeometryControls()` puts the size controls just below *Geometry*, and moves `*segments`/`detail` into a closed *Mesh Detail* folder, which is hidden when it is empty.
+  - **Every track.** The visibility checkbox is now *Show Track Line* (it showed the raw word "visible"). "Go to track" is now *Go to Track*. An imported track's *Remove Track* button is now *Delete Track*, and it asks "Delete track "<display name>"?".
+- **Ground right-click menu groups and names** (`83092aca`; `src/CustomManagerMenus.js`, `src/lil-gui-extras.js`, `src/i18n/en.js`).
+  - **Groups.** The new `GUI.addHeading()` adds a heading that takes no clicks. The groups are:
+    - *Camera and Target*;
+    - *Edit*, only when there are clouds or an overlay under the clicked point;
+    - *Add*, which now also holds *Drop Pin*;
+    - *Terrain*, only for non-dynamic terrain;
+    - *External Maps*, only with `extraHelpLinks`.
+  - **Names.** `custom.contextMenu.createTrackWithObject`, `createInOutObjectTrack` and `createTrackNoObject` are now *Add Moving Object*, *Add Moving Object (In→Out)* and *Add Flight Path*.
+- **"Manual" choices in Target Track and Orbit Target** (`83092aca`; `src/CustomManagerSetup.js`). `setOptionLabel()` on `targetTrackSwitch` shows "fixedTarget" as *Manual* and "fixedTarget + Wind" as *Manual + Wind* (Target → Target Track). The Orbit Target switch (Camera → Camera Tweaks) gets `labels: {fixedCamera: "Manual Camera"}`. This changes only the display. The stored keys are unchanged, so saved sitches still select them. The labels are set in `CustomManagerSetup` and not in `SitCustom.js`, because a saved custom sitch can override that definition.
+- **Floating menus keep each group open or closed** (`83092aca`; `src/MenuMirror.js`). Before, `mirrorFolderFrom()` opened every sub-folder in a floating copy. Now it opens a sub-folder only if the source folder is open. An open or close in the copy is written back to the source, so a rebuild of the copy keeps it.
+- Docs: `docs/Tracks.md`, `docs/SceneObjects.md`, `docs/CameraAndTarget.md`, `docs/CustomModels.md` and `docs/CustomSitchTool.md` describe the new names and controls. The `chatDesc` text for Tracks and Scene Objects in `docsRegistry.js` is updated. Tests: `tests/altitudeLockGUI.test.js`, `tests/userObjects.test.js`, `tests/lil-gui-extras.test.js`, `tests/MenuMirror.test.js`, `tests/DisplayName.test.js`, `tests/addObjectFromMenu.test.js`, `tests/pointContextMenu.test.js`, `tests/trackEditContextMenu.test.js`.
+
+### Security
+- **A fireball source URL is a link only on the Global Meteor Network** (`c82a10ae`, `9c254011`; `src/FireballData.js`, `src/FireballUI.js`, `docs/RecordedFireballs.md`; `tests/FireballData.test.js`, `tests/FireballUI.test.js`).
+  - **Why.** A `sitrec-fireball-v1` JSON file can name any `source.url`. `link()` in `FireballUI.js` made the URL a link if it matched `^https?://`. A shared file could therefore put a link to any host in the *Fireball source & limits* dialog (the track's folder) and in the *Source / peak method* block (File → Recorded fireballs…). This was found by a local replay of the User Data Egress Check review on 2.176.0.
+  - **Validation (`c82a10ae`).** `validateFireball()` now parses `source.url` with `new URL()` and requires `https:` with no user name or password (`validSourceURL`). The error is "Fireball needs ID, network, HTTPS source URL and license." Any host is still accepted as provenance.
+  - **Links (`c82a10ae`).** `isFireballLinkURL()` allows a link only for `https:` on an exact host in `FIREBALL_LINK_HOSTS` (`globalmeteornetwork.org`, `creativecommons.org`). Both hosts are in `scripts/egress-allowlist.json`. Any other URL is shown as "<label>: <url>" plain text.
+  - **Source link (`9c254011`).** The first change also let a source URL on the license host become a link. `isFireballLinkURL(url, hosts)` now takes a host list, and *Original source* passes `[GMN_HOST]`. The fixed CC BY 4.0 and GMN conventions links keep the two-host list.
+  - **Effect.** A fireball JSON with an `http://` source URL, or one with credentials, is now refused at import. `CTrackFileFireball` also validates, so a sitch that carries such a file no longer loads that track. This feature first shipped in 2.176.0.
+
 ## Version 2.176.1 (2026-10-08)
 
 An egress-contract maintenance release. Only `scripts/egress-allowlist.json` changes. Only the User Data Egress Check and its tests use that file, and no build includes it. There are no application code changes, so the app is the same as in 2.176.0. Because of the egress check result below, the production site was not updated to 2.176.0, so 2.176.1 is the first production release of the 2.176.0 features. The GitHub Pages copy, which deploys on each release tag, was published from 2.176.0.

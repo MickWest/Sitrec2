@@ -68,6 +68,7 @@ assistant — so if you add a doc, add it there.
 - [Ground Track - Intersecting a line of sight with terrain](docs/GroundTrack.md)
 - [Traverse Methods - How LOS + physical assumptions resolve target positions per frame](docs/TraverseMethods.md)
 - [Traverse Analysis and the Verdict - The Analyze button, the gallery, and the verdict codes](docs/TraverseAnalysis.md)
+- [LOS Error Analysis - Measure recorded pointing against a truth track, and model the tracking noise](docs/LOSErrorAnalysis.md)
 - [BOTBench - Evaluating bearings-only tracking methods against known truth](docs/BOTBench.md)
 - [BOTBench Scenarios - Provenance and regeneration of benchmark scenarios](docs/BOTBenchScenarios.md)
 - [Building the Mundane, Extreme and Anomalies Datasets](docs/BuildingMotionDatasets.md)

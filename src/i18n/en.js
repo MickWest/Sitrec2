@@ -833,6 +833,7 @@ const en = {
                 groundTrack: "Ground Track (Points on the Ground)",
                 traverseMethods: "Traverse Methods",
                 traverseAnalysis: "Traverse Analysis and the Verdict",
+                losErrorAnalysis: "LOS Error Analysis",
                 botBench: "BOTBench — Bearings-Only Traversal Bulk Analysis",
                 botBenchScenarios: "BOTBench Scenario Files — where they come from",
                 buildingMotionDatasets: "Building the Mundane, Extreme and Anomalies Datasets",

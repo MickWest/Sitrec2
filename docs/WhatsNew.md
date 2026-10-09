@@ -9,6 +9,24 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.177.0 (2026-10-09)
+
+### New Features
+- **LOS Error Analysis** (Traverse → Analyze LOS Error…): compare the recorded pointing of a camera with the direction from the platform to a truth track, at the original rate, 10 Hz and 1 Hz. Sitrec shows the horizontal and vertical error, its statistics and three charts. It then fits a noise model, either an operator who drifts, reacts and corrects, or a statistical model, and draws a new random sample of that model as dashed lines. You can export the model parameters to use with other tracks, or export a synthetic line-of-sight CSV. The analysis stays in your browser. A new help page, *LOS Error Analysis* (Help → Documentation), explains the method and its limits.
+- **Delete Object** (Objects → an object's folder): you can now delete an object that you made. *Delete Track* on a track that has an object now asks whether to delete the object too.
+
+### Improvements
+- **Track and object names**: a new track is named *Track 1*, *Track 2* and so on. The object made with a track gets the same number, for example *Track 3* and *Object 3*, and the two now have separate names. Each track name is unique, so the camera and target track lists can tell tracks apart. A new track shows its name in those lists at once.
+- **Track and object menus side by side**: a track's menu and its object's menu can be open at the same time, below the menu bar. *Show Object Menu* in the track's folder and *Show Track Menu* in the object's folder open the other menu, and the right-click menus in track edit mode have the same items. Closing the track's menu no longer ends edit mode.
+- **Altitude lock** (Contents → a track's folder): *Lock Altitude*, *Lock Height* and *Height From* (*Ground* or *Ellipsoid (HAE)*) replace *Alt Lock (-1 = off)* and *Alt Lock AGL*. When you switch the lock on, the track stays at its current height. For a hand-drawn track, that is the height of its first point.
+- **Clearer track and object menus**: a hand-drawn track's folder puts its controls in *Path*, *Smoothing* and *Display* groups, and *Curve Type* has plain names such as *Straight lines*. In an object's folder, the size of a shape is just below *Geometry*, the labels are readable (for example *Radius (m)*), and the segment counts are in a closed *Mesh Detail* group. The track checkbox is now *Show Track Line*, and an imported track's *Remove Track* is now *Delete Track*.
+- **Ground right-click menu**: the items are now in groups with headings. Three items have new names: *Add Moving Object*, *Add Moving Object (In→Out)* and *Add Flight Path*.
+- *Target Track* (Target menu) now shows *Manual* and *Manual + Wind*, and *Orbit Target* (Camera → Camera Tweaks) shows *Manual Camera*. Saved sitches still select them.
+- A group that is closed in a menu is now also closed in the floating copy of that menu.
+
+### Security
+- A fireball file can no longer make Sitrec show a link to any website. In *Fireball source & limits* and in File → Recorded fireballs…, the source address is a link only on the Global Meteor Network site. Other addresses show as text that you can copy. The source address must now be an HTTPS address without a user name or password.
+
 ## Version 2.176.0 (2026-10-08)
 
 ### New Features
