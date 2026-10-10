@@ -486,7 +486,8 @@ to the optional SitrecBridge helper on your own computer, which runs it with nat
 Python/OpenCV and returns the result. The overlay, graph, panoramas, stabilization, CSV export
 and track creation then work as usual. If the helper is not running, or cannot open the video,
 Sitrec analyzes in the browser and the **Local Compute** line shows *Fallback:* with the reason.
-The helper and its setup are described in the SitrecBridge README (`tools/SitrecBridge`).
+To install the helper, see [Install or update Local Compute](MCPBridge.md#6-install-or-update-local-compute)
+in the MCP Bridge guide.
 
 ### Tips
 

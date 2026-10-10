@@ -58,6 +58,9 @@ if (result.errors.length > 0) {
 cpSync(join(__dirname, "sitrec-mcp-guide.md"), join(DIST, "sitrec-mcp-guide.md"));
 cpSync(join(__dirname, "README.md"), join(DIST, "README.md"));
 cpSync(join(__dirname, "README-dev.md"), join(DIST, "README-dev.md"));
+// The end-user setup guide lives in docs/ so the site publishes it as HTML; ship a copy
+// so the downloaded folder still has the steps offline.
+cpSync(join(__dirname, "..", "..", "docs", "MCPBridge.md"), join(DIST, "SETUP.md"));
 if (dev) {
     writeFileSync(join(DIST, "dev-mode.json"), "{\"development\":true}\n");
 }

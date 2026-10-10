@@ -844,6 +844,7 @@ const en = {
                 lensGhostCaseStudy: "Lens Ghost Case Study (Pr055)",
                 apiKeys: "Your API Keys: Storage & Security",
                 webmcp: "Control Sitrec with ChatGPT",
+                mcpBridge: "Control Sitrec from an AI Assistant (MCP Bridge)",
                 localCustomSitches: "Local Custom Sitches (JSON)",
                 timeAndSync: "Time, Frames and Syncing",
                 sceneObjects: "Adding Objects and Tracks",

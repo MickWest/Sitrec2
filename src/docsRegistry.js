@@ -406,6 +406,11 @@ export const helpDocs = [
         chatDesc: "Using ChatGPT desktop site tools (WebMCP) to inspect and control the same open Sitrec page without an OpenAI API key, SitrecBridge, Chrome extension, local WebSocket, or separate MCP server. Covers setup, the thirteen available tools, example prompts, current model/workspace/browser limitations, local-file restrictions, safety boundaries, and when Codex CLI/IDE or Claude users should use SitrecBridge instead.",
     },
     {
+        file: "docs/MCPBridge", labelKey: "menus.help.documentation.mcpBridge",
+        section: "advanced", role: "tutorial",
+        chatDesc: "Setting up SitrecBridge (the MCP Bridge) so an AI assistant such as Codex, Claude Code or Claude Desktop can control Sitrec at metabunk.org/sitrec: downloading SitrecBridge.zip (Help → Documentation → Download MCP Bridge), loading the Chrome extension, the exact command or config for each client on macOS, Linux and Windows, checking the connection (/mcp and the extension popup's green indicators), example requests, installing Local Compute for Motion Analysis, and updating. Read for 'how do I connect an AI to Sitrec', 'what is MCP', 'how do I install the bridge', or 'the popup says No MCP servers'.",
+    },
+    {
         file: "docs/LocalCustomSitches", labelKey: "menus.help.documentation.localCustomSitches",
         section: "advanced", role: "reference",
         chatDesc: "Hand-authoring a sitch as JSON, for setups the drag-and-drop tool cannot express. Covers the file structure, where local sitches live, and how they are loaded.",

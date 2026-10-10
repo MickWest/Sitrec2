@@ -90,6 +90,7 @@ assistant — so if you add a doc, add it there.
 - [URL Parameters - Linking to a sitch, a place, a time or a startup action](docs/URLParameters.md)
 - [Your API Keys - Bring-your-own-provider keys, storage, limits, and privacy](docs/APIKeys.md)
 - [Control Sitrec with ChatGPT site tools (WebMCP)](docs/WebMCP.md)
+- [Control Sitrec from an AI assistant (MCP Bridge) - Set up SitrecBridge for Codex, Claude Code or Claude Desktop](docs/MCPBridge.md)
 - [Local Custom Sitches - JSON-based sitch definitions for advanced setups](docs/LocalCustomSitches.md)
 - [Scripted Camera Moves](docs/ScriptedVideo.md)
 - [Diffraction Glare - modelling a camera's diffraction spikes, and telling them from an object](docs/DiffractionGlare.md)
