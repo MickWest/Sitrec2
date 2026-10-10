@@ -60,7 +60,11 @@ patterns.push({ from: "tools", to: "./tools", globOptions: {
         "**/tools/SitrecBridge/tests_browser/dev-extension.test.mjs",
         "**/sitrec-comms/node_modules/**", "**/sitrec-comms/package-lock.json",
         // Output of tools/shf/stats/flare-stats.mjs, if it is run from inside tools/.
-        "**/flare-stats-out/**"],
+        "**/flare-stats-out/**",
+        // Thermal files that no page loads: the Node benchmark and its worker, the test fixtures, and the sea-wave
+        // model that nothing imports yet.
+        "**/tools/thermal/benchmark.mjs", "**/tools/thermal/opticsWorkerNode.mjs",
+        "**/tools/thermal/validationFixtures.js", "**/tools/thermal/seaWaves.js"],
 } });
 
 // Cache-busting for the standalone Starlink Flare tool: its index.html (which the

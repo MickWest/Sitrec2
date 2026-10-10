@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import {parse} from "@babel/parser";
 import {BoxGeometry, Group, Mesh, MeshBasicMaterial, PerspectiveCamera, Scene, Vector2, Vector3} from "three";
-import {thermalRenderMode, thermalUnavailable, objectThermalState, setupThermalMenu} from "../src/rendering/ThermalLoader";
+import {thermalRenderMode, thermalUnavailable, objectThermalState, setupObjectThermalMenu, setupThermalMenu} from "../src/rendering/ThermalLoader";
 import {effectiveRenderMode} from "../src/rendering/ViewRenderMode";
 import {createThermalViewAdapter, lensStepValidated, saveThermalSettings, setupThermalVehicleControls, thermalFieldMapping, thermalGeometry,
     thermalSettings, thermalSettingsForCameraState, thermalSettingsForViewField, thermalSolarGeometry, THERMAL_LOOK_HIDDEN} from "../src/rendering/ThermalViewAdapter";
@@ -19,7 +19,7 @@ import {generateVehicle} from "../tools/vehicles/generator.js";
 import {createVehicleRecipe} from "../tools/vehicles/recipe.js";
 import {PRESETS} from "../tools/vehicles/vehicleParameters.js";
 import {withThermalVehicle} from "../tools/vehicles/thermalPreview.js";
-import {recoveryTemperature, TURBOFAN_CLIMB_REFERENCE} from "../tools/thermal/signatures.js";
+import {recoveryTemperature, TURBOFAN_CLIMB_REFERENCE, ZONE_TABLE} from "../tools/thermal/signatures.js";
 import {meanSeaLevelOffset} from "../src/EGM96Geoid";
 import {getCelestialDirection} from "../src/CelestialMath";
 import {Globals, markSitchDirty, NodeMan, Sit} from "../src/Globals";
@@ -139,11 +139,15 @@ test("real camera and view deserializers keep old saves visible and omit an unus
     camera.modDeserialize({fov: 1,thermalSensor:{focalLengthM:.675}});
     expect(camera.thermalSensor).toEqual({focalLengthM:.675});
     camera.modDeserialize({fov: 1}); expect(camera.thermalSensor).toBeUndefined();
+    const releaseThermalView = jest.fn();
     const View = methods("src/nodes/CNodeView3D.js", "CNodeView3D", ["modDeserialize"],
-        {thermalRenderMode, NodeMan:{get:()=>null}}, class {modDeserialize() {}});
+        {thermalRenderMode, releaseThermalView, NodeMan:{get:()=>null}}, class {modDeserialize() {}});
     const view = Object.assign(new View(),{updateYCompressIndicator() {}});
     view.modDeserialize({renderMode:"physicalThermal"}); expect(view.renderMode).toBe("physicalThermal");
-    view.modDeserialize({}); expect(view.renderMode).toBe("visible");
+    expect(releaseThermalView).not.toHaveBeenCalled();
+    // A restored visible state releases the thermal pipeline; a visible state restored again does nothing more.
+    view.modDeserialize({}); expect(view.renderMode).toBe("visible"); expect(releaseThermalView).toHaveBeenCalledWith(view);
+    view.modDeserialize({}); expect(releaseThermalView).toHaveBeenCalledTimes(1);
     const serialize = fs.readFileSync(path.join(__dirname,"../src/CustomManagerSerialize.js"),"utf8");
     expect(serialize.slice(serialize.indexOf("const SitNeeded"))).toContain('"thermalEnvironment"');
 });
@@ -182,12 +186,12 @@ test("procedural zone resolution is the Designer path; uniform and partial zone 
 test("ECEF geometry supplies rolled local up, physical range and the shared turbulence integral", () => {
     const camera = cameraFor(native());camera.position.set(6371000+1382,0,0);camera.up.set(1,0,0);
     const target = new Vector3(6371000+1382,125000,0);camera.lookAt(target);camera.rotateZ(Math.PI/2);camera.updateMatrixWorld(true);
-    const geometry = thermalGeometry(camera,target,Globals,()=>0);
+    const geometry = thermalGeometry(camera,target,()=>0);
     expect(geometry.sensorAltitudeM).toBeCloseTo(1382,6);expect(geometry.rangeM).toBe(125000);
     // Height above mean sea level: a geoid 38.46 m below the ellipsoid raises the camera by that much.
-    expect(thermalGeometry(camera,target,Globals,()=>-38.46).sensorAltitudeM).toBeCloseTo(1382+38.46,6);
+    expect(thermalGeometry(camera,target,()=>-38.46).sensorAltitudeM).toBeCloseTo(1382+38.46,6);
     const lowCamera = cameraFor(native());lowCamera.position.set(6371000-17.46,0,0);lowCamera.updateMatrixWorld(true);
-    expect(thermalGeometry(lowCamera,target,Globals,()=>-38.46).sensorAltitudeM).toBeCloseTo(21,6);
+    expect(thermalGeometry(lowCamera,target,()=>-38.46).sensorAltitudeM).toBeCloseTo(21,6);
     expect(geometry.pathElevationDeg).toBeCloseTo(0,10);expect(Math.abs(geometry.skyUp.x)).toBeCloseTo(1,10);
     const expected = integrateTurbulence(geometry.path);
     const oceanSurfaceGroup=new Group(), water=new Mesh(new BoxGeometry(),new MeshBasicMaterial());oceanSurfaceGroup.add(water);
@@ -243,14 +247,19 @@ test("object mods retain thermal overrides through rebuild and old mods restore 
     const node=Object.assign(new ObjectNode(),{common:{},geometryParams:{},materialParams:{},thermal:objectThermalState(),
         flock:{isDefault:()=>true,deserialize(){},setEnabled(){}},rebuild:jest.fn(),rebuildMaterial(){},show(){},syncForceAboveSurfaceGUI(){}});
     const binding=node.thermal;
-    node.modDeserialize({thermal:{mode:"uniform",temperatureK:502,emissivity:.8,airTemperatureK:275,mach:.4,power:.8,zones:{jet_cavity:{temperatureK:760}}}});
+    node.modDeserialize({thermal:{mode:"uniform",temperatureK:502,emissivity:.8,airTemperatureK:275,mach:.4,power:.8,canopyPower:.25,zones:{jet_cavity:{temperatureK:760}}}});
     expect(node.thermal).toBe(binding);expect(node.rebuild).toHaveBeenCalled();
-    const saved=node.modSerialize();expect(saved.thermal).toMatchObject({temperatureK:502,airTemperatureK:275,mach:.4,power:.8,zones:{jet_cavity:{temperatureK:760}}});
+    const saved=node.modSerialize();expect(saved.thermal).toMatchObject({temperatureK:502,airTemperatureK:275,mach:.4,power:.8,canopyPower:.25,zones:{jet_cavity:{temperatureK:760}}});
     saved.thermal.zones.jet_cavity.temperatureK=800;expect(node.thermal.zones.jet_cavity.temperatureK).toBe(760);
+    // Save and reload: the JSON round trip keeps every override, including the canopy heating.
+    const reloaded=Object.assign(new ObjectNode(),{common:{},geometryParams:{},materialParams:{},thermal:objectThermalState(),
+        flock:{isDefault:()=>true,deserialize(){},setEnabled(){}},rebuild:jest.fn(),rebuildMaterial(){},show(){},syncForceAboveSurfaceGUI(){}});
+    reloaded.modDeserialize(JSON.parse(JSON.stringify(node.modSerialize())));expect(reloaded.thermal).toEqual(node.thermal);
+    expect(reloaded.thermal.canopyPower).toBe(.25);
     node.modDeserialize({});expect(node.thermal).toEqual(objectThermalState());
-    expect(node.thermal).toMatchObject({airTemperatureK:null,mach:null,power:null});
+    expect(node.thermal).toMatchObject({airTemperatureK:null,mach:null,power:null,canopyPower:null});
     node.modDeserialize({thermal:{mode:"inherit",temperatureK:293}});
-    expect(node.thermal).toMatchObject({airTemperatureK:null,mach:null,power:null});
+    expect(node.thermal).toMatchObject({airTemperatureK:null,mach:null,power:null,canopyPower:null});
 });
 
 // Estimated synthetic scene inputs; expected standard temperature is calculated
@@ -345,7 +354,7 @@ test("look draw updates each inherited vehicle, reports used values and leaves r
     const adapter=createThermalViewAdapter(view);
     jest.spyOn(adapter.pipeline,"render").mockImplementation(()=>{
         adapter.pipeline.hasFrame = true;
-        adapter.pipeline.lastFrame = {opticsCache: {message: "Coarse optical preview; calculated kernel L1 bound: 2."}};
+        adapter.pipeline.lastFrame = {opticsCache: {messageCode: "coarse"}};
         const state=window.lookThermal.vehicles.find(v=>v.id===node.id);
         expect(mesh.userData.thermal.temperatureK).toBeCloseTo(recoveryTemperature(state.airTemperatureK,state.mach),10);
     });
@@ -354,7 +363,7 @@ test("look draw updates each inherited vehicle, reports used values and leaves r
         expect(window.lookThermal.vehicles).toHaveLength(2);
         expect(window.lookThermal.vehicles[1]).toMatchObject({id:"second",airTemperatureK:290,mach:.2,power:.6});
         expect(view.thermalStatus).toContain("air 267.35 K");
-        expect(view.thermalStatus).toContain("Coarse optical preview; calculated kernel L1 bound: 2.");
+        expect(view.thermalStatus).toContain(en.thermal.optics.coarse);
         expect(view.thermalStatus).toContain("ground speed; no wind at altitude");
         expect(view.thermalStatus).toContain("power 0.900 (climb reference, estimated)");
         node.group.position.x=Globals.equatorRadius+5000; adapter.render(new Scene(),31);
@@ -390,6 +399,28 @@ test("instance menu defaults to scene, creates numeric overrides, and resets wit
     } finally {gui.destroy();Controller.prototype.tooltip=tooltip;}
 });
 
+test("object Thermal surface controls show values restored in place by a load, chapter switch or undo",()=>{
+    window.matchMedia ??= () => ({matches:false,addEventListener(){},removeEventListener(){}});
+    const gui=new GUI({autoPlace:false}), node={gui,thermal:objectThermalState()};
+    try {
+        setupObjectThermalMenu(node);
+        const controls=gui.controllersRecursive();
+        expect(controls.map(c=>c.property)).toEqual(["mode","temperatureK","emissivity"]);
+        // CNode3DObject.modDeserialize assigns into the same object; listening controls pick that up.
+        Object.assign(node.thermal,objectThermalState({mode:"uniform",temperatureK:500,emissivity:.7}));
+        for (const control of controls) {expect(control._listening).toBe(true);control.updateDisplay();}
+        expect(controls.map(c=>c.getValue())).toEqual(["uniform",500,.7]);
+    } finally {gui.destroy();}
+});
+
+test("every signature zone and optics message code has an English label",()=>{
+    for (const zone of ZONE_TABLE) expect(typeof en.thermal.zones[zone.id]).toBe("string");
+    expect(Object.keys(en.thermal.zones).sort()).toEqual(ZONE_TABLE.map(zone=>zone.id).sort());
+    const pipeline=fs.readFileSync(path.join(__dirname,"../tools/thermal/ThermalPipeline.js"),"utf8");
+    const codes=[...pipeline.matchAll(/messageCode: [^;]*/g)].flatMap(([text])=>[...text.matchAll(/"(\w+)"/g)].map(([,code])=>code));
+    expect(new Set(codes)).toEqual(new Set(Object.keys(en.thermal.optics)));
+});
+
 test("the closed menu performs no thermal initialization, and its fields remain standard menu controllers",()=>{
     const control={name(){return this;},listen(){return this;},onChange:jest.fn().mockReturnThis()};
     const folder={_closed:true,close(){return this;},add:jest.fn(()=>control),onOpenClose:jest.fn()};
@@ -399,6 +430,35 @@ test("the closed menu performs no thermal initialization, and its fields remain 
     const loader=fs.readFileSync(path.join(__dirname,"../src/rendering/ThermalLoader.js"),"utf8");
     const imports=parse(loader,{sourceType:"module"}).program.body.filter(n=>n.type==="ImportDeclaration").map(n=>n.source.value);
     expect(imports.some(value=>/tools\/|ThermalViewAdapter/.test(value))).toBe(false);
+});
+
+test("choosing Visible releases the thermal pipeline; an open settings folder keeps its controls", async () => {
+    window.matchMedia ??= () => ({matches:false,addEventListener(){},removeEventListener(){}});
+    const tooltip=Controller.prototype.tooltip;Controller.prototype.tooltip=function(){return this;};
+    const gui=new GUI({autoPlace:false});
+    const camera=cameraFor(native());camera.position.set(Globals.equatorRadius+100,0,0);camera.updateMatrixWorld(true);
+    const view={id:"lookView",camera,cameraNode:{},renderer:{},renderMode:"physicalThermal"};
+    NodeMan.get.mockReturnValue(undefined);
+    try {
+        setupThermalMenu(view,gui);
+        const folder=view._thermalFolder, mode=gui.controllersRecursive().find(c=>c.property==="renderMode");
+        const loaded=async()=>{await view._thermalLoading;return view._thermalAdapter;};
+        folder.open();
+        const first=await loaded(); expect(first).toBeTruthy();
+        const dispose=jest.spyOn(first,"dispose");
+        // Visible with the folder open: the old pipeline is disposed and a new adapter (no GPU memory yet) keeps the controls.
+        mode.setValue("visible");
+        expect(dispose).toHaveBeenCalledTimes(1); expect(view._thermalDisposed).toBe(false);
+        const second=await loaded(); expect(second).toBeTruthy(); expect(second).not.toBe(first);
+        expect(second.pipeline.resources).toBeNull();
+        expect(gui.controllersRecursive().some(c=>c.property==="focalLengthM")).toBe(true);
+        // Visible with the folder closed: nothing is kept.
+        folder.close(); mode.setValue("physicalThermal"); mode.setValue("visible");
+        expect(view._thermalAdapter).toBeNull(); expect(view._thermalLoading).toBeNull();
+        expect(gui.controllersRecursive().some(c=>c.property==="focalLengthM")).toBe(false);
+        // Physical thermal again loads a new pipeline.
+        mode.setValue("physicalThermal"); expect(await loaded()).toBeTruthy();
+    } finally {view._thermalAdapter?.dispose();gui.destroy();Controller.prototype.tooltip=tooltip;NodeMan.get.mockReset();}
 });
 
 test("thermal look pre-render skips RGB reflection capture while preserving visible main behavior",()=>{
@@ -511,7 +571,7 @@ test("the look draw applies camera data per frame, reports it, locks the driven 
     const gui=new GUI({autoPlace:false});
     const camera=cameraFor(native());camera.position.set(Globals.equatorRadius+100,0,0);camera.updateMatrixWorld(true);
     const view={camera,cameraNode:{},renderer:{},renderMode:"physicalThermal",div:document.createElement("div"),_thermalFolder:gui};
-    let row=null, optics={outsideValidatedDomain:false,quality:"full",message:""};
+    let row=null, optics={outsideValidatedDomain:false,quality:"full",messageCode:null};
     NodeMan.get.mockImplementation(id=>id==="cameraState"?{stateAt:()=>row}:undefined); NodeMan.iterate.mockImplementation(()=>{});
     Sit.thermalEnvironment={turbulenceMode:"manual"};
     const adapter=createThermalViewAdapter(view);
@@ -530,7 +590,7 @@ test("the look draw applies camera data per frame, reports it, locks the driven 
         expect(controller("polarity")._disabled).toBe(false);
         expect(readout()).toContain("675 mm estimated");
         // The new lens step's optics are not ready: the image keeps the previous lens's kernels and says so.
-        row=cameraRow(1012,{polarity:"whiteHot"}); optics={outsideValidatedDomain:true,quality:"retained",message:"Previous optical kernel retained while rebuilding."};
+        row=cameraRow(1012,{polarity:"whiteHot"}); optics={outsideValidatedDomain:true,quality:"retained",messageCode:"retained"};
         adapter.render(new Scene(),40);
         const inputs=render.mock.calls[1][0];
         expect(inputs.settings).toMatchObject({focalStep:"1012",focalLengthM:1.012,polarity:"whiteHot",detectorWindow:{width:480,height:384}});
@@ -543,7 +603,8 @@ test("the look draw applies camera data per frame, reports it, locks the driven 
             expect(controller(key)._disabled).toBe(true); expect(controller(key)._tooltip).toContain("Set by the per-frame camera data");
         }
         expect(controller("pupilPolicy")._disabled).toBe(false); expect(controller("sensorAltitudeM")._disabled).toBe(true);
-        optics={outsideValidatedDomain:false,quality:"full",message:""};
+        expect(readout()).toContain(en.thermal.optics.retained);
+        optics={outsideValidatedDomain:false,quality:"full",messageCode:null};
         adapter.render(new Scene(),40); expect(readout()).not.toContain("previous lens");
         // A wide step without measured values, and a row without polarity (the saved polarity applies).
         row=cameraRow(135); adapter.render(new Scene(),41);

@@ -126,28 +126,36 @@ export function projectedSurfaceOutside(position, toCamera, camera, projectPoint
 
 // Clip ambiguous surface triangles against the four side planes BEFORE perspective division. This retains
 // near/far geometry conservatively (the GPU's depth clip can only remove it), including logarithmic-depth hosts.
+// Two vertex lists for clipping one triangle: four planes add at most one vertex each, so seven suffice.
+const clipLists = [0, 1].map(() => Array.from({length: 8}, () => new Vector4()));
 export function projectedSurfaceBounds(geometry, toCamera, camera, projectPoint, width, height) {
-    const position=geometry.attributes.position, points=[], point=new Vector3();
+    const position=geometry.attributes.position, clip=new Float64Array(position.count*4), point=new Vector3(), projected=new Vector4();
     for(let i=0;i<position.count;i++) {
         point.fromBufferAttribute(position,i).applyMatrix4(toCamera);projectPoint?.(point);
-        points.push(new Vector4(point.x,point.y,point.z,1).applyMatrix4(camera.projectionMatrix));
+        projected.set(point.x,point.y,point.z,1).applyMatrix4(camera.projectionMatrix);
+        clip[4*i]=projected.x;clip[4*i+1]=projected.y;clip[4*i+2]=projected.z;clip[4*i+3]=projected.w;
     }
     const distance=(v,side)=>side===0?v.w*(1+2/width)+v.x:side===1?v.w*(1+2/width)-v.x:
         side===2?v.w*(1+2/height)+v.y:v.w*(1+2/height)-v.y;
     const index=geometry.index, count=index?.count ?? position.count;
     let left=Infinity,bottom=Infinity,right=-Infinity,top=-Infinity;
     for(let i=0;i+2<count;i+=3) {
-        let polygon=[0,1,2].map(j=>points[index?index.getX(i+j):i+j]);
-        for(let side=0;side<4 && polygon.length;side++) {
-            const clipped=[];
-            for(let j=0;j<polygon.length;j++) {
-                const a=polygon[j],b=polygon[(j+1)%polygon.length],da=distance(a,side),db=distance(b,side);
-                if(da>=0)clipped.push(a);
-                if((da>=0)!==(db>=0))clipped.push(a.clone().lerp(b,da/(da-db)));
-            }
-            polygon=clipped;
+        let [polygon,clipped]=clipLists, length=3;
+        for(let j=0;j<3;j++) {
+            const vertex=4*(index?index.getX(i+j):i+j);
+            polygon[j].set(clip[vertex],clip[vertex+1],clip[vertex+2],clip[vertex+3]);
         }
-        for(const v of polygon) {
+        for(let side=0;side<4 && length;side++) {
+            let kept=0;
+            for(let j=0;j<length;j++) {
+                const a=polygon[j],b=polygon[(j+1)%length],da=distance(a,side),db=distance(b,side);
+                if(da>=0)clipped[kept++].copy(a);
+                if((da>=0)!==(db>=0))clipped[kept++].copy(a).lerp(b,da/(da-db));
+            }
+            [polygon,clipped]=[clipped,polygon];length=kept;
+        }
+        for(let j=0;j<length;j++) {
+            const v=polygon[j];
             if(v.w<=1e-7 || ![v.x,v.y,v.w].every(Number.isFinite))return null;
             const x=(v.x/v.w+1)*width/2,y=(v.y/v.w+1)*height/2;
             left=Math.min(left,x);bottom=Math.min(bottom,y);right=Math.max(right,x);top=Math.max(top,y);
@@ -155,6 +163,19 @@ export function projectedSurfaceBounds(geometry, toCamera, camera, projectPoint,
     }
     return left===Infinity ? [] : [left-1,bottom-1,right+1,top+1];
 }
+
+// atmosphereFromSounding for a sounding object, kept for the last options used with it. A sounding is an input
+// value: a changed profile is a new object, so the object identity stands for its contents. The pipeline and its
+// hosts share the result, so a host's per-object air temperatures and the pipeline use one atmosphere.
+const soundingAtmospheres = new WeakMap();
+export function soundingAtmosphere(sounding, {visibilityM, densityScale}) {
+    const key = `${visibilityM}|${densityScale}`, cached = soundingAtmospheres.get(sounding);
+    if (cached?.key === key) return cached.measured;
+    const measured = atmosphereFromSounding(sounding, {visibilityM, densityScale});
+    soundingAtmospheres.set(sounding, {key, measured});
+    return measured;
+}
+
 const scalarTexture = (values, width = values.length, height = 1) =>
     dataTexture(Float32Array.from(values), width, height, RedFormat);
 // rgba is row-major Float32 data; physical units are supplied by the owning pass.
@@ -245,6 +266,17 @@ export class ThermalPipeline {
         if (!texture) return;
         texture.dispose();
         this.resources.textures.delete(texture);
+    }
+    // An owned RGBA float table texture holding data (width × height texels). A table of the texture's size replaces
+    // its image in place: one upload and no new GL texture. The data is referenced, not copied, because cached tables
+    // are reused later and must not be overwritten.
+    _tableTexture(texture, data, width, height = 1) {
+        if (texture && texture.image.width === width && texture.image.height === height) {
+            texture.image.data = data; texture.needsUpdate = true;
+            return texture;
+        }
+        this._removeTexture(texture);
+        return this._ownTexture(dataTexture(data, width, height));
     }
     _target(name, width, height, depth = false, explicitFormat = null) {
         const maximum = this.renderer.capabilities.maxTextureSize;
@@ -408,15 +440,15 @@ export class ThermalPipeline {
             // A finite positive, unit-mass optical response differs from another
             // by at most 2 in L1. This explicit transient bound applies only
             // outside the validated domain while a replacement is constructed.
+            // messageCode names the readout message, which the host translates (Sitrec: thermal.optics.<code>).
             const compatible = this.activeKernels && this.opticsSize?.[0] === width && this.opticsSize?.[1] === height;
             if (compatible) {
                 this.opticsReport = {status: "calculated", pending: true, workerPending: true,
                     basisRebuilt: false, spectraRebuilt: false, errorL1: 2, toleranceL1: OPTICS_L1_TOLERANCE,
                     outsideValidatedDomain: true, quality: this.activeKernels.quality ?? "retained",
                     appliedRangeM: this.activeKernels.spectrum.rangeM, requestedRangeM: settings.psfRangeM,
-                    message: this.activeKernels.quality === "coarse" ? "Coarse optical preview; full kernel pending. Calculated kernel L1 bound: 2; radiance error ≤ 2 × maximum scene contrast." :
-                        "Previous optical kernel retained while rebuilding. Calculated kernel L1 bound: 2; radiance error ≤ 2 × maximum scene contrast."};
-                return true;
+                    messageCode: this.activeKernels.quality === "coarse" ? "coarsePending" : "retained"};
+                return;
             }
             kernels = coarseOpticalKernels(settings, width, height, this.atmosphere);
         }
@@ -431,7 +463,7 @@ export class ThermalPipeline {
             interpolationErrorL1: interpolationError, workerPending: request?.pending ?? false, workerBuildMs: request?.buildMs,
             firstKernelMs: request?.firstKernelMs, fallback: request?.fallback ?? false,
             quality: kernels.quality ?? "full", outsideValidatedDomain: kernels.quality === "coarse",
-            message: kernels.quality === "coarse" ? "Coarse optical preview; diffraction and turbulence pending. Calculated kernel L1 bound: 2; radiance error ≤ 2 × maximum scene contrast." : ""};
+            messageCode: kernels.quality === "coarse" ? "coarse" : null};
         this.psfSpectrum = kernels.spectrum;
         // Changed support has no valid stale-kernel certificate and rebuilds
         // immediately. All other edits compare the actual finite kernels, even
@@ -473,7 +505,6 @@ export class ThermalPipeline {
         if (this.pendingOptics) this.onReady();
         this.opticsReport.appliedRangeM = this.activeKernels.spectrum.rangeM;
         this.opticsReport.requestedRangeM = kernels.spectrum.rangeM;
-        return true;
     }
 
     _retainKernels(kernels) {
@@ -626,13 +657,15 @@ export class ThermalPipeline {
         const options = {visibilityM: settings.visibilityM, densityScale: settings.atmosphereEnabled ? 1 : 0};
         this.workerAtmosphere = {sounding, options:{...options, surfaceWaterVaporDensityKgM3:settings.waterVaporDensityKgM3,
             surfaceTemperatureK:settings.surfaceTemperatureK}};
-        const measured = sounding ? atmosphereFromSounding(sounding, options) : null;
+        const measured = sounding ? soundingAtmosphere(sounding, options) : null;
         const contentKey = measured?.contentKey ?? JSON.stringify(["standard-v1", options,
             settings.surfaceTemperatureK, settings.waterVaporDensityKgM3]);
-        if (contentKey !== this.profileKey) {
+        if (contentKey !== this.profileContent) {
             this.atmosphere = measured?.atmosphere ?? createAtmosphere({...options,
                 surfaceWaterVaporDensityKgM3: settings.waterVaporDensityKgM3, surfaceTemperatureK: settings.surfaceTemperatureK});
-            this.profileKey = contentKey;
+            this.profileContent = contentKey;
+            // The cache keys below name the profile by this short identity: a sounding's content key holds every level.
+            this.profileKey = `profile-${this.profileSerial = (this.profileSerial ?? 0) + 1}`;
         }
         this.atmosphereProfile = Object.freeze({source: measured ? "sounding" : "standard", contentKey,
             ...(measured ? {stationId: sounding.stationId ?? null, time: sounding.time ?? null,
@@ -644,11 +677,11 @@ export class ThermalPipeline {
         // table uses the same atmosphere, photon band and 96-segment quadrature.
         const accuracy = {segments: 96, quantity: "photon", band};
         // Interactive views with the sky gradient draw the background from the validated sky table and ignore this
-        // centre value, so its path integral (the slowest step of a moving frame) is deferred: _prepareSkyBackground
+        // center value, so its path integral (the slowest step of a moving frame) is deferred: _prepareSkyBackground
         // reads it from that table, as the sky shader does (within the table's bound), or integrates it exactly when
         // the table is a rough-sea table. Analysis and synchronous renders integrate it here as before.
         const deferSky = !this.analysis && !this.synchronous && settings.skyGradient;
-        const skyKey = JSON.stringify([contentKey, geometry, band, this.rayGeometry?.key, deferSky]);
+        const skyKey = JSON.stringify([this.profileKey, geometry, band, this.rayGeometry?.key, deferSky]);
         if (settings.skySource === "atmosphere" && skyKey !== this.skyKey) {
             const mapped = this.rayGeometry?.ray(geometry.elevationRad, this.atmosphere.options.topAltitudeM);
             const atmosphere = this.atmosphere;
@@ -691,11 +724,11 @@ export class ThermalPipeline {
         const synchronous = this.analysis || this.synchronous;
         // Publishing a worker domain must update a stationary view as well as a moving one. The pose can be
         // unchanged when the first domain finishes after the user seeks to a different frame.
-        const key = JSON.stringify([synchronous, contentKey, geometry, band, maxRangeM, this.rayGeometry?.key,
+        const key = JSON.stringify([synchronous, this.profileKey, geometry, band, maxRangeM, this.rayGeometry?.key,
             synchronous ? null : this.rangeCache.builds ?? 0]);
         if (this.atmosphereKey === key) {
             if (this.rangeReport) this.rangeReport.pending = !!this.rangeCache.pending;
-            return true;
+            return;
         }
         const vacuum = !settings.atmosphereEnabled || maxRangeM === 0;
         const rangeOptions = {maxRangeM, ...geometry, band, atmosphere: this.atmosphere, rayGeometry: this.rayGeometry,
@@ -732,7 +765,6 @@ export class ThermalPipeline {
             this._updateTerrainTable(table);
         }
         this.atmosphereKey = key;
-        return true;
     }
 
     // Per-sample surface source radiance (red) and reflected sunlight (green) along the current range table.
@@ -904,8 +936,7 @@ export class ThermalPipeline {
         const depthKey = JSON.stringify([this.rayGeometry?.key, range.minRad]);
         if (this.rayGeometry && depthKey !== this.seaDepthKey) {
             const table = createThermalDepthTable(this.rayGeometry, Math.min(range.minRad, horizonRad));
-            this._removeTexture(this.seaDepthTexture);
-            this.seaDepthTexture = this._ownTexture(dataTexture(table.data, table.sampleCount));
+            this.seaDepthTexture = this._tableTexture(this.seaDepthTexture, table.data, table.sampleCount);
             this.seaDepthTable = table; this.seaDepthKey = depthKey;
         }
         const gradient = settings.skySource === "atmosphere" && settings.skyGradient;
@@ -930,8 +961,8 @@ export class ThermalPipeline {
                     data[i * 4] = value; data[i * 4 + 1] = table.photonRadiances[i] / PHOTON_SCALE;
                 });
                 if (table !== this.skyTable) {
-                    this._removeTexture(this.skyTableTexture);
-                    this.skyTableTexture = this._ownTexture(dataTexture(data, table.width ?? table.sampleCount, table.textureHeight ?? table.rows?.length ?? 1));
+                    this.skyTableTexture = this._tableTexture(this.skyTableTexture, data, table.width ?? table.sampleCount,
+                        table.textureHeight ?? table.rows?.length ?? 1);
                     this.skyBuildMs = performance.now() - started; this.skyCacheRebuilt = true;
                 }
                 this.skyTable = table; this.skyTableKey = key;
@@ -939,7 +970,7 @@ export class ThermalPipeline {
         }
         this.skyGradient = gradient; this.roughSky = rough;
         if (this.background?.deferredRadiance) {
-            // The deferred centre value (see _prepareAtmosphere): the sky shader's own lookup in the table just prepared,
+            // The deferred center value (see _prepareAtmosphere): the sky shader's own lookup in the table just prepared,
             // or the exact path integral where the table is a rough-sea table.
             const band = {minUm: settings.bandMinUm, maxUm: settings.bandMaxUm};
             const offset = (this.rayGeometry?.horizonRad ?? -Math.acos(6371000 / (6371000 + settings.sensorAltitudeM))) - this.skyTable.horizonRad;
@@ -1280,6 +1311,40 @@ export class ThermalPipeline {
         });
     }
 
+    // A number that changes whenever the cloud occlusion rays could hit something else: the camera pose and layers,
+    // and each occluder's layers, transform, geometry revision, draw range, groups and material sides (what
+    // Raycaster.intersectObjects reads). Unchanged occluders let the cloud pass keep its sheet tables (ThermalCloudPass).
+    // null for occluders whose shape is not in these values (skinned, morphed or batched meshes): the tables are then
+    // rebuilt on every frame.
+    _occluderRevision(occluders, camera) {
+        const identities = this.occluderIdentities ??= new WeakMap();
+        const identity = value => {
+            if (value == null) return 0;
+            if (!identities.has(value)) identities.set(value, this.nextOccluderIdentity = (this.nextOccluderIdentity ?? 0) + 1);
+            return identities.get(value);
+        };
+        const attribute = value => value ? [identity(value), identity(value.data ?? value.array),
+            value.version ?? value.data?.version, value.count] : [0, 0, 0, 0];
+        const signature = [...camera.matrixWorld.elements, camera.layers.mask];
+        for (const mesh of occluders) {
+            const geometry = mesh.geometry;
+            if (mesh.isSkinnedMesh || mesh.isBatchedMesh || mesh.morphTargetInfluences?.length ||
+                Object.keys(geometry.morphAttributes ?? {}).length) {this.occluderSignature = null; return null;}
+            const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+            signature.push(identity(mesh), mesh.layers.mask, ...mesh.matrixWorld.elements, identity(geometry),
+                ...attribute(geometry.attributes.position), ...attribute(geometry.index),
+                geometry.drawRange.start, geometry.drawRange.count, geometry.groups.length,
+                ...geometry.groups.flatMap(group => [group.start, group.count, group.materialIndex]),
+                Array.isArray(mesh.material) ? materials.length : -1, ...materials.map(material => material?.side ?? -1),
+                ...(mesh.isInstancedMesh ? [mesh.count, ...attribute(mesh.instanceMatrix)] : [-1]));
+        }
+        const previous = this.occluderSignature;
+        if (!previous || previous.length !== signature.length || signature.some((value, i) => value !== previous[i]))
+            this.occluderRevisionCount = (this.occluderRevisionCount ?? 0) + 1;
+        this.occluderSignature = signature;
+        return this.occluderRevisionCount;
+    }
+
     // Mesh bounds projected to detector pixels. Refinement draws the whole scene at
     // each tile, so foreground occlusion and background replacement remain correct.
     _coverageTiles(meshes, camera, settings) {
@@ -1318,7 +1383,7 @@ export class ThermalPipeline {
                     this.radianceAdapter?.projectPoint?.(corner, camera);
                     clip.set(corner.x,corner.y,corner.z,1).applyMatrix4(camera.projectionMatrix);
                     // Homogeneous clip planes also work for terrain boxes straddling the camera. Dividing by a
-                    // negative w flips the screen-side test and previously kept many wholly offscreen tiles.
+                    // negative w would flip the screen-side test and keep many wholly offscreen tiles.
                     outLeft += clip.x < -clip.w; outRight += clip.x > clip.w;
                     outBelow += clip.y < -clip.w; outAbove += clip.y > clip.w; outFar += clip.z > clip.w;
                     corner.applyMatrix4(camera.projectionMatrix);
@@ -1448,7 +1513,7 @@ export class ThermalPipeline {
                     if (!shell) { layers.push(entry); continue; }
                     (shell.volumes ??= []).push(entry.mesh);
                     // The volume lights the inside of a scattering shell (the flame glow): its in-band intensity
-                    // I_b = e B_b(T) A from the side, at the intensity-weighted centre of the shell's volumes.
+                    // I_b = e B_b(T) A from the side, at the intensity-weighted center of the shell's volumes.
                     const bands = this._volumeIntensity(entry.mesh, volumes.get(entry.mesh), settings), total = bands.reduce((a, b) => a + b, 0);
                     if (total > 0) {
                         const glow = shell.glow ??= {world: new Vector3(), bands: new Float64Array(12), total: 0};
@@ -1470,11 +1535,12 @@ export class ThermalPipeline {
                     raycaster.set(origin, direction); raycaster.far = Math.hypot(...point);
                     return raycaster.intersectObjects(occluders, false)[0]?.distance ?? Infinity;
                 } : undefined;
-                this.cloudPass.prepare(clouds?.sheets ?? [], camera, settings, clouds?.diagnostics ?? [], firstHitM);
+                this.cloudPass.prepare(clouds?.sheets ?? [], camera, settings, clouds?.diagnostics ?? [], firstHitM,
+                    firstHitM ? this._occluderRevision(occluders, camera) : null);
                 this.cloudPass.report.hostPrepareMs = hostPrepareMs;
             }
             // Borrow the participating roots for drawing only. Their parent links and world transforms stay in
-            // the host scene. Coverage patches no longer walk thousands of hidden sprites and helpers each time.
+            // the host scene, and coverage patches do not walk the host's thousands of hidden sprites and helpers.
             const drawScene = this.radianceScene ??= new Scene();
             drawScene.matrixWorldAutoUpdate = false;
             const rootsFor = selected => {
@@ -1551,7 +1617,7 @@ export class ThermalPipeline {
     // need another settle once this frame's statistics have already been applied.
     _reuseState(frame) {
         if (this.analysis || this.synchronous || !this.hasFrame || !this.lastFrame ||
-            this.lastFrame.held || !this.resources?.targets.has("display") || this.pendingOptics || this.opticsScheduler?.pending ||
+            !this.resources?.targets.has("display") || this.pendingOptics || this.opticsScheduler?.pending ||
             this.rangeCache?.pending || this.skyCache?.pending || this.seaSkyCache?.pending || this.gainSettle != null) return null;
         // Automatic gain must have settled on this frame's statistics of the scene now shown (see _gainParameters).
         if (["automatic", "plateau"].includes(this.settings?.gainMode) &&
@@ -1588,7 +1654,7 @@ export class ThermalPipeline {
         if (pace === true) this.framesInFlight = framesInFlight;
         const paced = pace === true && !this.analysis && !this.synchronous && this.hasFrame && this._gpuBusy();
         const hold = paced || holdFrame === true && !this.analysis && !this.synchronous && this.hasFrame &&
-            this.lastFrame?.frame === frame && !this.lastFrame.held;
+            this.lastFrame?.frame === frame;
         const reuseState = this._reuseState(frame), completed = this.completedReuse;
         const reuse = hold || typeof reuseKey === "string" && completed?.key === reuseKey &&
             completed.frame === this.lastFrame && this.lastFrame.frame === frame &&
@@ -1624,7 +1690,7 @@ export class ThermalPipeline {
             }
             // Read completed gain statistics before this frame's passes are queued. The read is a synchronous
             // round trip to the GPU process; issued after the passes it waited for them (up to 182 ms live).
-            // A sample read before a render that returned early (caches not ready) stays until a newer one arrives.
+            // A sample read before a render that failed stays until a newer one arrives.
             this.earlyGainSample = this.gainReadback?.poll() ?? this.earlyGainSample ?? null;
             const width = settings.detectorWidth, height = settings.detectorHeight, factor = settings.supersample;
             const fineWidth = width * factor, fineHeight = height * factor;
@@ -1640,17 +1706,9 @@ export class ThermalPipeline {
             if (base.lengthSq() === 0) base.set(0, 0, 1);
             this.seaWind = this.radianceAdapter?.seaWind?.(settings) ?? base.applyAxisAngle(up, settings.seaWindDirectionRad).toArray();
             const pathSettings = {...settings, pathElevationDeg: axisElevationDeg};
-            const atmosphereReady = this._stage("atmosphere", () => this._prepareAtmosphere(pathSettings, sounding));
+            this._stage("atmosphere", () => this._prepareAtmosphere(pathSettings, sounding));
             // The optical spectrum uses the same profile and ray as scene transfer.
-            const opticsReady = this._stage("prepareOptics", () => this._prepareOptics(pathSettings, fineWidth, fineHeight));
-            if (atmosphereReady === false || opticsReady === false) {
-                if (this.hasFrame) {
-                    this._present(this.settings, presentation, target);
-                    this.lastFrame.held = true;
-                    this.lastFrame.opticsCache = this.opticsReport;
-                }
-                return false;
-            }
+            this._stage("prepareOptics", () => this._prepareOptics(pathSettings, fineWidth, fineHeight));
             this.hasFrame = false;
             const radiance = this._target("radiance", fineWidth, fineHeight, true);
             const optics = this._target("optics", fineWidth, fineHeight);
@@ -2131,11 +2189,14 @@ export class ThermalCloudPass {
             blending: CustomBlending, blendEquation: AddEquation, blendSrc: OneFactor, blendDst: OneMinusSrcAlphaFactor});
         this.mesh = new Mesh(new PlaneGeometry(1, 1), this.material); this.mesh.frustumCulled = false;
     }
-    prepare(sheets, camera, settings, diagnostics = [], firstHitM) {
+    // firstHitM(point) is the distance to the first opaque surface along a camera-space ray, or undefined (no CPU
+    // occlusion test). occluderRevision identifies the state that firstHitM reads (ThermalPipeline._occluderRevision);
+    // null rebuilds every visible sheet's table on each call.
+    prepare(sheets, camera, settings, diagnostics = [], firstHitM, occluderRevision = null) {
         this.sensorAltitudeM = settings.sensorAltitudeM;
         const start = performance.now(), sortStart = start;
-        // The same conservative projection test was previously applied after sorting. Cull first so thousands of
-        // offscreen sheets need neither sorting/copying nor another visit during each coverage-patch draw.
+        // Cull with the conservative projection test before sorting, so thousands of offscreen sheets need neither
+        // sorting/copying nor another visit during each coverage-patch draw.
         this.sheets = sortCloudSheets(sheets.filter(sheet => cloudScreenBounds(sheet, camera, 1, 1))).map(sheet => ({...sheet}));
         const sortMs = performance.now() - sortStart;
         const p = this.pipeline, band = {minUm: settings.bandMinUm, maxUm: settings.bandMaxUm};
@@ -2159,9 +2220,10 @@ export class ThermalCloudPass {
             const maskData = sheet.mask?.image?.data;
             if (maskData && maskData.every((value, i) => i % 4 !== 3 || value === 0)) continue;
             used.add(sheet.id);
-            const key = JSON.stringify([domainKey, sheet.center, sheet.apparentCenter, sheet.size, sheet.temperaturePolicy, sheet.temperatureK, settings.sensorAltitudeM, p.skyView.up, p.rayGeometry?.key]);
+            const key = JSON.stringify([domainKey, sheet.center, sheet.apparentCenter, sheet.size, sheet.temperaturePolicy, sheet.temperatureK,
+                settings.sensorAltitudeM, p.skyView.up, p.rayGeometry?.key, firstHitM ? occluderRevision : "unoccluded"]);
             let cached = this.cache.get(sheet.id);
-            if (cached?.key !== key || firstHitM) {
+            if (cached?.key !== key || firstHitM && occluderRevision === null) {
                 const table = cloudRadianceTable(sheet, p.atmosphere, {sensorAltitudeM: settings.sensorAltitudeM, up: p.skyView.up, band,
                     domain: this.domains[Number(sheet.temperaturePolicy === "isothermal")], firstHitM, rayGeometry: p.rayGeometry});
                 if (table.empty) {cached?.texture.dispose(); this.cache.delete(sheet.id); continue;}

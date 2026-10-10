@@ -50,7 +50,7 @@
 // once flattened), and frustum culling is disabled on swept objects (their
 // bounds stay at globe positions) and restored on disable.
 
-import {Material, Matrix4, Object3D, Quaternion, Vector3} from "three";
+import {Material, Matrix4, Quaternion, Vector3} from "three";
 import {Globals, guiMenus, NodeMan, setRenderOne, Sit} from "../Globals";
 import {CNode} from "../nodes/CNode";
 import {sampleGroundSurface} from "../raycastGround";
@@ -588,12 +588,6 @@ function installFlatEarthSceneHook(scene) {
         }
         restoreCameraPose(camera);
     };
-    // With the flat Earth off these hooks leave the camera and scene unchanged, so a thermal frame with unchanged
-    // inputs may be reused through them (thermal rendering is unavailable while the flat Earth is on).
-    const flatEarthOff = () => flatEarthUniforms.uFlatOn.value === 0.0 && !Globals.flatEarthRendering;
-    const chainSafe = (hook, base) => typeof hook !== "function" || hook === base || hook.thermalReuseSafe?.() === true;
-    scene.onBeforeRender.thermalReuseSafe = () => flatEarthOff() && chainSafe(previous, Object3D.prototype.onBeforeRender);
-    scene.onAfterRender.thermalReuseSafe = () => flatEarthOff() && chainSafe(previousAfter, Object3D.prototype.onAfterRender);
     _sceneHookInstalled = scene;
 }
 

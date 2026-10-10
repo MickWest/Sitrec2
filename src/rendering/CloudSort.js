@@ -1,4 +1,4 @@
-import {BufferAttribute, DynamicDrawUsage, Matrix4, Object3D} from "three";
+import {BufferAttribute, DynamicDrawUsage, Matrix4} from "three";
 
 const preparedScenes = new WeakMap();
 
@@ -22,9 +22,6 @@ export function registerTransparentCamera(mesh) {
                 if (ancestor === this) object.userData.prepareTransparentCamera(camera);
             }
         };
-        // The ordering depends only on the camera, so a thermal frame with an unchanged camera may be reused.
-        scene.onBeforeRender.thermalReuseSafe = () => previous === Object3D.prototype.onBeforeRender ||
-            previous.thermalReuseSafe?.() === true;
     }
     objects.add(mesh);
     const geometry = mesh.geometry;

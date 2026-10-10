@@ -1,3 +1,5 @@
+// Foreground range tables and sky background tables: domains reused across camera height, elevation and Earth
+// radius drift within validated bounds, prefetch and publication, and the exact tables of offline renders.
 import {RangeTableCache, SkyBackgroundCache, createAtmosphere, createRangeLUT,
     createSkyElevationLUT, sampleSkyElevationLUT, backgroundAtElevation, brightnessErrorBound,
     skyViewGeometry, thermalSeaDistance, EARTH_RADIUS_M, createThermalRayGeometry,
@@ -5,6 +7,10 @@ import {RangeTableCache, SkyBackgroundCache, createAtmosphere, createRangeLUT,
 import {ThermalPipeline} from '../tools/thermal/ThermalPipeline.js';
 import {normalizeSettings} from '../tools/thermal/thermalSchema.js';
 import {PHOTON_SCALE, radianceDerivative} from '../tools/thermal/radiometry.js';
+import {PerspectiveCamera} from 'three';
+import {skyElevationRange} from '../tools/thermal/atmosphere.js';
+import {skyGradientReference} from '../tools/thermal/selfTest.js';
+import {compactSettings as compact} from './fixtures/thermalPipelineDoubles.js';
 
 const band = {minUm: 3, maxUm: 5};
 const finish = steps => {let result; do {result = steps.next();} while (!result.done); return result.value;};
@@ -35,7 +41,7 @@ function compareRange(cache, options, atmosphere) {
     expect(path).toBeLessThanOrEqual(RANGE_PATH_TOLERANCE_K);
 }
 
-test('range domains validate independent random heights and elevations and metre drift', () => {
+test('range domains validate independent random heights and elevations and meter drift', () => {
     const atmosphere = createAtmosphere(), options = {size: 32, maxRangeM: 200000,
         sensorAltitudeM: 1380, elevationRad: .04, band};
     const cache = rangeCache(options, atmosphere), next = random(), {dh, de} = cache.domain;
@@ -45,6 +51,9 @@ test('range domains validate independent random heights and elevations and metre
         elevationRad: options.elevationRad+(2*next()-1)*de}, atmosphere);
     for (const delta of [-100, -1, -.001, .001, 1, 100])
         expect(cache.request({...options, sensorAltitudeM: options.sensorAltitudeM+delta}, atmosphere)).not.toBeNull();
+    // Outside the elevation domain, or for another atmosphere, the cache has no table.
+    expect(cache.request({...options, elevationRad: .3}, atmosphere)).toBeNull();
+    expect(cache.request(options, createAtmosphere({surfaceTemperatureK: 300}))).toBeNull();
     cache.dispose();
 });
 
@@ -131,7 +140,7 @@ test.each([-50, -10, 10, 50])('range prefetch follows measured altitude motion (
         return height;
     };
     // Near the edge (leaving within about one build lead time at this rate) a build starts: its domain moves from the
-    // old centre in the direction of motion (the centre is clamped, but the domain still covers the camera).
+    // old center in the direction of motion (the center is clamped, but the domain still covers the camera).
     const height = request(Math.max(0, cache.domain.dh-Math.abs(speed)*leadS));
     const predicted = cache.start.mock.calls[0][0].sensorAltitudeM;
     expect(Math.sign(predicted-cache.domain.h)).toBe(Math.sign(speed));
@@ -285,3 +294,128 @@ test('cooperative sky work preserves a factory whose returned rays have no facto
         expect(brightnessErrorBound(Math.abs(actual-predicted), Math.min(actual,predicted), band)).toBeLessThanOrEqual(.005);
     } finally {cache.dispose();}
 }, 20000);
+
+test("cooperative range build yields before completion and disposal cancels publication", async () => {
+    const ready = jest.fn(), cache = new RangeTableCache(ready);
+    const atmosphere = createAtmosphere(), options = {size: 8, maxRangeM: 2000, sensorAltitudeM: 1380,
+        elevationRad: .04, band: {minUm: 3, maxUm: 5}};
+    expect(cache.request(options, atmosphere)).toBeNull();
+    expect(cache.domain).toBeUndefined();
+    cache.dispose();
+    await new Promise(resolve => setTimeout(resolve, 10));
+    expect(ready).not.toHaveBeenCalled();
+});
+
+test("sky cache reuses checked elevation domain and agrees at independent moving rays", () => {
+    const atmosphere = createAtmosphere(), cache = new SkyBackgroundCache();
+    const settings = compact({sensorAltitudeM: 1380}), camera = new PerspectiveCamera(.8, 4 / 3, 1, 200000);
+    const band = {minUm: 3, maxUm: 5};
+    let first;
+    for (let frame = 0; frame < 31; frame++) {
+        const elevation = .04 + frame * 1e-5;
+        const view = skyViewGeometry(settings, [0, Math.cos(elevation), -Math.sin(elevation)], camera);
+        const options = {view, sensorAltitudeM: 1380, temperatureK: 288.15, band};
+        const table = cache.table(options, atmosphere); first ??= table;
+        expect(table).toBe(first);
+        for (const offset of [-.00371, .000317, .00291]) {
+            const e = elevation + offset;
+            const actual = backgroundAtElevation(e, options, atmosphere).photonRadiance;
+            const predicted = sampleSkyElevationLUT(table, e);
+            expect(brightnessErrorBound(Math.abs(actual - predicted), Math.min(actual, predicted), band)).toBeLessThan(.005);
+        }
+    }
+    const shifted = cache.table({...first.options, sensorAltitudeM: 1380.001}, atmosphere);
+    expect(shifted).toBe(first);
+    expect(shifted.altitudeDomain.maxErrorK).toBeLessThanOrEqual(.001);
+    expect(cache.table({...first.options, sensorAltitudeM: 1400}, atmosphere)).not.toBe(first);
+    expect(cache.table(first.options, createAtmosphere({surfaceTemperatureK: 300}))).not.toBe(first);
+});
+
+test("mapped horizon cache never blends the separate sky and sea limits", () => {
+    const cache = new SkyBackgroundCache(), atmosphere = createAtmosphere();
+    const settings = compact({sensorAltitudeM: 21});
+    const camera = new PerspectiveCamera(2, 4 / 3, 1, 200000);
+    const rayGeometry = createThermalRayGeometry({sensorAltitudeM: 21, earthRadiusM: 6371000,
+        lift: () => 0, key: "estimated-flat-lift-fixture"});
+    const options = {sensorAltitudeM: 21, temperatureK: 288.15, band: {minUm: 3, maxUm: 5}, rayGeometry,
+        view: skyViewGeometry(settings, [0, 1, 0], camera)};
+    const table = cache.table(options, atmosphere);
+    for (const offset of [-1e-7, 1e-7]) {
+        const e = rayGeometry.horizonRad + offset;
+        const actual = backgroundAtElevation(e, options, atmosphere).photonRadiance;
+        const interpolated = sampleSkyElevationLUT(table, e);
+        expect(brightnessErrorBound(Math.abs(actual - interpolated), Math.min(actual, interpolated), options.band)).toBeLessThan(.005);
+    }
+});
+
+test("zero-radiance vacuum sky retains a finite altitude reuse bound", () => {
+    const cache = new SkyBackgroundCache(), atmosphere = createAtmosphere({densityScale: 0});
+    const settings = compact({sensorAltitudeM: 1380});
+    const options = {sensorAltitudeM: 1380, temperatureK: 288.15, band: {minUm: 3, maxUm: 5},
+        view: skyViewGeometry(settings, [0, Math.cos(.1), -Math.sin(.1)])};
+    const table = cache.table(options, atmosphere);
+    expect(cache.table({...options, sensorAltitudeM: 1380.001}, atmosphere)).toBe(table);
+    expect(table.altitudeDomain.maxErrorK).toBe(0);
+});
+
+test.each([null, [Math.cos(2.23 * Math.PI / 180), 0, -Math.sin(2.23 * Math.PI / 180)]])(
+    "offline sky uses the exact reference table and unchanged inputs reuse identical values (%s)", up => {
+        const reference = skyGradientReference(up), pipeline = new ThermalPipeline({});
+        pipeline.resources = {textures: new Set(), surfaces: new Map(), materials: new Map(), targets: new Map()};
+        pipeline.atmosphere = reference.atmosphere;
+        try {
+            pipeline._prepareSkyBackground(reference.settings, reference.view);
+            const table = pipeline.skyTable, texture = pipeline.skyTableTexture;
+            expect(table.elevations).toEqual(reference.table.elevations);
+            expect(table.photonRadiances).toEqual(reference.table.photonRadiances);
+            pipeline._prepareSkyBackground(reference.settings, reference.view);
+            expect(pipeline.skyTable).toBe(table);
+            expect(pipeline.skyTableTexture).toBe(texture);
+            expect(pipeline.skyCacheRebuilt).toBe(false);
+        } finally {pipeline.dispose();}
+    });
+
+test("an interactive view reads its center sky value from the sky table instead of a new path integral", () => {
+    // The center ray's 96-segment path integral costs about 40 ms on a moving frame, and the sky gradient draws the
+    // background from the validated table, which already holds that value.
+    const reference = skyGradientReference(null);
+    const settings = {...reference.settings, pathElevationDeg: skyElevationRange(reference.view).centerRad * 180 / Math.PI};
+    const run = analysis => {
+        const pipeline = new ThermalPipeline({}, {analysis});
+        pipeline.resources = {textures: new Set(), surfaces: new Map(), materials: new Map(), targets: new Map()};
+        pipeline.skyView = reference.view;
+        pipeline._prepareAtmosphere(settings, null);
+        const deferred = pipeline.background.deferredRadiance;
+        pipeline._prepareSkyBackground(settings, reference.view);
+        return {pipeline, deferred, kelvin: pipeline.background.brightnessTemperatureK};
+    };
+    const live = run(false), offline = run(true);
+    try {
+        expect(live.deferred).toBe(true); expect(offline.deferred).toBe(false);
+        expect(live.pipeline.background.deferredRadiance).toBe(false);
+        // The sky shader's own lookup in the validated table: inside the table's stated 0.005 K bound of the integral.
+        expect(Math.abs(live.kelvin - offline.kelvin)).toBeLessThan(.005);
+    } finally {live.pipeline.dispose(); offline.pipeline.dispose();}
+});
+
+test("a published range domain updates a stationary view without a camera or settings change", () => {
+    const pipeline = new ThermalPipeline({}, {analysis: false, synchronous: false});
+    pipeline.resources = {textures: new Set(), surfaces: new Map(), materials: new Map(), targets: new Map()};
+    const settings = compact({skySource: "manual", sensorAltitudeM: 1382, pathElevationDeg: 2.3});
+    const table = {size: 2, maxRangeM: settings.atmosphereMaxRangeM,
+        transmission: new Float32Array(24).fill(.5), pathRadiance: new Float32Array(24)};
+    pipeline.rangeCache.request = jest.fn(() => table);
+    pipeline.rangeCache.report = {status: "validated"};
+    try {
+        pipeline._prepareAtmosphere(settings);
+        expect(pipeline.rangeCache.request).toHaveBeenCalledTimes(1);
+        pipeline._prepareAtmosphere(settings);
+        expect(pipeline.rangeCache.request).toHaveBeenCalledTimes(1);
+        const replacement = {...table, transmission: new Float32Array(24).fill(.6)};
+        pipeline.rangeCache.request.mockReturnValue(replacement);
+        pipeline.rangeCache.builds = 1;
+        pipeline._prepareAtmosphere(settings);
+        expect(pipeline.rangeCache.request).toHaveBeenCalledTimes(2);
+        expect(pipeline.rangeLUT).toBe(replacement);
+    } finally {pipeline.dispose();}
+});

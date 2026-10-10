@@ -42,7 +42,7 @@
 // fisheyeProjectVector below (the night-sky label overlay is). Terrain tile
 // LOD selection still tests the pinhole frustum.
 
-import {Material, Object3D, ShaderMaterial, Vector2, Vector3} from "three";
+import {Material, ShaderMaterial, Vector2, Vector3} from "three";
 import {Globals, guiMenus, NodeMan, setRenderOne} from "./Globals";
 import {CNode} from "./nodes/CNode";
 import {GlobalScene, GlobalNightSkyScene, GlobalDaySkyScene, GlobalSunSkyScene} from "./LocalFrame";
@@ -540,10 +540,6 @@ function installFisheyeSceneHook(scene) {
         this._fishLastSweepMs = now;
         sweepFisheye(this);
     };
-    // With fisheye off the hook only sets camera uniforms, so a thermal frame with an unchanged camera may be
-    // reused; with fisheye on, its timed sweeps edit the scene, so it is not.
-    scene.onBeforeRender.thermalReuseSafe = () => !fisheye.enabled && (typeof previous !== "function" ||
-        previous === Object3D.prototype.onBeforeRender || previous.thermalReuseSafe?.() === true);
     scene._fisheyeHooked = true;
 }
 

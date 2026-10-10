@@ -69,12 +69,13 @@ export function createVehicleStudio(mount, {background="#dfe9f0",fov=36,damping=
         get sharesCamera() {return mode === "visible" || !!thermal?.usesViewCamera;},
         // Only the editor camera is fitted (the near IR view uses it); the far view's range and aspect are separate.
         fit(bounds,options) {fitVehicleCamera(camera,controls,bounds,options);},
-        render({mode: drawMode = mode, frame: nextFrame = frame} = {}) {
+        // showCounts: false skips the IR preview's count readout for this draw (see createVehicleThermalPreview).
+        render({mode: drawMode = mode, frame: nextFrame = frame, showCounts = true} = {}) {
             if (disposed) return;
             frame = nextFrame;
             if (drawMode === "ir") {
                 if (!thermal || !model) throw new Error("IR preview is not ready");
-                thermal.render(scene,model,frame);
+                thermal.render(scene,model,frame,{showCounts});
             } else renderer.render(scene,camera);
         },
         resize() {

@@ -1,43 +1,11 @@
-import {Color, PerspectiveCamera, Scene, Vector4, WebGLRenderTarget} from "three";
-import {ThermalPipeline} from "../tools/thermal/ThermalPipeline.js";
+// Frame reuse and GPU pacing: when a paused or held draw only presents the completed image, and when it must render.
+import {Vector4, WebGLRenderTarget} from "three";
 import {normalizeSettings} from "../tools/thermal/thermalSchema.js";
-
-// The coordinator and gain statistics are real; the renderer does not execute shaders.
-function fixture({width = 2, height = 2, automatic = false} = {}) {
-    let target = null, viewport = new Vector4(1, 2, 3, 4), scissor = new Vector4(2, 3, 4, 5);
-    const renderer = {autoClear: true, shadowMap: {enabled: true}, xr: {enabled: true},
-        capabilities: {maxTextureSize: 16384}, getRenderTarget: () => target,
-        getActiveCubeFace: () => 0, getActiveMipmapLevel: () => 0,
-        getViewport: v => v.copy(viewport), getScissor: v => v.copy(scissor), getScissorTest: () => false,
-        getClearColor: v => v.copy(new Color()), getClearAlpha: () => 1,
-        setRenderTarget: v => {target = v;}, setViewport: v => {viewport = v.clone();},
-        setScissor: v => {scissor = v.clone();}, setScissorTest() {}, setClearColor() {},
-        getSize: v => v.set(width, height), getContext: () => ({FRAMEBUFFER: 1,
-            FRAMEBUFFER_COMPLETE: 2, checkFramebufferStatus: () => 2})};
-    const pipeline = new ThermalPipeline(renderer, {analysis: false, synchronous: false});
-    pipeline.resources = {targets: new Map(), materials: new Map(), surfaces: new Map(),
-        textures: new Set(), checkedSizes: new WeakMap()};
-    pipeline.emptyTexture = {};
-    pipeline._prepareAtmosphere = jest.fn();
-    pipeline._prepareOptics = jest.fn(() => {pipeline.scatterSplit = {farMass: 0};});
-    pipeline._prepareSkyBackground = jest.fn(() => {pipeline.background = {scaledPhotonRadiance: 0};});
-    pipeline._radiance = jest.fn(); pipeline._optics = jest.fn(); pipeline._prepareFixedPattern = jest.fn();
-    pipeline._pass = jest.fn();
-    const counts = Float32Array.from({length: width * height}, (_, i) => 1000 + (i * 7919 % 12000));
-    // Like the real readback, a sample carries the scene and image-state identity of the render that queued it.
-    pipeline.gainReadback = {poll: () => pipeline.gainKey ? {counts, key: pipeline.gainKey, serial: pipeline.renderSerial - 1, frame: 10,
-        scene: pipeline.renderSceneKey == null ? null : `${pipeline.renderSceneKey}#${pipeline._imageStateEpoch()}`} : null,
-    enqueue: () => true, dispose() {}};
-    const inputs = {scene: new Scene(), camera: new PerspectiveCamera(1, width / height, 1, 500000),
-        settings: normalizeSettings({detectorWidth: width, detectorHeight: height, gainMode: automatic ? "automatic" : "manual",
-            atmosphereEnabled: false, skySource: "manual", gainRegion: "detector"}), frame: 10, reuseKey: "same"};
-    const clear = () => {for (const name of ["_prepareAtmosphere", "_prepareOptics", "_prepareSkyBackground", "_radiance", "_optics", "_prepareFixedPattern", "_pass"]) pipeline[name].mockClear();};
-    return {pipeline, inputs, clear, renderer};
-}
+import {coordinatorFixture as fixture} from "./fixtures/thermalPipelineDoubles.js";
 
 test("during playback a second draw inside the same frame shows that frame; the next frame renders", () => {
-    // Found in review: playback advances par.frame continuously, so a fast renderer can draw twice inside one detector
-    // frame; re-rendering would restart that frame's temporal filter and gain and make the noise flicker.
+    // Playback advances par.frame continuously, so a fast renderer can draw twice inside one detector frame;
+    // rendering it again would restart that frame's temporal filter and gain and make the noise flicker.
     const {pipeline, inputs, clear} = fixture();
     try {
         pipeline.render({...inputs, holdFrame: true});
@@ -52,8 +20,8 @@ test("during playback a second draw inside the same frame shows that frame; the 
 });
 
 test("a re-render of the same frame and scene repeats its temporal step; an edited scene resets", () => {
-    // Found in review: the render that settles the gain reset the temporal filter, so its image no longer matched
-    // the statistics it settled on.
+    // The render that settles the gain must show the image whose statistics it settled on, so it repeats the
+    // temporal step instead of resetting the filter.
     const {pipeline, inputs, clear} = fixture();
     const settings = normalizeSettings({...inputs.settings, temporalFilterAlpha: .3});
     const temporal = () => pipeline._pass.mock.calls.filter(call => call[0] === "temporal").at(-1)[2];
@@ -117,7 +85,6 @@ test.each([
     ["missing frame", p => {p.hasFrame = false;}],
     ["analysis", p => {p.analysis = true;}],
     ["synchronous", p => {p.synchronous = true;}],
-    ["held display", p => {p.lastFrame.held = true;}],
     ["optics worker", p => {p.opticsScheduler.pending = {};}],
     ["optics spectrum", p => {p.pendingOptics = {};}],
     ["range table", p => {p.rangeCache.pending = {};}],
@@ -148,21 +115,6 @@ test.each(["pendingOptics", "rangeCache", "skyCache", "opticsScheduler"])("a fra
     } finally {pipeline.dispose();}
 });
 
-test("a ready gain fence still requires same-frame statistics; redundant readback does not prevent reuse", () => {
-    const {pipeline, inputs, clear} = fixture({automatic: true});
-    try {
-        pipeline.render(inputs);
-        clearTimeout(pipeline.gainSettle); pipeline.gainSettle = null;
-        clear(); pipeline.render(inputs);
-        expect(pipeline._radiance).toHaveBeenCalledTimes(1);
-        expect(pipeline.gainReport).toMatchObject({held: false, statisticsFrame: 10});
-        pipeline.gainReadback.pending = [{tag: {frame: 10}}];
-        clear(); pipeline.render(inputs); expect(pipeline._radiance).not.toHaveBeenCalled();
-        pipeline.gainReport.statisticsFrame = 9;
-        clear(); pipeline.render(inputs); expect(pipeline._radiance).toHaveBeenCalledTimes(1);
-    } finally {pipeline.dispose();}
-});
-
 test("a failed render never associates its key with the previous image", () => {
     const {pipeline, inputs, clear} = fixture();
     try {
@@ -172,17 +124,6 @@ test("a failed render never associates its key with the previous image", () => {
         clear(); pipeline.render(inputs); expect(pipeline._radiance).toHaveBeenCalledTimes(1);
     } finally {pipeline.dispose();}
 });
-
-test("a held attempt does not record a completed key", () => {
-    const {pipeline, inputs, clear} = fixture();
-    try {
-        pipeline.render(inputs);
-        pipeline._prepareOptics.mockReturnValueOnce(false);
-        expect(pipeline.render({...inputs, reuseKey: "edited"})).toBe(false);
-        clear(); pipeline.render({...inputs, reuseKey: "edited"}); expect(pipeline._radiance).toHaveBeenCalledTimes(1);
-    } finally {pipeline.dispose();}
-});
-
 
 test("reused presentation restores the target and host even if the output pass fails", () => {
     const {pipeline, inputs, renderer} = fixture(), target = new WebGLRenderTarget(20, 10);
@@ -224,8 +165,8 @@ function pacingContext() {
 }
 
 test("a live render starts after the previous frame completes on the GPU; draws meanwhile show the last image", () => {
-    // Found live: frames were submitted faster than the GPU completed them (about 200 ms of GPU time each), so they
-    // queued up and every synchronous WebGL call waited behind the queue.
+    // A live host asks for frames faster than the GPU completes them (about 200 ms of GPU time each, measured); queued
+    // frames would make every synchronous WebGL call wait behind the queue.
     jest.useFakeTimers();
     const {pipeline, inputs, clear, renderer} = fixture(), gl = pacingContext();
     renderer.getContext = () => gl; pipeline.onReady = jest.fn();
@@ -272,43 +213,5 @@ test("framesInFlight lets a paced render start while fewer frames than that are 
         clear(); pipeline.render({...inputs, frame: 12, holdFrame: true, pace: true, framesInFlight: 2});
         expect(pipeline._radiance).toHaveBeenCalledTimes(1); expect(pipeline.frameFences).toHaveLength(1);
         expect(gl.deleteSync).toHaveBeenCalledTimes(2);
-    } finally {pipeline.dispose();}
-});
-
-test("a live render reads finished gain statistics before it queues the frame's passes", () => {
-    // Found live: the read is a synchronous round trip to the GPU process; after the passes it waited up to 182 ms.
-    const {pipeline, inputs} = fixture({automatic: true}), order = [], poll = pipeline.gainReadback.poll;
-    pipeline.gainReadback.poll = () => {order.push("poll"); return poll();};
-    pipeline._radiance = jest.fn(() => order.push("radiance"));
-    try {
-        pipeline.render(inputs); order.length = 0;
-        pipeline.render({...inputs, frame: 11});
-        expect(order.slice(0, 2)).toEqual(["poll", "radiance"]);
-    } finally {pipeline.dispose();}
-});
-
-test("live GPU gain uses each frame's own statistics: no readback, settled at once, AGC step only on advancing frames", () => {
-    // The GPU statistics remove the readback that waited behind queued GPU work (see _gpuGain).
-    const {pipeline, inputs, clear} = fixture({automatic: true});
-    pipeline.gpuGain = true; pipeline._scatter = jest.fn();
-    pipeline.gainReadback = {poll: jest.fn(() => null), enqueue: jest.fn(() => true), dispose() {}};
-    const settings = normalizeSettings({...inputs.settings, agcTimeConstantS: .5});
-    const last = name => pipeline._pass.mock.calls.filter(call => call[0] === name).at(-1)?.[2];
-    try {
-        pipeline.render({...inputs, settings});
-        expect(pipeline.gainReadback.enqueue).not.toHaveBeenCalled();
-        expect(pipeline.lastFrame.gain).toMatchObject({mode: "gpu", settled: true, statisticsFrame: 10, window: null});
-        expect(last("gainWindow")).toMatchObject({hasPrevious: false, alpha: 1});
-        expect(last("processingGainState")).toBeDefined(); expect(last("processing")).toBeUndefined();
-        // Ranks as percentileCounts: floor(p (n - 1)) over the 2 × 2 detector.
-        expect(last("gainSelect").ranks).toEqual([Math.floor(settings.lowPercentile * 3), Math.floor(settings.highPercentile * 3)]);
-        expect(pipeline._scatter).toHaveBeenCalledTimes(2);
-        clear(); pipeline.render({...inputs, settings, frame: 13});
-        expect(last("gainWindow").hasPrevious).toBe(true);
-        expect(last("gainWindow").alpha).toBeCloseTo(-Math.expm1(-(3 / settings.frameRateHz) / .5), 12);
-        // A re-render of the same frame starts from that frame's statistics, as an analysis render does.
-        clear(); pipeline.render({...inputs, settings, frame: 13, reuseKey: "edited"});
-        expect(last("gainWindow")).toMatchObject({hasPrevious: false, alpha: 1});
-        expect(pipeline.gainReadback.enqueue).not.toHaveBeenCalled();
     } finally {pipeline.dispose();}
 });

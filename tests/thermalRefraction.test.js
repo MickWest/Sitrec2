@@ -33,15 +33,15 @@ function fixture(enabled = true, extra = {}) {
 const apparentElevation = p => Math.atan2(p.y, Math.hypot(p.x, p.z));
 
 test("range and sky domains are not keyed to the drifting Earth radius; caches reuse them within RADIUS_REUSE_M", () => {
-    // Found live: the radius at the observer changes by centimetres per frame, so a key holding it changed on every
-    // frame and no range or sky domain was ever reused; rounding it then forced rebuilds at every step boundary.
+    // The radius at the observer changes by centimeters per frame: a key holding it would change on every frame and
+    // reuse no range or sky domain, and a rounded radius would force rebuilds at every step boundary.
     const ellipsoid = {enabled: true, k: .13, equatorRadius: 6378137, polarRadius: 6356752.314245};
     const at = position => {
         const camera = new PerspectiveCamera(1, 1, 1, 300000); camera.position.copy(position); camera.updateMatrixWorld();
         const geometry = createThermalSceneAdapter([], [], camera, ellipsoid).rayGeometry(normalizeSettings({sensorAltitudeM: 2500}));
         return {domainKey: geometry.domainKey, key: geometry.key, radius: geometry.earthRadiusM};
     };
-    // About 1.3 km steps in latitude from 45°, where the radius changes fastest (a few metres per step).
+    // About 1.3 km steps in latitude from 45°, where the radius changes fastest (a few meters per step).
     const samples = Array.from({length: 300}, (_, i) =>
         at(new Vector3(6378137 + 2500, 0, 0).applyAxisAngle(new Vector3(0, 1, 0), -Math.PI / 4 - i * 2e-4)));
     expect(Math.abs(samples.at(-1).radius - samples[0].radius)).toBeGreaterThan(300);

@@ -200,13 +200,11 @@ test("an export waits for this frame's image, optics and fenced gain, not for a 
     pipeline.gainReport.settled = true;
     expect(view.getPendingLoadState().hasPending).toBe(false);
     expect(view.getPendingLoadState(["mainView"])).toBeNull();
-    // The image shown is an earlier frame's (a paced draw), or a held one: wait for this frame's own draw.
+    // The image shown is an earlier frame's (a paced draw): wait for this frame's own draw.
     par.frame = 11.5;
     expect(view.getPendingLoadState()).toMatchObject({hasPending: true, perView: {lookView: {image: true}}});
     pipeline.lastFrame = {frame: 11};
     expect(view.getPendingLoadState().hasPending).toBe(false);
-    pipeline.lastFrame.held = true;
-    expect(view.getPendingLoadState().hasPending).toBe(true);
     // A failed render waits for nothing.
     pipeline.opticsReport = {outsideValidatedDomain: true}; view._thermalError = new Error("failed");
     expect(view.getPendingLoadState()).toMatchObject({hasPending: false, error: "failed"});
@@ -234,6 +232,7 @@ test("an export waits for this frame's image, optics and fenced gain, not for a 
 const SAVED_MODE_READERS = new Set([
     "src/nodes/CNodeView3D.js#renderXR",              // headsets have no thermal route and do not follow camera data
     "src/rendering/ThermalLoader.js#setupThermalMenu", // the menu's own value decides whether to load the sensor
+    "src/nodes/CNodeView3D.js#modDeserialize",        // a restored saved mode decides whether to release the sensor
 ]);
 
 function renderModeComparisons(file, source = fs.readFileSync(path.join(ROOT, file), "utf8")) {
@@ -284,7 +283,7 @@ test("no direct renderMode comparison remains outside the helper", () => {
     expect(direct).toEqual([]);
     // The allowed readers still exist, so this list cannot silently go stale.
     expect([...new Set(comparisons.map(entry => entry.replace(/ \(line \d+\)$/, "")))].sort()).toEqual([...SAVED_MODE_READERS].sort());
-    // And the readers named in the change use the helper. ThermalLoader.js no longer reads the frame's mode:
+    // And these readers use the helper. ThermalLoader.js does not read the frame's mode:
     // CNodeView3D.renderTargetAndEffects clears the thermal readout on a visible-light frame.
     for (const file of ["src/nodes/CNodeView3D.js", "src/nodes/CNodeView.js", "src/nodes/CNode3DObject.js",
         "src/rendering/ViewColorPipeline.js"])

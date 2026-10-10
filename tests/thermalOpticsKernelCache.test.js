@@ -1,22 +1,15 @@
-import {PerspectiveCamera} from "three";
+// Optical kernels for live and offline renders: the spectral basis cache, the L1 bound of retained kernels, the
+// optics worker and its validated reuse domains, and the fallbacks without a worker.
 import {Worker as NodeWorker} from "node:worker_threads";
 import {readFileSync} from "node:fs";
 import {createDefaultOpticsWorker, OpticsScheduler, OPTICS_DOMAIN_CACHE_BYTES, opticalDomainBytes, opticalStructureKey} from "../tools/thermal/sensorMath.js";
-import {createOpticsWorker} from "../src/rendering/ThermalWorkerFactory.js";
+import {createAtmosphereWorker} from "../src/rendering/ThermalWorkerFactory.js";
 import {OpticalKernelCache, opticalKernelError, OPTICS_L1_TOLERANCE, buildOpticalDomain, sampleOpticalDomain, psfSpectrum} from "../tools/thermal/sensorMath.js";
 import {normalizeSettings} from "../tools/thermal/thermalSchema.js";
 import {opticalKernels, scatterPlan, applyOptics} from "../tools/thermal/sensorMath.js";
-import {createAtmosphere, backgroundAtElevation, skyViewGeometry, sampleSkyElevationLUT,
-    brightnessErrorBound, createThermalRayGeometry, skyElevationRange} from "../tools/thermal/atmosphere.js";
-import {FencedReadback, ThermalGpuTimer} from "../tools/thermal/ThermalPipeline.js";
-import {SkyBackgroundCache} from "../tools/thermal/atmosphere.js";
+import {createAtmosphere} from "../tools/thermal/atmosphere.js";
 import {ThermalPipeline} from "../tools/thermal/ThermalPipeline.js";
-import {skyGradientReference} from "../tools/thermal/selfTest.js";
-
-const compact = extra => normalizeSettings({detectorWidth: 16, detectorHeight: 12,
-    fieldMode: "focalLength", focalStep: "free", focalLengthM: .675,
-    opticalSamplingMode: "manual", supersample: 2, opticsRadiusPx: 4,
-    scatterFraction: 0, scatterPreset: "custom", ...extra});
+import {compactSettings as compact} from "./fixtures/thermalPipelineDoubles.js";
 
 test.each([0, .12, .7])("spectral basis preserves full finite kernels at r0=%s m", turbulenceR0M => {
     const cache = new OpticalKernelCache(), atmosphere = createAtmosphere();
@@ -113,296 +106,25 @@ test("failed spectrum replacement cannot leave an apparently valid cache", () =>
     expect(pipeline.opticsReport.spectraRebuilt).toBe(true);
 });
 
-test("sky cache reuses checked elevation domain and agrees at independent moving rays", () => {
-    const atmosphere = createAtmosphere(), cache = new SkyBackgroundCache();
-    const settings = compact({sensorAltitudeM: 1380}), camera = new PerspectiveCamera(.8, 4 / 3, 1, 200000);
-    const band = {minUm: 3, maxUm: 5};
-    let first;
-    for (let frame = 0; frame < 31; frame++) {
-        const elevation = .04 + frame * 1e-5;
-        const view = skyViewGeometry(settings, [0, Math.cos(elevation), -Math.sin(elevation)], camera);
-        const options = {view, sensorAltitudeM: 1380, temperatureK: 288.15, band};
-        const table = cache.table(options, atmosphere); first ??= table;
-        expect(table).toBe(first);
-        for (const offset of [-.00371, .000317, .00291]) {
-            const e = elevation + offset;
-            const actual = backgroundAtElevation(e, options, atmosphere).photonRadiance;
-            const predicted = sampleSkyElevationLUT(table, e);
-            expect(brightnessErrorBound(Math.abs(actual - predicted), Math.min(actual, predicted), band)).toBeLessThan(.005);
-        }
-    }
-    const shifted = cache.table({...first.options, sensorAltitudeM: 1380.001}, atmosphere);
-    expect(shifted).toBe(first);
-    expect(shifted.altitudeDomain.maxErrorK).toBeLessThanOrEqual(.001);
-    expect(cache.table({...first.options, sensorAltitudeM: 1400}, atmosphere)).not.toBe(first);
-    expect(cache.table(first.options, createAtmosphere({surfaceTemperatureK: 300}))).not.toBe(first);
-});
-
-test("mapped horizon cache never blends the separate sky and sea limits", () => {
-    const cache = new SkyBackgroundCache(), atmosphere = createAtmosphere();
-    const settings = compact({sensorAltitudeM: 21});
-    const camera = new PerspectiveCamera(2, 4 / 3, 1, 200000);
-    const rayGeometry = createThermalRayGeometry({sensorAltitudeM: 21, earthRadiusM: 6371000,
-        lift: () => 0, key: "estimated-flat-lift-fixture"});
-    const options = {sensorAltitudeM: 21, temperatureK: 288.15, band: {minUm: 3, maxUm: 5}, rayGeometry,
-        view: skyViewGeometry(settings, [0, 1, 0], camera)};
-    const table = cache.table(options, atmosphere);
-    for (const offset of [-1e-7, 1e-7]) {
-        const e = rayGeometry.horizonRad + offset;
-        const actual = backgroundAtElevation(e, options, atmosphere).photonRadiance;
-        const interpolated = sampleSkyElevationLUT(table, e);
-        expect(brightnessErrorBound(Math.abs(actual - interpolated), Math.min(actual, interpolated), options.band)).toBeLessThan(.005);
-    }
-});
-
-test("zero-radiance vacuum sky retains a finite altitude reuse bound", () => {
-    const cache = new SkyBackgroundCache(), atmosphere = createAtmosphere({densityScale: 0});
-    const settings = compact({sensorAltitudeM: 1380});
-    const options = {sensorAltitudeM: 1380, temperatureK: 288.15, band: {minUm: 3, maxUm: 5},
-        view: skyViewGeometry(settings, [0, Math.cos(.1), -Math.sin(.1)])};
-    const table = cache.table(options, atmosphere);
-    expect(cache.table({...options, sensorAltitudeM: 1380.001}, atmosphere)).toBe(table);
-    expect(table.altitudeDomain.maxErrorK).toBe(0);
-});
-
-test.each([null, [Math.cos(2.23 * Math.PI / 180), 0, -Math.sin(2.23 * Math.PI / 180)]])(
-    "offline sky uses the exact reference table and unchanged inputs reuse identical values (%s)", up => {
-        const reference = skyGradientReference(up), pipeline = new ThermalPipeline({});
-        pipeline.resources = {textures: new Set(), surfaces: new Map(), materials: new Map(), targets: new Map()};
-        pipeline.atmosphere = reference.atmosphere;
-        try {
-            pipeline._prepareSkyBackground(reference.settings, reference.view);
-            const table = pipeline.skyTable, texture = pipeline.skyTableTexture;
-            expect(table.elevations).toEqual(reference.table.elevations);
-            expect(table.photonRadiances).toEqual(reference.table.photonRadiances);
-            pipeline._prepareSkyBackground(reference.settings, reference.view);
-            expect(pipeline.skyTable).toBe(table);
-            expect(pipeline.skyTableTexture).toBe(texture);
-            expect(pipeline.skyCacheRebuilt).toBe(false);
-        } finally {pipeline.dispose();}
-    });
-
-test("an interactive view reads its centre sky value from the sky table instead of a new path integral", () => {
-    // Found live: the centre ray's 96-segment path integral ran on every moving frame (~40 ms) although the sky
-    // gradient draws the background from the validated table and ignores that value.
-    const reference = skyGradientReference(null);
-    const settings = {...reference.settings, pathElevationDeg: skyElevationRange(reference.view).centerRad * 180 / Math.PI};
-    const run = analysis => {
-        const pipeline = new ThermalPipeline({}, {analysis});
-        pipeline.resources = {textures: new Set(), surfaces: new Map(), materials: new Map(), targets: new Map()};
-        pipeline.skyView = reference.view;
-        pipeline._prepareAtmosphere(settings, null);
-        const deferred = pipeline.background.deferredRadiance;
-        pipeline._prepareSkyBackground(settings, reference.view);
-        return {pipeline, deferred, kelvin: pipeline.background.brightnessTemperatureK};
-    };
-    const live = run(false), offline = run(true);
-    try {
-        expect(live.deferred).toBe(true); expect(offline.deferred).toBe(false);
-        expect(live.pipeline.background.deferredRadiance).toBe(false);
-        // The sky shader's own lookup in the validated table: inside the table's stated 0.005 K bound of the integral.
-        expect(Math.abs(live.kelvin - offline.kelvin)).toBeLessThan(.005);
-    } finally {live.pipeline.dispose(); offline.pipeline.dispose();}
-});
-
-test("a published range domain updates a stationary view without a camera or settings change", () => {
-    const pipeline = new ThermalPipeline({}, {analysis: false, synchronous: false});
-    pipeline.resources = {textures: new Set(), surfaces: new Map(), materials: new Map(), targets: new Map()};
-    const settings = compact({skySource: "manual", sensorAltitudeM: 1382, pathElevationDeg: 2.3});
-    const table = {size: 2, maxRangeM: settings.atmosphereMaxRangeM,
-        transmission: new Float32Array(24).fill(.5), pathRadiance: new Float32Array(24)};
-    pipeline.rangeCache.request = jest.fn(() => table);
-    pipeline.rangeCache.report = {status: "validated"};
-    try {
-        pipeline._prepareAtmosphere(settings);
-        expect(pipeline.rangeCache.request).toHaveBeenCalledTimes(1);
-        pipeline._prepareAtmosphere(settings);
-        expect(pipeline.rangeCache.request).toHaveBeenCalledTimes(1);
-        const replacement = {...table, transmission: new Float32Array(24).fill(.6)};
-        pipeline.rangeCache.request.mockReturnValue(replacement);
-        pipeline.rangeCache.builds = 1;
-        pipeline._prepareAtmosphere(settings);
-        expect(pipeline.rangeCache.request).toHaveBeenCalledTimes(2);
-        expect(pipeline.rangeLUT).toBe(replacement);
-    } finally {pipeline.dispose();}
-});
-
-function fakeGl() {
-    const gl = Object.fromEntries(["PIXEL_PACK_BUFFER_BINDING", "PACK_ALIGNMENT", "PACK_ROW_LENGTH", "PACK_SKIP_PIXELS",
-        "PACK_SKIP_ROWS", "PIXEL_PACK_BUFFER", "STREAM_READ", "RGBA", "FLOAT", "SYNC_GPU_COMMANDS_COMPLETE",
-        "TIMEOUT_EXPIRED", "WAIT_FAILED", "CONDITION_SATISFIED", "CURRENT_QUERY", "QUERY_RESULT_AVAILABLE", "QUERY_RESULT"].map((name, i) => [name, i + 1]));
-    Object.assign(gl, {getParameter: jest.fn(() => 0), createBuffer: jest.fn(() => ({})), bindBuffer: jest.fn(),
-        bufferData: jest.fn(), pixelStorei: jest.fn(), readPixels: jest.fn(), fenceSync: jest.fn(() => ({})),
-        flush: jest.fn(), deleteBuffer: jest.fn(), deleteSync: jest.fn(),
-        clientWaitSync: jest.fn(() => gl.TIMEOUT_EXPIRED),
-        getBufferSubData: jest.fn((target, offset, data) => data.set([10, 0, 0, 1, 20, 0, 0, 1]))});
-    return gl;
-}
-
-test("gain readback polls without waiting, preserves tags and bounds allocation", () => {
-    const gl = fakeGl(), reader = new FencedReadback(gl);
-    expect(reader.enqueue(2, 1, {serial: 1, key: "first"})).toBe(true);
-    expect(reader.enqueue(2, 1, {serial: 2, key: "second"})).toBe(true);
-    expect(reader.enqueue(2, 1, {})).toBe(false);
-    // Found live: a pack-state query is a synchronous GPU-process round trip (110-128 ms behind queued passes). The
-    // read sets the state it needs and queries only the buffer binding, which the browser answers on the client side.
-    expect(gl.getParameter.mock.calls.every(([name]) => name === gl.PIXEL_PACK_BUFFER_BINDING)).toBe(true);
-    expect(gl.pixelStorei.mock.calls).toEqual(expect.arrayContaining([[gl.PACK_ROW_LENGTH, 0], [gl.PACK_SKIP_PIXELS, 0], [gl.PACK_SKIP_ROWS, 0]]));
-    expect(reader.poll()).toBeNull(); expect(gl.getBufferSubData).not.toHaveBeenCalled();
-    expect(gl.clientWaitSync.mock.calls.every(([, flags, timeout]) => flags === 0 && timeout === 0)).toBe(true);
-    gl.clientWaitSync.mockReturnValue(gl.CONDITION_SATISFIED);
-    expect(reader.poll()).toMatchObject({counts: new Float32Array([10, 20]), serial: 2, key: "second"});
-    reader.dispose(); expect(gl.deleteBuffer).toHaveBeenCalledTimes(2); expect(gl.deleteSync).toHaveBeenCalledTimes(2);
-});
-
-test("interactive gain never reads synchronously, applies each sample once and never another key's", () => {
-    const pipeline = new ThermalPipeline({}, {analysis: false});
-    pipeline._read = () => {throw new Error("synchronous readback");};
-    pipeline._target = () => ({}); pipeline._pass = () => {};
-    pipeline.gainReadback = {poll: jest.fn(() => null), enqueue: jest.fn(() => true)};
-    const settings = compact({gainMode: "automatic", gainRegion: "detector", agcTimeConstantS: 0, lowPercentile: 0, highPercentile: 1});
-    const options = {gainKey: "A", reset: true, deltaTimeS: 1 / 30, width: 2, height: 2, frame: 0};
-    pipeline.renderSerial = 1;
-    expect(pipeline._gainParameters({}, settings, options).window).toEqual({low: 0, high: 16383});
-    pipeline.gainReadback.poll.mockReturnValue({counts: new Float32Array([100, 200, 300, 400]), key: "A", serial: 1, frame: 0});
-    pipeline.renderSerial = 2;
-    const parameters = pipeline._gainParameters({}, settings, {...options, frame: 1});
-    expect(parameters.window).toEqual({low: 100, high: 400}); expect(pipeline.gainReport.latencyFrames).toBe(1);
-    pipeline.renderSerial = 4;
-    pipeline._gainParameters({}, settings, {...options, reset: false, frame: 3});
-    expect(pipeline.gainReport).toMatchObject({held: true, missedDeadline: true});
-    pipeline.gainReadback.poll.mockReturnValue({counts: new Float32Array([999, 999, 999, 999]), key: "B", serial: 4, frame: 3});
-    pipeline.renderSerial = 5;
-    // Another gain key's sample never applies; the last valid window holds.
-    expect(pipeline._gainParameters({}, settings, {...options, frame: 4}).window).toEqual({low: 100, high: 400});
-    expect(pipeline.gainReport.held).toBe(true);
-    clearTimeout(pipeline.gainSettle);
-});
-
-test("a re-rendered frame holds its window, then settles on that frame's own statistics", () => {
-    // Sitrec re-renders a paused frame whenever, for example, a terrain tile arrives. Before the fix a
-    // re-render without a ready sample showed the full ADC interval, so the picture jumped between two states.
-    jest.useFakeTimers();
-    const onReady = jest.fn();
-    const pipeline = new ThermalPipeline({}, {analysis: false, onReady});
-    try {
-        pipeline._read = () => {throw new Error("synchronous readback");};
-        pipeline._target = () => ({}); pipeline._pass = () => {};
-        const readback = {pending: [], poll: jest.fn(() => null), signaled: jest.fn(() => false),
-            enqueue: jest.fn(() => {readback.pending.push({}); return true;}), dispose() {}};
-        pipeline.gainReadback = readback;
-        const settings = compact({gainMode: "automatic", gainRegion: "detector", agcTimeConstantS: 0, lowPercentile: 0, highPercentile: 1});
-        const options = {gainKey: "A", reset: false, deltaTimeS: 1 / 30, width: 2, height: 2};
-        const sample = (counts, serial, frame) => readback.poll.mockReturnValueOnce({counts: new Float32Array(counts), key: "A", serial, frame});
-        pipeline.renderSerial = 1; pipeline._gainParameters({}, settings, {...options, reset: true, frame: 7});
-        pipeline.lastFrame = {frame: 7};
-        sample([100, 200, 300, 400], 1, 7); pipeline.renderSerial = 2;
-        expect(pipeline._gainParameters({}, settings, {...options, frame: 8}).window).toEqual({low: 100, high: 400});
-        pipeline.lastFrame = {frame: 8};
-        // Re-render of frame 8 before its sample is ready: hold the window, never the full ADC interval.
-        pipeline.renderSerial = 3;
-        expect(pipeline._gainParameters({}, settings, {...options, reset: true, frame: 8}).window).toEqual({low: 100, high: 400});
-        expect(pipeline.gainReport.held).toBe(true);
-        // Nothing else renders (paused): once the sample is ready, exactly one more render is requested.
-        readback.signaled.mockReturnValue(true);
-        jest.advanceTimersByTime(20);
-        expect(onReady).toHaveBeenCalledTimes(1);
-        // That render recomputes frame 8's window from its own statistics, as an analysis re-render does.
-        sample([500, 600, 700, 800], 3, 8); pipeline.renderSerial = 4;
-        expect(pipeline._gainParameters({}, settings, {...options, reset: true, frame: 8}).window).toEqual({low: 500, high: 800});
-        // Further re-renders with no new sample keep it.
-        pipeline.renderSerial = 5;
-        expect(pipeline._gainParameters({}, settings, {...options, reset: true, frame: 8}).window).toEqual({low: 500, high: 800});
-        // After a backward seek, a sample from a later frame never applies.
-        sample([1, 2, 3, 4], 5, 8); pipeline.renderSerial = 6;
-        expect(pipeline._gainParameters({}, settings, {...options, reset: true, frame: 2}).window).toEqual({low: 500, high: 800});
-    } finally {pipeline.dispose(); jest.useRealTimers();}
-});
-
-test("a paused edit does not settle on statistics recorded before it", () => {
-    // Found in review: with frame reuse, an edited paused frame could settle on the previous scene's statistics and
-    // then be re-presented with that stale window indefinitely.
-    jest.useFakeTimers();
-    const onReady = jest.fn();
-    const pipeline = new ThermalPipeline({}, {analysis: false, onReady});
-    try {
-        pipeline._read = () => {throw new Error("synchronous readback");};
-        pipeline._target = () => ({}); pipeline._pass = () => {};
-        const readback = {pending: [], poll: jest.fn(() => null), signaled: jest.fn(() => true),
-            enqueue: jest.fn(() => {readback.pending.push({}); return true;}), dispose() {}};
-        pipeline.gainReadback = readback;
-        const settings = compact({gainMode: "automatic", gainRegion: "detector", agcTimeConstantS: 0, lowPercentile: 0, highPercentile: 1});
-        const options = {gainKey: "A", reset: true, deltaTimeS: 0, width: 2, height: 2, frame: 8};
-        // A sample's scene tag is the host scene plus the pipeline's image-state epoch, as the real readback records.
-        const sample = (counts, serial, scene) => readback.poll.mockReturnValueOnce({counts: new Float32Array(counts), key: "A", serial,
-            frame: 8, scene: `${scene}#${pipeline._imageStateEpoch()}`});
-        pipeline.lastFrame = {frame: 8};
-        pipeline.renderSceneKey = "before"; sample([100, 200, 300, 400], 1, "before"); pipeline.renderSerial = 2;
-        pipeline._gainParameters({}, settings, options);
-        expect(pipeline.gainReport.settled).toBe(true);
-        // The edit changes the host's scene identity; the newest same-frame sample predates it.
-        pipeline.renderSceneKey = "after"; sample([100, 200, 300, 400], 2, "before"); pipeline.renderSerial = 3;
-        expect(pipeline._gainParameters({}, settings, options).window).toEqual({low: 100, high: 400});
-        expect(pipeline.gainReport.settled).toBe(false);
-        jest.advanceTimersByTime(20);
-        expect(onReady).toHaveBeenCalledTimes(1);
-        // The requested render applies the edited scene's own statistics and settles.
-        sample([500, 600, 700, 800], 3, "after"); pipeline.renderSerial = 4;
-        expect(pipeline._gainParameters({}, settings, options).window).toEqual({low: 500, high: 800});
-        expect(pipeline.gainReport.settled).toBe(true);
-    } finally {pipeline.dispose(); jest.useRealTimers();}
-});
-
-test("an advancing frame applies the newest unused sample even when the GPU lags a render", () => {
-    const pipeline = new ThermalPipeline({}, {analysis: false});
-    pipeline._read = () => {throw new Error("synchronous readback");};
-    pipeline._target = () => ({}); pipeline._pass = () => {};
-    const readback = {pending: [], poll: jest.fn(() => null), enqueue: jest.fn(() => true)};
-    pipeline.gainReadback = readback;
-    const settings = compact({gainMode: "automatic", gainRegion: "detector", agcTimeConstantS: 0, lowPercentile: 0, highPercentile: 1});
-    const options = {gainKey: "A", reset: false, deltaTimeS: 1 / 30, width: 2, height: 2};
-    pipeline.renderSerial = 1; pipeline._gainParameters({}, settings, {...options, reset: true, frame: 10});
-    pipeline.lastFrame = {frame: 10}; pipeline.renderSerial = 2; pipeline._gainParameters({}, settings, {...options, frame: 14});
-    // Two renders later, frame 10's sample is the newest ready one; before the fix it was refused.
-    readback.poll.mockReturnValueOnce({counts: new Float32Array([100, 200, 300, 400]), key: "A", serial: 1, frame: 10});
-    pipeline.lastFrame = {frame: 14}; pipeline.renderSerial = 3;
-    expect(pipeline._gainParameters({}, settings, {...options, frame: 18}).window).toEqual({low: 100, high: 400});
-    expect(pipeline.gainReport).toMatchObject({held: false, latencyFrames: 2});
-    clearTimeout(pipeline.gainSettle);
-});
-
-test("GPU timer discards disjoint samples and converts valid ns to ms", () => {
-    const gl = fakeGl(), extension = {TIME_ELAPSED_EXT: 100, GPU_DISJOINT_EXT: 101};
-    Object.assign(gl, {getExtension: () => extension, getQuery: () => null, createQuery: () => ({}),
-        beginQuery: jest.fn(), endQuery: jest.fn(), deleteQuery: jest.fn(),
-        getQueryParameter: (query, key) => key === gl.QUERY_RESULT_AVAILABLE ? true : 2500000});
-    const timer = new ThermalGpuTimer(gl);
-    timer.begin(1, "optics"); timer.end(); timer.poll();
-    expect(timer.samples).toEqual([{frame: 1, stage: "optics", ms: 2.5}]);
-    timer.begin(2, "optics"); timer.end(); gl.getParameter.mockReturnValue(true); timer.poll();
-    expect(timer.samples).toHaveLength(1); expect(timer.disjointSamples).toBe(1); timer.dispose();
-});
-
-
 test("interactive construction displays a bounded coarse preview, retains output on edits and rejects late replies", async () => {
     const worker = {postMessage: jest.fn(), terminate: jest.fn()};
     const onReady = jest.fn(), pipeline = new ThermalPipeline({}, {analysis: false, createOpticsWorker: () => worker, onReady});
     pipeline._prepareSpectrum = jest.fn(); pipeline.atmosphere = createAtmosphere();
     pipeline.opticalCache.candidate = () => {throw Error("synchronous construction");};
     const settings = compact({turbulenceR0M: 0});
-    expect(pipeline._prepareOptics(settings, 32, 24)).toBe(true);
+    pipeline._prepareOptics(settings, 32, 24);
     expect(pipeline._prepareSpectrum).toHaveBeenCalled();
     expect(pipeline.opticsReport).toMatchObject({quality: "coarse", errorL1: 2, pending: true});
-    expect(pipeline.opticsReport.message).toMatch(/Coarse.*bound/);
+    expect(pipeline.opticsReport.messageCode).toBe("coarse");
     await pipeline.opticsScheduler.workerPromise;
     await Promise.resolve();
     const message = worker.postMessage.mock.calls[0][0];
     worker.onmessage({data: {id: message.id, domain: buildOpticalDomain(settings, 32, 24, message.spectrum)}});
-    expect(pipeline._prepareOptics(settings, 32, 24)).toBe(true);
+    pipeline._prepareOptics(settings, 32, 24);
     expect(pipeline.opticsReport.quality).toBe("full");
     const installed = pipeline.activeKernels;
     // An incompatible edit queues work and preserves the completed output.
-    expect(pipeline._prepareOptics({...settings, defocusM: 1e-5}, 32, 24)).toBe(true);
+    pipeline._prepareOptics({...settings, defocusM: 1e-5}, 32, 24);
     expect(pipeline.activeKernels).toBe(installed);
     pipeline.dispose();
     const calls = onReady.mock.calls.length;
@@ -498,14 +220,14 @@ test("worker URLs are module-relative even with an unusable document base", () =
     global.Worker = jest.fn(() => worker);
     try {
         expect(createDefaultOpticsWorker()).toBe(worker);
-        expect(createOpticsWorker()).toBe(worker);
-        for (const [url, options] of global.Worker.mock.calls) {
-            expect(url.pathname).toMatch(/\/tools\/thermal\/opticsWorker\.js$/);
-            expect(options).toEqual({type: "module"});
-        }
+        expect(createAtmosphereWorker()).toBe(worker);
+        const [[optics, opticsOptions], [atmosphere, atmosphereOptions]] = global.Worker.mock.calls;
+        expect(optics.pathname).toMatch(/\/tools\/thermal\/opticsWorker\.js$/);
+        expect(atmosphere.pathname).toMatch(/\/tools\/thermal\/atmosphereWorker\.js$/);
+        expect([opticsOptions, atmosphereOptions]).toEqual([{type: "module"}, {type: "module"}]);
         global.Worker.mockImplementation(() => {throw new Error("constructor unavailable");});
         expect(createDefaultOpticsWorker()).toBeNull();
-        expect(createOpticsWorker()).toBeNull();
+        expect(createAtmosphereWorker()).toBeNull();
         delete global.Worker;
         expect(createDefaultOpticsWorker()).toBeNull();
     } finally {
@@ -516,7 +238,7 @@ test("worker URLs are module-relative even with an unusable document base", () =
 
 test("evaluated worker factories without a module URL return the synchronous fallback", () => {
     for (const [path, name] of [["../tools/thermal/sensorMath.js", "createDefaultOpticsWorker"],
-        ["../src/rendering/ThermalWorkerFactory.js", "createOpticsWorker"]]) {
+        ["../src/rendering/ThermalWorkerFactory.js", "createAtmosphereWorker"]]) {
         const source = readFileSync(new URL(path, import.meta.url), "utf8");
         const factory = source.match(new RegExp(`export function ${name}\\(\\) \\{[\\s\\S]*?\\n\\}`))[0]
             .replace("export ", "").replaceAll("import.meta.url", "undefined");
@@ -631,7 +353,6 @@ test("validated turbulence intervals match independent unsampled strengths and s
         }
     }
 });
-
 
 test("IB6830 interactive interpolation preserves both full native lens-step kernels", () => {
     // Estimated path fixtures: range/altitude/coherence diameter in m; elevation in degrees.

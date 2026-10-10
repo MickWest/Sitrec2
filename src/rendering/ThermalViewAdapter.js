@@ -10,6 +10,7 @@ import {attachThermalDebug, configureSensorCamera, createThermalControls, resolv
 import {VEHICLE_THERMAL_GROUP} from "../../tools/vehicles/thermalTags.js";
 import {FileManager, GlobalDateTimeNode, Globals, markSitchDirty, NodeMan, setRenderOne, Sit} from "../Globals";
 import {getCelestialDirection} from "../CelestialMath";
+import {getLocalEastVector, getLocalNorthVector, getLocalUpVector} from "../SphericalMath";
 import {par} from "../par";
 import {ellipsoidAltitude, terrestrialOptsFrom} from "../atmosphere/terrestrialRefraction";
 import {meanSeaLevelOffset} from "../EGM96Geoid";
@@ -27,7 +28,7 @@ export function thermalMachWarning(state, recipe) {
     const airliner = p?.bodyStyle === "transport" && p?.engineType === "jet" &&
         (!p.vehicleType || p.vehicleType === "aircraft");
     if (!airliner || state.sources?.mach === "override" || !(state.mach > 0.95)) return "";
-    return `Warning: scene-derived Mach ${state.mach.toFixed(3)} is implausible for an airliner (estimated threshold 0.95). Check the track speed, or use Object → Thermal surface → Vehicle thermal state → Mach → Override.`;
+    return t("thermal.machWarning", {mach: state.mach.toFixed(3)});
 }
 
 export function thermalSettings(cameraNode, sit) {
@@ -122,12 +123,10 @@ const DRIVEN_OPTICS = new Set(["focalStep", "focalLengthM", "verticalFovDeg", "f
 export const THERMAL_LOOK_HIDDEN = new Set(["objectTemperatureK", "emissivity", "pictureWidth", "pictureHeight",
     "sunDirectionX", "sunDirectionY", "sunDirectionZ"]);
 
-export function thermalSolarGeometry(position, date, radii = Globals, direction = getCelestialDirection) {
+export function thermalSolarGeometry(position, date, direction = getCelestialDirection) {
     const sun = direction("Sun", date, position)?.normalize();
     if (!sun) throw new Error("Cannot calculate the thermal Sun direction for this scene time.");
-    const up = new Vector3(position.x / radii.equatorRadius ** 2,
-        position.y / radii.equatorRadius ** 2, position.z / radii.polarRadius ** 2).normalize();
-    const east = new Vector3(-position.y, position.x, 0).normalize(), north = new Vector3().crossVectors(up, east);
+    const up = getLocalUpVector(position), east = getLocalEastVector(position), north = getLocalNorthVector(position);
     return {direction: sun, elevationDeg: Math.asin(Math.max(-1, Math.min(1, sun.dot(up)))) * 180 / Math.PI,
         azimuthDeg: (Math.atan2(sun.dot(east), sun.dot(north)) * 180 / Math.PI + 360) % 360};
 }
@@ -203,15 +202,14 @@ export function thermalFieldMapping(camera, settings) {
 
 // Altitude is height above mean sea level (h_ellipsoid = h_MSL + N): the thermal sea and the atmosphere
 // profile begin at sea level, where Sitrec puts terrain and track altitudes. The ellipsoid can lie tens of
-// metres above or below it, more than the height of a ship's camera.
-export function thermalGeometry(camera, target, radii = Globals, geoidHeight = meanSeaLevelOffset) {
+// meters above or below it, more than the height of a ship's camera.
+export function thermalGeometry(camera, target, geoidHeight = meanSeaLevelOffset) {
     camera.updateWorldMatrix(true, false);
     const position = new Vector3().setFromMatrixPosition(camera.matrixWorld);
-    const up = new Vector3(position.x / radii.equatorRadius ** 2,
-        position.y / radii.equatorRadius ** 2, position.z / radii.polarRadius ** 2).normalize();
+    const up = getLocalUpVector(position);
     const skyUp = up.clone().transformDirection(camera.matrixWorldInverse);
     const lla = ECEFToLLAVD_radii(position);
-    const sensorAltitudeM = Math.max(0, ellipsoidAltitude(position, radii.equatorRadius, radii.polarRadius)
+    const sensorAltitudeM = Math.max(0, ellipsoidAltitude(position, Globals.equatorRadius, Globals.polarRadius)
         - geoidHeight(lla.x, lla.y));
     const pathElevationDeg = Math.asin(Math.max(-1, Math.min(1, -skyUp.z))) * 180 / Math.PI;
     const relative = target?.clone().sub(position);
@@ -221,20 +219,22 @@ export function thermalGeometry(camera, target, radii = Globals, geoidHeight = m
             elevationRad: Math.asin(Math.max(-1, Math.min(1, relative.dot(up) / rangeM)))} : null};
 }
 
-export function createThermalViewAdapter(view) {
+// reuseBudgetMs: the CPU time a paused frame's reuse key may take (see below).
+export function createThermalViewAdapter(view, {reuseBudgetMs = 10} = {}) {
     // Unit-mass kernel L1 error bounds radiance error by 0.1% of maximum scene contrast. Retaining this certified
     // response longer avoids frequent spectrum rebuilds; synchronous captures still use the exact current kernel.
     const pipeline = new ThermalPipeline(view.renderer, {analysis: false, opticsToleranceL1: .001, onReady: () => setRenderOne(true),
-        createOpticsWorker: () => import("./ThermalWorkerFactory.js").then(module => module.createOpticsWorker()),
         createAtmosphereWorker: () => import("./ThermalWorkerFactory.js").then(module => module.createAtmosphereWorker())});
     let controls, lastSettings, mapping, geometry, turbulence, turbulenceKey, comparisonPipeline, comparison;
     let atmosphere, atmosphereKey, vehicles = [], solar, groundClasses = null, groundMask = null, groundMaskState = null;
+    const soundingIds = new WeakMap();
+    let soundingCount = 0;
     // What the camera data drives at the last drawn frame, and the focal length of the last frame drawn with validated
     // optics (for the readout while a new lens builds).
     let drive = {lens: false, polarity: false, field: false}, cameraData = null, fieldLens = null, validatedFocalM = null;
     // Estimated budget: a paused frame's key costs a few ms in a scene with hundreds of meshes, against ~80 ms for
     // the full render it can save; a key that runs out of budget only disables reuse for that draw.
-    const reuseKey = createThermalReuseKey({budgetMs: 10});
+    const reuseKey = createThermalReuseKey({budgetMs: reuseBudgetMs});
     const settings = () => lastSettings ?? thermalSettings(view.cameraNode, Sit);
     const lensSource = () => {
         const saved = view.cameraNode.thermalSensor;
@@ -340,9 +340,11 @@ export function createThermalViewAdapter(view) {
         camera.matrixWorldInverse.copy(view.camera.matrixWorldInverse);
         const objects = [], clouds = [];
         NodeMan.iterate((id, node) => {if (node.isThermalObject) objects.push(node); if (node.isThermalCloud) clouds.push(node);});
+        // A sounding is a value that is replaced, never edited, so its identity names its contents.
         const sounding = activeThermalSounding(configured);
+        if (sounding && !soundingIds.has(sounding)) soundingIds.set(sounding, ++soundingCount);
         const profileKey = JSON.stringify([configured.surfaceTemperatureK, configured.waterVaporDensityKgM3,
-            configured.visibilityM, configured.atmosphereEnabled, sounding]);
+            configured.visibilityM, configured.atmosphereEnabled, sounding ? soundingIds.get(sounding) : null]);
         if (profileKey !== atmosphereKey) {
             atmosphere = thermalSceneAtmosphere(configured, sounding); atmosphereKey = profileKey;
         }
@@ -384,8 +386,8 @@ export function createThermalViewAdapter(view) {
                 groundAltitudeM = Math.max(0, Math.round(height / 25) * 25);
             }
         }
-        const radianceAdapter = createThermalSceneAdapter(objects, groundRoots, camera, options, clouds,
-            {groundClasses: groundClasses?.classes, groundMask: groundMaskState?.texture ? groundMaskState : null, groundAltitudeM});
+        const groundInputs = {groundClasses: groundClasses?.classes, groundMask: groundMaskState?.texture ? groundMaskState : null, groundAltitudeM};
+        const radianceAdapter = createThermalSceneAdapter(objects, groundRoots, camera, options, clouds, groundInputs);
         // Playback can place par.frame between video frames (for example 126.5). The scene uses that exact
         // time; the detector's noise, temporal filter and gain count whole frames, so it gets the frame in progress.
         // While playing, further draws inside a frame that already rendered show that frame's image (holdFrame).
@@ -402,10 +404,9 @@ export function createThermalViewAdapter(view) {
         withThermalRefraction(camera, options, () => withThermalScene(objects, () => {
             // Resolve vehicle tags and visibility before recording the exact inputs. Only a paused view can reuse a
             // frame (during playback the frame changes, and draws inside one frame are held), so only then is a key built.
-            inputs.reuseKey = par.paused ? reuseKey({...inputs, viewCamera: view.camera, objects, groundRoots, clouds,
-                atmosphereKey, refractionOptions: options, groundClasses: groundClasses?.classes}) : null;
-            const ready = pipeline.render(inputs);
-            if (ready === false) return;
+            inputs.reuseKey = par.paused ? reuseKey({...inputs, ...groundInputs, viewCamera: view.camera, objects, groundRoots, clouds,
+                atmosphereKey, refractionOptions: options}) : null;
+            pipeline.render(inputs);
             if (comparisonPipeline) {
                 const other = comparisonPipeline; comparisonPipeline = null;
                 // Native counts precede gain, so histories do not affect comparison.
@@ -447,12 +448,12 @@ export function createThermalViewAdapter(view) {
         ...(groundMaskState ? [groundMaskState.error ? t("thermal.groundMapUnavailable", {message: groundMaskState.error}) :
             groundMaskState.stats && groundMaskState.texture ? t("thermal.groundMapReadout", {roads: groundMaskState.stats.roads,
                 paths: groundMaskState.stats.paths, buildings: groundMaskState.stats.buildings,
-                km: (groundMaskState.region.meters / 1000).toFixed(1), metres: groundMaskState.stats.metersPerTexel.toFixed(1)}) :
+                km: (groundMaskState.region.meters / 1000).toFixed(1), meters: groundMaskState.stats.metersPerTexel.toFixed(1)}) :
             t("thermal.groundMapLoading")] : []),
         ...(groundClasses ? [t("thermal.groundClassesReadout", {condition: t(`thermal.parameters.groundCondition.options.${groundClasses.condition}`),
             climate: t(`thermal.parameters.groundClimate.options.${groundClasses.climate}`), air: groundClasses.airK.toFixed(1),
             classes: groundClasses.classes.map(c => `${t(`thermal.groundClasses.${c.id}`)} ${(groundClasses.airK + c.offsetK).toFixed(1)}`).join(", ")})] : []),
-        ...(pipeline.lastFrame?.opticsCache?.message ? [pipeline.lastFrame.opticsCache.message] : []),
+        ...(pipeline.lastFrame?.opticsCache?.messageCode ? [t(`thermal.optics.${pipeline.lastFrame.opticsCache.messageCode}`)] : []),
         ...(pipeline.lastFrame?.coverage?.tiles > pipeline.lastFrame?.coverage?.refined ? [t("thermal.coverageLimited",
             {refined: pipeline.lastFrame.coverage.refined, tiles: pipeline.lastFrame.coverage.tiles})] : []),
         ...(pipeline.lastFrame?.clouds?.diagnostics ?? []).map(d => t(`thermal.cloudDiagnostics.${d.code}`, {id: d.id})),
@@ -493,7 +494,7 @@ export function setupThermalZoneControls(node, folder) {
     for (const zone of zones) {
         const resolved = signature.resolveZone(zone);
         if (!Number.isFinite(resolved.temperatureK) || !Number.isFinite(resolved.emissivity)) continue;
-        const group = parent.addFolder(zone).close(), state = {};
+        const group = parent.addFolder(t(`thermal.zones.${zone}`, {defaultValue: zone})).close(), state = {};
         // Thin layers (a lantern canopy) also transmit. The scene adapter limits transmittance to 1 - emissivity;
         // the control shows that effective value.
         const value = key => node.thermal.zones[zone]?.[key] ?? resolved[key];
@@ -503,7 +504,7 @@ export function setupThermalZoneControls(node, folder) {
                 set: value => {node.thermal.zones[zone] = {...node.thermal.zones[zone], [key]: value}; markSitchDirty(); setRenderOne(true);}});
             // Same ranges and steps as the shared schema's objectTemperatureK and emissivity.
             const [min, max, step] = key === "temperatureK" ? [0, 3000, 1] : [0, 1, 0.01];
-            group.add(state, key, min, max, step).name(t(`thermal.object.${key}`));
+            group.add(state, key, min, max, step).name(t(`thermal.object.${key}`)).listen();
         }
         group.add({reset() {delete node.thermal.zones[zone]; group.controllers.forEach(c => c.updateDisplay()); setRenderOne(true); markSitchDirty();}}, "reset")
             .name(t("thermal.object.reset"));

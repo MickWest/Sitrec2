@@ -47,6 +47,15 @@ export function disposeThermalView(view, permanent = false) {
     if (view.thermalStatus) clearThermalStatus(view);
 }
 
+// The saved render mode is no longer physical thermal: release the pipeline's GPU targets, kernel spectra and workers.
+// Not permanent: choosing physical thermal again loads a new one. An open settings folder keeps its controls, through
+// a new adapter that allocates no GPU memory until it draws.
+export function releaseThermalView(view) {
+    disposeThermalView(view);
+    clearThermalStatus(view);
+    if (view._thermalFolder && !view._thermalFolder._closed) ensureThermalView(view);
+}
+
 export function setupThermalMenu(view, parent, readoutView) {
     const folder = parent.addFolder(t("thermal.title")).close();
     view._thermalFolder = folder;
@@ -54,9 +63,9 @@ export function setupThermalMenu(view, parent, readoutView) {
         .name(t("thermal.mode")).listen().onChange(() => {
             view._thermalError = null;
             // The saved choice, not this frame's route: a choice made on a visible-light frame of camera data
-            // still loads the sensor for the infrared frames.
+            // still loads the sensor for the infrared frames, and keeps it while the camera data shows visible light.
             if (view.renderMode === "physicalThermal") ensureThermalView(view);
-            else clearThermalStatus(view);
+            else releaseThermalView(view);
             markSitchDirty(); setRenderOne(true);
         });
     // The same flag as the view's entry in Show/Hide > Views. The view saves it with the sitch.
@@ -76,13 +85,14 @@ export function setupThermalMenu(view, parent, readoutView) {
 export function setupObjectThermalMenu(node) {
     const folder = node.gui.addFolder(t("thermal.object.title")).close();
     const update = () => {markSitchDirty(); setRenderOne(true);};
+    // listen(): a load, a chapter switch or an undo restores node.thermal in place (CNode3DObject.modDeserialize).
     folder.add(node.thermal, "mode", {[t("thermal.object.inherit")]: "inherit", [t("thermal.object.uniform")]: "uniform"})
-        .name(t("thermal.mode")).onChange(update);
+        .name(t("thermal.mode")).listen().onChange(update);
     // Same ranges and steps as the shared schema's objectTemperatureK and emissivity.
     folder.add(node.thermal, "temperatureK", 0, 3000, 1)
-        .name(t("thermal.object.temperatureK")).onChange(update);
+        .name(t("thermal.object.temperatureK")).listen().onChange(update);
     folder.add(node.thermal, "emissivity", 0, 1, 0.01)
-        .name(t("thermal.object.emissivity")).onChange(update);
+        .name(t("thermal.object.emissivity")).listen().onChange(update);
     // Zone controls use the same resolved vehicle signature, loaded on demand.
     folder.onOpenClose(changed => {
         if (changed !== folder || folder._closed || node._thermalZonesLoading) return;
@@ -101,5 +111,7 @@ export function objectThermalState(value = {}) {
         airTemperatureK: Number.isFinite(value?.airTemperatureK) ? value.airTemperatureK : null,
         mach: Number.isFinite(value?.mach) ? value.mach : null,
         power: Number.isFinite(value?.power) ? value.power : null,
+        // Null means the canopy follows the burn power.
+        canopyPower: Number.isFinite(value?.canopyPower) ? value.canopyPower : null,
         zones: JSON.parse(JSON.stringify(value?.zones ?? {}))};
 }

@@ -339,7 +339,7 @@ export async function runThermalSelfTest() {
                 live.render({scene: uniform, camera, settings: configured, target});
                 record("Coarse startup has a completed display", 1, Number(live.hasFrame), 0);
                 record("Coarse startup states its calculated contrast error bound", 2, live.lastFrame.opticsCache.errorL1, 0);
-                record("Coarse startup has a readout label", 1, Number(live.lastFrame.opticsCache.message.includes("Coarse")), 0);
+                record("Coarse startup has a readout label", 1, Number(live.lastFrame.opticsCache.messageCode === "coarse"), 0);
                 await live.opticsScheduler.workerPromise;
                 await Promise.resolve();
                 worker.onmessage({data: {id: request.id, domain: buildOpticalDomain(request.settings,

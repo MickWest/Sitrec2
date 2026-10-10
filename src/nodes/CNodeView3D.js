@@ -1,4 +1,4 @@
-import {clearThermalStatus, disposeThermalView, ensureThermalView, thermalRenderMode, thermalStatus, thermalUnavailable} from "../rendering/ThermalLoader";
+import {clearThermalStatus, disposeThermalView, ensureThermalView, releaseThermalView, thermalRenderMode, thermalStatus, thermalUnavailable} from "../rendering/ThermalLoader";
 import {migrateViewColorSettings, splitViewEffects, viewColorPolicy} from "../rendering/ViewColorPipeline";
 import {effectiveRenderMode, frameEffectPasses, frameRenderModeFor} from "../rendering/ViewRenderMode";
 import {SoftDepthPass} from "../rendering/SoftDepth";
@@ -2194,7 +2194,7 @@ export class CNodeView3D extends CNodeViewCanvas {
     getPendingLoadState(viewIds = null) {
         if (effectiveRenderMode(this) === "physicalThermal" && (!viewIds || viewIds.includes(this.id))) {
             // An export also waits for this frame's thermal image: drawn for this frame (a draw that the main loop's
-            // GPU pacing held, or one whose atmosphere was not ready, shows an earlier image), with no spectrum refresh
+            // GPU pacing held shows an earlier image), with no spectrum refresh
             // still being staged and kernels inside their validated domain (not the previous lens while a new lens
             // step builds, nor the coarse preview). Not on the scheduler's pending flag, which a prefetch build also
             // sets while the shown kernels are validated. With fenced gain it waits for this frame's own statistics.
@@ -2203,8 +2203,7 @@ export class CNodeView3D extends CNodeViewCanvas {
             const draws = this.visible && this._effectivelyVisible !== false && !this._thermalError &&
                 !this.thermalRouteUnavailable();
             const pipeline = draws ? this._thermalAdapter?.pipeline : null, shown = pipeline?.lastFrame;
-            const image = !!pipeline && (!pipeline.hasFrame || shown?.frame !== Math.max(0, Math.floor(par.frame)) ||
-                shown.held === true);
+            const image = !!pipeline && (!pipeline.hasFrame || shown?.frame !== Math.max(0, Math.floor(par.frame)));
             const optics = !!pipeline && (!!pipeline.pendingOptics || pipeline.opticsReport?.outsideValidatedDomain === true);
             const gain = pipeline?.gainReport?.mode === "fenced" && pipeline.gainReport.settled !== true;
             const thermal = !!this._thermalLoading;
@@ -3370,7 +3369,10 @@ export class CNodeView3D extends CNodeViewCanvas {
 
     modDeserialize(v) {
         super.modDeserialize(v)
+        const previousRenderMode = this.renderMode;
         this.renderMode = thermalRenderMode(v.renderMode);
+        // A restored state (a chapter, an undo) that returns to visible releases the thermal pipeline, as the menu does.
+        if (previousRenderMode === "physicalThermal" && this.renderMode !== "physicalThermal") releaseThermalView(this);
         if (v.focusTrackName !== undefined) this.focusTrackName = v.focusTrackName
         if (v.lockTrackName !== undefined) this.lockTrackName = v.lockTrackName
         if (v.effectsEnabled !== undefined) this.effectsEnabled = v.effectsEnabled
