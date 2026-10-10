@@ -216,8 +216,13 @@ export async function setupConfigPaths() {
     // own directory ("./sitrec-terrain/") or at any other origin serving the same layout.
     SITREC_TERRAIN = getEnv("SITREC_TERRAIN_URL", process.env.SITREC_TERRAIN_URL) || "../sitrec-terrain/";
     
-    // Populate Globals.env from compile-time process.env values (injected by dotenv-webpack)
+    // Populate Globals.env from compile-time process.env values (injected by dotenv-webpack).
+    // The values are the text from shared.env ("true", "false"), so the flags among them
+    // are read with envFlag(), the same as the "1" / "" that PHP sends in server mode.
+    // ALLOW_OVERRIDE (EnvOverride.js) is in Globals.env in both modes; in server mode
+    // config_paths.php sends it.
     Globals.env = {
+        ALLOW_OVERRIDE: getEnv("ALLOW_OVERRIDE", process.env.ALLOW_OVERRIDE),
         SITREC_USE_CUSTOM_TLE: getEnv("SITREC_USE_CUSTOM_TLE", process.env.SITREC_USE_CUSTOM_TLE),
         SITREC_CUSTOM_TLE_MENU_NAME: getEnv("SITREC_CUSTOM_TLE_MENU_NAME", process.env.SITREC_CUSTOM_TLE_MENU_NAME),
         SITREC_CUSTOM_TLE_TOOLTIP: getEnv("SITREC_CUSTOM_TLE_TOOLTIP", process.env.SITREC_CUSTOM_TLE_TOOLTIP),

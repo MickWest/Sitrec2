@@ -62,7 +62,13 @@ The seven flags below `IS_SECURE_BUILD` are the build's **security flags**. `src
 - a **security flag** the build set to `"false"` stays `"false"`: a runtime value of `"false"` is accepted, anything else (`"true"`, `"1"`, an empty string) is ignored;
 - a **sensitive key** (same rule as the build) is ignored outright, so a token blanked at build time cannot be supplied at run time.
 
-Every other setting is overridable as usual. In every other build `getEnv()` is unchanged; the checks are compiled out. `tests/envUtilsSecureRatchet.test.js` proves both halves.
+Every other setting can be set at run time as usual. In every other build `getEnv()` is unchanged; the checks are compiled out. `tests/envUtilsSecureRatchet.test.js` proves both halves.
+
+## The user's SITREC_ ENV Override
+
+A user can also replace settings for their own browser, with **Settings ▸ SITREC_ ENV Override…** (see [the Settings Manager](SettingsManager.md#sitrec_-env-override)). In every build that override is default-deny: a line is used only if its name starts with `SITREC_` and matches a pattern in the installation's `ALLOW_OVERRIDE` list. With no list, or an empty one, a user can override nothing and the menu entry is not shown. So a user cannot add a map, elevation or water source, or any other setting, that the installation did not allow.
+
+The secure build adds its own rule on top, in `userOverrideAllowed()` in `src/envUtils.js`: a user can set a security flag only to `"false"`, whatever value the installation sent, and cannot supply a credential. `tests/EnvOverride.test.js` covers the list and this rule.
 
 ## What is removed
 

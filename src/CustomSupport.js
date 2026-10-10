@@ -71,7 +71,7 @@ import * as LAYER from "./LayerMasks";
 import {forceUpdateUIText} from "./nodes/CNodeViewUI";
 import {configParams} from "./runtimeConfig";
 import {showError, showConfirm, showChoice, showTextEditor} from "./showError";
-import {applyEnvOverride} from "./EnvOverride";
+import {applyEnvOverride, envOverrideAvailable} from "./EnvOverride";
 import {
     hasAnyKey as byokHasAnyKey, hasCachedKey, isProviderConfigured, primeKeyCache,
 } from "./BYOKKeyStore";
@@ -789,10 +789,13 @@ export class CCustomManager {
             .name(t("custom.settings.apiKeys.label"))
             .tooltip(t("custom.settings.apiKeys.tooltip"));
 
-        settingsFolder
-            .add({envOverride: () => this.editEnvOverride()}, "envOverride")
-            .name(t("custom.settings.envOverride.label"))
-            .tooltip(t("custom.settings.envOverride.tooltip"));
+        // Only when the installation's ALLOW_OVERRIDE lets a user override something.
+        if (envOverrideAvailable()) {
+            settingsFolder
+                .add({envOverride: () => this.editEnvOverride()}, "envOverride")
+                .name(t("custom.settings.envOverride.label"))
+                .tooltip(t("custom.settings.envOverride.tooltip"));
+        }
 
         // Add Center Sidebar toggle
         settingsFolder.add(Globals.settings, "centerSidebar")

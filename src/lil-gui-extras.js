@@ -2885,7 +2885,9 @@ export class CGuiMenuBar {
 
         // Create the GUI with the container
         const gui = new GUI({ container: containerDiv, autoPlace: false });
-        gui.$title.innerHTML = title;
+        // Text, never markup: the title carries track, object and marker names from a
+        // loaded sitch.
+        gui.$title.textContent = title;
 
         // Set up the standalone menu properties
         gui.mode = "DETACHED";

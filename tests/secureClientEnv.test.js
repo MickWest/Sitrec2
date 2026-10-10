@@ -70,6 +70,8 @@ describe("buildSecureClientEnv", () => {
         const names = loadClientVarNames();
         expect(names.has("DEFAULT_MAP_TYPE")).toBe(true);
         expect(names.has("SAVE_TO_S3")).toBe(true);
+        // The list of settings a user may override reaches the page in every build.
+        expect(names.has("ALLOW_OVERRIDE")).toBe(true);
         expect(names.has("XENFORO_PATH")).toBe(false);
         expect(names.has("S3_SECRET_ACCESS_KEY")).toBe(false);
 
@@ -81,6 +83,7 @@ describe("buildSecureClientEnv", () => {
         const env = buildSecureClientEnv({
             exampleEnv: {
                 DEFAULT_MAP_TYPE: "ESRI",
+                ALLOW_OVERRIDE: "SITREC_CUSTOM_SOUNDING_*",
                 XENFORO_PATH: "/srv/forum/",
                 CUSTOM_WIND_URL: "https://wx.example.com/{date}.grib2",
                 SITREC_FORUM_ORIGIN: "https://forum.example.com",
@@ -89,6 +92,7 @@ describe("buildSecureClientEnv", () => {
             liveEnv: {},
         });
         expect(env.DEFAULT_MAP_TYPE).toBe("ESRI");
+        expect(env.ALLOW_OVERRIDE).toBe("SITREC_CUSTOM_SOUNDING_*");
         expect(env.SITREC_CUSTOM_MAP_INTERNAL_URL).toBe("https://tiles.internal/{z}/{x}/{y}.jpg");
         expect(env.XENFORO_PATH).toBeUndefined();
         expect(env.CUSTOM_WIND_URL).toBeUndefined();

@@ -51,15 +51,32 @@ export function setUserEnvOverrides(overrides) {
 }
 
 /**
- * True if a user override for `name` is used. Always true outside the secure build.
- * In the secure build a user override is held to the same rule as a runtime one: it
- * can tighten a security flag but never loosen it, and it cannot supply a credential.
+ * The secure build's rule for a user override. Always true outside the secure build.
+ * In the secure build a user can set a security flag only to "false", whatever the
+ * installation's value is, and cannot supply a credential. The value is not compared
+ * with the installation's: in server mode that value comes from PHP, which sends a
+ * false flag as "" or leaves it out.
  * @param {string} name
  * @param {string} override - the user's value
- * @param {string|undefined} baseValue - the value in force without the override
  */
-export function userOverrideAllowed(name, override, baseValue) {
-    return !(isSecureBuild && secureBuildRejectsRuntimeValue(name, override, baseValue));
+export function userOverrideAllowed(name, override) {
+    if (!isSecureBuild) return true;
+    if (isSensitiveEnvKey(name)) return false;
+    return !SECURE_SECURITY_FLAGS.includes(name) || isFalseString(override);
+}
+
+/**
+ * A flag from Globals.env as a boolean. Globals.env holds text: in server mode PHP sends
+ * true as "1" and false as "" (or leaves the key out); in serverless mode, and from the
+ * user's override, it is the text from shared.env, such as "true" or "false".
+ * Off: a missing value, "", "0" and "false" (any case, spaces around it ignored). On: any
+ * other text.
+ * @param {string|undefined} value
+ * @returns {boolean}
+ */
+export function envFlag(value) {
+    const text = String(value ?? "").trim().toLowerCase();
+    return text !== "" && text !== "0" && text !== "false";
 }
 
 /**
@@ -84,7 +101,7 @@ export function getEnv(name, fallback) {
 
     // The user's override, if there is one for this name and the build allows it.
     if (Object.prototype.hasOwnProperty.call(userEnvOverrides, name)
-        && userOverrideAllowed(name, userEnvOverrides[name], value)) {
+        && userOverrideAllowed(name, userEnvOverrides[name])) {
         value = userEnvOverrides[name];
     }
 

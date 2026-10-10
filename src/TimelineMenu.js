@@ -64,9 +64,6 @@ export function resetInOut() {
 // pointer, or null.
 export function showTimelineMenu(event, cursorFrame, marker) {
     const currentFrame = Math.round(par.frame);
-    // createStandaloneMenu sets its title with innerHTML, and a label can come
-    // from a loaded sitch file, so it gets only the numeric title; a marker's
-    // name goes in through title(), which sets textContent.
     const menu = Globals.menuBar?.createStandaloneMenu(t("timelineMarkers.menuTitle", {frame: Math.round(cursorFrame)}),
         event.clientX, event.clientY, true, true);
     if (!menu) return null;

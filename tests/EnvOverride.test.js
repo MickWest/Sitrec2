@@ -2,11 +2,18 @@
 // user's settings, whose SITREC_* lines replace the installation's values in this browser.
 
 import {parseEnvText, stripEnvComment} from '../tools/src/envText.js';
-import {applyEnvOverride, readEnvOverride} from '../src/EnvOverride';
-import {getEnv, getEnvBool} from '../src/envUtils';
+import {
+    allowOverrideList,
+    applyEnvOverride,
+    envOverrideAvailable,
+    parseAllowOverride,
+    readEnvOverride,
+} from '../src/EnvOverride';
+import {envFlag, getEnv, getEnvBool} from '../src/envUtils';
 import {Globals} from '../src/Globals';
 import {ENV_OVERRIDE_MAX_LENGTH, sanitizeSettings} from '../src/SettingsManager';
 import {soundingXMLLayoutsFromEnv} from '../src/ParseSoundingXML';
+import {CUSTOM_WIND_KEY, getWindSources} from '../src/nodes/WindSources';
 
 const {parseEnv, stripComment} = require('../scripts/envFile.js');
 
@@ -57,19 +64,77 @@ describe('parseEnvText (the browser reader of shared.env text)', () => {
 
 describe('readEnvOverride', () => {
     test('uses SITREC_ names only, and says which lines it left out', () => {
-        const {accepted, ignored} = readEnvOverride("SITREC_X=1\nMAPBOX_TOKEN=abc\nSAVE_TO_S3=true\nSITREC_Y=two");
+        const {accepted, ignored} = readEnvOverride("SITREC_X=1\nMAPBOX_TOKEN=abc\nSAVE_TO_S3=true\nSITREC_Y=two", "SITREC_*");
         expect(accepted).toEqual({SITREC_X: "1", SITREC_Y: "two"});
         expect(ignored).toEqual([
             {key: "MAPBOX_TOKEN", reason: "notSitrec"},
             {key: "SAVE_TO_S3", reason: "notSitrec"},
         ]);
     });
+
+    test('with no ALLOW_OVERRIDE list, or an empty one, it uses nothing', () => {
+        const text = "SITREC_X=1\nSITREC_CUSTOM_SOUNDING_WX_LEVEL_TAG=Level";
+        for (const list of [undefined, "", " , ,"]) {
+            const {accepted, ignored} = readEnvOverride(text, list);
+            expect(accepted).toEqual({});
+            expect(ignored).toEqual([
+                {key: "SITREC_X", reason: "notAllowed"},
+                {key: "SITREC_CUSTOM_SOUNDING_WX_LEVEL_TAG", reason: "notAllowed"},
+            ]);
+        }
+    });
+
+    test('uses only the keys an ALLOW_OVERRIDE pattern matches', () => {
+        const {accepted, ignored} = readEnvOverride(
+            "SITREC_CUSTOM_SOUNDING_WX_LEVEL_TAG=Level\n"
+            + "SITREC_CUSTOM_MAP_X_URL=https://tiles.example.net/{z}/{x}/{y}.png\n"
+            + "SITREC_USE_CUSTOM_WIND=true\n"
+            + "SITREC_FORUM_ORIGIN=https://forum.example.net",
+            "SITREC_CUSTOM_SOUNDING_* , SITREC_USE_CUSTOM_WIND");
+        expect(accepted).toEqual({SITREC_CUSTOM_SOUNDING_WX_LEVEL_TAG: "Level", SITREC_USE_CUSTOM_WIND: "true"});
+        expect(ignored).toEqual([
+            {key: "SITREC_CUSTOM_MAP_X_URL", reason: "notAllowed"},
+            {key: "SITREC_FORUM_ORIGIN", reason: "notAllowed"},
+        ]);
+    });
+});
+
+describe('parseAllowOverride', () => {
+    const allows = (list, key) => parseAllowOverride(list).some(pattern => pattern.test(key));
+
+    test('a pattern must match the whole key', () => {
+        expect(allows("SITREC_USE_CUSTOM_WIND", "SITREC_USE_CUSTOM_WIND")).toBe(true);
+        expect(allows("SITREC_USE_CUSTOM_WIND", "SITREC_USE_CUSTOM_WIND_X")).toBe(false);
+        expect(allows("SITREC_USE_CUSTOM", "SITREC_USE_CUSTOM_WIND")).toBe(false);
+        expect(allows("USE_CUSTOM_WIND", "SITREC_USE_CUSTOM_WIND")).toBe(false);
+    });
+
+    test('* matches any characters, none included, anywhere in the pattern', () => {
+        expect(allows("SITREC_*", "SITREC_ANYTHING_AT_ALL")).toBe(true);
+        expect(allows("SITREC_CUSTOM_SOUNDING_*", "SITREC_CUSTOM_SOUNDING_")).toBe(true);
+        expect(allows("SITREC_CUSTOM_*_NAME", "SITREC_CUSTOM_MAP_X_NAME")).toBe(true);
+        expect(allows("SITREC_CUSTOM_*_NAME", "SITREC_CUSTOM_MAP_X_URL")).toBe(false);
+        expect(allows("*", "SITREC_X")).toBe(true);
+    });
+
+    test('other characters are literal, and spaces around an entry are ignored', () => {
+        expect(allows("SITREC_.X", "SITREC_AX")).toBe(false);
+        expect(allows("  SITREC_A ,SITREC_B  ", "SITREC_B")).toBe(true);
+        expect(parseAllowOverride("SITREC_A, ,SITREC_B,")).toHaveLength(2);
+        expect(parseAllowOverride(undefined)).toEqual([]);
+    });
 });
 
 describe('applyEnvOverride', () => {
     const savedEnv = Globals.env;
+    const INSTALLATION = {
+        ALLOW_OVERRIDE: "SITREC_*",
+        SITREC_USE_CUSTOM_WIND: "",         // PHP's form of false
+        SITREC_CUSTOM_WIND_MENU_NAME: "Site Wind",
+        UPLOAD: "/u/",
+    };
     beforeEach(() => {
-        Globals.env = {SITREC_USE_CUSTOM_WIND: "false", SITREC_CUSTOM_WIND_MENU_NAME: "Site Wind", UPLOAD: "/u/"};
+        Globals.env = {...INSTALLATION};
     });
     afterEach(() => {
         applyEnvOverride("");
@@ -109,12 +174,12 @@ describe('applyEnvOverride', () => {
     test('a line taken out of the text stops overriding', () => {
         applyEnvOverride("SITREC_USE_CUSTOM_WIND=true\nSITREC_NEW=1");
         applyEnvOverride("SITREC_NEW=2");
-        expect(Globals.env.SITREC_USE_CUSTOM_WIND).toBe("false");   // the installation's value is back
+        expect(Globals.env.SITREC_USE_CUSTOM_WIND).toBe("");   // the installation's value is back
         expect(Globals.env.SITREC_NEW).toBe("2");
         expect(getEnv("SITREC_USE_CUSTOM_WIND", "false")).toBe("false");
 
         applyEnvOverride("");
-        expect(Globals.env).toEqual({SITREC_USE_CUSTOM_WIND: "false", SITREC_CUSTOM_WIND_MENU_NAME: "Site Wind", UPLOAD: "/u/"});
+        expect(Globals.env).toEqual(INSTALLATION);
         expect(getEnv("SITREC_NEW", undefined)).toBeUndefined();
     });
 
@@ -123,6 +188,63 @@ describe('applyEnvOverride', () => {
         expect(ignored.map(entry => entry.key)).toEqual(["UPLOAD", "CHATBOT_ENABLED"]);
         expect(Globals.env.UPLOAD).toBe("/u/");
         expect(getEnv("CHATBOT_ENABLED", "false")).toBe("false");
+    });
+
+    test('ALLOW_OVERRIDE itself cannot be changed by the user', () => {
+        Globals.env.ALLOW_OVERRIDE = "SITREC_CUSTOM_SOUNDING_*";
+        const {accepted, ignored} = applyEnvOverride("ALLOW_OVERRIDE=*\nSITREC_USE_CUSTOM_WIND=true");
+        expect(ignored).toEqual([
+            {key: "ALLOW_OVERRIDE", reason: "notSitrec"},
+            {key: "SITREC_USE_CUSTOM_WIND", reason: "notAllowed"},
+        ]);
+        expect(accepted).toEqual({});
+        expect(Globals.env.ALLOW_OVERRIDE).toBe("SITREC_CUSTOM_SOUNDING_*");
+        expect(allowOverrideList()).toBe("SITREC_CUSTOM_SOUNDING_*");
+        expect(getEnv("ALLOW_OVERRIDE", "SITREC_CUSTOM_SOUNDING_*")).toBe("SITREC_CUSTOM_SOUNDING_*");
+        // Even a list that allows every key cannot take it: it is not a SITREC_ key.
+        Globals.env.ALLOW_OVERRIDE = "*";
+        expect(applyEnvOverride("ALLOW_OVERRIDE=").ignored).toEqual([{key: "ALLOW_OVERRIDE", reason: "notSitrec"}]);
+        expect(allowOverrideList()).toBe("*");
+    });
+
+    test('with no ALLOW_OVERRIDE the stored text is kept but nothing is used, and the menu entry is not offered', () => {
+        delete Globals.env.ALLOW_OVERRIDE;
+        expect(envOverrideAvailable()).toBe(false);
+        const {accepted, ignored} = applyEnvOverride("SITREC_USE_CUSTOM_WIND=true");
+        expect(accepted).toEqual({});
+        expect(ignored).toEqual([{key: "SITREC_USE_CUSTOM_WIND", reason: "notAllowed"}]);
+        expect(Globals.env.SITREC_USE_CUSTOM_WIND).toBe("");
+        expect(getEnv("SITREC_USE_CUSTOM_WIND", "false")).toBe("false");
+
+        Globals.env.ALLOW_OVERRIDE = "";
+        expect(envOverrideAvailable()).toBe(false);
+        Globals.env.ALLOW_OVERRIDE = "SITREC_CUSTOM_SOUNDING_*";
+        expect(envOverrideAvailable()).toBe(true);
+    });
+
+    test('an override to "false" turns a Globals.env flag off', () => {
+        Globals.env.SITREC_USE_CUSTOM_WIND = "1";    // PHP's form of true
+        expect(getWindSources().some(source => source.key === CUSTOM_WIND_KEY)).toBe(true);
+        applyEnvOverride("SITREC_USE_CUSTOM_WIND=false");
+        expect(Globals.env.SITREC_USE_CUSTOM_WIND).toBe("false");
+        expect(envFlag(Globals.env.SITREC_USE_CUSTOM_WIND)).toBe(false);
+        expect(getWindSources().some(source => source.key === CUSTOM_WIND_KEY)).toBe(false);
+        applyEnvOverride("SITREC_USE_CUSTOM_WIND=true");
+        expect(getWindSources().some(source => source.key === CUSTOM_WIND_KEY)).toBe(true);
+    });
+});
+
+describe('envFlag: a Globals.env flag as a boolean', () => {
+    test('off for a missing value, "", "0" and "false" in any case', () => {
+        for (const value of [undefined, null, "", "0", " 0\r", "false", "FALSE", "False", " false ", "false\r"]) {
+            expect([value, envFlag(value)]).toEqual([value, false]);
+        }
+    });
+
+    test('on for PHP\'s "1" and for "true"', () => {
+        for (const value of ["1", "true", "TRUE", " true\r\n"]) {
+            expect([value, envFlag(value)]).toEqual([value, true]);
+        }
     });
 });
 
@@ -146,26 +268,63 @@ describe('the secure build holds a user override to the runtime rule', () => {
         return modules;
     }
 
-    test('it cannot loosen a security flag or supply a credential, but can tighten and can set a plain value', () => {
-        const {applyEnvOverride: apply, getEnv: get, Globals: globals} = loadSecure();
-        globals.env = {SITREC_ENABLE_DEFAULT_MAP_SOURCES: "false", SITREC_ENABLE_DEFAULT_TLE_SOURCES: "true"};
+    // Globals.env as PHP sends it: a false flag is "" (putenv of false), and a flag the
+    // installation did not set is absent.
+    test('it cannot turn on a security flag or supply a credential, whatever the installation sent', () => {
+        const {applyEnvOverride: apply, getEnv: get, envFlag: flag, Globals: globals} = loadSecure();
+        for (const installation of [
+            {SITREC_ENABLE_DEFAULT_MAP_SOURCES: "", SITREC_ENABLE_DEFAULT_TLE_SOURCES: ""},
+            {},
+        ]) {
+            globals.env = {ALLOW_OVERRIDE: "SITREC_*", ...installation};
 
-        const {accepted, ignored} = apply("SITREC_ENABLE_DEFAULT_MAP_SOURCES=true\n"
-            + "SITREC_ENABLE_DEFAULT_TLE_SOURCES=false\n"
-            + "SITREC_SOME_API_KEY=secret\n"
+            const {accepted, ignored} = apply("SITREC_ENABLE_DEFAULT_MAP_SOURCES=true\n"
+                + "SITREC_ENABLE_DEFAULT_TLE_SOURCES=true\n"
+                + "SITREC_TRACK_STATS=1\n"
+                + "SITREC_SOME_API_KEY=secret\n"
+                + "SITREC_CUSTOM_SOUNDING_WX_LEVEL_TAG=Level");
+
+            expect(ignored).toEqual([
+                {key: "SITREC_ENABLE_DEFAULT_MAP_SOURCES", reason: "secureBuild"},
+                {key: "SITREC_ENABLE_DEFAULT_TLE_SOURCES", reason: "secureBuild"},
+                {key: "SITREC_TRACK_STATS", reason: "secureBuild"},
+                {key: "SITREC_SOME_API_KEY", reason: "secureBuild"},
+            ]);
+            expect(accepted).toEqual({SITREC_CUSTOM_SOUNDING_WX_LEVEL_TAG: "Level"});
+
+            // The satellite load menus read this flag from Globals.env.
+            expect(flag(globals.env.SITREC_ENABLE_DEFAULT_TLE_SOURCES)).toBe(false);
+            expect(get("SITREC_ENABLE_DEFAULT_MAP_SOURCES", "false")).toBe("false");
+            expect(get("SITREC_SOME_API_KEY", "")).toBe("");
+            expect(globals.env.SITREC_CUSTOM_SOUNDING_WX_LEVEL_TAG).toBe("Level");
+            apply("");
+        }
+    });
+
+    test('it can set a security flag to "false"', () => {
+        const {applyEnvOverride: apply, getEnv: get, envFlag: flag, Globals: globals} = loadSecure();
+        globals.env = {ALLOW_OVERRIDE: "SITREC_*", SITREC_ENABLE_DEFAULT_TLE_SOURCES: "1"};
+        const {accepted, ignored} = apply("SITREC_ENABLE_DEFAULT_TLE_SOURCES=false");
+        expect(ignored).toEqual([]);
+        expect(accepted).toEqual({SITREC_ENABLE_DEFAULT_TLE_SOURCES: "false"});
+        expect(flag(globals.env.SITREC_ENABLE_DEFAULT_TLE_SOURCES)).toBe(false);
+        expect(get("SITREC_ENABLE_DEFAULT_TLE_SOURCES", "false")).toBe("false");
+        apply("");
+    });
+
+    test('the ALLOW_OVERRIDE list applies first', () => {
+        const {applyEnvOverride: apply, Globals: globals} = loadSecure();
+        globals.env = {ALLOW_OVERRIDE: "SITREC_CUSTOM_SOUNDING_*"};
+        const {accepted, ignored} = apply("SITREC_CUSTOM_MAP_X_URL=https://tiles.example.net/{z}/{x}/{y}.png\n"
+            + "SITREC_ENABLE_DEFAULT_MAP_SOURCES=false\n"
             + "SITREC_CUSTOM_SOUNDING_WX_LEVEL_TAG=Level");
-
         expect(ignored).toEqual([
-            {key: "SITREC_ENABLE_DEFAULT_MAP_SOURCES", reason: "secureBuild"},
-            {key: "SITREC_SOME_API_KEY", reason: "secureBuild"},
+            {key: "SITREC_CUSTOM_MAP_X_URL", reason: "notAllowed"},
+            {key: "SITREC_ENABLE_DEFAULT_MAP_SOURCES", reason: "notAllowed"},
         ]);
-        expect(Object.keys(accepted)).toEqual(["SITREC_ENABLE_DEFAULT_TLE_SOURCES", "SITREC_CUSTOM_SOUNDING_WX_LEVEL_TAG"]);
-
-        expect(globals.env.SITREC_ENABLE_DEFAULT_MAP_SOURCES).toBe("false");
-        expect(get("SITREC_ENABLE_DEFAULT_MAP_SOURCES", "false")).toBe("false");
-        expect(get("SITREC_SOME_API_KEY", "")).toBe("");
-        expect(globals.env.SITREC_ENABLE_DEFAULT_TLE_SOURCES).toBe("false");
-        expect(globals.env.SITREC_CUSTOM_SOUNDING_WX_LEVEL_TAG).toBe("Level");
+        expect(accepted).toEqual({SITREC_CUSTOM_SOUNDING_WX_LEVEL_TAG: "Level"});
+        expect(globals.env.SITREC_CUSTOM_MAP_X_URL).toBeUndefined();
+        apply("");
     });
 });
 

@@ -197,17 +197,42 @@ saved units, camera, and terrain state also win over these preferences.
 - The text is read by `parseEnvText()` in `tools/src/envText.js`, by the same rule as
   `scripts/envFile.js` uses for `shared.env` itself. `tests/EnvOverride.test.js` holds the two
   equal.
-- Only names that start with `SITREC_` are used. Each one replaces the installation's value for
-  both kinds of reader: `getEnv()` in `src/envUtils.js` looks at the user's values last, and the
-  value is also written into `Globals.env`. A line removed from the text stops overriding; the
-  installation's value is put back.
+- A line is used only if its name starts with `SITREC_` **and** matches the installation's
+  `ALLOW_OVERRIDE` list. Each used line replaces the installation's value for both kinds of
+  reader: `getEnv()` in `src/envUtils.js` looks at the user's values last, and the value is also
+  written into `Globals.env`. A line removed from the text stops overriding; the installation's
+  value is put back.
+- `ALLOW_OVERRIDE` is a comma-separated list of patterns. Spaces around an entry are ignored,
+  `*` matches any characters, and a pattern must match the whole name:
+  `SITREC_CUSTOM_SOUNDING_*` allows the custom sounding layouts, `SITREC_*` allows every
+  `SITREC_` setting. When the list is empty or not set, no line is used and the Settings menu
+  has no **SITREC_ ENV Override…** entry. A stored text is kept, and it applies again if the
+  installation later allows its names. `ALLOW_OVERRIDE` is not a `SITREC_` name, so a user
+  cannot change the list. `config/shared.env.example` sets `SITREC_CUSTOM_SOUNDING_*`.
+- The browser reads the list with `getEnv("ALLOW_OVERRIDE", Globals.env.ALLOW_OVERRIDE)`. In
+  server mode `config_paths.php` sends it with the `SITREC_` settings, and a container also
+  forwards it (`CLIENT_VARS` in `docker/entrypoint.sh`); the value compiled into the build is
+  not used. In serverless mode it comes from the
+  build, which merges `config/shared.env.example` under `shared.env`; there, a `shared.env`
+  without the line gets the example's value, and `ALLOW_OVERRIDE=` allows nothing.
+- `applyEnvOverride()` returns the lines it did not use, each with a reason: `notSitrec` (the
+  name does not start with `SITREC_`), `notAllowed` (no `ALLOW_OVERRIDE` pattern matches it) or
+  `secureBuild` (the secure build refuses the value). The editor lists them after a save.
 - It changes only what the browser reads. The server stores the text and returns it; PHP never
   reads it as configuration, so a setting that the server uses is not changed.
-- In the secure build it is held to the same rule as a run-time value (`secureFlags.js`): it can
-  set a security flag to `false` but not to anything else, and it cannot supply a credential.
-- A reader that runs before the settings load does not see the override. The readers that
-  matter (map, elevation, satellite and wind sources, and the custom sounding layouts) are built
-  with the sitch, after that point.
+- In the secure build `userOverrideAllowed()` in `src/envUtils.js` applies on top of the list:
+  a security flag (`secureFlags.js`) can be set only to `false`, whatever value the installation
+  sent, and a credential cannot be supplied. The value is not compared with `Globals.env`,
+  because in server mode PHP sends a false flag as `""` or leaves it out.
+- `Globals.env` flags are read with `envFlag()` in `src/envUtils.js`: a missing value, `""` and
+  `false` (any case) are off, and any other text (PHP's `"1"`, `true`) is on. So an override of
+  `false` turns a flag off for these readers, as it does for `getEnvBool()`.
+- A reader that runs before the settings load does not see the override, even after a reload:
+  `SITREC_TERRAIN_URL` (read by `setupConfigPaths()`), `SITREC_CHANNELS_ENABLED` (read by
+  `src/release/bootstrap.js`, which does not use `getEnv()`) and `SITREC_TRACK_STATS` (read
+  in `src/index.js` for the visit counter and by `TileUsageTracker.init()`).
+  The readers that matter (map, elevation, satellite and wind sources, and the custom sounding
+  layouts) are built with the sitch, after that point.
 - The text is not written to the settings cookie, which holds about 4 KB and is sent with every
   request. On the cookie path it is kept in `localStorage` under `sitrecEnvOverride`.
 

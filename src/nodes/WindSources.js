@@ -18,6 +18,7 @@
 
 import {Globals, NodeMan} from "../Globals";
 import {isSecureBuild} from "../configUtils";
+import {envFlag} from "../envUtils";
 
 const BUILT_IN_WIND_SOURCES = [
     { key: "gfs",              label: "GFS (NOAA)",       short: "GFS",              autoLoad: null },
@@ -41,7 +42,7 @@ export const WIND_SOURCES = isSecureBuild
 export const CUSTOM_WIND_KEY = "custom";
 
 function getCustomWindSource() {
-    if (!Globals.env?.SITREC_USE_CUSTOM_WIND) return null;
+    if (!envFlag(Globals.env?.SITREC_USE_CUSTOM_WIND)) return null;
     const label = Globals.env.SITREC_CUSTOM_WIND_MENU_NAME || "Custom Wind";
     return {
         key: CUSTOM_WIND_KEY,

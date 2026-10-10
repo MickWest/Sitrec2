@@ -995,3 +995,29 @@ describe('moveToFolder and addHeading', () => {
         menu.destroy();
     });
 });
+
+// A standalone menu's title can be a track, object or marker name from a shared sitch.
+describe('CGuiMenuBar.createStandaloneMenu title', () => {
+    let menuBar;
+
+    beforeEach(() => {
+        document.body.innerHTML = '';
+        menuBar = new CGuiMenuBar();
+        const { Globals } = require('../src/Globals');
+        Globals.menuBar = menuBar;
+    });
+
+    afterEach(() => {
+        if (menuBar) menuBar.destroy();
+        document.body.innerHTML = '';
+    });
+
+    test('shows markup in the title as text and creates no element from it', () => {
+        const name = 'Track: <img src=x onerror=alert(1)>';
+        const menu = menuBar.createStandaloneMenu(name, 400, 100, false, false, 'track');
+        expect(menu.$title.textContent).toBe(name);
+        expect(menu.$title.querySelector('img')).toBeNull();
+        expect(document.querySelector('img')).toBeNull();
+        menu.destroy();
+    });
+});

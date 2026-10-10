@@ -724,6 +724,10 @@ Notes on that block:
   default values above include those prefixes. Point the URLs at services reachable from
   user workstations. Section 9 covers routing, CORS and content security policy.
 - No `S3_ACCESS_KEY_ID`, no `XENFORO_PATH`, no `SITREC_DEFAULT_USERID`, no provider keys.
+- No `ALLOW_OVERRIDE`, so a user cannot override any setting and Settings has no
+  **SITREC_ ENV Override…** entry. To let users try their own sounding-file layouts, add
+  `{"name": "ALLOW_OVERRIDE", "value": "SITREC_CUSTOM_SOUNDING_*"}`. See
+  [the Secure Build](Secure-Build.md#the-users-sitrec_-env-override).
 
 Register and run:
 

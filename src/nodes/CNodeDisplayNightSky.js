@@ -7,7 +7,8 @@ import {CNodeWaterReflection} from "./CNodeWaterReflection";
 import {GlobalNightSkyScene, GlobalScene, GlobalSunSkyScene, setupNightSkyScene, setupSunSkyScene} from "../LocalFrame";
 import {Color, Group, Matrix4, Ray, Raycaster, Scene, Sphere, Vector3} from "three";
 import {degrees, radians} from "../utils";
-import {getEnv} from "../envUtils";
+import {envFlag, getEnv} from "../envUtils";
+import {isSecureBuild} from "../configUtils";
 import {FileManager, GlobalDateTimeNode, Globals, guiMenus, guiShowHide, NodeMan, setRenderOne, Sit} from "../Globals";
 import {ensureNightSkyFiles} from "../ExtraFiles";
 import {
@@ -178,7 +179,7 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
             this.firstRenderTLE = true;
         });
 
-        if (Globals.env?.SITREC_USE_CUSTOM_TLE) {
+        if (envFlag(Globals.env?.SITREC_USE_CUSTOM_TLE)) {
 
             const menuName = Globals.env.SITREC_CUSTOM_TLE_MENU_NAME || "Custom Satellites";
             const tooltipText = Globals.env.SITREC_CUSTOM_TLE_TOOLTIP || "Load custom TLE data for satellites from the custom source.";
@@ -190,7 +191,10 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
 
         }
 
-        if (Globals.env?.SITREC_ENABLE_DEFAULT_TLE_SOURCES) {
+        // The secure build ships no default TLE endpoints, so it never shows these entries.
+        const defaultTLESources = !isSecureBuild && envFlag(Globals.env?.SITREC_ENABLE_DEFAULT_TLE_SOURCES);
+
+        if (defaultTLESources) {
 
             satGUI.add(this.satellites, "updateLEOSats").name(t("nightSky.loadLEO.label"))
                 .onChange(function (x) {
@@ -215,7 +219,7 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
                 .tooltip(t("nightSky.loadActive.tooltip"))
         }
 
-        if (Globals.env?.SITREC_ENABLE_DEFAULT_TLE_SOURCES) {
+        if (defaultTLESources) {
 
             satGUI.add(this.satellites, "updateSLOWSats").name(t("nightSky.loadSlow.label"))
                 .onChange(function (x) {

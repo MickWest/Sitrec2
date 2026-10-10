@@ -110,7 +110,7 @@ Sitrec identifies the format of a dropped file by itself. A layout has a list of
 
 To find the settings for a file, open **Sitrec ▸ Extra Tools ▸ XML Wind Profile Analyzer** and load the file. The tool finds the position and the levels, proposes the settings, and shows what Sitrec reads with them. It reads the file in the browser and uploads nothing. It can also make a report of the file structure (tag names, namespace addresses and unit names, with no measurements, positions or times) to send to the person who sets up Sitrec.
 
-To try settings without a change to the installation, paste them into **Sitrec ▸ Settings ▸ SITREC_ ENV Override…** and save. They then apply to you only, and you can import the file at once.
+To try settings without a change to the installation, paste them into **Sitrec ▸ Settings ▸ SITREC_ ENV Override…** and save. They then apply to you only, and you can import the file at once. This works only if the installation allows it: its `ALLOW_OVERRIDE` setting must list these names. The example configuration allows `SITREC_CUSTOM_SOUNDING_*`; when the installation allows no setting, the menu entry is not shown.
 
 To use a file, drag the `.xml` file onto the page, or use **File ▸ Import File**. It appears as a sounding track at the position in the file, named after the file. Sitrec also sets **Wind Source** to the file's own entry, **Track: \<filename\>**, so Target Wind comes from that profile at once, at the target's altitude. You can select a different source afterwards. When you open a saved sitch, its saved wind source is kept.
 

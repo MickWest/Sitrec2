@@ -162,6 +162,13 @@ if (isset($_GET["FETCH_CONFIG"])) {
 			}
 		}
 	}
+	// ALLOW_OVERRIDE: the SITREC_ settings a user may override in their own browser
+	// (src/EnvOverride.js). It is not a SITREC_ name, so it is added by name. Without
+	// it the browser lets a user override nothing.
+	$allowOverride = getenv('ALLOW_OVERRIDE');
+	if ($allowOverride !== false) {
+		$client_config['ALLOW_OVERRIDE'] = $allowOverride;
+	}
 
 	header('Content-Type: application/json');
 	sitrecAuditResult();

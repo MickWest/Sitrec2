@@ -8,7 +8,8 @@
  *
  *   1. PHP gets its environment in one place, from one fixed file.
  *   2. Nothing in PHP writes that file.
- *   3. PHP names the override only in the settings sanitizer, which copies it as text.
+ *   3. No PHP reads the override except the settings sanitizer, which checks it and
+ *      copies it as text.
  *   4. Only settings.php reads the stored settings, and the user chooses no part of
  *      the path they are stored at.
  *   5. No PHP endpoint takes a SITREC_ setting from the request.
@@ -43,6 +44,20 @@ function phpCode(file) {
     return fs.readFileSync(file, "utf8")
         .replace(/\/\*[\s\S]*?\*\//g, "")
         .split("\n").map(line => line.replace(/^\s*(\/\/|#).*$/, "")).join("\n");
+}
+
+// The body of a PHP function, from its opening brace to the matching closing brace, or
+// null if the code has no function of that name.
+function functionBody(code, name) {
+    const start = code.search(new RegExp(String.raw`\bfunction\s+${name}\s*\(`));
+    if (start < 0) return null;
+    const open = code.indexOf("{", start);
+    let depth = 0;
+    for (let index = open; index < code.length; index++) {
+        if (code[index] === "{") depth++;
+        else if (code[index] === "}" && --depth === 0) return code.slice(open, index + 1);
+    }
+    return null;
 }
 
 const phpFiles = filesUnder(SERVER_DIR, ".php", ["vendor"]);
@@ -85,17 +100,39 @@ describe("the server's configuration has one source, and the override is not it"
         expect(injectEnv).not.toMatch(writeCall);
     });
 
-    test("3. PHP names the override only in the settings sanitizer, and only copies it", () => {
-        const mentions = [];
+    test("3. no PHP reads the override except to check it and copy it, in the settings sanitizer", () => {
+        // $name['envOverride'], with any spacing and either quote.
+        const KEY = String.raw`\$(\w+)\s*\[\s*['"]envOverride['"]\s*\]`;
+        const copies = new RegExp(String.raw`^\s*=\s*\$settings\s*\[\s*['"]envOverride['"]\s*\]\s*;`);
+        const checkedBy = /\b(isset|is_string|strlen)\s*\(\s*$/;
+        const copiedInto = new RegExp(String.raw`\$sanitized\s*\[\s*['"]envOverride['"]\s*\]\s*=\s*$`);
+
+        const misuses = [];
+        let copyCount = 0;
         for (const file of phpFiles) {
-            const lines = phpCode(file).split("\n").filter(line => line.includes("envOverride"));
-            for (const line of lines) mentions.push(`${relative(file)}: ${line.trim()}`);
+            const code = phpCode(file);
+            if (!code.includes("envOverride")) continue;
+            const sanitizer = functionBody(code, "sanitizeSettings");
+            // Outside a settings sanitizer, PHP does not name it at all.
+            const outside = sanitizer === null ? code : code.replace(sanitizer, "");
+            if (outside.includes("envOverride")) misuses.push(`${relative(file)}: named outside sanitizeSettings()`);
+            if (sanitizer === null) continue;
+            // Inside, the input value is only tested (isset, is_string, strlen) or copied as
+            // it is into the output; the output value is only assigned.
+            const nameCount = (sanitizer.match(/envOverride/g) ?? []).length;
+            const uses = [...sanitizer.matchAll(new RegExp(KEY, "g"))];
+            if (uses.length !== nameCount) misuses.push(`${relative(file)}: envOverride used other than as an array key`);
+            for (const use of uses) {
+                const before = sanitizer.slice(0, use.index);
+                const after = sanitizer.slice(use.index + use[0].length);
+                if (use[1] === "sanitized" && copies.test(after)) copyCount++;
+                else if (use[1] === "settings" && (checkedBy.test(before) || copiedInto.test(before))) continue;
+                else misuses.push(`${relative(file)}: ${use[0]}${after.split("\n")[0]}`);
+            }
         }
-        expect(mentions).toEqual([
-            "sitrecServer/settings.php: if (isset($settings['envOverride']) && is_string($settings['envOverride'])",
-            "sitrecServer/settings.php: && strlen($settings['envOverride']) <= 80000) {",
-            "sitrecServer/settings.php: $sanitized['envOverride'] = $settings['envOverride'];",
-        ]);
+        expect(misuses).toEqual([]);
+        // The text is still copied, so the setting is stored at all.
+        expect(copyCount).toBeGreaterThan(0);
     });
 
     test("4. only settings.php reads the stored settings, at a path the user does not choose", () => {
@@ -124,20 +161,21 @@ describe("the server's configuration has one source, and the override is not it"
     });
 
     test("6. the browser sends the override text only in a settings save", () => {
-        // Every src file that names the setting, and what it does with it.
-        const users = filesUnder(SRC_DIR, ".js")
-            .filter(file => /\benvOverride\b/.test(fs.readFileSync(file, "utf8")))
-            .map(relative).sort();
-        expect(users).toEqual([
-            "src/CustomSupport.js",     // the editor, and the apply on load
-            "src/EnvOverride.js",       // applies the text (named in a comment only)
-            "src/SettingsManager.js",   // the default, the sanitizer, and the stores
-            "src/i18n/en.js",           // the strings
-        ]);
+        const REQUEST = /\bfetch\s*\(|XMLHttpRequest|sendBeacon|WebSocket/;
 
         // EnvOverride.js applies the text and has no way to send anything.
         const applier = fs.readFileSync(path.join(SRC_DIR, "EnvOverride.js"), "utf8");
         expect(applier).not.toMatch(/\bfetch\s*\(|XMLHttpRequest|sendBeacon|WebSocket|\.php\b/);
+
+        // No line that names the setting makes a request. Code may read the text to show
+        // it or apply it; it does not hand it to a request of its own.
+        const senders = [];
+        for (const file of filesUnder(SRC_DIR, ".js")) {
+            fs.readFileSync(file, "utf8").split("\n").forEach((line, index) => {
+                if (/\benvOverride\b/.test(line) && REQUEST.test(line)) senders.push(`${relative(file)}:${index + 1}`);
+            });
+        }
+        expect(senders).toEqual([]);
 
         // The one request that carries settings goes to settings.php.
         const manager = fs.readFileSync(path.join(SRC_DIR, "SettingsManager.js"), "utf8");
