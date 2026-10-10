@@ -9,6 +9,14 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.177.1 (2026-10-09)
+
+### Improvements
+- **MCP Bridge setup guide** (Help → Documentation → Advanced → *Control Sitrec from an AI Assistant (MCP Bridge)*): the steps to connect Codex, Claude Code or Claude Desktop to Sitrec are now a documentation page, and the in-app assistant can read it. The zip from *Download MCP Bridge* (Help → Documentation) also has a copy of the guide, so you can read the steps offline. The *Motion Analysis* help page now links to the guide's Local Compute section.
+
+### Bug Fixes
+- Fixed two broken links on the documentation pages. A GitHub link on the *User Data Egress Check* page opened a page that does not exist. The *File Rehosting and Object References* link on the *Reference Objects* page showed the raw file as plain text instead of opening the page.
+
 ## Version 2.177.0 (2026-10-09)
 
 ### New Features
