@@ -8,8 +8,10 @@ import {GlobalDateTimeNode, Globals} from "../Globals";
  * installation describes with SITREC_CUSTOM_SOUNDING_<NAME>_* settings.
  *
  * From here on it is an ordinary sounding: a CTrackFileSonde with one profile,
- * which becomes a CNodeAtmosphericProfile that the Manual Soundings wind source
- * reads. With no layout configured this handler matches nothing.
+ * which becomes a CNodeAtmosphericProfile. The import selects the track's own
+ * "Track: <name>" wind source, which reads that profile alone; the Manual Soundings
+ * source also blends it with the other loaded soundings. With no layout configured
+ * this handler matches nothing.
  */
 export class CTrackFileSoundingXML extends CTrackFileSonde {
 

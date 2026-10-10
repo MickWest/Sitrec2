@@ -913,11 +913,30 @@ function methodNodeHypothesis(meth, node, dataset, originLat, originLon, losSig)
 // rule, evidence surfaces as prose and badges only: gallery ORDERING is
 // untouched, so anomalous/fast candidates keep their positions.
 
+// The evidence class of each wind source that is not read from sounding profiles.
 const WIND_SOURCE_CLASSES = {
     manual: "assumption",
     gfs: "model", custom: "model", openmeteo: "model",
-    uwyo: "observation", igra2: "observation", "manual-soundings": "observation",
 };
+
+/**
+ * The evidence class of the wind field's current source: "assumption", "model",
+ * "observation" or "unknown". A source read from sounding profiles (UWYO, IGRA2,
+ * Manual Soundings, or the Track entry of a sounding track) is an observation only if
+ * every profile it reads is one; a profile from an XML weather file is a model unless
+ * its layout says the data is measured (CNodeAtmosphericProfile.evidenceClass).
+ *
+ * @param {Object} wf - the wind field (CNodeDisplayWindField)
+ * @param {{profiles: Object[]}|null} soundingSet - wf._soundingSet()
+ * @returns {string}
+ */
+export function windSourceEvidenceClass(wf, soundingSet) {
+    if (soundingSet) {
+        return soundingSet.profiles.every(profile => profile.evidenceClass === "observation")
+            ? "observation" : "model";
+    }
+    return WIND_SOURCE_CLASSES[wf.source] ?? "unknown";
+}
 
 // {u,v} m/s → "22 kt from 260°" (meteorological FROM direction)
 function fmtWindVec(w) {
@@ -1052,11 +1071,10 @@ function attachBalloonWindEvidence(hypotheses, dataset, originLat, originLon, pr
     const wf = NodeMan.get("windField", false);
     const wfUsable = analyzeTweaks.windMode !== "Zero wind"
         && wf && wf.source && typeof wf.sampleWindAtAltitude === "function";
-    // The Track entry of a sounding track is read as a sounding
-    // (wf._soundingSet), so it is the same class of evidence as one.
-    const sourceClass = wfUsable
-        ? (WIND_SOURCE_CLASSES[wf.source] ?? (wf._soundingSet?.() ? "observation" : "unknown"))
-        : null;
+    // The profiles the source reads by altitude, or null for a source that is not
+    // read that way (wf._soundingSet).
+    const soundingSet = wfUsable ? wf._soundingSet() : null;
+    const sourceClass = wfUsable ? windSourceEvidenceClass(wf, soundingSet) : null;
     // No measured column for a hand-set constant: it is an assumption, and
     // rendering it beside "measured" invites exactly the confusion the
     // evidence rating exists to prevent.
@@ -1142,15 +1160,16 @@ function attachBalloonWindEvidence(hypotheses, dataset, originLat, originLon, pr
         // can say, so it is reserved for references that can actually bear the
         // weight. Conservative structural checks until per-sample source
         // metadata (valid time, per-sample distance) lands: an unrecognised
-        // source class never supports, and sounding evidence is capped when
-        // the nearest station is far away or the fitted altitude is above
-        // every station's measured wind top (the sampler HOLDS the top wind
-        // up there rather than refusing — see sampleWindAtAltitude).
+        // source class never supports, and sounding evidence (measured or
+        // model: each profile is one point) is capped when the nearest station
+        // is far away or the fitted altitude is above every station's wind top
+        // (the sampler HOLDS the top wind up there rather than refusing — see
+        // sampleWindAtAltitude).
         if (rated.rating === "supports") {
             if (sourceClass !== "observation" && sourceClass !== "model") {
                 rated.rating = "compatible";
                 rated.why += "; capped at compatible — unrecognised wind-source type";
-            } else if (sourceClass === "observation") {
+            } else if (soundingSet) {
                 // Distance must be measured to the stations that actually
                 // CONTRIBUTE at each sampled altitude — a nearby station whose
                 // sounding tops out below the fit does not vouch for winds
@@ -1159,17 +1178,7 @@ function attachBalloonWindEvidence(hypotheses, dataset, originLat, originLon, pr
                 // sampleWindAtAltitude). And when the station metadata cannot
                 // be read at all, the cap FAILS CLOSED: "supports" needs a
                 // reference that can be shown to bear the weight.
-                let profiles = [];
-                if (typeof wf._soundingSet === "function") {
-                    try {
-                        profiles = wf._soundingSet()?.profiles || [];
-                    } catch (e) { profiles = []; }
-                } else if (typeof wf._gatherSondeProfiles === "function") {
-                    try {
-                        profiles = wf._gatherSondeProfiles(
-                            wf.source === "manual-soundings" ? null : wf.source) || [];
-                    } catch (e) { profiles = []; }
-                }
+                const profiles = soundingSet.profiles;
                 const positioned = profiles.filter(
                     (prof) => prof.stationLat != null && prof.stationLon != null);
                 if (!positioned.length) {

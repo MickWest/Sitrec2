@@ -52,6 +52,7 @@ import {getAzElFromPositionAndForward, getLocalUpVector} from "./SphericalMath";
 import {meanSeaLevelOffset} from "./EGM96Geoid";
 import {degrees, escapeXML, getExportPrefix, radians} from "./utils";
 import {showError} from "./showError";
+import {turnToGeometricAim} from "./atmosphere/refractionAim";
 
 // How big the photo rectangle is, in metres across. `near` is then derived from it and the
 // field of view, rather than being a distance we pick directly.
@@ -132,14 +133,13 @@ const FULL = {num: fullPrecision, heading: fullHeading};
  *
  * Returns 0 when the camera is looking straight up or down, where "which way is up"
  * is degenerate and roll and heading describe the same rotation.
+ *
+ * @param {Vector3} position - the camera's position (ECEF)
+ * @param {Vector3} forward - its view axis, a unit vector
+ * @param {Vector3} camUp - its up axis, a unit vector
  */
-export function extractRoll(camera) {
-    const forward = new Vector3();
-    const camUp = new Vector3();
-    camera.getWorldDirection(forward);
-    camUp.setFromMatrixColumn(camera.matrixWorld, 1).normalize();
-
-    const localUp = getLocalUpVector(camera.position);
+export function extractRoll(position, forward, camUp) {
+    const localUp = getLocalUpVector(position);
 
     // The zero-roll reference: local up with its along-view component removed.
     const upRef = localUp.clone().sub(forward.clone().multiplyScalar(localUp.dot(forward)));
@@ -188,6 +188,11 @@ export function getCameraKMLPose(cameraNode, view = null) {
         const position = camera.position.clone();
         const forward = new Vector3();
         camera.getWorldDirection(forward);
+        const up = new Vector3().setFromMatrixColumn(camera.matrixWorld, 1).normalize();
+        // The pose is the line of sight, which is geometric: Google Earth draws no
+        // refraction, and MISB metadata gives where the sensor points. A display lookAt
+        // already aims at the geometric position, so it is used as it is.
+        if (!savedLookAt) turnToGeometricAim(camera, forward, up);
 
         const lla = ECEFToLLAVD_radii(position);
         const lat = lla.x, lon = lla.y, altHAE = lla.z;
@@ -200,7 +205,7 @@ export function getCameraKMLPose(cameraNode, view = null) {
             altMSL: altHAE - meanSeaLevelOffset(lat, lon),
             heading,
             tilt: elevation + 90,
-            roll: extractRoll(camera),
+            roll: extractRoll(position, forward, up),
             fovV: camera.fov,
             position, forward,
         };

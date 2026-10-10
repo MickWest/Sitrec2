@@ -10,7 +10,8 @@ import {CNodeController} from "./CNodeController";
 import {MISB} from "../MISBUtils";
 import {getCelestialDirection, getCelestialDirectionFromRaDec, getStarDirectionECEF} from "../CelestialMath";
 import {applyRefractionToDirection} from "../atmosphere/refraction";
-import {apparentPositionFrom, currentRefractionOpts} from "../atmosphere/refractionSettings";
+import {currentRefractionOpts} from "../atmosphere/refractionSettings";
+import {lookAtDrawnPosition} from "../atmosphere/refractionAim";
 import {Quaternion, Vector2, Vector3} from "three";
 import {assert} from "../assert";
 import {getCursorPositionFromTopView} from "../mouseMoveView";
@@ -18,26 +19,6 @@ import {get_real_horizon_angle_for_frame} from "../JetUtils";
 import {t} from "../i18n";
 import {extractFOV} from "../FOVUtils";
 
-
-// Aim a camera at where a target is DRAWN.
-//
-// The scene is drawn lofted by terrestrial refraction, so a camera aimed at the
-// target's geometric position looks below the target it shows. The aim is for the
-// picture only. Line-of-sight calculations stay geometric: the rotation that takes
-// the aim back to the geometric direction goes with the camera, and
-// CNodeLOSFromCamera applies it, so a traverse along that line still passes
-// through the target. With refraction off, this is a plain lookAt.
-function lookAtDrawnPosition(camera, targetPos) {
-    const drawn = apparentPositionFrom(camera.position, targetPos);
-    camera.lookAt(drawn);
-    if (drawn.equals(targetPos)) {
-        camera.userData.geometricAim = null;
-        return;
-    }
-    const toDrawn = drawn.sub(camera.position).normalize();
-    const toTarget = targetPos.clone().sub(camera.position).normalize();
-    camera.userData.geometricAim = new Quaternion().setFromUnitVectors(toDrawn, toTarget);
-}
 
 // Position the camera on the source track
 // Look at the target track

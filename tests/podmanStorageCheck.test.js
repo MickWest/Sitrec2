@@ -60,25 +60,35 @@ function hostEnv(fx, { rootless = "true", uidmap = "1,65536,", gidmap = "1,65536
     };
 }
 
-function runInstallBake(host) {
+// Each run gets its own fixture, removed when the run is over.
+function withFixture(run) {
     const fx = mkFixture();
-    return execFileSync(
+    try {
+        return run(fx);
+    } finally {
+        fs.rmSync(fx.dir, { recursive: true, force: true });
+    }
+}
+
+function runInstallBake(host) {
+    return withFixture(fx => execFileSync(
         "bash",
         [path.join(REPO, "install.sh"), "--podman", "--bake", "dummy:tag", "--env-file", fx.envFile],
         { cwd: fx.dir, encoding: "utf8", env: hostEnv(fx, host) }
-    );
+    ));
 }
 
 // sitrec.sh reads its compose command from .runtime beside itself, so run a copy.
 function runSitrecBake(host, compose = "podman compose") {
-    const fx = mkFixture();
-    const script = path.join(fx.dir, "sitrec.sh");
-    fs.copyFileSync(path.join(REPO, "sitrec.sh"), script);
-    fs.writeFileSync(path.join(fx.dir, ".runtime"), compose);
-    return execFileSync("bash", [script, "bake", "--env-file", fx.envFile, "dummy:tag"], {
-        cwd: fx.dir,
-        encoding: "utf8",
-        env: hostEnv(fx, host),
+    return withFixture(fx => {
+        const script = path.join(fx.dir, "sitrec.sh");
+        fs.copyFileSync(path.join(REPO, "sitrec.sh"), script);
+        fs.writeFileSync(path.join(fx.dir, ".runtime"), compose);
+        return execFileSync("bash", [script, "bake", "--env-file", fx.envFile, "dummy:tag"], {
+            cwd: fx.dir,
+            encoding: "utf8",
+            env: hostEnv(fx, host),
+        });
     });
 }
 

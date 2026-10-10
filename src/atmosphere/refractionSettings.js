@@ -98,15 +98,20 @@ export function installTerrestrialRefractionSceneHook(scene) {
         updateTerrestrialRefractionUniforms(camera, opts);
 
         // Fisheye and Flat Earth are not pinhole projections. Each switches frustum
-        // culling off for every object while it is on, and puts it back itself. That
-        // setting is theirs until then: to write it here made objects outside the
-        // pinhole frame disappear until their next sweep.
+        // culling off for every object while it is on, and puts it back itself, so
+        // while either is on this hook leaves frustum culling alone.
         const projectionOwnsCulling = !!(Globals.fisheye?.enabled || Globals.flatEarthRendering);
 
         if (!opts.enabled) {
             // This render draws nothing lofted (refraction is off, or the ray-traced
             // pass has taken this view over), so Three's own frustum test is right.
-            if (!projectionOwnsCulling) restoreLoftedCulling(_loftedObjects);
+            if (!projectionOwnsCulling) {
+                restoreLoftedCulling(_loftedObjects);
+                // Switched off, not only held off for this view by the ray-traced pass
+                // (which leaves the master on): let go of the objects. The first sweep
+                // after it is switched on again finds them anew.
+                if (!(Sit.refraction && Sit.refractionTerrain)) _loftedObjects = [];
+            }
             return;
         }
         const now = performance.now();

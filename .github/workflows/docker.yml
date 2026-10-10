@@ -70,7 +70,7 @@ jobs:
 
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
-          node-version: 22
+          node-version-file: .nvmrc
           cache: npm
 
       - name: Install dependencies
@@ -80,7 +80,8 @@ jobs:
 
       # Help → Documentation → "Download MCP Bridge" links to
       # tools/SitrecBridge/dist/SitrecBridge.zip. webpackCopyPatterns.js copies it into dist/
-      # only when it exists, and nothing else builds it, so without this step the link is 404.
+      # only when it exists, and the build offers the link only then (BRIDGE_ZIP_PACKAGED in
+      # webpack.common.js). Nothing else builds it, so without this step the image has no link.
       - name: Build the downloadable Bridge zip
         run: |
           npm ci --prefix tools/SitrecBridge
@@ -258,7 +259,7 @@ jobs:
       # version or latest tag is ever created.
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
-          node-version: 22
+          node-version-file: .nvmrc
 
       - name: Install trivy
         # Pinned to a tag that exists: this action publishes only v0.2.6, v0.3.0 and
@@ -476,7 +477,7 @@ jobs:
 
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
-          node-version: 22
+          node-version-file: .nvmrc
           cache: npm
 
       # The container security review moved to the per-architecture `package` job, so

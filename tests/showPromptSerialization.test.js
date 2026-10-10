@@ -14,7 +14,7 @@
 //      past them; now it can, and the results are wrong in ways that look like nothing
 //      happened — e.g. an annotation committed already fully faded.
 
-import {showPrompt} from '../src/showError';
+import {showPrompt, showTextEditor} from '../src/showError';
 import {Globals} from '../src/Globals';
 import {par} from '../src/par';
 
@@ -162,5 +162,49 @@ describe('showPrompt holds playback while it is open', () => {
         await expect(showPrompt('Suppressed?')).resolves.toBeNull();
         expect(openModals()).toHaveLength(0);
         expect(par.paused).toBe(false);
+    });
+});
+
+// The multi-line editor follows the same one-at-a-time rule, shared with showPrompt, and a
+// stray backdrop click does not throw away what was typed.
+describe('showTextEditor', () => {
+    const editors = () => [...document.body.children].filter(el => el.querySelector?.('textarea'));
+    const backdropClick = (overlay) =>
+        overlay.dispatchEvent(new window.MouseEvent('mousedown', {bubbles: true}));
+    const buttonNamed = (overlay, label) => [...overlay.querySelectorAll('button')].find(b => b.textContent === label);
+
+    test('a second editor, or a prompt, does not open while one is up', async () => {
+        const first = showTextEditor('Lines:', {defaultValue: 'a'});
+        await expect(showTextEditor('Again:')).resolves.toBeNull();
+        await expect(showPrompt('Name?')).resolves.toBeNull();
+        expect(editors()).toHaveLength(1);
+        expect(openModals()).toHaveLength(0);
+
+        buttonNamed(editors()[0], 'OK').click();
+        await expect(first).resolves.toEqual({text: 'a', action: 'ok'});
+
+        // The guard clears, so a later prompt opens.
+        const later = showPrompt('Later?');
+        expect(openModals()).toHaveLength(1);
+        buttonsOf(openModals()[0]).cancel.click();
+        await later;
+    });
+
+    test('a backdrop click cancels an unchanged editor', async () => {
+        const editor = showTextEditor('Lines:', {defaultValue: 'SITREC_X=1'});
+        backdropClick(editors()[0]);
+        await expect(editor).resolves.toBeNull();
+        expect(editors()).toHaveLength(0);
+    });
+
+    test('a backdrop click keeps an editor whose text was changed', async () => {
+        const editor = showTextEditor('Lines:', {defaultValue: 'SITREC_X=1'});
+        const overlay = editors()[0];
+        overlay.querySelector('textarea').value = 'SITREC_X=2';
+        backdropClick(overlay);
+        expect(editors()).toHaveLength(1);
+
+        buttonNamed(overlay, 'OK').click();
+        await expect(editor).resolves.toEqual({text: 'SITREC_X=2', action: 'ok'});
     });
 });

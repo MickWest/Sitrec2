@@ -9,17 +9,20 @@
 // Pure: no DOM, no network. Input is the object from xmlToObject().
 
 import {
+    ALTITUDE_TO_M,
     ENV_PREFIX,
     LENGTH_TO_M,
     PRESSURE_TO_HPA,
     childElements,
     collectNamespaces,
+    defaultElevationUnit,
     findAll,
     findSense,
     findSoundingXML,
     layoutIdentifiesFile,
     localName,
     parseDecimalCoordinate,
+    signedLongitude,
     soundingXMLLayoutsFromEnv,
     textOf,
 } from "./soundingLayout.js";
@@ -226,9 +229,13 @@ const ROLES = [
         name: /temp|oat/, not: /dew|virtual|potential/,
         valid: field => field.numbers.length >= 2},
     {role: "altitude", label: "altitude",
-        name: /alt|height|hght|hgt|elev|geopot|flightlevel/, not: /dens/,
+        name: /alt|height|hght|hgt|elev|geopot|flight_?level|(^|\/)fl$/, not: /dens/,
         valid: field => field.numbers.length >= 2, trend: true},
 ];
+
+// A tag that holds a flight level: hundreds of feet of pressure altitude, read with
+// _ALT_UNITS=fl.
+const FLIGHT_LEVEL = /flight_?level|(^|\/)fl$/;
 
 // True if the field has two or more numbers and at least four in five pass the
 // test. Not all: a file can mark a missing value with a number such as -9999.
@@ -361,8 +368,8 @@ function median(numbers) {
 }
 
 // The unit of each quantity: {unit, source} where source says how it is known.
-// "file" = the file states it. "values" = inferred from the numbers, which is a
-// guess. "default" = nothing to go on.
+// "file" = the file states it. "name" = the tag name says it (a flight level).
+// "values" = inferred from the numbers, which is a guess. "default" = nothing to go on.
 function findUnits(profile, position) {
     const roles = profile.roles;
     const units = {};
@@ -376,7 +383,9 @@ function findUnits(profile, position) {
             : {unit: "hPa", source: "default"};
     }
 
-    if (roles.altitude) {
+    if (roles.altitude && FLIGHT_LEVEL.test(roles.altitude.key)) {
+        units.altitude = {unit: "fl", source: "name", why: "the tag name says flight level"};
+    } else if (roles.altitude) {
         const stated = unitFromHints(roles.altitude.unitHints, "length");
         let inferred = null;
         if (!stated && roles.pressure && roles.altitude.allNumeric && roles.pressure.allNumeric) {
@@ -411,7 +420,7 @@ function findUnits(profile, position) {
     if (position?.elev) {
         const stated = unitFromHints(position.elev.unitHints, "length");
         units.elevation = stated ? {unit: stated, source: "file"}
-            : {unit: (units.altitude ?? {unit: "m"}).unit, source: "default"};
+            : {unit: defaultElevationUnit((units.altitude ?? {unit: "m"}).unit), source: "default"};
     }
     return units;
 }
@@ -477,6 +486,7 @@ function proposeSettings(xml, nodes, analysis) {
     const fieldTag = field => tagSetting(firstRecord.element, pathNodesTo(field.node, firstRecord), field.node.element);
     const unitCheck = (found, what) => found.source === "file" ? null
         : found.source === "values" ? `CHECK: ${what} unit is a GUESS from the values (${found.why}).`
+        : found.source === "name" ? `CHECK: ${what} unit is from the tag name (${found.why}).`
         : `CHECK: the file does not state the ${what} unit. This is Sitrec's default, not a finding.`;
 
     if (profile.roles.altitude) {
@@ -502,7 +512,7 @@ function proposeSettings(xml, nodes, analysis) {
         if (position.lon.node.local !== "longitude") add("LON_TAG", position.lon.node.name);
         if (position.elev) {
             if (position.elev.node.local !== "elevation") add("ELEV_TAG", position.elev.node.name);
-            if (units.elevation.unit !== (units.altitude?.unit ?? "m")) add("ELEV_UNITS", units.elevation.unit);
+            if (units.elevation.unit !== defaultElevationUnit(units.altitude?.unit ?? "m")) add("ELEV_UNITS", units.elevation.unit);
         }
     }
     if (valueTag && valueTag.local !== "value") add("VALUE_TAG", valueTag.name);
@@ -609,9 +619,16 @@ export function analyzeXML(xml, sourceText = "") {
     const notes = analysis.notes;
     notes.push("Wind direction is read as the direction the wind blows FROM, in degrees true. "
         + "If the file gives the direction the wind blows TO, add _WIND_DIR_CONVENTION=to.");
+    notes.push("The traverse wind evidence counts this profile as a model or forecast. "
+        + "If the file holds measurements (a sounding), add _DATA_KIND=measured.");
     const altitude = profile.roles.altitude;
+    if (altitude && analysis.units.altitude.unit === "fl") {
+        notes.push(`<${altitude.node.name}> is read as flight levels: hundreds of feet of pressure altitude. `
+            + "Sitrec takes each as the standard-atmosphere height for its pressure (FL x 30.48 m), the height "
+            + "it gives a level that has only a pressure.");
+    }
     if (altitude && position?.elev && altitude.min !== null) {
-        const toM = LENGTH_TO_M[analysis.units.altitude.unit.toLowerCase()];
+        const toM = ALTITUDE_TO_M[analysis.units.altitude.unit.toLowerCase()];
         const elevToM = LENGTH_TO_M[analysis.units.elevation.unit.toLowerCase()];
         const lowestM = altitude.min * toM;
         const elevM = position.elev.value * elevToM;
@@ -648,7 +665,7 @@ export function analyzeXML(xml, sourceText = "") {
         notes.push("WARNING: the reader found nothing with the proposed settings. Edit them and check again.");
     } else {
         if (position && (Math.abs(sonde.station.lat - position.lat.value) > 1e-9
-            || Math.abs(sonde.station.lon - position.lon.value) > 1e-9)) {
+            || Math.abs(sonde.station.lon - signedLongitude(position.lon.value)) > 1e-9)) {
             notes.push("WARNING: with the proposed settings the reader takes a different position from the one found here. "
                 + "Give _LAT_TAG and _LON_TAG as a path (for example Position/Latitude).");
         }

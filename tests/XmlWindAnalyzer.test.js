@@ -32,13 +32,6 @@ const plainText = `<Sounding>
   </Column>
 </Sounding>`;
 
-describe('xmlToObject', () => {
-    test('gives the same object as the parseXml() that Sitrec uses', () => {
-        expect(toObject(sampleText)).toEqual(parseXml(sampleText));
-        expect(toObject(plainText)).toEqual(parseXml(plainText));
-    });
-});
-
 describe('parseDecimalCoordinate', () => {
     test('reads a sign or a hemisphere letter', () => {
         expect(parseDecimalCoordinate("34.5")).toBe(34.5);
@@ -171,6 +164,36 @@ describe('analyzeXML on files without the data', () => {
         expect(analysis.position).toBeNull();
         expect(analysis.notes.some(note => /No position found/.test(note))).toBe(true);
         expect(analysis.check.sonde).toBeNull();
+    });
+
+    test('a longitude given as 0 to 360 is read as -180 to 180, with no warning', () => {
+        const analysis = analyze(plainText.replace("<Lon>151.2</Lon>", "<Lon>208.8</Lon>"));
+        expect(analysis.check.sonde.station.lon).toBeCloseTo(-151.2, 9);
+        expect(analysis.notes.some(note => note.startsWith("WARNING"))).toBe(false);
+    });
+
+    test('a flight-level column is the altitude, in flight levels', () => {
+        // FL 1, 30, 110: hundreds of feet of pressure altitude.
+        const flightLevels = plainText.replace(/<Hgt>(\d+)<\/Hgt>/g, (match, number) => `<FlightLevel>${number / 50}</FlightLevel>`);
+        const analysis = analyze(flightLevels);
+        expect(analysis.profile.roles.altitude.name).toBe("FlightLevel");
+        expect(analysis.units.altitude).toMatchObject({unit: "fl", source: "name"});
+        const altUnits = analysis.settings.entries.find(entry => entry.key.endsWith("_ALT_UNITS"));
+        expect(altUnits.value).toBe("fl");
+        expect(altUnits.check).toMatch(/from the tag name/);
+        expect(analysis.notes.some(note => /<FlightLevel> is read as flight levels/.test(note))).toBe(true);
+        // The position's elevation is in feet with flight levels, not in flight levels.
+        expect(analysis.units.elevation.unit).toBe("ft");
+        expect(analysis.settings.entries.some(entry => entry.key.endsWith("_ELEV_UNITS"))).toBe(false);
+        // What Sitrec reads: FL x 30.48 m.
+        expect(analysis.check.sonde.levels.map(level => level.height)).toEqual([30.48, 914.4, 3352.8].map(height => expect.closeTo(height, 6)));
+        expect(analysis.notes.some(note => note.startsWith("WARNING"))).toBe(false);
+
+        // A bare <FL> tag, with no pressure in the file.
+        const bare = analyze(flightLevels.replace(/<Pres>\d+<\/Pres>/g, "")
+            .replace(/<FlightLevel>/g, "<FL>").replace(/<\/FlightLevel>/g, "</FL>"));
+        expect(bare.profile.roles.altitude.name).toBe("FL");
+        expect(bare.units.altitude.unit).toBe("fl");
     });
 
     test('flags a missing-value marker in the wind', () => {

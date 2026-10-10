@@ -5,17 +5,13 @@
 const ABSOLUTE_URL = /^(?:[a-z][a-z0-9+.-]*:|\/\/)/i;
 
 // Rewrite inter-document links from .md to .html for the generated doc pages.
-// Handles a trailing anchor: [x](Foo.md#bar) -> [x](Foo.html#bar). The previous pattern
-// required a literal ".md)" and so silently left every anchored link pointing at the raw
-// markdown file, which the browser shows as plain text instead of opening the page.
+// A trailing anchor is kept: [x](Foo.md#bar) -> [x](Foo.html#bar).
 //
 // Only links to our own pages are rewritten. An absolute link points at another site,
-// which has no .html twin: rewriting https://github.com/.../egress-review-prompt.md to
-// .html made the published UserDataEgressCheck page link to a GitHub 404.
+// which has no .html twin (https://github.com/.../egress-review-prompt.md stays .md).
 //
-// The link text may wrap onto the next line. "[^\]]*" crosses the line break where
-// ".*?" did not, so ObjectReferences' wrapped "[File Rehosting and\nObject References]"
-// link stayed .md and opened as raw markdown.
+// The link text may wrap onto the next line: "[^\]]*" matches across the line break,
+// as in "[File Rehosting and\nObject References]".
 function rewriteMdLinks(text) {
     return text.replace(
         /(\[[^\]]*\]\((?:\.\/)?(?:docs\/)?)([^)#]*?)\.md(#[^)]*)?\)/g,

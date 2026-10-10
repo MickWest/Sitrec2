@@ -1,9 +1,9 @@
 // xmlObject.js — Turn a parsed XML Document into the nested object that Sitrec's
 // track-file handlers read, so the analyzer sees a file exactly as Sitrec does.
 //
-// This is the same conversion as parseXml() in src/parseXml.js, which a tool
-// cannot import (a tool is served unbundled, and src/ is not served at all).
-// tests/XmlWindAnalyzer.test.js holds the two equal.
+// SHARED: Sitrec's parseXml() (src/parseXml.js) is DOMParser plus this, and the XML
+// Wind Profile Analyzer runs it in the page. A tool is served unbundled, so this file
+// imports nothing.
 //
 // Each element becomes an object whose keys are its attributes (string values),
 // its child elements (an object, or an array of objects when a tag repeats) and
@@ -11,6 +11,10 @@
 
 const TEXT_NODE = 3;
 
+/**
+ * @param {Document} document
+ * @returns {Object}
+ */
 export function xmlToObject(document) {
     function visitNode(node, parentObject) {
         if (node.nodeType === TEXT_NODE) {

@@ -10,6 +10,7 @@ import {getAzElFromPositionAndForward} from "../SphericalMath";
 import {CNodeLOS} from "./CNodeLOS";
 import {ECEFToLLAVD, ECEFToLLAVD_radii} from "../LLA-ECEF-ENU";
 import {saveAs} from "file-saver";
+import {turnToGeometricAim} from "../atmosphere/refractionAim";
 
 export class CNodeLOSFromCamera extends CNodeLOS {
     constructor(v) {
@@ -89,12 +90,7 @@ export class CNodeLOSFromCamera extends CNodeLOS {
         // A camera that points at a target is aimed at where refraction DRAWS the
         // target. The line of sight is a calculation, and calculations are geometric,
         // so turn it back to the straight line to the target itself.
-        const geometricAim = camera.userData.geometricAim;
-        if (geometricAim) {
-            fwd.applyQuaternion(geometricAim);
-            up.applyQuaternion(geometricAim);
-            right.applyQuaternion(geometricAim);
-        }
+        turnToGeometricAim(camera, fwd, up, right);
         const vFOV = camera.fov;
         if (isNaN(fwd.x) || isNaN(fwd.y) || isNaN(fwd.z)) {
             console.error("CNodeLOSFromCamera: heading (fwd) is NaN, id=" + this.id + ", f=" + f);

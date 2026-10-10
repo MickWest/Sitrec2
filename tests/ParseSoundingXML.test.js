@@ -149,6 +149,34 @@ describe('parseSoundingXML', () => {
         expect(result.levels.map(level => level.windDir)).toEqual([90, 120, 130]);
     });
 
+    test('a flight level is read as FL x 30.48 m, and the elevation is then in feet', () => {
+        // The sample's levels as FL10, FL100 and FL300.
+        const flightLevels = sampleXML
+            .replace("<wx:Altitude><wx:Value>1000<", "<wx:Altitude><wx:Value>10<")
+            .replace("<wx:Altitude><wx:Value>10000<", "<wx:Altitude><wx:Value>100<")
+            .replace("<wx:Altitude><wx:Value>30000<", "<wx:Altitude><wx:Value>300<");
+        const layout = layoutFor({...sampleEnv, SITREC_CUSTOM_SOUNDING_WX_ALT_UNITS: "FL"});
+        expect(layout.altToM).toBe(30.48);
+        expect(layout.elevToM).toBe(0.3048);
+        const result = parseSoundingXML(parseXml(flightLevels), layout);
+        expect(result.levels.map(level => level.height)).toEqual([304.8, 3048, 9144].map(height => expect.closeTo(height, 6)));
+        expect(result.station.elev).toBeCloseTo(304.8, 6);
+        // A flight level is a unit for the altitude only.
+        const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
+        expect(soundingXMLLayoutsFromEnv({...sampleEnv, SITREC_CUSTOM_SOUNDING_WX_ELEV_UNITS: "fl"})).toEqual([]);
+        warn.mockRestore();
+    });
+
+    test('a profile is a model product unless the layout says the data is measured', () => {
+        expect(sonde.measured).toBe(false);
+        const measured = layoutFor({...sampleEnv, SITREC_CUSTOM_SOUNDING_WX_DATA_KIND: "Measured"});
+        expect(parseSoundingXML(parseXml(sampleXML), measured).measured).toBe(true);
+        const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
+        expect(soundingXMLLayoutsFromEnv({...sampleEnv, SITREC_CUSTOM_SOUNDING_WX_DATA_KIND: "forecast"})).toEqual([]);
+        expect(warn.mock.calls[0][0]).toMatch(/DATA_KIND="forecast" is not one of model, measured/);
+        warn.mockRestore();
+    });
+
     test('altitude above ground has the station elevation added', () => {
         const layout = layoutFor({...sampleEnv, SITREC_CUSTOM_SOUNDING_WX_ALT_REFERENCE: "agl"});
         const result = parseSoundingXML(parseXml(sampleXML), layout);
@@ -177,6 +205,13 @@ describe('parseSoundingXML', () => {
         expect(result.station).toMatchObject({lat: -33.9, lon: 151.2, elev: 50});
         expect(result.levels.map(level => level.windSpeed)).toEqual([5, 12]);
         expect(result.levels.map(level => level.height)).toEqual([50, 1500]);
+    });
+
+    test('a longitude given as 0 to 360 is taken to -180 to 180', () => {
+        const xml = parseXml(sampleXML.replace("<wx:Value>117.25</wx:Value><wx:Sense>W</wx:Sense>",
+            "<wx:Value>242.75</wx:Value>"));
+        const result = parseSoundingXML(xml, layoutFor(sampleEnv));
+        expect(result.station.lon).toBeCloseTo(-117.25, 9);
     });
 
     test('position tags given as paths find the longitude and elevation beside the latitude', () => {

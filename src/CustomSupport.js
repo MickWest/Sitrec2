@@ -356,7 +356,7 @@ export class CCustomManager {
                 `${key}: ${t("custom.settings.envOverride.ignoredReasons." + reason)}`);
             await showChoice(t("custom.settings.envOverride.ignoredMessage") + "\n\n" + lines.join("\n"), {
                 title: t("custom.settings.envOverride.dialogTitle"),
-                options: [{label: "OK", value: true, primary: true}],
+                options: [{label: t("misc.ok"), value: true, primary: true}],
             });
         }
         if (edited.action === "reload") window.location.reload();
@@ -727,7 +727,7 @@ export class CCustomManager {
                     if (!focused) {
                         showChoice(t("custom.settings.byokSitrecFocused.costWarning"), {
                             title: t("custom.settings.byokSitrecFocused.costTitle"),
-                            options: [{label: "OK", value: true, primary: true}],
+                            options: [{label: t("misc.ok"), value: true, primary: true}],
                         });
                     }
                 })

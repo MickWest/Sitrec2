@@ -467,6 +467,11 @@ ${bodyContent}
             'CAN_REQUIRE_CONTEXT': JSON.stringify(true),
             'INCLUDE_IWER_EMULATOR': JSON.stringify(env.includeIWER !== false),
             '__SITREC_BUILD_DIR__': JSON.stringify(process.cwd()),
+            // The Help menu's "Download MCP Bridge" link points at this zip. The "tools" copy
+            // pattern (webpackCopyPatterns.js) publishes it only if it was built before this
+            // build (npm run build in tools/SitrecBridge), so the link is offered only then.
+            'BRIDGE_ZIP_PACKAGED': JSON.stringify(
+                fs.existsSync(path.resolve(__dirname, 'tools/SitrecBridge/dist/SitrecBridge.zip'))),
             // Collect all SITREC_CUSTOM_MAP_*, SITREC_CUSTOM_ELEVATION_* and
             // SITREC_CUSTOM_SOUNDING_* vars from shared.env
             // as a JSON blob so serverless builds can iterate them at runtime (dotenv-webpack

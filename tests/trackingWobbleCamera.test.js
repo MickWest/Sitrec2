@@ -20,9 +20,9 @@ jest.mock("../src/LLA-ECEF-ENU", () => ({}));
 jest.mock("../src/KeyBoardHandler", () => ({}));
 jest.mock("../src/threeExt", () => ({}));
 jest.mock("../src/CelestialMath", () => ({}));
-// Refraction off: the aim point is the target itself.
+// Refraction off: no lift, so the aim point is the target itself.
 jest.mock("../src/atmosphere/refractionSettings", () => ({
-    apparentPositionFrom: (observer, point) => point.clone(),
+    currentTerrestrialLiftContext: () => null,
 }));
 jest.mock("../src/mouseMoveView", () => ({}));
 jest.mock("../src/JetUtils", () => ({}));

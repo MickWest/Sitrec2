@@ -385,8 +385,39 @@ export function showConfirm(message, {title = "Confirm", yesLabel = "Yes", noLab
  * @param {string} [opts.inputType="text"] - HTML input type (e.g. "text", "number")
  * @returns {Promise<string|null>}
  */
-// True while a showPrompt modal is on screen. See the guard inside showPrompt.
-let promptIsOpen = false;
+// True while a text-entry modal (showPrompt or showTextEditor) is on screen.
+let textEntryIsOpen = false;
+
+// ONE AT A TIME, for the text-entry modals. Native prompt() froze the page, so a
+// second activation while one was up (an impatient double-click on a menu item) was
+// swallowed by the blocked thread. An in-page modal does not freeze anything: without
+// this guard a second modal stacks on the first, and submitting both runs the
+// caller's action twice — two objects from one Add Object double-click. The extra
+// request resolves as cancelled, so callers already handling a null (they all do)
+// treat it as the no-op it used to be. Returns true if this modal may open; its
+// cleanup must then call endTextEntry().
+function beginTextEntry(caller, message) {
+    if (textEntryIsOpen) {
+        console.log(`${caller}: a dialog is already open, ignoring: ${message}`);
+        return false;
+    }
+    textEntryIsOpen = true;
+    return true;
+}
+
+function endTextEntry() {
+    textEntryIsOpen = false;
+}
+
+// A button for the row at the bottom of a text-entry modal.
+function makeModalButton(label, color, onClick) {
+    const button = document.createElement('button');
+    button.textContent = label;
+    button.style.cssText = `padding: 8px 16px; border: none; border-radius: 4px; cursor: pointer;
+        color: white; font-weight: bold; font-family: inherit; background: ${color};`;
+    button.onclick = onClick;
+    return button;
+}
 
 export function showPrompt(message, {title = "Enter Value", defaultValue = "", okLabel = "OK", cancelLabel = "Cancel", inputType = "text"} = {}) {
     return new Promise((resolve) => {
@@ -402,18 +433,11 @@ export function showPrompt(message, {title = "Enter Value", defaultValue = "", o
         // silently depend on it. Being a normal in-page modal, this one does not — so
         // both are re-established explicitly.
 
-        // 1. ONE AT A TIME. A second activation while a prompt is up (an impatient
-        // double-click on a menu item) used to be swallowed by the blocked thread.
-        // Without this guard it stacks a second modal, and submitting both runs the
-        // caller's action twice — two objects from one Add Object double-click.
-        // The extra request resolves as cancelled, so callers already handling a
-        // null (they all do) treat it as the no-op it used to be.
-        if (promptIsOpen) {
-            console.log("showPrompt: a prompt is already open, ignoring: " + message);
+        // 1. ONE AT A TIME (see beginTextEntry).
+        if (!beginTextEntry("showPrompt", message)) {
             resolve(null);
             return;
         }
-        promptIsOpen = true;
 
         // 2. PLAYBACK HOLDS. Callers read frame-dependent state around the prompt —
         // CNodeAnnotateOverlay stamps a stroke with the frame clicked, CTextExtraction
@@ -442,7 +466,7 @@ export function showPrompt(message, {title = "Enter Value", defaultValue = "", o
         // Single exit path, so the open flag and the playback state are always
         // restored — including on backdrop click and Escape.
         const cleanup = (result) => {
-            promptIsOpen = false;
+            endTextEntry();
             par.paused = wasPaused;
             if (overlay.parentNode) document.body.removeChild(overlay);
             resolve(result);
@@ -456,16 +480,8 @@ export function showPrompt(message, {title = "Enter Value", defaultValue = "", o
 
         const btnRow = document.createElement('div');
         btnRow.style.cssText = `display: flex; gap: 8px; justify-content: flex-end;`;
-        const mkBtn = (label, color, onClick) => {
-            const b = document.createElement('button');
-            b.textContent = label;
-            b.style.cssText = `padding: 8px 16px; border: none; border-radius: 4px; cursor: pointer;
-                color: white; font-weight: bold; font-family: inherit; background: ${color};`;
-            b.onclick = onClick;
-            return b;
-        };
-        btnRow.appendChild(mkBtn(cancelLabel, '#757575', () => cleanup(null)));
-        btnRow.appendChild(mkBtn(okLabel, '#1976d2', () => cleanup(input.value)));
+        btnRow.appendChild(makeModalButton(cancelLabel, '#757575', () => cleanup(null)));
+        btnRow.appendChild(makeModalButton(okLabel, '#1976d2', () => cleanup(input.value)));
         modal.appendChild(btnRow);
 
         // Backdrop click dismisses.
@@ -480,7 +496,9 @@ export function showPrompt(message, {title = "Enter Value", defaultValue = "", o
 /**
  * Show a styled editor for a block of text: the multi-line counterpart of showPrompt.
  * Resolves to {text, action} when one of the buttons is chosen, or to null on
- * Cancel/Escape/backdrop-click. Enter makes a new line, as in any text area.
+ * Cancel/Escape, or on a backdrop click while the text is unchanged. A backdrop click
+ * does not discard edits. Enter makes a new line, as in any text area. Like showPrompt,
+ * it opens only when no other text-entry modal is open; otherwise it resolves to null.
  * @param {string} message - Body text above the editor
  * @param {object} [opts]
  * @param {string} [opts.title="Edit Text"]
@@ -498,6 +516,11 @@ export function showTextEditor(message, {title = "Edit Text", defaultValue = "",
         // No user to type in validation/regression runs — resolve to null (cancelled).
         if (Globals.validationMode) {
             console.log("showTextEditor (suppressed dialog): " + message);
+            resolve(null);
+            return;
+        }
+
+        if (!beginTextEntry("showTextEditor", message)) {
             resolve(null);
             return;
         }
@@ -520,6 +543,7 @@ export function showTextEditor(message, {title = "Edit Text", defaultValue = "",
         modal.appendChild(textArea);
 
         const cleanup = (result) => {
+            endTextEntry();
             if (overlay.parentNode) document.body.removeChild(overlay);
             resolve(result);
         };
@@ -532,22 +556,18 @@ export function showTextEditor(message, {title = "Edit Text", defaultValue = "",
 
         const btnRow = document.createElement('div');
         btnRow.style.cssText = `display: flex; gap: 8px; justify-content: flex-end;`;
-        const mkBtn = (label, color, onClick) => {
-            const b = document.createElement('button');
-            b.textContent = label;
-            b.style.cssText = `padding: 8px 16px; border: none; border-radius: 4px; cursor: pointer;
-                color: white; font-weight: bold; font-family: inherit; background: ${color};`;
-            b.onclick = onClick;
-            return b;
-        };
-        btnRow.appendChild(mkBtn(cancelLabel, '#757575', () => cleanup(null)));
+        btnRow.appendChild(makeModalButton(cancelLabel, '#757575', () => cleanup(null)));
         for (const button of buttons) {
-            btnRow.appendChild(mkBtn(button.label, '#1976d2', () => cleanup({text: textArea.value, action: button.action})));
+            btnRow.appendChild(makeModalButton(button.label, '#1976d2',
+                () => cleanup({text: textArea.value, action: button.action})));
         }
         modal.appendChild(btnRow);
 
-        // Backdrop click dismisses.
-        overlay.addEventListener('mousedown', (e) => { if (e.target === overlay) cleanup(null); });
+        // A backdrop click dismisses only while the text is unchanged, so a stray click
+        // beside the editor never throws away what was typed.
+        overlay.addEventListener('mousedown', (e) => {
+            if (e.target === overlay && textArea.value === defaultValue) cleanup(null);
+        });
 
         document.body.appendChild(overlay);
         textArea.focus();
