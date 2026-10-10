@@ -2,7 +2,7 @@
 //
 // The rainbow in a diffraction spike is not decoration: the pattern's radius scales with
 // wavelength, so a spike is literally a spectrum smeared along its own length. Getting the
-// colour right therefore needs a real colour-matching function, not a hue ramp.
+// color right therefore needs a real color-matching function, not a hue ramp.
 //
 // The CIE 1931 2-degree observer is used through the multi-lobe piecewise-Gaussian fit of
 // Wyman, Sloan & Shirley (JCGT 2013). It is accurate to about 1% of peak across 360-830 nm,
@@ -15,7 +15,7 @@ function pieceGauss(x, mu, s1, s2) {
     return Math.exp(-0.5 * t * t);
 }
 
-/** CIE 1931 2-degree colour matching functions at wavelength `nm`. */
+/** CIE 1931 2-degree color matching functions at wavelength `nm`. */
 export function cieXYZ(nm) {
     const x = 1.056 * pieceGauss(nm, 599.8, 37.9, 31.0)
             + 0.362 * pieceGauss(nm, 442.0, 16.0, 26.7)
@@ -37,7 +37,7 @@ export function xyzToLinearRGB([X, Y, Z]) {
     ];
 }
 
-/** Linear sRGB for a single wavelength. Negative components (spectral colours outside the
+/** Linear sRGB for a single wavelength. Negative components (spectral colors outside the
  *  sRGB gamut, which most of them are) are clamped at zero: the alternative is a channel
  *  that subtracts light from its neighbours in the sum, which shows up as black fringes. */
 export function wavelengthToRGB(nm) {
@@ -66,13 +66,13 @@ export function spectrumWeight(nm, spectrum, kelvin) {
     }
 }
 
-/** The `steps` sample wavelengths spanning [nm0, nm1], each with its linear-sRGB colour and
+/** The `steps` sample wavelengths spanning [nm0, nm1], each with its linear-sRGB color and
  *  source weight already multiplied together.
  *
  *  Returns { nm, rgb } where rgb[i] is the 3-vector this wavelength contributes per unit of
- *  diffracted intensity, normalised so that the FULL band integrates to neutral white. That
- *  normalisation is what makes an undiffracted white source render white rather than the
- *  green cast you get from summing raw colour matching functions.
+ *  diffracted intensity, normalized so that the FULL band integrates to neutral white. That
+ *  normalization is what makes an undiffracted white source render white rather than the
+ *  green cast you get from summing raw color matching functions.
  *
  *  `band` detection instead repeats one scalar weight in all three channels, with no color
  *  matching or white balance. The source is spectral ENERGY density per wavelength; a photon
@@ -85,7 +85,7 @@ export function buildSpectralSamples(nm0, nm1, steps, spectrum = "flat", kelvin 
     const sum = [0, 0, 0];
 
     for (let i = 0; i < steps; i++) {
-        // Sample at bin CENTRES. Sampling at the endpoints double-counts the band edges and,
+        // Sample at bin CENTERS. Sampling at the endpoints double-counts the band edges and,
         // with a small `steps`, visibly biases the tint of the outer spike toward deep red.
         const l = steps === 1 ? 0.5 * (nm0 + nm1) : nm0 + ((i + 0.5) * (nm1 - nm0)) / steps;
         const w = spectrumWeight(l, spectrum, kelvin)

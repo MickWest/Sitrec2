@@ -183,6 +183,23 @@ const SHAPES = [["truncatedCircle", "Circle with flats"], ["circle", "Circle"],
                 ["square", "Square"], ["polygon", "Polygon"]];
 const APODS = [["none", "None (straight)"], ["sawtooth", "Serrated"], ["sine", "Wavy"]];
 const isBand = (s) => s.spectrum.detector === "band";
+// The From and To ranges in nm of each detector's sliders, and the band a detector change resets to.
+// The visible color matching functions have weight only from about 360 to 830 nm; band detection
+// covers the infrared bands too.
+const DETECTOR_BANDS = {
+    visible: { nm0: [300, 1000], nm1: [320, 1400],
+               default: [DEFAULT_SPEC.spectrum.nm0, DEFAULT_SPEC.spectrum.nm1] },
+    band: { nm0: [300, 14000], nm1: [300, 14000], default: [3000, 5000] },
+};
+
+/** A band inside the selected detector's ranges stays as it is; any other band is reset to that
+ *  detector's default band. */
+function fitBandToDetector(spectrum) {
+    const ranges = DETECTOR_BANDS[spectrum.detector === "band" ? "band" : "visible"];
+    const inside = (value, [low, high]) => value >= low && value <= high;
+    if (inside(spectrum.nm0, ranges.nm0) && inside(spectrum.nm1, ranges.nm1)) return;
+    [spectrum.nm0, spectrum.nm1] = ranges.default;
+}
 
 /** One stop's controls. `i` selects which stop, so the two are literally the same schema. */
 function stopRows(i) {
@@ -263,14 +280,15 @@ const SCHEMA = [
     ["Spectrum", [
         { t: "sel", p: "spectrum.detector", label: "Detector", default: "visible",
           opts: [["visible", "Visible color"], ["band", "Band (single channel)"]] },
-        { t: "range", p: "spectrum.nm0", label: "From (nm)", min: 300, max: 14000, step: 5,
-          hide: isBand },
-        { t: "range", p: "spectrum.nm1", label: "To (nm)", min: 300, max: 14000, step: 5, hide: isBand,
+        { t: "range", p: "spectrum.nm0", label: "From (nm)", min: DETECTOR_BANDS.visible.nm0[0],
+          max: DETECTOR_BANDS.visible.nm0[1], step: 5, hide: isBand },
+        { t: "range", p: "spectrum.nm1", label: "To (nm)", min: DETECTOR_BANDS.visible.nm1[0],
+          max: DETECTOR_BANDS.visible.nm1[1], step: 5, hide: isBand,
           hint: "The LONGEST wavelength sets the output pixel scale — it makes the widest pattern." },
-        { t: "range", p: "spectrum.nm0", label: "From (µm)", min: 0.3, max: 14, step: 0.01,
-          scale: 1000, hide: (s) => !isBand(s) },
-        { t: "range", p: "spectrum.nm1", label: "To (µm)", min: 0.3, max: 14, step: 0.01,
-          scale: 1000, hide: (s) => !isBand(s),
+        { t: "range", p: "spectrum.nm0", label: "From (µm)", min: DETECTOR_BANDS.band.nm0[0] / 1000,
+          max: DETECTOR_BANDS.band.nm0[1] / 1000, step: 0.01, scale: 1000, hide: (s) => !isBand(s) },
+        { t: "range", p: "spectrum.nm1", label: "To (µm)", min: DETECTOR_BANDS.band.nm1[0] / 1000,
+          max: DETECTOR_BANDS.band.nm1[1] / 1000, step: 0.01, scale: 1000, hide: (s) => !isBand(s),
           hint: "The longest wavelength sets the output pixel scale. Values are stored in nm." },
         { t: "sel", p: "spectrum.quantity", label: "Weighting", default: "photon", hide: (s) => !isBand(s),
           opts: [["photon", "Photon"], ["energy", "Energy"]],
@@ -364,9 +382,12 @@ function compute() {
         if (m.type === "error") { setStatus(m.message, "error"); setProgress(0); return; }
         result = { n: m.n, rgb: m.rgb, masks: m.masks, peak: m.peak, sampling: m.sampling, ms: m.ms };
         resultSpec = jobSpec;
-        $("exportPSF").disabled = false;
+        // With no open stop the PSF is empty: there is nothing to export.
+        const empty = !(m.peak > 0);
+        $("exportPSF").disabled = empty;
         setProgress(1);
-        setStatus(`${m.n}² in ${Math.round(m.ms)} ms`);
+        if (empty) setStatus("no open stop: the PSF is empty", "error");
+        else setStatus(`${m.n}² in ${Math.round(m.ms)} ms`);
         drawPSF();
         rebuildGlare();
         setTimeout(() => setProgress(0), 400);
@@ -606,6 +627,7 @@ function init() {
     const mount = $("schemaMount");
     for (const [title, rows, collapsed] of SCHEMA) {
         mount.appendChild(buildSection(title, rows, () => spec, (d) => {
+            if (d.p === "spectrum.detector") fitBandToDetector(spec.spectrum);
             // Keep an ordered band, including the monochromatic case where the ends meet.
             if (d.p === "spectrum.nm0" && spec.spectrum.nm0 > spec.spectrum.nm1) {
                 spec.spectrum.nm1 = spec.spectrum.nm0;

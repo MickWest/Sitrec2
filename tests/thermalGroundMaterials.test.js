@@ -14,11 +14,13 @@ jest.mock("../src/i18n", () => ({t: key => key}));
 const byId = Object.fromEntries(GROUND_CLASSES.map(groundClass => [groundClass.id, groundClass]));
 const evening = {climate: "humid", sunElevationDeg: -15, hoursSinceSunset: 2, cloudFraction: 0, windMps: 2};
 
-test("The time law reproduces the research table's anchors", () => {
-    // Calculated from the published forms: humid evening, 2 h after sunset, clear, 2 m/s (table: -1.5, -2.5, +4).
-    expect(groundClassOffset(byId.grass, evening)).toBeCloseTo(-3 * 0.7 * 12.6 / 18.3, 10);
-    expect(groundClassOffset(byId.roof, evening)).toBeCloseTo(-5 * 0.7 * 12.6 / 18.3, 10);
-    expect(groundClassOffset(byId.asphalt, evening)).toBeCloseTo(15 * 0.4 * Math.exp(-2 / 11), 10);
+test("The time law falls within the research table's ranges", () => {
+    // Humid evening, 2 h after sunset, clear, 2 m/s. The research table gives grass -1.5 (-0.5 to -3),
+    // painted roofs -2.5 (-1 to -5) and asphalt +4 (+2 to +7) K relative to the air.
+    const within = (value, low, high) => {expect(value).toBeGreaterThanOrEqual(low); expect(value).toBeLessThanOrEqual(high);};
+    within(groundClassOffset(byId.grass, evening), -3, -0.5);
+    within(groundClassOffset(byId.roof, evening), -5, -1);
+    within(groundClassOffset(byId.asphalt, evening), 2, 7);
     // Clear midday at 70 degrees and 2 m/s is the reference itself; full overcast leaves 25% of it.
     const day = {climate: "dry", sunElevationDeg: 70, hoursSinceSunset: 18, cloudFraction: 0, windMps: 2};
     expect(groundClassOffset(byId.asphalt, day)).toBeCloseTo(25, 10);

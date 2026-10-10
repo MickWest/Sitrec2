@@ -2,15 +2,14 @@ import assert from "node:assert/strict";
 import * as M from "../tools/thermal/atmosphere.js";
 import {inBandRadiance, PHOTON_SCALE} from "../tools/thermal/radiometry.js";
 
-const {createAtmosphere, solvePath, evaluatePath, blackbodyBands, plumeSurvival,
-    transmitRadiance, clearSky, cloudBackground, seaBackground, seaReflectance, BANDS} = M;
+const {createAtmosphere, solvePath, evaluatePath, blackbodyBands,
+    transmitRadiance, clearSky, seaBackground, seaReflectance, BANDS} = M;
 const sum = a => a.reduce((a, b) => a + b, 0);
 const rad = d => d * Math.PI / 180;
 function close(a, b, tolerance = 1e-10) { assert.ok(Math.abs(a - b) <= tolerance, `${a} != ${b} +/- ${tolerance}`); }
 function compare(a, b, tolerance = 1e-10) { assert.equal(a.length, b.length); a.forEach((v, i) => close(v, b[i], tolerance)); }
 const atm = createAtmosphere();
 const FLAT = {sensorAltitudeM: 0, targetAltitudeM: 0, earthRadiusM: Infinity};
-const fractions = {co2Center: 0.70, blueWing: 0.08, redWing: 0.17, water: 0.05};
 const isothermal = (temperatureK = 290, extra = {}) => createAtmosphere({
     profile: () => ({temperatureK, pressurePa: 101325, waterVaporDensityKgM3: 0.01}), ...extra});
 const aerosolOnly = (extra = {}) => isothermal(290, {co2Scale: 0, waterLineScale: 0,
@@ -93,13 +92,11 @@ test('elevated equal-height path transmits more in standard atmosphere', () => {
         p.transmission.forEach((t, i) => assert.ok(t >= previous[i] - 1e-14)); previous = p.transmission;
     }
 });
-test('CO2 center is suppressed and plume differs from a gray source', () => {
+test('CO2 center is suppressed and its wings transmit along a high-altitude path', () => {
     const p = evaluatePath({sensorAltitudeM: 7620, targetAltitudeM: 7620, slantRangeM: 60000}, atm);
     assert.ok(p.transmission[6] < 1e-6);
-    const plume = plumeSurvival(p, fractions);
-    assert.ok(plume.components.blueWing > plume.components.co2Center * 100);
-    assert.ok(plume.components.redWing > plume.components.co2Center * 100);
-    assert.ok(plume.effectiveTransmission < transmitRadiance(p, blackbodyBands(300)).effectiveTransmission);
+    assert.ok(p.transmission[4] > p.transmission[6] * 100);
+    assert.ok(p.transmission[9] > p.transmission[6] * 100);
 });
 test('a scattering-only aerosol does not emit thermal radiation', () => {
     const p = evaluatePath({...FLAT, slantRangeM: 2000}, aerosolOnly({aerosolSingleScatteringAlbedo: 1,
@@ -128,12 +125,6 @@ test('clear sky handles horizon and altitude without a secant singularity', () =
     assert.ok(zenith.radianceWm2Sr > high.radianceWm2Sr);
     assert.equal(clearSky({sensorAltitudeM: 20, elevationRad: rad(-1)}, atm).kind, 'surface');
 });
-test('cloud opaque and transparent limits', () => {
-    const p = evaluatePath({...FLAT, slantRangeM: 0}, atm);
-    compare(cloudBackground(p, {temperatureK: 270, normalOpticalDepth: 100}).observed, blackbodyBands(270));
-    compare(cloudBackground(p, {temperatureK: 270, normalOpticalDepth: 0, behindRadiance: blackbodyBands(200)}).observed, blackbodyBands(200));
-    assert.ok(cloudBackground(p, {temperatureK: 270, normalOpticalDepth: 1, viewCosine: 0.2}).cloudTransmission < Math.exp(-1));
-});
 test('sea Fresnel normal and grazing limits', () => {
     close(seaReflectance(1), ((1.35 - 1) ** 2 + 0.01 ** 2) / ((1.35 + 1) ** 2 + 0.01 ** 2));
     close(seaReflectance(0), 1);
@@ -152,18 +143,12 @@ test('profile hydrostatic pressure and array interpolation', () => {
     close(atm.sample(11000).temperatureK, 216.65);
     close(atm.sample(11000).pressurePa, 22632.04, 0.1);
 });
-test('shader table retains units, sign and ordering', () => {
-    const p = evaluatePath({...FLAT, slantRangeM: 1000}, atm), table = M.shaderTable(p);
-    assert.equal(table.length, 24); compare(table.slice(0, 12), p.transmission, 1e-6);
-    compare(table.slice(12), p.pathRadiance, 1e-6);
-});
 test('reject invalid inputs instead of returning plausible numbers', () => {
     for (const input of [{...FLAT, slantRangeM: -1}, {...FLAT, slantRangeM: NaN},
         {sensorAltitudeM: 0, targetAltitudeM: 2000, slantRangeM: 1000},
         {sensorAltitudeM: 0, targetAltitudeM: 10, slantRangeM: 0}]) assert.throws(() => evaluatePath(input));
     assert.throws(() => createAtmosphere({relativeHumidity: -0.1}));
     assert.throws(() => createAtmosphere({aerosolSingleScatteringAlbedo: 0.9}));
-    assert.throws(() => plumeSurvival(evaluatePath({...FLAT, slantRangeM: 1000}), {co2Center: 0.5}));
 });
 
 

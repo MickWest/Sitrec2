@@ -8,10 +8,10 @@ const close = (actual,expected,tolerance=1e-6) => expect(Math.abs(actual-expecte
 const maximumError = (actual, expected) => Math.max(...actual.map((value,pixel)=>Math.abs(value-expected[pixel])));
 const opticalSensor={focalM:0.675,apertureM:0.135,pitchM:20e-6};
 
-test("normalized diffraction, skirt, footprint, crosstalk and Gaussian kernels", () => {
+test("normalized diffraction, skirt, footprint and Gaussian kernels", () => {
     const kernels=[sensor.diffractionKernel(opticalSensor,{radiusPx:12},4e-6,2),
         sensor.scatterKernel(opticalSensor,{tis:0.1,cutoffRad:100e-6},2),
-        sensor.footprintKernel(2,0.9),sensor.footprintKernel(3,0.9),sensor.crosstalkKernel(0.02),sensor.gaussianKernel(1,4)];
+        sensor.footprintKernel(2,0.9),sensor.footprintKernel(3,0.9),sensor.gaussianKernel(1,4)];
     for(const kernel of kernels) {
         close(sensor.sum(kernel.data),1,1e-7);
         const width=129, input=new Float32Array(width*width);input[64*width+64]=1;

@@ -168,7 +168,7 @@ export const PRESETS = [
     },
 ];
 
-// Band presets follow the visible starting points, which retain their original spectra.
+// Band presets follow the visible starting points.
 PRESETS.push(
     {
         id: "mwirAiry",

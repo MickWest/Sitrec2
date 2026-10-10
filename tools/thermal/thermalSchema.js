@@ -4,6 +4,9 @@ import {opticalSampling, electronsPerRadiance, integrationTime, ADC_MAX} from ".
 // One menu and serialization contract. Numeric arguments use the unit field below;
 // choice values are stable identifiers, booleans are unitless. Defaults are estimates
 // unless the selected sensor supplies more specific provenance.
+// Sitrec shows the labels, tooltips and option labels from src/i18n/en.js (thermal.parameters);
+// the standalone tools pages cannot load that file and show the copies below.
+// tests/thermalParameterText.test.js requires the two copies to be identical.
 function parameter(key, group, type, unit, defaultValue, min, max, step, label, tooltip, extra = {}) {
     return Object.freeze({key, group, type, unit, default: defaultValue, min, max, step,
         label, tooltip, ...extra});
@@ -34,35 +37,35 @@ const environmentSources = {
     seaSwellDirectionRad: "Estimated swell toward azimuth from local north, clockwise; independent of wind",
 };
 const definitions = [
-    number("cloudOpticalDepth", "scene", "1", Math.log(100), 0, 20, .01, "Cloud absorption depth", "Estimated core absorption optical depth; texture alpha is normalized column, not thermal opacity. Scattering is omitted."),
-    choice("seaMode", "scene", "smooth", {smooth: "Smooth comparison", statistical: "Statistical rough sea"}, "Sea state model", "Statistical ensemble mean from wind slopes and optional independent swell. No moving waves or crest occlusion."),
-    number("seaWindMps", "scene", "m/s", 5, 0, 14, .1, "Sea wind at 10 m", "Estimated neutral-profile surface wind; drives the named Gaussian slope model, not aircraft-altitude wind."),
-    number("seaWindDirectionRad", "scene", "rad", 0, 0, 2 * Math.PI, .01, "Sea wind toward azimuth", "Clockwise from local north. Directional reflection uses each pixel ray."),
-    number("seaSkinTemperatureK", "scene", "K", 293, 250, 330, .1, "Sea skin temperature", "Estimated radiating water skin temperature, independent of air and bulk water temperature."),
-    number("seaSwellHeightM", "scene", "m", 0, 0, 20, .1, "Swell significant height", "Independent optional monochromatic swell; zero omits it. Averaged slopes only, no geometric wave occlusion."),
-    number("seaSwellPeriodS", "scene", "s", 13, 1, 30, .1, "Swell period", "Estimated deep-water monochromatic sensitivity case; does not infer wind-wave development."),
-    number("seaSwellDirectionRad", "scene", "rad", 0, 0, 2 * Math.PI, .01, "Swell toward azimuth", "Independent swell direction, clockwise from local north."),
+    number("cloudOpticalDepth", "scene", "1", Math.log(100), 0, 20, .01, "Cloud absorption depth", "Estimated core absorption depth: alpha = 1 − exp(−depth × mask). Scattering is omitted."),
+    choice("seaMode", "scene", "smooth", {smooth: "Smooth comparison", statistical: "Statistical rough sea"}, "Sea state model", "Statistical ensemble mean from wind slopes and independent swell; no moving crests or geometric occlusion."),
+    number("seaWindMps", "scene", "m/s", 5, 0, 14, .1, "Sea wind at 10 m", "Estimated surface wind in m/s. It is independent of aircraft-altitude wind."),
+    number("seaWindDirectionRad", "scene", "rad", 0, 0, 2 * Math.PI, .01, "Sea wind toward azimuth", "Clockwise from local north in radians; direction affects reflected sky."),
+    number("seaSkinTemperatureK", "scene", "K", 293, 250, 330, .1, "Sea skin temperature", "Estimated radiating skin in K; independent of air or bulk water temperature."),
+    number("seaSwellHeightM", "scene", "m", 0, 0, 20, .1, "Swell significant height", "Independent optional swell height in m; zero omits swell. All slopes are statistically averaged."),
+    number("seaSwellPeriodS", "scene", "s", 13, 1, 30, .1, "Swell period", "Estimated monochromatic deep-water swell period in s; not recovered from wind."),
+    number("seaSwellDirectionRad", "scene", "rad", 0, 0, 2 * Math.PI, .01, "Swell toward azimuth", "Independent swell direction, clockwise from local north in radians."),
     choice("sensorPreset", "detector", "MX15", Object.fromEntries(Object.entries(SENSOR_PRESETS).map(([key, preset]) => [key, preset.label])), "Sensor preset", "Conditional sensor model; inspect the status and source of each value."),
-    number("ambientTemperatureK", "scene", "K", 293, 150, 350, 1, "Ambient fallback temperature", "Fallback for untagged surfaces and thermal signatures without a scene air temperature. Tracked vehicles use the air profile at their altitude."),
+    number("ambientTemperatureK", "scene", "K", 293, 150, 350, 1, "Ambient fallback temperature", "Fallback temperature for untagged object surfaces. Vehicle air temperature comes from the atmosphere or the object's override."),
     choice("atmosphereProfile", "scene", "standard", {standard: "Standard profile", sounding: "Loaded sounding"}, "Atmosphere profile",
-        "Standard: the U.S. Standard Atmosphere 1976 shape with the surface air temperature and water vapor below. Loaded sounding: the measured temperature and humidity levels of a radiosonde loaded into the scene, the launch nearest the scene time."),
-    number("surfaceTemperatureK", "scene", "K", 288.15, 150, 350, 0.1, "Surface air temperature", "Sea-level air temperature for the standard profile, overridden by a loaded sounding. Also sets water temperature in the Smooth comparison sea model."),
+        "Standard: the standard atmosphere shape with the surface air temperature and water vapor below. Loaded sounding: the measured temperature and humidity of a weather balloon loaded into the scene (Import Sounding or Get Nearby Weather Balloons), the launch nearest the scene time."),
+    number("surfaceTemperatureK", "scene", "K", 288.15, 150, 350, 0.1, "Surface air temperature", "Sea-level air temperature for the standard atmospheric profile. A loaded sounding supplies the profile instead. This value also sets the water temperature in the Smooth comparison sea model."),
     // Estimated ground/sea fallback, using the U.S. Standard Atmosphere 1976
     // sea-level temperature as a reference, not an observed surface temperature.
-    choice("groundTemperatureMode", "scene", "color", {color: "Terrain color estimate", materials: "Material classes", uniform: "Uniform temperature"}, "Ground temperature source", "Terrain color estimate: darker colors warmer. Material classes: imagery colors classed as vegetation, asphalt, concrete, roof or soil, each at the air temperature plus a researched offset for the time of day, with its own emissivity. Uniform: one temperature. Visible imagery does not measure temperature or material."),
+    choice("groundTemperatureMode", "scene", "color", {color: "Terrain color estimate", materials: "Material classes", uniform: "Uniform temperature"}, "Ground temperature source", "Terrain color estimate: darker colors are warmer. Material classes: each imagery color is classed as vegetation, asphalt, concrete, roof or soil; each class is at the air temperature plus a researched offset for the time of day and has its own emissivity. Uniform: one temperature. Visible imagery does not measure temperature or material."),
     choice("groundCondition", "scene", "automatic", {automatic: "From sun and time", day: "Day, clear", overcast: "Day, overcast", evening: "Evening", night: "Late night"}, "Ground condition",
-        "Material classes only. Sets each class's temperature relative to air. Automatic uses the scene's sun elevation and the time since sunset, for a clear sky."),
+        "Sets each material class's temperature relative to the air. Automatic uses the scene's sun elevation, the time since sunset and the Cloud cover setting. The other conditions are fixed states: Day, clear and Day, overcast are midday with no cloud and with full cloud; Evening and Late night have a clear sky."),
     choice("groundClimate", "scene", "automatic", {automatic: "From humidity", humid: "Warm humid", temperate: "Temperate", dry: "Dry"}, "Ground climate",
-        "Material classes only. Dry air lets surfaces cool further at night and heat further by day. Automatic uses the surface dew point and relative humidity of the atmosphere profile."),
+        "Dry air lets surfaces cool further at night and heat further by day than humid air. Automatic uses the surface dew point and relative humidity of the atmosphere profile: a dew point of 18 °C or more is warm humid, under 35% relative humidity is dry."),
     number("groundCloudFraction", "scene", "1", 0.3, 0, 1, 0.05, "Cloud cover",
-        "Material classes with automatic condition. Fraction of sky covered: FEW 0.2, SCT 0.45, BKN 0.75, OVC 1 in a weather report. Cloud reduces night cooling and day heating."),
+        "Fraction of the sky covered by cloud, for the automatic ground condition. From a weather report: FEW 0.2, SCT 0.45, BKN 0.75, OVC 1. Cloud reduces night cooling and day heating."),
     boolean("groundMapData", "scene", false, "Mapped roads and buildings",
-        "Material classes only. Loads open map road and building data around the target (network): road surfaces are asphalt, footpaths concrete and building footprints roofs; elsewhere the imagery colors decide. Widths are typical for each road class."),
+        "Loads open map road and building data around the target over the network, as City lights does. Road surfaces are asphalt, footpaths concrete and building footprints roofs; roads under tree canopy stay trees. Walls of 3D buildings are concrete. Elsewhere the imagery colors decide. Road widths are typical for each road class, not mapped."),
     number("groundWindMps", "scene", "m/s", 2, 0, 15, 0.1, "Surface wind",
-        "Material classes only. Near-surface wind speed. Wind mixes surfaces toward the air temperature by day and night."),
-    number("groundTemperatureK", "scene", "K", 288.15, 150, 350, 0.1, "Ground temperature", "Estimated terrain reference temperature. Color mode spans equally above and below this value; uncolored terrain and manual-sky water use this fallback."),
-    number("groundTemperatureSpanK", "scene", "K", 10, 0, 30, 0.1, "Terrain color temperature span", "Estimated warm-to-cool span: black is warmer and white is cooler. Uses unlit sRGB luminance; imagery shadows and colors are not measured temperatures. Zero gives uniform ground temperature."),
-    number("groundEmissivity", "scene", "1", 1, 0, 1, 0.01, "Ground emissivity", "Estimated opaque terrain emissivity. Atmospheric water uses its sea model; manual-sky water uses this fallback."),
+        "Near-surface wind speed in m/s, for the material classes. Wind mixes surfaces toward the air temperature by day and night. A weather report gives the wind at 10 m in knots: 1 kt = 0.514 m/s."),
+    number("groundTemperatureK", "scene", "K", 288.15, 150, 350, 0.1, "Ground temperature", "Estimated terrain reference temperature. Color mode spans equally above and below it. Uncolored terrain and water tiles with a manual sky use this fallback."),
+    number("groundTemperatureSpanK", "scene", "K", 10, 0, 30, 0.1, "Terrain color temperature span", "Estimated warm-to-cool span in K: black is warmer and white is cooler, around Ground temperature. Uses unlit sRGB luminance. Imagery shadows and colors are not measured temperatures. Zero gives uniform ground temperature."),
+    number("groundEmissivity", "scene", "1", 1, 0, 1, 0.01, "Ground emissivity", "Estimated opaque terrain emissivity. Also used by water tiles with a manual sky; atmospheric sea emissivity comes from Fresnel reflection."),
     choice("skySource", "scene", "atmosphere", {atmosphere: "Atmosphere", manual: "Manual temperature"}, "Sky source", "Elevation-dependent background from the range-table atmosphere, or a manual brightness temperature."),
     boolean("skyGradient", "scene", true, "Sky elevation gradient", "Use each camera ray elevation for atmospheric sky and sea; disable for a uniform center-ray background."),
     number("skyTemperatureK", "scene", "K", 240, 0, 1000, 1, "Sky brightness temperature", "Equivalent blackbody radiance for the background in manual sky mode only."),
@@ -71,7 +74,7 @@ const definitions = [
     choice("environmentSource", "scene", "manual", {manual: "Manual temperature", skyGround: "Sky and ground"}, "Reflected environment source",
         "Manual: every surface reflects one temperature. Sky and ground: each surface reflects the clear sky above and the ground below, weighted by the way it faces, calculated at its own altitude."),
     number("environmentTemperatureK", "scene", "K", 240, 0, 1500, 1, "Reflected environment", "Cosine-weighted hemispheric incident radiance expressed as blackbody temperature."),
-    number("solarScale", "scene", "1", 0, 0, 1, 0.01, "Solar transmission", "Estimated transmission of the 5772 K solar continuum for diffuse reflection by opaque surfaces. Look View uses the scene's actual Sun direction. Zero disables reflection; no surface heating or cloud scattering is modeled."),
+    number("solarScale", "scene", "1", 0, 0, 1, 0.01, "Solar transmission", "Estimated direct solar transmission (0–1). Sun direction follows scene date, time and location. Adds diffuse reflected sunlight to opaque surfaces; does not heat them or scatter sunlight in clouds. Zero disables this contribution."),
     number("sunDirectionX", "scene", "1", 0, -1, 1, 0.01, "Sun direction X", "World direction toward the sun, normalized with Y and Z."),
     number("sunDirectionY", "scene", "1", 1, -1, 1, 0.01, "Sun direction Y", "World direction toward the sun."),
     number("sunDirectionZ", "scene", "1", 0, -1, 1, 0.01, "Sun direction Z", "World direction toward the sun."),
@@ -138,14 +141,14 @@ const definitions = [
     number("highPercentile", "processing", "1", 0.99, 0.01, 1, 0.001, "Upper percentile", "Upper adaptive count-window quantile."),
     number("agcTimeConstantS", "processing", "s", 0.3, 0, 30, 0.01, "Gain time constant", "Exponential settling time; zero responds immediately."),
     number("frameRateHz", "processing", "Hz", 30, 1, 240, 0.01, "Frame rate", "Converts frame deltas to seconds for adaptive gain; repeated frames recompute the current window without smoothing."),
-    number("minimumWindowCounts", "processing", "count", 32, 1, 16383, 1, "Minimum window", "Like a camera's maximum gain: a scene with less spread than this is widened equally about its middle, so low contrast stays mid-gray. For the MX-15 preset near 295 K, about 250 counts per kelvin."),
+    number("minimumWindowCounts", "processing", "count", 32, 1, 16383, 1, "Minimum window", "Like a camera's maximum gain: a scene with less spread than this is widened equally about its middle, so low contrast stays mid-gray. The default only steadies a nearly uniform frame. For the MX-15 preset near 295 K, about 250 counts per kelvin at the sensor."),
     number("plateauFactor", "processing", "1", 4, 0.01, 100, 0.1, "Histogram plateau", "Cap per detector-level bin = factor × pixel count / 16384; discarded counts are not redistributed."),
     number("localAmount", "processing", "1", 0, 0, 5, 0.05, "Local enhancement", "Signed unsharp detail before output clipping; produces opposite-sign rings."),
     number("localRadiusPx", "processing", "pixel", 3, 0, 20, 0.1, "Local radius", "Gaussian sigma in detector pixels; finite support is four sigma."),
     number("radiometricLow", "processing", "1e20 photon/s/m²/sr", 0, 0, 1e5, 0.01, "Radiometric low", "Fixed lower photon-radiance endpoint, recovered from counts using the exposure factor."),
     // Calculated MX-15 initial endpoint: (7e6 * (1-256/16383)) / 8363835.07150155.
     // normalizeSettings derives it again from the selected exposure and detector.
-    number("radiometricHigh", "processing", "1e20 photon/s/m²/sr", 0.8238587041668244, 0.001, 1e6, 0.01, "Radiometric high", "Defaults to available ADC signal headroom at the selected exposure; an explicit edit holds this radiance endpoint."),
+    number("radiometricHigh", "processing", "1e20 photon/s/m²/sr", 0.8238587041668244, 0.001, 1e6, 0.01, "Radiometric high", "Upper photon-radiance endpoint. By default it is the signal headroom of the well and the ADC at the selected exposure, and it follows the exposure; an edited value is held. Detector clipping still applies."),
     choice("polarity", "display", "whiteHot", {whiteHot: "White hot", blackHot: "Black hot"}, "Polarity", "Black hot is the exact 255-code inverse of white hot, including the response curve."),
     number("responseGamma", "display", "1", 1, 0.1, 5, 0.01, "Response gamma", "White-hot response = clamped drive^(1/gamma); invert after quantization."),
     choice("displayCurve", "display", "linear", {linear: "Linear", measured: "Measured preset curve"}, "Display curve", "Fixed lookup response after the count window and gamma, before quantization and polarity. Use gamma 1 for the measured law; MX-15 U depth uncertainty ±20%."),
