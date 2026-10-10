@@ -618,11 +618,7 @@ export async function runThermalSelfTest() {
             try {
                 for (const gainMode of ["automatic", "plateau"]) {
                     const configured = normalizeSettings({...settings, gainMode, agcTimeConstantS: .12, plateauFactor: 4});
-                    const deadline = performance.now()+300000;
-                    while (render(scene, configured, 0) === false) {
-                        if (performance.now() > deadline) throw new Error("Optical initialization timed out");
-                        await new Promise(resolve => setTimeout(resolve,16));
-                    }
+                    render(scene, configured, 0);
                     let previousCodes, previousWindow;
                     for (let frame = 0; frame < 4; frame++) {
                         scene.children.forEach(object => {object.userData.thermal.temperatureK += .3;});
@@ -1115,7 +1111,7 @@ export async function runThermalSelfTest() {
                 // reference/capture tests retain synchronous preparation.
                 const measured = new ThermalPipeline(renderer, {analysis: false, gpuTiming: true});
                 const cpu = [], preparation = [], wall = [], stageCpu = {}, fftSizes = new Set();
-                let missed = 0, pendingFrames = 0, maxKernelError = 0, previousStart, initializationMs = 0, previousRangeWork;
+                let missed = 0, maxKernelError = 0, previousStart, initializationMs = 0, previousRangeWork;
                 try {
                     for (let frame = 0; frame < 300; frame++) {
                         await new Promise(resolve => requestAnimationFrame(resolve));
@@ -1131,17 +1127,16 @@ export async function runThermalSelfTest() {
                         const settings = {...configured, turbulenceR0M: integrateTurbulence({sensorAltitudeM: configured.sensorAltitudeM,
                             slantRangeM: rangeM, elevationRad}).r0ReferenceM};
                         const inputs = {scene, camera: moving, settings, skyUp: [m[4], m[5], m[6]], psfRangeM: rangeM, frame, target, pace: true};
-                        let ready = measured.render(inputs);
+                        measured.render(inputs);
                         if (!frame) {
                             const initStart = performance.now();
                             record(`${speedMps} m/s at ${initialRangeM} m: startup produces output`, 1, Number(measured.hasFrame), 0);
-                            while ((ready === false || measured.opticsReport.workerPending || measured.rangeCache.pending) && performance.now()-initStart < 300000) {
-                                await new Promise(resolve => setTimeout(resolve, 16)); ready = measured.render(inputs);
+                            while ((measured.opticsReport.workerPending || measured.rangeCache.pending) && performance.now()-initStart < 300000) {
+                                await new Promise(resolve => setTimeout(resolve, 16)); measured.render(inputs);
                             }
                             if (measured.opticsReport.workerPending || measured.rangeCache.pending) throw new Error("Thermal preparation timed out");
                             initializationMs = performance.now()-initStart; previousStart = undefined;
                         }
-                        if (ready === false) {pendingFrames++; continue;}
                         const timing = measured.lastFrame.timing;
                         cpu.push(timing.cpuMs); missed += Number(measured.lastFrame.gain.missedDeadline ?? false);
                         const rangeWork = measured.rangeCache.workMs ?? 0;
@@ -1160,7 +1155,7 @@ export async function runThermalSelfTest() {
                     for (const sample of measured.gpuTimer.samples) (gpu[sample.stage] ??= []).push(sample.ms);
                     const prefix = `${speedMps} m/s at ${initialRangeM} m`;
                     performanceReport.movingCamera.push({tier: "interactive", speedMps, initialRangeM,
-                        frames: cpu.length, pendingFrames, initializationMs, maxKernelError,
+                        frames: cpu.length, initializationMs, maxKernelError,
                         worker: {firstKernelMs: measured.opticsScheduler.firstKernelMs,
                             domainBuildMs: measured.opticsScheduler.buildMs},
                         cpu: timingDistribution(cpu), preparation: timingDistribution(preparation),

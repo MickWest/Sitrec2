@@ -19,7 +19,7 @@
 import {Globals, guiMenus, setRenderOne, Sit} from "../Globals";
 import {GlobalScene} from "../LocalFrame";
 import {REFRACTION_DEFAULTS} from "./refraction";
-import {Object3D, Vector3} from "three";
+import {Vector3} from "three";
 import {
     cullLoftedObjects,
     liftWorldPoint,

@@ -56,7 +56,8 @@ same frame as a marker is added to the label of that marker, after a semicolon.
 
 **Add satellite rise / set markers** adds a marker at each time that a satellite rises above,
 or sets below, the horizon between the first frame and the last frame of the sitch. The marker
-is labeled **<satellite> rises** or **<satellite> sets**.
+is labeled **<satellite> rises** or **<satellite> sets**. The command is also in the timeline's
+right-click menu.
 
 - Load satellite data first (see [Satellites](Satellites.md)). Only the satellites that are
   shown in the sky are included (see

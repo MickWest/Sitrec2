@@ -480,7 +480,6 @@ export const subSitchMethods = {
             frame: GlobalDateTimeNode.msToFrame(timeMS),
             label: t(rising ? "custom.chapters.satelliteRises" : "custom.chapters.satelliteSets", {name: sat.name || sat.number}),
         }));
-        markSitchDirty();
         editTimelineMarkers(t("custom.chapters.satelliteMarkers.label"), () => TimelineMarkers.addPredicted(entries));
     },
 

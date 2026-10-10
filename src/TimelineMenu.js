@@ -5,7 +5,7 @@
 // landed; the slider passes in the frame under the cursor and the marker there.
 
 import {EventManager} from "./CEventManager";
-import {GlobalDateTimeNode, Globals, markSitchDirty, setRenderOne, Sit, UndoManager} from "./Globals";
+import {CustomManager, GlobalDateTimeNode, Globals, markSitchDirty, setRenderOne, Sit, UndoManager} from "./Globals";
 import {t} from "./i18n";
 import {par} from "./par";
 import {showConfirm} from "./showError";
@@ -124,6 +124,10 @@ export function showTimelineMenu(event, cursorFrame, marker) {
         item(menu, t("timelineMarkers.addHere", {frame: cursorFrame}),
             () => editTimelineMarkers(t("timelineMarkers.undoAdd"), () => TimelineMarkers.add(cursorFrame)),
             !TimelineMarkers.get(cursorFrame));
+    }
+    // The same command as File > Sitch Chapters; it reports when no satellites are loaded.
+    if (CustomManager?.addSatelliteMarkers) {
+        item(menu, t("custom.chapters.satelliteMarkers.label"), () => CustomManager.addSatelliteMarkers());
     }
 
     const markers = TimelineMarkers.list();

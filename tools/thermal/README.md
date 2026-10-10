@@ -549,8 +549,10 @@ The thermal branch runs after camera preparation and before its restoration. It
 bypasses visible sky/haze, RGB reflections, IR lighting, exposure, filmic mapping
 and all legacy effect passes. Temporary materials, callbacks, visibility,
 frustum flags and renderer state restore on success or exceptions. Visible main
-rendering uses its own unchanged path. Context loss/disposal releases pipeline
-resources; an asynchronous load cannot attach to a disposed view.
+rendering uses its own unchanged path. Choosing Visible releases the pipeline and
+its GPU memory; choosing a thermal mode again builds a new one. Context
+loss/disposal releases pipeline resources; an asynchronous load cannot attach to a
+disposed view.
 
 On `localhost` and `local.metabunk.org` only, `window.lookThermal` exposes
 `settings`, `mapping`, `geometry`, `turbulence`, `vehicles`, `pipeline`, `set(key,value)`,
@@ -871,6 +873,8 @@ the CSV column names and units below, with the same validation. In Sitrec,
 to these records; `atmosphereProfile: "sounding"` selects the loaded launch nearest the scene time.
 A dew point up to 0.5 K above the temperature is clamped to saturation; a larger one is dropped so
 that relative humidity is used. A profile the atmosphere rejects falls back to the standard one.
+The pipeline and the host build the atmosphere once per sounding object (`soundingAtmosphere` in
+`ThermalPipeline.js`), so a host replaces a sounding to change it and never edits one in place.
 
 The CSV columns are `level_type, pressure_Pa, geopotential_height_m, temperature_C,
 relative_humidity_pct, dewpoint_depression_C, wind_dir_deg, wind_speed_m_s`. Column order
@@ -1255,6 +1259,9 @@ preview containing residual Gaussian blur and scatter, with diffraction and
 turbulence explicitly omitted. This positive, normalized preview has a calculated
 universal kernel L1 bound of `2`, displayed in the readout along with the resulting
 radiance bound. This deliberately loose bound does not certify optical fidelity.
+The pipeline reports the preview state as a code (`messageCode`, for example
+`"coarse"`, in `opticsReport` and `lastFrame.opticsCache`), and the host shows its
+own text for that code.
 The worker publishes the exact requested response before constructing the wider
 reuse domain. Wavelength diffraction, its forward transform and fixed Gaussian
 transfer are reused across validation samples; finite crops remain unchanged.
