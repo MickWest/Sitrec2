@@ -27,16 +27,8 @@ const sharedEnvValues = loadEnvIntoProcess(sharedEnvFile);
 // does not, so it carries its own copy of this call.
 require('./scripts/sharedEnvVersion').checkOrExit({ envPath: sharedEnvFile });
 
-// Rewrite inter-document links from .md to .html for the generated doc pages.
-// Handles a trailing anchor: [x](Foo.md#bar) -> [x](Foo.html#bar). The previous pattern
-// required a literal ".md)" and so silently left every anchored link pointing at the raw
-// markdown file, which the browser shows as plain text instead of opening the page.
-function rewriteMdLinks(text) {
-    return text.replace(
-        /(\[.*?\]\((?:\.\/)?(?:docs\/)?)([^)#]*?)\.md(#[^)]*)?\)/g,
-        (_m, prefix, name, anchor) => `${prefix}${name}.html${anchor || ''})`
-    );
-}
+// .md -> .html for links between our own doc pages; absolute links are left alone.
+const { rewriteMdLinks } = require('./scripts/docLinks');
 
 // Applied until it stops changing the string. A single pass over "<<b>b>" leaves a
 // "<b>" the pass itself created, so one replace() is not a reliable way to remove
