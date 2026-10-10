@@ -40,6 +40,14 @@ import {closeFullscreen, isFullscreen, openFullscreen} from "./utils";
 import {forceUpdateUIText} from "./nodes/CNodeViewUI";
 import {TimelineMarkers} from "./TimelineMarkers";
 import {editTimelineMarkers, resetInOut} from "./TimelineMenu";
+import {t} from "./i18n";
+
+// A timeline marker as it goes back to a caller, which can be the chat model. A label can
+// come from a shared sitch, so it is returned as a label only (one line, limited length), as
+// listMenus does with menu names. The stored label does not change.
+function markerForPrompt(marker) {
+    return {...marker, label: sanitizeLabelForPrompt(marker.label)};
+}
 
 // Find a 3D object's folder in the Objects menu by what a script names it: the object's id
 // (which never changes, so a script still finds an object the user renamed), then its exact
@@ -593,7 +601,10 @@ class CSitrecAPI {
 
             listTimelineMarkers: {
                 doc: "List the timeline markers: named frames shown as flags on the frame slider. Returns [{frame, label}] sorted by frame, plus the In/Out (A-B) frames and the frame count.",
-                fn: () => ({markers: TimelineMarkers.list(), inFrame: Sit.aFrame, outFrame: Sit.bFrame, frames: Sit.frames}),
+                fn: () => ({
+                    markers: TimelineMarkers.list().map(markerForPrompt),
+                    inFrame: Sit.aFrame, outFrame: Sit.bFrame, frames: Sit.frames,
+                }),
             },
 
             addTimelineMarker: {
@@ -607,8 +618,8 @@ class CSitrecAPI {
                     if (!Number.isFinite(frame) || frame < 0 || frame > Sit.frames - 1) {
                         return {success: false, error: `frame must be between 0 and ${Sit.frames - 1}`};
                     }
-                    const marker = editTimelineMarkers("Add timeline marker", () => TimelineMarkers.add(frame, v?.label ?? ""));
-                    return {success: true, marker};
+                    const marker = editTimelineMarkers(t("timelineMarkers.undoAdd"), () => TimelineMarkers.add(frame, v?.label ?? ""));
+                    return {success: true, marker: markerForPrompt(marker)};
                 }
             },
 
@@ -624,11 +635,11 @@ class CSitrecAPI {
                     if (bad.length) {
                         return {success: false, error: `${bad.length} marker(s) outside frames 0-${Sit.frames - 1}`, bad};
                     }
-                    editTimelineMarkers("Set timeline markers", () => {
+                    editTimelineMarkers(t("timelineMarkers.undoSet"), () => {
                         if (v?.replace) TimelineMarkers.clear();
                         for (const m of list) TimelineMarkers.add(m.frame, m.label ?? "");
                     });
-                    return {success: true, markers: TimelineMarkers.list()};
+                    return {success: true, markers: TimelineMarkers.list().map(markerForPrompt)};
                 }
             },
 
@@ -636,7 +647,7 @@ class CSitrecAPI {
                 doc: "Remove the timeline marker at a frame. Undoable.",
                 params: {frame: "Frame number of the marker"},
                 fn: (v) => {
-                    const removed = editTimelineMarkers("Delete timeline marker", () => TimelineMarkers.remove(Number(v?.frame)));
+                    const removed = editTimelineMarkers(t("timelineMarkers.undoDelete"), () => TimelineMarkers.remove(Number(v?.frame)));
                     return removed ? {success: true} : {success: false, error: `no marker at frame ${v?.frame}`};
                 }
             },
@@ -645,7 +656,7 @@ class CSitrecAPI {
                 doc: "Remove every timeline marker. Undoable.",
                 fn: () => {
                     const count = TimelineMarkers.count();
-                    editTimelineMarkers("Delete all timeline markers", () => TimelineMarkers.clear());
+                    editTimelineMarkers(t("timelineMarkers.undoDeleteAll"), () => TimelineMarkers.clear());
                     return {success: true, removed: count};
                 }
             },

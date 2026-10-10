@@ -1,5 +1,5 @@
 import {
-    isPhotoBackdropJSON, normalizePhotoBackdrop, photoBackdropNodeId, PHOTO_BACKDROP_DEFAULT_RANGE,
+    isPhotoBackdropJSON, normalizePhotoBackdrop, photoBackdropGridSize, photoBackdropNodeId, PHOTO_BACKDROP_DEFAULT_RANGE,
 } from "../src/photoBackdrop/PhotoBackdropFormat";
 
 const PNG = "data:image/png;base64,iVBORw0KGgo=";
@@ -44,6 +44,19 @@ describe("PhotoBackdropFormat", () => {
         ["fill color", {fillColor: "grey"}, /fillColor/],
     ])("rejects a bad %s", (what, change, message) => {
         expect(() => normalizePhotoBackdrop({...valid(), ...change})).toThrow(message);
+    });
+
+    test("the grid is 0.1 degree cells for a small picture, and capped for a panorama", () => {
+        // the Tracks.md example, 75.6-87.8 by 1.9-4.7 degrees: the plain 0.1 degree grid
+        expect(photoBackdropGridSize(87.8 - 75.6, 4.7 - 1.9))
+            .toEqual({nx: Math.ceil((87.8 - 75.6) / 0.1), ny: Math.ceil((4.7 - 1.9) / 0.1)});
+        // at least 8 x 4
+        expect(photoBackdropGridSize(0.2, 0.1)).toEqual({nx: 8, ny: 4});
+        // a 360 x 90 degree panorama: square cells, about 512 x 512 in all
+        const {nx, ny} = photoBackdropGridSize(360, 90);
+        expect(nx / ny).toBeCloseTo(4, 1);
+        expect(nx * ny).toBeLessThanOrEqual(512 * 512 * 1.01);
+        expect(nx * ny).toBeGreaterThan(512 * 512 * 0.99);
     });
 
     test("node ids are stable and distinct", () => {

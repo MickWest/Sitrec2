@@ -46,6 +46,12 @@ export class CNodeCamera extends CNode3D {
         // GUI happens to be present.
         this.addSimpleSerial("freeLook");
 
+        // Off keeps an absolute (MSL) camera height even below the loaded terrain or 3D-tile
+        // surface: a dropped photo or video that gives an altitude turns it off (EXIFUtils.js,
+        // CustomManagerSetup.js). On, CNodeControllerTrackPosition lifts the camera onto the
+        // surface. Saved only when off, so a save with the default has no field.
+        this.forceAboveSurface = v.forceAboveSurface ?? true;
+
         this.addInput("altAdjust", "altAdjust", true);
 
         // Diffraction point spread function, imported from tools/psf. It belongs to the
@@ -157,6 +163,7 @@ export class CNodeCamera extends CNode3D {
             fov: this.camera.fov,
             orthographic: this.orthographic,
             nearPlane: this.nearPlane,
+            ...(this.forceAboveSurface === false ? {forceAboveSurface: false} : {}),
             // The whole file, image included - a few hundred kB. Storing only a reference
             // would mean a shared sitch arrives with its optics missing, which is worse:
             // the glare is part of what the scenario is claiming about the camera.
@@ -175,6 +182,7 @@ export class CNodeCamera extends CNode3D {
         this.camera.fov = v.fov;
         if (v.orthographic !== undefined) this.orthographic = v.orthographic;
         if (v.nearPlane !== undefined) this.nearPlane = v.nearPlane;
+        this.forceAboveSurface = v.forceAboveSurface ?? true;
         if (v.psfGlare !== undefined) Object.assign(this.psfGlare, v.psfGlare);
         if (v.psfFile !== undefined) this.setPSFFile(v.psfFile);
         if (this._ownsNearPlane) this.camera.near = this.nearPlane;

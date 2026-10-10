@@ -114,10 +114,7 @@ export async function exportPanorama() {
 
             lookView.camera.updateMatrix();
             lookView.camera.updateMatrixWorld();
-            
-            for (const node of NodeMan.getPreRenderNodes()) {
-                node.preRender(lookView);
-            }
+            NodeMan.preRenderAll(lookView);
 
             const cameraPos = lookView.camera.position.clone();
             const fwd = new Vector3();
@@ -227,10 +224,7 @@ export async function exportPanorama() {
 
             lookView.camera.updateMatrix();
             lookView.camera.updateMatrixWorld();
-
-            for (const node of NodeMan.getPreRenderNodes()) {
-                node.preRender(lookView);
-            }
+            NodeMan.preRenderAll(lookView);
 
             lookView.renderCanvas(fd.frame);
 

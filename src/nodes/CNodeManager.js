@@ -35,6 +35,14 @@ export class CNodeManager extends CManager{
         return this._preRenderNodes;
     }
 
+    // Run every node's preRender for a view that is about to be drawn. The view's per-frame
+    // state that pre-renders read is set first: isIR, which per-frame camera data can change
+    // at any frame (an object's reflection reads it).
+    preRenderAll(view) {
+        view.updateIsIR?.();
+        for (const node of this.getPreRenderNodes()) node.preRender(view);
+    }
+
     // Return array of nodes that implement postRender (typically ~1).
     getPostRenderNodes() {
         if (this._postRenderNodes === null) {

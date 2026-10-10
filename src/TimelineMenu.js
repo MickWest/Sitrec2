@@ -1,10 +1,11 @@
 // The frame slider's right-click menu: add, rename, go to and delete timeline
-// markers, and reset the In/Out (A-B) range. Every edit goes on the undo stack.
+// markers, and reset the In/Out (A-B) range. Every edit goes on the undo stack
+// and marks the sitch as changed, as do its undo and redo.
 // Kept out of CNodeFrameSlider so the slider only decides where the click
 // landed; the slider passes in the frame under the cursor and the marker there.
 
 import {EventManager} from "./CEventManager";
-import {GlobalDateTimeNode, Globals, setRenderOne, Sit, UndoManager} from "./Globals";
+import {GlobalDateTimeNode, Globals, markSitchDirty, setRenderOne, Sit, UndoManager} from "./Globals";
 import {t} from "./i18n";
 import {par} from "./par";
 import {showConfirm} from "./showError";
@@ -15,6 +16,12 @@ export function markerDisplayName(marker) {
     return marker.label || t("timelineMarkers.unnamed", {frame: marker.frame});
 }
 
+// A saved part of the sitch changed: redraw, and warn before the page closes.
+function changed() {
+    markSitchDirty();
+    setRenderOne(true);
+}
+
 // Run a change to the markers and record it for undo if anything changed.
 export function editTimelineMarkers(description, change) {
     const before = TimelineMarkers.snapshot();
@@ -23,10 +30,11 @@ export function editTimelineMarkers(description, change) {
     if (TimelineMarkers.version !== version) {
         const after = TimelineMarkers.snapshot();
         UndoManager?.add({
-            undo: () => { TimelineMarkers.restore(before); setRenderOne(true); },
-            redo: () => { TimelineMarkers.restore(after); setRenderOne(true); },
+            undo: () => { TimelineMarkers.restore(before); changed(); },
+            redo: () => { TimelineMarkers.restore(after); changed(); },
             description,
         });
+        markSitchDirty();
     }
     setRenderOne(true);
     return result;
@@ -53,7 +61,7 @@ export function resetInOut() {
         Sit.aFrame = a;
         Sit.bFrame = b;
         EventManager.dispatchEvent("abFrameChanged");
-        setRenderOne(true);
+        changed();
     };
     const after = {a: 0, b: Sit.frames - 1};
     apply(after);
@@ -88,7 +96,7 @@ export function showTimelineMenu(event, cursorFrame, marker) {
         menu.add(state, "label").name(t("timelineMarkers.label")).onChange(value => {
             TimelineMarkers.rename(marker.frame, value);
             menu.title(t("timelineMarkers.markerTitle", {name: markerDisplayName({...marker, label: value})}));
-            setRenderOne(true);
+            changed();
         });
         const destroy = menu.destroy.bind(menu);
         let recorded = false;
@@ -97,8 +105,8 @@ export function showTimelineMenu(event, cursorFrame, marker) {
             if (!recorded && final && final.label !== marker.label) {
                 recorded = true;
                 UndoManager?.add({
-                    undo: () => { TimelineMarkers.rename(marker.frame, marker.label); setRenderOne(true); },
-                    redo: () => { TimelineMarkers.rename(marker.frame, final.label); setRenderOne(true); },
+                    undo: () => { TimelineMarkers.rename(marker.frame, marker.label); changed(); },
+                    redo: () => { TimelineMarkers.rename(marker.frame, final.label); changed(); },
                     description: t("timelineMarkers.undoRename"),
                 });
             }

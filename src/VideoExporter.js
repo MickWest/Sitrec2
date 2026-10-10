@@ -1324,9 +1324,7 @@ export class VideoExportManager {
                     if (view.camera && view instanceof CNodeView3D) {
                         view.camera.updateMatrix();
                         view.camera.updateMatrixWorld();
-                        for (const node of NodeMan.getPreRenderNodes()) {
-                            node.preRender(view);
-                        }
+                        NodeMan.preRenderAll(view);
                     }
                     view.renderCanvas(frame);
                     for (const node of NodeMan.getPostRenderNodes()) {
@@ -1347,9 +1345,7 @@ export class VideoExportManager {
                     if (view.camera && view instanceof CNodeView3D) {
                         view.camera.updateMatrix();
                         view.camera.updateMatrixWorld();
-                        for (const node of NodeMan.getPreRenderNodes()) {
-                            node.preRender(view);
-                        }
+                        NodeMan.preRenderAll(view);
                     }
                     view.renderCanvas(frame);
                     for (const node of NodeMan.getPostRenderNodes()) {

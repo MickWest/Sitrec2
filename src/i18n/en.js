@@ -1308,6 +1308,7 @@ const en = {
         undoRename: "Rename timeline marker",
         undoDelete: "Delete timeline marker",
         undoDeleteAll: "Delete all timeline markers",
+        undoSet: "Set timeline markers",
     },
     panoramaExport: {
         exportLookPanorama: {
@@ -2121,10 +2122,17 @@ const en = {
         range: { label: "Range (m)", tooltip: "How far away the ground in the picture is taken to be. Only decides which objects it hides; the picture itself does not move" },
         fill: { label: "Fill", tooltip: "Fill the rest of the look view with one color" },
         fillColor: { label: "Fill Color" },
-        showInMain: { label: "Show in Main View", tooltip: "Draw the photographed part of the picture in the main view, Range metres from the camera, where the ground in it is assumed to be" },
+        showInMain: { label: "Show in Main View", tooltip: "Draw the photographed part of the picture in the main view, Range meters from the camera, where the ground in it is assumed to be" },
         mainOpacity: { label: "Main View Opacity" },
         hideTerrain: { label: "Hide Terrain in Look View", tooltip: "The picture already shows the real ground, so hide the terrain model while the look view draws" },
-        followCamera: { label: "Centre on Look Camera", tooltip: "Keep the picture centred on the look camera, so its angles stay exact if the camera is a few metres from where the photos were taken" },
+        followCamera: { label: "Center on Look Camera", tooltip: "Keep the picture centered on the look camera, so its angles stay exact if the camera is a few meters from where the photos were taken" },
+        importError: "Can't import photo backdrop \"{{filename}}\": {{message}}",
+    },
+    mradReticle: {
+        menuName: "Milliradian Reticle",
+        folder: "Reticle OSD",
+        showClock: { label: "Show Clock", tooltip: "Show the date and time in the lower left of the video image" },
+        clockStart: { label: "Clock at Start", tooltip: "What the camera clock read at the start of the sitch, as MM/DD/YY HH:MM:SS. Leave it empty to show the sitch's local time." },
     },
     synthBuilding: {
         name: { label: "Name" },
@@ -2865,8 +2873,9 @@ const en = {
         hideOutsideTrackData: {
             label: "Hide Outside Track Data",
             tooltip: "Hide the object on frames before its track's first data point and after "
-                + "its last. Without this, the object stays at the nearest data point, so a "
-                + "track that covers only part of the sitch leaves a marker where there is no data.",
+                + "its last. Without this, the object continues in a straight line from its first "
+                + "or last two data points (extrapolated), so a track that covers only part of the "
+                + "sitch shows the object where there is no data.",
         },
         exportToKML: {
             label: "Export to KMZ with Track",

@@ -617,9 +617,7 @@ export class CNodeView3D extends CNodeViewCanvas {
                     
                     this.camera.updateMatrix();
                     this.camera.updateMatrixWorld();
-                    for (const node of NodeMan.getPreRenderNodes()) {
-                        node.preRender(this);
-                    }
+                    NodeMan.preRenderAll(this);
 
                     this.renderCanvas(frame);
 
@@ -3604,11 +3602,18 @@ export class CNodeView3D extends CNodeViewCanvas {
 
     // Per-frame camera data (node "cameraState") records the state of the camera that made the video, and the look
     // camera is the one that reproduces it, so only the look view follows the data; the main view and other views
-    // keep their saved mode. Computed from the current frame on every read, so node pre-renders, this view's render
-    // and an export see the same frame. Transient: never saved and never marks the sitch changed. The menu still
-    // edits renderMode.
+    // keep their saved mode. Read for the current frame, so node pre-renders, this view's render and an export see
+    // the same frame. The row is looked up once per frame and kept until the frame, the table or Drive Look View
+    // changes. Transient: never saved and never marks the sitch changed. The menu still edits renderMode.
     get frameCameraState() {
-        return this.id === "lookView" ? NodeMan.get("cameraState", false)?.stateAt(par.frame) ?? null : null;
+        if (this.id !== "lookView") return null;
+        const node = NodeMan.get("cameraState", false);
+        const cache = this._frameCameraState;
+        if (cache && cache.frame === par.frame && cache.node === node
+            && cache.table === node?.table && cache.drive === node?.driveLookView) return cache.state;
+        const state = node?.stateAt(par.frame) ?? null;
+        this._frameCameraState = {frame: par.frame, node, table: node?.table, drive: node?.driveLookView, state};
+        return state;
     }
 
     get frameBand() {

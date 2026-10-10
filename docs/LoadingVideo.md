@@ -100,7 +100,8 @@ this only if the camera position and the time have not been set yet.
 | iPhone `.MOV` | Latitude, longitude and altitude above sea level | When the recording started, in the phone's local time |
 | iPhone `.mp4` (exported or shared) | Latitude, longitude and altitude above sea level | When the recording started, in the phone's local time |
 | Android (Pixel, Samsung and others) | Latitude and longitude, no altitude | The file gives the time the recording **stopped**. Sitrec subtracts the length of the video. The result can be a few seconds late. Samsung files also give the local time zone |
-| Files written by ffmpeg | The location copied from the original, if any | The file's creation time, if it has one, in UTC |
+| Files written by ffmpeg | The location copied from the original, if any | With `-movflags +use_metadata_tags`, the time copied from the original, as for that file. Otherwise the file's creation time, if it has one, read as UTC |
+| Other cameras and programs | The location in the file's standard location field, if any. GPS data recorded as a separate data track is not read | The file's creation time, read as UTC. Some cameras write their local time there, which puts the Start Time off by the time zone, so check it |
 
 If the file has no altitude, or an altitude of exactly 0, the camera goes 2 m above the
 ground, with **Above Ground Level** on. Otherwise the camera goes to the file's altitude above

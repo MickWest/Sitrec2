@@ -986,7 +986,7 @@ async function renderLongExposure(mgr) {
         camera.updateMatrixWorld(true);
     }
     function renderOnce(f) {
-        for (const pn of NodeMan.getPreRenderNodes()) pn.preRender(lookView);
+        NodeMan.preRenderAll(lookView);
         lookView.renderCanvas(f);
         for (const pn of NodeMan.getPostRenderNodes()) pn.postRender(lookView);
     }

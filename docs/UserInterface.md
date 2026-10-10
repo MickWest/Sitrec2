@@ -138,6 +138,30 @@ In a custom sitch, **Add Measurement** opens a dialog. Select the measurement ty
 
 Each measurement then has its own entry in the folder. The checkbox at the right end of the entry shows or hides that measurement. Click the entry to open the same dialog, where you can change it, show or hide it with **Show**, or **Delete** it. Click the entry again to close the dialog and keep the changes. Click a different entry, or **Add Measurement**, to keep the changes and open that dialog instead. A new custom sitch starts with three measurements: the camera altitude, the traverse altitude, and the distance from the camera to the traverse. A sitch saved before this feature is converted when it is loaded, and it is saved in the new form. If the thing a measurement uses is deleted, the measurement is not drawn, and its dialog shows the missing item as "not found".
 
+## Milliradian Reticle
+
+**Show → Views → Milliradian Reticle** draws the ranging reticle and the clock of a handheld
+thermal imager's display over the look view. The reticle is centered on the look view. Its ticks
+are 1 milliradian (mrad) apart, with a longer tick every 5 mrad. The spacing comes from the look
+camera's field of view and from the look view's **Video Zoom**, so you can read the size or the
+offset of an object in milliradians at any zoom.
+
+Like the real display, it has two reticles, chosen by the width of the video image in
+milliradians. With no video loaded, a 4:3 area in the middle of the view counts as the image.
+
+- An image 21.8 mrad wide or wider shows the wide reticle: 15 mrad to the left and right, 10 mrad
+  up and 5 mrad down, with the numbers 5, 10 and 15 under the horizontal bar.
+- A narrower image shows the narrow reticle: 3 mrad in each direction, with end marks only and
+  the number 3.
+
+Its settings are in **View → Reticle OSD**, which is shown while the reticle is on:
+
+- **Show Clock** draws the date and time in the lower left of the image, as MM/DD/YY HH:MM:SS.
+  It shows the sitch's local time.
+- **Clock at Start** is what the camera's clock read at the start of the sitch, as
+  MM/DD/YY HH:MM:SS, for a camera whose clock was not set correctly. The clock then counts on
+  from that reading. Leave it empty to show the sitch's local time.
+
 ## Units
 
 **Physics ▸ Units** sets the unit system for speeds, distances and altitudes shown in the menus, readouts and graphs. It has four values:
