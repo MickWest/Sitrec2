@@ -877,7 +877,7 @@ export async function runThermalSelfTest() {
                 Number(Math.max(pipeline.fftWidth, pipeline.fftHeight) <= 4096), 0);
         });
         await test("Packed overlap-add optics against the single-FFT reference and CPU", () => {
-            // Forced 2 × 2 tiles at this small size. Sources at the tile corner (image centre) and near the image
+            // Forced 2 × 2 tiles at this small size. Sources at the tile corner (image center) and near the image
             // corners, where the tile convolutions overlap and the padding must absorb the wrap.
             const packed = new ThermalPipeline(renderer, {analysis: true, packedOptics: {tiles: [2, 2]}});
             const sources = new Scene();
@@ -1076,7 +1076,7 @@ export async function runThermalSelfTest() {
             const configured = normalizeSettings({sensorPreset: "MX15", sensorAltitudeM: 1380});
             const scene = new Scene(), camera = new PerspectiveCamera(configured.verticalFovDeg,
                 configured.detectorWidth / configured.detectorHeight, 1, 300000);
-            // Sources near the tile corner (image centre) and near two image corners, placed by the field of view.
+            // Sources near the tile corner (image center) and near two image corners, placed by the field of view.
             const halfV = Math.tan(configured.verticalFovDeg * Math.PI / 360) * 2000;
             const halfH = halfV * configured.detectorWidth / configured.detectorHeight;
             for (const [x, y] of [[0.002, 0.003], [-0.85, -0.8], [0.9, 0.85]]) {

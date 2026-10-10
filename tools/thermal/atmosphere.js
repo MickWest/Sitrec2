@@ -17,6 +17,9 @@ const KB = 1.380649e-23;
 const NA = 6.02214076e23, MW = 0.01801528;
 export const EARTH_RADIUS_M = 6371000;
 
+// Calculated geometric horizon dip (rad, negative) of an observer at altitudeM above a sphere of radiusM.
+export const horizonDip = (altitudeM, radiusM = EARTH_RADIUS_M) => -Math.acos(radiusM / (radiusM + altitudeM));
+
 // Calculated first intersection with the same unrefracted sphere used for
 // atmospheric transfer. Infinity means no foreground sea on this ray.
 export function thermalSeaDistance(sensorAltitudeM, sineElevation, radiusM = EARTH_RADIUS_M) {
@@ -32,7 +35,7 @@ export function thermalSeaDistance(sensorAltitudeM, sineElevation, radiusM = EAR
 export function cloudMinimumElevation(altitudeM, rangeM, radiusM = EARTH_RADIUS_M) {
     const radial = radiusM + altitudeM;
     const tangent = Math.sqrt(altitudeM * (2 * radiusM + altitudeM));
-    return rangeM >= tangent ? -Math.acos(radiusM / radial) :
+    return rangeM >= tangent ? horizonDip(altitudeM, radiusM) :
         Math.asin(clamp(-(tangent * tangent + rangeM * rangeM) / (2 * radial * Math.max(rangeM, Number.MIN_VALUE)), -1, 1));
 }
 
@@ -298,7 +301,7 @@ function layerEdges(path, atmosphere, segments) {
             if (x > 0 && x < length) edges.push(x);
         }
     }
-    return edges.sort((a, bandIndex) => a - bandIndex).filter((x, index, a) => !index || x - a[index - 1] > 1e-8);
+    return edges.sort((first, second) => first - second).filter((x, index, a) => !index || x - a[index - 1] > 1e-8);
 }
 
 /** Return band transmission and additive path radiance. The nine channels per
@@ -336,9 +339,9 @@ export function evaluatePath(input, atmosphere = createAtmosphere(), {segments =
         const B = exactSource ? blackbodyBands(T, {quantity, band}) : pathSourceBands(T, quantity, band);
         const J = optionsResolved.aerosolSingleScatteringAlbedo ? spectrum("aerosolIncidentRadiance", typeof optionsResolved.aerosolIncidentRadiance === "function" ? optionsResolved.aerosolIncidentRadiance(altitudeM) : optionsResolved.aerosolIncidentRadiance) : null;
         for (let bandIndex = 0; bandIndex < N; bandIndex++) {
-            const band = BANDS[bandIndex], lambda = (band.minM + band.maxM) / 2;
-            const kc = band.co2PerM * co2Scale, kh = band.waterPerM * waterScale;
-            const kt = band.tracePerM * density * broadening * optionsResolved.traceGasScale * air.active;
+            const spectralBand = BANDS[bandIndex], lambda = (spectralBand.minM + spectralBand.maxM) / 2;
+            const kc = spectralBand.co2PerM * co2Scale, kh = spectralBand.waterPerM * waterScale;
+            const kt = spectralBand.tracePerM * density * broadening * optionsResolved.traceGasScale * air.active;
             const nitrogenContinuum = 4.5e-5 * Math.exp(-(((1 / (lambda * 100) - 2330) / 85) ** 2)) * (0.781 * p * 273.15 / T) ** 2;
             const kcont = (waterContinuum + nitrogenContinuum) * optionsResolved.continuumScale * air.active;
             const ka = air.aerosolPerM * (lambda / 4e-6) ** -optionsResolved.aerosolSpectralPower;
@@ -389,30 +392,6 @@ export function transmitRadiance(path, sourceBands) {
         effectiveTransmission: sourceRadiance ? directRadiance / sourceRadiance : null};
 }
 
-// Unit-integral illustrative emission distributions, NOT measured engine spectra.
-export const PLUME_COMPONENTS = Object.freeze({
-    co2Center: Object.freeze([0, 0, 0, 0, 0, 0.15, 0.65, 0.20, 0, 0, 0, 0]),
-    blueWing: Object.freeze([0, 0, 0, 0.25, 0.75, 0, 0, 0, 0, 0, 0, 0]),
-    redWing: Object.freeze([0, 0, 0, 0, 0, 0, 0, 0, 0.30, 0.70, 0, 0]),
-    water: Object.freeze([0.50, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0.20, 0.30]),
-});
-/** Supply fractions explicitly; broader/hotter plume spectra should be supplied
- * by the signature model (preferably HITEMP or measured). No assumed temperature
- * uniquely determines these fractions. Output is conditional atmospheric survival. */
-export function plumeSurvival(path, fractions) {
-    const bands = zeros(N), components = {};
-    let total = 0;
-    for (const [name, template] of Object.entries(PLUME_COMPONENTS)) {
-        const fraction = number(`plume fraction ${name}`, fractions[name] ?? 0, 0, 1);
-        total += fraction;
-        components[name] = sum(template.map((x, index) => x * path.transmission[index]));
-        for (let index = 0; index < N; index++) bands[index] += fraction * template[index];
-    }
-    if (Math.abs(total - 1) > 1e-8) throw new RangeError("Plume fractions must sum to one");
-    return {effectiveTransmission: sum(bands.map((x, index) => x * path.transmission[index])), components,
-        sourceBandFractions: bands, transmittedBandFractions: Float64Array.from(bands, (x, index) => x * path.transmission[index])};
-}
-
 /** Thermal clear sky, excluding sunlight and external clouds. Below the geometric
  * horizon return a surface intersection, not a fictitious sky temperature. */
 export function clearSky({sensorAltitudeM, elevationRad, earthRadiusM = EARTH_RADIUS_M}, atmosphere = createAtmosphere(), accuracy) {
@@ -430,23 +409,6 @@ export function clearSky({sensorAltitudeM, elevationRad, earthRadiusM = EARTH_RA
         radianceWm2Sr: path.pathRadianceWm2Sr, path};
 }
 
-/** Cloud top or side: an isothermal absorbing slab with a specified temperature
- * and normal absorption optical depth. The normal/view cosine distinguishes a
- * top from a side. Optically thick cloud is robust; thin scattering cloud is not.
- * Atmosphere in front of the cloud is supplied as a precomputed path. Source and
- * behindRadiance use path.quantity and path.band (legacy default: energy, 3–5 um).
- */
-export function cloudBackground(path, {temperatureK, normalOpticalDepth = 20, viewCosine = 1,
-    behindRadiance = zeros(N)}) {
-    number("normalOpticalDepth", normalOpticalDepth);
-    number("viewCosine", viewCosine, 0, 1);
-    spectrum("behindRadiance", behindRadiance);
-    const cloudTransmission = normalOpticalDepth === 0 ? 1 : Math.exp(-normalOpticalDepth / Math.max(1e-12, viewCosine));
-    const B = blackbodyBands(temperatureK, {quantity: path.quantity ?? "energy", band: path.band});
-    const source = B.map((x, index) => (1 - cloudTransmission) * x + cloudTransmission * behindRadiance[index]);
-    return {...transmitRadiance(path, source), cloudTransmission};
-}
-
 // a and imaginaryPart are dimensionless complex-index components.
 function complexSqrt(a, imaginaryPart) {
     const r = Math.hypot(a, imaginaryPart);
@@ -456,11 +418,12 @@ function complexSqrt(a, imaginaryPart) {
  * gray approximation, used for the Omaha surface-path comparison, not a spectral water table. */
 export function seaReflectance(cosIncidence, n = 1.35, k = 0.01) {
     number("cosIncidence", cosIncidence, 0, 1); number("water n", n, 1); number("water k", k);
-    const a = n * n - k * k, bandIndex = 2 * n * k;
-    const [qr, qi] = complexSqrt(a - (1 - cosIncidence * cosIncidence), bandIndex);
+    // Complex permittivity (n + ik)² = a + i·b.
+    const a = n * n - k * k, b = 2 * n * k;
+    const [qr, qi] = complexSqrt(a - (1 - cosIncidence * cosIncidence), b);
     const c = cosIncidence;
     const rs = ((c - qr) ** 2 + qi * qi) / ((c + qr) ** 2 + qi * qi);
-    const rp = ((a * c - qr) ** 2 + (bandIndex * c - qi) ** 2) / ((a * c + qr) ** 2 + (bandIndex * c + qi) ** 2);
+    const rp = ((a * c - qr) ** 2 + (b * c - qi) ** 2) / ((a * c + qr) ** 2 + (b * c + qi) ** 2);
     return (rs + rp) / 2;
 }
 
@@ -598,66 +561,26 @@ export function reflectedEnvironmentTable({altitudeM, groundTemperatureK, ground
 /** Adaptive photon-radiance/elevation table. Calculated numerical policy: 65
  * initial nodes across the diagonal interval, plus the exact axis and separate
  * sea/sky horizon endpoints. Bisect intervals with midpoint relative error above
- * 2e-5, up to 2049 nodes or depth 12. Final leaf midpoints report interpolation
- * error against the same 96-segment atmosphere, not atmospheric model accuracy.
- * Horizon limits are evaluated 1e-8 rad inside each branch to avoid tangent-ray
- * roundoff. Duplicate horizon coordinates prevent blending sea into clear sky.
+ * 2e-5 (or, with toleranceK, a midpoint brightness error above it), up to maxSamples
+ * nodes (2049 by default) or 20 bisection levels. Final leaf midpoints report
+ * interpolation error against the same 96-segment atmosphere, not atmospheric model
+ * accuracy. Horizon limits are evaluated 1e-8 rad inside each branch to avoid
+ * tangent-ray roundoff. Duplicate horizon coordinates prevent blending sea into clear sky.
  */
-export function createSkyElevationLUT({view, elevationRange, toleranceK, relativeTolerance = 2e-5, maxSamples = 2049, initialSamples = 65, ...options}, atmosphere = createAtmosphere()) {
-    const range = elevationRange ?? skyElevationRange(view), {minRad, maxRad, centerRad} = range;
-    const radius = options.earthRadiusM ?? EARTH_RADIUS_M;
-    const horizonRad = options.rayGeometry?.horizonRad ?? -Math.acos(radius / (radius + options.sensorAltitudeM));
-    const at = e => backgroundAtElevation(e, options, atmosphere).photonRadiance;
-    const nodes = [];
-    for (let i = 0; i < initialSamples; i++) {
-        const e = minRad + (maxRad - minRad) * i / (initialSamples - 1);
-        if (Math.abs(e - horizonRad) > 1e-12) nodes.push({e, value: at(e)});
-    }
-    if (Math.abs(centerRad - horizonRad) > 1e-12) nodes.push({e: centerRad, value: at(centerRad)});
-    if (horizonRad >= minRad && horizonRad <= maxRad) {
-        nodes.push({e: horizonRad, value: at(Math.max(-Math.PI / 2, horizonRad - 1e-8))});
-        nodes.push({e: horizonRad, value: at(Math.min(Math.PI / 2, horizonRad + 1e-8))});
-    }
-    nodes.sort((a, b) => a.e - b.e);
-    const unique = nodes.filter((node, i) => i === 0 || node.e !== nodes[i - 1].e || node.e === horizonRad);
-    const positive = unique.map(n => n.value).filter(value => value > 0);
-    // Vacuum sky is identically zero on its separate horizon branch. It has no
-    // interpolation error and must not supply a zero Planck slope for the sea.
-    const inverseSlope = toleranceK && positive.length ? brightnessErrorBound(1, Math.min(...positive) * .99,
-        options.band ?? {minUm: 3, maxUm: 5}, toleranceK) : 0;
-    let sampleCount = unique.length, maxRelativeError = 0, maxAbsoluteError = 0;
-    const refined = [unique[0]];
-    function interval(a, b, depth) {
-        if (b.e === a.e) { refined.push(b); return; }
-        const e = (a.e + b.e) / 2, value = at(e);
-        const error = Math.abs(value - (a.value + b.value) / 2), relative = error / Math.max(value, 1);
-        if ((toleranceK ? error * inverseSlope > toleranceK : relative > relativeTolerance) && sampleCount < maxSamples && depth < 20) {
-            sampleCount++;
-            const mid = {e, value}; interval(a, mid, depth + 1); interval(mid, b, depth + 1);
-        } else {
-            maxRelativeError = Math.max(maxRelativeError, relative);
-            maxAbsoluteError = Math.max(maxAbsoluteError, error); refined.push(b);
-        }
-    }
-    for (let i = 1; i < unique.length; i++) interval(unique[i - 1], unique[i], 0);
-    const elevations = Float64Array.from(refined, node => node.e);
-    const photonRadiances = Float64Array.from(refined, node => node.value);
-    return {elevations, photonRadiances, sampleCount: refined.length, horizonRad, ...range,
-        photonRadianceRange: [Math.min(...photonRadiances), Math.max(...photonRadiances)],
-        interpolation: {status: "calculated", maxRelativeError, maxAbsoluteError, relativeTolerance,
-            ...(toleranceK ? {maxErrorK: maxAbsoluteError * inverseSlope, toleranceK} : {}),
-            toleranceMet: toleranceK ? maxAbsoluteError * inverseSlope <= toleranceK : maxRelativeError <= relativeTolerance,
-            validation: "interval midpoints; photons/(s m² sr)"}};
+export function createSkyElevationLUT(options, atmosphere = createAtmosphere()) {
+    const steps = skyElevationLUTSteps(options, atmosphere);
+    let result; do {result = steps.next();} while (!result.done);
+    return result.value;
 }
 
-// Interactive cooperative construction uses the same integration. A calculated
-// coordinate translation lets altitude rows share identical angular knots, so
-// subtracting different horizons cannot create almost-duplicate validation nodes.
-// The reference builder above remains unchanged.
-function* cooperativeSkyElevationLUT({view, elevationRange, toleranceK, relativeTolerance = 2e-5, maxSamples = 2049, initialSamples = 65, coordinateOriginRad = 0, ...options}, atmosphere = createAtmosphere()) {
+// The table builder as a generator that yields after each atmospheric integration, so that
+// interactive work can run in cooperative slices. coordinateOriginRad translates the elevation
+// coordinate (the table stores elevation minus the origin), so that altitude rows share identical
+// angular knots and subtracting different horizons cannot create almost-duplicate validation nodes.
+function* skyElevationLUTSteps({view, elevationRange, toleranceK, relativeTolerance = 2e-5, maxSamples = 2049, initialSamples = 65, coordinateOriginRad = 0, ...options}, atmosphere = createAtmosphere()) {
     const range = elevationRange ?? skyElevationRange(view), {minRad, maxRad, centerRad} = range;
     const radius = options.earthRadiusM ?? EARTH_RADIUS_M;
-    const horizonRad = (options.rayGeometry?.horizonRad ?? -Math.acos(radius / (radius + options.sensorAltitudeM)))-coordinateOriginRad;
+    const horizonRad = (options.rayGeometry?.horizonRad ?? horizonDip(options.sensorAltitudeM, radius))-coordinateOriginRad;
     const at = e => backgroundAtElevation(e+coordinateOriginRad, options, atmosphere).photonRadiance;
     const nodes = [];
     for (let i = 0; i < initialSamples; i++) {
@@ -714,15 +637,6 @@ export function sampleSkyElevationLUT(table, elevationRad) {
     return photonRadiances[low] + t * (photonRadiances[high] - photonRadiances[low]);
 }
 
-/** path is evaluatePath output; radiance units follow path.quantity.
- * Two rows of an R32F table: transmission then band-integrated path radiance.
- * A shader forms sum_b(source_b * transmission_b + pathRadiance_b).
- * Recompute per distinct range/altitude, or interpolate a range/elevation table.
- */
-export function shaderTable(path) {
-    return Float32Array.from([...path.transmission, ...path.pathRadiance]);
-}
-
 /** Photon transfer on the same 12 bands. Temperatures K, band endpoints um.
  * Returned radiances are photons s^-1 m^-2 sr^-1, integrated per band.
  * Scattering incident radiances, if supplied, must use the same photon units.
@@ -764,11 +678,10 @@ export function createRangeLUT(options) {
     return result.value;
 }
 
-/** sourceBands: 12 physical photon radiances; output: scaled photon radiance by range.
- * The shader linearly interpolates these samples at sqrt(rangeM/maxRangeM)*(size-1).
- */
-/** Sensor radiance of a source seen at each table range. A thin layer that transmits t of what lies behind it
- * passes pathWeight = 1 - t: the renderer adds t times the radiance already behind it, which carries its own path. */
+/** Sensor radiance of a source seen at each table range. sourceBands: 12 physical photon radiances; output:
+ * scaled photon radiance by range. The shader linearly interpolates these samples at
+ * sqrt(rangeM/maxRangeM)*(size-1). A thin layer that transmits t of what lies behind it passes
+ * pathWeight = 1 - t: the renderer adds t times the radiance already behind it, which carries its own path. */
 export function sourceRangeLUT(rangeLUT, sourceBands, pathWeight = 1) {
     spectrum("sourceBands", sourceBands);
     return Float32Array.from({length: rangeLUT.size}, (_, sample) => {
@@ -781,14 +694,6 @@ export function sourceRangeLUT(rangeLUT, sourceBands, pathWeight = 1) {
         return radiance;
     });
 }
-
-/** A local segment emits E and transmits tau. These operations also permit an
- * emission-only volume (tau=1). Radiance units must agree at every boundary. */
-export const applyTransfer = (segment, behind) => segment.E + segment.tau * behind;
-export const composeTransfer = (near, far) => ({E: near.E + near.tau * far.E, tau: near.tau * far.tau});
-export const observerTransfer = (cloud, foreground) => ({
-    E: (1 - cloud.tau) * foreground.E + foreground.tau * cloud.E, tau: cloud.tau,
-});
 
 export function cloudOpacity(mask, opticalDepth = Math.log(100), semantics = "normalizedColumn") {
     if (!Number.isFinite(mask) || mask < 0 || mask > 1 || !(opticalDepth >= 0)) throw new RangeError("Invalid cloud column");
@@ -1056,10 +961,6 @@ export function cloudRadianceTable(sheet, atmosphere, {sensorAltitudeM, up, band
         maxErrorK, toleranceK, toleranceMet: maxErrorK <= toleranceK};
 }
 
-// Isothermal profile's analytic center chord; volume renderers must clip chords
-// against opaque depth and jointly integrate overlapping unequal-temperature media.
-export const sphereOpticalDepth = (centerDepth, impactFraction) => centerDepth * Math.max(0, 1 - impactFraction ** 2) ** 2;
-
 export const SEA_SOURCES = Object.freeze({
     slopes: "Cox–Munk slope statistics (published measurement); legacy Gaussian component convention",
     visibility: "Published study; independent Smith visibility with black-cavity closure (estimated)",
@@ -1123,12 +1024,7 @@ export function smithEscape(direction, covariance) {
     return clamp(z / projected, 0, 1);
 }
 
-/** Projected visible Gaussian normals, including a finite grazing limit.
- * Calculated midpoint quadrature on +/-6 sigma; 241 samples per slope axis is
- * the estimated numerical default (481 is the convergence reference).
- * Returned bins retain reflected direction; first-hit R is NOT effective R
- * after hidden reflections. Black-cavity closure preserves isothermal balance.
- */
+// Gauss–Legendre nodes and weights on [-1, 1], cached by count.
 const quadratures = new Map();
 function gaussLegendre(count) {
     if (quadratures.has(count)) return quadratures.get(count);
@@ -1147,6 +1043,12 @@ function gaussLegendre(count) {
     quadratures.set(count, nodes); return nodes;
 }
 
+/** Projected visible Gaussian normals, including a finite grazing limit.
+ * Calculated midpoint quadrature on +/-6 sigma; 241 samples per slope axis is
+ * the estimated numerical default (481 is the convergence reference).
+ * Returned bins retain reflected direction; first-hit R is NOT effective R
+ * after hidden reflections. Black-cavity closure preserves isothermal balance.
+ */
 export function roughSeaFacets(cosView, covariance, azimuthRad = 0, {count = 241, bins = 129, hiding = true, quadrature = "midpoint"} = {}) {
     const c = clamp(cosView, 0, 1), st = Math.sqrt(1 - c * c), vx = st * Math.cos(azimuthRad), vy = st * Math.sin(azimuthRad);
     const ca = Math.cos(azimuthRad), sa = Math.sin(azimuthRad), gaussian = quadrature === "gauss";
@@ -1227,7 +1129,7 @@ export function createStatisticalSea(settings, atmosphere, {segments = 96, count
                 sourceChannels[ch] = source;
             }
             const channels = sourceChannels.map((v, i) => v * path.transmissionChannels[i] + path.pathRadianceChannels[i]);
-            const radiance = Float64Array.from(BANDS, (_, b) => CHANNEL_WEIGHTS.reduce((s, w, i) => s + w * channels[b * nc + i], 0));
+            const radiance = collapse(channels);
             return {kind: "sea", radiance, photonRadiance: sum(radiance), path, firstReflectance: facets.firstReflectance,
                 effectiveReflectance: facets.effectiveReflectance, spectrum, hiding: this.hiding};
         }};
@@ -1245,39 +1147,36 @@ export function seaRayAzimuth(ray, up, wind) {
  * 0.005 K at each elevation knot; refine to at most 65 rows, report exhaustion.
  */
 const seaAngularDomains = new WeakMap();
-const thermalHorizon = h => -Math.acos(EARTH_RADIUS_M / (EARTH_RADIUS_M + h));
-
 // Estimated altitude reuse budget, independent of angular interpolation. Shift
 // the angular coordinate with the exact horizon, then check both altitude ends
 // against received radiance at every row knot and interval midpoint. A factor
 // two margin guards the sampled small-height interval. Failed intervals shrink.
-function validateSeaAltitudeDomain(table, atmosphere, sea, band) {
+// rows are elevation tables of the same table (its azimuth rows, or the table itself);
+// moved(h) gives {rayGeometry, horizonRad} at height h; evaluate(rowIndex, elevationRad, at)
+// is the received photon radiance of that row, at the table's own altitude when at is
+// null, else at {sensorAltitudeM, rayGeometry}. On success sets table.altitudeDomain.
+function validateAltitudeSpan(table, rows, moved, evaluate, band) {
     // Estimated initial height margin: 0.05 m, reduced at the water boundary.
-    let span = Math.min(.05, table.sensorAltitudeM / 4), errorK = Infinity;
-    if (!span) return;
-    for (let attempt = 0; attempt < 16; attempt++, span /= 2) {
+    let span = Math.min(.05, table.sensorAltitudeM / 4);
+    for (let attempt = 0; span > 0 && attempt < 16; attempt++, span /= 2) {
         let absolute = 0, minimum = Infinity;
         for (const h of [table.sensorAltitudeM - span, table.sensorAltitudeM + span]) {
-            const movedGeometry = table.rayGeometry?.atAltitude(h);
-            const shift = (movedGeometry?.horizonRad ?? thermalHorizon(h)) - table.horizonRad;
-            for (let rowIndex = 0; rowIndex < table.rows.length; rowIndex++) {
-                const row = table.rows[rowIndex], azimuthRad = table.minAzimuth + rowIndex / (table.rows.length - 1) * (table.maxAzimuth - table.minAzimuth);
+            const {rayGeometry, horizonRad} = moved(h), shift = horizonRad - table.horizonRad;
+            rows.forEach((row, rowIndex) => {
                 for (let i = 0; i < row.elevations.length; i++) {
                     const points = [row.elevations[i]];
                     if (i && row.elevations[i] !== row.elevations[i - 1]) points.push((row.elevations[i] + row.elevations[i - 1]) / 2);
                     for (let e of points) {
                         if (e === table.horizonRad) e += i && row.elevations[i - 1] === e ? 1e-8 : -1e-8;
                         if (Math.abs(e + shift) > Math.PI / 2) continue;
-                        const evaluate = (sensorAltitudeM, elevationRad, rayGeometry) => backgroundAtElevation(elevationRad, {sensorAltitudeM, band, rayGeometry,
-                            seaProvider: g => sea.evaluate({...g, azimuthRad})}, atmosphere).photonRadiance;
-                        const base = evaluate(table.sensorAltitudeM, e, table.rayGeometry), moved = evaluate(h, e + shift, movedGeometry);
-                        absolute = Math.max(absolute, Math.abs(base - moved));
-                        if (base !== 0 || moved !== 0) minimum = Math.min(minimum, base, moved);
+                        const base = evaluate(rowIndex, e, null), shifted = evaluate(rowIndex, e + shift, {sensorAltitudeM: h, rayGeometry});
+                        absolute = Math.max(absolute, Math.abs(base - shifted));
+                        if (base !== 0 || shifted !== 0) minimum = Math.min(minimum, base, shifted);
                     }
                 }
-            }
+            });
         }
-        errorK = 2 * brightnessErrorBound(absolute, minimum, band, .001);
+        const errorK = absolute === 0 ? 0 : 2 * brightnessErrorBound(absolute, minimum, band, .001);
         if (errorK <= .001) {
             table.altitudeDomain = {minM: table.sensorAltitudeM - span, maxM: table.sensorAltitudeM + span,
                 maxErrorK: errorK, toleranceK: .001, status: "calculated"};
@@ -1286,19 +1185,46 @@ function validateSeaAltitudeDomain(table, atmosphere, sea, band) {
     }
 }
 
+function validateSeaAltitudeDomain(table, atmosphere, sea, band) {
+    const azimuthOf = rowIndex => table.minAzimuth + rowIndex / (table.rows.length - 1) * (table.maxAzimuth - table.minAzimuth);
+    validateAltitudeSpan(table, table.rows, h => {
+        const rayGeometry = table.rayGeometry?.atAltitude(h);
+        return {rayGeometry, horizonRad: rayGeometry?.horizonRad ?? horizonDip(h)};
+    }, (rowIndex, elevationRad, at) => backgroundAtElevation(elevationRad, {sensorAltitudeM: at?.sensorAltitudeM ?? table.sensorAltitudeM,
+        band, rayGeometry: at ? at.rayGeometry : table.rayGeometry, seaProvider: g => sea.evaluate({...g, azimuthRad: azimuthOf(rowIndex)})},
+    atmosphere).photonRadiance, band);
+}
+
+// Calculated half-width in azimuth of a cone of half-angle halfCone about a ray at elevation centerRad;
+// pi when the cone contains a pole.
+const coneHalfAzimuth = (halfCone, centerRad) => Math.sin(halfCone) >= Math.cos(centerRad) ? Math.PI :
+    Math.asin(Math.sin(halfCone) / Math.cos(centerRad));
+
+// Elevation rows -> RGBA float texture, one row per azimuth: elevation, scaled photon radiance, row sample
+// count. Shorter rows repeat their last sample.
+function packElevationRows(rows) {
+    const width = Math.max(...rows.map(row => row.sampleCount)), data = new Float32Array(width * rows.length * 4);
+    rows.forEach((row, y) => {
+        for (let x = 0; x < width; x++) {
+            const i = Math.min(x, row.sampleCount - 1), offset = (y * width + x) * 4;
+            data[offset] = row.elevations[i]; data[offset + 1] = row.photonRadiances[i] / PHOTON_SCALE; data[offset + 2] = row.sampleCount;
+        }
+    });
+    return {width, data};
+}
+
 export function createSeaSkyTable(view, wind, settings, atmosphere, sea, rayGeometry,
     {paddingRad = 0, maxPaddingRad = Infinity, azimuthPaddingRad = 0, elevationRange, axisAzimuth: workAzimuth, azimuthOrder = 1, initialSamples = 65, toleranceK = .002,
         azimuthSamples = azimuthOrder === 3 ? 5 : 3} = {}) {
     const band = {minUm: settings.bandMinUm, maxUm: settings.bandMaxUm}, requested = elevationRange ?? skyElevationRange(view);
     const axis = skyRayDirection(0, 0, view), axisAzimuth = workAzimuth ?? seaRayAzimuth(axis, view.up, wind);
     const halfCone = Math.max(requested.centerRad - requested.minRad, requested.maxRad - requested.centerRad);
-    const halfAzimuth = Math.sin(halfCone) >= Math.cos(requested.centerRad) ? Math.PI :
-        Math.asin(Math.sin(halfCone) / Math.cos(requested.centerRad));
+    const halfAzimuth = coneHalfAzimuth(halfCone, requested.centerRad);
     const candidate = seaAngularDomains.get(sea);
     const domainKey = rayGeometry?.domainKey ?? rayGeometry?.key;
     const cached = candidate?.geometryDomainKey === domainKey ? candidate : null;
     const azimuthDelta = cached ? Math.atan2(Math.sin(axisAzimuth - cached.axisAzimuth), Math.cos(axisAzimuth - cached.axisAzimuth)) : 0;
-    const elevationShift = cached ? (rayGeometry?.horizonRad ?? thermalHorizon(settings.sensorAltitudeM)) - cached.horizonRad : 0;
+    const elevationShift = cached ? (rayGeometry?.horizonRad ?? horizonDip(settings.sensorAltitudeM)) - cached.horizonRad : 0;
     if ((!rayGeometry || rayGeometry.atAltitude) && cached && cached.sensorAltitudeM !== settings.sensorAltitudeM && !cached.altitudeDomain &&
         Math.abs(cached.sensorAltitudeM - settings.sensorAltitudeM) <= .05) validateSeaAltitudeDomain(cached, atmosphere, sea, band);
     const altitudeSupported = cached && (cached.sensorAltitudeM === settings.sensorAltitudeM || cached.altitudeDomain &&
@@ -1347,13 +1273,7 @@ export function createSeaSkyTable(view, wind, settings, atmosphere, sea, rayGeom
         if (maxErrorK <= toleranceK || count >= 65) break;
         count = 2 * count - 1;
     }
-    const width = Math.max(...rows.map(r => r.sampleCount)), data = new Float32Array(width * rows.length * 4);
-    rows.forEach((r, y) => {
-        for (let x = 0; x < width; x++) {
-            const i = Math.min(x, r.sampleCount - 1), offset = (y * width + x) * 4;
-            data[offset] = r.elevations[i]; data[offset + 1] = r.photonRadiances[i] / PHOTON_SCALE; data[offset + 2] = r.sampleCount;
-        }
-    });
+    const {width, data} = packElevationRows(rows);
     const elevationErrorK = Math.max(...rows.map(r => r.interpolation.maxErrorK));
     const table = {...rows[Math.floor(rows.length / 2)], rows, width, data, axisAzimuth, minAzimuth, maxAzimuth, azimuthOrder,
         sensorAltitudeM: settings.sensorAltitudeM, geometryDomainKey: domainKey, rayGeometry, quadrature: sea.quadrature,
@@ -1405,7 +1325,7 @@ export class SeaSkyBackgroundCache {
         this.onReady = onReady; this.createWorker = createWorker; this.serial = 0; this.builds = 0;
     }
     table(view, wind, settings, atmosphere, sea, rayGeometry, workerAtmosphere) {
-        const range = skyElevationRange(view), horizon = rayGeometry?.horizonRad ?? thermalHorizon(settings.sensorAltitudeM);
+        const range = skyElevationRange(view), horizon = rayGeometry?.horizonRad ?? horizonDip(settings.sensorAltitudeM);
         const key = JSON.stringify([settings.bandMinUm, settings.bandMaxUm, rayGeometry?.domainKey ?? rayGeometry?.key]);
         if (this.key !== key || this.sea !== sea) {
             this.pending = this.domain = this.previousDomain = this.lastRequest = null;
@@ -1414,8 +1334,7 @@ export class SeaSkyBackgroundCache {
         if (this.error) {this.failedKey=key;this.error=null;}
         const axis = seaRayAzimuth(skyRayDirection(0,0,view), view.up, wind);
         const halfCone = Math.max(range.centerRad-range.minRad,range.maxRad-range.centerRad);
-        const halfAzimuth = Math.sin(halfCone) >= Math.cos(range.centerRad) ? Math.PI :
-            Math.asin(Math.sin(halfCone)/Math.cos(range.centerRad));
+        const halfAzimuth = coneHalfAzimuth(halfCone, range.centerRad);
         const h = settings.sensorAltitudeM, now = performance.now(), last = this.lastRequest;
         const dt = last && now-last.time;
         const wrapped = angle => Math.atan2(Math.sin(angle),Math.cos(angle));
@@ -1448,11 +1367,7 @@ export class SeaSkyBackgroundCache {
                     weights.reduce((sum,w,j)=>sum+w*d.values[j][row][i],0)));
                 return {elevations,photonRadiances,sampleCount:elevations.length,minRad:d.minRad,maxRad:d.maxRad};
             });
-            const width=Math.max(...rows.map(row=>row.sampleCount)),data=new Float32Array(width*rows.length*4);
-            rows.forEach((row,y)=>{for(let x=0;x<width;x++) {
-                const i=Math.min(x,row.sampleCount-1),offset=(y*width+x)*4;
-                data[offset]=row.elevations[i];data[offset+1]=row.photonRadiances[i]/PHOTON_SCALE;data[offset+2]=row.sampleCount;
-            }});
+            const {width,data}=packElevationRows(rows);
             return {...rows[Math.floor(rows.length/2)],rows,width,data,horizonRad:horizon,
                 ...(d.azimuthOrder===3 ? packSeaSkyAzimuth(rows) : {}),
                 axisAzimuth:d.axisAzimuth,minAzimuth:d.minAzimuth,maxAzimuth:d.maxAzimuth,azimuthOrder:d.azimuthOrder,
@@ -1475,7 +1390,7 @@ export class SeaSkyBackgroundCache {
             // A wide field can fit below the horizon without the usual .04 rad
             // margin fitting there. Bound padding by the horizon at every basis
             // height; retain the same one-sided domain and validation budgets.
-            const lowestHorizon=Math.min(...heights.map((z,j)=>geometries[j]?.horizonRad ?? thermalHorizon(z)));
+            const lowestHorizon=Math.min(...heights.map((z,j)=>geometries[j]?.horizonRad ?? horizonDip(z)));
             const paddingRad=Math.min(.04,(lowestHorizon-requestedRange.maxRad)/2);
             if (!(paddingRad>0)) continue;
             const tables=[];
@@ -1657,7 +1572,7 @@ export function createThermalDepthTable(geometry, minElevationRad) {
 // Estimated shared scheduling policy: a 24 ms burst per 50 ms. Larger bursts
 // make progress between busy frames while retaining a similar average CPU budget.
 // A single queue prevents independent range and sky jobs from doubling a slice.
-// Estimated reuse span in Earth radius. The radius at the observer changes by centimetres per frame as the camera moves,
+// Estimated reuse span in Earth radius. The radius at the observer changes by centimeters per frame as the camera moves,
 // so it is not part of a domain key: a range or sky domain built at radius R serves requests within 100 m of R. At
 // 200 km that moves the path altitude by at most d²·δR/(2R²(1−k)) ≈ 6 cm and the horizon distance by δR/(2R) ≈ 8e-6
 // of itself, far inside the range and sky tolerances.
@@ -1710,13 +1625,10 @@ function scheduleThermalBuild(owner, steps, publish) {
 
 const SKY_HEIGHTS = [-1, -1/3, 1/3, 1];
 const SKY_PADDING_RAD = .024; // estimated angular prefetch margin
-const skyHorizon = (options, h) => {
-    const radius = options.earthRadiusM ?? EARTH_RADIUS_M;
-    return -Math.acos(radius/(radius+h));
-};
+const skyHorizon = (options, h) => horizonDip(h, options.earthRadiusM ?? EARTH_RADIUS_M);
 
-/** Validated angular and altitude interpolation in photon radiance. The
- * reference table builder remains independent of cooperative interactive work.
+/** Validated angular and altitude interpolation in photon radiance. Its altitude rows use the
+ * createSkyElevationLUT builder in cooperative slices, with a 17-node seed and a 0.0006 K tolerance.
  */
 export class SkyBackgroundCache {
     constructor(onReady = () => {}) {this.onReady = onReady; this.builds = 0; this.fallbacks = 0; this.hits = 0;}
@@ -1814,7 +1726,7 @@ export class SkyBackgroundCache {
                     centerRad: clamp(requested.centerRad-horizon, minQ, maxQ)};
                 // Calculated cubic weight sum is at most 1.632; a factor of two
                 // reserves the original .002 K angular budget after blending.
-                const table = yield* cooperativeSkyElevationLUT({...options, sensorAltitudeM: heights[j], rayGeometry: geometries[j],
+                const table = yield* skyElevationLUTSteps({...options, sensorAltitudeM: heights[j], rayGeometry: geometries[j],
                     elevationRange, coordinateOriginRad: horizons[j], toleranceK: .0006, initialSamples: 17}, atmosphere);
                 if (!table.interpolation.toleranceMet) throw new Error("Sky interpolation did not meet its brightness tolerance");
                 tables.push(table); yield;
@@ -1870,32 +1782,12 @@ export class SkyBackgroundCache {
     }
     dispose() {this.disposed = true; this.pending = this.domain = this.previousDomain = null;}
     validateAltitude(table, atmosphere) {
-        let span = Math.min(.05, table.sensorAltitudeM / 4);
-        for (let attempt = 0; span > 0 && attempt < 16; attempt++, span /= 2) {
-            let absolute = 0, minimum = Infinity;
-            for (const h of [table.sensorAltitudeM - span, table.sensorAltitudeM + span]) {
-                const rayGeometry = table.options.rayGeometry?.atAltitude(h);
-                const shift = (rayGeometry?.horizonRad ?? skyHorizon(table.options, h)) - table.horizonRad;
-                for (let i = 0; i < table.sampleCount; i++) {
-                    const points = [table.elevations[i]];
-                    if (i && table.elevations[i] > table.elevations[i - 1]) points.push((table.elevations[i] + table.elevations[i - 1]) / 2);
-                    for (let e of points) {
-                        if (e === table.horizonRad) e += i && table.elevations[i - 1] === e ? 1e-8 : -1e-8;
-                        if (Math.abs(e + shift) > Math.PI / 2) continue;
-                        const a = backgroundAtElevation(e, table.options, atmosphere).photonRadiance;
-                        const b = backgroundAtElevation(e + shift, {...table.options, sensorAltitudeM: h, rayGeometry}, atmosphere).photonRadiance;
-                        absolute = Math.max(absolute, Math.abs(a - b));
-                        if (a || b) minimum = Math.min(minimum, a, b);
-                    }
-                }
-            }
-            const errorK = absolute === 0 ? 0 : 2 * brightnessErrorBound(absolute, minimum, table.options.band, .001);
-            if (errorK <= .001) {
-                table.altitudeDomain = {minM: table.sensorAltitudeM - span, maxM: table.sensorAltitudeM + span,
-                    maxErrorK: errorK, toleranceK: .001, status: "calculated"};
-                return;
-            }
-        }
+        validateAltitudeSpan(table, [table], h => {
+            const rayGeometry = table.options.rayGeometry?.atAltitude(h);
+            return {rayGeometry, horizonRad: rayGeometry?.horizonRad ?? skyHorizon(table.options, h)};
+        }, (_, elevationRad, at) => backgroundAtElevation(elevationRad,
+            at ? {...table.options, sensorAltitudeM: at.sensorAltitudeM, rayGeometry: at.rayGeometry} : table.options,
+            atmosphere).photonRadiance, table.options.band);
     }
 }
 

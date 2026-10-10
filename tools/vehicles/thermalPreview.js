@@ -157,7 +157,9 @@ export function withThermalVehicle(model, draw, values = {}) {
 
 // readOnly(parameter) is truthy for a field the host does not let the user edit; a string is shown in the tooltip.
 // The menu host evaluates it again on every refresh, so a host can make a field read only for a while.
-const CONTROL_REASONS = {
+// The standalone page cannot load src/i18n/en.js, so it keeps this copy of thermal.controlReasons;
+// tests/thermalParameterText.test.js requires the two to be identical.
+export const CONTROL_REASONS = {
     terrainColor: "Used only with Ground temperature source = Terrain color estimate.",
     materialClasses: "Used only with Ground temperature source = Material classes.",
     groundAutomatic: "Used only with Ground condition = From sun and time; the other conditions are clear or overcast.",

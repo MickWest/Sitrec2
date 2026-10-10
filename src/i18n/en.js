@@ -206,7 +206,7 @@ const en = {
             },
             "groundCondition": {
                 "label": "Ground condition",
-                "tooltip": "Sets each material class's temperature relative to the air. Automatic uses the scene's sun elevation and the time since sunset, for a clear sky. Choose Day, overcast for a cloudy day.",
+                "tooltip": "Sets each material class's temperature relative to the air. Automatic uses the scene's sun elevation, the time since sunset and the Cloud cover setting. The other conditions are fixed states: Day, clear and Day, overcast are midday with no cloud and with full cloud; Evening and Late night have a clear sky.",
                 "options": {"automatic": "From sun and time", "day": "Day, clear", "overcast": "Day, overcast", "evening": "Evening", "night": "Late night"}
             },
             "groundClimate": {
@@ -403,10 +403,6 @@ const en = {
                 "label": "Vertical residual blur",
                 "tooltip": "Independent Gaussian residual along display y, in angle before sampling and detector noise. MX-15 long steps use about 40 µrad with the measured display curve; origin unresolved."
             },
-            "systemBlurRmsUrad": {
-                "label": "Residual system blur",
-                "tooltip": "Independent Gaussian optical residual in angle, before sampling. Zero disables; excludes turbulence, exposure jitter and charge diffusion."
-            },
             "diffusionSigmaPx": {
                 "label": "Charge diffusion",
                 "tooltip": "Estimated Gaussian sigma before native sampling; zero disables. Pixel-area integration is separate."
@@ -536,7 +532,7 @@ const en = {
             },
             "fixedLevel": {
                 "label": "Fixed level",
-                "tooltip": "Count mapped to middle gray before response and polarity."
+                "tooltip": "Signal count after pedestal removal mapped to middle gray before response and polarity."
             },
             "lowPercentile": {
                 "label": "Lower percentile",
@@ -560,7 +556,7 @@ const en = {
             },
             "plateauFactor": {
                 "label": "Histogram plateau",
-                "tooltip": "Cap per bin = factor × pixel count / 256; discarded counts are not redistributed."
+                "tooltip": "Cap per detector-level bin = factor × pixel count / 16384; discarded counts are not redistributed."
             },
             "localAmount": {
                 "label": "Local enhancement",
@@ -576,7 +572,7 @@ const en = {
             },
             "radiometricHigh": {
                 "label": "Radiometric high",
-                "tooltip": "Fixed upper photon-radiance endpoint; detector clipping still applies."
+                "tooltip": "Upper photon-radiance endpoint. By default it is the signal headroom of the well and the ADC at the selected exposure, and it follows the exposure; an edited value is held. Detector clipping still applies."
             },
             "polarity": {
                 "label": "Polarity",

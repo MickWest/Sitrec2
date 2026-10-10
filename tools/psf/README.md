@@ -23,7 +23,7 @@ transform of the complex pupil. So
 PSF = |FFT(mask · e^{iφ})|²        φ = 2π · W20 · ρ² / λ
 ```
 
-where `mask` is the aperture transmission, `ρ` is the normalised pupil radius, and `W20` is the
+where `mask` is the aperture transmission, `ρ` is the normalized pupil radius, and `W20` is the
 wavefront error at the rim from a longitudinal focus shift `δz` in a beam of focal ratio `F`:
 `W20 = δz / (8F²)`.
 
@@ -48,7 +48,7 @@ carries the same total flux.
 ### Visible color and single-channel bands
 
 `spectrum.detector` selects `"visible"` (the default when omitted) or `"band"`. Visible mode
-retains the color matching and white balance of the original engine. Band mode bypasses both:
+applies color matching and white balance. Band mode bypasses both:
 each wavelength contributes one scalar weight, repeated equally in the three stored channels.
 The finite kernel is normalized so each band channel sums to 1.
 
@@ -60,10 +60,15 @@ uses the energy spectrum directly. Common factors cancel during normalization. A
 weights the long end of 3–5 µm more strongly than an 800 K source; photon weighting adds a
 further preference for long wavelengths. No measured spectral response curve is included.
 
-`nm0` and `nm1` remain nanometers in every spec and file. The page displays and edits them in
-µm for band mode, up to 14 µm; the engine has no visible-band cutoff in this mode. Samples
-remain uniform bin centers, with one sample at the band center. Equal endpoints specify a
-monochromatic calculation.
+`nm0` and `nm1` are nanometers in every spec and file. The page displays and edits them in
+µm for band mode, from 0.3 to 14 µm; visible mode edits them in nm, From 300–1000 and To
+320–1400. When the detector changes, a band inside the new detector's ranges stays as it is;
+any other band is reset to that detector's default band (visible 350–780 nm, band 3–5 µm). Samples are
+uniform bin centers, with one sample at the band center. Equal endpoints specify a
+monochromatic calculation. A spectrum with no weight in the band (for example an infrared band
+with the visible color detector, whose color matching functions have no weight there)
+cannot define a normalized PSF: `computePSF` throws, and the page reports it and keeps Export
+off. With no open stop the PSF is empty, and Export stays off too.
 
 At fixed aperture diameter `D`, the Airy first-zero angle is `1.22 λ/D`. A 4 µm monochromatic
 pattern therefore has about 7.27 times the angular radius of a 550 nm pattern. The FFT grid
@@ -74,29 +79,15 @@ relative bandwidth and spectral weights. `describeSampling` uses the band midpoi
 
 Choose the entrance-pupil diameter, not the housing diameter, and the transmitting detector
 band. Focal length sets focal-plane distances and defocus sensitivity; angular diffraction
-scale depends on aperture and wavelength. The new unobstructed infrared preset uses an
+scale depends on aperture and wavelength. The unobstructed infrared preset (`mwirAiry`) uses an
 estimated 0.135 m pupil, a 0.675 m focal length and a 3–5 µm band. The catadioptric variant
-adds an obstruction and vanes. `chandelierIR` copies the original two-stop geometry and optics
-and changes its spectral mode and band; the original preset is retained unchanged.
+adds an obstruction and vanes. `chandelierIR` has the two-stop geometry and optics of the visible
+`chandelier` preset, with band detection over 3–5 µm.
 
-### A scalar kernel for a renderer
-
-```js
-import { computeBandKernel } from "./psf.js";
-import { presetById } from "./presets.js";
-
-const spec = presetById("mwirAiry").spec;
-spec.spectrum.kind = "blackbody";
-spec.spectrum.kelvin = 300;
-const { n, kernel, anglePerPixelRad, peak } = computeBandKernel(spec);
-```
-
-This forces band detection without mutating `spec`. `kernel` is a row-major `Float32Array`
-of length `n*n`, centered at `(n/2, n/2)` and summing to 1 to Float32 precision; `peak` is its
-largest sample. Empty pupils or spectra throw because they cannot define a unit-sum kernel.
-The angular pitch is radians per kernel sample, not the detector's pixel pitch. Resample for
-the consumer's angular grid while conserving flux. One integrated kernel assumes the same
-source spectrum across the image; sources with different spectra need separate kernels.
+A band PSF has the same value in its three channels, so its red channel is a single-channel
+kernel, centered at `(n/2, n/2)` and summing to 1. `sampling.anglePerPixelRad` is radians per
+kernel sample, not the detector's pixel pitch. One integrated kernel assumes the same source
+spectrum across the image; sources with different spectra need separate kernels.
 
 ---
 
@@ -110,7 +101,7 @@ sees it. Every import has to resolve over plain HTTP.
 | `fft.js` | Radix-2 complex FFT, 1D and square 2D, plus `fftshift` |
 | `cie.js` | Wavelength → linear sRGB (CIE 1931, Wyman/Sloan/Shirley fit), source spectra |
 | `aperture.js` | Parametric pupil rasteriser: shape, obstruction, vanes, apodisation |
-| `psf.js` | The polychromatic PSF, `computeBandKernel`, and `describeSampling` |
+| `psf.js` | The polychromatic PSF and `describeSampling` |
 | `presets.js` | The built-in starting points, and localStorage user presets |
 | `display.js` | Tone-mapping curves (gamma, log, asinh) |
 | `glare.js` | Exact FFT convolution of a scene with the PSF, for the preview |
@@ -133,7 +124,7 @@ one-for-one into radius units (the ratio is the same either way); vane `width` b
 half-width. An earlier version doubled the obstruction and made every one twice the size it
 claimed.
 
-**The pupil is centred on pixel `n/2`, not `(n-1)/2`.** That is where `fftshift` puts DC.
+**The pupil is centered on pixel `n/2`, not `(n-1)/2`.** That is where `fftshift` puts DC.
 Centring it half a pixel off is a linear phase ramp, and the PSF comes out shifted half a pixel
 diagonally — visible as an Airy core that peaks at pixel 1 rather than 0.
 
@@ -239,7 +230,7 @@ Same two hooks as `tools/shf`, gated to local hosts so no eval gadget ships to p
 
 ```js
 sitrec_eval({ expression: "psfTool.result.peak" })
-sitrec_eval({ expression: "psfTool.psfAt(28, 28)" })          // peak-normalised, at an offset
+sitrec_eval({ expression: "psfTool.psfAt(28, 28)" })          // peak-normalized, at an offset
 sitrec_eval({ expression: "psfTool.set('stops.0.vanes.count', 3)" })
 sitrec_eval({ expression: "psfEval('computePSF({...spec, n:128})').peak" })   // module scope
 ```

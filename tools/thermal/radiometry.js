@@ -86,7 +86,7 @@ export function tabulatedResponse(samples) {
         const t = (wavelengthUm - points[lo][0]) / (points[hi][0] - points[lo][0]);
         return points[lo][1] * (1 - t) + points[hi][1] * t;
     };
-    response.breakpointsUm = points.map(radiancePair => radiancePair[0]);
+    response.breakpointsUm = points.map(([wavelengthUm]) => wavelengthUm);
     return response;
 }
 
@@ -100,6 +100,8 @@ const GW = [0.3626837833783620, 0.3137066458778873, 0.2223810344533745, 0.101228
  * band: {minUm=3, maxUm=5, response=1, breakpointsUm=[], relativeTolerance=1e-10}.
  * response may be a constant or a function. Supply ALL sharp features as breakpoints;
  * a numerical integrator cannot discover arbitrarily narrow unsampled features.
+ * The spectrum and a response function must be nonnegative; samples are not checked one by one,
+ * and the integral is checked once (finite and nonnegative).
  */
 export function integrateSpectrum(spectralEnergy, band = {}) {
     const {minUm = 3, maxUm = 5, response = 1, breakpointsUm = [], relativeTolerance = 1e-10} = band;
@@ -107,7 +109,8 @@ export function integrateSpectrum(spectralEnergy, band = {}) {
     if (maxUm <= minUm) throw new RangeError("maxUm must exceed minUm");
     positive(relativeTolerance, "relativeTolerance");
     if (typeof spectralEnergy !== "function") throw new TypeError("spectralEnergy must be a function");
-    const weight = typeof response === "function" ? response : () => nonnegative(response, "response");
+    if (typeof response !== "function") nonnegative(response, "response");
+    const weight = typeof response === "function" ? response : () => response;
     const knots = [...breakpointsUm, ...(response.breakpointsUm ?? [])];
     knots.forEach(x => positive(x, "breakpointUm"));
     const edges = [...new Set([minUm, ...knots.filter(x => x > minUm && x < maxUm), maxUm])].sort((a, b) => a - b);
@@ -117,7 +120,7 @@ export function integrateSpectrum(spectralEnergy, band = {}) {
         for (let sample = 0; sample < GX.length; sample++) {
             for (const sign of [-1, 1]) {
                 const wavelengthUm = mid + sign * half * GX[sample];
-                const value = nonnegative(spectralEnergy(wavelengthUm), "spectralEnergy") * nonnegative(weight(wavelengthUm), "response");
+                const value = spectralEnergy(wavelengthUm) * weight(wavelengthUm);
                 energy += GW[sample] * value;
                 photon += GW[sample] * value * (wavelengthUm * 1e-6) / (H * C);
             }
@@ -220,68 +223,4 @@ export function apparentTemperature(radiance, {quantity = "photon", band = {}, m
         if (inBandRadiance(mid, band)[quantity] < radiance) lo = mid; else hi = mid;
     }
     return (lo + hi) / 2;
-}
-
-/** Small-angle pixel solid angle in sr, IFOV angles in rad. */
-export function pixelSolidAngle(ifovXRad, ifovYRad = ifovXRad) {
-    return positive(ifovXRad, "ifovXRad") * positive(ifovYRad, "ifovYRad");
-}
-
-/** Pixel-averaged radiance and angular integral from geometric footprint overlap.
- * projectedAreaM2 is source area normal to the viewing ray, rangeM is slant range.
- * overlapFraction is the fraction of the SOURCE's apparent area in this pixel.
- * Default 1 is only valid when the entire source fits in this pixel.
- * For resolved sources supply one overlap per pixel; overlaps sum to 1.
- * Reject overfilled pixels instead of clamping and silently losing source energy.
- * angularIntegral units: W m^-2 or photons s^-1 m^-2 (per collecting area).
- */
-export function pixelSignal({sourceRadiance, backgroundRadiance = 0, projectedAreaM2,
-    rangeM, pixelSolidAngleSr, overlapFraction = 1}) {
-    nonnegative(sourceRadiance, "sourceRadiance"); nonnegative(backgroundRadiance, "backgroundRadiance");
-    nonnegative(projectedAreaM2, "projectedAreaM2"); positive(rangeM, "rangeM");
-    positive(pixelSolidAngleSr, "pixelSolidAngleSr"); nonnegative(overlapFraction, "overlapFraction");
-    if (overlapFraction > 1 + 1e-12) throw new RangeError("overlapFraction must be <= 1");
-    const sourceSolidAngleSr = projectedAreaM2 / rangeM ** 2;
-    const overlapSr = sourceSolidAngleSr * Math.min(1, overlapFraction);
-    let fillFraction = overlapSr / pixelSolidAngleSr;
-    if (fillFraction > 1 + 1e-12) throw new RangeError("Source overlap exceeds pixel solid angle; distribute across pixels");
-    fillFraction = Math.min(1, fillFraction); // floating-point tolerance only
-    const radiance = backgroundRadiance + (sourceRadiance - backgroundRadiance) * fillFraction;
-    return {sourceSolidAngleSr, fillFraction, radiance,
-        angularIntegral: radiance * pixelSolidAngleSr,
-        sourceAngularIntegral: sourceRadiance * overlapSr,
-        excessAngularIntegral: (sourceRadiance - backgroundRadiance) * overlapSr};
-}
-
-/** Float32 log2(L/unitScale) LUT sampled uniformly in log2(T), inclusive endpoints.
- * Default photon table: 2048 texels, 180–3000 K, 8192 bytes, unitScale=1e20.
- * For energy, default unitScale=4 W m^-2 sr^-1. Rebuild for each band/response.
- */
-export function createRadianceLUT({size = 2048, minK = 180, maxK = 3000, quantity = "photon",
-    unitScale = quantity === "photon" ? PHOTON_SCALE : 4, band = {}} = {}) {
-    if (!Number.isInteger(size) || size < 2) throw new RangeError("size must be an integer >= 2");
-    positive(minK, "minK"); positive(maxK, "maxK"); positive(unitScale, "unitScale");
-    if (maxK <= minK) throw new RangeError("maxK must exceed minK");
-    if (!["energy", "photon"].includes(quantity)) throw new RangeError("Unknown radiance quantity");
-    const logMinK = Math.log2(minK), logRangeK = Math.log2(maxK / minK);
-    const values = new Float32Array(size);
-    for (let index = 0; index < size; index++) {
-        const temperatureK = minK * 2 ** (logRangeK * index / (size - 1));
-        const value = inBandRadiance(temperatureK, band)[quantity];
-        positive(value, "LUT radiance");
-        values[index] = Math.log2(value / unitScale);
-    }
-    return {values, size, minK, maxK, quantity, unitScale, logMinK, logRangeK};
-}
-
-/** CPU equivalent of log-value interpolation; returns physical linear radiance.
- * Rejects temperatures outside the table. Shader callers must use the same policy.
- */
-export function sampleRadianceLUT(lut, temperatureK) {
-    positive(temperatureK, "temperatureK");
-    if (temperatureK < lut.minK || temperatureK > lut.maxK) throw new RangeError("Temperature outside LUT");
-    const position = Math.max(0, Math.min(lut.size - 1,
-        (Math.log2(temperatureK) - lut.logMinK) / lut.logRangeK * (lut.size - 1)));
-    const index = Math.min(lut.size - 2, Math.floor(position)), t = position - index;
-    return lut.unitScale * 2 ** (lut.values[index] * (1 - t) + lut.values[index + 1] * t);
 }

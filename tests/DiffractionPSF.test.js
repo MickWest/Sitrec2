@@ -8,49 +8,61 @@
 // The assertions are deliberately physical rather than golden-value: an Airy pattern has a
 // first zero at a known radius, N spider vanes throw a known NUMBER of spikes in known
 // DIRECTIONS, and a convolution kernel conserves flux. A snapshot would pass just as happily
-// with the transform subtly wrong.
+// with the transform subtly wrong. One test keeps summary values of the visible presets, compared
+// with a tolerance, as a guard against unintended engine changes.
 
-import { createHash } from "node:crypto";
 import { inflateSync } from "node:zlib";
 import { FFT2D, fftshift } from "../tools/psf/fft.js";
 import { buildSpectralSamples, wavelengthToRGB } from "../tools/psf/cie.js";
 import { rasterStop, DEFAULT_STOP } from "../tools/psf/aperture.js";
-import { computePSF, computeBandKernel, DEFAULT_SPEC, describeSampling } from "../tools/psf/psf.js";
+import { computePSF, DEFAULT_SPEC, describeSampling } from "../tools/psf/psf.js";
 import { presetById, PRESETS } from "../tools/psf/presets.js";
 import { buildPSFFile, rgbeEncode, rgbeDecode, validatePSFFile } from "../tools/psf/psfFile.js";
 import { loadPSFFromFile, disposePSF } from "../src/CameraPSF.js";
 
-// Captured from the visible engine before band detection was added. Hash every Float32
-// channel plus the exact spec, peak and sampling metadata; elapsed time is not physics.
-const VISIBLE_BASELINES = {
-    default: "c4489e2938152b225603400b7e45b130c352dce974a874679126113632d709b6",
-    airy: "efc3671e9684c7aeca09ba0e24622d9324fbb807da0ae374e86532e98fd354c8",
-    newtonian: "bcb426b6eddc8ddd4768d2b296eb2ae7e264f18b19033ebfb8d440aa81affbef",
-    cass3: "a385a966b731bea982aad7ab8459bdb0d59e8af9af3e9e11738d482a3f3084e9",
-    iris6: "afade6523b3fa35dad4db3c84efa3739d5554a483e984e03b30398cafff35841",
-    squareIris: "49320c3130ef1e5a88ea8ac8a69c6a839bf5eeaedae6fac3aab5a02632c5b5ef",
-    segmented: "1f3c60b8f6e1269d5f938e14cf771c69c9acc133a5eb18a021d1bdd7e29fedcd",
-    apodised: "9d54cde63e3f74e96e9f399eba932ff4e434055290cad8a4da43004483eda457",
-    chandelier: "9080cace83c03c686098e61165587f8af14371ac7351e9f4b43902fca4de46d5",
-    defocusedBlackbody: "ddb02d712151250f8773ef8cd37f5370028b70080ae97c99579f3f7723cf3a0f",
+// Summary values of the visible engine for the presets and a defocused blackbody case: peak, the three channel
+// sums, the RMS radius in pixels, and the mean channel at six offsets from the center. They are compared with a
+// relative tolerance, so a change in the last bits of Math.sin/cos/exp cannot fail the test, while a change to
+// the engine does.
+const VISIBLE_OFFSETS = [[0, 0], [1, 0], [3, 2], [10, 0], [25, 25], [60, 7]];
+const VISIBLE_SUMMARIES = {
+    default: [0.414514551091, 0.934342410343, 0.993911391091, 1.07174620177, 9.68316140082, 0.41451455156, 0.0570293652515, 0.00104546391716, 0.0000627511083925, 0.00000180264635219, 8.10588251928e-7],
+    airy: [0.0861054639772, 0.999227529258, 0.995943492804, 1.00482895873, 10.1332716411, 0.0861054634055, 0.0631686697404, 0.00122561276658, 0.000118782880842, 0.00000223053624874, 4.0871760613e-7],
+    newtonian: [0.299497926204, 0.996001876656, 1.02493781165, 0.979060280234, 10.2188424076, 0.299497927229, 0.087865854303, 0.000981336411011, 0.0000456066942813, 0.0000304359018628, 2.09252561945e-7],
+    cass3: [0.28695549851, 0.993410473804, 1.02852284866, 0.97806665623, 9.70310379368, 0.286955500642, 0.0802316019932, 0.00124733604025, 0.0000756516504528, 0.00000131379348052, 3.24441619644e-7],
+    iris6: [0.305125487077, 1.00634106711, 1.01705197112, 0.976606961444, 7.74649507357, 0.305125484864, 0.0966277271509, 0.000620788632659, 0.000190148915863, 7.07386534534e-8, 3.69079108016e-8],
+    squareIris: [0.319879854763, 1.00731905129, 1.02810342772, 0.964577535526, 8.90734987919, 0.319879854719, 0.0922090932727, 0.000177910723626, 0.000425427861046, 2.11672895508e-8, 3.67890062118e-8],
+    segmented: [0.292133574477, 1.00481685535, 1.01945420234, 0.975728942449, 10.8986203377, 0.292133574684, 0.0896872530381, 0.000888989001396, 0.000299194599696, 2.73237830584e-7, 1.38713977786e-7],
+    apodised: [0.369420471147, 0.950606436025, 1.00515425244, 1.04423929031, 9.34057422545, 0.369420458873, 0.0685412424306, 0.000779347234735, 0.0000765133081586, 0.0000192083152797, 2.1855094919e-7],
+    chandelier: [0.496438378735, 0.912331310539, 0.986504685748, 1.10116401394, 7.351664162, 0.496438384056, 0.0630806759, 0.000487096093517, 0.000209309820396, 0.00000879687604538, 1.11541249718e-7],
+    defocusedBlackbody: [0.05384549225, 1.0148662553, 0.996472974459, 0.988660768615, 5.89951710993, 0.0538454918812, 0.0352757461369, 0.00795061420649, 0.000102773745311, 0.00000179543464659, 1.67421227345e-12],
 };
 
-test("existing visible specs and presets remain bit-identical", () => {
+test("visible presets keep their summary values within a relative 1e-9", () => {
     const extra = JSON.parse(JSON.stringify(DEFAULT_SPEC));
     extra.n = 128;
     extra.defocusUm = 200;
     extra.combine = "intersect";
     extra.stops[1].enabled = true;
     Object.assign(extra.spectrum, { kind: "blackbody", steps: 8, kelvin: 3200 });
-    for (const [id, expected] of Object.entries(VISIBLE_BASELINES)) {
+    for (const [id, expected] of Object.entries(VISIBLE_SUMMARIES)) {
         const spec = id === "default" ? DEFAULT_SPEC
                    : id === "defocusedBlackbody" ? extra : presetById(id).spec;
-        const r = computePSF(spec);
-        const hash = createHash("sha256")
-            .update(new Uint8Array(r.rgb.buffer))
-            .update(JSON.stringify({ spec, peak: r.peak, sampling: r.sampling }))
-            .digest("hex");
-        expect({ id, hash }).toEqual({ id, hash: expected });
+        const r = computePSF(spec), n = r.n, c = n / 2;
+        const channels = [0, 0, 0];
+        let moment = 0;
+        for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) {
+            const i = (y * n + x) * 3, mean = (r.rgb[i] + r.rgb[i + 1] + r.rgb[i + 2]) / 3;
+            for (let k = 0; k < 3; k++) channels[k] += r.rgb[i + k];
+            moment += mean * ((x - c) ** 2 + (y - c) ** 2);
+        }
+        const samples = VISIBLE_OFFSETS.map(([dx, dy]) => {
+            const i = ((c + dy) * n + c + dx) * 3;
+            return (r.rgb[i] + r.rgb[i + 1] + r.rgb[i + 2]) / 3;
+        });
+        [r.peak, ...channels, Math.sqrt(moment), ...samples].forEach((value, index) =>
+            expect({ id, index, error: Math.abs(value - expected[index]) <= 1e-9 * Math.abs(expected[index]) })
+                .toEqual({ id, index, error: true }));
     }
 });
 
@@ -367,9 +379,9 @@ describe("band detection", () => {
         const spec = presetById("mwirAiry").spec;
         spec.n = 128;
         Object.assign(spec.spectrum, { nm0: 8000, nm1: 14000, steps: 8, kind: "blackbody", kelvin: 300 });
-        const r = computeBandKernel(spec);
-        expect(r.kernel.reduce((a, b) => a + b, 0)).toBeCloseTo(1, 6);
-        expect(r.anglePerPixelRad).toBeCloseTo(14000e-9 * spec.fill / spec.optics.apertureM, 12);
+        const r = computePSF(spec);
+        expect(r.rgb.filter((_, i) => i % 3 === 0).reduce((a, b) => a + b, 0)).toBeCloseTo(1, 6);
+        expect(r.sampling.anglePerPixelRad).toBeCloseTo(14000e-9 * spec.fill / spec.optics.apertureM, 12);
     });
 
     test("a 4000 nm Airy first zero is at 1.22 lambda/D on the sky", () => {
@@ -432,25 +444,18 @@ describe("band detection", () => {
         expect(describeSampling(spec).criticalFocusUm).toBeCloseTo(2 * 0.55 * 25, 10);
     });
 
-    test("computeBandKernel supplies a normalized scalar kernel without changing the spec", () => {
-        const spec = presetById("mwirCatadioptric").spec;
-        spec.n = 128;
-        spec.spectrum.steps = 8;
-        delete spec.spectrum.detector;
-        delete spec.spectrum.quantity;
-        const before = JSON.stringify(spec);
-        const r = computeBandKernel(spec);
-        const rgb = computePSF({ ...spec, spectrum: { ...spec.spectrum, detector: "band", quantity: "photon" } });
-        expect(r.kernel).toBeInstanceOf(Float32Array);
-        expect(r.n).toBe(spec.n);
-        expect(r.kernel.length).toBe(r.n * r.n);
-        expect(r.kernel.reduce((a, b) => a + b, 0)).toBeCloseTo(1, 6);
-        expect(r.peak).toBe(r.kernel.reduce((a, b) => Math.max(a, b), 0));
-        expect(r.anglePerPixelRad).toBe(rgb.sampling.anglePerPixelRad);
-        expect(r.kernel).toEqual(rgb.rgb.filter((_, i) => i % 3 === 0));
-        expect(JSON.stringify(spec)).toBe(before);
+    test("a spectrum with no weight for the detector is refused; a closed pupil gives an empty PSF", () => {
+        // The visible color matching functions have no weight in the mid-wave infrared.
+        const spec = presetById("mwirAiry").spec;
+        spec.n = 64;
+        spec.spectrum.detector = "visible";
+        expect(() => computePSF(spec)).toThrow(/no weight/);
+        spec.spectrum.detector = "band";
+        expect(computePSF(spec).peak).toBeGreaterThan(0);
         spec.stops.forEach((s) => { s.enabled = false; });
-        expect(() => computeBandKernel(spec)).toThrow(/nonzero pupil/);
+        const empty = computePSF(spec);
+        expect(empty.peak).toBe(0);
+        expect(empty.empty).toBe(true);
     });
 
     test("an explicit visible detector is identical to the default", () => {

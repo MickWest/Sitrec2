@@ -2,6 +2,7 @@ import {PHOTON_SCALE, inBandRadiance, radianceDerivative} from "./radiometry.js"
 import {BANDS, createAtmosphere, evaluatePath} from "./atmosphere.js";
 import {turbulenceMTF} from "./turbulence.js";
 import {SENSOR_PRESETS} from "./sensorPresets.js";
+import {FFT2D, fftshift} from "../psf/fft.js";
 
 // Images are row-major Float32Array; dimensions and kernel coordinates are pixels.
 // Kernels are dimensionless, unit-sum weights. Convolution preserves input units.
@@ -17,40 +18,12 @@ export function normalized(data, width, height = width) {
     return {width, height, data: Float32Array.from(data, v => v / total), rawSum: total};
 }
 
-// Radix-2 row/column FFT, adapted from tools/psf/fft.js .
-// re/im carry the same input unit; inverse is a boolean. Inverse restores amplitude.
-function fft1(re, im, inverse) {
-    const n = re.length;
-    for (let index = 1, sample = 0; index < n; index++) {
-        let bit = n >> 1;
-        for (; sample & bit; bit >>= 1) sample ^= bit;
-        sample ^= bit;
-        if (index < sample) { [re[index], re[sample]] = [re[sample], re[index]]; [im[index], im[sample]] = [im[sample], im[index]]; }
-    }
-    for (let len = 2; len <= n; len *= 2) {
-        const angle = (inverse ? 2 : -2) * Math.PI / len;
-        const wr0 = Math.cos(angle), wi0 = Math.sin(angle);
-        for (let base = 0; base < n; base += len) {
-            let wr = 1, wi = 0;
-            for (let sample = 0; sample < len / 2; sample++) {
-                const a = base + sample, b = a + len / 2;
-                const tr = wr * re[b] - wi * im[b], ti = wr * im[b] + wi * re[b];
-                re[b] = re[a] - tr; im[b] = im[a] - ti; re[a] += tr; im[a] += ti;
-                const t = wr * wr0 - wi * wi0; wi = wr * wi0 + wi * wr0; wr = t;
-            }
-        }
-    }
-    if (inverse) for (let index = 0; index < n; index++) { re[index] /= n; im[index] /= n; }
-}
-// re/im are square complex arrays in input units; n is samples per side.
+// The PSF Studio's square complex FFT (tools/psf/fft.js), one instance per power-of-two size.
+// re/im are square complex arrays in input units; n is samples per side. Inverse restores amplitude.
+const fftBySize = new Map();
 function fft2(re, im, n, inverse = false) {
-    for (let y = 0; y < n; y++) fft1(re.subarray(y*n, (y+1)*n), im.subarray(y*n, (y+1)*n), inverse);
-    const cr = new Float64Array(n), ci = new Float64Array(n);
-    for (let x = 0; x < n; x++) {
-        for (let y = 0; y < n; y++) { cr[y] = re[y*n+x]; ci[y] = im[y*n+x]; }
-        fft1(cr, ci, inverse);
-        for (let y = 0; y < n; y++) { re[y*n+x] = cr[y]; im[y*n+x] = ci[y]; }
-    }
+    if (!fftBySize.has(n)) fftBySize.set(n, new FFT2D(n));
+    fftBySize.get(n).transform(re, im, inverse);
 }
 /** Linear convolution; zero exterior is physical crop loss. 'wrap' is only a periodic test/scene.
  * image is scalar input in any linear unit, width/height pixels, kernel unit-sum.
@@ -194,11 +167,8 @@ export function diffractionKernel(sensor, optics, wavelengthM, s = 3) {
         }
     }
     fft2(re, im, n);
-    const intensity = new Float64Array(n*n);
-    for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) {
-        const index = ((y+n/2)%n)*n+(x+n/2)%n;
-        intensity[y*n+x] = re[index]*re[index]+im[index]*im[index];
-    }
+    const intensity = Float64Array.from(re, (value, index) => value*value+im[index]*im[index]);
+    fftshift(intensity, n);
     const total = sum(intensity), scale = dp/(wavelengthM*F*fill);
     if (radius*scale >= n/2-1) throw new Error("Pupil FFT field too small; increase pupilGrid or pupilFill");
     for (let y = -radius; y <= radius; y++) for (let x = -radius; x <= radius; x++) {
@@ -340,16 +310,13 @@ export function sampleDetector(a, w, h, s, fillFactor = 1) {
     }
     return out;
 }
-// fraction is dimensionless neighbor coupling; returned weights are unit-sum.
-export function crosstalkKernel(fraction = 0) {
-    if (fraction < 0 || fraction > 1) throw new Error("Invalid crosstalk fraction");
-    return {width:3,height:3,data:new Float32Array([0,fraction/4,0,fraction/4,1-fraction,fraction/4,0,fraction/4,0])};
-}
-
 export const ADC_MAX = 16383;
 export const DISPLAY_MAX = 255;
 
-/** Validate a scalar Float32 image. width/height, when given, are pixel counts. */
+/** Validate a scalar Float32 image. width/height, when given, are pixel counts. The entry points that receive
+ * images from a caller (runSensorChain, detectorCounts, temporalFilter, the gain statistics, enlargeImage) check
+ * them once; the internal stages they call (exposure, noise, well, local mean) do not check again.
+ */
 export function validateImage(image, width = image?.length, height = 1) {
     if (!(image instanceof Float32Array) || image.length !== width * height || !image.length)
         throw new RangeError("Expected a nonempty Float32Array with matching image dimensions");
@@ -415,7 +382,6 @@ export function fixedPatternMap(settings, length = settings.detectorWidth * sett
  * electrons/pixel/exposure. Output is the nonnegative expected charge, electrons.
  */
 export function exposureToElectrons(radiance, factor, dark = 0) {
-    validateImage(radiance);
     if (!(Number.isFinite(factor) && factor >= 0 && Number.isFinite(dark) && dark >= 0))
         throw new RangeError("Exposure factor and dark charge must be finite and nonnegative");
     return Float32Array.from(radiance, value => Math.max(0, value * factor) + dark);
@@ -461,18 +427,15 @@ export function poisson(mean, random) {
 }
 /** Charge image in electrons, frame/seed unitless. Does not clip the well. */
 export function shotNoise(electrons, frame = 0, seed = 12345) {
-    validateImage(electrons);
     return Float32Array.from(electrons, (mean, pixel) => poisson(mean, randomSequence(pixelSeed(pixel, frame, seed))));
 }
 /** Charge and well in electrons. Negative charge drains; no charge spill model. */
 export function wellLimit(electrons, wellElectrons) {
-    validateImage(electrons);
     if (!(Number.isFinite(wellElectrons) && wellElectrons > 0)) throw new RangeError("Well capacity must be positive");
     return Float32Array.from(electrons, value => clamp(value, 0, wellElectrons));
 }
 /** Electrons and sigma in electrons. Independent stream from the shot-noise stream. */
 export function readNoise(electrons, sigma, frame = 0, seed = 12345) {
-    validateImage(electrons);
     if (!(Number.isFinite(sigma) && sigma >= 0)) throw new RangeError("Read noise must be nonnegative");
     return Float32Array.from(electrons, (value, pixel) => value + sigma * normal(randomSequence(pixelSeed(pixel, frame, seed ^ 0xa511e9b3))));
 }
@@ -487,11 +450,12 @@ export function quantizeADC(electrons, fullScaleElectrons, offsetCounts = 0) {
  */
 export function detectorCounts(radiance, settings, frame = 0) {
     const dark = settings.darkElectronsPerS * integrationTime(settings);
-    // Scalar/short calibration arrays retain their supplied shape; a full native
-    // raster is required when applying spatial shading.
+    // The only image check of the detector stages below. Scalar/short calibration arrays retain their
+    // supplied shape; a full native raster is required when applying spatial shading.
+    if (settings.shadingK) validateImage(radiance, settings.detectorWidth, settings.detectorHeight);
+    else validateImage(radiance);
     let signal = radiance;
     if (settings.shadingK) {
-        validateImage(radiance, settings.detectorWidth, settings.detectorHeight);
         const offsets = shadingMap(settings);
         signal = Float32Array.from(radiance, (value, pixel) => value + offsets[pixel]);
     }
@@ -507,10 +471,6 @@ export function detectorCounts(radiance, settings, frame = 0) {
     return quantizeADC(charge, settings.wellElectrons, settings.adcOffsetCounts ?? 0);
 }
 
-/** ADC count image, dimensionless gain, count-valued level -> clipped display drive [0,1]. */
-export function manualGainLevel(counts, gain = 1, level = ADC_MAX / 2) {
-    return Float32Array.from(counts, value => clamp((value - level) * gain / ADC_MAX + 0.5));
-}
 // Calculated exact ordering: complement negative Float32 words and flip the
 // sign bit of nonnegative words. Unsigned keys then have the same order as the
 // numeric typed-array sort, including -0 before +0. Two 16-bit histogram passes
@@ -621,7 +581,6 @@ export function plateauEqualization(drive, factor = 4, bins = 256) {
  * detail across opposite edges: clamp the nearest edge sample for the local filter.
  */
 export function localMean(image, width, height, sigmaPx) {
-    validateImage(image, width, height);
     if (sigmaPx === 0) return image.slice();
     if (!(Number.isFinite(sigmaPx) && sigmaPx > 0)) throw new RangeError("Local radius must be nonnegative");
     const kernel = gaussianKernel(sigmaPx, Math.ceil(4 * sigmaPx), true);
@@ -1009,43 +968,17 @@ export function temporalFilter(counts, settings, frame = 0, previous = null) {
     return {image, frame, key, memory, reset};
 }
 
-/** settings SI, oversample unitless. Normalized diffraction and scatter kernels.
- * Seven bands are weighted by photons from the stated PSF temperature. This uses a
- * spatially common spectrum, an explicit approximation for a mixed-temperature scene.
+/** settings SI. Normalized diffraction and scatter kernels for the CPU reference: the optical basis and
+ * spectral mix that the live kernels use (opticalBasis, mixOpticalBasis). Seven bands are weighted by
+ * photons from the stated PSF temperature. This uses a spatially common spectrum, an explicit
+ * approximation for a mixed-temperature scene.
  */
 export function opticalKernels(settings, width = settings.detectorWidth * settings.supersample,
     height = settings.detectorHeight * settings.supersample, atmosphere = null) {
     const spectrum = psfSpectrum(settings, atmosphere);
-    const split = scatterPlan(settings, width, height);
-    const sensor = {focalM: settings.focalLengthM, apertureM: settings.apertureM, pitchM: settings.pixelPitchM};
-    const oversample = settings.supersample;
-    let core = deltaKernel();
-    if (settings.opticsEnabled || settings.turbulenceR0M > 0) {
-        const samples = [];
-        for (const {photons, wavelengthM} of spectrum.bins) {
-            let kernel = settings.opticsEnabled ? diffractionKernel(sensor, {radiusPx: settings.opticsRadiusPx,
-                defocusM: settings.defocusM, pupilGrid: 1024}, wavelengthM, oversample) : deltaKernel();
-            if (settings.turbulenceR0M > 0) kernel = filterKernelMTF(kernel, split.angularStep,
-                frequency => turbulenceMTF(frequency, wavelengthM, settings.turbulenceR0M),
-                Math.ceil(settings.opticsRadiusPx * oversample));
-            samples.push({photons, kernel});
-        }
-        const photons = samples.reduce((total, sample) => total + sample.photons, 0);
-        const data = new Float64Array(samples[0].kernel.data.length);
-        for (const sample of samples) for (let pixel = 0; pixel < data.length; pixel++)
-            data[pixel] += sample.kernel.data[pixel] * sample.photons / photons;
-        core = normalized(data, samples[0].kernel.width);
-    }
-    // Published Gaussian transfer exp(-2*pi²*sigma²*f²); estimated RMS inputs.
-    // Diffusion is after the optical PSF and before pixel-area sampling. These
-    // spatially invariant convolutions commute with scatter, so the same blurred
-    // core can feed both scatter branches without another full-frame pass.
-    const sigma = gaussianBlurRmsRad(settings);
-    if (sigma.horizontal > 0 || sigma.vertical > 0) core = filterKernelMTF(core, split.angularStep,
-        (frequency, fx, fy) => Math.exp(-2 * Math.PI ** 2 *
-            ((sigma.horizontal * fx) ** 2 + (sigma.vertical * fy) ** 2)), opticalCoreRadius(settings));
-    const scatter = splitScatter(settings, split);
-    return {core, ...scatter, split, spectrum, farCore: scatter.farScatter ? coarsenKernel(core, split.factor) : null};
+    // The bands share one Gaussian transfer table.
+    const work = {diffraction: [], turbulence: [], gaussian: {reuseTransfer: true}};
+    return mixOpticalBasis(opticalBasis(settings, width, height, spectrum, null, work), spectrum);
 }
 
 /** Two unit-sum kernels -> their full linear convolution. Dimensions are samples;
@@ -1118,6 +1051,9 @@ export function opticalBasis(settings, width, height, spectrum, scatterBasis = n
             frequency => turbulenceMTF(frequency, wavelengthM, settings.turbulenceR0M),
             Math.ceil(settings.opticsRadiusPx * settings.supersample), false,
             work ? (work.turbulence[index] ??= {reuseTransform: true}) : null);
+        // Published Gaussian transfer exp(-2*pi²*sigma²*f²); estimated RMS inputs. Diffusion is after the optical
+        // PSF and before pixel-area sampling. These spatially invariant convolutions commute with scatter, so the
+        // same blurred core feeds both scatter branches without another full-frame pass.
         if (sigma.horizontal > 0 || sigma.vertical > 0) kernel = filterKernelMTF(kernel, split.angularStep,
             (frequency, fx, fy) => Math.exp(-2 * Math.PI ** 2 *
                 ((sigma.horizontal * fx) ** 2 + (sigma.vertical * fy) ** 2)), opticalCoreRadius(settings), true, work?.gaussian);
@@ -1191,12 +1127,6 @@ export function opticalStructureKey(settings, width, height) {
         scatterPlan(settings, width, height)]);
 }
 export const turbulenceStrength = r0 => r0 > 0 ? r0 ** (-5 / 3) : 0;
-export function interpolateOpticalBasis(a, b, fraction) {
-    if (!fraction) return a;
-    if (fraction === 1) return b;
-    return {...a, bands: a.bands.map((band, i) => ({...band,
-        data: Float64Array.from(band.data, (v, p) => v + fraction * (b.bands[i].data[p] - v))}))};
-}
 export function buildOpticalDomain(settings, width, height, spectrum, onAnchor = null) {
     const q = turbulenceStrength(settings.turbulenceR0M), samples = new Map();
     // Diffraction depends on wavelength and pupil, not turbulence strength.
@@ -1367,7 +1297,7 @@ export class OpticsScheduler {
     }
     /** Without a worker, build the worker's interpolation domain in this thread, once per optical structure
      * and turbulence interval, and sample it each frame. The results match the worker path, and a moving
-     * camera, whose turbulence changes every frame, no longer rebuilds the whole optical basis every frame.
+     * camera, whose turbulence changes every frame, samples the domain instead of rebuilding the optical basis.
      */
     synchronousRequest(settings, width, height, atmosphere, key) {
         const spectrum = psfSpectrum(settings, atmosphere);

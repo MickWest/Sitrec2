@@ -46,7 +46,7 @@ hairline. A vane whose edge waves has no single orientation, so its spike fans o
 feather — an *aigrette*. Some instruments do this deliberately, to spread glare instead of
 concentrating it.
 
-And one more, which is why the spikes are coloured: **the pattern scales with wavelength.** Blue
+And one more, which is why the spikes are colored: **the pattern scales with wavelength.** Blue
 light diffracts less than red, so the blue copy of the pattern sits inside the red one. A spike
 is therefore a spectrum smeared along its own length, reddening outwards.
 
@@ -189,7 +189,7 @@ wide view.
 **View ▸ Physical Point Sources.** Off by default. Turn it on whenever you are using diffraction
 glare.
 
-Sitrec normally draws a star as a **disc whose radius grows with brightness**, with its colour
+Sitrec normally draws a star as a **disc whose radius grows with brightness**, with its color
 clamped at white. That is the right compromise when the frame is the finished image — a star is
 a point source of essentially zero angular size, and you cannot see a sub-pixel dot, so
 brightness has to be expressed as area to be visible at all.
@@ -239,7 +239,7 @@ narrow fields; the floor only stops planets disappearing outside them.
 ## What it does and does not model
 
 It models Fraunhofer diffraction from an aperture, polychromatically, with defocus. That covers
-the spikes, the rings, the feathers and their colour. Band mode integrates a single-channel
+the spikes, the rings, the feathers and their color. Band mode integrates a single-channel
 optical response with the selected source spectrum and photon or energy weighting. It
 normalizes the kernel; it does not calculate absolute radiance, detector charge, or temperature.
 

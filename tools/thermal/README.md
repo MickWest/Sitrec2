@@ -128,8 +128,8 @@ parallel. Digital zoom crops the native field after detection and does not chang
 frame's angular diagonal plus **max(0.01 degree, 5% of half-diagonal)** margin, clamped
 to −90…90 degrees. These are calculated numerical policies. It starts with **65**
 uniform elevation nodes and inserts the exact optical axis. Intervals whose midpoint
-relative radiance error exceeds **2e-5** are bisected, to at most **2049 nodes** and
-**12 refinement levels**. The final midpoint error is reported, including failure to
+relative radiance error exceeds **2e-5** are bisected, to at most **2049 nodes** (`maxSamples`) and
+**20 bisection levels**. The final midpoint error is reported, including failure to
 reach tolerance at those limits. This bounds a checked interpolation error, not
 atmospheric model accuracy or an error guarantee between probes.
 
@@ -141,7 +141,7 @@ conditions, not a sensor specification. A cached table is reused while profile
 content, altitude, enclosing field geometry, sea temperature and photon band agree.
 Manual backgrounds remain uniform. `skySource: "manual"` instead uses the blackbody
 brightness temperature `skyTemperatureK`; editing that temperature alone does not change
-the source policy. Older saves without a sky source use the new atmosphere default.
+the source policy. Saves without a sky source use the atmosphere default.
 
 Without terrestrial refraction, below the spherical geometric horizon, `seaBackground` supplies thermal emission
 plus reflected sky through the foreground atmosphere. The horizon is
@@ -179,8 +179,8 @@ shared lift only at projection. Cloud sheets receive their anchor's lift, preser
 the visible billboard dimensions. Their temperatures still use local physical altitude.
 
 The analytic mean sea is projected with that same density-dependent, saturated lift.
-Its horizon is the maximum apparent elevation of the surface; lifting the old
-geometric tangent alone does not find the new limb. Each displayed elevation maps
+Its horizon is the maximum apparent elevation of the surface; lifting the unrefracted
+geometric tangent alone does not find the refracted limb. Each displayed elevation maps
 back to a physical sea endpoint or atmospheric exit. Sea radiance, its directional
 angular lookup, foreground depth and cloud visibility share this mapping. Separate
 sky/sea table endpoints preserve the boundary. An error-checked apparent-depth table
@@ -257,8 +257,7 @@ pipeline diagnostic used by the GPU self-test.
 `CNodeCloudField` carries fitted display emission, not kelvin or absorption depth.
 It is excluded with `unresolvedThermal` in the readout until physical density/optical
 metadata and a joint, clipped volume integrator are provided. Sorting sphere hulls
-would not solve overlap. The CPU helpers retain local E/tau composition, emission-only
-addition and the analytic radial sphere-column relation for validation. Cloud scattering,
+would not solve overlap. Cloud scattering,
 including illumination from the Sun and lower atmosphere, is omitted and reported as
 `absorptionOnly`; no total physical-accuracy bound is claimed.
 
@@ -292,7 +291,7 @@ isothermal balance; it is not geometric crest tracing or validated multiple refl
 The provider is named `clearSkyThermalOnlyDiagnostic`: clouds and the Sun do not
 contribute reflected radiance. Scene-environment reflection is deferred. Foam,
 resolved wave motion and occulting crests also remain absent.
-The optical point spread function follows radiance composition as before.
+The optical point spread function follows radiance composition.
 
 The numerical sea default uses **96×96 Gaussian slope quadrature**, splitting at the
 visible half-space boundary, and **513 incident-sky elevations**. Doubling to
@@ -316,7 +315,7 @@ environment changes rebuild the relevant table. Small altitude changes use a
 separately checked height interval, initially **0.05 m** on either side, halved until
 both height endpoints pass the **0.001 K** received-radiance gate. The exact physical
 horizon shift is applied before table sampling, so reuse cannot move the sea/sky
-boundary. Unchecked height intervals rebuild. Height-domain validation is currently
+boundary. Unchecked height intervals rebuild. Height-domain validation is
 synchronous when first needed. Every row has separate sea/sky horizon entries;
 it interpolates radiance without smearing across that boundary. Thus the horizon ramp
 comes from atmospheric range, skin emission and directional reflected sky, not a
@@ -334,7 +333,7 @@ wall time in ms, `hostPrepareMs`, evaluations, upload bytes, draws and a conserv
 including coverage subviews. Cached frames do no cloud atmospheric integration or
 source upload. Moving sheets resample the shared function and update small source
 textures; they do not each reintegrate the same atmospheric rays. Sorting is **O(N log N)**; compatible sheets
-currently use one draw each, or two with the bounded-copy fallback. Source textures
+use one draw each, or two with the bounded-copy fallback. Source textures
 cost `4*sum(tableSize²)` bytes; fallback adds one fine-grid R32F target, `4*width*height`
 bytes. `background.sea` reports spectrum assumptions, table build time, interpolation
 error, azimuth rows and texture bytes. `environmentBuildMs` reports incident-sky setup;
@@ -347,16 +346,12 @@ not zero.
 
 `node tools/thermal/benchmark.mjs` measures CPU cloud/sea preparation for estimated
 **300 frames at 30 Hz**, **20 clouds**, a **60 m/s** camera following a constant-altitude
-sphere, **10 m/s** cloud drift and **1e-5 rad/frame** pitch motion. The calculated local
-run gave median **0.18 ms**, p95 **0.43 ms**, p99 **0.70 ms**, mean **3.09 ms**, and maximum
-**842 ms** (the cold first frame). The warmed maximum was **17.94 ms**; the sea domain
-built once and only **2 frames** integrated new cloud cells. This meets the estimated
-**5 ms median / 16 ms p95** preparation targets in this fixture, but cold preparation
-still blocks synchronously. Timings include canonical records, sort, shared domains,
+sphere, **10 m/s** cloud drift and **1e-5 rad/frame** pitch motion, against estimated
+**5 ms median / 16 ms p95** preparation targets. Cold preparation blocks synchronously. Timings include canonical records, sort, shared domains,
 sheet textures and sea tables; they exclude GPU work, opaque-object range tables,
 optics and detector processing. They are not full-frame performance claims.
 
-`tests/thermalPhase3a.test.js` reuses the bounded cloud-transfer checks and reproduces
+`tests/thermalClouds.test.js` reuses the bounded cloud-transfer checks and reproduces
 **0.880/0.497/0.241 K** at **100/130/160 km** with **0.03 K** numerical reproduction
 tolerance. The input is a radiosonde archive sounding, CIM00085586, **2014-11-11 12 UTC**, with an
 estimated **1382 m**, **1.84 degree** test ray; these are conditional calculations, not
@@ -381,6 +376,13 @@ frozen nonisothermal cases validate the sea source separately from GPU compositi
 cloud layers, camera motion/roll, cloud disposal/rebuild and atmosphere edits, and
 verify unresolved fields show their diagnostic without changing visible rendering.
 
+### Wave spectrum module (staged)
+
+`seaWaves.js` builds a linear random sea from a measured directional wave spectrum in deep water
+(significant height, plane-wave components with seeded random phases, surface elevation and slopes at
+a position and scene time). It is staged work: no view, pipeline or worker uses it yet, and the
+statistical sea above does not depend on it.
+
 ## Sitrec host contract
 
 The custom look view selects `visible` (the default for old saves) or
@@ -396,7 +398,10 @@ visible image under a thermal label.
 `configureSensorCamera` and `withThermalVehicle`, and `createThermalControls` with
 its lil-gui widget sink. `THERMAL_PARAMETERS` owns all sensor/environment parameter
 descriptions and validation. Its `owner` identifies sensor, environment or derived
-geometry. Sitrec translates menu keys through its English resource. Ordinary
+geometry. Sitrec translates menu keys through its English resource (`src/i18n/en.js`,
+`thermal.parameters` and `thermal.controlReasons`); the standalone tools pages cannot load that file
+and show the copies in `thermalSchema.js` and `tools/vehicles/thermalPreview.js`.
+`tests/thermalParameterText.test.js` requires the copies to be identical. Ordinary
 lil-gui controllers remain addressable through `setMenuValue` and `getMenuValue`.
 
 Persistent ownership is `CNodeCamera.thermalSensor`, `Sit.thermalEnvironment`,
@@ -594,8 +599,8 @@ one that fits and reports `nyquistMet: false`. If even 2 cannot fit, it retains 
 is derived, never a menu parameter. Editing `supersample` on normalized settings
 selects `manual`; manual mode retains the requested factor and still reports whether
 it meets Nyquist and allocation limits. To construct manual settings from scratch,
-specify both `opticalSamplingMode: "manual"` and `supersample`. Legacy saves without
-the new mode start in Nyquist even if they contain a previously saved factor.
+specify both `opticalSamplingMode: "manual"` and `supersample`. Saves without
+`opticalSamplingMode` start in Nyquist, whatever factor they contain.
 
 The scene is rasterized finer than the detector. Mesh bounds narrower than two native
 pixels trigger additional **128 samples per native pixel side** coverage tiles, independent
@@ -710,36 +715,16 @@ with `displayCurve: "measured"`. The nominal horizontal zero is within the measu
 40 µrad vertical value is an estimated conversion of the measured **34 ±3 µrad** under
 a linear display law. Selecting Linear does not silently change a saved blur value.
 
-Status: **measured from the IB6830 video at both lens steps (seven lobe-shape measures;
-34 ±3 µrad under a linear display law, about 40 under the measured curve); horizontal
-bound ≤8 µrad; angle-fixed; acts before detector noise; origin unresolved (optical
-anisotropy leading, fast elevation vibration still possible; sensor and readout effects
-ruled out as ordinary fixed-pixel explanations)**. This empirical response belongs to
-one recording, not every unit in the sensor family.
-
-The measurement compares seven lobe-shape measures over **41-frame sequences** around
-frames **10450, 11000 and 14200**. Comparing consistent physical lobe estimators removes
-the apparent spacing discrepancy. The actual discrepancy is shape: the real lobes are
-rounder than an isotropically blurred model. Resolving the axes gives vertical
-**34 ±3 µrad at 675 mm** and **34 ±2 µrad at 1012 mm** under the linear law. Their common
-angular width, together with the horizontal bound at the longer step, supersedes the
-older isotropic inference and the proposed detector-fixed blur. With the measured curve,
+Status: **measured from the IB6830 video at both lens steps** (34 ±3 µrad at 675 mm and
+34 ±2 µrad at 1012 mm under a linear display law, about 40 under the measured curve); horizontal
+bound ≤8 µrad; angle-fixed; acts before detector noise; **origin unresolved**. This empirical
+response belongs to one recording, not every unit in the sensor family. With the measured curve,
 calculated native vertical sigmas are `40e-6 × .675 / 20e-6 = 1.35 pixels` and
 `40e-6 × 1.012 / 20e-6 = 2.024 pixels`.
 
-Optical anisotropy leads provisionally; it is not an identified focus or astigmatism
-coefficient. Resolved clean-frame motion explains only about **2–3 µrad**, calculated
-at an assumed **0.01625 s** exposure. Fast elevation vibration can average out of the
-recorded centroids and remains possible. Fixed sensor/readout row blur fails angular
-scaling; filtering the dominant detector noise would introduce a vertical correlation
-absent from the recording. Early sensor effects are not excluded by noise isotropy alone,
-but lack the required magnitude and lens-step scaling. A raw point-source exposure sweep
-at both steps, with focus state and synchronized two-axis motion telemetry, would
-separate these origins. No new focus or vibration mechanism is asserted here.
-
-A legacy saved or preset `systemBlurRmsUrad` maps to both missing axes. An explicit axis
+A saved or preset scalar `systemBlurRmsUrad` maps to both missing axes. An explicit axis
 wins, including zero; normalization writes only the two-axis representation. A migrated
-scalar is preserved as an explicit value, including when its old provenance called it a
+scalar is preserved as an explicit value, including when its saved provenance called it a
 preset default. Reselect the sensor preset to adopt the measured pair.
 The residual excludes modeled turbulence, exposure jitter and charge diffusion. Do not
 also add a defocus or full motion surrogate for that same measured residual. If explicit
@@ -764,7 +749,8 @@ convolutions commute. For each axis, calculate
 in rad². The transfer is `exp(-2 pi² (sigmaX² fx² + sigmaY² fy²))`, with frequencies
 in cycles/radian. It is applied once after the separately calculated turbulence and
 spectral diffraction, and feeds both scatter branches. Charge spreading and detector-area
-integration each occur once. All-zero blur controls reproduce the prior core exactly.
+integration each occur once. With all blur controls at zero the Gaussian stage is skipped, so the
+core is exactly the diffraction and turbulence core.
 
 The scatter kernel is `(1-fraction) × delta + fraction × skirt`, with
 `skirt(angle) ∝ [1+(angle/shoulder)²]^(-slope/2)` inside a finite angular cutoff.
@@ -811,7 +797,7 @@ point-source convolution to **1% of redistributed flux**: 0.00003 of total flux 
 clean and 0.0003 for dirty. These cases include central and off-center sources, rectangular
 fields, and partial coarse cells. Tests also use the actual default MX-15, ATFLIR and
 OMAHA plans in both clean and dirty modes, with a source at a coarse-cell corner.
-The calculated worst-case profile errors are reported by `thermalCoreIteration6.test.js`. This is a tested
+The calculated worst-case profile errors are reported by `thermalScatter.test.js`. This is a tested
 numerical tolerance, not a hardware accuracy claim or a guarantee at all custom extremes.
 A fully contained split source conserves total flux within 2e-7; tests separately check
 far energy, diffraction normalization, and allocation at native 2× and 4× sampling.
@@ -820,7 +806,7 @@ Padding covers the summed supports of the blurred core and scatter on each grid.
 The **per-pixel background drawn by the sky pass** is subtracted before padding and
 restored once after summing both branches. CPU `applyOptics()` accepts either that
 fine-grid background image or a uniform scalar in the same radiance units. The
-exterior has zero **object contrast**, so smooth sky gradients no longer acquire
+exterior has zero **object contrast**, so smooth sky gradients do not acquire
 frame-edge lines. This treats the modeled background as a locally continued field;
 a symmetric normalized PSF preserves a linear gradient. Curvature and abrupt sky/sea
 boundaries are an approximation because this background term is restored without
@@ -839,9 +825,8 @@ absorption coefficients are estimated, with one broadband surface-path anchor. T
 Omaha comparison stays within 8.3% over the saved ranges; this is not a general accuracy
 bound. Photon source terms are integrated spectrally, not obtained by dividing energy
 radiance by a single photon energy. `evaluatePath()` retains its `quantity` and `band`;
-`cloudBackground()` uses both for the cloud Planck source and requires behind-cloud
-radiance in that same unit and band. Legacy paths without those fields default to
-energy radiance in 3–5 um. This prevents mixing an energy cloud with photon path emission. A quadratic range table retains each band's source
+cloud sources (`opaqueCloudRadiance()`) use photon radiance in the selected band, the unit of
+the photon path emission they are added to. A quadratic range table retains each band's source
 transmission and path emission. Foreground and background use **96 segments**; sounding
 level heights split the quadrature at interpolation changes, including upper standard
 atmosphere continuation layers. The shader interpolates by square root of fragment range.
@@ -859,12 +844,12 @@ long-range visibility remain uncalibrated.
 shift by its difference from 288.15 K, with a 150 K floor; pressure is recalculated
 hydrostatically. Explicit `createAtmosphere()` profiles still take precedence.
 `ambientTemperatureK` remains air temperature around the object and the fallback for
-untagged surfaces. It no longer changes the sea-level profile. No observation-derived
+untagged surfaces. It does not change the sea-level profile. No observation-derived
 weather for the 2014 recording is supplied by these defaults.
 
 ### Measured soundings
 
-`sounding.js` exports `parseSoundingCSV(text, metadata)`, `parseIGRASounding(text, metadata)`
+`sounding.js` exports `parseSoundingCSV(text, metadata)`, `soundingFromRecords(records, metadata)`
 and `atmosphereFromSounding(sounding, options)`. The latter returns
 `{atmosphere, contentKey, assumptions, levels}`. `atmosphere` is a
 `createAtmosphere({profile})` object; its key is a stable serialization of effective
@@ -890,16 +875,10 @@ that relative humidity is used. A profile the atmosphere rejects falls back to t
 The CSV columns are `level_type, pressure_Pa, geopotential_height_m, temperature_C,
 relative_humidity_pct, dewpoint_depression_C, wind_dir_deg, wind_speed_m_s`. Column order
 can vary; all eight names are required. Blanks remain null, and wind-only levels are
-retained by the parser. This numeric CSV format does not use quoted fields.
-
-The fixed-width parser accepts **one complete sounding**, its header and the declared
-number of level records, from radiosonde archive period-of-record files. It follows the
-archive's published format description.
-It retains level types, flags and raw records; missing or rejected values (`-9999`,
-`-8888`) become null. Temperatures, relative humidity, dew-point depression and wind
-speed are decoded from tenths. Parsed temperatures are K, pressure Pa, height m,
-humidity percent, depression K, wind direction degrees and speed m/s. Station elevation
-is supplied separately because the sounding header does not contain it.
+retained by the parser. The archive codes for missing or rejected values (`-9999`, `-8888`)
+also become null. This numeric CSV format does not use quoted fields. Parsed temperatures are K,
+pressure Pa, height m, humidity percent, depression K, wind direction degrees and speed m/s.
+Station elevation is supplied separately.
 
 The measured profile replaces settings-built temperature, pressure and water vapor
 for both foreground transfer and sky. `visibilityM` still sets the aerosol model.
@@ -1142,8 +1121,8 @@ intersection of that mapping and the available detector window; whole-detector g
 `pupilReferenceM` is **0.150 m at 675 mm, estimated**, with working range
 **0.120–0.180 m**. It follows comparison f/4–f/5.5 lens classes and a published study,
 whose **0.160 m** later MX-15D reconstruction is not a measurement of this legacy pupil.
-The old **0.135 m**
-control and broader **0.1125–0.225 m** sensitivity envelope remain possible inputs.
+A **0.135 m**
+control and the broader **0.1125–0.225 m** sensitivity envelope remain possible inputs.
 `pupilPolicy: "holdFNumber"` is the estimated default: `D = Dref × f/0.675`, giving
 **f/4.5** and **0.224889 m** at 1012 mm. `"keepPupil"` holds **0.150 m**, giving
 **f/6.7467** there. Neither policy is verified hardware behavior. Holding a 0.150 m pupil at
@@ -1167,12 +1146,6 @@ coordinate adds `0.5 - 0.5*N*c/M` to the half-pixel coordinate measured from the
 top left. The GPU reverses the Y correction for its bottom-first buffers. Display interpolation
 changes neither detector counts nor histogram weighting.
 
-The preset audit's proposed values/statuses are applied, including array/band
-sources, uncertainty ranges, explicit detector analogies, and unverified ATFLIR/SAFIRE
-field/pupil assignments. Source text uses published sources and explicit model assumptions.
-No numerical audit proposal is omitted. The database's earlier unresolved 1012 mechanism
-is superseded by the optical-step evidence above. No signature change was required.
-
 ## Settings and verification
 
 `THERMAL_PARAMETERS` is the menu contract: key, group, type, unit, default, min, max,
@@ -1187,10 +1160,11 @@ Linked focal length and field remain consistent. `presetMetadata` survives seria
 and identifies edited preset values. Temperature/emissivity settings provide suggested
 values for authoring tags; empty models still use the documented ambient fallback.
 
-Run the core numeric tests and import check:
+Run the thermal, Vehicle Designer and PSF tests and the import check (Jest matches each pattern
+against test paths without regard to case, so `tests/thermal` also selects `tests/Thermal…`):
 
 ```sh
-npx jest tests/thermalRadiometry.test.js tests/thermalAtmosphere.test.js tests/thermalSensorMath.test.js tests/thermalSchema.test.js tests/thermalCoreIteration2.test.js tests/thermalCoreIteration3.test.js tests/thermalCoreIteration4.test.js tests/thermalCoreIteration5.test.js tests/thermalCoreIteration6.test.js tests/thermalCoreIteration7.test.js tests/thermalSignatures.test.js tests/VehicleThermal.test.js tests/VehicleThermalControls.test.js tests/VehicleThermalRearView.test.js tests/ThermalViewIntegration.test.js tests/ThermalPipelineHost.test.js
+npx jest tests/thermal tests/VehicleThermal tests/DiffractionPSF
 npm run check-three-imports
 ```
 
@@ -1226,57 +1200,15 @@ reported brightness temperature within **1e-9 K** of the CPU value. Jest runs bo
 background calculations, including the photon-band sea-emission check. WebGL execution
 of these checks remains required.
 
-The additional browser checks require: reported well-fill time matching the CPU result
-within 1e-12 s and a zero-dark 300 K reference within one ADC count of half well; shading
-matching CPU counts within one count; unchanged native shading across frames and 2× zoom;
-zoomed output matching the centered native crop within 1e-6 normalized units; fixed pattern
-matching CPU within one count and identical between distinct frames; and full padded
-far-skirt energy within **0.5%** of incoming flux times the allocated far fraction for both
-clean and dirty. Cropped far profiles must also agree with CPU to **0.5% of full far flux**
-in integrated absolute error. These GPU checks must be run on WebGL; Jest does not execute
-the shaders.
-
-The per-pixel sky checks use a perspective field, with default up and with 90-degree
-roll, and compare five fine-grid pixels with the CPU elevation table: **maximum relative
-photon-radiance error 1e-5**. The blurred-point test enables **r0 .572 m**, **2.714 µrad
-axis jitter**, **.2 native-pixel diffusion**, and full detector fill. Its GPU optics
-must match CPU convolution within **0.1% integrated absolute error / source flux**,
-conserve contained fine-grid flux within **0.2%**, and match independently rasterized
-CPU source coverage plus native sampling within **1% of CPU flux**. Jest executes both
-CPU reference cases and separately tests each blur, the MTF, wavelength scaling and
-gain statistics regions. These tolerances are numerical acceptance policies, not
-hardware accuracy claims. The new GPU checks still require `runThermalSelfTest()` in
-a WebGL browser.
-
-The enlargement self-test compares all three shader kernels with `enlargeImage()` to
-**1e-6 normalized error**, and checks the exact centered impulse phase. The temporal
-self-test compares consecutive, skipped, repeated and backward frames against the CPU
-recursion to **0.002 count**, verifies filtering precedes gain to **1 display code**,
-and verifies alpha zero preserves raw counts exactly. After **16 warm-up frames**,
-**64 frames of independent read noise** must give the variance ratio **0.7/1.3** within
-**0.02 absolute**. These are estimated numerical acceptance tolerances; they do not
-validate a camera's undocumented firmware. Run `runThermalSelfTest()` on WebGL before
-accepting the shader behavior. The GPU also needs the lens-step visual check: 1012 mm
-must narrow optical sampling while showing the central 480 × 384 samples, enlarged 2×.
-
-
-The additional browser comparisons require a surface at both a node and a midpoint
-of a non-vacuum range table to match direct CPU photon transfer within **0.1%**.
-Unequal-population scenes must separate plateau from automatic by at least **100 display
-codes**, and automatic from manual by **50**, before GPU/CPU comparisons within **1 code**.
-Advancing, repeated and backward frames must reproduce CPU gain endpoints within
-**0.002 count**. A **40 × 24** detector tests nonzero dark current and rectangular
-shading, then **16 expected photoelectrons** tests the exact Poisson branch: maximum
-GPU/CPU difference **2 counts**, mean absolute difference **0.1 count**. These are
-estimated numerical acceptance tolerances. Uniform atmospheric sky is tested with
-both gradient settings; clean and dirty scatter with a nonzero sky must match CPU
-optics within **0.1% of source-contrast flux**. A sky-only gradient must preserve all
-edges within **1e-6 scaled radiance unit**. Minification must match CPU area averaging
-and conserve the impulse integral within **1e-6**. R32F/RG32F rendering and portable
-RGBA32F readback staging must complete without framebuffer or shader errors.
+Each further browser check compares one GPU stage with its CPU reference in `sensorMath.js`
+or `atmosphere.js`: exposure, shading, fixed pattern, zoom, far scatter, per-pixel sky, blurred
+optics, enlargement, temporal filtering, range transfer, gain modes, Poisson noise, the measured
+display curve and two-axis blur. Each check reports its expected and measured values and its
+tolerance in `report.checks`. The tolerances are estimated numerical acceptance policies, not
+hardware accuracy claims, and only the browser self-test executes the shaders.
 
 The default MX-15 resident render-target budget is calculated from allocated dimensions,
-formats and 4 bytes per depth sample by `thermalCoreIteration6.test.js`: **532.141 MiB**
+formats and 4 bytes per depth sample by `thermalPipelineContract.test.js`: **532.141 MiB**
 with both temporal buffers and a maximum coverage tile, excluding the caller's output,
 textures, CPU arrays and driver overhead. The fine FFT trio is **384 MiB**
 (`3 × 4096 × 4096 × 2 × 4 bytes`); scalar fine grids including the sky total **100 MiB**.
@@ -1285,23 +1217,10 @@ diagnostic, or **256 MiB** if explicitly reading a full fine FFT. Staging is dis
 immediately, so diagnostic readbacks do not retain that allocation. Local enhancement
 adds **2.5 MiB** when enabled. These are storage calculations, not a GPU memory survey.
 
-Serialized explicit values remain authoritative. Older records without reliable
-provenance cannot distinguish an intentional custom setting from a superseded preset
-default; they are not silently rewritten. Reselect the sensor/scatter/optical-step preset
-to adopt new defaults. This limitation is separate from the new parameter defaults.
-
-The measured-curve browser checks must show a monotonic **0–1** response, CPU/GPU
-normalized error **≤1e-6**, slope at black-hot code **166 = 131 ±3 codes/drive**, and
-relative slopes **58/166 = 5.2 ±0.12**, **234/166 = 3.2 ±0.10**. Linear and measured
-curves must agree with CPU display codes to **1 code**, including the optional
-recording affine; default white-hot plus black-hot must be exactly **255**.
-The two-axis blur checks at **0.675 and 1.012 m** must recover horizontal **0** and
-vertical **40 µrad RMS** within **0.15 µrad**, preserve contained flux within **0.2%**,
-match CPU optics within **0.1% of source flux**, and match native samples within
-**1e-5 of source flux**. The native vertical-width ratio must equal `1.012/.675`
-within **0.005**. These are calculated test geometries and estimated numerical
-acceptance tolerances. Jest checks the numeric references and uploaded shader inputs;
-only the browser self-test executes WebGL and establishes GPU parity.
+Serialized explicit values remain authoritative. Records without reliable provenance
+cannot distinguish an intentional custom setting from a superseded preset default; they are
+not silently rewritten. Reselect the sensor/scatter/optical-step preset to adopt the preset
+defaults.
 
 ### Moving-camera execution
 
@@ -1357,9 +1276,9 @@ photon transfer at interior angles and heights. Estimated numerical allocations 
 `1e-4` absolute transmission and the photon radiance equivalent of `0.001 K` at
 `300 K` for summed path emission, including a factor-two validation margin. Thus
 additional radiance error is bounded by `1e-4 * sum(source bands) + B'(300 K)*0.001 K`
-for any nonnegative source spectrum. Existing range interpolation remains unchanged.
+for any nonnegative source spectrum.
 Profile content, band, maximum range and ray mapping invalidate the domain. The Earth
-radius at the observer changes by centimetres per frame as the camera moves, so it is not
+radius at the observer changes by centimeters per frame as the camera moves, so it is not
 part of the key: each range and sky domain records the radius it was built at and serves
 requests within an estimated `100 m` of it, which moves a 200 km path's altitude by at
 most about 6 cm. A domain is prefetched when the camera, at its current rate, would leave
@@ -1371,7 +1290,7 @@ These are sampled numerical certificates, not bounds on physical model uncertain
 
 The sky cache retains its estimated `0.005 K` budget. Interactive tables begin with
 an estimated `17`-node seed and refine to the same `0.002 K` angular tolerance;
-reference table generation retains its original `65`-node seed and exact elevation
+reference table generation uses a `65`-node seed and the exact elevation
 interval. Unchanged inputs retain the identical table and GPU upload. Analysis
 comparisons use that same reference table; interactive comparisons explicitly use
 the `0.005 K` brightness bound rather than asserting bit equality with a different
@@ -1385,8 +1304,8 @@ from the same order keys and two 16-bit radix passes as the CPU, so they are exa
 minimum span, the AGC dynamics and the plateau table follow `processingParameters`
 (the AGC step and plateau sums in float32 instead of float64). The scatter adds into 16
 stacked copies of each histogram and then sums them: the counts of one frame fall in a
-narrow range, and additive blends into one texel run one after another (measured: 18.6 ms
-of GPU time per frame with one copy, 2.4 ms with 16). The self-test compares windows and
+narrow range, and additive blends into one texel run one after another, so the copies
+remove most of that contention. The self-test compares windows and
 tables with the CPU on fractional counts with ties, crops and both AGC dynamics.
 
 Without float blending, automatic and plateau gain use a fenced, one-render-late readback. Polling never
@@ -1408,14 +1327,12 @@ GPU pacing: a host that draws again on its next animation frame passes `pace: tr
 (Sitrec does so only for the main loop's draws). Such a render starts only after the
 previous one has completed on the GPU, as a fence reports; a draw before that shows the
 last image, and the pipeline asks the host for a render when the fence signals. Without
-pacing a live view queued frames faster than the GPU finished them. Exports, screenshots
+pacing, a live view can queue frames faster than the GPU finishes them. Exports, screenshots
 and comparisons read the image right after rendering, so they leave pacing off and always
 get the frame they request. `framesInFlight` (default 1) allows more paced frames on the
-GPU at once. With a readback, two made each read wait about 15 ms behind the other frame;
-with the GPU gain statistics no read remains, so Sitrec's look view uses two while
-playing (one while paused, so a seek renders as soon as the GPU is free). Measured on the
-testbed with a 30 Hz loop: 14.3 → 21.5 new frames per second, a new frame on almost every
-loop tick, and no loop gap over 50 ms.
+GPU at once. With a readback, a second frame in flight makes each read wait behind the other
+frame; with the GPU gain statistics no read remains, so Sitrec's look view uses two while
+playing (one while paused, so a seek renders as soon as the GPU is free).
 
 Run `node tools/thermal/benchmark.mjs --moving` for measured CPU preparation on
 estimated transverse tracks at `250` and `822 m/s`, `300` frames at `30 Hz`, starting

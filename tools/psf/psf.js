@@ -183,6 +183,11 @@ export function computePSF(spec, onProgress = null) {
     const samples = buildSpectralSamples(
         spec.spectrum.nm0, spec.spectrum.nm1, spec.spectrum.steps,
         spec.spectrum.kind, spec.spectrum.kelvin, spec.spectrum.detector, spec.spectrum.quantity);
+    // A spectrum with no weight (for example an infrared band with the visible color detector)
+    // cannot define a normalized PSF.
+    if (!samples.rgb.some((weight) => weight > 0)) {
+        throw new Error("The source spectrum has no weight in this band for the selected detector");
+    }
 
     const rgb = new Float64Array(n * n * 3);
     const masks = [];
@@ -232,21 +237,4 @@ export function computePSF(spec, onProgress = null) {
 
     const now = (typeof performance !== "undefined" ? performance : Date).now();
     return { n, rgb: out, masks, peak, sampling: describeSampling(spec), ms: now - t0 };
-}
-
-/** A single-channel optics kernel, centered at (n/2, n/2), with unit sum to Float32 precision.
- *  Forces band detection without mutating the caller's spec; quantity defaults to photons.
- *  An empty pupil or spectrum cannot define a normalized kernel and is rejected. */
-export function computeBandKernel(spec) {
-    const result = computePSF({ ...spec, spectrum: { ...spec.spectrum, detector: "band" } });
-    if (!(result.peak > 0) || !Number.isFinite(result.peak)) {
-        throw new Error("A band kernel needs a nonzero pupil and spectrum");
-    }
-    const kernel = new Float32Array(result.n * result.n);
-    let peak = 0;
-    for (let i = 0; i < kernel.length; i++) {
-        kernel[i] = result.rgb[i * 3];
-        if (kernel[i] > peak) peak = kernel[i];
-    }
-    return { n: result.n, kernel, anglePerPixelRad: result.sampling.anglePerPixelRad, peak };
 }

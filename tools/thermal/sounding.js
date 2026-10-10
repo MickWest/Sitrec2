@@ -4,19 +4,18 @@ import {createAtmosphere} from "./atmosphere.js";
 const COLUMNS = ["level_type", "pressure_Pa", "geopotential_height_m", "temperature_C",
     "relative_humidity_pct", "dewpoint_depression_C", "wind_dir_deg", "wind_speed_m_s"];
 
-function numeric(text, name, scale = 1) {
+function numeric(text, name) {
     if (text.trim() === "") return null;
     const value = Number(text);
     if (!Number.isFinite(value)) throw new RangeError(`Invalid sounding ${name}`);
-    // IGRA distinguishes not reported (-9999) and rejected (-8888). Both are
-    // absent numerically; the raw record and flags remain available for inspection.
-    return value === -9999 || value === -8888 ? null : value / (1 / scale);
+    // The archive codes -9999 (not reported) and -8888 (rejected) are both absent values.
+    return value === -9999 || value === -8888 ? null : value;
 }
-function level(type, p, z, tC, rh, dpd, dir, speed, extra = {}) {
+function level(type, p, z, tC, rh, dpd, dir, speed) {
     if (!/^[123][012]$/.test(type)) throw new RangeError(`Invalid sounding level type: ${type}`);
     return Object.freeze({levelType: type, pressurePa: p, geopotentialHeightM: z,
         temperatureK: tC === null ? null : tC + 273.15, relativeHumidityPct: rh,
-        dewpointDepressionK: dpd, windDirectionDeg: dir, windSpeedMS: speed, ...extra});
+        dewpointDepressionK: dpd, windDirectionDeg: dir, windSpeedMS: speed});
 }
 function parsed(levels, metadata, format) {
     if (!levels.length) throw new RangeError("Sounding has no levels");
@@ -39,32 +38,6 @@ export function parseSoundingCSV(text, metadata = {}) {
         return level(values[0], ...values.slice(1).map((value, i) => numeric(value, COLUMNS[i + 1])));
     });
     return parsed(levels, metadata, "csv");
-}
-
-/** Exactly one header plus NUMLEV data records from a period-of-record IGRA v2
- * file. Fixed column positions are one-based in the published format description.
- * Values in tenths (temperature, RH, depression, wind speed) convert to the CSV units.
- * Quality flags and raw records are retained; -8888/-9999 never become zeros.
- */
-export function parseIGRASounding(text, metadata = {}) {
-    const lines = text.replace(/^\uFEFF/, "").split(/\r?\n/).filter(line => line.trim());
-    const header = lines.shift();
-    if (!header?.startsWith("#") || header.length < 36) throw new Error("IGRA sounding needs a header");
-    const count = numeric(header.slice(32, 36), "level count");
-    if (!Number.isInteger(count) || count < 1 || lines.length !== count || lines.some(line => line.startsWith("#")))
-        throw new Error("Supply exactly one IGRA sounding with its declared level count");
-    const levels = lines.map(raw => {
-        if (raw.length < 51) throw new Error("Incomplete IGRA level");
-        const read = (start, end, name, scale) => numeric(raw.slice(start - 1, end), name, scale);
-        return level(raw.slice(0, 2), read(10, 15, "pressure"), read(17, 21, "height"),
-            read(23, 27, "temperature", 0.1), read(29, 33, "humidity", 0.1),
-            read(35, 39, "depression", 0.1), read(41, 45, "wind direction"), read(47, 51, "wind speed", 0.1),
-            {elapsedTime: read(4, 8, "elapsed time"), flags: Object.freeze({pressure: raw[15], height: raw[21], temperature: raw[27]}), raw});
-    });
-    return parsed(levels, {...metadata, stationId: header.slice(1, 12).trim(),
-        year: numeric(header.slice(13, 17), "year"), month: numeric(header.slice(18, 20), "month"),
-        day: numeric(header.slice(21, 23), "day"), hour: numeric(header.slice(24, 26), "hour"),
-        releaseTime: header.slice(27, 31).trim(), rawHeader: header}, "igra2");
 }
 
 /** Levels already parsed by a host (for example a radiosonde import), as objects with the CSV column names above and

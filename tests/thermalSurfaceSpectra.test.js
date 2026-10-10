@@ -56,36 +56,7 @@ function fixture(options = {}) {
     return {pipeline, settings, scene, camera, target, terrain, aircraft, sea, setRange, draw, dispose};
 }
 
-const median = values => [...values].sort((a, b) => a - b)[Math.floor(values.length / 2)];
-test("radiance CPU benchmark with terrain, aircraft, sea and hidden helpers", () => {
-    const f = fixture(), timings = {}, samples = [];
-    for (const name of ["_attributes", "_surface", "_coverageTiles"]) {
-        timings[name] = [];
-        const original = f.pipeline[name];
-        f.pipeline[name] = function (...args) {
-            const start = performance.now();
-            try {return original.apply(this, args);}
-            finally {totals[name] += performance.now() - start;}
-        };
-    }
-    let totals;
-    try {
-        for (let frame = 0; frame < 90; frame++) {
-            f.setRange(frame);
-            totals = {_attributes: 0, _surface: 0, _coverageTiles: 0};
-            const start = performance.now(); f.draw(); const elapsed = performance.now() - start;
-            if (frame >= 30) {
-                samples.push(elapsed);
-                for (const name of Object.keys(timings)) timings[name].push(totals[name]);
-            }
-        }
-        console.log("radiance CPU median ms", JSON.stringify({total: median(samples),
-            ...Object.fromEntries(Object.entries(timings).map(([key, values]) => [key, median(values)]))}));
-        expect(f.pipeline.resources.surfaces.size).toBeGreaterThan(0);
-    } finally {f.dispose();}
-});
-
-// Independent reference using the original per-surface spectral evaluation.
+// Independent reference: a per-surface spectral evaluation.
 function referenceTexture(attributes, settings, rangeLUT) {
     const emission = new Float64Array(12), reflectedSun = new Float64Array(12);
     BANDS.forEach((band, index) => {

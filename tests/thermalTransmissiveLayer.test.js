@@ -4,6 +4,7 @@ import {ThermalPipeline} from "../tools/thermal/ThermalPipeline.js";
 import {BANDS, sourceRangeLUT} from "../tools/thermal/atmosphere.js";
 import {grayBodyRadiance, inBandRadiance, PHOTON_SCALE, solarIrradiance} from "../tools/thermal/radiometry.js";
 import {resolveSignatures} from "../tools/thermal/signatures.js";
+import {resolveVehicleThermal} from "../tools/vehicles/thermalPreview.js";
 import {normalizeSettings} from "../tools/thermal/thermalSchema.js";
 import {radianceFragment} from "../tools/thermal/shaders.js";
 import {createThermalSceneAdapter} from "../src/rendering/ThermalSceneAdapters";
@@ -129,7 +130,7 @@ test("without float blending a transmitting surface is drawn as an opaque surfac
     } finally {pipeline.dispose();}
 });
 
-test("lantern zones: a thin canopy that follows burn power and a flame whose intensity follows burn power", () => {
+test("lantern zones: a canopy that follows burn power unless set apart, and a flame whose intensity follows burn power", () => {
     const at = power => resolveSignatures({thermal: {profile: "lantern", powerFraction: power}}, 297);
     const full = at(1), quarter = at(0.25), out = at(0);
     expect(full.resolveZone("lantern_envelope")).toMatchObject({temperatureK: 337, emissivity: 0.45, transmittance: 0.3});
@@ -147,6 +148,26 @@ test("lantern zones: a thin canopy that follows burn power and a flame whose int
     expect(overridden.resolveZone("lantern_envelope").transmittance).toBeCloseTo(0.2, 12);
     // A resolved zone copied onto a mesh as plain attributes keeps its transmittance.
     expect(resolveSignatures(full.resolveZone("lantern_envelope"), 297).airframe).toMatchObject({emissivity: 0.45, transmittance: 0.3});
+    // Canopy heating set apart from the burn power: null follows it; 0 leaves the canopy at the air temperature
+    // while the flame keeps its intensity; full canopy heating with a weak flame gives the full-burn canopy.
+    const lantern = (power, canopyPowerFraction) => resolveSignatures({thermal: {profile: "lantern", powerFraction: power,
+        ...(canopyPowerFraction === undefined ? {} : {canopyPowerFraction})}}, 297);
+    expect(lantern(1, null).resolveZone("lantern_envelope").temperatureK).toBe(full.resolveZone("lantern_envelope").temperatureK);
+    const apart = lantern(1, 0);
+    expect(apart.resolveZone("lantern_envelope").temperatureK).toBeCloseTo(297, 6);
+    expect(apart.resolveZone("lantern_flame").emissivity).toBe(full.resolveZone("lantern_flame").emissivity);
+    const weakFlame = lantern(0.1, 1);
+    expect(weakFlame.resolveZone("lantern_envelope").temperatureK).toBe(full.resolveZone("lantern_envelope").temperatureK);
+    expect(weakFlame.resolveZone("lantern_flame").emissivity).toBeCloseTo(0.1 * full.resolveZone("lantern_flame").emissivity, 10);
+});
+
+test("the vehicle recipe path passes the canopy heating through", () => {
+    const recipe = {presetId: "sky-lantern", parameters: {vehicleType: "balloon", balloonShape: "lantern", thermalProfile: "auto",
+        thermalPower: 1, thermalMach: 0, thermalAmbientK: 293, thermalEmissivity: 0.85}};
+    const follows = resolveVehicleThermal(recipe, {airTemperatureK: 299, power: 0.5});
+    const apart = resolveVehicleThermal(recipe, {airTemperatureK: 299, power: 0.5, canopyPower: 0});
+    expect(apart.resolveZone("lantern_envelope").temperatureK).toBeCloseTo(299, 6);
+    expect(follows.resolveZone("lantern_envelope").temperatureK).toBeGreaterThan(310);
 });
 
 test("the radiance stage draws the shell and the flame volume as transparent layers and nests the flame in the shell", () => {

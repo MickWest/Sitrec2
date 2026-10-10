@@ -1349,29 +1349,18 @@ test("gray body reflection, solar dilution, and isothermal enclosure", () => {
         }
     }
 });
-test("subpixel source overlap conserves excess angular flux and inverse square dilution", () => {
-    for (const rangeM of [5000,10000,20000]) for (const side of [0.01,0.2,0.9,1,1.01,1.5,3.7,7]) for (const offset of [0,0.13,0.49]) {
-        let flux = 0;
-        const sidePx = side / (rangeM * Math.sqrt(1e-8));
-        for (let row=-16; row<=16; row++) for (let column=-16; column<=16; column++) {
-            const overlap = coordinate => Math.max(0, Math.min(coordinate+0.5,offset+sidePx/2)-Math.max(coordinate-0.5,offset-sidePx/2));
-            flux += radiometry.pixelSignal({sourceRadiance:100, backgroundRadiance:2, projectedAreaM2:side*side,
-                rangeM, pixelSolidAngleSr:1e-8, overlapFraction:overlap(row)*overlap(column)/(sidePx*sidePx)}).excessAngularIntegral;
-        }
-        relative(flux,98*side*side/(rangeM*rangeM),5e-13);
-    }
-});
-test("log-temperature/log-radiance float LUT interpolation stays below 1e-5 relative", () => {
-    const lut = radiometry.createRadianceLUT();
-    for (let sample=0; sample<512; sample++) {
-        const temperature=180*(3000/180)**((sample+0.37)/512);
-        relative(radiometry.sampleRadianceLUT(lut,temperature),radiometry.inBandRadiance(temperature).photon,1e-5);
-    }
-    expect(() => radiometry.sampleRadianceLUT(lut,179)).toThrow();
-});
 test("non-finite and unphysical radiometry inputs fail explicitly", () => {
     for (const value of [NaN,Infinity,-1]) expect(() => radiometry.inBandRadiance(value)).toThrow();
     expect(() => radiometry.inBandRadiance(300,{minUm:5,maxUm:3})).toThrow();
     expect(() => radiometry.grayBodyRadiance({temperatureK:300,emissivity:1.1})).toThrow();
-    expect(() => radiometry.pixelSignal({sourceRadiance:1,projectedAreaM2:10,rangeM:1,pixelSolidAngleSr:1})).toThrow();
+    expect(() => radiometry.inBandRadiance(300,{response:-0.1})).toThrow();
+    expect(() => radiometry.inBandRadiance(300,{response:() => -1})).toThrow();
+});
+test("cold allowed temperatures converge without a subnormal quadrature failure", () => {
+    for (let t = 0; t <= 10; t += .1) for (const band of [{minUm: 3, maxUm: 5}, {minUm: 3.7, maxUm: 5}]) {
+        const result = radiometry.inBandRadiance(t, band);
+        expect(Number.isFinite(result.photon)).toBe(true);
+        expect(result.photon).toBeGreaterThanOrEqual(0);
+        expect(result.photon).toBeLessThan(1e-90);
+    }
 });

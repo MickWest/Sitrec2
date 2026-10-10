@@ -4,7 +4,7 @@
 // E [m²/Hz], the band width [Hz], the mean direction the waves come FROM [degrees clockwise from true north]
 // and r1, the first normalized directional moment [1]. The sea is a sum of plane-wave components with
 // random phases from a seed, so a replay or a seek returns the same water. Linear theory only: no
-// second-order crest sharpening, breaking, foam or spray. Positions are metres east and north of a fixed
+// second-order crest sharpening, breaking, foam or spray. Positions are meters east and north of a fixed
 // point on the sea; time is seconds on the scene clock, so a moving camera sees encounter frequencies
 // without any special case.
 
