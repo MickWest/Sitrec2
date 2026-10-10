@@ -1,20 +1,20 @@
 // GMN summary columns are documented at https://globalmeteornetwork.org/data/media/GMN_orbit_data_columns.pdf
+import {t} from "./i18n";
+
 export const GMN_SOURCE = "https://globalmeteornetwork.org/data/traj_summary_data/";
-export const FIREBALL_LIMITS =
-    "Only imported records are searched. GMN coverage varies with station location, night, weather and successful multi-station detection. No match does not rule out a meteor. Magnitudes are absolute at 100 km, not brightness at your camera. Saturation can affect bright events.";
 const number = (value) => (value?.trim() && Number.isFinite(Number(value)) ? Number(value) : null);
 export function parseGMNSummary(text, sourceURL = GMN_SOURCE) {
     const lines = text.split(/\r\n|\n\r|[\r\n]/);
     const generated = lines[0];
     const header = lines.find((l) => /^#\s*Unique trajectory;/.test(l));
-    if (!header) throw new Error("Not a GMN trajectory summary (missing column header).");
+    if (!header) throw new Error(t("fireballs.errors.notGMN"));
     const names = header
         .slice(1)
         .split(";")
         .map((s) => s.trim());
     const at = (name) => {
         const i = names.indexOf(name);
-        if (i < 0) throw new Error("Missing GMN column: " + name);
+        if (i < 0) throw new Error(t("fireballs.errors.missingColumn", {column: name}));
         return i;
     };
     const idx = Object.fromEntries(
@@ -23,7 +23,7 @@ export function parseGMNSummary(text, sourceURL = GMN_SOURCE) {
         ),
     );
     // "Beginning" occurs twice: Julian date, then UTC. Use the documented UTC column.
-    if (names[2] !== "Beginning") throw new Error("Unsupported GMN UTC column layout.");
+    if (names[2] !== "Beginning") throw new Error(t("fireballs.errors.utcLayout"));
     const events = [];
     let rejected = 0;
     for (const line of lines) {
@@ -109,16 +109,16 @@ export function validateFireball(event) {
         !validSourceURL(event.source?.url) ||
         !event.source?.license
     )
-        throw new Error("Fireball needs ID, network, HTTPS source URL and license.");
+        throw new Error(t("fireballs.errors.provenance"));
     if (event.altitudeReference !== "WGS84 ellipsoid")
-        throw new Error("Altitude must explicitly use WGS84 ellipsoid, metres.");
+        throw new Error(t("fireballs.errors.altitudeReference"));
     if (
         !["measured time-tagged samples", "measured endpoints; constant-speed interpolation"].includes(event.pathMethod)
     )
-        throw new Error("Specify the path measurement/interpolation method.");
-    if (!Array.isArray(event.samples) || event.samples.length < 2) throw new Error("At least two samples required.");
+        throw new Error(t("fireballs.errors.pathMethod"));
+    if (!Array.isArray(event.samples) || event.samples.length < 2) throw new Error(t("fireballs.errors.twoSamples"));
     if (event.pathMethod.includes("endpoints") && event.samples.length !== 2)
-        throw new Error("Endpoint summaries must have exactly two samples.");
+        throw new Error(t("fireballs.errors.endpointSamples"));
     let previous = -Infinity;
     for (const p of event.samples) {
         const t = Date.parse(p.time);
@@ -133,7 +133,7 @@ export function validateFireball(event) {
             !Number.isFinite(p.altitude) ||
             p.altitude < 0
         )
-            throw new Error("Invalid UTC sample, coordinates, height or time order.");
+            throw new Error(t("fireballs.errors.invalidSample"));
         previous = t;
     }
     if (!Number.isFinite(event.peakMagnitude)) {
@@ -147,16 +147,21 @@ export function validateFireball(event) {
             Date.parse(event.recordedPeakUTC) < Date.parse(event.samples[0].time) ||
             Date.parse(event.recordedPeakUTC) > previous)
     )
-        throw new Error("Recorded peak must be UTC within the observed path.");
+        throw new Error(t("fireballs.errors.recordedPeak"));
     return event;
 }
+// The peak time of a fireball, or null: {time, kind, label}. `kind` is "recorded", "brightest"
+// or "estimated"; `label` is its user-visible description.
+function peak(time, kind) {
+    return { time, kind, label: t(`fireballs.peak.${kind}`) };
+}
 export function fireballPeak(event) {
-    if (event.recordedPeakUTC) return { time: Date.parse(event.recordedPeakUTC), label: "Recorded peak UTC" };
+    if (event.recordedPeakUTC) return peak(Date.parse(event.recordedPeakUTC), "recorded");
     if (event.pathMethod === "measured time-tagged samples") {
         const values = event.samples.filter((p) => Number.isFinite(p.absoluteMagnitude));
         if (values.length) {
             const p = values.reduce((a, b) => (b.absoluteMagnitude < a.absoluteMagnitude ? b : a));
-            return { time: Date.parse(p.time), label: "Brightest measured sample (sampling limited)" };
+            return peak(Date.parse(p.time), "brightest");
         }
     }
     const a = event.samples[0],
@@ -170,10 +175,7 @@ export function fireballPeak(event) {
         f <= 1 &&
         a.altitude !== b.altitude
     )
-        return {
-            time: Date.parse(a.time) + f * (Date.parse(b.time) - Date.parse(a.time)),
-            label: "Estimated peak UTC (height fraction × duration; constant speed)",
-        };
+        return peak(Date.parse(a.time) + f * (Date.parse(b.time) - Date.parse(a.time)), "estimated");
     return null;
 }
 export function nearbyFireballs(events, { utc, lat, lon, hours = 24, km = 1000, faintest = -3 }) {

@@ -194,10 +194,11 @@ test("sub sitches neither capture nor restore the camera data: it belongs to the
     const node = new CNodeCameraState({id: "cameraState"});
     node.setTable(table());
     // No node here is a view, so a restore never changes the fullscreen view.
-    const manager = subSitchManager({Globals, setRenderOne: jest.fn(), t: () => "", ViewMan: {exists: () => false}, NodeMan: {
+    const manager = subSitchManager({Globals, setRenderOne: jest.fn(), t: () => "", ViewMan: {exists: () => false},
+        TimelineMarkers: {snapshot: () => [], restore: jest.fn()}, UndoManager: {clear: jest.fn()}, NodeMan: {
         get: (id) => nodes.get(id), exists: (id) => nodes.has(id), iterate: (callback) => nodes.forEach((n, id) => callback(id, n))}});
     // Its id matches the camera category, so only the node's own flag keeps it out.
-    expect(manager.nodeMatchesCategory("cameraState", "Cameras")).toBe(true);
+    expect(manager.nodeMatchesCategory("cameraState", "cameras")).toBe(true);
     const state = manager.captureSubSitchState();
     expect(Object.keys(state.mods)).toEqual(["lookCamera"]);
 

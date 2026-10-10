@@ -32,6 +32,7 @@ assistant — so if you add a doc, add it there.
 - [Where to Get Flight Data - ADS-B Exchange, FlightRadar24, FlightAware and friends](docs/KMLDataSources.md)
 - [Recorded Fireballs - Finding a Global Meteor Network fireball and loading its path](docs/RecordedFireballs.md)
 - [Saving and Loading Sitches - Server saves and local folder workflow](docs/SavingAndLoading.md)
+- [Sitch Chapters - Several setups of one sitch, each with its own markers](docs/SitchChapters.md)
 - [Custom Models and 3D Objects - Add your own planes](docs/CustomModels.md)
 - [Reference Objects](docs/ObjectReferences.md)
 - [Adding Objects and Tracks - The right-click ground menu, buildings, clouds, ground overlays and grids](docs/SceneObjects.md)

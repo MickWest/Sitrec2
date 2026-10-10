@@ -58,6 +58,12 @@ first, and save later from the File menu if you prefer. The original stored data
 altered or deleted, so earlier versions of the sitch keep opening exactly as they always
 did.
 
+### Chapters in a saved sitch
+
+A saved sitch includes all its [chapters](SitchChapters.md), each with its own views, cameras,
+time and timeline markers. **File → Sitch Chapters → Revert sitch to last save / load**
+discards the edits made since the sitch was last saved or loaded.
+
 ## Saving to a Local Folder
 
 Local save is best when you want fast offline-like iteration and no server dependency.

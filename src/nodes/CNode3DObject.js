@@ -200,28 +200,20 @@ export function shortObjectName(fullName, max = 30) {
 }
 
 
-// Labels for the parameter keys that a plain split would get wrong or leave unclear.
-const PARAM_LABELS = {
-    rotateX: "Rotate X°",
-    rotateY: "Rotate Y°",
-    rotateZ: "Rotate Z°",
-    material: "Material Type",
-    ior: "Index of Refraction",
-};
-
 // Parameters that are sizes. A geometry's dimensions are meters in every sitch, whatever the
 // units setting, so their labels say so. (The same keys addParams makes elastic.)
 const SIZE_PARAMS = ["radius", "length", "height", "width", "depth", "tube", "innerRadius",
     "outerRadius", "totalLength", "radiusTop", "radiusBottom"];
 
 // The label for a geometry or material parameter key: "widthSegments" → "Width Segments",
-// "radius" → "Radius (m)". The key is still the control's property, which the Sitrec API
-// also matches, so menu paths that use the key keep working.
+// "radius" → "Radius (m)", and the keys under nodes3dObject.paramLabels in en.js as written
+// there. The key is still the control's property, which the Sitrec API also matches, so menu
+// paths that use the key keep working.
 function paramLabel(key) {
-    if (PARAM_LABELS[key]) return PARAM_LABELS[key];
     const words = key.replace(/([a-z])([A-Z])/g, "$1 $2");
-    const label = words.charAt(0).toUpperCase() + words.slice(1);
-    return SIZE_PARAMS.includes(key) ? label + " (m)" : label;
+    const split = words.charAt(0).toUpperCase() + words.slice(1);
+    const label = SIZE_PARAMS.includes(key) ? t("nodes3dObject.sizeParamLabel", {label: split}) : split;
+    return t(`nodes3dObject.paramLabels.${key}`, {defaultValue: label});
 }
 
 export class CNode3DObject extends CNode3DGroup {

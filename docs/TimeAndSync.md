@@ -222,7 +222,8 @@ frame. **Reset In/Out** in the right-click menu does both.
 the timeline, with a faint line down the bar. Put the pointer on a flag to see its name and
 frame. Click a flag to go to that frame. Where a marker is on the In or Out line, the flag
 takes the click; drag the line lower down. `<` and `>` (Shift+`,` / Shift+`.`) go to the
-previous / next marker. Markers are saved with the sitch.
+previous / next marker. Markers are saved with the sitch. In a sitch with
+[chapters](SitchChapters.md), each chapter has its own markers.
 
 **The right-click menu.** Right-click the timeline for:
 

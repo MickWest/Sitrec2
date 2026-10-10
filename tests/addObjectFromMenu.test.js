@@ -1,4 +1,4 @@
-import {highestSequentialNumber, nextPairNumber, nextSequentialName, nextSequentialObjectName, parseObjectInput} from '../src/utils/parseObjectInput';
+import {highestSequentialNumber, nextPairNumber, nextSequentialName, parseObjectInput} from '../src/utils/parseObjectInput';
 import {menuMethods} from '../src/CustomManagerMenus';
 import {CNodeManager} from '../src/nodes/CNodeManager';
 import {setNodeMan} from '../src/Globals';
@@ -177,7 +177,8 @@ describe('parseObjectInput', () => {
     });
 });
 
-describe('nextSequentialObjectName', () => {
+describe('nextSequentialName for objects', () => {
+    const nextSequentialObjectName = names => nextSequentialName(names, "Object");
 
     test('returns Object 1 when nothing is in use', () => {
         expect(nextSequentialObjectName([])).toBe("Object 1");

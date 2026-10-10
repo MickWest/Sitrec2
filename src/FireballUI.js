@@ -1,5 +1,4 @@
 import {
-    FIREBALL_LIMITS,
     GMN_SOURCE,
     parseGMNSummary,
     validateFireball,
@@ -10,11 +9,12 @@ import {
 } from "./FireballData";
 import { GlobalDateTimeNode, NodeMan, Sit, setRenderOne } from "./Globals";
 import { DragDropHandler } from "./DragDropHandler";
+import { ECEFToLLAVD_radii } from "./LLA-ECEF-ENU";
 import { par } from "./par";
+import { t } from "./i18n";
 
 function jump(time) {
-    const start = GlobalDateTimeNode.dateStart.getTime();
-    const frame = Math.round(((time - start) * Sit.fps) / (1000 * (Sit.simSpeed || 1)));
+    const frame = Math.round(GlobalDateTimeNode.msToFrame(time));
     par.paused = true;
     if (frame >= 0 && frame < Sit.frames) par.frame = frame;
     else {
@@ -33,22 +33,19 @@ export function addFireballTrackControls(folder, event) {
         peak: () => jump(peak.time),
         provenance: () => showFireballDetails(event),
     };
-    folder.add(actions, "begin").name("Jump to observed start");
+    folder.add(actions, "begin").name(t("fireballs.track.jumpToStart"));
     const control = folder
         .add(actions, "peak")
         .name(
             peak
-                ? peak.label.startsWith("Estimated")
-                    ? "Jump to estimated peak"
-                    : "Jump to measured peak"
-                : "Peak time unavailable",
+                ? peak.kind === "estimated"
+                    ? t("fireballs.track.jumpToEstimatedPeak")
+                    : t("fireballs.track.jumpToMeasuredPeak")
+                : t("fireballs.track.peakUnavailable"),
         );
     if (!peak) control.disable();
-    else
-        control.tooltip(
-            peak.label + ". Outside the timeline this shifts its start; inside it jumps to the nearest frame.",
-        );
-    folder.add(actions, "provenance").name("Fireball source & limits");
+    else control.tooltip(t("fireballs.track.peakTooltip", { label: peak.label }));
+    folder.add(actions, "provenance").name(t("fireballs.track.sourceAndLimits"));
 }
 function modal(title) {
     document.getElementById("fireball-dialog")?.remove();
@@ -60,7 +57,7 @@ function modal(title) {
     heading.textContent = title;
     root.append(heading);
     const close = document.createElement("button");
-    close.textContent = "Close";
+    close.textContent = t("fireballs.close");
     close.onclick = () => root.close();
     root.append(close);
     root.addEventListener("close", () => root.remove());
@@ -88,26 +85,30 @@ function link(root, label, url, hosts) {
     root.append(a);
 }
 export function showFireballDetails(event) {
-    const root = modal("Fireball " + event.id);
+    const root = modal(t("fireballs.details.title", { id: event.id }));
     describe(root, event);
 }
 function describe(root, event) {
     paragraph(
         root,
-        `${event.source.network} · ${event.source.license}. ${event.pathMethod}. Heights: metres above WGS84 ellipsoid. UTC timestamps render to milliseconds; printed digits do not establish measurement accuracy. No light curve is synthesized. Positions between samples are interpolated; the marker holds the endpoint outside the observed interval and does not represent continued flight.`,
+        t("fireballs.details.conventions", {
+            network: event.source.network,
+            license: event.source.license,
+            pathMethod: event.pathMethod,
+        }),
     );
-    link(root, "Original source", event.source.url, [GMN_HOST]);
+    link(root, t("fireballs.details.originalSource"), event.source.url, [GMN_HOST]);
     if (event.source.license === "CC BY 4.0") link(root, "CC BY 4.0", "https://creativecommons.org/licenses/by/4.0/");
     if (event.source.network === "Global Meteor Network")
-        link(root, "GMN conventions", "https://globalmeteornetwork.org/data/media/GMN_orbit_data_columns.pdf");
+        link(root, t("fireballs.details.gmnConventions"), "https://globalmeteornetwork.org/data/media/GMN_orbit_data_columns.pdf");
     const peak = fireballPeak(event);
     paragraph(
         root,
         peak
-            ? `${peak.label}: ${new Date(peak.time).toISOString()}`
-            : "No usable peak time or peak height is supplied.",
+            ? t("fireballs.details.peak", { label: peak.label, time: new Date(peak.time).toISOString() })
+            : t("fireballs.details.noPeak"),
     );
-    paragraph(root, FIREBALL_LIMITS);
+    paragraph(root, t("fireballs.limits"));
     const pre = document.createElement("pre");
     pre.style.cssText = "white-space:pre-wrap;overflow-wrap:anywhere;font-size:12px";
     pre.textContent = JSON.stringify(
@@ -123,71 +124,74 @@ function describe(root, event) {
     );
     root.append(pre);
 }
+// The default search center: the look camera's position, so the search follows the scene
+// rather than the sitch's start-up origin (Sit.lat/lon), which can be far from it.
+function sceneLatLon() {
+    const camera = NodeMan.get("lookCamera", false)?.camera;
+    if (!camera) return { lat: Sit.lat || 0, lon: Sit.lon || 0 };
+    const lla = ECEFToLLAVD_radii(camera.position);
+    return { lat: Number(lla.x.toFixed(4)), lon: Number(lla.y.toFixed(4)) };
+}
 export function openFireballBrowser() {
-    const root = modal("Recorded fireballs");
+    const root = modal(t("fireballs.browser.title"));
     let events = [];
     let importGeneration = 0;
     root.addEventListener("close", () => importGeneration++);
-    paragraph(
-        root,
-        "Import a GMN daily/monthly summary (.txt), or a sitrec-fireball-v1 JSON with measured samples. Search covers only this file. Download a modest period; maximum import is 100 MB. GMN archives start in December 2018 and are updated; there is no bundled global archive.",
-    );
-    link(root, "GMN daily files", GMN_SOURCE + "daily/");
-    link(root, "GMN monthly files", GMN_SOURCE + "monthly/");
-    link(root, "Source & references", "https://globalmeteornetwork.org/data/");
-    paragraph(root, FIREBALL_LIMITS);
+    paragraph(root, t("fireballs.browser.intro"));
+    link(root, t("fireballs.browser.dailyFiles"), GMN_SOURCE + "daily/");
+    link(root, t("fireballs.browser.monthlyFiles"), GMN_SOURCE + "monthly/");
+    link(root, t("fireballs.browser.references"), "https://globalmeteornetwork.org/data/");
+    paragraph(root, t("fireballs.limits"));
     const file = document.createElement("input");
     file.type = "file";
     file.accept = ".txt,.json";
-    file.setAttribute("aria-label", "Import fireball records");
+    file.setAttribute("aria-label", t("fireballs.browser.importLabel"));
     root.append(file);
     const source = document.createElement("input");
     source.type = "url";
-    source.placeholder = "Exact original GMN .txt download URL (required for summaries)";
+    source.placeholder = t("fireballs.browser.sourcePlaceholder");
     source.style.width = "95%";
-    source.setAttribute("aria-label", "Original summary source URL");
+    source.setAttribute("aria-label", t("fireballs.browser.sourceLabel"));
     root.append(source);
-    const status = paragraph(
-        root,
-        "No records imported. Supply the exact original download URL to preserve provenance.",
-    );
+    const status = paragraph(root, t("fireballs.browser.noRecords"));
     const form = document.createElement("div");
     form.style.cssText = "display:flex;flex-wrap:wrap;gap:12px;margin:16px 0";
     root.append(form);
     const fields = {};
+    const center = sceneLatLon();
     const defaults = {
-        UTC: GlobalDateTimeNode?.dateNow?.toISOString() || Sit.startTime,
-        Latitude: Sit.lat || 0,
-        Longitude: Sit.lon || 0,
-        "Time window hours": 24,
-        "Radius km": 1000,
-        "Faintest absolute magnitude": -3,
+        utc: GlobalDateTimeNode?.dateNow?.toISOString() || Sit.startTime,
+        latitude: center.lat,
+        longitude: center.lon,
+        hours: 24,
+        radius: 1000,
+        faintest: -3,
     };
     for (const [name, value] of Object.entries(defaults)) {
         const label = document.createElement("label");
-        label.textContent = name + " ";
+        label.textContent = t(`fireballs.browser.fields.${name}`) + " ";
         const input = document.createElement("input");
         input.value = value;
-        input.type = name === "UTC" ? "text" : "number";
-        input.style.width = name === "UTC" ? "240px" : "90px";
+        input.type = name === "utc" ? "text" : "number";
+        input.style.width = name === "utc" ? "240px" : "90px";
         label.append(input);
         form.append(label);
         fields[name] = input;
     }
     const results = document.createElement("div");
     const search = document.createElement("button");
-    search.textContent = "Find nearby records";
+    search.textContent = t("fireballs.browser.find");
     root.append(search, results);
     search.onclick = () => {
         results.replaceChildren();
-        const utc = Date.parse(fields.UTC.value),
-            lat = +fields.Latitude.value,
-            lon = +fields.Longitude.value,
-            hours = +fields["Time window hours"].value,
-            km = +fields["Radius km"].value,
-            faintest = +fields["Faintest absolute magnitude"].value;
+        const utc = Date.parse(fields.utc.value),
+            lat = +fields.latitude.value,
+            lon = +fields.longitude.value,
+            hours = +fields.hours.value,
+            km = +fields.radius.value,
+            faintest = +fields.faintest.value;
         if (
-            !/Z$/.test(fields.UTC.value) ||
+            !/Z$/.test(fields.utc.value) ||
             !Number.isFinite(utc) ||
             Math.abs(lat) > 90 ||
             Math.abs(lon) > 180 ||
@@ -195,30 +199,35 @@ export function openFireballBrowser() {
             km < 0 ||
             ![lat, lon, hours, km, faintest].every(Number.isFinite)
         ) {
-            paragraph(results, "Enter valid UTC ending in Z, coordinates and nonnegative windows.");
+            paragraph(results, t("fireballs.browser.invalidSearch"));
             return;
         }
         const matches = nearbyFireballs(events, { utc, lat, lon, hours, km, faintest });
-        paragraph(
-            results,
-            `${matches.length} matches. Records with unknown brightness are included. Distance is to the nearest supplied sample, not visibility or distance to every point of the interpolated path. Showing at most 100; narrow filters for more.`,
-        );
+        paragraph(results, t("fireballs.browser.matches", { count: matches.length }));
         for (const { event, distanceKm, deltaHours } of matches.slice(0, 100)) {
             const row = document.createElement("div");
             row.style.cssText = "padding:12px 0;border-top:1px solid #667";
             paragraph(
                 row,
-                `${event.id} · ${event.samples[0].time} · abs mag ${Number.isFinite(event.peakMagnitude) ? event.peakMagnitude : "unknown"} · ${distanceKm.toFixed(0)} km · Δ ${deltaHours.toFixed(2)} h`,
+                t("fireballs.browser.match", {
+                    id: event.id,
+                    time: event.samples[0].time,
+                    magnitude: Number.isFinite(event.peakMagnitude)
+                        ? event.peakMagnitude
+                        : t("fireballs.browser.unknownMagnitude"),
+                    distance: distanceKm.toFixed(0),
+                    hours: deltaHours.toFixed(2),
+                }),
             );
             const load = document.createElement("button");
-            load.textContent = "Load observed path";
+            load.textContent = t("fireballs.browser.loadPath");
             load.onclick = async () => {
                 load.disabled = true;
                 try {
                     await DragDropHandler.uploadDroppedFile(
                         new File([JSON.stringify(event)], event.id + ".fireball.json", { type: "application/json" }),
                     );
-                    paragraph(row, "Import request finished. If accepted, the path appears under Contents → Fireball with start/peak and source controls.");
+                    paragraph(row, t("fireballs.browser.loadFinished"));
                 } catch (e) {
                     paragraph(row, e.message);
                 } finally {
@@ -226,7 +235,7 @@ export function openFireballBrowser() {
                 }
             };
             const details = document.createElement("button");
-            details.textContent = "Source / peak method";
+            details.textContent = t("fireballs.browser.sourcePeakMethod");
             details.onclick = () => {
                 const block = document.createElement("div");
                 describe(block, event);
@@ -246,33 +255,37 @@ export function openFireballBrowser() {
         try {
             const f = file.files[0];
             if (!f) return;
-            if (f.size > 100 * 1024 * 1024)
-                throw new Error("Import exceeds 100 MB; choose a daily or smaller summary.");
-            status.textContent = "Reading records…";
+            if (f.size > 100 * 1024 * 1024) throw new Error(t("fireballs.browser.tooLarge"));
+            status.textContent = t("fireballs.browser.reading");
             const text = await f.text();
             if (generation !== importGeneration || !root.isConnected) return;
             let rejected = 0;
             if (f.name.endsWith(".json")) events = [validateFireball(JSON.parse(text))];
             else {
                 const url = new URL(sourceURL);
-                if (
-                    url.protocol !== "https:" ||
-                    url.hostname !== "globalmeteornetwork.org" ||
-                    !url.pathname.endsWith(".txt")
-                )
-                    throw new Error("Provide the exact HTTPS GMN .txt download URL, not an archive directory.");
+                if (url.protocol !== "https:" || url.hostname !== GMN_HOST || !url.pathname.endsWith(".txt"))
+                    throw new Error(t("fireballs.browser.needGMNURL"));
                 const parsed = parseGMNSummary(text, sourceURL);
                 events = parsed.events;
                 rejected = parsed.rejected;
                 for (const event of events) event.source.originalFilename = f.name;
             }
-            if (!events.length) throw new Error("No usable trajectories in this file.");
+            if (!events.length) throw new Error(t("fireballs.browser.noTrajectories"));
             const times = events.map((e) => Date.parse(e.samples[0].time)),
                 lats = events.flatMap((e) => e.samples.map((p) => p.lat)),
                 lons = events.flatMap((e) => e.samples.map((p) => p.lon));
             const min = (a) => a.reduce((x, y) => Math.min(x, y), Infinity),
                 max = (a) => a.reduce((x, y) => Math.max(x, y), -Infinity);
-            status.textContent = `${events.length} records; ${rejected} rejected. UTC ${new Date(min(times)).toISOString()} to ${new Date(max(times)).toISOString()}. Sample extent lat ${min(lats).toFixed(2)}…${max(lats).toFixed(2)}, lon ${min(lons).toFixed(2)}…${max(lons).toFixed(2)} (not a surveyed coverage boundary).`;
+            status.textContent = t("fireballs.browser.imported", {
+                count: events.length,
+                rejected,
+                first: new Date(min(times)).toISOString(),
+                last: new Date(max(times)).toISOString(),
+                latMin: min(lats).toFixed(2),
+                latMax: max(lats).toFixed(2),
+                lonMin: min(lons).toFixed(2),
+                lonMax: max(lons).toFixed(2),
+            });
             search.disabled = false;
             search.click();
         } catch (e) {

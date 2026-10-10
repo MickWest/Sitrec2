@@ -5,6 +5,14 @@ import {Raycaster, Sphere, Vector3} from "three";
 import {intersectSphere2} from "../threeUtils";
 import {wgs84} from "../LLA-ECEF-ENU";
 import {bestSat} from "../TLEUtils";
+import {findHorizonCrossings} from "../HorizonCrossings";
+
+// The prediction cache key for an observer position: its ECEF coordinates
+// rounded to 1 km, so a moving camera reuses predictions until it has moved
+// about 1 km.
+function observerCacheKey(position) {
+    return `${Math.round(position.x / 1000)},${Math.round(position.y / 1000)},${Math.round(position.z / 1000)}`;
+}
 
 export class CNodeViewEphemeris extends CNodeViewText {
     constructor(v) {
@@ -135,15 +143,14 @@ export class CNodeViewEphemeris extends CNodeViewText {
     // Predict next event (rise/set) for a satellite
     // Returns string like "AOS 5m 23s" (Acquisition of Signal) or "LOS 3m 45s" (Loss of Signal)
     // Based on C++ pass predictor which uses 2-minute steps and looks for horizon crossings
-    predictNextEvent(sat, currentDate, currentEl, lookCamera) {
+    // observerKey is observerCacheKey(lookCamera.camera.position).
+    predictNextEvent(sat, currentDate, currentEl, lookCamera, observerKey) {
         // Cache predictions to avoid recalculating every frame
         const now = currentDate.getTime();
-        const observerKey = lookCamera.camera.position.toArray().join(",");
         if (sat.predictionObserver === observerKey && sat.lastPredictionTime && Math.abs(now - sat.lastPredictionTime) < 10000) {
             return sat.cachedNextEvent || '---';
         }
         
-        sat.cachedEventTime = undefined;
         sat.predictionObserver = observerKey;
         const satellites = this.nightSkyNode.satellites;
         
@@ -197,8 +204,6 @@ export class CNodeViewEphemeris extends CNodeViewText {
             // For satellites currently below horizon (prevEl < 0), we're looking for AOS (el > 0)
             if ((prevEl < 0 && el >= 0) || (prevEl >= 0 && el < 0)) {
                 const isRising = el > prevEl;
-                sat.cachedEventTime = searchTime.getTime();
-                sat.cachedEventRising = isRising;
                 const diffMs = searchTime.getTime() - currentDate.getTime();
                 const diffSec = Math.floor(diffMs / 1000);
                 const minutes = Math.floor(diffSec / 60);
@@ -225,7 +230,30 @@ export class CNodeViewEphemeris extends CNodeViewText {
         return result;
     }
 
-    updateEphemeris(includeBelowHorizon = false) {
+    // Every horizon crossing between startMS and endMS (ms since the epoch) of
+    // each satellite shown in the sky, seen from the look camera's current
+    // position: [{sat, timeMS, rising}]. See findHorizonCrossings.
+    horizonCrossings(startMS, endMS) {
+        const satellites = this.nightSkyNode.satellites;
+        const cameraPos = NodeMan.get("lookCamera").camera.position;
+        const crossings = [];
+        for (const sat of satellites.TLEData.satData) {
+            if (!sat.visible) continue;
+            const elevationAt = timeMS => {
+                const date = new Date(timeMS);
+                const satrec = bestSat(sat.satrecs, date);
+                const satPos = satrec && satellites.calcSatECEF(satrec, date);
+                if (!satPos) return null;
+                return getAzElFromPositionAndForward(cameraPos, satPos.clone().sub(cameraPos).normalize())[1];
+            };
+            for (const crossing of findHorizonCrossings(elevationAt, startMS, endMS)) {
+                crossings.push({sat, ...crossing});
+            }
+        }
+        return crossings;
+    }
+
+    updateEphemeris() {
         if (!this.nightSkyNode || !this.nightSkyNode.satellites || !this.nightSkyNode.satellites.TLEData) {
             return;
         }
@@ -239,6 +267,7 @@ export class CNodeViewEphemeris extends CNodeViewText {
         }
 
         const cameraPos = lookCamera.camera.position;
+        const observerKey = observerCacheKey(cameraPos);
         const currentDate = GlobalDateTimeNode.dateNow;
         const satData = [];
         
@@ -249,7 +278,6 @@ export class CNodeViewEphemeris extends CNodeViewText {
             const sat = tleData.satData[i];
             
             if (!sat.visible || !sat.ecef) {
-                sat.cachedEventTime = undefined;
                 continue;
             }
 
@@ -264,8 +292,6 @@ export class CNodeViewEphemeris extends CNodeViewText {
             // But note: in C++ code, predictions happen for all satellites
             // that pass the initial filter, not just above horizon
             if (el < 0) {
-                if (includeBelowHorizon) this.predictNextEvent(sat, currentDate, el, lookCamera);
-                else { sat.cachedEventTime = undefined; sat.lastPredictionTime = undefined; }
                 continue;
             }
 
@@ -276,7 +302,7 @@ export class CNodeViewEphemeris extends CNodeViewText {
             
             // Predict next event - pass the current elevation we just calculated
             // This should predict when the satellite will SET (LOS) since it's currently above horizon
-            const nextEvent = this.predictNextEvent(sat, currentDate, el, lookCamera);
+            const nextEvent = this.predictNextEvent(sat, currentDate, el, lookCamera, observerKey);
 
             satData.push({
                 name: sat.name || `SAT ${sat.number}`,

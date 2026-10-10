@@ -597,7 +597,7 @@ Contrails simulate the visual appearance of condensation trails behind aircraft,
 |---------|-------|-------------|
 | **Alt offset** | -1000 to +1000 m | Manual altitude adjustment, applied in the source's own datum |
 | **Lock Altitude** | on/off | Hold the whole track at one height. When you switch it on, the lock height starts at the track's height at that time (for a hand-drawn track, the height of its first point) |
-| **Lock Height** | 0 to 100,000 ft | The height of the lock. Shown only while **Lock Altitude** is on. Shown in your display units; stored in metres |
+| **Lock Height** | 0 to 100,000 ft | The height of the lock. Shown only while **Lock Altitude** is on. Shown in your display units; stored in meters |
 | **Height From** | Ground / Ellipsoid (HAE) | **Ground**: the height above the ground below. **Ellipsoid (HAE)**: the height above the WGS84 ellipsoid, *not* MSL. Shown only while **Lock Altitude** is on |
 
 > **Dragging a locked hand-drawn track.** When a hand-drawn track has its altitude locked, the

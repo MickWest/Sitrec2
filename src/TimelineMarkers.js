@@ -127,7 +127,37 @@ class CTimelineMarkers {
         this.changed();
     }
 
-    // Undo support: a snapshot is a plain copy that restore() puts back.
+    // Add markers that a prediction found, such as satellite rises and sets:
+    // entries are {frame, label}. A frame that already has a marker keeps its
+    // label and gets the new one after it, separated by "; ", so a label that
+    // the user typed is never replaced. A label that the marker already has is
+    // not added again, so the same prediction added twice changes nothing.
+    // Returns the number of markers added or changed.
+    addPredicted(entries) {
+        let count = 0;
+        for (const entry of entries) {
+            const frame = Math.round(Number(entry.frame));
+            if (!Number.isFinite(frame)) continue;
+            const label = String(entry.label);
+            const existing = this.markers.find(m => m.frame === frame);
+            if (!existing) {
+                this.markers.push({frame, label});
+                count++;
+            } else if (!existing.label.split("; ").includes(label)) {
+                existing.label = existing.label ? existing.label + "; " + label : label;
+                count++;
+            }
+        }
+        if (count) {
+            this.markers.sort((a, b) => a.frame - b.frame);
+            this.changed();
+        }
+        return count;
+    }
+
+    // Undo and sitch chapters (CustomManagerSubSitch, which gives each chapter
+    // its own markers) use snapshots: a snapshot is a plain copy that restore()
+    // puts back.
     snapshot() {
         return this.list();
     }

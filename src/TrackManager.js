@@ -2861,28 +2861,8 @@ class CTrackManager extends CManager {
         // (set above) and the smoothed wrapper node to exist.
         splineEditorNode.addTrackExportButtons();
 
-        // Add delete button to the folder. A track with an object asks about the object too: it
-        // can stay without the track, and its own Delete Object removes it later.
         const dummy = {
-            deleteTrack: async () => {
-                const name = trackOb.displayName ?? shortName;
-                const object = trackOb.objectID ? NodeMan.get(trackOb.objectID, false) : null;
-                if (object) {
-                    const choice = await showChoice(`Delete track "${name}"?`, {
-                        title: "Delete Track",
-                        options: [
-                            {label: `Delete Track and "${object.displayName}"`, value: "both", primary: true},
-                            {label: "Delete Track Only", value: "track"},
-                            {label: "Cancel", value: null, cancel: true},
-                        ],
-                    });
-                    if (!choice) return;
-                    if (choice === "both") CustomManager.deleteObject(object);
-                    this.disposeSyntheticTrack(trackID);
-                } else if (await showConfirm(`Delete track "${name}"?`, {title: "Delete Track"})) {
-                    this.disposeSyntheticTrack(trackID);
-                }
-            }
+            deleteTrack: () => this.confirmDeleteSyntheticTrack(trackID, trackOb.displayName ?? shortName),
         };
         const deleteController = guiFolder.add(dummy, "deleteTrack").name(t("trackManager.deleteTrack"));
         
@@ -2956,6 +2936,33 @@ class CTrackManager extends CManager {
         setRenderOne(true);
         
         return trackOb;
+    }
+
+    /**
+     * The synthetic track's Delete Track button. A track with an object asks about the object
+     * too: it can stay without the track, and its own Delete Object removes it later.
+     * @param {string} trackID - ID of the track to delete
+     * @param {string} name - the track name shown in the question
+     */
+    async confirmDeleteSyntheticTrack(trackID, name) {
+        const trackOb = this.get(trackID);
+        const object = trackOb.objectID ? NodeMan.get(trackOb.objectID, false) : null;
+        const question = t("trackManager.deleteTrackConfirm", {name});
+        if (object) {
+            const choice = await showChoice(question, {
+                title: t("trackManager.deleteTrack"),
+                options: [
+                    {label: t("trackManager.deleteTrackAndObject", {object: object.displayName}), value: "both", primary: true},
+                    {label: t("trackManager.deleteTrackOnly"), value: "track"},
+                    {label: t("trackManager.cancel"), value: null, cancel: true},
+                ],
+            });
+            if (!choice) return;
+            if (choice === "both") CustomManager.deleteObject(object);
+            this.disposeSyntheticTrack(trackID);
+        } else if (await showConfirm(question, {title: t("trackManager.deleteTrack")})) {
+            this.disposeSyntheticTrack(trackID);
+        }
     }
 
     /**
