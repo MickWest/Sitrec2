@@ -1,4 +1,5 @@
 import {angularSizeFitEnabled, compileAngularSizeFit, remapAngularSize} from "./AngularSize";
+import {losFitCostFrames, LOS_FIT_SAMPLE_INTERVAL_SEC} from "./LOSFitSampling";
 /**
  * TraverseAnalysis.js — physically-motivated analysis of LOS traversals.
  *
@@ -3285,6 +3286,9 @@ export function aircraftCostErrDeg(dataset, params, costFrames, cumW, incumbent,
  *                        adds windE/windN to the returned parameters
  *   boundedCost          skip provably losing evaluations (default true);
  *                        false runs the full objective for comparison
+ *   sampleIntervalSec    cost-observation cadence (default 0.5 seconds);
+ *                        sparse sources retain every observation
+ *   costStride           explicit frame-stride override for reproducibility
  *   gpu                  true or {instances, pop, gens}: search on the GPU
  *                        (WebGPU) instead of the CPU DE runs, then polish the
  *                        best `runs` instance results on the CPU. Falls back
@@ -3311,13 +3315,13 @@ export async function fitAircraft(dataset, options = {}) {
     const boundedCost = options.boundedCost ?? true;
     const T = Math.max(0, dataset.n - 1) / dataset.fps;
 
-    // Strided cost integration (block midpoint) keeps the many DE/polish
-    // evaluations O(n/costStride) instead of O(n) — dominant cost at long clips.
-    const costStride = Math.max(1, Math.floor(options.costStride ?? 5));
+    // Keep the search economical at high rates without throwing away sparse
+    // observations. The historical stride is available only as an override.
     const cumW = cumulativeWind(dataset);
-    const costFrames = [];
-    for (let f = 0; f < dataset.n; f += costStride) costFrames.push(f);
-    if (costFrames[costFrames.length - 1] !== dataset.n - 1) costFrames.push(dataset.n - 1);
+    const {frames: costFrames, sampling} = losFitCostFrames({count: dataset.n, fps: dataset.fps}, new Set(), {
+        sampleIntervalSec: options.sampleIntervalSec ?? LOS_FIT_SAMPLE_INTERVAL_SEC,
+        sampleStride: options.costStride ?? null,
+    });
 
     // Optional soft ground-contact prior (from the analysis ground modes):
     // pull the START altitude (frame-0 ray at range p[0]) and/or the END
@@ -3610,6 +3614,7 @@ export async function fitAircraft(dataset, options = {}) {
     }
     return {
         pinned,
+        sampling,
         params: {
             startDist: R0,
             heading: ((h0 % 360) + 360) % 360,

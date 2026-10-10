@@ -1,4 +1,5 @@
 import {angularSizeFitEnabled, angularSizeFrames, compileAngularSizeFit, remapAngularSize} from "./AngularSize";
+import {losFitCostFrames} from "./LOSFitSampling";
 /**
  * LOSFitting.js — Global LOS Trajectory Fitting Algorithms
  *
@@ -1478,7 +1479,9 @@ export function fitKalmanFilter(dataset, excluded, options = {}) {
 //   maxIter        Nelder-Mead iteration cap (default 5000)
 //   errSigma       angular-error weight, degrees per unit cost (default 0.02)
 //   sampleStride   use every Nth active frame (plus the last) in the cost
-//                  (default 1); final trajectory/residuals stay full-resolution
+//                  (explicit override); final trajectory/residuals stay full-resolution
+//   sampleIntervalSec  minimum seconds between cost observations (default 0:
+//                  all active observations); ignored if sampleStride is given
 //   optimizer      "nm" (default: single-start Nelder-Mead from model defaults)
 //                  or "de" (global differential evolution over the parameter
 //                  bounds, then Nelder-Mead polish from the DE best)
@@ -1554,15 +1557,7 @@ export async function fitPhysicsModel(dataset, excluded, model, options = {}) {
     const t0 = times[active[0]];
     const T = times[active[active.length - 1]] - t0; // total duration, seconds
 
-    // Strided subset of active frames for the expensive optimizer cost (always
-    // keep the last frame so the whole engagement is constrained). stride 1 =
-    // all frames. This subsampling never changes the final output resolution.
-    const stride = Math.max(1, Math.floor(options.sampleStride ?? 1));
-    const costFrames = [];
-    for (let k = 0; k < active.length; k += stride) costFrames.push(active[k]);
-    if (costFrames[costFrames.length - 1] !== active[active.length - 1]) {
-        costFrames.push(active[active.length - 1]);
-    }
+    const {frames: costFrames, sampling} = losFitCostFrames(dataset, excluded, options);
     const costTimes = costFrames.map(i => times[i] - t0);
 
     // Use every observed size frame. Sparse evidence is never interpolated.
@@ -1888,7 +1883,7 @@ export async function fitPhysicsModel(dataset, excluded, model, options = {}) {
         positions,
         residuals,
         params: {
-            model: model.getName(), cost: result.cost, errDeg, solved: solvedParams, pinned,
+            model: model.getName(), cost: result.cost, errDeg, solved: solvedParams, pinned, sampling,
             // What the model's soft priors cost AT THE SOLUTION, expressed in
             // the same units as errDeg so it can be compared against it
             // directly. The cost function is errDeg/errSigma + extraCost, so

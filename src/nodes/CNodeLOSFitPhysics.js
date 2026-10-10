@@ -6,6 +6,7 @@
 // while it is computing, the node serves its last computed track (if any).
 
 import {CNodeTrack} from "./CNodeTrack";
+import {LOS_FIT_SAMPLE_INTERVAL_SEC} from "../LOSFitSampling";
 import {fitPhysicsModel, fitKalmanFilter, buildLOSDataset, unpackFitPositions} from "../LOSFitting";
 import {SkyLanternModel} from "../SkyLanternModel";
 import {FixedWingModel} from "../FixedWingModel";
@@ -100,11 +101,12 @@ export class CNodeLOSFitPhysics extends CNodeTrack {
         if (this.in.maxIter) options.maxIter = this.in.maxIter.v0;
 
         // Multi-modal cost landscapes (both models): global DE search then
-        // polish. Strided cost sampling keeps the many DE evaluations fast.
+        // polish. Time-based cost sampling keeps the many DE evaluations fast
+        // without discarding observations from sparse sources.
         // Same settings as the traverse-analysis gallery's fits, so applying
         // a gallery physics tile starts from comparable deterministic assumptions.
         options.optimizer = "de";
-        options.sampleStride = 5;
+        options.sampleIntervalSec = LOS_FIT_SAMPLE_INTERVAL_SEC;
         options.dePop = 48;
         options.deGens = 120;
 

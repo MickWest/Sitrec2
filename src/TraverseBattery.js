@@ -87,6 +87,7 @@ import {buildRangeLadder, rangeConditionedFamily} from "./TraverseFamily";
 import {UNIT_ORDER} from "./analysis/BotBenchSolvers";
 import {MONTE_CARLO_IDS, monteCarloName} from "./MonteCarloLOS";
 import {fitMonteCarloGPU} from "./gpu/MonteCarloLOS";
+import {LOS_FIT_SAMPLE_INTERVAL_SEC} from "./LOSFitSampling";
 
 // Slow-object range-profile settings. Exported because the hypothesis builder
 // needs the SAME options the slow profile was computed with (it re-derives the
@@ -732,7 +733,7 @@ export async function runTraverseBattery({
     });
     const clipDurationSec = (dataset.n - 1) / dataset.fps;
     const physicsOpts = {
-        optimizer: "de", sampleStride: 5, dePop: 48, deGens: 120,
+        optimizer: "de", sampleIntervalSec: LOS_FIT_SAMPLE_INTERVAL_SEC, dePop: 48, deGens: 120,
         // let the caller's Cancel actually stop the DE search
         shouldCancel: cancelled,
     };
@@ -932,7 +933,8 @@ export async function runTraverseBattery({
             // search cost coarsely (fitMaxDt 1 s — the controls are linear
             // over ~60 s knots, so a 1 s step is plenty; the final
             // full-resolution trajectory still uses the model's 0.25 s step)
-            // on a wider stride.
+            // using the shared time-based observation cadence. Sparse inputs
+            // keep every measurement, including every observation at 1 Hz.
             //
             // maxIter is deliberately low. Nelder-Mead makes almost all its
             // progress from a good seed in the first few hundred iterations
@@ -946,7 +948,7 @@ export async function runTraverseBattery({
             // the seed — a corkscrew (huge residual) can't appear.
             fit = await fitPhysicsModel(physicsDS, new Set(), m,
                 {...physicsOpts, paramOverrides, optimizer: "nm",
-                    sampleStride: 20, fitMaxDt: 1.0, maxIter: 400});
+                    fitMaxDt: 1.0, maxIter: 400});
             if (fit) {
                 // What the hypothesis builder reads off the model, taken now:
                 // the model is a class instance, so a stored unit cannot carry
