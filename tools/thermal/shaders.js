@@ -40,7 +40,7 @@ export const radianceFragment = `
     uniform float transmittance; // thin-layer transmittance, unitless; 0 = opaque
     uniform int innerRow; // texture row for back faces: 1 = a thin shell's inner side, 0 = same as front
     uniform vec4 diffuser; // x scattered transmittance, y reflectance, z forward-lobe fraction, w lobe Gaussian sigma (rad)
-    uniform vec4 glowSource; // xyz flame centre in camera space (m); w in-band intensity at the sensor (scaled photon radiance x m^2); 0 = none
+    uniform vec4 glowSource; // xyz flame center in camera space (m); w in-band intensity at the sensor (scaled photon radiance x m^2); 0 = none
     uniform int environmentRow; // first of five reflected-environment rows by normal elevation (sine -1, -0.5, 0, 0.5, 1); 0 = none
     uniform vec3 upView; // local up in camera space
     in vec3 vViewPosition; // m

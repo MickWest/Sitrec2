@@ -1,6 +1,6 @@
 import {decodeCompact, ROAD_CLASSES} from "./CityLightsData";
 
-// Estimated paved widths in metres by road class: typical carriageway widths, not mapped widths (the source has none).
+// Estimated paved widths in meters by road class: typical carriageway widths, not mapped widths (the source has none).
 export const ROAD_WIDTHS_M = Object.freeze({motorway: 15, trunk: 12, primary: 10, secondary: 8, tertiary: 7,
     residential: 6, service: 4, pedestrian: 3, footway: 1.5, cycleway: 2, unclassified: 5, unknown: 5});
 // Paths for people are usually concrete or paving; roads for vehicles are usually asphalt.
@@ -10,7 +10,7 @@ export const PAVED_PATH_CLASSES = Object.freeze(["pedestrian", "footway", "cycle
 // each as the covered fraction of the texel. Coordinates are the region's normalized Web Mercator square.
 export function rasterThermalGround(source) {
     const started = performance.now(), decoder = decodeCompact(source.data), meta = decoder.meta, size = meta.size;
-    const pixelsPerMetre = size / meta.meters;
+    const pixelsPerMeter = size / meta.meters;
     const layers = ["roads", "buildings", "paths"].map(() => {
         const canvas = new OffscreenCanvas(size, size), context = canvas.getContext("2d", {willReadFrequently: true});
         context.lineCap = context.lineJoin = "round";
@@ -40,7 +40,7 @@ export function rasterThermalGround(source) {
     for (const [roadClass, shape] of strokes) {
         const target = PAVED_PATH_CLASSES.includes(roadClass) ? paths : roads;
         // A width under one texel draws an antialiased line whose coverage approximates the paved fraction.
-        target.context.lineWidth = Math.max(0.5, (ROAD_WIDTHS_M[roadClass] ?? 5) * pixelsPerMetre);
+        target.context.lineWidth = Math.max(0.5, (ROAD_WIDTHS_M[roadClass] ?? 5) * pixelsPerMeter);
         target.context.stroke(shape);
     }
     const [r, g, b] = layers.map(layer => layer.context.getImageData(0, 0, size, size).data);

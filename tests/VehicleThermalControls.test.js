@@ -195,6 +195,32 @@ test("the shared editor lazily activates IR, snapshots it, uses visible thumbnai
     expect(window.vehicleThermal).toBeUndefined();
 });
 
+test("the IR preview draws new sensor frames only for detector noise and reads counts after a change or a pointer move", async () => {
+    const parsed = new DOMParser().parseFromString(fs.readFileSync(path.join(__dirname, "../tools/vehicles/index.html"), "utf8"), "text/html");
+    document.body.innerHTML = parsed.body.innerHTML;
+    const editor = mountVehicleDesigner(document, {persist: false});
+    try {
+        const mode = document.querySelector("#renderMode"); mode.value = "ir"; mode.dispatchEvent(new Event("change"));
+        for (let turn = 0; turn < 8; turn++) await Promise.resolve();
+        const reads = jest.spyOn(ThermalPipeline.mock.results[0].value, "readDetectorCounts");
+        const frameMs = 1000 / window.vehicleThermal.settings.frameRateHz;
+        let time = 10000;
+        const tick = (steps = 1) => {time += steps * frameMs; requestAnimationFrame.mock.calls.at(-1)[0](time);};
+        tick(); mockDraws.length = 0; reads.mockClear();
+        // Detector noise on: each sensor frame is drawn, but nothing else changed, so no counts are read back.
+        expect(window.vehicleThermal.settings.noiseEnabled).toBe(true);
+        tick(); tick(); tick();
+        expect(mockDraws).toEqual(["ir", "ir", "ir"]); expect(reads).not.toHaveBeenCalled();
+        // The pointer asks for the counts under it.
+        document.querySelector("#canvasMount canvas").dispatchEvent(new MouseEvent("pointermove", {clientX: 1, clientY: 1}));
+        expect(reads).toHaveBeenCalledTimes(1);
+        // An edit draws once and reads the counts for the readout; without noise, time alone draws nothing.
+        window.vehicleThermal.set("noiseEnabled", false); mockDraws.length = 0; reads.mockClear();
+        tick(); expect(mockDraws).toEqual(["ir"]); expect(reads).toHaveBeenCalledTimes(1);
+        tick(); tick(5); expect(mockDraws).toEqual(["ir"]); expect(reads).toHaveBeenCalledTimes(1);
+    } finally {editor.dispose();}
+});
+
 test("closing a studio during lazy load does not create a pipeline or a debug hook", async () => {
     const studio = createVehicleStudio(document.createElement("div"));
     const loading = studio.loadThermal({}); studio.dispose();

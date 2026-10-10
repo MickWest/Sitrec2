@@ -6,7 +6,8 @@ import {cityLightsRegion, cityLightsRegionContains} from "../citylights/CityLigh
 export const THERMAL_GROUND_MASK_SIZE = 2048;
 
 // Mapped roads, paths and building footprints around the thermal camera's target, from the same open map vector tiles
-// as City lights, rasterized in its worker. Lazy: no worker or fetch until a view asks for a mask.
+// as City lights, rasterized by a City lights worker of its own (its region cache is not shared with City lights).
+// Lazy: no worker or fetch until a view asks for a mask.
 export class ThermalGroundMask {
     constructor(onChange = () => {}) {
         this.onChange = onChange;

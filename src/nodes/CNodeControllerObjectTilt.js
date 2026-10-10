@@ -45,7 +45,7 @@ export class CNodeControllerObjectTilt extends CNodeController {
         // Compass heading (degrees true) the model holds when tiltType is "fixedHeading",
         // i.e. when the object's attitude is independent of its direction of travel.
         this.fixedHeading = v.fixedHeading ?? 0
-        // Tilt and sway, added after the banking mode: the top leans toward tiltDirection (degrees true) by
+        // Tilt and sway, applied after the banking mode's rotation: the top leans toward tiltDirection (degrees true) by
         // tiltAngle + swayAmplitude * sin(2 pi t / swayPeriod). Estimated scene inputs with no measured
         // default (a sky lantern or balloon swinging in gusts); all zero leaves the orientation unchanged.
         this.tiltAngle = v.tiltAngle ?? 0

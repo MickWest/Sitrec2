@@ -2,7 +2,7 @@ import {kernelReach, nearConvolutionPlan, farConvolutionPlan, contrastSourceRegi
 
 // CPU model of the packed near convolution with the shaders' index rules: each tile's circular convolution on the
 // plan's FFT grid (what the FFT computes; fftPackFragment places the tile at the origin and fftPrepareFragment places
-// the kernel centre at index 0), then the overlap-add assembly of overlapAddFragment.
+// the kernel center at index 0), then the overlap-add assembly of overlapAddFragment.
 function packedConvolution(image, width, height, kernel, plan, outputSize = [width,height]) {
     const nw = plan.fftWidth, nh = plan.fftHeight, cx = Math.floor(kernel.width / 2), cy = Math.floor(kernel.height / 2);
     const tiles = [];
@@ -49,7 +49,7 @@ const random = seed => () => (seed = (seed * 1103515245 + 12345) % 2147483648) /
 
 test.each([[23, 17, 7, 5], [16, 16, 4, 6], [31, 9, 9, 3], [5, 3, 6, 4]])(
     "packed overlap-add equals the direct linear convolution (%i × %i image, %i × %i kernel)", (width, height, kw, kh) => {
-        // Odd sizes leave a short last tile; even kernel widths make the support asymmetric about the centre.
+        // Odd sizes leave a short last tile; even kernel widths make the support asymmetric about the center.
         const next = random(width * 31 + kw);
         const image = Float64Array.from({length: width * height}, () => next() - .3);
         const kernel = {width: kw, height: kh, data: Float64Array.from({length: kw * kh}, () => next())};
@@ -66,7 +66,7 @@ test.each([[23, 17, 7, 5], [16, 16, 4, 6], [31, 9, 9, 3], [5, 3, 6, 4]])(
         }
     });
 
-test("kernel support adds the core and scatter reaches, centred at floor(width / 2)", () => {
+test("kernel support adds the core and scatter reaches, centered at floor(width / 2)", () => {
     expect(kernelReach([{width: 5, height: 3}, {width: 4, height: 7}])).toEqual({low: [4, 4], high: [3, 4]});
     expect(kernelReach([{width: 257, height: 257}, {width: 513, height: 513}])).toEqual({low: [384, 384], high: [384, 384]});
 });

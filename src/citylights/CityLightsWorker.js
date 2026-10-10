@@ -70,7 +70,9 @@ async function processQueue() {
                 const source = await loadRegion(region, cancelled, progress);
                 if (!source || cancelled()) continue;
                 progress(thermalGround ? "Preparing thermal ground mask…" : "Preparing city lights…");
-                // The thermal ground mask (road, building and path coverage) reuses the same region data.
+                // The thermal ground mask (road, building and path coverage) uses the same region data format. Its
+                // owner (ThermalGroundMask) starts its own worker, so it shares this cache only with its own
+                // requests, not with City lights.
                 const result = thermalGround ? rasterThermalGround(source) : await rasterCityLights(source, roadFraction, pathFraction, cancelled);
                 if (result && !cancelled()) self.postMessage({view, id, ...result}, [result.pixels]);
             } catch (error) {

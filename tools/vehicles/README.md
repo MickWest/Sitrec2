@@ -44,7 +44,10 @@ equalization or fixed radiometric gain, black/white hot polarity, and radiance
 or detector-count diagnostics. Automatic gain is the initial preview setting.
 The readout shows the detector count under the pointer and the full detector
 frame's minimum, maximum and median. Pointer coordinates include digital zoom;
-statistics include pixels outside the displayed crop. **Snapshot** saves the
+statistics include pixels outside the displayed crop. With detector noise on,
+the preview draws a new noise frame at the sensor frame rate, and the readout
+updates after an edit or a camera move and when the pointer moves. With noise
+off, the preview draws only after a change. **Snapshot** saves the
 selected mode. Library thumbnails and the preset picker use the normal view.
 
 Vehicle surface temperatures, emissivities and their equilibrium power response

@@ -80,8 +80,8 @@ $("renderMode").addEventListener("change", async () => {
     } catch (failure) {$("renderMode").value = studio.mode; error(`Could not load IR preview: ${failure.message}`);}
 }, events);
 
-function render() {
-    try {studio.render({frame:sensorFrame}); thermalFailed = false; return true;}
+function render(showCounts = true) {
+    try {studio.render({frame:sensorFrame, showCounts}); thermalFailed = false; return true;}
     catch (failure) {
         thermalFailed = true; renderer.clear(); error(`IR preview failed: ${failure.message}`); return false;
     }
@@ -352,11 +352,14 @@ function animate(now) {
         propellerTime += dt; poseVehicleSpinners(model.propellers,propellerTime,true);
         renderDirty = true;
     }
-    if (studio.mode === "ir" && !thermalFailed) {
+    // The IR picture changes from one sensor frame to the next only through detector noise. Without noise a frame
+    // is drawn after a change only; with noise, a frame that changes nothing else does not read the counts back.
+    let noiseFrame = false;
+    if (studio.mode === "ir" && !thermalFailed && studio.thermal.settings.noiseEnabled) {
         const nextFrame = Math.floor(now / 1000 * studio.thermal.settings.frameRateHz) >>> 0;
-        if (nextFrame !== sensorFrame) {sensorFrame = nextFrame; renderDirty = true;}
+        if (nextFrame !== sensorFrame) {sensorFrame = nextFrame; noiseFrame = !renderDirty; renderDirty = true;}
     }
-    if (renderDirty) {render(); renderDirty = false;}
+    if (renderDirty) {render(!noiseFrame); renderDirty = false;}
     frameId = requestAnimationFrame(animate);
 }
 frameId = requestAnimationFrame(animate);

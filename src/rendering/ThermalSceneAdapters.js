@@ -1,8 +1,9 @@
-import {Box3, Frustum, Matrix4, Object3D, Ray, Vector3} from "three";
+import {Box3, Frustum, Matrix4, Ray, Vector3} from "three";
 import {withThermalVehicle} from "../../tools/vehicles/thermalPreview.js";
 import {createAtmosphere, createThermalRayGeometry} from "../../tools/thermal/atmosphere.js";
 import {atmosphereFromSounding, soundingFromRecords} from "../../tools/thermal/sounding.js";
 import {TURBOFAN_CLIMB_REFERENCE} from "../../tools/thermal/signatures.js";
+import {soundingAtmosphere} from "../../tools/thermal/ThermalPipeline.js";
 import {Globals, Sit} from "../Globals";
 import {airDataFromTAS} from "../AirData";
 import {ECEFToLLAVD_radii} from "../LLA-ECEF-ENU";
@@ -23,11 +24,11 @@ export function thermalParticipation(mesh, roots) {
     return binding ?? false;
 }
 
-// Same profile construction and options as ThermalPipeline._prepareAtmosphere.
-// Extinction can be disabled without removing the air's thermodynamic state.
+// Same profile construction and options as ThermalPipeline._prepareAtmosphere; a sounding's atmosphere is the one the
+// pipeline uses (built once per sounding object). Extinction can be disabled without removing the air's thermodynamic state.
 export function thermalSceneAtmosphere(settings, sounding) {
     const options = {visibilityM: settings.visibilityM, densityScale: settings.atmosphereEnabled ? 1 : 0};
-    return sounding ? atmosphereFromSounding(sounding, options).atmosphere : createAtmosphere({...options,
+    return sounding ? soundingAtmosphere(sounding, options).atmosphere : createAtmosphere({...options,
         surfaceTemperatureK: settings.surfaceTemperatureK, surfaceWaterVaporDensityKgM3: settings.waterVaporDensityKgM3});
 }
 
@@ -172,8 +173,8 @@ export function createThermalSceneAdapter(objects, groundRoots, camera, refracti
         if (context) liftCameraRelative(context, point.applyMatrix4(rotation), point).applyMatrix4(inverseRotation);
         return point;
     };
-    // The Earth radius at the observer changes by centimetres per frame as the camera moves, so it is not part of the
-    // domain key (in the key, no range or sky domain was ever reused). The ray geometry carries it; each domain records
+    // The Earth radius at the observer changes by centimeters per frame as the camera moves, so it is not part of the
+    // domain key (in the key, no range or sky domain would be reused). The ray geometry carries it; each domain records
     // the radius it was built at and serves requests within RADIUS_REUSE_M of it (atmosphere.js). Rays use the current
     // radius.
     const geometryDomainKey = JSON.stringify(context && [context.k, context.maxBendRad, context.scaleHeightM, context.maxLiftM]);
@@ -228,7 +229,7 @@ export function createThermalSceneAdapter(objects, groundRoots, camera, refracti
         // Height of a surface above mean sea level (m), where the atmosphere profile begins (as in thermalGeometry),
         // for the sky-and-ground reflected environment.
         surfaceAltitudeM: mesh => {
-            // The centre of the geometry, not the mesh origin: a terrain tile's origin need not lie on its surface.
+            // The center of the geometry, not the mesh origin: a terrain tile's origin need not lie on its surface.
             const geometry = mesh.geometry;
             if (geometry && !geometry.boundingSphere) geometry.computeBoundingSphere();
             const position = geometry?.boundingSphere ? geometry.boundingSphere.center.clone().applyMatrix4(mesh.matrixWorld) :
@@ -280,7 +281,7 @@ export function createThermalReuseKey({budgetMs = 2} = {}) {
     const fail = why => {failure = why; return unavailable;};
     const key = ({scene, camera, viewCamera = camera, settings, frame, objects = [], groundRoots = [], clouds = [],
         sounding = null, atmosphereKey = null, refractionOptions = {}, presentation = null, skyUp = null, psfRangeM = 0,
-        groundClasses = null}) => {
+        groundClasses = null, groundMask = null, groundAltitudeM = null}) => {
         const start = performance.now();
         failure = null;
         const check = () => {if (performance.now() - start > budgetMs) throw fail("time budget");};
@@ -301,12 +302,9 @@ export function createThermalReuseKey({budgetMs = 2} = {}) {
                 value.isInterleavedBufferAttribute ? [identity(value.data), identity(value.data.array), value.data.stride, value.offset] : null];
         };
         try {
-            // A scene hook may change the image on every draw. Hooks that declare themselves reuse-safe depend
-            // only on inputs this key covers (the camera); any other custom hook disables reuse.
-            const hookSafe = (hook, base) => hook === base || hook?.thermalReuseSafe?.() === true;
-            if (!scene || !camera?.isPerspectiveCamera ||
-                !hookSafe(scene.onBeforeRender, Object3D.prototype.onBeforeRender) ||
-                !hookSafe(scene.onAfterRender, Object3D.prototype.onAfterRender)) {key.lastNullReason = "scene hook or camera"; return null;}
+            // The scene's own render hooks are not inputs: the thermal radiance pass draws its own scene of borrowed
+            // roots and replaces each mesh's hooks, so they never run inside a thermal draw (ThermalPipeline._radiance).
+            if (!scene || !camera?.isPerspectiveCamera) {key.lastNullReason = "scene or camera"; return null;}
             camera.updateWorldMatrix(true, false);
             // Match the update done by the radiance pass before taking the snapshot.
             scene.updateMatrixWorld(true);
@@ -339,8 +337,11 @@ export function createThermalReuseKey({budgetMs = 2} = {}) {
             const roots = new Map();
             for (const node of objects) if (node.model ?? node.object) roots.set(node.model ?? node.object, {kind: "object", node});
             for (const [i, root] of groundRoots.entries()) if (root) roots.set(root, {kind: i === 1 ? "sea" : "ground"});
-            const parts = [encode([frame, settings, sounding, atmosphereKey, refractionOptions, presentation, skyUp, psfRangeM, groundClasses,
-                identity(scene), scene.visible, camera.matrixWorld.elements, camera.matrixWorldInverse.elements,
+            // Material classes: the mapped-ground mask (it arrives after the first draw) and the classes' terrain height.
+            const mask = groundMask?.texture ? [identity(groundMask.texture), groundMask.texture.version, groundMask.rect] : null;
+            // A sounding is replaced, never edited (ThermalPipeline soundingAtmosphere), so its identity stands for its levels.
+            const parts = [encode([frame, settings, identity(sounding), atmosphereKey, refractionOptions, presentation, skyUp, psfRangeM, groundClasses,
+                mask, groundAltitudeM ?? null, identity(scene), scene.visible, camera.matrixWorld.elements, camera.matrixWorldInverse.elements,
                 camera.projectionMatrix.elements, camera.layers.mask, camera.near, camera.far,
                 camera.coordinateSystem, camera.reversedDepth, viewCamera.matrixWorld.elements, viewCamera.projectionMatrix.elements])];
             for (const node of objects) {
@@ -349,6 +350,9 @@ export function createThermalReuseKey({budgetMs = 2} = {}) {
                 parts.push(encode([identity(node), node.id, identity(root), root?.matrixWorld.elements,
                     node.thermal, node._thermalSceneState, node.proceduralModel?.recipe]));
             }
+            const terrainImagery = binding => binding.kind === "ground" &&
+                (settings.groundTemperatureMode === "color" && settings.groundTemperatureSpanK > 0 ||
+                    settings.groundTemperatureMode === "materials" && groundClasses?.length > 0);
             scene.traverse(mesh => {
                 check();
                 if (mesh.isLOD && mesh.autoUpdate) throw fail("automatic detail selection");
@@ -404,7 +408,7 @@ export function createThermalReuseKey({budgetMs = 2} = {}) {
                             outside: !frustum.intersectsBox(box), box};
                         projectedBounds.set(mesh, projected);
                     }
-                    // The cloud pass tests occlusion on rays across each whole sheet, not only its centre ray, so
+                    // The cloud pass tests occlusion on rays across each whole sheet, not only its center ray, so
                     // with a visible cloud any off-image mesh may change the image: keep them all in the key then.
                     if (projected.outside && !cloudRays.length) return;
                 }
@@ -422,11 +426,13 @@ export function createThermalReuseKey({budgetMs = 2} = {}) {
                     geometry.drawRange.count === Infinity ? "all" : geometry.drawRange.count,
                     materials.map(material => {
                         const state = [material.side, material.visible];
-                        if (binding.kind === "ground" && settings.groundTemperatureMode === "color" && settings.groundTemperatureSpanK > 0) {
+                        // Terrain color and material classes both read the imagery (createThermalSceneAdapter's
+                        // attributes): a tile's texture arrives by a material swap or a map update.
+                        if (terrainImagery(binding)) {
                             const map = material.map;
                             if (map?.isVideoTexture) throw fail("animated terrain texture");
                             if (map?.matrixAutoUpdate) map.updateMatrix();
-                            state.push(material.color?.toArray(), material.vertexColors, identity(map), map?.version,
+                            state.push(identity(material), material.color?.toArray(), material.vertexColors, identity(map), map?.version,
                                 identity(map?.source), map?.source?.version, map?.channel, map?.matrix.elements,
                                 map && [map.wrapS, map.wrapT, map.minFilter, map.magFilter, map.anisotropy,
                                     map.flipY, map.colorSpace, map.format, map.type]);

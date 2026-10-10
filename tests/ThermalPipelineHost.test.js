@@ -1,71 +1,14 @@
-import {BoxGeometry, BufferGeometry, Color, Float32BufferAttribute, Group, Matrix4, Mesh, MeshBasicMaterial, PerspectiveCamera, Scene, Vector2, Vector4, WebGLRenderTarget} from "three";
-import {projectedSurfaceBounds, projectedSurfaceOutside, ThermalPipeline} from "../tools/thermal/ThermalPipeline.js";
-import {normalizeSettings} from "../tools/thermal/thermalSchema.js";
-import {buildOpticalDomain, displayCurveLUT, processingParameters} from "../tools/thermal/sensorMath.js";
-import {thermalSceneAtmosphere} from "../src/rendering/ThermalSceneAdapters";
-
-// Exercise the real coordinator and scene/material scope with a renderer double.
+// The real coordinator around a renderer double: host state restored, the radiance scope (materials, visibility,
+// callbacks), coverage tiles, surface clipping, cloud occlusion, atmosphere sharing and GPU timing.
 // No GPU shader execution is asserted by these tests.
-function fixture() {
-    let target = {id:"original"}, viewport = new Vector4(2,3,4,5), scissor = new Vector4(1,2,3,4),
-        scissorTest = true, clear = new Color(.1,.2,.3), alpha = .4;
-    const renderer = {autoClear:true,shadowMap:{enabled:true},xr:{enabled:true},capabilities:{maxTextureSize:16384},
-        toneMapping:42,outputColorSpace:"original",
-        getRenderTarget:()=>target,getActiveCubeFace:()=>2,getActiveMipmapLevel:()=>3,
-        getViewport:v=>v.copy(viewport),getScissor:v=>v.copy(scissor),getScissorTest:()=>scissorTest,
-        getClearColor:v=>v.copy(clear),getClearAlpha:()=>alpha,
-        setRenderTarget:v=>{target=v;},setViewport:(...args)=>{viewport=args[0]?.isVector4?args[0].clone():new Vector4(...args);},
-        setScissor:v=>{scissor=v.clone();},setScissorTest:v=>{scissorTest=v;},setClearColor:(c,a)=>{clear=new Color(c);alpha=a;},
-        clear:jest.fn(),render:jest.fn(),getSize:v=>v.set(16,12),
-        getContext:()=>({FRAMEBUFFER:1,FRAMEBUFFER_COMPLETE:2,checkFramebufferStatus:()=>2}),
-    };
-    const pipeline = new ThermalPipeline(renderer);
-    pipeline.resources={targets:new Map(),materials:new Map(),surfaces:new Map(),textures:new Set(),checkedSizes:new WeakMap()};
-    pipeline.emptyTexture={}; pipeline.quad={geometry:{dispose() {}}};
-    pipeline._prepareOptics=()=>{pipeline.scatterSplit={farMass:0};};
-    pipeline._optics=()=>{};pipeline._prepareFixedPattern=()=>{};
-    pipeline._prepareSkyBackground=()=>{pipeline.background={scaledPhotonRadiance:0};};
-    pipeline._pass=jest.fn();
-    pipeline._coverageTiles=()=>{pipeline.coverageBounds=new Map();return [];};
-    pipeline._read=()=>new Float32Array([100,200,300,400]);
-    const settings=normalizeSettings({detectorWidth:2,detectorHeight:2,fieldMode:"focalLength",focalLengthM:.1,
-        atmosphereEnabled:false,skySource:"manual",gainMode:"automatic",gainRegion:"detector",agcTimeConstantS:1});
-    const scene=new Scene(),camera=new PerspectiveCamera(1,1,1,500000);
-    const state=()=>({target:renderer.getRenderTarget(),viewport:renderer.getViewport(new Vector4()),
-        scissor:renderer.getScissor(new Vector4()),scissorTest:renderer.getScissorTest(),clear:renderer.getClearColor(new Color()),
-        alpha:renderer.getClearAlpha(),autoClear:renderer.autoClear,shadow:renderer.shadowMap.enabled,xr:renderer.xr.enabled,
-        toneMapping:renderer.toneMapping,outputColorSpace:renderer.outputColorSpace});
-    return {pipeline,renderer,settings,scene,camera,state};
-}
-
-test("paused, revisited and backward frames recompute gain; advancing frames still settle",()=>{
-    const {pipeline,settings,scene,camera}=fixture();
-    pipeline.render({scene,camera,settings,frame:10});const old={...pipeline.window};
-    const codes=new Float32Array([1100,1200,1300,1400]);pipeline._read=()=>codes;
-    pipeline.render({scene,camera,settings,frame:11});
-    expect(pipeline.window.low).toBeGreaterThan(old.low);expect(pipeline.window.low).toBeLessThan(1100);
-    const fresh=processingParameters(codes,settings).window;
-    pipeline.render({scene,camera,settings,frame:11});expect(pipeline.window).toEqual(fresh);
-    pipeline._read=()=>new Float32Array([2100,2200,2300,2400]);camera.position.x=20;
-    pipeline.render({scene,camera,settings,frame:11});expect(pipeline.window.low).toBe(2100);
-    pipeline._read=()=>codes;pipeline.render({scene,camera,settings,frame:3});expect(pipeline.window).toEqual(fresh);
-    pipeline.dispose();
-});
-
-test("interactive render restores the host and never performs a synchronous gain read", () => {
-    const {pipeline, settings, scene, camera, state} = fixture(), before = state();
-    pipeline.analysis = false;
-    pipeline._read = () => {throw new Error("synchronous frame read");};
-    pipeline.gainReadback = {poll: jest.fn(() => null), enqueue: jest.fn(() => true), dispose() {}};
-    pipeline.render({scene, camera, settings, frame: 10});
-    expect(pipeline.lastFrame.gain).toMatchObject({mode: "fenced", held: true, queued: true});
-    pipeline.gainReadback.poll.mockReturnValue({counts: new Float32Array([100, 200, 300, 400]),
-        key: pipeline.gainKey, serial: 1, frame: 10});
-    pipeline.render({scene, camera, settings, frame: 11});
-    expect(pipeline.lastFrame.gain).toMatchObject({mode: "fenced", held: false, latencyFrames: 1});
-    expect(state()).toEqual(before); expect(pipeline.gainReadback.enqueue).toHaveBeenCalledTimes(2);
-    pipeline.dispose();
-});
+import {BoxGeometry, BufferGeometry, Color, Float32BufferAttribute, Group, Matrix4, Mesh, MeshBasicMaterial, PerspectiveCamera, Scene, Vector4, WebGLRenderTarget} from "three";
+import {projectedSurfaceBounds, projectedSurfaceOutside, ThermalGpuTimer, ThermalPipeline} from "../tools/thermal/ThermalPipeline.js";
+import {normalizeSettings} from "../tools/thermal/thermalSchema.js";
+import {buildOpticalDomain, displayCurveLUT} from "../tools/thermal/sensorMath.js";
+import {thermalSceneAtmosphere} from "../src/rendering/ThermalSceneAdapters";
+import * as soundingModule from "../tools/thermal/sounding.js";
+import {createAtmosphere} from "../tools/thermal/atmosphere.js";
+import {fakeGl, hostFixture as fixture} from "./fixtures/thermalPipelineDoubles.js";
 
 test("a paused interactive render keeps drawing with its last valid kernel during a worker rebuild", async () => {
     const {pipeline, settings, scene, camera, state} = fixture(), before = state();
@@ -92,23 +35,6 @@ test("a paused interactive render keeps drawing with its last valid kernel durin
         expect(pipeline.hasFrame).toBe(true);
         expect(pipeline.lastFrame.opticsCache).toMatchObject({pending: true, quality: "retained", errorL1: 2});
         expect(pipeline._pass.mock.calls.some(([name]) => name === "enlarge")).toBe(true);
-        expect(() => pipeline.readStage("display")).not.toThrow();
-        expect(state()).toEqual(before);
-    } finally {pipeline.dispose();}
-});
-
-test("deferred preparation redraws the completed display and preserves readback", () => {
-    const {pipeline, settings, scene, camera, state} = fixture(), before = state();
-    try {
-        pipeline.render({scene, camera, settings, frame: 10});
-        const display = pipeline.resources.targets.get("display"), previous = pipeline.lastFrame;
-        pipeline._prepareAtmosphere = () => false;
-        pipeline._pass.mockClear();
-        expect(pipeline.render({scene, camera, settings, frame: 10})).toBe(false);
-        expect(pipeline.hasFrame).toBe(true);
-        expect(pipeline.lastFrame).toBe(previous);
-        expect(pipeline.lastFrame.held).toBe(true);
-        expect(pipeline._pass.mock.calls.at(-1)[2].tInput).toBe(display.texture);
         expect(() => pipeline.readStage("display")).not.toThrow();
         expect(state()).toEqual(before);
     } finally {pipeline.dispose();}
@@ -155,7 +81,7 @@ test("display shader receives the CPU LUT and affine; curve changes release cach
     } finally {pipeline.dispose();}
 });
 
-test("host vehicle and pipeline use identical standard and sounding profiles, including edited contents",()=>{
+test("host vehicle and pipeline use identical standard and sounding profiles, including a replaced sounding",()=>{
     const {pipeline,settings}=fixture();
     // Estimated synthetic sounding, with a deliberately different sea-level setting.
     const sounding={levels:[{geopotentialHeightM:0,pressurePa:101325,temperatureK:295,relativeHumidityPct:50},
@@ -167,10 +93,78 @@ test("host vehicle and pipeline use identical standard and sounding profiles, in
             const host=thermalSceneAtmosphere(configured,supplied);
             for(const altitudeM of [0,1000,3200,4000,12000]) expect(host.sample(altitudeM)).toEqual(pipeline.atmosphere.sample(altitudeM));
         }
-        sounding.levels[1].temperatureK=270;
-        pipeline._prepareAtmosphere(settings,sounding);
-        expect(thermalSceneAtmosphere(settings,sounding).sample(3200)).toEqual(pipeline.atmosphere.sample(3200));
+        // A sounding is a value: an edited profile arrives as a new object.
+        const edited={...sounding,levels:[sounding.levels[0],{...sounding.levels[1],temperatureK:270}]};
+        pipeline._prepareAtmosphere(settings,edited);
+        expect(thermalSceneAtmosphere(settings,edited).sample(3200)).toEqual(pipeline.atmosphere.sample(3200));
+        expect(pipeline.atmosphere.sample(3200).temperatureK).not.toBe(thermalSceneAtmosphere(settings,sounding).sample(3200).temperatureK);
     } finally {pipeline.dispose();}
+});
+
+test("a loaded sounding's atmosphere is built once per sounding, not on every frame, and the host shares it",()=>{
+    const {pipeline,settings}=fixture();
+    const sounding={levels:[{geopotentialHeightM:0,pressurePa:101325,temperatureK:295,relativeHumidityPct:50},
+        {geopotentialHeightM:4000,pressurePa:60000,temperatureK:265,relativeHumidityPct:30}]};
+    const build=jest.spyOn(soundingModule,"atmosphereFromSounding");
+    try {
+        pipeline._prepareAtmosphere(settings,sounding);
+        const atmosphere=pipeline.atmosphere, profileKey=pipeline.profileKey;
+        for(let frame=0;frame<5;frame++) pipeline._prepareAtmosphere({...settings,sensorAltitudeM:100+frame},sounding);
+        expect(build).toHaveBeenCalledTimes(1);
+        expect(pipeline.atmosphere).toBe(atmosphere);expect(pipeline.profileKey).toBe(profileKey);
+        // The cache keys name the profile by a short identity, not by the sounding's levels.
+        expect(profileKey.length).toBeLessThan(32);
+        expect(thermalSceneAtmosphere(settings,sounding)).toBe(atmosphere);expect(build).toHaveBeenCalledTimes(1);
+        // Other extinction options are another atmosphere; a new sounding object is another profile.
+        pipeline._prepareAtmosphere({...settings,visibilityM:settings.visibilityM/2},sounding);
+        expect(build).toHaveBeenCalledTimes(2);expect(pipeline.profileKey).not.toBe(profileKey);
+        pipeline._prepareAtmosphere(settings,{...sounding});expect(build).toHaveBeenCalledTimes(3);
+    } finally {build.mockRestore();pipeline.dispose();}
+});
+
+// Without refraction the cloud pass tests each sheet sample against the opaque meshes on the CPU (raycasts).
+function cloudOcclusionFixture() {
+    const renderer={extensions:{has:()=>true},clear:jest.fn(),setRenderTarget:jest.fn(),setScissorTest:jest.fn(),render:jest.fn()};
+    const pipeline=new ThermalPipeline(renderer);
+    pipeline.resources={surfaces:new Map()};pipeline._drawSky=()=>{};pipeline._pass=()=>{};
+    pipeline._coverageTiles=()=>{pipeline.coverageBounds=new Map();return [];};
+    pipeline._surface=()=>opaque;
+    pipeline.atmosphere=createAtmosphere();pipeline.profileKey="standard";pipeline.skyView={up:[0,1,0]};
+    const scene=new Scene(),camera=new PerspectiveCamera(4,1,1,100000);camera.updateMatrixWorld();
+    const opaque=new MeshBasicMaterial(),occluder=new Mesh(new BoxGeometry(20,100,10),new MeshBasicMaterial());
+    occluder.position.set(20,0,-5000);scene.add(occluder);
+    const raycast=jest.spyOn(occluder,"raycast");
+    // An estimated sheet behind the occluder's edge, in camera coordinates.
+    const sheets=[{id:"a",center:[0,0,-10000],size:[100,50],temperatureK:275,opticalDepth:1,mask:{}}];
+    pipeline.radianceAdapter={attributes:()=>({temperatureK:300,emissivity:1}),cloudSheets:()=>({sheets,diagnostics:[]})};
+    const settings=normalizeSettings({detectorWidth:8,detectorHeight:8,sensorAltitudeM:3000});
+    const target=new WebGLRenderTarget(16,16);
+    const draw=()=>{raycast.mockClear();pipeline._radiance(scene,camera,settings,target,0);
+        return {texture:pipeline.cloudPass.sheets[0].table.texture,data:pipeline.cloudPass.sheets[0].table.texture.image.data,
+            raycasts:raycast.mock.calls.length,report:{...pipeline.cloudPass.report}};};
+    const dispose=()=>{pipeline.cloudPass?.dispose();target.dispose();occluder.geometry.dispose();occluder.material.dispose();opaque.dispose();};
+    return {pipeline,scene,camera,occluder,draw,dispose};
+}
+
+test("without refraction, cloud occlusion is tested again only when the camera or an occluder changes, with the same table",()=>{
+    const {occluder,camera,draw,dispose}=cloudOcclusionFixture(), fresh=cloudOcclusionFixture();
+    try {
+        const first=draw();
+        expect(first.raycasts).toBeGreaterThan(0);expect(first.report.evaluations).toBeGreaterThan(0);
+        // An unchanged frame keeps the table: no raycasts, no integration, no upload.
+        const again=draw();
+        expect(again).toMatchObject({texture:first.texture,raycasts:0,report:{evaluations:0,uploadedBytes:0}});
+        // The kept table is the table a new build gives for the same state.
+        expect(fresh.draw().data).toEqual(first.data);
+        // Any change that can move a ray's first hit builds it again.
+        for (const change of [()=>{occluder.position.x+=5;},()=>{occluder.geometry.attributes.position.needsUpdate=true;},
+            ()=>{occluder.layers.enable(3);},()=>{occluder.geometry.setDrawRange(0,6);},()=>{camera.position.y+=.01;camera.updateMatrixWorld();}]) {
+            change();
+            const changed=draw();
+            expect(changed.raycasts).toBeGreaterThan(0);expect(changed.report.uploadedBytes).toBeGreaterThan(0);
+            expect(draw().raycasts).toBe(0);
+        }
+    } finally {dispose();fresh.dispose();}
 });
 
 test.each(["surface", "scene", "optics", "output"])("renderer, materials, visibility and callbacks restore after %s failure",stage=>{
@@ -220,7 +214,7 @@ test("coverage refinement skips meshes outside the image and surfaces, and bound
     const tiles=meshes=>[...ThermalPipeline.prototype._coverageTiles.call(pipeline,meshes,camera,sample)];
     const mesh=new Mesh(new BoxGeometry(10,10,10),new MeshBasicMaterial());
     const at=(x,z)=>{mesh.position.set(x,0,z);mesh.updateMatrixWorld(true);return tiles([mesh]);};
-    // 250 km away and 5 degrees outside a 1 degree field: before the fix this stopped every frame.
+    // 250 km away and 5 degrees outside a 1 degree field: outside the image, so it cannot stop the frame.
     expect(at(250000*Math.sin(5*Math.PI/180),-250000*Math.cos(5*Math.PI/180))).toEqual([]);
     expect(at(0,250000)).toEqual([]); // behind the camera
     expect(()=>at(0,-250000)).toThrow(/range/i); // in the image: still an explicit error
@@ -291,6 +285,54 @@ test("surface triangle clipping keeps an image-spanning triangle whose vertices 
     geometry.dispose();
 });
 
+test("surface clipping with reused vertex lists gives the bounds of a per-vertex clip, bit for bit",()=>{
+    // Reference: a new vector for every projected vertex and every clipped polygon vertex.
+    const reference=(geometry,camera,width,height)=>{
+        const position=geometry.attributes.position,points=[];
+        for(let i=0;i<position.count;i++) points.push(new Vector4(position.getX(i),position.getY(i),position.getZ(i),1).applyMatrix4(camera.projectionMatrix));
+        const distance=(v,side)=>side===0?v.w*(1+2/width)+v.x:side===1?v.w*(1+2/width)-v.x:side===2?v.w*(1+2/height)+v.y:v.w*(1+2/height)-v.y;
+        let left=Infinity,bottom=Infinity,right=-Infinity,top=-Infinity;
+        for(let i=0;i+2<geometry.index.count;i+=3) {
+            let polygon=[0,1,2].map(j=>points[geometry.index.getX(i+j)]);
+            for(let side=0;side<4&&polygon.length;side++) {
+                const clipped=[];
+                polygon.forEach((a,j)=>{const b=polygon[(j+1)%polygon.length],da=distance(a,side),db=distance(b,side);
+                    if(da>=0)clipped.push(a);if((da>=0)!==(db>=0))clipped.push(a.clone().lerp(b,da/(da-db)));});
+                polygon=clipped;
+            }
+            for(const v of polygon) {const x=(v.x/v.w+1)*width/2,y=(v.y/v.w+1)*height/2;
+                left=Math.min(left,x);bottom=Math.min(bottom,y);right=Math.max(right,x);top=Math.max(top,y);}
+        }
+        return left===Infinity?[]:[left-1,bottom-1,right+1,top+1];
+    };
+    const camera=new PerspectiveCamera(10,1.25,1,10000);
+    // A seeded sheet of triangles around and partly behind the camera, as a terrain tile near the camera is.
+    let seed=7;const random=()=>(seed=(seed*16807)%2147483647)/2147483647;
+    for(let trial=0;trial<20;trial++) {
+        const geometry=new BufferGeometry(),vertices=[];
+        for(let i=0;i<60;i++) vertices.push((random()-.5)*400,(random()-.5)*300,-random()*800+50);
+        geometry.setAttribute("position",new Float32BufferAttribute(vertices,3));
+        geometry.setIndex(Array.from({length:90},()=>Math.floor(random()*60)));
+        expect(projectedSurfaceBounds(geometry,new Matrix4(),camera,null,640,512)).toEqual(reference(geometry,camera,640,512));
+        geometry.dispose();
+    }
+});
+
+test("a sky or sea-depth table of the same size replaces the texture's data in place and keeps the earlier table intact",()=>{
+    const {pipeline}=fixture();
+    try {
+        const first=new Float32Array(16).fill(1),second=new Float32Array(16).fill(2);
+        const texture=pipeline._tableTexture(null,first,4);
+        const version=texture.version;
+        expect(pipeline._tableTexture(texture,second,4)).toBe(texture);
+        expect(texture.image.data).toBe(second);expect(texture.version).toBeGreaterThan(version);
+        expect(first.every(value=>value===1)).toBe(true);
+        const dispose=jest.spyOn(texture,"dispose"),wider=pipeline._tableTexture(texture,new Float32Array(32),8);
+        expect(wider).not.toBe(texture);expect(dispose).toHaveBeenCalledTimes(1);
+        expect(pipeline.resources.textures.has(texture)).toBe(false);expect(pipeline.resources.textures.has(wider)).toBe(true);
+    } finally {pipeline.dispose();}
+});
+
 test("sea depth skips an all-sky view, keeps a horizon crossing and respects the apparent horizon",()=>{
     const {pipeline,settings,scene,camera}=fixture(),configured={...settings,skySource:"atmosphere",sensorAltitudeM:1000};
     const run=e=>{
@@ -306,17 +348,14 @@ test("sea depth skips an all-sky view, keeps a horizon crossing and respects the
     pipeline.dispose();
 });
 
-test.each([2048,16384])("GPU histogram stacks fit a %i-pixel texture limit",maximum=>{
-    const {pipeline,renderer,settings}=fixture();
-    pipeline.analysis=false;renderer.capabilities.maxTextureSize=maximum;
-    pipeline._scatter=jest.fn();
-    pipeline._gpuGain({texture:{}},{...settings,gainMode:"automatic"},
-        {reset:true,deltaTimeS:0,width:2,height:2,presentation:null,frame:0});
-    for(const [uniforms,target,samples] of pipeline._scatter.mock.calls) {
-        expect(target.height).toBeLessThanOrEqual(maximum);
-        expect(uniforms.copies).toBe(Math.min(32,Math.floor(maximum/uniforms.histogramSize[1])));
-        expect(samples).toBe(4);
-    }
-    expect(pipeline._scatter).toHaveBeenCalledTimes(2);
-    pipeline.dispose();
+test("GPU timer discards disjoint samples and converts valid ns to ms", () => {
+    const gl = fakeGl(), extension = {TIME_ELAPSED_EXT: 100, GPU_DISJOINT_EXT: 101};
+    Object.assign(gl, {getExtension: () => extension, getQuery: () => null, createQuery: () => ({}),
+        beginQuery: jest.fn(), endQuery: jest.fn(), deleteQuery: jest.fn(),
+        getQueryParameter: (query, key) => key === gl.QUERY_RESULT_AVAILABLE ? true : 2500000});
+    const timer = new ThermalGpuTimer(gl);
+    timer.begin(1, "optics"); timer.end(); timer.poll();
+    expect(timer.samples).toEqual([{frame: 1, stage: "optics", ms: 2.5}]);
+    timer.begin(2, "optics"); timer.end(); gl.getParameter.mockReturnValue(true); timer.poll();
+    expect(timer.samples).toHaveLength(1); expect(timer.disjointSamples).toBe(1); timer.dispose();
 });

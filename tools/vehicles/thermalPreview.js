@@ -290,7 +290,9 @@ export function createThermalControls(mount, getSettings, set, {translate = null
 // viewCamera and orbit are the visible preview's camera and OrbitControls; the near view renders through them.
 export function createVehicleThermalPreview({renderer, panel, readout, onChange, onError, viewCamera, orbit}) {
     let settings = normalizeSettings({...settingsForPreset("MX15"), gainMode: "automatic", polarity: "blackHot"});
-    let view = normalizeSensorView(), counts, lastSettings, stats, pointer = null, model = null, nearRange = null;
+    // counts and stats are read from the GPU on demand (readCounts), not after every draw; drawn says whether the
+    // pipeline holds a frame of the current settings to read.
+    let view = normalizeSensorView(), counts, drawn = false, lastSettings, stats, pointer = null, model = null, nearRange = null;
     try {
         const saved = JSON.parse(localStorage.getItem(STORAGE_KEY));
         if (saved) {const nextSettings = normalizeSettings(saved.settings), nextView = normalizeSensorView(saved.view); settings = nextSettings; view = nextView;}
@@ -357,12 +359,16 @@ export function createVehicleThermalPreview({renderer, panel, readout, onChange,
             const fieldMode = key === "focalLengthM" ? "focalLength" : key === "verticalFovDeg" ? "fieldOfView" : settings.fieldMode;
             settings = normalizeSettings({...settings, [key]: value, fieldMode});
         }
-        counts = null; refresh(); persist(); onError(""); onChange();
+        counts = null; drawn = false; refresh(); persist(); onError(""); onChange();
     }
     function edit(key, value) {try {set(key, value);} catch (error) {onError(error.message); refresh();}}
     const geometryReadout = document.createElement("div"), countReadout = document.createElement("div"); readout.append(geometryReadout, countReadout);
+    function readCounts() {
+        if (!counts && drawn) {counts = pipeline.readDetectorCounts(); stats = detectorStatistics(counts);}
+        return counts;
+    }
     function showCounts() {
-        if (!counts) {countReadout.textContent = "Detector counts · waiting for a frame"; return;}
+        if (!readCounts()) {countReadout.textContent = "Detector counts · waiting for a frame"; return;}
         const pixel = pointer && detectorPixelAt(pointer.x, pointer.y, renderer.domElement.getBoundingClientRect(), lastSettings);
         countReadout.textContent = `14-bit counts · pointer ${pixel ? `${counts[pixel.index]} [${pixel.column}, ${pixel.row}]` : "—"} · min ${stats.min} · max ${stats.max} · median ${stats.median}`;
     }
@@ -381,7 +387,7 @@ export function createVehicleThermalPreview({renderer, panel, readout, onChange,
         const scale = configureSensorCamera(camera, vehicle.bounds, settings, view);
         ensureAtmosphereRange(scale.requiredRangeM);
         withThermalVehicle(vehicle, () => pipeline.render({scene, camera, settings, frame, psfRangeM: view.rangeM}));
-        counts = pipeline.readDetectorCounts(); lastSettings = {...settings}; stats = detectorStatistics(counts);
+        lastSettings = {...settings};
         geometryReadout.textContent = `Far · ${view.rangeM.toLocaleString()} m · FOV ${scale.verticalFovDeg.toFixed(3)}° V × ${scale.horizontalFovDeg.toFixed(3)}° H · ${scale.pixelSizeM.toFixed(3)} m / detector pixel · aspect ${view.azimuthDeg}°, ${view.elevationDeg}°`;
     }
     function renderNear(scene, vehicle, frame) {
@@ -394,7 +400,7 @@ export function createVehicleThermalPreview({renderer, panel, readout, onChange,
         if (!nearRange || distanceM !== nearRange.latest) nearRange = {applied: nearRange?.applied ?? distanceM, latest: distanceM, since: now};
         if (nearRange.applied !== nearRange.latest && now - nearRange.since >= NEAR_RANGE_SETTLE_MS) nearRange.applied = nearRange.latest;
         withThermalVehicle(vehicle, () => pipeline.render({scene, camera: viewCamera, settings: nearSettings, frame, psfRangeM: nearRange.applied}));
-        counts = pipeline.readDetectorCounts(); lastSettings = {...nearSettings}; stats = detectorStatistics(counts);
+        lastSettings = {...nearSettings};
         if (document.activeElement !== distanceInput) distanceInput.value = distanceM.toFixed(1);
         const half = Math.tan(nearSettings.verticalFovDeg * Math.PI / 360);
         const horizontalFovDeg = 2 * Math.atan(half * nearSettings.detectorWidth / nearSettings.detectorHeight) * 180 / Math.PI;
@@ -403,11 +409,14 @@ export function createVehicleThermalPreview({renderer, panel, readout, onChange,
     return {pipeline, get settings() {return settings;}, get view() {return view;}, set,
         /** True when the IR picture renders through the visible preview's camera (its orbit stays active). */
         get usesViewCamera() {return near();},
-        render(scene, vehicle, frame) {
-            counts = null; model = vehicle;
+        /** showCounts: false leaves the count readout to the next pointer move (a frame that only advances the
+         * detector noise needs no synchronous GPU readback). */
+        render(scene, vehicle, frame, {showCounts: show = true} = {}) {
+            counts = null; drawn = false; model = vehicle;
             try {
                 if (near()) renderNear(scene, vehicle, frame); else renderFar(scene, vehicle, frame);
-            } finally {showCounts();}
+                drawn = true;
+            } finally {if (show) showCounts();}
         },
         dispose() {
             lifecycle.abort(); pipeline.dispose(); controls.dispose(); panel.replaceChildren(); readout.replaceChildren();
