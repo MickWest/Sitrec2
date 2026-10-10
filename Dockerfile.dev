@@ -1,7 +1,8 @@
 # Development Dockerfile for Sitrec
 # This setup allows for rapid iteration with hot reloading
 
-FROM node:22
+# Node.js 22.13: the version in .nvmrc. Keep the two in step.
+FROM node:22.13
 
 # Install PHP and Apache for the backend server
 RUN apt-get update && apt-get install -y \
@@ -37,7 +38,7 @@ COPY package*.json ./
 # and we don't run the regression tests in Docker yet
 ENV PUPPETEER_SKIP_DOWNLOAD=true
 
-# Pin npm version to match local dev (node:22 ships npm 10, lock file was generated with npm 11)
+# Pin npm version to match local dev (node:22.13 ships npm 10, lock file was generated with npm 11)
 RUN npm install -g npm@11
 
 # Install dependencies

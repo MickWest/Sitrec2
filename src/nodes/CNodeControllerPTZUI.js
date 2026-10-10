@@ -18,6 +18,7 @@ import {Euler, Matrix4, Quaternion, Vector3} from "three";
 import {extractFOV} from "./CNodeControllerVarious";
 import {t} from "../i18n";
 import {markFreeLookSafe} from "../FreeLookGuard";
+import {turnToGeometricAim} from "../atmosphere/refractionAim";
 
 const pszUIColor = "#C0C0FF";
 const _xAxis = new Vector3(1, 0, 0);
@@ -772,8 +773,11 @@ export class CNodeControllerPTZUI extends CNodeControllerAzElZoom {
             if (this.satellite) {
                 // Switching TO satellite mode.
                 // Derive satQuat from current camera orientation: satQuat = nadirQuat^-1 * cameraQuat
+                // (the geometric aim; see syncFromCamera).
                 const nadirQuat = this._buildNadirQuat(camera.position);
-                this.satQuat.copy(nadirQuat).invert().multiply(camera.quaternion);
+                const cameraQuaternion = camera.quaternion.clone();
+                turnToGeometricAim(camera, cameraQuaternion);
+                this.satQuat.copy(nadirQuat).invert().multiply(cameraQuaternion);
                 this.satQuat.normalize();
                 // Extract roll/el/az with rotation=0 first, then no residual rotation
                 this.rotation = 0;
@@ -782,8 +786,11 @@ export class CNodeControllerPTZUI extends CNodeControllerAzElZoom {
             } else {
                 // Switching FROM satellite mode back to normal.
                 // Extract az/el/roll from the current camera direction.
+                // The geometric aim (see syncFromCamera).
                 const fwd = new Vector3();
                 camera.getWorldDirection(fwd);
+                const cameraUp = new Vector3().setFromMatrixColumn(camera.matrixWorld, 1);
+                turnToGeometricAim(camera, fwd, cameraUp);
                 const localUp = getLocalUpVector(camera.position);
 
                 let [az, el] = getAzElFromPositionAndForward(camera.position, fwd);
@@ -793,7 +800,6 @@ export class CNodeControllerPTZUI extends CNodeControllerAzElZoom {
 
                 // Extract roll from camera up vs zero-roll up
                 if (this.roll !== undefined) {
-                    const cameraUp = new Vector3().setFromMatrixColumn(camera.matrixWorld, 1);
                     const zeroRollUp = localUp.clone().sub(fwd.clone().multiplyScalar(localUp.dot(fwd)));
                     if (zeroRollUp.lengthSq() > 1e-10) {
                         zeroRollUp.normalize();
@@ -868,12 +874,15 @@ export class CNodeControllerPTZUI extends CNodeControllerAzElZoom {
         }
 
         const fwd = new Vector3().setFromMatrixColumn(matrixWorld, 2).negate().normalize();
-        const localUp = getLocalUpVector(camera.position);
-        const dotUpFwd = fwd.dot(localUp);
-
         // Camera Y axis (up direction) from world matrix
         const cameraUp = new Vector3();
         cameraUp.setFromMatrixColumn(matrixWorld, 1);
+        // The angles are the line of sight. A camera aimed at where refraction draws a
+        // target carries the rotation back to it, and a PTZ camera carries none, so the
+        // copied angles keep the line of sight on the target.
+        turnToGeometricAim(camera, fwd, cameraUp);
+        const localUp = getLocalUpVector(camera.position);
+        const dotUpFwd = fwd.dot(localUp);
 
         if (Math.abs(dotUpFwd) > 1 - 1e-6) {
             // Near-vertical (nadir/zenith): normal az/el has gimbal lock.

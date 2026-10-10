@@ -23,6 +23,7 @@ import {FileManager, NodeMan, Globals, getEffectiveUserID} from "./Globals";
 import {extractSitrecObjectKey} from "./SitrecObjectResolver";
 import {isGPSetIncomplete, isOMMCSV, gpQueryFilterField, GP_QUERY_WINDOW_DAYS} from "./TLEUtils";
 import {showChoice} from "./showError";
+import {t} from "./i18n";
 import {SITREC_SERVER} from "./configUtils";
 
 // A dated satellite file is named for the date it covers, e.g.
@@ -237,7 +238,7 @@ async function performRefresh(setDate, found) {
         await showChoice(
             `Could not fetch the satellite data for ${dateStr}.\n\n${e.message}\n\n` +
             `The sitch is unchanged and still has the data it was saved with.`,
-            {title: "Refresh failed", options: [{label: "OK", value: "ok", primary: true}]});
+            {title: t("tleRefresh.failedTitle"), options: [{label: t("misc.ok"), value: "ok", primary: true}]});
         return;
     }
 

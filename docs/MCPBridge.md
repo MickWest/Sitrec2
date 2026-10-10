@@ -29,7 +29,8 @@ If you use the ChatGPT desktop app, you can control Sitrec without installing an
 1. Open Sitrec at `https://www.metabunk.org/sitrec`.
 2. Open **Help → Documentation → Download MCP Bridge**, or download
    [SitrecBridge.zip](https://www.metabunk.org/sitrec/tools/SitrecBridge/dist/SitrecBridge.zip)
-   directly.
+   directly. The menu item is there only when the installation's build includes the Bridge
+   download; the demo on GitHub Pages does not.
 3. Save `SitrecBridge.zip`.
 4. Unzip it to a permanent folder. Your MCP configuration will point to this
    exact location, so do not leave it somewhere that may be cleaned up. For

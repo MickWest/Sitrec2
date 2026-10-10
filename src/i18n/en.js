@@ -3446,7 +3446,14 @@ const en = {
         },
     },
 
+    // Refreshing the satellite data a saved sitch was made with (src/TLERefresh.js).
+    tleRefresh: {
+        failedTitle: "Refresh failed",
+    },
+
     misc: {
+        // The button that closes a notice.
+        ok: "OK",
         freeLookCamera: {
             label: "Free Look Camera",
             tooltip: "Fly the look camera by hand, exactly like the main view camera.\n" +

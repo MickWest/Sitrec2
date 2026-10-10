@@ -18,6 +18,16 @@ const LAYOUT_KEY = /^SITREC_CUSTOM_SOUNDING_(.+)_LEVEL_TAG$/;
 // Unit names are compared lower-case. Each table converts TO the unit SondeData
 // uses: metres, metres per second, hPa.
 export const LENGTH_TO_M = {m: 1, meters: 1, metres: 1, ft: 0.3048, feet: 0.3048, km: 1000};
+// An altitude can also be a flight level: hundreds of feet of PRESSURE altitude. FL x
+// 30.48 m is the standard-atmosphere height for the level's pressure, which is the
+// height Sitrec gives a level that has only a pressure.
+export const ALTITUDE_TO_M = {...LENGTH_TO_M, fl: 30.48};
+
+// The position's elevation is in the altitude unit unless _ELEV_UNITS says otherwise.
+// A flight level is not a unit for an elevation; with flight levels it is feet.
+export function defaultElevationUnit(altitudeUnit) {
+    return altitudeUnit.toLowerCase() === "fl" ? "ft" : altitudeUnit;
+}
 export const SPEED_TO_MPS = {"m/s": 1, mps: 1, kt: 0.514444, kts: 0.514444, knots: 0.514444, "km/h": 1 / 3.6, kph: 1 / 3.6, mph: 0.44704};
 export const PRESSURE_TO_HPA = {hpa: 1, mb: 1, mbar: 1, pa: 0.01, kpa: 10, inhg: 33.8639};
 export const TEMP_TO_C = {
@@ -100,13 +110,16 @@ export function soundingXMLLayoutsFromEnv(env, report = message => console.warn(
             timeTag: tagPath(setting("TIME_TAG")),
             xmlnsContains: substringList(setting("XMLNS_CONTAINS")),
             fileContains: substringList(setting("FILE_CONTAINS")),
-            altToM: unit("ALT_UNITS", LENGTH_TO_M, "m"),
-            elevToM: unit("ELEV_UNITS", LENGTH_TO_M, altitudeUnits),
+            altToM: unit("ALT_UNITS", ALTITUDE_TO_M, "m"),
+            elevToM: unit("ELEV_UNITS", LENGTH_TO_M, defaultElevationUnit(altitudeUnits)),
             windSpeedToMps: unit("WIND_SPEED_UNITS", SPEED_TO_MPS, "m/s"),
             pressureToHPa: unit("PRESSURE_UNITS", PRESSURE_TO_HPA, "hPa"),
             tempToC: unit("TEMP_UNITS", TEMP_TO_C, "C"),
             altAboveGround: choice("ALT_REFERENCE", ["msl", "agl"], "msl") === "agl",
             windDirIsTo: choice("WIND_DIR_CONVENTION", ["from", "to"], "from") === "to",
+            // A weather file can be a forecast or model product, so its profile counts as
+            // a model in the traverse wind evidence unless the layout says it is measured.
+            measured: choice("DATA_KIND", ["model", "measured"], "model") === "measured",
         };
 
         if (layout.windDirTag.length === 0) problems.push(`${prefix}WIND_DIR_TAG is not set`);
@@ -252,6 +265,12 @@ function findBeside(triple, path) {
     return findAll(triple, path)[0] ?? findAll(triple, [wanted])[0] ?? null;
 }
 
+// A longitude given as 0 to 360 (common in weather data) taken to -180 to 180, as
+// every other position in Sitrec is.
+export function signedLongitude(lon) {
+    return lon >= 180 ? lon - 360 : lon;
+}
+
 // The position that belongs to the profile: the Latitude/Longitude pair found in
 // the nearest element that encloses the levels. A file can hold other positions
 // (other data objects); one further out is used only when nothing nearer exists.
@@ -267,7 +286,7 @@ function findPosition(levelHit, layout, parseCoordinate) {
             const elevationHit = findBeside(triple, layout.elevTag);
             const elevationNumber = elevationHit ? parseFloat(valueText(elevationHit.element, layout)) : NaN;
             const elevation = Number.isFinite(elevationNumber) ? elevationNumber : null;
-            return {lat, lon, elev: elevation === null ? 0 : elevation * layout.elevToM};
+            return {lat, lon: signedLongitude(lon), elev: elevation === null ? 0 : elevation * layout.elevToM};
         }
     }
     return null;
@@ -342,6 +361,7 @@ export function parseSoundingXML(xml, layout, defaultDate = new Date(), parseCoo
         datetime: readTime(xml, layout, defaultDate),
         levels,
         source: "xml",
+        measured: layout.measured,
         hasGPS: false,
     };
 }

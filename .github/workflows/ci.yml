@@ -34,10 +34,6 @@ jobs:
       contents: read
     strategy:
       matrix:   # run a separate jub for all combinations of the following variables
-        # 22.13, as used in development. The thermal tests start Node processes that import
-        # tools/thermal/*.js as ES modules; Node detects ES modules in .js files only from
-        # 22.7, so on 22.4 those imports failed as CommonJS. Quoted: YAML reads 22.10 as 22.1.
-        node-version: ['22.13']
         # Ubuntu by default; all three on a manual run.
         #
         # This was pinned to macOS because the suite failed on Linux. The cause was one
@@ -65,10 +61,13 @@ jobs:
         # but checkout only does a shallow clone by default and the tags are not available
         # fetch-tags: true is supposed to fetch the tags without a full clone, but doesn't work ?
         fetch-depth: 0    # do a full clone instead. for now it doesn't seem to be any slower
-    - name: use node.js ${{ matrix.node-version }}
+    # Every workflow takes the Node version from .nvmrc: the version used in development
+    # (22.13). The thermal tests start Node processes that import tools/thermal/*.js as ES
+    # modules, and Node detects ES modules in .js files only from 22.7.
+    - name: use node.js (.nvmrc)
       uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
       with:
-        node-version: ${{ matrix.node-version }}
+        node-version-file: .nvmrc
         # cache the downloaded node version and the package dependencies
         # it doesn't seem to make it faster for now, disabled
         #cache: npm
@@ -115,10 +114,10 @@ jobs:
       with:
         # No job here pushes with the checkout token.
         persist-credentials: false
-    - name: use node.js 22
+    - name: use node.js (.nvmrc)
       uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
       with:
-        node-version: '22.13'
+        node-version-file: .nvmrc
     - name: partition lint
       run: npm run lint-partition
 

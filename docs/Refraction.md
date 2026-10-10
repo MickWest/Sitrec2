@@ -147,8 +147,10 @@ down with distance, as the light does, so the target is inside the frustum where
 sees it.
 
 This aim is for the picture only. The line of sight that Sitrec calculates from this camera,
-and everything built on it (traverses, azimuth and elevation, the ground track), is still the
-straight line to the target.
+and everything built on it (traverses, azimuth and elevation, the ground track, the camera in a
+KML or MISB export), is still the straight line to the target. So are the angles that the
+camera hands to the Manual heading: after a switch from *To Target* to *Manual*, the camera
+looks along the straight line, and the target is drawn above the center by the lift.
 
 ---
 

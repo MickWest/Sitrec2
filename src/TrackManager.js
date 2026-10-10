@@ -1527,6 +1527,9 @@ class CTrackManager extends CManager {
                 stationId: sonde0?.station?.id ?? "",
                 stationName: sonde0?.station?.name ?? "",
                 source: normSource,
+                // A radiosonde file is a measurement. An XML weather file is a model
+                // product unless its layout says the data is measured (_DATA_KIND).
+                evidenceClass: rawSrc === "xml" && !sonde0.measured ? "model" : "observation",
                 // Every sounding: its Track entry in the Wind Source menu reads
                 // the profile at the target's altitude, not the row for the time.
                 windByAltitude: true,

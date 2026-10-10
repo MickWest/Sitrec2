@@ -15,6 +15,7 @@ import {MV3} from "../threeUtils";
 import {getCelestialDirection, getCelestialDirectionFromRaDec} from "../CelestialMath";
 import {applyRefractionToDirection} from "../atmosphere/refraction";
 import {currentRefractionOpts} from "../atmosphere/refractionSettings";
+import {lookAtDrawnPosition, turnToGeometricAim} from "../atmosphere/refractionAim";
 import {t} from "../i18n";
 import {raycastLocalGround} from "../raycastGround";
 import {ViewMan} from "../CViewManager";
@@ -747,6 +748,10 @@ export class CNodeCamera extends CNode3D {
     // so the Camera > FOV (Zoom) controls (and Shift+wheel, see CameraControls'
     // zoomFovBy) stay live and let you frame what you have flown to.
     applyControllers(f, depth = 0) {
+        // Only a controller applied on this pass may say that the camera is aimed off its
+        // geometric line of sight (lookAtDrawnPosition sets it again). A rotation left by
+        // an earlier controller would turn the readers of the line of sight wrongly.
+        this.camera.userData.geometricAim = null;
         if (this.freeLook) {
             this.applyFOVControllers(f);
             return;
@@ -907,8 +912,11 @@ export class CNodeCamera extends CNode3D {
         const target = this.getGroundTrackSwitchTarget(switchFrame);
         if (!target) return;
 
+        // Aimed like To Target: at where the ground point is drawn, with the rotation
+        // back to it carried for the line of sight. This also replaces the rotation
+        // that this frame's controllers left for the point they aimed at.
         this.camera.up.copy(this.getUpVector(this.camera.position));
-        this.camera.lookAt(target);
+        lookAtDrawnPosition(this.camera, target);
         this.camera.updateMatrix();
         this.camera.updateMatrixWorld(true);
     }
@@ -941,8 +949,11 @@ export class CNodeCamera extends CNode3D {
             camera.updateMatrix();
             camera.updateMatrixWorld(true);
 
+            // Along the line of sight, which is geometric: a controller that aims at
+            // where refraction draws a point carries the rotation back to it.
             this._groundTrackSwitchRaycaster.ray.origin.copy(camera.position);
             camera.getWorldDirection(this._groundTrackSwitchRaycaster.ray.direction);
+            turnToGeometricAim(camera, this._groundTrackSwitchRaycaster.ray.direction);
             this._groundTrackSwitchRaycaster.near = 0;
             this._groundTrackSwitchRaycaster.far = Infinity;
 

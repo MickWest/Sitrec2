@@ -15,6 +15,7 @@ import {
     applyRefractionMaster,
     ensureRefractionSettings,
     installTerrestrialRefractionSceneHook,
+    resetTerrestrialRefractionSweep,
 } from "../src/atmosphere/refractionSettings";
 import {Mesh, MeshBasicMaterial, PerspectiveCamera, Scene, SphereGeometry, Vector3} from "three";
 
@@ -207,6 +208,35 @@ describe("frustum culling in the scene hook", () => {
         applyRefractionMaster();
         render();
         expect(wing.frustumCulled).toBe(true);
+    });
+
+    test("the ray-traced pass holding one view off keeps the lofted objects for the others", () => {
+        const {wing, render} = build();
+        resetTerrestrialRefractionSweep();
+        render();
+        expect(wing.frustumCulled).toBe(false);
+        // RefractionPass.begin(): the terrain half off for one render, the master still on.
+        Sit.terrestrialRefraction = false;
+        render();
+        expect(wing.frustumCulled).toBe(true);
+        Sit.terrestrialRefraction = true;
+        // The next view, before the next sweep, still exempts the wing.
+        render();
+        expect(wing.frustumCulled).toBe(false);
+    });
+
+    test("with refraction switched off, the hook lets go of the objects", () => {
+        const {wing, render} = build();
+        resetTerrestrialRefractionSweep();
+        render();
+        Sit.refractionTerrain = false;
+        applyRefractionMaster();
+        render();
+        expect(wing.frustumCulled).toBe(true);
+        // A later change to the object's own setting is not undone by later renders.
+        wing.frustumCulled = false;
+        render();
+        expect(wing.frustumCulled).toBe(false);
     });
 
     for (const [name, switchOn, switchOff] of [

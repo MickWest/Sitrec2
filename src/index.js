@@ -2170,8 +2170,11 @@ async function initializeOnce() {
         ).perm();
     }
 
-    docs.addExternalLink(t("menus.help.documentation.downloadBridge"), "./tools/SitrecBridge/dist/SitrecBridge.zip").perm()
-        .tooltip(t("menus.help.documentation.downloadBridgeTooltip"));
+    // Only in a build that packaged the Bridge zip (BRIDGE_ZIP_PACKAGED, webpack.common.js).
+    if (BRIDGE_ZIP_PACKAGED) {
+        docs.addExternalLink(t("menus.help.documentation.downloadBridge"), "./tools/SitrecBridge/dist/SitrecBridge.zip").perm()
+            .tooltip(t("menus.help.documentation.downloadBridgeTooltip"));
+    }
 
     // The secure build offers no external links (see docs/dev/Secure-Build.md).
     if (configParams?.extraHelpLinks !== undefined && !isSecureBuild) {

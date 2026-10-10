@@ -45,6 +45,9 @@ All of it is a heuristic over tag names and values.
   size of the numbers, and the altitude unit from altitude against pressure in the
   standard atmosphere. These are marked as guesses. A wind speed unit that the file
   does not state cannot be inferred.
+- An altitude tag named `FlightLevel`, `Flight_Level` or `FL` holds flight levels:
+  the tool proposes `_ALT_UNITS=fl` (marked CHECK). Sitrec reads a flight level as the
+  standard-atmosphere height for its pressure, FL x 30.48 m.
 
 ## Files
 
@@ -52,7 +55,7 @@ All of it is a heuristic over tag names and values.
 |---|---|
 | `soundingLayout.js` | The reader for the settings. Sitrec imports it through `src/ParseSoundingXML.js`, so the check in this tool and the import in Sitrec are the same code. |
 | `analyze.js` | The detection, the proposed settings, the check and the report. No DOM. |
-| `xmlObject.js` | XML document to the nested object that the reader takes. Equal to `src/parseXml.js`; a test holds them equal. |
+| `xmlObject.js` | XML document to the nested object that the reader takes. Sitrec's `src/parseXml.js` imports it, so the tool and Sitrec read a file the same way. |
 | `app.js`, `index.html` | The page. |
 | `sample.xml` | A made-up file for trying the tool. |
 

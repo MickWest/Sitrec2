@@ -23,6 +23,9 @@ export class CNodeAtmosphericProfile extends CNode {
         // "Track: <name>" wind source is read by altitude, not by time
         // (see altitudeProfileForSourceKey in WindSources.js).
         this.windByAltitude = v.windByAltitude ?? false;
+        // "observation" | "model": what kind of evidence this profile is in the traverse
+        // wind comparison (AnalyzeTraverse.windSourceEvidenceClass).
+        this.evidenceClass = v.evidenceClass ?? "observation";
         this.stationLat = null;
         this.stationLon = null;
         this.levels = []; // sorted by altitude: [{alt, temp, pressure, rh, windDir, windSpeed}]

@@ -192,7 +192,7 @@ Less common adjustments.
 | Control | Default | What it does |
 |---|---|---|
 | **Free Look Camera** | Off | Fly the look camera by hand, like the main view camera. While it is on, the Location and Heading sources are suspended, but the field of view is not. Where you fly to is written into the Manual position, so turning it off keeps the camera there. Touching a control in Location or Heading turns it off. See [User Interface](UserInterface.md). |
-| **Switch to Ground Track at** | 0 | 0 turns this off. At any other frame, Sitrec finds where the camera's center line meets the ground at that frame, and aims at that ground point for every later frame. |
+| **Switch to Ground Track at** | 0 | 0 turns this off. At any other frame, Sitrec finds where the camera's line of sight meets the ground at that frame, and aims at that ground point for every later frame. With refraction on, the line of sight is the straight line, and the camera aims at where the point is drawn (see [Refraction](Refraction.md#cameras-that-point-at-a-target)). |
 | **Look View Orthographic** | Off | Draws the look view with a parallel (orthographic) projection instead of perspective. The size matches the current framing at the ground and scales as the camera moves. |
 | **Main View Orthographic** | Off | The same, for the main view. |
 | **Main Near Plane (m)** | 1 | Near clipping distance of the main view camera. Increase it to slice through buildings or terrain in front of the camera. Useful in orthographic mode. |

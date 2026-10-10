@@ -817,7 +817,7 @@ export class CNodeDisplayCameraFrustum extends CNode3DGroup {
         // Faces are in the order right, bottom, left, top (see updateSidesColors()).
         if (this.showFrustum && this.shadedFrustum) {
             const fw = line_points[3], fh = line_points[4], fd = line_points[5];
-            // Each side runs between two neighbouring corner edges. A straight frustum is
+            // Each side runs between two neighboring corner edges. A straight frustum is
             // one triangle a side. A bent one is a strip of the same pieces as its edges,
             // so that the sides stay on the lines.
             const cornerXY = [[fw, fh], [fw, -fh], [-fw, -fh], [-fw, fh]];

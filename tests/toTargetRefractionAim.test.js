@@ -28,10 +28,9 @@ jest.mock("../src/JetUtils", () => ({}));
 jest.mock("../src/i18n", () => ({}));
 // The real lift, with a switch in place of the Sit settings.
 jest.mock("../src/atmosphere/refractionSettings", () => ({
-    apparentPositionFrom: (observer, point) => {
-        const {liftWorldPoint, terrestrialLiftContext} = jest.requireActual("../src/atmosphere/terrestrialRefraction");
-        const context = terrestrialLiftContext(observer, {enabled: mockRefraction, k: 0.176});
-        return liftWorldPoint(context, point);
+    currentTerrestrialLiftContext: (observer) => {
+        const {terrestrialLiftContext} = jest.requireActual("../src/atmosphere/terrestrialRefraction");
+        return terrestrialLiftContext(observer, {enabled: mockRefraction, k: 0.176});
     },
 }));
 
