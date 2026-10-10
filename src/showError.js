@@ -201,9 +201,10 @@ function buildModalShell(title, message) {
     `;
 
     const modal = document.createElement('div');
+    // A long list of options (a choice between many saved versions) scrolls in the modal.
     modal.style.cssText = `
         background: white; border-radius: 8px; padding: 20px;
-        width: 60vw; max-width: 480px;
+        width: 60vw; max-width: 480px; max-height: 85vh; overflow-y: auto;
         box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
         font-family: Arial, sans-serif;
     `;

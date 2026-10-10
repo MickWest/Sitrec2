@@ -10,6 +10,7 @@ import {
     migrateMaskOverlayId,
     migrateLegacyMeasurements,
     legacyMeasurementRef,
+    migrateChapterEventsToMarkers,
 } from "../src/SitchMigrations";
 
 // A minimal saved-custom shape with the OLD nested two-switch camera-heading model.
@@ -400,5 +401,62 @@ describe("migrateLegacyMeasurements", () => {
     test("keeps any other node id as an Other reference", () => {
         expect(legacyMeasurementRef("jetTrack")).toEqual({kind: "node", id: "jetTrack"});
         expect(legacyMeasurementRef("cameraTrackSwitchSmooth")).toEqual({kind: "camera", id: "lookCamera"});
+    });
+});
+
+describe("migrateChapterEventsToMarkers", () => {
+    // A save from when each chapter kept "timeline events" and the markers belonged to the sitch.
+    const oldChapterSave = () => ({
+        name: "custom",
+        timelineMarkers: [{frame: 10, label: "Flash"}, {frame: 40, label: ""}],
+        subSitchesData: {
+            currentSubIndex: 1,
+            subSitches: [
+                {name: "Chapter 1", state: {frame: 0, events: [], mods: {}}},
+                {name: "Chapter 2", state: {frame: 5, events: [{name: "Turn", frame: 20}, {name: "Second flash", frame: 10}], mods: {}}},
+            ],
+        },
+    });
+
+    test("each chapter gets the sitch's markers plus its own events", () => {
+        const obj = oldChapterSave();
+        migrateChapterEventsToMarkers(obj);
+        const [first, second] = obj.subSitchesData.subSitches;
+        expect(first.state.markers).toEqual([{frame: 10, label: "Flash"}, {frame: 40, label: ""}]);
+        expect(second.state.markers).toEqual([
+            {frame: 10, label: "Flash; Second flash"},
+            {frame: 20, label: "Turn"},
+            {frame: 40, label: ""},
+        ]);
+        expect(first.state.events).toBeUndefined();
+        expect(second.state.events).toBeUndefined();
+        // The top-level markers are the current chapter's, which a load shows first.
+        expect(obj.timelineMarkers).toEqual(second.state.markers);
+    });
+
+    test("is idempotent", () => {
+        const obj = oldChapterSave();
+        migrateChapterEventsToMarkers(obj);
+        const once = JSON.parse(JSON.stringify(obj));
+        migrateChapterEventsToMarkers(obj);
+        expect(obj).toEqual(once);
+    });
+
+    test("leaves a save without chapter events alone", () => {
+        const older = {name: "custom", timelineMarkers: [{frame: 3, label: "x"}],
+            subSitchesData: {subSitches: [{name: "Sub 1", state: {mods: {}}}]}};
+        const copy = JSON.parse(JSON.stringify(older));
+        migrateChapterEventsToMarkers(older);
+        expect(older).toEqual(copy);
+        const noChapters = {name: "custom", timelineMarkers: [{frame: 3, label: "x"}]};
+        migrateChapterEventsToMarkers(noChapters);
+        expect(noChapters).toEqual({name: "custom", timelineMarkers: [{frame: 3, label: "x"}]});
+    });
+
+    test("a current chapter with no markers clears the top-level markers", () => {
+        const obj = {name: "custom", subSitchesData: {subSitches: [{name: "Chapter 1", state: {events: [], mods: {}}}]}};
+        migrateChapterEventsToMarkers(obj);
+        expect(obj.subSitchesData.subSitches[0].state.markers).toEqual([]);
+        expect("timelineMarkers" in obj).toBe(false);
     });
 });

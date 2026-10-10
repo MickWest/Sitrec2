@@ -1,6 +1,10 @@
 const fs = require('fs');
 const vm = require('vm');
 const babel = require('@babel/core');
+import {TimelineMarkers} from "../src/TimelineMarkers";
+import {t} from "../src/i18n";
+import {findHorizonCrossings} from "../src/HorizonCrossings";
+import {migrateChapterEventsToMarkers} from "../src/SitchMigrations";
 
 // Exercise the actual mixin with a small scene graph, independent of WebGL and the app singleton.
 function harness() {
@@ -12,40 +16,87 @@ function harness() {
     let prompt = async () => null, confirm = async () => false;
     const views = {};
     const ViewMan = {fullscreenView:null, exists:id=>!!views[id], setFullscreenView(view){this.fullscreenView=view;}, restoreFullscreenFromMods(){this.fullscreenView=Object.values(views).find(v=>v.doubled)||null;}};
-    const context = {structuredClone, Globals, par, Sit, NodeMan, ViewMan, console, setRenderOne(){}, UIChangedFrame(){}, markSitchDirty(){Globals.sitchDirty=true;}, showError:jest.fn(), showPrompt:(...args)=>prompt(...args), showConfirm:(...args)=>confirm(...args), textSitchToObject:JSON.parse, setNewSitchObject:data => {Globals.newSitchObject=data;}};
+    const editTimelineMarkers = jest.fn((description, change) => change());
+    const UndoManager = {clear:jest.fn()};
+    const context = {structuredClone, Globals, par, Sit, NodeMan, ViewMan, console, TimelineMarkers, editTimelineMarkers, UndoManager, t, setRenderOne(){}, UIChangedFrame(){}, markSitchDirty(){Globals.sitchDirty=true;}, showError:jest.fn(), showPrompt:(...args)=>prompt(...args), showConfirm:(...args)=>confirm(...args), textSitchToObject:JSON.parse, setNewSitchObject:data => {Globals.newSitchObject=data;}};
     const source = fs.readFileSync(require.resolve('../src/CustomManagerSubSitch.js'),'utf8');
     const code = babel.transformSync(source, {configFile:false, plugins:[() => ({visitor:{ImportDeclaration(path){path.remove();}, ExportNamedDeclaration(path){path.replaceWith(path.node.declaration);}}})]}).code;
     vm.createContext(context); vm.runInContext(code+';globalThis.methods=subSitchMethods;', context);
-    const manager = {...context.methods,subIncludes:{Cameras:[1,'mainCamera']},subSaveEnabled:{Cameras:true},subLoadEnabled:{Cameras:true},subSitches:[],currentSubIndex:0,subSitchControllers:[],chapterBusy:false,rebuildSubSitchMenu:jest.fn(),rebuildTimelineEvents:jest.fn()};
+    const manager = {...context.methods,subIncludes:{cameras:[1,'mainCamera'],markers:[1]},subSaveEnabled:{cameras:true,markers:true},subLoadEnabled:{cameras:true,markers:true},subSitches:[],currentSubIndex:0,chapterBusy:false,rebuildSubSitchMenu:jest.fn()};
+    TimelineMarkers.clear();
     manager.initializeFirstSubSitch();
-    return {manager,node,Globals,par,context,views,setPrompt:fn=>prompt=fn,setConfirm:fn=>confirm=fn};
+    return {manager,node,Globals,par,context,views,UndoManager,setPrompt:fn=>prompt=fn,setConfirm:fn=>confirm=fn};
 }
 
-test('switch captures outgoing edits, restores frame/events, and isolates mutable node values',()=>{
-    const {manager:m,node,par}=harness();
-    m.timelineEvents=[{name:'Flash',frame:5}]; par.frame=5; node.value.zoom=2;
-    m.updateAndAddSubSitch(); node.value.zoom=3; par.frame=8; m.timelineEvents[0].name='Edited';
+test('a chapter switch clears undo, so an undo cannot put one chapter\'s markers into another',()=>{
+    const {manager:m,UndoManager}=harness();
+    TimelineMarkers.add(5,'Chapter 1'); m.updateAndAddSubSitch();
+    UndoManager.clear.mockClear();
     m.switchToSubSitch(0);
-    expect(node.value.zoom).toBe(2); expect(par.frame).toBe(5); expect(m.timelineEvents[0].name).toBe('Flash');
+    expect(UndoManager.clear).toHaveBeenCalledTimes(1);
+    m.switchToSubSitch(0);    // already current: nothing is restored, so undo is kept
+    expect(UndoManager.clear).toHaveBeenCalledTimes(1);
+});
+
+test('switch captures outgoing edits, restores frame and markers, and isolates mutable node values',()=>{
+    const {manager:m,node,par}=harness();
+    TimelineMarkers.add(5,'Flash'); par.frame=5; node.value.zoom=2;
+    m.updateAndAddSubSitch(); node.value.zoom=3; par.frame=8; TimelineMarkers.rename(5,'Edited'); TimelineMarkers.add(9,'Only in chapter 2');
+    m.switchToSubSitch(0);
+    expect(node.value.zoom).toBe(2); expect(par.frame).toBe(5); expect(TimelineMarkers.list()).toEqual([{frame:5,label:'Flash'}]);
     node.value.zoom=9; expect(m.subSitches[0].state.mods.mainCamera.value.zoom).toBe(2);
-    m.switchToSubSitch(1); expect(node.value.zoom).toBe(3); expect(m.timelineEvents[0].name).toBe('Edited');
+    TimelineMarkers.add(1,'Live edit'); expect(m.subSitches[0].state.markers).toEqual([{frame:5,label:'Flash'}]);
+    m.switchToSubSitch(1); expect(node.value.zoom).toBe(3);
+    expect(TimelineMarkers.list()).toEqual([{frame:5,label:'Edited'},{frame:9,label:'Only in chapter 2'}]);
+    m.switchToSubSitch(0); expect(TimelineMarkers.list()).toEqual([{frame:1,label:'Live edit'},{frame:5,label:'Flash'}]);
 });
-test('legacy loading clamps invalid index and clears absent events',()=>{
-    const {manager:m}=harness(); m.timelineEvents=[{name:'old',frame:2}];
-    m.deserializeSubSitches({subSitches:[{name:'legacy',state:{mods:{}}}],currentSubIndex:999});
-    expect(m.currentSubIndex).toBe(0); expect(m.timelineEvents).toEqual([]);
+test('markers follow the capture and restore scope',()=>{
+    const {manager:m}=harness();
+    TimelineMarkers.add(3,'Shared');
+    m.subSaveEnabled.markers=false;
+    m.updateAndAddSubSitch();
+    expect(m.subSitches[0].state.markers).toBeUndefined();
+    TimelineMarkers.add(4,'Added later');
+    m.switchToSubSitch(0);
+    // Chapter 1 captured no markers, so they stay as they are.
+    expect(TimelineMarkers.frames()).toEqual([3,4]);
+    m.subSaveEnabled.markers=true; m.switchToSubSitch(1); TimelineMarkers.clear(); m.switchToSubSitch(0);
+    m.subLoadEnabled.markers=false; m.switchToSubSitch(1);
+    expect(TimelineMarkers.frames()).toEqual([3,4]);
 });
-test('failed switch rolls scene back and preserves outgoing snapshot',()=>{
-    const {manager:m,node,context}=harness(); m.updateAndAddSubSitch(); m.switchToSubSitch(0); node.value.zoom=7;
+test('loading a chapter list restores the current chapter; a chapter without markers keeps the current ones',()=>{
+    const {manager:m}=harness(); TimelineMarkers.add(2,'old');
+    m.deserializeSubSitches({subSitches:[{name:'legacy',state:{mods:{}}}]});
+    expect(m.currentSubIndex).toBe(0); expect(TimelineMarkers.list()).toEqual([{frame:2,label:'old'}]);
+    m.deserializeSubSitches({subSitches:[{name:'a',state:{mods:{},markers:[]}},{name:'b',state:{mods:{},markers:[{frame:7,label:'b'}]}}],currentSubIndex:1});
+    expect(m.currentSubIndex).toBe(1); expect(TimelineMarkers.list()).toEqual([{frame:7,label:'b'}]);
+});
+test('an old save with chapter events loads with those events as the markers of each chapter',()=>{
+    const {manager:m}=harness();
+    const saved={name:'custom',timelineMarkers:[{frame:1,label:'Shared'}],subSitchesData:{currentSubIndex:0,subSitches:[
+        {name:'Chapter 1',state:{frame:0,mods:{},events:[{name:'Flash begins',frame:12}]}},
+        {name:'Chapter 2',state:{frame:0,mods:{},events:[]}}]}};
+    migrateChapterEventsToMarkers(saved);
+    m.deserializeSubSitches(saved.subSitchesData);
+    expect(TimelineMarkers.list()).toEqual([{frame:1,label:'Shared'},{frame:12,label:'Flash begins'}]);
+    m.switchToSubSitch(1);
+    expect(TimelineMarkers.list()).toEqual([{frame:1,label:'Shared'}]);
+});
+test('an error while restoring a chapter surfaces, and the current chapter does not change',()=>{
+    const {manager:m,node}=harness(); m.updateAndAddSubSitch(); m.switchToSubSitch(0);
     const original=node.modDeserialize; node.modDeserialize=function(data){if(data.value.zoom===1) throw Error('bad state'); original.call(this,data);};
-    m.switchToSubSitch(1); expect(m.currentSubIndex).toBe(0); expect(node.value.zoom).toBe(7); expect(context.showError).toHaveBeenCalled();
+    expect(()=>m.switchToSubSitch(1)).toThrow('bad state'); expect(m.currentSubIndex).toBe(0);
 });
-test('cancelled and stale event prompts make no changes; repeated clicks are gated',async()=>{
+test('cancelled and stale rename prompts make no changes; repeated clicks are gated',async()=>{
     const {manager:m,Globals,setPrompt}=harness(); let resolve; setPrompt(()=>new Promise(r=>resolve=r));
-    const pending=m.addTimelineEvent(); await m.addTimelineEvent(); expect(m.chapterBusy).toBe(true);
-    resolve(null); await pending; expect(m.timelineEvents).toBeUndefined(); expect(m.chapterBusy).toBe(false);
-    const stale=m.addTimelineEvent(); Globals.loadGeneration++; m.timelineEvents=[]; resolve('stale'); await stale;
-    expect(m.timelineEvents).toEqual([]); expect(Globals.sitchDirty).toBeUndefined();
+    const name=m.subSitches[0].name;
+    const pending=m.renameCurrentSubSitch(); await m.renameCurrentSubSitch(); expect(m.chapterBusy).toBe(true);
+    resolve(null); await pending; expect(m.subSitches[0].name).toBe(name); expect(m.chapterBusy).toBe(false);
+    const stale=m.renameCurrentSubSitch(); Globals.loadGeneration++; resolve('stale'); await stale;
+    expect(m.subSitches[0].name).toBe(name); expect(Globals.sitchDirty).toBeUndefined();
+    Globals.loadGeneration--; m.chapterBusy=false;
+    const renamed=m.renameCurrentSubSitch(); resolve('  Approach  '); await renamed;
+    expect(m.subSitches[0].name).toBe('Approach'); expect(Globals.sitchDirty).toBe(true);
 });
 test('revert cancellation preserves edits and confirmed revert uses full baseline',async()=>{
     const {manager:m,Globals,setConfirm}=harness(); m.markChapterBaseline('{"sitch":"saved"}');
@@ -64,13 +115,14 @@ test('cancelled version confirmation and stale delete preserve sitch',async()=>{
     await m.restoreChapterFromData({subSitches:[{name:'v',state:{mods:{}}}]},m.subSitches[1],1); expect(m.subSitches).toEqual(before);
     let resolve; setConfirm(()=>new Promise(r=>resolve=r)); const pending=m.deleteCurrentSubSitch(); Globals.loadGeneration++; resolve(true); await pending; expect(m.subSitches).toEqual(before);
 });
-test('failed delete and restore keep the chapter list and roll back scene',async()=>{
+test('an error in delete or restore surfaces and leaves the chapter list as it was',async()=>{
     const {manager:m,node,setConfirm}=harness(); m.updateAndAddSubSitch(); node.value.zoom=8; setConfirm(async()=>true);
     const original=node.modDeserialize; node.modDeserialize=function(data){if(data.value?.zoom===1) throw Error('broken'); original.call(this,data);};
-    const before=structuredClone(m.subSitches); await m.deleteCurrentSubSitch(); expect(m.subSitches).toEqual(before); expect(node.value.zoom).toBe(8);
+    const before=structuredClone(m.subSitches);
+    await expect(m.deleteCurrentSubSitch()).rejects.toThrow('broken'); expect(m.subSitches).toEqual(before); expect(m.chapterBusy).toBe(false);
     m.chooseChapterOption=async()=>0;
-    await expect(m.restoreChapterFromData({subSitches:[{state:{mods:{mainCamera:{value:{zoom:1}}}}}]},m.subSitches[1],1)).rejects.toThrow();
-    expect(m.subSitches).toHaveLength(2); expect(node.value.zoom).toBe(8);
+    await expect(m.restoreChapterFromData({subSitches:[{state:{mods:{mainCamera:{value:{zoom:1}}}}}]},m.subSitches[1],1)).rejects.toThrow('broken');
+    expect(m.subSitches).toHaveLength(2);
 });
 function serializeHarness() {
     const Globals={loadGeneration:1}; const Sit={isCustom:true}; let resolveSave;
@@ -112,7 +164,7 @@ test('chapter switching reconciles fullscreen ownership and preserves view resto
     expect(node.doubled).toBe(false); expect(context.ViewMan.fullscreenView).toBeNull();
     m.switchToSubSitch(1);
     expect(node.doubled).toBe(true); expect(context.ViewMan.fullscreenView).toBe(node);
-    m.subLoadEnabled.Cameras=false;
+    m.subLoadEnabled.cameras=false;
     m.switchToSubSitch(0);
     expect(node.doubled).toBe(true); expect(context.ViewMan.fullscreenView).toBe(node);
 });
@@ -142,7 +194,7 @@ test('recovery retains values overwritten by restore even when excluded from cap
     const lighting={value:8,modSerialize(){return {value:this.value};},modDeserialize(data){this.value=data.value;},recalculateCascade(){}};
     context.NodeMan.iterate=fn=>{fn('mainCamera',node);fn('lighting',lighting);};
     context.NodeMan.get=id=>id==='lighting'?lighting:node;
-    m.subIncludes.Others=[0,'lighting'];m.subSaveEnabled.Others=false;m.subLoadEnabled.Others=true;
+    m.subIncludes.others=[0,'lighting'];m.subSaveEnabled.others=false;m.subLoadEnabled.others=true;
     m.chooseChapterOption=async()=>0;setConfirm(async()=>true);
     await m.restoreChapterFromData({subSitches:[{name:'historic',state:{mods:{lighting:{value:2}}}}]},m.subSitches[0],1);
     expect(lighting.value).toBe(2);
@@ -166,7 +218,7 @@ function saveWrapperHarness() {
 test('recovery remains complete after visiting, leaving and serializing with filtered capture',async()=>{
     const {manager:m,node,setConfirm}=harness();
     m.updateAndAddSubSitch(); node.value.zoom=9;
-    m.subSaveEnabled.Cameras=false; m.chooseChapterOption=async()=>0; setConfirm(async()=>true);
+    m.subSaveEnabled.cameras=false; m.chooseChapterOption=async()=>0; setConfirm(async()=>true);
     await m.restoreChapterFromData({subSitches:[{name:'saved',state:{mods:{mainCamera:{value:{zoom:3}}}}}]},m.subSitches[1],1);
     m.switchToSubSitch(2); expect(node.value.zoom).toBe(9);
     m.switchToSubSitch(1);
@@ -257,37 +309,69 @@ test('stale desktop save failure cannot roll back a newly loaded sitch name',asy
     expect(await pending).toBe(false);expect(Sit.sitchName).toBe('B');expect(m.showLocalSaveError).not.toHaveBeenCalled();
 });
 
-test('predicted crossings convert simulation time into chapter frames and deduplicate events',()=>{
-    const {manager:m,context,par}=harness();
-    context.GlobalDateTimeNode={dateNow:new Date('2025-01-01T00:00:00Z')};
-    context.Sit.fps=30;context.Sit.simSpeed=2;par.frame=10;
-    const sat={name:'Test satellite',cachedEventTime:context.GlobalDateTimeNode.dateNow.getTime()+2000,cachedEventRising:true};
-    const update=jest.fn();
-    const ephemeris={updateEphemeris:update,nightSkyNode:{satellites:{TLEData:{satData:[sat,{name:'outside',cachedEventTime:sat.cachedEventTime+100000}]}}}};
-    context.NodeMan.iterate=fn=>fn('ephemeris',ephemeris);
-    m.addPredictedTimelineEvents();m.addPredictedTimelineEvents();
-    expect(update).toHaveBeenCalledWith(true);
-    expect(m.timelineEvents).toHaveLength(1);expect(m.timelineEvents[0].frame).toBe(40);
-    expect(m.timelineEvents[0].name).toContain('rise (estimated, 30 s samples)');
-    expect(m.subSitches[0].state.events).toEqual(m.timelineEvents);
+test('satellite markers go on the frames of the crossings, keep user labels, and are not added twice',()=>{
+    const {manager:m,context}=harness();
+    const start=Date.parse('2025-01-01T00:00:00Z');
+    context.Sit.fps=30;context.Sit.simSpeed=2;
+    context.GlobalDateTimeNode={frameToMS:frame=>start+frame*1000*2/30,msToFrame:ms=>(ms-start)*30/(1000*2)};
+    const horizonCrossings=jest.fn(()=>[
+        {sat:{name:'Test satellite'},timeMS:start+2000,rising:true},
+        {sat:{number:44713},timeMS:start+4010,rising:false},
+    ]);
+    context.NodeMan.get=id=>id==='ephemerisView'?{horizonCrossings}:undefined;
+    TimelineMarkers.add(60,'Flash');
+    m.addSatelliteMarkers();m.addSatelliteMarkers();
+    expect(horizonCrossings).toHaveBeenCalledWith(start,start+99*1000*2/30);
+    expect(TimelineMarkers.list()).toEqual([{frame:30,label:'Test satellite rises'},{frame:60,label:'Flash; 44713 sets'}]);
+    expect(context.editTimelineMarkers).toHaveBeenCalledWith('Add satellite rise / set markers',expect.any(Function));
 });
 
-test('ephemeris prediction records simulation crossing times and invalidates after seeks or observer movement',()=>{
-    const base=new Date('2025-01-01T00:00:00Z');
-    const position={value:[1,2,3],toArray(){return this.value;}};
+test('satellite markers report when there is no satellite data or no crossing',()=>{
+    const {manager:m,context}=harness();
+    context.NodeMan.get=()=>undefined;
+    m.addSatelliteMarkers();
+    expect(context.showError).toHaveBeenLastCalledWith('Load satellite data first, then try again.');
+    context.GlobalDateTimeNode={frameToMS:frame=>frame,msToFrame:ms=>ms};
+    context.NodeMan.get=id=>id==='ephemerisView'?{horizonCrossings:()=>[]}:undefined;
+    m.addSatelliteMarkers();
+    expect(context.showError).toHaveBeenCalledTimes(2);
+    expect(TimelineMarkers.count()).toBe(0);
+});
+
+function ephemerisHarness() {
+    const position={x:1,y:2,z:3};
     const calculate=jest.fn((sat,date)=>({time:date.getTime(),clone(){return {...this};},sub(){return this;},normalize(){return this;}}));
-    const context={console,Date,CNodeViewText:class {},bestSat:()=>({}),getAzElFromPositionAndForward:(pos,forward)=>[0,forward.time<base.getTime()+60000?-1:1]};
+    const base=new Date('2025-01-01T00:00:00Z');
+    const context={console,Date,CNodeViewText:class {},bestSat:()=>({}),findHorizonCrossings,
+        NodeMan:{get:id=>id==='lookCamera'?{camera:{position}}:undefined},
+        getAzElFromPositionAndForward:(pos,forward)=>[0,forward.time<base.getTime()+60000?-1:1]};
     const source=fs.readFileSync(require.resolve('../src/nodes/CNodeViewEphemeris.js'),'utf8');
     const code=babel.transformSync(source,{configFile:false,plugins:[()=>({visitor:{ImportDeclaration(p){p.remove();},ExportNamedDeclaration(p){p.replaceWith(p.node.declaration);}}})]}).code;
-    vm.createContext(context);vm.runInContext(code+';globalThis.methods=CNodeViewEphemeris.prototype;',context);
-    const manager={nightSkyNode:{satellites:{calcSatECEF:calculate}},...context.methods};
+    vm.createContext(context);vm.runInContext(code+';globalThis.methods=CNodeViewEphemeris.prototype;globalThis.observerCacheKey=observerCacheKey;',context);
+    const view=Object.assign(Object.create(context.methods),{nightSkyNode:{satellites:{calcSatECEF:calculate}}});
+    return {view,context,position,calculate,base};
+}
+
+test('ephemeris predictions are cached per 1 km of observer movement and 10 s of sitch time',()=>{
+    const {view,context,position,calculate,base}=ephemerisHarness();
     const sat={satrecs:[]};const camera={camera:{position}};
-    const predict=context.methods.predictNextEvent;
-    expect(predict.call(manager,sat,base,-1,camera)).toBe('AOS 1m 0s');
-    expect(sat.cachedEventTime).toBe(base.getTime()+60000);expect(sat.cachedEventRising).toBe(true);
+    const predict=(date)=>view.predictNextEvent(sat,date,-1,camera,context.observerCacheKey(position));
+    expect(predict(base)).toBe('AOS 1m 0s');
     const count=calculate.mock.calls.length;
-    predict.call(manager,sat,new Date(base.getTime()+1000),-1,camera);expect(calculate).toHaveBeenCalledTimes(count);
-    position.value=[4,5,6];predict.call(manager,sat,new Date(base.getTime()+1000),-1,camera);expect(calculate.mock.calls.length).toBeGreaterThan(count);
+    predict(new Date(base.getTime()+1000));expect(calculate).toHaveBeenCalledTimes(count);
+    // A move of 300 m keeps the cached prediction; a move of 2 km does not.
+    position.x+=300;predict(new Date(base.getTime()+1000));expect(calculate).toHaveBeenCalledTimes(count);
+    position.x+=2000;predict(new Date(base.getTime()+1000));expect(calculate.mock.calls.length).toBeGreaterThan(count);
     const afterMove=calculate.mock.calls.length;
-    predict.call(manager,sat,new Date(base.getTime()+30000),-1,camera);expect(calculate.mock.calls.length).toBeGreaterThan(afterMove);
+    predict(new Date(base.getTime()+30000));expect(calculate.mock.calls.length).toBeGreaterThan(afterMove);
+});
+
+test('horizon crossings cover the given range for each satellite shown in the sky',()=>{
+    const {view,base}=ephemerisHarness();
+    const shown={name:'shown',visible:true,satrecs:[]},hidden={name:'hidden',visible:false,satrecs:[]};
+    view.nightSkyNode.satellites.TLEData={satData:[shown,hidden]};
+    const start=base.getTime()-120000;
+    // The elevation steps from -1 to +1 at base + 60 s; the samples at 30 s and 60 s put the crossing midway.
+    expect(view.horizonCrossings(start,start+600000)).toEqual([{sat:shown,timeMS:base.getTime()+45000,rising:true}]);
+    expect(view.horizonCrossings(start,start+100000)).toEqual([]);
 });

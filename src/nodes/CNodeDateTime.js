@@ -1136,6 +1136,12 @@ export class CNodeDateTime extends CNode {
         return new Date(MS);
     }
 
+    // The inverse of frameToMS: the frame, fractional, at a time in ms since the epoch.
+    // Round it to get the nearest frame.
+    msToFrame(ms) {
+        return (ms - this.dateStart.valueOf()) * Sit.fps / (1000 * (Sit.simSpeed ?? 1));
+    }
+
     update(frame) {
 
         // first check for live mode

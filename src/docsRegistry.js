@@ -168,6 +168,11 @@ export const helpDocs = [
         chatDesc: "Was it a meteor or fireball? How do I find a recorded fireball near my time and place and load its path? Covers File → Recorded fireballs…, importing a Global Meteor Network (GMN) trajectory summary file, searching by time window, radius and magnitude, jumping to the observed start or the estimated peak, why the peak time is an estimate, heights above the WGS84 ellipsoid, the .fireball.json format for measured samples, and why no match does not rule out a meteor.",
     },
     {
+        file: "docs/SitchChapters", labelKey: "menus.help.documentation.sitchChapters",
+        section: "data", menuId: "file", role: "reference",
+        chatDesc: "Sitch Chapters (File → Sitch Chapters): keeping several setups of one sitch, each chapter with its own views, cameras, date and time, frame and timeline markers while tracks, objects and the rest are shared. Covers adding, renaming, deleting and switching chapters, that edits stay in the chapter you leave, each chapter's own timeline markers, Add satellite rise / set markers and how the crossing times are found, Revert sitch to last save / load, restoring one chapter from a server version or a saved file and the recovery chapter it keeps, and the capture and restore scope. Read for 'what is a chapter', 'how do I keep two camera setups in one sitch', 'why did my markers change when I switched chapters', or 'how do I get back an older version of a chapter'.",
+    },
+    {
         file: "docs/SavingAndLoading", labelKey: "menus.help.documentation.savingLoading",
         section: "data", menuId: "file", role: "reference",
         chatDesc: "Saving, loading, and sharing sitches — versioned server/S3 saves vs fast local-folder saves, what a saved sitch does and does not capture, and how to hand an analysis to someone else so they can reproduce it.",

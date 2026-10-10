@@ -18,8 +18,11 @@ independent measurement of tracking accuracy.
 For each valid sample, the reference bearing is the direction from platform to
 truth. The spherical log map expresses the angular difference in a local
 horizontal/vertical tangent plane. Its vector magnitude is the exact angular
-separation. Horizontal is local-up cross reference bearing; vertical completes
-the frame. The horizontal axis becomes ambiguous near zenith or nadir.
+separation. The horizontal axis is local up × the reference bearing, so a
+positive horizontal (H) error is to the left of the reference bearing
+(counter-clockwise seen from above). The vertical axis completes the frame, so a
+positive vertical (V) error is up. Exported models use this basis. The horizontal
+axis becomes ambiguous near zenith or nadir.
 
 The report shows mean H/V bias, demeaned H/V standard deviation, radial RMS,
 radial percentiles, successive-sample step RMS, cross-axis correlation,
@@ -120,20 +123,14 @@ subsecond reaction is simulated between observations.
 aggregate model parameters and rates. It excludes source filenames, dates,
 positions, truth tracks, measured samples and original seeds. **Import model**
 loads these parameters for use on another chosen platform/target geometry.
-Statistical parameters can still describe the source population; this format
-is not a formal guarantee of anonymity.
 
-**Export synthetic LOS CSV** downloads the last generated realization. This
-file deliberately includes the current platform and target positions in ECEF
-meters, relative time and new ECEF unit LOS directions. It contains no measured
-pointing sequence. Handle this geometry-bearing file according to the source
-data's access rules. It is an explicit ECEF analysis interchange, not a BOT
-challenge file or a parameter-only export.
+**Export synthetic LOS CSV** downloads the last generated realization. Each row
+has the relative time, the current platform and target positions in ECEF meters,
+and the new ECEF unit LOS direction. It contains no measured pointing sequence.
 
 For scripted use, `generateErrors(model, timesSeconds, newSeed, geometry)` and
 `directionWithError(sensor, target, error, up)` are exported by
 `src/LOSErrorModel.js`. Geometry rows contain `{t, sensor, target, up}`, with
 positions and up vectors in the same coordinate frame. A following-delay model
 requires synchronized geometry. Use a new seed with new tracks; do not reuse the
-source residuals. Analysis and synthesis run locally in the browser, and the
-feature sends no measured tracks or residuals to an AI service.
+source residuals. Analysis and synthesis run in the browser.

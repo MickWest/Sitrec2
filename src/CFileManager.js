@@ -228,7 +228,7 @@ export class CFileManager extends CManager {
 
 
             this.guiFolder.add(this, "importFile").name(t("file.importFile.label")).perm().tooltip(t("file.importFile.tooltip"));
-            this.guiFolder.add({openFireballBrowser}, "openFireballBrowser").name("Recorded fireballs…").perm();
+            this.guiFolder.add({openFireballBrowser}, "openFireballBrowser").name(t("fireballs.menuItem")).perm();
 
             // Settings that change what importing DOES, as opposed to the
             // commands above that do it. `perm` so the folder and its state

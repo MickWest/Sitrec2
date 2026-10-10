@@ -134,12 +134,3 @@ export function nextPairNumber(objectNames, trackNames) {
     return Math.max(highestSequentialNumber(objectNames, "Object"),
         highestSequentialNumber(trackNames, "Track")) + 1;
 }
-
-/**
- * Pick the next free "Object N" name given every name already in use.
- * @param {Iterable<string>} existingNames - see nextSequentialName
- * @returns {string} "Object <highest+1>", or "Object 1" when none are in use.
- */
-export function nextSequentialObjectName(existingNames) {
-    return nextSequentialName(existingNames, "Object");
-}

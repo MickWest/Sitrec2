@@ -6,7 +6,7 @@ import {checkForModding} from "./utils";
 import {showError} from "./showError";
 import {isServerless} from "./configUtils";
 import {migrateCameraHeadingReorg, migrateFovSwitchLabel, migrateCameraMenuFolders,
-    migrateMaskOverlayId, migrateLegacyMeasurements} from "./SitchMigrations";
+    migrateMaskOverlayId, migrateLegacyMeasurements, migrateChapterEventsToMarkers} from "./SitchMigrations";
 
 //////////////////////////////////////////////////////////////////////////////////////
 // Note. This failed once due to what seemed to be a circular dependency
@@ -132,6 +132,8 @@ export function textSitchToObject(text, canMod = true) {
         migrateMaskOverlayId(obj);
         // Turn the old hard-wired measurement nodes into Show > Measurements entries.
         migrateLegacyMeasurements(obj);
+        // Turn the old per-chapter timeline events into each chapter's timeline markers.
+        migrateChapterEventsToMarkers(obj);
         if (canMod) {
             return rememberSitchText(checkForModding(obj), text);
         } else {

@@ -1,12 +1,17 @@
 /** @jest-environment jsdom */
 import { openFireballBrowser, showFireballDetails } from "../src/FireballUI";
 import { parseGMNSummary } from "../src/FireballData";
-jest.mock("../src/Globals", () => ({ Sit: { startTime: "2025-01-01T00:00:00Z" } }));
+import { NodeMan } from "../src/Globals";
+import { LLAToECEF } from "../src/LLA-ECEF-ENU";
+jest.mock("../src/Globals", () => ({
+    Sit: { startTime: "2025-01-01T00:00:00Z", lat: 32, lon: -118 },
+    Globals: { equatorRadius: 6378137, polarRadius: 6356752.314245 },
+    NodeMan: { get: jest.fn(() => undefined) },
+}));
 jest.mock("../src/DragDropHandler", () => ({ DragDropHandler: {} }));
 jest.mock("../src/par", () => ({ par: {} }));
 jest.mock("../src/FireballData", () => ({
     ...jest.requireActual("../src/FireballData"),
-    FIREBALL_LIMITS: "Coverage limits",
     GMN_SOURCE: "https://globalmeteornetwork.org/data/",
     parseGMNSummary: jest.fn(() => ({ events: [], rejected: 0 })),
     nearbyFireballs: jest.fn(() => []),
@@ -32,6 +37,20 @@ test("new import invalidates pending reads and snapshots the original source URL
     await oldImport;
     expect(parseGMNSummary).toHaveBeenCalledTimes(1);
     expect(parseGMNSummary).toHaveBeenCalledWith("new", "https://globalmeteornetwork.org/new.txt");
+});
+const searchField = (label) =>
+    [...document.querySelectorAll("dialog label")].find((l) => l.textContent.startsWith(label + " ")).querySelector("input");
+test("the default search center is the look camera's position, not the start-up origin", () => {
+    NodeMan.get.mockImplementation((id) => (id === "lookCamera" ? { camera: { position: LLAToECEF(64.1355, -21.8954, 3000) } } : undefined));
+    openFireballBrowser();
+    expect(Number(searchField("Latitude").value)).toBeCloseTo(64.1355, 4);
+    expect(Number(searchField("Longitude").value)).toBeCloseTo(-21.8954, 4);
+    NodeMan.get.mockImplementation(() => undefined);
+});
+test("without a look camera the search starts at the sitch origin", () => {
+    openFireballBrowser();
+    expect(searchField("Latitude").value).toBe("32");
+    expect(searchField("Longitude").value).toBe("-118");
 });
 test("closing the importer invalidates an in-flight read", async () => {
     openFireballBrowser();

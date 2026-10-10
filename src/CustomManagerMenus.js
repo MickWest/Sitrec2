@@ -50,7 +50,7 @@ import {configParams} from "./runtimeConfig";
 import {showPostLoadFilterDialog} from "./TrackFilterDialog";
 import {textSitchToObject} from "./RegisterSitches";
 import {waitForExportFrameSettled} from "./ExportFrameSettler";
-import {nextPairNumber, nextSequentialObjectName, parseObjectInput as parseObjectInputUtil} from "./utils/parseObjectInput";
+import {nextPairNumber, nextSequentialName, parseObjectInput as parseObjectInputUtil} from "./utils/parseObjectInput";
 import {initializeSettings, SettingsSaver} from "./SettingsManager";
 import {CNodeCurveEditor2} from "./nodes/CNodeCurveEdit2";
 import {CNodeViewDAG} from "./nodes/CNodeViewDAG";
@@ -142,7 +142,7 @@ export const menuMethods = {
      * @returns {string} Next sequential object name
      */
     getNextObjectName() {
-        return nextSequentialObjectName(this.objectNamesInUse());
+        return nextSequentialName(this.objectNamesInUse(), "Object");
     },
 
     /**

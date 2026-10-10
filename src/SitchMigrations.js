@@ -282,3 +282,50 @@ export function legacyMeasurementRef(nodeId) {
     if (nodeId === "traverseSmoothedTrack") return {kind: "traverse", id: nodeId};
     return {kind: "node", id: nodeId};
 }
+
+/**
+ * Turn the timeline events of an old save's chapters into timeline markers.
+ *
+ * Sitch chapters (subSitchesData.subSitches) used to keep their own "timeline events"
+ * ({name, frame} in state.events), while the timeline markers ({frame, label}, the top-level
+ * timelineMarkers) belonged to the whole sitch and so showed in every chapter. Now the markers
+ * are the one store of named frames, and each chapter keeps its own copy in state.markers. So
+ * each chapter that has events gets the sitch's markers plus its own events, and the top-level
+ * markers become those of the current chapter.
+ *
+ * One marker per frame: an event on a frame that already has a marker is added to that
+ * marker's label after "; ". Idempotent: a migrated chapter has no events left.
+ *
+ * @param {Object} obj - parsed sitch object
+ */
+export function migrateChapterEventsToMarkers(obj) {
+    if (!obj || typeof obj !== "object") return;
+    const chapters = obj.subSitchesData?.subSitches;
+    if (!Array.isArray(chapters)) return;
+    const sitchMarkers = Array.isArray(obj.timelineMarkers) ? obj.timelineMarkers : [];
+    let migrated = false;
+    for (const chapter of chapters) {
+        const state = chapter?.state;
+        if (!state || !Array.isArray(state.events)) continue;
+        const byFrame = new Map();
+        const addMarker = (frame, label) => {
+            frame = Math.round(Number(frame));
+            if (!Number.isFinite(frame)) return;
+            label = label == null ? "" : String(label);
+            const existing = byFrame.get(frame);
+            if (!existing) byFrame.set(frame, {frame, label});
+            else if (label && !existing.label.split("; ").includes(label)) {
+                existing.label = existing.label ? existing.label + "; " + label : label;
+            }
+        };
+        for (const marker of sitchMarkers) addMarker(marker?.frame, marker?.label);
+        for (const event of state.events) addMarker(event?.frame, event?.name);
+        state.markers = [...byFrame.values()].sort((a, b) => a.frame - b.frame);
+        delete state.events;
+        migrated = true;
+    }
+    if (!migrated) return;
+    const current = chapters[obj.subSitchesData.currentSubIndex ?? 0]?.state?.markers;
+    if (current?.length) obj.timelineMarkers = current.map(marker => ({...marker}));
+    else if (current) delete obj.timelineMarkers;
+}
