@@ -4,19 +4,20 @@
 // is a pure function of where it points, so a mosaic of registered photos reproduces every
 // photo exactly, with no terrain model.
 //
-// Layers, all centred on the look camera:
+// Layers, all centered on the look camera:
 //   fill     - one color behind everything (optional), so the view outside the photos is plain;
 //   sky      - the whole picture, drawn before the scene and without depth, like a skybox;
-//   occluder - only the ground (terrainMask), "range" metres away, writing depth, so objects
+//   occluder - only the ground (terrainMask), "range" meters away, writing depth, so objects
 //              beyond that range go behind the hills and nearer ones pass in front;
-//   main     - the picture in the MAIN view, on the same sphere "range" metres away, so the
+//   main     - the picture in the MAIN view, on the same sphere "range" meters away, so the
 //              photographed ground can be seen where it is assumed to be. Only the photographed
 //              part (coverageMask) is drawn. The other layers are look view only.
+// The sky, occluder and main layers share one patch geometry.
 // The picture already shows where things appeared, refraction included, so it is excluded
 // from terrestrial refraction. It also already shows the real ground, so by default the
 // terrain model is hidden while the look view draws (a different ground would sit in front).
 import {
-    BackSide, BufferGeometry, Color, DoubleSide, Float32BufferAttribute, Mesh, MeshBasicMaterial,
+    BackSide, BufferAttribute, BufferGeometry, Color, DoubleSide, Mesh, MeshBasicMaterial,
     SphereGeometry, SRGBColorSpace, TextureLoader, Vector3,
 } from "three";
 import {CNode3DGroup} from "./CNode3DGroup";
@@ -28,8 +29,7 @@ import {guiMenus, NodeMan, setRenderOne} from "../Globals";
 import {t} from "../i18n";
 import {excludeFromTerrestrialRefraction} from "../atmosphere/terrestrialRefraction";
 import {radians} from "../utils";
-
-const PATCH_STEP_DEG = 0.1;     // tessellation of the picture; finer than any visible bend
+import {photoBackdropGridSize} from "../photoBackdrop/PhotoBackdropFormat";
 
 export class CNodePhotoBackdrop extends CNode3DGroup {
     constructor(v) {
@@ -86,28 +86,33 @@ export class CNodePhotoBackdrop extends CNode3DGroup {
     // image row 0 at v = 1, the top.
     buildPatchGeometry(radius) {
         const {azMin, azMax, elMin, elMax} = this.backdrop;
-        const nx = Math.max(8, Math.ceil((azMax - azMin) / PATCH_STEP_DEG));
-        const ny = Math.max(4, Math.ceil((elMax - elMin) / PATCH_STEP_DEG));
-        const positions = [], uvs = [], indices = [];
+        const {nx, ny} = photoBackdropGridSize(azMax - azMin, elMax - elMin);
+        const positions = new Float32Array((nx + 1) * (ny + 1) * 3);
+        const uvs = new Float32Array((nx + 1) * (ny + 1) * 2);
+        let vertex = 0;
         for (let j = 0; j <= ny; j++) {
             const el = elMin + (elMax - elMin) * j / ny;
             for (let i = 0; i <= nx; i++) {
                 const az = azMin + (azMax - azMin) * i / nx;
-                const p = this.direction(az, el).multiplyScalar(radius);
-                positions.push(p.x, p.y, p.z);
-                uvs.push(i / nx, j / ny);
+                this.direction(az, el).multiplyScalar(radius).toArray(positions, vertex * 3);
+                uvs[vertex * 2] = i / nx;
+                uvs[vertex * 2 + 1] = j / ny;
+                vertex++;
             }
         }
+        const indices = (nx + 1) * (ny + 1) > 65536 ? new Uint32Array(nx * ny * 6) : new Uint16Array(nx * ny * 6);
+        let index = 0;
         for (let j = 0; j < ny; j++) {
             for (let i = 0; i < nx; i++) {
                 const a = j * (nx + 1) + i, b = a + 1, c = a + nx + 1, d = c + 1;
-                indices.push(a, c, b, b, c, d);
+                indices.set([a, c, b, b, c, d], index);
+                index += 6;
             }
         }
         const geometry = new BufferGeometry();
-        geometry.setAttribute("position", new Float32BufferAttribute(positions, 3));
-        geometry.setAttribute("uv", new Float32BufferAttribute(uvs, 2));
-        geometry.setIndex(indices);
+        geometry.setAttribute("position", new BufferAttribute(positions, 3));
+        geometry.setAttribute("uv", new BufferAttribute(uvs, 2));
+        geometry.setIndex(new BufferAttribute(indices, 1));
         return geometry;
     }
 
@@ -130,13 +135,14 @@ export class CNodePhotoBackdrop extends CNode3DGroup {
         this.fillMesh = this.addMesh(new SphereGeometry(this.range, 32, 16),
             new MeshBasicMaterial({...flat, side: BackSide, depthTest: false, depthWrite: false}), -1002);
         this.fillMesh.material.color = this.fillColor;   // shared, so the Fill Color control edits it live
-        this.skyMesh = this.addMesh(this.buildPatchGeometry(this.range),
+        const patch = this.buildPatchGeometry(this.range);
+        this.skyMesh = this.addMesh(patch,
             new MeshBasicMaterial({...flat, map: this.texture, side: DoubleSide, depthTest: false, depthWrite: false}), -1001);
         if (this.maskTexture) {
-            this.occluderMesh = this.addMesh(this.buildPatchGeometry(this.range),
+            this.occluderMesh = this.addMesh(patch,
                 new MeshBasicMaterial({...flat, map: this.texture, alphaMap: this.maskTexture, alphaTest: 0.5, side: DoubleSide}), 0);
         }
-        this.mainMesh = this.addMesh(this.buildPatchGeometry(this.range), new MeshBasicMaterial({
+        this.mainMesh = this.addMesh(patch, new MeshBasicMaterial({
             ...flat, map: this.texture, alphaMap: this.coverageTexture, alphaTest: this.coverageTexture ? 0.5 : 0,
             side: DoubleSide,
         }), 0);
@@ -160,8 +166,8 @@ export class CNodePhotoBackdrop extends CNode3DGroup {
         this.mainMesh.visible = this.showInMain;
     }
 
-    // Centre on the camera that took the photos, so the angles stay exact even if the camera
-    // track and the file's origin differ by a few metres.
+    // Center on the camera that took the photos, so the angles stay exact even if the camera
+    // track and the file's origin differ by a few meters.
     preRender(view) {
         if (this.followCamera) {
             const camera = NodeMan.get("lookCamera", false)?.camera;
@@ -263,14 +269,16 @@ export class CNodePhotoBackdrop extends CNode3DGroup {
     }
 
     disposeMeshes() {
+        const geometries = new Set();
         for (const key of ["fillMesh", "skyMesh", "occluderMesh", "mainMesh"]) {
             const mesh = this[key];
             if (!mesh) continue;
             this.group.remove(mesh);
-            mesh.geometry.dispose();
+            geometries.add(mesh.geometry);
             mesh.material.dispose();
             this[key] = null;
         }
+        geometries.forEach(geometry => geometry.dispose());
     }
 
     dispose() {

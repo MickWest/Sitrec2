@@ -20,3 +20,22 @@ export function frameEffectPasses(view) {
     if (view.frameBand !== "EO") return view.effectPasses;
     return Object.values(view.effectPasses).filter(effect => !INFRARED_LOOK_EFFECTS.has(effect.effectName));
 }
+
+// Effects that enlarge the center of the rendered image by their magnifyFactor (percent).
+const MAGNIFYING_EFFECTS = new Set(["pixelZoom", "digitalZoom"]);
+
+// How many times larger than camera.fov alone gives the view draws the scene: camera.zoom
+// narrows the projection, and an enabled pixel zoom or digital zoom pass enlarges the
+// center of the image. With Video Zoom synced, the two together are the Video Zoom. The
+// physical thermal route and disabled effects (renderEffects false: the debug switch)
+// draw no effect passes.
+export function viewMagnification(view, frame, renderEffects = true) {
+    let magnification = view.camera.zoom ?? 1;
+    if (!renderEffects || !view.effectsEnabled || effectiveRenderMode(view) === "physicalThermal") return magnification;
+    for (const effect of Object.values(frameEffectPasses(view) ?? {})) {
+        if (effect.enabled && MAGNIFYING_EFFECTS.has(effect.effectName)) {
+            magnification *= effect.in.magnifyFactor.v(frame) / 100;
+        }
+    }
+    return magnification;
+}

@@ -65,6 +65,27 @@ test("only the look view follows the camera data; visible-light frames drop the 
     expect(plain.frameRenderMode).toBeNull(); expect(effectiveRenderMode(plain)).toBe("physicalThermal");
 });
 
+test("the camera-data row is looked up once per frame, and again when the data or Drive Look View changes", () => {
+    const par = {frame: 10};
+    const node = {table: {rows: 1}, driveLookView: true,
+        stateAt: jest.fn(frame => node.driveLookView ? {band: frame >= 20 ? "EO" : "IR", table: node.table} : null)};
+    const NodeMan = {get: () => node};
+    const View = methods("src/nodes/CNodeView3D.js", "CNodeView3D", FRAME_GETTERS, {NodeMan, par, frameRenderModeFor});
+    const look = Object.assign(new View(), {id: "lookView", renderMode: "physicalThermal"});
+    for (let read = 0; read < 5; read++) expect(look.frameBand).toBe("IR");
+    expect(node.stateAt).toHaveBeenCalledTimes(1);
+    par.frame = 20;
+    expect(look.frameBand).toBe("EO");
+    // a new file at the same frame
+    const newTable = {rows: 2};
+    node.table = newTable;
+    expect(look.frameCameraState.table).toBe(newTable);
+    // Drive Look View turned off at the same frame
+    node.driveLookView = false;
+    expect(look.frameCameraState).toBeNull();
+    expect(node.stateAt).toHaveBeenCalledTimes(4);
+});
+
 test("an infrared frame takes the thermal route and a visible-light frame the visible route, in the real dispatcher", () => {
     const {par, NodeMan} = cameraData();
     let cameraUnavailable = false;
@@ -146,9 +167,11 @@ test("a reflection update reads the band of the frame being drawn, not of the la
     const node = Object.assign(new ObjectNode(), {_perViewEnvMaps: true, material: {}, group: new Group(),
         applyEnvMapToModel() {}, getOrCreateEnvMap: () => ({renderTarget: {texture: {}}, cubeCamera: {children: [],
             position: new Vector3(), update: () => backgrounds.push(scene.background.hex ?? scene.background)}})});
-    // An export sets the frame and runs node pre-renders before the view's renderCanvas updates isIR.
-    par.frame = 20; node.updateEnvMap(view);
-    par.frame = 10; node.updateEnvMap(view);
+    // An export sets the frame and runs the node pre-renders (NodeMan.preRenderAll) before the view's renderCanvas.
+    const Manager = methods("src/nodes/CNodeManager.js", "CNodeManager", ["preRenderAll"]);
+    const manager = Object.assign(new Manager(), {getPreRenderNodes: () => [{preRender: v => node.updateEnvMap(v)}]});
+    par.frame = 20; manager.preRenderAll(view);
+    par.frame = 10; manager.preRenderAll(view);
     expect(backgrounds).toEqual(["sky", 0xFFFFFF]); expect(scene.background).toBe("saved");
 });
 

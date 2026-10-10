@@ -1,16 +1,19 @@
 // Milliradian ranging reticle and clock, as drawn by a handheld thermal imager's
-// on-screen display. The reticle is drawn from the look camera's field of view, so
-// its ticks stay true milliradians at any zoom, and an object's size or offset can
-// be read off it the same way as on the real display.
+// on-screen display. The reticle is drawn from the look camera's field of view and
+// the look view's magnification (Video Zoom), so its ticks stay true milliradians at
+// any zoom, and an object's size or offset can be read off it the same way as on the
+// real display. Its settings are in View > Reticle OSD, shown while the view is on.
 //
 // The layout (tick lengths, label and clock placement, the 2x pixel doubling) was
 // measured from 1280x960 stills of a 640x480 sensor. Sizes below are in those
 // 1280x960 image pixels and are scaled to the video image on screen.
 import {CNodeViewUI} from "./CNodeViewUI";
-import {GlobalDateTimeNode, guiMenus, NodeMan, setRenderOne} from "../Globals";
+import {GlobalDateTimeNode, Globals, guiMenus, NodeMan, setRenderOne} from "../Globals";
 import {getHUDImageRect} from "../HUDImageRect";
-import {radians} from "../utils";
 import {formatReticleClock, parseReticleClock} from "../ReticleClock";
+import {pixelsPerMrad, reticleForImage} from "../ReticleScale";
+import {viewMagnification} from "../rendering/ViewRenderMode";
+import {t} from "../i18n";
 
 const REF_HEIGHT = 960;            // reference image height the sizes below are measured in
 
@@ -25,13 +28,6 @@ const CLOCK_X = 20;
 const CLOCK_WIDTH = 335;           // the display's wide digits; the text is stretched to fit
 const CLOCK_BASELINE = 930;
 const CLOCK_BOX = {x: 10, y: 892, width: 352, height: 52, alpha: 0.12};
-
-// The display shows one of two reticles, chosen by the field of view. The wide one
-// was seen at a 43.6 mrad field and the narrow one at 10.9 mrad (4x); switch at
-// their geometric mean.
-const WIDE_MIN_FIELD_MRAD = Math.sqrt(43.6 * 10.9);
-const WIDE_RETICLE = {left: 15, right: 15, up: 10, down: 5, minorStep: 1, majorStep: 5, labels: [5, 10, 15]};
-const NARROW_RETICLE = {left: 3, right: 3, up: 3, down: 3, minorStep: 0, majorStep: 0, labels: [3]};
 
 export class CNodeMradReticleUI extends CNodeViewUI {
 
@@ -52,12 +48,17 @@ export class CNodeMradReticleUI extends CNodeViewUI {
 
     setupMenu() {
         if (!guiMenus.view) return;
-        const menu = this.menu = guiMenus.view.addFolder("Reticle OSD").close();
-        menu.add(this, "showClock").name("Show Clock").listen().onChange(() => setRenderOne(true))
-            .tooltip("Show the date and time in the lower left of the MradReticleUI view");
-        menu.add(this, "clockStart").name("Clock at Start").listen().onFinishChange(() => setRenderOne(true))
-            .tooltip("What the camera clock read at the start of the sitch, as MM/DD/YY HH:MM:SS. "
-                + "Leave it empty to show the sitch's local time.");
+        const menu = this.menu = guiMenus.view.addFolder(t("mradReticle.folder")).close();
+        menu.add(this, "showClock").name(t("mradReticle.showClock.label")).listen().onChange(() => setRenderOne(true))
+            .tooltip(t("mradReticle.showClock.tooltip"));
+        menu.add(this, "clockStart").name(t("mradReticle.clockStart.label")).listen().onFinishChange(() => setRenderOne(true))
+            .tooltip(t("mradReticle.clockStart.tooltip"));
+        menu.show(this.visible);
+    }
+
+    setVisibleRaw(visible) {
+        super.setVisibleRaw(visible);
+        this.menu?.show(this.visible);
     }
 
     clockText() {
@@ -80,10 +81,11 @@ export class CNodeMradReticleUI extends CNodeViewUI {
             NodeMan.get("mirrorVideo", false) ?? NodeMan.get("video", false), 4 / 3);
         const k = rect.height / REF_HEIGHT;   // screen pixels per reference image pixel
 
-        // The reticle centre is the boresight, which is the centre of the view.
-        const pxPerMrad = (this.heightPx / 2) / Math.tan(radians(camera.fov) / 2) / 1000;
-        const fieldMrad = rect.width / pxPerMrad;
-        const reticle = fieldMrad >= WIDE_MIN_FIELD_MRAD ? WIDE_RETICLE : NARROW_RETICLE;
+        // The reticle center is the boresight, which is the center of the view. The look
+        // view draws the scene larger than camera.fov when the video is zoomed.
+        const magnification = viewMagnification(this.in.relativeTo, frame, Globals.renderDebugFlags.dbg_renderEffects);
+        const pxPerMrad = pixelsPerMrad(this.heightPx, camera.fov, magnification);
+        const reticle = reticleForImage(rect.width, pxPerMrad);
 
         const c = this.ctx;
         c.save();

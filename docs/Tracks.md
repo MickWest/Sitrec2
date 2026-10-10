@@ -430,7 +430,7 @@ with it.
   Az/El** uses.
 - **origin**: where the camera stood, with altitude above mean sea level.
 - **terrainMask** (optional): an image the same size as the picture. White is ground and
-  black is sky. The ground hides objects that are farther away than `range` metres.
+  black is sky. The ground hides objects that are farther away than `range` meters.
 - **coverageMask** (optional): an image the same size as the picture. White marks the
   pixels that came from a photo. The main view draws only those pixels.
 - **range** (optional, default 15000): how far away the ground is taken to be. In the look
@@ -439,13 +439,13 @@ with it.
 - **fillColor** (optional): one color for the rest of the look view.
 
 In the look view the backdrop is drawn behind everything, at the angles the pixels were
-photographed at. In the main view it is a curved panel **Range (m)** metres from the camera, at
+photographed at. In the main view it is a curved panel **Range (m)** meters from the camera, at
 those same angles, so you can see where the photographed ground is assumed to be. The folder has
 **Show Photo**, **Ground Hides Objects**, **Range (m)**, **Fill**, **Fill Color**, **Show in Main
-View**, **Main View Opacity**, **Hide Terrain in Look View** and **Centre on Look Camera**. **Hide Terrain in Look View** is on by default: the picture already shows the real
+View**, **Main View Opacity**, **Hide Terrain in Look View** and **Center on Look Camera**. **Hide Terrain in Look View** is on by default: the picture already shows the real
 ground, so the terrain model is not drawn in the look view. The main view still shows it. When
-**Centre on Look Camera** is on, the picture stays centred on the look camera, so its
-angles stay exact when the camera track is a few metres from `origin`. The picture
+**Center on Look Camera** is on, the picture stays centered on the look camera, so its
+angles stay exact when the camera track is a few meters from `origin`. The picture
 already shows where things appeared, so terrestrial refraction does not bend it. Turn off
 **Enable Refraction** if the objects were also placed where they appeared in the photos.
 
@@ -486,9 +486,11 @@ The menu item appears only in browsers that can pick a folder. To open the Track
 4. A colored track line appears in the scene
 5. Track controls appear in the **Contents** menu on the right
 
-If a track's data covers only part of the sitch, its object stays at the nearest data point on
-the frames before the first point and after the last. To hide the object on those frames, turn on
-**Hide Outside Track Data** in the object's folder in the **Objects** menu.
+If a track's data covers only part of the sitch, its object continues in a straight line on the
+frames before the first point and after the last: the position is extrapolated from the first two
+or the last two data points. A recorded fireball track is different: its object stays at the first
+or last data point. To hide the object on those frames, turn on **Hide Outside Track Data** in the
+object's folder in the **Objects** menu.
 
 ![A loaded track with default settings](docimages/Close-up-of-single-track-defaults.jpg)
 

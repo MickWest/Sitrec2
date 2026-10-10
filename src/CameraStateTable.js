@@ -56,11 +56,11 @@ export function emptyCameraStateTable() {
     return {version: CAMERA_STATE_VERSION, sourceName: null, rows: []};
 }
 
-// A header cell as a column name. The first cell may start with a byte-order
-// mark: a browser's TextDecoder removes it, Node's readFileSync does not.
-function columnName(cell, index) {
-    const name = String(cell ?? "");
-    return (index === 0 ? name.replace(/^﻿/, "") : name).trim().toLowerCase();
+// A header cell as a column name. trim() also removes the byte-order mark that
+// can start the first cell (a browser's TextDecoder removes it, Node's
+// readFileSync does not).
+function columnName(cell) {
+    return String(cell ?? "").trim().toLowerCase();
 }
 
 /**
@@ -95,7 +95,7 @@ export function parseCameraStateCSV(rows, {sourceName = null} = {}) {
 
     const column = {};
     rows[0].forEach((cell, index) => {
-        const name = columnName(cell, index);
+        const name = columnName(cell);
         if (!REQUIRED_COLUMNS.includes(name) && !OPTIONAL_COLUMNS.includes(name)) return;
         if (column[name] !== undefined) {
             throw new Error(`Camera data header names the "${name}" column twice`);

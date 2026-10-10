@@ -4,6 +4,7 @@
 
 import {Globals, NodeMan, setRenderOne} from "../Globals";
 import {showError} from "../showError";
+import {t} from "../i18n";
 import {normalizePhotoBackdrop, photoBackdropNodeId} from "./PhotoBackdropFormat";
 import {CNodePhotoBackdrop} from "../nodes/CNodePhotoBackdrop";
 
@@ -15,7 +16,7 @@ export function importPhotoBackdrop(filename, json) {
     try {
         backdrop = normalizePhotoBackdrop(json);
     } catch (error) {
-        showError(`Can't import photo backdrop "${filename}": ${error.message}`);
+        showError(t("photoBackdrop.importError", {filename, message: error.message}));
         return null;
     }
     const id = photoBackdropNodeId(filename);

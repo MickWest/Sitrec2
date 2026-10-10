@@ -1318,6 +1318,7 @@ export class CCustomManager {
 
         new CNodeMradReticleUI({
             id: "MradReticleUI",
+            menuName: t("mradReticle.menuName"),
             camera: "lookCamera",
             relativeTo: "lookView",
             visible: false,

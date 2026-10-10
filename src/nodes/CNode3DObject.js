@@ -112,6 +112,7 @@ import {proceduralObjectMethods} from "./CNode3DObjectProcedural";
 import {copyProceduralModel} from "../../tools/vehicles/recipeFormat.js";
 import {ObjectFlock} from "../ObjectFlock";
 import {installTerrestrialRefractionOnShaderMaterial} from "../atmosphere/terrestrialRefraction";
+import {CNodeSwitch} from "./CNodeSwitch";
 
 // Map old/renamed model file paths to their current equivalents.
 // Used to remap file paths in loadedFiles and model name references in serialized sitches.
@@ -2511,9 +2512,8 @@ ${trackPlacemark}    </Document>
     updateEnvMap(view) {
         if (!this._perViewEnvMaps || !view.renderer) return;
 
-        // isIR for this frame: per-frame camera data can change it at any frame, and an export runs node pre-renders
-        // before the view's renderCanvas, which is where it is otherwise refreshed.
-        view.updateIsIR?.();
+        // view.isIR is this frame's: per-frame camera data can change it at any frame, so the main loop and the
+        // exporters call view.updateIsIR() before they run the node pre-renders for a view.
 
         const {renderTarget, cubeCamera} = this.getOrCreateEnvMap(view.renderer);
 
@@ -2750,13 +2750,15 @@ ${trackPlacemark}    </Document>
 
     // The sitch frames this object's track has data for, {first, last} (fractional, inclusive),
     // from the first node in its source chain that records them (CNodeTrackFromMISB, which
-    // every CSV/KML/MISB track is built on), including that track's time offsets. null when
-    // the track has no valid data; undefined when there is no track, or it records no span.
+    // every CSV/KML/MISB track is built on), including that track's time offsets. The chain
+    // goes through a switch to its selected input (the custom sitch's camera position is a
+    // switch). null when the track has no valid data; undefined when there is no track, or
+    // it records no span.
     trackDataSpan() {
         let node = this.getSourceTrack();
         for (let depth = 0; node && depth < 8; depth++) {
             if (node.getDataFrameSpan !== undefined) return node.getDataFrameSpan();
-            node = node.in?.source ?? node.in?.track;
+            node = node instanceof CNodeSwitch ? node.inputs[node.choice] : node.in?.source ?? node.in?.track;
         }
         return undefined;
     }

@@ -1,7 +1,7 @@
 import {registerSurfaceInteraction} from "../SurfaceInteraction";
 import {pointerHitRadius} from "../HandleStyle";
 import {par} from "../par";
-import {GlobalDateTimeNode, NodeMan, setRenderOne, Sit} from "../Globals";
+import {GlobalDateTimeNode, markSitchDirty, NodeMan, setRenderOne, Sit} from "../Globals";
 import {CNode} from "./CNode";
 import {getControlsContainer} from "../PageStructure";
 import {EventManager} from "../CEventManager";
@@ -123,6 +123,71 @@ export class CNodeFrameSlider extends CNode {
         const drawableWidth = this.canvas.offsetWidth - 2 * padding;
         const frame = Math.round(Math.max(0, Math.min(drawableWidth, x - padding)) / drawableWidth * Sit.frames);
         return Math.max(0, Math.min(Sit.frames - 1, frame));
+    }
+
+    // 'A' or 'B' when the pointer is on the In or Out limit line or its handle, else null.
+    getNearLimit(mouseX, mouseY, threshold = this.dragThreshold) {
+        // A marker flag wins in its band at the top of the bar, so a marker on the
+        // In or Out frame stays clickable; the limit line can still be dragged lower down.
+        if (this.getNearMarker(mouseX, mouseY) !== null) return null;
+        const aPixel = this.frameToCanvasX(Sit.aFrame);
+        const bPixel = this.frameToCanvasX(Sit.bFrame);
+        const currentFramePixel = this.frameToCanvasX(par.frame);
+
+        // Define slider thumb area (prioritize this over A/B limits)
+        const thumbWidth = 14; // Approximate width of slider thumb (scaled down)
+        const thumbArea = {
+            left: currentFramePixel - thumbWidth / 2,
+            right: currentFramePixel + thumbWidth / 2,
+            top: 7, // Allow A/B dragging above the slider track
+            bottom: 28 // Full height of slider container
+        };
+
+        // If mouse is in the slider thumb area, don't allow A/B limit dragging
+        if (mouseX >= thumbArea.left && mouseX <= thumbArea.right &&
+            mouseY >= thumbArea.top && mouseY <= thumbArea.bottom) {
+            return null;
+        }
+
+        // Check if near A limit line or handle
+        if (Math.abs(mouseX - aPixel) <= threshold) {
+            return 'A';
+        }
+        // Check if near A handle circle (top of line) - prioritize this area
+        if (Math.abs(mouseX - aPixel) <= 6 && mouseY >= 0 && mouseY <= 12) {
+            return 'A';
+        }
+
+        // Check if near B limit line or handle
+        if (Math.abs(mouseX - bPixel) <= threshold) {
+            return 'B';
+        }
+        // Check if near B handle circle (top of line) - prioritize this area
+        if (Math.abs(mouseX - bPixel) <= 6 && mouseY >= 0 && mouseY <= 12) {
+            return 'B';
+        }
+
+        return null;
+    }
+
+    // The frame in `frames` whose mark is nearest the pointer, within 6 px, or null.
+    // overThumb: the pointer is on the playhead thumb, which then wins over a mark it covers.
+    nearestMarkFrame(frames, mouseX, overThumb) {
+        const thumbX = this.frameToCanvasX(par.frame);
+        const thumbHalfWidth = 7;
+        const xTolerance = 6;
+        let bestFrame = null;
+        let bestDist = xTolerance + 1;
+        for (const frame of frames) {
+            const x = this.frameToCanvasX(frame);
+            const dx = Math.abs(mouseX - x);
+            if (dx <= xTolerance && dx < bestDist) {
+                if (overThumb && Math.abs(x - thumbX) <= thumbHalfWidth) continue;
+                bestDist = dx;
+                bestFrame = frame;
+            }
+        }
+        return bestFrame;
     }
 
     setupFrameSlider() {
@@ -369,58 +434,7 @@ export class CNodeFrameSlider extends CNode {
         this.sliderContainer.addEventListener('mousemove', (event) => {
             if (!this.draggingALimit && !this.draggingBLimit) {
                 const {x: mouseX, y: mouseY} = this.getMousePos(event);
-                
-                // Helper functions (duplicated here for scope)
-                const frameToPixel = (frame) => {
-                    return (frame / Sit.frames) * this.canvas.offsetWidth;
-                };
-                
-                const getNearLimit = (mouseX, mouseY, threshold = this.dragThreshold) => {
-                    // A marker flag wins in its band at the top of the bar, so a
-                    // marker on the In or Out frame stays clickable; the limit
-                    // line can still be dragged lower down.
-                    if (this.getNearMarker(mouseX, mouseY) !== null) return null;
-                    const aPixel = frameToPixel(Sit.aFrame);
-                    const bPixel = frameToPixel(Sit.bFrame);
-                    const currentFramePixel = frameToPixel(par.frame);
-                    
-                    // Define slider thumb area (prioritize this over A/B limits)
-                    const thumbWidth = 14; // Approximate width of slider thumb (scaled down)
-                    const thumbArea = {
-                        left: currentFramePixel - thumbWidth / 2,
-                        right: currentFramePixel + thumbWidth / 2,
-                        top: 7, // Allow A/B dragging above the slider track
-                        bottom: 28 // Full height of slider container (reduced from 40)
-                    };
-                    
-                    // If mouse is in the slider thumb area, don't allow A/B limit dragging
-                    if (mouseX >= thumbArea.left && mouseX <= thumbArea.right && 
-                        mouseY >= thumbArea.top && mouseY <= thumbArea.bottom) {
-                        return null;
-                    }
-                    
-                    // Check if near A limit line or handle
-                    if (Math.abs(mouseX - aPixel) <= threshold) {
-                        return 'A';
-                    }
-                    // Check if near A handle circle (top of line) - prioritize this area
-                    if (Math.abs(mouseX - aPixel) <= 6 && mouseY >= 0 && mouseY <= 12) {
-                        return 'A';
-                    }
-                    
-                    // Check if near B limit line or handle
-                    if (Math.abs(mouseX - bPixel) <= threshold) {
-                        return 'B';
-                    }
-                    // Check if near B handle circle (top of line) - prioritize this area
-                    if (Math.abs(mouseX - bPixel) <= 6 && mouseY >= 0 && mouseY <= 12) {
-                        return 'B';
-                    }
-                    
-                    return null;
-                };
-                
-                const nearLimit = getNearLimit(mouseX, mouseY);
+                const nearLimit = this.getNearLimit(mouseX, mouseY);
                 const nearKF = this.getNearKeyframe(mouseX, mouseY);
                 const nearMarker = (nearLimit || nearKF !== null || sliderDragging) ? null : this.getNearMarker(mouseX, mouseY);
 
@@ -593,66 +607,6 @@ export class CNodeFrameSlider extends CNode {
         // Local alias so existing call sites stay terse.
         const getMousePos = (event) => this.getMousePos(event);
 
-        // Helper function to convert pixel position to frame number
-        const pixelToFrame = (x) => {
-            const padding = 5; // Must match the padding used in drawing
-            const drawableWidth = this.canvas.offsetWidth - (2 * padding);
-            const adjustedX = Math.max(0, Math.min(drawableWidth, x - padding));
-            return Math.round((adjustedX / drawableWidth) * Sit.frames);
-        };
-
-        // Helper function to get pixel position of a frame
-        const frameToPixel = (frame) => {
-            const padding = 5; // Must match the padding used in drawing
-            const drawableWidth = this.canvas.offsetWidth - (2 * padding);
-            return padding + (drawableWidth * frame / Sit.frames);
-        };
-
-        // Helper function to check if mouse is near a limit line or handle
-        const getNearLimit = (mouseX, mouseY, threshold = this.dragThreshold) => {
-            // A marker flag wins in its band at the top of the bar (see the
-            // copy in setupFrameSlider).
-            if (this.getNearMarker(mouseX, mouseY) !== null) return null;
-            const aPixel = frameToPixel(Sit.aFrame);
-            const bPixel = frameToPixel(Sit.bFrame);
-            const currentFramePixel = frameToPixel(par.frame);
-            
-            // Define slider thumb area (prioritize this over A/B limits)
-            const thumbWidth = 14; // Approximate width of slider thumb (scaled down)
-            const thumbArea = {
-                left: currentFramePixel - thumbWidth / 2,
-                right: currentFramePixel + thumbWidth / 2,
-                top: 7, // Allow A/B dragging above the slider track
-                bottom: 28 // Full height of slider container (reduced from 40)
-            };
-            
-            // If mouse is in the slider thumb area, don't allow A/B limit dragging
-            if (mouseX >= thumbArea.left && mouseX <= thumbArea.right && 
-                mouseY >= thumbArea.top && mouseY <= thumbArea.bottom) {
-                return null;
-            }
-            
-            // Check if near A limit line or handle
-            if (Math.abs(mouseX - aPixel) <= threshold) {
-                return 'A';
-            }
-            // Check if near A handle circle (top of line) - prioritize this area
-            if (Math.abs(mouseX - aPixel) <= 6 && mouseY >= 0 && mouseY <= 12) {
-                return 'A';
-            }
-            
-            // Check if near B limit line or handle
-            if (Math.abs(mouseX - bPixel) <= threshold) {
-                return 'B';
-            }
-            // Check if near B handle circle (top of line) - prioritize this area
-            if (Math.abs(mouseX - bPixel) <= 6 && mouseY >= 0 && mouseY <= 12) {
-                return 'B';
-            }
-            
-            return null;
-        };
-
         const beginLimit = (event, hit) => {
             this.draggingALimit = hit.limit === "A";
             this.draggingBLimit = hit.limit === "B";
@@ -666,7 +620,7 @@ export class CNodeFrameSlider extends CNode {
             if (!isDragging) {
                 const mousePos = getMousePos(event);
                 // Update cursor and hover state based on proximity to limits
-                const nearLimit = getNearLimit(mousePos.x, mousePos.y);
+                const nearLimit = this.getNearLimit(mousePos.x, mousePos.y);
                 const nearKF = (nearLimit) ? null : this.getNearKeyframe(mousePos.x, mousePos.y);
                 const nearMarker = (nearLimit || nearKF !== null) ? null : this.getNearMarker(mousePos.x, mousePos.y);
                 const newHoveringA = (nearLimit === 'A');
@@ -695,10 +649,12 @@ export class CNodeFrameSlider extends CNode {
         const globalMouseMove = (event) => {
             if (isDragging) {
                 const mousePos = getMousePos(event);
-                const newFrameValue = Math.max(0, Math.min(Sit.frames - 1, pixelToFrame(mousePos.x)));
+                const newFrameValue = this.canvasXToFrame(mousePos.x);
 
+                // In and Out are saved with the sitch.
                 if (this.draggingALimit) {
                     const clampedFrame = Math.min(newFrameValue, Sit.bFrame - 1);
+                    if (clampedFrame !== Sit.aFrame) markSitchDirty();
                     Sit.aFrame = clampedFrame;
                     par._frameOverride = clampedFrame;
                     GlobalDateTimeNode.liveMode = false;
@@ -707,6 +663,7 @@ export class CNodeFrameSlider extends CNode {
                     this.updateFrameDisplay(clampedFrame, event.clientX);
                 } else if (this.draggingBLimit) {
                     const clampedFrame = Math.max(newFrameValue, Sit.aFrame + 1);
+                    if (clampedFrame !== Sit.bFrame) markSitchDirty();
                     Sit.bFrame = clampedFrame;
                     par._frameOverride = clampedFrame;
                     GlobalDateTimeNode.liveMode = false;
@@ -760,13 +717,14 @@ export class CNodeFrameSlider extends CNode {
             enabled: () => !par.playbackLocked,
             model: this, nativeControl: true, intent: {priority: 80, zIndex: 1002},
             hitTest: e => {
-                const p = getMousePos(e), limit = getNearLimit(p.x, p.y, pointerHitRadius(e, this.dragThreshold));
+                const p = getMousePos(e), limit = this.getNearLimit(p.x, p.y, pointerHitRadius(e, this.dragThreshold));
                 return limit ? {limit} : null;
             },
             begin: beginLimit, move: globalMouseMove, end: globalMouseUp,
             snapshot: () => ({a: Sit.aFrame, b: Sit.bFrame}),
             restore: state => {
                 Sit.aFrame = state.a; Sit.bFrame = state.b;
+                markSitchDirty();
                 this.needsCanvasRedraw = true; setRenderOne(true);
                 EventManager.dispatchEvent("abFrameChanged");
             },
@@ -783,8 +741,8 @@ export class CNodeFrameSlider extends CNode {
             const mousePos = getMousePos(event);
             // The zone within grab distance of a limit line/handle belongs to
             // dragging, not resetting — ignore double-clicks there.
-            if (getNearLimit(mousePos.x, mousePos.y)) return;
-            const clickFrame = pixelToFrame(mousePos.x);
+            if (this.getNearLimit(mousePos.x, mousePos.y)) return;
+            const clickFrame = this.canvasXToFrame(mousePos.x);
             if (clickFrame < Sit.aFrame) {
                 Sit.aFrame = 0;
             } else if (clickFrame > Sit.bFrame) {
@@ -792,6 +750,7 @@ export class CNodeFrameSlider extends CNode {
             } else {
                 return; // inside the A-B range: nothing to reset
             }
+            markSitchDirty();
             this.needsCanvasRedraw = true;
             setRenderOne(true);
             EventManager.dispatchEvent("abFrameChanged");
@@ -1197,36 +1156,16 @@ export class CNodeFrameSlider extends CNode {
         if (!this.keyframeFrames || this.keyframeFrames.length === 0) return null;
         if (!Sit.frames) return null;
 
-        const padding = 5;
-        const drawableWidth = this.canvas.offsetWidth - (2 * padding);
-        const yKF = this.canvas.height - 5;
-
-        // Don't intercept clicks that land on the slider thumb area —
-        // dragging the playhead remains the primary action there.
-        const currentFramePixel = padding + (drawableWidth * par.frame / Sit.frames);
-        const thumbHalfWidth = 7;
-        const overThumb = (Math.abs(mouseX - currentFramePixel) <= thumbHalfWidth);
-
         // Keyframe diamonds occupy the lower half of the slider strip.
         // Keep the y-band tight so we don't shadow A/B handle clicks above.
+        const yKF = this.canvas.height - 5;
         const vBand = 9;
         if (Math.abs(mouseY - yKF) > vBand) return null;
 
-        const xTolerance = 6;
-        let bestFrame = null;
-        let bestDist = xTolerance + 1;
-        for (const f of this.keyframeFrames) {
-            const x = padding + (drawableWidth * f / Sit.frames);
-            const dx = Math.abs(mouseX - x);
-            if (dx <= xTolerance && dx < bestDist) {
-                // Lose the contest if the playhead thumb is over this exact
-                // diamond — let the user grab the thumb in that case.
-                if (overThumb && Math.abs(x - currentFramePixel) <= thumbHalfWidth) continue;
-                bestDist = dx;
-                bestFrame = f;
-            }
-        }
-        return bestFrame;
+        // Don't intercept clicks that land on the slider thumb area —
+        // dragging the playhead remains the primary action there.
+        const overThumb = Math.abs(mouseX - this.frameToCanvasX(par.frame)) <= 7;
+        return this.nearestMarkFrame(this.keyframeFrames, mouseX, overThumb);
     }
 
     // The frame of the marker flag nearest the pointer, or null. mouseY null
@@ -1237,22 +1176,8 @@ export class CNodeFrameSlider extends CNode {
         if (frames.length === 0 || !Sit.frames) return null;
         if (mouseY !== null && mouseY > 12) return null;
         // As for keyframes, the playhead thumb wins where it covers a flag.
-        const thumbX = this.frameToCanvasX(par.frame);
-        const thumbHalfWidth = 7;
-        const overThumb = mouseY !== null && mouseY >= 7 && Math.abs(mouseX - thumbX) <= thumbHalfWidth;
-        const xTolerance = 6;
-        let bestFrame = null;
-        let bestDist = xTolerance + 1;
-        for (const f of frames) {
-            const x = this.frameToCanvasX(f);
-            const dx = Math.abs(mouseX - x);
-            if (dx <= xTolerance && dx < bestDist) {
-                if (overThumb && Math.abs(x - thumbX) <= thumbHalfWidth) continue;
-                bestDist = dx;
-                bestFrame = f;
-            }
-        }
-        return bestFrame;
+        const overThumb = mouseY !== null && mouseY >= 7 && Math.abs(mouseX - this.frameToCanvasX(par.frame)) <= 7;
+        return this.nearestMarkFrame(frames, mouseX, overThumb);
     }
 
     // Read-out for a hovered marker: its name, then its frame and video time.

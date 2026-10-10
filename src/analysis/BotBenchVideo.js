@@ -120,7 +120,7 @@ export function renderFrame(f) {
     // Recording advances independently of the animation loop. Request terrain
     // subdivision for this camera pose before asking the export settler to wait.
     NodeMan.get("terrainUI", false)?.update();
-    for (const node of NodeMan.getPreRenderNodes()) node.preRender(view);
+    NodeMan.preRenderAll(view);
     view.renderCanvas(f);
     hud.renderCanvas(f);
     const ctx = canvas.getContext("2d");
@@ -347,7 +347,7 @@ async function verifyUnfilteredImport(expected, videoFilter, defaultAngleSmoothi
         videoView.renderCanvas(f);
         NodeMan.get("mirrorVideo", false)?.renderCanvas(f);
         cameraNode.update(f);
-        for (const node of NodeMan.getPreRenderNodes()) node.preRender(view);
+        NodeMan.preRenderAll(view);
         // Inspect the camera at the actual scene draw, including viewport FOV,
         // zoom and pan adjustments that renderCanvas restores afterwards.
         const originalRender = view.renderer.render;

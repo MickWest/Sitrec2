@@ -13,7 +13,6 @@
 // Usage:
 //   KeyframeRegistry.register('horizon', { getFrames: () => myMap.keys() });
 //   KeyframeRegistry.unregister('horizon');  // on dispose/sitch-reload
-//   KeyframeRegistry.prevFrame(par.frame);   // for navigation
 
 class CKeyframeRegistry {
     constructor() {
@@ -43,24 +42,6 @@ class CKeyframeRegistry {
             }
         }
         return Array.from(set).sort((a, b) => a - b);
-    }
-
-    prevFrame(current) {
-        const frames = this.getAllFrames();
-        let result;
-        for (const f of frames) {
-            if (f < current) result = f;
-            else break;
-        }
-        return result;
-    }
-
-    nextFrame(current) {
-        const frames = this.getAllFrames();
-        for (const f of frames) {
-            if (f > current) return f;
-        }
-        return undefined;
     }
 
     // Cheap fingerprint the slider compares each tick to decide whether to
