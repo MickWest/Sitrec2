@@ -379,6 +379,9 @@ Tools that look for signs of editing or re-compression in a frame. They show a *
 not a verdict: every video that has been compressed shows some pattern, and a camera's own
 processing can produce the same patterns as editing.
 
+Use the checkbox on each tool's folder title to show or hide it. Open the folder to adjust
+its controls. Closing a tool's folder or the Forensics folder keeps enabled tools visible.
+
 ### Error Level Analysis
 
 **Video → Forensics → Error Level Analysis**
@@ -386,9 +389,6 @@ processing can produce the same patterns as editing.
 Sitrec compresses the current frame again as a JPEG at a known quality, and shows how much each
 pixel changed. Areas that were already compressed in the same way change little. Areas with a
 different compression history, such as something pasted in, can stand out.
-
-The overlay is shown **while this folder is open** (and Forensics is open). Close the folder
-to hide it.
 
 | Control | Default | What it does |
 |---|---|---|
@@ -405,7 +405,6 @@ to hide it.
 Sitrec removes the picture content with a high-pass filter (a filter that keeps only fine,
 pixel-to-pixel detail), leaving mostly sensor and compression noise. A region with a different
 noise level from its surroundings can show that it came from somewhere else, or was smoothed.
-Like Error Level Analysis, it is shown while its folder is open.
 
 | Control | Default | What it does |
 |---|---|---|
@@ -422,6 +421,41 @@ Two more tools in the same folder graph the whole video:
   video bitstream. See [Video QP Graph](VideoQPGraph.md).
 - **Tonal Range Graph** plots the brightness distribution of every frame. See
   [Video Tonal Range Graph](VideoTonalRange.md).
+
+### NPD Folder Scan
+
+**Video → Forensics → Noise Pattern Detection → NPD Folder Scan** opens a batch scan.
+Choose a folder to examine its videos and every subfolder. The folder picker needs Chrome
+or Edge, or the Sitrec desktop app. The scan reads local files without uploading them.
+
+Results arrive one video at a time. Repeats appear first: green rows identify repeating
+noise and amber rows identify repeating pictures. The table shows the period, strength,
+reference coverage, matched frames and decoded frame count. **Details** includes matched
+frame ranges, the longest confirmed repeat and isolated peaks. **Folders** lists counts
+for every folder, including folders with no videos. Filter paths or select **Repeats only**
+to narrow the table, and use **Export CSV** to save the results.
+Select a video's path to open the local file in a fresh Sitrec tab and run NPD with
+the same search settings and analyzed frame range, including any shortened region.
+
+**Usable** counts decoded frames with enough noise detail after held or near-identical
+pictures are excluded. The repeat search needs at least 136 usable frames. A clip can
+decode completely and still have too few usable frames; the result states the usable
+and held counts rather than reporting a decoding error.
+
+**Limit to (minutes)** defaults to **2**: only the beginning of each video, up to that
+duration, is analyzed. Limited files are marked in the table, and the analyzed duration
+is included in Details and CSV. Increase the limit to examine more of each file.
+The scan uses the current NPD settings for that prefix. **Stop** cancels the
+current video and leaves completed results available. **Scan Again** scans the selected
+folder with the current settings. Closing the window stops the scan.
+
+If a region would exceed the scan's memory budget, the scan automatically shortens it
+and marks the row **auto-reduced**. Details and CSV record the actual analyzed duration.
+Unsupported or damaged files appear as errors; they are not counted as videos with no
+repeats. A repeat strength is a search
+score, not a probability or a determination of a video's origin. Sparse lag curves
+with zero robust variation use RMS deviation to avoid inflated scores. Repeated footage and
+compression can also produce recurring patterns. Review flagged files individually.
 
 ---
 

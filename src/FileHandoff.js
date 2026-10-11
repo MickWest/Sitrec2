@@ -40,6 +40,11 @@ export const HANDOFF_TTL_MS = 60 * 60 * 1000;
 
 const KEY_PREFIX = "handoff:";
 
+export function createFileHandoffId() {
+    return crypto.randomUUID ? crypto.randomUUID()
+        : `${Date.now()}-${Math.floor(Math.random() * 1e9)}`;
+}
+
 /**
  * Store files for a new window to collect. Returns the key to put in its URL.
  *
@@ -48,16 +53,14 @@ const KEY_PREFIX = "handoff:";
  *               unidentifiable at the far end.
  * @param meta   Anything structured-cloneable the receiver should also see.
  *               Kept small — this is a handoff, not a cache.
+ * @param id     Optional preallocated key for a link whose local file is still being read.
  */
-export async function putFileHandoff(files, meta = {}) {
+export async function putFileHandoff(files, meta = {}, id = createFileHandoffId()) {
     const list = (Array.isArray(files) ? files : [files]).filter(Boolean);
     if (!list.length) throw new Error("putFileHandoff: no files");
     for (const f of list) {
         if (!f.name) throw new Error("putFileHandoff: every file needs a name");
     }
-
-    const id = crypto.randomUUID ? crypto.randomUUID()
-        : `${Date.now()}-${Math.floor(Math.random() * 1e9)}`;
 
     // Stored as {name, type, blob} rather than as File objects: structured
     // clone preserves a File in every browser that matters, but the name is

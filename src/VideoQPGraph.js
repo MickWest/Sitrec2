@@ -52,11 +52,13 @@ export function addVideoQPGraphMenu(folder) {
         get show() { return isVideoQPGraphShown(); },
         set show(value) { showVideoQPGraph(value); },
     };
-    folder.add(proxy, "show")
+    const controls = folder.addFolder(t("videoQP.menu.label")).close().perm();
+    controls.add(proxy, "show")
         .name(t("videoQP.menu.label"))
         .tooltip(t("videoQP.menu.tooltip"))
         .listen()
-        .perm();
+        .perm()
+        .asFolderToggle();
 }
 
 // The view is made on demand, so it is not saved as a node mod. A sitch saves this

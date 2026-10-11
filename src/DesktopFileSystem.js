@@ -103,6 +103,13 @@ export function createDesktopDirectoryHandle(dirPath) {
         kind: "directory",
         name: dirPath.split(/[\\/]/).pop(),
         path: dirPath,
+        async *entries() {
+            for (const entry of await bridge.listDirectory(dirPath)) {
+                yield [entry.name, entry.kind === "directory"
+                    ? createDesktopDirectoryHandle(entry.path)
+                    : createDesktopFileHandle(entry.path)];
+            }
+        },
         async getDirectoryHandle(name, { create = false } = {}) {
             const childPath = await bridge.resolvePath(dirPath, name);
             if (create) {

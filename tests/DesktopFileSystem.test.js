@@ -78,4 +78,17 @@ describe("DesktopFileSystem", () => {
             name: "NotFoundError",
         });
     });
+
+    test("directory entries support recursive read-only scans", async () => {
+        files.set("/tmp/sitrec/video.mp4", Buffer.from([1, 2, 3]));
+        window.sitrecDesktop.fs.listDirectory = jest.fn(async () => [
+            {kind: "file", name: "video.mp4", path: "/tmp/sitrec/video.mp4"},
+            {kind: "directory", name: "nested", path: "/tmp/sitrec/nested"},
+        ]);
+        const entries = [];
+        for await (const entry of createDesktopDirectoryHandle("/tmp/sitrec").entries()) entries.push(entry);
+        expect(entries.map(([name, handle]) => [name, handle.kind])).toEqual([["video.mp4", "file"], ["nested", "directory"]]);
+        expect(await (await entries[0][1].getFile()).arrayBuffer()).toEqual(Uint8Array.from([1, 2, 3]).buffer);
+        expect(typeof entries[1][1].entries).toBe("function");
+    });
 });

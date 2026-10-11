@@ -33,8 +33,8 @@ export function addVideoTonalGraphMenu(folder) {
         refresh() { currentView()?.refreshAnalysis(); },
         exportCSV() { currentView()?.exportCSV(); },
     };
-    folder.add(proxy, 'show').name(t('videoTonal.menu')).tooltip(t('videoTonal.tooltip')).listen().perm();
-    const controls = folder.addFolder(t('videoTonal.settings')).close().perm();
+    const controls = folder.addFolder(t('videoTonal.menu')).close().perm();
+    controls.add(proxy, 'show').name(t('videoTonal.menu')).tooltip(t('videoTonal.tooltip')).listen().perm().asFolderToggle();
     for (const key of Object.keys(TONAL_DEFAULTS)) {
         Object.defineProperty(proxy, key, {
             get() { return (currentView()?.options ?? settings)[key]; },

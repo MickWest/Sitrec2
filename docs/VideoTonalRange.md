@@ -1,6 +1,6 @@
 # Video Tonal Range Graph
 
-Open **Video → Forensics → Tonal Range Graph** to measure the recorded brightness
+Enable the checkbox on **Video → Forensics → Tonal Range Graph** to measure the recorded brightness
 distribution of every video frame. Click or drag in the graph to scrub the video,
 just as in the [QP Graph](VideoQPGraph.md). The graph fills progressively without
 moving the playhead. Its position, theme and settings are saved while it is shown.
@@ -9,7 +9,7 @@ The default graph plots the 5th percentile (blue), median (white or black), and
 95th percentile (orange). The shaded bands contain the middle 90% and middle 50%
 of pixel intensities. These are distribution bands, not uncertainty intervals.
 The readout gives the current frame's P5, median, P95, P95–P5 span and sample count.
-Min/max and mean can be added under **Tonal Range Settings**.
+Open the **Tonal Range Graph** folder to add min/max and mean.
 
 Set **Display → Histogram over time** to see the full distribution. Each column
 represents the intensity distribution at that time, with intensity on the vertical
@@ -33,7 +33,7 @@ hiding the overlay does not change graph measurements.
 ## Comparing an object with the background
 
 First measure the object's positions with **Point Track**. Enable **Tracked object**
-in Tonal Range Settings to add its aperture mean (green) and local background median
+in the Tonal Range Graph folder to add its aperture mean (green) and local background median
 (pink). **Object radius** is measured in original video pixels. An elliptical
 aperture follows each measured position. The surrounding background ring spans
 two to four times that radius, leaving a guard gap. The object and guard gap are

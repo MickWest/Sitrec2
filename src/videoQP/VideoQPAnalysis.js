@@ -32,6 +32,24 @@ export function displayIndexForFrame(videoData, frame) {
     return Math.floor(f / (video?.videoSpeed || 1));
 }
 
+// Display index in the source video -> the first sitch frame that shows it (the inverse of
+// displayIndexForFrame). With a video speed below 1 some pictures are never shown; then it
+// is the first frame that shows a later picture.
+export function frameForDisplayIndex(videoData, index) {
+    const wrappers = [];
+    let video = videoData;
+    while (video?.source && typeof video.virtualToSource === "function") {
+        wrappers.push(video);
+        video = video.source;
+    }
+    const speed = video?.videoSpeed || 1;
+    let f = Math.max(0, Math.ceil(index * speed - 1e-9));
+    while (f > 0 && Math.floor((f - 1) / speed) >= index) f--;
+    while (Math.floor(f / speed) < index) f++;
+    for (let i = wrappers.length - 1; i >= 0; i--) f = wrappers[i].sourceToVirtual(f);
+    return f;
+}
+
 // Returns null when the video can be analyzed, or a short reason when it cannot.
 export function whyNotAnalyzable(videoData) {
     const source = sourceVideoOf(videoData);
