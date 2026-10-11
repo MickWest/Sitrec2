@@ -2285,8 +2285,8 @@ class CSitrecAPI {
                         return { success: false, error: "video node not found" };
                     }
 
-                    const clearFrames = !Array.isArray(videoNode.videos) || videoNode.videos.length === 0;
-                    videoNode.newVideo(source, clearFrames);
+                    const newImport = !Array.isArray(videoNode.videos) || videoNode.videos.length === 0;
+                    videoNode.newVideo(source, newImport);
                     markSitchDirty();
 
                     return {

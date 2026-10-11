@@ -211,7 +211,7 @@ describe('CSitrecAPI importMedia', () => {
         });
     });
 
-    test('uses clearFrames on the first imported media entry', async () => {
+    test('marks the first imported media entry as a new import', async () => {
         const videoNode = {
             videos: [],
             newVideo: jest.fn(),
