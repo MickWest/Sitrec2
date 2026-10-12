@@ -1940,6 +1940,7 @@ export const serializeMethods = {
         await deserializeVideoQPGraph(sitchData.videoQPGraph);
         if (Globals.loadGeneration !== myGeneration) return;
         await deserializeVideoTonalGraph(sitchData.videoTonalGraph);
+        if (Globals.loadGeneration !== myGeneration) return;
         await deserializePointTrackFrequencyGraph(sitchData.pointTrackFrequencyGraph);
         if (Globals.loadGeneration !== myGeneration) return;
 

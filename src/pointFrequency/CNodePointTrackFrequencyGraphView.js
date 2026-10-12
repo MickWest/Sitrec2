@@ -7,7 +7,7 @@ import {getObjectTracker} from '../CObjectTracking';
 import {abFrameRange} from '../TraverseAnalysisData';
 import {displayIndexForFrame, sourceVideoOf} from '../videoQP/VideoQPAnalysis';
 import {startTonalAnalysis} from '../videoTonal/VideoTonalAnalysis';
-import {FREQUENCY_DEFAULTS, pointFrequencyTargetColor} from '../PointTrackFrequencyGraph';
+import {clampApertureRadius, FREQUENCY_DEFAULTS, pointFrequencyTargetColor} from '../PointTrackFrequencyGraph';
 import {amplitudeSpectrum, captureFrequencyTargets, frequencySampling} from './PointFrequencyStatistics';
 
 const MARGIN = 60;
@@ -28,7 +28,7 @@ export class CNodePointTrackFrequencyGraphView extends CNodeCustomGraphView {
     modDeserialize(state) {
         super.modDeserialize(state);
         this.options = {...FREQUENCY_DEFAULTS, ...state.frequencyOptions};
-        this.options.radius = Math.max(1, Math.min(100, Number(this.options.radius) || 4));
+        this.options.radius = clampApertureRadius(this.options.radius);
         this.options.percent = !!this.options.percent;
         this.options.showBackground = !!this.options.showBackground;
         this.refreshAnalysis();

@@ -18,8 +18,9 @@ import {
     deserializeVideoTonalGraph, resetVideoTonalGraph, serializeVideoTonalGraph, showVideoTonalGraph,
 } from "../src/VideoTonalGraph";
 import {createPointTrackFrequencyGraphView} from "../src/pointFrequency/CNodePointTrackFrequencyGraphView";
-import {addPointTrackFrequencyMenu, deserializePointTrackFrequencyGraph, resetPointTrackFrequencyGraph,
+import {addPointTrackFrequencyMenu, deserializePointTrackFrequencyGraph, MIN_APERTURE_RADIUS, resetPointTrackFrequencyGraph,
     serializePointTrackFrequencyGraph, showPointTrackFrequencyGraph} from "../src/PointTrackFrequencyGraph";
+import {measurePointFlux} from "../src/pointFrequency/PointFrequencyStatistics";
 
 describe.each([
     {id: 'videoTonalGraph', createVideoTonalGraphView, deserializeVideoTonalGraph, resetVideoTonalGraph, serializeVideoTonalGraph, showVideoTonalGraph},
@@ -141,4 +142,29 @@ test('frequency menu controls retain boolean types when a GUI sends numeric chec
     expect(proxy.percent).toBe(true);
     proxy.radius = 1000;
     expect(proxy.radius).toBe(100);
+});
+
+test('frequency aperture minimum is the smallest radius that can be measured', () => {
+    NodeMan.get.mockReturnValue(null);
+    resetPointTrackFrequencyGraph();
+    const calls = [];
+    const controller = {};
+    for (const method of ['name', 'tooltip', 'listen', 'perm']) controller[method] = () => controller;
+    const folder = {
+        add(object, key, min) { calls.push({object, key, min}); return controller; },
+        addFolder() { return folder; },
+        close() { return folder; },
+        perm() { return folder; },
+    };
+    addPointTrackFrequencyMenu(folder);
+    const radius = calls.find(call => call.key === 'radius');
+    expect(radius.min).toBe(MIN_APERTURE_RADIUS);
+    radius.object.radius = 1;
+    expect(radius.object.radius).toBe(MIN_APERTURE_RADIUS);
+
+    const pixels = new Uint8Array(1600).fill(100);
+    pixels[20 * 40 + 20] = 200;
+    const flux = r => measurePointFlux(pixels, 40, 40, null, {u: .5, v: .5, rx: r / 40, ry: r / 40}).flux;
+    expect(Number.isFinite(flux(MIN_APERTURE_RADIUS))).toBe(true);
+    expect(flux(MIN_APERTURE_RADIUS - 1)).toBeNaN();
 });

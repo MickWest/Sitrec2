@@ -3,6 +3,7 @@ import {NodeMan, Sit} from '../src/Globals';
 import {par, resetPar, stopControlledPlayback} from '../src/par';
 import {KeyMan} from '../src/KeyBoardHandler';
 import {loadOpenCV} from '../src/openCVLoader';
+import {getJsfeat} from '../src/jsfeatLoader';
 
 jest.mock('../src/Globals', () => ({
     Globals: {}, Sit: {frames: 20, aFrame: 0, bFrame: 19},
@@ -10,7 +11,7 @@ jest.mock('../src/Globals', () => ({
     unregisterFrameBlocker: jest.fn(),
 }));
 jest.mock('../src/openCVLoader', () => ({getCV: () => ({}), loadOpenCV: jest.fn()}));
-jest.mock('../src/jsfeatLoader', () => ({}));
+jest.mock('../src/jsfeatLoader', () => ({getJsfeat: jest.fn(() => null), loadJsfeat: jest.fn()}));
 jest.mock('../src/CVideoData', () => ({interpolatePosition: (map, f) => map.get(f)}));
 jest.mock('../src/CEventManager', () => ({}));
 jest.mock('../src/KeyBoardHandler', () => ({KeyMan: {isKeyHeld: jest.fn(), clearAll: jest.fn()}}));
@@ -112,6 +113,24 @@ test('a centroid with no matching pixels records a missing measurement', () => {
     expect(t.trackedPositions.has(1)).toBe(false);
     expect(t.trackedPositions.unmeasuredFrames.has(1)).toBe(true);
     expect([t.trackX, t.trackY]).toEqual([100, 100]);
+});
+
+test('optical flow too small for corner detection records a missing measurement, not a held point', () => {
+    getJsfeat.mockReturnValue({U8_t: 0, C1_t: 0, imgproc: {grayscale: () => {}},
+        matrix_t: class { constructor(w, h) { this.data = new Uint8Array(w * h); } }});
+    const context = {drawImage: () => {}, getImageData: (x, y, w, h) => ({data: new Uint8ClampedArray(w * h * 4)})};
+    global.document = {createElement: () => ({getContext: () => context})};
+    try {
+        const {t, image} = makeTracker();
+        t.updateSliderStatus = jest.fn();
+        t.trackRadius = 5;
+        t.trackOpticalFlow(1, image, {x: 500, y: 200});
+        expect(t.trackedPositions.has(1)).toBe(false);
+        expect(t.trackedPositions.unmeasuredFrames.has(1)).toBe(true);
+    } finally {
+        delete global.document;
+        getJsfeat.mockReturnValue(null);
+    }
 });
 
 test('tracking circles show the source-pixel radii at the current video zoom', () => {

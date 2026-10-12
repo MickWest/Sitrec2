@@ -4,6 +4,10 @@ import {t} from './i18n';
 
 const VIEW_ID = 'pointTrackFrequencyGraph';
 export const FREQUENCY_DEFAULTS = {radius: 4, percent: true, showBackground: true};
+// At 1 px the 1.75–2.5 radius background ring holds at most 14 pixels, fewer
+// than measurePointFlux requires, so no frame would ever give a sample.
+export const MIN_APERTURE_RADIUS = 2;
+export const clampApertureRadius = value => Math.max(MIN_APERTURE_RADIUS, Math.min(100, Number(value) || 4));
 let settings = {...FREQUENCY_DEFAULTS};
 let wanted = false;
 const currentView = () => NodeMan.get(VIEW_ID, false);
@@ -45,7 +49,7 @@ export function addPointTrackFrequencyMenu(folder) {
     for (const key of Object.keys(FREQUENCY_DEFAULTS)) Object.defineProperty(proxy, key, {
         get() { return (currentView()?.options ?? settings)[key]; },
         set(value) {
-            value = key === 'radius' ? Math.max(1, Math.min(100, Number(value) || 4)) : !!value;
+            value = key === 'radius' ? clampApertureRadius(value) : !!value;
             settings[key] = value;
             const view = currentView();
             if (view) {
@@ -56,7 +60,7 @@ export function addPointTrackFrequencyMenu(folder) {
             setRenderOne();
         },
     });
-    controls.add(proxy, 'radius', 1, 100, 1).name(t('pointFrequency.radius')).tooltip(t('pointFrequency.radiusTooltip')).listen().perm();
+    controls.add(proxy, 'radius', MIN_APERTURE_RADIUS, 100, 1).name(t('pointFrequency.radius')).tooltip(t('pointFrequency.radiusTooltip')).listen().perm();
     controls.add(proxy, 'percent').name(t('pointFrequency.percent')).listen().perm();
     controls.add(proxy, 'showBackground').name(t('pointFrequency.showBackground')).listen().perm();
     controls.add(proxy, 'refresh').name(t('videoTonal.refresh')).perm();

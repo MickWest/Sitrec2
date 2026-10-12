@@ -1922,10 +1922,11 @@ export class ObjectTracker {
             const roiW = Math.min(this.trackRadius * 2, width - roiX);
             const roiH = Math.min(this.trackRadius * 2, height - roiY);
 
+            // Too small for corner detection (Track Radius 5 or less, or the
+            // image edge). Recording prevPos here would look like a successful,
+            // stationary track; record the frame as missing instead.
             if (roiW < 11 || roiH < 7) {
-                this.trackX = prevPos.x;
-                this.trackY = prevPos.y;
-                this.trackedPositions.set(frame, {x: this.trackX, y: this.trackY});
+                this.trackedPositions.markUnmeasured(frame);
                 this.updateSliderStatus();
                 return;
             }

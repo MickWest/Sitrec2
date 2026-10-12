@@ -118,7 +118,8 @@ object over the selected range. Moving either marker or editing the track recalc
 
 In **Frequency Analysis Settings**, set **Object radius (px)** to include the whole object
 without including its neighbours. This radius is in original video pixels and is independent
-of the tracking/search circles. Sitrec sums the pixels in a circular aperture, with fractional
+of the tracking/search circles. The smallest radius is 2 pixels; at 1 pixel the background ring
+has too few pixels to measure. Sitrec sums the pixels in a circular aperture, with fractional
 weights at its edge. A green circle matching the object curve shows this aperture on the video
 while the frequency graph is open; it follows the track and scales with video zoom. Sitrec
 subtracts the median background from a ring at 1.75–2.5 times the
@@ -362,7 +363,7 @@ nothing tells it apart from the picture. Mask it.
 | Control | Default | Range | What it does |
 |---|---|---|---|
 | **Tracking Method** | Motion (Background) | — | See [Choosing a tracking method](#choosing-a-tracking-method). Changing it during a run clears the track |
-| **Track Radius** | 30 | 1–100 | The inner solid circle: the template size, or the maximum extent of the connected object used for a centroid |
+| **Track Radius** | 30 | 1–100 | The inner solid circle: the template size, or the maximum extent of the connected object used for a centroid. Optical Flow needs 6 or more; below that it records no measurements |
 | **Search Radius** | 50 | 1–300 | The outer dashed circle: how far from the predicted position the tracker looks |
 | **Feature Size** | 4 | 1–20 | The size of the object in pixels. Used by High/Low Peak and Motion (Background). Set by Analyse Object |
 | **Motion Polarity** | Either | — | Whether the object is brighter or darker than its background. *Either* works but is noisier; Analyse Object picks one |
