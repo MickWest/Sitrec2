@@ -231,7 +231,7 @@ previous / next marker. Markers are saved with the sitch. In a sitch with
 |---|---|
 | **Add Marker at Current Frame** | Adds a marker at the current frame |
 | **Add Marker Here** | Adds a marker at the frame under the pointer |
-| **Add satellite rise / set markers** | Adds a marker at each rise and set of the satellites shown in the sky (custom sitches; see [Satellite rise and set markers](SitchChapters.md#satellite-rise-and-set-markers)) |
+| **Add satellite rise / set markers** | Adds a marker at each rise and set of the satellites shown in the sky (see [Satellite rise and set markers](SitchChapters.md#satellite-rise-and-set-markers)) |
 | **Label**, **Go to Marker**, **Delete Marker** | Shown when you right-click a flag: name the marker, go to it, or delete it |
 | **Go to Marker** (folder) | Every marker, by name and frame. Click one to go there |
 | **Delete All Markers** | Deletes every marker, after you confirm |
