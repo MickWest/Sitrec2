@@ -544,6 +544,18 @@ server.listen(9781, () => console.log('ready'));
 
 This works because `FileManager.parseResult()` is the same pipeline used by drag-and-drop. The one-shot server avoids browser CORS issues and closes itself after serving the file once.
 
+**Videos** go through the drop path instead. When a video is already loaded, a drop opens the **Second Video** dialog, and a repeated filename opens **Name Already Used**. An agent cannot answer either one. Pass `{replaceVideo: true}` to replace the primary video without both dialogs:
+```js
+(window._importResult = 'fetching',
+ fetch('http://localhost:9781/clip.mp4')
+   .then(r => r.blob())
+   .then(blob => DragDropHandler.uploadDroppedFile(new File([blob], 'clip.mp4', {type: 'video/mp4'}), {}, {replaceVideo: true}))
+   .then(() => window._importResult = 'done')
+   .catch(e => window._importResult = 'error: ' + e.message),
+ 'started')
+```
+The option applies to that call only. `window._mcpDebug` does not skip these dialogs, because the bridge sets it in every tab it attaches to, and a video that the user drops by hand must still ask.
+
 ### Reloading the Sitrec tab
 When the MCP bridge is active (`window._mcpDebug` is set by `page-bridge.js`), the `beforeunload` "Leave Site?" dialog is **automatically suppressed**. Just reload directly:
 ```js

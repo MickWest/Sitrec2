@@ -86,9 +86,6 @@ class CDragDropHandler {
      * @returns {Promise<string>} Resolves 'secondView' | 'add' | 'replace', rejects if cancelled
      */
     async showSecondVideoChoiceDialog(filename) {
-        // Automated video imports replace the primary video, using the same
-        // disposal/upload path as the interactive Replace Video choice.
-        if (typeof window !== "undefined" && window._mcpDebug) return "replace";
         const options = [];
         // Only offer the side-by-side option when a secondary view exists.
         if (NodeMan.exists("video2")) {
@@ -315,7 +312,7 @@ class CDragDropHandler {
      * @param {File} file
      * @returns {Promise<File|null>} The file to import, renamed if "Keep Both", or null if cancelled
      */
-    async resolveNameCollision(file) {
+    async resolveNameCollision(file, {replaceVideo = false} = {}) {
         // A clipboard image is handed over as "image.<ext>" whatever it is a picture of. That
         // name carries no information, so there is nothing for the user to decide: rename it
         // silently to a free "pasted-image-N" instead of asking. Prompting here would be asking
@@ -330,11 +327,10 @@ class CDragDropHandler {
             return file;
         }
 
-        // A repeated automated video drop must also pass the filename gate.
-        // Keep other file collisions interactive; transport streams use the
+        // A caller that asked for replaceVideo has already answered "Replace" for a
+        // video. Other file collisions stay interactive; transport streams use the
         // data-import path rather than the primary-video replacement path.
-        if (typeof window !== "undefined" && window._mcpDebug && file.type.startsWith("video/") &&
-            !/\.(ts|m2ts|mts)$/i.test(file.name)) return file;
+        if (replaceVideo && file.type.startsWith("video/") && !/\.(ts|m2ts|mts)$/i.test(file.name)) return file;
 
         const choice = await showChoice(`"${file.name}" has already been imported. What would you like to do?`, {
             title: 'Name Already Used',
@@ -627,11 +623,19 @@ class CDragDropHandler {
         return filesAreTrackImport(files);
     }
 
-    async uploadDroppedFile(droppedFile, sourceDetails = {}) {
+    /**
+     * @param {File} droppedFile
+     * @param {Object} [sourceDetails] - Extra source metadata recorded for the file
+     * @param {Object} [options]
+     * @param {boolean} [options.replaceVideo] - For a scripted import: a video replaces the
+     *     primary video without the Second Video or Name Already Used dialogs. Drops by hand
+     *     never pass it, so they always ask.
+     */
+    async uploadDroppedFile(droppedFile, sourceDetails = {}, options = {}) {
 
         EventManager.dispatchEvent("fileDropped", {})
 
-        const file = await this.resolveNameCollision(droppedFile);
+        const file = await this.resolveNameCollision(droppedFile, options);
         if (file === null) {
             console.log("Import cancelled, name already used: " + droppedFile.name);
             return;
@@ -646,7 +650,7 @@ class CDragDropHandler {
                     relativePath: droppedFile.sourceRelativePath || droppedFile.webkitRelativePath || null,
                     ...sourceDetails},
             };
-            return await this.importDroppedFile(file);
+            return await this.importDroppedFile(file, options);
         } finally {
             // The claim only has to cover the window between settling on a name and
             // the import registering under it. By the time we get here FileManager is
@@ -660,7 +664,7 @@ class CDragDropHandler {
         }
     }
 
-    async importDroppedFile(file) {
+    async importDroppedFile(file, {replaceVideo = false} = {}) {
 
         // Peek at the first few KB of the file to detect its real type from
         // contents rather than trusting the filename extension or browser MIME.
@@ -749,7 +753,9 @@ class CDragDropHandler {
             // primary view (old stays selectable), or replace the primary video.
             let choice;
             try {
-                choice = await this.showSecondVideoChoiceDialog(file.name);
+                // A scripted import that asked for replaceVideo takes the same path
+                // as the Replace Video choice.
+                choice = replaceVideo ? "replace" : await this.showSecondVideoChoiceDialog(file.name);
             } catch (cancelled) {
                 console.log("Second-video import cancelled");
                 return;
