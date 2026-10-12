@@ -214,15 +214,19 @@ export function residualCanvas(image, shiftAt = null) {
 
 // The pair images: target and source side by side, or one at a time (blink), with a box
 // of the same color around each confident strip in both frames.
+// Returns the panel geometry {panels: [{which, x0, y0, dw, dh, toPx}]} so that a click can be
+// mapped back to a strip. data.selected (a box index) gets a 2 px white outline drawn just
+// outside the column, in every panel that shows it.
 export function drawPairImages(ctx, width, height, data) {
-    const {target, source, blink, showSource, boxes, dark, labels, frameWidth} = data;
+    const {target, source, blink, showSource, boxes, dark, labels, frameWidth, selected = -1} = data;
     const c = palette(dark);
+    const geometry = {panels: []};
     ctx.fillStyle = c.bg;
     ctx.fillRect(0, 0, width, height);
     if (!target || !source) {
         ctx.fillStyle = c.dim; ctx.font = "12px sans-serif"; ctx.textAlign = "center";
         ctx.fillText(labels.empty, width / 2, height / 2);
-        return;
+        return geometry;
     }
     const panels = blink ? [{image: showSource ? source : target, which: showSource ? "source" : "target"}]
         : [{image: target, which: "target"}, {image: source, which: "source"}];
@@ -237,12 +241,20 @@ export function drawPairImages(ctx, width, height, data) {
         ctx.fillStyle = c.text; ctx.font = "11px sans-serif"; ctx.textAlign = "left";
         ctx.fillText(labels[panel.which], x0, 10);
         const toPx = dw / frameWidth;
-        for (const box of boxes ?? []) {
+        geometry.panels.push({which: panel.which, x0, y0, dw, dh, toPx});
+        (boxes ?? []).forEach((box, k) => {
             const a = panel.which === "target" ? box.x0 : box.sx0, b = panel.which === "target" ? box.x1 : box.sx1;
-            if (!Number.isFinite(a) || !Number.isFinite(b)) continue;
+            if (!Number.isFinite(a) || !Number.isFinite(b)) return;
+            const bx = x0 + a * toPx, bw = (b - a) * toPx;
             ctx.strokeStyle = `hsl(${box.hue}, 90%, 55%)`;
             ctx.lineWidth = 1.5;
-            ctx.strokeRect(x0 + a * toPx, y0 + 1, (b - a) * toPx, dh - 2);
-        }
+            ctx.strokeRect(bx, y0 + 1, bw, dh - 2);
+            if (k === selected) {
+                ctx.strokeStyle = "#fff";
+                ctx.lineWidth = 2;
+                ctx.strokeRect(bx - 1, y0 - 1, bw + 2, dh + 2);
+            }
+        });
     });
+    return geometry;
 }

@@ -1377,6 +1377,38 @@ export function offsetSegments(map, tolerance = 4) {
 // ---------------------------------------------------------------------------------------
 // Decode planning
 
+// H.264 random access. The MP4 sync-sample table can mark a chunk as a key frame when it
+// holds a non-IDR I slice (NAL type 1) and not an IDR (type 5). Playback survives a cold
+// start there because the hardware decoder conceals the missing references, but a decoder
+// started cold fails on the frames that follow (they reference pictures before the chunk),
+// and the software decoder reports "Decoding error". So a decode segment may only start at
+// a chunk that holds an IDR. For avc1/avc3 the chunk data is NAL units with a length
+// prefix of lengthSize bytes (avcC byte 4, low two bits, plus one).
+export function avcNalLengthSize(description) {
+    if (!description) return 4;
+    const bytes = description instanceof Uint8Array ? description
+        : new Uint8Array(description.buffer ?? description, description.byteOffset ?? 0, description.byteLength);
+    return bytes.length > 4 ? (bytes[4] & 3) + 1 : 4;
+}
+
+// True when the chunk holds an IDR slice, or when it holds no slice that can be read (an
+// Annex B stream or malformed data: keep the sync-sample table's word). False when it holds
+// only non-IDR slices.
+export function avcChunkHasIdr(bytes, lengthSize = 4) {
+    let p = 0, sawSlice = false;
+    while (p + lengthSize <= bytes.length) {
+        let len = 0;
+        for (let i = 0; i < lengthSize; i++) len = len * 256 + bytes[p + i];
+        p += lengthSize;
+        if (len <= 0 || p + len > bytes.length) return !sawSlice;
+        const type = bytes[p] & 0x1f;
+        if (type === 5) return true;
+        if (type === 1) sawSlice = true;
+        p += len;
+    }
+    return !sawSlice;
+}
+
 // Splits the video into decode segments of whole key-frame groups.
 //   groupStarts[g]  decode index of the key chunk of group g (ascending)
 //   displayOf[c]    display index of chunk c (-1 when unknown)

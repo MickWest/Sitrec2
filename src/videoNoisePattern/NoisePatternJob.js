@@ -22,7 +22,7 @@
 import {
     ALIGNED_CURVES, BAND_STRIDE, CURVES, LAG_MIN, LIVE_FRACTION, SIG_COUNT, STRIP_CURVES, STRONG_Z, SIGNIFICANT_Z,
     TEMPORAL_HALF, THUMB_SIZE, HELD_NCC, assignmentMap, bitReversedOrder, lagPair, matchedRuns, medianOf,
-    offsetSegments, pairRuleFit, planFrameDecodes, planSegments, referenceIndices, thumbNCC,
+    avcChunkHasIdr, avcNalLengthSize, offsetSegments, pairRuleFit, planFrameDecodes, planSegments, referenceIndices, thumbNCC,
 } from "./NoisePatternMath";
 import {sourceVideoOf} from "../videoQP/VideoQPAnalysis";
 
@@ -435,6 +435,56 @@ class NoisePatternRun {
             if (d !== undefined) this.displayOf[c] = d;
         }
         this.groupStarts = (src.groups ?? []).map(group => group.frame);
+        // Segments may only start where a cold decoder can start: for H.264 that is an IDR
+        // chunk. A "key" chunk with only a non-IDR I slice is merged into the group before it.
+        this.mergedStarts = 0;
+        if (/^avc[13]/i.test(String(src.config?.codec ?? "")) && this.groupStarts.length > 1) {
+            const lengthSize = avcNalLengthSize(src.config?.description);
+            const starts = [this.groupStarts[0]];
+            for (let i = 1; i < this.groupStarts.length; i++) {
+                const chunk = chunks[this.groupStarts[i]];
+                const bytes = new Uint8Array(chunk.byteLength);
+                chunk.copyTo(bytes);
+                if (avcChunkHasIdr(bytes, lengthSize)) starts.push(this.groupStarts[i]);
+                else this.mergedStarts++;
+            }
+            this.groupStarts = starts;
+        }
+    }
+
+    // Runs one decode segment. A decoder failure, whether the whole segment was rejected or
+    // only part of it came out (the worker reports that as an error with frames failed), is
+    // retried once from the start of the segment before it (pre-roll). A second failure keeps
+    // what was decoded, skips the rest and counts it: the analysis goes on, and the verdict
+    // says how many frames it does not cover. The feature store ignores a frame it already
+    // holds, so a retry never counts a frame twice.
+    async decodeSegmentWithRetry(scheduler, segments, i, buildFor) {
+        const segment = segments[i];
+        const attempt = (from) => scheduler.run({build: () => buildFor(from)});
+        let first = null, error = null;
+        try {
+            first = await attempt(segment.decodeFrom);
+            if (!first.error || !(first.failed > 0)) return first;
+            error = first.error;
+        } catch (e) {
+            error = String(e?.message ?? e);
+        }
+        const prev = i > 0 ? segments[i - 1].decodeFrom : -1;
+        if (prev >= 0 && prev < segment.decodeFrom && !this.cancelled) {
+            try {
+                const reply = await attempt(prev);
+                reply.prerolled = true;
+                // the recovery is reported with the error that made it necessary
+                reply.error = reply.error ?? error;
+                if (reply.failed > 0 && reply.error) reply.partial = true;
+                return reply;
+            } catch (e) {
+                error = String(e?.message ?? e);
+            }
+        }
+        console.warn(`Noise Pattern Detection: frames ${segment.keepFrom}-${segment.keepTo - 1} could not be decoded (${error})`);
+        return {decoded: first?.decoded ?? 0, failed: first ? first.failed : segment.keepTo - segment.keepFrom,
+            accel: first?.accel, error, skipped: true};
     }
 
     chunkItems(from, to, limitBytes = MESSAGE_BYTES) {
@@ -473,29 +523,32 @@ class NoisePatternRun {
         if (!segments.length) throw new Error("The video has no key frames in the range");
         const scheduler = new Scheduler(decodeLanes, ms => this.slice(ms));
         const accels = new Set();
-        let decoded = 0, failed = 0, decodeErrors = 0;
-        await Promise.all(segments.map(segment => scheduler.run({
-            build: () => {
-                const first = this.chunkItems(segment.decodeFrom, segment.decodeTo);
-                const last = first.next >= segment.decodeTo;
-                return {
-                    message: {type: "decode", config: this.source.config, accel: "prefer-software", items: first.items,
-                        keepFrom: segment.keepFrom, keepTo: segment.keepTo, detail: this.options.detail, batchSize: 32, last},
-                    transfer: first.transfer,
-                    onPartial: (data) => this.timed(() => this.storeFeatures(data)),
-                    onStart: last ? null : (id, lane) => { this.sendRest(lane, id, segment, first.next); },
-                };
-            },
+        let decoded = 0, failed = 0, decodeErrors = 0, skippedSegments = 0, prerolled = 0, lastError = null;
+        await Promise.all(segments.map((segment, i) => this.decodeSegmentWithRetry(scheduler, segments, i, (decodeFrom) => {
+            const first = this.chunkItems(decodeFrom, segment.decodeTo);
+            const last = first.next >= segment.decodeTo;
+            return {
+                message: {type: "decode", config: this.source.config, accel: "prefer-software", items: first.items,
+                    keepFrom: segment.keepFrom, keepTo: segment.keepTo, detail: this.options.detail, batchSize: 32, last},
+                transfer: first.transfer,
+                onPartial: (data) => this.timed(() => this.storeFeatures(data)),
+                onStart: last ? null : (id, lane) => { this.sendRest(lane, id, segment, first.next); },
+            };
         }).then(reply => {
             decoded += reply.decoded;
             failed += reply.failed;
             if (reply.accel) accels.add(reply.accel);
-            if (reply.error) decodeErrors++;
+            if (reply.error) { decodeErrors++; lastError = reply.error; }
+            if (reply.skipped) skippedSegments++;
+            if (reply.prerolled) prerolled++;
         })));
-        if (!this.store?.decodedCount) throw new Error("No frame of the video could be decoded");
+        if (!this.store?.decodedCount) throw new Error(lastError ? `No frame of the video could be decoded (${lastError})` : "No frame of the video could be decoded");
         r.counts.decoded = this.store.decodedCount;
         r.counts.failed = r.counts.frames - this.store.decodedCount;
-        r.counts.decodeErrors = decodeErrors;
+        // kept on the store, so that a cached rerun (new settings, same features) reports them too
+        this.store.decodeReport = {decodeErrors, skippedSegments, prerolledSegments: prerolled,
+            mergedKeyFrames: this.mergedStarts, lastDecodeError: lastError};
+        Object.assign(r.counts, this.store.decodeReport);
         r.representation.accel = [...accels].join(", ");
         this.store.representation = {...r.representation};
         r.timings.ingest = now() - t0;
@@ -660,6 +713,7 @@ class NoisePatternRun {
         r.video.height = store.height;
         r.counts.decoded = store.decodedCount;
         r.counts.failed = r.counts.frames - store.decodedCount;
+        if (store.decodeReport) Object.assign(r.counts, store.decodeReport);
         r.counts.held = store.heldCount ?? 0;
         r.counts.sequence = store.n;
         r.counts.valid = store.valid.map(v => v.reduce((s, x) => s + x, 0));
@@ -1456,13 +1510,11 @@ class NoisePatternRun {
         const decodeLanes = this.lanes.slice(0, Math.min(DECODE_CONCURRENCY, this.lanes.length));
         const scheduler = new Scheduler(decodeLanes, ms => this.slice(ms));
         let frames = 0;
-        await Promise.all(segments.map(segment => scheduler.run({
-            build: () => {
-                const part = this.chunkItems(segment.decodeFrom, segment.decodeTo, Infinity);
-                return {message: {type: "decode", config: this.source.config, accel: "prefer-software", items: part.items,
-                    keepFrom: segment.keepFrom, keepTo: segment.keepTo, detail: this.options.detail, batchSize: 32, last: true},
-                transfer: part.transfer, onPartial: (data) => { frames += data.count; }};
-            },
+        await Promise.all(segments.map((segment, i) => this.decodeSegmentWithRetry(scheduler, segments, i, (decodeFrom) => {
+            const part = this.chunkItems(decodeFrom, segment.decodeTo, Infinity);
+            return {message: {type: "decode", config: this.source.config, accel: "prefer-software", items: part.items,
+                keepFrom: segment.keepFrom, keepTo: segment.keepTo, detail: this.options.detail, batchSize: 32, last: true},
+            transfer: part.transfer, onPartial: (data) => { frames += data.count; }};
         })));
         const ms = now() - t0;
         return {ms, frames, fps: frames / Math.max(1e-3, ms / 1000)};

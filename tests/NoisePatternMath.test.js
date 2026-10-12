@@ -1,5 +1,6 @@
 import {
     BAND_STRIDE, BANDS, SIG_COUNT, THUMB_SIZE, bandPassRow, createFeatureContext, createMatchScratch, extractFrameFeatures,
+    avcChunkHasIdr, avcNalLengthSize,
     detrendZ, findPeriod, fitRule, gaussianSource, latticeFold, matchPair, matchProbes, mulberry32, planeDescriptors, planSegments,
     reducePair, temporalHighPass,
 } from "../src/videoNoisePattern/NoisePatternMath";
@@ -328,5 +329,36 @@ describe("decode segments", () => {
         const ranged = plan(displayOf, starts, 4, {from: 40, to: 70});
         expect(ranged[0].keepFrom).toBe(40);
         expect(ranged[ranged.length - 1].keepTo).toBe(71);
+    });
+});
+
+describe("H.264 random access", () => {
+    // length-prefixed NAL units: [4-byte length][nal header byte ...]
+    function nal(type, payload = 3) {
+        const len = 1 + payload;
+        return [0, 0, 0, len, 0x60 | type, ...new Array(payload).fill(0xaa)];
+    }
+    test("avcC length size", () => {
+        expect(avcNalLengthSize(null)).toBe(4);
+        expect(avcNalLengthSize(new Uint8Array([1, 0x4d, 0x40, 0x1f, 0xff]))).toBe(4);
+        expect(avcNalLengthSize(new Uint8Array([1, 0x4d, 0x40, 0x1f, 0xfd]))).toBe(2);
+        expect(avcNalLengthSize(new Uint8Array([1, 0x4d, 0x40, 0x1f, 0xfe]).buffer)).toBe(3);
+    });
+    test("an SEI followed by an IDR slice is a random access point", () => {
+        expect(avcChunkHasIdr(Uint8Array.from([...nal(6), ...nal(5)]))).toBe(true);
+    });
+    test("an SEI followed by a non-IDR I slice is not", () => {
+        expect(avcChunkHasIdr(Uint8Array.from([...nal(6), ...nal(1)]))).toBe(false);
+        expect(avcChunkHasIdr(Uint8Array.from([...nal(1), ...nal(1)]))).toBe(false);
+    });
+    test("data without a readable slice keeps the sync-sample flag", () => {
+        expect(avcChunkHasIdr(Uint8Array.from([0, 0, 0, 1, 0x67, 0x4d]))).toBe(true);   // Annex B start code
+        expect(avcChunkHasIdr(Uint8Array.from([...nal(6)]))).toBe(true);                // SEI only
+        expect(avcChunkHasIdr(new Uint8Array(0))).toBe(true);
+    });
+    test("other NAL length sizes", () => {
+        const two = (type) => [0, 2, 0x60 | type, 0xaa];
+        expect(avcChunkHasIdr(Uint8Array.from([...two(6), ...two(5)]), 2)).toBe(true);
+        expect(avcChunkHasIdr(Uint8Array.from([...two(6), ...two(1)]), 2)).toBe(false);
     });
 });

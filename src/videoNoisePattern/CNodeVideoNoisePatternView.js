@@ -25,6 +25,8 @@ setVideoNoisePatternTeardown(terminateNoisePatternWorkers);
 const tr = (key, values) => t(`videoNoisePattern.${key}`, values);
 const fmt = (value, digits = 2) => Number.isFinite(value) ? value.toFixed(digits) : "—";
 const int = (value) => Number.isFinite(value) ? Math.round(value).toLocaleString("en-US") : "—";
+// matching strips pasted on each side of a picked strip on the video (frames one period apart)
+const NEIGHBOR_STRIPS = 4;
 const ms = (value) => Number.isFinite(value) ? (value >= 1000 ? `${(value / 1000).toFixed(2)} s` : `${Math.round(value)} ms`) : "—";
 
 export class CNodeVideoNoisePatternView extends CNodeViewText {
@@ -38,7 +40,7 @@ export class CNodeVideoNoisePatternView extends CNodeViewText {
         super(v);
         this.skipModSerialize = true;
         this.options = clampNoisePatternOptions(v.options);
-        this.ui = this.ui ?? {blink: false, aligned: false, overlay: false, showSource: false};
+        this.ui = this.ui ?? {blink: false, aligned: false, overlay: false, showSource: false, maxContrast: false};
         this.savedSelection = this.savedSelection ?? null;
         this.job = null;
         this.statusKey = "";
@@ -69,7 +71,7 @@ export class CNodeVideoNoisePatternView extends CNodeViewText {
         super.modDeserialize(state);
         this.options = clampNoisePatternOptions(state.noisePatternOptions);
         const s = state.noisePatternSelection;
-        this.ui = this.ui ?? {blink: false, aligned: false, overlay: false, showSource: false};
+        this.ui = this.ui ?? {blink: false, aligned: false, overlay: false, showSource: false, maxContrast: false};
         if (s && Number.isFinite(s.source) && Number.isFinite(s.target)) {
             this.savedSelection = {source: Math.round(s.source), target: Math.round(s.target), lag: s.lag};
             this.ui.blink = !!s.blink; this.ui.aligned = !!s.aligned; this.ui.overlay = !!s.overlay;
@@ -122,15 +124,42 @@ export class CNodeVideoNoisePatternView extends CNodeViewText {
         this.blinkButton = this.button(tr("view.blink"), () => this.toggle("blink"), bar);
         this.alignedButton = this.button(tr("view.aligned"), () => this.toggle("aligned"), bar);
         this.overlayButton = this.button(tr("view.showOnVideo"), () => this.toggle("overlay"), bar);
-        this.pairCanvas = el("canvas", {display: "block"});
+        this.maxContrastButton = this.button(tr("view.maxContrast"), () => this.toggleMaxContrast(), bar);
+        this.pairCanvas = el("canvas", {display: "block", cursor: "pointer"});
         el("div", heading, area, tr("view.details"));
         this.detailsEl = el("pre", {fontFamily: "monospace", fontSize: "11px", whiteSpace: "pre-wrap", margin: "2px 0 8px", ...selectable});
 
         this.chartCanvas.addEventListener("mousemove", (e) => this.hoverChart(e));
         this.chartCanvas.addEventListener("mouseleave", () => { this.hoverLag = null; this.drawChart(); });
         this.chartCanvas.addEventListener("click", (e) => this.clickChart(e));
+        this.pairCanvas.addEventListener("click", (e) => this.clickPair(e));
         this.whereCanvas.addEventListener("mousedown", e => this.beginWhereDrag(e));
         this.refreshDisplay();
+    }
+
+    // ---- a picked strip: a click on a column in either pane picks it (a second click lets go)
+
+    pickIndex(sel) {
+        return this.pick && sel && this.pick.selection === sel ? this.pick.index : -1;
+    }
+
+    clickPair(e) {
+        const g = this.pairGeometry, sel = this.job?.result?.selection, boxes = this.pairBoxes;
+        if (!g || !sel || !boxes?.length) return;
+        const rect = this.pairCanvas.getBoundingClientRect();
+        const x = e.clientX - rect.left, y = e.clientY - rect.top;
+        const panel = g.panels.find(p => x >= p.x0 && x <= p.x0 + p.dw && y >= p.y0 && y <= p.y0 + p.dh);
+        if (!panel) return;
+        const fx = (x - panel.x0) / panel.toPx;
+        const k = boxes.findIndex(b => {
+            const a = panel.which === "target" ? b.x0 : b.sx0, c = panel.which === "target" ? b.x1 : b.sx1;
+            return Number.isFinite(a) && Number.isFinite(c) && fx >= Math.min(a, c) && fx < Math.max(a, c);
+        });
+        const again = k >= 0 && this.pickIndex(sel) === k;
+        this.pick = k >= 0 && !again ? {selection: sel, index: k} : null;
+        this.neighbors = null;
+        this.drawPair();
+        setRenderOne();
     }
 
     button(label, onClick, parent) {
@@ -267,9 +296,11 @@ export class CNodeVideoNoisePatternView extends CNodeViewText {
 
     dispose() {
         this.layoutObserver?.disconnect();
+        this.restoreContrast();
         this.release();
         this.overlay?.remove();
         this.overlay = null;
+        this.watchVideoClicks(null);
         if (isLocal && window._noisePattern?.view === this) delete window._noisePattern;
         super.dispose();
     }
@@ -381,6 +412,40 @@ export class CNodeVideoNoisePatternView extends CNodeViewText {
         setRenderOne();
     }
 
+    // "Max contrast": Video Adjustments contrast to 5 (its maximum), with the adjustments
+    // turned on; toggling it off, or closing the window, puts the old values back. Set through
+    // the nodes' own setValue, as the adjustments menu's Reset does, so the menu follows.
+    toggleMaxContrast() {
+        if (this.ui.maxContrast) {
+            this.restoreContrast();
+        } else {
+            const contrast = NodeMan.get("videoContrast", false), effects = NodeMan.get("videoEnableEffects", false);
+            if (!contrast) return;
+            this.savedContrast = {contrast: contrast.value, effects: effects ? effects.value : null};
+            if (effects && !effects.value) this.setNodeValue(effects, true);
+            this.setNodeValue(contrast, 5);
+            this.ui.maxContrast = true;
+        }
+        this.refreshDisplay();
+        setRenderOne();
+    }
+
+    restoreContrast() {
+        if (!this.ui?.maxContrast) return;
+        const saved = this.savedContrast;
+        const contrast = NodeMan.get("videoContrast", false), effects = NodeMan.get("videoEnableEffects", false);
+        if (saved && contrast) this.setNodeValue(contrast, saved.contrast);
+        if (saved && effects && saved.effects === false) this.setNodeValue(effects, false);
+        this.savedContrast = null;
+        this.ui.maxContrast = false;
+    }
+
+    setNodeValue(node, value) {
+        if (typeof node.setValue === "function") node.setValue(value);
+        else if (node.guiEntry) node.guiEntry.setValue(value);
+        else node.value = value;
+    }
+
     startBlink() {
         this.stopBlink();
         this.ui.blink = true;
@@ -424,7 +489,8 @@ export class CNodeVideoNoisePatternView extends CNodeViewText {
         const running = !!r && !r.complete;
         this.runButton.disabled = running;
         this.stopButton.disabled = !running;
-        for (const [button, on] of [[this.blinkButton, this.ui.blink], [this.alignedButton, this.ui.aligned], [this.overlayButton, this.ui.overlay]]) {
+        for (const [button, on] of [[this.blinkButton, this.ui.blink], [this.alignedButton, this.ui.aligned], [this.overlayButton, this.ui.overlay],
+            [this.maxContrastButton, this.ui.maxContrast]]) {
             button.style.outline = on ? "2px solid #4ea1ff" : "none";
             button.setAttribute("aria-pressed", on ? "true" : "false");
         }
@@ -467,6 +533,13 @@ export class CNodeVideoNoisePatternView extends CNodeViewText {
             if (r.pictureRepeat?.repeats) lines.push(tr("verdict.pictureRepeat"));
             text = lines.join("\n");
             color = r.pictureRepeat?.repeats ? "#e0a000" : "#e53935";
+        }
+        // frames the decoder could not deliver are not covered by the verdict: say so, and a
+        // "no repeat" on an incomplete video is not shown in green
+        const failed = r?.counts?.failed;
+        if (v && r?.status === "done" && failed > 0 && v.kind !== "pending" && v.kind !== "cannot") {
+            text += "\n" + tr("verdict.incomplete", {failed: int(failed), frames: int(r.counts.frames), segments: int(r.counts.skippedSegments ?? 0)});
+            if (v.kind === "none") color = "#e0a000";
         }
         if (this.changed) text += "\n" + tr("status.settingsChanged");
         if (this.verdictText.textContent !== text && !this.selectionIn(this.verdictText)) this.verdictText.textContent = text;
@@ -573,9 +646,10 @@ export class CNodeVideoNoisePatternView extends CNodeViewText {
                 target: residualCanvas(sel.images?.target), source: residualCanvas(image, shiftAt)};
         }
         const pairBoxes = this.ui.aligned ? this.selectionBoxes(sel).map(b => ({...b, sx0: b.x0, sx1: b.x1})) : this.selectionBoxes(sel);
-        drawPairImages(ctx, width, canvasHeight, {
+        this.pairBoxes = pairBoxes;
+        this.pairGeometry = drawPairImages(ctx, width, canvasHeight, {
             target: this.pairImages?.target, source: this.pairImages?.source, blink: this.ui.blink, showSource: this.ui.showSource,
-            boxes: pairBoxes, dark: this.dark, frameWidth: sel?.frameWidth ?? 1,
+            boxes: pairBoxes, dark: this.dark, frameWidth: sel?.frameWidth ?? 1, selected: this.pickIndex(sel),
             labels: {empty: tr("view.noPair"), target: sel ? tr("view.targetImage", {frame: this.frameOf(sel.target)}) : "",
                 source: sel ? tr(this.ui.aligned ? "view.sourceAligned" : "view.sourceImage", {frame: this.frameOf(sel.source)}) : ""},
         });
@@ -605,6 +679,7 @@ export class CNodeVideoNoisePatternView extends CNodeViewText {
             Object.assign(this.overlay.style, {position: "absolute", top: "0", left: "0", width: "100%", height: "100%",
                 pointerEvents: "none", zIndex: "100"});
             videoView.div.appendChild(this.overlay);
+            this.watchVideoClicks(videoView.div);
         }
         const w = videoView.widthPx, h = videoView.heightPx;
         if (this.overlay.width !== w || this.overlay.height !== h) { this.overlay.width = w; this.overlay.height = h; }
@@ -615,7 +690,17 @@ export class CNodeVideoNoisePatternView extends CNodeViewText {
         if (videoData?.stabilizationEnabled || (videoData?.effectiveRotation ?? 0) !== 0) return;
         const display = displayIndexForFrame(videoData, frame);
         const role = display === sel.target ? "target" : display === sel.source ? "source" : null;
-        if (!role || !videoView.videoToCanvasCoordsOriginal) return;
+        if (!videoView.videoToCanvasCoordsOriginal) return;
+        if (!role) {
+            // the overlay follows the playhead: on a paused frame outside the shown pair, the
+            // pair the precise pass found for that frame is selected (its boxes come with the
+            // next render); where nothing matched, the video says so
+            this.followPlayhead(display);
+            if (this.autoPair?.display === display && this.autoPair.none) {
+                this.overlayCaption(ctx, w, h, tr("overlay.noMatch", {frame: this.frameOf(display)}));
+            }
+            return;
+        }
         const height = sel.frameHeight || videoView.originalVideoHeight || 720;
         ctx.font = "bold 12px sans-serif";
         ctx.textAlign = "center";
@@ -630,13 +715,240 @@ export class CNodeVideoNoisePatternView extends CNodeViewText {
             ctx.fillStyle = `hsl(${box.hue}, 90%, 65%)`;
             ctx.fillText(role === "target" ? box.label : box.sourceLabel, (x0 + x1) / 2, y0 + 14);
         }
-        const caption = tr("overlay.caption", {target: this.frameOf(sel.target), source: this.frameOf(sel.source), lag: sel.lag});
+        this.drawPickedStrip(ctx, w, videoView, sel, role, height);
+        this.overlayCaption(ctx, w, h, tr("overlay.caption", {target: this.frameOf(sel.target), source: this.frameOf(sel.source), lag: sel.lag}));
+    }
+
+    overlayCaption(ctx, w, h, caption) {
         ctx.font = "14px sans-serif";
+        ctx.textAlign = "center";
         const tw = ctx.measureText(caption).width;
         ctx.fillStyle = "rgba(0,0,0,0.6)";
         ctx.fillRect(w / 2 - tw / 2 - 8, h - 30, tw + 16, 22);
         ctx.fillStyle = "#fff";
         ctx.fillText(caption, w / 2, h - 14);
+    }
+
+    // Select the pair of the frame under the playhead, once per frame, only while paused (a
+    // pair selection decodes two frames; during playback the frame changes every render).
+    followPlayhead(display) {
+        if (!this.job || !par.paused || !Number.isFinite(display)) return;
+        if (this.autoPair?.display === display) return;
+        const pair = this.job.pairForDisplay(display);
+        // only a pair the precise pass accepted (the green part of the strip); a weak one
+        // would draw boxes that mean nothing
+        const bd = this.job.result?.byDisplay;
+        const ok = !!pair && (!bd || bd.matched[pair.source - bd.from] === 1);
+        this.autoPair = {display, none: !ok};
+        if (ok) this.selectPair(pair.source, pair.target);
+    }
+
+    // A click on a strip in the video view picks it, like a click in the pane. The views take
+    // their input as pointer events through the interaction router, which cancels the default
+    // of pointerdown (so no mouse events follow) and may capture the pointer elsewhere; these
+    // listeners therefore sit on the document in the capture phase and only look: a press that
+    // starts inside the video view and ends within 4 px of where it started is a click. A drag
+    // is left alone, and nothing is prevented or stopped.
+    watchVideoClicks(div) {
+        if (this.videoClickDiv === div) return;
+        if (this.videoClickDiv) {
+            document.removeEventListener("pointerdown", this.videoDown, true);
+            document.removeEventListener("pointerup", this.videoUp, true);
+        }
+        this.videoClickDiv = div;
+        this.videoPress = null;
+        if (!div) return;
+        this.videoDown = (e) => {
+            const inside = e.button === 0 && e.isPrimary !== false && this.videoClickDiv?.contains(e.target);
+            this.videoPress = inside ? {id: e.pointerId, x: e.clientX, y: e.clientY} : null;
+        };
+        this.videoUp = (e) => {
+            const press = this.videoPress;
+            if (!press || press.id !== e.pointerId) return;
+            this.videoPress = null;
+            if (Math.hypot(e.clientX - press.x, e.clientY - press.y) > 4) return;
+            this.clickVideo(e);
+        };
+        document.addEventListener("pointerdown", this.videoDown, true);
+        document.addEventListener("pointerup", this.videoUp, true);
+    }
+
+    clickVideo(e) {
+        const videoView = NodeMan.get("video", false);
+        const sel = this.job?.result?.selection;
+        if (!this.visible || !this.ui.overlay || !sel || !this.overlay || !videoView?.canvasToVideoCoordsOriginal) return;
+        const videoData = videoView.videoData;
+        if (videoData?.stabilizationEnabled || (videoData?.effectiveRotation ?? 0) !== 0) return;
+        const display = displayIndexForFrame(videoData, par.frame);
+        const role = display === sel.target ? "target" : display === sel.source ? "source" : null;
+        if (!role) return;
+        const rect = this.overlay.getBoundingClientRect();
+        if (!(rect.width > 0) || !(rect.height > 0)) return;
+        const x = (e.clientX - rect.left) * this.overlay.width / rect.width;
+        const y = (e.clientY - rect.top) * this.overlay.height / rect.height;
+        const [vx, vy] = videoView.canvasToVideoCoordsOriginal(x, y);
+        const height = sel.frameHeight || videoView.originalVideoHeight || 720;
+        if (!(vy >= 0 && vy <= height)) return;
+        const k = this.selectionBoxes(sel).findIndex(box => {
+            const a = role === "target" ? box.x0 : box.sx0, b = role === "target" ? box.x1 : box.sx1;
+            return Number.isFinite(a) && Number.isFinite(b) && vx >= Math.min(a, b) && vx < Math.max(a, b);
+        });
+        if (k < 0) return;
+        const again = this.pickIndex(sel) === k;
+        this.pick = again ? null : {selection: sel, index: k};
+        this.neighbors = null;
+        this.drawPair();
+        setRenderOne();
+    }
+
+    // The picked strip on the video: a 2 px white outline just outside the column, and a row
+    // of the SAME strip as it appears in the frames one period apart, pasted directly beside
+    // it (+P, +2P ... to the right, -P, -2P ... to the left). Each pasted strip is that frame's
+    // ORIGINAL pixels from the playback decoder's cache, drawn through the view's own Video
+    // Adjustments so that it looks like the video; a frame outside the cache window is fetched
+    // once and its strip kept. Where the strip lands in each frame comes from a pair match
+    // between that frame and the frame on screen (the match also decodes the frame).
+    adjustmentsKey(videoView) {
+        const i = videoView.in ?? {};
+        const v = (n) => { const x = i[n]; return x ? (x.v0 ?? x.value ?? "") : ""; };
+        return ["enableVideoEffects", "contrast", "brightness", "hue", "saturate", "blur", "shadows", "highlights", "dehaze", "invert"]
+            .map(v).join("|");
+    }
+
+    // The neighbor list for the pick (built once per pick and side; refreshed as pairs arrive).
+    neighborItems(sel, k, role) {
+        const nb = this.neighbors;
+        if (nb && nb.selection === sel && nb.index === k && nb.role === role) return nb.list;
+        const row = sel.assignment?.[k];
+        const anchor = sel[role], other = role === "target" ? "source" : "target";
+        const list = [];
+        if (!row) {
+            // no strip numbers (a translated layer): only the pair's other frame
+            const box = this.selectionBoxes(sel)[k];
+            const a = other === "source" ? box?.sx0 : box?.x0, b = other === "source" ? box?.sx1 : box?.x1;
+            if (Number.isFinite(a) && Number.isFinite(b)) list.push({n: sel[other] > anchor ? 1 : -1, display: sel[other], a, b, state: "ready"});
+            this.neighbors = {selection: sel, index: k, role, list};
+            return list;
+        }
+        const P = this.job?.result?.verdict?.period || Math.abs(sel.lag) || 0;
+        const range = this.job?.result?.range;
+        for (let n = -NEIGHBOR_STRIPS; n <= NEIGHBOR_STRIPS; n++) {
+            if (!n || !P) continue;
+            const display = anchor + n * P;
+            if (range && (display < range.from || display > range.to)) continue;
+            list.push({n, display, a: NaN, b: NaN, state: "pending"});
+        }
+        this.neighbors = {selection: sel, index: k, role, list};
+        const strip = role === "target" ? row.target : row.source;
+        (async () => {
+            for (const item of list) {
+                if (this.neighbors?.list !== list || !this.job) return;
+                try {
+                    const before = item.display < anchor;
+                    const pair = before ? await this.job.analyzePair(item.display, anchor) : await this.job.analyzePair(anchor, item.display);
+                    const rows = pair?.assignment ?? [];
+                    const match = before ? rows.find(r => r.target === strip) : rows.find(r => r.source === strip);
+                    if (match) {
+                        item.a = before ? match.sx0 : match.x0;
+                        item.b = before ? match.sx1 : match.x1;
+                        item.state = Number.isFinite(item.a) && Number.isFinite(item.b) ? "ready" : "none";
+                    } else item.state = "none";
+                } catch (error) {
+                    item.state = "none";
+                }
+                setRenderOne();
+            }
+        })();
+        return list;
+    }
+
+    // One pasted strip's pixels (original frame, adjusted), kept on the item; null until the
+    // frame is available, in which case it is requested once.
+    stripCanvas(item, videoView, videoData, key, height, frameWidth) {
+        if (item.canvas && item.key === key) return item.canvas;
+        const frame = frameForDisplayIndex(videoData, item.display);
+        if (!Number.isFinite(frame)) return null;
+        const copy = (image) => {
+            let source = image, filter = "";
+            try {
+                const adjusted = videoView.getAdjustedVideoFrameSource?.(image, frame);
+                if (adjusted) {
+                    if (adjusted.fullABOverlay) return null;   // belongs to the frame on screen
+                    source = adjusted.sourceImage || image;
+                    filter = adjusted.filter || "";
+                }
+            } catch (error) { source = image; filter = ""; }
+            const scaleX = (source.width || image.width) / (frameWidth || image.width);
+            const scaleY = (source.height || image.height) / (height || image.height);
+            const canvas = document.createElement("canvas");
+            canvas.width = Math.max(1, Math.round(Math.abs(item.b - item.a)));
+            canvas.height = Math.max(1, Math.round(height));
+            const ctx = canvas.getContext("2d");
+            ctx.imageSmoothingEnabled = false;
+            ctx.filter = filter || "none";
+            ctx.drawImage(source, Math.min(item.a, item.b) * scaleX, 0, Math.max(1, Math.abs(item.b - item.a) * scaleX), height * scaleY,
+                0, 0, canvas.width, canvas.height);
+            item.canvas = canvas;
+            item.key = key;
+            return canvas;
+        };
+        const image = videoData?.getImageNoPurge?.(frame) ?? null;
+        if (image) return copy(image);
+        if (!item.requested && videoData?.waitForFrame) {
+            item.requested = true;
+            // copy as soon as it lands: the playback cache may drop a distant frame again
+            videoData.waitForFrame(frame).then(() => {
+                const later = videoData.getImageNoPurge?.(frame);
+                if (later) copy(later);
+                setRenderOne();
+            }, () => {}).finally(() => { item.requested = false; });
+        }
+        return null;
+    }
+
+    drawPickedStrip(ctx, w, videoView, sel, role, height) {
+        const boxes = this.selectionBoxes(sel), k = this.pickIndex(sel);
+        if (k < 0 || k >= boxes.length) return;
+        const box = boxes[k];
+        const a = role === "target" ? box.x0 : box.sx0, b = role === "target" ? box.x1 : box.sx1;
+        if (!Number.isFinite(a) || !Number.isFinite(b)) return;
+        const [x0, y0] = videoView.videoToCanvasCoordsOriginal(Math.min(a, b), 0);
+        const [x1, y1] = videoView.videoToCanvasCoordsOriginal(Math.max(a, b), height);
+        const sw = x1 - x0, sh = y1 - y0;
+        const videoData = videoView.videoData;
+        const key = this.adjustmentsKey(videoView);
+        const place = (n) => n > 0 ? x1 + 2 + (n - 1) * (sw + 2) : x0 - 2 - sw - (-n - 1) * (sw + 2);
+        ctx.font = "bold 12px sans-serif";
+        ctx.textAlign = "center";
+        for (const item of this.neighborItems(sel, k, role)) {
+            const left = place(item.n);
+            if (left < 0 || left + sw > w) continue;
+            if (item.state !== "ready") {
+                if (item.state === "pending") {
+                    ctx.strokeStyle = "rgba(255,255,255,0.35)";
+                    ctx.lineWidth = 1;
+                    ctx.strokeRect(left - 0.5, y0 - 0.5, sw + 1, sh + 1);
+                }
+                continue;
+            }
+            const canvas = this.stripCanvas(item, videoView, videoData, key, height, sel.frameWidth);
+            if (!canvas) {
+                ctx.strokeStyle = "rgba(255,255,255,0.35)";
+                ctx.lineWidth = 1;
+                ctx.strokeRect(left - 0.5, y0 - 0.5, sw + 1, sh + 1);
+                continue;
+            }
+            ctx.imageSmoothingEnabled = false;
+            ctx.drawImage(canvas, left, y0, sw, sh);
+            ctx.strokeStyle = "#fff";
+            ctx.lineWidth = 1;
+            ctx.strokeRect(left - 0.5, y0 - 0.5, sw + 1, sh + 1);
+            ctx.fillStyle = "#fff";
+            ctx.fillText(String(this.frameOf(item.display)), left + sw / 2, y0 + 28);
+        }
+        ctx.strokeStyle = "#fff";
+        ctx.lineWidth = 2;
+        ctx.strokeRect(x0 - 1, y0 - 1, sw + 2, sh + 2);
     }
 
     // ---- text
@@ -667,6 +979,9 @@ export class CNodeVideoNoisePatternView extends CNodeViewText {
         const c = r.counts;
         push(`  ${tr("details.counts", {decoded: int(c.decoded), frames: int(c.frames), failed: int(c.failed), held: int(c.held),
             y: int(c.valid?.[0]), cb: int(c.valid?.[1]), cr: int(c.valid?.[2]), sequence: int(c.sequence), unit: this.unit(r)})}`);
+        if (c.mergedKeyFrames) push(`  ${tr("details.mergedKeyFrames", {n: int(c.mergedKeyFrames)})}`);
+        if (c.decodeErrors) push(`  ${tr("details.decodeErrors", {n: int(c.decodeErrors), skipped: int(c.skippedSegments),
+            prerolled: int(c.prerolledSegments), error: c.lastDecodeError || "—"})}`);
         if (r.lags) {
             push("", tr("details.lagScan", {references: r.lags.R, lmax: r.lags.lmax, lagMin: LAG_MIN, unit: this.unit(r)}));
             push(`  ${"curve".padEnd(8)} ${"period".padStart(6)} ${"strength".padStart(8)} ${"coverage".padStart(8)}  peaks (lag z)`);

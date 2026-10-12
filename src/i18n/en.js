@@ -2614,6 +2614,7 @@ const en = {
             blink: "Blink (2 Hz)",
             aligned: "Aligned",
             showOnVideo: "Show on video",
+            maxContrast: "Max contrast",
             details: "Details",
             memory: "The features of this video need about {{mb}} MB of memory, more than the {{limit}} MB limit. Analyze the A-B range of the timeline instead?",
             memoryTitle: "Noise Pattern Detection",
@@ -2691,6 +2692,7 @@ const en = {
                 weak: "weak",
             },
             where: "Where: frames {{runs}} ({{matched}} of {{tested}} tested frames match)",
+            incomplete: "Incomplete: {{failed}} of {{frames}} frames could not be decoded ({{segments}} segments skipped), so this result covers the other frames only",
             rule: {
                 xor: "Strips {{width}} px wide change order by an XOR of their numbers (fits {{fit}} of {{total}} refined pairs)",
                 cyclic: "Strips {{width}} px wide move round by whole strips (fits {{fit}} of {{total}} refined pairs)",
@@ -2710,6 +2712,8 @@ const en = {
             settings: "settings: longest lag {{lag}}, strip detail {{detail}} px, vertical search ±{{vertical}} bands, held frames {{held}}, frames {{frames}}, search on {{search}}",
             frames: "FRAMES",
             counts: "decoded {{decoded}} of {{frames}} (failed {{failed}}), held {{held}}, usable Y {{y}} / Cb {{cb}} / Cr {{cr}}, sequence {{sequence}} {{unit}}",
+            mergedKeyFrames: "{{n}} key frames hold no IDR slice (a decoder cannot start there); each was merged into the group before it",
+            decodeErrors: "{{n}} decode segments reported an error: {{prerolled}} recovered by decoding from the previous key frame, {{skipped}} skipped; last error: {{error}}",
             lagScan: "LAG SCAN ({{references}} reference frames, lags 1–{{lmax}} {{unit}}, scored from {{lagMin}})",
             verdict: "VERDICT",
             isolated: "significant lags that are not multiples of the period: {{list}}",
@@ -2744,6 +2748,7 @@ const en = {
         },
         overlay: {
             caption: "Frame {{target}} shows noise from frame {{source}} (lag {{lag}})",
+            noMatch: "No matched repeat at frame {{frame}}; use Previous or Next, or go to a green part of the strip",
         },
     },
     osdController: {

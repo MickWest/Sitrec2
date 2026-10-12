@@ -277,3 +277,63 @@ test("a second run with another Longest lag reuses the decoded features", async 
     expect(second.lags.lmax).toBe(64);
     expect(second.verdict.period).toBe(32);
 });
+
+describe("decoder failures", () => {
+    // A decoder that fails for the segment holding frame F when started cold (its first item
+    // is the segment's own start) and works when the job pre-rolls from the segment before;
+    // `always` fails both ways, `partial` delivers the first half and then reports the error.
+    function decoderFailingAt(v, stats, F, {always = false, partial = false} = {}) {
+        const base = syntheticDecoder(v, stats);
+        return {...base, async decodeSegment(message, onFrame, more) {
+            const holds = message.keepFrom <= F && F < message.keepTo;
+            const cold = (message.items[0]?.index ?? message.keepFrom) >= message.keepFrom;
+            if (!holds || !(always || cold)) return base.decodeSegment(message, onFrame, more);
+            if (!partial) throw new Error("Decoding error.");
+            const items = [...message.items];
+            let last = message.last !== false;
+            while (!last) { const next = await more(); items.push(...next.items); last = next.last; }
+            const half = message.keepFrom + ((message.keepTo - message.keepFrom) >> 1);
+            let decoded = 0;
+            for (const item of items) {
+                if (item.index < message.keepFrom || item.index >= half) continue;
+                onFrame({index: item.index, ...v.frame(item.index), mode: "native", bits: 8});
+                decoded++;
+            }
+            return {decoded, failed: message.keepTo - half, accel: "synthetic", error: "Decoding error."};
+        }};
+    }
+    const lanesWith = (decoder, count = 4) => () => Array.from({length: count},
+        () => createLane("cpu", localPort(post => createNoisePatternCore({post, decoder}))));
+    const stats = () => ({segments: 0, frames: 0});
+
+    test("a cold-start failure is recovered by decoding from the segment before it", async () => {
+        const v = XOR();
+        const r = await run(v, {}, {lanes: lanesWith(decoderFailingAt(v, stats(), 200))});
+        expect(r.status).toBe("done");
+        expect(r.counts.failed).toBe(0);
+        expect(r.counts.prerolledSegments).toBe(1);
+        expect(r.counts.decodeErrors).toBe(1);
+        expect(r.counts.skippedSegments).toBe(0);
+        expect(r.verdict.period).toBe(32);
+    });
+
+    test("a partial failure is retried and recovered, and counted once", async () => {
+        const v = XOR();
+        const r = await run(v, {}, {lanes: lanesWith(decoderFailingAt(v, stats(), 200, {partial: true}))});
+        expect(r.status).toBe("done");
+        expect(r.counts.failed).toBe(0);
+        expect(r.counts.decoded).toBe(r.counts.frames);
+        expect(r.counts.prerolledSegments).toBe(1);
+        expect(r.counts.decodeErrors).toBe(1);
+    });
+
+    test("a segment that fails twice is skipped, and the counts say so", async () => {
+        const v = XOR();
+        const r = await run(v, {}, {lanes: lanesWith(decoderFailingAt(v, stats(), 200, {always: true}))});
+        expect(r.status).toBe("done");
+        expect(r.counts.skippedSegments).toBe(1);
+        expect(r.counts.failed).toBeGreaterThan(0);
+        expect(r.counts.decoded + r.counts.failed).toBe(r.counts.frames);
+        expect(r.counts.lastDecodeError).toBe("Decoding error.");
+    });
+});

@@ -106,6 +106,7 @@ export function createNoisePatternCore({post, decoder}) {
         }
         flush();
         post({type: "segmentDone", id, decoded: stats.decoded, failed: stats.failed, accel: stats.accel,
+            error: stats.error ?? null,
             mode: frameMode, bits: frameBits, ms: now() - started, featureMs, decodeMs: stats.decodeMs});
     }
 
