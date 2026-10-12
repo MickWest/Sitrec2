@@ -3,7 +3,9 @@ name: Docker Image
 # Build and publish multi-arch Docker images to GitHub Container Registry.
 # Triggers on version tags (e.g. 2.36.4) and can be run manually.
 #
-# Architecture: four-stage pipeline
+# Architecture: four-stage pipeline, behind a guard
+#   0. "guard" skips everything when GHCR already holds this version tag, so a
+#      duplicate tag push or a full re-run never publishes a release twice.
 #   1. "build-js" runs once on x86 — webpack produces identical output
 #      regardless of CPU architecture, so no need to build twice.
 #   2. "package" runs natively on both amd64 and arm64 runners, copying the
@@ -33,8 +35,75 @@ env:
   IMAGE_NAME: ${{ github.repository }}   # lowercased in each job below
 
 jobs:
+  # ── Stage 0: Never publish a release tag twice ─────────────────
+  # GitHub can deliver one tag push twice (2.179.0 started two runs in the same
+  # second). The shared queue above then runs the second copy after the first has
+  # published. Run in full, it would build again and move the version tag to the
+  # new index. The first index, which a deployment may already run, would then have
+  # no tag and nothing that refers to it, and docker-cleanup.yml deletes exactly
+  # that. So a run for a version tag that GHCR already holds builds and publishes
+  # nothing: every later job is skipped. To publish a tag again on purpose, delete
+  # it from GHCR first.
+  guard:
+    runs-on: ubuntu-latest
+    permissions:
+      packages: read
+    outputs:
+      publish: ${{ steps.check.outputs.publish }}
+    steps:
+      - name: Check whether this release tag is already published
+        id: check
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REF_TYPE: ${{ github.ref_type }}
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME}"
+          # Only a version tag publishes a version tag (type=semver in the manifest job).
+          if [ "$REF_TYPE" != tag ] || ! [[ "$TAG" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Not a version tag (${REF_TYPE} ${TAG}): no release tag to protect."
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          REPO="${IMAGE_NAME,,}"
+          ACCEPT='application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json'
+          BODY="${RUNNER_TEMP}/published-manifest.json"
+          TOKEN=$(curl -fsSL --connect-timeout 15 --max-time 60 -u "x:${GH_TOKEN}" \
+            "https://ghcr.io/token?scope=repository:${REPO}:pull&service=ghcr.io" \
+            | jq -er '.token | select(type == "string" and length > 0)')
+
+          # 200 means published and 404 means not yet. Any other answer stops the run:
+          # read as "not published", a registry fault would allow the second
+          # publication this job exists to prevent.
+          code=000
+          for _ in 1 2; do
+            if code=$(curl -sSL --connect-timeout 15 --max-time 60 -o "$BODY" -w '%{http_code}' \
+              -H "Authorization: Bearer ${TOKEN}" -H "Accept: ${ACCEPT}" \
+              "https://ghcr.io/v2/${REPO}/manifests/${TAG}"); then
+              case "$code" in 200|404) break ;; esac
+            else
+              code=000
+            fi
+          done
+          case "$code" in
+            404)
+              echo "${TAG} is not in GHCR yet: build and publish it."
+              echo "publish=true" >> "$GITHUB_OUTPUT"
+              ;;
+            200)
+              echo "::warning::${TAG} is already published in GHCR. This run builds and publishes nothing (a duplicate tag push, or a re-run)."
+              echo "publish=false" >> "$GITHUB_OUTPUT"
+              ;;
+            *)
+              echo "::error::GHCR answered HTTP ${code} for ${REPO}:${TAG}; cannot tell whether the tag is already published."
+              exit 1
+              ;;
+          esac
+
   # ── Stage 1: Build JS artifacts (runs once on x86) ─────────────
   build-js:
+    needs: guard
+    if: needs.guard.outputs.publish == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read

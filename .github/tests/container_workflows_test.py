@@ -281,6 +281,58 @@ docker() {
         self.assertNotEqual(result.returncode, 0)
         self.assertNotIn('--tag ghcr.io/example/fixture:2.155.0', (self.path / 'docker-calls').read_text())
 
+    def run_guard(self, **env):
+        script = step(RELEASE, 'guard', 'Check whether this release tag is already published')['run']
+        self.write('output', '')
+        return self.shell(script, MOCK_REGISTRY, {'GITHUB_REF_NAME': '2.179.0', 'REF_TYPE': 'tag',
+                                                  'IMAGE_NAME': 'Example/Fixture', **env})
+
+    def test_guard_publishes_a_version_tag_only_once(self):
+        # Not in GHCR yet (the fake registry answers 404): build and publish.
+        result = self.run_guard()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual((self.path / 'output').read_text().strip(), 'publish=true')
+        # Already published, as when GitHub delivered the 2.179.0 push twice: publish nothing.
+        self.write('2.179.0', index(1))
+        result = self.run_guard()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual((self.path / 'output').read_text().strip(), 'publish=false')
+        # Any other answer, a broken download or no token stops the run without a decision.
+        for fixture, data in [('2.179.0.code', '500'), ('2.179.0.exit', '28'), ('token-failure', '')]:
+            with self.subTest(fixture=fixture):
+                self.write(fixture, data)
+                result = self.run_guard()
+                self.assertNotEqual(result.returncode, 0)
+                self.assertEqual((self.path / 'output').read_text(), '')
+                (self.path / fixture).unlink()
+        # A branch, or a tag that is not a version, publishes no version tag: nothing to check,
+        # so the registry is not asked (the token request would fail here).
+        self.write('token-failure', '')
+        for env in [dict(REF_TYPE='branch', GITHUB_REF_NAME='main'), dict(GITHUB_REF_NAME='test-1')]:
+            with self.subTest(**env):
+                result = self.run_guard(**env)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertEqual((self.path / 'output').read_text().strip(), 'publish=true')
+
+    def test_every_build_job_waits_for_the_guard(self):
+        jobs = RELEASE['jobs']
+        self.assertEqual(jobs['build-js']['needs'], 'guard')
+        self.assertEqual(jobs['build-js']['if'], "needs.guard.outputs.publish == 'true'")
+
+        def needs(name):
+            value = jobs[name].get('needs', [])
+            return [value] if isinstance(value, str) else value
+
+        def ancestors(name):
+            return {parent for direct in needs(name) for parent in {direct} | ancestors(direct)}
+        # A skipped job skips every job that needs it, unless that job overrides it with if:.
+        for name in jobs:
+            if name in ('guard', 'build-js'):
+                continue
+            with self.subTest(job=name):
+                self.assertIn('build-js', ancestors(name))
+                self.assertNotIn('if', jobs[name])
+
     def test_shell_syntax(self):
         for workflow in [RELEASE, CLEANUP]:
             for job in workflow['jobs'].values():
