@@ -541,7 +541,9 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
      *   preserve host-agnostic object identity instead of short-lived presigned URLs.
      *
      * @param {string} fileName - Concrete URL/path or resolvable Sitrec reference.
-     * @param {boolean} [clearFrames=true] - Whether to invalidate global frame count.
+     * @param {boolean} [newImport=true] - True for a new import whose frame count is not known yet,
+     *   so it is never streamed against the current Sit.frames. Sit.frames itself keeps its value
+     *   until the loader replaces it (updateSitFrames), as a dropped file does.
      * @param {string|undefined} [storedRef=undefined] - Stable original ref for serialization/restoration.
      * @returns {void}
      */
@@ -550,10 +552,10 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
     // so the completion assigns itself to the correct slot by identity, and so a
     // restore-originated straggler never adds a duplicate entry. undefined for
     // normal (drag-drop / single) loads, which keep the add-on-load behavior.
-    newVideo(fileName, clearFrames = true, storedRef = undefined, restoreIndex = undefined) {
+    newVideo(fileName, newImport = true, storedRef = undefined, restoreIndex = undefined) {
         if (storedRef === undefined && isResolvableSitrecReference(fileName)) {
             resolveURLForFetch(fileName).then(resolvedUrl => {
-                this.newVideo(resolvedUrl, clearFrames, fileName, restoreIndex);
+                this.newVideo(resolvedUrl, newImport, fileName, restoreIndex);
             }).catch(error => {
                 console.error(`[VideoNew] Failed to resolve video ref: ${fileName}`, error);
                 this.errorCallback(error);
@@ -564,7 +566,7 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
         // What the timeline looked like before any video touched it, captured at the moment the
         // FIRST one arrives and never overwritten while videos remain. Remove Video restores
         // this; without it there is no way back to the sitch's own duration, because the value
-        // is about to be replaced (and, with clearFrames, replaced by undefined).
+        // is replaced when the video's own frame count arrives.
         //
         // Not captured while deserializing: a sitch being rebuilt from a save is not a user
         // loading a video, and the "before" it would record is a half-built graph.
@@ -574,9 +576,9 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
             };
         }
 
-        if (clearFrames) {
-            Sit.frames = undefined; // need to recalculate this
-        }
+        // Sit.frames is NOT cleared while the video loads. It feeds CNodeMath through the "frames"
+        // node, and the graph recalculates during the load (the render loop, and the early
+        // "videoLoaded" event), so undefined here made the import fail. See restorePreVideoTimeline.
         EventManager.dispatchEvent("videoImportStarted", {viewId: this.id, fileName});
         this.fileName = fileName;
         setFilenameOverlaySource(this.fileName);
@@ -689,7 +691,7 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
             // the upload-path fallback kicks in. Routing by extension here
             // avoids that wasted attempt.
             const ext = (getFileExtension(fileName) || "").toLowerCase();
-            if (!clearFrames && canStreamVideo(storedRef || fileName, Sit)) {
+            if (!newImport && canStreamVideo(storedRef || fileName, Sit)) {
                 this.videoData = new CVideoStreamData({id: videoDataId, file: fileName,
                     sourceRef: storedRef || fileName, streamFrames: Sit.frames, viewId: this.id,
                     videoSpeed: this.videoSpeed, ownsTimeline: this.ownsTimeline},
