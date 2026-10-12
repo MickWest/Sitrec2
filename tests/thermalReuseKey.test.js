@@ -389,3 +389,32 @@ test("an offscreen tile intersecting a visible wide cloud's center ray remains a
     const before = f.key(); tile.geometry = new BoxGeometry(20, 20, 20);
     expect(f.key()).not.toBe(before);
 });
+
+
+test.each(['hidden parent', 'hidden patches', 'excluded layers', 'thermal opt out', 'unsupported model', 'flock', 'inactive patches', 'hidden material'])
+('solar settings on %s do not disable reuse', reason => {
+    const f = fixture();
+    f.node.modelOrGeometry = 'geometry';
+    f.node.solarSurface = {enabled: true};
+    const group = new Group(), parent = new Group(), band = f.mesh();
+    band.userData.solarSurfacePatch = true;
+    group.add(band); parent.add(group); f.inputs.scene.add(parent);
+    f.node._solarSurfacePatches = {group};
+    if (reason === 'hidden parent') parent.visible = false;
+    if (reason === 'hidden patches') group.visible = false;
+    if (reason === 'excluded layers') band.layers.set(3);
+    if (reason === 'thermal opt out') parent.userData.thermal = false;
+    if (reason === 'unsupported model') f.node.modelOrGeometry = 'model';
+    if (reason === 'flock') f.node.flockEnabled = true;
+    if (reason === 'inactive patches') group.removeFromParent();
+    if (reason === 'hidden material') band.material.visible = false;
+    expect(typeof f.key()).toBe('string');
+});
+
+test('visible participating supported solar bands disable reuse', () => {
+    const f = fixture(), group = new Group(), band = f.mesh();
+    Object.assign(f.node, {modelOrGeometry: 'geometry', solarSurface: {enabled: true}, _solarSurfacePatches: {group}});
+    band.userData.solarSurfacePatch = true; group.add(band); f.inputs.scene.add(group);
+    expect(f.key()).toBeNull();
+    expect(f.inputs.scene.visible).toBe(true);
+});

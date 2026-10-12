@@ -220,3 +220,45 @@ test("an import keeps only the file's own name", () => {
     expect(importCameraStateCSV("https://example.com/data/camera.csv?v=2", rows).sourceName).toBe("camera.csv");
     expect(showError).not.toHaveBeenCalled();
 });
+
+test("independent IR/TV keys survive saving, backward seeking and replacement without lens data", () => {
+    const node = new CNodeCameraState({id: "cameraState", gui: false});
+    node.setModeKey(37, "TV");
+    node.setModeKey(83, "IR");
+    node.setModeKey(12, "IR");
+    const restored = new CNodeCameraState({id: "restored", gui: false});
+    restored.modDeserialize(savedMod(node));
+    for (const [frame, mode] of [[100, "IR"], [37, "TV"], [36.9, "IR"], [11, null], [82, "TV"], [83, "IR"]]) {
+        expect(restored.modeAt(frame)).toBe(mode);
+    }
+    expect(restored.stateAt(37)).toBeNull(); // No invented focal length.
+    restored.setModeKey(37, "IR");
+    expect(restored.modeKeys).toHaveLength(3);
+    expect(restored.modeAt(50)).toBe("IR");
+    restored.removeModeKey(37);
+    expect(restored.modeKeys.map(key => key.frame)).toEqual([12, 83]);
+    expect(() => restored.setModeKey(-1, "TV")).toThrow();
+});
+
+test("mode keys override CSV modes without changing focal lengths or the source table", () => {
+    const node = new CNodeCameraState({id: "cameraState", gui: false});
+    node.setTable(table());
+    node.setModeKey(5, "TV");
+    node.setModeKey(15, "IR");
+    expect(node.stateAt(20)).toMatchObject({mode: "IR", band: "IR", focalLengthMm: 1012});
+    expect(node.stateAt(5)).toMatchObject({mode: "TV", band: "EO", focalLengthMm: 675});
+    expect(node.stateAt(0)).toMatchObject({mode: "IR", band: "IR"});
+    expect(node.table.rows[0].mode).toBe("IR");
+});
+
+test("conditional CSV free-focal choice is opt-in and saved with its camera data", () => {
+    const node = new CNodeCameraState({id: "cameraState", gui: false});
+    node.setTable(table());
+    expect(node.useFreeFocal).toBe(false);
+    node.useFreeFocal = true;
+    const restored = new CNodeCameraState({id: "restored", gui: false});
+    restored.modDeserialize(savedMod(node));
+    expect(restored.useFreeFocal).toBe(true);
+    restored.modDeserialize({cameraState: savedMod(node).cameraState});
+    expect(restored.useFreeFocal).toBe(false);
+});

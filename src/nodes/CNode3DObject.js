@@ -1,5 +1,8 @@
 import {objectThermalState, setupObjectThermalMenu} from "../rendering/ThermalLoader";
 import {effectiveRenderMode} from "../rendering/ViewRenderMode";
+import {SolarSurfacePatches} from "../rendering/SolarSurfacePatches";
+import {solarSurfaceState} from "../../tools/thermal/solarSurface.js";
+import {getCelestialDirection} from "../CelestialMath";
 import {SceneLineSegments} from "../SceneLines";
 // CNode3DObject.js - CNode3DObject
 // a 3D object node - a sphere, cube, etc., with generated geometry and material from the input parameters
@@ -57,7 +60,7 @@ import {
     WebGLCubeRenderTarget,
     WireframeGeometry
 } from "three";
-import {CustomManager, FileManager, GlobalDateTimeNode, Globals, guiMenus, markShadowCastersDirty, NodeMan, setRenderOne, Sit, TrackManager} from "../Globals";
+import {CustomManager, FileManager, GlobalDateTimeNode, Globals, guiMenus, markShadowCastersDirty, markSitchDirty, NodeMan, setRenderOne, Sit, TrackManager} from "../Globals";
 import {isUserMadeObjectId} from "../UserObjects";
 import {addNameControl, notifyDisplayNameChanged} from "../DisplayName";
 import {assert} from "../assert";
@@ -306,6 +309,8 @@ export class CNode3DObject extends CNode3DGroup {
         this.isThermalObject = true;
         this.thermal = objectThermalState(v.thermal);
         setupObjectThermalMenu(this);
+        this.solarSurface = solarSurfaceState(v.solarSurface);
+        this.setupSolarSurfaceMenu();
         this.setupVehicleControls(v);
 
         // "Flock": draw this object as many birds, in formation about its track, in place
@@ -1161,6 +1166,7 @@ ${trackPlacemark}    </Document>
             ...(this.proceduralModel ? {proceduralModel: copyProceduralModel(this.proceduralModel),
                 vehicleAnimation: this.vehicleAnimation, vehicleLightOverrides: this.captureVehicleOverrides()} : {}),
             thermal: objectThermalState(this.thermal),
+            solarSurface: this.solarSurface ? {...this.solarSurface} : undefined,
             common: commonCopy,
             geometryParams: this.geometryParams,
             materialParams: this.materialParams,
@@ -1174,6 +1180,7 @@ ${trackPlacemark}    </Document>
     modDeserialize(v) {
         super.modDeserialize(v)
         Object.assign(this.thermal, objectThermalState(v.thermal));
+        if (this.solarSurface) this.restoreSolarSurface(v.solarSurface);
         // Not linked: the track restores its own saved name.
         if (typeof v.displayName === "string" && v.displayName !== this.displayName) {
             this.setDisplayName(v.displayName, {linked: false});
@@ -2305,6 +2312,8 @@ ${trackPlacemark}    </Document>
     }
 
     destroyObject() {
+        this._solarSurfacePatches?.dispose();
+        this._solarSurfacePatches = null;
         const hadCaster = this.hasVisibleShadowCaster?.() || this._lastShadowCasterActive;
         if (this.object) {
             this.object.geometry.dispose();
@@ -2379,6 +2388,8 @@ ${trackPlacemark}    </Document>
         } else if (target) {
             target.updateMatrixWorld(true);
         }
+
+        if (this.solarSurface) this.updateSolarSurface(view);
 
         // After the group has its scale and rotation for this view, which the flock cancels.
         if (this.flockEnabled) this.flock.preRender(this._viewScale ?? 1);
@@ -2590,6 +2601,7 @@ ${trackPlacemark}    </Document>
     }
     
     postRender(view) {
+        this._solarSurfacePatches?.hide();
         // Restore the original transformation state
         if (this.needsUndo && this.group && this.origQuaternion) {
             // Restore the original position, quaternion, and scale
@@ -2604,6 +2616,43 @@ ${trackPlacemark}    </Document>
             // so that a click between frames finds the birds where they were drawn
             if (this.flockEnabled) this.flock.syncTransform();
         }
+    }
+
+    setupSolarSurfaceMenu() {
+        const folder = this.gui.addFolder("Solar surface heating (estimated)").close();
+        const fields = {enabled: "Enable for solid geometry", airTemperatureK: "Air temperature K", mach: "Object Mach",
+            recoveryFactor: "Recovery factor", solarAbsorptivity: "Solar absorptivity", solarIrradianceWm2: "Direct sun W/m²",
+            convectionWm2K: "Convection W/m²/K", radiationTemperatureK: "Radiation environment K",
+            coolingEmissivity: "Cooling emissivity", emissivityMWIR: "MWIR emissivity",
+            internalHeatFluxWm2: "Estimated internal surface heat flux W/m²", internalHeatCenterFraction: "Internal heat center fraction (local z)",
+            internalHeatSigmaFraction: "Internal heat sigma / half length"};
+        const bounds = {airTemperatureK: [100, 1000, 1], mach: [0, 5, .01], recoveryFactor: [0, 1, .01],
+            solarAbsorptivity: [0, 1, .01], solarIrradianceWm2: [0, 1500, 10], convectionWm2K: [.1, 2000, .1],
+            radiationTemperatureK: [0, 1000, 1], coolingEmissivity: [0, 1, .01], emissivityMWIR: [0, 1, .01],
+            internalHeatFluxWm2: [0, 20000, 10], internalHeatCenterFraction: [-1, 1, .01], internalHeatSigmaFraction: [.01, 2, .01]};
+        for (const [key, label] of Object.entries(fields)) {
+            folder.add(this.solarSurface, key, ...(bounds[key] ?? [])).name(label).listen().onChange(() => {
+                markSitchDirty(); setRenderOne(true);
+            }).tooltip("Estimated local steady equilibrium, not identity evidence. Internal Gaussian flux is body-fixed along local z, in W/m² arriving at the skin, not engine power. Convex solid geometry only; no conduction, thermal inertia, diffuse sun or self-shadowing. Overrides uniform temperature while enabled.");
+        }
+    }
+
+    restoreSolarSurface(value) { Object.assign(this.solarSurface, solarSurfaceState(value)); }
+
+    updateSolarSurface(view) {
+        this._solarSurfacePatches?.hide();
+        if (!this.solarSurface?.enabled || effectiveRenderMode(view) !== "physicalThermal" ||
+            this.modelOrGeometry !== "geometry" || !this.object?.isMesh || this.flockEnabled) return;
+        const source = this.object;
+        const date = GlobalDateTimeNode?.dateNow ?? new Date(Sit.nowTime ?? Sit.startTime);
+        const position = source.getWorldPosition(new Vector3());
+        const sun = getCelestialDirection("Sun", date, position)?.normalize();
+        if (!sun) return;
+        const up = new Vector3(position.x / Globals.equatorRadius ** 2,
+            position.y / Globals.equatorRadius ** 2, position.z / Globals.polarRadius ** 2).normalize();
+        this._solarSurfacePatches ??= new SolarSurfacePatches(source);
+        this._solarSurfacePatches.update(this.solarSurface, sun, sun.dot(up) > 0);
+        this._solarSurfacePatches.show();
     }
 
 

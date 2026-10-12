@@ -53,7 +53,7 @@ export function vehicleDistance(camera, bounds) {
 }
 
 export function attachThermalDebug(host, debug, key = "vehicleThermal") {
-    if (!["localhost", "local.metabunk.org"].includes(host.location.hostname)) return () => {};
+    if (!["localhost", "127.0.0.1", "[::1]", "local.metabunk.org"].includes(host.location.hostname)) return () => {};
     host[key] = debug;
     return () => {if (host[key] === debug) delete host[key];};
 }

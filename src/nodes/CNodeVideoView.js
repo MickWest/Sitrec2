@@ -994,7 +994,10 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
     }
 
     isValidVideoURL(url) {
-        if (!url) return false;
+        if (typeof url !== 'string' || !url) return false;
+        // Same-origin media paths are valid web URLs, including saved scenes
+        // served through a local preview proxy. They do not need a working folder.
+        if (url.startsWith('/') && !url.startsWith('//')) return true;
         if (url.startsWith('http://') || url.startsWith('https://') || url.startsWith('blob:')) {
             return true;
         }

@@ -1007,6 +1007,7 @@ class CSitrecAPI {
                     if (frame < 0) frame = 0;
                     if (frame > Sit.frames - 1) frame = Sit.frames - 1;
                     par.frame = frame;
+                    setRenderOne(true);
                     return { success: true, frame: par.frame, totalFrames: Sit.frames };
                 }
             },

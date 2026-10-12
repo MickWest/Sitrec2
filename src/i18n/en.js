@@ -59,8 +59,9 @@ const en = {
             "row": "Camera data: {{mode}} · {{focal}} mm · {{polarity}} · row at frame {{frame}}",
             "savedPolarity": "{{polarity}} (saved)",
             "notStep": "The camera data's {{focal}} mm is not a lens step of this sensor preset; the saved lens ({{saved}} mm) is kept.",
+            "freeFocal": "Conditional optical model: CSV focal length {{focal}} mm with the selected aperture and detector. This is not calibrated sensor optics; electronic zoom does not change focal length.",
             "noSteps": "This sensor preset has no lens steps; the saved lens ({{saved}} mm) is kept for the camera data's {{focal}} mm.",
-            "invalid": "The {{focal}} mm lens step does not work with the saved pupil policy ({{message}}); the saved lens ({{saved}} mm) is kept.",
+            "invalid": "The camera data focal length {{focal}} mm does not work with the selected optical settings ({{message}}); the saved lens ({{saved}} mm) is kept.",
             "previousLens": "The {{focal}} mm optics are still being built; until they are ready, this frame uses the optics of the previous lens ({{previous}} mm).",
             "readOnly": "Set by the per-frame camera data at this frame (Camera > Camera Data > Drive Look View). The saved value applies where the camera data does not set it."
         },

@@ -9,6 +9,7 @@ var mockNodeList;
 var mockTrackManager;
 var mockMarkSitchDirty = jest.fn();
 var mockSetNewSitchObject = jest.fn();
+var mockSetRenderOne = jest.fn();
 var mockWithTestUser = jest.fn((url) => url);
 var mockSetStartDateTime = jest.fn();
 var mockShowChoice = jest.fn();
@@ -79,6 +80,7 @@ jest.mock('../src/Globals', () => {
         UndoManager: {add: jest.fn()},
         setRenderOne: jest.fn(),
         setNewSitchObject: (...args) => mockSetNewSitchObject(...args),
+        setRenderOne: (...args) => mockSetRenderOne(...args),
         withTestUser: (...args) => mockWithTestUser(...args),
     };
 });
@@ -1147,5 +1149,27 @@ describe('CSitrecAPI timeline markers', () => {
         // the stored labels are not changed
         expect(TimelineMarkers.get(5).label).toContain('\n');
         expect(TimelineMarkers.get(30).label).toHaveLength(500);
+    });
+});
+
+describe('CSitrecAPI frame repaint', () => {
+    test.each([ [904, 904], [-10, 0], [3000, 2288] ])('requests a render after setting frame %s', (input, expected) => {
+        mockSit.frames = 2289;
+        const {par} = require('../src/par');
+        par.paused = true;
+        par.frame = 901;
+        const result = sitrecAPI.api.setFrame.fn({frame: input});
+        expect(result).toEqual({success: true, frame: expected, totalFrames: 2289});
+        expect(par.frame).toBe(expected);
+        expect(par.paused).toBe(true);
+        expect(mockSetRenderOne).toHaveBeenCalledWith(true);
+    });
+
+    test('invalid frame does not request rendering or change the playhead', () => {
+        const {par} = require('../src/par');
+        par.frame = 901;
+        expect(sitrecAPI.api.setFrame.fn({frame: 'invalid'}).success).toBe(false);
+        expect(par.frame).toBe(901);
+        expect(mockSetRenderOne).not.toHaveBeenCalled();
     });
 });

@@ -228,10 +228,10 @@ test("closing a studio during lazy load does not create a pipeline or a debug ho
     expect(ThermalPipeline).not.toHaveBeenCalled(); expect(window.vehicleThermal).toBeUndefined();
 });
 
-test.each(["localhost", "local.metabunk.org", "www.metabunk.org", "metabunk.org", "localhost.example.org"])("debug exposure obeys the exact hostname allowlist on %s", hostname => {
+test.each(["localhost", "127.0.0.1", "[::1]", "local.metabunk.org", "www.metabunk.org", "metabunk.org", "localhost.example.org", "127.0.0.1.example.org", "[::2]"])("debug exposure obeys the exact hostname allowlist on %s", hostname => {
     const host = {location: {hostname}}, debug = {};
     const detach = attachThermalDebug(host, debug);
-    expect(host.vehicleThermal === debug).toBe(["localhost", "local.metabunk.org"].includes(hostname));
+    expect(host.vehicleThermal === debug).toBe(["localhost", "127.0.0.1", "[::1]", "local.metabunk.org"].includes(hostname));
     detach(); expect(host.vehicleThermal).toBeUndefined();
 });
 

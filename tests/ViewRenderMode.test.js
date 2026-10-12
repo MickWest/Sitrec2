@@ -125,12 +125,12 @@ test("a visible-light frame skips only the FLIR and thermal look passes; other e
     const drawn = [];
     const pass = effectName => ({effectName, enabled: true, filter: "Linear", pass: {uniforms: {tDiffuse: {}}, material: effectName}});
     const view = Object.assign(new View(), {id: "lookView", renderMode: "physicalThermal", effectsEnabled: true,
-        effectPasses: ["FLIRShader", "Thermal", "StaticNoise", "Levels"].map(pass),
+        effectPasses: ["FLIRShader", "Thermal", "StaticNoise", "Levels", "Greyscale"].map(name => ({...pass(name), tvOnly: name === "Greyscale"})),
         renderTargetA: {texture: {}}, renderTargetB: {texture: {}}, fullscreenQuad: {}, fullscreenQuadCamera: {},
         renderer: {setRenderTarget() {}, render: () => drawn.push(view.fullscreenQuad.material)}});
     const policy = {active: false, toneMapping: false, exposure: 1, opticsBeforeSensor: false};
     par.frame = 20; view.renderEffectsAndOutput(view.renderTargetA, policy);
-    expect(drawn).toEqual(["StaticNoise", "Levels"]);
+    expect(drawn).toEqual(["StaticNoise", "Levels", "Greyscale"]);
     drawn.length = 0; par.frame = 10; view.renderEffectsAndOutput(view.renderTargetA, policy);
     expect(drawn).toEqual(["FLIRShader", "Thermal", "StaticNoise", "Levels"]);
     // A keyed pass list (addEffectPass) filters the same way.
@@ -288,4 +288,33 @@ test("no direct renderMode comparison remains outside the helper", () => {
     for (const file of ["src/nodes/CNodeView3D.js", "src/nodes/CNodeView.js", "src/nodes/CNode3DObject.js",
         "src/rendering/ViewColorPipeline.js"])
         expect(fs.readFileSync(path.join(ROOT, file), "utf8")).toMatch(/effectiveRenderMode\((this|view)\)/);
+});
+
+test("manual IR/TV switches route a physical look view without CSV data, including backward seeks", () => {
+    const par = {frame: 0};
+    const node = {stateAt: () => null, modeAt: frame => frame >= 80 ? "IR" : frame >= 37 ? "TV" : null};
+    const NodeMan = {get: () => node};
+    const View = methods("src/nodes/CNodeView3D.js", "CNodeView3D", FRAME_GETTERS, {NodeMan, par, frameRenderModeFor});
+    const view = Object.assign(new View(), {id: "lookView", renderMode: "physicalThermal"});
+    for (const [frame, expected] of [[100, "physicalThermal"], [37, "visible"], [36, "physicalThermal"], [79.5, "visible"], [80, "physicalThermal"]]) {
+        par.frame = frame;
+        expect(effectiveRenderMode(view)).toBe(expected);
+        expect(view.renderMode).toBe("physicalThermal");
+    }
+    view.id = "mainView";
+    par.frame = 50;
+    expect(effectiveRenderMode(view)).toBe("physicalThermal");
+});
+
+test("TV-only greyscale applies to TV but leaves IR and unclassified views unchanged", () => {
+    const grey = {effectName: "Greyscale", enabled: true, tvOnly: true};
+    const noise = {effectName: "StaticNoise", enabled: true};
+    const flir = {effectName: "FLIRShader", enabled: true};
+    const effectPasses = {grey, noise, flir};
+    for (const band of ["IR", null]) {
+        expect(frameEffectPasses({frameBand: band, effectPasses})).toEqual([noise, flir]);
+    }
+    expect(frameEffectPasses({frameBand: "EO", effectPasses})).toEqual([grey, noise]);
+    grey.tvOnly = false;
+    expect(frameEffectPasses({frameBand: "IR", effectPasses})).toBe(effectPasses);
 });

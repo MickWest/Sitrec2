@@ -223,10 +223,19 @@ export class   CNodeATFLIRUI extends CNodeViewUI {
         return this.hudRect ? this.hudRect.width * x / 100 : super.sx(x);
     }
 
+    updateCameraMode(frame) {
+        const state = NodeMan.get("cameraState", false);
+        const mode = state?.effectiveModeAt?.(frame) ?? state?.stateAt(frame)?.mode;
+        // ATFLIR names its visible channel TV. Do not infer optical field or
+        // electronic zoom from a mode label or camera FOV.
+        this.textElements.mode.text = mode ? (/^(IR|MWIR|LWIR)/i.test(mode) ? "IR" : "TV") : "IR";
+    }
+
     // Render for CNodeATFLIRUI
     renderCanvas(frame) {
         if (!this.visible) return;
         if (this.overlayView && !this.overlayView.visible) return;
+        this.updateCameraMode(frame);
         if (this.trackDriven) {
             this.updateTrackReadouts(frame);
             this.hudRect = getHUDImageRect(this.widthPx, this.heightPx,

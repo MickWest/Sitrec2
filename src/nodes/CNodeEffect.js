@@ -97,6 +97,12 @@ export class CNodeEffect extends CNode {
         // defaults to the shared "Effects On/Off" folder.
         const flagFolder = (v.enabledGUI && guiMenus[v.enabledGUI]) ? guiMenus[v.enabledGUI] : guiOnOffFolder;
         this.enabledController = this._addEnabledToggle(flagFolder);
+        if (this.effectName === "Greyscale") {
+            this.tvOnly = v.tvOnly ?? false;
+            this.addSimpleSerial("tvOnly");
+            this.tvOnlyController = flagFolder.add(this, "tvOnly").name(`${this.id} TV Only`).listen()
+                .tooltip("Apply greyscale only to visible-channel camera-data or manual TV frames.");
+        }
 
 
         Globals.defaultGui = null;

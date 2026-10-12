@@ -242,15 +242,17 @@ export class CNodeWescamMXUI extends CNodeViewUI {
     // when it is not 1. Otherwise the dimmed placeholder mode and a focal
     // length from the vertical FOV, as a 35mm-equivalent value.
     updateCameraTexts(frame, vFOV) {
-        const state = NodeMan.get("cameraState", false)?.stateAt(frame) ?? null;
+        const cameraState = NodeMan.get("cameraState", false);
+        const state = cameraState?.stateAt(frame) ?? null;
         if (state) {
             this.modeText.text = state.mode;
             this.modeText.color = '#FFFFFF';
             this.focalText.text = `${Math.round(state.focalLengthMm)}`;
             this.zoomText.text = state.zoom !== 1 ? `${state.zoom.toFixed(1)}X` : "";
         } else {
-            this.modeText.text = MODE_PLACEHOLDER;
-            this.modeText.color = GRAY;
+            const mode = cameraState?.effectiveModeAt?.(frame);
+            this.modeText.text = mode ?? MODE_PLACEHOLDER;
+            this.modeText.color = mode ? '#FFFFFF' : GRAY;
             this.focalText.text = `${Math.round((this.sensorHeightMM / 2) / Math.tan(radians(vFOV) / 2))}`;
             this.zoomText.text = "";
         }
