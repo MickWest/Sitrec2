@@ -9,6 +9,26 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.179.0 (2026-10-12)
+
+### New Features
+- **IR/TV mode switches** (Camera → *IR/TV Mode Switches*): set the look view to infrared (IR) or visible light (TV) from a frame onward, for a video in which the camera changes mode. Each switch holds until the next one. A switch overrides the mode in the camera data, and it also works when *Drive Look View* is off or when there is no camera data. On a TV frame the infrared effects are skipped, and with *Render mode* set to *Physical MWIR thermal* the look view shows the visible-light image. The ATFLIR and WESCAM MX overlays show the current mode. The switches are saved with the sitch.
+- **Solar surface heating** (Objects → an object's folder → *Solar surface heating (estimated)*): in the physical thermal view, a generated shape (not a loaded 3D model, and not drawn as a flock) can now get a temperature on each part of its surface. The temperature comes from the sun, from the air temperature and Mach number that you set, and from an optional internal heat source along the object's length (its local z axis). The thermal image then shows the sunlit side and any internal heat, while a visible-light view shows the plain shape. The values are estimates: heat flow through the object, heating time, diffuse sunlight and shadows on itself are not modeled. While this setting is on, it replaces the object's *Thermal surface* temperature.
+- **Frequency Analysis** (Video → Point Track → *Frequency Analysis*): shows the spectrum of the tracked object's brightness between the In and Out markers, so you can find a regular flash or flicker in a light. The frequencies come from the timing of the source video, so the playback speed does not change them. In *Frequency Analysis Settings* you set *Object radius (px)* (2 pixels or more), percent or brightness units, and the local background curve. *Export CSV* saves the spectrum and the measurements. A green circle on the video shows the measured area, and a saved sitch keeps the graph and its settings. The largest peak is a candidate, not a detection. The *Point Tracking and Stabilization* help page (Help → Documentation → Video Tools) explains the method and its limits.
+
+### Improvements
+- **TV Only** for the black-and-white effect (Effects → Rendering Effects → Effects On/Off; *Custom_GreyScale TV Only* in a custom sitch): with this on, the effect applies only on visible-light (TV) frames from camera data or from an IR/TV mode switch.
+- **Use CSV Free Focal Length (Conditional)** (Camera → Camera Data): for a thermal sensor preset that has no lens steps, the physical thermal view can now use the focal length from the camera data on infrared frames, with the selected aperture and detector. This is an estimate, not a calibration. The zoom in the camera data still does not change the focal length.
+- **Point Track** (Video → Point Track): *Center on Bright*, *Center on Dark* and *Center on Color* now measure only the connected object under the track point, so a separate light inside the track circle no longer pulls the center away. *Track Radius* and *Search Radius* can now go down to 1 pixel (*Optical Flow* needs a *Track Radius* of 6 or more and records no measurements below that). These three methods and *Motion (Background)* now prefer a candidate near the predicted position more strongly, so a wide *Search Radius* does not make a distant neighbor as likely as the object.
+- **Traverse fits on sparse data** (Traverse → *Analyze Traverse Methods...*, and the *Global Fit: Physics* method): the fits now choose their observations by time, one for each half second, instead of every fifth frame. A sitch with one frame per second now uses all of its observations, where before the fits used only one in five. At other frame rates the results can change a little.
+- **Scripted video import** (MCP Bridge): a script can now ask for a video to replace the loaded video without the *Second Video* and *Name Already Used* dialogs. A video that you drop by hand still opens both dialogs.
+
+### Bug Fixes
+- Fixed a video that a script imports into an empty video view (the import command that the MCP Bridge and the chat assistant use) sometimes failing with "Video loading error: Cannot read properties of undefined (reading 'position')".
+- Fixed *Center on Bright*, *Center on Dark* and *Center on Color* (Video → Point Track) keeping the previous point on a frame where no pixel matched, so that the track looked measured there. Such a frame is now marked as missing.
+- Fixed the Point Track circles showing a smaller area than the tracker uses when the video is zoomed.
+- Fixed SitrecBridge (1.0.65) screenshots drawing objects without the per-view rotation, scale and visibility that the live view gives them.
+
 ## Version 2.178.0 (2026-10-10)
 
 ### Improvements
