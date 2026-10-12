@@ -171,6 +171,7 @@ import {CustomGraphManager} from "./CCustomGraphManager";
 import {MeasurementManager} from "./CMeasurementManager";
 import {resetVideoQPGraph} from "./VideoQPGraph";
 import {resetVideoTonalGraph} from "./VideoTonalGraph";
+import {resetPointTrackFrequencyGraph} from "./PointTrackFrequencyGraph";
 import {setGlobalTheme} from "./Theme";
 import {GraphDataManager} from "./CGraphDataManager";
 import {classifyProvenance, setSitchProvenance} from "./SitchProvenance";
@@ -3450,6 +3451,7 @@ function disposeEverything() {
     GraphDataManager.disposeAll();
     resetVideoQPGraph();
     resetVideoTonalGraph();
+    resetPointTrackFrequencyGraph();
 
     // reset motion analysis state (must be after NodeMan.disposeAll since it references the video node)
     resetMotionAnalysis();

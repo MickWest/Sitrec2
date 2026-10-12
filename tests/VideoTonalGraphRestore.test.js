@@ -9,6 +9,7 @@ jest.mock("../src/CManager", () => ({CManager: class {
     iterate(fn) { for (const [id, view] of Object.entries(this.list)) fn(id, view); }
 }}));
 jest.mock("../src/videoTonal/CNodeVideoTonalGraphView", () => ({createVideoTonalGraphView: jest.fn()}));
+jest.mock("../src/pointFrequency/CNodePointTrackFrequencyGraphView", () => ({createPointTrackFrequencyGraphView: jest.fn()}));
 
 import {Globals, NodeMan} from "../src/Globals";
 import {ViewMan} from "../src/CViewManager";
@@ -16,6 +17,16 @@ import {createVideoTonalGraphView} from "../src/videoTonal/CNodeVideoTonalGraphV
 import {
     deserializeVideoTonalGraph, resetVideoTonalGraph, serializeVideoTonalGraph, showVideoTonalGraph,
 } from "../src/VideoTonalGraph";
+import {createPointTrackFrequencyGraphView} from "../src/pointFrequency/CNodePointTrackFrequencyGraphView";
+import {addPointTrackFrequencyMenu, deserializePointTrackFrequencyGraph, resetPointTrackFrequencyGraph,
+    serializePointTrackFrequencyGraph, showPointTrackFrequencyGraph} from "../src/PointTrackFrequencyGraph";
+
+describe.each([
+    {id: 'videoTonalGraph', createVideoTonalGraphView, deserializeVideoTonalGraph, resetVideoTonalGraph, serializeVideoTonalGraph, showVideoTonalGraph},
+    {id: 'pointTrackFrequencyGraph', createVideoTonalGraphView: createPointTrackFrequencyGraphView,
+        deserializeVideoTonalGraph: deserializePointTrackFrequencyGraph, resetVideoTonalGraph: resetPointTrackFrequencyGraph,
+        serializeVideoTonalGraph: serializePointTrackFrequencyGraph, showVideoTonalGraph: showPointTrackFrequencyGraph},
+])('$id restoration', ({id, createVideoTonalGraphView, deserializeVideoTonalGraph, resetVideoTonalGraph, serializeVideoTonalGraph, showVideoTonalGraph}) => {
 
 const saved = {visible: true, left: 0.55, top: 0.20, width: 0.45, height: 0.53, headerPinned: true};
 let graph;
@@ -63,7 +74,7 @@ test("a legacy saved graph restores visibly on top of the fullscreen video", asy
 
 test("an already-created graph is re-shown after fullscreen restoration", async () => {
     // Models the old ordering, or a graph opened while a sitch was loading.
-    makeGraph("videoTonalGraph");
+    makeGraph(id);
     restoreFullscreen();
     ViewMan.computeEffectiveVisibility();
     expect(graph._effectivelyVisible).toBe(false);
@@ -74,11 +85,11 @@ test("an already-created graph is re-shown after fullscreen restoration", async 
 });
 
 test("a graph deliberately covered by fullscreen stays covered after a round trip", async () => {
-    makeGraph("videoTonalGraph");
+    makeGraph(id);
     restoreFullscreen();
     const state = serializeVideoTonalGraph();
     expect(state.fullscreenSuppressed).toBe(true);
-    delete ViewMan.list.videoTonalGraph;
+    delete ViewMan.list[id];
     graph = null;
     restoreFullscreen();
     await deserializeVideoTonalGraph(state);
@@ -107,4 +118,27 @@ test("a superseded sitch cannot create its graph after the lazy import", async (
     await restoring;
     expect(createVideoTonalGraphView).not.toHaveBeenCalled();
     expect(graph).toBeNull();
+});
+});
+
+test('frequency menu controls retain boolean types when a GUI sends numeric checkbox values', () => {
+    NodeMan.get.mockReturnValue(null);
+    resetPointTrackFrequencyGraph();
+    const calls = [];
+    const controller = {};
+    for (const method of ['name', 'tooltip', 'listen', 'perm']) controller[method] = () => controller;
+    const folder = {
+        add(object, key) { calls.push({object, key}); return controller; },
+        addFolder() { return folder; },
+        close() { return folder; },
+        perm() { return folder; },
+    };
+    addPointTrackFrequencyMenu(folder);
+    const proxy = calls.find(call => call.key === 'percent').object;
+    proxy.percent = 0;
+    expect(proxy.percent).toBe(false);
+    proxy.percent = 1;
+    expect(proxy.percent).toBe(true);
+    proxy.radius = 1000;
+    expect(proxy.radius).toBe(100);
 });

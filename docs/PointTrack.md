@@ -78,6 +78,11 @@ pick the wrong polarity, and a peak fit is more accurate for a point of light. A
 recommends High Peak in this case. Set **Feature Size** to about the size of the light in
 pixels.
 
+For several nearby dots, **Center on Bright/Dark/Color** centres on one connected group of
+matching pixels. Separate objects inside the tracking circle are excluded. Set the threshold
+so background pixels do not join the objects together. Both tracking radii can be reduced to
+1 pixel when needed; a smaller Search Radius helps preserve the identity of close neighbours.
+
 ### Large objects with structure
 
 For a vehicle, an aircraft seen close, or anything much bigger than the tracking circles, use
@@ -104,6 +109,41 @@ whole clip:
 | Desert, hand-held long lens, 1920×1080, 1810 frames | soft bright blob among bright rocks | every frame (79 of 1810 estimated, mostly through a saturated stretch) |
 
 ---
+
+### Frequency analysis of brightness
+
+Track the object through the interval, set the **In** and **Out** markers, then turn on
+**Video → Point Track → Frequency Analysis**. A graph shows the brightness spectrum of that
+object over the selected range. Moving either marker or editing the track recalculates it.
+
+In **Frequency Analysis Settings**, set **Object radius (px)** to include the whole object
+without including its neighbours. This radius is in original video pixels and is independent
+of the tracking/search circles. Sitrec sums the pixels in a circular aperture, with fractional
+weights at its edge. A green circle matching the object curve shows this aperture on the video
+while the frequency graph is open; it follows the track and scales with video zoom. Sitrec
+subtracts the median background from a ring at 1.75–2.5 times the
+radius. Dark objects keep their negative contrast. **Output Smoothing** applies to aperture
+positions; the brightness samples themselves are not smoothed.
+
+The graph removes a linear trend, applies a Hann window and plots Fourier **semi-amplitude**
+(half the peak-to-peak modulation of a sinusoid). **Amplitude as percent** divides by the
+absolute mean background-subtracted object flux. Switch it off for recorded intensity × pixel
+area (DN·pixels); that scale is also used when the mean flux is zero. The background comparison
+uses the same aperture area and scale. Values are
+recorded brightness, not temperature. **Export CSV** includes the spectrum, measurements and
+analysis settings.
+
+The header shows the sample count, duration and independent frequency bin spacing (`fps/N`).
+The curve is interpolated with zero padding; that does not improve the resolution. The right
+edge is the source video's Nyquist limit, half its frame rate. Held playback frames are counted
+once, so playback speed does not change the frequency scale. Missing or estimated track points,
+irregular source timing, or an aperture that overlaps a mask or image edge must be resolved by
+adjusting the track or selected range.
+
+A largest peak is a candidate periodicity, not a statistical detection or an identification
+of the object. Short intervals, motion across pixels, background structure, camera processing
+and compression can all produce peaks. Compare different intervals, aperture radii and the local
+background curve before interpreting one.
 
 ## B. Point tracks in traverse analysis
 
@@ -290,7 +330,10 @@ Size 1; a soft blob on rough desert wants 4. On one test clip the same footage g
 confident track at Feature Size 1 and almost no detections at 4.
 
 It also checks for look-alikes. The tracker accepts a detection only when it clearly beats the
-next strongest thing within the Search Radius. Analyse Object measures that too. If the
+next strongest thing within the Search Radius, after weighting their distance from the predicted
+position. While following, that weighting uses the recent motion and feature size, so widening
+the search does not make a distant neighbour as plausible as the selected object. During a wide
+reacquisition it uses the whole search area. Analyse Object checks for competition too. If the
 strongest setting leaves nearby clutter almost as strong as the object, and another setting is
 nearly as strong but separates the object clearly, it chooses that one. On one test clip,
 Feature Size 2 was slightly stronger at the first frame, but it left rocks almost as bright as
@@ -319,8 +362,8 @@ nothing tells it apart from the picture. Mask it.
 | Control | Default | Range | What it does |
 |---|---|---|---|
 | **Tracking Method** | Motion (Background) | — | See [Choosing a tracking method](#choosing-a-tracking-method). Changing it during a run clears the track |
-| **Track Radius** | 30 | 10–100 | The inner solid circle: the template size, or the window a centroid is measured over |
-| **Search Radius** | 50 | 20–300 | The outer dashed circle: how far from the predicted position the tracker looks |
+| **Track Radius** | 30 | 1–100 | The inner solid circle: the template size, or the maximum extent of the connected object used for a centroid |
+| **Search Radius** | 50 | 1–300 | The outer dashed circle: how far from the predicted position the tracker looks |
 | **Feature Size** | 4 | 1–20 | The size of the object in pixels. Used by High/Low Peak and Motion (Background). Set by Analyse Object |
 | **Motion Polarity** | Either | — | Whether the object is brighter or darker than its background. *Either* works but is noisier; Analyse Object picks one |
 | **Motion Frame Gap** | 3 | 1–12 | How many frames apart the background samples are |

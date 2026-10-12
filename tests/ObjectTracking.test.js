@@ -1,12 +1,12 @@
 import {ObjectTracker, pointTrackingShift} from '../src/CObjectTracking';
-import {Sit} from '../src/Globals';
+import {NodeMan, Sit} from '../src/Globals';
 import {par, resetPar, stopControlledPlayback} from '../src/par';
 import {KeyMan} from '../src/KeyBoardHandler';
 import {loadOpenCV} from '../src/openCVLoader';
 
 jest.mock('../src/Globals', () => ({
     Globals: {}, Sit: {frames: 20, aFrame: 0, bFrame: 19},
-    NodeMan: {get: () => null}, setRenderOne: jest.fn(),
+    NodeMan: {get: jest.fn(() => null)}, setRenderOne: jest.fn(),
     unregisterFrameBlocker: jest.fn(),
 }));
 jest.mock('../src/openCVLoader', () => ({getCV: () => ({}), loadOpenCV: jest.fn()}));
@@ -20,6 +20,10 @@ jest.mock('../src/showError', () => ({showError: jest.fn()}));
 jest.mock('../src/AttributionOverlay', () => ({}));
 jest.mock('../src/configUtils', () => ({isLocal: true}));
 jest.mock('../src/i18n', () => ({t: v => v}));
+jest.mock('../src/PointTrackFrequencyGraph', () => ({
+    addPointTrackFrequencyMenu: jest.fn(),
+    getPointTrackFrequencyAperture: jest.fn(() => null),
+}));
 
 function makeTracker() {
     const image = {width: 1000, height: 400};
@@ -34,7 +38,96 @@ function makeTracker() {
     return {t, image, videoData};
 }
 
-beforeEach(() => {resetPar(); par.paused = true; Sit.bFrame = 19;});
+beforeEach(() => {resetPar(); par.paused = true; Sit.bFrame = 19; NodeMan.get.mockReset();});
+
+function pixelTracker(background, pixels) {
+    const {t} = makeTracker();
+    const image = {width: 200, height: 200};
+    t.readROI = (_, x0, y0, w, h) => {
+        const rgba = new Uint8ClampedArray(w * h * 4);
+        for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+            const color = pixels.get(`${x + x0},${y + y0}`) ?? background;
+            rgba.set([...color, 255], (y * w + x) * 4);
+        }
+        return rgba;
+    };
+    t.updateSliderStatus = jest.fn();
+    t.trackRadius = 30;
+    t.searchRadius = 44;
+    return {t, image};
+}
+
+test.each([
+    ['trackBrightCentroid', [50, 50, 50], [210, 210, 210]],
+    ['trackDarkCentroid', [220, 220, 220], [40, 40, 40]],
+    ['trackColorCentroid', [50, 50, 50], [255, 0, 0]],
+])('%s follows one object when a neighbour is inside both circles', (method, background, color) => {
+    const pixels = new Map();
+    for (const cx of [96, 122]) for (let y = 99; y <= 101; y++) {
+        for (let x = cx - 1; x <= cx + 1; x++) pixels.set(`${x},${y}`, color);
+    }
+    const {t, image} = pixelTracker(background, pixels);
+    t[method](1, image, {x: 100, y: 100});
+    expect(t.trackedPositions.get(1).x).toBeCloseTo(96, 6);
+    expect(t.trackedPositions.get(1).y).toBeCloseTo(100, 6);
+});
+
+test('centroid retains weighted diagonal pixels and clips at the image edge', () => {
+    const {t, image} = pixelTracker([0, 0, 0], new Map([
+        ['0,0', [150, 150, 150]], ['1,1', [200, 200, 200]],
+        ['2,2', [250, 250, 250]], ['8,2', [255, 255, 255]],
+    ]));
+    const point = t.calculateWeightedCentroid(image, 1, 1, 30, (r, g, b) => t._brightWeight(r, g, b));
+    expect(point.x).toBeCloseTo((72 + 2 * 122) / (22 + 72 + 122), 6);
+    expect(point.y).toBeCloseTo(point.x, 6);
+});
+
+test('a dimming centroid target retains identity beside a brighter neighbour', () => {
+    const pixels = new Map();
+    for (const [cx, cy, value] of [[100, 100, 207], [114, 116, 255]]) {
+        for (let y = cy - 1; y <= cy + 1; y++) for (let x = cx - 1; x <= cx + 1; x++) {
+            pixels.set(`${x},${y}`, [value, value, value]);
+        }
+    }
+    const {t, image} = pixelTracker([30, 30, 30], pixels);
+    t.featureSize = 1;
+    t.trackBrightCentroid(1, image, {x: 104, y: 100});
+    expect(t.trackedPositions.get(1)).toEqual({x: 100, y: 100});
+});
+
+test('masked pixels cannot seed a centroid on a neighbouring object', () => {
+    const {t, image} = pixelTracker([0, 0, 0], new Map([
+        ['100,100', [255, 255, 255]], ['106,100', [180, 180, 180]],
+    ]));
+    NodeMan.get.mockReturnValue({maskImageData: {}, maskCanvas: {width: 100, height: 100},
+        isPointMasked: (x, y) => x === 50 && y === 50});
+    t.trackBrightCentroid(1, image, {x: 100, y: 100});
+    expect(t.trackedPositions.get(1)).toEqual({x: 106, y: 100});
+});
+
+test('a centroid with no matching pixels records a missing measurement', () => {
+    const {t, image} = pixelTracker([60, 60, 60], new Map());
+    t.trackX = 100; t.trackY = 100;
+    t.trackBrightCentroid(1, image, {x: 100, y: 100});
+    expect(t.trackedPositions.has(1)).toBe(false);
+    expect(t.trackedPositions.unmeasuredFrames.has(1)).toBe(true);
+    expect([t.trackX, t.trackY]).toEqual([100, 100]);
+});
+
+test('tracking circles show the source-pixel radii at the current video zoom', () => {
+    const {t} = makeTracker();
+    t.trackingMethod = 'centerOnBright';
+    t.trackRadius = 30; t.searchRadius = 44;
+    // A 640px viewport displays a 160px crop of the original 1280px video.
+    Object.assign(t.videoView, {dWidth: 640, originalVideoWidth: 1280,
+        videoToCanvasCoordsOriginal: (x, y) => [4 * x - 500, 4 * y - 800]});
+    const ctx = {setLineDash: jest.fn(), beginPath: jest.fn(), arc: jest.fn(),
+        stroke: jest.fn(), moveTo: jest.fn(), lineTo: jest.fn()};
+    expect(t.drawTrackingCircles(ctx, 100, 200)).toBe(120);
+    expect(ctx.arc.mock.calls.map(args => args.slice(0, 3))).toEqual([
+        [100, 200, 176], [100, 200, 120],
+    ]);
+});
 
 function startTestRun() {
     const result = makeTracker();

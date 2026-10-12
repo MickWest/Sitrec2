@@ -1,16 +1,22 @@
 import {TONAL_FIELDS} from './TonalStatistics';
 import {sourceVideoOf} from '../videoQP/VideoQPAnalysis';
+import {FREQUENCY_FIELDS, frequencyDecodeRange} from '../pointFrequency/PointFrequencyStatistics';
 
 // A separate sequential decoder leaves the playback decoder, playhead and image cache alone.
 export function startTonalAnalysis(videoData, options, onUpdate) {
     const source = sourceVideoOf(videoData);
     const chunks = source.chunks;
     const frames = chunks.length;
-    const result = {frames, done: 0, complete: false, error: null, version: 0,
+    const pointFrequency = !!options.pointFrequency;
+    const fields = pointFrequency ? FREQUENCY_FIELDS : TONAL_FIELDS;
+    const first = pointFrequency ? options.first : 0, last = pointFrequency ? options.last : frames - 1;
+    const decode = pointFrequency ? frequencyDecodeRange(source, first, last) : {start: 0, end: frames};
+    const result = {frames: last - first + 1, first, last, done: 0, complete: false, error: null, version: 0,
         masked: !!options.mask, hasTargets: !!options.targets,
-        counts: new Uint32Array(frames), targetCounts: new Uint32Array(frames),
-        localCounts: new Uint32Array(frames), histograms: new Uint32Array(frames * 256)};
-    for (const field of TONAL_FIELDS) result[field] = new Float32Array(frames).fill(NaN);
+    };
+    if (!pointFrequency) Object.assign(result, {counts: new Uint32Array(frames), targetCounts: new Uint32Array(frames),
+        localCounts: new Uint32Array(frames), histograms: new Uint32Array(frames * 256)});
+    for (const field of fields) result[field] = (pointFrequency ? new Float64Array(frames) : new Float32Array(frames)).fill(NaN);
     const worker = new Worker(new URL('../workers/VideoTonalWorker.js', import.meta.url));
     const measured = new Uint8Array(frames);
     let cancelled = false, waiting = null;
@@ -40,14 +46,14 @@ export function startTonalAnalysis(videoData, options, onUpdate) {
         const started = performance.now();
         try {
             await request({type: 'init', config: source.config, ...options});
-            for (let next = 0; next < frames;) {
+            for (let next = decode.start; next < decode.end;) {
                 if (cancelled) return;
                 if (source.disposed || source.chunks !== chunks || chunks.length !== frames) {
                     throw new Error('The video changed during analysis');
                 }
                 const items = [];
                 let bytes = 0;
-                while (next < frames && items.length < 64 && bytes < 4 * 1024 * 1024) {
+                while (next < decode.end && items.length < 64 && bytes < 4 * 1024 * 1024) {
                     const chunk = chunks[next];
                     const data = new ArrayBuffer(chunk.byteLength);
                     chunk.copyTo(data);
@@ -57,23 +63,25 @@ export function startTonalAnalysis(videoData, options, onUpdate) {
                     next++;
                     bytes += data.byteLength;
                 }
-                const reply = await request({type: 'chunks', items, last: next === frames});
+                const reply = await request({type: 'chunks', items, last: next === decode.end});
                 if (cancelled) return;
                 Object.assign(result, {mode: reply.mode, bits: reply.bits, width: reply.width, height: reply.height});
                 for (const item of reply.items) {
                     if (item.index < 0 || item.index >= frames) throw new Error('Invalid decoded frame index');
                     if (measured[item.index]) throw new Error('Duplicate decoded frame index');
                     measured[item.index] = 1;
-                    for (const field of TONAL_FIELDS) result[field][item.index] = item[field];
-                    result.counts[item.index] = item.count;
-                    result.targetCounts[item.index] = item.targetCount;
-                    result.localCounts[item.index] = item.localCount;
-                    result.histograms.set(item.histogram, item.index * 256);
+                    for (const field of fields) result[field][item.index] = item[field];
+                    if (!pointFrequency) {
+                        result.counts[item.index] = item.count;
+                        result.targetCounts[item.index] = item.targetCount;
+                        result.localCounts[item.index] = item.localCount;
+                        result.histograms.set(item.histogram, item.index * 256);
+                    }
                     result.done++;
                 }
                 notify();
             }
-            if (result.done !== frames) throw new Error(`Decoded ${result.done} of ${frames} frames`);
+            if (result.done !== result.frames) throw new Error(`Decoded ${result.done} of ${result.frames} frames`);
         } catch (error) {
             if (!cancelled) result.error = error.message;
         } finally {

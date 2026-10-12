@@ -69,6 +69,7 @@ const DEFAULTS = {
     firstFrame: 0,
     lastFrame: Number.MAX_SAFE_INTEGER,
     preferNear: false,   // rank peaks by nearness as well as strength
+    proximityRadius: null, // prediction uncertainty; defaults to the full gate
     requireAppearance: false, // a wide search also needs a real image feature
     maxCandidates: 1,
     fieldSigmas: 8,      // display range of the Motion Field view, in sigma
@@ -748,7 +749,7 @@ export class MotionBackgroundTracker {
         const scales = [opts.featureScale];
 
         const gate2 = opts.gate * opts.gate;
-        // Half weight at the edge of the gate. Among comparable candidates the
+        // Half weight at the prediction's uncertainty radius. Among comparable candidates the
         // nearest is much the likeliest to be the object, and without that prior
         // a search over a scene containing several genuinely moving things —
         // rotating turbine blades, say — always finds a rival of equal strength
@@ -756,8 +757,9 @@ export class MotionBackgroundTracker {
         // track never recovers. It is gentle enough not to block a real jump:
         // a target that jolted to the edge of the gate still wins outright when
         // it is the only strong thing there.
+        const proximity2 = Math.max(1, (opts.proximityRadius ?? opts.gate) ** 2);
         const nearness = opts.preferNear
-            ? (dx, dy) => 1 / (1 + (dx * dx + dy * dy) / gate2)
+            ? (dx, dy) => 1 / (1 + (dx * dx + dy * dy) / proximity2)
             : () => 1;
 
         const smooth = new Float32Array(n);

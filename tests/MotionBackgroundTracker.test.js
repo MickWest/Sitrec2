@@ -114,6 +114,47 @@ test('a large cursor does not hide a competing small point inside the search gat
     expect(hit.second / hit.score).toBeGreaterThan(0.9);
 });
 
+function movingPoints(points) {
+    const tracker = new MotionBackgroundTracker({});
+    tracker.frameImage = () => ({width: 640, height: 480});
+    tracker.computeResponse = (_, frame, rect) => {
+        const {x0, y0, w, h} = rect;
+        const response = new Float32Array(w * h);
+        for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+            response[y * w + x] = points.reduce((sum, [px, strength]) => sum + strength *
+                Math.exp(-((x + x0 - px) ** 2 + (y + y0 - 240) ** 2) / 4), 0);
+        }
+        return {...rect, response, usable: new Uint8Array(w * h).fill(1), samples: 8};
+    };
+    return tracker;
+}
+
+test('a wide motion search retains identity between nearby moving points', () => {
+    const tracker = movingPoints([[324, 30], [346, 40]]);
+    const options = {gate: 44, targetRadius: 30, featureScale: 1, preferNear: true};
+    const broad = tracker.measure({}, 20, 320, 240, options);
+    expect(broad.second).toBeGreaterThan(broad.score / 1.6);
+    const hit = tracker.measure({}, 20, 320, 240, {...options, proximityRadius: 6});
+    expect(Math.abs(hit.x - 324)).toBeLessThan(0.3);
+    expect(hit.second).toBeLessThan(hit.score / 1.6);
+});
+
+test('continuity still rejects genuinely ambiguous nearby motion peaks', () => {
+    const tracker = movingPoints([[312, 30], [328, 30]]);
+    const hit = tracker.measure({}, 20, 320, 240,
+        {gate: 44, featureScale: 1, preferNear: true, proximityRadius: 6});
+    expect(hit.second).toBeGreaterThan(hit.score / 1.6);
+});
+
+test('continuity weighting retains a lone target near the search boundary', () => {
+    const tracker = movingPoints([[358, 40]]);
+    const hit = tracker.measure({}, 20, 320, 240,
+        {gate: 44, featureScale: 1, preferNear: true, proximityRadius: 6});
+    expect(Math.abs(hit.x - 358)).toBeLessThan(0.3);
+    expect(hit.score).toBeGreaterThan(6);
+    expect(hit.second).toBeLessThan(hit.score / 1.6);
+});
+
 test('reacquisition ignores a stronger registration artifact with no object in the raw image', () => {
     const tracker = new MotionBackgroundTracker({});
     tracker.frameImage = () => ({width: 640, height: 480});

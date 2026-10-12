@@ -1,4 +1,5 @@
 import {exclusionMask, measureTonalFrame} from '../videoTonal/TonalStatistics';
+import {measurePointFlux} from '../pointFrequency/PointFrequencyStatistics';
 
 let decoder, options, failure, representation, mode, bits, frameSize, excluded;
 let results = [], pending = new Set(), indices = new Map();
@@ -8,6 +9,7 @@ async function measure(frame) {
     try {
         const index = indices.get(frame.timestamp);
         if (index === undefined) throw new Error('Decoded frame has no presentation index');
+        if (options.pointFrequency && (index < options.first || index > options.last)) return;
         const width = frame.visibleRect.width, height = frame.visibleRect.height;
         const native = /^(I4(20|22|44)A?(P(10|12))?|NV12)$/.test(frame.format ?? '');
         const frameMode = native ? 'luma' : 'display';
@@ -43,7 +45,15 @@ async function measure(frame) {
                 pixels[i] = Math.round(.299 * rgba[4 * i] + .587 * rgba[4 * i + 1] + .114 * rgba[4 * i + 2]);
             }
         }
-        results.push({index, ...measureTonalFrame(pixels, width, height, excluded, options.targets?.[index], options.rotation)});
+        // Limited-range luma reserves codes outside its black/white endpoints.
+        // The display-gray fallback has already converted those to full range.
+        const scale = 255 / (2 ** bits - 1);
+        const limits = native && frame.colorSpace?.fullRange === false
+            ? [Math.round(16 * 2 ** (bits - 8) * scale), Math.round(235 * 2 ** (bits - 8) * scale)] : [0, 255];
+        const values = options.pointFrequency
+            ? measurePointFlux(pixels, width, height, excluded, options.targets?.[index], options.rotation, limits)
+            : measureTonalFrame(pixels, width, height, excluded, options.targets?.[index], options.rotation);
+        results.push({index, ...values});
     } finally {
         frame.close();
     }
@@ -79,7 +89,7 @@ self.onmessage = async ({data}) => {
         check();
         const items = results;
         results = [];
-        self.postMessage({type: 'result', items, mode, bits, ...frameSize}, items.map(item => item.histogram.buffer));
+        self.postMessage({type: 'result', items, mode, bits, ...frameSize}, items.filter(item => item.histogram).map(item => item.histogram.buffer));
         if (data.last) decoder.close();
     } catch (error) {
         failure = error;

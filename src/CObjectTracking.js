@@ -19,6 +19,7 @@ import {MotionReacquisition} from './MotionReacquisition';
 import {MotionTrackingRegime} from './MotionTrackingRegime';
 import {addVideoAnalysisResolutionMenu, beginVideoAnalysis} from './VideoAnalysisResolution';
 import {normalizeTrackSmoothing, smoothPointTrack, TrackPositionMap} from './PointTrackSmoothing';
+import {addPointTrackFrequencyMenu, getPointTrackFrequencyAperture} from './PointTrackFrequencyGraph';
 
 let cv = null;
 
@@ -780,8 +781,9 @@ export class ObjectTracker {
         return null;
     }
 
-    // Generic weighted-centroid pass. Returns {x, y} in image coordinates
-    // (weighted by `weightFn(r, g, b)`) or null if no pixel contributed.
+    // Weighted centroid of the connected object under the seed, within the
+    // track circle. Disconnected matching objects must not pull its centre.
+    // Returns {x, y} in image coordinates or null if no pixel contributed.
     // weightFn must return 0 for "ignore", positive for "include with weight".
     // Used by all three centroid methods (bright, dark, color) so the ROI
     // extraction, circular gate, and centroid math live in one place.
@@ -797,8 +799,10 @@ export class ObjectTracker {
 
         const roiWidth = maxX - minX + 1;
         const roiHeight = maxY - minY + 1;
+        if (roiWidth < 1 || roiHeight < 1) return null;
 
         const data = this.readROI(image, minX, minY, roiWidth, roiHeight);
+        const weights = new Float32Array(roiWidth * roiHeight);
 
         let totalWeight = 0;
         let weightedX = 0;
@@ -824,6 +828,7 @@ export class ObjectTracker {
         const maskScaleX = maskCanvas ? maskCanvas.width / imgWidth : 1;
         const maskScaleY = maskCanvas ? maskCanvas.height / imgHeight : 1;
 
+        let seed = -1, seedDistance = Infinity;
         for (let roiY = 0; roiY < roiHeight; roiY++) {
             for (let roiX = 0; roiX < roiWidth; roiX++) {
                 const imgX = minX + roiX;
@@ -839,10 +844,38 @@ export class ObjectTracker {
                 const index = (roiY * roiWidth + roiX) * 4;
                 const w = weightFn(data[index], data[index + 1], data[index + 2]);
                 if (w > 0) {
-                    totalWeight += w;
-                    weightedX += imgX * w;
-                    weightedY += imgY * w;
-                    pixelCount++;
+                    weights[roiY * roiWidth + roiX] = w;
+                    const distance = dx * dx + dy * dy;
+                    if (distance < seedDistance) {
+                        seed = roiY * roiWidth + roiX;
+                        seedDistance = distance;
+                    }
+                }
+            }
+        }
+
+        if (seed < 0) return null;
+        // Eight-connected pixels retain diagonal/irregular objects, while
+        // a background gap separates neighbouring lights. Clear on enqueue
+        // so each pixel is visited once, including at the image boundary.
+        const queue = new Int32Array(weights.length);
+        let head = 0, tail = 0;
+        const enqueue = i => {
+            const w = weights[i];
+            if (!(w > 0)) return;
+            weights[i] = 0;
+            queue[tail++] = i;
+            totalWeight += w;
+            weightedX += (minX + i % roiWidth) * w;
+            weightedY += (minY + Math.floor(i / roiWidth)) * w;
+            pixelCount++;
+        };
+        enqueue(seed);
+        while (head < tail) {
+            const i = queue[head++], x = i % roiWidth, y = Math.floor(i / roiWidth);
+            for (let yy = Math.max(0, y - 1); yy <= Math.min(roiHeight - 1, y + 1); yy++) {
+                for (let xx = Math.max(0, x - 1); xx <= Math.min(roiWidth - 1, x + 1); xx++) {
+                    enqueue(yy * roiWidth + xx);
                 }
             }
         }
@@ -917,15 +950,16 @@ export class ObjectTracker {
         // Seed selection:
         //   force=true (' hold-loop): use current cursor position so a freshly-
         //     placed manual keyframe drives the algorithm, not stale stored data.
-        //   peak methods: use motion-extrapolated prediction from the last two
+        //   peak/centroid methods: use motion-extrapolated prediction from recent
         //     tracked frames so a moving feature is followed even when the
         //     stored position at frame-1 is also stale.
         //   other methods: use the interpolated position at frame-1.
-        const isPeak = (this.trackingMethod === 'highPeak' || this.trackingMethod === 'lowPeak');
+        const predictsPosition = ['highPeak', 'lowPeak', 'centerOnBright', 'centerOnDark', 'centerOnColor']
+            .includes(this.trackingMethod);
         let prevPos;
         if (force) {
             prevPos = {x: this.trackX, y: this.trackY};
-        } else if (isPeak) {
+        } else if (predictsPosition) {
             prevPos = this.predictPosition(frame) ?? this.getRawInterpolatedPosition(frame - 1);
         } else {
             prevPos = this.getRawInterpolatedPosition(frame - 1);
@@ -1216,9 +1250,9 @@ export class ObjectTracker {
     }
 
     // Scan the disk of `radius` around (centerX, centerY) for the best-scoring
-    // pixel under `weightFn`, where score = weight × radial falloff. The falloff
-    // (1 at the centre, 0 at the rim) biases the seed toward the previous
-    // position, so a bright-and-near target beats a brighter-but-distant cloud
+    // pixel under `weightFn`, weighted by distance from the prediction. A wide
+    // search remains available for jumps without making every neighbour equally
+    // plausible. This lets a dimming target beat a brighter-but-distant object
     // — without it a global maximum over a large window jumps to whatever blob
     // happens to be brightest anywhere in range. Returns {x, y} in image coords,
     // or null if nothing qualified.
@@ -1227,7 +1261,7 @@ export class ObjectTracker {
     // SEARCH radius so a feature that moved more than a Track Radius between
     // frames is still re-acquired (the old code only looked inside the Track
     // Radius, so any motion larger than that silently lost the track).
-    findBestWeightedPixel(image, centerX, centerY, radius, weightFn) {
+    findBestWeightedPixel(image, centerX, centerY, radius, weightFn, proximityRadius = radius) {
         const imgWidth = image.width || image.videoWidth;
         const imgHeight = image.height || image.videoHeight;
 
@@ -1240,8 +1274,13 @@ export class ObjectTracker {
         if (roiWidth < 1 || roiHeight < 1) return null;
 
         const data = this.readROI(image, minX, minY, roiWidth, roiHeight);
+        const mask = this.useMask ? NodeMan.get("videoMask", false) : null;
+        const maskCanvas = mask?.maskImageData ? mask.maskCanvas : null;
+        const maskScaleX = maskCanvas ? maskCanvas.width / imgWidth : 1;
+        const maskScaleY = maskCanvas ? maskCanvas.height / imgHeight : 1;
 
         const radiusSquared = radius * radius;
+        const proximitySquared = Math.max(1, proximityRadius * proximityRadius);
         const invRadius = radius > 0 ? 1 / radius : 0;
         let bestScore = 0, bestX = -1, bestY = -1;
         for (let roiY = 0; roiY < roiHeight; roiY++) {
@@ -1252,11 +1291,12 @@ export class ObjectTracker {
                 const dy = imgY - centerY;
                 const dist2 = dx * dx + dy * dy;
                 if (dist2 > radiusSquared) continue;
+                if (maskCanvas && mask.isPointMasked(imgX * maskScaleX, imgY * maskScaleY)) continue;
                 const index = (roiY * roiWidth + roiX) * 4;
                 const w = weightFn(data[index], data[index + 1], data[index + 2]);
                 if (w <= 0) continue;
                 const falloff = 1 - Math.sqrt(dist2) * invRadius;  // 1 at centre → 0 at rim
-                const score = w * falloff;
+                const score = w * falloff / (1 + dist2 / proximitySquared);
                 if (score > bestScore) {
                     bestScore = score;
                     bestX = imgX;
@@ -1271,23 +1311,20 @@ export class ObjectTracker {
     // Shared two-stage tracker for all three centroid-based methods:
     //   1. SEARCH RADIUS pass — find the strongest matching pixel anywhere
     //      within searchRadius of the previous position (re-acquisition).
-    //   2. TRACK RADIUS pass — refine to the weighted centroid of the matching
-    //      pixels within trackRadius of that seed, so the reported point isn't
-    //      dragged off by unrelated bright pixels elsewhere in the window.
-    // Falls back to the seed (then the previous position) when nothing matched.
+    //   2. TRACK RADIUS pass — refine the connected object containing that
+    //      seed, excluding separate matching objects even inside Track Radius.
+    // No matching pixels means no measurement, rather than a held auto point.
     _trackCentroid(frame, currImage, prevPos, weightFn) {
         const seed = this.findBestWeightedPixel(
-            currImage, prevPos.x, prevPos.y, this.searchRadius, weightFn) ?? prevPos;
-        const centroid = this.calculateWeightedCentroid(
+            currImage, prevPos.x, prevPos.y, this.searchRadius, weightFn,
+            Math.min(this.searchRadius, Math.max(6, 3 * this.featureSize)));
+        const centroid = seed && this.calculateWeightedCentroid(
             currImage, seed.x, seed.y, this.trackRadius, weightFn);
         if (centroid) {
             this.trackX = centroid.x;
             this.trackY = centroid.y;
-        } else {
-            this.trackX = seed.x;
-            this.trackY = seed.y;
-        }
-        this.trackedPositions.set(frame, {x: this.trackX, y: this.trackY});
+            this.trackedPositions.set(frame, {x: this.trackX, y: this.trackY});
+        } else this.trackedPositions.markUnmeasured(frame);
         this.updateSliderStatus();
     }
 
@@ -1526,6 +1563,12 @@ export class ObjectTracker {
             slack: this.motionSlack,
             polarity: this.motionPolarity,
             preferNear: true,
+            // Search Radius bounds reacquisition; it is not the uncertainty
+            // of a continuing track. A broad gate must not make neighbouring
+            // objects equally plausible on the very first step.
+            proximityRadius: searching ? gate : Math.min(gate, Math.max(
+                this.motionMinJump, 3 * this.featureSize,
+                speed * Math.max(1, elapsed) + this.motionMinJump)),
             requireAppearance: temporalSearch,
             maxCandidates: temporalSearch ? 12 : 1,
             mask: this.getMotionMask(),
@@ -2424,9 +2467,11 @@ export class ObjectTracker {
     // always visible and the user can see how a bright blob relates to each.
     // Returns the canvas-space Track Radius (callers reuse it for labels etc.).
     drawTrackingCircles(ctx, cx, cy) {
-        const {dWidth} = this.videoView;
-        const refW = this.videoView.originalVideoWidth || this.videoView.videoWidth || 1;
-        const scale = dWidth / refW;
+        // Use the same source-pixel transform as the cursor. dWidth/refW
+        // ignores the zoomed crop and understates the actual search area.
+        const [x0, y0] = this.videoView.videoToCanvasCoordsOriginal(0, 0);
+        const [x1, y1] = this.videoView.videoToCanvasCoordsOriginal(1, 0);
+        const scale = Math.hypot(x1 - x0, y1 - y0);
         const missing = !this.trackedPositions.has(Math.floor(par.frame)) &&
             this.trackedPositions.unmeasuredFrames?.has(Math.floor(par.frame));
         const trackColor = missing ? '#aaaaaa' : this.tracking ? '#00ff00' : '#ffff00';
@@ -2464,6 +2509,40 @@ export class ObjectTracker {
         ctx.stroke();
 
         return canvasRadius;
+    }
+
+    drawFrequencyAperture(ctx, frame) {
+        const aperture = getPointTrackFrequencyAperture();
+        const f = Math.floor(frame);
+        const measured = this.trackedPositions.get(f);
+        if (!aperture || !measured || measured.estimated) return;
+        const position = this.getOutputPositions().get(f);
+        if (!position) return;
+
+        let {x, y} = position;
+        const video = this.videoView.videoData;
+        if (video?.stabilizationEnabled && video.stabilizationData && video.stabilizationReferencePoint) {
+            const point = interpolatePosition(video.stabilizationData, f);
+            if (point) {
+                const width = video.originalVideoWidth || video.videoWidth;
+                const height = video.originalVideoHeight || video.videoHeight;
+                const shift = video.stabilizationDirectOffset
+                    ? {x: point.x * width / video.videoWidth, y: point.y * height / video.videoHeight}
+                    : pointTrackingShift(video, point, video.stabilizationReferencePoint, width, height);
+                x += shift.x;
+                y += shift.y;
+            }
+        }
+        const [cx, cy] = this.videoView.videoToCanvasCoordsOriginal(x, y);
+        const [edgeX, edgeY] = this.videoView.videoToCanvasCoordsOriginal(x + aperture.radius, y);
+        ctx.save();
+        ctx.strokeStyle = aperture.color;
+        ctx.lineWidth = 2;
+        ctx.setLineDash([]);
+        ctx.beginPath();
+        ctx.arc(cx, cy, Math.hypot(edgeX - cx, edgeY - cy), 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.restore();
     }
 
     renderOverlay(frame) {
@@ -2530,7 +2609,10 @@ export class ObjectTracker {
 
         // Intentionally hide tracking cursor after stabilization is applied,
         // since the overlay would be misaligned with the stabilized video.
-        if (stabEnabled) return;
+        if (stabEnabled) {
+            this.drawFrequencyAperture(ctx, frame);
+            return;
+        }
         
         const getStabOffset = (f) => {
             if (!stabEnabled) return {x: 0, y: 0};
@@ -2595,7 +2677,7 @@ export class ObjectTracker {
             ctx.stroke();
         }
 
-        const keyframeRadius = canvasRadius * 0.3;
+        const keyframeRadius = Math.min(6, canvasRadius * 0.3);
         // Show only the N keyframes nearest to the current frame
         let keyframesToDraw = Array.from(this.manualKeyframes);
         if (this.showMaxKeyframes < keyframesToDraw.length) {
@@ -2626,6 +2708,7 @@ export class ObjectTracker {
                 ctx.stroke();
             }
         }
+        this.drawFrequencyAperture(ctx, frame);
     }
     
     clearTrack() {
@@ -3311,6 +3394,8 @@ export function addObjectTrackingMenu() {
     }).name('Output Smoothing').listen().perm()
         .tooltip('Centered average of the output track. Smooths the trail, graphs, line of sight and stabilization. Raw measurements and user points are preserved. Try 3–5 frames for jumps between parts of an object.');
 
+    addPointTrackFrequencyMenu(trackingFolder);
+
     const menuActions = {
         enableTracking: toggleEnableTracking,
         startTracking: toggleStartTracking,
@@ -3428,7 +3513,7 @@ export function addObjectTrackingMenu() {
         }
     };
     
-    radiusController = trackingFolder.add(radiusParams, 'trackRadius', 10, 100, 1)
+    radiusController = trackingFolder.add(radiusParams, 'trackRadius', 1, 100, 1)
         .name(t("tracking.trackRadius.label"))
         .tooltip(t("tracking.trackRadius.tooltip"))
         .listen()
@@ -3444,7 +3529,7 @@ export function addObjectTrackingMenu() {
         }
     };
     
-    trackingFolder.add(searchRadiusParams, 'searchRadius', 20, 300, 1)
+    trackingFolder.add(searchRadiusParams, 'searchRadius', 1, 300, 1)
         .name(t("tracking.searchRadius.label"))
         .tooltip(t("tracking.searchRadius.tooltip"))
         .listen()
