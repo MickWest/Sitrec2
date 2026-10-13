@@ -2289,11 +2289,29 @@ function createDialog() {
         "Do not show a remembered row as it is: rebuild every row from the stored fits, which takes "
         + "a fraction of a second a file. The fits themselves are still reused. Use it after a change "
         + "to the candidates, the ranking or the verdict, which the cache cannot see.", false);
-    const trackOutput = labelledCheckbox("Create Output Files",
-        "Save the top candidate, selected without truth, as a CSV with the source filename. "
-        + "Creates output beside All/Input when opened through their parent, otherwise inside "
-        + "the track folder. Preserves BOT TrackID, sample times and XYZ metres; optional covariance "
-        + "cells are blank. Replaces existing output files. Needs Folder (Caching) write access.", false);
+    const trackOutputLabel = document.createElement("label");
+    trackOutputLabel.style.cssText = "display: inline-flex; align-items: center; gap: 6px; font-size: 13px;";
+    trackOutputLabel.title = "Save the fitted tracks as CSV files in an output folder: beside All/Input when "
+        + "opened through their parent, otherwise inside the track folder. Candidates are selected and "
+        + "ordered by the ranking without truth.\n"
+        + "Best Track: the top candidate, as output/<source>.csv.\n"
+        + "All Tracks Combined: every candidate in one file, best first, as output/AllTracks/<source>.csv.\n"
+        + "All Tracks Separate CSVs: one file for each candidate, as "
+        + "output/AllTracksSeparate/<source>/<source>_<method>.csv.\n"
+        + "Preserves BOT TrackID, sample times and XYZ metres; AlgorithmID names the method; optional "
+        + "covariance cells are blank. Direction-only candidates are left out. Replaces existing output "
+        + "files, and removes this source's files that a run no longer writes. Needs Folder (Caching) "
+        + "write access.";
+    const trackOutputInput = document.createElement("select");
+    trackOutputInput.setAttribute("aria-label", "Track output");
+    trackOutputInput.style.cssText = "font-size: 13px; padding: 3px;";
+    for (const [value, text] of TRACK_OUTPUT_CHOICES) {
+        const option = document.createElement("option");
+        option.value = value;
+        option.textContent = text;
+        trackOutputInput.appendChild(option);
+    }
+    trackOutputLabel.append(document.createTextNode("Track output"), trackOutputInput);
     const angularSizeJudge = labelledCheckbox("Judge angular size", "Use available angular-size observations as a separate ranking check; keep LOS and BOT scores unchanged.", false);
     const angularSizeFit = labelledCheckbox("Fit angular size (experimental)", "Adds a separate size-interval loss in supported CPU fits. Requires constant projected size and range-change evidence. Unsupported methods remain LOS-only; every result names its fitting mode.", false);
     const angularSizeConstant = labelledCheckbox("Assume constant projected size (recommended)", "Recommended when shape and orientation stay stable. Allows relative angular size and changes in absolute size to constrain range changes. Rotation, inflation or occlusion can invalidate this assumption.", false);
@@ -2366,7 +2384,7 @@ function createDialog() {
         + "or a 300 dpi PNG for a paper.");
 
     for (const el of [recursive.label, families.label, mcSweep.label, gpuSearch.label, screenshots.label,
-        rebuildRows.label, trackOutput.label, angularSizeJudge.label, angularSizeConstant.label, angularSizeFit.label,
+        rebuildRows.label, trackOutputLabel, angularSizeJudge.label, angularSizeConstant.label, angularSizeFit.label,
         anchorLabel, workerLabel, fractionLabel, solversButton,
         chooseFolderReadButton, chooseFolderCacheButton, chooseFilesButton,
         cancelButton, clearButton,
@@ -2509,7 +2527,7 @@ function createDialog() {
         gpuSearchInput: gpuSearch.input,
         screenshotsInput: screenshots.input,
         rebuildRowsInput: rebuildRows.input,
-        trackOutputInput: trackOutput.input,
+        trackOutputInput,
         angularSizeJudgeInput: angularSizeJudge.input,
         angularSizeFitInput: angularSizeFit.input,
         angularSizeConstantInput: angularSizeConstant.input,
@@ -3397,6 +3415,14 @@ const WORKER_LIMITS = [1, 2, 4, 8, 16];
 // A conservative starting point, not a measurement of available system memory.
 const DEFAULT_WORKER_LIMIT = 4;
 
+// The Track output choices. Each value is a writeTrackOutput mode, apart from "none".
+const TRACK_OUTPUT_CHOICES = [
+    ["none", "None"],
+    ["best", "Best Track"],
+    ["allCombined", "All Tracks Combined"],
+    ["allSeparate", "All Tracks Separate CSVs"],
+];
+
 function loadStoredWorkerLimit() {
     try {
         const value = Number(localStorage.getItem(WORKER_LIMIT_STORAGE_KEY));
@@ -3489,8 +3515,10 @@ export async function analyzeEntries(state, found, {askSolvers = false} = {}) {
     // key, and whether a picture was taken has no bearing on the numbers. A run
     // with screenshots on must still hit the cache written by a run with them off.
     const wantShots = state.screenshotsInput.checked;
-    const wantTrackOutput = state.trackOutputInput.checked;
-    const outputStats = {written: 0, skipped: 0, failed: 0};
+    const outputMode = state.trackOutputInput.value;
+    const wantTrackOutput = outputMode !== "none";
+    // `files` counts the separate files; the other counts are per source.
+    const outputStats = {written: 0, skipped: 0, failed: 0, files: 0};
     const shotStats = {written: 0, skipped: 0, failed: 0};
     // The queue is held on the state so Cancel Run can stop it: captures are queued
     // as each analysis finishes, so a cancelled run can otherwise have hundreds
@@ -3695,9 +3723,10 @@ export async function analyzeEntries(state, found, {askSolvers = false} = {}) {
             if (entry.status === "done") {
                 if (wantTrackOutput) {
                     try {
-                        entry.trackOutput = await writeTrackOutput(entry);
+                        entry.trackOutput = await writeTrackOutput(entry, {mode: outputMode});
                         if (entry.trackOutput.written) outputStats.written++;
                         else outputStats.skipped++;
+                        outputStats.files += entry.trackOutput.files ?? 0;
                     } catch (error) {
                         outputStats.failed++;
                         entry.trackOutput = {written: false, failed: true, reason: error?.message ?? String(error)};
@@ -3775,7 +3804,8 @@ export async function analyzeEntries(state, found, {askSolvers = false} = {}) {
         : "";
     state.shotQueue = null;
     const outputNote = wantTrackOutput
-        ? ` Track output: ${outputStats.written} written, ${outputStats.skipped} skipped, ${outputStats.failed} failed.`
+        ? ` Track output: ${outputStats.written} written, ${outputStats.skipped} skipped, ${outputStats.failed} failed`
+          + (outputMode === "allSeparate" ? ` (${outputStats.files} files).` : ".")
           + (outputStats.skipped || outputStats.failed ? " Hover the row status for details." : "")
         : "";
     state.status.textContent = (state.cancelled

@@ -155,27 +155,52 @@ group.
   themselves are still reused. Use it after a change to the candidates, the
   ranking or the verdict, which the cache cannot see (see
   [the result cache](#the-result-cache)).
-- **Create Output Files** — optionally save the **Top interpretation**, selected
-  without truth, for each analysed file. Enable this before choosing **Folder
-  (Caching)** to grant write access. The output is CSV with the **same filename**
-  as the source, with `.csv` added when the source name does not already end in
-  `.csv` (`clip.ts` gives `clip.ts.csv`; `track.csv` stays `track.csv`). If
-  `All/` or `Input/` was reached through its parent, the file
-  goes in a sibling `output/` folder; otherwise `output/` is created inside the
-  track folder. Existing output files are replaced, and generated `output/`
-  folders are excluded from subsequent scans. Cached fits are reused, with the
-  candidate paths rebuilt for export.
+- **Track output** — optionally save the fitted tracks for each analysed file as
+  CSV. Choose it before choosing **Folder (Caching)**, which grants write
+  access. The choices are:
+  - **None** (the default) — no files.
+  - **Best Track** — the **Top interpretation**, selected without truth, as
+    `output/<source>.csv`.
+  - **All Tracks Combined** — every candidate that has finite positions, in one
+    file for each source file, as `output/AllTracks/<source>.csv`: one block of
+    rows for each candidate, in the order of the ranking without truth (best
+    first), so the first block is the best track.
+  - **All Tracks Separate CSVs** — the same candidates, one file each, in a
+    folder for each source file:
+    `output/AllTracksSeparate/<source>/<source>_<method>.csv`, where `<method>`
+    is the `AlgorithmID` without `sitrec_` (for example
+    `bot-0001.input_lantern_fittedWind.csv`). Each file holds the rows of one
+    block of the combined file.
+
+  `<source>` is the source filename, with `.csv` added when it does not already
+  end in `.csv` (`clip.ts` gives `clip.ts.csv`; `track.csv` stays `track.csv`).
+  A source folder or a separate file name leaves out that final `.csv`. If
+  `All/` or `Input/` was reached through its parent, `output/` is a sibling
+  folder; otherwise `output/` is created inside the track folder. Existing
+  output files are replaced, and generated `output/` folders are excluded from
+  subsequent scans. Cached fits are reused, with the candidate paths rebuilt for
+  export.
 
   Columns are `TrackID,Time,AlgorithmID,EstimatedPositionX,EstimatedPositionY,EstimatedPositionZ,CovarianceXX,CovarianceYY,CovarianceZZ,CovarianceXY,CovarianceXZ,CovarianceYZ`.
   BOT `TrackID` and `Time` values match the retained input samples at their native
   rate, including a nonzero start time. XYZ coordinates are metres in the input's
-  local frame. `AlgorithmID` is `sitrec_` followed by the selected method's key.
+  local frame. `AlgorithmID` is `sitrec_` followed by the method's key, then the
+  wind mode for a model fitted with one (`_suppliedWind`, `_fittedWind`,
+  `_correctedWind`) and the order for a polynomial sweep candidate (`_order3`),
+  for example `sitrec_lantern_fittedWind`. The wind variants of one model share
+  a key, so the wind mode is what tells them apart. A candidate has the same
+  `AlgorithmID` in every choice.
   The optional covariance cells are blank because calibrated position covariance
   is unavailable. Other input formats use their source label as `TrackID` and
   the fitted sample clock, starting at zero, as `Time`; positions are in the
-  analysis's local ENU frame. No output is written for a direction-only winner
-  or a missing/incomplete track. The status line counts written, skipped and
-  failed outputs; hover a row's status for its path or reason.
+  analysis's local ENU frame. No best-track file is written for a direction-only
+  winner or a missing/incomplete track. The all-tracks choices leave out those
+  candidates and write the others; they write nothing when no candidate is left.
+  A file from an earlier run that the current run does not write is removed (for
+  separate files, a method that the run no longer fits), so an old result is
+  never read as the current one. The status line counts the source files written,
+  skipped and failed, and for separate files the number of files; hover a row's
+  status for its path or reason.
 - **Solvers…** — choose which [solvers](#choosing-the-solvers) the next run fits
   and ranks. The button shows the current choice, and every run started from
   the window opens the same dialog first.
