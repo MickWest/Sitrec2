@@ -10,6 +10,7 @@ const tr = (key, values) => t(`videoNoisePattern.folderScan.${key}`, values);
 const pct = value => Number.isFinite(value) ? `${(value * 100).toFixed(1)}%` : "—";
 const num = value => Number.isFinite(value) ? value.toFixed(2) : "—";
 const repeat = row => row.status === "done" && row.kind === "repeat";
+const hasCandidate = row => repeat(row) || row.status === "done" && row.offsetCandidates > 0;
 let active = null;
 
 function element(tag, parent, text, style = {}) {
@@ -154,6 +155,9 @@ export class NoisePatternFolderScanDialog {
         if (row.status === "error") return `${tr("error")}: ${row.error || tr("unknownError")}`;
         if (row.status !== "done") return tr(row.status === "stopped" ? "stopped" : row.status === "queued" ? "queued" : "working");
         if (repeat(row)) return tr(row.pictureRepeat ? "pictureRepeat" : "noiseRepeat");
+        if (row.offsetCandidates > 0) return tr("offsetCandidates", {count: row.offsetCandidates});
+        if (row.offsetStatus === "error") return tr("offsetError");
+        if (row.offsetStatus === "done" && row.kind === "none") return tr("offsetNone");
         if (row.kind === "cannot" && row.usable != null) return tr("cannotReason", {usable: row.usable, required: row.minUsableFrames, held: row.held});
         return tr(row.kind === "isolated" ? "isolated" : row.kind === "cannot" ? "cannot" : "none");
     }
@@ -183,11 +187,11 @@ export class NoisePatternFolderScanDialog {
         this.folderList.textContent = [...groups].map(([folder, c]) => tr("folderRow", {folder, ...c})).join("\n")
             + state.errors.map(e => `\n${e.path}: ${e.error}`).join("");
         const query = this.filter.value.toLocaleLowerCase();
-        const rows = state.rows.filter(row => (!this.onlyRepeats.checked || repeat(row)) && row.path.toLocaleLowerCase().includes(query))
-            .sort((a, b) => Number(repeat(b)) - Number(repeat(a)) || (b.strength ?? 0) - (a.strength ?? 0) || a.path.localeCompare(b.path));
+        const rows = state.rows.filter(row => (!this.onlyRepeats.checked || hasCandidate(row)) && row.path.toLocaleLowerCase().includes(query))
+            .sort((a, b) => Number(hasCandidate(b)) - Number(hasCandidate(a)) || Number(repeat(b)) - Number(repeat(a)) || (b.strength ?? 0) - (a.strength ?? 0) || a.path.localeCompare(b.path));
         this.body.replaceChildren();
         for (const row of rows) {
-            const line = element("tr", this.body, undefined, {background: repeat(row) ? (row.pictureRepeat ? "#504224" : "#204a37") : "transparent"});
+            const line = element("tr", this.body, undefined, {background: repeat(row) ? (row.pictureRepeat ? "#504224" : "#204a37") : hasCandidate(row) ? "#504224" : "transparent"});
             line.dataset.path = row.path;
             line.dataset.repeat = String(repeat(row));
             const values = [row.path, this.resultLabel(row), row.period ?? "—", num(row.strength), row.curve || "—",

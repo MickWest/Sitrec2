@@ -114,7 +114,7 @@ function fakeGpu({delay = 0, fail = false} = {}) {
 }
 
 async function run(v, options = {}, hooks = {}) {
-    const job = startNoisePatternJob(createFakeVideoData(v), {references: 8, searchOn: "cpu", ...options},
+    const job = startNoisePatternJob(createFakeVideoData(v), {offsetSearch: false, references: 8, searchOn: "cpu", ...options},
         {lanes: lanesFor(v, 4), cache: false, ...hooks});
     return job.promise;
 }
@@ -225,7 +225,7 @@ test("looped footage is reported as a repeated picture", async () => {
 
 test("stop ends the run with no later updates", async () => {
     let updates = 0, afterStop = 0, stopped = false;
-    const job = startNoisePatternJob(createFakeVideoData(XOR()), {references: 8, searchOn: "cpu"}, {
+    const job = startNoisePatternJob(createFakeVideoData(XOR()), {offsetSearch: false, references: 8, searchOn: "cpu"}, {
         lanes: lanesFor(XOR(), 4), cache: false,
         onUpdate: (r) => { updates++; if (stopped) afterStop++; if (r.stage === "coarse" && !stopped) { stopped = true; job.cancel(); } },
     });
@@ -264,12 +264,12 @@ test("a second run with another Longest lag reuses the decoded features", async 
     const v = XOR();
     const data = createFakeVideoData(v);
     const stats = {segments: 0, frames: 0};
-    const first = await startNoisePatternJob(data, {references: 8, searchOn: "cpu"}, {lanes: lanesFor(v, 4, stats)}).promise;
+    const first = await startNoisePatternJob(data, {offsetSearch: false, references: 8, searchOn: "cpu"}, {lanes: lanesFor(v, 4, stats)}).promise;
     expect(first.cached).toBe(false);
     expect(stats.frames).toBe(v.frames);
     const segments = stats.segments;
     expect(segments).toBeGreaterThan(0);
-    const second = await startNoisePatternJob(data, {references: 8, searchOn: "cpu", longestLag: 64}, {lanes: lanesFor(v, 4, stats)}).promise;
+    const second = await startNoisePatternJob(data, {offsetSearch: false, references: 8, searchOn: "cpu", longestLag: 64}, {lanes: lanesFor(v, 4, stats)}).promise;
     expect(second.cached).toBe(true);
     expect(second.timings.ingest).toBeUndefined();
     expect(stats.segments).toBe(segments);
@@ -336,4 +336,32 @@ describe("decoder failures", () => {
         expect(r.counts.decoded + r.counts.failed).toBe(r.counts.frames);
         expect(r.counts.lastDecodeError).toBe("Decoding error.");
     });
+});
+
+test("the independent 2-D stage detects displaced texture when the column scan has too few frames", async () => {
+    const v = createSyntheticVideo({frames: 40, width: 256, height: 256, fresh: 0.2,
+        layer: {kind: "vertical", clip: 7, shiftY: 48, sigma: 4}});
+    const r = await run(v, {offsetSearch: true, longestLag: 32});
+    expect(r.status).toBe("done");
+    expect(r.verdict.kind).toBe("cannot");
+    expect(r.offset.status).toBe("done");
+    expect(r.offset.pairs).toBeGreaterThan(0);
+    expect(r.offset.matches.some(m => m.plane === 1 && Math.abs(m.dy) === 48 && m.score > 0.6)).toBe(true);
+    for (const m of r.offset.matches) {
+        expect(m.target).toBeGreaterThan(m.source);
+        expect(m.sourceCrop.pixels.length).toBe(m.sourceCrop.width * m.sourceCrop.height);
+    }
+});
+
+test("stopping the additional stage preserves the completed column result", async () => {
+    const v = createSyntheticVideo({frames: 40, width: 160, height: 160});
+    let job;
+    job = startNoisePatternJob(createFakeVideoData(v), {offsetSearch: true, searchOn: "cpu"}, {
+        lanes: lanesFor(v, 2), cache: false,
+        onUpdate: r => { if (r.stage === "offsetDecode") job.cancel(); },
+    });
+    const r = await job.promise;
+    expect(r.status).toBe("stopped");
+    expect(r.verdict.kind).toBe("cannot");
+    expect(r.offset.matches).toEqual([]);
 });

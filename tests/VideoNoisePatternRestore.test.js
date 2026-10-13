@@ -111,8 +111,8 @@ test("a superseded sitch cannot create its graph after the lazy import", async (
 
 test("saved settings are limited to the values the menu offers", () => {
     expect(clampNoisePatternOptions({longestLag: 5000, detail: 3, vertical: 2, held: "x", frames: "ab", searchOn: "gpu"}))
-        .toEqual({longestLag: 2000, detail: 8, vertical: 0, held: "leave", frames: "ab", searchOn: "gpu"});
-    expect(clampNoisePatternOptions(undefined)).toEqual({longestLag: 256, detail: 8, vertical: 0, held: "leave", frames: "all", searchOn: "fastest"});
+        .toEqual({longestLag: 2000, detail: 8, vertical: 0, held: "leave", frames: "ab", searchOn: "gpu", offsetSearch: true});
+    expect(clampNoisePatternOptions(undefined)).toEqual({longestLag: 256, detail: 8, vertical: 0, held: "leave", frames: "all", searchOn: "fastest", offsetSearch: true});
     expect(clampNoisePatternOptions({longestLag: 10, detail: 4, vertical: 3, held: "picture"}))
         .toMatchObject({longestLag: 32, detail: 4, vertical: 3, held: "picture"});
 });

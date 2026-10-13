@@ -15,6 +15,8 @@ import {
     extractFrameFeatures, fineProfile, fitRule, heldScores, latticeFold, boundariesOf, matchPair,
     preciseThresholds, residualImage, temporalHighPass, temporalHighPassSignatures,
 } from "./NoisePatternMath";
+import {offsetPlane} from "./NoiseOffsetMath";
+import {offsetCrop, searchOffsets, verifyOffset} from "./NoiseOffsetSearch";
 
 const now = () => (typeof performance !== "undefined" ? performance.now() : Date.now());
 
@@ -195,6 +197,43 @@ export function createNoisePatternCore({post, decoder}) {
             frames.flatMap(f => [f.q.buffer, f.live.buffer, f.image.pixels.buffer]));
     }
 
+    async function decodeSelected(message, onFrame) {
+        // Offset passes share the bounded encoded-chunk delivery used by ingest.
+        const state = {items: [], last: message.last !== false, wake: null};
+        continuations.set(message.id, state);
+        const more = async () => {
+            while (!state.items.length && !state.last) await new Promise(resolve => { state.wake = resolve; });
+            const items = state.items; state.items = [];
+            return {items, last: state.last};
+        };
+        try {
+            return await decoder.decodeSegment({...message, keepFrom: Math.min(...message.targets),
+                keepTo: Math.max(...message.targets) + 1}, onFrame, more);
+        } finally { continuations.delete(message.id); }
+    }
+
+    async function offsetFrames(message) {
+        const wanted = new Set(message.targets), frames = [];
+        await decodeSelected(message, frame => {
+            if (!wanted.delete(frame.index)) return;
+            frames.push({index: frame.index, planes: [0, 1, 2].map(p => offsetPlane(frame, p, message.step))});
+        });
+        post({type: "offsetFrames", id: message.id, frames}, frames.flatMap(f => f.planes.map(p => p.pixels.buffer)));
+    }
+
+    async function offsetCrops(message) {
+        const crops = [], byFrame = new Map();
+        for (const request of message.crops) {
+            if (!byFrame.has(request.frame)) byFrame.set(request.frame, []);
+            byFrame.get(request.frame).push(request);
+        }
+        await decodeSelected(message, frame => {
+            for (const request of byFrame.get(frame.index) ?? []) crops.push({key: request.key, image: offsetCrop(frame, request)});
+            byFrame.delete(frame.index);
+        });
+        post({type: "offsetCrops", id: message.id, crops}, crops.map(c => c.image.pixels.buffer));
+    }
+
     function dense({id, target, source, colWidth}) {
         const map = denseMatch(target.q, source.q, Math.min(target.columns, source.columns), colWidth);
         post({type: "dense", id, map});
@@ -228,6 +267,16 @@ export function createNoisePatternCore({post, decoder}) {
                 case "analyze": return analyze(message);
                 case "thresholds": return thresholds(message);
                 case "decodeFrames": return await decodeFrames(message);
+                case "offsetFrames": return await offsetFrames(message);
+                case "offsetCrops": return await offsetCrops(message);
+                case "offsetSearch": {
+                    const result = searchOffsets(message.frames, message.pairs, done => post({type: "offsetProgress", partial: true, id: message.id, done}));
+                    return post({type: "offsetSearch", id: message.id, ...result});
+                }
+                case "offsetVerify": {
+                    const matches = message.items.map(item => verifyOffset(item.candidate, item.crops)).filter(Boolean);
+                    return post({type: "offsetVerified", id: message.id, matches}, matches.flatMap(m => [m.sourceCrop.pixels.buffer, m.targetCrop.pixels.buffer]));
+                }
                 case "dense": return dense(message);
                 case "fit": return fit(message);
                 case "ping": return post({type: "pong", id: message.id});

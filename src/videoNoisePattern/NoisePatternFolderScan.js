@@ -4,6 +4,7 @@ import {LAG_MIN} from "./NoisePatternMath";
 // Only summaries survive a file. Feature arrays, decoded pictures and encoded video
 // belong to that file's job and are released before the next video starts.
 export function summarizeNoisePatternResult(result) {
+    const offsetMatches = result.offset?.matches?.filter(m => m.screening?.passed === true) ?? [];
     const v = result.verdict ?? {};
     const isolated = (v.isolated ?? []).slice().sort((a, b) => b.z - a.z).slice(0, 10);
     return {
@@ -21,13 +22,18 @@ export function summarizeNoisePatternResult(result) {
         runs: result.precise?.runs ?? [], longRange: result.longRange ?? null, isolated,
         limitMinutes: result.scan?.limitMinutes ?? null, analyzedSeconds: result.scan?.analyzedSeconds ?? null,
         capped: !!result.scan?.capped, autoReduced: !!result.scan?.autoReduced, videoDurationSeconds: result.scan?.videoDurationSeconds ?? null,
+        offsetStatus: result.offset?.status ?? "disabled", offsetCandidates: offsetMatches.length,
+        offsetSuppressed: (result.offset?.matches?.length ?? 0) - offsetMatches.length,
+        offsetScore: offsetMatches[0]?.score ?? null, offsetPairs: result.offset?.pairs ?? 0,
+        offsetError: result.offset?.error ?? "",
     };
 }
 
 export function noisePatternFolderCSV(rows) {
     const columns = ["path", "folder", "status", "kind", "period", "strength", "strengthLabel", "curve", "coverage", "references",
         "frames", "decoded", "failed", "held", "usable", "minUsableFrames", "tested", "matched", "pictureRepeat", "pictureMode", "codec", "elapsedMs",
-        "limitMinutes", "analyzedSeconds", "capped", "autoReduced", "videoDurationSeconds", "error"];
+        "limitMinutes", "analyzedSeconds", "capped", "autoReduced", "videoDurationSeconds", "error",
+        "offsetStatus", "offsetCandidates", "offsetSuppressed", "offsetScore", "offsetPairs", "offsetError"];
     const quote = value => `"${String(value ?? "").replace(/"/g, '""')}"`;
     return [columns.join(","), ...rows.map(row => columns.map(c => quote(row[c])).join(","))].join("\r\n");
 }

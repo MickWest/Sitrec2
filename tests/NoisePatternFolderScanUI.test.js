@@ -33,6 +33,8 @@ test("highlights and sorts repeats, filters paths, shows reference fraction corr
     expect(createNoisePatternFileLink.mock.results[0].value.prepare).toHaveBeenCalledTimes(3);
     expect(dialog.body.textContent).toContain("error: bad file");
     expect(dialog.resultLabel({status: "done", kind: "cannot", usable: 127, minUsableFrames: 136, held: 195})).toContain('"usable":127,"required":136,"held":195');
+    expect(dialog.resultLabel({status: "done", kind: "none", offsetCandidates: 2})).toContain("offsetCandidates");
+    expect(dialog.resultLabel({status: "done", kind: "none", offsetStatus: "error"})).toContain("offsetError");
     dialog.onlyRepeats.checked = true;
     dialog.render();
     expect(rows()).toHaveLength(1);
@@ -42,4 +44,16 @@ test("highlights and sorts repeats, filters paths, shows reference fraction corr
     dialog.close();
     expect(dialog.scan.stop).toHaveBeenCalled();
     expect(document.body.contains(dialog.overlay)).toBe(false);
+});
+
+test("offset-only discoveries remain visible when filtering for repeats", () => {
+    const dialog = new NoisePatternFolderScanDialog(() => ({}));
+    dialog.scan = {stop: jest.fn(), state: {status: "done", folder: "Chosen", folders: ["."], completed: 2, errors: [], rows: [
+        {path: "offset.mp4", folder: ".", status: "done", kind: "none", offsetCandidates: 2},
+        {path: "plain.mp4", folder: ".", status: "done", kind: "none", offsetCandidates: 0},
+    ]}};
+    dialog.onlyRepeats.checked = true;
+    dialog.render();
+    expect([...dialog.body.querySelectorAll("tr")].map(row => row.dataset.path)).toEqual(["offset.mp4"]);
+    dialog.close();
 });

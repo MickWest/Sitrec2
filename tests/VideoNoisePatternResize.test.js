@@ -33,7 +33,7 @@ beforeEach(() => {
         observe() {}
         disconnect = jest.fn();
     };
-    jest.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({setTransform() {}});
+    jest.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({setTransform() {}, clearRect() {}});
     view = new CNodeVideoNoisePatternView({id: "resizeTest", visible: true});
     dimensions = {width: 640, height: 480};
     Object.defineProperties(view.outputArea, {
@@ -53,7 +53,7 @@ test("resizing a paused window redraws all canvases to the available width witho
     dimensions.width = 128;
     view.layoutObserver.callback();
 
-    for (const canvas of [view.chartCanvas, view.whereCanvas, view.pairCanvas]) {
+    for (const canvas of [view.chartCanvas, view.whereCanvas, view.pairCanvas, view.offsetCanvas]) {
         expect(canvas.width).toBe(112);
         expect(canvas.style.width).toBe("112px");
     }

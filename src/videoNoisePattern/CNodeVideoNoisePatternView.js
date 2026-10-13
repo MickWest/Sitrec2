@@ -91,6 +91,7 @@ export class CNodeVideoNoisePatternView extends CNodeViewText {
     }
 
     buildDOM() {
+        this.ui.offsetOriginalPositions ??= false;
         const area = this.outputArea;
         Object.assign(area.style, {whiteSpace: "normal", overflowWrap: "anywhere", overflowX: "hidden",
             fontFamily: "sans-serif", fontSize: "12px", cursor: "default"});
@@ -128,6 +129,26 @@ export class CNodeVideoNoisePatternView extends CNodeViewText {
         this.overlayButton = this.button(tr("view.showOnVideo"), () => this.toggle("overlay"), bar);
         this.maxContrastButton = this.button(tr("view.maxContrast"), () => this.toggleMaxContrast(), bar);
         this.pairCanvas = el("canvas", {display: "block", cursor: "pointer"});
+        this.offsetSection = el("section");
+        area.insertBefore(this.offsetSection, this.progressEl.nextSibling);
+        el("div", heading, this.offsetSection, tr("view.offsetTitle"));
+        this.offsetSummary = el("div", {fontSize: "11px", whiteSpace: "pre-wrap", ...selectable}, this.offsetSection);
+        this.offsetLabel = el("div", {fontFamily: "monospace", fontSize: "11px", whiteSpace: "pre-wrap", ...selectable}, this.offsetSection);
+        const offsetBar = el("div", {display: "flex", flexWrap: "wrap", gap: "4px", margin: "4px 0"}, this.offsetSection);
+        this.offsetPreviousButton = this.button(tr("view.offsetPrevious"), () => this.stepOffset(-1), offsetBar);
+        this.offsetNextButton = this.button(tr("view.offsetNext"), () => this.stepOffset(1), offsetBar);
+        this.offsetGoSourceButton = this.button(tr("view.goSource"), () => this.goToOffset("source"), offsetBar);
+        this.offsetGoTargetButton = this.button(tr("view.goTarget"), () => this.goToOffset("target"), offsetBar);
+        this.offsetOverlayButton = this.button(tr("view.showOnVideo"), () => this.toggle("offsetOverlay"), offsetBar);
+        this.offsetOriginalPositionsButton = this.button(tr("view.offsetOriginalPositions"), () => this.toggle("offsetOriginalPositions"), offsetBar);
+        this.offsetContrastButton = this.button(tr("view.maxContrast"), () => this.toggleMaxContrast(), offsetBar);
+        this.offsetResidualButton = this.button(tr("view.offsetResidual"), () => this.toggle("offsetResidual"), offsetBar);
+        this.offsetAmbiguousButton = this.button(tr("view.offsetAmbiguous"), () => this.toggle("offsetAmbiguous"), offsetBar);
+        this.offsetExportButton = this.button(tr("exportFade.button"), () => this.exportOffsetFade(), offsetBar);
+        this.offsetExportButton.title = tr("exportFade.tooltip");
+        this.offsetExportStatus = el("div", {fontSize: "11px", ...selectable}, this.offsetSection);
+        this.offsetExportStatus.setAttribute("aria-live", "polite");
+        this.offsetCanvas = el("canvas", {display: "block"}, this.offsetSection);
         el("div", heading, area, tr("view.details"));
         this.detailsEl = el("pre", {fontFamily: "monospace", fontSize: "11px", whiteSpace: "pre-wrap", margin: "2px 0 8px", ...selectable});
 
@@ -243,6 +264,9 @@ export class CNodeVideoNoisePatternView extends CNodeViewText {
         }
         this.changed = false;
         this.selectionApplied = false;
+        this.offsetIndex = 0;
+        this.offsetPaste = null;
+        this.offsetResidualImages = null;
         this.pairImages = null;
         this.jobStarted = performance.now();
         this.job = startNoisePatternJob(video, {...options, range}, {onUpdate: () => this.refreshDisplay()});
@@ -294,11 +318,14 @@ export class CNodeVideoNoisePatternView extends CNodeViewText {
     }
 
     release() {
+        if (this.offsetExport) this.offsetExport.cancelled = true;
         clearTimeout(this.waitTimer);
         this.waitTimer = null;
         this.stopBlink();
         if (this.job && !this.job.result.complete) this.job.cancel();
         terminateNoisePatternWorkers();
+        this.offsetPaste = null;
+        this.offsetResidualImages = null;
         this.clearOverlay();
     }
 
@@ -384,8 +411,143 @@ export class CNodeVideoNoisePatternView extends CNodeViewText {
         goToTimelineFrame(frameForDisplayIndex(this.currentVideoData(), sel[which]));
     }
 
+    offsetMatches() {
+        const matches = this.job?.result?.offset?.matches ?? [];
+        return this.ui.offsetAmbiguous ? matches : matches.filter(m => m.screening?.passed === true);
+    }
+
+    offsetMatch() {
+        const matches = this.offsetMatches();
+        if (!matches.length) return null;
+        this.offsetIndex = Math.max(0, Math.min(this.offsetIndex ?? 0, matches.length - 1));
+        return matches[this.offsetIndex];
+    }
+
+    stepOffset(direction) {
+        const matches = this.offsetMatches();
+        if (!matches.length) return;
+        const display = displayIndexForFrame(this.currentVideoData(), par.frame);
+        const role = display === this.offsetMatch()?.target ? "target" : "source";
+        this.offsetIndex = ((this.offsetIndex ?? 0) + direction + matches.length) % matches.length;
+        this.offsetPaste = null;
+        this.drawOffset();
+        if (this.ui.offsetOverlay) this.goToOffset(role);
+        setRenderOne();
+    }
+
+    goToOffset(which) {
+        const match = this.offsetMatch();
+        if (!match || !Number.isFinite(match[which])) return;
+        goToTimelineFrame(frameForDisplayIndex(this.currentVideoData(), match[which]));
+    }
+
+    drawOffset() {
+        if (!this.offsetCanvas) return;
+        const r = this.job?.result, offset = r?.offset;
+        const matches = this.offsetMatches(), match = this.offsetMatch();
+        const available = offset?.status === "done" && !!match;
+        this.offsetExportButton.disabled = !available && !this.offsetExport;
+        this.offsetExportButton.textContent = tr(this.offsetExport ? "exportFade.cancel" : "exportFade.button");
+        this.offsetExportStatus.textContent = this.offsetExportMessage ?? "";
+        for (const button of [this.offsetPreviousButton, this.offsetNextButton, this.offsetGoSourceButton, this.offsetGoTargetButton, this.offsetOverlayButton, this.offsetResidualButton, this.offsetOriginalPositionsButton]) button.disabled = !available;
+        this.offsetSummary.textContent = !offset ? tr("view.offsetSummaryUnavailable")
+            : offset.status === "done" ? this.offsetSummaryText(offset)
+            : offset.status === "error" ? tr("view.offsetSummaryError", {error: offset.error || "—"})
+            : offset.status === "disabled" ? tr("view.offsetSummaryDisabled") : tr("view.offsetSummaryPending");
+        const width = this.contentWidth(), height = match ? 180 : 1, ctx = sizeCanvas(this.offsetCanvas, width, height);
+        ctx.clearRect(0, 0, width, height);
+        this.offsetLabel.textContent = "";
+        if (!match) return;
+        // Verified ROI coordinates are already expressed in full-frame luma pixels.
+        const step = 1;
+        const plane = typeof match.plane === "number" ? ["Y", "Cb", "Cr"][match.plane] ?? String(match.plane) : String(match.plane ?? "—");
+        this.offsetLabel.textContent = tr("view.offsetMatchLabel", {
+            index: this.offsetIndex + 1, count: matches.length, source: this.frameOf(match.source), target: this.frameOf(match.target),
+            lag: int(match.target - match.source), plane,
+            sourceROI: `${int(match.x * step)},${int(match.y * step)} ${int(match.width * step)}×${int(match.height * step)}`,
+            targetROI: `${int(match.tx * step)},${int(match.ty * step)} ${int(match.width * step)}×${int(match.height * step)}`,
+            dx: int(match.dx * step), dy: int(match.dy * step), score: fmt(match.score, 4),
+        });
+        const screen = match.screening;
+        this.offsetLabel.textContent += `\n${tr("view.offsetScreening", {
+            status: tr(`view.offsetScreen.${screen?.reason ?? "unchecked"}`),
+            band: fmt(screen?.background?.band, 3), broad: fmt(screen?.background?.broad, 3),
+            context: fmt(screen?.background?.context, 3), gain: fmt(screen?.phaseGain, 3),
+        })}`;
+        const a = match.sourceCrop, b = match.targetCrop;
+        if (!a?.pixels || !b?.pixels || !a.width || !a.height || !b.width || !b.height) return;
+        const sample = [];
+        for (const crop of [a, b]) for (let i = 0; i < crop.pixels.length; i += Math.max(1, Math.floor(crop.pixels.length / 4096))) sample.push(Math.abs(crop.pixels[i]));
+        sample.sort((x, y) => x - y);
+        const max = Math.max(1e-6, sample[Math.floor((sample.length - 1) * 0.98)] || 0);
+        const rotate = a.width < a.height && b.width < b.height;
+        if (rotate) this.offsetLabel.textContent += `\n${tr("view.offsetRotated")}`;
+        const gap = 8, panelWidth = rotate ? width : (width - gap) / 2, panelHeight = rotate ? (height - gap) / 2 : height;
+        const paint = (crop, x0, y0) => {
+            const image = document.createElement("canvas"); image.width = rotate ? crop.height : crop.width; image.height = rotate ? crop.width : crop.height;
+            const imageCtx = image.getContext("2d"), pixels = imageCtx.createImageData(image.width, image.height);
+            for (let i = 0; i < crop.width * crop.height; i++) {
+                const gray = Math.max(0, Math.min(255, Math.round(128 + 127 * crop.pixels[i] / max)));
+                const k = 4 * (rotate ? (i % crop.width) * image.width + crop.height - 1 - Math.floor(i / crop.width) : i);
+                pixels.data[k] = pixels.data[k + 1] = pixels.data[k + 2] = gray; pixels.data[k + 3] = 255;
+            }
+            imageCtx.putImageData(pixels, 0, 0);
+            const scale = Math.min(panelWidth / image.width, panelHeight / image.height), dw = image.width * scale, dh = image.height * scale;
+            ctx.imageSmoothingEnabled = false; ctx.drawImage(image, x0 + (panelWidth - dw) / 2, y0 + (panelHeight - dh) / 2, dw, dh);
+            ctx.strokeStyle = this.dark ? "#aaa" : "#555"; ctx.strokeRect(x0 + (panelWidth - dw) / 2, y0 + (panelHeight - dh) / 2, dw, dh);
+        };
+        paint(a, 0, 0); paint(b, rotate ? 0 : panelWidth + gap, rotate ? panelHeight + gap : 0);
+    }
+
+    async exportOffsetFade() {
+        if (this.offsetExport) { this.offsetExport.cancelled = true; return; }
+        const match = this.offsetMatch(), videoData = this.currentVideoData(), result = this.job?.result;
+        if (!match || result?.offset?.status !== "done" || videoData !== this.analysisVideo) return;
+        const state = {cancelled: false};
+        this.offsetExport = state;
+        const message = text => {
+            this.offsetExportMessage = text;
+            if (this.offsetExportStatus) this.offsetExportStatus.textContent = text;
+        };
+        message(tr("exportFade.preparing"));
+        this.drawOffset();
+        try {
+            const {exportNoiseOffsetFade} = await import("./NoiseOffsetFadeExport");
+            const output = await exportNoiseOffsetFade({
+                videoData, match: {...match}, width: result.video.width, height: result.video.height,
+                isCancelled: () => state.cancelled || this.currentVideoData() !== videoData,
+                onProgress: (current, total) => message(tr("exportFade.progress", {percent: Math.round(100 * current / total)})),
+            });
+            const base = (result.video.name || "video").replace(/\.[^.]+$/, "").replace(/[^a-zA-Z0-9_-]+/g, "_");
+            const filename = `${base}_overlap_fade_${match.source}-${match.target}_${match.x}-${match.y}_to_${match.tx}-${match.ty}.mp4`;
+            const url = URL.createObjectURL(output.blob), link = document.createElement("a");
+            link.href = url; link.download = filename; link.click();
+            setTimeout(() => URL.revokeObjectURL(url), 30_000);
+            message(tr("exportFade.saved", {filename}));
+        } catch (error) {
+            message(error.name === "AbortError" ? tr("exportFade.cancelled") : tr("exportFade.failed", {error: error.message}));
+        } finally {
+            this.offsetExport = null;
+            this.drawOffset();
+        }
+    }
+
     toggle(key) {
         this.ui[key] = !this.ui[key];
+        if (key === "offsetAmbiguous") {
+            this.offsetIndex = 0; this.offsetPaste = null;
+            if (this.ui.offsetOverlay) this.goToOffset("source");
+        }
+        // Only one comparison owns the video overlay; the column selection is retained.
+        if (key === "offsetOverlay" && this.ui.offsetOverlay) {
+            this.ui.overlay = false;
+            const match = this.offsetMatch(), display = displayIndexForFrame(this.currentVideoData(), par.frame);
+            if (match && display !== match.source && display !== match.target) this.goToOffset("source");
+        }
+        if (key === "overlay" && this.ui.overlay) this.ui.offsetOverlay = false;
+        if ((key === "offsetResidual" || key === "offsetOriginalPositions") && this.ui[key] && !this.ui.offsetOverlay) {
+            this.ui.offsetOverlay = true; this.ui.overlay = false; this.goToOffset("source");
+        }
         if (key === "blink") { if (this.ui.blink) this.startBlink(); else this.stopBlink(); }
         if (key === "aligned") this.pairImages = null;
         this.refreshDisplay();
@@ -470,13 +632,16 @@ export class CNodeVideoNoisePatternView extends CNodeViewText {
         this.runButton.disabled = running;
         this.stopButton.disabled = !running;
         for (const [button, on] of [[this.blinkButton, this.ui.blink], [this.alignedButton, this.ui.aligned], [this.overlayButton, this.ui.overlay],
-            [this.maxContrastButton, this.ui.maxContrast]]) {
+            [this.maxContrastButton, this.ui.maxContrast], [this.offsetOverlayButton, this.ui.offsetOverlay], [this.offsetContrastButton, this.ui.maxContrast],
+            [this.offsetAmbiguousButton, this.ui.offsetAmbiguous], [this.offsetResidualButton, this.ui.offsetResidual],
+            [this.offsetOriginalPositionsButton, this.ui.offsetOriginalPositions]]) {
             button.style.outline = on ? "2px solid #4ea1ff" : "none";
             button.setAttribute("aria-pressed", on ? "true" : "false");
         }
         this.drawChart();
         this.drawWhere();
         this.drawPair();
+        this.drawOffset();
         this.setDetails(this.detailsText(r));
     }
 
@@ -517,6 +682,15 @@ export class CNodeVideoNoisePatternView extends CNodeViewText {
         // frames the decoder could not deliver are not covered by the verdict: say so, and a
         // "no repeat" on an incomplete video is not shown in green
         const failed = r?.counts?.failed;
+        if (r?.offset) {
+            const o = r.offset;
+            const summary = o.status === "done" ? this.offsetSummaryText(o)
+                : o.status === "error" ? tr("view.offsetSummaryError", {error: o.error || "—"})
+                : o.status === "disabled" ? tr("view.offsetSummaryDisabled")
+                : tr("view.offsetSummaryPending");
+            text += `\n${summary}`;
+            if (o.matches?.length || o.status === "error" || o.status === "pending") color = "#e0a000";
+        }
         if (v && r?.status === "done" && failed > 0 && v.kind !== "pending" && v.kind !== "cannot") {
             text += "\n" + tr("verdict.incomplete", {failed: int(failed), frames: int(r.counts.frames), segments: int(r.counts.skippedSegments ?? 0)});
             if (v.kind === "none") color = "#e0a000";
@@ -527,6 +701,14 @@ export class CNodeVideoNoisePatternView extends CNodeViewText {
     }
 
     unit(r) { return r?.picture ? tr("view.pictures") : tr("view.frames"); }
+
+    offsetSummaryText(offset) {
+        const unchecked = offset.matches?.filter(m => !m.screening).length ?? 0;
+        if (unchecked) return tr("view.offsetSummaryUnchecked", {count: int(unchecked)});
+        const count = offset.matches?.filter(m => m.screening?.passed === true).length ?? 0;
+        return tr("view.offsetSummaryDone", {count: int(count), suppressed: int((offset.matches?.length ?? 0) - count),
+            sampled: int(offset.sampled ?? 0), pairs: int(offset.pairs ?? 0)});
+    }
 
     planeName(v) {
         if (!v) return "—";
@@ -652,7 +834,8 @@ export class CNodeVideoNoisePatternView extends CNodeViewText {
     drawOverlay(frame) {
         const videoView = NodeMan.get("video", false);
         const sel = this.job?.result?.selection;
-        if (!this.visible || !this.ui.overlay || !sel || !videoView?.div) { this.clearOverlay(); return; }
+        const offset = this.ui.offsetOverlay ? this.offsetMatch() : null;
+        if (!this.visible || !(offset || this.ui.overlay && sel) || !videoView?.div) { this.clearOverlay(); return; }
         if (!this.overlay || this.overlay.parentElement !== videoView.div) {
             this.overlay?.remove();
             this.overlay = document.createElement("canvas");
@@ -667,10 +850,14 @@ export class CNodeVideoNoisePatternView extends CNodeViewText {
         ctx.clearRect(0, 0, w, h);
         const videoData = videoView.videoData;
         // the boxes are in the coded picture: hidden while the view shifts or turns it
-        if (videoData?.stabilizationEnabled || (videoData?.effectiveRotation ?? 0) !== 0) return;
+        if (videoData?.stabilizationEnabled || (videoData?.effectiveRotation ?? 0) !== 0) {
+            if (offset) this.overlayCaption(ctx, w, h, tr("overlay.offsetTransform"));
+            return;
+        }
         const display = displayIndexForFrame(videoData, frame);
-        const role = display === sel.target ? "target" : display === sel.source ? "source" : null;
         if (!videoView.videoToCanvasCoordsOriginal) return;
+        if (offset) { this.drawOffsetOverlay(ctx, w, h, videoView, offset, display); return; }
+        const role = display === sel.target ? "target" : display === sel.source ? "source" : null;
         if (!role) {
             // the overlay follows the playhead: on a paused frame outside the shown pair, the
             // pair the precise pass found for that frame is selected (its boxes come with the
@@ -697,6 +884,87 @@ export class CNodeVideoNoisePatternView extends CNodeViewText {
         }
         this.drawPickedStrip(ctx, w, videoView, sel, role, height);
         this.overlayCaption(ctx, w, h, tr("overlay.caption", {target: this.frameOf(sel.target), source: this.frameOf(sel.source), lag: sel.lag}));
+    }
+
+    // By default, align the other frame's ROI beside the playing frame's ROI.
+    // Original positions instead keeps each ROI at its own full-frame coordinates.
+    drawOffsetOverlay(ctx, w, h, videoView, match, display) {
+        const role = display === match.source ? "source" : display === match.target ? "target" : null;
+        if (!role) {
+            this.overlayCaption(ctx, w, h, tr("overlay.offsetOtherFrame", {source: this.frameOf(match.source), target: this.frameOf(match.target)}));
+            return;
+        }
+        const source = role === "source", other = source ? "target" : "source";
+        const x = source ? match.x : match.tx, y = source ? match.y : match.ty;
+        const ox = source ? match.tx : match.x, oy = source ? match.ty : match.y;
+        const [x0, y0] = videoView.videoToCanvasCoordsOriginal(x, y);
+        const [x1, y1] = videoView.videoToCanvasCoordsOriginal(x + match.width, y + match.height);
+        const sw = x1 - x0, sh = y1 - y0;
+        if (!(sw > 0 && sh > 0)) return;
+        let left, top;
+        const originalPositions = !!this.ui.offsetOriginalPositions;
+        if (originalPositions) {
+            // Let the canvas clip offscreen regions; moving them would misstate their position.
+            [left, top] = videoView.videoToCanvasCoordsOriginal(ox, oy);
+        } else {
+            // Prefer the later frame on the right, with an edge fallback to keep it visible.
+            left = source ? x1 + 3 : x0 - sw - 3;
+            if (left < 0 || left + sw > w) left = source ? x0 - sw - 3 : x1 + 3;
+            top = y0;
+        }
+        const videoData = videoView.videoData;
+        if (this.offsetPaste?.match !== match || this.offsetPaste.role !== role || this.offsetPaste.videoData !== videoData) {
+            this.offsetPaste = {match, role, videoData, display: match[other], a: ox, b: ox + match.width, top: oy, bottom: oy + match.height};
+        }
+        const frameWidth = this.job.result.video.width, frameHeight = this.job.result.video.height;
+        let canvas;
+        if (this.ui.offsetResidual) {
+            const images = this.offsetResidualCanvases(match);
+            canvas = images?.[other];
+            if (images?.[role]) { ctx.imageSmoothingEnabled = false; ctx.drawImage(images[role], x0, y0, sw, sh); }
+        } else {
+            canvas = this.stripCanvas(this.offsetPaste, videoView, videoData, this.adjustmentsKey(videoView), frameHeight, frameWidth);
+        }
+        const sourceColor = "#36e6ff", targetColor = "#ffcf40";
+        const outline = (px, py, color, label, labelY) => {
+            ctx.strokeStyle = color; ctx.lineWidth = 2;
+            ctx.strokeRect(px - 1, py - 1, sw + 2, sh + 2);
+            ctx.font = "bold 12px sans-serif"; ctx.textAlign = "center";
+            ctx.lineWidth = 3; ctx.strokeStyle = "#000";
+            ctx.strokeText(label, px + sw / 2, labelY);
+            ctx.fillStyle = color; ctx.fillText(label, px + sw / 2, labelY);
+        };
+        const visible = originalPositions ? left < w && left + sw > 0 && top < h && top + sh > 0 : left >= 0 && left + sw <= w;
+        if (visible) {
+            if (canvas) { ctx.imageSmoothingEnabled = false; ctx.drawImage(canvas, left, top, sw, sh); }
+            outline(left, top, source ? targetColor : sourceColor, String(this.frameOf(match[other])), Math.max(14, top - (originalPositions ? 5 : 20)));
+        }
+        outline(x0, y0, source ? sourceColor : targetColor, String(this.frameOf(match[role])), Math.max(28, y0 - 5));
+        const caption = this.ui.offsetResidual
+            ? (originalPositions ? "overlay.offsetResidualOriginalCaption" : "overlay.offsetResidualCaption")
+            : (originalPositions ? "overlay.offsetOriginalCaption" : "overlay.offsetCaption");
+        this.overlayCaption(ctx, w, h, tr(caption, {
+            source: this.frameOf(match.source), target: this.frameOf(match.target),
+            dx: int(match.dx), dy: int(match.dy),
+        }));
+    }
+
+    offsetResidualCanvases(match) {
+        if (this.offsetResidualImages?.match === match) return this.offsetResidualImages;
+        const crops = [match.sourceCrop, match.targetCrop];
+        if (crops.some(c => !c?.pixels?.length)) return null;
+        const values = crops.flatMap(c => Array.from(c.pixels, Math.abs)).sort((a, b) => a - b);
+        const max = Math.max(1e-6, values[Math.floor((values.length - 1) * 0.98)]);
+        const canvases = crops.map(crop => {
+            const canvas = document.createElement("canvas"); canvas.width = crop.width; canvas.height = crop.height;
+            const ctx = canvas.getContext("2d"), data = ctx.createImageData(crop.width, crop.height);
+            for (let i = 0; i < crop.pixels.length; i++) {
+                const gray = Math.max(0, Math.min(255, Math.round(128 + 127 * crop.pixels[i] / max)));
+                data.data[4 * i] = data.data[4 * i + 1] = data.data[4 * i + 2] = gray; data.data[4 * i + 3] = 255;
+            }
+            ctx.putImageData(data, 0, 0); return canvas;
+        });
+        return this.offsetResidualImages = {match, source: canvases[0], target: canvases[1]};
     }
 
     overlayCaption(ctx, w, h, caption) {
@@ -861,11 +1129,12 @@ export class CNodeVideoNoisePatternView extends CNodeViewText {
             const scaleY = (source.height || image.height) / (height || image.height);
             const canvas = document.createElement("canvas");
             canvas.width = Math.max(1, Math.round(Math.abs(item.b - item.a)));
-            canvas.height = Math.max(1, Math.round(height));
+            const top = item.top ?? 0, bottom = item.bottom ?? height;
+            canvas.height = Math.max(1, Math.round(bottom - top));
             const ctx = canvas.getContext("2d");
             ctx.imageSmoothingEnabled = false;
             ctx.filter = filter || "none";
-            ctx.drawImage(source, Math.min(item.a, item.b) * scaleX, 0, Math.max(1, Math.abs(item.b - item.a) * scaleX), height * scaleY,
+            ctx.drawImage(source, Math.min(item.a, item.b) * scaleX, top * scaleY, Math.max(1, Math.abs(item.b - item.a) * scaleX), (bottom - top) * scaleY,
                 0, 0, canvas.width, canvas.height);
             item.canvas = canvas;
             item.key = key;
@@ -1008,6 +1277,14 @@ export class CNodeVideoNoisePatternView extends CNodeViewText {
                 push("  " + sel.assignment.map(a => `${a.target}←${a.source}${a.share < 0.7 ? "?" : ""}(${fmt(a.margin, 2)})`).join(" "));
             }
         }
+        if (r.offset) {
+            const off = r.offset;
+            push("", tr("view.offsetTitle"), `  ${off.status}: ${int(off.matches?.length ?? 0)} candidates; ${int(off.sampled ?? 0)}/${int(off.pictures ?? 0)} sampled pictures, ${int(off.pairs ?? 0)} tested pairs per plane; ${int(off.proposals ?? 0)} proposals; ${int(off.missing ?? 0)} missing pictures; ${int(off.missingCrops ?? 0)} missing crop sets; ${ms(r.timings.offset)}`);
+            if (off.status === "done") push(`  ${this.offsetSummaryText(off)}`);
+            if (off.error) push(`  ${off.error}`);
+            push(`  ${tr("view.offsetInterpretation")}`);
+            push(`  ${tr("view.offsetLimits")}`);
+        }
         push("", tr("details.timings", {start: r.visibility.start, end: r.visibility.end ?? "—"}));
         const tm = r.timings;
         push(`  ${tr("details.timingSpawn", {spawn: ms(tm.spawn), lanes: r.backend.lanes, decodeLanes: r.backend.decodeLanes})}`);
@@ -1071,6 +1348,15 @@ export class CNodeVideoNoisePatternView extends CNodeViewText {
             for (const p of r.refine.pairs) {
                 csv(this.frameOf(p.source), this.frameOf(p.target), p.lag, p.C, p.fit?.xor?.d, p.fit?.xor?.fit, p.fit?.translation?.shift, p.fit?.translation?.fit);
             }
+            lines.push("");
+        }
+        if (r.offset) {
+            csv("section", "offset texture candidates", `status ${r.offset.status}`, `sampled ${r.offset.sampled ?? ""}`, `pairs ${r.offset.pairs ?? ""}`, `proposals ${r.offset.proposals ?? ""}`, `missing ${r.offset.missing ?? ""}`);
+            csv("sourceFrame", "targetFrame", "lag", "plane", "sourceLumaX", "sourceLumaY", "targetLumaX", "targetLumaY", "widthLuma", "heightLuma", "dxLuma", "dyLuma", "nativeNCC", "coarseScore", "halves", "screening", "backgroundBandNCC", "backgroundBroadNCC", "backgroundContextNCC", "phaseGain");
+            const step = 1;
+            for (const m of r.offset.matches ?? []) csv(this.frameOf(m.source), this.frameOf(m.target), m.target - m.source, m.plane,
+                m.x * step, m.y * step, m.tx * step, m.ty * step, m.width * step, m.height * step, m.dx * step, m.dy * step, m.score, m.coarseScore, m.halves,
+                m.screening?.reason ?? "unchecked", m.screening?.background?.band, m.screening?.background?.broad, m.screening?.background?.context, m.screening?.phaseGain);
             lines.push("");
         }
         const sel = r.selection;

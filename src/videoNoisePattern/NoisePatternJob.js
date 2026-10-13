@@ -25,8 +25,9 @@ import {
     avcChunkHasIdr, avcNalLengthSize, offsetSegments, pairRuleFit, planFrameDecodes, planSegments, referenceIndices, thumbNCC,
 } from "./NoisePatternMath";
 import {sourceVideoOf} from "../videoQP/VideoQPAnalysis";
+import {offsetPairs, planOffsetFrames} from "./NoiseOffsetMath";
 
-export const NOISE_PATTERN_STAGES = ["spawn", "ingest", "held", "prep", "coarse", "precise", "longRange", "refine"];
+export const NOISE_PATTERN_STAGES = ["spawn", "ingest", "held", "prep", "coarse", "precise", "longRange", "refine", "offsetDecode", "offsetSearch", "offsetVerify"];
 const DECODE_CONCURRENCY = 8;
 const IDLE_TERMINATE_MS = 60000;
 const MESSAGE_BYTES = 8 * 1024 * 1024;
@@ -49,6 +50,7 @@ export function normalizeNoisePatternOptions(options = {}) {
         held: options.held === "picture" ? "picture" : "leave",
         frames: options.frames === "ab" ? "ab" : "all",
         searchOn: ["fastest", "gpu", "cpu"].includes(options.searchOn) ? options.searchOn : "fastest",
+        offsetSearch: options.offsetSearch !== false,
         range: options.range ?? null,
         references: Math.max(4, Math.min(64, Math.round(options.references ?? 24))),
     };
@@ -307,6 +309,7 @@ class NoisePatternRun {
             lags: null, curves: {}, analysis: null,
             verdict: {kind: "pending"},
             precise: null, longRange: null, pictureRepeat: null, refine: null, selection: null,
+            offset: {status: this.options.offsetSearch ? "pending" : "disabled", matches: []},
             byDisplay: null,
             benchmark: null,
         };
@@ -404,6 +407,7 @@ class NoisePatternRun {
                 await this.longRange();
                 await this.refine();
             }
+            if (this.options.offsetSearch) await this.offsetSearch();
             r.status = "done";
         } catch (error) {
             if (this.cancelled) r.status = "stopped";
@@ -1248,6 +1252,97 @@ class NoisePatternRun {
     }
 
     // ---- refine
+
+    offsetDecodeTask(run, type, extra) {
+        this.check();
+        const part = this.chunkItems(run.decodeFrom, run.decodeTo), last = part.next >= run.decodeTo;
+        return {message: {type, config: this.source.config, accel: "prefer-software", items: part.items,
+            targets: Int32Array.from(run.targets), last, ...extra}, transfer: part.transfer,
+        onStart: last ? null : (id, lane) => { this.sendRest(lane, id, run, part.next); }};
+    }
+
+    async offsetSearch() {
+        const r = this.result, out = r.offset, store = this.store, started = now();
+        // Keep the column result available even if this independent stage fails.
+        try {
+            const plan = planOffsetFrames(store.decoded, store.held, store.from);
+            out.pictures = plan.pictures; out.sampled = plan.selected.length; out.pilot = plan.pilot;
+            out.lumaStep = 4 * Math.max(1, Math.ceil(Math.max(store.width / 1280, store.height / 720)));
+            const frames = new Map();
+            this.displayMap();
+            this.setStage("offsetDecode", plan.targets.length);
+            const runs = planFrameDecodes(this.groupStarts, this.displayOf, this.chunkCount, plan.targets);
+            await Promise.all(runs.map(run => this.scheduler.run({build: () => {
+                return this.offsetDecodeTask(run, "offsetFrames", {step: out.lumaStep});
+            }}).then(reply => {
+                this.check();
+                for (const frame of reply.frames) frames.set(frame.index, frame);
+                r.progress.done += reply.frames.length; this.notify();
+            })));
+            const selected = plan.selected.filter(f => frames.has(f.frame) && frames.has(f.previous));
+            out.missing = plan.selected.length - selected.length;
+            out.sampled = selected.length;
+            const pairs = offsetPairs(selected, this.options.longestLag, r.picture);
+            out.pairs = pairs.length; out.proposals = 0; out.testedPairs = 0;
+            this.setStage("offsetSearch", pairs.length * 3);
+            const progress = [0, 0, 0], candidates = [];
+            await Promise.all([0, 1, 2].map(plane => this.scheduler.run({build: () => {
+                this.check();
+                // Copies are bounded compact images, not native video frames.
+                const samples = selected.map(s => ({index: s.index, frame: s.frame, current: frames.get(s.frame).planes[plane], previous: frames.get(s.previous).planes[plane]}));
+                const transfer = [...new Set(samples.flatMap(s => [s.current.pixels.buffer, s.previous.pixels.buffer]))];
+                return {message: {type: "offsetSearch", frames: samples, pairs}, transfer, onPartial: reply => {
+                    this.check(); progress[plane] = reply.done; out.testedPairs = r.progress.done = progress.reduce((a, b) => a + b, 0); this.notify();
+                }};
+            }}).then(reply => {
+                this.check(); out.proposals += reply.proposals;
+                for (const c of reply.candidates) {
+                    const a = selected[c.a], b = selected[c.b];
+                    candidates.push({source: a.frame, target: b.frame, previousSource: a.previous, previousTarget: b.previous,
+                        plane, x: c.x * c.scaleX, y: c.y * c.scaleY, tx: c.tx * c.scaleX, ty: c.ty * c.scaleY,
+                        width: c.width * c.scaleX, height: c.height * c.scaleY, coarseScore: c.score, proposal: c.proposal, step: out.lumaStep});
+                }
+            })));
+            frames.clear();
+            this.setStage("offsetVerify", candidates.length);
+            const requests = candidates.flatMap((c, i) => [
+                {frame: c.source, x: c.x, y: c.y}, {frame: c.previousSource, x: c.x, y: c.y},
+                {frame: c.target, x: c.tx, y: c.ty}, {frame: c.previousTarget, x: c.tx, y: c.ty},
+            ].map((f, j) => ({...f, width: c.width, height: c.height, plane: c.plane, key: `${i}:${j}`})));
+            const targets = [...new Set(requests.map(c => c.frame))].sort((a, b) => a - b), crops = new Map();
+            const cropRuns = planFrameDecodes(this.groupStarts, this.displayOf, this.chunkCount, targets);
+            await Promise.all(cropRuns.map(run => this.scheduler.run({build: () => {
+                const wanted = new Set(run.targets);
+                return this.offsetDecodeTask(run, "offsetCrops", {crops: requests.filter(c => wanted.has(c.frame))});
+            }}).then(reply => { this.check(); for (const c of reply.crops) crops.set(c.key, c.image); })));
+            // Small batches keep native refinements cancellable and spread across workers.
+            const verified = [];
+            await Promise.all(Array.from({length: Math.ceil(candidates.length / 4)}, (_, batch) => this.scheduler.run({build: () => {
+                this.check();
+                const items = candidates.slice(batch * 4, batch * 4 + 4).map((candidate, j) => ({candidate,
+                    crops: [0, 1, 2, 3].map(k => crops.get(`${batch * 4 + j}:${k}`))}));
+                out.missingCrops = (out.missingCrops ?? 0) + items.filter(item => item.crops.some(c => !c)).length;
+                const transfer = items.flatMap(item => item.crops.filter(Boolean).map(c => c.pixels.buffer));
+                for (let j = 0; j < items.length; j++) for (let k = 0; k < 4; k++) crops.delete(`${batch * 4 + j}:${k}`);
+                return {message: {type: "offsetVerify", items}, transfer};
+            }}).then(reply => { this.check(); verified.push(...reply.matches); r.progress.done = Math.min(candidates.length, r.progress.done + 4); this.notify(); })));
+            verified.sort((a, b) => b.score - a.score);
+            // Native work is already capped at 24 per plane. Preserve every
+            // surviving plane/lag candidate rather than letting one channel's
+            // high-scoring scene detail hide another channel's weaker texture.
+            out.matches = verified;
+            out.screeningVersion = 1;
+            out.screened = verified.filter(m => m.screening?.passed).length;
+            out.suppressed = verified.length - out.screened;
+            out.candidates = candidates.length;
+            out.status = "done";
+        } catch (error) {
+            if (this.cancelled) throw error;
+            out.status = "error"; out.error = error?.message ?? String(error);
+        }
+        r.timings.offset = now() - started;
+        this.notify(true);
+    }
 
     async decodeFineFrames(displays, plane = this.result.verdict.plane ?? 1) {
         if (this.finePlane !== plane) { this.fineFrames.clear(); this.finePlane = plane; }

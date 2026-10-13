@@ -84,3 +84,13 @@ test("CSV quotes relative paths, errors and every result status", () => {
     expect(csv).toContain('"bad\nfile"');
     expect(csv).toContain('"stopped"');
 });
+
+
+test("folder summary retains offset-only discoveries without carrying pixel crops", () => {
+    const summary = summarizeNoisePatternResult({...result("none"), offset: {status: "done", pairs: 73,
+        matches: [{score: 0.81, screening: {passed: true}, sourceCrop: {pixels: new Float32Array(128)}}, {score: 0.99, screening: {passed: false}}]}});
+    expect(summary).toMatchObject({kind: "none", offsetStatus: "done", offsetCandidates: 1, offsetScore: 0.81, offsetPairs: 73});
+    expect(JSON.stringify(summary)).not.toContain("pixels");
+    expect(noisePatternFolderCSV([summary])).toContain("offsetCandidates");
+    expect(summary.offsetSuppressed).toBe(1);
+});

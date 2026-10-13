@@ -1,4 +1,21 @@
 import {MediabunnyExporter} from "../src/MediabunnyExporter";
+import {MessageChannel as NodeMessageChannel} from "worker_threads";
+
+test("encoder backpressure can drain when background timer callbacks are unavailable", async () => {
+    const oldFrame = global.VideoFrame, oldChannel = global.MessageChannel;
+    global.VideoFrame = class { close() {} };
+    global.MessageChannel = NodeMessageChannel;
+    const timer = jest.spyOn(global, "setTimeout").mockImplementation(() => { throw new Error("Background timer unavailable"); });
+    try {
+        let checks = 0;
+        const exporter = new MediabunnyExporter();
+        exporter.encodedWidth = 640; exporter.encodedHeight = 480;
+        exporter.encoder = {encode() {}, get encodeQueueSize() { return checks++ === 0 ? 6 : 0; }};
+        await exporter.addFrame({width: 640, height: 480}, 0);
+        expect(exporter.frameCount).toBe(1);
+        expect(timer).not.toHaveBeenCalled();
+    } finally { timer.mockRestore(); global.VideoFrame = oldFrame; global.MessageChannel = oldChannel; }
+});
 
 test.each([30, 30000 / 1001])("video timestamps stay on the absolute %s fps clock", async fps => {
     const frames = [];

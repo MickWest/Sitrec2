@@ -2,6 +2,19 @@
 // tools/flowgen.html, and a browser does not add a missing extension the way webpack does.
 import { sanitizeAvcDescription } from "./H264Utils.js";
 
+// Timer callbacks can be delayed by a minute in a hidden tab. Yield through
+// a message task so encoder backpressure and finalization still make progress.
+export function yieldVideoExportTask() {
+    if (typeof MessageChannel === "undefined") return new Promise(resolve => setTimeout(resolve, 0));
+    return new Promise(resolve => {
+        const channel = new MessageChannel();
+        channel.port1.onmessage = () => {
+            channel.port1.close(); channel.port2.close(); resolve();
+        };
+        channel.port2.postMessage(0);
+    });
+}
+
 export class MediabunnyExporter {
     constructor(options = {}) {
         this.width = options.width || 640;
@@ -189,7 +202,8 @@ export class MediabunnyExporter {
         // Without this, frames queue faster than encoding, causing massive memory use
         // and a very long "flushing encoder" stage at the end.
         while (this.encoder.encodeQueueSize > 5) {
-            await new Promise(r => setTimeout(r, 1));
+            await yieldVideoExportTask();
+            if (this.error) throw this.error;
         }
 
         this.frameCount++;
@@ -198,7 +212,7 @@ export class MediabunnyExporter {
     async finalize(onProgress = null, onStatus = null) {
         if (onStatus) {
             onStatus('Flushing encoder...');
-            await new Promise(r => setTimeout(r, 0));
+            await yieldVideoExportTask();
         }
 
         await this.encoder.flush();
@@ -209,7 +223,7 @@ export class MediabunnyExporter {
         if (this.audioSource && this.audioBuffer) {
             if (onStatus) {
                 onStatus('Encoding audio...');
-                await new Promise(r => setTimeout(r, 0));
+                await yieldVideoExportTask();
             }
 
             const srcSampleRate = this.audioBuffer.sampleRate;

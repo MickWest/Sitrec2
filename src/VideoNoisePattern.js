@@ -9,7 +9,7 @@ import {ViewMan} from "./CViewManager";
 import {t} from "./i18n";
 
 const VIEW_ID = "videoNoisePattern";
-export const NOISE_PATTERN_DEFAULTS = {longestLag: 256, detail: 8, vertical: 0, held: "leave", frames: "all", searchOn: "fastest"};
+export const NOISE_PATTERN_DEFAULTS = {longestLag: 256, detail: 8, vertical: 0, held: "leave", frames: "all", searchOn: "fastest", offsetSearch: true};
 let settings = {...NOISE_PATTERN_DEFAULTS};
 
 // true from the moment the user asks for the window, so the checkbox does not flip back
@@ -33,6 +33,7 @@ export function clampNoisePatternOptions(saved) {
         held: o.held === "picture" ? "picture" : "leave",
         frames: o.frames === "ab" ? "ab" : "all",
         searchOn: ["fastest", "gpu", "cpu"].includes(o.searchOn) ? o.searchOn : "fastest",
+        offsetSearch: o.offsetSearch !== false,
     };
 }
 
@@ -119,6 +120,7 @@ export function addVideoNoisePatternMenu(folder) {
         .name(s("detail")).tooltip(s("detailTooltip")).listen().perm();
     controls.add(proxy, "vertical", {[s("verticalOff")]: 0, [s("verticalOne")]: 1, [s("verticalThree")]: 3})
         .name(s("vertical")).tooltip(s("verticalTooltip")).listen().perm();
+    controls.add(proxy, "offsetSearch").name(s("offsetSearch")).tooltip(s("offsetSearchTooltip")).listen().perm();
     controls.add(proxy, "held", {[s("heldLeave")]: "leave", [s("heldPicture")]: "picture"})
         .name(s("held")).tooltip(s("heldTooltip")).listen().perm();
     controls.add(proxy, "frames", {[s("framesAll")]: "all", [s("framesAB")]: "ab"})
