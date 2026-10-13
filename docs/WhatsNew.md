@@ -9,6 +9,16 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.180.0 (2026-10-12)
+
+### New Features
+- **Noise Pattern Detection** (Video → Forensics → *Noise Pattern Detection*): finds noise that appears again in later frames of a video, such as a noise layer that loops. It also finds the repeat when the layer is cut into vertical strips that change order, or when the layer moves sideways. A camera makes new noise in every frame, so noise that repeats was added to the video. Turn on the checkbox on the folder title to open a results window. The window shows a verdict (the repeat period and its strength), a chart of the repeat score at each lag, a strip that shows where on the timeline the noise repeats, and the noise images of a matched pair of frames. *Show on video* outlines the matching strips on the video. A click on a strip also shows that strip from the frames one period before and after. The analysis runs in background workers, and on the GPU when that is faster. If some frames cannot be decoded, the analysis continues and the verdict says how many frames it does not cover. While the window is open, it is saved with the sitch together with its settings, and the analysis runs again when the sitch loads. The strength is a search score, not a probability. The *Video Noise Pattern Detection* help page (Help → Documentation → Video Tools) explains the method and its limits.
+- **NPD Folder Scan** (Video → Forensics → Noise Pattern Detection → *NPD Folder Scan*): runs Noise Pattern Detection on every video in a local folder and its subfolders, without uploading them. By default it analyzes the first 2 minutes of each video (*Limit to (minutes)*), and it shortens a video that would need too much memory. Videos with a repeat or a candidate are listed first, and *Export CSV* saves the table. Click a video's path to open it in a new Sitrec tab and run the analysis there with the same settings and frames. To choose a folder you need Chrome or Edge, or the Sitrec desktop app.
+- **Search offset patches** (Video → Forensics → Noise Pattern Detection; off by default): an additional, slower search for texture that appears again at a different place in the picture. The candidates show in an *Offset texture candidates* section of the results window, with a video overlay. An *Export overlap fade* button saves a 4-second MP4 in which the two original frames fade into each other. A candidate is a local similarity that you must examine, not proof that the noise was added.
+
+### Improvements
+- **Forensics checkboxes** (Video → Forensics): *Error Level Analysis*, *Noise Analysis*, *QP Graph* and *Tonal Range Graph* each have a checkbox on their folder title that shows or hides the tool. Before, Error Level Analysis and Noise Analysis showed only while their folder was open. Now you turn them on with the checkbox (off by default), and they stay on when you close the folder. The Tonal Range Graph settings are now in the *Tonal Range Graph* folder (before: *Tonal Range Settings*).
+
 ## Version 2.179.0 (2026-10-12)
 
 ### New Features

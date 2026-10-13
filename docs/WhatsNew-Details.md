@@ -9,6 +9,111 @@ lockstep with docs/WhatsNew.md.
 
 ---
 
+## Version 2.180.0 (2026-10-12)
+
+### New Features
+- **Noise Pattern Detection (NPD)** (`60b81bac`, `2c3a85a6`, merged in `0f413646`; `6422eebf`; new `src/VideoNoisePattern.js` `addVideoNoisePatternMenu`, `showVideoNoisePattern`, `clampNoisePatternOptions`, `serializeVideoNoisePattern`, `deserializeVideoNoisePattern`, `resetVideoNoisePattern`; new `src/videoNoisePattern/CNodeVideoNoisePatternView.js`, `NoisePatternJob.js`, `NoisePatternMath.js`, `NoisePatternWorkerCore.js`, `NoisePatternGpu.js`, `NoisePatternCharts.js`; new `src/workers/NoisePatternWorker.js`, `src/workers/NoisePatternGpuWorker.js`; `src/videoQP/VideoQPAnalysis.js` `frameForDisplayIndex`; `src/nodes/CNodeVideoViewFilters.js`; `src/CustomManagerSerialize.js`; `src/index.js` `disposeEverything`; `src/i18n/en.js` `videoNoisePattern.*`; new `docs/VideoNoisePattern.md`, registered in `src/docsRegistry.js` and `README.md`; `tests/NoisePatternMath.test.js`, `tests/NoisePatternJob.test.js`, `tests/VideoNoisePatternRestore.test.js`, `tests/VideoNoisePatternResize.test.js`, `tests/VideoNoisePatternVideoChange.test.js`, `tests/noisePatternSynthetic.js`).
+  - **Purpose.** A camera sensor makes new noise in every frame. If the same noise appears again in a later frame, it was added to the video, for example as a looping noise layer. NPD finds the repeat. It also finds it when the layer is cut into vertical strips that change order between repeats (an XOR of the strip numbers, or a cyclic shift), and when the layer moves sideways.
+  - **Menu.** `addVideoNoisePatternMenu(guiVideoForensicsFolder)` adds the folder Video → Forensics → *Noise Pattern Detection*. Its `show` control becomes the folder's title checkbox (`asFolderToggle()`), which opens and closes the results window. The folder holds:
+    - *Longest lag (frames)*: 32–2000, default 256. The run also caps it at a quarter of the analyzed frames.
+    - *Strip detail*: *8 px (fast)* or *4 px*. `stripColumnWidth()` multiplies this base width by ceil(width / 1920).
+    - *Vertical search*: Off, ±1 band or ±3 bands. A band is 1/45 of the picture height. It runs on the CPU workers only.
+    - *Search offset patches*: see the separate entry below.
+    - *Held frames* (*Leave out* or *Count as one picture*), *Frames* (*Whole video* or *A-B range*) and *Search on* (*Fastest (measured)*, *GPU* or *CPU workers*).
+    - The buttons *Run*, *Stop*, *Export CSV* and *Benchmark CPU and GPU*.
+    - *NPD Folder Scan*. It is marked `keepLiveWhenFolderOff()`, so it works while the checkbox is off.
+    - The window, the analysis, the charts and the workers load by dynamic import on first show. A `Globals.loadGeneration` check drops a show that a new sitch load has overtaken.
+  - **Before a run.** `CNodeVideoNoisePatternView.run()` checks every 500 ms while the video is loading or still downloading. It reports a video that has no encoded frames (a still image or an image sequence) or no key frames. If `estimateFeatureBytes()` for the whole video is more than `NOISE_PATTERN_CACHE_LIMIT` (384 MiB), `showChoice` offers *Use the A-B range*, *Analyze the whole video* or *Cancel*. NPD needs at least 136 usable frames (8 × `LAG_MIN`).
+  - **Pipeline.** `startNoisePatternJob()` (`NoisePatternJob.js`) coordinates the work from the page thread. The heavy work goes to a pool of CPU workers: `workerLaneCount()` is hardware threads − 2, clamped to 2–12, and up to 8 of them decode. The strip search can also run on a WebGPU worker (`NoisePatternGpu.js`). *Fastest (measured)* runs the first 512 pairs (`CALIBRATION_PAIRS`) on both and uses the faster one. The stages are:
+    - *ingest*: decodes every frame once, in parallel segments of whole key-frame groups. It keeps compact features: strip profiles of Y, Cb and Cr in 45 bands, aligned signatures, and a 32×18 thumbnail.
+    - *held*: finds held (repeated) pictures.
+    - *prep*: subtracts the mean of the frames within ±8 (`TEMPORAL_HALF`). For this reason, lags below 17 (`LAG_MIN`) are not scored.
+    - *coarse*: scores lags from 1 to the longest lag, from 24 reference frames, on five curves. Three are strip searches (S-Y, S-Cb, S-Cr) and two compare the same position (A-Yfine, A-Cbmid).
+      - `detrendZ()` subtracts a baseline: the median over ±12 lags, without the lag and its neighbors, computed a second time without the outliers. It then divides by 1.4826 × MAD. When the MAD is zero, as on a sparse quantized curve, it uses the RMS deviation instead, so that such a curve does not get an inflated score.
+      - `findPeriod()` takes the smallest P that meets two tests: z ≥ 3 at 70% or more of its multiples, and 80% or more of the lags with z ≥ 6 are multiples of P.
+      - The strength is the median z at the multiples. It is labeled *strong* (≥ 12), *clear* (≥ 6) or *weak*.
+    - *precise*: tests every frame against the frame one period later. Control pairs are P + ceil(P/2) apart, and each frame gets a threshold from the control scores.
+    - *longRange*: finds how far the repeat reaches (k × P, k up to 64).
+    - *refine*: decodes up to 12 of the best pairs again. It makes dense 2-px offset maps, the strip lattice and the re-ordering rule (XOR, cyclic, translation or none).
+    - The features are cached for each source video (`featureCache`, keyed on strip detail, frame range and held-frame mode). So *Run* after a change of *Longest lag*, *Vertical search* or *Search on* does not decode the video again.
+    - Idle workers stop after 60 s.
+  - **Decoding.** Some videos play correctly but mark chunks as key frames that hold only a non-IDR slice. A decoder cannot start at such a chunk. This code keeps those videos from failing with "Decoding error":
+    - For avc1/avc3 video, `avcChunkHasIdr()` and `avcNalLengthSize()` read the length-prefixed NAL units of each key chunk. A key chunk with no IDR slice is merged into the group before it.
+    - `decodeSegmentWithRetry()` decodes a failed segment once more, starting from the start of the previous segment (pre-roll). If that also fails, it keeps the frames that came out and skips the rest.
+    - The verdict then says "Incomplete: N of M frames could not be decoded (K segments skipped)…". A "no repeat" result on an incomplete video shows amber instead of green.
+    - Details lists the merged key frames and the decode errors. The decode report is kept on the feature store, so a cached rerun reports it too.
+  - **Results window.** `CNodeVideoNoisePatternView` is a `CNodeViewText`, so all its text is selectable. From top to bottom it shows:
+    - The verdict: the period, the strength, the reference coverage, the plane, the matched frame runs, the strip rule, the longest return, and a note when the picture itself repeats.
+    - The progress line, with *Run* and *Stop*.
+    - *Repeat score by lag*. Hovering reads each curve. A click selects the best pair at that lag.
+    - *Where the repeat is*: green, gray, hatched and yellow. A drag (through `registerSurfaceInteraction`) scrubs the playhead, and the release selects the pair at that frame.
+    - *Frame pair*: the target and source noise images, with *◀ Previous*, *Next ▶*, *Go to source*, *Go to target*, *Blink (2 Hz)*, *Aligned*, *Show on video* and *Max contrast*.
+    - *Details*.
+    - When the loaded video changes, the window starts a new analysis. A `ResizeObserver` redraws the window when its size changes.
+  - **Strip pick and video overlay.**
+    - A click on a column in the target or source image, or on a strip in the video, picks that strip. A second click releases it. A white outline marks the picked strip in all three places.
+    - With *Show on video* on, the overlay outlines the matched strips when the playhead is on the target or source frame of the pair. When the video is paused at another frame, `followPlayhead()` selects the pair that the precise pass accepted for that frame. If there is none, the caption says that no repeat matched there.
+    - With a strip picked, the video also shows the same strip from the frames one period apart, up to 4 on each side (`NEIGHBOR_STRIPS`). `analyzePair()` against the frame on screen finds where each one is. Its original pixels come from the playback cache (`waitForFrame` for a frame outside the cache) and are drawn through the view's Video Adjustments (`getAdjustedVideoFrameSource`).
+    - The video click is a pending click in the interaction router. A drag past the click threshold still pans the video, and a tool with a higher priority (mask, annotation, tracking) keeps the click.
+    - The outlines are hidden while the video is stabilized or rotated.
+  - **Max contrast.** Sets `videoContrast` to 5 and turns on `videoEnableEffects` if it is off, through the nodes' `setValue`. A second click puts the old values back, and `dispose()` does too when the sitch is cleared. `release()` (the window closing) does not restore them.
+  - **Saving.** `serializeVideoNoisePattern()` writes `videoNoisePattern` only while the window is shown. The record holds the window geometry and theme, `noisePatternOptions`, and `noisePatternSelection` with the *Blink*, *Aligned* and *Show on video* states. The results are never saved.
+    - On load, `deserializeVideoNoisePattern()` opens the window, the analysis runs again, and `applySavedSelection()` selects the saved pair.
+    - `clampNoisePatternOptions()` limits saved settings to the values the menu offers.
+    - `resetVideoNoisePattern()`, called from `disposeEverything()`, stops the workers and resets the settings.
+  - **Export CSV.** Writes the lag curves, the result of every frame, the refined pairs, any offset candidates and the probes of the selected pair to `VideoNoisePattern.csv`.
+- **NPD Folder Scan** (`60b81bac`; new `src/videoNoisePattern/NoisePatternFolderScan.js`, `NoisePatternFolderScanUI.js`, `NoisePatternFile.js`, `NoisePatternHandoff.js`; `src/FileHandoff.js` `createFileHandoffId`, `putFileHandoff(files, meta, id)`; `src/DesktopFileSystem.js` `createDesktopDirectoryHandle` `entries()`; `src/index.js` startup handoff (`npd=1`); `docs/LoadingVideo.md` *NPD Folder Scan*; `tests/NoisePatternFolderScan.test.js`, `tests/NoisePatternFolderScanUI.test.js`, `tests/NoisePatternFile.test.js`, `tests/NoisePatternFileLoad.test.js`, `tests/NoisePatternHandoff.test.js`, `tests/DesktopFileSystem.test.js`).
+  - **Choosing the folder.** *Choose Folder* uses `showDirectoryPicker({mode: "read"})` in the browser (Chrome or Edge). In the Sitrec desktop app it uses the desktop bridge's `chooseFolder`. Desktop directory handles get an async `entries()` iterator over `bridge.listDirectory`, so both kinds of folder are walked the same way, through every subfolder.
+    - Files are selected by extension: mp4, mov, m4v, webm, mkv, avi, ts, mts, m2ts, flv, ogv.
+    - The files are read locally with mediabunny. Nothing is uploaded.
+  - **Each video.** `analyzeNoisePatternFile()` analyzes one video at a time.
+    - Each scan has its own worker session (`createNoisePatternWorkerSession()`, with no feature cache), so closing the single-video window does not stop a scan.
+    - The scan uses the current NPD settings, with *Frames* forced to the whole scan region.
+    - *Limit to (minutes)* (0.1–120, default 2): only the frames before the cutoff are analyzed. The group of pictures that holds the cutoff is read to its end, so that B frames keep their reference pictures.
+    - If the estimated features would be more than 384 MiB, or the encoded data more than 512 MiB, the region is cut back to the last complete group of pictures and the row is marked *auto-reduced*.
+    - A read error, or a codec that the browser cannot decode, gives an error row, not a "no repeat" result.
+  - **Table.** The columns are *Video / relative path*, *Result*, *Period*, *Strength*, *Channel*, *Reference coverage*, *Matched / tested*, *Decoded / frames* (with *limited* or *auto-reduced*), *Usable* and *Details*.
+    - Rows with a repeat or an offset candidate sort first. Green rows are repeating noise. Amber rows are repeating pictures or offset candidates.
+    - The window also has *Repeats only*, *Filter paths*, the *Folders* list (which includes folders with no videos), *Export CSV* (`noisePatternFolderCSV`), *Stop* and *Scan Again*.
+    - Closing the window stops the scan.
+  - **Open in a new tab.** Each path is a real link (`?action=new&handoff=<id>&npd=1`), made before the click, so a normal click, a middle click and the context menu all work.
+    - The click stores the file with `putFileHandoff()` under the preallocated id, with `meta.noisePattern`: the settings and the number of analyzed frames.
+    - The new tab waits up to 120 s for the handoff (`takeNoisePatternHandoff()`) and imports the file.
+    - `runNoisePatternHandoff()` waits for the video, sets A and B to the analyzed frames, and opens NPD with *Frames* set to *A-B range*.
+- **Search offset patches** (`9c06065b`, `6422eebf`; new `src/videoNoisePattern/NoiseOffsetMath.js`, `NoiseOffsetSearch.js`, `NoiseOffsetFadeExport.js`; `NoisePatternJob.js` `offsetSearch`; `NoisePatternWorkerCore.js` messages `offsetFrames`, `offsetCrops`, `offsetSearch`, `offsetVerify`; `CNodeVideoNoisePatternView.js` `drawOffset`, `drawOffsetOverlay`, `exportOffsetFade`; `src/MediabunnyExporter.js` `yieldVideoExportTask`; `tests/NoiseOffsetMath.test.js`, `tests/NoiseOffsetWorker.test.js`, `tests/NoiseOffsetFadeExport.test.js`, `tests/VideoNoiseOffsetOverlay.test.js`, `tests/MediabunnyExporter.test.js`).
+  - **Setting.** Video → Forensics → Noise Pattern Detection → *Search offset patches*. It is off by default.
+    - `NOISE_PATTERN_DEFAULTS.offsetSearch` is false. `clampNoisePatternOptions()` and `normalizeNoisePatternOptions()` accept only `true`, so a saved sitch that does not have the key gets the search off.
+    - It was on by default in `9c06065b`. `6422eebf` turned it off because on a long video it takes about twenty times as long as the column analysis. `9c06065b` measured about 54 s added to a 2.5 s column analysis on a 3,282-frame video.
+  - **Search.** This is a separate stage that runs after the column stages, on the CPU workers only. It has its own progress stages: *Reading offset-search pictures*, *Searching 2-D offsets on CPU* and *Checking native-resolution patches*. It can be stopped. A failure sets `offset.status = "error"` and never fails the column result.
+    - `planOffsetFrames()` samples up to 128 distinct pictures: a continuous run of up to 64 from the start, and the rest spread through the clip.
+    - `differenceResidual()` subtracts the preceding distinct picture from each sampled picture and applies a band-pass filter, at reduced resolution. Pixels near large changes are masked.
+    - `offsetSpectrum()` and `translationPeaks()` correlate the 2×2-averaged residuals of each pair by FFT. The data is zero-padded, so matches do not wrap around. They propose up to 4 translations for each pair that is at least 2 pictures apart and within *Longest lag*.
+    - `searchOffsets()` keeps 48 proposals per plane, spread over logarithmic lag ranges. It confirms the patches and keeps up to 24 candidates per plane (Y, Cb, Cr).
+    - `verifyOffset()` checks each candidate at native plane resolution, on a σ 1 − σ 6 residual. It needs NCC ≥ 0.6, both halves ≥ 0.4, and a texture rank ≥ 1.5 for both patches.
+    - `screenOffset()` then marks a candidate as ambiguous in two cases. The first is when the background also matches: absolute band NCC ≥ 0.6, or broad or surrounding NCC ≥ 0.9. The second is when the temporal control fails: both same-phase correlations must be above 0 and at least 0.15 above the larger crossed-phase correlation. These are screening heuristics, not a significance test.
+  - **Window.** A new *Offset texture candidates* section under the progress line gives a summary. For each candidate it shows the frames, the lag, the plane, the positions, the offset, the native NCC, the screening values and the two residual crops.
+    - Buttons: *◀ Previous offset candidate*, *Next offset candidate ▶*, *Go to source*, *Go to target*, *Show on video*, *Original positions*, *Max contrast*, *Residuals on video*, *Include ambiguous matches* and *Export overlap fade*.
+    - By default, the list holds only the candidates that pass the screening.
+    - *Show on video* draws the other frame's patch beside the match on the video, or at its own position with *Original positions*. It draws original pixels through Video Adjustments, or residuals with *Residuals on video*.
+    - Only one overlay can be on at a time: the column overlay or the offset overlay.
+    - The verdict also gives the offset summary. The window's CSV lists every candidate with its screening values.
+    - The folder scan reports the candidates that pass (*N offset texture candidates*, and the CSV columns `offsetStatus` to `offsetError`).
+  - **Export overlap fade.** `exportNoiseOffsetFade()` writes a 4-second H.264 MP4: 120 frames at 30 fps, 20 Mb/s, at the analyzed video size rounded up to even numbers.
+    - Each frame is the original frame, moved so that its patch is at the center, with black padding and no Video Adjustments.
+    - The sequence is 0.5 s of the source, a 1 s fade and 0.5 s of the target, then the same in reverse.
+    - The button changes to *Cancel export* while the export runs.
+    - The file name is `<video>_overlap_fade_<source>-<target>_<x>-<y>_to_<tx>-<ty>.mp4`.
+  - **Shared exporter change.** In `MediabunnyExporter`, two waits now await `yieldVideoExportTask()` (a `MessageChannel` message) instead of `setTimeout`, which a hidden tab can delay by up to a minute. They are the encoder backpressure wait (`encodeQueueSize > 5`) and the `finalize` status yields.
+    - The backpressure loop also rethrows a stored encoder error.
+    - Every exporter built on `MediabunnyExporter` gets this change. The overlap fade's frame loop yields only through `yieldVideoExportTask()`. The other export loops still pace their frames with timers and `requestAnimationFrame`, which a hidden tab throttles.
+
+### Improvements
+- **Forensics tools have folder checkboxes** (`60b81bac`; `src/nodes/CNodeVideoViewFilters.js` new `CNodeGUIFlag` nodes `videoELAEnabled` (*Show Error Level Analysis*) and `videoNoiseEnabled` (*Show Noise Analysis*), default false, promoted with `asFolderToggle()`; `src/nodes/CNodeVideoViewAnalysis.js` `getELAOverlayState`, `getNoiseOverlayState`; `src/VideoQPGraph.js` `addVideoQPGraphMenu`; `src/VideoTonalGraph.js` `addVideoTonalGraphMenu`; `docs/LoadingVideo.md`, `docs/VideoQPGraph.md`, `docs/VideoTonalRange.md`; `tests/VideoForensicsVisibility.test.js`).
+  - **Before.** Error Level Analysis and Noise Analysis drew their overlays only while both the Forensics folder and the tool's folder were open. The overlay-state functions tested `guiVideoForensicsFolder._closed` and `guiVideoELAFolder._closed` or `guiVideoNoiseFolder._closed`.
+  - **Now.** `getELAOverlayState()` and `getNoiseOverlayState()` read `this.in.elaEnabled.v0` and `this.in.noiseEnabled.v0`. Whether a folder is open or closed has no effect. Both checkboxes are off by default, so opening the folder alone no longer shows the overlay.
+  - **Graphs.** *QP Graph*: the `show` row moved from the Forensics folder into a new *QP Graph* folder, as that folder's title checkbox. *Tonal Range Graph*: the `show` row moved into the settings folder, which was titled *Tonal Range Settings* (`videoTonal.settings`) and is now *Tonal Range Graph* (`videoTonal.menu`). The settings in that folder do not change.
+  - *Noise Pattern Detection* uses the same kind of folder checkbox.
+
 ## Version 2.179.0 (2026-10-12)
 
 ### New Features
