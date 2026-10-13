@@ -55,7 +55,7 @@ jobs:
           # No job here pushes with the checkout token.
           persist-credentials: false
       - name: use node.js
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version-file: .nvmrc
       - name: config script setup
@@ -107,7 +107,7 @@ jobs:
           fi
       - name: focused security review
         if: steps.haskey.outputs.present == 'true'
-        uses: anthropics/claude-code-action@56cf60fde42f7b19c3abfd5c9c48b69a1288461f # v1
+        uses: anthropics/claude-code-action@1d6de8cb0c237e7c15e9e1bdf973826ebae490cc # v1
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           prompt: |
