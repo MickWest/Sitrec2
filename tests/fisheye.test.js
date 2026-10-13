@@ -14,6 +14,7 @@ import {
 import {
     fisheye,
     fisheyeProjectView,
+    fisheyeViewToNDC,
     fisheyeEquivalentFOVDegRaw,
     clampFisheyeFov,
     fisheyeStarLens,
@@ -147,6 +148,32 @@ describe("fisheyeProjectView", () => {
         // Rectilinear at circle=100%: same lens as a pinhole at the same FOV.
         resetState({lensType: "rectilinear", fov: 90, circlePct: 100});
         expect(fisheyeEquivalentFOVDegRaw()).toBeCloseTo(90, 10);
+    });
+});
+
+describe("fisheyeViewToNDC - projection through the caller's own pose", () => {
+    test("matches fisheyeProjectView, for a unit direction or a distant position", () => {
+        resetState({fov: 180, circlePct: 100});
+        for (const [theta, az] of [[0, 0], [30, 45], [80, 200]]) {
+            const expected = fisheyeProjectView(viewDir(theta, az), 16 / 9);
+            const dir = viewDir(theta, az, 1);
+            expect(fisheyeViewToNDC(dir, 16 / 9)).toBe(true);
+            expect(dir.x).toBeCloseTo(expected.x, 12);
+            expect(dir.y).toBeCloseTo(expected.y, 12);
+        }
+    });
+
+    test("false outside the masked image circle, true there when the mask is off", () => {
+        resetState({fov: 180, circlePct: 100, showCircle: true});
+        expect(fisheyeViewToNDC(viewDir(95, 30), 1)).toBe(false);
+        resetState({fov: 180, circlePct: 100, showCircle: false});
+        expect(fisheyeViewToNDC(viewDir(95, 30), 1)).toBe(true);
+    });
+
+    test("false past the cull angle, even with the mask off", () => {
+        resetState({fov: 180, showCircle: false});
+        expect(fisheyeViewToNDC(viewDir(150, 30), 1)).toBe(false);   // cull is fov/2 + 25° = 115°
+        expect(fisheyeViewToNDC(new Vector3(), 1)).toBe(false);
     });
 });
 

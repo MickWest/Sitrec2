@@ -54,6 +54,9 @@ import {Quaternion, Vector3} from "three";
 import {nudgeParams, defaultNudgeParams, nudgeQuaternion} from "./nodes/CNodeControllerCameraNudge";
 import {applyRefractionECI, refractionOptsFromUniforms, refractionUniforms} from "./atmosphere/refraction";
 import {installTerrestrialRefractionOnMaterial} from "./atmosphere/terrestrialRefraction";
+import {fisheyeUniforms, fisheyeViewToNDC, installFisheyeOnMaterial, isFisheyeCamera} from "./FisheyeProjection";
+import {isPanoramicCamera, panoramic} from "./PanoramicCamera";
+import {panoramaFaceCamera, panoramaFaces, panoramaProject} from "./rendering/PanoramaMath";
 import {applyAnnualAberration, raDec2Celestial} from "./CelestialMath";
 import {CNode3DLight} from "./nodes/CNode3DLight";
 import {CNodeViewUI} from "./nodes/CNodeViewUI";
@@ -541,6 +544,13 @@ async function renderLongExposure(mgr) {
     if (!lookView || !lookView.camera) { alert("Long Exposure: no look view in this sitch."); return; }
     const camera = lookView.camera;
     const P = mgr.params;
+    // The look view's projection. A fisheye or a panorama replaces the pinhole
+    // in the render itself (FisheyeProjection.js, PanoramicCamera.js), so every
+    // projection below follows the same mode. Otherwise the splats are laid out
+    // as a pinhole image on top of a scene drawn through the lens.
+    const lensMode = isPanoramicCamera(camera) ? "panorama" : isFisheyeCamera(camera) ? "fisheye" : "pinhole";
+    const panoHFOV = panoramic.hfov * Math.PI / 180;
+    const panoVFOV = panoramic.vfov * Math.PI / 180;
 
     const fps = Sit.fps || 30;
     // expose for Duration minutes from the FIRST frame of the sitch. If that
@@ -790,26 +800,76 @@ async function renderLongExposure(mgr) {
     let occProj = null;
     const _vm = new Vector3();
 
+    const _pMask = {x: 0, y: 0};
     function maskOccluded(src) {
         if (src.isDir) _vm.set(src.x, src.y, src.z);
         else _vm.copy(src.pos).sub(occPos);
         _vm.applyQuaternion(occQuatInv);
-        const e = occProj;
-        const w = src.isDir ? 0 : 1;
-        const cw = e[3] * _vm.x + e[7] * _vm.y + e[11] * _vm.z + e[15] * w;
-        if (cw <= 1e-9) return false;                  // behind the mask camera: assume visible
-        const cx = e[0] * _vm.x + e[4] * _vm.y + e[8] * _vm.z + e[12] * w;
-        const cy = e[1] * _vm.x + e[5] * _vm.y + e[9] * _vm.z + e[13] * w;
-        const mx = Math.floor((cx / cw + 1) * 0.5 * occW);
-        const my = Math.floor((1 - cy / cw) * 0.5 * occH);
+        if (lensMode === "panorama") return panoramaMaskOccluded(_vm);
+        let mx, my;
+        if (lensMode === "fisheye") {
+            if (!lensViewToPixel(_vm, occW, occH, _pMask)) return false;   // not imaged: assume visible
+            mx = Math.floor(_pMask.x);
+            my = Math.floor(_pMask.y);
+        } else {
+            const e = occProj;
+            const w = src.isDir ? 0 : 1;
+            const cw = e[3] * _vm.x + e[7] * _vm.y + e[11] * _vm.z + e[15] * w;
+            if (cw <= 1e-9) return false;                  // behind the mask camera: assume visible
+            const cx = e[0] * _vm.x + e[4] * _vm.y + e[8] * _vm.z + e[12] * w;
+            const cy = e[1] * _vm.x + e[5] * _vm.y + e[9] * _vm.z + e[13] * w;
+            mx = Math.floor((cx / cw + 1) * 0.5 * occW);
+            my = Math.floor((1 - cy / cw) * 0.5 * occH);
+        }
         if (mx < 0 || my < 0 || mx >= occW || my >= occH) return false;   // outside mask: assume visible
         return occMask[my * occW + mx] !== 0;
+    }
+
+    // A panorama mask is one render per capture face (see computeOcclusionMask).
+    // The face that owns a direction is chosen as the panorama shader in
+    // PanoramicCamera.js chooses it. `d` is in the base camera's frame.
+    function panoramaMaskOccluded(d) {
+        const len = d.length();
+        const largest = Math.max(Math.abs(d.x), Math.abs(d.y), Math.abs(d.z));
+        for (const {face, w, h, mask} of occMask) {
+            const z = d.dot(face.forward);
+            if (z <= 0 || z + 1e-6 * len < largest) continue;
+            const [left, right, bottom, top] = face.bounds;
+            const u = (d.dot(face.right) / z - left) / (right - left);
+            const v = (d.dot(face.up) / z - bottom) / (top - bottom);
+            if (u < 0 || u >= 1 || v < 0 || v >= 1) return false;   // outside the face's capture: assume visible
+            return mask[Math.floor((1 - v) * h) * w + Math.floor(u * w)] !== 0;
+        }
+        return false;
+    }
+
+    // Render GlobalScene with the override material through `cam` into a
+    // w x h mask: 1 where anything opaque is drawn.
+    function renderMask(renderer, cam, w, h) {
+        const rt = new WebGLRenderTarget(w, h);
+        try {
+            renderer.setRenderTarget(rt);
+            renderer.clear();
+            renderer.render(GlobalScene, cam);
+            const buf = new Uint8Array(w * h * 4);
+            renderer.readRenderTargetPixels(rt, 0, 0, w, h, buf);
+            const mask = new Uint8Array(w * h);
+            // GL readback is bottom-to-top: flip Y into canvas orientation
+            for (let y = 0; y < h; y++) {
+                const srcRow = (h - 1 - y) * w;
+                for (let x = 0; x < w; x++) {
+                    mask[y * w + x] = buf[(srcRow + x) * 4] > 16 ? 1 : 0;
+                }
+            }
+            return mask;
+        } finally {
+            rt.dispose();
+        }
     }
 
     function computeOcclusionMask(qBase) {
         const renderer = lookView.renderer;
         if (!renderer || !GlobalScene) return null;
-        const rt = new WebGLRenderTarget(W, H);
         const override = new MeshBasicMaterial({color: 0xffffff});
         // The mask decides which stars and satellites are hidden behind terrain,
         // so its silhouette has to sit where the visible render draws it. With
@@ -817,6 +877,9 @@ async function renderLongExposure(mgr) {
         // arcminutes; an unpatched override material would leave the mask edge
         // at the geometric position and let sources in that band leak through.
         installTerrestrialRefractionOnMaterial(override);
+        // The same holds for the fisheye: the look camera renders through it,
+        // so the override material must project through it too.
+        if (lensMode === "fisheye") installFisheyeOnMaterial(override);
         const savedQuat = camera.quaternion.clone();
         const savedClearColor = new Color();
         renderer.getClearColor(savedClearColor);
@@ -828,19 +891,21 @@ async function renderLongExposure(mgr) {
             camera.updateMatrix();
             camera.updateMatrixWorld(true);
             GlobalScene.overrideMaterial = override;
-            renderer.setRenderTarget(rt);
             renderer.setClearColor(0x000000, 1);
-            renderer.clear();
-            renderer.render(GlobalScene, camera);
-            const buf = new Uint8Array(W * H * 4);
-            renderer.readRenderTargetPixels(rt, 0, 0, W, H, buf);
-            mask = new Uint8Array(W * H);
-            // GL readback is bottom-to-top: flip Y into canvas orientation
-            for (let y = 0; y < H; y++) {
-                const srcRow = (H - 1 - y) * W;
-                for (let x = 0; x < W; x++) {
-                    mask[y * W + x] = buf[(srcRow + x) * 4] > 16 ? 1 : 0;
-                }
+            if (lensMode === "panorama") {
+                // The panorama is assembled from cropped perspective faces, so
+                // the mask is one render per face, at about the output's
+                // pixels per radian.
+                const density = Math.max(W / panoHFOV, H / panoVFOV);
+                const limit = Math.min(renderer.capabilities.maxTextureSize, Math.max(W, H) * 2);
+                mask = panoramaFaces(panoramic.hfov, panoramic.vfov).map(face => {
+                    const [left, right, bottom, top] = face.bounds;
+                    const w = Math.max(2, Math.min(limit, Math.ceil((right - left) * density)));
+                    const h = Math.max(2, Math.min(limit, Math.ceil((top - bottom) * density)));
+                    return {face, w, h, mask: renderMask(renderer, panoramaFaceCamera(face, camera), w, h)};
+                });
+            } else {
+                mask = renderMask(renderer, camera, W, H);
             }
         } catch (e) {
             console.warn("Long exposure: occlusion mask render failed", e);
@@ -852,10 +917,25 @@ async function renderLongExposure(mgr) {
             camera.quaternion.copy(savedQuat);
             camera.updateMatrix();
             camera.updateMatrixWorld(true);
-            rt.dispose();
             override.dispose();
         }
         return mask;
+    }
+
+    // View-space vector -> canvas pixel through the fisheye or the panorama,
+    // for a w x h image. Mutates v. False where the render shows nothing there.
+    // The fisheye shader squeezes x by camera.aspect, not by the pixel ratio,
+    // which can differ from it by a rounding error.
+    function lensViewToPixel(v, w, h, out) {
+        if (lensMode === "fisheye") {
+            if (!fisheyeViewToNDC(v, camera.aspect > 0 ? camera.aspect : w / h)) return false;
+        } else {
+            panoramaProject(v, panoramic.hfov, panoramic.vfov);
+            if (Math.abs(v.x) > 1 || Math.abs(v.y) > 1) return false;
+        }
+        out.x = (v.x + 1) * 0.5 * w;
+        out.y = (1 - v.y) * 0.5 * h;
+        return true;
     }
 
     // project a source through pose (q, camPos); src: {isDir, x,y,z | pos}
@@ -865,6 +945,7 @@ async function renderLongExposure(mgr) {
         if (src.isDir) _v.set(src.x, src.y, src.z);
         else _v.copy(src.pos).sub(camPos);
         _v.applyQuaternion(_qInv);
+        if (lensMode !== "pinhole") return lensViewToPixel(_v, W, H, out);
         const e = projElements;
         const w = src.isDir ? 0 : 1;
         const cw = e[3] * _v.x + e[7] * _v.y + e[11] * _v.z + e[15] * w;
@@ -874,6 +955,32 @@ async function renderLongExposure(mgr) {
         out.x = (cx / cw + 1) * 0.5 * W;
         out.y = (1 - cy / cw) * 0.5 * H;
         return true;
+    }
+
+    // Angular size of one pixel at the image centre, radians, per axis.
+    function radiansPerPixel() {
+        if (lensMode === "fisheye") {
+            // Every lens curve has rho ~ theta near the axis, so the centre
+            // scale is (circle radius in pixels) / rho(fov/2).
+            const r = fisheyeUniforms.uFishRhoEdge.value * 2 / (fisheyeUniforms.uFishScaleY.value * H);
+            return {x: r, y: r};
+        }
+        if (lensMode === "panorama") return {x: panoHFOV / W, y: panoVFOV / H};
+        const e = projElements;
+        return {x: 2 * Math.atan(1 / e[0]) / W, y: 2 * Math.atan(1 / e[5]) / H};
+    }
+
+    // Largest angle from the view axis that the image can show, radians.
+    function halfFieldAngle() {
+        if (lensMode === "fisheye") return fisheyeUniforms.uFishCullTheta.value;
+        if (lensMode === "panorama") {
+            // The farthest point is a corner, or the left/right edge centre
+            // when the panorama is wider than 180 degrees.
+            const hx = panoHFOV / 2, hy = panoVFOV / 2;
+            return Math.max(Math.acos(Math.cos(hx) * Math.cos(hy)), hx);
+        }
+        const e = projElements;
+        return Math.atan(Math.hypot(1 / e[0], 1 / e[5]));
     }
 
     // energy-conserving erf-integrated Gaussian deposit at sub-pixel (px, py)
@@ -1107,8 +1214,8 @@ async function renderLongExposure(mgr) {
                 }
                 // tie the point-source scale to the now-calibrated ground
                 if (P.moonlight && bgBoost > 1) {
-                    const e = projElements;
-                    const omegaPix = (2 * Math.atan(1 / e[0]) / W) * (2 * Math.atan(1 / e[5]) / H);
+                    const pixel = radiansPerPixel();
+                    const omegaPix = pixel.x * pixel.y;
                     const moonMag = nightSky?.planets?.planetSprites?.Moon?.mag ?? -12.7;
                     splatScale = Math.pow(10, 0.4 * (moonMag - P.satMag)) *
                         Math.PI * bgTargetLin / (GROUND_ALBEDO_REF * bgBoost * omegaPix);
@@ -1123,7 +1230,7 @@ async function renderLongExposure(mgr) {
 
             // ---- HDR moon disk: scale so the disk's total energy matches its magnitude ----
             if (P.hdrPoints && P.moonGain > 0 && planets?.planetSprites?.Moon && nightSky?.celestialSphere) {
-                boostMoonDisk(frameLin, W, H, planets, nightSky, camera, projElements, P, projectAt);
+                boostMoonDisk(frameLin, W, H, planets, nightSky, camera, projElements, P, projectAt, lensMode);
             }
 
             // ---- accumulate the frame ----
@@ -1155,12 +1262,11 @@ async function renderLongExposure(mgr) {
                     const fwd = new Vector3(0, 0, -1).applyQuaternion(pose.qBase);
                     const fwdPrev = new Vector3(0, 0, -1).applyQuaternion(pPose.qBase);
                     const fwdECI = fwd.clone().add(fwdPrev).normalize().applyQuaternion(celQInv);
-                    const e = projElements;
-                    const halfDiag = Math.atan(Math.hypot(1 / e[0], 1 / e[5]));
+                    const halfField = halfFieldAngle();
                     const interFrame = fwd.angleTo(fwdPrev);
                     const margin = radians(3) + interFrame +
                         (nudgeParams.enabled ? radians(nudgeParams.magnitude * 2.6) : 0);
-                    const cosLimit = Math.cos(Math.min(Math.PI, halfDiag + margin));
+                    const cosLimit = Math.cos(Math.min(Math.PI, halfField + margin));
 
                     const celSrc = {isDir: true, x: 0, y: 0, z: 0};
                     // chromatic extinction rides in the splat color channels:
@@ -1343,7 +1449,7 @@ async function renderLongExposure(mgr) {
 // energy equals its catalog-magnitude flux under the star calibration —
 // preserving the phase/limb texture while letting the disk burn out and trail
 // like a real exposure. Never dims below the LDR rendering.
-function boostMoonDisk(frameLin, W, H, planets, nightSky, camera, projElements, P, projectAt) {
+function boostMoonDisk(frameLin, W, H, planets, nightSky, camera, projElements, P, projectAt, lensMode) {
     const moon = planets.planetSprites.Moon;
     if (!moon || moon.mag === undefined || !moon.equatorial || !moon.sprite) return;
     const celQ = nightSky.celestialSphere.getWorldQuaternion(new Quaternion());
@@ -1357,7 +1463,24 @@ function boostMoonDisk(frameLin, W, H, planets, nightSky, camera, projElements, 
     // angular radius from the mesh scale (CPlanets: scale = tan(angDiam/2) * sphereRadius)
     const sphereR = planets.sphereRadius ?? nightSky.starField?.sphereRadius ?? 100;
     const halfAng = Math.atan2(moon.sprite.scale.x, sphereR);
-    const rPx = halfAng * (projElements[5] * H / 2);
+    let rPx = halfAng * (projElements[5] * H / 2);
+    if (lensMode !== "pinhole") {
+        // A fisheye or panorama image changes scale across the frame and
+        // between directions. Take the larger of two perpendicular radii,
+        // projected, so the circle holds the whole disk.
+        rPx = 0;
+        const a1 = new Vector3().crossVectors(dir, up);
+        if (a1.lengthSq() < 1e-12) a1.set(1, 0, 0).cross(dir);
+        a1.normalize();
+        const a2 = new Vector3().crossVectors(dir, a1);
+        const edge = {x: 0, y: 0};
+        for (const axis of [a1, a2]) {
+            const off = dir.clone().applyAxisAngle(axis, halfAng);
+            if (projectAt(qNow, camera.position, {isDir: true, x: off.x, y: off.y, z: off.z}, edge)) {
+                rPx = Math.max(rPx, Math.hypot(edge.x - ctr.x, edge.y - ctr.y));
+            }
+        }
+    }
     if (rPx < 0.5 || rPx > Math.max(W, H)) return;
     const x0 = Math.max(0, Math.floor(ctr.x - rPx - 1)), x1 = Math.min(W - 1, Math.ceil(ctr.x + rPx + 1));
     const y0 = Math.max(0, Math.floor(ctr.y - rPx - 1)), y1 = Math.min(H - 1, Math.ceil(ctr.y + rPx + 1));

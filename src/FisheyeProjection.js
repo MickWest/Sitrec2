@@ -589,6 +589,27 @@ export function fisheyeProjectView(v, aspect = 1, near = 1, far = 1e9) {
     );
 }
 
+// Outside the image circle the render is masked to black. `ndc` is a point
+// from fisheyeProjectView.
+function outsideFisheyeCircle(ndc, aspect) {
+    if (!fisheye.showCircle) return false;
+    const rx = (ndc.x - (fisheye.centerX / 100) * 2 / aspect) * aspect;
+    const ry = ndc.y - (fisheye.centerY / 100) * 2;
+    return Math.hypot(rx, ry) > fisheye.circlePct / 100;
+}
+
+// For CPU code that projects through a pose of its own instead of a camera
+// (the long exposure): mutates a VIEW-SPACE Vector3 into NDC like
+// fisheyeProjectView, and returns false where the render shows nothing there —
+// past the cull angle, or outside the masked image circle.
+export function fisheyeViewToNDC(v, aspect) {
+    refreshFisheyeParams();
+    const d = v.length();
+    if (!(d > 1e-9) || -v.z / d < Math.cos(fisheyeUniforms.uFishCullTheta.value)) return false;
+    fisheyeProjectView(v, aspect);
+    return !outsideFisheyeCircle(v, aspect);
+}
+
 // Mirror of fisheyeClip for CPU-side projections (night-sky label overlay).
 // Mutates `v` (a WORLD-space Vector3) into NDC exactly like Vector3.project
 // would, and returns true — or returns false untouched when the fisheye does
@@ -600,13 +621,9 @@ export function fisheyeProjectVector(v, camera) {
     _fpV.copy(v).applyMatrix4(camera.matrixWorldInverse);
     const aspect = camera.aspect > 0 ? camera.aspect : 1;
     fisheyeProjectView(_fpV, aspect, camera.near, camera.far);
-    // Outside the image circle the render is masked to black — park the
-    // point outside the -1..1 z window so labels don't draw over the mask.
-    if (fisheye.showCircle) {
-        const rx = (_fpV.x - (fisheye.centerX / 100) * 2 / aspect) * aspect;
-        const ry = _fpV.y - (fisheye.centerY / 100) * 2;
-        if (Math.hypot(rx, ry) > fisheye.circlePct / 100) _fpV.z = 2;
-    }
+    // Park a point outside the circle outside the -1..1 z window so labels
+    // don't draw over the mask.
+    if (outsideFisheyeCircle(_fpV, aspect)) _fpV.z = 2;
     v.copy(_fpV);
     return true;
 }

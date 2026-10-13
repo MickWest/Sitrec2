@@ -156,6 +156,10 @@ grid are automatically excluded from exposures — chart overlays aren't light.
   behind it. The mask is sampled once per camera position (recomputed if the camera
   moves), so objects that move *during* the exposure occlude at their sampled positions
   only, and an aircraft's body still doesn't hide its own far-side lights.
+- With the **Fisheye** lens (Camera → FOV (Zoom) → Fisheye) or the **Panoramic Camera**
+  on, the point sources and their trails are placed through that projection, the same
+  as the rendered scene, and sources outside the fisheye's masked image circle are left
+  out. With a panorama, the occlusion mask is rendered once for each panorama face.
 - Non-flaring satellites are omitted entirely. Only flaring satellites and the sunlit ISS
   are drawn.
 - Long Exposure and Camera Nudge settings are saved with custom sitches.
