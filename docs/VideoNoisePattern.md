@@ -5,7 +5,8 @@
 A camera sensor makes new noise in every frame. If the same noise appears again in a later
 frame, it was added to the video, for example as a noise layer that loops. NPD also finds the
 repeat when the layer is cut into vertical strips that change order between repeats, and when
-the layer moves sideways.
+the layer moves sideways. An optional, slower search also finds noise texture that appears again
+at a different place in the picture (see [Search offset patches](#search-offset-patches)).
 
 Use the checkbox on the **Video → Forensics → Noise Pattern Detection** folder to show or hide
 it. Open the folder to change its settings.
@@ -19,7 +20,9 @@ To scan many videos at once, use **NPD Folder Scan** in the same folder. See
 2. Set **Video → Forensics → Noise Pattern Detection** to on. The results window opens, and the
    analysis starts in background workers.
 3. The progress line shows each stage: decoding frames, finding held frames, preparing
-   features, the lag scan, testing every frame, testing long lags, and mapping strips.
+   features, the lag scan, testing every frame, testing long lags, and mapping strips. With
+   **Search offset patches** on, three more stages follow: reading offset-search pictures,
+   searching 2-D offsets, and checking native-resolution patches.
 4. Read the verdict at the top of the window.
 
 NPD keeps features of every analyzed frame in memory. If a video needs more than 384 MB for
@@ -61,6 +64,11 @@ For a repeat, the verdict also gives:
 
 If some frames could not be decoded, the verdict says **Incomplete** and gives how many frames
 were left out. The result then covers the other frames only.
+
+### Offset texture candidates
+
+This section is under the progress line. It shows the results of
+[Search offset patches](#search-offset-patches), or says that the search is off.
 
 ### Repeat score by lag
 
@@ -123,6 +131,65 @@ so they look like the video.
 
 The outlines are hidden while the video is stabilized or rotated.
 
+## Search offset patches
+
+The strip search finds noise that repeats in the same rows. **Search offset patches** looks
+for a patch of noise texture that appears again at a different place in the picture, moved in
+any direction. It is off by default, because on a long video it can take about twenty times as
+long as the strip search. Turn it on in the Noise Pattern Detection folder, then click **Run**.
+
+The search runs after the strip search, on the CPU workers only, also when the strip search
+finds no repeat. You can stop it. If it fails, the strip result stays, and the section gives
+the error.
+
+### How the search works
+
+1. **Sample pictures.** NPD takes up to 128 distinct pictures: a continuous run of up to 64
+   from the start, and the rest spread through the clip.
+2. **Make residuals.** From each sampled picture, NPD subtracts the distinct picture before it
+   and applies a band-pass filter, at reduced resolution. Pixels near large changes are masked.
+3. **Propose offsets.** For each pair of sampled pictures that are at least 2 pictures apart
+   and within **Longest lag**, NPD correlates the two residuals and proposes up to 4 offsets.
+   It keeps 48 proposals for each plane (Y, Cb and Cr), spread over the range of lags.
+4. **Check at full resolution.** NPD checks up to 24 candidates for each plane at the native
+   resolution of the plane. A candidate must have a normalized cross-correlation of 0.6 or more,
+   0.4 or more in each half of the patch, and enough texture in both patches.
+5. **Screen.** A candidate is **ambiguous** when the background around it also matches, or
+   when a temporal control test fails. These are screening rules, not a significance test.
+
+The search is limited: it does not look for rotated or scaled patches, and it can miss small,
+faint or unsampled patches. If it finds nothing, that does not show that there is no moved
+noise.
+
+### The candidates
+
+The **Offset texture candidates** section gives a summary: how many candidates pass the
+screening, how many were left out as ambiguous, and how many pictures and pairs were tested.
+For the selected candidate it gives the two frames, the lag, the plane, the position of each
+patch, the offset, the correlation, the screening values, and the two residual patches.
+
+| Button | What it does |
+|---|---|
+| **◀ Previous offset candidate**, **Next offset candidate ▶** | Show the previous or next candidate |
+| **Go to source**, **Go to target** | Move the playhead to that frame |
+| **Show on video** | Draw the patch of the other frame next to the match on the video. The source is cyan and the target is yellow |
+| **Original positions** | Draw each patch at its own position in the picture |
+| **Max contrast** | As in the frame pair |
+| **Residuals on video** | Draw the residuals on the video, not the original pixels |
+| **Include ambiguous matches** | Also list the candidates that the screening marked as ambiguous |
+| **Export overlap fade** | Save an MP4 video in which the two frames fade into each other (see below) |
+
+The video shows one comparison at a time: the strip outlines or the offset patches. Original
+pixels are drawn through the Video Adjustments.
+
+**Export overlap fade** saves a 4-second MP4 (30 fps) of the two original frames. Each frame is
+moved so that its patch is at the center, with black padding and no Video Adjustments. The
+video shows the source for 0.5 s, fades to the target in 1 s, shows the target for 0.5 s, and
+then does the same in reverse. While it runs, the button changes to **Cancel export**.
+
+A candidate is a local similarity of two image patches. It does not prove that the noise was
+added: scene motion and compression can also make such similarities. Examine each candidate.
+
 ## Settings
 
 | Setting | Default | What it does |
@@ -130,6 +197,7 @@ The outlines are hidden while the video is stabilized or rotated.
 | **Longest lag (frames)** | 256 | The longest time between two compared frames (32 to 2000). It is also limited to a quarter of the analyzed frames |
 | **Strip detail** | 8 px (fast) | The width of the columns of the strip profiles. **4 px** finds narrower strips, uses twice the memory and takes about four times as long to search |
 | **Vertical search** | Off | Also compare the frames moved up and down by **±1** or **±3** bands (a band is 1/45 of the picture height), for a noise layer that moves vertically. Runs on the CPU workers |
+| **Search offset patches** | Off | After the strip search, also search for noise texture that appears again at a different place in the picture. Slow on a long video. See [Search offset patches](#search-offset-patches) |
 | **Held frames** | Leave out | **Leave out**: held frames are not analyzed, and lags are in frames. **Count as one picture**: each run of identical frames is one picture, and lags are in pictures |
 | **Frames** | Whole video | Analyze the whole video, or only the frames between the A and B markers |
 | **Search on** | Fastest (measured) | Where the strip search runs: the **GPU**, the **CPU workers**, or **Fastest (measured)**, which runs the first 512 pairs on both and uses the faster one |
@@ -138,7 +206,7 @@ The outlines are hidden while the video is stabilized or rotated.
 |---|---|
 | **Run** | Run the analysis again with the current settings. The frame features are kept, so a change of Longest lag, Vertical search or Search on does not decode the video again |
 | **Stop** | Stop the analysis |
-| **Export CSV** | Save the lag curves, the result of every frame and the refined pairs as a CSV file |
+| **Export CSV** | Save the lag curves, the result of every frame, the refined pairs and any offset candidates as a CSV file |
 | **Benchmark CPU and GPU** | Decode the video again on the CPU workers, and run the lag scan and the frame tests on both the CPU workers and the GPU. The times are in Details. Run the analysis to completion first |
 
 The window, its settings and the selected pair are saved with the sitch while the window is

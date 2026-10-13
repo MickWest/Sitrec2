@@ -432,7 +432,9 @@ Choose a folder to examine its videos and every subfolder. The folder picker nee
 or Edge, or the Sitrec desktop app. The scan reads local files without uploading them.
 
 Results arrive one video at a time. Repeats appear first: green rows identify repeating
-noise and amber rows identify repeating pictures. The table shows the period, strength,
+noise and amber rows identify repeating pictures. With **Search offset patches** on, a video
+with offset texture candidates that pass the screening is also an amber row, and the CSV
+includes the offset results. The table shows the period, strength,
 reference coverage, matched frames and decoded frame count. **Details** includes matched
 frame ranges, the longest confirmed repeat and isolated peaks. **Folders** lists counts
 for every folder, including folders with no videos. Filter paths or select **Repeats only**

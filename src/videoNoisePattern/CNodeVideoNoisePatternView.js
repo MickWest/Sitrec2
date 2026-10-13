@@ -317,7 +317,10 @@ export class CNodeVideoNoisePatternView extends CNodeViewText {
         else this.release();
     }
 
+    // Closing the window (✕, the folder checkbox, hide()) comes here through show(false), and
+    // so does dispose(); both put back the contrast that "Max contrast" changed.
     release() {
+        this.restoreContrast();
         if (this.offsetExport) this.offsetExport.cancelled = true;
         clearTimeout(this.waitTimer);
         this.waitTimer = null;
@@ -331,7 +334,6 @@ export class CNodeVideoNoisePatternView extends CNodeViewText {
 
     dispose() {
         this.layoutObserver?.disconnect();
-        this.restoreContrast();
         this.release();
         this.overlay?.remove();
         this.overlay = null;
