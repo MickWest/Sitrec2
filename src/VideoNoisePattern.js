@@ -9,7 +9,7 @@ import {ViewMan} from "./CViewManager";
 import {t} from "./i18n";
 
 const VIEW_ID = "videoNoisePattern";
-export const NOISE_PATTERN_DEFAULTS = {longestLag: 256, detail: 8, vertical: 0, held: "leave", frames: "all", searchOn: "fastest", offsetSearch: true};
+export const NOISE_PATTERN_DEFAULTS = {longestLag: 256, detail: 8, vertical: 0, held: "leave", frames: "all", searchOn: "fastest", offsetSearch: false};
 let settings = {...NOISE_PATTERN_DEFAULTS};
 
 // true from the moment the user asks for the window, so the checkbox does not flip back
@@ -33,7 +33,7 @@ export function clampNoisePatternOptions(saved) {
         held: o.held === "picture" ? "picture" : "leave",
         frames: o.frames === "ab" ? "ab" : "all",
         searchOn: ["fastest", "gpu", "cpu"].includes(o.searchOn) ? o.searchOn : "fastest",
-        offsetSearch: o.offsetSearch !== false,
+        offsetSearch: o.offsetSearch === true,
     };
 }
 

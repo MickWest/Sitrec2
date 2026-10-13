@@ -50,7 +50,7 @@ export function normalizeNoisePatternOptions(options = {}) {
         held: options.held === "picture" ? "picture" : "leave",
         frames: options.frames === "ab" ? "ab" : "all",
         searchOn: ["fastest", "gpu", "cpu"].includes(options.searchOn) ? options.searchOn : "fastest",
-        offsetSearch: options.offsetSearch !== false,
+        offsetSearch: options.offsetSearch === true,
         range: options.range ?? null,
         references: Math.max(4, Math.min(64, Math.round(options.references ?? 24))),
     };
