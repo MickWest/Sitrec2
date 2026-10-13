@@ -9,6 +9,21 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.180.1 (2026-10-13)
+
+### Improvements
+- **Track output** (File → File Analysis → **BOTBench...**): the *Create Output Files* checkbox is now a *Track output* list with four choices:
+  - *None* (the default) writes no files.
+  - *Best Track* writes the top candidate, as before.
+  - *All Tracks Combined* writes every candidate that has a complete position track into one file for each source file, best first.
+  - *All Tracks Separate CSVs* writes one file for each candidate into a folder for each source file, with the method name in the file name.
+
+  The *AlgorithmID* column now also gives the wind mode and the sweep order, so the wind variants of one model have different IDs. For those models this also changes the ID in the *Best Track* file. A run can write no file for a source file, or stop writing a method's separate file. In that situation it removes the file that an earlier run wrote there, so an old track is not read as a current one.
+
+### Bug Fixes
+- Fixed the stars, planets, satellites and lights in a long exposure (Video → Long Exposure) not lining up with the scene when the *Fisheye* lens or the *Panoramic Camera* (Camera → FOV (Zoom)) is on. They and their trails now follow the lens, and the ground hides them at the correct horizon. With *Show Image Circle* on, sources outside the image circle are left out.
+- Fixed *Max contrast* (Video → Forensics → Noise Pattern Detection) staying on the video after the Noise Pattern Detection window closes. Closing the window now puts back the contrast and video adjustments that *Max contrast* changed.
+
 ## Version 2.180.0 (2026-10-12)
 
 ### New Features

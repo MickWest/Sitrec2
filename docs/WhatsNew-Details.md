@@ -9,6 +9,46 @@ lockstep with docs/WhatsNew.md.
 
 ---
 
+## Version 2.180.1 (2026-10-13)
+
+### Improvements
+- **BOTBench Track output: Best Track, All Tracks Combined, All Tracks Separate CSVs** (File → File Analysis → **BOTBench...** → **Track output**; `3fbcefe6`; `src/analysis/BotBenchTrackOutput.js` `writeTrackOutput(entry, {mode})`, `trackOutputLocation(entry, mode)`, new `trackAlgorithmID`, `buildAllTracksOutputCSV`, `buildSeparateTrackOutputCSVs`, `trackOutputBase`, `separateTrackFileName`, `ALL_TRACKS_OUTPUT_DIR`, `SEPARATE_TRACKS_OUTPUT_DIR`; `src/analysis/BotBenchUI.js` `createDialog`, `TRACK_OUTPUT_CHOICES`, `analyzeEntries`; `docs/BOTBench.md`; `tests/botbench/trackOutput.test.js`).
+  - **Control.** A *Track output* `<select>` (`TRACK_OUTPUT_CHOICES`) replaces the *Create Output Files* checkbox. It has *None*, *Best Track* (`best`), *All Tracks Combined* (`allCombined`) and *All Tracks Separate CSVs* (`allSeparate`). *None* is the first option, so it is the default, the same as the old box off. `analyzeEntries` gives the value to `writeTrackOutput` as `mode`. Any choice other than *None* sets `wantTrackOutput`, so a cached row is still rebuilt from its stored fits (`needResults`). The control still needs **Folder (Caching)** write access.
+  - **Best Track.** The choice of candidate does not change. It is the first candidate from `rankAllHypotheses(…, {useTruth: false})`, written to `output/<source>.csv`. No file is written for a direction-only (`atInfinity`) or incomplete top candidate.
+  - **All Tracks Combined.** `buildAllTracksOutputCSV()` writes every ranked candidate that has a complete finite track (`hasFinitePositions`: not `atInfinity`, `track.length === n × 3`, all values finite). It writes one block of rows for each candidate, in the order of the ranking without truth (best first), to `output/AllTracks/<source>.csv`. No file is written when no candidate is left.
+  - **All Tracks Separate CSVs.** `buildSeparateTrackOutputCSVs()` writes the same candidates, one file each, to `output/AllTracksSeparate/<base>/<base>_<method>.csv`. `<base>` is the output name without its final `.csv` (`trackOutputBase`). `<method>` is the AlgorithmID without `sitrec_`. The status line adds the file count: *Track output: N written, N skipped, N failed (N files).*
+  - **One candidate list.** Both all-tracks modes take their candidates from `exportableCandidates()`, so the two modes hold the same candidates with the same IDs. An ID that still repeats gets `_2`, `_3`, so rows are not merged and files are not overwritten.
+  - **AlgorithmID.** The new `trackAlgorithmID(h)` gives `sitrec_<key>`, then `_<windMode>Wind` (`suppliedWind`, `fittedWind` or `correctedWind`) when the candidate has a wind mode, then `_order<mcOrder>` for a Monte Carlo polynomial sweep candidate. An example is `sitrec_lantern_fittedWind`. Before, the wind variants and sweep orders of one model all had the bare `sitrec_<key>`, so a reader could not tell their tracks apart. The Best Track file uses the same function, so its AlgorithmID changes for those models.
+  - **Files from an earlier run.** For *Best Track* and *All Tracks Combined*, a source that gives no file in this run gets `removeEarlierOutput()`. It removes the earlier file at that mode's path, and the row reason adds *The output file from an earlier run was removed.* For *All Tracks Separate CSVs*, `removeEarlierSeparateFiles()` removes the source's `<base>_*.csv` files in its folder that this run did not write, for example a method that is no longer fitted. Other files in the folder stay. A run does not touch the files of a different *Track output* choice. Both all-tracks folders are inside `output/`, which the folder scan does not enter.
+
+### Bug Fixes
+- **Fixed Long Exposure point sources with the Fisheye lens or the Panoramic Camera** (Video → Long Exposure; Camera → FOV (Zoom) → Fisheye / Panoramic Camera; `b22affb1`; `src/LongExposure.js` `renderLongExposure` (`lensMode`, `projectAt`, `maskOccluded`, `computeOcclusionMask`, new `panoramaMaskOccluded`, `renderMask`, `lensViewToPixel`, `radiansPerPixel`, `halfFieldAngle`), `boostMoonDisk(…, lensMode)`; `src/FisheyeProjection.js` new `fisheyeViewToNDC`, `outsideFisheyeCircle`; `docs/LongExposure.md`; `tests/fisheye.test.js`).
+  - **Before.** The look camera renders each exposure frame, so the scene went through the fisheye or the panorama. But the splats were placed on the CPU by `projectAt`, which used the camera's pinhole projection matrix (`projElements`). `projectAt` places every star, planet, satellite and light, and every trail sub-step. With a 180° fisheye, the stars filled the whole frame and did not line up with the sky.
+  - **Now.** `lensMode` is `panorama` (`isPanoramicCamera`), `fisheye` (`isFisheyeCamera`) or `pinhole`. In the two lens modes, `projectAt` goes through `lensViewToPixel()`. That calls `fisheyeViewToNDC()` (with `camera.aspect`) for the fisheye, or `panoramaProject()` for the panorama. The function returns false, and the source is not drawn, in these places:
+    - past the fisheye cull angle (`uFishCullTheta`, fov/2 + 25°)
+    - outside the image circle, when *Show Image Circle* is on
+    - outside the panorama's ±1 NDC extent
+  - **Occlusion mask.**
+    - Fisheye: the override material now also gets `installFisheyeOnMaterial()` (it already had terrestrial refraction), and the mask lookup goes through `lensViewToPixel()`.
+    - Panorama: the mask is one render for each `panoramaFaces()` face, through `panoramaFaceCamera()`. Each face render uses about the output's pixels per radian, capped at `maxTextureSize` and at 2 × max(W, H). `panoramaMaskOccluded()` picks the face the same way the panorama shader does.
+    - `renderMask()` now holds the render and the readback.
+  - **Pre-cull, Moonlight and the Moon disk.**
+    - The star pre-cull cone uses `halfFieldAngle()` instead of the pinhole half-diagonal. For the fisheye that is the cull angle. For a panorama it is the corner angle, or half the HFOV when the panorama is wider than 180°.
+    - The *Moonlight* pixel solid angle uses `radiansPerPixel()` at the image center. For the fisheye it comes from the fisheye uniforms. For a panorama it is HFOV/W × VFOV/H.
+    - The HDR Moon disk boost (*HDR Point Sources*, *Moon Gain*) projects two perpendicular disk-edge points through `projectAt` and uses the larger radius.
+  - `fisheyeProjectVector` (night-sky labels) now uses the shared `outsideFisheyeCircle()`. Its behavior does not change.
+- **Fixed *Max contrast* staying on after the Noise Pattern Detection window closes** (Video → Forensics → Noise Pattern Detection; `a55e79b3`; `src/videoNoisePattern/CNodeVideoNoisePatternView.js` `release`, `dispose`; new `tests/VideoNoisePatternMaxContrast.test.js`).
+  - **What it does.** *Max contrast* is on both the frame-pair bar and the offset-candidate bar, and both call `toggleMaxContrast()`. It sets `videoContrast` to 5 and turns on `videoEnableEffects`.
+  - **Cause.** Every close path (the ✕ button, the folder title checkbox, `hide()`) goes through `show(false)` and then `release()`. Only `dispose()` called `restoreContrast()`, so a closed window left the boost on the video. The 2.180.0 entry says this: "`release()` … does not restore them".
+  - **Fix.** The call is now the first line of `release()`, which `dispose()` also calls. `restoreContrast()` returns at once when *Max contrast* is off, so closing the window without it does not change the user's adjustments. The new test closes the window with *Max contrast* on and off.
+
+### Documentation
+- **Search offset patches documented** (`a55e79b3`; `docs/VideoNoisePattern.md`, `docs/LoadingVideo.md`, `src/docsRegistry.js` `chatDesc`).
+  - The Help → Documentation → *Video Noise Pattern Detection* page gets a *Search offset patches* section. It covers when the search runs, its five steps, its limits, the *Offset texture candidates* section and its buttons, and *Export overlap fade*.
+  - The same page gets a settings-table row, the three extra progress stages, and offset candidates in the *Export CSV* row.
+  - The *NPD Folder Scan* text in *Loading and Adjusting Video* now says two things. A video with offset candidates that pass the screening is an amber row, and the CSV includes the offset results.
+  - The chatbot description of the page in the help-doc registry now mentions the offset search.
+
 ## Version 2.180.0 (2026-10-12)
 
 ### New Features
