@@ -4,7 +4,7 @@ The **QP Graph** shows how hard each frame of an H.264 video was compressed. It 
 **maximum**, **mean** and **minimum** quantization parameter (QP) of every frame, against the
 frame number.
 
-You'll find it under **Video → Forensics → QP Graph**.
+Use the checkbox on the **Video → Forensics → QP Graph** folder to show or hide it.
 
 ## What QP is
 

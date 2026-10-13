@@ -172,6 +172,7 @@ import {MeasurementManager} from "./CMeasurementManager";
 import {resetVideoQPGraph} from "./VideoQPGraph";
 import {resetVideoTonalGraph} from "./VideoTonalGraph";
 import {resetPointTrackFrequencyGraph} from "./PointTrackFrequencyGraph";
+import {resetVideoNoisePattern} from "./VideoNoisePattern";
 import {setGlobalTheme} from "./Theme";
 import {GraphDataManager} from "./CGraphDataManager";
 import {classifyProvenance, setSitchProvenance} from "./SitchProvenance";
@@ -3253,7 +3254,9 @@ function loadStartupHandoffAfterSitchSetup() {
     startupHandoffLoaded = true;
     setTimeout(async () => {
         try {
-            const handoff = await takeFileHandoff(key);
+            const handoff = urlParams.get("npd") === "1"
+                ? await (await import("./videoNoisePattern/NoisePatternHandoff")).takeNoisePatternHandoff(key)
+                : await takeFileHandoff(key);
             if (!handoff || !handoff.files.length) {
                 // The usual cause is a link opened again hours later, or a
                 // reload after the store swept. Say so plainly rather than
@@ -3293,6 +3296,10 @@ function loadStartupHandoffAfterSitchSetup() {
                     ? {relativePath: handoff.meta.relativePath, pathBasis: "Folder selected in " + (handoff.meta.source || "source browser")}
                     : {};
                 await DragDropHandler.uploadDroppedFile(file, sourceDetails);
+            }
+            if (handoff.meta?.noisePattern) {
+                const {runNoisePatternHandoff} = await import("./videoNoisePattern/NoisePatternHandoff");
+                await runNoisePatternHandoff(handoff.meta);
             }
             // The notes describe the files, so they go in after them. The
             // panel is independent of the tracks, so it does not matter that
@@ -3452,6 +3459,7 @@ function disposeEverything() {
     resetVideoQPGraph();
     resetVideoTonalGraph();
     resetPointTrackFrequencyGraph();
+    resetVideoNoisePattern();
 
     // reset motion analysis state (must be after NodeMan.disposeAll since it references the video node)
     resetMotionAnalysis();

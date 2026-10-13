@@ -26,9 +26,6 @@ import {
     applyELAOutputExpansion,
     canvasToBlobAsync,
     clampByte,
-    guiVideoELAFolder,
-    guiVideoForensicsFolder,
-    guiVideoNoiseFolder,
     noiseRatioToColor,
 } from "./CNodeVideoViewFilters";
 
@@ -44,14 +41,7 @@ export const analysisMethods = {
     },
 
     getELAOverlayState(frame, image) {
-        const foldersExpanded = Boolean(
-            guiVideoForensicsFolder &&
-            guiVideoELAFolder &&
-            !guiVideoForensicsFolder._closed &&
-            !guiVideoELAFolder._closed
-        );
-
-        if (!foldersExpanded || !image || !image.width || !image.height) {
+        if (!this.in.elaEnabled?.v0 || !image || !image.width || !image.height) {
             return { enabled: false, key: null, opacity: 0 };
         }
 
@@ -351,14 +341,7 @@ export const analysisMethods = {
     },
 
     getNoiseOverlayState(frame, image) {
-        const foldersExpanded = Boolean(
-            guiVideoForensicsFolder &&
-            guiVideoNoiseFolder &&
-            !guiVideoForensicsFolder._closed &&
-            !guiVideoNoiseFolder._closed
-        );
-
-        if (!foldersExpanded || !image || !image.width || !image.height) {
+        if (!this.in.noiseEnabled?.v0 || !image || !image.width || !image.height) {
             return { enabled: false, key: null, opacity: 0 };
         }
 

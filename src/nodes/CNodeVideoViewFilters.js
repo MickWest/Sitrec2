@@ -21,12 +21,11 @@ import {addStarOptimizeControls} from "../starTrack/StarAdjustOptimize";
 import {viewMenuKey} from "../ViewUIBarMenus";
 import {addVideoQPGraphMenu} from "../VideoQPGraph";
 import {addVideoTonalGraphMenu} from "../VideoTonalGraph";
+import {addVideoNoisePatternMenu} from "../VideoNoisePattern";
 
 // Top-level GUI folders are shared across CNodeVideoView instances — the first
-// node through addFiltersToVideoNode creates them; the class methods in
-// CNodeVideoView.js read them to gate ELA / noise overlay computation on their
-// open/closed state. Exported as live bindings so importers see updates when
-// addFiltersToVideoNode runs for the first node.
+// node through addFiltersToVideoNode creates them. Each Forensics tool has a
+// title-bar checkbox that controls its display independently of folder expansion.
 export let guiVideoEffectsFolder = null;
 export let guiVideoProcessingFolder = null;
 export let guiVideoForensicsFolder = null;
@@ -65,13 +64,14 @@ export function addFiltersToVideoNode(videoNode) {
         guiVideoNoiseFolder.onOpenClose(() => setRenderOne(true));
         addVideoQPGraphMenu(guiVideoForensicsFolder);
         addVideoTonalGraphMenu(guiVideoForensicsFolder);
+        addVideoNoisePatternMenu(guiVideoForensicsFolder);
     }
 
     let brightness, contrast, levels, levelsInputBlack, levelsMidpoint, levelsInputWhite, levelsOutputBlack, levelsOutputWhite, showHistogram, histogramOnScreen, curves, showCurves, shadows, highlights, dehaze, blur, hue, invert, saturate, enableVideoEffects, convolutionFilter;
     let sharpenAmount, edgeDetectThreshold, embossDepth;
     let echoMin, echoMax, echoFrames, fullABEcho, fullABEchoOpacity, fullABBlend, fullABExposure;
-    let showCache, elaJpegQuality, elaErrorScale, elaOpacity, elaExpandMethod, elaContrastClipPercent;
-    let noiseBlockSize, noiseScale, noiseOpacity, noiseDisplayMode;
+    let showCache, elaEnabled, elaJpegQuality, elaErrorScale, elaOpacity, elaExpandMethod, elaContrastClipPercent;
+    let noiseEnabled, noiseBlockSize, noiseScale, noiseOpacity, noiseDisplayMode;
     let convolutionFilterDropdown, sharpenAmountControl, edgeDetectThresholdControl, embossDepthControl, elaExpandMethodDropdown, noiseDisplayModeDropdown;
 
     const filterOptions = {
@@ -257,6 +257,7 @@ export function addFiltersToVideoNode(videoNode) {
             }}, guiVideoProcessingFolder),
             fullABEchoOpacity = new CNodeGUIValue({ id: "videoFullABEchoOpacity", value: 100, start: 0, end: 100, step: 1, desc: "A-B Echo Opacity %", tip: "Opacity of the A-B echo/blend/exposure overlay" }, guiVideoProcessingFolder),
             showCache = new CNodeGUIFlag({ id: "videoShowCache", value: false, desc: "Show Cache", tip: "Show the current state of the video frame cache" }, guiVideoProcessingFolder),
+            elaEnabled = new CNodeGUIFlag({ id: "videoELAEnabled", value: false, desc: "Show Error Level Analysis", tip: "Show the error level analysis overlay on the video" }, guiVideoELAFolder),
             elaJpegQuality = new CNodeGUIValue({ id: "videoELAJpegQuality", value: 90, start: 1, end: 100, step: 1, desc: "JPEG Quality", tip: "JPEG compression quality used for error level re-encoding", onChange: () => {
                 videoNode.invalidateELAResult();
             }}, guiVideoELAFolder),
@@ -288,6 +289,7 @@ export function addFiltersToVideoNode(videoNode) {
                 videoNode.invalidateELAResult();
                 setRenderOne(true);
             }),
+            noiseEnabled = new CNodeGUIFlag({ id: "videoNoiseEnabled", value: false, desc: "Show Noise Analysis", tip: "Show the noise analysis overlay on the video" }, guiVideoNoiseFolder),
             noiseBlockSize = new CNodeGUIValue({ id: "videoNoiseBlockSize", value: 16, start: 4, end: 128, step: 1, desc: "Block Size", tip: "Size of blocks used for noise variance estimation", onChange: () => {
                 videoNode.invalidateNoiseResult();
             }}, guiVideoNoiseFolder),
@@ -381,11 +383,13 @@ export function addFiltersToVideoNode(videoNode) {
         fullABExposure = NodeMan.get("videoFullABExposure");
         fullABEchoOpacity = NodeMan.get("videoFullABEchoOpacity");
         showCache = NodeMan.get("videoShowCache");
+        elaEnabled = NodeMan.get("videoELAEnabled");
         elaJpegQuality = NodeMan.get("videoELAJpegQuality");
         elaErrorScale = NodeMan.get("videoELAErrorScale");
         elaOpacity = NodeMan.get("videoELAOpacity");
         elaExpandMethod = NodeMan.get("videoELAExpandMethod");
         elaContrastClipPercent = NodeMan.get("videoELAContrastClipPercent");
+        noiseEnabled = NodeMan.get("videoNoiseEnabled");
         noiseBlockSize = NodeMan.get("videoNoiseBlockSize");
         noiseScale = NodeMan.get("videoNoiseScale");
         noiseOpacity = NodeMan.get("videoNoiseOpacity");
@@ -409,6 +413,8 @@ export function addFiltersToVideoNode(videoNode) {
     updateLevelsControlVisibility();
     updateCurvesControlVisibility();
     updateELAExpandControlVisibility();
+    elaEnabled?.guiEntry.asFolderToggle();
+    noiseEnabled?.guiEntry.asFolderToggle();
 
     // The three adjustments worth reaching without opening the (very deep) Video menu. Done
     // here rather than at each `new CNodeGUIValue` because the nodes are shared singletons:
@@ -465,11 +471,13 @@ export function addFiltersToVideoNode(videoNode) {
         fullABExposure: fullABExposure,
         fullABEchoOpacity: fullABEchoOpacity,
         showCache: showCache,
+        elaEnabled: elaEnabled,
         elaJpegQuality: elaJpegQuality,
         elaErrorScale: elaErrorScale,
         elaOpacity: elaOpacity,
         elaExpandMethod: elaExpandMethod,
         elaContrastClipPercent: elaContrastClipPercent,
+        noiseEnabled: noiseEnabled,
         noiseBlockSize: noiseBlockSize,
         noiseScale: noiseScale,
         noiseOpacity: noiseOpacity,

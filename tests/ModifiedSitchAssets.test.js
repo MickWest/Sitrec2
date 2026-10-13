@@ -34,6 +34,7 @@ function save({local = false, custom = false} = {}) {
         serializeMotionAnalysis: empty, serializeAutoTracking: empty, serializeHorizonExtractor: empty,
         serializeScriptedVideo: empty, serializeLongExposure: empty, serializeVideoFormatEffects: empty,
         serializeVideoQPGraph: empty, serializeVideoTonalGraph: empty, serializePointTrackFrequencyGraph: empty,
+        serializeVideoNoisePattern: empty,
         process: {env: {BUILD_VERSION_NUMBER: '2.156.2', BUILD_VERSION_STRING: 'test', VERSION: 'test'}},
         currentBuild: null, collectActiveTrackSourceFileIDs, shouldSerializeLoadedFileEntry,
         assert: (condition, message) => { if (!condition) throw new Error(message); },
