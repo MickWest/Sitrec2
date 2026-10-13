@@ -2,5 +2,14 @@
     "require": {
         "aws/aws-sdk-php": "^3.301",
         "guzzlehttp/guzzle": "^8.1"
+    },
+    "scripts": {
+        "pre-autoload-dump": "Aws\\Script\\Composer\\Composer::removeUnusedServices"
+    },
+    "extra": {
+        "aws/aws-sdk-php": [
+            "S3",
+            "Sts"
+        ]
     }
 }

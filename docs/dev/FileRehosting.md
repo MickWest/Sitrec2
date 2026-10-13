@@ -180,6 +180,14 @@ composer install --no-dev --optimize-autoloader
 The released container builds `vendor/` from the same lock file, so no runtime Composer
 step is needed there.
 
+Sitrec uses only the S3 client from the SDK. During `composer install`, the SDK's
+`removeUnusedServices` script deletes every other service and keeps the services listed
+under `extra` in `sitrecServer/composer.json`: `S3`, and `Sts` for role credentials that
+assume a role. This reduces the SDK from about 56 MB to about 4.5 MB. If server code starts
+to use another AWS service, add its namespace (for example `SecretsManager`) to that list.
+Then delete `sitrecServer/vendor` and run `composer install` again, because the script
+only removes services and cannot restore one.
+
 All endpoints create their client through `getS3Client()` in
 `sitrecServer/s3_client.php`. Setting `SAVE_TO_S3=true` selects object storage; it does
 **not** fall back to the filesystem when credentials or bucket settings are missing.
