@@ -9,6 +9,18 @@ lockstep with docs/WhatsNew.md.
 
 ---
 
+## Version 2.180.2 (2026-10-14)
+
+A deployment-tooling maintenance release. Only `scripts/quickship.mjs`, `tests/quickship.test.js` and `docs/dev/ReleaseChannels.md` change. There are no application code changes, so the app is the same as in 2.180.1.
+
+### Improvements
+- **The frontend pool image keeps only the builds that the live channel manifest names** (`scripts/quickship.mjs` `package` command, new `retainedBuilds(state, newId, limit)` and `POOL_BUILD_LIMIT = 3`, new `retainedBuilds` field in `quickship.json`; `tests/quickship.test.js`; `docs/dev/ReleaseChannels.md`).
+  - **Before.** With `--previous`, if the previous pool had the same `org.sitrec.reviewed-runtime` label, it became the base image of the new pool. A Shipped build on a different runtime copied all of `/srv/frontend/builds/` from it. Either way, every earlier build stayed in the pool. At this release the pool held 45 builds (every build since 2.156.0, about 9.6 GB), and each deploy upload was about 9.7 GB.
+  - **Now.** The base is always the reviewed runtime (`--runtime`). With `--previous`, `package` also needs `--manifest <file>`, which holds the live channel state (`{manifest: {...}}` or a bare manifest). `retainedBuilds()` returns the current Shipped ID and the current Beta ID. It removes duplicates and the new build's ID. The function copies each of these builds from the previous pool in its own `COPY --from=retained` layer. A pool holds at most three builds: the new build, the current Shipped and the current Beta. The deploy upload is now about 1.4 GB.
+  - **Why these builds.** A rollback keeps the newest pool and selects the previous manifest. So the new pool must hold every build that the live manifest names.
+  - **Guards.** `retainedBuilds()` gives an error when the manifest names no Shipped build, or when an ID does not match `^(?:shipped|beta)-\d{17}-[a-f0-9]{12}$`. This match stops a path-traversal ID from getting into the Dockerfile `COPY` paths. It also gives an error when the count, with the new build, is more than the limit. A Beta still refuses a previous pool on a different runtime.
+  - **Effect on users.** The app does not change. A browser tab left open on a build that the live manifest no longer names cannot lazy-load that build's chunks or workers after the next release. Before, every build since 2.156.0 stayed available.
+
 ## Version 2.180.1 (2026-10-13)
 
 ### Improvements

@@ -54,6 +54,21 @@ export function snapshot(destination, extraFiles = [], root = ROOT) {
     return {files, sourceHash: hash(canonical(files))};
 }
 
+// A rollback keeps the newest pool and selects the previous manifest, so a new
+// pool must hold every build the live manifest names. Nothing older is kept: a
+// pool holds at most POOL_BUILD_LIMIT builds, the new one included.
+export const POOL_BUILD_LIMIT = 3;
+const BUILD_ID = /^(?:shipped|beta)-\d{17}-[a-f0-9]{12}$/;
+export function retainedBuilds(state, newId, limit = POOL_BUILD_LIMIT) {
+    const manifest = state?.manifest ?? state;
+    if (!manifest?.shipped?.id) throw new Error('The channel manifest names no Shipped build');
+    const ids = [...new Set([manifest.shipped.id, manifest.beta?.id])].filter(id => id && id !== newId);
+    const unexpected = ids.find(id => !BUILD_ID.test(id));
+    if (unexpected) throw new Error(`Unexpected build ID in the channel manifest: ${unexpected}`);
+    if (ids.length + 1 > limit) throw new Error(`The manifest names ${ids.length} builds; a pool holds at most ${limit}`);
+    return ids;
+}
+
 export function deltaFiles(baseline, candidate) {
     return [...new Set([...Object.keys(baseline), ...Object.keys(candidate)])]
         .filter(name => baseline[name] !== candidate[name]).sort();
@@ -293,23 +308,28 @@ async function main(args) {
         fs.mkdirSync(context, {recursive: true});
         const target = path.join(context, 'frontend/builds', record.id);
         const files = copyFrontend(path.join(source, 'dist'), target);
-        // A previous static image retains older immutable build paths. It must
-        // use the same reviewed runtime; changing runtimes is a full ship.
+        // The new pool copies only the builds the live manifest names out of the
+        // previous pool, one layer each (retainedBuilds). A Beta must use the
+        // previous pool's runtime; changing runtimes is a full ship.
         let base = args.runtime;
         let retained = '';
+        let keep = [];
         if (args.previous) {
             if (!/^sha256:[a-f0-9]{64}$/.test(args.previous)) throw new Error('Previous static image must be immutable');
             const info = JSON.parse(run('docker', ['image', 'inspect', args.previous]))[0];
             if (!info.Config.Labels?.['org.sitrec.reviewed-runtime']) throw new Error('Previous image is not a frontend pool');
-            if (info.Config.Labels['org.sitrec.reviewed-runtime'] !== args.runtime) {
-                if (record.channel !== 'shipped') throw new Error('Previous image uses a different runtime');
-                retained = `FROM ${buildReference(args.previous)} AS retained\n`;
-            } else base = args.previous;
+            if (info.Config.Labels['org.sitrec.reviewed-runtime'] !== args.runtime && record.channel !== 'shipped') {
+                throw new Error('Previous image uses a different runtime');
+            }
+            if (!args.manifest) throw new Error('Pass --manifest with the live channel state so the pool keeps the builds it names');
+            keep = retainedBuilds(JSON.parse(fs.readFileSync(args.manifest)), record.id);
+            if (keep.length) retained = `FROM ${buildReference(args.previous)} AS retained\n`;
         }
+        const copies = keep.map(id => `COPY --from=retained /srv/frontend/builds/${id}/ /srv/frontend/builds/${id}/\n`).join('');
         const baseLayers = JSON.parse(run('docker', ['image', 'inspect', base]))[0].RootFS.Layers;
         base = buildReference(base);
         fs.copyFileSync(path.join(source, 'docker/frontend_server.py'), path.join(context, 'frontend_server.py'));
-        fs.writeFileSync(path.join(context, 'Dockerfile'), `${retained}FROM ${base}\nUSER root\n${retained ? 'COPY --from=retained /srv/frontend/builds/ /srv/frontend/builds/\n' : ''}COPY frontend/ /srv/frontend/\nCOPY frontend_server.py /usr/local/lib/sitrec/frontend_server.py\nUSER 33:33\nWORKDIR /srv/frontend\nLABEL org.sitrec.reviewed-runtime="${args.runtime}"\nENTRYPOINT ["python3", "/usr/local/lib/sitrec/frontend_server.py"]\nCMD []\nHEALTHCHECK CMD python3 -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/healthz',timeout=3)"\n`);
+        fs.writeFileSync(path.join(context, 'Dockerfile'), `${retained}FROM ${base}\nUSER root\n${copies}COPY frontend/ /srv/frontend/\nCOPY frontend_server.py /usr/local/lib/sitrec/frontend_server.py\nUSER 33:33\nWORKDIR /srv/frontend\nLABEL org.sitrec.reviewed-runtime="${args.runtime}"\nENTRYPOINT ["python3", "/usr/local/lib/sitrec/frontend_server.py"]\nCMD []\nHEALTHCHECK CMD python3 -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/healthz',timeout=3)"\n`);
         const tag = `sitrec-local:${record.id}`;
         let builtImage;
         await phase('package', fd => {
@@ -323,6 +343,7 @@ async function main(args) {
         record.packagerHash = hash(fs.readFileSync(fileURLToPath(import.meta.url)));
         fs.copyFileSync(fileURLToPath(import.meta.url), path.join(work, 'packager.mjs'));
         record.imageId = builtImage.Id;
+        record.retainedBuilds = keep;
         record.runtime = args.runtime;
         record.artifactFiles = files.length;
         record.artifactHashes = Object.fromEntries(files.map(name => [name, hash(fs.readFileSync(path.join(target, name)))]));

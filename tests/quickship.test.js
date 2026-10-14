@@ -5,7 +5,7 @@ const {spawnSync} = require('node:child_process');
 const {pathToFileURL} = require('node:url');
 const runner = pathToFileURL(path.resolve(__dirname, '../scripts/quickship.mjs')).href;
 const call = code => spawnSync(process.execPath, ['--input-type=module', '-e',
-    `import {checkScope,checkEmergencyBoundary,snapshot,copyFrontend,buildReference} from ${JSON.stringify(runner)}; ${code}`], {encoding: 'utf8'});
+    `import {checkScope,checkEmergencyBoundary,snapshot,copyFrontend,buildReference,retainedBuilds} from ${JSON.stringify(runner)}; ${code}`], {encoding: 'utf8'});
 let directory;
 beforeEach(() => { directory = fs.mkdtempSync(path.join(os.tmpdir(), 'quickship-test-')); });
 afterEach(() => fs.rmSync(directory, {recursive: true, force: true}));
@@ -22,6 +22,23 @@ test('local image IDs get a verified BuildKit reference and mismatched aliases f
     expect(call(`buildReference(${JSON.stringify(id)},args=>JSON.stringify([{Id:args[2]?.startsWith('sitrec-')?'wrong':${JSON.stringify(id)}}]));`).status).not.toBe(0);
     expect(call(`buildReference(${JSON.stringify(id)},()=>JSON.stringify([{Id:'wrong'}]));`).status).not.toBe(0);
     expect(call(`if(buildReference('ghcr.io/mickwest/sitrec2@${id}',()=>{throw Error('unexpected Docker call')})!=='ghcr.io/mickwest/sitrec2@${id}')throw Error('changed digest');`).status).toBe(0);
+});
+
+test('a new pool keeps only the builds the live manifest names, at most three with the new build', () => {
+    const shipped = 'shipped-20261013212807292-4e5786cf3f78';
+    const beta = 'beta-20260909221048500-dfbcb581e84a';
+    const fresh = 'shipped-20261014000000000-0123456789ab';
+    const keep = state => call(`console.log(JSON.stringify(retainedBuilds(${JSON.stringify(state)},${JSON.stringify(fresh)})));`);
+    const kept = state => { const result = keep(state); expect(result.status).toBe(0); return JSON.parse(result.stdout); };
+    expect(kept({manifest: {shipped: {id: shipped}, beta: {id: beta}}})).toEqual([shipped, beta]);
+    expect(kept({shipped: {id: shipped}, beta: null})).toEqual([shipped]);
+    expect(kept({manifest: {shipped: {id: fresh}, beta: {id: beta}}})).toEqual([beta]);
+    expect(kept({manifest: {shipped: {id: shipped}, beta: {id: shipped}}})).toEqual([shipped]);
+    expect(keep({manifest: {beta: {id: beta}}}).status).not.toBe(0);
+    for (const id of ['shipped-20261013212807292-4e5786cf3f78/../../etc', '../x', 'shipped-1-abc', 'release-20261013212807292-4e5786cf3f78']) {
+        expect(keep({manifest: {shipped: {id}, beta: null}}).status).not.toBe(0);
+    }
+    expect(call(`retainedBuilds({shipped:{id:${JSON.stringify(shipped)}},beta:{id:${JSON.stringify(beta)}}},${JSON.stringify(fresh)},2);`).status).not.toBe(0);
 });
 
 test('Beta scope permits display changes and refuses runtime, auth, dependency and backend changes', () => {

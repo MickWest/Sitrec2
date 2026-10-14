@@ -84,8 +84,10 @@ and lazy-chunk URLs remain within their immutable build directory.
 - `regression`: copy only frontend artifacts into the local preview webroot and
   run the existing visual suite against the supplied URL.
 - `package`: package tested frontend artifacts for `linux/amd64`, reusing an
-  immutable reviewed runtime. Supply the reviewed delta hash for Beta. A previous
-  static image can retain older build directories using the same runtime.
+  immutable reviewed runtime. Supply the reviewed delta hash for Beta. With a
+  previous static image, also supply the live channel manifest: the new image copies
+  only the builds that the manifest names, so it holds at most three builds (the new
+  build, the current Shipped and the current Beta).
 - `import-image`: import Shipped frontend bytes from a reviewed release image whose
   source revision matches the snapshot, avoiding an unnecessary rebuild.
 
