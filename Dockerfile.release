@@ -52,9 +52,11 @@ FROM ${BASE_IMAGE} AS runtime
 ARG WITH_GFS_WIND=1
 
 # GD with JPEG support is required by the Street View panorama stitcher.
-# Request the inherited headers explicitly so apt upgrades them from the security
-# repository even when the other build dependencies are already satisfied.
-RUN apt-get update && apt-get install -y linux-libc-dev libzip-dev libonig-dev libpng-dev libjpeg62-turbo-dev \
+# Request the inherited headers and curl explicitly so apt upgrades them from the
+# security repository even when the other build dependencies are already satisfied.
+# curl depends on exactly its own version of libcurl, which PHP's curl extension links,
+# so naming curl upgrades both without a release-specific library package name.
+RUN apt-get update && apt-get install -y linux-libc-dev curl libzip-dev libonig-dev libpng-dev libjpeg62-turbo-dev \
     && docker-php-ext-configure gd --with-jpeg \
     && docker-php-ext-install zip mbstring iconv gd \
     && if [ "$WITH_GFS_WIND" = "1" ]; then \

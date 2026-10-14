@@ -9,6 +9,17 @@ lockstep with docs/WhatsNew.md.
 
 ---
 
+## Version 2.180.3 (2026-10-14)
+
+A container security maintenance release. Only `Dockerfile` and `Dockerfile.release` change. There are no application code changes, so the app is the same as in 2.180.2.
+
+### Security
+- **The container images install the patched curl and libcurl** (`Dockerfile`, `Dockerfile.release`; the `apt-get install` line of the `runtime` stage).
+  - **Change.** The line now names `curl`, next to `linux-libc-dev` (named in 2.155.1 for the same reason). `apt-get install` upgrades a named package that is already installed, so apt takes `curl` from the Debian security repository. Debian's `curl` package depends on exactly its own version of libcurl (`libcurl4t64`), so apt upgrades both together: 8.14.1-2+deb13u5 (from the `php:8.4-apache` base) → 8.14.1-2+deb13u7. The line names `curl` and not `libcurl4t64` because `libcurl4t64` is a package name only in Debian 13. `Dockerfile.release` also accepts an operator `BASE_IMAGE`, which can be a different release.
+  - **Fixes.** CVE-2026-8286 (high: insecure connection establishment from a TLS configuration mismatch), CVE-2026-8927 (high: information disclosure because proxy authentication state is not cleared), CVE-2026-8924 (medium: cookie injection through super cookies) and CVE-2026-92392 (not rated).
+  - **Exposure.** PHP's curl extension links `libcurl4t64`. The server uses it for its outbound requests: S3 storage through the AWS SDK, `curlGetRequest.php`, the proxies (`proxyStarlink.php`, `proxyADSBx.php`, `proxyFlySFO.php`, `s3-proxy.php`), `chatbot.php`, `streetview.php`, `dvidsVideo.php` and `aimask.php`. The `curl` command runs only in the image `HEALTHCHECK`, which requests the site's home page on `localhost` inside the container.
+  - **Verification.** On `php:8.4-apache` (Debian 13.7), after `apt-get install -y linux-libc-dev curl`, `dpkg-query` shows 8.14.1-2+deb13u7 for both `curl` and `libcurl4t64`, and PHP's curl extension still loads.
+
 ## Version 2.180.2 (2026-10-14)
 
 A deployment-tooling maintenance release. Only `scripts/quickship.mjs`, `tests/quickship.test.js` and `docs/dev/ReleaseChannels.md` change. There are no application code changes, so the app is the same as in 2.180.1.

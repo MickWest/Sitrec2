@@ -9,6 +9,11 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.180.3 (2026-10-14)
+
+### Security
+- The Docker image now installs a patched version of curl, the library that the server uses for its outbound requests. This fixes four security advisories, two of them rated high. There is no change to how the app behaves.
+
 ## Version 2.180.1 (2026-10-13)
 
 ### Improvements
