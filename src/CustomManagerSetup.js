@@ -1553,11 +1553,21 @@ export const setupMethods = {
             .listen()
             .shareAs(sharedMenuKey("extendToGround"));
 
-        // The GLOBAL Show Tracks gate. One control, mirrored onto both 3D views' header bars,
-        // so a press on either is the same press. What differs is what each BAR does around it:
-        // the main view's button offers Show Every Track on a double click, and the look view's
-        // also syncs "Show in look view" — see ICON_OVERRIDES in src/ViewUIBarMenus.js.
+        // The Show Tracks gates, one PER VIEW: each is mirrored onto its own view's header bar,
+        // so the button on the main view hides tracks in the main view only, and the one on the
+        // look view in the look view only. The bars also add a gesture each: the main view's
+        // button offers Show Every Track on a double click, and the look view's also syncs
+        // "Show in look view" — see ICON_OVERRIDES in src/ViewUIBarMenus.js.
         //
+        // Created Look first because each row moves to the top, so Main ends up above Look.
+        if (Globals.showTracksLook === undefined) Globals.showTracksLook = true;
+        guiMenus.contents.add(this, "showTracksLook")
+            .name(t("custom.showHide.showTracksLook.label"))
+            .moveToFirst()
+            .tooltip(t("custom.showHide.showTracksLook.tooltip"))
+            .listen()
+            .shareAs(viewMenuKey("lookView", "showTracks"));
+
         // The i18n key keeps its old name (the property was showAllTracks) so the nine
         // translations of the label stay attached to it.
         if (Globals.showTracks === undefined) Globals.showTracks = true;
@@ -1566,7 +1576,7 @@ export const setupMethods = {
             .moveToFirst()
             .tooltip(t("custom.showHide.showAllTracks.tooltip"))
             .listen()
-            .shareAs(sharedMenuKey("showTracks"));
+            .shareAs(viewMenuKey("mainView", "showTracks"));
 
         // The two blunter things the header-bar buttons reach for. Real rows with real labels,
         // because a gesture that exists only on a button is one nobody can find.
@@ -1594,6 +1604,20 @@ export const setupMethods = {
             this.refreshLookViewTracks();
 
         }).listen().shareAs(viewMenuKey("lookView", "allTracks"));
+
+        // Per-frame tracks are drawn over In..Out only, and the raw data tracks are hidden.
+        // Saved with the sitch, and reset for each new sitch (index.js).
+        if (Globals.limitTracksInOut === undefined)
+            Globals.limitTracksInOut = false;
+        guiMenus.showhide.add(Globals, "limitTracksInOut").name(t("custom.showHide.limitTracksInOut.label"))
+            .tooltip(t("custom.showHide.limitTracksInOut.tooltip"))
+            .onChange(() => this.applyTrackLimit())
+            .listen();
+
+        // Every path that changes In/Out dispatches abFrameChanged (see MakeTraverseNodesMenu.js).
+        EventManager.addEventListener("abFrameChanged", () => {
+            if (Globals.limitTracksInOut) this.applyTrackLimit();
+        });
 
         if (GlobalScene.showCompassElevation === undefined) {
             Globals.showCompassElevation = false;

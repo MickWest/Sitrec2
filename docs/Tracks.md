@@ -539,6 +539,10 @@ Each loaded track gets its own folder in the **Contents** menu. You can:
 - **Highlight** a track by hovering over its folder label (the track line turns white temporarily)
 - **Center camera** on a track using the **Go to Track** button
 
+### Limiting Tracks to In/Out
+
+An imported track is drawn twice: one line through all of its data points, and a second line over the length of the sitch. **Show ▸ Limit Tracks In/Out** (off by default) draws each track only between the In and Out points (the A–B markers on the timeline), and does not draw the line through all of the data. The tracks are drawn again each time you change In or Out. When **Extend To Ground** is on, the wall covers the same part of the track; on an imported track its vertical lines are then at least 20 pixels apart on screen. The setting is saved with the sitch.
+
 ## Track Display Controls
 
 ![Track display controls in the Contents menu](docimages/tracks-contents-menu.jpg)

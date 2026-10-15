@@ -97,7 +97,7 @@ export const VIEW_UIBAR_MENUS = {
         {slot: "currentLos", name: "Current LOS"},
         {slot: "frustum", name: "Camera Frustum"},
         {slot: "latLonGrid", name: "Lat/Lon Grid"},
-        {slot: "showTracks", name: "Show Tracks", shared: true},
+        {slot: "showTracks", name: "Show Tracks"},
         {slot: "extendToGround", name: "Extend Tracks to Ground", shared: true},
         {slot: "compass", name: "Compass"},
         {slot: "timeDisplay", name: "Time Display"},
@@ -117,7 +117,7 @@ export const VIEW_UIBAR_MENUS = {
         {slot: "features", name: "Pins"},
         {slot: "allTracks", name: "All Tracks"},
         {slot: "latLonGrid", name: "Lat/Lon Grid"},
-        {slot: "showTracks", name: "Show Tracks", shared: true},
+        {slot: "showTracks", name: "Show Tracks"},
         {slot: "extendToGround", name: "Extend Tracks to Ground", shared: true},
         {slot: "compass", name: "Compass"},
         {slot: "timeDisplay", name: "Time Display"},
@@ -366,7 +366,7 @@ const COMMON_3D_ICONS = [
     {slot: "labels", icon: ICON_LABELS},
     {slot: "features", icon: ICON_PINS},
     {slot: "measurements", icon: ICON_MEASUREMENTS},
-    {slot: "showTracks", icon: ICON_SHOW_TRACKS, shared: true},
+    {slot: "showTracks", icon: ICON_SHOW_TRACKS},
     {slot: "extendToGround", icon: ICON_EXTEND_GROUND, shared: true,
         double: "clearExtendToGround"},
     {slot: "showSatellites", icon: ICON_SATELLITE, shared: true},
@@ -383,20 +383,21 @@ const COMMON_3D_ICONS = [
 // is still written once — the two bars are read as a pair, and a button in both has to be in the
 // same place in both.
 //
-// Show Tracks is the one such button. Both bars drive the same global gate, and a plain click on
-// either just toggles it. What differs is the blunter thing each view wants next to it:
+// Show Tracks is the one such button. Each bar drives its own view's gate (Show Tracks in Main,
+// Show Tracks in Look), and a plain click just toggles it. What differs is the blunter thing each
+// view wants next to it:
 //   Main — a DOUBLE click also puts every track's own checkbox back on, which the gate cannot do.
 //   Look — a click also sets "Show in look view" on every showing track to match the gate, since
 //          over there the question the button answers is what the LOOK view draws.
 const ICON_OVERRIDES = {
     mainView: {
         showTracks: {double: "showEveryTrack",
-            tip: "Show Tracks — every track at once, leaving each track's own setting alone;"
+            tip: "Show Tracks — every track in this view, leaving each track's own setting alone;"
                 + " double-click to switch every track back on as well"},
     },
     lookView: {
         showTracks: {press: "syncTracksInLook",
-            tip: "Show Tracks — every track at once, and show the ones that are on in this view too"},
+            tip: "Show Tracks — every track in this view, and show the ones that are on in this view too"},
     },
 };
 

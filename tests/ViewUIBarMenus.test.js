@@ -742,7 +742,7 @@ describe("populateViewUIBarIcons", () => {
         source(state, "labels").shareAs(viewMenuKey("mainView", "labels"));
         source(state, "features").shareAs(viewMenuKey("mainView", "features"));
         source(state, "measurements").shareAs(viewMenuKey("mainView", "measurements"));
-        source(state, "tracks").shareAs(sharedMenuKey("showTracks"));
+        source(state, "tracks").shareAs(viewMenuKey("mainView", "showTracks"));
 
         const view = fakeBar("mainView");
         populateViewUIBarIcons(view);

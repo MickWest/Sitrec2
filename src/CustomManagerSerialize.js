@@ -564,7 +564,9 @@ export const serializeMethods = {
             "objectScale",
             "objectScaleMain",
             "showAllTracksInLook",
-            "showTracks",               // the global Show Tracks gate (CCustomManager.showTracks)
+            "showTracks",               // Show Tracks in Main (CCustomManager.showTracks) — name kept for older saves
+            "showTracksLook",           // Show Tracks in Look (CCustomManager.showTracksLook)
+            "limitTracksInOut",         // draw tracks over In..Out only, without the raw data tracks
             "showTimeDisplay",          // the UTC/local clock overlaid on the look view
         ]
 
@@ -1835,11 +1837,16 @@ export const serializeMethods = {
                 }
                 Globals[key] = sitchData.globals[key];
             }
+            // A save from before Show Tracks was per view has one gate, which hid the tracks
+            // in every view. It now means Main, so give Look the same value.
+            if (sitchData.globals.showTracks !== undefined && sitchData.globals.showTracksLook === undefined) {
+                Globals.showTracksLook = sitchData.globals.showTracks;
+            }
         }
 
-        // The global Show Tracks gate is a flag of its own, so the tracks have to be told about
-        // it — their own saved visibility is back in place by now, and what they DRAW is the two
-        // together (CNodeDisplayTrack.applyVisibility).
+        // The tracks' own saved visibility is back in place by now, so each one works out what
+        // it draws (CNodeDisplayTrack.applyVisibility). The per-view Show Tracks gates are
+        // applied at render time and need nothing here.
         this.applyTrackGate?.();
 
         // and Sit
@@ -1886,6 +1893,8 @@ export const serializeMethods = {
         refreshLabelsAfterLoading();
         refreshLatLonGridVisibility();
         this.refreshLookViewTracks();
+        // In/Out is restored with Sit, after the globals, so the limited tracks are built here.
+        if (Globals.limitTracksInOut) this.applyTrackLimit();
 
         await restoreRefractionTool();
         if (Globals.loadGeneration !== myGeneration) return;

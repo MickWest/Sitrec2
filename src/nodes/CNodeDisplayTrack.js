@@ -332,7 +332,6 @@ export class CNodeDisplayTrack extends CNode3DGroup {
                 if (this.in.dropColor !== undefined) {
                     this.in.dropColor.value = this.polyColor
                 }
-                this.recalculate()
                 if (this.in.dataTrackDisplay !== undefined) {
                     this.in.dataTrackDisplay.polyColor = this.polyColor
                     if (this.in.dataTrackDisplay.in.dropColor !== undefined) {
@@ -340,6 +339,8 @@ export class CNodeDisplayTrack extends CNode3DGroup {
                     }
                     this.in.dataTrackDisplay.recalculate()
                 }
+                // After the data track: limited to In/Out, this track's wall uses its color.
+                this.recalculate()
             })
 
 
@@ -452,27 +453,46 @@ export class CNodeDisplayTrack extends CNode3DGroup {
         this.applyVisibility()
     }
 
-    // Whether this track is drawn, from the TWO flags that decide it: the global Show Tracks
-    // gate (every track at once — the header-bar button, CCustomManager.showTracks) and this
-    // track's own `visible` checkbox. The effective state is the AND of them, and it is written
-    // to the Three.js group ONLY, never back into `visible`. That is what lets the gate go off
-    // and come back on leaving each track exactly as its owner had it — the gate has nothing to
-    // remember and nothing to restore.
+    // Whether this track is drawn, from this track's own `visible` checkbox and "Limit Tracks
+    // In/Out". The result is written to the Three.js group ONLY, never back into `visible`.
     //
-    // The third flag a track has, "Show in look view", is a LAYER bit rather than a visibility
-    // flag: it says which VIEWS draw the track, so it is independent of this and survives both.
+    // The Show Tracks gates are NOT applied here. There is one per view (Main and Look), and the
+    // group's visibility is shared by every view, so CCustomManager.preRenderUpdate hides the
+    // tracks for one view's render only. "Show in look view" is a LAYER bit rather than a
+    // visibility flag: it says which VIEWS draw the track, so it is independent of this too.
     applyVisibility() {
-        const on = Globals.showTracks !== false && !!this.visible;
-        this.group.visible = on;
+        const on = !!this.visible;
+        // Raw data is not indexed by sitch frames, so it has no In/Out portion to draw.
+        const hideRawData = !!Globals.limitTracksInOut;
+        this.group.visible = on && !(hideRawData && this.isRawDataDisplay());
         this.noteShadowCasterState?.("visibility");
         const data = this.in.dataTrackDisplay;
         if (data !== undefined) {
-            data.group.visible = on;
+            data.group.visible = on && !hideRawData;
             data.noteShadowCasterState?.("visibility");
         }
         // The centre helpers drawn along the line. NOT the object riding the track — see
         // CMetaTrack.show, which is careful about exactly that.
         this.metaTrack?.show(on);
+    }
+
+    // True when this display draws the imported data as it is (a point per data sample),
+    // rather than a per-frame track. Its index is the sample, not the sitch frame.
+    isRawDataDisplay() {
+        return !!(this.framesInvariant || this.in.track?.framesInvariant);
+    }
+
+    // The frames this display draws, inclusive. That is every frame, unless "Limit Tracks
+    // In/Out" (Globals.limitTracksInOut) is on and this is a per-frame track: then it is
+    // In..Out, clamped to the track.
+    drawnFrameRange(frames = this.in.track.frames) {
+        const last = frames - 1;
+        if (!Globals.limitTracksInOut || this.isRawDataDisplay()) {
+            return {start: 0, end: last, limited: false};
+        }
+        const start = Math.max(0, Math.min(Number.isFinite(Sit.aFrame) ? Sit.aFrame : 0, last));
+        const end = Math.max(start, Math.min(Number.isFinite(Sit.bFrame) ? Sit.bFrame : last, last));
+        return {start, end, limited: true};
     }
 
     gotoTrack() {
@@ -721,7 +741,14 @@ export class CNodeDisplayTrack extends CNode3DGroup {
             step = this.frames / MAX_DISPLAY_POINTS
         }
 
-        for (var f = 0; f < this.frames; f+= step) {
+        // The frames to sample. Limited to In/Out, the Out frame itself is added, so the line
+        // ends exactly at Out and not up to one step before it.
+        const {start, end, limited} = this.drawnFrameRange(this.frames);
+        const sampleFrames = [];
+        for (let s = start; s < (limited ? end : this.frames); s += step) sampleFrames.push(s);
+        if (limited) sampleFrames.push(end);
+
+        for (var f of sampleFrames) {
             let trackPoint = this.in.track.v(f)
 
             // the track must have a valid first frame. If we have a situation
@@ -816,9 +843,12 @@ export class CNodeDisplayTrack extends CNode3DGroup {
             }
         }
         dispose(this.trackGeometry)
+        this.trackGeometry = null;
+
+        // An In/Out range with no valid point, or with only one (In = Out), has no line to draw.
+        if (limited && line_points.length < 6) return;
+
         this.trackGeometry = new LineGeometry();
-
-
 
         assert(line_points.length > 0, "CNodeDisplayTrack: no points in track "+this.id)
 
@@ -879,8 +909,11 @@ export class CNodeDisplayTrack extends CNode3DGroup {
 
         // we don't display track walls for track that have a data track,
         // as the data track will have the walls (spaced per track frame, like a KML track, so wide)
-        if (this.in.dataTrackDisplay === undefined) {
-            this.makeTrackWall(color, dropColor, this.lineOpacity, this.polyOpacity)
+        // When limited to In/Out the data track is hidden, so this track draws its own wall,
+        // in the data track's poly color.
+        if (this.in.dataTrackDisplay === undefined || limited) {
+            const wallColor = limited ? this.in.dataTrackDisplay?.in.dropColor?.v(f) ?? dropColor : dropColor;
+            this.makeTrackWall(color, wallColor, this.lineOpacity, this.polyOpacity)
         }
     }
 
@@ -919,18 +952,23 @@ export class CNodeDisplayTrack extends CNode3DGroup {
         const groundPoints = [];
         // Distance along the wall top to each point, for the screen-spaced lines.
         const lineDistances = [];
-        const screenSpacedLines = this.wallLineSpacing > 0 && !this.showCap;
         assert(this.inputs.track !== undefined, "CNodeDisplayTrack: track input is undefined, id=" + this.id);
 
         // get the number of frames
         const frames = this.in.track.frames;
+        const {start, end, limited} = this.drawnFrameRange(frames);
+
+        // A per-frame track limited to In/Out draws the wall its data track usually draws.
+        // A line per wall point would be a solid sheet here, so space the lines on screen.
+        const wallLineSpacing = this.wallLineSpacing || (limited && this.in.dataTrackDisplay !== undefined ? 20 : 0);
+        const screenSpacedLines = wallLineSpacing > 0 && !this.showCap;
 
         // just some point far away to start with
         // as we are using this to measure distance
         let lastPoint = V3(0,-10000,0)
 
 
-        for (let f = 0; f < frames; f++) {
+        for (let f = start; f <= end; f++) {
             let trackPoint = this.in.track.v(f);
 
             if (trackPoint && trackPoint.x !== undefined) {
@@ -947,7 +985,7 @@ export class CNodeDisplayTrack extends CNode3DGroup {
 
             // if the distance is less than the minimum wall step
             // and this is not the last frame, then skip this point
-            if (dist < this.minWallStep && f < frames-1) continue;
+            if (dist < this.minWallStep && f < end) continue;
 
             lineDistances.push(linePoints.length === 0 ? 0 : lineDistances.at(-1) + dist);
             lastPoint = trackPoint.position.clone();
@@ -973,6 +1011,8 @@ export class CNodeDisplayTrack extends CNode3DGroup {
             groundPoints.push(bottom);
         }
 
+        // A short In/Out range can leave a single point, which has no wall.
+        if (limited && linePoints.length < 2) return;
         assert(linePoints.length > 1, "CNodeDisplayTrack: not enough points for mesh in track " + this.id);
 
         // Find the midpoint as in recalculate()
@@ -1074,7 +1114,7 @@ export class CNodeDisplayTrack extends CNode3DGroup {
             installTrackWallLines(mat, {
                 color: new Color(lineColor),
                 opacity: lineOpacity,
-                spacing: this.wallLineSpacing,
+                spacing: wallLineSpacing,
                 length: lineDistances.at(-1),
                 pixelScale: displayPixelScale,
             });

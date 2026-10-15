@@ -1905,28 +1905,60 @@ export class CCustomManager {
         return tracks;
     }
 
-    // Whether tracks are drawn at all — the GLOBAL gate, and a flag in its own right rather
-    // than a write over every track's own checkbox. Three flags decide whether you see a track:
-    // this one, the track's own `visible`, and its "Show in look view" (which views draw it).
+    // Whether tracks are drawn at all, PER VIEW: "Show Tracks in Main" (Globals.showTracks, the
+    // name kept for older saves) and "Show Tracks in Look" (Globals.showTracksLook). Each is a
+    // flag in its own right rather than a write over every track's own checkbox. Four flags
+    // decide whether you see a track in a view: that view's gate, the track's own `visible`,
+    // its "Show in look view" (which views draw it), and "Limit Tracks In/Out" for a raw data
+    // track.
     //
     // Being a separate flag is what makes it cheap to use: flicking it off and back on leaves
     // each track exactly as its owner had it, with nothing to remember and nothing to restore.
     // It used to write all the per-track flags and keep a map of what they were, which meant a
     // press could not be undone by another press once anything else had changed in between.
+    //
+    // The gates are applied at render time (preRenderUpdate), because a track's group
+    // visibility is shared by every view.
     get showTracks() {
         return Globals.showTracks !== false;
     }
 
     set showTracks(on) {
         Globals.showTracks = !!on;
-        this.applyTrackGate();
+        setRenderOne(true);
     }
 
-    // Hand the gate to every track. Each one works out for itself what that leaves it showing
-    // (CNodeDisplayTrack.applyVisibility), so this is also the call a sitch load makes once the
-    // saved per-track flags are back in place.
+    get showTracksLook() {
+        return Globals.showTracksLook !== false;
+    }
+
+    set showTracksLook(on) {
+        Globals.showTracksLook = !!on;
+        setRenderOne(true);
+    }
+
+    // The Show Tracks gate for one view. Only the main and look views have a Show Tracks
+    // button, so every other 3D view always draws its tracks.
+    showTracksIn(view) {
+        if (view.id === "lookView") return this.showTracksLook;
+        if (view.id === "mainView") return this.showTracks;
+        return true;
+    }
+
+    // Tell every track to work out what it draws (CNodeDisplayTrack.applyVisibility). This is
+    // the call a sitch load makes once the saved per-track flags are back in place.
     applyTrackGate() {
         for (const track of this.displayTracks()) track.applyVisibility();
+        setRenderOne(true);
+    }
+
+    // "Limit Tracks In/Out" changed, or In/Out changed while it is on: rebuild the per-frame
+    // tracks over the new range, and hide or show the raw data tracks.
+    applyTrackLimit() {
+        for (const track of this.displayTracks()) {
+            if (!track.isRawDataDisplay()) track.recalculate();
+            track.applyVisibility();
+        }
         setRenderOne(true);
     }
 
@@ -1954,13 +1986,13 @@ export class CCustomManager {
         setRenderOne(true);
     }
 
-    // "Show in look view" over every track that is SHOWING, set to match the gate — what the
-    // look view's Show Tracks button does on top of toggling it. A track hidden by its own
-    // checkbox is left alone: it is not drawn in any view, so there is nothing to say yet about
-    // which views it would be drawn in, and saying it anyway would quietly rewrite a setting the
-    // user cannot even see at the time.
+    // "Show in look view" over every track that is SHOWING, set to match "Show Tracks in Look" —
+    // what the look view's Show Tracks button does on top of toggling it. A track hidden by its
+    // own checkbox is left alone: it is not drawn in any view, so there is nothing to say yet
+    // about which views it would be drawn in, and saying it anyway would quietly rewrite a
+    // setting the user cannot even see at the time.
     syncTracksInLook() {
-        const on = this.showTracks;
+        const on = this.showTracksLook;
         TrackManager.iterate((id, trackOb) => {
             const display = trackOb.trackDisplayNode ?? trackOb.displayTrack;
             if (!display?.visible) return;
@@ -2404,8 +2436,39 @@ export class CCustomManager {
         return this._c3dObjects;
     }
 
+    // Cached list of CNodeDisplayTracks, rebuilt only when the node set changes (as above).
+    _getDisplayTracks() {
+        if (this._displayTracksVersion !== NodeMan.listVersion) {
+            this._displayTracks = this.displayTracks();
+            this._displayTracksVersion = NodeMan.listVersion;
+        }
+        return this._displayTracks;
+    }
+
+    // Hide every drawn track for this view's render when its Show Tracks gate is off.
+    // postRenderUpdate puts them back. A render that threw before postRenderUpdate leaves
+    // some hidden, so they are put back here first.
+    hideTracksForRender(view) {
+        this.restoreTracksAfterRender();
+        if (this.showTracksIn(view)) return;
+        for (const track of this._getDisplayTracks()) {
+            if (track.group?.visible) {
+                track.group.visible = false;
+                this._tracksHiddenForRender.push(track.group);
+            }
+        }
+    }
+
+    restoreTracksAfterRender() {
+        if (!this._tracksHiddenForRender) this._tracksHiddenForRender = [];
+        for (const group of this._tracksHiddenForRender) group.visible = true;
+        this._tracksHiddenForRender.length = 0;
+    }
+
     preRenderUpdate(view) {
         if (!Sit.isCustom) return;
+
+        this.hideTracksForRender(view);
 
         // Track which CNode3DObjects we hide for this view's render so the
         // right-click picker can ignore them even after postRenderUpdate
@@ -2485,6 +2548,7 @@ export class CCustomManager {
 
     postRenderUpdate(view) {
         if (!Sit.isCustom) return;
+        this.restoreTracksAfterRender();
         for (const node of this._getCNode3DObjects()) {
             restoreIfDisabled(node._object, view.camera)
         }

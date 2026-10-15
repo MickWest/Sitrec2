@@ -578,13 +578,14 @@ export const mouseMethods = {
      * @param {Function} getPositionFunc - Function to get position at index i
      * @param {number} mouseX - Screen X coordinate
      * @param {number} mouseY - Screen Y coordinate
+     * @param {number} [firstIndex=0] - First point to check (for a track drawn over In..Out only)
      * @returns {number} Minimum distance from mouse to any segment (or Infinity if no valid segments)
      */
-    checkTrackSegments(trackNode, dataPointCount, getPositionFunc, mouseX, mouseY) {
+    checkTrackSegments(trackNode, dataPointCount, getPositionFunc, mouseX, mouseY, firstIndex = 0) {
         let minDistance = Infinity;
-        
+
         // Check distance to line segments between consecutive points
-        for (let dataIndex = 0; dataIndex < dataPointCount - 1; dataIndex++) {
+        for (let dataIndex = firstIndex; dataIndex < dataPointCount - 1; dataIndex++) {
             // For nodes with validPoint method, check if data exists before accessing
             if (trackNode.validPoint) {
                 if (!trackNode.validPoint(dataIndex) || !trackNode.validPoint(dataIndex + 1)) {
@@ -655,7 +656,14 @@ export const mouseMethods = {
         
         let closestTrack = null;
         let closestDistance = threshold;
-        
+
+        // Only tracks this view draws. With its Show Tracks gate off it draws none. Otherwise a
+        // track is drawn when its group is visible and its layers include this camera's, so a
+        // track with "Show in look view" off is not drawn in the look view.
+        if (Sit.isCustom && !CustomManager.showTracksIn(this)) return null;
+        const drawnHere = (display) => display.group?.visible !== false
+            && (display.group?.layers.mask & this.camera.layers.mask) !== 0;
+
         // First, check tracks from TrackManager (user-loaded tracks from KML/CSV/etc)
         TrackManager.iterate((trackID, trackOb) => {
             const trackNode = trackOb.trackNode;
@@ -663,19 +671,25 @@ export const mouseMethods = {
             
             // Check the display node's visibility (trackDisplayNode for loaded tracks, displayTrack for synthetic)
             const displayNode = trackOb.trackDisplayNode || trackOb.displayTrack;
-            if (!trackNode || (displayNode && !displayNode.visible)) return;
+            if (!trackNode || (displayNode && (!displayNode.visible || !drawnHere(displayNode)))) return;
             
             // Check ONLY the track data node if it exists (raw data points)
             // This represents the actual track data (e.g., from KML/CSV) and is the complete track
             if (trackDataNode && trackDataNode.getPosition && trackDataNode.misb) {
                 const dataPointCount = trackDataNode.misb.length;
-                const distance = this.checkTrackSegments(
-                    trackDataNode, 
-                    dataPointCount, 
-                    (i) => trackDataNode.getPosition(i),
-                    mouseX, 
-                    mouseY
-                );
+                // With "Limit Tracks In/Out" the raw data is not drawn: check the drawn
+                // In..Out part of the per-frame track instead.
+                const range = displayNode?.drawnFrameRange?.();
+                const drawn = displayNode?.in.track;
+                const distance = range?.limited && drawn?.p
+                    ? this.checkTrackSegments(drawn, range.end + 1, (i) => drawn.p(i), mouseX, mouseY, range.start)
+                    : this.checkTrackSegments(
+                        trackDataNode,
+                        dataPointCount,
+                        (i) => trackDataNode.getPosition(i),
+                        mouseX,
+                        mouseY
+                    );
                 
                 if (distance < closestDistance) {
                     closestDistance = distance;
@@ -693,7 +707,7 @@ export const mouseMethods = {
         // These are algorithmic tracks that aren't in TrackManager
         NodeMan.iterate((nodeId, node) => {
             // Check if this is a CNodeDisplayTrack with a visible track
-            if (node.constructor.name === 'CNodeDisplayTrack' && node.visible && node.guiFolder) {
+            if (node.constructor.name === 'CNodeDisplayTrack' && node.visible && node.guiFolder && drawnHere(node)) {
                 const trackNode = node.in.track;
                 if (!trackNode || !trackNode.p || !trackNode.validPoint) return;
                 
@@ -705,13 +719,16 @@ export const mouseMethods = {
                 // Check if the track has valid data at the first frame
                 // Some tracks (like satellites) might not have data loaded yet
                 if (!trackNode.validPoint(0)) return;
-                
+
+                // Only the frames drawn: In..Out with "Limit Tracks In/Out", else all.
+                const range = node.drawnFrameRange(frameCount);
                 const distance = this.checkTrackSegments(
                     trackNode,
-                    frameCount,
+                    range.end + 1,
                     (i) => trackNode.p(i),
                     mouseX,
-                    mouseY
+                    mouseY,
+                    range.start
                 );
                 
                 if (distance < closestDistance) {
