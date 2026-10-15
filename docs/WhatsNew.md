@@ -9,6 +9,11 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.180.4 (2026-10-14)
+
+### New Features
+- **Parquet track output** (File → File Analysis → **BOTBench...** → *Track output*): two new choices write the fitted tracks as Parquet files. *Best Track (Parquet)* writes the same top candidate as *Best Track*. *All Tracks (Parquet)* writes the same candidates, in the same order, as *All Tracks Combined*, in one file for each source file. The files have the same columns as the CSV files: *TrackID* and *AlgorithmID* are text, the other columns are numbers, and the covariance columns are empty. The Parquet files go in the same folders as the CSV files and do not replace them.
+
 ## Version 2.180.3 (2026-10-14)
 
 ### Security

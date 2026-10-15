@@ -51,7 +51,8 @@ test("derived patch participates and overrides uniform mode without changing ord
     expect(adapter.attributes(patch, {})).toEqual(patch.userData.thermal);
     expect(adapter.attributes(source, {})).toEqual({temperatureK: 400, emissivity: .2});
     // Derived heating must not silently reuse a prior frame before its state is keyed.
-    const key = createThermalReuseKey();
+    // No time budget: under suite load the default 2 ms can expire first and give "time budget".
+    const key = createThermalReuseKey({budgetMs: Infinity});
     const scene = new Scene(); scene.add(parent);
     node._solarSurfacePatches.show(); scene.updateMatrixWorld(true);
     expect(key({objects: [node], scene, camera})).toBeNull();
