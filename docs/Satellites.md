@@ -169,12 +169,35 @@ Each filter has a checkbox. Only the checked filters are used.
 
 | Control | Default | What it does |
 |---|---|---|
+| **Satellite Brightness Model** | Photometric estimate | Continuous Starlink flare curves, estimated diffuse light, range and phase. **Legacy cone** selects the previous cone approximation |
+| **Starlink Design** | Unknown design (estimated mixture) | Select a design supported by independent information. Unknown uses an equal-weight flux mixture of the available designs, not an inferred population |
+| **Satellite Sunlight** | Finite Sun + atmosphere | Integrates the solar disk through a clear standard atmosphere at Earth's limb. **Finite Sun** omits atmosphere; **Legacy fade** uses the adjustable shadow depth |
 | **Sat Brightness** | 2 | Scale factor for the brightness of the satellites. 0 is invisible |
-| **Flare Brightness** | 0.2 | Scale factor for the extra brightness of a flaring satellite. 0 adds nothing |
+| **Flare Brightness** | 0.2 | In Legacy cone mode, scale factor for extra flare brightness. 0 adds nothing |
 | **Sat Cut-Off** | 0.06 | Satellites dimmed to this level or less are not drawn |
-| **Flare Angle Spread** | 5 | The largest angle, in degrees, between the reflected view line and the direction to the Sun for which a flare is visible. Sitrec treats the underside of the satellite as a mirror parallel to the ground |
+| **Flare Angle Spread** | 5 | Off-specular angle for flare arrows and the Legacy cone model. Photometric estimates include continuous light outside this angle |
 | **Flare Model** | Geocentric Nadir | How "down" is found for that mirror. **Geocentric Nadir** points at the Earth's center. **Geodetic Nadir** is perpendicular to the WGS84 ellipsoid. The two differ by at most about 0.18° |
-| **Earth's Penumbra Depth** | 5000 | The vertical depth, in metres, over which a satellite fades out as it goes into the Earth's shadow |
+| **Earth's Penumbra Depth** | 5000 | In Legacy fade mode, shadow depth in metres over which illumination fades |
+
+The photometric model uses approximate digitizations of the fitted horizon-flare curves
+in [Mallama and Cole (2024)](https://arxiv.org/abs/2405.13091), with explicit estimated
+continuations outside their roughly 2–20° range. The authors do not give an unobscured-Sun
+normalization; applying the calculated sunlight fraction to those curves is an assumption.
+Individual design, attitude and flight state can change brightness by several magnitudes.
+Other satellites use an estimated diffuse reference because orbital records do not provide
+their optical size and reflectance. The ISS retains an estimated magnitude −2 reference at
+1000 km and 90° phase, with range and phase scaling.
+
+The sunlight model follows the finite solar disk, limb darkening, atmospheric transmission
+and refraction described by [Mallama (2021)](https://arxiv.org/abs/2112.08310). It uses a
+smooth clear atmosphere; local weather and terrain at the remote limb are unknown.
+This sunlight path is separate from the atmosphere between the satellite and the camera.
+
+The live view uses the calculated brightness as a display aid. HDR long exposures integrate
+the estimated linear flux with the same zero point as stars. Display brightness and cut-off
+sliders do not calibrate a photograph's camera response. Flare-region overlays and the
+standalone horizon-flare scanner retain a geometric cone criterion; their event counts do
+not predict the number of detectable trails in a photograph.
 
 ---
 
@@ -319,7 +342,7 @@ flare. Right-click a satellite for its catalog number. The full procedure is in
 ## See also
 
 - [Investigating Starlink Flares](Starlink.md): a step-by-step guide to horizon flares
-- [Long Exposure Simulation](LongExposure.md): star trails and satellite streaks
+- [Long Exposure/Stacking](LongExposure.md): star trails and satellite streaks
 - [Historic Skies](HistoricSkies.md): the sky for dates before the space age
 - [Lighting](Lighting.md): the sun, ambient light and night scenes
 - [User Interface](UserInterface.md)

@@ -1,7 +1,7 @@
 // LongExposure.js
 //
-// Simulated long exposure of the Look view, plus the "Nudge Camera" damped
-// camera jolt (Video menu > Long Exposure).
+// Simulated long exposure or brightest-pixel stack of the Look view, plus the
+// "Nudge Camera" damped camera jolt (Video menu > Long Exposure/Stacking).
 //
 // Two parts:
 //
@@ -40,11 +40,12 @@
 //  - splat energy is deposited per frame and averaged like the background, so
 //    a static star keeps exactly flux F while a moving one spreads F along its
 //    path (trail brightness = dwell-time fraction — correct photometry).
-//  - terrain/object occlusion of splats is ignored (a star trail can cross a
-//    foreground hill; an aircraft body doesn't occlude its own far light).
+//  - source flux and position are interpolated between time-weighted samples;
+//    a large Frame Step can still miss rapid brightness changes.
 //  - non-catalogued bright content that saturates the LDR frame stays clipped
 //    at 1.0 (only catalog sources + the Moon get HDR treatment).
-//  - satellites are not yet splatted (they keep their LDR rendering).
+//  - satellite magnitudes are estimates from empirical curves and uncertain
+//    diffuse properties, not measurements of each spacecraft's attitude.
 
 import {GlobalDateTimeNode, Globals, guiMenus, markSitchDirty, NodeMan, setRenderOne, Sit} from "./Globals";
 import {par} from "./par";
@@ -61,7 +62,7 @@ import {applyAnnualAberration, raDec2Celestial} from "./CelestialMath";
 import {CNode3DLight} from "./nodes/CNode3DLight";
 import {CNodeViewUI} from "./nodes/CNodeViewUI";
 import {degrees, radians} from "./mathUtils";
-import {flareRamp, penumbraFade, shadowOcclusion} from "../tools/shf/flarePhysics.js";
+import {flareRamp} from "../tools/shf/flarePhysics.js";
 import {altitudeHAE, getLocalUpVector} from "./SphericalMath";
 import {GlobalScene} from "./LocalFrame";
 import {MeshBasicMaterial, WebGLRenderTarget, Color} from "three";
@@ -71,6 +72,8 @@ import {MeshBasicMaterial, WebGLRenderTarget, Color} from "three";
 
 const defaultParams = () => ({
     durationMin: 5,      // exposure length in minutes, from the start of the sitch
+    captureMode: "Brightest-pixel stack",
+    stackExposureSeconds: 10, // contiguous finite exposures, then per-channel maximum
     lockHeading: true,   // hold the camera heading AS IT IS NOW for the whole
                          // exposure (a tripod doesn't track): even in To Target /
                          // Celestial Lock / Horizon Flare Region modes the camera
@@ -101,10 +104,9 @@ const defaultParams = () => ({
     reddening: false,    // chromatic horizon extinction (dim AND redden); off =
                          // achromatic dimming only (V coefficient on all channels)
     settle: true,        // settle terrain/tiles per frame before capture
-    step: 30,            // sample every Nth frame (exposure normalizes per sample,
-                         // and point-source trails are splatted continuously across
-                         // the whole inter-sample interval, so they stay smooth and
-                         // photometrically correct; only background motion steps)
+    step: 30,            // sample every Nth frame; interpolate source position and
+                         // linear flux across each elapsed-time-weighted interval.
+                         // Large steps can miss rapid changes in flux or motion.
     occlusion: true,     // occlusion mask: splats blocked by terrain and other
                          // opaque foreground (rebuilt automatically whenever the
                          // camera position moves)
@@ -133,18 +135,29 @@ class CLongExposureManager {
 
     setupMenu() {
         if (!guiMenus || !guiMenus.video) return;
-        const folder = guiMenus.video.addFolder("Long Exposure").close().perm();
+        const folder = guiMenus.video.addFolder("Long Exposure/Stacking").close().perm();
         this.folder = folder;
         const dirty = () => { markSitchDirty(); setRenderOne(true); };
 
-        folder.add({render: () => this.render()}, "render").name("Render Long Exposure").perm()
-            .tooltip("Render an averaged long-exposure still: Duration minutes of real time\n" +
+        folder.add({render: () => this.render()}, "render").name("Render Long Exposure/Stacking").perm()
+            .tooltip("Render a still using the selected capture mode: Duration minutes of real time\n" +
                 "from the start of the sitch (the timeline is extended temporarily if the\n" +
                 "exposure is longer than the sitch). Shown in a window with an EV\n" +
                 "(exposure) slider and Save PNG.");
         folder.add(this.params, "durationMin", 0.1, 720, 0.1).name("Duration (Minutes)").perm().listen().onChange(dirty)
             .tooltip("Exposure length in minutes of real (sitch) time, from the start of\n" +
                 "the sitch. May extend past the sitch's own end.");
+        folder.add(this.params, "captureMode", ["Brightest-pixel stack", "Continuous exposure"])
+            .name("Capture Mode").perm().listen().onChange(() => { this.updateStackControls(); dirty(); })
+            .tooltip("Continuous exposure averages light over the whole duration. Brightest-pixel\n" +
+                "stack integrates each finite subexposure, then keeps the brightest value in\n" +
+                "each color channel. It does not take the brightest instantaneous sample.");
+        this.stackExposureController = folder.add(this.params, "stackExposureSeconds", 0.1, 600, 0.1)
+            .name("Stack Exposure (s)").perm().listen().onChange(dirty)
+            .tooltip("Duration of each contiguous exposure in a brightest-pixel stack. The final\n" +
+                "partial exposure keeps the same gain. Gaps, sensor noise and camera gain\n" +
+                "changes are not modeled.");
+        this.updateStackControls();
         folder.add(this.params, "lockHeading").name("Lock Camera Heading").perm().listen().onChange(dirty)
             .tooltip("Hold the camera heading exactly as it is RIGHT NOW for the whole\n" +
                 "exposure — a tripod doesn't track. Works in any camera mode (To Target,\n" +
@@ -196,9 +209,9 @@ class CLongExposureManager {
             .tooltip("Settle terrain/3D-tiles each frame before capture (slower, stable).");
         folder.add(this.params, "step", 1, 600, 1).name("Frame Step").perm().listen().onChange(dirty)
             .tooltip("Sample every Nth frame of the exposure (default 30 = ~30x faster).\n" +
-                "Exposure brightness is unaffected. Star/light/satellite trails stay smooth\n" +
-                "and photometrically exact (they are integrated continuously between samples);\n" +
-                "only background/scene motion becomes stepped. Use 1 for full quality.");
+                "Positions and linear flux are interpolated and weighted by elapsed time.\n" +
+                "Trails stay smooth, but large steps can miss rapid flares or shadow changes.\n" +
+                "Reduce the step to check short events; use 1 for full quality.");
         folder.add(this.params, "occlusion").name("Occlusion Mask").perm().listen().onChange(dirty)
             .tooltip("Hide splatted sources (stars/planets/satellites/lights) behind terrain\n" +
                 "and other opaque foreground, using a mask rendered from the scene.\n" +
@@ -253,12 +266,16 @@ class CLongExposureManager {
         this.ensureNudgeController();
     }
 
+    updateStackControls() {
+        this.stackExposureController?.show(this.params.captureMode === "Brightest-pixel stack");
+    }
+
     render() {
         if (this.rendering) return;
         this.rendering = true;
         renderLongExposure(this).catch((e) => {
-            console.error("Long exposure render failed:", e);
-            alert("Long exposure render failed: " + (e.message || e));
+            console.error("Long Exposure/Stacking render failed:", e);
+            alert("Long Exposure/Stacking render failed: " + (e.message || e));
         }).finally(() => { this.rendering = false; });
     }
 }
@@ -363,9 +380,16 @@ export function serializeLongExposure() {
 }
 
 export function deserializeLongExposure(data) {
+    if (data?.params) Object.assign(LongExposure.params, data.params);
+    const defaults = defaultParams();
+    // New scenes use the current default. Exposure saves from before capture
+    // modes existed keep their original continuous-integration behavior.
+    LongExposure.params.captureMode = data?.params?.captureMode ??
+        (data ? "Continuous exposure" : defaults.captureMode);
+    LongExposure.params.stackExposureSeconds = data?.params?.stackExposureSeconds ?? defaults.stackExposureSeconds;
+    LongExposure.updateStackControls();
     if (!data) return;
     Sit.longExposure = data;
-    if (data.params) Object.assign(LongExposure.params, data.params);
     if (data.nudge) Object.assign(nudgeParams, data.nudge);
     if (nudgeParams.enabled) LongExposure.ensureNudgeController();
 }
@@ -541,7 +565,7 @@ function acesForward(arr, idx, exposure) {
 
 async function renderLongExposure(mgr) {
     const lookView = NodeMan.get("lookView", false);
-    if (!lookView || !lookView.camera) { alert("Long Exposure: no look view in this sitch."); return; }
+    if (!lookView || !lookView.camera) { alert("Long Exposure/Stacking: no look view in this sitch."); return; }
     const camera = lookView.camera;
     const P = mgr.params;
     // The look view's projection. A fisheye or a panorama replaces the pinhole
@@ -557,16 +581,40 @@ async function renderLongExposure(mgr) {
     // runs past the sitch end, temporarily extend Sit.frames / aFrame / bFrame
     // so the world keeps evaluating (restored in the finally below).
     const startFrame = 0;
-    const numFrames = Math.max(1, Math.round((P.durationMin ?? 5) * 60 * fps));
-    const endFrame = startFrame + numFrames - 1;
+    const simSpeed = Sit.simSpeed ?? 1;
+    if (!(simSpeed > 0) || !Number.isFinite(simSpeed)) throw new Error("Long exposure needs a positive simulation speed");
+    const durationSeconds = Math.max(0.001, (P.durationMin ?? 5) * 60);
+    const stackMode = P.captureMode === "Brightest-pixel stack";
+    const renderLabel = stackMode ? "Rendering brightest-pixel stack" : "Rendering long exposure";
+    const stackSeconds = Number.isFinite(P.stackExposureSeconds) && P.stackExposureSeconds > 0
+        ? P.stackExposureSeconds : 10;
+    const numFrames = durationSeconds * fps / simSpeed;
+    const endFrame = startFrame + numFrames;
     const savedSitFrames = Sit.frames, savedSitA = Sit.aFrame, savedSitB = Sit.bFrame;
     if (endFrame >= (Sit.frames ?? 1)) {
-        Sit.frames = endFrame + 1;
-        Sit.bFrame = endFrame;
+        Sit.frames = Math.ceil(endFrame) + 1;
+        Sit.bFrame = Math.ceil(endFrame);
         if (Sit.aFrame === undefined) Sit.aFrame = 0;
     }
     const step = Math.max(1, Math.round(P.step || 1));
-    const numSamples = Math.ceil(numFrames / step);
+    // Seed the source histories at t=0, then integrate every interval including
+    // the exact shutter endpoint (which can be a fractional sitch frame).
+    // Merge normal samples with exact subexposure boundaries. An interval must
+    // never straddle two stack windows, even with a large step or simSpeed.
+    const sampleOffsets = stackMode ? [0] : null;
+    const frameEpsilon = Math.max(1, numFrames) * 1e-12;
+    if (stackMode) {
+        let regular = step, boundaryIndex = 1;
+        while (sampleOffsets.at(-1) < numFrames) {
+            const boundary = Math.min(numFrames, boundaryIndex * stackSeconds * fps / simSpeed);
+            const next = Math.abs(regular - boundary) <= frameEpsilon ? boundary : Math.min(regular, boundary);
+            if (next - sampleOffsets.at(-1) > frameEpsilon) sampleOffsets.push(next);
+            else sampleOffsets[sampleOffsets.length - 1] = next;
+            if (regular <= next + frameEpsilon) regular += step;
+            if (boundary <= next + frameEpsilon) boundaryIndex++;
+        }
+    }
+    const numSamples = sampleOffsets?.length ?? Math.ceil(numFrames / step) + 1;
     // preview cadence: roughly every 30 frames of sitch time, at least every sample
     const previewEvery = Math.max(1, Math.round(30 / step));
 
@@ -602,13 +650,13 @@ async function renderLongExposure(mgr) {
         "display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;" +
         "color:#777;font-family:sans-serif;font-size:18px;";
     const coverLabel = document.createElement("div");
-    coverLabel.textContent = "Rendering long exposure…";
+    coverLabel.textContent = `${renderLabel}…`;
     cover.appendChild(coverLabel);
     document.body.appendChild(cover);
     let preview = null, previewCtx = null, previewImg = null;
 
     const progress = new ExportProgressWidget(
-        `Rendering long exposure (${numSamples} of ${numFrames} frames${step > 1 ? `, step ${step}` : ""})…`,
+        `${renderLabel} (${numSamples} of ${numFrames} frames${step > 1 ? `, step ${step}` : ""})…`,
         numSamples);
 
     // ---- gather HDR sources, hide their cosmetic LDR versions ----
@@ -659,8 +707,8 @@ async function renderLongExposure(mgr) {
                 n.suppressBillboard = true;
             }
         }
-        // hide the LDR satellite cloud: only flaring satellites (+ lit ISS)
-        // are splatted; everything else is omitted from the exposure
+        // The HDR path integrates satellite flux directly, including ordinary
+        // sunlit passes when the photometric estimate is selected.
         if (nightSky?.satellites?.lightCloud) {
             for (const pts of [nightSky.satellites.lightCloud.points, nightSky.satellites.lightCloud.mainViewPoints]) {
                 if (pts) hiddenSprites.push({obj: pts, was: pts.visible});
@@ -670,7 +718,9 @@ async function renderLongExposure(mgr) {
     // chart furniture never belongs in a photograph: constellation lines and
     // the equatorial grid are hidden for the exposure (both modes), restored after
     if (nightSky) {
-        for (const g of [nightSky.constellationsGroup, nightSky.equatorialSphereGroup]) {
+        for (const g of [nightSky.constellationsGroup, nightSky.equatorialSphereGroup,
+            nightSky.sunArrowGroup, nightSky.flareRegionGroup, nightSky.flareBandGroup,
+            nightSky.satelliteTrackGroup, nightSky.satelliteFlareTracksGroup, nightSky.satelliteGroundGroup]) {
             if (g) hiddenSprites.push({obj: g, was: g.visible});
         }
     }
@@ -781,6 +831,13 @@ async function renderLongExposure(mgr) {
 
     // ---- per-run state, sized after the first render ----
     let W = 0, H = 0, acc = null, frameLin = null, readCanvas = null, readCtx = null;
+    let stackMax = null, stackPreview = null, windowSeconds = 0, nextStackEnd = stackSeconds;
+    function flushStackWindow() {
+        // Fixed detector gain, including the final partial window and Enough.
+        for (let p = 0; p < acc.length; p++) stackMax[p] = Math.max(stackMax[p], acc[p] / stackSeconds);
+        acc.fill(0);
+        windowSeconds = 0;
+    }
 
     const _q = new Quaternion(), _qInv = new Quaternion(), _qTmp = new Quaternion();
     const _v = new Vector3(), _v2 = new Vector3();
@@ -1033,7 +1090,15 @@ async function renderLongExposure(mgr) {
             return _qTmp;
         };
         const srcAt = (s) => {
-            if (src.isDir || !src.prevPos) return src;
+            if (src.isDir) {
+                if (!src.prevDir) return src;
+                const p = src.prevDir;
+                const x = p.x + (src.x - p.x) * s, y = p.y + (src.y - p.y) * s, z = p.z + (src.z - p.z) * s;
+                const inv = 1 / Math.hypot(x, y, z);
+                _movingDir.x = x * inv; _movingDir.y = y * inv; _movingDir.z = z * inv;
+                return _movingDir;
+            }
+            if (!src.prevPos) return src;
             _movingSrc.pos.lerpVectors(src.prevPos, src.pos, s);
             return _movingSrc;
         };
@@ -1049,25 +1114,34 @@ async function renderLongExposure(mgr) {
         // cap scales with Frame Step: inter-sample intervals are step× longer,
         // so a fast streak can legitimately cover step× more pixels per interval
         const nSub = Math.min(4096, Math.max(1, Math.ceil(est / 0.6)));
-        const eSub = flux * splatScale / nSub;
         const dt = (t1 - t0);
+        if (!(dt > 0)) return;
+        const energyScale = dt * simSpeed * splatScale / nSub;
+        const cr = flux * r, cg = flux * g, cb = flux * b;
+        const previous = src.prevRGB;
         for (let k = 0; k < nSub; k++) {
             const s = (k + 0.5) / nSub;
             const t = t0 + dt * s;
-            let e2 = eSub;
+            let e2 = energyScale;
             if (strobe) {
-                e2 *= strobeOnFraction(t0 + dt * (k / nSub), t0 + dt * ((k + 1) / nSub),
+                const clockScale = strobe.timeScale ?? 1;
+                e2 *= strobeOnFraction((t0 + dt * (k / nSub)) * clockScale,
+                    (t0 + dt * ((k + 1) / nSub)) * clockScale,
                     strobe.every, strobe.length, strobe.offset);
                 if (e2 <= 0) continue;
             }
             const ss = srcAt(s);
             if (occMask && maskOccluded(ss)) continue;   // blocked by foreground
             if (projectAt(poseAt(s, t), _v2, ss, _pS)) {
-                deposit(_pS.x, _pS.y, e2, r, g, b);
+                deposit(_pS.x, _pS.y, e2,
+                    previous ? previous[0] + (cr - previous[0]) * s : cr,
+                    previous ? previous[1] + (cg - previous[1]) * s : cg,
+                    previous ? previous[2] + (cb - previous[2]) * s : cb);
             }
         }
     }
     const _movingSrc = {isDir: false, pos: new Vector3()};
+    const _movingDir = {isDir: true, x: 0, y: 0, z: 0};
 
     // ---- offline per-frame recipe (mirrors ScriptRenderer.renderViewAt) ----
     async function updateWorld(f) {
@@ -1099,15 +1173,15 @@ async function renderLongExposure(mgr) {
     }
 
     let prevPose = null;             // {qBase, pos, t}
-    const prevLightPos = new Map();  // light node id -> Vector3 (last frame's world pos)
-    const prevSatPos = new Map();    // satellite number -> Vector3 (last frame's apparent pos)
-    let framesDone = 0;              // SAMPLES actually accumulated (early "Enough" stop);
-                                     // the average normalizes per sample, so Frame Step
-                                     // changes speed, not exposure brightness
+    const prevLightPos = new Map();  // source id -> {pos, rgb}, including zero-flux samples
+    const prevSatPos = new Map();
+    let framesDone = 0;
+    let elapsedSeconds = 0;
 
     try {
-        for (let i = 0; i < numFrames; i += step) {
+        for (let sample = 0; sample < numSamples; sample++) {
             if (progress.shouldStop()) break;
+            const i = sampleOffsets ? sampleOffsets[sample] : Math.min(sample * step, numFrames);
             const f = startFrame + i;
             const t = f / fps;
 
@@ -1128,6 +1202,10 @@ async function renderLongExposure(mgr) {
                 W = lookView.canvas.width;
                 H = lookView.canvas.height;
                 acc = new Float32Array(W * H * 3);
+                if (stackMode) {
+                    stackMax = new Float32Array(acc.length);
+                    stackPreview = new Float32Array(acc.length);
+                }
                 frameLin = new Float32Array(W * H * 3);
                 readCanvas = document.createElement("canvas");
                 readCanvas.width = W; readCanvas.height = H;
@@ -1145,7 +1223,9 @@ async function renderLongExposure(mgr) {
             const qRendered = camera.quaternion.clone();
             const nq = nudgeQuaternion(t);
             const qBase = nq ? qRendered.clone().multiply(_q.copy(nq).invert()) : qRendered;
-            const pose = {qBase, pos: camera.position.clone(), t};
+            const pose = {qBase, pos: camera.position.clone(), t,
+                celQ: nightSky?.celestialSphere?.getWorldQuaternion(new Quaternion())};
+            const intervalSeconds = prevPose ? (t - prevPose.t) * simSpeed : 0;
             projElements = camera.projectionMatrix.elements.slice();
 
             // occlusion mask: build from this sample's base pose, and rebuild
@@ -1234,7 +1314,7 @@ async function renderLongExposure(mgr) {
             }
 
             // ---- accumulate the frame ----
-            for (let p = 0; p < nPix * 3; p++) acc[p] += frameLin[p];
+            for (let p = 0; p < nPix * 3; p++) acc[p] += frameLin[p] * intervalSeconds;
 
             // ---- HDR point splats over [prev frame, this frame] ----
             if (P.hdrPoints) {
@@ -1245,14 +1325,18 @@ async function renderLongExposure(mgr) {
                 // camera sits above most of the extinction (scale exp(-h/8400m))
                 // and its horizon dips below 0° apparent altitude
                 const up = getLocalUpVector(camera.position);
+                const previousUp = getLocalUpVector(pPose.pos);
                 const camAltM = Math.max(0, altitudeHAE(camera.position));
                 const kAltScale = Math.exp(-camAltM / 8400);
                 const horizonSin = -(Math.sqrt(2 * camAltM / 6371000) + 0.01);
+                const previousAltM = Math.max(0, altitudeHAE(pPose.pos));
+                const previousKAltScale = Math.exp(-previousAltM / 8400);
+                const previousHorizonSin = -(Math.sqrt(2 * previousAltM / 6371000) + 0.01);
 
                 // celestial sources (skip in full daylight, like renderSky)
                 const skyOp = NodeMan.get("theSun", false)?.skyOpacity ?? 0;
                 if (nightSky?.celestialSphere && skyOp < 1) {
-                    const celQ = nightSky.celestialSphere.getWorldQuaternion(new Quaternion());
+                    const celQ = pose.celQ;
                     const celQInv = celQ.clone().invert();
                     const refractOn = refractionUniforms.uRefractionEnabled.value > 0.5;
                     const refractOpts = refractOn ? refractionOptsFromUniforms() : null;
@@ -1268,18 +1352,30 @@ async function renderLongExposure(mgr) {
                         (nudgeParams.enabled ? radians(nudgeParams.magnitude * 2.6) : 0);
                     const cosLimit = Math.cos(Math.min(Math.PI, halfField + margin));
 
-                    const celSrc = {isDir: true, x: 0, y: 0, z: 0};
+                    const celSrc = {isDir: true, x: 0, y: 0, z: 0, prevDir: {x: 0, y: 0, z: 0}, prevRGB: [0, 0, 0]};
+                    const previousDir = new Vector3();
+                    const darkRGB = [0, 0, 0];
                     // chromatic extinction rides in the splat color channels:
                     // per-channel transmittance × source color, so horizon
                     // sources dim AND redden together
-                    const splatCelestial = (dirECI, flux, r, g, b) => {
+                    const splatCelestial = (dirECI, flux, r, g, b, alreadyRefracted = false) => {
                         _v2.copy(dirECI).applyQuaternion(celQ);       // -> ECEF/world
-                        if (refractOn) applyRefractionECI(_v2, zenith, refractOpts);
+                        previousDir.copy(dirECI).applyQuaternion(pPose.celQ ?? celQ);
+                        if (refractOn && !alreadyRefracted) {
+                            applyRefractionECI(_v2, zenith, refractOpts);
+                            applyRefractionECI(previousDir, previousUp, refractOpts);
+                        }
                         const sinAlt = _v2.dot(up);
-                        if (sinAlt < horizonSin) return;              // below (dipped) horizon
-                        const ex = extinctionRGB(sinAlt, P.extinctionK, kAltScale, P.reddening);
-                        if (flux * ex[0] < 1e-5) return;              // red fades last
+                        const previousSinAlt = previousDir.dot(previousUp);
+                        const ex = sinAlt >= horizonSin ? extinctionRGB(sinAlt, P.extinctionK, kAltScale, P.reddening) : darkRGB;
+                        const previousEx = previousSinAlt >= previousHorizonSin ?
+                            extinctionRGB(previousSinAlt, P.extinctionK, previousKAltScale, P.reddening) : darkRGB;
+                        if (flux * Math.max(ex[0], previousEx[0]) < 1e-5) return;
                         celSrc.x = _v2.x; celSrc.y = _v2.y; celSrc.z = _v2.z;
+                        celSrc.prevDir.x = previousDir.x; celSrc.prevDir.y = previousDir.y; celSrc.prevDir.z = previousDir.z;
+                        celSrc.prevRGB[0] = flux * r * previousEx[0];
+                        celSrc.prevRGB[1] = flux * g * previousEx[1];
+                        celSrc.prevRGB[2] = flux * b * previousEx[2];
                         splatInterval(celSrc, pPose, pose, t0, t, flux, r * ex[0], g * ex[1], b * ex[2], null);
                     };
 
@@ -1306,64 +1402,60 @@ async function renderLongExposure(mgr) {
                             // near-white point sources
                             const flux = Math.pow(10, -0.4 * (ps.mag - P.satMag));
                             if (flux < 1e-5) continue;
-                            _v2.copy(ps.equatorial).normalize().applyQuaternion(celQ);
-                            const sinAlt = _v2.dot(up);
-                            if (sinAlt < horizonSin) continue;
-                            const ex = extinctionRGB(sinAlt, P.extinctionK, kAltScale, P.reddening);
-                            if (flux * ex[0] < 1e-5) continue;
-                            celSrc.x = _v2.x; celSrc.y = _v2.y; celSrc.z = _v2.z;
-                            splatInterval(celSrc, pPose, pose, t0, t, flux, ex[0], ex[1], ex[2], null);
+                            splatCelestial(_v.copy(ps.equatorial).normalize(), flux, 1, 1, 1, true);
                         }
                     }
 
-                    // Satellites: only FLARING ones, plus the ISS when sunlit —
-                    // everything else is omitted (the LDR cloud is hidden above).
-                    // The glint ramp is recomputed fresh per frame (the display's
-                    // updateSatellites staggers each sat every ~10 frames), and the
-                    // flare flux ramps with the same shared cone falloff the live
-                    // view uses. Fast-moving sats get the same sub-frame interval
-                    // splatting as everything else -> smooth flare streaks.
-                    const sats = nightSky?.satellites;
-                    if (sats?.TLEData?.satData && sats.showSatellites !== false && Globals.toSun) {
-                        const spread = sats.flareAngle;
-                        const fluxFlarePeak = Math.pow(10, -0.4 * (SAT_FLARE_PEAK_MAG - P.satMag));
-                        const fluxISS = Math.pow(10, -0.4 * (ISS_MAG - P.satMag));
-                        for (const sd of sats.TLEData.satData) {
-                            if (!sd || !sd.visible || sd.invalidPosition || !sd.ecef) continue;
-                            // Recompute fractional illumination at this sample: the
-                            // live display staggers updates, and a lit boolean would
-                            // keep a fading flare at full flux until shadow entry.
-                            const illumination = penumbraFade(shadowOcclusion(sd.ecef, Globals.toSun,
-                                Globals.equatorRadius, Globals.polarRadius), sats.penumbraDepth);
-                            if (illumination <= 0) continue;
-                            const isISS = sd.number === 25544;
-                            const pos = sd.ecefApparent ?? sd.ecef;
+                }
+
+                const sats = nightSky?.satellites;
+                if (sats?.TLEData?.satData && Globals.toSun) {
+                    const fluxZeroPoint = Math.pow(10, 0.4 * P.satMag);
+                    for (const sd of sats.TLEData.satData) {
+                        if (!sd || sd.invalidPosition || !sd.ecef) {
+                            if (sd) prevSatPos.delete(sd.number);
+                            continue;
+                        }
+                        const pos = sd.ecefApparent ?? sd.ecef;
+                        let state = prevSatPos.get(sd.number);
+                        if (!state) {
+                            state = {pos: pos.clone(), prevPos: pos.clone(), rgb: [0, 0, 0], prevRGB: [0, 0, 0]};
+                            prevSatPos.set(sd.number, state);
+                        }
+                        state.prevPos.copy(state.pos);
+                        state.pos.copy(pos);
+                        for (let c = 0; c < 3; c++) { state.prevRGB[c] = state.rgb[c]; state.rgb[c] = 0; }
+
+                        // Keep physical history even while invisible. A later
+                        // reappearance must not connect to an old visible point.
+                        if (skyOp < 1 && sats.showSatellites !== false && sd.visible &&
+                            !sd.tleFrameHidden && !sd.hiddenInLookView) {
                             _v.copy(pos).sub(camera.position).normalize();
                             const sinAlt = _v.dot(up);
-                            if (sinAlt < horizonSin) continue;
-                            let flux = isISS ? fluxISS : 0;
-                            const satNormal = sats.getSatelliteNormal(sd.ecef, nightSky.globe.center);
-                            const reflected = _v2.copy(sd.ecef).sub(camera.position).reflect(satNormal).normalize();
-                            const dotS = Math.max(-1, Math.min(1, reflected.dot(Globals.toSun)));
-                            const glintAngle = Math.abs(degrees(Math.acos(dotS)));
-                            if (glintAngle < spread) {
-                                // magnitude-space taper: the falloff band fades the
-                                // flare by SAT_FLARE_TAPER_MAGS mags -> the streak
-                                // brightens smoothly from nothing, flares at full
-                                // peak through the core, and fades back to nothing
-                                flux += fluxFlarePeak * Math.pow(10,
-                                    -0.4 * SAT_FLARE_TAPER_MAGS * (1 - flareRamp(glintAngle, spread)));
+                            if (sinAlt >= horizonSin) {
+                                const illumination = sats.getSatelliteIllumination(sd.ecef, Globals.toSun);
+                                let flux = 0;
+                                if (illumination > 0) {
+                                    const appearance = sats.getSatelliteAppearance(sd, camera.position, Globals.toSun, illumination);
+                                    if (sats.brightnessModel === "Photometric estimate") {
+                                        flux = appearance.flux * fluxZeroPoint;
+                                    } else {
+                                        // Explicit compatibility mode for older cone renders.
+                                        flux = sd.number === 25544 ? Math.pow(10, -0.4 * (ISS_MAG - P.satMag)) : 0;
+                                        if (appearance.glintAngleDeg < sats.flareAngle) {
+                                            flux += Math.pow(10, -0.4 * (SAT_FLARE_PEAK_MAG - P.satMag)) * Math.pow(10,
+                                                -0.4 * SAT_FLARE_TAPER_MAGS * (1 - flareRamp(appearance.glintAngleDeg, sats.flareAngle)));
+                                        }
+                                        flux *= illumination;
+                                    }
+                                }
+                                const ex = extinctionRGB(sinAlt, P.extinctionK, kAltScale, P.reddening);
+                                for (let c = 0; c < 3; c++) state.rgb[c] = flux * ex[c];
                             }
-                            flux *= illumination;
-                            if (flux <= 0) continue;
-                            const ex = extinctionRGB(sinAlt, P.extinctionK, kAltScale, P.reddening);
-                            if (flux * ex[0] < 1e-4) continue;        // red fades last
-                            const pPos = prevSatPos.get(sd.number);
-                            const cur = pos.clone();
-                            prevSatPos.set(sd.number, cur);
-                            const src = {isDir: false, pos: cur, prevPos: pPos || cur};
-                            splatInterval(src, pPose, pose, t0, t, flux, ex[0], ex[1], ex[2], null);
                         }
+                        if (Math.max(...state.rgb, ...state.prevRGB) < 1e-5) continue;
+                        const src = {isDir: false, pos: state.pos, prevPos: state.prevPos, prevRGB: state.prevRGB};
+                        splatInterval(src, pPose, pose, t0, t, 1, state.rgb[0], state.rgb[1], state.rgb[2], null);
                     }
                 }
 
@@ -1375,14 +1467,13 @@ async function renderLongExposure(mgr) {
                 // it fades into the stars. Slant-path extinction (~0.015 mag/km
                 // clear air) dims the distant ones the way a camera sees them.
                 for (const ln of lightNodes) {
-                    if (!ln.lightVisible || !ln.light) continue;
+                    if (!ln.light) { prevLightPos.delete(ln.id); continue; }
                     const pos = ln.light.getWorldPosition(new Vector3());
                     const d = Math.max(1, pos.distanceTo(camera.position));
                     const E = (ln.light.intensity ?? 100) * LIGHT_CANDELA_PER_INTENSITY * P.lightGain / (d * d);
-                    let flux = E * Math.pow(10, 0.4 * (P.satMag + 14.2));
+                    let flux = ln.lightVisible ? E * Math.pow(10, 0.4 * (P.satMag + 14.2)) : 0;
                     if (flux > 1e7) flux = 1e7;          // 3m-away light: don't blow up the splat loop
-                    const pPos = prevLightPos.get(ln.id);
-                    prevLightPos.set(ln.id, pos);
+                    const previous = prevLightPos.get(ln.id);
                     // chromatic slant-path extinction, scaled by the mean
                     // pressure altitude of the path (plane-to-plane paths at
                     // cruise altitude run through far thinner air)
@@ -1391,36 +1482,57 @@ async function renderLongExposure(mgr) {
                     const exG = Math.pow(10, -0.4 * xl * EXT_RGB[1]);
                     const exR = P.reddening ? Math.pow(10, -0.4 * xl * EXT_RGB[0]) : exG;
                     const exB = P.reddening ? Math.pow(10, -0.4 * xl * EXT_RGB[2]) : exG;
-                    if (flux * exR < 1e-5) continue;
                     const c = ln.light.color ?? {r: 1, g: 1, b: 1};
+                    const rgb = [flux * c.r * exR, flux * c.g * exG, flux * c.b * exB];
+                    prevLightPos.set(ln.id, {pos, rgb});
+                    if (Math.max(...rgb, ...(previous?.rgb ?? [0, 0, 0])) < 1e-5) continue;
                     const strobe = (ln.strobeEvery && ln.strobeLength)
-                        ? {every: ln.strobeEvery, length: ln.strobeLength, offset: ln.strobeOffset || 0}
+                        ? {every: ln.strobeEvery, length: ln.strobeLength, offset: ln.strobeOffset || 0,
+                            timeScale: ln.deterministicStrobe ? simSpeed : 1}
                         : null;
-                    const src = {isDir: false, pos, prevPos: pPos || pos};
+                    const src = {isDir: false, pos, prevPos: previous?.pos ?? pos, prevRGB: previous?.rgb ?? rgb};
                     splatInterval(src, pPose, pose, t0, t, flux, c.r * exR, c.g * exG, c.b * exB, strobe);
                 }
             }
 
             prevPose = pose;
+            elapsedSeconds += intervalSeconds;
+            if (stackMode) {
+                windowSeconds += intervalSeconds;
+                if (elapsedSeconds >= nextStackEnd - frameEpsilon * simSpeed / fps) {
+                    flushStackWindow();
+                    nextStackEnd += stackSeconds;
+                }
+            }
             framesDone++;
 
             // live preview of the developing exposure (running average so far);
             // moonlight mode previews at the developed gain (raw values are
             // ~18.6 stops down at full moon and would preview black)
-            if (previewCtx && framesDone % previewEvery === 0) {
+            if (previewCtx && elapsedSeconds > 0 && framesDone % previewEvery === 0) {
                 const previewGain = (P.moonlight && bgBoost > 1) ? bgBoost : 1;
-                tonemapBufferInto(acc, 1 / framesDone, W, H, previewGain, {useACES, acesExposure}, previewCtx, previewImg);
-                coverLabel.textContent = `Rendering long exposure… ${framesDone} / ${numSamples} samples`;
+                if (stackMode) for (let p = 0; p < acc.length; p++) {
+                    stackPreview[p] = Math.max(stackMax[p], acc[p] / stackSeconds);
+                }
+                tonemapBufferInto(stackMode ? stackPreview : acc, stackMode ? 1 : 1 / elapsedSeconds,
+                    W, H, previewGain, {useACES, acesExposure}, previewCtx, previewImg);
+                coverLabel.textContent = `${renderLabel}… ${framesDone} / ${numSamples} samples`;
             }
 
             progress.update(framesDone);
             if (framesDone % 4 === 1) await new Promise((r) => setTimeout(r, 0));
         }
 
-        if (acc && framesDone > 0) {
-            // normalize by frames actually accumulated (early "Enough" stop included)
-            const inv = 1 / framesDone;
-            for (let p = 0; p < acc.length; p++) acc[p] *= inv;
+        if (acc && elapsedSeconds > 0) {
+            // Normalize by the actual shutter time, including an uneven final
+            // interval or an early stop, rather than by the number of samples.
+            if (stackMode) {
+                if (windowSeconds > 0) flushStackWindow();
+                acc = stackMax;
+            } else {
+                const inv = 1 / elapsedSeconds;
+                for (let p = 0; p < acc.length; p++) acc[p] *= inv;
+            }
             // moonlight mode: open pre-developed (EV = the calibrated boost,
             // i.e. the moonlit ground exposed like the boosted render), with
             // the slider range extended to reach it

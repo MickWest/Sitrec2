@@ -328,5 +328,5 @@ size** in Shadow tweaks.
 - [Lunar Eclipses](LunarEclipse.md): the Lunar Eclipse folder
 - [Terrain](Terrain.md): 3D Buildings, which City Lights needs
 - [Diffraction Glare](DiffractionGlare.md): glare from bright point sources, which Optics Before Sensor Effects orders
-- [Long Exposure Simulation](LongExposure.md)
+- [Long Exposure/Stacking](LongExposure.md)
 - [User Interface](UserInterface.md)

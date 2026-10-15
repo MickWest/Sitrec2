@@ -1,26 +1,58 @@
-# Long Exposure Simulation
+# Long Exposure/Stacking
 
-Sitrec can simulate a **long-exposure photograph** taken with the look camera: the scene
-is sampled across the exposure and averaged into a single still image, as if the camera's
-shutter had been open for that long in real time. Anything that moves — aircraft,
-satellites, stars, or the camera itself — leaves a trail. Point-source brightness is computed
-from each source's magnitude or light intensity.
+Sitrec can simulate a **brightest-pixel stack** or a **continuous long exposure** taken
+with the look camera. Anything that moves — aircraft, satellites, stars, or the camera
+itself — leaves a trail. Point-source brightness is computed from each source's magnitude
+or light intensity.
 
-You'll find it under **Video → Long Exposure**.
+You'll find it under **Video → Long Exposure/Stacking**.
 
 ## Quick start
 
 1. Set **Duration (Minutes)** (default 5). The exposure runs from the **start of the
    sitch** for that long — extending past the sitch's own end if necessary.
-2. Open **Video → Long Exposure** and click **Render Long Exposure**.
+2. Choose **Capture Mode**: **Brightest-pixel stack** (the default for new scenes) or
+   **Continuous exposure**. For a stack, set **Stack Exposure (s)** (default 10).
+   Click **Render Long Exposure/Stacking**.
 3. While it renders, a preview of the developing exposure is shown, updated every 30 frames.
    The progress widget's **Enough** button stops early and keeps a correctly-exposed
-   shorter exposure.
+   shorter exposure. In stack mode, a partial final subexposure retains the
+   configured gain rather than being brightened to a full exposure.
 4. The result opens in a window with an **Exposure (EV)** slider and **Save PNG**.
 
 The EV slider re-tone-maps the kept high-dynamic-range result live — push it up to reveal
 faint trails and stars, down to isolate only the brightest sources, without re-rendering.
 Bright values roll off through a soft photographic shoulder rather than clipping hard.
+
+## Continuous exposure and brightest-pixel stacks
+
+Brightest-pixel stacking, also called lighten blending, is a standard star-trail
+workflow used by [Allsky](https://github.com/AllskyTeam/allsky/blob/master/src/startrails.cpp)
+and [indi-allsky](https://github.com/aaronwmorris/indi-allsky/blob/master/indi_allsky/starTrails.py).
+It is the default for new scenes. Saved capture-mode choices are preserved. Older
+exposure saves that predate this option retain continuous exposure.
+
+**Continuous exposure** integrates the whole duration and displays its time-average,
+so a static scene has the same brightness as a single frame. **Brightest-pixel stack**
+simulates a sequence of contiguous finite exposures, then keeps the brightest value
+in each color channel at each pixel. For example, 20 minutes with **Stack Exposure (s)**
+set to 10 combines 120 ten-second exposures. Each subexposure integrates the same
+linear source flux and background as continuous mode; it does not take a maximum
+of instantaneous rendered samples.
+
+This changes how moving trails compare with slowly moving stars or a stationary
+background. Each subexposure retains its own dwell time, and repeated visits to
+the same pixel do not add across exposures. A colored result pixel can contain
+channels selected from different subexposures. Stack boundaries are sampled exactly,
+even when they fall between sitch frames or the Frame Step exceeds the subexposure.
+The final partial subexposure, including one stopped with **Enough**, uses the full
+configured subexposure duration for normalization; a shorter shutter does not receive
+extra gain.
+
+This models contiguous exposures with fixed gain. It does not include gaps, sensor
+noise, changing camera gain, or later local image processing. The capture and stacking
+recipe of a comparison photograph must be established independently; selecting this
+mode does not establish that the photograph used a brightest-pixel stack.
 
 ## Why "HDR Point Sources" matters
 
@@ -50,10 +82,13 @@ its astronomical magnitude:
   beacons), inverse-square falloff and distance haze. **Strobes leave dashed
   trails** (the dash spacing is the strobe period), and colored lights trail in
   their own color.
-- **Satellites** — only the ones that are actually **flaring** (sun-glint within the flare
-  cone), plus the **ISS when sunlit**. Other satellites are omitted.
-  A flare streak brightens smoothly from nothing, holds full brightness through the heart
-  of the flare, and fades back to nothing.
+- **Satellites** — with **Satellites → Satellite Brightness Model → Photometric estimate**,
+  continuous flare curves and estimated ordinary light, including passes outside the flare
+  angle. Range, phase and fractional sunlight affect their flux. The default sunlight model
+  includes the finite solar disk and a clear atmosphere at Earth's limb. The **Legacy cone**
+  option retains the older flare-only/ISS exposure approximation. Satellite magnitudes remain
+  estimates: orbital records do not give individual attitudes or optical properties. See
+  [Brightness and flares](Satellites.md#brightness-and-flares).
 
 All sources are positioned **continuously between frames** (not just at frame instants), so
 trails are smooth curves even during fast camera motion.
@@ -63,6 +98,8 @@ trails are smooth curves even during fast camera motion.
 | Control | Meaning |
 |---|---|
 | **Duration (Minutes)** | The exposure (shutter) time in minutes of sitch time, from the start of the sitch. If longer than the sitch itself, the timeline is extended for the render. |
+| **Capture Mode** | **Continuous exposure** averages the full duration. **Brightest-pixel stack** integrates contiguous finite subexposures and keeps the per-channel maximum at each pixel. |
+| **Stack Exposure (s)** | Shown for a brightest-pixel stack; default 10 seconds. The final partial exposure retains the same detector gain. |
 | **Lock Camera Heading** | On by default: the camera holds the heading it has *right now* for the whole exposure — a tripod doesn't track. Works in any camera mode (To Target, Celestial Lock, Horizon Flare Region…), behaving as if the heading were locked (Manual) on the current spot in the sky. The Camera Nudge still applies on top. Turn off to let the active camera mode steer during the exposure. |
 | **HDR Point Sources** | On by default: replaces the cosmetic star/planet/light sprites with physically-bright point splats (true linear flux) so bright sources stay visible in the average and leave correct trails. Off = a plain frame average. |
 | **HDR Background** | On by default: in a dark scene the lighting (Sun + Ambient) is temporarily boosted so the background renders using the full 8-bit range, then scaled back down in the HDR buffer. Pushing the EV slider up then reveals smooth ground detail instead of quantized color bands. Calibrated on the first frame; the lighting is restored after the render (including Enough/cancel). |
@@ -74,13 +111,13 @@ trails are smooth curves even during fast camera motion.
 | **Moon Gain** | Multiplier on the magnitude-calibrated Moon disk (1 = physical). |
 | **Point Spread (px)** | The Gaussian point-spread width of splatted sources, in pixels. |
 | **Wait For Loading** | On by default: settle terrain/3D-tiles each frame before capture (slower, but stable terrain). |
-| **Frame Step** | Sample every Nth frame of the range (default 30, ~30× faster). Exposure brightness is unaffected, and point-source trails (stars, lights, satellite flares — including strobe dashes) are integrated continuously between samples so they stay smooth and their total flux does not depend on Frame Step. Only background/scene motion becomes stepped. Set to 1 for a full-quality render. |
+| **Frame Step** | Sample every Nth frame (default 30, ~30× faster). Position and linear flux are interpolated and weighted by elapsed time, including the final partial interval. Trails remain smooth, but a large step can miss rapid flares, shadow transitions or background motion. Reduce it to check short events; use 1 for full quality. |
 | **Refraction** | Shows whether sky refraction is in effect — normally on when **Enable Refraction** (the checkbox on the View → Atmospheric Refraction title) and **Sky** are both on. Ticking it changes that state directly; it is not a copy of either View checkbox, and a later change in View → Atmospheric Refraction sets it again from those two switches. When on, splatted sources use refracted apparent positions, and horizon culling and extinction follow the refracted direction. |
 | **Occlusion Mask** | Hide splatted sources behind terrain and other opaque foreground (a planet setting behind a hill stays hidden). Exact under camera rotation, and recalculated automatically whenever the camera position moves. |
 
 ## Camera Nudge
 
-**Video → Long Exposure → Camera Nudge** jolts the look camera at a chosen time: it bounces
+**Video → Long Exposure/Stacking → Camera Nudge** jolts the look camera at a chosen time: it bounces
 around and settles, like a tripod that's been bumped — and every light in the frame writes
 that bounce into the exposure as a decaying zigzag trail.
 
@@ -128,10 +165,9 @@ inverse-square falloff and atmospheric extinction.
 
 ### Starlink flares
 
-A Starlink Horizon Flares scenario: only the satellites that actually flare during the
-exposure appear, each leaving a streak that swells from nothing to full brightness and fades
-out again as the sun-glint sweeps past the observer. Constellation lines and the equatorial
-grid are automatically excluded from exposures — chart overlays aren't light.
+A Starlink Horizon Flares scenario rendered with the legacy cone model. The photometric
+estimate also includes ordinary illuminated passes and fainter wings outside the cone.
+Constellation lines and the equatorial grid are automatically excluded from exposures.
 
 ![Long exposure of Starlink satellite flares](docimages/longexposure-shf.jpg)
 
@@ -141,9 +177,12 @@ grid are automatically excluded from exposures — chart overlays aren't light.
   ignored. The exposure starts at the first frame of the sitch; if it is longer than the
   sitch, the timeline is temporarily extended (the world keeps evolving — sky rotation,
   satellites, tracks hold their last position) and restored after the render.
-- The result is the **time-average** of the scene — the same brightness convention as a
+- In **Continuous exposure** the result is the **time-average** of the scene — the same brightness convention as a
   single frame. A static scene looks identical to one frame; trails dim in proportion to
   how fast they move (dwell time). Use the EV slider to "push" the exposure.
+- In **Brightest-pixel stack**, each finite subexposure is normalized by its configured
+  duration before taking the per-channel maximum. Gaps, sensor noise and gain changes
+  are not modeled. A partial final exposure receives no compensating brightness boost.
 - Anything that saturates in the **base render** (bright clouds, city glow, terrain) is
   clipped at single-frame white — only catalogued point sources, model lights, satellites
   and the Moon carry true HDR values.
@@ -160,6 +199,8 @@ grid are automatically excluded from exposures — chart overlays aren't light.
   on, the point sources and their trails are placed through that projection, the same
   as the rendered scene, and sources outside the fisheye's masked image circle are left
   out. With a panorama, the occlusion mask is rendered once for each panorama face.
-- Non-flaring satellites are omitted entirely. Only flaring satellites and the sunlit ISS
-  are drawn.
-- Long Exposure and Camera Nudge settings are saved with custom sitches.
+- Satellite visibility depends on estimated flux, image speed, point-spread width and
+  exposure response. Design and attitude are not supplied by orbital elements. Use the
+  available Starlink design profiles as sensitivity checks, with one camera calibration
+  across the trails; a selected profile is not an identification of an unknown spacecraft.
+- Long Exposure/Stacking and Camera Nudge settings are saved with custom sitches.

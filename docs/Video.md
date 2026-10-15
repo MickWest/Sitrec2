@@ -337,5 +337,5 @@ When it is on, renders that include the look view bake it into the output (see
 
 - [Scripting](ScriptedVideo.md) — for scripted, repeatable camera moves rather
   than hand-flown ones
-- [Long Exposure Simulation](LongExposure.md) — trails rather than motion
+- [Long Exposure/Stacking](LongExposure.md) — trails rather than motion
 - [Keyboard Shortcuts](KeyboardShortcuts.md)

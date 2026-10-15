@@ -18,6 +18,9 @@ import {showError} from "../showError";
 import {CPointLightCloud} from "./CPointLightCloud";
 import {t} from "../i18n";
 import {applyRefractionFromObserver, REFRACTION_DEFAULTS} from "../atmosphere/refraction";
+import {penumbraFade, shadowOcclusion} from "../../tools/shf/flarePhysics.js";
+import {satelliteIllumination} from "../../tools/shf/solarIllumination.js";
+import {satelliteFlux, fluxToMagnitude} from "../../tools/shf/satellitePhotometry.js";
 
 // The Earth's rotation rate, rad/s, about the ECEF z axis.
 const EARTH_ROTATION_RATE = 7.292115e-5;
@@ -57,6 +60,9 @@ export class CSatellite {
         this.flareAngle = options.flareAngle ?? 5;
         this.flareModel = options.flareModel ?? "Geocentric Nadir";
         this.penumbraDepth = options.penumbraDepth ?? 5000;
+        this.illuminationModel = options.illuminationModel ?? "Finite Sun + atmosphere";
+        this.brightnessModel = options.brightnessModel ?? "Photometric estimate";
+        this.starlinkProfile = options.starlinkProfile ?? "unknown";
         this.toSun = V3(0, 0, 1);
         this.fromSun = V3(0, 0, -1);
 
@@ -1245,6 +1251,7 @@ export class CSatellite {
                 // 'on' → always visible, no action needed
             }
 
+            satData.tleFrameHidden = tleFrameHidden;
             if (satData.invalidPosition || !satData.visible || tleFrameHidden) {
                 this.removeSatSunArrows(satData);
                 this.lightCloud.setBrightness(i, 0);
@@ -1588,6 +1595,39 @@ export class CSatellite {
         // Geodetic Nadir: normal to the WGS84 ellipsoid at the satellite's position.
         // For a nadir-pointing satellite, the antenna panel is perpendicular to this direction.
         return getLocalUpVector(satPosition);
+    }
+
+    // The sunlight path is distinct from extinction between the satellite and
+    // observer. Both live rendering and offline exposure use this same fraction.
+    getSatelliteIllumination(position, toSun = this.toSun) {
+        const options = {equatorRadius: Globals.equatorRadius, polarRadius: Globals.polarRadius};
+        if (this.illuminationModel === "Legacy fade") {
+            return penumbraFade(shadowOcclusion(position, toSun,
+                options.equatorRadius, options.polarRadius), this.penumbraDepth);
+        }
+        options.atmosphere = this.illuminationModel !== "Finite Sun";
+        return satelliteIllumination(position, toSun, options);
+    }
+
+    getSatelliteAppearance(satData, observer, toSun = this.toSun, illumination = undefined) {
+        const position = satData.ecef;
+        const dx = position.x - observer.x, dy = position.y - observer.y, dz = position.z - observer.z;
+        const rangeM = Math.hypot(dx, dy, dz);
+        if (!(rangeM > 0)) return {flux: 0, magnitude: Infinity, rangeM, glintAngleDeg: 180};
+        const normal = this.getSatelliteNormal(position, V3(0, 0, 0));
+        const incidence = (dx * normal.x + dy * normal.y + dz * normal.z) * 2;
+        const reflectedSunDot = ((dx - incidence * normal.x) * toSun.x +
+            (dy - incidence * normal.y) * toSun.y + (dz - incidence * normal.z) * toSun.z) / rangeM;
+        const glintAngleDeg = degrees(Math.acos(Math.max(-1, Math.min(1, reflectedSunDot))));
+        const phaseAngleRad = Math.acos(Math.max(-1, Math.min(1,
+            -(dx * toSun.x + dy * toSun.y + dz * toSun.z) / rangeM)));
+        illumination ??= this.getSatelliteIllumination(position, toSun);
+        const flux = satelliteFlux({rangeM, phaseAngleRad, glintAngleDeg, illumination,
+            starlink: /STARLINK/i.test(satData.name ?? ""), profile: this.starlinkProfile,
+            // Retain the previous ISS magnitude as an explicit estimated
+            // 1000-km/90-degree reference, now with range and phase dependence.
+            diffuseMagnitudeAt90Deg: satData.number === 25544 ? -2 : undefined});
+        return {flux, magnitude: fluxToMagnitude(flux), rangeM, glintAngleDeg, phaseAngleRad, illumination};
     }
 
     /**

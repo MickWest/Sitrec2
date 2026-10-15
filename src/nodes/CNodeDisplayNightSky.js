@@ -9,7 +9,7 @@ import {Color, Group, Matrix4, Ray, Scene, Sphere, Vector3} from "three";
 import {degrees, radians} from "../utils";
 import {envFlag, getEnv} from "../envUtils";
 import {isSecureBuild} from "../configUtils";
-import {FileManager, GlobalDateTimeNode, Globals, guiMenus, guiShowHide, NodeMan, setRenderOne, Sit} from "../Globals";
+import {FileManager, GlobalDateTimeNode, Globals, guiMenus, guiShowHide, markSitchDirty, NodeMan, setRenderOne, Sit} from "../Globals";
 import {ensureNightSkyFiles} from "../ExtraFiles";
 import {
     DebugArrow,
@@ -32,11 +32,10 @@ import {CNodeDisplayEarthShadow} from "./CNodeDisplayEarthShadow";
 import {CNodeDisplayMoonShadow} from "./CNodeDisplayMoonShadow";
 import {assert} from "../assert";
 import {intersectSphere2, V3} from "../threeUtils";
-// Shared flare brightness model — the cone ramp, penumbra fade, and base/darkness
-// constants, single-sourced so the standalone SHF flare tool can't drift from this
-// live render. (Lives under tools/shf/ because that tool is served as raw ES modules
-// and can only import from there; this bundle can import down into it.)
-import {FLARE, flareRamp, penumbraFade, shadowOcclusion} from "../../tools/shf/flarePhysics.js";
+// Legacy cone controls are shared with the standalone flare scanner. The
+// photometric path uses continuous flux and sunlight models through CSatellite.
+import {FLARE, flareRamp} from "../../tools/shf/flarePhysics.js";
+import {STARLINK_PROFILES} from "../../tools/shf/satellitePhotometry.js";
 import {
     getCelestialDirectionFromRaDec,
     getECEFToEQJMatrix,
@@ -242,8 +241,25 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
             .onChange(() => setRenderOne(true))
         this.addSimpleSerial("flareModel")
 
-        satGUI.add(this.satellites, 'penumbraDepth', 0, 100000, 1).listen().name(t("nightSky.penumbraDepth.label"))
+        const changedPhotometry = () => {
+            this.fullBrightnessUpdate = true;
+            this.updatePhotometryControls();
+            markSitchDirty();
+            setRenderOne(true);
+        };
+        satGUI.add(this.satellites, "brightnessModel", ["Photometric estimate", "Legacy cone"]).listen()
+            .name(t("nightSky.brightnessModel.label")).tooltip(t("nightSky.brightnessModel.tooltip"))
+            .onChange(changedPhotometry);
+        const profiles = Object.fromEntries(Object.entries(STARLINK_PROFILES).map(([key, profile]) => [profile.label, key]));
+        this.starlinkProfileController = satGUI.add(this.satellites, "starlinkProfile", profiles).listen()
+            .name(t("nightSky.starlinkProfile.label")).tooltip(t("nightSky.starlinkProfile.tooltip"))
+            .onChange(changedPhotometry);
+        satGUI.add(this.satellites, "illuminationModel", ["Finite Sun + atmosphere", "Finite Sun", "Legacy fade"]).listen()
+            .name(t("nightSky.illuminationModel.label")).tooltip(t("nightSky.illuminationModel.tooltip"))
+            .onChange(changedPhotometry);
+        this.penumbraController = satGUI.add(this.satellites, 'penumbraDepth', 0, 100000, 1).listen().name(t("nightSky.penumbraDepth.label"))
             .tooltip(t("nightSky.penumbraDepth.tooltip"))
+            .onChange(changedPhotometry);
         this.addSimpleSerial("penumbraDepth")
 
         this.showSunArrows = Sit.showSunArrows;
@@ -575,7 +591,7 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
         satGUI.add(Sit, "satScale", 0, 50, 0.01).name(t("nightSky.satBrightness.label")).listen()
             .tooltip(t("nightSky.satBrightness.tooltip"))
 
-        satGUI.add(Sit, "flareScale", 0, 1, 0.001).name(t("nightSky.flareBrightness.label")).listen()
+        this.flareScaleController = satGUI.add(Sit, "flareScale", 0, 1, 0.001).name(t("nightSky.flareBrightness.label")).listen()
             .tooltip(t("nightSky.flareBrightness.tooltip"))
 
 
@@ -590,6 +606,7 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
                 setRenderOne(true);
             })
         this.addSimpleSerial("arrowRange");
+        this.updatePhotometryControls();
 
 
         // Sun Direction will get recalculated based on data (in satellites)
@@ -1033,7 +1050,14 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
     // Properties that live on this.satellites but are serialized via addSimpleSerial on this node.
     // modSerialize/modDeserialize bridge the gap so values round-trip correctly.
     getSatelliteSerials() {
-        return ["flareAngle", "flareModel", "penumbraDepth", "arrowRange"];
+        return ["flareAngle", "flareModel", "penumbraDepth", "arrowRange", "brightnessModel", "illuminationModel", "starlinkProfile"];
+    }
+
+    updatePhotometryControls() {
+        const photometric = this.satellites.brightnessModel === "Photometric estimate";
+        this.starlinkProfileController?.[photometric ? "show" : "hide"]();
+        this.flareScaleController?.[photometric ? "hide" : "show"]();
+        this.penumbraController?.[this.satellites.illuminationModel === "Legacy fade" ? "show" : "hide"]();
     }
 
     modSerialize() {
@@ -1065,6 +1089,7 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
                 this.satellites[satSerials[i]] = v[satSerials[i]];
             }
         }
+        this.updatePhotometryControls();
 
         if (Globals.exportTagNumber <= 2025003) {
             console.log("Old save with Dispay Range, updating from " + this.arrowRange + " to 100000");
@@ -1289,7 +1314,7 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
         for (let i = 0; i < this.satellites.TLEData.satData.length; i++) {
             const satData = this.satellites.TLEData.satData[i];
 
-            if (!satData.visible) {
+            if (!satData.visible || satData.tleFrameHidden) {
                 magnitudes[i] = 0;
                 continue;
             }
@@ -1313,19 +1338,23 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
             const satPosition = satData.ecef;
             let brightness = FLARE.base;
             const darknessMultiplier = FLARE.darknessMult;
-            const occludedMeters = shadowOcclusion(satPosition, toSun, Globals.equatorRadius, Globals.polarRadius);
-            const fade = penumbraFade(occludedMeters, this.satellites.penumbraDepth);
+            const fade = this.satellites.getSatelliteIllumination(satPosition, toSun);
+            satData.illumination = fade;
             if (fade < 1) {
                 brightness *= fade > 0 ? darknessMultiplier + (1 - darknessMultiplier) * fade : darknessMultiplier;
                 if (fade <= 0) this.satellites.removeSatSunArrows(satData);
             }
             satData.isLit = fade > 0;
+            let appearance = null;
 
             if (fade > 0) {
                 const camToSat = satPosition.clone().sub(cameraPos);
                 const belowHorizon = rayIntersectsEllipsoid(cameraPos, camToSat);
 
                 if (!belowHorizon) {
+                    if (this.satellites.brightnessModel === "Photometric estimate") {
+                        appearance = this.satellites.getSatelliteAppearance(satData, cameraPos, toSun, fade);
+                    }
                     if (satData.number === 25544) {
                         brightness *= 3;
                     }
@@ -1365,6 +1394,14 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
                 satData.isFlaring = false;
             }
 
+            if (this.satellites.brightnessModel === "Photometric estimate") {
+                satData.apparentMagnitude = appearance?.magnitude ?? Infinity;
+                // The live cloud is a visibility aid whose disk area represents
+                // flux. Compensate its old shader distance factor: the model
+                // already includes inverse-square range in the incident flux.
+                brightness = appearance ? Math.min(1, FLARE.base * Math.sqrt(appearance.flux / Math.pow(10, -2.4))) *
+                    appearance.rangeM / 3000000 : 0;
+            }
             // need the /5 as brightness calculation has changed
             if (brightness < Sit.satCutOff/5) {
                 brightness = 0;

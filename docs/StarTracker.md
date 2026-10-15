@@ -404,6 +404,6 @@ The result is the field centre in RA/Dec, the roll angle, and a field of view. R
 ## See also
 
 - [Masking](Masking.md) — excluding trees, an OSD or a vignette from the analysis
-- [Long Exposure](LongExposure.md) — stacking frames, which pairs naturally with star work
+- [Long Exposure/Stacking](LongExposure.md) — stacking frames, which pairs naturally with star work
 - [Starlink](Starlink.md) — identifying satellites among the movers
 - [Tracks](Tracks.md) — what Sitrec does with a moving object once you have one

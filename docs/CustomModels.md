@@ -283,7 +283,7 @@ The live glow faces each view's camera, grows with viewing distance/FOV to remai
 
 The names `Sky_Dome`, `Light`, `Moon_Light`, `Lensflare_Source`, and `Sun_light` are explicitly ignored. This is a short, case-sensitive list, not a general studio-light detector. Avoid these names for operational lamps and exclude studio lighting from the GLB altogether. Name substrings such as "strobe" or "beacon" do **not** enable flashing; only the custom properties do that.
 
-With **HDR Point Sources** enabled, [Long Exposure](LongExposure.md) replaces the live glows with photometric point sources. The current conversion is `effective candela = imported intensity × 0.2 × Light Brightness`, followed by inverse-square falloff and atmospheric extinction. It preserves the light color and integrates flash duty cycles, producing dashed strobe trails. `Light Visible` still gates the source; `Light Illuminates` need not be on for it to appear in the exposure.
+With **HDR Point Sources** enabled, [Long Exposure/Stacking](LongExposure.md) replaces the live glows with photometric point sources. The current conversion is `effective candela = imported intensity × 0.2 × Light Brightness`, followed by inverse-square falloff and atmospheric extinction. It preserves the light color and integrates flash duty cycles, producing dashed strobe trails. `Light Visible` still gates the source; `Light Illuminates` need not be on for it to appear in the exposure.
 
 #### Verification before delivering a model
 

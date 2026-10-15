@@ -274,7 +274,7 @@ export const helpDocs = [
     {
         file: "docs/LongExposure", labelKey: "menus.help.documentation.longExposure",
         section: "video", menuId: "video", role: "reference",
-        chatDesc: "Simulating a long-exposure photograph (Video → Long Exposure) so moving aircraft, satellites, and stars leave trails.",
+        chatDesc: "Simulating a long-exposure photograph or brightest-pixel stack (Video → Long Exposure/Stacking) so moving aircraft, satellites, and stars leave trails.",
     },
     {
         file: "docs/VideoTonalRange", labelKey: "menus.help.documentation.videoTonalGraph",

@@ -56,8 +56,8 @@ it back to **Manual**. **Shift+C** also puts the camera 7 ft above the ground.
 |---|---|
 | **Manual** | You aim the camera with **Pan (Az)**, **Tilt (El)** and **Roll**. This is the default. Pan 0 is north and Tilt 0 is level, unless **Relative Heading** is on. |
 | **To Target** | The camera points at the target, which is set in the [Target menu](#c-the-target-menu). **Roll** still applies. When you import a second track, Sitrec selects **To Target** for you. |
-| **Celestial Lock** | The camera follows a sky object, chosen in the **Celestial Object** box that appears under the selector. See [Long Exposure](LongExposure.md). |
-| **Horizon Flare Region** | The camera points toward the Sun's azimuth, just above the horizon, where Starlink horizon flares appear. See [Long Exposure](LongExposure.md). |
+| **Celestial Lock** | The camera follows a sky object, chosen in the **Celestial Object** box that appears under the selector. See [Long Exposure/Stacking](LongExposure.md). |
+| **Horizon Flare Region** | The camera points toward the Sun's azimuth, just above the horizon, where Starlink horizon flares appear. See [Long Exposure/Stacking](LongExposure.md). |
 | **Custom Az/El** | The camera follows azimuth and elevation columns from a CSV file. This choice appears only after you import a file with `az` or `el` columns. See [Camera Angle Tracks in Tracks](Tracks.md). |
 | *A track with angles* | A track that carries its own pointing angles (a MISB file, for example) adds its own choice. |
 | **Star Track** | Appears after the Star Tracker syncs the camera to a solved star field. See [Star Tracker](StarTracker.md). |
@@ -353,7 +353,7 @@ ground. Near the center, check that the camera is not below the terrain.
 - [Camera View Modes](satcam.md): Normal and Satellite Mode, and the 0-360 Pan setting
 - [Fisheye (Allsky) Projection](Fisheye.md)
 - [Panoramic Camera](PanoramicCamera.md)
-- [Long Exposure](LongExposure.md): Celestial Lock and Horizon Flare Region
+- [Long Exposure/Stacking](LongExposure.md): Celestial Lock and Horizon Flare Region
 - [Diffraction Glare](DiffractionGlare.md): the Diffraction Glare folder in Camera Tweaks
 - [MQ9 Tracking Simulation](MQ9TrackingSimulation.md): the MQ9 Tracking folder
 - [Star Tracker](StarTracker.md): the Lens folder, and the Star Track heading and FOV

@@ -717,8 +717,9 @@ export const serializeMethods = {
         // editor holds nothing save-worthy (e.g. the unmodified demo script).
         out.scriptedVideoScript = serializeScriptedVideo() ?? Sit.scriptedVideoScript ?? null
 
-        // Long Exposure / Camera Nudge parameters (null when all defaults)
-        out.longExposure = serializeLongExposure() ?? Sit.longExposure ?? null
+        // Current exposure/stacking settings, including an intentional reset
+        // to defaults. A loaded snapshot must not replace that reset.
+        out.longExposure = serializeLongExposure();
         out.videoFormatEffects = serializeVideoFormatEffects();
 
         // Split-tree tiling layout (UI redesign Phase 2): the optional view-tiling tree (view
@@ -1922,9 +1923,7 @@ export const serializeMethods = {
             Globals.scriptedVideo.groundClearance = 3;
         }
 
-        if (sitchData.longExposure) {
-            deserializeLongExposure(sitchData.longExposure);
-        }
+        deserializeLongExposure(sitchData.longExposure);
         deserializeVideoFormatEffects(sitchData.videoFormatEffects);
 
         if (sitchData.subSitchesData) {
