@@ -1991,8 +1991,18 @@ export class CCustomManager {
     // own checkbox is left alone: it is not drawn in any view, so there is nothing to say yet
     // about which views it would be drawn in, and saying it anyway would quietly rewrite a
     // setting the user cannot even see at the time.
+    // The satellite tracks (Satellites → Satellite to Track and Track 2) are display tracks that
+    // TrackManager does not hold, so the look-view track controls reach them through this list.
+    satelliteDisplayTracks() {
+        return ["satelliteDisplayTrack", "satelliteDisplayTrack2"]
+            .map(id => NodeMan.get(id, false)).filter(Boolean);
+    }
+
     syncTracksInLook() {
         const on = this.showTracksLook;
+        for (const display of this.satelliteDisplayTracks()) {
+            if (display.visible) display.showInLook = on;
+        }
         TrackManager.iterate((id, trackOb) => {
             const display = trackOb.trackDisplayNode ?? trackOb.displayTrack;
             if (!display?.visible) return;
@@ -2415,6 +2425,7 @@ export class CCustomManager {
                 }
             }
         });
+        for (const display of this.satelliteDisplayTracks()) display.applyLookLayer();
         setRenderOne(true)
     }
 

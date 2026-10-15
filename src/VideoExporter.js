@@ -5,6 +5,7 @@ import {t} from "./i18n";
 // Pure data and pure functions with no imports of their own, so this stays out of
 // the way; the heavy filter chain and its dialog are loaded on demand below.
 import {isVideoFilterActive, videoFilterFilenameSuffix} from "./videoFilters/VideoFilterSettings";
+import {appendAll} from "./SafeArrays";
 
 const isFirefox = typeof navigator !== 'undefined' && navigator.userAgent.includes('Firefox');
 const defaultAccelerationOrder = isFirefox 
@@ -272,7 +273,7 @@ function buildBaseFrameSequence(startFrame, endFrame, pingPong, loops) {
 
     const sequence = [];
     for (let loop = 0; loop < loops; loop++) {
-        sequence.push(...oneLoop);
+        appendAll(sequence, oneLoop);
     }
     return sequence;
 }

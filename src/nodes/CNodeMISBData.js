@@ -14,6 +14,7 @@ import {parsePartialDateTime} from "../ParseUtils";
 import {meanSeaLevelOffset} from "../EGM96Geoid";
 import {isAGLLockActive, isAltitudeLockActive} from "../AltitudeLock";
 import {t} from "../i18n";
+import {minOf} from "../SafeArrays";
 
 //export const MISBFields = Object.keys(MISB).length;
 
@@ -614,7 +615,7 @@ export class CNodeMISBDataTrack extends CNodeEmptyArray {
             // the prefix BEFORE the first gap.
             push("DRIFT DECOMPOSITION");
             push(sectionBreak);
-            const firstGapIdx = gaps.length > 0 ? Math.min(...gaps.map(g => g.idx)) : (lastValid + 1);
+            const firstGapIdx = gaps.length > 0 ? minOf(gaps.map(g => g.idx)) : (lastValid + 1);
             const skewEnd = Math.min(firstGapIdx, lastValid + 1);
             // Pair record i with the proportionally-i-th video frame (same
             // pairing used by the CUMULATIVE DRIFT table). Pairing by t_uts

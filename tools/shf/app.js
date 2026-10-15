@@ -1838,7 +1838,8 @@ async function onSubmit(e) {
     w.onmessage = (ev) => {
       const m = ev.data || {};
       if (m.type === "flares") {
-        if (m.flares && m.flares.length) { liveFlares.push(...m.flares); liveDirty = true; }
+        // A loop, not push(...m.flares): a large batch would pass the argument limit.
+        if (m.flares && m.flares.length) { for (const f of m.flares) liveFlares.push(f); liveDirty = true; }
       } else if (m.type === "progress") {
         setTopProgress(m.fraction);
       } else if (m.type === "result") {

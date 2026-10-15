@@ -25,6 +25,7 @@
 // expose a SAC_SIC_RADAR table that's easy to extend.
 
 import {MISB, MISBFields} from "../MISBFields";
+import {appendAll} from "../SafeArrays";
 
 // Site reference points for radars seen in the wild.
 // Keyed by `${SAC}_${SIC}`. lat/lon in degrees, alt in meters MSL.
@@ -808,7 +809,7 @@ export function parseASTERIXBuffer(buffer) {
     // increasing per track.
     dedup.sort((a, b) => a[MISB.UnixTimeStamp] - b[MISB.UnixTimeStamp]);
     rows.length = 0;
-    rows.push(...dedup);
+    appendAll(rows, dedup);
 
     console.log(`ASTERIX: parsed CAT048=${counts.cat048} CAT034=${counts.cat034} ` +
                 `CAT062=${counts.cat062} CAT065=${counts.cat065} other=${counts.other} ` +

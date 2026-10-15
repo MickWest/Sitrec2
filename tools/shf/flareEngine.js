@@ -87,7 +87,13 @@ export function createFlareEngine(satellite) {
         // catalogue passed on 2026-07-11, so CelesTrak leaves the newest
         // Starlinks out of TLE feeds entirely: exactly the satellites a current
         // flare search cares about.
+        //
+        // Blocks are appended one satellite at a time, never with out.push(...block):
+        // a spread passes every element as a call argument, and a full catalogue
+        // (about 150,000 rows) is past the engine's argument limit, so the spread
+        // throws "Maximum call stack size exceeded".
         const out = [];
+        const append = (sats) => { for (const s of sats) out.push(s); };
         let i = 0;
         while (i < lines.length) {
             if (looksLikeOMMCSV(lines[i])) {
@@ -100,7 +106,7 @@ export function createFlareEngine(satellite) {
                     block.push(lines[j]);
                     j++;
                 }
-                out.push(...parseOMMCSV(block));
+                append(parseOMMCSV(block));
                 i = j;
             } else {
                 const block = [];
@@ -108,7 +114,7 @@ export function createFlareEngine(satellite) {
                     block.push(lines[i]);
                     i++;
                 }
-                out.push(...parseTLEBlock(block));
+                append(parseTLEBlock(block));
             }
         }
         return out;

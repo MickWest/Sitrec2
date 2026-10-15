@@ -1,4 +1,5 @@
 import {MISB} from "../MISBFields";
+import {maxOf, minOf} from "../SafeArrays";
 
 const DEFAULT_GAP_FACTOR = 3;
 const DEFAULT_MIN_GAP_S = 0.1;
@@ -102,8 +103,8 @@ export function analyzeTimelineValues(values, {
     const stddevS = stddev(positiveIntervals, meanS);
     const cv = meanS > 0 && isFiniteNumber(stddevS) ? stddevS / meanS : null;
     const spanS = points.length >= 2 ? (points[points.length - 1].value - points[0].value) / unitScale : null;
-    const minIntervalS = positiveIntervals.length ? Math.min(...positiveIntervals) : null;
-    const maxIntervalS = positiveIntervals.length ? Math.max(...positiveIntervals) : null;
+    const minIntervalS = positiveIntervals.length ? minOf(positiveIntervals) : null;
+    const maxIntervalS = positiveIntervals.length ? maxOf(positiveIntervals) : null;
     const gapThresholdS = meanS > 0 ? Math.max(minGapS, meanS * gapFactor) : null;
     const gaps = isFiniteNumber(gapThresholdS)
         ? intervals.filter(interval => interval.dtS > gapThresholdS)
@@ -132,7 +133,7 @@ export function analyzeTimelineValues(values, {
         gapThresholdS,
         gaps,
         gapCount: gaps.length,
-        maxGapS: gaps.length ? Math.max(...gaps.map(gap => gap.dtS)) : null,
+        maxGapS: gaps.length ? maxOf(gaps.map(gap => gap.dtS)) : null,
         cumulativeExtraGapS,
         duplicateCount,
         negativeCount,
@@ -278,7 +279,7 @@ export function analyzePtsSync(misb, videoFramePTSus, {
     }
 
     if (deltas.length > 0) {
-        maxDeltaUs = Math.max(...deltas);
+        maxDeltaUs = maxOf(deltas);
         meanAbsDeltaUs = mean(deltas);
     }
 

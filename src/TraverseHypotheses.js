@@ -31,6 +31,7 @@ import {satelliteECEF, satelliteTrackENU, satelliteSunlit} from "./SatelliteSear
 import {localFitCompletionWarnings, settledButUnidentifiable} from "./TraverseRanking";
 import {datasetWithWindCorrection, solvedHorizontalWindAt, windPriorCost} from "./TraverseWind";
 import {monteCarloName} from "./MonteCarloLOS";
+import {minOf} from "./SafeArrays";
 
 export const UNDERGROUND_TOL = 40;
 export const UNDERGROUND_MIN_FRACTION = 0.05;
@@ -127,7 +128,7 @@ export function syncRangeProfile(dataset, ranges, options = {}) {
         out.push({
             startDist,
             endDist: lam[dataset.n - 1],
-            minDist: Math.min(...lam),
+            minDist: minOf(lam),
             score,
             metrics: m,
         });

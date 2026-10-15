@@ -8,6 +8,7 @@ import {detectSondeFormat, listIGRA2Soundings, parseIGRA2, parseUWYOList, parseU
 import {reconstructTrajectory} from "./SondeTrajectory";
 import {initProgress, updateProgress, hideProgress} from "./CProgressIndicator";
 import {ECEFToLLAVD_radii} from "./LLA-ECEF-ENU";
+import {maxOf} from "./SafeArrays";
 
 // Escape HTML metacharacters to prevent XSS when interpolating into innerHTML
 function esc(s) {
@@ -887,7 +888,7 @@ export async function compareSondeTrajectory(stationId, date, hour) {
     // Summary statistics
     const horizErrors = errors.map(e => e.horizError_m);
     const sortedHoriz = [...horizErrors].sort((a, b) => a - b);
-    const maxIdx = horizErrors.indexOf(Math.max(...horizErrors));
+    const maxIdx = horizErrors.indexOf(maxOf(horizErrors));
 
     const stats = {
         station: stationId,
@@ -899,8 +900,8 @@ export async function compareSondeTrajectory(stationId, date, hour) {
         horizontalError: {
             mean_m: Math.round(horizErrors.reduce((a, b) => a + b, 0) / horizErrors.length),
             median_m: Math.round(sortedHoriz[Math.floor(sortedHoriz.length / 2)]),
-            max_m: Math.round(Math.max(...horizErrors)),
-            max_km: (Math.max(...horizErrors) / 1000).toFixed(1),
+            max_m: Math.round(maxOf(horizErrors)),
+            max_km: (maxOf(horizErrors) / 1000).toFixed(1),
             atMaxAlt_km: errors[maxIdx].altKm.toFixed(1),
         },
     };

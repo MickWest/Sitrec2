@@ -125,6 +125,7 @@ import {
 } from "../TraverseHandoff";
 import {CNodeCustomGraphView} from "../nodes/CNodeCustomGraphView";
 import {WindowedTableBody} from "./WindowedTableBody";
+import {appendAll} from "../SafeArrays";
 
 let activeDialog = null;
 let botBenchController = null;
@@ -2122,7 +2123,7 @@ export async function walkDirectoryHandle(directoryHandle, {recursive, basePath 
                 onSkip?.(relativePath);
                 continue;
             }
-            files.push(...await walkDirectoryHandle(handle,
+            appendAll(files, await walkDirectoryHandle(handle,
                 {recursive, basePath: relativePath, onFound, parentHandle: directoryHandle, onSkip}));
         }
     }

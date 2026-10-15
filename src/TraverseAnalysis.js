@@ -45,6 +45,7 @@ import {gpuDifferentialEvolution, resolveGpuBudget} from "./gpu/GpuDifferentialE
 import {buildAircraftKernel, GPU_AIRCRAFT_BUDGET} from "./gpu/AircraftCostKernel";
 import {RollingAveragePolyEdge} from "./smoothing";
 import {windPriorCost, WIND_PRIOR_SIGMA_MS, datasetWithConstantWind} from "./TraverseWind";
+import {appendAll, minOf} from "./SafeArrays";
 
 export const KNOTS_TO_MS = 0.514444;
 export const METERS_PER_NM = 1852;
@@ -2680,7 +2681,7 @@ export async function rangeProfile(dataset, options = {}) {
             startDist: ranges[i],
             ...(wind ? {wind} : {}),
             endDist: lam[dataset.n - 1],
-            minDist: Math.min(...lam),
+            minDist: minOf(lam),
             score,
             windCost,
             metrics: summarizeMetrics(m),
@@ -3513,7 +3514,7 @@ export async function fitAircraft(dataset, options = {}) {
     const ESC_RESERVE = 0.15;
     const fromGpu = options.gpu && !sizeFit ? await gpuRuns() : null;
     if (fromGpu) {
-        runs.push(...fromGpu);
+        appendAll(runs, fromGpu);
     } else {
         for (let r = 0; r < nRuns; r++) {
             runs.push(await doRun(pop, gens, 0x51F17A + r * 0x9E3779,

@@ -248,6 +248,10 @@ of a name is enough, for example `ISS`. The default is the ISS (catalog number 2
 If the satellite is not in the loaded TLE data, the field shows *… not found*. The track is
 calculated again when new TLE data is loaded.
 
+Each satellite track has a **Show in look view** checkbox in its folder, as other tracks do. It is
+off by default. The look view's **Show Tracks** button and **Show → All Tracks in Look** include
+the satellite tracks too.
+
 ---
 
 ## Satellite views in the Show menu

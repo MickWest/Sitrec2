@@ -1606,6 +1606,11 @@ export const setupMethods = {
 
         }).listen().shareAs(viewMenuKey("lookView", "allTracks"));
 
+        // The satellite tracks have no track GUI, so give each its own "Show in look view" row.
+        // Added before a save is applied, so the saved value restores into it.
+        for (const display of this.satelliteDisplayTracks()) display.addLookViewToggle();
+        this.refreshLookViewTracks();
+
         // Per-frame tracks are drawn over In..Out only, and the raw data tracks are hidden.
         // Saved with the sitch, and reset for each new sitch (index.js).
         if (Globals.limitTracksInOut === undefined)

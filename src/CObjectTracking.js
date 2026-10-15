@@ -20,6 +20,7 @@ import {MotionTrackingRegime} from './MotionTrackingRegime';
 import {addVideoAnalysisResolutionMenu, beginVideoAnalysis} from './VideoAnalysisResolution';
 import {normalizeTrackSmoothing, smoothPointTrack, TrackPositionMap} from './PointTrackSmoothing';
 import {addPointTrackFrequencyMenu, getPointTrackFrequencyAperture} from './PointTrackFrequencyGraph';
+import {minOf} from "./SafeArrays";
 
 let cv = null;
 
@@ -2793,7 +2794,7 @@ export class ObjectTracker {
         const vd = this.videoView?.videoData;
         if (vd?.stabilizationEnabled && !vd.stabilizationDirectOffset && this.trackedPositions.size) {
             const points = this.getOutputPositions();
-            const first = Math.min(...points.keys());
+            const first = minOf(points.keys());
             vd.setStabilizationData(points, points.get(first));
         }
         NodeMan.get('autoTrackLOS', false)?.recalculateCascade();
@@ -3117,7 +3118,7 @@ function stabilizeVideo() {
 
     // Use the first tracked frame as the reference point
     const outputPositions = objectTracker.getOutputPositions();
-    const firstFrame = Math.min(...outputPositions.keys());
+    const firstFrame = minOf(outputPositions.keys());
     const referencePoint = outputPositions.get(firstFrame);
 
     if (!referencePoint) {
@@ -3179,7 +3180,7 @@ function getStabilizationBounds() {
     if (!videoData) return null;
 
     const outputPositions = objectTracker.getOutputPositions();
-    const firstFrame = Math.min(...outputPositions.keys());
+    const firstFrame = minOf(outputPositions.keys());
     const referencePoint = outputPositions.get(firstFrame);
     if (!referencePoint) return null;
 
@@ -3272,7 +3273,7 @@ async function renderStabilizedVideo(expanded = false) {
 
     // Get reference point for stabilization
     const outputPositions = objectTracker.getOutputPositions();
-    const firstFrame = Math.min(...outputPositions.keys());
+    const firstFrame = minOf(outputPositions.keys());
     const referencePoint = outputPositions.get(firstFrame);
 
     const compositeCanvas = document.createElement('canvas');
@@ -4036,7 +4037,7 @@ export async function deserializeAutoTracking(data) {
     // Restore stabilization if there's tracking data
     if (data.stabilizationEnabled && objectTracker.trackedPositions.size > 0) {
         const outputPositions = objectTracker.getOutputPositions();
-        const firstFrame = Math.min(...outputPositions.keys());
+        const firstFrame = minOf(outputPositions.keys());
         const referencePoint = outputPositions.get(firstFrame);
         if (referencePoint) {
             videoData.stabilizeCenters = data.stabilizeCenters ?? true;

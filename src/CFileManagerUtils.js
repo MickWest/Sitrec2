@@ -6,6 +6,7 @@
  */
 
 import {showErrorOnce} from "./showError";
+import {appendAll} from "./SafeArrays";
 
 // ── IndexedDB helpers for persisting working folder handle ──────────────
 
@@ -121,7 +122,7 @@ export async function walkDirectoryForFiles(directoryHandle,
                 onFound?.(entry);
             }
         } else if (recursive && handle.kind === "directory" && !skipDirectory?.(name, relativePath, handle)) {
-            files.push(...await walkDirectoryForFiles(handle,
+            appendAll(files, await walkDirectoryForFiles(handle,
                 {accept, recursive, basePath: relativePath, onFound, parentHandle: directoryHandle, skipDirectory}));
         }
     }

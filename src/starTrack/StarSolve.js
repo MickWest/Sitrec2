@@ -25,6 +25,7 @@ import {
     fitSimilarity,
     invertTransform,
 } from "./StarMatch";
+import {maxOf, minOf} from "../SafeArrays";
 
 export const STAR_SOLVE_DEFAULTS = {
     // Tracklet association, in REFERENCE-frame pixels.
@@ -972,7 +973,7 @@ function classifyAtNoise(tracks, transforms, stars, O, sigma) {
 
 function span(a) {
     if (!a.length) return 0;
-    return Math.max(...a) - Math.min(...a);
+    return maxOf(a) - minOf(a);
 }
 
 /** Total frames covered by the union of the pieces' [first, last] intervals. */

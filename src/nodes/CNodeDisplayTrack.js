@@ -476,6 +476,24 @@ export class CNodeDisplayTrack extends CNode3DGroup {
         this.metaTrack?.show(on);
     }
 
+    // A "Show in look view" row, for a display track that has no track GUI to hold one (the
+    // two satellite tracks). Imported and drawn tracks get theirs from CNodeTrackGUI. Saved with
+    // the sitch; whether the track is drawn in the look view is applyLookLayer().
+    addLookViewToggle() {
+        if (this.lookViewController || !this.guiFolder) return;
+        this.showInLook ??= false;
+        this.lookViewController = this.guiFolder.add(this, "showInLook").name(t("misc.showInLookView.label"))
+            .listen().onChange(() => this.applyLookLayer());
+        this.addSimpleSerial("showInLook");
+    }
+
+    // Draw in the look view when this track's own "Show in look view" is on, or when
+    // "All Tracks in Look" is. The look view's Show Tracks gate still applies at render time.
+    applyLookLayer() {
+        this.setLayerBit(LAYER.LOOK, !!(Globals.showAllTracksInLook || this.showInLook));
+        setRenderOne(true);
+    }
+
     // True when this display draws the imported data as it is (a point per data sample),
     // rather than a per-frame track. Its index is the sample, not the sitch frame.
     isRawDataDisplay() {

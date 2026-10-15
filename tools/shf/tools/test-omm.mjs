@@ -141,5 +141,36 @@ ok("truncated rows are skipped",
 ok("CSV without the required OMM columns yields nothing",
     engine.parseTLE("NORAD_CAT_ID,SOMETHING\n44714,3\n").length === 0);
 
+console.log("== Full-catalogue scale ==");
+
+// A full LEO catalogue (payloads, rocket bodies, debris; two days of history) has
+// about 150,000 rows. The parser once appended each block with push(...rows),
+// which passes every row as a call argument and throws "Maximum call stack size
+// exceeded" past the engine's argument limit. A stub orbit library keeps this
+// about parsing scale, not SGP4.
+{
+    const ROWS = 200000;
+    const stubEngine = createFlareEngine({
+        json2satrec: (omm) => ({error: 0, satnum: omm.NORAD_CAT_ID}),
+        twoline2satrec: (l1) => ({error: 0, satnum: l1.slice(2, 7)}),
+    });
+    const rows = ["OBJECT_NAME,NORAD_CAT_ID,EPOCH,MEAN_MOTION"];
+    for (let i = 1; i <= ROWS; i++) rows.push(`OBJ ${i},${i},2026-08-19T00:00:00,15.0`);
+    let sats = null, err = null;
+    try { sats = stubEngine.parseTLE(rows.join("\n")); } catch (e) { err = e; }
+    ok("a 200,000-row OMM CSV block parses", !err && sats?.length === ROWS, err ? String(err) : `n=${sats?.length}`);
+    ok("its last row is intact", sats?.[ROWS - 1]?.noradId === ROWS && sats?.[ROWS - 1]?.name === `OBJ ${ROWS}`);
+
+    const tle = [];
+    for (let i = 1; i <= ROWS; i++) {
+        const id = String(i % 100000).padStart(5, "0");
+        tle.push(`SAT ${i}`, `1 ${id}U 26001A   26231.00000000  .00000000  00000-0  00000-0 0  9990`,
+            `2 ${id}  53.0000 000.0000 0001000 000.0000 000.0000 15.00000000000000`);
+    }
+    sats = null; err = null;
+    try { sats = stubEngine.parseTLE(tle.join("\n")); } catch (e) { err = e; }
+    ok("a 200,000-satellite TLE block parses", !err && sats?.length === ROWS, err ? String(err) : `n=${sats?.length}`);
+}
+
 console.log(fails === 0 ? "\nALL PASS" : `\n${fails} FAILED`);
 process.exit(fails === 0 ? 0 : 1);

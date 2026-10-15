@@ -12,6 +12,7 @@ import {addBotBenchMenu} from "./BotBenchUI";
 import {addResultChartsMenu} from "./charts/RockV3ChartsUI";
 import {addTrackBrowserMenu} from "../CTrackBrowser";
 import {par} from "../par";
+import {appendAll} from "../SafeArrays";
 
 let activeDialog = null;
 let fileAnalysisFolder = null;
@@ -321,7 +322,7 @@ async function walkDirectoryHandle(directoryHandle, {recursive, basePath = "", o
                 onFound?.(entry);
             }
         } else if (recursive && handle.kind === "directory") {
-            files.push(...await walkDirectoryHandle(handle, {recursive, basePath: relativePath, onFound}));
+            appendAll(files, await walkDirectoryHandle(handle, {recursive, basePath: relativePath, onFound}));
         }
     }
     files.sort((a, b) => a.relativePath.localeCompare(b.relativePath));
