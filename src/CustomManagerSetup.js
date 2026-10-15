@@ -260,6 +260,7 @@ export const setupMethods = {
                 set(ptz.satelliteController, manual);
                 set(ptz.rotationController, manual);
                 set(ptz.rollController, consumesRoll);
+                ptz.setHeadingManual?.(manual);   // Lock Forward Vector: Manual, not Relative
             }
 
             // FOV: the Zoom slider is editable only for the Manual (userFOV) source. HFOV and the

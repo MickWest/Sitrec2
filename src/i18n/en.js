@@ -3203,6 +3203,10 @@ const en = {
             label: "Near Plane (m)",
             tooltip: "Camera near clipping plane distance in meters, sometimes useful for very close objects, or to exclude near-field objects from the frustum",
         },
+        lockForward: {
+            label: "Lock Forward Vector",
+            tooltip: "When the camera moves, keep it pointing in the same direction in space.\nPan, Tilt and Roll change to match, so the view of the sky does not change.\nManual heading only, and not with Relative Heading.",
+        },
         relative: {
             label: "Relative Heading",
             tooltip: "The camera heading is relative to the camera path (e.g. a plane's ADSB track) instead of absolute.\nSo you can set the camera to always point forward along the path, or to the left/right of the path, etc.",

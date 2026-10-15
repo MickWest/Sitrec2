@@ -158,6 +158,10 @@ export class CNodeControllerPTZUI extends CNodeControllerAzElZoom {
         this.yOffset = v.yOffset ?? 0;
         this.nearPlane = v.nearPlane ?? 0.1;
         this.relative = false;
+        // Keep the camera's direction in space while the camera moves; see holdLockedForward.
+        this.lockForward = v.lockForward ?? false;
+        this._lock = null;
+        this._headingManual = true;
         this.satellite = v.satellite ?? false;
         this.rotation = v.rotation ?? 0; // screen-space rotation around camera look axis (satellite mode only)
         // Which spelling the Pan slider shows: signed -180..180 (off, the default) or
@@ -282,6 +286,10 @@ export class CNodeControllerPTZUI extends CNodeControllerAzElZoom {
             if (this.roll !== undefined ) {
                 this.rollController = guiPTZ.add(this, "roll", -180, 180, 0.005).listen().name(t("ptzUI.roll.label")).tooltip(t("ptzUI.roll.tooltip")).onChange(v => this.refresh()).setLabelColor(pszUIColor)
             }
+            // markFreeLookSafe: turning the lock on or off does not move the camera.
+            this.lockForwardController = markFreeLookSafe(guiPTZ.add(this, "lockForward").listen()
+                .name(t("ptzUI.lockForward.label")).tooltip(t("ptzUI.lockForward.tooltip"))
+                .onChange(() => { this._lock = null; this.refresh(); }));
             // Lens X/Y offset and near plane are "tweaks" rather than primary
             // pan/tilt/zoom controls, so they live in Camera ▸ Camera Tweaks (falls
             // back to the PTZ folder if that permanent shell isn't present).
@@ -289,7 +297,10 @@ export class CNodeControllerPTZUI extends CNodeControllerAzElZoom {
             tweaksFolder.add(this, "xOffset", -20, 20, 0.001).listen().name(t("ptzUI.xOffset.label")).tooltip(t("ptzUI.xOffset.tooltip")).onChange(v => this.refresh()).setLabelColor(pszUIColor)
             tweaksFolder.add(this, "yOffset", -20, 20, 0.001).listen().name(t("ptzUI.yOffset.label")).tooltip(t("ptzUI.yOffset.tooltip")).onChange(v => this.refresh()).setLabelColor(pszUIColor)
             tweaksFolder.add(this, "nearPlane", 0.001, 1, 0.001).listen().name(t("ptzUI.nearPlane.label")).tooltip(t("ptzUI.nearPlane.tooltip")).onChange(v => this.refresh()).setLabelColor(pszUIColor)
-            this.relativeController = guiPTZ.add(this, "relative").listen().name(t("ptzUI.relative.label")).tooltip(t("ptzUI.relative.tooltip")).onChange(v => this.refresh())
+            this.relativeController = guiPTZ.add(this, "relative").listen().name(t("ptzUI.relative.label")).tooltip(t("ptzUI.relative.tooltip")).onChange(v => {
+                this.updateLockForwardControl();
+                this.refresh();
+            })
             this.satelliteController = guiPTZ.add(this, "satellite").listen().name(t("ptzUI.satellite.label")).tooltip(t("ptzUI.satellite.tooltip")).onChange(v => {
                 this.syncModeTransition();
             }).setLabelColor(pszUIColor)
@@ -567,6 +578,7 @@ export class CNodeControllerPTZUI extends CNodeControllerAzElZoom {
             yOffset: this.yOffset,
             nearPlane: this.nearPlane,
             relative: this.relative,
+            lockForward: this.lockForward,
             satellite: this.satellite,
             rotation: this.rotation,
             pan360: this.pan360,
@@ -585,6 +597,8 @@ export class CNodeControllerPTZUI extends CNodeControllerAzElZoom {
         this.yOffset = v.yOffset ?? 0;
         this.nearPlane = v.nearPlane ?? 0.1;
         this.relative = v.relative ?? false;
+        this.lockForward = v.lockForward ?? false;
+        this._lock = null;
         this.satellite = v.satellite ?? false;
         this.rotation = v.rotation ?? 0;
         this.pan360 = v.pan360 ?? (v.az > 180);
@@ -592,6 +606,7 @@ export class CNodeControllerPTZUI extends CNodeControllerAzElZoom {
         this.lockedAspect = v.lockedAspect ?? 16 / 9;
         this.updatePanRange();
         this.updateSatelliteSliderVisibility();
+        this.updateLockForwardControl();
     }
 
     // Note this has to be in apply, not update, as there are update orders issues
@@ -606,13 +621,17 @@ export class CNodeControllerPTZUI extends CNodeControllerAzElZoom {
             this.fov = extractFOV(fovSwitch.getValue(f));
         }
 
+        const camera = objectNode.camera;
+        const held = this.holdLockedForward(camera);
+
         if (this.satellite) {
             this.applySatellite(objectNode);
         } else {
             super.apply(f, objectNode);
         }
 
-        const camera = objectNode.camera;
+        this.recordLockedForward(camera, held);
+
         camera.near = this.nearPlane;
         camera.updateProjectionMatrix();
 
@@ -635,6 +654,75 @@ export class CNodeControllerPTZUI extends CNodeControllerAzElZoom {
         if (fovSwitch) {
             this.fov = extractFOV(fovSwitch.getValue(f));
         }
+    }
+
+    // "Lock Forward Vector". While the camera moves, it keeps looking in the same direction in
+    // space, so the celestial sky in the view does not change. Pan, Tilt and Roll (or the
+    // Satellite Mode angles) are worked out again for each new position. Not with Relative
+    // Heading, which makes the heading follow the camera's path instead.
+    //
+    // The locked orientation is taken when the lock is turned on, and again whenever the angles
+    // are changed. A move only works the angles out from it and never stores it again, so a
+    // long series of moves cannot build up rounding error.
+    lockForwardActive() {
+        return this.lockForward && !this.relative;
+    }
+
+    // Before the orientation is built: if the camera moved and the angles did not change, set
+    // the angles that give the locked orientation at the new position. Returns true if it did.
+    holdLockedForward(camera) {
+        if (!this.lockForwardActive()) {
+            this._lock = null;
+            return false;
+        }
+        const lock = this._lock;
+        if (!lock || !this.lockAnglesUnchanged(lock)
+            || camera.position.distanceToSquared(lock.pos) < 1e-6) return false;
+
+        camera.quaternion.copy(lock.quat);
+        camera.updateMatrixWorld();
+        if (this.satellite) {
+            // The inverse of applySatellite: camera = nadirFrame * satQuat.
+            this.satQuat.copy(this._buildNadirQuat(camera.position)).invert()
+                .multiply(camera.quaternion).normalize();
+            this.extractAnglesFromSatQuat();
+            this._satQuatDirty = false;
+        } else {
+            this.syncFromCamera(camera);
+        }
+        return true;
+    }
+
+    // After the orientation is built: take it as the locked orientation if the lock is new or
+    // the angles were changed, and note where the camera is and what the angles are.
+    recordLockedForward(camera, held) {
+        if (!this.lockForwardActive()) return;
+        if (!this._lock || (!held && !this.lockAnglesUnchanged(this._lock))) {
+            this._lock = {quat: camera.quaternion.clone()};
+        }
+        this._lock.pos = camera.position.clone();
+        this._lock.angles = this.lockAngles();
+    }
+
+    lockAngles() {
+        return [this.az, this.el, this.roll, this.rotation, this.satellite];
+    }
+
+    lockAnglesUnchanged(lock) {
+        const now = this.lockAngles();
+        return lock.angles.every((value, i) => value === now[i]);
+    }
+
+    // Lock Forward Vector can be changed only with the Manual heading source and without
+    // Relative Heading. CustomManagerSetup reports the source.
+    setHeadingManual(manual) {
+        this._headingManual = manual;
+        this.updateLockForwardControl();
+    }
+
+    updateLockForwardControl() {
+        const on = this._headingManual && !this.relative;
+        this.lockForwardController?.[on ? "enable" : "disable"]();
     }
 
     // Satellite mode: quaternion-based orientation, no gimbal lock.

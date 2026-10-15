@@ -62,8 +62,9 @@ it back to **Manual**. **Shift+C** also puts the camera 7 ft above the ground.
 | *A track with angles* | A track that carries its own pointing angles (a MISB file, for example) adds its own choice. |
 | **Star Track** | Appears after the Star Tracker syncs the camera to a solved star field. See [Star Tracker](StarTracker.md). |
 
-**Pan (Az)**, **Tilt (El)**, **Relative Heading**, **Satellite Mode** and **Rotation** only
-work when **Camera Heading** is **Manual**. They are greyed out for every other source.
+**Pan (Az)**, **Tilt (El)**, **Lock Forward Vector**, **Relative Heading**, **Satellite Mode** and
+**Rotation** only work when **Camera Heading** is **Manual**. They are greyed out for every other
+source. **Lock Forward Vector** is also greyed out while **Relative Heading** is on.
 **Roll** works for **Manual** and **To Target**, and is greyed out for the others.
 
 ### Field of view sources (Camera → FOV (Zoom) → Camera FOV)
@@ -148,6 +149,7 @@ and point the target at the same place.
 | **Pan (Az)** | 0 | Azimuth in degrees. 0 is north, 90 is east. Manual only. |
 | **Tilt (El)** | 0 | Elevation in degrees, from -89 to 89. Positive is up. Manual only. |
 | **Roll** | 0 | Roll around the view axis, in degrees. Manual and To Target only. |
+| **Lock Forward Vector** | Off | When on, moving the camera does not change the direction it points in space. Pan, Tilt and Roll (or the Satellite Mode angles) change to match the new position, so the stars and other sky objects stay where they are in the view. Changing Pan, Tilt or Roll yourself sets the new direction to hold. Manual only, and not with Relative Heading. |
 | **Relative Heading** | Off | When on, Pan is measured from the direction the camera track is moving, not from north. Pan 0 then looks forward along the track, and -90 looks left. Only the heading is relative; Tilt is still measured from level. Manual only. |
 | **Satellite Mode** | Off | Screen-space camera movement for high and low elevation angles. See [Camera View Modes](satcam.md). Manual only. |
 | **Rotation** | 0 | Screen-space rotation around the view axis. Shown only in Satellite Mode. Manual only. |
