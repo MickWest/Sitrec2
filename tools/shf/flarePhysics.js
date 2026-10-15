@@ -58,12 +58,25 @@ export function penumbraFade(occludedDist, depth = FLARE.penumbraDepthM) {
     return 1 - occludedDist / depth;
 }
 
-// Depth (same units as inputs) by which a satellite at `pos` is occluded by the spherical
-// shadow of radius `radius` (centred at the origin) looking toward unit `sunDir`. Returns
-// the chord-midpoint depth below the sphere surface, or -1 if the forward Sun-ray misses
-// the sphere (satellite is lit). Mirrors Sitrec's intersectSphere2 + midpoint depth, but as
-// plain math so SHF (which has no Three.js) can compute the same fade Sitrec does.
-export function shadowOcclusion(pos, sunDir, radius) {
+// Radial depth at the shadow chord's midpoint, in the same units as the radii.
+// The optional polar radius supports an ellipsoid centred at the origin; omitting it
+// preserves the spherical model. Returns -1 when the forward Sun-ray misses Earth.
+// This geometry feeds the adjustable penumbra fade, not a finite solar-disk model.
+export function shadowOcclusion(pos, sunDir, radius, polarRadius = radius) {
+    if (polarRadius !== radius) {
+        const invA2 = 1 / (radius * radius), invB2 = 1 / (polarRadius * polarRadius);
+        const qa = (sunDir.x * sunDir.x + sunDir.y * sunDir.y) * invA2 + sunDir.z * sunDir.z * invB2;
+        const qb = (pos.x * sunDir.x + pos.y * sunDir.y) * invA2 + pos.z * sunDir.z * invB2;
+        const qc = (pos.x * pos.x + pos.y * pos.y) * invA2 + pos.z * pos.z * invB2 - 1;
+        const disc = qb * qb - qa * qc;
+        if (disc <= 0 || -qb + Math.sqrt(disc) <= 0) return -1;
+        const tm = -qb / qa;
+        const mx = pos.x + tm * sunDir.x, my = pos.y + tm * sunDir.y, mz = pos.z + tm * sunDir.z;
+        const distance = Math.hypot(mx, my, mz);
+        if (distance === 0) return radius;
+        const scaledDistance = Math.sqrt((mx * mx + my * my) * invA2 + mz * mz * invB2);
+        return distance * (1 / scaledDistance - 1);
+    }
     const b = pos.x * sunDir.x + pos.y * sunDir.y + pos.z * sunDir.z;   // sunDir is unit
     const c = pos.x * pos.x + pos.y * pos.y + pos.z * pos.z - radius * radius;
     const disc = b * b - c;

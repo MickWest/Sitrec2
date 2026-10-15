@@ -61,7 +61,7 @@ import {applyAnnualAberration, raDec2Celestial} from "./CelestialMath";
 import {CNode3DLight} from "./nodes/CNode3DLight";
 import {CNodeViewUI} from "./nodes/CNodeViewUI";
 import {degrees, radians} from "./mathUtils";
-import {flareRamp} from "../tools/shf/flarePhysics.js";
+import {flareRamp, penumbraFade, shadowOcclusion} from "../tools/shf/flarePhysics.js";
 import {altitudeHAE, getLocalUpVector} from "./SphericalMath";
 import {GlobalScene} from "./LocalFrame";
 import {MeshBasicMaterial, WebGLRenderTarget, Color} from "three";
@@ -1329,12 +1329,13 @@ async function renderLongExposure(mgr) {
                         const fluxFlarePeak = Math.pow(10, -0.4 * (SAT_FLARE_PEAK_MAG - P.satMag));
                         const fluxISS = Math.pow(10, -0.4 * (ISS_MAG - P.satMag));
                         for (const sd of sats.TLEData.satData) {
-                            if (!sd || sd.invalidPosition || !sd.ecef) continue;
-                            // isLit is staggered (~10 frame refresh) but the shadow
-                            // boundary moves slowly; the glint itself is recomputed
-                            // fresh for EVERY lit satellite every frame so streak
-                            // entry/exit are exact, not stagger-truncated.
-                            if (!sd.isLit) continue;
+                            if (!sd || !sd.visible || sd.invalidPosition || !sd.ecef) continue;
+                            // Recompute fractional illumination at this sample: the
+                            // live display staggers updates, and a lit boolean would
+                            // keep a fading flare at full flux until shadow entry.
+                            const illumination = penumbraFade(shadowOcclusion(sd.ecef, Globals.toSun,
+                                Globals.equatorRadius, Globals.polarRadius), sats.penumbraDepth);
+                            if (illumination <= 0) continue;
                             const isISS = sd.number === 25544;
                             const pos = sd.ecefApparent ?? sd.ecef;
                             _v.copy(pos).sub(camera.position).normalize();
@@ -1353,6 +1354,7 @@ async function renderLongExposure(mgr) {
                                 flux += fluxFlarePeak * Math.pow(10,
                                     -0.4 * SAT_FLARE_TAPER_MAGS * (1 - flareRamp(glintAngle, spread)));
                             }
+                            flux *= illumination;
                             if (flux <= 0) continue;
                             const ex = extinctionRGB(sinAlt, P.extinctionK, kAltScale, P.reddening);
                             if (flux * ex[0] < 1e-4) continue;        // red fades last

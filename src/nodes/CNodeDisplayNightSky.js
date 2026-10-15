@@ -5,7 +5,7 @@ import {CNodeEclipse} from "./CNodeEclipse";
 import {CNodeLunarEclipse} from "./CNodeLunarEclipse";
 import {CNodeWaterReflection} from "./CNodeWaterReflection";
 import {GlobalNightSkyScene, GlobalScene, GlobalSunSkyScene, setupNightSkyScene, setupSunSkyScene} from "../LocalFrame";
-import {Color, Group, Matrix4, Ray, Raycaster, Scene, Sphere, Vector3} from "three";
+import {Color, Group, Matrix4, Ray, Scene, Sphere, Vector3} from "three";
 import {degrees, radians} from "../utils";
 import {envFlag, getEnv} from "../envUtils";
 import {isSecureBuild} from "../configUtils";
@@ -36,7 +36,7 @@ import {intersectSphere2, V3} from "../threeUtils";
 // constants, single-sourced so the standalone SHF flare tool can't drift from this
 // live render. (Lives under tools/shf/ because that tool is served as raw ES modules
 // and can only import from there; this bundle can import down into it.)
-import {FLARE, flareRamp, penumbraFade} from "../../tools/shf/flarePhysics.js";
+import {FLARE, flareRamp, penumbraFade, shadowOcclusion} from "../../tools/shf/flarePhysics.js";
 import {
     getCelestialDirectionFromRaDec,
     getECEFToEQJMatrix,
@@ -1276,11 +1276,6 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
         }
 
         const toSun = this.satellites.toSun;
-        const raycaster = new Raycaster();
-        raycaster.layers.mask |= LAYER.MASK_MAIN | LAYER.MASK_LOOK;
-
-        const hitPoint = new Vector3();
-        const hitPoint2 = new Vector3();
         const magnitudes = this.satellites.lightCloud.brightnessArray;
         const cameraPos = this.camera.position;
 
@@ -1318,14 +1313,9 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
             const satPosition = satData.ecef;
             let brightness = FLARE.base;
             const darknessMultiplier = FLARE.darknessMult;
-            let fade = 1;
-
-            raycaster.set(satPosition, toSun);
-            if (intersectSphere2(raycaster.ray, this.globe, hitPoint, hitPoint2)) {
-                const midPoint = hitPoint.clone().add(hitPoint2).multiplyScalar(0.5);
-                const originToMid = midPoint.clone().sub(this.globe.center);
-                const occludedMeters = this.globe.radius - originToMid.length();
-                fade = penumbraFade(occludedMeters, this.satellites.penumbraDepth);
+            const occludedMeters = shadowOcclusion(satPosition, toSun, Globals.equatorRadius, Globals.polarRadius);
+            const fade = penumbraFade(occludedMeters, this.satellites.penumbraDepth);
+            if (fade < 1) {
                 brightness *= fade > 0 ? darknessMultiplier + (1 - darknessMultiplier) * fade : darknessMultiplier;
                 if (fade <= 0) this.satellites.removeSatSunArrows(satData);
             }

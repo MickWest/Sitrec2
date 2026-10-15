@@ -13,6 +13,7 @@ import {
 } from "../src/atmosphere/terrestrialRefraction";
 import {
     fisheye,
+    fisheyeUniforms,
     fisheyeProjectView,
     fisheyeViewToNDC,
     fisheyeEquivalentFOVDegRaw,
@@ -171,9 +172,35 @@ describe("fisheyeViewToNDC - projection through the caller's own pose", () => {
     });
 
     test("false past the cull angle, even with the mask off", () => {
-        resetState({fov: 180, showCircle: false});
-        expect(fisheyeViewToNDC(viewDir(150, 30), 1)).toBe(false);   // cull is fov/2 + 25° = 115°
+        resetState({lensType: "equidistantFisheye", fov: 90, showCircle: false});
+        expect(fisheyeViewToNDC(viewDir(150, 30), 1)).toBe(false);
         expect(fisheyeViewToNDC(new Vector3(), 1)).toBe(false);
+    });
+
+    test.each([
+        [16 / 9, 100, 0, 0],
+        [16 / 9, 85, 5, -7],
+        [9 / 16, 100, -8, 4],
+    ])("unmasked orthographic corners remain visible (aspect %s, circle %s)", (aspect, circlePct, centerX, centerY) => {
+        resetState({enabled: true, lensType: "orthographicFisheye", fov: 50.764706574,
+            showCircle: false, circlePct, centerX, centerY});
+        const size = [1080 * aspect, 1080];
+        const lens = fisheyeStarLens(size);
+        for (const [nx, ny] of [[-.99, -.99], [-.99, .99], [.99, -.99], [.99, .99]]) {
+            const ray = lensToRay(lens, (nx + 1) * size[0] / 2, (1 - ny) * size[1] / 2, size);
+            if (!ray) continue; // A shifted, enlarged field can extend outside the lens domain.
+            const direction = new Vector3(ray[0], -ray[1], -ray[2]);
+            const projected = fisheyeProjectView(direction.clone(), aspect);
+            expect(projected.x).toBeCloseTo(nx, 10);
+            expect(projected.y).toBeCloseTo(ny, 10);
+            expect(projected.z).toBeLessThan(1);
+            expect(fisheyeViewToNDC(direction, aspect)).toBe(true);
+            expect(direction.x).toBeCloseTo(nx, 10);
+            expect(direction.y).toBeCloseTo(ny, 10);
+            const theta = Math.acos(ray[2]);
+            // HDR exposure's field pre-cull reads this same uniform.
+            expect(fisheyeUniforms.uFishCullTheta.value).toBeGreaterThan(theta);
+        }
     });
 });
 

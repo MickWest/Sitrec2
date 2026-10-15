@@ -422,7 +422,7 @@ export function setFisheyeFov(fov) {
 
 // Derived projection constants for the current settings. Small enough to
 // recompute on every gated render (a handful of trig calls).
-function refreshFisheyeParams() {
+function refreshFisheyeParams(aspect = fisheyeUniforms.uFishAspect.value) {
     const u = fisheyeUniforms;
     const preset = activePreset();
     fisheye.fov = Math.min(fisheye.fov, fovCap());
@@ -432,7 +432,16 @@ function refreshFisheyeParams() {
     u.uFishScaleY.value = fisheye.circlePct / 100;
     u.uFishRoll.value = fisheye.roll * Math.PI / 180;
     u.uFishMaxTheta.value = preset.maxTheta ?? Math.PI;
-    // Cull well past the FOV edge (margin keeps rim-crossing primitives
+    // With the circle mask off, a rectangular viewport can extend far beyond
+    // the vertical half-FOV, especially in its corners or with an offset lens.
+    // Radius is measured in half-heights, so image roll does not change it.
+    aspect = aspect > 0 ? aspect : 1;
+    const cornerRadius = Math.hypot(aspect + Math.abs(fisheye.centerX) / 50,
+        1 + Math.abs(fisheye.centerY) / 50);
+    const cornerRho = cornerRadius * u.uFishRhoEdge.value / Math.max(u.uFishScaleY.value, 1e-6);
+    const fieldAngle = fisheye.showCircle ? halfFovRad : Math.max(halfFovRad,
+        preset.theta(Math.min(cornerRho, preset.maxRho ?? Infinity)));
+    // Cull well past the visible field (margin keeps rim-crossing primitives
     // alive to be clamped/masked), and normally short of the antipode —
     // whose image is the entire rim circle, so coarse primitives near it
     // smear chords across the disc. The antipode guard must never eat into
@@ -442,8 +451,8 @@ function refreshFisheyeParams() {
     // smear from coarse primitives there is the projection's honest
     // behaviour, not a silent crop of the saved FOV.
     const deg = Math.PI / 180;
-    u.uFishCullTheta.value = Math.min(halfFovRad + 25 * deg,
-        Math.max(178 * deg, halfFovRad + 0.5 * deg));
+    u.uFishCullTheta.value = Math.min(fieldAngle + 25 * deg,
+        Math.max(178 * deg, fieldAngle + 0.5 * deg));
 }
 
 // The fisheye the look view renders through, as a Star Track LENS in `size` pixels - so an
@@ -498,8 +507,8 @@ function updateFisheyeUniformsForRender(camera) {
         u.uFishOn.value = 0.0;
         return;
     }
-    refreshFisheyeParams();
     const aspect = camera.aspect > 0 ? camera.aspect : 1;
+    refreshFisheyeParams(aspect);
     u.uFishOn.value = 1.0;
     u.uFishAspect.value = aspect;
     u.uFishCenter.value.set(
@@ -559,7 +568,7 @@ function installAllSceneHooks(forceSweep) {
 // the current fisheye state (no camera gating — the gated world-space wrapper
 // below is what rendering code uses; this form is directly unit-testable).
 export function fisheyeProjectView(v, aspect = 1, near = 1, far = 1e9) {
-    refreshFisheyeParams();
+    refreshFisheyeParams(aspect);
     const d = v.length();
     if (d < 1e-9) {
         return v.set(0, 0, 2);   // degenerate: park it outside the -1..1 z window
@@ -603,7 +612,7 @@ function outsideFisheyeCircle(ndc, aspect) {
 // fisheyeProjectView, and returns false where the render shows nothing there —
 // past the cull angle, or outside the masked image circle.
 export function fisheyeViewToNDC(v, aspect) {
-    refreshFisheyeParams();
+    refreshFisheyeParams(aspect);
     const d = v.length();
     if (!(d > 1e-9) || -v.z / d < Math.cos(fisheyeUniforms.uFishCullTheta.value)) return false;
     fisheyeProjectView(v, aspect);
