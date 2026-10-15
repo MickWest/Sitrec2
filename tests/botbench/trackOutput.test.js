@@ -1,11 +1,12 @@
 /** @jest-environment jsdom */
 import {webcrypto} from "node:crypto";
-import {TextEncoder} from "node:util";
+import {TextDecoder, TextEncoder} from "node:util";
 import {ingestBotCSV} from "../../src/analysis/BotBenchIngest";
 import {compareTrackToTruth, trackMetrics} from "../../src/TraverseAnalysis";
 import {rankAllHypotheses} from "../../src/TraverseRanking";
 import {
-    buildAllTracksOutputCSV, buildSeparateTrackOutputCSVs, buildTrackOutputCSV, separateTrackFileName,
+    buildAllTracksOutputCSV, buildAllTracksOutputParquet, buildSeparateTrackOutputCSVs,
+    buildTrackOutputCSV, buildTrackOutputParquet, separateTrackFileName, TRACK_OUTPUT_COLUMNS,
     trackAlgorithmID, trackOutputBase, trackOutputLocation, trackOutputName, writeTrackOutput,
 } from "../../src/analysis/BotBenchTrackOutput";
 import {
@@ -13,7 +14,11 @@ import {
 } from "../../src/analysis/BotBenchUI";
 
 beforeAll(() => {
-    globalThis.TextEncoder = TextEncoder;
+    // Node's encoder returns a Node-realm array; the writer checks jsdom's Uint8Array.
+    globalThis.TextEncoder = class extends TextEncoder {
+        encode(value) { return Uint8Array.from(super.encode(value)); }
+    };
+    globalThis.TextDecoder = TextDecoder;
     Object.defineProperty(globalThis.crypto, "subtle", {value: webcrypto.subtle, configurable: true});
 });
 
@@ -116,6 +121,68 @@ test("all-tracks CSV leaves out direction-only and incomplete candidates, and co
     expect(buildAllTracksOutputCSV({...record, hypotheses: []})).toEqual({reason: "No candidate was produced."});
 });
 
+async function readParquet(parquet) {
+    const {parquetMetadata, parquetReadObjects} = await import("hyparquet");
+    return {metadata: parquetMetadata(parquet), rows: await parquetReadObjects({file: parquet})};
+}
+
+test("the Parquet writer stays unloaded for CSV output and loads on the first Parquet export", async () => {
+    const record = ingestBotCSV(scenarioCSV());
+    const results = {...record, hypotheses: candidates(record)};
+    const writerPath = require.resolve("hyparquet-writer");
+    expect(require.cache[writerPath]).toBeUndefined();
+    buildTrackOutputCSV(results);
+    buildAllTracksOutputCSV(results);
+    expect(require.cache[writerPath]).toBeUndefined();
+    await buildTrackOutputParquet(results);
+    expect(require.cache[writerPath]).toBeDefined();
+});
+
+test("best-track Parquet preserves source strings, retained times, double precision and null covariance", async () => {
+    const record = ingestBotCSV(scenarioCSV({gap: true}));
+    record.outputSamples.trackId = '0007,"飛行"';
+    const hypotheses = candidates(record);
+    hypotheses[0].track[0] = 3000.123456789;
+    const output = await buildTrackOutputParquet({...record, hypotheses});
+    expect(output).toMatchObject({algorithmID: "sitrec_constAir", samples: 12});
+    const {rows, metadata} = await readParquet(output.parquet);
+    expect(rows).toHaveLength(12);
+    expect(rows[0]).toEqual({TrackID: '0007,"飛行"', Time: 18.75, AlgorithmID: "sitrec_constAir",
+        EstimatedPositionX: 3000.123456789, EstimatedPositionY: 2000, EstimatedPositionZ: 500,
+        CovarianceXX: null, CovarianceYY: null, CovarianceZZ: null,
+        CovarianceXY: null, CovarianceXZ: null, CovarianceYZ: null});
+    expect(rows.at(-1).Time).toBe(24.25);
+    expect(metadata.schema.slice(1).map(column => column.name)).toEqual(TRACK_OUTPUT_COLUMNS);
+    expect(metadata.schema.slice(1).map(column => column.type))
+        .toEqual(["BYTE_ARRAY", "DOUBLE", "BYTE_ARRAY", ...new Array(9).fill("DOUBLE")]);
+    expect(metadata.schema.slice(7).every(column => column.repetition_type === "OPTIONAL")).toBe(true);
+});
+
+test("all-tracks Parquet has the combined CSV's rows, order and distinct candidate IDs", async () => {
+    const record = ingestBotCSV(scenarioCSV());
+    const [a, b] = candidates(record);
+    const results = {...record, hypotheses: [a, {...a, errDeg: 0.02}, b, {...b, atInfinity: true}]};
+    const output = await buildAllTracksOutputParquet(results);
+    expect(output).toMatchObject({algorithmIDs: ["sitrec_constAir", "sitrec_constAir_2", "sitrec_horizontalSpeed"],
+        samples: 15, omitted: 1});
+    const {rows} = await readParquet(output.parquet);
+    const csvRows = buildAllTracksOutputCSV(results).csv.trimEnd().split("\r\n").slice(1)
+        .map(line => Object.fromEntries(line.split(",").map((cell, i) => [TRACK_OUTPUT_COLUMNS[i],
+            i === 0 || i === 2 ? cell : cell === "" ? null : Number(cell)])));
+    expect(rows).toEqual(csvRows);
+    expect(rows.slice(0, 15)).toEqual((await readParquet((await buildTrackOutputParquet(results)).parquet)).rows);
+});
+
+test("Parquet refuses unavailable samples and artificial or incomplete tracks just like CSV", async () => {
+    const record = ingestBotCSV(scenarioCSV());
+    const [h] = candidates(record);
+    for (const results of [{}, {...record, hypotheses: []}, {...record, hypotheses: [{...h, atInfinity: true}]},
+        {...record, hypotheses: [{...h, track: new Float64Array([NaN])}]}]) {
+        expect(await buildTrackOutputParquet(results)).toEqual(buildTrackOutputCSV(results));
+        expect(await buildAllTracksOutputParquet(results)).toEqual(buildAllTracksOutputCSV(results));
+    }
+});
+
 test("all-tracks output goes in output/AllTracks with the source filename", async () => {
     const parentHandle = {}, dirHandle = {name: "All"};
     expect(trackOutputLocation({name: "track.all.csv", dirPath: "batch/All", dirHandle, parentHandle}, "allCombined"))
@@ -190,10 +257,10 @@ function directory(name) {
                 if (!opts.create) missing();
                 const file = {name: child, kind: "file", text: "",
                     getFile: async () => ({name: child, text: async () => file.text,
-                        arrayBuffer: async () => Buffer.from(file.text)}),
+                        arrayBuffer: async () => typeof file.text === "string" ? Buffer.from(file.text) : file.text}),
                     createWritable: async () => {
                         let pending = "";
-                        return {write: async text => { pending += text; },
+                        return {write: async data => { pending = typeof data === "string" ? pending + data : data; },
                             close: async () => { file.text = pending; }, abort: async () => {}};
                     }};
                 children.set(child, file);
@@ -220,7 +287,8 @@ test("fresh and cached runs export only when enabled, using stored fits and the 
         state.gpuSearchInput.checked = false;
         expect(state.trackOutputInput.value).toBe("none");
         expect([...state.trackOutputInput.options].map(option => option.textContent))
-            .toEqual(["None", "Best Track", "All Tracks Combined", "All Tracks Separate CSVs"]);
+            .toEqual(["None", "Best Track", "All Tracks Combined", "All Tracks Separate CSVs",
+                "Best Track (Parquet)", "All Tracks (Parquet)"]);
         await analyzeEntries(state, entries);
         expect(state.entries[0].status).toBe("done");
         expect(root.children.has("output")).toBe(false);
@@ -293,6 +361,23 @@ test("fresh and cached runs export only when enabled, using stored fits and the 
         expect(state.entries[4].fromCache).toBe(false);
         expect(state.entries[4].trackOutput.written).toBe(true);
         expect(fresh.children.get("output").children.get(freshSource.name).text.split("\r\n")[0]).toBe(header);
+
+        for (const mode of ["bestParquet", "allParquet"]) {
+            state.trackOutputInput.value = mode;
+            await analyzeEntries(state, entries);
+            const parquetEntry = state.entries.at(-1);
+            expect(parquetEntry.fromCache).toBe(true);
+            expect(parquetEntry.rowReused).toBe(false);
+            const path = mode === "bestParquet" ? "output/example.all.parquet" : "output/AllTracks/example.all.parquet";
+            expect(parquetEntry.trackOutput).toMatchObject({written: true, path, samples: 15});
+            const folder = mode === "bestParquet" ? root.children.get("output")
+                : root.children.get("output").children.get("AllTracks");
+            const {rows} = await readParquet(folder.children.get("example.all.parquet").text);
+            expect(rows).toHaveLength(mode === "bestParquet" ? 15 : ids.length * 15);
+            expect(rows[0]).toMatchObject({TrackID: "0007", Time: 7.25, AlgorithmID: ids[0]});
+            expect(state.status.textContent).toContain("Track output: 1 written, 0 skipped, 0 failed.");
+        }
+        expect((await walkDirectoryHandle(root, {recursive: true})).map(e => e.name)).toEqual([source.name]);
     } finally {
         state.closeButton.onclick();
         globalThis.Worker = originalWorker;
@@ -341,6 +426,26 @@ test("a run that cannot write a file removes the file from an earlier run", asyn
     const empty = directory("empty");
     await expect(writeTrackOutput({...entry, dirHandle: empty}, {mode: "allCombined"})).resolves.toMatchObject({removed: false});
     expect(empty.children.size).toBe(0);
+});
+
+test.each(["bestParquet", "allParquet"])("%s writes binary files beside CSV and removes only its stale output", async mode => {
+    const record = ingestBotCSV(scenarioCSV());
+    const dirHandle = directory("tracks");
+    const entry = {name: "x.csv", dirHandle, results: {...record, hypotheses: candidates(record)}};
+    const csvMode = mode === "bestParquet" ? "best" : "allCombined";
+    await writeTrackOutput(entry, {mode: csvMode});
+    await writeTrackOutput(entry, {mode});
+    const output = dirHandle.children.get("output");
+    const folder = mode === "bestParquet" ? output : output.children.get("AllTracks");
+    expect((await readParquet(folder.children.get("x.parquet").text)).rows).toHaveLength(mode === "bestParquet" ? 15 : 30);
+    expect(trackOutputName("clip.ts", mode)).toBe("clip.ts.parquet");
+    expect(trackOutputName("TRACK.CSV", mode)).toBe("TRACK.parquet");
+    expect(trackOutputLocation({...entry, name: "clip.ts"}, mode).path)
+        .toBe(mode === "bestParquet" ? "output/clip.ts.parquet" : "output/AllTracks/clip.ts.parquet");
+    entry.results = {...record, hypotheses: []};
+    await expect(writeTrackOutput(entry, {mode})).resolves.toMatchObject({written: false, removed: true});
+    expect(folder.children.has("x.parquet")).toBe(false);
+    expect(folder.children.has("x.csv")).toBe(true);
 });
 
 test("separate CSVs: one file per candidate, named <source>_<method>.csv, in a folder for the source", async () => {

@@ -14,16 +14,21 @@ export const TRACK_OUTPUT_COLUMNS = [
 /**
  * The modes writeTrackOutput takes. "best" writes the top candidate,
  * "allCombined" every candidate in one file, and "allSeparate" one file for
- * each candidate in a folder for each source.
+ * each candidate in a folder for each source. The Parquet modes write the
+ * same candidates as "best" and "allCombined", with typed columns.
  */
 const MODE_FOLDERS = {
     best: [],
     allCombined: [ALL_TRACKS_OUTPUT_DIR],
     allSeparate: [SEPARATE_TRACKS_OUTPUT_DIR],
+    bestParquet: [],
+    allParquet: [ALL_TRACKS_OUTPUT_DIR],
 };
+const PARQUET_MODES = new Set(["bestParquet", "allParquet"]);
 
-/** The source filename, with ".csv" added unless it already ends in ".csv" (clip.ts -> clip.ts.csv). */
-export function trackOutputName(sourceName) {
+/** Preserve the source name, adding ".csv" or replacing its final ".csv" with ".parquet". */
+export function trackOutputName(sourceName, mode = "best") {
+    if (PARQUET_MODES.has(mode)) return `${trackOutputBase(sourceName)}.parquet`;
     return /\.csv$/i.test(sourceName) ? sourceName : `${sourceName}.csv`;
 }
 
@@ -46,7 +51,7 @@ export function trackOutputLocation(entry, mode = "best") {
     const base = beside ? entry.parentHandle : entry.dirHandle;
     const dir = String(entry.dirPath ?? "").replace(/\/$/, "");
     const prefix = beside ? dir.replace(/(^|\/)[^/]+$/, "") : dir;
-    const last = mode === "allSeparate" ? trackOutputBase(entry.name) : trackOutputName(entry.name);
+    const last = mode === "allSeparate" ? trackOutputBase(entry.name) : trackOutputName(entry.name, mode);
     return {base, path: [prefix, TRACK_OUTPUT_DIR, ...MODE_FOLDERS[mode], last].filter(Boolean).join("/")};
 }
 
@@ -100,8 +105,7 @@ function toCSV(rows) {
     return [TRACK_OUTPUT_COLUMNS.join(","), ...rows].join("\r\n") + "\r\n";
 }
 
-/** Export the selected path in the analysis's input XYZ frame, in metres. */
-export function buildTrackOutputCSV(results) {
+function bestCandidate(results) {
     const missing = missingSamplesReason(results);
     if (missing) return {reason: missing};
     const top = rankAllHypotheses(results.hypotheses ?? [], {useTruth: false, dataset: results.dataset})[0]?.h;
@@ -109,7 +113,14 @@ export function buildTrackOutputCSV(results) {
     if (top.atInfinity) return {reason: "The top candidate has no finite target position."};
     if (!hasFinitePositions(top, results.dataset.n)) return {reason: "The top candidate has no complete finite track."};
     const algorithmID = trackAlgorithmID(top);
-    return {csv: toCSV(candidateRows(results, top, algorithmID)), algorithmID, samples: results.dataset.n};
+    return {candidates: [{h: top, algorithmID}], algorithmID, samples: results.dataset.n};
+}
+
+/** Export the selected path in the analysis's input XYZ frame, in metres. */
+export function buildTrackOutputCSV(results) {
+    const {candidates, ...facts} = bestCandidate(results);
+    if (!candidates) return facts;
+    return {csv: toCSV(candidateRows(results, candidates[0].h, facts.algorithmID)), ...facts};
 }
 
 /**
@@ -152,6 +163,38 @@ export function buildSeparateTrackOutputCSVs(results) {
         csv: toCSV(candidateRows(results, c.h, c.algorithmID))})), ...facts};
 }
 
+async function buildParquetOutput(results, {candidates, ...facts}) {
+    if (!candidates) return facts;
+    // Keep the writer in a separate webpack chunk, loaded only for a Parquet export.
+    const {parquetWriteBuffer} = await import(/* webpackChunkName: "parquet-writer" */ "hyparquet-writer");
+    const count = results.dataset.n * candidates.length;
+    const columnData = TRACK_OUTPUT_COLUMNS.map((name, i) => {
+        const isString = i === 0 || i === 2;
+        return {name, type: isString ? "STRING" : "DOUBLE", nullable: i >= 6,
+            data: i >= 6 ? new Array(count).fill(null) : isString ? new Array(count) : new Float64Array(count)};
+    });
+    let row = 0;
+    for (const {h, algorithmID} of candidates) {
+        for (let f = 0; f < results.dataset.n; f++, row++) {
+            columnData[0].data[row] = String(results.outputSamples.trackId);
+            columnData[1].data[row] = results.outputSamples.times[f];
+            columnData[2].data[row] = algorithmID;
+            for (let axis = 0; axis < 3; axis++) columnData[3 + axis].data[row] = h.track[f * 3 + axis];
+        }
+    }
+    return {parquet: parquetWriteBuffer({columnData}), ...facts};
+}
+
+/** The best-track columns, with null optional covariance and double-precision numbers. */
+export function buildTrackOutputParquet(results) {
+    return buildParquetOutput(results, bestCandidate(results));
+}
+
+/** Every finite candidate in one Parquet file, in the same order as combined CSV. */
+export function buildAllTracksOutputParquet(results) {
+    return buildParquetOutput(results, exportableCandidates(results));
+}
+
 async function outputDirectory(base, folders, create) {
     let directory = base;
     for (const name of folders) directory = await directory.getDirectoryHandle(name, {create});
@@ -168,11 +211,11 @@ async function existingDirectory(base, folders) {
     }
 }
 
-async function writeFile(directory, name, text) {
+async function writeFile(directory, name, data) {
     const file = await directory.getFileHandle(name, {create: true});
     const writable = await file.createWritable();
     try {
-        await writable.write(text);
+        await writable.write(data);
         await writable.close();
     } catch (error) {
         try { await writable.abort(); } catch (_) { /* retain the original write error */ }
@@ -185,7 +228,7 @@ async function removeEarlierOutput(entry, mode) {
     const directory = await existingDirectory(trackOutputLocation(entry, mode).base,
         [TRACK_OUTPUT_DIR, ...MODE_FOLDERS[mode]]);
     try {
-        await directory?.removeEntry(trackOutputName(entry.name));
+        await directory?.removeEntry(trackOutputName(entry.name, mode));
         return !!directory;
     } catch (error) {
         if (error?.name === "NotFoundError") return false;
@@ -229,21 +272,24 @@ async function writeSeparateTrackOutput(entry) {
     return {written: true, path, files: files.length, removed, ...facts};
 }
 
-/** Writes the output that `mode` names: "best", "allCombined" or "allSeparate". */
+/** Writes the CSV or Parquet output that `mode` names. */
 export async function writeTrackOutput(entry, {mode = "best"} = {}) {
     if (!canWriteTrackOutput(entry)) {
         return {written: false, reason: "Choose Folder (Caching) to give track output files write access."};
     }
     if (mode === "allSeparate") return writeSeparateTrackOutput(entry);
-    const {csv, reason, ...facts} = mode === "allCombined"
-        ? buildAllTracksOutputCSV(entry.results) : buildTrackOutputCSV(entry.results);
-    if (!csv) {
+    const output = mode === "bestParquet" ? await buildTrackOutputParquet(entry.results)
+        : mode === "allParquet" ? await buildAllTracksOutputParquet(entry.results)
+        : mode === "allCombined" ? buildAllTracksOutputCSV(entry.results) : buildTrackOutputCSV(entry.results);
+    const {csv, parquet, reason, ...facts} = output;
+    const data = parquet ?? csv;
+    if (!data) {
         const removed = await removeEarlierOutput(entry, mode);
         return {written: false, removed,
             reason: removed ? `${reason} The output file from an earlier run was removed.` : reason};
     }
     const {base, path} = trackOutputLocation(entry, mode);
     await writeFile(await outputDirectory(base, [TRACK_OUTPUT_DIR, ...MODE_FOLDERS[mode]], true),
-        trackOutputName(entry.name), csv);
+        trackOutputName(entry.name, mode), data);
     return {written: true, path, ...facts};
 }

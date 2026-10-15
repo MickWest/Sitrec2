@@ -156,8 +156,8 @@ group.
   ranking or the verdict, which the cache cannot see (see
   [the result cache](#the-result-cache)).
 - **Track output** — optionally save the fitted tracks for each analysed file as
-  CSV. Choose it before choosing **Folder (Caching)**, which grants write
-  access. The choices are:
+  CSV or Parquet. Choose it before choosing **Folder (Caching)**, which grants
+  write access. The choices are:
   - **None** (the default) — no files.
   - **Best Track** — the **Top interpretation**, selected without truth, as
     `output/<source>.csv`.
@@ -171,10 +171,17 @@ group.
     is the `AlgorithmID` without `sitrec_` (for example
     `bot-0001.input_lantern_fittedWind.csv`). Each file holds the rows of one
     block of the combined file.
+  - **Best Track (Parquet)** — the same top candidate as **Best Track**, as
+    `output/<source>.parquet`.
+  - **All Tracks (Parquet)** — the same candidates and order as **All Tracks
+    Combined**, in one file per source, as `output/AllTracks/<source>.parquet`.
 
-  `<source>` is the source filename, with `.csv` added when it does not already
-  end in `.csv` (`clip.ts` gives `clip.ts.csv`; `track.csv` stays `track.csv`).
-  A source folder or a separate file name leaves out that final `.csv`. If
+  For CSV, `<source>` is the source filename, with `.csv` added when it does not
+  already end in `.csv` (`clip.ts` gives `clip.ts.csv`; `track.csv` stays `track.csv`).
+  A source folder or a separate file name leaves out that final `.csv`. Parquet
+  replaces a final `.csv` with `.parquet`, or adds `.parquet` to other filenames
+  (`track.csv` gives `track.parquet`; `clip.ts` gives `clip.ts.parquet`). The Parquet
+  writer loads only when a Parquet file is exported. If
   `All/` or `Input/` was reached through its parent, `output/` is a sibling
   folder; otherwise `output/` is created inside the track folder. Existing
   output files are replaced, and generated `output/` folders are excluded from
@@ -190,8 +197,10 @@ group.
   for example `sitrec_lantern_fittedWind`. The wind variants of one model share
   a key, so the wind mode is what tells them apart. A candidate has the same
   `AlgorithmID` in every choice.
-  The optional covariance cells are blank because calibrated position covariance
-  is unavailable. Other input formats use their source label as `TrackID` and
+  The optional covariance cells are blank in CSV and null in Parquet because
+  calibrated position covariance is unavailable. Parquet stores `TrackID` and
+  `AlgorithmID` as strings and the numeric columns as double-precision numbers.
+  Other input formats use their source label as `TrackID` and
   the fitted sample clock, starting at zero, as `Time`; positions are in the
   analysis's local ENU frame. No best-track file is written for a direction-only
   winner or a missing/incomplete track. The all-tracks choices leave out those

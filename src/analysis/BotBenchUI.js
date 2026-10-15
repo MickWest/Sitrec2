@@ -2291,15 +2291,18 @@ function createDialog() {
         + "to the candidates, the ranking or the verdict, which the cache cannot see.", false);
     const trackOutputLabel = document.createElement("label");
     trackOutputLabel.style.cssText = "display: inline-flex; align-items: center; gap: 6px; font-size: 13px;";
-    trackOutputLabel.title = "Save the fitted tracks as CSV files in an output folder: beside All/Input when "
+    trackOutputLabel.title = "Save the fitted tracks as CSV or Parquet files in an output folder: beside All/Input when "
         + "opened through their parent, otherwise inside the track folder. Candidates are selected and "
         + "ordered by the ranking without truth.\n"
         + "Best Track: the top candidate, as output/<source>.csv.\n"
         + "All Tracks Combined: every candidate in one file, best first, as output/AllTracks/<source>.csv.\n"
         + "All Tracks Separate CSVs: one file for each candidate, as "
         + "output/AllTracksSeparate/<source>/<source>_<method>.csv.\n"
+        + "Best Track (Parquet): the top candidate, as output/<source>.parquet.\n"
+        + "All Tracks (Parquet): every finite candidate in one file, best first, as "
+        + "output/AllTracks/<source>.parquet.\n"
         + "Preserves BOT TrackID, sample times and XYZ metres; AlgorithmID names the method; optional "
-        + "covariance cells are blank. Direction-only candidates are left out. Replaces existing output "
+        + "covariance cells are blank in CSV and null in Parquet. Direction-only candidates are left out. Replaces existing output "
         + "files, and removes this source's files that a run no longer writes. Needs Folder (Caching) "
         + "write access.";
     const trackOutputInput = document.createElement("select");
@@ -3421,6 +3424,8 @@ const TRACK_OUTPUT_CHOICES = [
     ["best", "Best Track"],
     ["allCombined", "All Tracks Combined"],
     ["allSeparate", "All Tracks Separate CSVs"],
+    ["bestParquet", "Best Track (Parquet)"],
+    ["allParquet", "All Tracks (Parquet)"],
 ];
 
 function loadStoredWorkerLimit() {

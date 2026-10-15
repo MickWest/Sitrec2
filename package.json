@@ -156,7 +156,7 @@
       "\\.txt$": "<rootDir>/tests/rawTextTransform.js"
     },
     "transformIgnorePatterns": [
-      "node_modules/(?!(3d-tiles-renderer|three/examples|three/build)/)"
+      "node_modules/(?!(3d-tiles-renderer|three/examples|three/build|hyparquet|hyparquet-writer)/)"
     ],
     "moduleNameMapper": {
       ".+\\.mjs$": "<rootDir>/tests/__mocks__/three-addons-stub.js",
@@ -178,6 +178,7 @@
     "file-saver": "^2.0.5",
     "geotiff": "^3.0.5",
     "heic-to": "^1.5.2",
+    "hyparquet-writer": "^0.16.12",
     "i18next": "^26.4.2",
     "json-stringify-pretty-compact": "^4.0.0",
     "jsurl": "^0.1.5",
