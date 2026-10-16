@@ -199,6 +199,10 @@ Constellation lines and the equatorial grid are automatically excluded from expo
   on, the point sources and their trails are placed through that projection, the same
   as the rendered scene, and sources outside the fisheye's masked image circle are left
   out. With a panorama, the occlusion mask is rendered once for each panorama face.
+- The point sources, their trails and the occlusion mask are placed in the view as it is
+  drawn. That includes a video zoom or pan that the look view follows (View → *Video Zoom %*,
+  or panning in the video pane), **Match Video Aspect** and the Camera Tweaks offsets, so a
+  trail ends at the skyline that the rendered terrain shows.
 - Satellite visibility depends on estimated flux, image speed, point-spread width and
   exposure response. Design and attitude are not supplied by orbital elements. Use the
   available Starlink design profiles as sensitivity checks, with one camera calibration

@@ -65,6 +65,7 @@ import {degrees, radians} from "./mathUtils";
 import {flareRamp} from "../tools/shf/flarePhysics.js";
 import {altitudeHAE, getLocalUpVector} from "./SphericalMath";
 import {GlobalScene} from "./LocalFrame";
+import {withDisplayedCamera} from "./ViewUtils";
 import {MeshBasicMaterial, WebGLRenderTarget, Color} from "three";
 
 // ---------------------------------------------------------------------------
@@ -924,7 +925,10 @@ async function renderLongExposure(mgr) {
         }
     }
 
-    function computeOcclusionMask(qBase) {
+    // The mask is rendered through `proj`, the projection the frame was drawn with
+    // (see the sample loop), so it lines up with the background and with the lookup
+    // in maskOccluded, which projects through the same elements.
+    function computeOcclusionMask(qBase, proj) {
         const renderer = lookView.renderer;
         if (!renderer || !GlobalScene) return null;
         const override = new MeshBasicMaterial({color: 0xffffff});
@@ -938,6 +942,8 @@ async function renderLongExposure(mgr) {
         // so the override material must project through it too.
         if (lensMode === "fisheye") installFisheyeOnMaterial(override);
         const savedQuat = camera.quaternion.clone();
+        const savedProj = camera.projectionMatrix.clone();
+        const savedProjInv = camera.projectionMatrixInverse.clone();
         const savedClearColor = new Color();
         renderer.getClearColor(savedClearColor);
         const savedClearAlpha = renderer.getClearAlpha();
@@ -947,6 +953,8 @@ async function renderLongExposure(mgr) {
             camera.quaternion.copy(qBase);
             camera.updateMatrix();
             camera.updateMatrixWorld(true);
+            camera.projectionMatrix.fromArray(proj);
+            camera.projectionMatrixInverse.copy(camera.projectionMatrix).invert();
             GlobalScene.overrideMaterial = override;
             renderer.setClearColor(0x000000, 1);
             if (lensMode === "panorama") {
@@ -974,6 +982,8 @@ async function renderLongExposure(mgr) {
             camera.quaternion.copy(savedQuat);
             camera.updateMatrix();
             camera.updateMatrixWorld(true);
+            camera.projectionMatrix.copy(savedProj);
+            camera.projectionMatrixInverse.copy(savedProjInv);
             override.dispose();
         }
         return mask;
@@ -1219,14 +1229,28 @@ async function renderLongExposure(mgr) {
             }
 
             // pose actually rendered (controllers incl. nudge have run);
-            // un-apply the analytic nudge to get the base pose for sub-frame slerp
-            const qRendered = camera.quaternion.clone();
+            // un-apply the analytic nudge to get the base pose for sub-frame slerp.
+            //
+            // "Rendered" means as DRAWN. Between renders the camera holds its base pose
+            // and projection; the render pass adds display-only terms and takes them off
+            // again - the video pan, the look view's video-coverage widening, Match Video
+            // Aspect, y-compression and the Camera Tweaks offsets. The splats, the
+            // occlusion mask and the Moon boost are placed over the captured frame, so
+            // they must use the drawn pose and projection (withDisplayedCamera applies
+            // the same terms). With the base camera, a 5% vertical video pan put every
+            // star and satellite trail ~26 px below the terrain that should hide it.
+            // A panorama's face passes apply none of those terms: it keeps the base camera.
+            const drawn = lensMode === "panorama"
+                ? {q: camera.quaternion.clone(), proj: camera.projectionMatrix.elements.slice()}
+                : withDisplayedCamera(lookView, cam => ({
+                    q: cam.quaternion.clone(), proj: cam.projectionMatrix.elements.slice()}));
+            const qRendered = drawn.q;
             const nq = nudgeQuaternion(t);
             const qBase = nq ? qRendered.clone().multiply(_q.copy(nq).invert()) : qRendered;
             const pose = {qBase, pos: camera.position.clone(), t,
                 celQ: nightSky?.celestialSphere?.getWorldQuaternion(new Quaternion())};
             const intervalSeconds = prevPose ? (t - prevPose.t) * simSpeed : 0;
-            projElements = camera.projectionMatrix.elements.slice();
+            projElements = drawn.proj;
 
             // occlusion mask: build from this sample's base pose, and rebuild
             // whenever the camera POSITION moves (parallax changes what hides
@@ -1239,7 +1263,7 @@ async function renderLongExposure(mgr) {
                     occPos.copy(pose.pos);
                     occQuatInv.copy(pose.qBase).invert();
                     occProj = projElements.slice();
-                    occMask = computeOcclusionMask(pose.qBase);
+                    occMask = computeOcclusionMask(pose.qBase, occProj);
                 }
             } else {
                 occMask = null;
@@ -1310,7 +1334,7 @@ async function renderLongExposure(mgr) {
 
             // ---- HDR moon disk: scale so the disk's total energy matches its magnitude ----
             if (P.hdrPoints && P.moonGain > 0 && planets?.planetSprites?.Moon && nightSky?.celestialSphere) {
-                boostMoonDisk(frameLin, W, H, planets, nightSky, camera, projElements, P, projectAt, lensMode);
+                boostMoonDisk(frameLin, W, H, planets, nightSky, camera, qRendered, projElements, P, projectAt, lensMode);
             }
 
             // ---- accumulate the frame ----
@@ -1563,7 +1587,8 @@ async function renderLongExposure(mgr) {
 // energy equals its catalog-magnitude flux under the star calibration —
 // preserving the phase/limb texture while letting the disk burn out and trail
 // like a real exposure. Never dims below the LDR rendering.
-function boostMoonDisk(frameLin, W, H, planets, nightSky, camera, projElements, P, projectAt, lensMode) {
+// qNow: the orientation the frame was drawn with (see the sample loop), not camera.quaternion.
+function boostMoonDisk(frameLin, W, H, planets, nightSky, camera, qNow, projElements, P, projectAt, lensMode) {
     const moon = planets.planetSprites.Moon;
     if (!moon || moon.mag === undefined || !moon.equatorial || !moon.sprite) return;
     const celQ = nightSky.celestialSphere.getWorldQuaternion(new Quaternion());
@@ -1572,7 +1597,6 @@ function boostMoonDisk(frameLin, W, H, planets, nightSky, camera, projElements, 
     if (dir.dot(up) < -0.01) return;                       // below horizon
     const src = {isDir: true, x: dir.x, y: dir.y, z: dir.z};
     const ctr = {x: 0, y: 0};
-    const qNow = camera.quaternion;
     if (!projectAt(qNow, camera.position, src, ctr)) return;
     // angular radius from the mesh scale (CPlanets: scale = tan(angDiam/2) * sphereRadius)
     const sphereR = planets.sphereRadius ?? nightSky.starField?.sphereRadius ?? 100;
