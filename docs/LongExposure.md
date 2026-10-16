@@ -18,11 +18,69 @@ You'll find it under **Video → Long Exposure/Stacking**.
    The progress widget's **Enough** button stops early and keeps a correctly-exposed
    shorter exposure. In stack mode, a partial final subexposure retains the
    configured gain rather than being brightened to a full exposure.
-4. The result opens in a window with an **Exposure (EV)** slider and **Save PNG**.
+4. The result opens in a window with an **Exposure (EV)** slider and **Save PNG**. The
+   slider starts at +3 EV, the exposure at which night trails usually show (Moonlight
+   starts at its developed exposure, see below). The preview during the render uses the
+   same exposure.
 
 The EV slider re-tone-maps the kept high-dynamic-range result live — push it up to reveal
 faint trails and stars, down to isolate only the brightest sources, without re-rendering.
 Bright values roll off through a soft photographic shoulder rather than clipping hard.
+
+To frame the camera before a render, use **Preview Timelapse** (below).
+
+## Preview Timelapse
+
+**Video → Long Exposure/Stacking → Preview Timelapse** draws the trails that the render
+will record as lines in the 3D scene: stars, planets and satellites, with the satellites'
+flares. Turn it on with the checkbox in the folder's title bar. It uses the settings of
+the Long Exposure/Stacking menu: Duration, Capture Mode, Stack Exposure, Frame Step,
+Saturation Magnitude, Point Spread, Star Tint, Horizon Reddening, Refraction and the
+Camera Nudge.
+
+**Positions** are those of the render: the same sample times, star catalog, annual
+aberration and refraction, and the same apparent satellite positions. Stars and planets
+are drawn on the night sky, so the terrain hides them. Satellites are drawn at their
+apparent positions in the 3D world, so terrain in front of them hides them, and the main
+view shows their real paths.
+
+**Brightness** is that of the render. Each trail vertex has the value that the render's
+point spread leaves at the middle of the trail: the flux of the source, dimmed by
+extinction, times the part of its light that falls in one pixel along the trail. A slow
+star keeps almost all of it; a fast satellite spreads it along its streak. The line
+applies the same point spread across the trail, so a faint trail is a thin, dim line and
+a bright flare fills a wider line. Overlapping trails show the brighter one, as in a
+brightest-pixel stack.
+
+| Control | Effect |
+|---|---|
+| **Segments Per Trail** | The number of straight segments in each trail, 20 by default. A star or planet trail gets fewer when its segments would be shorter than 4 pixels. A satellite's segments cover only the visible part of its pass, from where it fades in to where it fades out. Half of them are spaced by time and half by change of brightness, so the rise, the peak and the fall of a flare each get vertices. |
+| **Preview Exposure (EV)** | The exposure of the look view while the preview is on, +3 EV by default. It applies to the whole view, the trails and the scene, as the EV slider of the result window does. Use the same value in both to compare them. |
+| **Stars**, **Planets**, **Satellites** | Which trails to draw. |
+| **Hide Live Sky** | In the look view, hide what the render hides: the star, planet and satellite sprites and the sky chart lines (constellations, grid, flare region). On by default. |
+| **Recalculate Now** | Calculate the trails again, for a change that the preview does not watch, for example a new satellite filter. |
+| **Status** | The number of trails drawn and the time the calculation took. |
+
+The trails are calculated again when the view has not changed for half a second. While
+the look camera moves, the old lines stay where they are, because they are fixed in the
+world. The calculation runs in parallel in background workers, so it does not slow the
+camera, and only for sources in the view or near it (a margin of 5° or a quarter of the
+field of view, whichever is larger). A larger pan shows the new trails when the camera stops.
+
+Limits of the preview:
+
+- The camera is assumed to hold still for the exposure, as with **Lock Camera Heading**
+  (on by default). The current camera position and heading are used for all of it.
+- The Moon's trail and aircraft lights are not drawn. The background is the current
+  frame, not the stack of all the frames.
+- Within one subexposure, two trails that cross add their light in the render; the
+  preview shows the brighter one.
+- With the **Camera Nudge**, the trails follow the nudge only at their vertices. Increase
+  **Segments Per Trail** to see more of a fast bounce.
+- A satellite is sampled at the render's sample times while it moves fast. A slow or
+  distant one is sampled less often: at most about 2 pixels or 0.3° of motion between
+  samples, and at least one sample every 30 seconds. For a very long exposure or a small
+  **Frame Step**, the samples are also limited to 1,500 in the exposure.
 
 ## Continuous exposure and brightest-pixel stacks
 

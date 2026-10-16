@@ -68,6 +68,15 @@ const STATE = {
 	DOUBLE_TAP_DRAG_ZOOM: 12,    // Double-tap-and-drag one-hand zoom
 };
 
+// A drag in a PTZ-driven view (the look view) changes the controller's angles.
+// The camera follows them every frame on its own; what needs the controller's
+// recalculateCascade is everything computed from the camera over the WHOLE sitch:
+// lines of sight, ground tracks, angle graphs. In a long sitch that is far slower
+// than a frame (23 minutes, 41,400 frames: about 200 ms, nearly all of it the LOS
+// display), and doing it on every mouse move made the drag lag behind the mouse.
+// So the drag defers it until the camera has not moved for this long.
+const CASCADE_PAUSE_MS = 500;
+
 const MIN_CAMERA_ELEVATION_DEGREES = -89;
 const MAX_CAMERA_ELEVATION_DEGREES = 89;
 
@@ -856,7 +865,29 @@ class CameraMapControls {
 
     dispose() {
         this.unregisterInteraction?.();
+        clearTimeout(this.cascadeTimer);
+        this.cascadeTimer = null;
+        this.cascadeNode = null;
     }
+
+	// Recalculate `node`'s cascade once the drag pauses (see CASCADE_PAUSE_MS).
+	deferCascade(node) {
+		this.cascadeNode = node;
+		clearTimeout(this.cascadeTimer);
+		this.cascadeTimer = setTimeout(() => this.flushCascade(), CASCADE_PAUSE_MS);
+	}
+
+	flushCascade() {
+		clearTimeout(this.cascadeTimer);
+		this.cascadeTimer = null;
+		const node = this.cascadeNode;
+		this.cascadeNode = null;
+		// not if the sitch changed meanwhile and the node went with it
+		if (node && NodeMan.exists(node.id) && NodeMan.get(node.id) === node) {
+			node.recalculateCascade();
+			setRenderOne(true);
+		}
+	}
 
 	handlePointerCancel(event) {
 		// Handle pointer interruptions (e.g., browser gestures, context menus)
@@ -989,7 +1020,7 @@ class CameraMapControls {
 
 					if (ptzControls.satellite) {
 						// Satellite mode: camera-local rotations via quaternion
-						ptzControls.applySatelliteMouseDelta(xRotate, yRotate, dragFov);
+						ptzControls.applySatelliteMouseDelta(xRotate, yRotate, dragFov, false);
 					} else {
 						// No wrap needed on az: its setter folds the angle back into
 						// -180..180 (CNodeControllerAzElZoom), which is also what keeps
@@ -999,9 +1030,8 @@ class CameraMapControls {
 
 						if (ptzControls.el <= -89) ptzControls.el = -89
 						if (ptzControls.el >= 89) ptzControls.el = 89
-
-						ptzControls.recalculateCascade();
 					}
+					this.deferCascade(ptzControls);
 
 				} else {
 

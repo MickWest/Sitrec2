@@ -277,6 +277,8 @@ The Main View is a 3D view on the world, very similar in concept to other 3D vie
 - The mouse wheel zooms in and out.
 - Shift + the mouse wheel changes the camera's field of view instead of moving it. This is the same zoom the Look view's wheel does, and it works in the Look view too when *Free Look Camera* is on (where the plain wheel is moving the camera). The Look camera's field of view can also be set exactly under Camera ▸ FOV (Zoom). In a sitch whose Look camera takes its field of view from the recorded data - MISB metadata, or a track's zoom - Shift + the wheel does nothing on that view, because that value is a measurement of what the real camera did.
 
+A drag in the Look view turns the look camera (its pan and tilt angles). The view follows the mouse at once. What Sitrec calculates from the camera for the whole sitch — the lines of sight, ground tracks and angle graphs — is calculated again when the drag pauses for half a second. When every line of sight is the same line, as for a camera that does not move, the Main view draws that one line, and it follows the drag at once.
+
 If you get lost, you can select "Reset Camera" from the View menu. This will put the camera back to the start position. In the custom sitch tool, it will put the camera back to the position calculated when you last imported a track. You can also get this by pressing "." on the numeric keypad. 
 
 You can also set a default using "Snapshot camera".
