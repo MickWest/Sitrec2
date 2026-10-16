@@ -9,6 +9,30 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.181.0 (2026-10-15)
+
+### New Features
+- **From timelapse** (Video → Star Tracker): analyses one stacked timelapse image of star trails from a fixed camera. It finds the trails, identifies the stars, and fits the lens and the camera's pointing from both ends of every trail. **Sync Camera to Star Field** then sets the Fisheye render to that lens and holds the camera at that pointing.
+- **General fisheye projection** (Camera → FOV (Zoom) → Fisheye → Projection): the new *General fisheye (curve k)* choice has a **Curve k** slider that blends between the orthographic, equisolid, equidistant, stereographic and rectilinear projections. It is saved with the sitch.
+- **Brightest-pixel stacking** (Video → Long Exposure/Stacking → Capture Mode): simulates a series of short exposures (**Stack Exposure (s)**, default 10) and keeps the brightest value at each pixel, as star-trail stacking software does. It is the default for new sitches. *Continuous exposure* is the earlier long exposure, and older saved sitches with Long Exposure settings keep it.
+- **Satellite brightness and sunlight models** (Satellites → Satellite Brightness Model, Starlink Design, Satellite Sunlight): the default *Photometric estimate* calculates each satellite's brightness from published Starlink flare measurements, its distance and the Sun angle. A long exposure now also shows ordinary sunlit passes, not only flares. The default sunlight model uses the size of the Sun's disk and the atmosphere near Earth's shadow. Saved sitches also use the new models; select *Legacy cone* and *Legacy fade* for the earlier ones.
+- **Limit Tracks In/Out** (Show): draws each track only between the In and Out points, and draws it again when you change them. The full data tracks are not drawn.
+- **Lock Forward Vector** (Camera → Heading): when the camera moves, it keeps pointing in the same direction in space, so the stars stay in place in the view, and Pan, Tilt and Roll change to match. It works only with the Manual heading and not with Relative Heading.
+- **Video overlay button** (Look view header bar): a click switches the video overlay off, and on again at its last transparency. Hover over it for a transparency slider. It is the same setting as *Vid Overlay Trans %* (View) and *Transparency %* (Look).
+
+### Improvements
+- **Show Tracks** now works for each view: the button on the main view's header bar hides tracks only in the main view, and the button on the look view's header bar only in the look view. In the Contents menu they are *Show Tracks in Main* and *Show Tracks in Look*. A right-click in a view now finds only the tracks that view shows.
+- The satellite tracks (Satellites → Satellite to Track, Satellite to Track 2) now have a *Show in look view* setting, and the look view's *Show Tracks* button and *All Tracks in Look* (Show) include them.
+- Long exposures (Video → Long Exposure/Stacking) now use the real time between samples, and *Duration* counts world time when the *Simulation Speed* is not 1. Star and satellite trails stay smooth at a large *Frame Step*. The Sun angle arrows, flare region, flare band and satellite tracks are left out of the image.
+
+### Bug Fixes
+- Fixed the corners of the Fisheye render (Camera → FOV (Zoom) → Fisheye) missing parts of the scene when *Show Image Circle* is off.
+- Fixed satellites in a long exposure staying at full brightness until they suddenly disappeared into Earth's shadow.
+- Fixed star and satellite trails in a long exposure crossing terrain that should hide them, when the look view follows a video zoom or pan, *Match Video Aspect* or the Camera Tweaks offsets.
+- Fixed the ground height under the camera coming from low-detail elevation data. This could put an AGL camera tens of metres under the visible ground, and affected WASD walking and the C-key eye-level placement.
+- Fixed the ground altitude lookups that the AI chat assistant uses giving the height of the bare Earth ellipsoid, not the terrain, where there are no 3D tiles.
+- Fixed the Starlink Flare Predictor (Sitrec → Extra Tools) crashing with a full satellite catalogue, and similar "Maximum call stack size exceeded" errors with very large files, folders and data sets.
+
 ## Version 2.180.4 (2026-10-14)
 
 ### New Features
