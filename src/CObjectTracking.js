@@ -690,8 +690,13 @@ export class ObjectTracker {
         // A frame that did not decode (a corrupt frame, or a timeout) stays
         // unmeasured and tracking continues with the next frame. getImage()
         // may show a nearby frame for smooth playback; never turn that
-        // fallback into a measurement at the requested time.
-        if (!ready) return true;
+        // fallback into a measurement at the requested time. A forced
+        // re-track replaces the frame's old auto point, so that point must
+        // not survive as a measurement either; a user point always stays.
+        if (!ready) {
+            if (force && !this.isUserPoint(frame)) this.trackedPositions.markUnmeasured(frame);
+            return true;
+        }
 
         this.trackFrame(frame, force);
         if (this.trackedPositions.has(frame)) this.lastTrackedFrame = frame;

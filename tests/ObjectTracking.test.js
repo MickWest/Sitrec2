@@ -402,6 +402,25 @@ test('the tracking key skips a frame that does not decode and keeps tracking', a
     KeyMan.isKeyHeld.mockReset();
 });
 
+test('re-tracking an undecodable frame removes its old auto point but keeps a user point', async () => {
+    const {t, videoData} = makeTracker();
+    t.trackedPositions.set(2, {x: 10, y: 10});
+    t.trackedPositions.set(3, {x: 20, y: 20});
+    t.manualKeyframes.add(3);
+    videoData.waitForFrame = async () => false;
+    t.trackFrame = jest.fn();
+    expect(await t.trackStep(videoData, 2, () => true, true)).toBe(true);
+    expect(t.trackedPositions.has(2)).toBe(false);
+    expect(t.trackedPositions.unmeasuredFrames.has(2)).toBe(true);
+    await t.trackStep(videoData, 3, () => true, true);
+    expect(t.trackedPositions.get(3)).toEqual({x: 20, y: 20});
+    // Start (not forced) keeps existing points, as documented.
+    t.trackedPositions.set(4, {x: 30, y: 30});
+    await t.trackStep(videoData, 4, () => true);
+    expect(t.trackedPositions.get(4)).toEqual({x: 30, y: 30});
+    expect(t.trackFrame).not.toHaveBeenCalled();
+});
+
 test('render-time tracking waits for the exact frame too', () => {
     const {t, videoData} = makeTracker();
     videoData.isFrameLoaded = () => false;

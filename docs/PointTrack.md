@@ -71,7 +71,9 @@ a difficult stretch. Hold **`;`** to go back. Note that `;` is not "tracking bac
 **deletes** the points as it goes, user points included, so use it to undo a bad run.
 
 If a frame cannot be decoded (for example, a damaged frame), **`'`** and **Start Point Track**
-both leave that frame without a point and continue with the next frame.
+both continue with the next frame. **Start Point Track** keeps a point that the frame already
+has. **`'`** measures each frame again, so it removes an old automatic point from that frame
+and marks the frame as not measured; your user points always stay.
 
 ### Lights at night, and stars
 
