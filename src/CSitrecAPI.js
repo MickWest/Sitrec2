@@ -1,4 +1,5 @@
 // Client-side Sitrec API with callable functions and documentation
+import * as LAYER from "./LayerMasks";
 import {
     CustomManager,
     FileManager,
@@ -2482,6 +2483,11 @@ class CSitrecAPI {
         const high = LLAToECEF(lat, lon, 100000);
         const down = getLocalUpVector(high).negate();
         const raycaster = new Raycaster(high, down, 0, 200000);
+        // The terrain tiles sit on the main/look layers too, and raycastLocalGround
+        // widens the mask only for the 3D tiles. A fresh Raycaster tests layer 0 alone,
+        // so without this the terrain was never hit and every answer off the 3D tiles
+        // was the bare-ellipsoid fallback.
+        raycaster.layers.mask |= LAYER.MASK_MAIN | LAYER.MASK_LOOK;
         // The tiles sit on the main/look layers, and raycastLocalGround widens the
         // mask to the camera's — so hand it a camera or the tiles are skipped.
         const camera = ViewMan.get("lookView", false)?.camera

@@ -80,6 +80,14 @@ toggle the tiles on or off. Measured under the synthetic buildings of an Arizona
 (3) sat 1.7-2.3 m **above** (4) — most of a small building's own height, which is why a base
 left on the DEM visibly floats.
 
+**The ground under each view's camera is always loaded at full detail.** Elsewhere, elevation
+detail follows what is on screen, so a hillside the camera looks across is refined and the
+ground behind it is not. Directly under the camera it is always refined, to the elevation
+source's finest zoom, whatever the camera looks at — because the camera's own AGL height,
+WASD walking and the C-key eye-level placement are all measured from it. After you move the
+camera somewhere new, its height settles onto the fine ground within a few seconds, as those
+tiles arrive.
+
 Also worth knowing: the fast ray-marcher used for long line-of-sight queries **never sees 3D
 tiles at all**. It works against the elevation model only.
 

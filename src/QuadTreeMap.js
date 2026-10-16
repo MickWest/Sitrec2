@@ -1,4 +1,4 @@
-import {LLAToECEF, wgs84} from "./LLA-ECEF-ENU";
+import {ECEFToLLAVD_radii, LLAToECEF, wgs84} from "./LLA-ECEF-ENU";
 import {Frustum, Matrix4, Sphere, Vector3} from "three";
 import {par} from "./par";
 import {computeActiveTileHash, debugLog, Globals, tileBoundsModeForView} from "./Globals";
@@ -43,6 +43,10 @@ const EARTH_CIRCUMFERENCE_M = 40075016.686;
 // by a full zoom level's worth of detail." Smaller = stickier, larger = less
 // memory but more flicker.
 const MERGE_HYSTERESIS_FACTOR = 0.5;
+
+// The column of ELEVATION tiles under each view's camera is kept refined down to tiles this
+// many times wider than the camera's height above the ground. See groundColumnUnder().
+const GROUND_COLUMN_SPAN_FACTOR = 2;
 
 // Texture merges are visually destructive: a ready high-detail child cut is
 // replaced by a coarser parent. Do that only after the camera has stopped
@@ -559,6 +563,18 @@ export class QuadTreeMap {
         // Fallback to 1080 if the view hasn't sized itself yet (early frames).
         camera._viewportHeightPx = view.heightPx || 1080;
         camera._panoramaWidth = view.widthPx || 1920;
+
+        // The ground under this view's camera - elevation map only, null otherwise. Positions
+        // are measured from the elevation map: an AGL camera's height, WASD walking, the
+        // C-key eye-level placement, and the arbiter that accepts 3D-tile ground near it. So
+        // the elevation tiles under the camera must be fine whatever the camera looks at, and
+        // screen-space error does not give that: it measures a big tile from its CENTRE, so
+        // the tile the camera stands in reads as far away. Measured on a mountain sitch: the
+        // z8 tile under the camera scored 3.3 px against the 4 px target, the camera's ground
+        // stayed at about 0.5 km resolution, and an AGL camera stood 55 m under the terrain
+        // drawn from finer data.
+        const groundColumn = this.constructor.name === 'QuadTreeMapElevation'
+            ? this.groundColumnUnder(camera) : null;
         camera._panoramaFrusta = null;
         if (isPanoramicCamera(camera)) {
             // Black bars contain no scene pixels and must not raise tile detail.
@@ -654,6 +670,12 @@ export class QuadTreeMap {
             // This is expensive, so we only do it after early exit checks.
             // Errors propagate — silent fallback to legacy was hiding real bugs.
             const visibility = this.calculateTileVisibility(tile, camera, _v5Options, diag);
+            // The ground under the camera always refines (see groundColumn above).
+            const inGroundColumn = this.tileInGroundColumn(tile, groundColumn);
+            if (inGroundColumn) {
+                visibility.visible = true;
+                visibility.screenSpaceError = Number.POSITIVE_INFINITY;
+            }
             rememberReconcileVisibility(tile, visibility);
             let coverageVisibility = null;
             const textureCoverageVisible = () => {
@@ -743,7 +765,9 @@ export class QuadTreeMap {
                     // follow this real view predicate.
                     const childVis = this.calculateTileVisibility(child, camera, _v5Options, null);
                     rememberReconcileVisibility(child, childVis);
-                    if (!childVis.visible) continue;
+                    // An inactive leaf is never visited by the loop, so the ground column's
+                    // child has to be brought back here even when it is outside the frustum.
+                    if (!childVis.visible && !this.tileInGroundColumn(child, groundColumn)) continue;
                     // Reactivate bridge ancestors as active/loading state even
                     // when deeper descendants already exist. Render suppression
                     // in reconcileRenderedTileCut keeps the visible cut clean,
@@ -771,7 +795,7 @@ export class QuadTreeMap {
                 // deactivate -> prune -> re-create -> re-fetch). Treat the tile
                 // as a leaf instead. See anyProspectiveChildVisible() for why
                 // this can never wrongly block a useful subdivision.
-                if (!this.anyProspectiveChildVisible(tile, camera)) {
+                if (!inGroundColumn && !this.anyProspectiveChildVisible(tile, camera)) {
                     continue;
                 }
 
@@ -1749,6 +1773,37 @@ export class QuadTreeMap {
             
             this.trackTileLoading(`${key}-highres`, materialPromise);
         }
+    }
+
+    /**
+     * The camera's ground point and height above the loaded ground, for keeping the
+     * elevation tiles under it refined: {lat, lon, heightM}, or null when there is none to
+     * keep (no usable position, or a Flat Earth warp, whose cameras are not in globe space).
+     */
+    groundColumnUnder(camera) {
+        if (Globals.flatEarthWarpSphere) return null;
+        const lla = ECEFToLLAVD_radii(camera.position);
+        if (!Number.isFinite(lla.x) || !Number.isFinite(lla.y) || !Number.isFinite(lla.z)) return null;
+        const ground = this.getElevationInterpolated?.(lla.x, lla.y);
+        // At least 1 m, so a camera at (or under) the coarse ground still asks for the finest.
+        const heightM = Math.max(1, lla.z - (Number.isFinite(ground) ? ground : 0));
+        return {lat: lla.x, lon: lla.y, heightM};
+    }
+
+    /**
+     * Is this tile in the column under the camera that must stay refined? It contains the
+     * camera's ground point, and it is wide compared with the camera's height above the
+     * ground - a camera 10 km up needs its ground to tens of km, not to metres.
+     */
+    tileInGroundColumn(tile, column) {
+        if (!column) return false;
+        const proj = this.options.mapProjection;
+        const n = 2 ** tile.z;
+        const x = Math.floor(Math.abs(proj.lon2Tile(column.lon, tile.z) % n));
+        const y = Math.floor(Math.abs(proj.lat2Tile(column.lat, tile.z) % n));
+        if (x !== tile.x || y !== tile.y) return false;
+        const spanM = EARTH_CIRCUMFERENCE_M * Math.cos(column.lat * Math.PI / 180) / n;
+        return spanM > GROUND_COLUMN_SPAN_FACTOR * column.heightM;
     }
 
     /**

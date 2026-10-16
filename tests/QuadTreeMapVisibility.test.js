@@ -86,3 +86,50 @@ describe("QuadTreeMap tile visibility", () => {
         expect(map.anyProspectiveChildVisible(parentTile, camera)).toBe(true);
     });
 });
+
+describe("ground column under the camera (elevation map)", () => {
+    // The elevation tiles under a camera must refine whatever it looks at: an AGL camera's
+    // height, WASD walking and the C-key eye-level placement are all measured from them.
+    const projection = new CTileMappingGoogleMapsCompatible();
+    const lat = 33.217213, lon = -106.637568;
+    const tileAt = (z) => ({
+        z,
+        x: Math.floor(Math.abs(projection.lon2Tile(lon, z) % 2 ** z)),
+        y: Math.floor(Math.abs(projection.lat2Tile(lat, z) % 2 ** z)),
+    });
+    const map = Object.create(QuadTreeMapTexture.prototype);
+    map.options = {mapProjection: projection};
+
+    test("a camera on the ground keeps every zoom of the tile it stands in", () => {
+        const column = {lat, lon, heightM: 2};
+        for (let z = 0; z <= 15; z++) expect(map.tileInGroundColumn(tileAt(z), column)).toBe(true);
+        // ...but not the tile next door.
+        const t = tileAt(12);
+        expect(map.tileInGroundColumn({...t, x: t.x + 1}, column)).toBe(false);
+    });
+
+    test("a camera high above stops at tiles wide compared with its height", () => {
+        const column = {lat, lon, heightM: 10000};
+        // At 33 deg a z11 tile is about 16.4 km wide and a z10 one 32.8 km.
+        expect(map.tileInGroundColumn(tileAt(10), column)).toBe(true);
+        expect(map.tileInGroundColumn(tileAt(11), column)).toBe(false);
+    });
+
+    test("the column measures the camera's height from the loaded ground", () => {
+        const elev = Object.create(QuadTreeMapTexture.prototype);
+        elev.getElevationInterpolated = () => 2029.5;
+        const camera = new PerspectiveCamera();
+        camera.position.copy(LLAToECEF(lat, lon, 2031.6));
+        const column = elev.groundColumnUnder(camera);
+        expect(column.lat).toBeCloseTo(lat, 6);
+        expect(column.lon).toBeCloseTo(lon, 6);
+        expect(column.heightM).toBeCloseTo(2.1, 1);
+        // Under the ground (the case that started this) it still asks for the finest tiles.
+        camera.position.copy(LLAToECEF(lat, lon, 1990));
+        expect(elev.groundColumnUnder(camera).heightM).toBe(1);
+    });
+
+    test("no column, no tile", () => {
+        expect(map.tileInGroundColumn(tileAt(8), null)).toBe(false);
+    });
+});

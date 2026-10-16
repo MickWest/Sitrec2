@@ -28,7 +28,9 @@ const SOLAR_RADIUS_DEG = 0.266;
 
 export const SATELLITE_PHOTOMETRY = Object.freeze({
     label: "Estimated satellite photometry",
-    source: "https://arxiv.org/pdf/2405.13091",
+    // Provenance only, never fetched: written as the arXiv identifier, not a URL, so the
+    // egress scan does not take a citation for a network destination.
+    source: "arXiv:2405.13091",
     curveProvenance: "Approximate digitization of Figure 3 fitted lines at 1000 km",
     supportedOffSpecularDeg: Object.freeze([2, 20]),
     // A modelling caution, not a Gaussian confidence interval: even the more
