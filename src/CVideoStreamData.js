@@ -343,10 +343,14 @@ export class CVideoStreamData extends CVideoWebCodecBase {
             this.requestGroup(first);
             return !!this.isFrameCached(first.frame * this.videoSpeed);
         }
-        const group = this.getGroup(actual);
+        const group = this.getDecodeGroup(actual);
         if (!group?.dataReady) return false;
         this.requestGroup(group);
-        return !!this.isFrameCached(frame) && (!this.audioHandler?.streamAudio ||
+        // A finished decode that did not output this frame never will (the
+        // decoder dropped a corrupt frame, or the group failed for good). Play
+        // on and show the nearest frame, as getImage does, instead of waiting.
+        const videoReady = this.isFrameCached(frame) || group.loaded || group._permanentlyFailed || this._allGroupsFailed;
+        return !!videoReady && (!this.audioHandler?.streamAudio ||
             this.audioHandler.streamAudio.isReady(audioFrame, this.originalFps));
     }
 
@@ -360,7 +364,7 @@ export class CVideoStreamData extends CVideoWebCodecBase {
     async waitForFrame(frame, timeout = 10000) {
         const started = performance.now();
         while (!this.disposed && performance.now() - started < timeout) {
-            const group = this.getGroup(Math.floor(frame / this.videoSpeed));
+            const group = this.getDecodeGroup(Math.floor(frame / this.videoSpeed));
             if (group?.dataReady) return super.waitForFrame(frame, Math.max(0, timeout - (performance.now() - started)));
             // A stream failure can leave a usable downloaded prefix. Test its
             // frame readiness first; only missing bytes make this wait futile.

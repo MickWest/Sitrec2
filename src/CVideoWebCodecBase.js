@@ -856,19 +856,28 @@ export class CVideoWebCodecBase extends CVideoAndAudio {
             this.framePTSus[i] = this.chunks[i].timestamp;
         }
 
+        // Open GOP: the B-frames that follow a keyframe in decode order but
+        // display before it reference the previous group. They sort to the
+        // first leadingFrames display slots of their own group, and only the
+        // previous group's decode, which sends them as openGopExtra, can
+        // produce them.
+        for (let g = 0; g < this.groups.length; g++) {
+            const group = this.groups[g];
+            group.index = g;
+            group.leadingFrames = 0;
+            for (let i = group.frame + 1; i < group.frame + group.length && i < this.chunks.length; i++) {
+                if (this.chunks[i].timestamp < group.timestamp) {
+                    group.leadingFrames++;
+                } else {
+                    break;
+                }
+            }
+        }
+
         for (let g = 0; g < this.groups.length; g++) {
             const group = this.groups[g];
             const nextGroup = g + 1 < this.groups.length ? this.groups[g + 1] : null;
-            group.openGopExtra = 0;
-            if (nextGroup) {
-                for (let i = nextGroup.frame + 1; i < nextGroup.frame + nextGroup.length; i++) {
-                    if (i < this.chunks.length && this.chunks[i].timestamp < nextGroup.timestamp) {
-                        group.openGopExtra++;
-                    } else {
-                        break;
-                    }
-                }
-            }
+            group.openGopExtra = nextGroup ? nextGroup.leadingFrames : 0;
 
             const timestamps = [];
             for (let i = group.frame; i < group.frame + group.length; i++) {
@@ -928,6 +937,27 @@ export class CVideoWebCodecBase extends CVideoAndAudio {
         return null;
     }
 
+    // The group whose decode outputs this display frame. An open-GOP leading
+    // frame comes from the previous group's decode, not from its own group's.
+    // Request and wait on this group, never on getGroup(), or a leading frame
+    // purged while the previous group stays loaded is never decoded again.
+    getDecodeGroup(frame) {
+        const group = this.getGroup(frame);
+        if (group && group.index > 0 && frame - group.frame < (group.leadingFrames || 0)) {
+            return this.groups[group.index - 1];
+        }
+        return group;
+    }
+
+    // Display frames [start, end) that this group's decode fills and its purge
+    // releases: its own frames less the leading frames the previous group
+    // produces, plus the next group's leading frames. The next group's keyframe,
+    // which is decoded only as a reference, stays owned by the next group.
+    getGroupDisplayRange(group) {
+        const start = group.frame + (group.index > 0 ? (group.leadingFrames || 0) : 0);
+        return [start, group.frame + group.length + (group.openGopExtra || 0)];
+    }
+
     getGroupsBetween(start, end) {
         const groups = [];
         for (let g = 0; g < this.groups.length; g++) {
@@ -952,7 +982,7 @@ export class CVideoWebCodecBase extends CVideoAndAudio {
         if (frame > Sit.videoFrames - 1) frame = Sit.videoFrames - 1;
         if (frame < 0) frame = 0;
 
-        const group = this.getGroup(frame);
+        const group = this.getDecodeGroup(frame);
         if (group === null) {
             return; // No group found
         }
@@ -1006,11 +1036,16 @@ export class CVideoWebCodecBase extends CVideoAndAudio {
         }
 
         const extraChunks = group.openGopExtra || 0;
-        group.pending = group.length;
+        // Count the frames this decode outputs, not the group's chunks: the
+        // display range plus the next keyframe sent as a reference. The group's
+        // own leading frames are not output (they need the previous group).
+        const [displayStart, displayEnd] = this.getGroupDisplayRange(group);
+        const expectedFrames = displayEnd - displayStart + (extraChunks > 0 ? 1 : 0);
+        group.pending = expectedFrames;
         group.decodePending = 0;
         group.loaded = false;
         group.decodeOrder = [];
-        group._expectedLength = group.length;
+        group._expectedLength = expectedFrames;
         group._decodeStartTime = performance.now();
         this.groupsPending++;
 
@@ -1182,7 +1217,10 @@ export class CVideoWebCodecBase extends CVideoAndAudio {
             if (!keep.has(group) && group.loaded && group.pending <= 0) {
                 assert(this.imageCache, "imageCache is undefined when purging groups but groups.length = " + this.groups.length);
 
-                for (let i = group.frame; i < group.frame + group.length; i++) {
+                // Release exactly the frames this group's decode produced, so a
+                // later request for any of them reaches a group that is not loaded.
+                const [displayStart, displayEnd] = this.getGroupDisplayRange(group);
+                for (let i = displayStart; i < displayEnd; i++) {
                     // release all the frames in this group
                     // Close imageCache (ImageBitmap for WebCodec videos)
                     if (this.imageCache[i]) {
@@ -1281,7 +1319,7 @@ export class CVideoWebCodecBase extends CVideoAndAudio {
 
         const groupsToKeep = new Set();
         const groupsToRequest = new Set();
-        const currentGroup = this.getGroup(frame);
+        const currentGroup = this.getDecodeGroup(frame);
 
         for (let g in this.groups) {
             const group = this.groups[g];
@@ -1301,7 +1339,7 @@ export class CVideoWebCodecBase extends CVideoAndAudio {
                 }
             }
         }
-        const lookaheadGroup = this.getGroup(Math.min(frame + cacheWindow, this.chunks.length - 1));
+        const lookaheadGroup = this.getDecodeGroup(Math.min(frame + cacheWindow, this.chunks.length - 1));
         if (lookaheadGroup) groupsToRequest.add(lookaheadGroup);
 
         this.purgeGroupsExcept(groupsToKeep);
@@ -1434,7 +1472,7 @@ export class CVideoWebCodecBase extends CVideoAndAudio {
             return true;
         }
         
-        const group = this.getGroup(actualFrame);
+        const group = this.getDecodeGroup(actualFrame);
         if (!group) {
             console.warn(`waitForFrame: no group for frame ${frame}`);
             return false;

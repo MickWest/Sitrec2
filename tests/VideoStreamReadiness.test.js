@@ -25,7 +25,7 @@ jest.mock('../src/quickFetch', () => ({}));
 function video() {
     return Object.assign(Object.create(CVideoStreamData.prototype), {
         videoSpeed: 1, disposed: false, streamError: 'Earlier decode failed',
-        getGroup: () => ({dataReady: true}), isFrameCached: f => f === 32,
+        getDecodeGroup: () => ({dataReady: true}), isFrameCached: f => f === 32,
     });
 }
 
@@ -38,10 +38,23 @@ test('an earlier stream failure does not hide an exact decoded frame from analys
 
 test('missing bytes after stream failure and disposed sources fail promptly', async () => {
     const v = video();
-    v.getGroup = () => undefined;
+    v.getDecodeGroup = () => undefined;
     expect(await v.waitForFrame(100)).toBe(false);
     v.disposed = true;
     expect(await v.waitForFrame(32)).toBe(false);
+});
+
+test('playback waits for a decoding frame but not for one a finished decode dropped', () => {
+    const v = video();
+    const group = {dataReady: true, loaded: false};
+    Object.assign(v, {groups: [{frame: 0, dataReady: true}], isFrameCached: () => false,
+        getDecodeGroup: () => group, requestGroup: jest.fn()});
+    expect(v.isStreamFrameReady(50)).toBe(false);
+    group.loaded = true;
+    expect(v.isStreamFrameReady(50)).toBe(true);
+    group.loaded = false;
+    group._permanentlyFailed = true;
+    expect(v.isStreamFrameReady(50)).toBe(true);
 });
 
 test('a late successful initial decode clears only the startup failure', () => {
