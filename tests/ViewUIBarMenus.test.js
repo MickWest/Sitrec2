@@ -304,9 +304,9 @@ describe("the icon registry", () => {
         // Exactly one of the two shapes: one control, or a group of them.
         expect(item.slot === undefined).toBe(item.targets !== undefined);
         // A button whose control's own label does not describe what pressing it does has to say
-        // so itself: a SNAP ("Video Zoom %" is not what 100% does) and a GROUP (which has no one
-        // control to borrow from). An ordinary toggle must NOT restate its control's wording.
-        if (item.value !== undefined || item.targets !== undefined) {
+        // so itself: a SNAP ("Video Zoom %" is not what 100% does), a GROUP (which has no one
+        // control to borrow from) and a SLIDER button ("Transparency %" is not an on/off switch). An ordinary toggle must NOT restate its control's wording.
+        if (item.value !== undefined || item.targets !== undefined || item.slider) {
             expect(typeof item.tip).toBe("string");
         } else {
             expect(item.tip).toBeUndefined();
@@ -636,6 +636,104 @@ describe("populateViewUIBarIcons", () => {
         expect(state.zoom).toBe(100);
         icon.click();
         expect(state.zoom).toBe(400);
+    });
+
+    // The look view's video overlay button: an on/off switch for a NUMBER control, with that
+    // control's slider a hover away. Every face of the value - source row, icon, slider - has to
+    // move together whichever one is used.
+    describe("the video overlay SLIDER icon", () => {
+        function overlay(value = 0.6) {
+            const state = {t: value};
+            const control = source(state, "t", 0, 1, 0.01).name("Vid Overlay Trans %")
+                .shareAs(viewMenuKey("lookView", "overlayTransparency"));
+            const view = fakeBar("lookView");
+            populateViewUIBarIcons(view);
+            const icon = iconOf(view, "overlayTransparency");
+            const popup = view.uiBar.bar.querySelector(".view-uibar-popup");
+            return {state, control, view, icon, popup, input: popup.querySelector("input")};
+        }
+
+        test("a click switches the overlay off and back to the value it had", () => {
+            const {state, icon} = overlay(0.6);
+            expect(icon.style.display).toBe("flex");
+            expect(icon.getAttribute("aria-pressed")).toBe("true");
+            expect(icon.title).toMatch(/^Video overlay/);
+
+            icon.click();
+            expect(state.t).toBe(0);
+            expect(icon.getAttribute("aria-pressed")).toBe("false");
+
+            icon.click();
+            expect(state.t).toBe(0.6);
+            expect(icon.getAttribute("aria-pressed")).toBe("true");
+        });
+
+        test("off from the start, a click turns it on at the default", () => {
+            const {state, icon} = overlay(0);
+            expect(icon.getAttribute("aria-pressed")).toBe("false");
+            icon.click();
+            expect(state.t).toBe(0.5);
+        });
+
+        test("the value it goes back to is the last one it held, however it was set", () => {
+            const {state, control, icon} = overlay(0.6);
+            control.setValue(0.3);                  // the menu row
+            icon.click();
+            expect(state.t).toBe(0);
+            icon.click();
+            expect(state.t).toBe(0.3);
+        });
+
+        test("hovering shows the slider; it writes the control, and the control writes it", () => {
+            jest.useFakeTimers();
+            try {
+                const {state, control, view, icon, popup, input} = overlay(0.6);
+                view.uiBar.setShown(true);
+                expect(popup.style.display).toBe("none");
+
+                icon.dispatchEvent(new Event("pointerenter"));
+                expect(popup.style.display).toBe("flex");
+                expect(view.uiBar.hasOpenMenu()).toBe(true);       // keeps the bar up
+                expect(Number(input.value)).toBeCloseTo(0.6);
+                expect(popup.textContent).toContain("0.60");
+
+                // The slider writes through to the source and its menu row.
+                input.value = "0.25";
+                input.dispatchEvent(new Event("input"));
+                expect(state.t).toBe(0.25);
+                expect(control.getValue()).toBe(0.25);
+                expect(popup.textContent).toContain("0.25");
+
+                // A change made elsewhere moves the slider.
+                control.setValue(0.8);
+                expect(Number(input.value)).toBeCloseTo(0.8);
+
+                // Crossing from the icon onto the slider keeps it open...
+                icon.dispatchEvent(new Event("pointerleave"));
+                popup.dispatchEvent(new Event("pointerenter"));
+                jest.advanceTimersByTime(1000);
+                expect(popup.style.display).toBe("flex");
+
+                // ...and leaving both fades it out and lets the bar go.
+                popup.dispatchEvent(new Event("pointerleave"));
+                jest.advanceTimersByTime(1000);
+                expect(popup.style.display).toBe("none");
+                expect(view.uiBar.hasOpenMenu()).toBe(false);
+            } finally {
+                jest.useRealTimers();
+            }
+        });
+
+        test("the slider does not open while the bar is hidden, and closes when it hides", () => {
+            const {view, icon, popup} = overlay(0.6);
+            icon.dispatchEvent(new Event("pointerenter"));
+            expect(popup.style.display).toBe("none");
+            view.uiBar.setShown(true);
+            icon.dispatchEvent(new Event("pointerenter"));
+            expect(popup.style.display).toBe("flex");
+            view.uiBar.setShown(false);
+            expect(popup.style.display).toBe("none");
+        });
     });
 
     test("a SNAP icon already at its value with nothing remembered does nothing", () => {

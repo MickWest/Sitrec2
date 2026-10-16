@@ -3690,6 +3690,7 @@ const en = {
     viewIcons: {
         declutter: "Declutter — hide every overlay in this view; press again to bring back exactly the ones that were showing",
         zoom: "Video zoom 100% — press again to go back to the previous zoom",
+        overlayTransparency: "Video overlay — click to switch it off and back on; hover for its transparency",
     },
 
     traverseAnalysis: {

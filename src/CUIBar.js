@@ -5,7 +5,12 @@ import {registerGUIRoot, unregisterGUIRoot} from "./GUIRootRegistry";
 // Everything on a bar that is a thing in its own right rather than backdrop. A menu SLOT (not
 // the lil-gui root inside it) because the slot is the tab's box; the dropdown hangs outside it
 // and below the strip, so it never widens this.
-const BAR_HIT_TARGETS = '.view-uibar-menuslot, .view-uibar-icon, .view-uibar-label';
+const BAR_HIT_TARGETS = '.view-uibar-menuslot, .view-uibar-icon, .view-uibar-label, .view-uibar-popup';
+
+// A slider icon's popup: how long the pointer may be off both the icon and the popup before the
+// popup starts to fade (long enough to cross the gap between them), and how long the fade takes.
+const POPUP_HIDE_DELAY_MS = 300;
+const POPUP_FADE_MS = 250;
 
 // How long a button with a double action waits before committing to the single one. A double
 // click always delivers its two clicks FIRST, so a button that has both has no way to know which
@@ -30,6 +35,7 @@ const DROPDOWN_MIN_PX = 80;      // never squash a low-docked view's menu to not
  *   - addMenu(title)            — host another lil-gui menu as a tab.
  *   - addIcon(html,onClick,tip,action) — an icon button (appended right, in call order).
  *   - addControlIcon(key, ...)  — an icon bound to a control that lives elsewhere (see below).
+ *   - addSliderIcon(key, ...)   — the same for a NUMBER control: on/off, with its slider on hover.
  *   - addPinIcon / addCloseIcon — the standard chrome icons.
  */
 export class CUIBar {
@@ -112,7 +118,7 @@ export class CUIBar {
     // BELOW the strip, so moving the pointer down to click an item leaves the bar's hover
     // region, and hover-reveal would fade the menu out from under the click.
     hasOpenMenu() {
-        return this.menus.some(gui => !gui._closed);
+        return this.menus.some(gui => !gui._closed) || !!this._popups?.some(p => p.open);
     }
 
     // What this bar paints, in page coordinates — the full-width strip, plus any open dropdown
@@ -132,11 +138,22 @@ export class CUIBar {
             rect.bottom = Math.max(rect.bottom, children.top + Math.min(cap, gui.$children.scrollHeight));
             rect.menuRight = Math.max(rect.menuRight, children.right);
         }
+        // A slider icon's popup hangs below the strip in the same way, so it is covered the same
+        // way: the column out to its right edge, down to its bottom.
+        for (const popup of this._popups ?? []) {
+            if (!popup.open) continue;
+            const r = popup.el.getBoundingClientRect();
+            rect.bottom = Math.max(rect.bottom, r.bottom);
+            rect.menuRight = Math.max(rect.menuRight, r.right);
+        }
         return rect;
     }
 
     closeMenus() {
         let changed = false;
+        for (const popup of this._popups ?? []) {
+            if (popup.open) { popup.close(true); changed = true; }
+        }
         for (const gui of this.menus) {
             if (gui._closed) continue;
             gui._uibarAllowToggle = true;
@@ -339,6 +356,150 @@ export class CUIBar {
         });
         if (doubleKey) this._toggleHost().addMirror(doubleKey, {onMirror: (t) => { doubleTwin = t; }});
         if (pressKey) this._toggleHost().addMirror(pressKey, {onMirror: (t) => { pressTwin = t; }});
+        return btn;
+    }
+
+    // An icon bound to a NUMBER control - the look view's video overlay transparency - that is
+    // both a switch and a way to the control's slider.
+    //
+    //   click  - the control goes to `offValue` (no overlay); the next click puts back the value
+    //            it last held while on. If it has never been on, `onValue`.
+    //   hover  - a horizontal slider for the same control drops down under the icon, and fades
+    //            out once the pointer has left both the icon and the slider.
+    //
+    // Like addControlIcon it is not a second control: it binds to a hidden TWIN of the source
+    // (src/MenuMirror.js), and the slider writes through that twin. So the global menu row, the
+    // header-menu row, the icon and the slider are faces of one value, and a change from any of
+    // them - or from a sitch load or the API, through the twin's .listen() - moves all the others.
+    // The icon lights while the value is not `offValue`.
+    //
+    // While the slider is showing, the bar counts it as an open menu (hasOpenMenu), so moving
+    // the pointer down onto it does not fade the bar out from under it.
+    addSliderIcon(key, {html, action, label, tooltip, offValue = 0, onValue = 0.5, left = true} = {}) {
+        let twin = null;
+        let lastOn;                            // the value it last held while on
+
+        const isOn = () => !!twin && twin.getValue() !== offValue;
+        const clamp = (v) => {
+            const min = twin?._min ?? -Infinity, max = twin?._max ?? Infinity;
+            return Math.min(max, Math.max(min, v));
+        };
+        const click = () => {
+            if (!twin) return;
+            if (isOn()) twin.setValue(offValue);
+            else twin.setValue(clamp(lastOn ?? onValue));
+        };
+
+        const btn = this.addIcon(html, click, null, action, left);
+        btn.style.display = 'none';
+        btn.style.alignItems = 'center';
+        btn.style.justifyContent = 'center';
+        btn.style.height = '18px';
+        btn.style.padding = '0 3px';
+
+        // The popup hangs from the BAR, not from the icon strip, which clips; it is placed under
+        // the icon each time it opens. Inside the bar, so the bar's own guards cover it: it is
+        // hidden with the bar, and a press on it is not a press "outside the menus".
+        const el = document.createElement('div');
+        el.className = 'view-uibar-popup';
+        el.dataset.uibarAction = `${action ?? 'slider'}-popup`;
+        Object.assign(el.style, {
+            position: 'absolute', top: '100%', marginTop: '3px', left: '0',
+            display: 'none', alignItems: 'center', gap: '6px',
+            padding: '4px 8px', boxSizing: 'border-box',
+            background: 'var(--sitrec-bg-header, #303030)',
+            border: '1px solid var(--sitrec-border-area, rgba(255,255,255,0.18))',
+            borderRadius: '4px', boxShadow: '0 2px 6px rgba(0, 0, 0, 0.5)',
+            opacity: '0', transition: `opacity ${POPUP_FADE_MS}ms ease`,
+            pointerEvents: 'auto', whiteSpace: 'nowrap', zIndex: '1',
+        });
+        const input = document.createElement('input');
+        input.type = 'range';
+        input.style.width = '120px';
+        input.style.margin = '0';
+        input.style.cursor = 'pointer';
+        const readout = document.createElement('span');
+        Object.assign(readout.style, {font: '11px sans-serif', minWidth: '2.6em', textAlign: 'right'});
+        el.append(input, readout);
+        // The whole bar is a drag handle for the view: a press on the slider must not start one.
+        el.addEventListener('pointerdown', (e) => e.stopPropagation());
+        this.bar.appendChild(el);
+
+        let hideTimer = null, fadeTimer = null, dragging = false, hovering = 0;
+        const decimals = () => {
+            const step = twin?._step;
+            if (!(step > 0) || step >= 1) return 0;
+            return Math.min(6, Math.ceil(-Math.log10(step) - 1e-9));
+        };
+        const sync = () => {
+            if (!twin) return;
+            const v = twin.getValue();
+            if (v !== offValue) lastOn = v;
+            if (Number.isFinite(twin._min)) input.min = String(twin._min);
+            if (Number.isFinite(twin._max)) input.max = String(twin._max);
+            input.step = twin._step > 0 ? String(twin._step) : 'any';
+            if (Number(input.value) !== v) input.value = String(v);
+            readout.textContent = Number(v).toFixed(decimals());
+        };
+        const popup = {el, open: false};
+        const place = () => {
+            const bar = this.bar.getBoundingClientRect(), b = btn.getBoundingClientRect();
+            const w = el.offsetWidth;
+            const x = b.left - bar.left + b.width / 2 - w / 2;
+            el.style.left = Math.max(2, Math.min(bar.width - w - 2, x)) + 'px';
+        };
+        popup.show = () => {
+            clearTimeout(hideTimer); hideTimer = null;
+            clearTimeout(fadeTimer); fadeTimer = null;
+            if (!twin || btn.style.display === 'none' || !this.shown) return;
+            sync();
+            const opening = !popup.open;
+            el.style.display = 'flex';
+            place();
+            el.style.opacity = '1';
+            popup.open = true;
+            if (opening) this.onMenuStateChange?.();
+        };
+        popup.close = (now = false) => {
+            clearTimeout(hideTimer); hideTimer = null;
+            clearTimeout(fadeTimer); fadeTimer = null;
+            const finish = () => {
+                fadeTimer = null;
+                el.style.display = 'none';
+                if (popup.open) { popup.open = false; this.onMenuStateChange?.(); }
+            };
+            el.style.opacity = '0';
+            if (now) finish(); else fadeTimer = setTimeout(finish, POPUP_FADE_MS);
+        };
+        const scheduleHide = () => {
+            if (dragging || hovering > 0 || hideTimer) return;
+            hideTimer = setTimeout(() => { hideTimer = null; popup.close(); }, POPUP_HIDE_DELAY_MS);
+        };
+        for (const target of [btn, el]) {
+            target.addEventListener('pointerenter', () => { hovering++; popup.show(); });
+            target.addEventListener('pointerleave', () => { hovering = Math.max(0, hovering - 1); scheduleHide(); });
+        }
+        // A drag that leaves the slider keeps it open until the button is released.
+        input.addEventListener('pointerdown', () => {
+            dragging = true;
+            window.addEventListener('pointerup', () => { dragging = false; scheduleHide(); }, {once: true});
+        });
+        input.addEventListener('input', () => {
+            if (!twin) return;
+            twin.setValue(clamp(parseFloat(input.value)));
+        });
+        (this._popups ??= []).push(popup);
+
+        this._toggleHost().addMirror(key, {
+            onMirror: (t) => {
+                twin = t;
+                lastOn = undefined;
+                bindControlIcon(btn, t, {label, tooltip});
+                andThen(t, 'updateDisplay', sync);
+                andThen(t, 'destroy', () => popup.close(true));
+                sync();
+            },
+        });
         return btn;
     }
 
@@ -662,6 +823,8 @@ export class CUIBar {
         }
         this.shown = false;
         for (const {ghost} of this._peeks ?? []) ghost.remove();
+        for (const popup of this._popups ?? []) popup.close(true);
+        this._popups = null;
         this._peeks = null;
         this.bar.remove();
     }

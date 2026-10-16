@@ -102,7 +102,9 @@ Next to the name, the busiest of those are repeated as one-click icons.
 
 **Main** then adds the three things only it draws: red parallel lines for Lines of Sight, a white line down a greyed-out frustum for Current LOS, and a cyan triangle for the Camera Frustum.
 
-**Look** puts **Free Look** — three orthogonal axes — *ahead* of that run, because it is the one button that says who is flying the camera rather than what the view is drawing, and it then adds a data panel for its readout at the end. **Video** adds the data panel for its own.
+**Look** puts **Free Look** — three orthogonal axes — *ahead* of that run, because it is the one button that says who is flying the camera rather than what the view is drawing, and it then adds a data panel for its readout and the **video overlay** button at the end. **Video** adds the data panel for its own.
+
+The **video overlay** button — a frame with a half-filled frame over it — is the look view's video overlay. Click it to switch the overlay off, and again to bring it back at the transparency it had. Hover over it and a slider for the transparency drops down under it; the slider fades away a moment after the pointer leaves both the button and the slider. It is the same setting as **Transparency %** in the Look menu's Video Overlay group and **Vid Overlay Trans %** in the View menu, so moving any one of them moves the others. On a touch screen, where there is no hover, the button switches the overlay on and off, and the transparency is in the Look menu.
 
 **Video** also has **100%**, which sets the video zoom to 1:1 and stays lit while it is there. It remembers the zoom it took you away from, so pressing it again puts the video back exactly where it was.
 

@@ -343,6 +343,14 @@ const ICON_READOUT = `<svg viewBox="0 0 20 16" width="19" height="15" aria-hidde
         <path d="M4.4 6.2 H13"/><path d="M4.4 8.6 H15.6"/><path d="M4.4 11 H10.4"/>
     </g></svg>`;
 
+// The video laid over the view: a frame, and a second frame over it filled at half strength -
+// the overlay, seen through. Off, the icon drains like any other; the fill is what says "partly".
+const ICON_VIDEO_OVERLAY = `<svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true">
+    <rect x="1.4" y="2.6" width="9.2" height="7.4" rx="1" fill="none" stroke="currentColor"
+          stroke-width="1.2"/>
+    <rect x="5.4" y="6" width="9.2" height="7.4" rx="1" fill="#8cd9ff" fill-opacity="0.45"
+          stroke="#8cd9ff" stroke-width="1.2"/></svg>`;
+
 // Not every icon is a picture. A control whose point is a NUMBER is clearer written out than
 // drawn, so this one is text and is simply wider than it is tall — the bar's icons are laid out
 // by their own width, not forced into a square.
@@ -435,6 +443,9 @@ export function viewIconItems(viewId) {
  *   press  — slot of a shared ACTION control to run straight AFTER the single click, where one
  *            view needs the same control to mean a little more than it does on the other bar.
  *            Usually set per view in ICON_OVERRIDES rather than here.
+ *   slider — the slot is a NUMBER control, and the button is its on/off switch with the control's
+ *            slider on hover (CUIBar.addSliderIcon): a click takes it to 0 and back to the last
+ *            value it had; hovering drops the slider down under the button. Needs `tip`.
  *   peek   — keep a copy of this icon on screen while the header is HIDDEN and its control is
  *            ON. For a MODE that changes what the view does rather than what it draws: with the
  *            bar away there would otherwise be nothing at all to say you are in it.
@@ -462,6 +473,9 @@ export const VIEW_UIBAR_ICONS = {
         {slot: "freeLook", icon: ICON_FREE_LOOK, peek: true},
         ...COMMON_3D_ICONS,
         {slot: "simInfo", icon: ICON_READOUT},      // this view's on-screen readout
+        // The video laid over this view: on/off, and its transparency on hover.
+        {slot: "overlayTransparency", icon: ICON_VIDEO_OVERLAY, slider: true,
+            tip: "Video overlay — click to switch it off and back on; hover for its transparency"},
     ],
 
     video: [
@@ -496,6 +510,16 @@ export function populateViewUIBarIcons(view) {
                 html: item.icon,
                 action: `icon-${item.action}`,
                 tooltip: iconTip({...item, slot: item.action}),
+                left: true,
+            });
+            continue;
+        }
+        if (item.slider) {
+            bar.addSliderIcon(keyForItem(view.id, item), {
+                html: item.icon,
+                action: `icon-${item.slot}`,
+                label: rowLabel(view.id, item.slot),
+                tooltip: iconTip(item),
                 left: true,
             });
             continue;
