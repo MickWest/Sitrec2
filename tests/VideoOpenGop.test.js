@@ -77,6 +77,19 @@ test('purging a group keeps the leading frames its predecessor decoded', () => {
     expect(v.requestGroup).toHaveBeenCalledWith(g0);
 });
 
+test('a frame wait ends at once when its group has failed for good', async () => {
+    const v = video();
+    Object.assign(v, {config: {}, requestGroup: jest.fn()});
+    v.groups[1]._permanentlyFailed = true;
+    const started = Date.now();
+    expect(await v.waitForFrame(12, 5000)).toBe(false);
+    expect(Date.now() - started).toBeLessThan(1000);
+    // A leading frame waits on the group that decodes it.
+    v.groups[0].loaded = true;
+    v.imageCache[9] = Object.assign(new ImageBitmap(), {width: 1});
+    expect(await v.waitForFrame(9, 5000)).toBe(true);
+});
+
 test('a decode expects only the frames it can output', () => {
     const v = video();
     v._workerManager = {configured: true, busy: false, decodeGroup: jest.fn(() => true)};

@@ -464,14 +464,9 @@ export class ObjectTracker {
                     const nf = cur + 1;
                     if (nf > lastFrame) break;
                     par.frame = nf;
-                    videoData.getImage(nf);
-                    const ready = await videoData.waitForFrame(nf, 5000);
-                    if (!KeyMan.isKeyHeld(heldKey) || !this.tracking) break;
-                    if (!ready) break;
                     // force=true so we re-run the algorithm even if the new
                     // frame already has a stale stored position.
-                    this.trackFrame(nf, true);
-                    if (this.trackedPositions.has(nf)) this.lastTrackedFrame = nf;
+                    if (!await this.trackStep(videoData, nf, () => KeyMan.isKeyHeld(heldKey) && this.tracking, true)) break;
                 } else {
                     // Delete any keyframe at the current frame, then step back.
                     this.trackedPositions.delete(cur);
@@ -638,41 +633,16 @@ export class ObjectTracker {
         const targetRenderInterval = 40; // ms
         let lastRenderTime = performance.now();
 
-        const wrapperHasHolds = typeof videoData.isHeldFrame === "function";
+        const running = () => this.tracking && runId === this.trackingRunId;
 
         for (let frame = startFrame; frame <= bFrame; frame++) {
-            if (!this.tracking || runId !== this.trackingRunId) break;
+            if (!running()) break;
 
             // Set current frame
             if (this.playbackControl) this.playbackControl.setFrame(frame);
             else par.frame = frame; // Hold-key / standalone tracking callers.
 
-            // Skip held (synthesized duplicate) frames: identical pixels as
-            // the prior canonical V, so template-matching would produce the
-            // same answer at the same wall-clock budget. Carry the previous
-            // tracked position forward so any consumer reading
-            // trackedPositions.get(frame) sees a value, but skip the work.
-            if (wrapperHasHolds && videoData.isHeldFrame(frame) && !this.isUserPoint(frame)) {
-                const prev = this.trackedPositions.get(frame - 1);
-                if (prev) {
-                    this.trackedPositions.set(frame, {...prev});
-                    this.lastTrackedFrame = frame;
-                }
-                else if (this.trackingMethod === 'motion') this.trackedPositions.markUnmeasured(frame);
-                continue;
-            }
-
-            // Wait for video frame to be loaded (with timeout)
-            videoData.getImage(frame);
-            const ready = await videoData.waitForFrame(frame, 5000);
-            if (!this.tracking || runId !== this.trackingRunId) break;
-            // getImage() may return a nearby frame for smooth playback. Never
-            // turn that fallback into a measurement at the requested time.
-            if (!ready) continue;
-
-            // Track this frame
-            this.trackFrame(frame);
-            if (this.trackedPositions.has(frame)) this.lastTrackedFrame = frame;
+            if (!await this.trackStep(videoData, frame, running)) break;
 
             // Only render and yield if enough time has passed (target 25 FPS visual updates)
             const now = performance.now();
@@ -693,6 +663,39 @@ export class ObjectTracker {
             }
         }
 
+    }
+
+    // Measure one frame. Start and the ' hold key both step through this, so a
+    // frame that cannot be measured is handled the same way in each. Returns
+    // false only when stillRunning() turned false during the wait.
+    async trackStep(videoData, frame, stillRunning, force = false) {
+        // Skip held (synthesized duplicate) frames: identical pixels as the
+        // prior canonical V, so template-matching would produce the same answer
+        // at the same wall-clock budget. Carry the previous tracked position
+        // forward so any consumer reading trackedPositions.get(frame) sees a
+        // value, but skip the work.
+        if (typeof videoData.isHeldFrame === "function" && videoData.isHeldFrame(frame) && !this.isUserPoint(frame)) {
+            const prev = this.trackedPositions.get(frame - 1);
+            if (prev) {
+                this.trackedPositions.set(frame, {...prev});
+                this.lastTrackedFrame = frame;
+            }
+            else if (this.trackingMethod === 'motion') this.trackedPositions.markUnmeasured(frame);
+            return true;
+        }
+
+        videoData.getImage(frame);
+        const ready = await videoData.waitForFrame(frame, 5000);
+        if (!stillRunning()) return false;
+        // A frame that did not decode (a corrupt frame, or a timeout) stays
+        // unmeasured and tracking continues with the next frame. getImage()
+        // may show a nearby frame for smooth playback; never turn that
+        // fallback into a measurement at the requested time.
+        if (!ready) return true;
+
+        this.trackFrame(frame, force);
+        if (this.trackedPositions.has(frame)) this.lastTrackedFrame = frame;
+        return true;
     }
 
     stopTracking() {

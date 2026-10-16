@@ -3,7 +3,7 @@ import {ViewMan} from './CViewManager';
 import {t} from './i18n';
 
 const VIEW_ID = 'pointTrackFrequencyGraph';
-export const FREQUENCY_DEFAULTS = {radius: 4, percent: true, showBackground: true};
+export const FREQUENCY_DEFAULTS = {radius: 4, percent: true, showBackground: true, perMinute: false};
 // At 1 px the 1.75–2.5 radius background ring holds at most 14 pixels, fewer
 // than measurePointFlux requires, so no frame would ever give a sample.
 export const MIN_APERTURE_RADIUS = 2;
@@ -65,6 +65,7 @@ export function addPointTrackFrequencyMenu(folder) {
     controls.add(proxy, 'showBackground').name(t('pointFrequency.showBackground')).listen().perm();
     controls.add(proxy, 'refresh').name(t('videoTonal.refresh')).perm();
     controls.add(proxy, 'exportCSV').name(t('videoTonal.exportCSV')).perm();
+    controls.add(proxy, 'perMinute').name(t('pointFrequency.perMinute')).tooltip(t('pointFrequency.perMinuteTooltip')).listen().perm();
 }
 
 export function serializePointTrackFrequencyGraph() {

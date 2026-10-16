@@ -958,6 +958,13 @@ export class CVideoWebCodecBase extends CVideoAndAudio {
         return [start, group.frame + group.length + (group.openGopExtra || 0)];
     }
 
+    // True when waiting longer cannot produce a frame of this decode group: the
+    // group decoded (an uncached frame was dropped as corrupt) or failed for
+    // good. Frame waits and the stream playback gate both stop here.
+    isDecodeFinished(group) {
+        return !!group && (group.loaded || !!group._permanentlyFailed || !!this._allGroupsFailed);
+    }
+
     getGroupsBetween(start, end) {
         const groups = [];
         for (let g = 0; g < this.groups.length; g++) {
@@ -1479,12 +1486,12 @@ export class CVideoWebCodecBase extends CVideoAndAudio {
         }
 
         this.requestGroup(group);
-        
-        if (group.loaded) {
+
+        if (this.isDecodeFinished(group)) {
             return this.isFrameCached(frame);
         }
-        
-        while (!group.loaded) {
+
+        while (!this.isDecodeFinished(group)) {
             if (Date.now() - startTime > timeout) {
                 console.warn(`waitForFrame timeout waiting for group to load, frame ${frame}`);
                 return false;

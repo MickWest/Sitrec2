@@ -11,8 +11,8 @@ import {clampApertureRadius, FREQUENCY_DEFAULTS, pointFrequencyTargetColor} from
 import {amplitudeSpectrum, captureFrequencyTargets, frequencySampling} from './PointFrequencyStatistics';
 
 const MARGIN = 60;
-const DARK = {bg: '#000', text: '#ddd', grid: '#333', target: pointFrequencyTargetColor(true), background: '#ff86d2'};
-const LIGHT = {bg: '#fff', text: '#222', grid: '#ddd', target: pointFrequencyTargetColor(false), background: '#ad246e'};
+const DARK = {bg: '#000', text: '#ddd', grid: '#333', target: pointFrequencyTargetColor(true), background: '#ff86d2', warning: '#ffb84d'};
+const LIGHT = {bg: '#fff', text: '#222', grid: '#ddd', target: pointFrequencyTargetColor(false), background: '#ad246e', warning: '#a45a00'};
 
 export class CNodePointTrackFrequencyGraphView extends CNodeCustomGraphView {
     constructor(v) {
@@ -31,6 +31,7 @@ export class CNodePointTrackFrequencyGraphView extends CNodeCustomGraphView {
         this.options.radius = clampApertureRadius(this.options.radius);
         this.options.percent = !!this.options.percent;
         this.options.showBackground = !!this.options.showBackground;
+        this.options.perMinute = !!this.options.perMinute;
         this.refreshAnalysis();
     }
     refreshAnalysis() {
@@ -114,9 +115,10 @@ export class CNodePointTrackFrequencyGraphView extends CNodeCustomGraphView {
             const flux = input.plan.indices.map(i => result.flux[i]);
             if (flux.some(value => !Number.isFinite(value))) this.spectrumError = t('pointFrequency.invalidAperture');
             else {
-                this.spectrum = amplitudeSpectrum(flux, input.sampling.fps);
+                const {fps, irregular, times} = input.sampling;
+                this.spectrum = amplitudeSpectrum(flux, fps, irregular ? times : null);
                 const area = input.plan.indices.reduce((sum, i) => sum + result.area[i], 0) / flux.length;
-                this.backgroundSpectrum = amplitudeSpectrum(input.plan.indices.map(i => result.background[i] * area), input.sampling.fps);
+                this.backgroundSpectrum = amplitudeSpectrum(input.plan.indices.map(i => result.background[i] * area), fps, irregular ? times : null);
             }
         }
         this._plotKey = '';
@@ -162,12 +164,18 @@ export class CNodePointTrackFrequencyGraphView extends CNodeCustomGraphView {
         ctx.font = '11px sans-serif';
         const s = this.spectrum, input = this._inputs;
         const status = this.statusMessage();
+        // Flashes per minute relabel the same axis: frequencies stay in Hz, only
+        // the printed values and units change.
+        const perMinute = this.options.perMinute, xUnit = perMinute ? 60 : 1;
+        const frequencyUnit = t(perMinute ? 'pointFrequency.perMinuteUnit' : 'pointFrequency.hz');
+        const frequencyText = hz => (hz * xUnit).toFixed(perMinute ? 1 : 2);
         ctx.fillText(status ? t('pointFrequency.unavailable') : (s ? t('pointFrequency.window', {a: input.range.frame0, b: input.range.frame1,
-            count: s.count, duration: s.duration.toFixed(2), fps: s.fps.toFixed(3), resolution: s.binSpacing.toPrecision(3)}) : ''), width / 2, 34, width - 20);
+            count: s.count, duration: s.duration.toFixed(2), fps: s.fps.toFixed(3), resolution: (s.binSpacing * xUnit).toPrecision(3),
+            frequencyUnit}) : ''), width / 2, 34, width - 20);
         const peak = s?.peak;
-        ctx.fillText(!status && s ? (peak ? t('pointFrequency.peak', {frequency: peak.frequency.toFixed(2),
+        ctx.fillText(!status && s ? (peak ? t('pointFrequency.peak', {frequency: frequencyText(peak.frequency), frequencyUnit,
             amplitude: (peak.amplitude * this.scale).toFixed(2), unit: this.percent ? '%' : 'DN·px'}) : t('pointFrequency.flat')) : '', width / 2, 49, width - 20);
-        const xs = this.calculateStep(this.maxX, w), ys = this.calculateStep(this.maxY, h);
+        const xs = this.calculateStep(this.maxX * xUnit, w) / xUnit, ys = this.calculateStep(this.maxY, h);
         ctx.save(); ctx.beginPath(); ctx.rect(MARGIN, MARGIN, w, h); ctx.clip(); ctx.strokeStyle = c.grid;
         for (let x = 0; x <= this.maxX; x += xs) { const p = this.point(x, 0); ctx.beginPath(); ctx.moveTo(p.x, MARGIN); ctx.lineTo(p.x, height - MARGIN); ctx.stroke(); }
         for (let y = 0; y <= this.maxY; y += ys) { const p = this.point(0, y); ctx.beginPath(); ctx.moveTo(MARGIN, p.y); ctx.lineTo(width - MARGIN, p.y); ctx.stroke(); }
@@ -181,6 +189,12 @@ export class CNodePointTrackFrequencyGraphView extends CNodeCustomGraphView {
             ctx.stroke();
         }
         ctx.restore(); ctx.strokeStyle = c.grid; ctx.strokeRect(MARGIN, MARGIN, w, h);
+        if (!status && s && input.sampling.irregular) {
+            const {minFps, maxFps} = input.sampling;
+            ctx.font = '11px sans-serif'; ctx.textAlign = 'center'; ctx.fillStyle = c.warning;
+            ctx.fillText(t('pointFrequency.irregularTiming', {min: minFps.toFixed(2), max: maxFps.toFixed(2),
+                limit: frequencyText(minFps / 2), frequencyUnit}), width / 2, MARGIN + 14, w - 10);
+        }
         if (status) {
             const lines = []; let line = '';
             ctx.font = '12px sans-serif'; ctx.textAlign = 'center';
@@ -194,9 +208,9 @@ export class CNodePointTrackFrequencyGraphView extends CNodeCustomGraphView {
             lines.forEach((text, i) => ctx.fillText(text, width / 2, height / 2 + i * 18));
         }
         ctx.fillStyle = c.text; ctx.font = '12px sans-serif';
-        for (let x = 0; x <= this.maxX; x += xs) { ctx.textAlign = 'center'; ctx.fillText(Number(x.toFixed(3)).toString(), this.point(x, 0).x, height - MARGIN + 17); }
+        for (let x = 0; x <= this.maxX; x += xs) { ctx.textAlign = 'center'; ctx.fillText(Number((x * xUnit).toFixed(3)).toString(), this.point(x, 0).x, height - MARGIN + 17); }
         for (let y = 0; y <= this.maxY; y += ys) { ctx.textAlign = 'right'; ctx.fillText(Number(y.toPrecision(3)).toString(), MARGIN - 5, this.point(0, y).y + 4); }
-        ctx.textAlign = 'center'; ctx.fillText(t('pointFrequency.xLabel'), width / 2, height - 5);
+        ctx.textAlign = 'center'; ctx.fillText(t(perMinute ? 'pointFrequency.xLabelPerMinute' : 'pointFrequency.xLabel'), width / 2, height - 5);
         ctx.save(); ctx.translate(15, height / 2); ctx.rotate(-Math.PI / 2);
         ctx.fillText(t(this.percent ? 'pointFrequency.yPercent' : 'pointFrequency.yFlux'), 0, 0, h + 30); ctx.restore();
         if (!status && s) {
@@ -216,9 +230,10 @@ export class CNodePointTrackFrequencyGraphView extends CNodeCustomGraphView {
         const rows = ['frequency_hz,object_semi_amplitude_dn_px,background_semi_amplitude_dn_px,object_semi_amplitude_percent'];
         s.frequencies.forEach((f, i) => rows.push([f, s.amplitude[i], this.backgroundSpectrum.amplitude[i],
             Math.abs(s.mean) > 1e-6 ? s.amplitude[i] * 100 / Math.abs(s.mean) : ''].join(',')));
-        rows.push('', 'scene_in,scene_out,samples,fps,duration_s,bin_spacing_hz,nyquist_hz,radius_px,position_smoothing_frames,mean_signed_flux_dn_px,representation,source_bits,mask_enabled',
+        rows.push('', 'scene_in,scene_out,samples,fps,duration_s,bin_spacing_hz,nyquist_hz,radius_px,position_smoothing_frames,mean_signed_flux_dn_px,representation,source_bits,mask_enabled,irregular_timing,min_fps,max_fps',
             [input.range.frame0, input.range.frame1, s.count, s.fps, s.duration, s.binSpacing, s.nyquist, this.options.radius,
-                input.smoothing, s.mean, result.mode, result.bits, result.masked].join(','), '',
+                input.smoothing, s.mean, result.mode, result.bits, result.masked,
+                input.sampling.irregular, input.sampling.minFps, input.sampling.maxFps].join(','), '',
             'source_frame,time_s,x_original_px,y_original_px,signed_flux_dn_px,local_background_dn,aperture_area_px,clipped_fraction');
         input.plan.indices.forEach((i, n) => {
             const target = input.plan.targets[i], video = input.video;

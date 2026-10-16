@@ -70,6 +70,9 @@ Hold **`'`** to track one frame at a time at about playback speed, which is usef
 a difficult stretch. Hold **`;`** to go back. Note that `;` is not "tracking backwards": it
 **deletes** the points as it goes, user points included, so use it to undo a bad run.
 
+If a frame cannot be decoded (for example, a damaged frame), **`'`** and **Start Point Track**
+both leave that frame without a point and continue with the next frame.
+
 ### Lights at night, and stars
 
 For a single light against a dark sky, choose **High Peak** (or **Center on Bright**) instead of
@@ -134,12 +137,23 @@ uses the same aperture area and scale. Values are
 recorded brightness, not temperature. **Export CSV** includes the spectrum, measurements and
 analysis settings.
 
+**Flashes per minute**, the last item in the settings, shows the frequencies as flashes per
+minute (Hz × 60) instead of Hz. The axis covers the same range; only its units change. The
+exported CSV stays in Hz.
+
 The header shows the sample count, duration and independent frequency bin spacing (`fps/N`).
 The curve is interpolated with zero padding; that does not improve the resolution. The right
 edge is the source video's Nyquist limit, half its frame rate. Held playback frames are counted
 once, so playback speed does not change the frequency scale. Missing or estimated track points,
-irregular source timing, or an aperture that overlaps a mask or image edge must be resolved by
-adjusting the track or selected range.
+or an aperture that overlaps a mask or image edge, must be resolved by adjusting the track or
+selected range.
+
+Some videos, often from phones, have a variable frame rate: the time between frames changes.
+Sitrec then calculates the spectrum with each frame at its real time, and the frequency scale
+uses the mean frame rate. Sitrec does not resample the video to an even rate, because
+interpolating between frames weakens fast signals. A warning on the graph shows the range of
+frame rates. Peaks above half the lowest frame rate can be aliases of higher frequencies. The
+exported CSV records the timing in its `irregular_timing`, `min_fps` and `max_fps` columns.
 
 A largest peak is a candidate periodicity, not a statistical detection or an identification
 of the object. Short intervals, motion across pixels, background structure, camera processing

@@ -8,25 +8,12 @@
 
 import {createNoisePatternCore} from "../videoNoisePattern/NoisePatternWorkerCore";
 import {planeDescriptors, rgbaToI420} from "../videoNoisePattern/NoisePatternMath";
+import {chooseDecoderAcceleration} from "../VideoDecoderAcceleration";
 
 const NATIVE_FORMAT = /^(I4(20|22|44)A?(P(10|12))?|NV12)$/;
 const MAX_IN_FLIGHT = 12;
 const now = () => performance.now();
 
-const support = new Map();
-async function chooseAcceleration(config, preferred) {
-    const key = `${config.codec}|${config.codedWidth}x${config.codedHeight}|${preferred}`;
-    if (support.has(key)) return support.get(key);
-    let chosen = null;
-    for (const candidate of [preferred, "no-preference"]) {
-        try {
-            const answer = await VideoDecoder.isConfigSupported({...config, hardwareAcceleration: candidate});
-            if (answer.supported) { chosen = candidate; break; }
-        } catch { /* try the next */ }
-    }
-    support.set(key, chosen);
-    return chosen;
-}
 
 const spareBuffers = [];
 function takeBuffer(size) {
@@ -61,7 +48,7 @@ async function readFrame(frame, index) {
 async function decodeSegment(message, onFrame, more) {
     const started = now();
     const {config, keepFrom, keepTo} = message;
-    const accel = await chooseAcceleration(config, message.accel ?? "prefer-software");
+    const accel = await chooseDecoderAcceleration(config, message.accel ?? "prefer-software");
     if (!accel) throw new Error("This browser cannot decode this video codec");
     let decoded = 0, failure = null, inFlight = 0, wake = null, expected = 0;
     const indexOf = new Map();

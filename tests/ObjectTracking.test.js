@@ -385,6 +385,23 @@ test('releasing the tracking key during library loading does not write points', 
     expect(t.analysisResolutionSession).toBeNull();
 });
 
+test('the tracking key skips a frame that does not decode and keeps tracking', async () => {
+    const {t, videoData} = makeTracker();
+    KeyMan.isKeyHeld.mockReturnValue(true);
+    Sit.bFrame = 3;
+    t.tracking = false;
+    t.holdLoopActive = true;
+    t.trackingMethod = 'centerOnBright';
+    t.initializeTracker = jest.fn();
+    t.updateSliderStatus = jest.fn();
+    videoData.waitForFrame = async frame => frame !== 2;
+    t.trackFrame = jest.fn();
+    await t.runHoldLoop('forward');
+    expect(t.trackFrame.mock.calls.map(([frame]) => frame)).toEqual([1, 3]);
+    expect(t.holdLoopActive).toBe(false);
+    KeyMan.isKeyHeld.mockReset();
+});
+
 test('render-time tracking waits for the exact frame too', () => {
     const {t, videoData} = makeTracker();
     videoData.isFrameLoaded = () => false;

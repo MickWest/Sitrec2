@@ -346,10 +346,9 @@ export class CVideoStreamData extends CVideoWebCodecBase {
         const group = this.getDecodeGroup(actual);
         if (!group?.dataReady) return false;
         this.requestGroup(group);
-        // A finished decode that did not output this frame never will (the
-        // decoder dropped a corrupt frame, or the group failed for good). Play
-        // on and show the nearest frame, as getImage does, instead of waiting.
-        const videoReady = this.isFrameCached(frame) || group.loaded || group._permanentlyFailed || this._allGroupsFailed;
+        // A finished decode that did not output this frame never will. Play on
+        // and show the nearest frame, as getImage does, instead of waiting.
+        const videoReady = this.isFrameCached(frame) || this.isDecodeFinished(group);
         return !!videoReady && (!this.audioHandler?.streamAudio ||
             this.audioHandler.streamAudio.isReady(audioFrame, this.originalFps));
     }

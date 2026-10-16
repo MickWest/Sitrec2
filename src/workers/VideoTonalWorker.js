@@ -1,5 +1,6 @@
 import {exclusionMask, measureTonalFrame} from '../videoTonal/TonalStatistics';
-import {measurePointFlux} from '../pointFrequency/PointFrequencyStatistics';
+import {measurePointFlux, pointFluxGeometry} from '../pointFrequency/PointFrequencyStatistics';
+import {chooseDecoderAcceleration} from '../VideoDecoderAcceleration';
 
 let decoder, options, failure, representation, mode, bits, frameSize, excluded;
 let results = [], pending = new Set(), indices = new Map();
@@ -22,27 +23,38 @@ async function measure(frame) {
             frameSize = {width, height};
             excluded = exclusionMask(width, height, options.mask, options.rotation);
         }
-        let pixels;
-        if (native) {
-            const bytes = new Uint8Array(frame.allocationSize());
-            const layout = await frame.copyTo(bytes);
+        // Point frequency reads only the box its aperture uses: a 4K frame has
+        // 8 million pixels, an aperture and its ring a few hundred. Even box
+        // edges keep a native read on the 4:2:0 chroma sample grid.
+        const box = options.pointFrequency
+            ? pointFluxGeometry(width, height, options.targets?.[index], options.rotation) : null;
+        const read = box ? evenBox(box, width, height) : {x: 0, y: 0, width, height};
+        const pixels = new Uint8Array(width * height);
+        if (options.pointFrequency && !box) {
+            // The aperture leaves the image; measurePointFlux reports it as missing.
+        } else if (native) {
+            const copy = box ? {rect: {x: frame.visibleRect.x + read.x, y: frame.visibleRect.y + read.y,
+                width: read.width, height: read.height}} : undefined;
+            const bytes = new Uint8Array(frame.allocationSize(copy));
+            const layout = await frame.copyTo(bytes, copy);
             const plane = layout[0];
-            pixels = new Uint8Array(width * height);
             const words = bits > 8 ? new DataView(bytes.buffer) : null;
             const scale = 255 / (2 ** bits - 1);
-            for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) {
+            for (let y = 0; y < read.height; y++) for (let x = 0; x < read.width; x++) {
                 const offset = plane.offset + y * plane.stride + x * (words ? 2 : 1);
-                pixels[y * width + x] = words ? Math.round(words.getUint16(offset, true) * scale) : bytes[offset];
+                pixels[(read.y + y) * width + read.x + x] = words ? Math.round(words.getUint16(offset, true) * scale) : bytes[offset];
             }
         } else {
             // A consistent, explicitly labeled fallback for decoder outputs without Y planes.
-            const canvas = new OffscreenCanvas(width, height);
+            // A VideoFrame's source coordinates are in its display size.
+            const canvas = new OffscreenCanvas(read.width, read.height);
             const ctx = canvas.getContext('2d', {willReadFrequently: true});
-            ctx.drawImage(frame, 0, 0, width, height);
-            const rgba = ctx.getImageData(0, 0, width, height).data;
-            pixels = new Uint8Array(width * height);
-            for (let i = 0; i < pixels.length; i++) {
-                pixels[i] = Math.round(.299 * rgba[4 * i] + .587 * rgba[4 * i + 1] + .114 * rgba[4 * i + 2]);
+            const kx = frame.displayWidth / width, ky = frame.displayHeight / height;
+            ctx.drawImage(frame, read.x * kx, read.y * ky, read.width * kx, read.height * ky, 0, 0, read.width, read.height);
+            const rgba = ctx.getImageData(0, 0, read.width, read.height).data;
+            for (let y = 0; y < read.height; y++) for (let x = 0; x < read.width; x++) {
+                const i = y * read.width + x;
+                pixels[(read.y + y) * width + read.x + x] = Math.round(.299 * rgba[4 * i] + .587 * rgba[4 * i + 1] + .114 * rgba[4 * i + 2]);
             }
         }
         // Limited-range luma reserves codes outside its black/white endpoints.
@@ -61,10 +73,19 @@ async function measure(frame) {
 
 function check() { if (failure) throw failure; }
 
+// The pointFluxGeometry box widened to even edges.
+function evenBox(box, width, height) {
+    const x = box.x0 & ~1, y = box.y0 & ~1;
+    const x1 = Math.min(width, box.x1 + (box.x1 & 1)), y1 = Math.min(height, box.y1 + (box.y1 & 1));
+    return {x, y, width: x1 - x, height: y1 - y};
+}
+
 self.onmessage = async ({data}) => {
     try {
         if (data.type === 'init') {
             options = data;
+            const hardwareAcceleration = await chooseDecoderAcceleration(data.config);
+            if (!hardwareAcceleration) throw new Error('This browser cannot decode this video codec');
             decoder = new VideoDecoder({
                 output(frame) {
                     const job = measure(frame).catch(error => { failure = error; })
@@ -73,7 +94,7 @@ self.onmessage = async ({data}) => {
                 },
                 error(error) { failure = error; },
             });
-            decoder.configure({...data.config, hardwareAcceleration: 'prefer-software'});
+            decoder.configure({...data.config, hardwareAcceleration});
             self.postMessage({type: 'ready'});
             return;
         }

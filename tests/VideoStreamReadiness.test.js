@@ -48,7 +48,8 @@ test('playback waits for a decoding frame but not for one a finished decode drop
     const v = video();
     const group = {dataReady: true, loaded: false};
     Object.assign(v, {groups: [{frame: 0, dataReady: true}], isFrameCached: () => false,
-        getDecodeGroup: () => group, requestGroup: jest.fn()});
+        getDecodeGroup: () => group, requestGroup: jest.fn(),
+        isDecodeFinished: g => g.loaded || !!g._permanentlyFailed});
     expect(v.isStreamFrameReady(50)).toBe(false);
     group.loaded = true;
     expect(v.isStreamFrameReady(50)).toBe(true);

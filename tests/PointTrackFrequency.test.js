@@ -1,5 +1,5 @@
 import {
-    amplitudeSpectrum, captureFrequencyTargets, frequencyDecodeRange, frequencySampling, measurePointFlux,
+    amplitudeSpectrum, captureFrequencyTargets, frequencyDecodeRange, frequencySampling, irregularTransform, measurePointFlux,
 } from '../src/pointFrequency/PointFrequencyStatistics';
 import {rotatedUV} from '../src/videoTonal/TonalStatistics';
 
@@ -113,11 +113,65 @@ test('source presentation order handles B frames and fractional frame rates', ()
     expect(sampling.fps).toBeCloseTo(30000 / 1001, 4);
 });
 
-test('missing source frames and irregular source timing are rejected', () => {
+test('missing source frames are rejected; irregular source timing is flagged', () => {
     expect(() => frequencySampling(source(), [0, ...Array.from({length: 16}, (_, i) => i + 2)])).toThrow(/skips/);
+    expect(frequencySampling(source(), Array.from({length: 32}, (_, i) => i)).irregular).toBe(false);
     const s = source(); s.chunks[10].timestamp += 20000;
     s.timestampToChunkIndex = new Map(s.chunks.map((c, i) => [c.timestamp, i]));
-    expect(() => frequencySampling(s, Array.from({length: 32}, (_, i) => i))).toThrow(/irregular/);
+    const sampling = frequencySampling(s, Array.from({length: 32}, (_, i) => i));
+    expect(sampling.irregular).toBe(true);
+    expect(sampling.minFps).toBeCloseTo(1e6 / 53333, 0);
+    expect(sampling.maxFps).toBeCloseTo(1e6 / 13333, 0);
+});
+
+test('the fast irregular transform matches the direct sum', () => {
+    const count = 300, size = 2048;
+    let seed = 7;
+    const random = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+    const positions = Array.from({length: count}, (_, i) => i + (random() - .5) * .8);
+    const samples = positions.map(() => random() - .5);
+    const re = new Float64Array(size), im = new Float64Array(size);
+    irregularTransform(samples, positions, re, im);
+    let largest = 0, error = 0;
+    for (let k = 0; k <= size / 2; k++) {
+        let directRe = 0, directIm = 0;
+        for (let i = 0; i < count; i++) {
+            const angle = -2 * Math.PI * k * positions[i] / size;
+            directRe += samples[i] * Math.cos(angle); directIm += samples[i] * Math.sin(angle);
+        }
+        largest = Math.max(largest, Math.hypot(directRe, directIm));
+        error = Math.max(error, Math.hypot(re[k] - directRe, im[k] - directIm));
+    }
+    expect(error / largest).toBeLessThan(1e-9);
+});
+
+test('a long variable-frame-rate selection is not quadratic', () => {
+    // 20,000 samples: the direct sum needed 1.3 billion steps (seconds of frozen page).
+    const times = Array.from({length: 20000}, (_, i) => i / 30 + (i % 7 ? 0 : .01));
+    const values = times.map(time => Math.sin(2 * Math.PI * 11 * time));
+    const started = performance.now();
+    const spectrum = amplitudeSpectrum(values, (times.length - 1) / times.at(-1), times);
+    expect(performance.now() - started).toBeLessThan(1500);
+    expect(spectrum.peak.frequency).toBeCloseTo(11, 1);
+});
+
+test('a variable frame rate recovers a fast signal at each frame\'s real time', () => {
+    // 30 fps, then 24 fps, then 30 fps again, as in a variable-frame-rate phone video.
+    const times = [];
+    for (let i = 0, time = 0; i < 400; i++) {
+        times.push(time);
+        time += i < 100 || i >= 300 ? 1 / 30 : 1 / 24;
+    }
+    const values = times.map(time => 50 + 4 * Math.sin(2 * Math.PI * 11 * time));
+    const fps = (times.length - 1) / times.at(-1);
+    const spectrum = amplitudeSpectrum(values, fps, times);
+    expect(spectrum.peak.frequency).toBeCloseTo(11, 1);
+    expect(spectrum.peak.amplitude).toBeCloseTo(4, 0);
+    // With even timing the times argument changes nothing.
+    const even = times.map((_, i) => i / 30);
+    const evenValues = even.map(time => Math.sin(2 * Math.PI * 7 * time));
+    const direct = amplitudeSpectrum(evenValues, 30, even), fast = amplitudeSpectrum(evenValues, 30);
+    for (let i = 0; i < fast.amplitude.length; i += 37) expect(direct.amplitude[i]).toBeCloseTo(fast.amplitude[i], 9);
 });
 
 test('selected decoding includes a preceding keyframe and B-frame references', () => {
