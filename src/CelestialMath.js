@@ -269,7 +269,10 @@ export function getECEFToEQJMatrix(date, target = new Matrix4()) {
 let _aberrationMs = null;
 const _aberrationVOverC = V3();
 
-function getAberrationVOverC(date) {
+// The Earth's orbital velocity as a fraction of c, EQJ. A shared vector, cached
+// per date: copy what you keep. (Exported for the timelapse preview's workers,
+// which apply the same aberration as applyAnnualAberration below.)
+export function getAberrationVOverC(date) {
     const ms = (date && typeof date.getTime === "function") ? date.getTime() : +date;
     if (_aberrationMs !== ms) {
         const state = Astronomy.BaryState(Astronomy.Body.Earth, Astronomy.MakeTime(date));

@@ -19,6 +19,23 @@ import {Group} from "three";
 import * as LAYER from "../LayerMasks";
 
 const matLineGreyThin = makeMatLine(0x404040, 0.50);
+
+// Often every line of sight is the same line: a fixed camera aimed by fixed
+// angles sees along one line in every frame (an allsky camera, a tripod). Then a
+// single line is drawn, and it follows the camera in real time (update), so a
+// drag of the look view moves it at once. The full set, one camera evaluation
+// per line, takes hundreds of ms in a long sitch, which is why a look-view drag
+// recalculates it only when the drag pauses (CameraControls CASCADE_PAUSE_MS).
+// recalculate() decides from SINGLE_PROBES evenly spaced lines, then checks the
+// rest in short background slices; if any differs, the full set is drawn.
+const SINGLE_PROBES = 17;
+const SAME_POSITION_M = 0.01;
+const SAME_HEADING_RAD = 1e-7;
+const VERIFY_SLICE_MS = 8;
+
+function sameLOS(a, b) {
+    return a.position.distanceTo(b.position) < SAME_POSITION_M && a.heading.angleTo(b.heading) < SAME_HEADING_RAD;
+}
 const matLineWhite = makeMatLine(0xffffff, 1);
 // CNodeDisplayLOS display the Lines Of Sight
 // inputs.LOS is a per-frame node that returns values of:
@@ -148,6 +165,7 @@ export class CNodeDisplayLOS extends CNode3DGroup {
        // return;
 
         this.updateCurrentLOS(par.frame);
+        this.updateSingleLOS(par.frame);
 
         if (this.in.traverse)
             for (var f = 0; f < this.in.LOS.frames; f++) {
@@ -233,22 +251,8 @@ export class CNodeDisplayLOS extends CNode3DGroup {
         this.currentLOSGroup.add(this.currentLOSLine);
     }
 
-    recalculate() {
-
-        // console.log("recalculate LOS, this.in.LOS.frames = "+this.in.LOS.frames+
-        // "this.in.LOS.id = "+this.in.LOS.id+ " Sit.frames = "+Sit.frames);
-
-        // Jet_LOS is an array of structures of line + geometry
-        // for all the radiating LOS (like LOSX)
-        this.Jet_LOS3D.forEach((item, index) => {
-            this.group.remove(item.line)
-            dispose(item.geometry)
-        })
-
-
-
-
-        this.Jet_LOS3D = []
+    // The frames whose line of sight is drawn.
+    shownFrames() {
         let spacing = this.spacing;
         let frames = this.in.LOS.frames;
 
@@ -267,43 +271,142 @@ export class CNodeDisplayLOS extends CNode3DGroup {
             spacing *= Math.pow(2, Math.round(this.hideSomeLOS));
         }
 
-        for (var f = 0; f < frames; f++) {
-
+        const shown = [];
+        for (let f = 0; f < frames; f++) {
             // one per second (assume 30 fps), plus arbitary lines to highlight
-            if (this.isFineDetail(f) || f % spacing === 0 || this.highlightLines[f] !== undefined) {
+            if (this.isFineDetail(f) || f % spacing === 0 || this.highlightLines[f] !== undefined) shown.push(f);
+        }
+        return shown;
+    }
 
-                var {A, B} = this.getLineEndpoints(f)
+    removeLines() {
+        this.cancelVerify();
+        this.single = null;
+        // Jet_LOS is an array of structures of line + geometry
+        // for all the radiating LOS (like LOSX)
+        this.Jet_LOS3D.forEach((item) => {
+            this.group.remove(item.line)
+            dispose(item.geometry)
+        })
+        this.Jet_LOS3D = []
+    }
 
-                var mid = A.clone().add(B).multiplyScalar(0.5);
+    recalculate() {
 
-                A.sub(mid);
-                B.sub(mid);
-                var points = [A.x, A.y, A.z, B.x, B.y, B.z]
-                var lineOb = {}
-                lineOb.geometry = new LineGeometry()
-                lineOb.geometry.setPositions(points)
+        // console.log("recalculate LOS, this.in.LOS.frames = "+this.in.LOS.frames+
+        // "this.in.LOS.id = "+this.in.LOS.id+ " Sit.frames = "+Sit.frames);
 
-                var color = this.material // matLineWhiteThin;
+        this.removeLines();
+        const shown = this.shownFrames();
 
-                // we can be passed in an array of lines to highlight
-                if (this.highlightLines[f] !== undefined)
-                    color = this.highlightLines[f]
-
-                // dim out things outside the active range
-                if (f < Sit.aFrame || f > Sit.bFrame) {
-                    color = matLineGreyThin;
-                }
-
-                lineOb.line = new Line2(lineOb.geometry, color)
-                lineOb.line.position.set(mid.x, mid.y, mid.z)
-                this.Jet_LOS3D.push(lineOb)
-                this.group.add(lineOb.line)
+        // One line for all? Probe evenly spaced lines first (see SINGLE_PROBES).
+        // Highlighted lines and the fine-detail debug view keep the full set.
+        if (shown.length > SINGLE_PROBES && !this.displayFineDetail
+            && Object.keys(this.highlightLines).length === 0) {
+            const los = this.in.LOS;
+            const first = los.v(shown[0]);
+            let same = true;
+            for (let k = 1; k < SINGLE_PROBES && same; k++) {
+                same = sameLOS(los.v(shown[Math.round(k * (shown.length - 1) / (SINGLE_PROBES - 1))]), first);
+            }
+            if (same) {
+                this.single = {position: first.position.clone(), heading: first.heading.clone()};
+                // drawn in the active range's colour when any of it is in the range
+                this.addLine(shown.find(f => f >= Sit.aFrame && f <= Sit.bFrame) ?? shown[0]);
+                this.propagateLayerMask();
+                this.verifySingle(shown);
+                return;
             }
         }
-        this.propagateLayerMask()
+        this.addLines(shown);
+    }
+
+    // The full set of lines.
+    addLines(shown) {
+        for (const f of shown) this.addLine(f);
+        this.propagateLayerMask();
+    }
+
+    addLine(f) {
+        const {A, B} = this.getLineEndpoints(f)
+        const mid = A.clone().add(B).multiplyScalar(0.5);
+        A.sub(mid);
+        B.sub(mid);
+        const lineOb = {}
+        lineOb.geometry = new LineGeometry()
+        lineOb.geometry.setPositions([A.x, A.y, A.z, B.x, B.y, B.z])
+
+        let color = this.material // matLineWhiteThin;
+
+        // we can be passed in an array of lines to highlight
+        if (this.highlightLines[f] !== undefined)
+            color = this.highlightLines[f]
+
+        // dim out things outside the active range
+        if (f < Sit.aFrame || f > Sit.bFrame) {
+            color = matLineGreyThin;
+        }
+
+        lineOb.line = new Line2(lineOb.geometry, color)
+        lineOb.line.position.set(mid.x, mid.y, mid.z)
+        this.Jet_LOS3D.push(lineOb)
+        this.group.add(lineOb.line)
+    }
+
+    // Check the lines the probe skipped, a slice at a time. Any that differs means
+    // the camera moves during the sitch: draw them all. Each slice first takes the
+    // first line again: if THAT changed, the camera was moved (a drag), which says
+    // nothing about the sitch, so the check stops; the recalculation that follows
+    // the move starts a new one.
+    verifySingle(shown) {
+        let i = 1;
+        const step = () => {
+            this.verifyTimer = null;
+            if (!this.single) return;
+            const reference = this.in.LOS.v(shown[0]);
+            if (!sameLOS(reference, this.single)) return;
+            const end = performance.now() + VERIFY_SLICE_MS;
+            for (; i < shown.length && performance.now() < end; i++) {
+                if (!sameLOS(this.in.LOS.v(shown[i]), reference)) {
+                    this.removeLines();
+                    this.addLines(shown);
+                    setRenderOne(true);
+                    return;
+                }
+            }
+            if (i < shown.length) this.verifyTimer = setTimeout(step, 0);
+        };
+        this.verifyTimer = setTimeout(step, 0);
+    }
+
+    cancelVerify() {
+        clearTimeout(this.verifyTimer);
+        this.verifyTimer = null;
+    }
+
+    // With a single line, follow the camera every frame: one camera evaluation.
+    // A change stops the background check; the recalculation that follows the
+    // change (at once, or when a drag pauses) starts a new one.
+    updateSingleLOS(f) {
+        if (!this.single) return;
+        const los = this.in.LOS.v(f);
+        if (sameLOS(los, this.single)) return;
+        this.cancelVerify();
+        this.single = {position: los.position.clone(), heading: los.heading.clone()};
+        const item = this.Jet_LOS3D[0];
+        if (!item) return;
+        const {A, B} = this.getLineEndpoints(f);
+        const mid = A.clone().add(B).multiplyScalar(0.5);
+        A.sub(mid);
+        B.sub(mid);
+        item.geometry.setPositions([A.x, A.y, A.z, B.x, B.y, B.z]);
+        item.line.position.set(mid.x, mid.y, mid.z);
+        item.line.updateMatrixWorld();
     }
 
     dispose() {
+        this.cancelVerify();
+        this.single = null;
         for (const item of this.Jet_LOS3D) {
             this.group.remove(item.line);
             item.geometry.dispose();

@@ -61,9 +61,13 @@ import {panoramaFaceCamera, panoramaFaces, panoramaProject} from "./rendering/Pa
 import {applyAnnualAberration, raDec2Celestial} from "./CelestialMath";
 import {CNode3DLight} from "./nodes/CNode3DLight";
 import {CNodeViewUI} from "./nodes/CNodeViewUI";
-import {degrees, radians} from "./mathUtils";
-import {flareRamp} from "../tools/shf/flarePhysics.js";
+import {radians} from "./mathUtils";
 import {altitudeHAE, getLocalUpVector} from "./SphericalMath";
+import {
+    erf, EXT_RGB, exposureSampleOffsets, extinctionRGB, psfRadiusPx, psfSigmaPx,
+    satelliteExposureFlux, starTintRGB,
+} from "./ExposurePhotometry";
+import {setupTimelapsePreviewMenu} from "./TimelapsePreview";
 import {GlobalScene} from "./LocalFrame";
 import {withDisplayedCamera} from "./ViewUtils";
 import {MeshBasicMaterial, WebGLRenderTarget, Color} from "three";
@@ -229,6 +233,8 @@ class CLongExposureManager {
             .tooltip("Atmospheric refraction (same setting as View > Atmospheric Refraction).\n" +
                 "When on, splatted stars/planets/satellites use refracted apparent positions,\n" +
                 "and the horizon culling and extinction altitude follow the refracted direction.");
+
+        setupTimelapsePreviewMenu(folder, this);
 
         const nf = folder.addFolder("Camera Nudge").close().perm();
         this.nudgeFolder = nf;
@@ -396,16 +402,7 @@ export function deserializeLongExposure(data) {
 }
 
 // ---------------------------------------------------------------------------
-// Math helpers
-
-// Abramowitz & Stegun 7.1.26, |error| < 1.5e-7
-function erf(x) {
-    const sign = x < 0 ? -1 : 1;
-    x = Math.abs(x);
-    const t = 1 / (1 + 0.3275911 * x);
-    const y = 1 - (((((1.061405429 * t - 1.453152027) * t) + 1.421413741) * t - 0.284496736) * t + 0.254829592) * t * Math.exp(-x * x);
-    return sign * y;
-}
+// Math helpers (the shared photometry is in ExposurePhotometry.js)
 
 // fraction of [t0, t1) during which a strobe (period `every`, on-window
 // `length`, phase `offset`) is lit — exact integral, so sub-frame dashes
@@ -427,17 +424,9 @@ function strobeOnFraction(t0, t1, every, length, offset) {
 // (applied to in-atmosphere model lights; stars use the airmass model below)
 const LIGHT_EXT_MAG_PER_KM = 0.015;
 
-// satellite splat calibration: apparent magnitude of a full (ramp=1) flare,
-// and of the sunlit ISS. Only flaring satellites (+ the lit ISS) are splatted.
-const SAT_FLARE_PEAK_MAG = -4;
-const ISS_MAG = -2;
-// The flare cone's falloff band fades the flare by this many MAGNITUDES.
-// A linear ramp is photometrically instantaneous here (peak is ~1600x pixel
-// saturation, so the square-law band crosses the whole visible range in its
-// last ~1%) — streaks would start and end at full brightness. Fading in
-// magnitude space makes the streak taper smoothly to zero at both ends
-// while the core still flares at full peak.
-const SAT_FLARE_TAPER_MAGS = 13;
+// EV the result window opens at. Night trails of satellites and faint stars
+// usually need about +3 EV to show; the slider still covers -6 to +10.
+const RESULT_EV = 3;
 
 // Model-light intensity -> candela for the exposure. GLB light intensities are
 // tuned for DISPLAY visibility and run hot photometrically: the 737 models use
@@ -446,58 +435,7 @@ const SAT_FLARE_TAPER_MAGS = 13;
 // realistic range (543 -> ~109 cd) without touching the display billboards.
 const LIGHT_CANDELA_PER_INTENSITY = 0.2;
 
-// Kasten-Young 1989 airmass at apparent altitude. Capped at the grazing-ray
-// tangent value (~28, including refraction path-shortening) rather than the
-// plane-parallel 38: a horizon ray grazes the limb and rises out of the air,
-// it does not keep accumulating column. Below 0° apparent (a dipped horizon
-// seen from altitude) the airmass HOLDS at the horizon value — extrapolating
-// the plane-parallel fit below 0° badly over-counts a rising grazing ray.
-const AIRMASS_TANGENT = 28;
-function airmassKY(sinAlt) {
-    const altDeg = Math.max(0, degrees(Math.asin(Math.min(1, Math.max(-1, sinAlt)))));
-    const s = Math.sin(radians(altDeg));
-    const am = 1 / (s + 0.50572 * Math.pow(altDeg + 6.07995, -1.6364));
-    return Math.min(AIRMASS_TANGENT, Math.max(1, am));
-}
-
-// Chromatic extinction: R/G/B multipliers on the base (V-band) coefficient at
-// the effective sRGB primaries 620/550/460nm — Rayleigh (λ⁻⁴) + typical clear
-// aerosol + ozone Chappuis (expert-reviewed clear-air breakdown).
-const EXT_RGB = [0.72, 1.00, 1.77];
-
-// Heterochromatic (Forbes) correction: a wide sRGB channel does NOT extinct
-// exponentially in airmass — as the column grows, the surviving flux shifts
-// to the channel's red (low-extinction) edge, so the effective coefficient
-// FALLS with airmass. Without this, a monochromatic law applied linearly to
-// X≈30+ over-reddens the horizon by ~2.5 magnitudes of B−R differential.
-// Modeled as a per-channel effective airmass X/(1 + a·X); a values for ~90nm
-// channels at k_V = 0.16, scaled linearly with the actual coefficient.
-const EXT_FORBES_A = [0.0012, 0.0030, 0.0058];
-
-// Per-channel transmittance for a source at apparent altitude sinAlt.
-// kAltScale is the observer's pressure-altitude factor exp(-h/8400m): an
-// airborne camera sits above most of the extinction.
-// Targets the observed horizon differential B−R ≈ 3.5-4 mag (B/R ~25-60),
-// not the naive monochromatic ~6.7 mag (~470) which looks blood-red.
-const _ext3 = new Float32Array(3);
-function extinctionRGB(sinAlt, kBase, kAltScale, chromatic) {
-    if (kBase <= 0) { _ext3[0] = _ext3[1] = _ext3[2] = 1; return _ext3; }
-    const X = airmassKY(sinAlt);
-    const kEff = kBase * kAltScale;
-    const aScale = kEff / 0.16;            // Forbes curvature scales with the coefficient
-    if (!chromatic) {
-        // achromatic: V-band dimming on all channels, no color shift
-        const Xe = X / (1 + EXT_FORBES_A[1] * aScale * X);
-        _ext3[0] = _ext3[1] = _ext3[2] = Math.pow(10, -0.4 * kEff * (Xe - 1));
-        return _ext3;
-    }
-    for (let c = 0; c < 3; c++) {
-        const a = EXT_FORBES_A[c] * aScale;
-        const Xe = X / (1 + a * X);
-        _ext3[c] = Math.pow(10, -0.4 * kEff * EXT_RGB[c] * (Xe - 1));
-    }
-    return _ext3;
-}
+// Airmass and extinction (airmassKY, extinctionRGB) are in ExposurePhotometry.js.
 
 // --- ACES Filmic (Stephen Hill fit) forward + inverse -----------------------
 // Must match shaders/ACESFilmicToneMappingShader.js exactly (incl. the /0.6).
@@ -602,20 +540,9 @@ async function renderLongExposure(mgr) {
     // the exact shutter endpoint (which can be a fractional sitch frame).
     // Merge normal samples with exact subexposure boundaries. An interval must
     // never straddle two stack windows, even with a large step or simSpeed.
-    const sampleOffsets = stackMode ? [0] : null;
     const frameEpsilon = Math.max(1, numFrames) * 1e-12;
-    if (stackMode) {
-        let regular = step, boundaryIndex = 1;
-        while (sampleOffsets.at(-1) < numFrames) {
-            const boundary = Math.min(numFrames, boundaryIndex * stackSeconds * fps / simSpeed);
-            const next = Math.abs(regular - boundary) <= frameEpsilon ? boundary : Math.min(regular, boundary);
-            if (next - sampleOffsets.at(-1) > frameEpsilon) sampleOffsets.push(next);
-            else sampleOffsets[sampleOffsets.length - 1] = next;
-            if (regular <= next + frameEpsilon) regular += step;
-            if (boundary <= next + frameEpsilon) boundaryIndex++;
-        }
-    }
-    const numSamples = sampleOffsets?.length ?? Math.ceil(numFrames / step) + 1;
+    const sampleOffsets = exposureSampleOffsets({numFrames, step, stackMode, stackFrames: stackSeconds * fps / simSpeed});
+    const numSamples = sampleOffsets.length;
     // preview cadence: roughly every 30 frames of sitch time, at least every sample
     const previewEvery = Math.max(1, Math.round(30 / step));
 
@@ -1054,9 +981,8 @@ async function renderLongExposure(mgr) {
     const wxArr = new Float32Array(16), wyArr = new Float32Array(16);
     function deposit(px, py, energy, r, g, b) {
         if (energy <= 0) return;
-        const sigma = Math.max(0.2, P.psfSigma);
-        const inv = 1 / (Math.SQRT2 * sigma);
-        const rad = Math.min(7, Math.max(1, Math.ceil(3 * sigma)));
+        const inv = 1 / (Math.SQRT2 * psfSigmaPx(P.psfSigma));
+        const rad = psfRadiusPx(P.psfSigma);
         const ix0 = Math.round(px) - rad, iy0 = Math.round(py) - rad;
         const n = rad * 2 + 1;
         if (ix0 + n < 0 || iy0 + n < 0 || ix0 >= W || iy0 >= H) return;
@@ -1191,7 +1117,7 @@ async function renderLongExposure(mgr) {
     try {
         for (let sample = 0; sample < numSamples; sample++) {
             if (progress.shouldStop()) break;
-            const i = sampleOffsets ? sampleOffsets[sample] : Math.min(sample * step, numFrames);
+            const i = sampleOffsets[sample];
             const f = startFrame + i;
             const t = f / fps;
 
@@ -1404,10 +1330,8 @@ async function renderLongExposure(mgr) {
                     };
 
                     if (starDirsECI) {
-                        // intrinsic blue-white tint (Star Tint dial): lerp from flat
-                        // white toward the bright-star population average [.78,.90,1.10]
-                        const tt = Math.max(0, P.starTint ?? 1);
-                        const sr = 1 + tt * (0.78 - 1), sg = 1 + tt * (0.90 - 1), sb = 1 + tt * (1.10 - 1);
+                        // intrinsic blue-white tint (Star Tint dial)
+                        const [sr, sg, sb] = starTintRGB(P.starTint);
                         for (let s = 0; s < starCount; s++) {
                             const x = starDirsECI[s * 3], y = starDirsECI[s * 3 + 1], z = starDirsECI[s * 3 + 2];
                             if (x * fwdECI.x + y * fwdECI.y + z * fwdECI.z < cosLimit) continue;
@@ -1434,7 +1358,7 @@ async function renderLongExposure(mgr) {
 
                 const sats = nightSky?.satellites;
                 if (sats?.TLEData?.satData && Globals.toSun) {
-                    const fluxZeroPoint = Math.pow(10, 0.4 * P.satMag);
+                    const satSettings = sats.brightnessSettings();
                     for (const sd of sats.TLEData.satData) {
                         if (!sd || sd.invalidPosition || !sd.ecef) {
                             if (sd) prevSatPos.delete(sd.number);
@@ -1457,22 +1381,7 @@ async function renderLongExposure(mgr) {
                             _v.copy(pos).sub(camera.position).normalize();
                             const sinAlt = _v.dot(up);
                             if (sinAlt >= horizonSin) {
-                                const illumination = sats.getSatelliteIllumination(sd.ecef, Globals.toSun);
-                                let flux = 0;
-                                if (illumination > 0) {
-                                    const appearance = sats.getSatelliteAppearance(sd, camera.position, Globals.toSun, illumination);
-                                    if (sats.brightnessModel === "Photometric estimate") {
-                                        flux = appearance.flux * fluxZeroPoint;
-                                    } else {
-                                        // Explicit compatibility mode for older cone renders.
-                                        flux = sd.number === 25544 ? Math.pow(10, -0.4 * (ISS_MAG - P.satMag)) : 0;
-                                        if (appearance.glintAngleDeg < sats.flareAngle) {
-                                            flux += Math.pow(10, -0.4 * (SAT_FLARE_PEAK_MAG - P.satMag)) * Math.pow(10,
-                                                -0.4 * SAT_FLARE_TAPER_MAGS * (1 - flareRamp(appearance.glintAngleDeg, sats.flareAngle)));
-                                        }
-                                        flux *= illumination;
-                                    }
-                                }
+                                const flux = satelliteExposureFlux(satSettings, sd, sd.ecef, camera.position, Globals.toSun, P.satMag);
                                 const ex = extinctionRGB(sinAlt, P.extinctionK, kAltScale, P.reddening);
                                 for (let c = 0; c < 3; c++) state.rgb[c] = flux * ex[c];
                             }
@@ -1530,11 +1439,12 @@ async function renderLongExposure(mgr) {
             }
             framesDone++;
 
-            // live preview of the developing exposure (running average so far);
-            // moonlight mode previews at the developed gain (raw values are
-            // ~18.6 stops down at full moon and would preview black)
+            // live preview of the developing exposure (running average so far),
+            // at the result window's opening EV; moonlight mode previews at the
+            // developed gain (raw values are ~18.6 stops down at full moon and
+            // would preview black)
             if (previewCtx && elapsedSeconds > 0 && framesDone % previewEvery === 0) {
-                const previewGain = (P.moonlight && bgBoost > 1) ? bgBoost : 1;
+                const previewGain = (P.moonlight && bgBoost > 1) ? bgBoost : Math.pow(2, RESULT_EV);
                 if (stackMode) for (let p = 0; p < acc.length; p++) {
                     stackPreview[p] = Math.max(stackMax[p], acc[p] / stackSeconds);
                 }
@@ -1557,10 +1467,10 @@ async function renderLongExposure(mgr) {
                 const inv = 1 / elapsedSeconds;
                 for (let p = 0; p < acc.length; p++) acc[p] *= inv;
             }
-            // moonlight mode: open pre-developed (EV = the calibrated boost,
-            // i.e. the moonlit ground exposed like the boosted render), with
-            // the slider range extended to reach it
-            const evInit = (P.moonlight && bgBoost > 1) ? Math.round(Math.log2(bgBoost) * 10) / 10 : 0;
+            // open at RESULT_EV; moonlight mode opens pre-developed (EV = the
+            // calibrated boost, i.e. the moonlit ground exposed like the boosted
+            // render), with the slider range extended to reach it
+            const evInit = (P.moonlight && bgBoost > 1) ? Math.round(Math.log2(bgBoost) * 10) / 10 : RESULT_EV;
             const evMax = Math.max(10, Math.ceil(evInit) + 4);
             showResultWindow(acc, W, H, {useACES, acesExposure, evInit, evMax});
         }

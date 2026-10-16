@@ -1,11 +1,9 @@
 import {Color} from "three";
 import {V3} from "../threeUtils";
-import {LLAToECEFRadians} from "../LLA-ECEF-ENU";
 import {SITREC_SERVER} from "../configUtils";
 import {FileManager, GlobalDateTimeNode, Globals, guiMenus, NodeMan, setRenderOne, Sit} from "../Globals";
 import {par} from "../par";
 import {EventManager} from "../CEventManager";
-import * as satellite from 'satellite.js';
 import {bestSat, CTLEData, satRecToDate} from "../TLEUtils";
 import {degrees} from "../utils";
 import {hideProgress, initProgress, updateProgress} from "../CProgressIndicator";
@@ -18,9 +16,7 @@ import {showError} from "../showError";
 import {CPointLightCloud} from "./CPointLightCloud";
 import {t} from "../i18n";
 import {applyRefractionFromObserver, REFRACTION_DEFAULTS} from "../atmosphere/refraction";
-import {penumbraFade, shadowOcclusion} from "../../tools/shf/flarePhysics.js";
-import {satelliteIllumination} from "../../tools/shf/solarIllumination.js";
-import {satelliteFlux, fluxToMagnitude} from "../../tools/shf/satellitePhotometry.js";
+import {satelliteAppearance, satelliteECEF, satelliteSunlitFraction} from "../SatelliteBrightness";
 
 // The Earth's rotation rate, rad/s, about the ECEF z axis.
 const EARTH_ROTATION_RATE = 7.292115e-5;
@@ -994,29 +990,8 @@ export class CSatellite {
      * Calculate satellite ECEF position for a given date
      */
     calcSatECEF(sat, date) {
-        const positionAndVelocity = satellite.propagate(sat, date);
-        if (positionAndVelocity && positionAndVelocity.position) {
-            const gmst = satellite.gstime(date);
-            // get geodetic (LLA) coordinates directly from satellite.js
-            const GD = satellite.eciToGeodetic(positionAndVelocity.position, gmst);
-            const altitude = GD.height * 1000; // convert from km to meters
-
-            // if the altitude is less than 100km, then it's in the atmosphere so we don't show it
-            if (altitude < 100000) {
-                return null;
-            }
-
-            // if it's significantly (10%) greater than geostationary orbit (35,786 km), then it's probably an error
-            // so we don't show it
-            if (altitude > 40000000) {
-                return null;
-            }
-
-            const ecef = LLAToECEFRadians(GD.latitude, GD.longitude, altitude);
-            return ecef;
-        } else {
-            return null;
-        }
+        // Null under 100 km (in the atmosphere) and over 40,000 km (an error).
+        return satelliteECEF(sat, date, Globals.equatorRadius, Globals.polarRadius);
     }
 
     /**
@@ -1597,37 +1572,29 @@ export class CSatellite {
         return getLocalUpVector(satPosition);
     }
 
+    // The settings the brightness calculations read, as a plain object, so the
+    // same code (SatelliteBrightness.js) can run in a worker.
+    brightnessSettings() {
+        return {
+            illuminationModel: this.illuminationModel,
+            penumbraDepth: this.penumbraDepth,
+            flareModel: this.flareModel,
+            starlinkProfile: this.starlinkProfile,
+            brightnessModel: this.brightnessModel,
+            flareAngle: this.flareAngle,
+            equatorRadius: Globals.equatorRadius,
+            polarRadius: Globals.polarRadius,
+        };
+    }
+
     // The sunlight path is distinct from extinction between the satellite and
     // observer. Both live rendering and offline exposure use this same fraction.
     getSatelliteIllumination(position, toSun = this.toSun) {
-        const options = {equatorRadius: Globals.equatorRadius, polarRadius: Globals.polarRadius};
-        if (this.illuminationModel === "Legacy fade") {
-            return penumbraFade(shadowOcclusion(position, toSun,
-                options.equatorRadius, options.polarRadius), this.penumbraDepth);
-        }
-        options.atmosphere = this.illuminationModel !== "Finite Sun";
-        return satelliteIllumination(position, toSun, options);
+        return satelliteSunlitFraction(position, toSun, this.brightnessSettings());
     }
 
     getSatelliteAppearance(satData, observer, toSun = this.toSun, illumination = undefined) {
-        const position = satData.ecef;
-        const dx = position.x - observer.x, dy = position.y - observer.y, dz = position.z - observer.z;
-        const rangeM = Math.hypot(dx, dy, dz);
-        if (!(rangeM > 0)) return {flux: 0, magnitude: Infinity, rangeM, glintAngleDeg: 180};
-        const normal = this.getSatelliteNormal(position, V3(0, 0, 0));
-        const incidence = (dx * normal.x + dy * normal.y + dz * normal.z) * 2;
-        const reflectedSunDot = ((dx - incidence * normal.x) * toSun.x +
-            (dy - incidence * normal.y) * toSun.y + (dz - incidence * normal.z) * toSun.z) / rangeM;
-        const glintAngleDeg = degrees(Math.acos(Math.max(-1, Math.min(1, reflectedSunDot))));
-        const phaseAngleRad = Math.acos(Math.max(-1, Math.min(1,
-            -(dx * toSun.x + dy * toSun.y + dz * toSun.z) / rangeM)));
-        illumination ??= this.getSatelliteIllumination(position, toSun);
-        const flux = satelliteFlux({rangeM, phaseAngleRad, glintAngleDeg, illumination,
-            starlink: /STARLINK/i.test(satData.name ?? ""), profile: this.starlinkProfile,
-            // Retain the previous ISS magnitude as an explicit estimated
-            // 1000-km/90-degree reference, now with range and phase dependence.
-            diffuseMagnitudeAt90Deg: satData.number === 25544 ? -2 : undefined});
-        return {flux, magnitude: fluxToMagnitude(flux), rangeM, glintAngleDeg, phaseAngleRad, illumination};
+        return satelliteAppearance(satData, satData.ecef, observer, toSun, illumination, this.brightnessSettings());
     }
 
     /**

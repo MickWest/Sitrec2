@@ -793,7 +793,9 @@ export class CNodeControllerPTZUI extends CNodeControllerAzElZoom {
     // Apply incremental mouse drag as camera-local rotations.
     // dragFov: the on-screen field the drag rate scales with — the pinhole fov by
     // default; the caller passes the fisheye's equivalent FOV when that render is on.
-    applySatelliteMouseDelta(xRotate, yRotate, dragFov = this.fov) {
+    // cascade: false when the caller recalculates the cascade itself (a camera drag
+    // defers it until the drag pauses, see CameraControls CASCADE_PAUSE_MS).
+    applySatelliteMouseDelta(xRotate, yRotate, dragFov = this.fov, cascade = true) {
         if (this._satQuatDirty) {
             this.buildSatQuatFromAngles();
         }
@@ -815,7 +817,7 @@ export class CNodeControllerPTZUI extends CNodeControllerAzElZoom {
         this.satQuat.normalize();
         this.extractAnglesFromSatQuat();
         this._satQuatDirty = false;
-        this.recalculateCascade();
+        if (cascade) this.recalculateCascade();
     }
 
     applySatellite(objectNode) {
