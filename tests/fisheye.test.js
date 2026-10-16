@@ -143,6 +143,23 @@ describe("fisheyeProjectView", () => {
         expect(clampFisheyeFov(190)).toBe(180);
         resetState({lensType: "rectilinear"});
         expect(clampFisheyeFov(170)).toBe(160);
+        // The General curve's cap follows k, and matches the named curve its k reproduces.
+        for (const [k, cap] of [[1, 180], [0.5, 360], [0, 360], [-0.5, 340], [-1, 160]]) {
+            resetState({lensType: "generalFisheye", curveK: k});
+            expect(clampFisheyeFov(400)).toBeCloseTo(cap, 9);
+        }
+    });
+
+    test("General curve: projects like the named curve its k reproduces", () => {
+        for (const [type, k] of [["orthographicFisheye", 1], ["equisolidFisheye", 0.5],
+            ["equidistantFisheye", 0], ["stereographic", -0.5], ["rectilinear", -1]]) {
+            resetState({lensType: type, fov: 120});
+            const a = fisheyeProjectView(viewDir(40, 30), 16 / 9);
+            resetState({lensType: "generalFisheye", curveK: k, fov: 120});
+            const b = fisheyeProjectView(viewDir(40, 30), 16 / 9);
+            expect(b.x).toBeCloseTo(a.x, 9);
+            expect(b.y).toBeCloseTo(a.y, 9);
+        }
     });
 
     test("equivalent pinhole FOV matches at the plate-scale gauge", () => {
@@ -258,7 +275,7 @@ describe("GLSL / JS lens curve agreement", () => {
     test("the shader chunk carries the closed forms in FISHEYE_TYPE_INDEX order", () => {
         expect(FISHEYE_TYPE_INDEX).toEqual({
             rectilinear: 0, stereographic: 1, equidistantFisheye: 2,
-            equisolidFisheye: 3, orthographicFisheye: 4,
+            equisolidFisheye: 3, orthographicFisheye: 4, generalFisheye: 5,
         });
         const glsl = FISHEYE_VERTEX_GLSL;
         const ladder = glsl.slice(glsl.indexOf("float fisheyeRho"), glsl.indexOf("vec4 fisheyeClip"));
@@ -266,11 +283,17 @@ describe("GLSL / JS lens curve agreement", () => {
         expect(ladder).toContain("if (uFishType < 1.5) return 2.0 * tan(theta * 0.5);");
         expect(ladder).toContain("if (uFishType < 2.5) return theta;");
         expect(ladder).toContain("if (uFishType < 3.5) return 2.0 * sin(theta * 0.5);");
-        expect(ladder).toContain("return sin(theta);");
+        expect(ladder).toContain("if (uFishType < 4.5) return sin(theta);");
+        // The General curve: sin(k theta)/k, theta at k = 0, tan(-k theta)/(-k) below.
+        expect(ladder).toContain("if (abs(uFishK) < 1e-6) return theta;");
+        expect(ladder).toContain("if (uFishK > 0.0) return sin(uFishK * theta) / uFishK;");
+        expect(ladder).toContain("return tan(-uFishK * theta) / (-uFishK);");
         // And the JS side really is LENS_PRESETS: spot-check one value per curve.
         expect(LENS_PRESETS.stereographic.rho(1)).toBeCloseTo(2 * Math.tan(0.5), 12);
         expect(LENS_PRESETS.equisolidFisheye.rho(1)).toBeCloseTo(2 * Math.sin(0.5), 12);
         expect(LENS_PRESETS.orthographicFisheye.rho(1)).toBeCloseTo(Math.sin(1), 12);
+        expect(LENS_PRESETS.generalFisheye.rho(1, 0.89)).toBeCloseTo(Math.sin(0.89) / 0.89, 12);
+        expect(LENS_PRESETS.generalFisheye.rho(1, -0.3)).toBeCloseTo(Math.tan(0.3) / 0.3, 12);
     });
 });
 

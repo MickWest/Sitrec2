@@ -81,6 +81,20 @@ export const LENS_PRESETS = {
         maxTheta: Math.PI / 2,
         maxRho: 1,
     },
+    // r = f sin(k theta) / k for k > 0, f theta for k = 0, f tan(-k theta) / (-k) for k < 0.
+    // ONE curve through all five closed forms above - k = 1 orthographic, 0.5 equisolid,
+    // 0 equidistant, -0.5 stereographic, -1 rectilinear - with k free in between. Real lenses
+    // often sit between two of the named ones: an allsky timelapse measured against 145 star
+    // trails fitted k = 0.89 at 1.1 px rms, where the best named curve (orthographic) left
+    // 2.1 px. Analytic in both directions, so the render can use it directly. k is the lens's
+    // `curveK`; the limits depend on it (generalFisheyeLimits).
+    generalFisheye: {
+        label: "General fisheye (curve k)",
+        theta: (rho, k) => generalTheta(rho, k),
+        rho: (theta, k) => generalRho(theta, k),
+        maxTheta: null,   // depends on k, see lensMaxTheta / lensMaxRho
+        maxRho: null,
+    },
     // theta = rho + d3 rho^3 + d5 rho^5 + d7 rho^7, inverted numerically.
     //
     // The linear coefficient is pinned to 1 BY CONSTRUCTION so that focalPx alone sets the
@@ -106,6 +120,68 @@ export const DEFAULT_LENS_TYPE = "rectilinear";
 
 function clamp(v, lo, hi) {
     return v < lo ? lo : (v > hi ? hi : v);
+}
+
+// Below this |k| the general curve is the equidistant one; sin(k t)/k loses precision there.
+const GENERAL_K_EPS = 1e-6;
+
+/** The general curve's k, held to the range it is defined on. */
+export function clampCurveK(k) {
+    return Number.isFinite(k) ? clamp(k, -1, 1) : 0.5;
+}
+
+/** The k of each named curve, so a switch to the general curve starts where the lens was. */
+export const NAMED_CURVE_K = {
+    rectilinear: -1,
+    stereographic: -0.5,
+    equidistantFisheye: 0,
+    equisolidFisheye: 0.5,
+    orthographicFisheye: 1,
+};
+
+function generalRho(theta, k) {
+    k = clampCurveK(k);
+    if (Math.abs(k) < GENERAL_K_EPS) return theta;
+    return k > 0 ? Math.sin(k * theta) / k : Math.tan(-k * theta) / -k;
+}
+
+function generalTheta(rho, k) {
+    k = clampCurveK(k);
+    if (Math.abs(k) < GENERAL_K_EPS) return rho;
+    return k > 0 ? Math.asin(clamp(k * rho, -1, 1)) / k : Math.atan(-k * rho) / -k;
+}
+
+/**
+ * The general curve's limits for a given k: the largest field angle it images, and the image
+ * radius there. The sine branch turns over at k theta = 90 deg; the tangent branch diverges
+ * there, so its radius is unbounded (as the rectilinear and stereographic presets' are).
+ */
+export function generalFisheyeLimits(k) {
+    k = clampCurveK(k);
+    const a = Math.abs(k);
+    const maxTheta = a < GENERAL_K_EPS ? Math.PI : Math.min(Math.PI, Math.PI / (2 * a));
+    let maxRho;
+    if (a < GENERAL_K_EPS) maxRho = Math.PI;
+    else if (k > 0) maxRho = Math.sin(k * maxTheta) / k;
+    else maxRho = maxTheta < Math.PI / (2 * a) - 1e-9 ? Math.tan(a * maxTheta) / a : Infinity;
+    return {maxTheta, maxRho};
+}
+
+/** The extra parameter a preset's curve takes: the custom polynomial, or the general k. */
+function curveParam(lens) {
+    if (lens.type === "custom") return lens.distortion;
+    if (lens.type === "generalFisheye") return lens.curveK;
+    return undefined;
+}
+
+/** Field angle at normalised radius rho, for any lens type. */
+export function lensTheta(lens, rho) {
+    return LENS_PRESETS[lens.type].theta(rho, curveParam(lens));
+}
+
+/** Normalised radius at field angle theta, for any lens type. */
+export function lensRho(lens, theta) {
+    return LENS_PRESETS[lens.type].rho(theta, curveParam(lens));
 }
 
 function customTheta(rho, d) {
@@ -151,6 +227,8 @@ export function makeLens(opts = {}) {
         principal: opts.principal ? [...opts.principal] : null,
         refSize: opts.refSize ? [...opts.refSize] : null,
         distortion: opts.distortion ? [...opts.distortion] : [0, 0, 0],
+        // The general curve's k (generalFisheye only; other types ignore it).
+        curveK: clampCurveK(opts.curveK ?? NAMED_CURVE_K[opts.type] ?? 0.5),
         source: opts.source ?? "default",
     };
     // Principal point defaults to the image centre, which is the right prior and the right
@@ -189,6 +267,7 @@ export function lensScaleFor(lens, size) {
 export function lensMaxRho(lens) {
     const preset = LENS_PRESETS[lens.type];
     if (!preset) return 0;
+    if (lens.type === "generalFisheye") return generalFisheyeLimits(lens.curveK).maxRho;
     if (lens.type !== "custom") return preset.maxRho;
     // The custom curve is only usable while it is strictly increasing.
     let rho = 0;
@@ -204,6 +283,7 @@ export function lensMaxRho(lens) {
 export function lensMaxTheta(lens) {
     const preset = LENS_PRESETS[lens.type];
     if (!preset) return 0;
+    if (lens.type === "generalFisheye") return generalFisheyeLimits(lens.curveK).maxTheta;
     if (lens.type !== "custom") return preset.maxTheta;
     return customTheta(lensMaxRho(lens), lens.distortion);
 }
@@ -261,10 +341,7 @@ export function lensToRay(lens, x, y, size = null, s = 1) {
     // at s=0.7 the frame corner sits at rho=1.15, a clamp would call it exactly 90 deg, and the
     // pixel would come back 94 px away. Measured - this is what the round-trip test caught.
     if (!(rho <= lensMaxRho(lens) + 1e-12)) return null;
-    const preset = LENS_PRESETS[lens.type];
-    const theta = lens.type === "custom"
-        ? preset.theta(rho, lens.distortion)
-        : preset.theta(rho);
+    const theta = lensTheta(lens, rho);
     if (!isFinite(theta) || theta > lensMaxTheta(lens) + 1e-9) return null;
     // sin(theta)/rho, guarded at the axis where both go to zero together.
     const scale = rho > 1e-12 ? Math.sin(theta) / rho : 1;
@@ -286,10 +363,7 @@ export function rayToPixel(lens, ray, size = null, s = 1) {
     const cx = lens.principal[0] * k, cy = lens.principal[1] * k;
     const theta = Math.acos(clamp(ray[2], -1, 1));
     if (theta > lensMaxTheta(lens) + 1e-9) return null;
-    const preset = LENS_PRESETS[lens.type];
-    const rho = lens.type === "custom"
-        ? preset.rho(theta, lens.distortion)
-        : preset.rho(theta);
+    const rho = lensRho(lens, theta);
     if (!isFinite(rho)) return null;
     const rho2 = Math.hypot(ray[0], ray[1]);
     // At the optical axis the azimuth is undefined but the answer is the principal point.
@@ -315,8 +389,7 @@ export function lensJacobian(lens, theta, size = null, s = 1) {
     const k = lensScaleFor(lens, size);
     if (k === null) return null;
     const f = lens.focalPx * k * s;
-    const preset = LENS_PRESETS[lens.type];
-    const rhoOf = (t) => (lens.type === "custom" ? preset.rho(t, lens.distortion) : preset.rho(t));
+    const rhoOf = (t) => lensRho(lens, t);
     const h = 1e-6;
     const rho = rhoOf(theta);
     // Central difference, narrowing to one-sided at the axis. The SPAN has to match the points
@@ -335,11 +408,7 @@ export function lensFOV(lens, size = null, s = 1) {
     const [w, h] = size ?? lens.refSize;
     const cx = lens.principal[0] * k, cy = lens.principal[1] * k;
     const f = lens.focalPx * k * s;
-    const preset = LENS_PRESETS[lens.type];
-    const th = (r) => {
-        const rho = r / f;
-        return lens.type === "custom" ? preset.theta(rho, lens.distortion) : preset.theta(rho);
-    };
+    const th = (r) => lensTheta(lens, r / f);
     // Measured across the full extent, so an off-centre principal point is accounted for rather
     // than assumed away.
     const deg = 180 / Math.PI;
@@ -356,6 +425,7 @@ export function serializeLens(lens) {
         kind: lens.kind, type: lens.type, focalPx: lens.focalPx,
         principal: [...lens.principal], refSize: [...lens.refSize],
         distortion: [...lens.distortion], source: lens.source,
+        ...(lens.type === "generalFisheye" ? {curveK: lens.curveK} : {}),
     };
 }
 

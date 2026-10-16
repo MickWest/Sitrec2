@@ -89,6 +89,7 @@ The Star Tracker folder lives under **Video**.
 | **Status** | What the last stage did, or what it found |
 | **Fit lens from stars** | Measure the camera's actual optics from the star field, and judge motion on a sphere rather than with a flat model. Reasonable to leave on: it declines when the clip does not constrain a lens, and says so. See [why this matters](#why-fitting-the-lens-matters) |
 | **Fixed camera** | The camera did not move, turn or zoom during the clip — a mounted allsky or meteor camera. The sky then turns rigidly about one axis at one rate, so the solver fits three numbers for the whole clip instead of an orientation per frame. Far more robust on a sparse or very wide field, and the **Lens** field reports the exposure interval the fitted rate implies. Off by default; leave it off for hand-held or panned footage. See [Allsky and fisheye footage](#allsky-and-fisheye-footage) |
+| **From timelapse** | The video is one stacked timelapse image of star trails from a fixed camera, taken between the **In** and **Out** frames. Full Analysis then finds the trails instead of points, and the lens and the camera's pointing are fitted from both ends of every trail. Off by default. See [Timelapse star trails](#timelapse-star-trails) |
 | **Lens** | The fitted lens, e.g. `custom, 96 deg, rms 0.15 px`, or why it declined. When the Fisheye render is on it reports that lens instead, e.g. `fisheye (Camera menu) Equisolid-angle fisheye, 158.6 deg circle, rms 0.30 px` — plus, after identification, the lens calibrated from the named stars |
 | **Show star markers** | Draw the green circles round the stars. The circles only — the names and the quad lines are separate switches, so you can read the names over clean video |
 | **Show star names** | Label identified stars with their catalog names. Independent of **Show star markers**: with the circles off the name sits beside the star itself |
@@ -365,6 +366,50 @@ Camera to Star Field** then sets the Fisheye render's **Fisheye FOV °**, **Cent
 reference clip the render's stars land within a pixel of the video's across the whole field,
 where the hand-matched lens had been fifteen pixels out at 30° off-axis.
 
+### Timelapse star trails
+
+A fixed camera that stacks its exposures into one image draws every star as an arc about the
+celestial pole. There are no points to detect, but each trail holds two exact star positions:
+where the star was when the stack started, and where it was when the stack ended. Tick **From
+timelapse**, set **In** and **Out** to the start and end of the stack, and press **Full Analysis**.
+
+1. **Trails.** The image is thresholded against the local sky, and the pixels kept are the
+   ridges of lines that run *along* circles about one centre. That centre is found first, as the
+   point the trails' normals pass closest to; a satellite or aircraft line that crosses a trail
+   points the wrong way, so it is cut out of the trail rather than merged with it. Pieces of a
+   dotted or broken trail are joined end to end, but never into a chain that spans clearly more
+   than a typical star's turn — two stars at the same declination share a circle.
+2. **Start and end.** Each end is measured where the brightness along the trail falls to half its
+   level, which is where the true end is whatever the star's brightness. The sky turns
+   counterclockwise about the north celestial pole as seen looking at it, so a trail starts at its
+   clockwise end around the pole and ends at its counterclockwise end (the other way round about
+   the south pole). The *Status* line reports the centre and how far the trails turned.
+3. **Identification.** The starts become the image's stars at the **In** frame, and are identified
+   as for any still. A star too close to the centre to show an arc is used at its middle.
+4. **Lens and pointing.** A fixed camera has one orientation relative to the ground for the
+   whole stack, while every star moves. So the fit is made in Earth-fixed coordinates, with each
+   star's direction computed as the render draws it (with aberration and refraction for the
+   camera's position). The stack is taken to be centred on the **In**/**Out** window: how far the
+   stars turned is *measured*, and every start is the star's direction half that turn before the
+   window's middle, every end half that turn after it. The order of the ends is checked against
+   the Earth's rotation and swapped if the camera was pointed the other way. Every projection is
+   fitted — the General fisheye curve with its *k* free — to every catalog star found on a trail
+   end, and the best one is kept. The General curve is chosen only when it beats every named
+   projection clearly.
+
+The **Lens** line then reads, for example, `timelapse fit: General fisheye (curve k) k 0.889,
+f 1349 px, centre (77, -25) px off, rms 1.32 px over 715 trail ends; trails turn 20.6 min (In/Out
+20.0)`. The measured turn reads slightly long, because each measured end lies about half a pixel
+past the true one; that does not move the middle, which is what sets the camera. With **Sync
+Camera to Star Field** on, the Fisheye render (**Camera → FOV (Zoom) → Fisheye**) is turned on
+and set to that lens — projection, **Curve k**, **Fisheye FOV** and **Center X/Y** — and the look
+camera is held at the fitted orientation for every frame. That orientation is fixed relative to
+the ground, so it stays correct when you move the camera's position afterwards: the stars are
+far enough away that a move of a few kilometres does not change them, while it does move nearby
+aircraft and the skyline.
+
+Use **Use mask** to keep foreground lights and the ground out of the trail search.
+
 ### Stage 4 — group the movers
 
 Several red detections moving together are usually one object — an aircraft's navigation lights, say. Tracks that are not stars and share a common motion are grouped into a single cluster, drawn as an orange ring. Notably this includes tracks that were individually dismissed as *short* or *incoherent*, which is exactly what a flashing light looks like on its own.
@@ -388,6 +433,13 @@ The result is the field centre in RA/Dec, the roll angle, and a field of view. R
 - **A still image is a special case.** With one real frame there is no motion to solve, so every detected point is taken as a star. The **Enough** button is not offered, since there is nothing to stop short of.
 - **The frame range is the In/Out range**, not the whole video. If the analysis covers less than you expected, check your A–B markers.
 - **Identification runs on the flat 2D map when a lens has been *fitted*.** The two features are deliberately decoupled for now: the matcher is calibrated end to end against what the flat chart produces, and feeding it the extra edge stars the lens fit recovers costs it its match consensus. So a fitted lens improves what is *called a star*, but does not currently widen what gets *named*. A *known* fisheye lens is the exception — its identification runs on a chart of the sphere (see [Allsky and fisheye footage](#allsky-and-fisheye-footage)), but only the central 70° of the field takes part in the blind match; the rim stars are named afterwards, through the calibrated lens.
+- **From timelapse needs the stack's time.** The stars cannot tell when the stack was taken,
+  because a time offset turns the sky exactly as turning the camera about the pole does. The
+  stack is taken to be centred on the **In**/**Out** window; an error of *t* seconds in that
+  turns the camera by 15 arcseconds per second about the celestial pole. Something fixed to the
+  ground — a skyline, an aircraft track — is what can check it. A trail cut by the frame edge or
+  the skyline is left out of the fit; one that crosses another star's trail on the same circle
+  can be cut short, and the fit discards it.
 - **Fixed camera assumes equal time steps.** Dropped frames or a gap in a timelapse cannot be expressed by one rate, and show up as a raised rms; untick it and the free per-frame solve handles them.
 
 ## Troubleshooting

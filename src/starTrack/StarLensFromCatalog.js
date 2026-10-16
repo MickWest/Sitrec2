@@ -15,7 +15,7 @@
 //
 // Pure: plain arrays in, plain objects out. No DOM, no THREE, no Sitrec globals.
 
-import {LENS_PRESETS, lensToRay, makeLens, rayToPixel} from "../CameraLens";
+import {LENS_PRESETS, clampCurveK, lensToRay, makeLens, rayToPixel} from "../CameraLens";
 import {fitRotationWahba, qExp, qMul, qNormalize, qRotate} from "./StarSphere";
 
 export const STAR_LENS_CATALOG_DEFAULTS = {
@@ -56,9 +56,18 @@ export function fitLensToCatalog(corr, size, opts = {}) {
         if (!q0) return null;
     }
 
-    // Parameters: rotation vector applied on the left of q0, focalPx, cx, cy.
+    // Parameters: rotation vector applied on the left of q0, focalPx, cx, cy - and, for the
+    // general curve, u = k|k| rather than k itself. Near k = 0 the curve depends on k only
+    // through k^2 (sin(k t)/k = t - k^2 t^3/6), so its slope in k is ZERO there and a fit seeded
+    // at an equidistant lens (k = 0) never moves; in u the slope is t^3/6 on one side and t^3/3 on
+    // the other, and the fit crosses 0 freely.
+    const fitK = type === "generalFisheye";
+    const NP = fitK ? 7 : 6;
+    const kOfU = (u) => Math.sign(u) * Math.sqrt(Math.abs(u));
     let p = [0, 0, 0, seed.focalPx, seed.principal?.[0] ?? w / 2, seed.principal?.[1] ?? h / 2];
-    const lensOf = (pp) => makeLens({type, focalPx: pp[3], principal: [pp[4], pp[5]], refSize: size});
+    if (fitK) { const k0 = clampCurveK(O.seedK ?? seed.curveK); p.push(k0 * Math.abs(k0)); }
+    const lensOf = (pp) => makeLens({type, focalPx: pp[3], principal: [pp[4], pp[5]], refSize: size,
+        ...(fitK ? {curveK: kOfU(pp[6])} : {})});
     const qOf = (pp) => qNormalize(qMul(qExp([pp[0], pp[1], pp[2]]), q0));
     const project = (pp, dir) => rayToPixel(lensOf(pp), qRotate(qOf(pp), dir), size);
     const residuals = (pp) => corr.map((c) => {
@@ -75,19 +84,21 @@ export function fitLensToCatalog(corr, size, opts = {}) {
             const base = residuals(p);
             // Numeric Jacobian, one column per parameter. Step sizes scaled to each
             // parameter's units: radians for the rotation, pixels for the rest.
-            const hs = [1e-6, 1e-6, 1e-6, 1e-3, 1e-3, 1e-3];
+            // u's step points AWAY from its nearer bound: u is clamped to [-1, 1], and a step
+            // across the bound would read as a zero derivative and stall the fit there.
+            const hs = [1e-6, 1e-6, 1e-6, 1e-3, 1e-3, 1e-3, p[6] > 0 ? -1e-6 : 1e-6].slice(0, NP);
             const cols = hs.map((hk, k) => {
                 const pp = p.slice(); pp[k] += hk;
                 return residuals(pp);
             });
-            const M = Array.from({length: 6}, () => new Array(6).fill(0));
-            const g = new Array(6).fill(0);
+            const M = Array.from({length: NP}, () => new Array(NP).fill(0));
+            const g = new Array(NP).fill(0);
             let used = 0;
             for (let i = 0; i < corr.length; i++) {
                 if (!mask[i] || !base[i]) continue;
                 const J = [];
                 let ok = true;
-                for (let k = 0; k < 6; k++) {
+                for (let k = 0; k < NP; k++) {
                     const c = cols[k][i];
                     if (!c) { ok = false; break; }
                     // residual = obs - model, so d(model)/dp = -(d residual / dp)
@@ -95,13 +106,13 @@ export function fitLensToCatalog(corr, size, opts = {}) {
                 }
                 if (!ok) continue;
                 used++;
-                for (let a = 0; a < 6; a++) {
-                    for (let b = 0; b < 6; b++) M[a][b] += J[a][0] * J[b][0] + J[a][1] * J[b][1];
+                for (let a = 0; a < NP; a++) {
+                    for (let b = 0; b < NP; b++) M[a][b] += J[a][0] * J[b][0] + J[a][1] * J[b][1];
                     g[a] += J[a][0] * base[i][0] + J[a][1] * base[i][1];
                 }
             }
             if (used < O.minPairs) return null;
-            const d = solveN(M, g, 6);
+            const d = solveN(M, g, NP);
             if (!d) break;
             const costOf = (pp) => {
                 const r = residuals(pp);
@@ -116,11 +127,13 @@ export function fitLensToCatalog(corr, size, opts = {}) {
             let scale = 1, accepted = false;
             for (let t = 0; t < 6; t++) {
                 const pn = p.map((v, k) => v + scale * d[k]);
+                if (fitK) pn[6] = Math.max(-1, Math.min(1, pn[6]));
                 if (pn[3] > 0 && costOf(pn) < c0) { p = pn; accepted = true; break; }
                 scale *= 0.5;
             }
             if (!accepted) break;
-            if (Math.hypot(d[0], d[1], d[2]) * scale < 1e-9 && Math.hypot(d[3], d[4], d[5]) * scale < 1e-4) break;
+            if (Math.hypot(d[0], d[1], d[2]) * scale < 1e-9 && Math.hypot(d[3], d[4], d[5]) * scale < 1e-4
+                && (!fitK || Math.abs(d[6]) * scale < 1e-7)) break;
         }
         // Re-trim against the gate for the next round (and the final statistics).
         const r = residuals(p);
@@ -141,7 +154,10 @@ export function fitLensToCatalog(corr, size, opts = {}) {
 
 /**
  * Score every non-custom preset on the same correspondences, seeded from `fit`'s orientation,
- * so a report can say which projection the footage actually follows. Sorted best first.
+ * so a report can say which projection the footage actually follows. Sorted best first. The
+ * general curve is fitted with its k free, starting from the seed lens's own curve.
+ *
+ * Each entry carries the fit itself (`fit`), so a caller that wants the winner need not refit.
  */
 export function rankLensTypes(corr, size, seedLens, seedQ, opts = {}) {
     const out = [];
@@ -149,7 +165,10 @@ export function rankLensTypes(corr, size, seedLens, seedQ, opts = {}) {
         if (type === "custom") continue;
         const seed = makeLens({...seedLens, type});
         const f = fitLensToCatalog(corr, size, {...opts, type, seedLens: seed, seedQ});
-        if (f) out.push({type, rms: f.rms, inliers: f.inliers, focalPx: f.lens.focalPx});
+        if (f) {
+            out.push({type, rms: f.rms, inliers: f.inliers, focalPx: f.lens.focalPx,
+                ...(type === "generalFisheye" ? {curveK: f.lens.curveK} : {}), fit: f});
+        }
     }
     return out.sort((a, b) => a.rms - b.rms);
 }
@@ -164,17 +183,30 @@ export function rankLensTypes(corr, size, seedLens, seedQ, opts = {}) {
  * @returns {Array<{px, dir, cat, index, dPx}>} one-to-one nearest matches within tolPx
  */
 export function matchCatalogToPixels(lens, q, catalog, pixels, size, magLimit, tolPx) {
-    // Project the catalog once; only the stars that land in the frame are candidates.
-    const cands = [];
-    const [w, h] = size;
+    const dirs = [];
     for (let i = 0; i < catalog.n; i++) {
         if (catalog.mag[i] > magLimit) continue;
         const dec = catalog.dec[i], ra = catalog.ra[i];
-        const dir = [Math.cos(dec) * Math.cos(ra), Math.cos(dec) * Math.sin(ra), Math.sin(dec)];
+        dirs.push({cat: i, dir: [Math.cos(dec) * Math.cos(ra), Math.cos(dec) * Math.sin(ra), Math.sin(dec)]});
+    }
+    return matchDirsToPixels(lens, q, dirs, pixels, size, tolPx);
+}
+
+/**
+ * matchCatalogToPixels for directions the caller has already put in the fit's frame - an
+ * Earth-fixed fit, say, where each star's direction depends on the time and the refraction.
+ *
+ * @param {Array<{cat:number, dir:number[]}>} dirs candidate unit directions, with a caller id
+ */
+export function matchDirsToPixels(lens, q, dirs, pixels, size, tolPx) {
+    // Project the candidates once; only the stars that land in the frame are kept.
+    const cands = [];
+    const [w, h] = size;
+    for (const {cat, dir} of dirs) {
         const px = rayToPixel(lens, qRotate(q, dir), size);
         if (!px) continue;
         if (px[0] < -tolPx || px[1] < -tolPx || px[0] > w + tolPx || px[1] > h + tolPx) continue;
-        cands.push({cat: i, dir, px});
+        cands.push({cat, dir, px});
     }
     // Greedy by distance, one catalog star per pixel and one pixel per catalog star.
     const pairs = [];

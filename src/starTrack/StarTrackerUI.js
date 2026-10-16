@@ -1,3 +1,4 @@
+import {Vector3} from "three";
 import {registerSurfaceInteraction} from "../SurfaceInteraction";
 import {addVideoAnalysisResolutionMenu, beginVideoAnalysis} from '../VideoAnalysisResolution';
 // Star Tracker: the app-facing layer over the pure Star Track pipeline.
@@ -9,7 +10,7 @@ import {addVideoAnalysisResolutionMenu, beginVideoAnalysis} from '../VideoAnalys
 // The menu lives under Video, alongside the other motion-analysis tools.
 
 import {FileManager, GlobalDateTimeNode, Globals, guiMenus, NodeMan, Sit, setRenderOne, UndoManager} from "../Globals";
-import {getStarDirectionECEF} from "../CelestialMath";
+import {getECEFToEQJMatrix, getStarDirectionECEF} from "../CelestialMath";
 import {CNodeController} from "../nodes/CNodeController";
 import {CNodeArray} from "../nodes/CNodeArray";
 import {SITREC_APP} from "../configUtils";
@@ -31,10 +32,13 @@ import {
 import {refineGlobalSphericalAsync} from "./StarSphereSolvePool";
 import {detectInPool, detectWorkersAvailable, ensureDetectPool, terminateDetectWorkers}
     from "./StarDetectPool";
-import {framePixelToFrame, frameToRef, refToFrame, qConj, qMul, qRotate} from "./StarSphere";
-import {LENS_PRESETS, lensFOV, lensToRay, rayToPixel, serializeLens} from "../CameraLens";
+import {framePixelToFrame, frameToRef, makeFrameState, refToFrame, qConj, qMul, qRotate} from "./StarSphere";
+import {LENS_PRESETS, lensFOV, lensFromVFOV, lensMaxRho, lensTheta, lensToRay, rayToPixel, serializeLens}
+    from "../CameraLens";
 import {applyFisheyeState, clampFisheyeFov, fisheye, fisheyeStarLens} from "../FisheyeProjection";
-import {fitLensToCatalog, matchCatalogToPixels, rankLensTypes} from "./StarLensFromCatalog";
+import {fitLensToCatalog, matchCatalogToPixels, matchDirsToPixels, rankLensTypes} from "./StarLensFromCatalog";
+import {extractStarTrails} from "./StarTrails";
+import {applyRefractionToDirection, refractionOptsFromUniforms} from "../atmosphere/refraction";
 import {
     STAR_IDENTIFY_DEFAULTS,
     buildQuadIndex,
@@ -162,6 +166,12 @@ const params = {
     // rather than three per frame, which is what makes a sparse, sub-pixel-per-frame allsky
     // timelapse solvable at all. Off by default: most footage is hand-held or panned.
     fixedCamera: false,
+    // The video is ONE stacked timelapse image of star trails from a fixed camera. Detection
+    // then finds the trails instead of points: their centre of rotation, and each trail's START
+    // (a star's position when the stack began, at the In frame) and END (at the Out frame).
+    // The starts are identified as stars; both ends then calibrate the lens and the camera's
+    // fixed orientation. Only meaningful for a still image; implies a fixed camera.
+    fromTimelapse: false,
     // Display. Each of these gates ONE thing on the overlay, so any of them can be turned off
     // without taking a neighbour with it: the star circles, the catalog names beside them and
     // the solver's quad lines are three independent layers over the same stars.
@@ -866,7 +876,7 @@ function sphereChartUnproject(chart, x, y) {
  */
 function sphereIdentifyChart(r, minIdentifyObs) {
     const li = r?.lensInfo;
-    if (!li?.lens || li.lens.source !== "fisheye" || !li.states) return null;
+    if (!li?.lens || !(li.lens.source === "fisheye" || li.timelapse) || !li.states) return null;
     // The camera's own axis in the reference frame - the gauge pins frame f0 to the identity,
     // so this is simply +z; read through the lens anyway so a gauge change cannot silently
     // move it.
@@ -1036,23 +1046,325 @@ function catalogFitPose(r, globalFrame) {
  */
 function applyFittedLensToFisheye(r) {
     const fit = r?.lensFit;
-    if (!fit || !fisheye.enabled || !r.videoW || !r.videoH) return null;
+    if (!fit || !r.videoW || !r.videoH) return null;
+    // A timelapse fit chose the projection itself, and the render is how its lens is shown, so
+    // it turns the Fisheye render on. Any other fit only refines a render the user turned on.
+    if (!fisheye.enabled && !r.timelapse) return null;
     const L = fit.lens;
     const preset = LENS_PRESETS[L.type];
     if (!preset) return null;
     const W = r.videoW, H = r.videoH;
-    const before = {fov: fisheye.fov, centerX: fisheye.centerX, centerY: fisheye.centerY};
+    const before = {fov: fisheye.fov, centerX: fisheye.centerX, centerY: fisheye.centerY,
+        type: fisheye.lensType, curveK: fisheye.curveK};
     // The image circle is what the footage shows; its angular radius is what the lens says.
     const circleRadiusPx = (fisheye.circlePct / 100) * H / 2;
     const rho = circleRadiusPx / L.focalPx;
-    const maxRho = preset.maxRho ?? Infinity;
-    const thetaEdge = preset.theta(Math.min(rho, maxRho));
+    const thetaEdge = lensTheta(L, Math.min(rho, lensMaxRho(L)));
+    if (!fisheye.enabled) {
+        // Turned on by a timelapse fit: the fit assumed the lens's own roll (none, with the
+        // render off), and a rectangular stack has no image circle to mask - a retained roll
+        // or the default circle mask would rotate the stars or black out the corners.
+        fisheye.roll = r.lensInfo?.rollDeg ?? 0;
+        fisheye.showCircle = false;
+    }
+    fisheye.enabled = true;
     fisheye.lensType = L.type;
+    // Before the FOV: the General curve's FOV cap depends on its k.
+    if (L.type === "generalFisheye") fisheye.curveK = L.curveK;
     fisheye.fov = clampFisheyeFov(2 * thetaEdge * 180 / Math.PI);
     fisheye.centerX = (L.principal[0] - W / 2) / H * 100;
     fisheye.centerY = (H / 2 - L.principal[1]) / H * 100;
     applyFisheyeState();
-    return {before, after: {fov: fisheye.fov, centerX: fisheye.centerX, centerY: fisheye.centerY}};
+    return {before, after: {fov: fisheye.fov, centerX: fisheye.centerX, centerY: fisheye.centerY,
+        type: fisheye.lensType, curveK: fisheye.curveK}};
+}
+
+// ---------------------------------------------------------------------------------------------
+// From timelapse: one stacked image of star trails from a fixed camera
+// ---------------------------------------------------------------------------------------------
+//
+// The trail finder (StarTrails.js) gives each trail's two ends and the centre the trails turn
+// about. The STARTS are handed to the normal pipeline as a still's point detections - so the
+// solve, the overlay and the blind identification all run unchanged on them - and the
+// identification then names the trails. From there the fit is in the EARTH-FIXED frame: a fixed
+// camera has ONE orientation relative to the ground for the whole stack, while each star's
+// direction changes with time. So every start is a correspondence at the In frame's instant,
+// every end one at the stack's last instant, both computed as the render draws the star
+// (aberrated, then refracted for the observer), and one rotation and one lens explain them all.
+
+const SIDEREAL_RAD_PER_SEC = 2 * Math.PI / 86164.0905;
+
+/** A complete trail spans close to the typical turn; near the centre the span is not measurable. */
+function isCompleteTrail(t) {
+    // A clipped end ran off the profile - the frame edge, or a trail that continues past what was
+    // linked - so it is not where the star was at either instant.
+    if (t.startClipped || t.endClipped) return false;
+    return t.r < 300 || (t.completeness > 0.85 && t.completeness < 1.2);
+}
+
+/**
+ * Find the trails in a decoded frame and turn them into point detections at their STARTS.
+ *
+ * The rotation sense decides which end is the start. The sky turns counterclockwise about the
+ * north celestial pole as seen looking at it, so when the north pole lies in front of the look
+ * camera the trails turn counterclockwise on screen and END at their counterclockwise end; when
+ * the south pole is in front, the other way. The look camera only has to be roughly right for
+ * that; the lens fit checks the order against the Earth's rotation and swaps it if not.
+ */
+function extractTimelapseTrails(px, maskNode) {
+    const cam = NodeMan.get("lookCamera", false)?.camera;
+    let sense = -1;
+    if (cam) {
+        const fwd = new Vector3();
+        cam.getWorldDirection(fwd);
+        // ECEF +z is the Earth's axis, toward the north celestial pole.
+        if (fwd.z < 0) sense = 1;
+    }
+    const isMasked = maskNode
+        ? (() => {
+            const msx = maskNode.maskCanvas.width / px.W, msy = maskNode.maskCanvas.height / px.H;
+            return (x, y) => maskNode.isPointMasked(x * msx, y * msy);
+        })()
+        : null;
+    const t0 = Date.now();
+    const res = extractStarTrails(px.data, px.W, px.H, {sense, ...(isMasked ? {isMasked} : {})});
+    console.log(`[StarTrack] timelapse: ${res.trails.length} trails, ${res.points.length} points near the `
+        + `centre, centre ${res.centre ? `(${res.centre[0].toFixed(1)}, ${res.centre[1].toFixed(1)})` : "none"}, `
+        + `span ${res.spanRad ? (res.spanRad * 180 / Math.PI).toFixed(2) : "?"} deg, sense ${sense}, `
+        + `${Date.now() - t0} ms`, res.stats);
+    // Point detections: complete trails at their start, and the stars too near the centre to
+    // have a measurable arc at their centroid. Brightness is the trail's whole light, which is
+    // the star's flux times the exposure whatever its speed across the frame.
+    const sources = [];
+    res.trails.forEach((t, i) => {
+        if (!isCompleteTrail(t)) return;
+        sources.push({x: t.startPx[0], y: t.startPx[1], flux: Math.max(t.totalFlux, 1e-3),
+            peakSNR: t.snr, area: Math.max(1, Math.round(t.lengthPx)), elongation: 1, width: 3,
+            height: 3, tl: {kind: "trail", i}});
+    });
+    res.points.forEach((p, i) => {
+        sources.push({x: p.x, y: p.y, flux: Math.max(p.totalFlux ?? p.flux, 1e-3), peakSNR: p.snr,
+            area: 4, elongation: 1, width: 3, height: 3, tl: {kind: "point", i}});
+    });
+    return {...res, sense, sources};
+}
+
+/**
+ * The lens a timelapse run starts from, and the frame states that put the trail starts on the
+ * sphere. The Fisheye render's lens when it is on (the user has matched it roughly); otherwise a
+ * pinhole at the look camera's vertical FOV. The camera does not move, so every frame's state is
+ * the identity: the reference frame IS the camera.
+ */
+function timelapseLensInfo(solved, size, total) {
+    let lens = fisheyeStarLens(size);
+    if (!lens) {
+        const vfov = NodeMan.get("lookCamera", false)?.camera?.fov ?? 60;
+        lens = {...lensFromVFOV(vfov, size), source: "camera"};
+    }
+    const identity = makeFrameState();
+    const states = Array.from({length: Math.max(1, total)}, () => identity);
+    attachRays(solved.tracks, states, lens, size);
+    return {lens, states, timelapse: true, rollDeg: lens.source === "fisheye" ? fisheye.roll : 0,
+        diagnostics: {source: "timelapse"}};
+}
+
+/** A star's direction in ECEF at `date`, as the render draws it: aberrated, then refracted. */
+function apparentStarECEF(raRad, decRad, date, observer, refrOpts) {
+    const d = getStarDirectionECEF(raRad, decRad, date);
+    if (observer) applyRefractionToDirection(d, observer, refrOpts, d);
+    return [d.x, d.y, d.z];
+}
+
+/**
+ * The lens and the fixed camera orientation from the identified trails.
+ *
+ * 1. Fit the seed lens type to the identified STARTS at the In frame.
+ * 2. Check the start/end order against the Earth's rotation: unprojected through that fit, a
+ *    star's direction must turn WEST (decreasing ECEF longitude) from start to end. If it turns
+ *    east the ends were swapped, and the fit is redone from the other ends.
+ * 3. Measure how long the stack ran from how far the stars turned (sidereal rate), rather than
+ *    assuming the In/Out span - the image says when it ended; only its start is taken on trust.
+ * 4. Fit every projection - the General curve with its k free - to the starts AND ends, widen the
+ *    match to every catalog star that lands on a trail end, refit, and keep the best projection
+ *    (the General curve only when it clearly beats every named one).
+ */
+function fitTimelapseLens(r, catalog, solved, stars) {
+    const tl = r.timelapse, li = r.lensInfo;
+    if (!tl || !li?.lens) return null;
+    const size = [r.videoW, r.videoH];
+    const D2R = Math.PI / 180;
+    const observer = NodeMan.get("lookCamera", false)?.camera?.position?.clone() ?? null;
+    const refr = refractionOptsFromUniforms();
+    const date0 = GlobalDateTimeNode.frameToDate(tl.startFrame);
+    const nominalSec = (GlobalDateTimeNode.frameToDate(tl.endFrame) - date0) / 1000;
+    const dateAt = (sec) => new Date(date0.getTime() + sec * 1000);
+
+    // The identified trails: catalog direction and the trail (or near-centre point) it drew.
+    const ids = [];
+    for (const m of solved.matches) {
+        const track = r.solved.tracks[stars[m.image]?.index];
+        const ref = track?.obs?.[0]?.src?.tl;
+        if (!ref) continue;
+        ids.push({ra: m.raDeg * D2R, dec: m.decDeg * D2R, ref});
+    }
+    let swapped = false;
+    const pixelOf = (ref, end) => {
+        if (ref.kind === "point") return [tl.points[ref.i].x, tl.points[ref.i].y];
+        const t = tl.trails[ref.i];
+        return (end !== swapped) ? t.endPx : t.startPx;
+    };
+    // The trails are tied to the MIDDLE of the In/Out window: starts at the middle less half the
+    // measured turn, ends at the middle plus half. A measured end lies a little past the true one
+    // (about half a pixel on the Allsky stack, from the half-level crossing on a dotted trail),
+    // the same at both ends; that lengthens the measured turn but leaves its middle - and so the
+    // camera's orientation - where it is. Tying the starts to In instead would turn the camera
+    // about the pole by the excess, a few pixels at the frame edge.
+    const midSec = nominalSec / 2;
+    const startSec = (span) => midSec - span / 2;
+    const endSec = (span) => midSec + span / 2;
+    // Correspondences: starts and ends about the middle, near-centre points at the middle.
+    const corrOf = (list, spanSec, withEnds) => {
+        const out = [];
+        for (const [end, sec] of withEnds ? [[false, startSec(spanSec)], [true, endSec(spanSec)]]
+            : [[false, startSec(spanSec)]]) {
+            const date = dateAt(sec);
+            for (const id of list) {
+                if (id.ref.kind === "point") continue;
+                out.push({px: pixelOf(id.ref, end), dir: apparentStarECEF(id.ra, id.dec, date, observer, refr)});
+            }
+        }
+        const mid = dateAt(midSec);
+        for (const id of list) {
+            if (id.ref.kind !== "point") continue;
+            out.push({px: pixelOf(id.ref, false), dir: apparentStarECEF(id.ra, id.dec, mid, observer, refr)});
+        }
+        return out;
+    };
+    // How far each complete trail turned, in seconds at the sidereal rate: both ends
+    // unprojected through the fit into ECEF, the longitude difference between them. Every star
+    // turns by the same angle, so this needs no identification - and the more trails, and the
+    // wider their spread of lengths, the better the duration fit below separates the two.
+    const trailTurns = (fit) => {
+        const out = [];
+        for (let i = 0; i < tl.trails.length; i++) {
+            if (!isCompleteTrail(tl.trails[i])) continue;
+            const ref = {kind: "trail", i};
+            const px = [pixelOf(ref, false), pixelOf(ref, true)];
+            const ends = px.map((p) => {
+                const ray = lensToRay(fit.lens, p[0], p[1], size);
+                return ray ? qRotate(qConj(fit.q), ray) : null;
+            });
+            if (!ends[0] || !ends[1]) continue;
+            let dl = Math.atan2(ends[1][1], ends[1][0]) - Math.atan2(ends[0][1], ends[0][0]);
+            while (dl > Math.PI) dl -= 2 * Math.PI;
+            while (dl < -Math.PI) dl += 2 * Math.PI;
+            out.push({sec: -dl / SIDEREAL_RAD_PER_SEC,
+                lengthPx: Math.hypot(px[1][0] - px[0][0], px[1][1] - px[0][1])});
+        }
+        return out;
+    };
+    const measureSpan = (fit) => {
+        const turns = trailTurns(fit).map((t) => t.sec).sort((a, b) => a - b);
+        return turns.length ? turns[turns.length >> 1] : null;
+    };
+    // 1-2: seed fit on the starts, then the order check.
+    let fit = fitLensToCatalog(corrOf(ids, nominalSec, false), size, {type: li.lens.type, seedLens: li.lens});
+    if (!fit) {
+        console.log(`[StarTrack] timelapse lens fit: not enough identified trails (${ids.length})`);
+        return null;
+    }
+    let spanSec = measureSpan(fit);
+    if (spanSec !== null && spanSec < 0) {
+        swapped = true;
+        fit = fitLensToCatalog(corrOf(ids, nominalSec, false), size, {type: li.lens.type, seedLens: li.lens}) ?? fit;
+        spanSec = measureSpan(fit);
+    }
+    if (!(spanSec > 0)) spanSec = nominalSec;
+
+    // 3-4: all projections on both ends, widened to every catalog star on a trail end.
+    // Recomputed per call: the end correction can change between widening rounds.
+    const pixelSets = () => {
+        const starts = [], ends = [], points = [];
+        tl.trails.forEach((t, i) => {
+            if (!isCompleteTrail(t)) return;
+            starts.push({px: pixelOf({kind: "trail", i}, false), index: i});
+            ends.push({px: pixelOf({kind: "trail", i}, true), index: i});
+        });
+        tl.points.forEach((p, i) => points.push({px: [p.x, p.y], index: i}));
+        return {starts, ends, points};
+    };
+    const magLimit = STAR_IDENTIFY_DEFAULTS.verifyMagLimit;
+    // Each instant's catalog directions are computed once: the widening asks for the same three
+    // instants on every round, and refraction per star is the expensive part.
+    const dirCache = new Map();
+    const catalogDirs = (sec) => {
+        const key = sec.toFixed(3);
+        if (dirCache.has(key)) return dirCache.get(key);
+        const date = dateAt(sec), out = [];
+        for (let i = 0; i < catalog.n; i++) {
+            if (catalog.mag[i] > magLimit) continue;
+            out.push({cat: i, dir: apparentStarECEF(catalog.ra[i], catalog.dec[i], date, observer, refr)});
+        }
+        dirCache.set(key, out);
+        return out;
+    };
+    const widen = (f, tol, span) => {
+        const P = pixelSets();
+        return [
+            ...matchDirsToPixels(f.lens, f.q, catalogDirs(startSec(span)), P.starts, size, tol),
+            ...matchDirsToPixels(f.lens, f.q, catalogDirs(endSec(span)), P.ends, size, tol),
+            ...matchDirsToPixels(f.lens, f.q, catalogDirs(midSec), P.points, size, tol),
+        ];
+    };
+    const pickBest = (ranked) => {
+        const named = ranked.filter((k) => k.type !== "generalFisheye");
+        const general = ranked.find((k) => k.type === "generalFisheye");
+        const bestNamed = named[0];
+        // The General curve has one more free parameter, so it must earn it.
+        return general && (!bestNamed || general.rms < 0.9 * bestNamed.rms) ? general : bestNamed;
+    };
+    let corr = corrOf(ids, spanSec, true);
+    let ranked = rankLensTypes(corr, size, fit.lens, fit.q);
+    let best = pickBest(ranked);
+    if (best) fit = best.fit;
+    for (const tol of [8, 5, 3]) {
+        const m = widen(fit, tol, spanSec);
+        if (m.length < corr.length) break;
+        ranked = rankLensTypes(m, size, fit.lens, fit.q);
+        best = pickBest(ranked);
+        if (!best) break;
+        fit = best.fit;
+        corr = m;
+        spanSec = measureSpan(fit) ?? spanSec;
+    }
+
+    // The camera's fixed pose in ECEF: the optical axis, and "up" with the render's roll undone
+    // (as catalogFitPose does), so the Fisheye render puts the roll back.
+    const L = fit.lens;
+    const [px, py] = L.principal;
+    const upPx = Math.max(50, r.videoH * 0.1);
+    const roll = (li.rollDeg ?? 0) * D2R;
+    const toECEF = (x, y) => {
+        const ray = lensToRay(L, x, y, size);
+        return ray ? qRotate(qConj(fit.q), ray) : null;
+    };
+    const fwd = toECEF(px, py);
+    const above = toECEF(px - upPx * Math.sin(roll), py - upPx * Math.cos(roll));
+    const label = (k) => `${LENS_PRESETS[k.type]?.label ?? k.type}`
+        + (k.type === "generalFisheye" ? ` k ${k.curveK.toFixed(3)}` : "");
+    console.log(`[StarTrack] timelapse lens fit: ${label({type: L.type, curveK: L.curveK})}, f ${L.focalPx.toFixed(1)} px, `
+        + `principal (${L.principal[0].toFixed(1)}, ${L.principal[1].toFixed(1)}), rms ${fit.rms.toFixed(2)} px over `
+        + `${fit.inliers}/${fit.n} trail ends (${ids.length} trails identified), ends ${swapped ? "SWAPPED, " : ""}`
+        + `trails turn ${(spanSec / 60).toFixed(2)} min of sidereal time (In/Out ${(nominalSec / 60).toFixed(2)} min); `
+        + "projections: " + ranked.map((k) => `${label(k)} ${k.rms.toFixed(2)}`).join(", "));
+    params.lensStatus = `timelapse fit: ${label({type: L.type, curveK: L.curveK})}, f ${L.focalPx.toFixed(0)} px, `
+        + `centre (${(L.principal[0] - r.videoW / 2).toFixed(0)}, ${(L.principal[1] - r.videoH / 2).toFixed(0)}) px off, `
+        + `rms ${fit.rms.toFixed(2)} px over ${fit.inliers} trail ends; trails turn ${(spanSec / 60).toFixed(1)} min`
+        + ` (In/Out ${(nominalSec / 60).toFixed(1)})`;
+    updateCameraLensMenu({...li, lens: L, rms: fit.rms}, size);
+    return {lens: L, q: fit.q, rms: fit.rms, inliers: fit.inliers, n: fit.n, ranked: ranked.map(({fit: _f, ...k}) => k),
+        spanSec, nominalSec, swapped, fixedECEF: fwd && above ? {fwd, above} : null,
+        fromIdentify: ids.length};
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1172,6 +1484,10 @@ class CNodeControllerStarTrack extends CNodeController {
         // Per-frame FOV, baked only for windowed solves (a zoom-during-pan clip has no single
         // plate scale). Same indexing as poseTrack; vfovDeg stays as the scalar fallback.
         this.vfovTrack = Array.isArray(v.vfovTrack) ? v.vfovTrack : null;
+        // A FIXED camera's pose (a timelapse stack): the optical axis and the up direction in
+        // ECEF, constant for every frame. Stars at infinity fix it relative to the ground, so it
+        // stays right when the camera's POSITION is adjusted afterwards. Null otherwise.
+        this.fixedPose = v.fixedPose ?? null;
     }
 
     /**
@@ -1193,6 +1509,26 @@ class CNodeControllerStarTrack extends CNodeController {
     bakeFrom(r) {
         const transforms = r?.solved?.transforms;
         if (!transforms || !transforms.length) return false;
+        // A timelapse's camera never moved: one Earth-fixed pose, not a sky pose per frame. The
+        // pose track keeps a single entry (the In frame's sky pose) so everything that asks
+        // "is there a bake" still finds one, without 4 numbers for every frame of the timeline.
+        const fixed = r.lensFit?.fixedECEF;
+        if (r.timelapse && fixed) {
+            const round = (v) => v.map((x) => +x.toFixed(9));
+            this.fixedPose = {fwd: round(fixed.fwd), above: round(fixed.above)};
+            const date = GlobalDateTimeNode.frameToDate(r.frame0);
+            const sky = (d) => {
+                const v = new Vector3(...d).applyMatrix4(getECEFToEQJMatrix(date)).normalize();
+                const rd = vecToRaDec([v.x, v.y, v.z]);
+                return [+(rd.ra * 180 / Math.PI).toFixed(5), +(rd.dec * 180 / Math.PI).toFixed(5)];
+            };
+            this.frame0 = r.frame0;
+            this.poseTrack = [...sky(fixed.fwd), ...sky(fixed.above)];
+            this.vfovDeg = null;
+            this.vfovTrack = null;
+            return true;
+        }
+        this.fixedPose = null;
         const track = [];
         for (let i = 0; i < transforms.length; i++) {
             const pose = starTrackPose(r.frame0 + i);
@@ -1252,6 +1588,7 @@ class CNodeControllerStarTrack extends CNodeController {
             poseTrack: this.poseTrack,
             vfovDeg: this.vfovDeg,
             vfovTrack: this.vfovTrack,
+            ...(this.fixedPose ? {fixedPose: this.fixedPose} : {}),
         };
     }
 
@@ -1261,6 +1598,7 @@ class CNodeControllerStarTrack extends CNodeController {
         if (Array.isArray(v.poseTrack)) this.poseTrack = v.poseTrack;
         if (Number.isFinite(v.vfovDeg)) this.vfovDeg = v.vfovDeg;
         if (Array.isArray(v.vfovTrack)) this.vfovTrack = v.vfovTrack;
+        this.fixedPose = v.fixedPose?.fwd && v.fixedPose?.above ? v.fixedPose : null;
         // Put the "Star Track" entries back in the camera dropdowns. The switches restore their
         // own saved choice through CNodeSwitch's pendingChoice, which waits for the option to be
         // registered - so this is what lets a sitch saved with the camera synced come back
@@ -1269,9 +1607,20 @@ class CNodeControllerStarTrack extends CNodeController {
     }
 
     apply(f, objectNode) {
+        const camera = objectNode.camera;
+        if (this.fixedPose) {
+            // Earth-fixed: the same ECEF axis and up at every frame.
+            const fwd = new Vector3(...this.fixedPose.fwd).normalize();
+            const aboveDir = new Vector3(...this.fixedPose.above);
+            const up = aboveDir.sub(fwd.clone().multiplyScalar(fwd.dot(aboveDir)));
+            if (up.lengthSq() < 1e-12) return;
+            camera.up = up.normalize();
+            camera.lookAt(camera.position.clone().add(fwd));
+            objectNode.syncUIPosition?.();
+            return;
+        }
         const pose = this.posesAt(f);
         if (!pose) return;
-        const camera = objectNode.camera;
         const date = GlobalDateTimeNode.frameToDate(f);
         const D2R = Math.PI / 180;
         // The solve maps pixels to CATALOG RA/Dec, so recovering where the
@@ -1382,14 +1731,17 @@ function updateCameraLensMenu(lensInfo, size) {
         + `(${(100 * Math.abs(ox) / w).toFixed(1)}%, ${(100 * Math.abs(oy) / h).toFixed(1)}%)`
         + (offFrame ? " - OUTSIDE THE FRAME" : "")
         + (lensInfo.diagnostics?.principalClamped ? " - CLAMPED, may be cropped further" : "");
-    // Only the custom curve has coefficients; for a named preset the shape IS the type.
+    // Only the custom curve has coefficients, and the General curve its k; for a named preset
+    // the shape IS the type.
     lensParams.distortion = lens.type === "custom"
         ? lens.distortion.map((v) => v.toFixed(3)).join(", ")
+        : lens.type === "generalFisheye" ? `curve k ${lens.curveK.toFixed(3)}`
         : "(none - preset curve)";
     lensParams.hfov = fov ? `${d3(fov.hfov)} deg` : "-";
     lensParams.vfov = fov ? `${d3(fov.vfov)} deg` : "-";
     lensParams.dfov = fov ? `${d3(fov.dfov)} deg` : "-";
-    lensParams.fit = `${lensInfo.rms.toFixed(2)} px rms`
+    // A lens taken as given (a timelapse's seed, before Identify fits it) has no fit yet.
+    lensParams.fit = !Number.isFinite(lensInfo.rms) ? "-" : `${lensInfo.rms.toFixed(2)} px rms`
         + (lensInfo.diagnostics?.holdoutRms != null
             ? `, ${lensInfo.diagnostics.holdoutRms.toFixed(2)} px held out` : "");
 
@@ -1537,7 +1889,15 @@ export function syncCameraToStarTrack() {
             + " calibrated, the rest approximate"
         : "camera synced to the star field"
             + (lensChange
-                ? ` - fisheye FOV ${lensChange.before.fov.toFixed(1)} -> ${lensChange.after.fov.toFixed(1)} deg, `
+                ? " - "
+                    + (lensChange.before.type !== lensChange.after.type
+                        || (lensChange.after.type === "generalFisheye"
+                            && lensChange.before.curveK !== lensChange.after.curveK)
+                        ? `${LENS_PRESETS[lensChange.after.type]?.label ?? lensChange.after.type}`
+                            + (lensChange.after.type === "generalFisheye"
+                                ? ` k ${lensChange.after.curveK.toFixed(3)}` : "") + ", "
+                        : "")
+                    + `fisheye FOV ${lensChange.before.fov.toFixed(1)} -> ${lensChange.after.fov.toFixed(1)} deg, `
                     + `centre (${lensChange.before.centerX.toFixed(1)}, ${lensChange.before.centerY.toFixed(1)}) -> `
                     + `(${lensChange.after.centerX.toFixed(1)}, ${lensChange.after.centerY.toFixed(1)}) %`
                 : "");
@@ -1988,7 +2348,9 @@ export async function identifyStars(opts = {}) {
         // used to CALIBRATE that lens: the hand-matched render is right to a few percent, the
         // stars say exactly. The user's projection type is kept; focal, centre and the
         // orientation are fitted, then widened to every star the frame holds.
-        myResult.lensFit = sphereChart ? fitFisheyeLensFromCatalog(myResult, catalog, solved, stars) : null;
+        myResult.lensFit = myResult.timelapse
+            ? fitTimelapseLens(myResult, catalog, solved, stars)
+            : (sphereChart ? fitFisheyeLensFromCatalog(myResult, catalog, solved, stars) : null);
         refreshSyncedCamera();
         const raH = solved.centerRaDeg / 15;
         params.status = `identified ${solved.matches.length}/${stars.length} stars - `
@@ -2149,6 +2511,10 @@ async function runStarTrackerAtResolution(opts) {
     // A deliberate single-frame run is the same situation arrived at by choice rather than by the
     // source's nature - one exposure, nothing to compare it against - so it takes the same path.
     const still = videoData instanceof CVideoImageData || singleFrame;
+    // A timelapse stack is a still whose detections are trail ENDS (see extractTimelapseTrails).
+    // The Out frame is snapshotted with it: it is when the trails end.
+    const timelapse = still && !singleFrame && !!params.fromTimelapse;
+    let trailInfo = null;
 
     const wasPaused = par.paused;
     // The previous identification's quads describe the previous solve. A new analysis replaces
@@ -2251,7 +2617,8 @@ async function runStarTrackerAtResolution(opts) {
             // should be answerable by looking.
             const kept = [];
             for (const s of det.sources) {
-                const why = rejectReason(s, {minArea: ctx.minArea, maxArea: det.maxArea});
+                // Trail ends are not blobs: the blob tests (area, elongation) do not apply.
+                const why = det.prefiltered ? null : rejectReason(s, {minArea: ctx.minArea, maxArea: det.maxArea});
                 if (why) {
                     rejectCounts[why] = (rejectCounts[why] || 0) + 1;
                     if (rejectSamples.length < 200) {
@@ -2331,6 +2698,18 @@ async function runStarTrackerAtResolution(opts) {
                 if (!px) { perFrame.push([]); continue; }
                 if (!videoW) { videoW = px.W; videoH = px.H; }
 
+                if (timelapse) {
+                    params.status = "finding star trails";
+                    updateProgress({percent: 40, status: "Finding star trails and their centre of rotation"});
+                    await yieldToBrowser();
+                    trailInfo = extractTimelapseTrails(px, maskUsable ? maskNode : null);
+                    if (!trailInfo.centre) {
+                        params.status = `From timelapse: ${trailInfo.reason}`;
+                        return null;
+                    }
+                    finalizeFrame(f, {sources: trailInfo.sources, W: px.W, H: px.H, prefiltered: true});
+                    continue;
+                }
                 const maxArea = dynMaxArea(px.W, px.H);
                 const {sources} = detectSources(px.data, px.W, px.H, detectOpts(maxArea));
                 finalizeFrame(f, {sources, W: px.W, H: px.H, maxArea});
@@ -2556,6 +2935,12 @@ async function runStarTrackerAtResolution(opts) {
         // clip that does not exercise the lens.
         const size = [videoW, videoH];
         const knownLens = still ? null : fisheyeStarLens(size);
+        if (timelapse) {
+            lensInfo = timelapseLensInfo(solved, size, total);
+            params.lensStatus = `${lensInfo.lens.source === "fisheye" ? "fisheye (Camera menu)" : "camera FOV"} `
+                + `${LENS_PRESETS[lensInfo.lens.type]?.label ?? lensInfo.lens.type} as the seed; `
+                + "Identify fits the lens from the trails";
+        }
         if (!still && (knownLens || params.fitLens) && solved.tracks.length) {
             try {
                 // Awaited, and handed a yield: the scans inside take tens of seconds on a
@@ -2786,7 +3171,9 @@ async function runStarTrackerAtResolution(opts) {
         detachStarTrackCamera();
         result = {frame0, frame1: analysedLast, generation, videoData, perFrame, chain, solved,
             clusters, videoW, videoH, still, rejectCounts, rejectSamples, lensInfo,
-            stoppedEarly: analysedLast < lastFrame};
+            stoppedEarly: analysedLast < lastFrame,
+            // The trails, for the lens fit: starts at the In frame, ends at the Out frame.
+            timelapse: trailInfo ? {...trailInfo, startFrame: frame0, endFrame: frame1} : null};
         // Published for inspection and for other tools, the way camera motion publishes its own
         // per-video data on Globals.
         Globals.starTrackerResult = result;
@@ -2796,7 +3183,11 @@ async function runStarTrackerAtResolution(opts) {
         updateCameraLensMenu(lensInfo, [videoW, videoH]);
         const counts = {};
         for (const c of solved.classified) counts[c.klass] = (counts[c.klass] || 0) + 1;
-        params.status = still
+        params.status = trailInfo
+            ? `${counts.star || 0} trail starts (timelapse): centre of rotation `
+                + `(${trailInfo.centre[0].toFixed(0)}, ${trailInfo.centre[1].toFixed(0)}), `
+                + `trails turn ${(trailInfo.spanRad * 180 / Math.PI).toFixed(2)} deg`
+            : still
             ? `${counts.star || 0} stars (still image)`
             : `${counts.star || 0} stars, ${counts.moving || 0} moving`
                 + (clusters.length ? `, ${clusters.length} light cluster${clusters.length > 1 ? "s" : ""}` : "")
@@ -3956,6 +4347,14 @@ export function setupStarTrackerMenu() {
             + "frame - far more robust on a sparse or very wide field, and it reports the "
             + "exposure interval the fitted rate implies. Leave off for hand-held or panned "
             + "footage.");
+    folder.add(params, "fromTimelapse").name("From timelapse")
+        .tooltip("The video is a single stacked timelapse image of star trails, taken by a "
+            + "fixed camera between the In and Out frames. Full Analysis then finds the trails "
+            + "and their centre of rotation, takes each trail's START as the star's position at "
+            + "the In frame, identifies those stars, and fits the lens (projection, curve, focal "
+            + "length and optical centre) and the fixed camera's pointing from both ends of every "
+            + "trail, with refraction. Sync Camera to Star Field then sets the Fisheye render and "
+            + "holds the camera still relative to the ground.");
     folder.add(params, "lensStatus").name("Lens").listen().disable();
     // The overlay switches, in the order they are reached for: the circles, the names beside
     // them, the solver's quad lines, then the less-used classes. Each gates exactly one layer.

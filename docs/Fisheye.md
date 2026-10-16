@@ -39,6 +39,13 @@ turns the other off.
   - *Rectilinear* (r = f·tan(θ)): the pinhole itself, included as a sanity
     check — at the same FOV it matches the normal render exactly. Caps at
     160°.
+  - *General fisheye (curve k)*: one curve through all five above, set by the
+    **Curve k** slider that appears when it is selected. For k above 0 it is
+    r = f·sin(kθ)/k, for k = 0 r = fθ, and for k below 0 r = f·tan(−kθ)/(−k).
+    k = 1 is orthographic, 0.5 equisolid-angle, 0 equidistant, −0.5
+    stereographic and −1 rectilinear; values in between describe a real lens
+    that lies between two of them. Selecting it starts k at the projection you
+    had, so the view does not jump. Its FOV cap follows k.
 
   These are the same lens models Star Track uses for its camera calibration,
   so a lens fitted there tells you which projection to pick here.
@@ -90,6 +97,11 @@ the whole clip. After **Identify Stars**, the named stars calibrate the lens, an
 Camera to Star Field** sets **Fisheye FOV** and **Center X/Y** from them — projection type and
 **Circle Size** are left as you set them — and points the camera. See
 [Star Tracker → Allsky and fisheye footage](StarTracker.md#allsky-and-fisheye-footage).
+
+For a single stacked image of star trails, tick **From timelapse** in the Star Tracker instead.
+That fit also chooses the **Projection** — including the **General fisheye** curve and its
+**Curve k** — and the sync turns this render on with the fitted lens. See
+[Star Tracker → Timelapse star trails](StarTracker.md#timelapse-star-trails).
 
 ## Limitations
 

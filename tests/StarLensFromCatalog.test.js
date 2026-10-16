@@ -56,13 +56,60 @@ describe("fitLensToCatalog", () => {
         expect(fit.rms).toBeLessThan(0.5);
     });
 
-    test("the true projection ranks first", () => {
+    test("the true projection ranks first among the named ones", () => {
         const corr = scene(3, 250, 0.3);
         const fit = fitLensToCatalog(corr, SIZE, {type: "equisolidFisheye", seedLens: SEED});
         const ranked = rankLensTypes(corr, SIZE, fit.lens, fit.q);
-        expect(ranked[0].type).toBe("equisolidFisheye");
+        const named = ranked.filter((k) => k.type !== "generalFisheye");
+        expect(named[0].type).toBe("equisolidFisheye");
         // And the wrong ones are not close: at 200-400 px radii the curves differ by many px.
-        expect(ranked[1].rms).toBeGreaterThan(ranked[0].rms * 4);
+        expect(named[1].rms).toBeGreaterThan(named[0].rms * 4);
+        // The General curve, k free, finds the equisolid one (k = 0.5) and fits no worse.
+        const general = ranked.find((k) => k.type === "generalFisheye");
+        expect(general.curveK).toBeCloseTo(0.5, 2);
+        expect(general.rms).toBeLessThan(named[0].rms * 1.05);
+    });
+
+    test.each([0.2, -0.3])("the General curve fit leaves k = 0 (an equidistant seed) for k = %p", (kTrue) => {
+        // In k itself the curve's slope is zero at k = 0, so a fit seeded there used to stall
+        // (1.43 px rms on this ring set); fitting u = k|k| moves through 0.
+        const truth = makeLens({type: "generalFisheye", curveK: kTrue, focalPx: 300,
+            principal: [500, 500], refSize: [1000, 1000]});
+        const corr = [];
+        for (const th of [0.2, 0.5, 0.8, 1.1]) {
+            for (let i = 0; i < 12; i++) {
+                const az = 2 * Math.PI * i / 12;
+                const dir = [Math.sin(th) * Math.cos(az), Math.sin(th) * Math.sin(az), Math.cos(th)];
+                corr.push({px: rayToPixel(truth, dir, [1000, 1000]), dir});
+            }
+        }
+        const seed = makeLens({type: "generalFisheye", curveK: 0, focalPx: 300, principal: [500, 500],
+            refSize: [1000, 1000]});
+        const fit = fitLensToCatalog(corr, [1000, 1000], {type: "generalFisheye", seedLens: seed,
+            seedQ: [0, 0, 0, 1]});
+        expect(fit.lens.curveK).toBeCloseTo(kTrue, 3);
+        expect(fit.rms).toBeLessThan(0.01);
+    });
+
+    test("the General curve recovers a k between the named projections", () => {
+        // A lens between orthographic (k = 1) and equisolid (k = 0.5), as an allsky stack fitted.
+        const truth = makeLens({type: "generalFisheye", curveK: 0.89, focalPx: 600,
+            principal: [660, 350], refSize: SIZE});
+        const rand = mulberry32(5);
+        const corr = [];
+        while (corr.length < 250) {
+            const dec = Math.asin(2 * rand() - 1), ra = 2 * Math.PI * rand();
+            const dir = [Math.cos(dec) * Math.cos(ra), Math.cos(dec) * Math.sin(ra), Math.sin(dec)];
+            const px = rayToPixel(truth, qRotate(Q_TRUE, dir), SIZE);
+            if (!px || px[0] < 0 || px[1] < 0 || px[0] > SIZE[0] || px[1] > SIZE[1]) continue;
+            corr.push({px: [px[0] + 0.3 * (rand() - 0.5), px[1] + 0.3 * (rand() - 0.5)], dir});
+        }
+        const seed = makeLens({type: "generalFisheye", curveK: 1, focalPx: 560, refSize: SIZE});
+        const fit = fitLensToCatalog(corr, SIZE, {type: "generalFisheye", seedLens: seed});
+        expect(fit.lens.curveK).toBeCloseTo(0.89, 2);
+        expect(fit.lens.focalPx).toBeCloseTo(600, 0);
+        expect(fit.lens.principal[0]).toBeCloseTo(660, 0);
+        expect(fit.rms).toBeLessThan(0.3);
     });
 
     test("refuses too few correspondences", () => {

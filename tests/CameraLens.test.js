@@ -15,6 +15,7 @@ import {
     lensJacobian,
     lensScaleFor,
     lensMaxTheta,
+    lensMaxRho,
     validateLens,
     serializeLens,
     deserializeLens,
@@ -70,6 +71,40 @@ describe("named presets", () => {
         expect(ray[1]).toBeGreaterThan(0);
         const right = lensToRay(lens, 1000, 360, SIZE);
         expect(right[0]).toBeGreaterThan(0);
+    });
+});
+
+describe("General fisheye curve", () => {
+    test("k = 1, 0.5, 0, -0.5, -1 reproduce the five named projections", () => {
+        const named = {1: "orthographicFisheye", 0.5: "equisolidFisheye", 0: "equidistantFisheye",
+            "-0.5": "stereographic", "-1": "rectilinear"};
+        for (const [k, type] of Object.entries(named)) {
+            const p = LENS_PRESETS[type];
+            for (let i = 1; i <= 10; i++) {
+                const theta = 0.8 * (p.maxTheta * 0.95) * i / 10;
+                expect(LENS_PRESETS.generalFisheye.rho(theta, +k)).toBeCloseTo(p.rho(theta), 10);
+            }
+        }
+    });
+
+    test.each([0.89, 0.3, 0, -0.3, -0.8])("k = %p round-trips pixel -> ray -> pixel", (k) => {
+        const lens = makeLens({type: "generalFisheye", curveK: k, focalPx: 700, principal: [700, 330],
+            refSize: SIZE});
+        let worst = 0;
+        for (const [x, y] of samplePixels()) {
+            const ray = lensToRay(lens, x, y, SIZE);
+            if (!ray) continue;   // past a strongly compressive curve's field
+            const px = rayToPixel(lens, ray, SIZE);
+            worst = Math.max(worst, Math.hypot(px[0] - x, px[1] - y));
+        }
+        expect(worst).toBeLessThan(1e-8);
+    });
+
+    test("k survives serialization, and the limits follow it", () => {
+        const lens = makeLens({type: "generalFisheye", curveK: 0.89, focalPx: 1349, refSize: [1920, 1080]});
+        expect(deserializeLens(serializeLens({...lens, source: "fitted"})).curveK).toBeCloseTo(0.89, 12);
+        expect(lensMaxTheta(lens)).toBeCloseTo(Math.PI / (2 * 0.89), 12);
+        expect(lensMaxRho(lens)).toBeCloseTo(1 / 0.89, 12);
     });
 });
 

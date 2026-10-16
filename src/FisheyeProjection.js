@@ -46,7 +46,7 @@ import {Material, ShaderMaterial, Vector2, Vector3} from "three";
 import {Globals, guiMenus, NodeMan, setRenderOne} from "./Globals";
 import {CNode} from "./nodes/CNode";
 import {GlobalScene, GlobalNightSkyScene, GlobalDaySkyScene, GlobalSunSkyScene} from "./LocalFrame";
-import {LENS_PRESETS, makeLens} from "./CameraLens";
+import {LENS_PRESETS, NAMED_CURVE_K, clampCurveK, generalFisheyeLimits, makeLens} from "./CameraLens";
 import {getLocalNorthVector, getLocalUpVector} from "./SphericalMath";
 import {updateCameraFOVControls} from "./CameraFOVControls";
 
@@ -56,6 +56,7 @@ import {updateCameraFOVControls} from "./CameraFOVControls";
 export const fisheyeUniforms = {
     uFishOn: {value: 0.0},                    // 1 only while the LOOK camera renders
     uFishType: {value: 3.0},                  // FISHEYE_TYPE_INDEX of the lens curve
+    uFishK: {value: 0.5},                     // the general curve's k (type 5 only)
     uFishRhoEdge: {value: Math.SQRT2},        // rho(fov/2): normalised radius of the circle edge
     uFishScaleY: {value: 1.0},                // circle radius in NDC half-heights (1 = inscribed)
     uFishAspect: {value: 16 / 9},             // render aspect, converts NDC-y radius to NDC-x
@@ -75,6 +76,7 @@ export const FISHEYE_TYPE_INDEX = {
     equidistantFisheye: 2,
     equisolidFisheye: 3,
     orthographicFisheye: 4,
+    generalFisheye: 5,
 };
 
 // Largest usable full FOV per curve, degrees. Rectilinear/stereographic have
@@ -86,6 +88,7 @@ const FISHEYE_FOV_CAP = {
     equidistantFisheye: 360,
     equisolidFisheye: 360,
     orthographicFisheye: 180,
+    // generalFisheye: depends on k, see fovCap()
 };
 
 const CHUNK_MARKER = "SITREC_FISHEYE_CHUNK";
@@ -94,6 +97,7 @@ export const FISHEYE_VERTEX_GLSL = /* glsl */`
 // ${CHUNK_MARKER}
 uniform float uFishOn;
 uniform float uFishType;
+uniform float uFishK;
 uniform float uFishRhoEdge;
 uniform float uFishScaleY;
 uniform float uFishAspect;
@@ -111,7 +115,11 @@ float fisheyeRho(float theta) {
     if (uFishType < 1.5) return 2.0 * tan(theta * 0.5);     // stereographic
     if (uFishType < 2.5) return theta;                      // equidistant
     if (uFishType < 3.5) return 2.0 * sin(theta * 0.5);     // equisolid
-    return sin(theta);                                      // orthographic
+    if (uFishType < 4.5) return sin(theta);                 // orthographic
+    // general: sin(k theta)/k, theta at k = 0, tan(-k theta)/(-k) for k < 0
+    if (abs(uFishK) < 1e-6) return theta;
+    if (uFishK > 0.0) return sin(uFishK * theta) / uFishK;
+    return tan(-uFishK * theta) / (-uFishK);
 }
 
 // View-space position -> fisheye clip position. theta is the angle off the
@@ -393,13 +401,38 @@ export const fisheye = {
     centerY: 0,
     roll: 0,                        // image rotation, degrees
     showCircle: true,               // mask outside the image circle to black
+    curveK: 0.5,                    // the General fisheye curve's k (1 ortho ... -1 rectilinear)
 };
 
 function activePreset() {
     return LENS_PRESETS[fisheye.lensType] ?? LENS_PRESETS.equisolidFisheye;
 }
 
+// The active curve, its inverse and its limits, with the general curve's k supplied. The
+// named presets ignore the extra argument.
+function fishRho(theta) {
+    return activePreset().rho(theta, fisheye.curveK);
+}
+
+function fishTheta(rho) {
+    return activePreset().theta(rho, fisheye.curveK);
+}
+
+function fishLimits() {
+    if (fisheye.lensType === "generalFisheye") return generalFisheyeLimits(fisheye.curveK);
+    const preset = activePreset();
+    return {maxTheta: preset.maxTheta ?? Math.PI, maxRho: preset.maxRho ?? Infinity};
+}
+
 function fovCap() {
+    if (fisheye.lensType === "generalFisheye") {
+        // Twice the curve's field limit. On the tangent side the image radius diverges at
+        // 180/|k| degrees of full field, so the cap stays 20 degrees short of it - which gives
+        // exactly the rectilinear (160) and stereographic (340) caps at k = -1 and -0.5.
+        const k = clampCurveK(fisheye.curveK);
+        if (k >= 0) return Math.min(360, k > 0.5 ? 180 / k : 360);
+        return Math.min(360, 180 / -k - 20);
+    }
     return FISHEYE_FOV_CAP[fisheye.lensType] ?? 180;
 }
 
@@ -424,14 +457,16 @@ export function setFisheyeFov(fov) {
 // recompute on every gated render (a handful of trig calls).
 function refreshFisheyeParams(aspect = fisheyeUniforms.uFishAspect.value) {
     const u = fisheyeUniforms;
-    const preset = activePreset();
+    fisheye.curveK = clampCurveK(fisheye.curveK);
+    const limits = fishLimits();
     fisheye.fov = Math.min(fisheye.fov, fovCap());
     const halfFovRad = fisheye.fov * Math.PI / 360;
     u.uFishType.value = FISHEYE_TYPE_INDEX[fisheye.lensType] ?? 3;
-    u.uFishRhoEdge.value = preset.rho(halfFovRad);
+    u.uFishK.value = fisheye.curveK;
+    u.uFishRhoEdge.value = fishRho(halfFovRad);
     u.uFishScaleY.value = fisheye.circlePct / 100;
     u.uFishRoll.value = fisheye.roll * Math.PI / 180;
-    u.uFishMaxTheta.value = preset.maxTheta ?? Math.PI;
+    u.uFishMaxTheta.value = limits.maxTheta;
     // With the circle mask off, a rectangular viewport can extend far beyond
     // the vertical half-FOV, especially in its corners or with an offset lens.
     // Radius is measured in half-heights, so image roll does not change it.
@@ -440,7 +475,7 @@ function refreshFisheyeParams(aspect = fisheyeUniforms.uFishAspect.value) {
         1 + Math.abs(fisheye.centerY) / 50);
     const cornerRho = cornerRadius * u.uFishRhoEdge.value / Math.max(u.uFishScaleY.value, 1e-6);
     const fieldAngle = fisheye.showCircle ? halfFovRad : Math.max(halfFovRad,
-        preset.theta(Math.min(cornerRho, preset.maxRho ?? Infinity)));
+        fishTheta(Math.min(cornerRho, limits.maxRho)));
     // Cull well past the visible field (margin keeps rim-crossing primitives
     // alive to be clamped/masked), and normally short of the antipode —
     // whose image is the entire rim circle, so coarse primitives near it
@@ -482,7 +517,8 @@ export function fisheyeStarLens(size) {
     const focalPx = (fisheye.circlePct / 100) * (h / 2) / rhoEdge;
     // centerY positive moves the circle UP on screen; pixel y runs down.
     const principal = [w / 2 + (fisheye.centerX / 100) * h, h / 2 - (fisheye.centerY / 100) * h];
-    return makeLens({type: fisheye.lensType, focalPx, principal, refSize: [w, h], source: "fisheye"});
+    return makeLens({type: fisheye.lensType, focalPx, principal, refSize: [w, h], source: "fisheye",
+        curveK: fisheye.curveK});
 }
 
 // Is this render's camera the one the fisheye applies to (the look camera)?
@@ -579,7 +615,7 @@ export function fisheyeProjectView(v, aspect = 1, near = 1, far = 1e9) {
         return v.set(0, 0, 2);   // culled in the render; park labels off-screen too
     }
     theta = Math.min(theta, u.uFishMaxTheta.value);
-    const rho = activePreset().rho(theta);
+    const rho = fishRho(theta);
     const l = Math.hypot(v.x, v.y);
     let dx = 0, dy = 0;
     if (l > 1e-9) {
@@ -764,7 +800,8 @@ class CNodeFisheye extends CNode {
     constructor(v) {
         super(v);
         this.addSimpleSerials(["fishEnabled", "fishLensType", "fishFov",
-            "fishCirclePct", "fishCenterX", "fishCenterY", "fishRoll", "fishShowCircle"]);
+            "fishCirclePct", "fishCenterX", "fishCenterY", "fishRoll", "fishShowCircle",
+            "fishCurveK"]);
     }
 
     get fishEnabled() { return fisheye.enabled; }
@@ -783,6 +820,8 @@ class CNodeFisheye extends CNode {
     set fishRoll(x) { fisheye.roll = x; }
     get fishShowCircle() { return fisheye.showCircle; }
     set fishShowCircle(b) { fisheye.showCircle = !!b; }
+    get fishCurveK() { return fisheye.curveK; }
+    set fishCurveK(x) { fisheye.curveK = clampCurveK(x); }
 
     modDeserialize(v) {
         super.modDeserialize(v);
@@ -796,11 +835,23 @@ class CNodeFisheye extends CNode {
         const wasEnabled = fisheye.enabled;
         Object.assign(fisheye, {
             enabled: false, lensType: "equisolidFisheye", fov: 180, circlePct: 100,
-            centerX: 0, centerY: 0, roll: 0, showCircle: true,
+            centerX: 0, centerY: 0, roll: 0, showCircle: true, curveK: 0.5,
         });
         if (wasEnabled) applyFisheyeState();
         super.dispose();
     }
+}
+
+// The Curve k slider, shown only while the General fisheye curve is selected. Kept so a type set
+// from code (a load, a Star Track fit) shows or hides it too, not only a menu pick.
+let _curveKController = null;
+// The last NAMED projection the lens had, whoever set it - the menu, a sitch load, a Star Track
+// fit. Kept here rather than in the menu's closure, which a load after the menu is built bypasses.
+let _lastNamedType = fisheye.lensType;
+
+function updateFisheyeCurveControls() {
+    if (NAMED_CURVE_K[fisheye.lensType] !== undefined) _lastNamedType = fisheye.lensType;
+    _curveKController?.show(fisheye.lensType === "generalFisheye");
 }
 
 // Whether the scene hooks are armed for the ON state. Parameter changes
@@ -810,6 +861,7 @@ class CNodeFisheye extends CNode {
 let _fisheyeArmed = false;
 
 export function applyFisheyeState() {
+    updateFisheyeCurveControls();
     if (fisheye.enabled) {
         // Both modes preserve their own settings, but only one can render.
         if (Globals.panoramic) Globals.panoramic.enabled = false;
@@ -858,10 +910,26 @@ export function setupFisheye() {
     }
     folder.add(fisheye, "lensType", typeOptions).listen()
         .name("Projection")
-        .onChange(applyFisheyeState)
+        .onChange((type) => {
+            // Start the general curve at the k that reproduces the projection it replaces, so
+            // the view does not jump and k is tuned from where the lens was.
+            if (type === "generalFisheye" && NAMED_CURVE_K[_lastNamedType] !== undefined) {
+                fisheye.curveK = NAMED_CURVE_K[_lastNamedType];
+            }
+            applyFisheyeState();
+        })
         .tooltip("The lens's radial mapping r(θ) — how far off-axis angles land from the image "
             + "centre. Cheap allsky board lenses are usually close to equisolid or equidistant. "
+            + "General fisheye adds a Curve k slider that blends between them. "
             + "Same curves as Star Track's camera lens model.");
+
+    _curveKController = folder.add(fisheye, "curveK", -1, 1, 0.001).listen()
+        .name("Curve k")
+        .onChange(applyFisheyeState)
+        .tooltip("The General fisheye curve, r = f·sin(kθ)/k. 1 is orthographic, 0.5 equisolid, "
+            + "0 equidistant, -0.5 stereographic and -1 rectilinear; values between blend them. "
+            + "Star Tracker's From Timelapse fit sets it from the stars.");
+    updateFisheyeCurveControls();
 
     folder.add(fisheye, "fov", FISHEYE_FOV_MIN, 360, 0.1).listen()
         .name("Fisheye FOV °")
