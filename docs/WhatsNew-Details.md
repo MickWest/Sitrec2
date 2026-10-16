@@ -9,6 +9,52 @@ lockstep with docs/WhatsNew.md.
 
 ---
 
+## Version 2.182.0 (2026-10-16)
+
+### New Features
+- **Preview Timelapse: a live preview of the Long Exposure/Stacking trails** (Video → Long Exposure/Stacking → **Preview Timelapse**; `b1c38a85`; new `src/TimelapsePreview.js` `setupTimelapsePreviewMenu`, `timelapsePreview`, `CNodeTimelapsePreview`, `TrailLineMaterial`, `farFromOrbitPlane`, `CPreviewPool`; new `src/TimelapsePreviewKernels.js` `computeStarTrails`, `computeSatelliteTrails`, `celestialTrail`, `starBand`, `phaseTester`, `trailValues`, `makeProjector`; new `src/workers/TimelapsePreviewWorker.js`; new `src/ExposurePhotometry.js` `chooseTrailVertices`, `alongTrackFraction`, `psfCentreFraction`; `src/LongExposure.js` `setupMenu`; `src/CelestialMath.js` `getAberrationVOverC` now exported; `docs/LongExposure.md`; `tests/ExposurePhotometry.test.js`, `tests/TimelapsePreviewKernels.test.js`).
+  - **What it draws.** You turn it on with the checkbox in the folder's title bar (`asFolderToggle`). While it is on, the star, planet and satellite trails that **Render Long Exposure/Stacking** would record are drawn as 3D lines, with the satellite flares, so the camera can be framed before the render. It reads the render's settings: Duration (Minutes), Capture Mode, Stack Exposure (s), Frame Step, Saturation Magnitude, Point Spread (px), Star Tint, Horizon Reddening, Refraction and the Camera Nudge.
+  - **Where the lines are drawn.** Stars and planets are drawn on the night-sky sphere (`GlobalNightSkyScene`, no depth test), so the terrain hides them. Satellites are drawn at their refracted apparent positions in `GlobalScene`, relative to the camera. These lines are depth-tested and excluded from terrestrial refraction, so terrain in front of a satellite hides it and the main view shows the real paths.
+  - **What it does not draw.** The Moon, the Sun and aircraft lights are not drawn. In daylight (`theSun.skyOpacity >= 1`) nothing is drawn and **Status** says so. The preview needs a look view and a night sky.
+  - **Positions and brightness.** The preview uses the render's sample times (`exposureSampleOffsets`), star catalog, annual aberration at the start instant, refraction and satellite apparent positions. Each vertex carries the linear value that the render's point spread leaves at the middle of the trail. That value is the source flux (`satelliteExposureFlux`, or the magnitude against **Saturation Magnitude**), times the extinction (`extinctionRGB`) and the tint, times `alongTrackFraction` of the path covered in one exposure window. The window is the stack window in *Brightest-pixel stack* mode and the full duration otherwise.
+  - **How the lines are drawn.** `TrailLineMaterial` is a `LineMaterial` subclass used on `LineSegments2`. It applies the erf-integrated Gaussian across the line, with the width from `psfRadiusPx`. It blends with `MaxEquation`, so overlapping trails show the brighter one, as in a brightest-pixel stack. It opts out of aerial-perspective haze (`userData.atmosphere = false`).
+  - **Controls.**
+    - **Segments Per Trail** (1–200, default 20). This is the most a trail gets. A star or planet trail gets fewer when a segment would be shorter than 4 px (`MIN_SKY_SEGMENT_PX`). A satellite's segments cover only the visible part of its pass. They are spaced half by time and half by change of the displayed brightness (`chooseTrailVertices`), so the rise, peak and fall of a flare each get vertices.
+    - **Preview Exposure (EV)** (−6 to +10, default +3). It multiplies the look view's `viewExposure` by 2^EV for the look-view render only, so it applies to the whole view, not only to the trails.
+    - **Stars**, **Planets** and **Satellites** choose which trails are drawn.
+    - **Hide Live Sky** (default on). For the look-view render only, it hides the star, planet (not Moon or Sun) and satellite sprites. It also hides the constellations, equatorial grid, Sun arrows, flare region, flare band and satellite track groups.
+    - **Recalculate Now** is for a change that the preview does not watch, for example a new satellite filter.
+    - **Status** shows the trail counts and the time the calculation took.
+  - **When it recalculates.** On each look-view render the preview computes a signature of the inputs: PTZ angles, camera position and orientation without the live Camera Nudge, projection, canvas size, fisheye and panorama state, the Long Exposure settings, the preview settings, refraction, fps, Simulation Speed, start time, satellite count and models, and the Earth radii. When the signature has not changed for 500 ms (`SETTLE_MS`), the trails are calculated again. While the camera moves, the old lines stay. If the view changed while the workers ran, their result is thrown away. The lines are hidden while a long-exposure render or a scripted video render runs.
+  - **Workers and culling.** Stars and satellites are calculated in a worker pool (one worker per core minus one, at most 12). If there are no workers, they are calculated on the main thread. Planets are always calculated on the main thread, from their start and end directions. Only sources inside the view cone plus a margin are calculated (the larger of 5° and 25 % of the half-field).
+    - Stars are first tested against the RA/Dec band that the view cone sweeps (`starBand`).
+    - On the main thread, a satellite is dropped when it is not visible, hidden in the look view or filtered off. It is also dropped when it is too far from the camera, when its best orbit record is more than 90 days from mid-exposure, or when its orbit plane never comes near the observer (`farFromOrbitPlane`).
+    - A worker then does an orbit-phase test with one SGP4 call. It propagates on a 20 s SGP4 grid with a 4-point cubic between the points (`COARSE_SECONDS`). It samples at the render's sample times, thinned to at most 1,500 and spaced by speed: about 2 px or 0.005 rad at most between samples, and at least one sample every 30 s.
+  - **Limits.**
+    - The camera is taken to hold still for the exposure, at the current position and heading, as with **Lock Camera Heading**.
+    - The background is the current frame.
+    - Where two trails cross, the preview shows the brighter one, not the sum.
+    - The Camera Nudge is followed only at the vertices.
+    - Satellites with orbit records more than 90 days from mid-exposure are left out, though the render still draws them.
+    - The preview is a viewing aid created from the menu (`skipModSerialize`). It is not saved with the sitch.
+
+### Improvements
+- **Long Exposure/Stacking result opens at +3 EV** (Video → Long Exposure/Stacking; `b1c38a85`; `src/LongExposure.js` `RESULT_EV`; `docs/LongExposure.md`). The **Exposure (EV)** slider of the result window now starts at +3, where it was 0. The preview during the render uses the same gain (2^3, where it was 1). With *Moonlight* on, the window still opens at its developed exposure (log2 of the background boost). The slider range does not change.
+- **Quick look-view drag** (`b1c38a85`; `src/js/CameraControls.js` `CASCADE_PAUSE_MS`, `deferCascade`, `flushCascade`; `src/nodes/CNodeControllerPTZUI.js` `applySatelliteMouseDelta(…, cascade)`; `docs/UserInterface.md`).
+  - A pan drag in a view with an interactive PTZ controller (the look view) no longer calls `recalculateCascade()` on every pointer move. This is true in both Az/El mode and Satellite Mode.
+  - The angles change at once and the camera follows them each frame. The cascade runs once the drag has not moved for 500 ms. The cascade is everything calculated from the camera over the whole sitch: lines of sight, ground tracks and angle graphs.
+  - The code comment gives about 200 ms per cascade in a 23-minute, 41,400-frame sitch, nearly all of it in the LOS display.
+  - `flushCascade` skips a node that was removed in the meantime, and `dispose()` clears the timer.
+- **One line of sight for a camera that does not move** (main view; `b1c38a85`; `src/nodes/CNodeDisplayLOS.js` `SINGLE_PROBES`, `sameLOS`, `shownFrames`, `addLine`, `addLines`, `verifySingle`, `updateSingleLOS`).
+  - When more than 17 lines would be drawn, no line is highlighted and fine detail is off, `recalculate()` first checks 17 evenly spaced lines.
+  - If they all match (within 1 cm and 1e-7 rad), it draws one line. The line has the active-range color if any drawn frame is between In and Out.
+  - `update()` then moves that line to the camera's current line of sight every frame, so it follows a look-view drag at once.
+  - The other lines are checked in 8 ms background slices, and if any of them differs, the full set is drawn. A slice stops if the first line changed (a drag); the recalculation after the move starts a new check.
+- **Shared satellite and exposure calculations** (internal, no intended change in output; `b1c38a85`).
+  - New `src/SatelliteBrightness.js` (`satelliteECEF`, `satelliteSunlitFraction`, `satelliteAppearance`). `CSatellite.calcSatECEF`, `getSatelliteIllumination` and `getSatelliteAppearance` now call it through the new `brightnessSettings()`.
+  - New `src/ExposurePhotometry.js` holds `erf`, the PSF helpers, `exposureSampleOffsets`, `airmassKY`, `extinctionRGB`, `starTintRGB`, `magnitudeFlux` and `satelliteExposureFlux`, which moved out of `LongExposure.js`, plus the new `observerExtinction`.
+  - Both modules are pure (no Sitrec globals), so the live display, the render and the preview workers run the same code.
+
 ## Version 2.181.0 (2026-10-15)
 
 ### New Features

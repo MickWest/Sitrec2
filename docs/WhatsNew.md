@@ -9,6 +9,16 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.182.0 (2026-10-16)
+
+### New Features
+- **Preview Timelapse** (Video → Long Exposure/Stacking → Preview Timelapse): draws the star, planet and satellite trails that the render will record, with the satellite flares, as lines in the 3D scene, so you can frame the camera before you render. Turn it on with the checkbox in the folder's title bar. The trails are calculated again when the view has not changed for half a second. *Segments Per Trail* (20 by default) sets the detail of each trail, and *Preview Exposure (EV)* (+3 by default) sets the exposure of the whole look view.
+
+### Improvements
+- The result window of Long Exposure/Stacking (Video → Long Exposure/Stacking) now opens at +3 EV, where night trails usually show, and the preview during the render uses the same exposure. With *Moonlight* on, it still opens at its developed exposure.
+- A drag in the look view now turns the camera at once. The lines of sight, ground tracks and angle graphs update when the drag pauses for half a second.
+- When every line of sight is the same line, as for a camera that does not move, the main view draws one line, and that line follows a look-view drag at once.
+
 ## Version 2.181.0 (2026-10-15)
 
 ### New Features
