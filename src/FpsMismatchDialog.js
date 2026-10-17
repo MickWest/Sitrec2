@@ -26,6 +26,7 @@ import { EventManager } from "./CEventManager";
 import { Sit, NodeMan } from "./Globals";
 import { updateSitFrames } from "./UpdateSitFrames";
 import { computeMisbSpans, computeFpsAnalysis } from "./MISBUtils";
+import { snapFps } from "./FrameRates";
 
 let _videoReady = false;
 let _videoData = null;
@@ -124,22 +125,6 @@ function tryShow() {
             }
         })
         .catch(() => { /* dialog dismissed without a choice */ });
-}
-
-// Round to a "clean" fps value if very close to an integer / NTSC
-// rate. 29.96 → 30, 27.003 → 27, 23.97 → 23.976. Avoids the
-// recommendation buttons reading "29.9603 fps" when the user
-// actually wants "30."
-function snapFps(fps) {
-    const candidates = [12, 15, 23.976, 24, 25, 29.97, 30, 50, 59.94, 60];
-    for (const c of candidates) {
-        if (Math.abs(fps - c) / c < 0.01) return c;
-    }
-    // Fall back to integer when within 0.5 %; otherwise keep the
-    // computed value but trim to 3 decimals.
-    const rounded = Math.round(fps);
-    if (Math.abs(fps - rounded) / rounded < 0.005) return rounded;
-    return Math.round(fps * 1000) / 1000;
 }
 
 function showFpsChoiceDialog({ frames, klvUtsSpan, realFps, labeledFps, pcrFps }) {

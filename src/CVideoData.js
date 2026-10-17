@@ -158,6 +158,8 @@ export class CVideoData {
             height: this.videoHeight,
             frames: this.frames,
             fps: this.fps,
+            // analyzeFrameTiming (VFRTimeline.js), set when the video loads
+            frameTiming: this.frameTiming,
         };
     }
 

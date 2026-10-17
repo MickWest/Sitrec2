@@ -332,6 +332,15 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
         return out;
     }
 
+    // VFR Fix (VFRTimeline.js): the fit frame and the keyframes move to the new frame numbers.
+    remapFrames(remap) {
+        if (!this.keyframes.length && !this.points.length) return;
+        this.fitFrame = remap(this.fitFrame);
+        for (const keyframe of this.keyframes) keyframe.frame = remap(keyframe.frame);
+        this.refreshMotionNodes();
+        this.recalculateCascade();
+    }
+
     modDeserialize(v) {
         super.modDeserialize(v);
         if (Array.isArray(v.points)) {

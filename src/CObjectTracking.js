@@ -19,6 +19,7 @@ import {MotionReacquisition} from './MotionReacquisition';
 import {MotionTrackingRegime} from './MotionTrackingRegime';
 import {addVideoAnalysisResolutionMenu, beginVideoAnalysis} from './VideoAnalysisResolution';
 import {normalizeTrackSmoothing, smoothPointTrack, TrackPositionMap} from './PointTrackSmoothing';
+import {registerFrameRemap, remapFrameEntries} from './VFRTimeline';
 import {addPointTrackFrequencyMenu, getPointTrackFrequencyAperture} from './PointTrackFrequencyGraph';
 import {minOf} from "./SafeArrays";
 
@@ -752,11 +753,18 @@ export class ObjectTracker {
 
         // Cached homographies describe one forward walk through one clip; a
         // fresh run must not compose them into a different one.
+        this.resetMotionHistory();
+    }
+
+    // Motion (Background) state that refers to earlier frames: prediction anchors,
+    // homographies, the trail. Reset when a run restarts, the track is cleared, or the
+    // frame numbers change (VFR Fix).
+    resetMotionHistory() {
         if (this.motionTracker) this.motionTracker.reset();
         this.motionMisses = 0;
         this.motionOffscreen = false;
         this.motionLastFrame = null;
-        this.motionReacquisition.reset();
+        this.motionReacquisition?.reset();
         this.motionAnchors = [];
         this.motionCandidate = null;
         this.motionScores = [];
@@ -2724,14 +2732,7 @@ export class ObjectTracker {
     clearTrack() {
         this.trackedPositions.clear();
         this.manualKeyframes.clear();
-        if (this.motionTracker) this.motionTracker.reset();
-        this.motionMisses = 0;
-        this.motionOffscreen = false;
-        this.motionLastFrame = null;
-        this.motionAnchors = [];
-        this.motionCandidate = null;
-        this.motionScores = [];
-        this.motionTrail = [];
+        this.resetMotionHistory();
         // Recenter the cursor to the middle of the (original-coords) video so
         // a freshly-cleared track has a sane seed point. The current frame
         // gets that center as its sole keyframe.
@@ -4043,23 +4044,45 @@ export async function deserializeAutoTracking(data) {
     objectTracker.lastVideoHeight = origH;
 
     // Restore stabilization if there's tracking data
-    if (data.stabilizationEnabled && objectTracker.trackedPositions.size > 0) {
-        const outputPositions = objectTracker.getOutputPositions();
-        const firstFrame = minOf(outputPositions.keys());
-        const referencePoint = outputPositions.get(firstFrame);
-        if (referencePoint) {
-            videoData.stabilizeCenters = data.stabilizeCenters ?? true;
-            videoData.setStabilizationData(
-                outputPositions,
-                referencePoint,
-                data.stabilizationDirectOffset ?? false
-            );
-            videoData.setStabilizationEnabled(true);
-            if (stabilizeToggleMenuItem) {
-                stabilizeToggleMenuItem.name(t("tracking.stabilizeToggle.disableLabel"));
-            }
-        }
+    if (data.stabilizationEnabled) {
+        applyTrackStabilization(videoData, data.stabilizeCenters ?? true, data.stabilizationDirectOffset ?? false);
     }
 
     setRenderOne(true);
 }
+
+// Stabilize videoData on the track, from the track's first frame.
+function applyTrackStabilization(videoData, stabilizeCenters, directOffset) {
+    if (!objectTracker?.trackedPositions.size) return;
+    const outputPositions = objectTracker.getOutputPositions();
+    const referencePoint = outputPositions.get(minOf(outputPositions.keys()));
+    if (!referencePoint) return;
+    videoData.stabilizeCenters = stabilizeCenters;
+    videoData.setStabilizationData(outputPositions, referencePoint, directOffset);
+    videoData.setStabilizationEnabled(true);
+    if (stabilizeToggleMenuItem) {
+        stabilizeToggleMenuItem.name(t("tracking.stabilizeToggle.disableLabel"));
+    }
+}
+
+// VFR Fix (VFRTimeline.js): move the track to the new frame numbers, in the live tracker
+// and in the saved copy (Sit.autoTracking) that the video view loads again once the
+// video has arrived. Stabilization lives on the video data, so it is rebuilt there.
+registerFrameRemap("pointTracking", (remap, {from, to}) => {
+    const saved = Sit.autoTracking;
+    if (saved) {
+        if (Array.isArray(saved.trackedPositions)) saved.trackedPositions = [...remapFrameEntries(saved.trackedPositions, remap)];
+        if (Array.isArray(saved.unmeasuredFrames)) saved.unmeasuredFrames = saved.unmeasuredFrames.map(remap);
+        if (Array.isArray(saved.manualKeyframes)) saved.manualKeyframes = saved.manualKeyframes.map(remap);
+    }
+    if (!objectTracker) return;
+    const positions = remapFrameEntries(objectTracker.trackedPositions, remap);
+    positions.unmeasuredFrames = new Set([...(objectTracker.trackedPositions.unmeasuredFrames ?? [])].map(remap));
+    objectTracker.trackedPositions = positions;
+    objectTracker.manualKeyframes = new Set([...objectTracker.manualKeyframes].map(remap));
+    if (Number.isFinite(objectTracker.lastTrackedFrame)) objectTracker.lastTrackedFrame = remap(objectTracker.lastTrackedFrame);
+    objectTracker.resetMotionHistory();
+    if (from?.stabilizationEnabled && to && to !== from) {
+        applyTrackStabilization(to, from.stabilizeCenters ?? true, from.stabilizationDirectOffset ?? false);
+    }
+});

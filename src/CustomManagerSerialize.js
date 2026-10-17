@@ -1991,6 +1991,11 @@ export const serializeMethods = {
             }
         }
 
+        Globals.restoredLoadGeneration = myGeneration;
+        // A variable-frame-rate video that finished loading during the restore converts
+        // the restored frame numbers now (VFRTimeline.js). Still inside the restore, and
+        // before the chapter baseline, so the converted sitch does not read as edited.
+        NodeMan.get("video", false)?.settleVFR?.();
         this.markChapterBaseline();
         Globals.deserializing = false;
         Globals.sitchDirty = false;

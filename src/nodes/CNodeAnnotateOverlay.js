@@ -141,6 +141,15 @@ export class CNodeAnnotateOverlay extends CNodeActiveOverlay {
         setRenderOne(true);
     }
 
+    // VFR Fix (VFRTimeline.js): each stroke starts at the same image in the new frame numbers.
+    remapFrames(remap) {
+        if (!this.strokes.length) return;
+        for (const stroke of this.strokes) {
+            if (Number.isFinite(stroke.frame)) stroke.frame = remap(stroke.frame);
+        }
+        setRenderOne(true);
+    }
+
     // ---------- GUI (lil-gui folder in Video menu) ----------
 
     _setupGUI() {

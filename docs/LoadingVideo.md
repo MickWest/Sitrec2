@@ -178,6 +178,40 @@ When a video loads into the main video view, the sitch takes its length from the
 **Time → Sitch Frames** becomes the number of frames in the video, and **Time → Video FPS**
 becomes the video's frame rate. One sitch frame is one video frame.
 
+### Variable frame rate (VFR Fix)
+
+In some videos, often from phones, the time between frames changes: for example 30 fps in one
+part and 24 fps in another. Sitrec finds this from the real time of each frame. A video counts
+as variable only if its frames somewhere drift more than half a frame from a constant rate.
+The small timing jitter of a constant-rate file does not count.
+
+For such a video, **VFR Fix** is on by default. Sitrec then uses a constant frame rate equal to
+the video's fastest steady rate, and each sitch frame shows the video frame nearest to its real
+time. Where the video is slower, one video frame is shown for more than one sitch frame. The
+video plays at its real speed, the audio stays in step, and the time of each sitch frame is
+correct. **Time → Video FPS** shows the constant rate, and **Time → Sitch Frames** the new
+number of frames.
+
+Without the fix, Sitrec plays every frame at the video's mean rate, as it does for any other
+video. Parts of the video then play too slow or too fast, and the time of a frame can be wrong
+by a large part of a second.
+
+**VFR Fix** is in the **Video** menu, and it is a button on the right of the video view's title
+bar. Both appear only for a variable-frame-rate video. Hover over either one to see the video's
+frame rates and how far its timing drifts. The video's info panel also shows the variable
+frame rate and whether the fix is on.
+
+Turning the fix on or off changes the frame numbers. Sitrec moves the current frame, the In and
+Out frames, point tracks, manual tracking keyframes, timeline markers, horizon keyframes, camera
+fit points, annotations and OSD data series with them, so they stay on the same images. A sitch
+saved before VFR Fix existed is converted in the same way when it loads. If the sitch has other
+frame data that Sitrec cannot yet move (chapters, ground track keyframes, camera state keys, an
+FOV editor curve, synthetic tracks, a camera switch to the ground track, star tracker results,
+LOS fit results, a track elevation cache, a frame number offset, or a track-to-track stop
+frame), the fix stays off, and the hover text says why.
+
+The setting is saved with the sitch.
+
 ### Changing the frame rate
 
 **Time → Video FPS** (1 to 120) sets the frame rate by hand. Use it when the rate in the file

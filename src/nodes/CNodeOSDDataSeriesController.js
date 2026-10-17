@@ -921,9 +921,26 @@ export class CNodeOSDDataSeriesController extends CNode {
         };
     }
 
+    // VFR Fix (VFRTimeline.js): each series' values move to the new frame numbers.
+    remapFrames(remap) {
+        let changed = false;
+        for (const track of this.tracks) {
+            const moved = {};
+            for (const [frame, value] of Object.entries(track.frameData)) {
+                const next = remap(Number(frame));
+                if (!(next in moved)) moved[next] = value;
+                changed = true;
+            }
+            track.frameData = moved;
+        }
+        if (!changed) return;
+        this.updateSliderStatus();
+        this.recalculateCascade();
+    }
+
     modDeserialize(v) {
         super.modDeserialize(v);
-        
+
         if (v.showAll !== undefined) {
             this.showAll = v.showAll;
         }

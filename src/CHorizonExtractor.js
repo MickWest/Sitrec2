@@ -4,6 +4,7 @@ import {addVideoAnalysisResolutionMenu, beginVideoAnalysis} from './VideoAnalysi
 import {EventManager} from "./CEventManager";
 import {CNode} from "./nodes/CNode";
 import {KeyframeRegistry} from "./CKeyframeRegistry";
+import {registerFrameRemap, remapFrameEntries} from "./VFRTimeline";
 
 // Manual horizon-angle extractor. The user enables this and a cross overlay
 // appears on the video view. They drag the cross center to position it on
@@ -590,6 +591,17 @@ export function deserializeHorizonExtractor(data) {
     }
     setRenderOne(true);
 }
+
+// VFR Fix (VFRTimeline.js): move the keyframes to the new frame numbers, in the live
+// extractor (and so its browser-storage copy) and in the saved copy Sit.horizonExtractor.
+registerFrameRemap("horizonExtractor", remap => {
+    if (Array.isArray(Sit.horizonExtractor?.keyframes)) {
+        Sit.horizonExtractor.keyframes = [...remapFrameEntries(Sit.horizonExtractor.keyframes, remap)];
+    }
+    if (!horizonExtractor?.keyframes.size) return;
+    horizonExtractor.keyframes = remapFrameEntries(horizonExtractor.keyframes, remap);
+    horizonExtractor.saveToStorage();
+});
 
 // Called from index.js disposeAll() path (alongside resetObjectTracking)
 // on every sitch reload so we don't leak handler closures or render-hook

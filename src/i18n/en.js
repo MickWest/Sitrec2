@@ -2500,6 +2500,32 @@ const en = {
         clipped: "Aperture reaches black/white code limits; amplitudes may be distorted",
         irregularTiming: "Irregular frame timing ({{min}}–{{max}} fps): each frame is placed at its real time. Peaks above {{limit}} {{frequencyUnit}} may be aliases",
     },
+    vfr: {
+        fix: {
+            label: "VFR Fix",
+            tooltip: "This video has a variable frame rate: its frames are not evenly spaced in time ({{min}}–{{max}} fps). "
+                + "Without the fix, Sitrec plays every frame at the mean rate of {{mean}} fps, so some parts play too slow and others too fast, "
+                + "and the time of a frame can be wrong by up to {{drift}} s. "
+                + "With the fix, Sitrec uses a constant {{fps}} fps timeline and shows each frame at its real time, repeating a frame where the video is slower. "
+                + "Turning it on or off changes the frame numbers; the In/Out markers, point tracks and other frame data move with them.",
+            blocked: "The fix is off: this sitch has frame data that Sitrec cannot yet move to new frame numbers ({{kinds}}).",
+            blockedError: "VFR Fix was not changed: this sitch has frame data that Sitrec cannot yet move to new frame numbers ({{kinds}}).",
+        },
+        kinds: {
+            chapters: "chapters",
+            groundTrack: "ground track keyframes",
+            cameraState: "camera state keys",
+            fovEditor: "FOV editor curve",
+            syntheticTracks: "synthetic tracks",
+            groundTrackSwitch: "camera switch-to-ground-track frame",
+            starTracker: "star tracker pose track",
+            losFit: "LOS fit results",
+            elevationCache: "track elevation cache",
+            frameOffset: "frame number offset",
+            trackToTrackStop: "track-to-track stop frame",
+            unknown: "the sitch could not be checked",
+        },
+    },
     videoTonal: {
         menu: "Tonal Range Graph",
         tooltip: "Per-frame recorded brightness distribution: median and percentile bands, or a histogram over time. Uses unmasked pixels when Enable Mask is on. Values are recorded intensity, not temperature.",
@@ -3676,6 +3702,7 @@ const en = {
         grid: "Grid",
         annotations: "Annotations",
         exifPanel: "EXIF / Metadata",
+        vfrFix: "VFR Fix",
         removeVideo: "Remove Video",
         effects: "Enable Effects",
         brightness: "Brightness",

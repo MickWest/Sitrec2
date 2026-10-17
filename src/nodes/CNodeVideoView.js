@@ -31,7 +31,8 @@ import {wheelZoomFactor} from "../GestureActions";
  */
 
 import {CNodeViewCanvas2D} from "./CNodeViewCanvas";
-import {showChoice, showConfirm} from "../showError";
+import {showChoice, showConfirm, showError} from "../showError";
+import {analyzeFrameTiming, remapTimelineFrames, unsupportedFrameData} from "../VFRTimeline";
 import {par} from "../par";
 import {quickToggle} from "../KeyBoardHandler";
 import {CustomManager, FileManager, GlobalDateTimeNode, Globals, guiMenus, NodeMan, registerFrameBlocker, unregisterFrameBlocker, setRenderOne, Sit, SitchMan} from "../Globals";
@@ -50,7 +51,7 @@ import {assert} from "../assert";
 import {EventManager} from "../CEventManager";
 import {getFlowAlignRotation} from "../FlowAlignment";
 import {VideoLoadingManager} from "../CVideoLoadingManager";
-import {clampSitFrameRange, updateSitFrames} from "../UpdateSitFrames";
+import {clampSitFrameRange, setSitFpsFromVideo, updateSitFrames} from "../UpdateSitFrames";
 import {applyImportedImageMetadata, extractJPEGImportMetadata, stripImageRotationMetadata} from "../EXIFUtils";
 import {EXIFInfoPanel} from "../EXIFInfoPanel";
 import {isResolvableSitrecReference, resolveURLForFetch} from "../SitrecObjectResolver";
@@ -216,6 +217,11 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
         // Used mainly by the secondary video view to sync a second clip to the in point.
         this.lockToInFrame = v.lockToInFrame ?? false;
         this.lockToInFrameController = null;
+        // VFR Fix (VFRTimeline.js): play a variable-frame-rate video on a constant-rate
+        // timeline. On by default; saved only for such a video (see modSerialize). ??=
+        // because the early modDeserialize (inside super()) may already have restored it.
+        this.vfrFix ??= v.vfrFix ?? true;
+        this.vfrFixController = null;
         this.exifInfoButtonController = null;
         this.exifInfoPanel = new EXIFInfoPanel({
             title: "EXIF/Metadata" + this.viewMenuSuffix(),
@@ -521,6 +527,7 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
         // Every load, selection and removal passes through here, which makes it the one place
         // the Remove entry has to follow to appear and disappear with the media.
         this.updateRemoveVideoButton();
+        this.updateVFRFixControl();
         // Custom-sitch UI depends on whether the video view has a real pixel coordinate system yet.
         EventManager.dispatchEvent("videoAvailabilityChanged", {
             viewId: this.id,
@@ -831,9 +838,7 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
             if (vd._restoreIndex !== undefined) patched._restoreIndex = vd._restoreIndex;
             const stats = patched.getPatchStats();
             console.log(`[VideoPatch] wrapping: source=${sourceFrames} virtual=${patched.frames} held=${stats.heldFrames} longestHold=${stats.longestHoldFrames}f (${Math.round(stats.longestHoldMs)}ms)`);
-            const idx = this.videos.findIndex(v => v.videoData === vd);
-            if (idx >= 0) this.videos[idx].videoData = patched;
-            this.videoData = patched;
+            this.replaceVideoData(vd, patched);
             vd = patched;
             // The source video class already wrote Sit.videoFrames = sourceFrames.
             // Overwrite with the virtual count and re-run updateSitFrames so
@@ -841,6 +846,23 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
             // (otherwise CNodeTrackFromMISB asserts on Sit.frames === undefined).
             Sit.videoFrames = patched.frames;
             updateSitFrames();
+        } else if (this.ownsTimeline && vd.hasRealFramePTS?.()) {
+            // VFR Fix (VFRTimeline.js): a video that the dropped-frame wrap leaves alone may
+            // still have a variable frame rate. Wrap it now if the Fix is on; settleVFR
+            // makes the final decision once the sitch restore has finished.
+            vd.frameTiming = analyzeFrameTiming(CVideoPatchedData.getSourceTimestamps(vd), vd.frames);
+            // A new import, not a sitch restore: no saved setting applies to this video.
+            if (!this.pendingVideoRestore && !Globals.deserializing) this.vfrFixSaved = false;
+            if (vd.frameTiming?.variable) {
+                const timing = vd.frameTiming;
+                console.log(`[VFR] ${timing.steadyMinFps}–${timing.steadyMaxFps} fps, mean ${timing.meanFps.toFixed(3)}, drift up to ${timing.maxDriftS.toFixed(3)} s`);
+                if (this.vfrFix) {
+                    const wrapper = this.makeVFRWrapper(vd);
+                    this.switchTimeline(vd, wrapper, null);
+                    vd = wrapper;
+                }
+                this.vfrPending = Globals.loadGeneration;
+            }
         }
 
         // if we loaded from a mod or custom
@@ -885,6 +907,160 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
         if (this.pendingVideoRestore) {
             this.continueVideoRestore(vd);
         }
+
+        this.updateVFRFixControl();
+        this.settleVFR();
+        // After the wrap decision: what other nodes can rely on for the video's frame
+        // numbers (an MP4 sends videoLoaded earlier, before that decision).
+        EventManager.dispatchEvent("videoTimelineReady", {videoData: this.videoData, viewId: this.id});
+    }
+
+    // Put `to` in place of `from`, in this view and in its list of videos.
+    replaceVideoData(from, to) {
+        const idx = this.videos.findIndex(entry => entry.videoData === from);
+        if (idx >= 0) this.videos[idx].videoData = to;
+        this.videoData = to;
+    }
+
+    // The timeline video of this view, unwrapped from a VFR Fix wrapper, has its frame
+    // timing here once it has loaded (analyzeFrameTiming).
+    videoFrameTiming() {
+        const videoData = this.videoData;
+        return (videoData?.vfr ? videoData.source : videoData)?.frameTiming;
+    }
+
+    // VFR Fix: a constant-rate timeline at the video's fastest steady rate, where each
+    // frame shows the video frame nearest its real time.
+    makeVFRWrapper(source) {
+        const wrapper = new CVideoPatchedData(source, {fps: source.frameTiming.steadyMaxFps, fillMode: "hold", vfr: true});
+        // Keep the restore-slot tag so continueVideoRestore routes the completion to its slot.
+        if (source._restoreIndex !== undefined) wrapper._restoreIndex = source._restoreIndex;
+        return wrapper;
+    }
+
+    // Sit's frame rate and length follow the timeline video: a VFR Fix wrapper runs at
+    // its own constant rate, any other video at its source rate. A typed fps override wins.
+    applyVideoTimeline(videoData) {
+        setSitFpsFromVideo(videoData.vfr ? videoData.fps : (videoData.originalFps ?? videoData.fps), videoData);
+        Sit.videoFrames = videoData.frames * (videoData.videoSpeed ?? 1);
+        updateSitFrames();
+    }
+
+    // Swap the timeline video between a VFR Fix wrapper and its source. map(frame) converts
+    // every frame number (VFRTimeline.js); null when the frame data already belongs to `to`.
+    switchTimeline(from, to, map) {
+        if (this.videoData !== to) this.replaceVideoData(from, to);
+        if (map) {
+            const nodes = [];
+            NodeMan.iterate((id, node) => nodes.push(node));
+            remapTimelineFrames(map, {oldFrames: from.frames, newFrames: to.frames, from, to}, nodes);
+        }
+        this.applyVideoTimeline(to);
+        this.updateVFRFixControl();
+        this.refreshEXIFUI(to);
+        setRenderOne(true);
+    }
+
+    // Kinds of frame data in this sitch that the VFR Fix cannot convert yet.
+    vfrBlockers() {
+        try {
+            return unsupportedFrameData(JSON.parse(CustomManager.getCustomSitchString(true)));
+        } catch (error) {
+            console.warn("[VFR] Could not check the sitch for frame data:", error);
+            return ["unknown"];
+        }
+    }
+
+    // The final VFR Fix decision for a variable-frame-rate video, once it has loaded AND
+    // the sitch restore has finished (whichever is later; finishDeserialization calls this
+    // too). A save with a vfrFix field has its frame numbers in that setting's frames. An
+    // older save has them in the video's own frames: convert them, or, if the sitch has a
+    // kind of frame data with no converter, keep the Fix off.
+    settleVFR() {
+        if (this.vfrPending !== Globals.loadGeneration) return;
+        if (Globals.restoredLoadGeneration !== Globals.loadGeneration) return;
+        this.vfrPending = undefined;
+        const current = this.videoData;
+        const source = current?.vfr ? current.source : current;
+        if (!source?.frameTiming?.variable) return;
+        if (this.vfrFixSaved) {
+            if (!!current.vfr === this.vfrFix) this.applyVideoTimeline(current);
+            else this.switchTimeline(current, this.vfrFix ? this.makeVFRWrapper(source) : source, null);
+            return;
+        }
+        if (!current.vfr) return;
+        this.vfrBlocked = this.vfrBlockers();
+        if (this.vfrBlocked.length) {
+            console.warn(`[VFR] Fix kept off for this older sitch; no converter for: ${this.vfrBlocked.join(", ")}`);
+            this.vfrFix = false;
+            this.switchTimeline(current, source, null);
+        } else {
+            this.switchTimeline(source, current, frame => current.sourceToVirtual(frame));
+        }
+    }
+
+    // The VFR Fix control (menu and title bar). Turning it on or off converts every
+    // frame number, unless the sitch holds a kind that has no converter yet.
+    setVFRFix(on) {
+        const current = this.videoData;
+        const source = current?.vfr ? current.source : current;
+        if (!source?.frameTiming?.variable || !!current.vfr === on) return;
+        this.vfrBlocked = this.vfrBlockers();
+        if (this.vfrBlocked.length) {
+            this.vfrFix = !!current.vfr;
+            this.updateVFRFixControl();
+            showError(t("vfr.fix.blockedError", {kinds: this.vfrBlockedText()}));
+            return;
+        }
+        this.vfrFix = on;
+        if (on) {
+            const wrapper = this.makeVFRWrapper(source);
+            this.switchTimeline(current, wrapper, frame => wrapper.sourceToVirtual(frame));
+        } else {
+            this.switchTimeline(current, source, frame => current.virtualToSource(frame));
+        }
+    }
+
+    vfrBlockedText() {
+        return (this.vfrBlocked ?? []).map(id => t(`vfr.kinds.${id}`)).join(", ");
+    }
+
+    // The Video menu's VFR Fix entry, and its title-bar button, exist only while this
+    // view's timeline video has a variable frame rate. The hover text explains it.
+    updateVFRFixControl() {
+        if (!guiMenus.video || this.isMirrorView || !this.ownsTimeline) return;
+        const timing = this.videoFrameTiming();
+        if (!timing?.variable) {
+            this.vfrFixController?.destroy();
+            this.vfrFixController = null;
+            return;
+        }
+        let tooltip = t("vfr.fix.tooltip", {min: timing.steadyMinFps, max: timing.steadyMaxFps,
+            mean: timing.meanFps.toFixed(2), drift: timing.maxDriftS.toFixed(2), fps: timing.steadyMaxFps});
+        if (this.vfrBlocked?.length) tooltip += "\n\n" + t("vfr.fix.blocked", {kinds: this.vfrBlockedText()});
+        if (!this.vfrFixController) {
+            // Tooltip before shareAs: the title-bar button copies it when it binds.
+            this.vfrFixController = guiMenus.video.add(this, "vfrFix")
+                .name(t("vfr.fix.label") + this.viewMenuSuffix())
+                .tooltip(tooltip)
+                .onChange(on => this.setVFRFix(on));
+            this.vfrFixController.shareAs(viewMenuKey(this.id, "vfrFix"));
+            this.addVFRFixIcon();
+        }
+        this.vfrFixController.tooltip(tooltip);
+        if (this.vfrFixIcon) this.vfrFixIcon.title = tooltip;
+        this.vfrFixController.updateDisplay();
+    }
+
+    // On the right of the title bar, before the standard buttons.
+    addVFRFixIcon() {
+        const bar = this.uiBar;
+        if (!bar || this.vfrFixIcon) return;
+        this.vfrFixIcon = bar.addControlIcon(viewMenuKey(this.id, "vfrFix"),
+            {html: t("vfr.fix.label"), label: t("vfr.fix.label"), action: "vfr-fix", left: false});
+        const first = bar.right.querySelector('[data-uibar-action="darklight"],[data-uibar-action="fullscreen"],'
+            + '[data-uibar-action="popout"],[data-uibar-action="pin"],[data-uibar-action="close"]');
+        if (first) bar.right.insertBefore(this.vfrFixIcon, first);
     }
 
     // Pre-create one output slot per saved video, in order, with videoData=null.
@@ -1347,12 +1523,20 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
         if (this.videos && this.videos.length > 1) {
             result.currentVideoIndex = this.currentVideoIndex;
         }
+        // Only for a variable-frame-rate video. Its presence also records that the saved
+        // frame numbers belong to this setting; a save without it predates the VFR Fix,
+        // and settleVFR converts its frame numbers.
+        if (this.videoFrameTiming()?.variable) result.vfrFix = this.vfrFix;
         return result;
     }
 
     modDeserialize(v) {
         super.modDeserialize(v)
         this.simpleDeserialize(v, this.toSerializeCNodeVideoView)
+        if (typeof v.vfrFix === "boolean") {
+            this.vfrFix = v.vfrFix;
+            this.vfrFixSaved = true;
+        }
         this.positioned = true;
         if (v.currentVideoIndex !== undefined && this.videos && this.videos.length > 1) {
             this.selectVideo(v.currentVideoIndex);
@@ -1955,7 +2139,9 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
             this.wasPlayingLastFrame = isPlaying;
 
             if (isPlaying) {
-                this.videoData.audioHandler.play(Math.floor(frame), Sit.fps, par.playbackSpeed ?? 1);
+                // A wrapped video's audio counts in its source's frames (CVideoPatchedData.audioTiming).
+                const audio = this.videoData.audioTiming?.(Math.floor(frame), Sit.fps) ?? {frame: Math.floor(frame), fps: Sit.fps};
+                this.videoData.audioHandler.play(audio.frame, audio.fps, par.playbackSpeed ?? 1);
             } else {
                 this.videoData.audioHandler.pause();
             }
@@ -1985,6 +2171,8 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
             this.removeVideoController.destroy();
             this.removeVideoController = null;
         }
+        this.vfrFixController?.destroy();
+        this.vfrFixController = null;
         // Call parent dispose
         super.dispose();
     }

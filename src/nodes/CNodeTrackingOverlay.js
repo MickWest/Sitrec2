@@ -1960,8 +1960,11 @@ export class CNodeTrackingOverlay extends CNodeActiveOverlay {
             return newKeyframe;
         })
 
-        const onVideoLoaded = () => {
-            EventManager.removeEventListener("videoLoaded", onVideoLoaded);
+        // Wait for videoTimelineReady, not videoLoaded: an MP4 sends videoLoaded early, before
+        // the video view has decided whether to wrap it, and a translation then would be
+        // skipped. If the video finished loading before this restore, run now.
+        const onTimelineReady = () => {
+            EventManager.removeEventListener("videoTimelineReady", onTimelineReady);
             // Translate saved source-indexed frame numbers to virtual now
             // that the wrapper exists. For legacy saves (frameSpace
             // undefined / "virtual") we leave them alone.
@@ -1972,13 +1975,22 @@ export class CNodeTrackingOverlay extends CNodeActiveOverlay {
                     k.frame = videoData.sourceToVirtual(k.frame);
                 }
             }
+            this._savedFrameSpace = "virtual";
             // Give any keyframe saved without a B one now, and fill in the readouts —
             // the size solution needs the video geometry, which only exists at this point.
             this.syncBPoints();
             this.updateSizeSolution();
             this.recalculateCascade();
         };
-        EventManager.addEventListener("videoLoaded", onVideoLoaded);
+        if (this.overlayView?.videoData?.loaded) onTimelineReady();
+        else EventManager.addEventListener("videoTimelineReady", onTimelineReady);
+    }
+
+    // VFR Fix (VFRTimeline.js): the keyframes move to the new frame numbers.
+    remapFrames(remap) {
+        if (!this.keyframes?.length) return;
+        for (const k of this.keyframes) k.frame = remap(k.frame);
+        this.recalculateCascade();
     }
 
 }

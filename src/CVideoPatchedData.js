@@ -61,6 +61,10 @@ export class CVideoPatchedData extends CVideoData {
         this.fps = fps;
         this.frameDuration_us = frameDuration_us;
         this.fillMode = options.fillMode || "hold";
+        // vfr: a VFR Fix wrap (VFRTimeline.js) of a variable-frame-rate video, rather than
+        // a dropped-frame wrap. Its held frames are normal, so they get no debug marker.
+        this.vfr = !!options.vfr;
+        this.heldMarker = DEBUG_HELD_MARKER && !this.vfr;
         this.map = map;
         this.virtualPTSus = virtualPTSus;
         this.framePTSus = virtualPTSus;
@@ -122,8 +126,15 @@ export class CVideoPatchedData extends CVideoData {
 
     isStreamFrameReady(frame) {
         if (!this.source?.isStreamFrameReady) return true;
-        const audioFrame = frame * (this.source.originalFps || this.fps) / this.fps;
-        return this.source.isStreamFrameReady(this.virtualToSource(frame), audioFrame);
+        return this.source.isStreamFrameReady(this.virtualToSource(frame), this.audioTiming(frame, this.fps).frame);
+    }
+
+    // The audio belongs to the source, and converts a frame to time with the source's
+    // own rate (frame / originalFps). A virtual frame V is at time V / this.fps, so
+    // scale both the frame and the playback rate into the source's units.
+    audioTiming(frame, fps) {
+        const scale = (this.source?.originalFps || this.fps) / this.fps;
+        return {frame: frame * scale, fps: fps * scale};
     }
 
     retryDownload() { this.source?.retryDownload(); }
@@ -166,7 +177,7 @@ export class CVideoPatchedData extends CVideoData {
         const img = this.source.getImage(S);
         this.videoWidth = this.source.videoWidth;
         this.videoHeight = this.source.videoHeight;
-        if (DEBUG_HELD_MARKER && img && this.isHeldFrame(V)) {
+        if (this.heldMarker && img && this.isHeldFrame(V)) {
             return this._withHeldMarker(S, img);
         }
         return img;
@@ -215,6 +226,7 @@ export class CVideoPatchedData extends CVideoData {
             ...this.source.getMediaInfo(),
             frames: this.frames,
             fps: this.fps,
+            vfrFix: this.vfr,
         };
     }
 

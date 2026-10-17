@@ -142,6 +142,9 @@ export const VIEW_UIBAR_MENUS = {
         {slot: "grid", name: "Grid"},
         {slot: "annotations", name: "Annotations"},
         {slot: "exifPanel", name: "EXIF / Metadata"},
+        // Only for a variable-frame-rate video. Its button is on the RIGHT of the bar
+        // (CNodeVideoView.addVFRFixIcon), so it has no entry in the left-side icon list.
+        {slot: "vfrFix", name: "VFR Fix"},
         {slot: "removeVideo", name: "Remove Video"},
         {slot: "effects", name: "Enable Effects", folder: "adjustments"},
         {slot: "brightness", name: "Brightness", folder: "adjustments"},

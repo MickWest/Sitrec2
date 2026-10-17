@@ -72,6 +72,17 @@ function buildMediaHTML(media) {
     // A still image is one frame with no frame rate — saying "Frames: 1" is just noise.
     if (media.frames > 1) pushRow("Frames", media.frames);
     if (media.fps) pushRow("Frame Rate", `${formatImportMetadataValue(media.fps, 2)} fps`);
+    // A variable frame rate (VFRTimeline.js). With the VFR Fix on, Frames and Frame Rate
+    // above are the constant-rate timeline's, so the file's own count is given here.
+    const timing = media.frameTiming;
+    if (timing?.variable) {
+        pushRow("Variable Frame Rate", `${timing.steadyMinFps}–${timing.steadyMaxFps} fps `
+            + `(${timing.frames} frames, mean ${formatImportMetadataValue(timing.meanFps, 2)} fps), `
+            + `timing drift up to ${timing.maxDriftS.toFixed(2)} s at the mean rate`);
+        pushRow("VFR Fix", media.vfrFix
+            ? `On: constant ${formatImportMetadataValue(media.fps, 2)} fps timeline, frames at their real times`
+            : "Off: frames at the mean rate");
+    }
     pushRow("Container", media.container);
     pushRow("Video Codec", media.videoCodec);
     pushRow("Video Bitrate", formatBitrate(media.videoBitrate));
