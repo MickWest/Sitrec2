@@ -9,6 +9,23 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.183.0 (2026-10-16)
+
+### New Features
+- **VFR Fix** (Video → *VFR Fix*, the menu on the video view's title bar, and a button on the right of that title bar): in some videos, often from phones, the time between frames changes, for example 30 fps in one part and 24 fps in another. Sitrec now finds these videos. By default it plays them on a constant timeline at the video's fastest steady rate and shows each frame at its real time. The video then plays at its real speed, the audio stays in step, and the time of each frame is correct. The menu entry and the button show only for such a video. Hover over either one to see the frame rates and how far the timing drifts. The EXIF / Metadata panel also shows the variable frame rate and whether the fix is on. When you turn the fix on or off, the In and Out frames, point tracks, manual tracking keyframes, timeline markers, horizon keyframes, camera fit points, annotations, OSD data series, synthetic tracks and Traverse analysis snapshots move with the frames and stay on the same images. A sitch saved before this release is converted when it opens. If a sitch has frame data that Sitrec cannot move yet (for example chapters, ground track keyframes or camera state keys), the fix stays off, and the hover text tells you why.
+
+### Improvements
+- **Frequency Analysis on variable-frame-rate video** (Video → Point Track → *Frequency Analysis*): Frequency Analysis now works on a video whose frame rate changes. Before, it stopped with an irregular-timing error. It puts each frame at its real time. A warning on the graph shows the range of frame rates and the frequency above which a peak can be an alias. The exported CSV records the timing.
+- **Flashes per minute** (Video → Point Track → Frequency Analysis Settings → *Flashes per minute*): shows the frequencies in flashes per minute (Hz × 60) instead of Hz. The axis covers the same range, and the exported CSV stays in Hz.
+- Frequency Analysis now reads only the pixels around the measured area, so it is much faster on large videos: about 20 times faster on 4K video.
+
+### Bug Fixes
+- Fixed Frequency Analysis (Video → Point Track) and the Tonal Range Graph (Video → Forensics) not working on HEVC video in browsers that decode HEVC only in hardware, such as Chrome.
+- Fixed tracking with the held **'** key (Video → Point Track) stopping at the first frame that does not decode. It now leaves that frame without a point and continues, as *Start Point Track* does. If that frame had an old automatic point, **'** now removes it, so Frequency Analysis does not use it. Your own points stay.
+- Fixed playback stopping for good partway through some videos that play while they download (a saved or shared sitch whose video is on the server). This playback also no longer waits for a damaged frame. It shows the nearest frame and continues.
+- Fixed manual tracking keyframes moving to other frames when you open a saved sitch whose MP4 video has dropped frames.
+- Fixed the *Frame Rate Mismatch Detected* dialog showing and setting 29.97 fps for a video that is really 30 fps. The same was true of 23.976 fps for 24 fps, and 59.94 fps for 60 fps.
+
 ## Version 2.182.0 (2026-10-16)
 
 ### New Features
