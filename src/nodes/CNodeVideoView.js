@@ -464,12 +464,14 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
     // whenever this key changes forces the current frame to be fully re-filtered.
     getFilterStateKey() {
         const effectsEnabled = this.in.enableVideoEffects ? this.in.enableVideoEffects.v0 : true;
-        if (!effectsEnabled) return "off";
+        // Echo runs with the master toggle off too, so it is part of both keys.
+        const echo = `echo:${this.in.echoMin?.value ?? false}:${this.in.echoMax?.value ?? false}:${Math.round(this.in.echoFrames?.v0 ?? 10)}`;
+        if (!effectsEnabled) return `off|${echo}`;
         const levels = this.getLevelsSettings();
         return [
             "on",
             `conv:${this.in.convolutionFilter?.value ?? "none"}:${this.in.sharpenAmount?.v0 ?? 1}:${this.in.edgeDetectThreshold?.v0 ?? 0}:${this.in.embossDepth?.v0 ?? 1}`,
-            `echo:${this.in.echoMin?.value ?? false}:${this.in.echoMax?.value ?? false}:${Math.round(this.in.echoFrames?.v0 ?? 10)}`,
+            echo,
             `levels:${this.hasActiveLevels()}:${levels.inputBlack}:${levels.inputWhite}:${levels.midpoint}:${levels.outputBlack}:${levels.outputWhite}`,
             `curves:${this.in.curves?.value === true}:${this.curvesView?.curveRevision ?? 0}`,
             `tonal:${this.in.shadows?.v0 ?? 0}:${this.in.highlights?.v0 ?? 0}:${this.in.dehaze?.v0 ?? 0}`,
@@ -2339,9 +2341,12 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
             sourceImage = this._fullABEchoResult;
             invertSourceKey += `fullABRunning:${this.in.fullABEcho?.value}:${this.in.fullABBlend?.value}:${this.in.fullABExposure?.value}|`;
         } else if (!hasFullABOverlay) {
+            // Echo is Video Processing, like Full A-B Echo above, so the Video
+            // Adjustments master toggle does not gate it. It did, from before the
+            // folders were split, and with that toggle off Echo silently did nothing.
             const wantEchoMin = this.in.echoMin?.value ?? false;
             const wantEchoMax = this.in.echoMax?.value ?? false;
-            if (effectsEnabled && (wantEchoMin || wantEchoMax)) {
+            if (wantEchoMin || wantEchoMax) {
                 sourceImage = applyEchoEffect(this, sourceImage, frame, wantEchoMin, wantEchoMax);
                 invertSourceKey += `echo:${wantEchoMin}:${wantEchoMax}:${Math.round(this.in.echoFrames?.v0 ?? 10)}|`;
             } else if (this._echoPixelCache) {
@@ -2729,8 +2734,7 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
 
         this.syncAudioWithVideo(frame);
 
-        const wantEcho = (this.in.echoMin?.value || this.in.echoMax?.value) &&
-            (this.in.enableVideoEffects ? this.in.enableVideoEffects.v0 : true);
+        const wantEcho = this.in.echoMin?.value || this.in.echoMax?.value;
         this.videoData.echoFramesNeeded = wantEcho ? Math.round(this.in.echoFrames?.v0 ?? 10) : 0;
 
         this.videoData.update()

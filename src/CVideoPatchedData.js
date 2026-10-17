@@ -107,6 +107,11 @@ export class CVideoPatchedData extends CVideoData {
     set videoWidth(v) { this._videoWidth = v; }
     get videoHeight() { return this.source?.videoHeight ?? this._videoHeight; }
     set videoHeight(v) { this._videoHeight = v; }
+    // Echo asks the decoder to keep the frames behind the current one. The decoder
+    // is the source, so the request must reach it — kept on the wrapper, the source
+    // purged them anyway. N virtual frames never span more than N source frames.
+    get echoFramesNeeded() { return this.source?.echoFramesNeeded; }
+    set echoFramesNeeded(v) { if (this.source) this.source.echoFramesNeeded = v; }
 
     // Preserve the streaming lifecycle through the virtual timeline. The byte
     // transport is separate from `source`, which is the wrapped video here.
@@ -181,6 +186,26 @@ export class CVideoPatchedData extends CVideoData {
             return this._withHeldMarker(S, img);
         }
         return img;
+    }
+
+    // The decoder's cache queries. Callers ask in virtual frames, as for getImage,
+    // but the cache is the source's, indexed by source frame. CVideoData has none of
+    // these, so without them echo threw on getCachedImage (a black video view), and
+    // render and export waits never saw a frame as still decoding.
+    getCachedImage(frame) {
+        return this.source.getCachedImage(this.virtualToSource(Math.floor(frame)));
+    }
+
+    getImageNoPurge(frame) {
+        return this.source.getImageNoPurge(this.virtualToSource(Math.floor(frame)));
+    }
+
+    isFrameCached(frame) {
+        return this.source.isFrameCached(this.virtualToSource(Math.floor(frame)));
+    }
+
+    requestFrame(frame) {
+        this.source.requestFrame(this.virtualToSource(Math.floor(frame)));
     }
 
     // Single-slot cache: held bursts run consecutively over the same source

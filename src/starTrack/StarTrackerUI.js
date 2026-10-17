@@ -366,8 +366,7 @@ async function framePixels(view, globalFrame, ctx, drivePlayhead = true) {
     // the display shows. Declared BEFORE the decode below, which is what does the purging, and
     // only ever RAISED: lowering it would evict frames the video view still wants.
     if (ctx.applyAdjustments) {
-        const wantEcho = (view.in.echoMin?.value || view.in.echoMax?.value)
-            && (view.in.enableVideoEffects ? view.in.enableVideoEffects.v0 : true);
+        const wantEcho = view.in.echoMin?.value || view.in.echoMax?.value;
         const needed = wantEcho ? Math.round(view.in.echoFrames?.v0 ?? 10) : 0;
         if (needed > (view.videoData.echoFramesNeeded || 0)) view.videoData.echoFramesNeeded = needed;
     }

@@ -337,4 +337,39 @@ describe('CVideoPatchedData mapping algorithm', () => {
         expect(wrapper.stabilizationData.get(9)).toEqual({x: 200, y: 200});
         expect(wrapper.stabilizationData.get(13)).toEqual({x: 300, y: 300});
     });
+
+    test('decoder cache queries reach the source at the source frame', () => {
+        const fps = 30;
+        // V10 and V11 hold source 9; V12 is source 10.
+        const pts = makePTS(fps, 30, [{at: 9, count: 2}]);
+        const source = fakeSource(pts);
+        const cached = new Set([9]);
+        const requested = [];
+        source.getCachedImage = S => cached.has(S) ? {sourceFrame: S} : null;
+        source.getImageNoPurge = S => cached.has(S) ? {sourceFrame: S} : null;
+        source.isFrameCached = S => cached.has(S);
+        source.requestFrame = S => requested.push(S);
+        const wrapper = new CVideoPatchedData(source, {fps});
+
+        // Echo reads the frames behind the current one with getCachedImage; without
+        // this the wrapper had no such method and the video view rendered black.
+        expect(wrapper.getCachedImage(11)).toEqual({sourceFrame: 9});
+        expect(wrapper.getImageNoPurge(10.6)).toEqual({sourceFrame: 9});
+        expect(wrapper.isFrameCached(11)).toBe(true);
+        expect(wrapper.isFrameCached(12)).toBe(false);
+        expect(wrapper.getCachedImage(12)).toBeNull();
+        wrapper.requestFrame(12);
+        expect(requested).toEqual([10]);
+    });
+
+    test('echoFramesNeeded is kept by the source decoder, not the wrapper', () => {
+        const fps = 30;
+        const source = fakeSource(makePTS(fps, 30, [{at: 9, count: 2}]));
+        const wrapper = new CVideoPatchedData(source, {fps});
+        // The source's getImage purges by this value, so it has to be the source's.
+        wrapper.echoFramesNeeded = 22;
+        expect(source.echoFramesNeeded).toBe(22);
+        expect(wrapper.echoFramesNeeded).toBe(22);
+        expect(Object.prototype.hasOwnProperty.call(wrapper, "echoFramesNeeded")).toBe(false);
+    });
 });
