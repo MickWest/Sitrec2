@@ -203,12 +203,12 @@ frame rate and whether the fix is on.
 
 Turning the fix on or off changes the frame numbers. Sitrec moves the current frame, the In and
 Out frames, point tracks, manual tracking keyframes, timeline markers, horizon keyframes, camera
-fit points, annotations and OSD data series with them, so they stay on the same images. A sitch
+fit points, annotations, OSD data series, synthetic (spline) track points, track ground
+elevations and Traverse analysis snapshots with them, so they stay on the same images. A sitch
 saved before VFR Fix existed is converted in the same way when it loads. If the sitch has other
 frame data that Sitrec cannot yet move (chapters, ground track keyframes, camera state keys, an
-FOV editor curve, synthetic tracks, a camera switch to the ground track, star tracker results,
-LOS fit results, a track elevation cache, a frame number offset, or a track-to-track stop
-frame), the fix stays off, and the hover text says why.
+FOV editor curve, a camera switch to the ground track, star tracker results, a frame number
+offset, or a track-to-track stop frame), the fix stays off, and the hover text says why.
 
 The setting is saved with the sitch.
 

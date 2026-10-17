@@ -166,6 +166,18 @@ export class CNodeSplineEditor extends CNodeTrack {
         return result;
     }
 
+    // VFR Fix (VFRTimeline.js): the control points stay on the same images. restoreState
+    // is the undo path: it moves them, redraws the editor and recalculates the track.
+    remapFrames(remap, context) {
+        super.remapFrames(remap, context);
+        const editor = this.splineEditor;
+        if (!editor?.frameNumbers?.length) return;
+        const state = editor.captureState();
+        state.frameNumbers = state.frameNumbers.map(remap);
+        editor.restoreState(state);
+        this.recalculateCascade();
+    }
+
     modDeserialize(v) {
         super.modDeserialize(v);
         if (v.positions !== undefined) {

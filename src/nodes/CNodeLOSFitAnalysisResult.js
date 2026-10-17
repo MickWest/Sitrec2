@@ -84,10 +84,37 @@ export class CNodeLOSFitAnalysisResult extends CNodeTrack {
         }
     }
 
+    // VFR Fix (VFRTimeline.js): the snapshot stays on the same images in the new frame
+    // numbers. Each new frame takes the position of the old frame that shows its image
+    // (context.inverse), as the LOS there comes from that image. The track is rebuilt at
+    // the next recalculate, once the LOS has the new frame count.
+    remapFrames(remap, context) {
+        super.remapFrames(remap, context);
+        if (!this.hasAnalysisResult || !context?.inverse) return;
+        const count = this._analysisTrack.length / 3, first = this._frame0, last = first + count - 1;
+        const newFirst = remap(first), newLast = remap(last);
+        const track = new Float64Array((newLast - newFirst + 1) * 3);
+        for (let frame = newFirst; frame <= newLast; frame++) {
+            const old = Math.min(last, Math.max(first, context.inverse(frame))) - first;
+            track.set(this._analysisTrack.subarray(old * 3, old * 3 + 3), (frame - newFirst) * 3);
+        }
+        this._analysisTrack = track;
+        this._frame0 = newFirst;
+        this._rebuildForFrames = context.newFrames;
+    }
+
     // A result snapshot should not refit itself during an unrelated graph
     // cascade. If the sitch changes frame count, discard it rather than serving
-    // a track from a different situation.
+    // a track from a different situation, unless the VFR Fix converted it for
+    // exactly this frame count.
     recalculate() {
+        if (this._rebuildForFrames !== undefined && this.in.LOS.frames === this._rebuildForFrames) {
+            this._rebuildForFrames = undefined;
+            if (this.hasAnalysisResult) {
+                this.setAnalysisTrack(this._analysisTrack, this._originLat, this._originLon, this._frame0, this.resultName);
+                return;
+            }
+        }
         if (this.array.length !== this.in.LOS.frames) {
             this.hasAnalysisResult = false;
             this.resultName = null;

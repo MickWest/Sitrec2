@@ -134,6 +134,18 @@ export class CNodeTrack extends CNodeEmptyArray {
         return LLAToECEF(lat, lon, clampTerrainElevationHAE(lat, lon, elevation) + agl);
     }
 
+    // VFR Fix (VFRTimeline.js): cached ground elevations stay with their images.
+    // refreshElevationCache writes an entry's point back into array[f], so an entry left
+    // at its old frame number would move the track there.
+    remapFrames(remap) {
+        if (!this.elevationCache) return;
+        const moved = [];
+        this.elevationCache.forEach((entry, frame) => {
+            if (entry) moved[remap(frame)] ??= entry;
+        });
+        this.elevationCache = moved;
+    }
+
     serializeElevationCache() {
         if (!this.elevationCache) return null;
         const out = [];

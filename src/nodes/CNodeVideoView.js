@@ -35,7 +35,7 @@ import {showChoice, showConfirm, showError} from "../showError";
 import {analyzeFrameTiming, remapTimelineFrames, unsupportedFrameData} from "../VFRTimeline";
 import {par} from "../par";
 import {quickToggle} from "../KeyBoardHandler";
-import {CustomManager, FileManager, GlobalDateTimeNode, Globals, guiMenus, NodeMan, registerFrameBlocker, unregisterFrameBlocker, setRenderOne, Sit, SitchMan} from "../Globals";
+import {CustomManager, FileManager, GlobalDateTimeNode, Globals, guiMenus, markSitchDirty, NodeMan, registerFrameBlocker, unregisterFrameBlocker, setRenderOne, Sit, SitchMan} from "../Globals";
 import {CMouseHandler} from "../CMouseHandler";
 import {CNodeViewUI} from "./CNodeViewUI";
 import {CVideoMp4Data} from "../CVideoMp4Data";
@@ -948,12 +948,13 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
 
     // Swap the timeline video between a VFR Fix wrapper and its source. map(frame) converts
     // every frame number (VFRTimeline.js); null when the frame data already belongs to `to`.
-    switchTimeline(from, to, map) {
+    // inverse(newFrame) is the old frame that shows the same image, for per-frame arrays.
+    switchTimeline(from, to, map, inverse = null) {
         if (this.videoData !== to) this.replaceVideoData(from, to);
         if (map) {
             const nodes = [];
             NodeMan.iterate((id, node) => nodes.push(node));
-            remapTimelineFrames(map, {oldFrames: from.frames, newFrames: to.frames, from, to}, nodes);
+            remapTimelineFrames(map, {oldFrames: from.frames, newFrames: to.frames, from, to, inverse}, nodes);
         }
         this.applyVideoTimeline(to);
         this.updateVFRFixControl();
@@ -995,7 +996,7 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
             this.vfrFix = false;
             this.switchTimeline(current, source, null);
         } else {
-            this.switchTimeline(source, current, frame => current.sourceToVirtual(frame));
+            this.switchTimeline(source, current, frame => current.sourceToVirtual(frame), frame => current.virtualToSource(frame));
         }
     }
 
@@ -1015,10 +1016,12 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
         this.vfrFix = on;
         if (on) {
             const wrapper = this.makeVFRWrapper(source);
-            this.switchTimeline(current, wrapper, frame => wrapper.sourceToVirtual(frame));
+            this.switchTimeline(current, wrapper, frame => wrapper.sourceToVirtual(frame), frame => wrapper.virtualToSource(frame));
         } else {
-            this.switchTimeline(current, source, frame => current.virtualToSource(frame));
+            this.switchTimeline(current, source, frame => current.virtualToSource(frame), frame => current.sourceToVirtual(frame));
         }
+        // A saved sitch records the setting and its frame numbers.
+        markSitchDirty();
     }
 
     vfrBlockedText() {

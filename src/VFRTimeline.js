@@ -102,11 +102,8 @@ const UNSUPPORTED = {
     groundTrack: s => s.mods?.groundTrack?.keyframes?.length > 0,
     cameraState: s => s.mods?.cameraState?.modeKeys?.length > 0 || s.mods?.cameraState?.cameraState !== undefined,
     fovEditor: s => s.mods?.fovSwitch?.choice === "FOV Editor",
-    syntheticTracks: s => s.syntheticTracks?.length > 0,
     groundTrackSwitch: s => Object.values(s.mods ?? {}).some(m => m?.switchToGroundTrackFrame > 0),
     starTracker: s => Object.values(s.mods ?? {}).some(m => Array.isArray(m?.poseTrack)),
-    losFit: s => Object.keys(s.mods ?? {}).some(id => id.startsWith("LOSFitAnalysisResult")),
-    elevationCache: s => Object.values(s.mods ?? {}).some(m => m?.elevationCache?.length > 0),
     frameOffset: s => Number(s.mods?.videoInfo?.offsetFrameValue ?? 0) !== 0,
     trackToTrackStop: s => Number(s.pars?.trackToTrackStopAt ?? 0) > 0,
 };

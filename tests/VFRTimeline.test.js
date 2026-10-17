@@ -112,6 +112,7 @@ test('frame data with no converter yet is found in a saved sitch, defaults are n
         lookCamera: {switchToGroundTrackFrame: 0}, videoInfo: {offsetFrameValue: 0}}, pars: {trackToTrackStopAt: 0}}))
         .toEqual([]);
     expect(unsupportedFrameData({subSitchesData: {subSitches: [{}, {}]}, syntheticTracks: [{}],
-        mods: {fovSwitch: {choice: 'FOV Editor'}, LOSFitAnalysisResult1: {}, groundTrack: {keyframes: [{frame: 3}]}}}))
-        .toEqual(['chapters', 'groundTrack', 'fovEditor', 'syntheticTracks', 'losFit']);
+        mods: {fovSwitch: {choice: 'FOV Editor'}, LOSFitAnalysisResult: {analysisResult: {}},
+            groundTrack: {keyframes: [{frame: 3}]}, track: {elevationCache: [[0]]}}}))
+        .toEqual(['chapters', 'groundTrack', 'fovEditor']);
 });
