@@ -9,6 +9,13 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.183.1 (2026-10-17)
+
+### Bug Fixes
+- Fixed *Echo Dark* and *Echo Light* (Video → Video Processing) making the video view black on a video with *VFR Fix* on, or on a video with dropped frames.
+- Fixed other video tools on the same videos: *Export Motion Pano Image* and *Export Motion Pano Video* (Video → Motion Analysis → Panorama) failed, the strips from the frames one period before and after a picked strip (*Show on video* in the Noise Pattern Detection window) stayed empty, and *Render Source Video* (Video → Video Adjustments) waited 1.5 seconds on each frame.
+- Fixed *Echo Dark* and *Echo Light* doing nothing when the checkbox on the *Video Adjustments* folder title (Video → Video Adjustments) is off. Echo now works with that checkbox off, as *Full A-B Echo* (Video → Video Processing) already does.
+
 ## Version 2.183.0 (2026-10-16)
 
 ### New Features
