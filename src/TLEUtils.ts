@@ -60,35 +60,14 @@ export function dateToTLENumber(date: Date): number {
 
 // bestSat with the date already converted by dateToTLENumber.
 export function bestSatAtTLENumber(sats: SatRec[], dateNum: number): SatRec {
-    return bestSatScan(sats, dateNum).sat;
+    return bestSatWithRange(sats, dateNum).sat;
 }
 
-// The choice bestSat makes stays the same for every date in [lo, hi), so a
-// per-frame loop can keep it until the time crosses the next record's epoch
-// instead of rescanning every record of every satellite each frame.
-interface BestSatCache {
-    sats: SatRec[];
-    length: number;
-    lo: number;
-    hi: number;
-    sat: SatRec;
-}
-
-// bestSatAtTLENumber, remembered on `holder` (the satellite's satData). The
-// cache is dropped if the satrecs array is replaced or grows (merged TLEs).
-export function bestSatCached(holder: {satrecs: SatRec[], _bestSat?: BestSatCache}, dateNum: number): SatRec {
-    const sats = holder.satrecs;
-    if (sats.length === 1) return sats[0];
-    const c = holder._bestSat;
-    if (c && c.sats === sats && c.length === sats.length && dateNum >= c.lo && dateNum < c.hi) {
-        return c.sat;
-    }
-    const scan = bestSatScan(sats, dateNum);
-    holder._bestSat = {sats, length: sats.length, lo: scan.lo, hi: scan.hi, sat: scan.sat};
-    return scan.sat;
-}
-
-function bestSatScan(sats: SatRec[], dateNum: number): {sat: SatRec, lo: number, hi: number} {
+// bestSat, plus the range of dates [lo, hi) over which that choice stays the
+// same, so a per-frame loop can keep it until the time crosses the next
+// record's epoch instead of rescanning every record of every satellite each
+// frame. lo and hi are NaN when the choice must not be kept.
+export function bestSatWithRange(sats: SatRec[], dateNum: number): {sat: SatRec, lo: number, hi: number} {
     assert(sats !== undefined && sats.length > 0, "No satellite records provided");
     if (sats.length === 1) {
         return {sat: sats[0], lo: -Infinity, hi: Infinity};
@@ -271,18 +250,6 @@ function tleEpochToDate(epochYr: number, epochDays: number): Date {
 export function satRecToDate(satrec: SatRec): Date {
     // Convert the TLE epoch to a Date object
     return tleEpochToDate(satrec.epochyr, satrec.epochdays);
-}
-
-// satRecToDate(satrec).getTime(), worked out once and kept on the satrec. A
-// record's epoch never changes, and per-frame loops ask for it for every
-// satellite, where building two Dates each time adds up.
-export function satRecEpochMS(satrec: SatRec): number {
-    let ms = satrec._epochMS as number | undefined;
-    if (ms === undefined) {
-        ms = satRecToDate(satrec).getTime();
-        satrec._epochMS = ms;
-    }
-    return ms;
 }
 
 // The OMM (CCSDS Orbit Mean-Elements Message) fields that satellite.js's

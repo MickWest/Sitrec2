@@ -4,7 +4,7 @@ import {SITREC_SERVER} from "../configUtils";
 import {FileManager, GlobalDateTimeNode, Globals, guiMenus, NodeMan, setRenderOne, Sit} from "../Globals";
 import {par} from "../par";
 import {EventManager} from "../CEventManager";
-import {bestSatCached, CTLEData, dateToTLENumber, satRecEpochMS} from "../TLEUtils";
+import {bestSatWithRange, CTLEData, dateToTLENumber, satRecToDate} from "../TLEUtils";
 import {degrees} from "../utils";
 import {hideProgress, initProgress, updateProgress} from "../CProgressIndicator";
 import {DebugArrow, DebugArrowAB, getPointBelow, rayIntersectsEllipsoid, removeDebugArrow} from "../threeExt";
@@ -1043,6 +1043,31 @@ export class CSatellite {
         return bestIdx;
     }
 
+    /**
+     * Per-satellite memory of bestSat's choice, in flat arrays indexed like
+     * TLEData.satData. The choice holds while the date stays in [lo, hi) (see
+     * bestSatWithRange), so the frame loop rescans a satellite's records only
+     * when the time crosses one of its epochs. The epoch in ms is kept with it
+     * for the TLE age check. Typed arrays rather than properties on the satrec
+     * or satData objects: satrecs are satellite.js objects with ~100 fields,
+     * and adding one sends them to slow dictionary mode.
+     */
+    _bestSatCacheFor(numSats) {
+        let c = this._bestSatCache;
+        if (!c || c.tleData !== this.TLEData || c.lo.length !== numSats) {
+            c = this._bestSatCache = {
+                tleData: this.TLEData,
+                lo: new Float64Array(numSats).fill(NaN),
+                hi: new Float64Array(numSats).fill(NaN),
+                epochMS: new Float64Array(numSats),
+                count: new Int32Array(numSats),
+                satrecs: new Array(numSats).fill(null),
+                sat: new Array(numSats).fill(null),
+            };
+        }
+        return c;
+    }
+
     updateAllSatellites(date, options = {}) {
         if (!this.TLEData || !this.lightCloud) {
             return;
@@ -1085,6 +1110,7 @@ export class CSatellite {
 
         // bestSat's date key, once per frame (it formats and re-parses a string).
         const tleDateNum = dateToTLENumber(date);
+        const best = this._bestSatCacheFor(numSats);
 
         // When the camera is riding a satellite (e.g. ISS), hide that satellite
         // AND any co-located objects (docked spacecraft with separate TLE entries).
@@ -1100,9 +1126,24 @@ export class CSatellite {
 
         for (let i = 0; i < numSats; i++) {
             const satData = this.TLEData.satData[i];
-            const satrec = bestSatCached(satData, tleDateNum);
+            // The cache is dropped if the satrecs array is replaced or grows (merged TLEs).
+            const satrecs = satData.satrecs;
+            let satrec;
+            if (best.satrecs[i] === satrecs && best.count[i] === satrecs.length
+                && tleDateNum >= best.lo[i] && tleDateNum < best.hi[i]) {
+                satrec = best.sat[i];
+            } else {
+                const choice = bestSatWithRange(satrecs, tleDateNum);
+                satrec = choice.sat;
+                best.satrecs[i] = satrecs;
+                best.count[i] = satrecs.length;
+                best.lo[i] = choice.lo;
+                best.hi[i] = choice.hi;
+                best.sat[i] = satrec;
+                best.epochMS[i] = satRecToDate(satrec).getTime();
+            }
 
-            const tleAgeMS = Math.abs(timeMS - satRecEpochMS(satrec));
+            const tleAgeMS = Math.abs(timeMS - best.epochMS[i]);
             if (tleAgeMS > maxTLEAgeMS) {
                 satData.invalidPosition = true;
                 satData.outOfRange = true;
