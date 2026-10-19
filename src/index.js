@@ -538,11 +538,16 @@ const frameRateController = {
         
         const shouldDegrade = currentAnalysis.slowFramePercentage > 0.1; // >10% slow frames
         
-        // Check improvement: next tier must have 0% slow frames (perfect performance)
+        // Check improvement: at most 5% of frames (1 in the 30-frame history) may be
+        // slow at the next tier. It used to need 0%, so a single garbage-collection
+        // pause or tile load in every 30 frames held the rate at the lowest tier for
+        // good, while one slow stretch (a heavy video effect, a burst of loading)
+        // could drop it there. 5% stays under the 10% that degrades, so a tier
+        // reached this way is not dropped again straight away.
         let shouldImprove = false;
         if (currentTierIndex < this.fpsTiers.length - 1) {
             const nextAnalysis = this.analyzeFrameTimes(this.fpsTiers[currentTierIndex + 1]);
-            if (nextAnalysis && nextAnalysis.slowFramePercentage === 0.0) {
+            if (nextAnalysis && nextAnalysis.slowFramePercentage <= 0.05) {
                 shouldImprove = true;
             }
         }
@@ -554,9 +559,9 @@ const frameRateController = {
             this.fps = newFps;
             this.lastAdjustTime = Date.now();
         } else if (shouldImprove) {
-            // Upgrade only if next tier shows perfect performance
+            // Upgrade when the next tier would be met by nearly all recent frames
             const newFps = this.fpsTiers[currentTierIndex + 1];
-            // console.log(`⬆️ Improving FPS: ${this.fps}fps → ${newFps}fps (0% slow at ${newFps}fps)`);
+            // console.log(`⬆️ Improving FPS: ${this.fps}fps → ${newFps}fps (≤5% slow at ${newFps}fps)`);
             this.fps = newFps;
             this.lastAdjustTime = Date.now();
         }
