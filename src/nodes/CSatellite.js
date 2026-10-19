@@ -1162,9 +1162,13 @@ export class CSatellite {
                 || timeMS > satData.timeB) {
                 // When crossing the boundary (timeMS > timeB), start new interval from old endpoint
                 // to ensure smooth continuity. Otherwise we'd jump from position-at-timeB to position-at-timeMS.
+                // This holds for any step that lands inside the new interval, not just
+                // steps under a second: fast playback (16x moves about a second per
+                // frame) would otherwise propagate both ends afresh, twice the work,
+                // for no gain in accuracy — the new interval is the same length.
                 if (satData.timeB !== undefined
                     && timeMS > satData.timeB               // current time is past B time
-                    && (timeMS - satData.timeB) < 1000      // but less than a second past
+                    && (timeMS - satData.timeB) < this.timeStep  // but inside the next interval
                     && satData.ecefB !== null) {             // and we were interpolating valid     positions
                     // Carry forward: old end becomes new start
                     satData.timeA = satData.timeB;
