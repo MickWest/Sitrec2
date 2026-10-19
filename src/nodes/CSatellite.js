@@ -4,7 +4,7 @@ import {SITREC_SERVER} from "../configUtils";
 import {FileManager, GlobalDateTimeNode, Globals, guiMenus, NodeMan, setRenderOne, Sit} from "../Globals";
 import {par} from "../par";
 import {EventManager} from "../CEventManager";
-import {bestSat, CTLEData, satRecToDate} from "../TLEUtils";
+import {bestSatCached, CTLEData, dateToTLENumber, satRecEpochMS} from "../TLEUtils";
 import {degrees} from "../utils";
 import {hideProgress, initProgress, updateProgress} from "../CProgressIndicator";
 import {DebugArrow, DebugArrowAB, getPointBelow, rayIntersectsEllipsoid, removeDebugArrow} from "../threeExt";
@@ -15,7 +15,11 @@ import {saveAs} from "file-saver";
 import {showError} from "../showError";
 import {CPointLightCloud} from "./CPointLightCloud";
 import {t} from "../i18n";
-import {applyRefractionFromObserver, REFRACTION_DEFAULTS} from "../atmosphere/refraction";
+import {
+    applyPreparedObserverRefraction,
+    prepareObserverRefraction,
+    REFRACTION_DEFAULTS
+} from "../atmosphere/refraction";
 import {satelliteAppearance, satelliteECEF, satelliteSunlitFraction} from "../SatelliteBrightness";
 
 // The Earth's rotation rate, rad/s, about the ECEF z axis.
@@ -1074,6 +1078,13 @@ export class CSatellite {
             equatorRadius: Globals.equatorRadius,
             polarRadius: Globals.polarRadius,
         };
+        // The observer's zenith and height are the same for every satellite,
+        // so work them out once per frame rather than once per satellite.
+        const refractionPrep = prepareObserverRefraction(lookPos, refractionOpts, this._refractionPrep);
+        this._refractionPrep = refractionPrep;
+
+        // bestSat's date key, once per frame (it formats and re-parses a string).
+        const tleDateNum = dateToTLENumber(date);
 
         // When the camera is riding a satellite (e.g. ISS), hide that satellite
         // AND any co-located objects (docked spacecraft with separate TLE entries).
@@ -1089,10 +1100,9 @@ export class CSatellite {
 
         for (let i = 0; i < numSats; i++) {
             const satData = this.TLEData.satData[i];
-            const satrec = bestSat(satData.satrecs, date);
+            const satrec = bestSatCached(satData, tleDateNum);
 
-            const tleEpochDate = satRecToDate(satrec);
-            const tleAgeMS = Math.abs(timeMS - tleEpochDate.getTime());
+            const tleAgeMS = Math.abs(timeMS - satRecEpochMS(satrec));
             if (tleAgeMS > maxTLEAgeMS) {
                 satData.invalidPosition = true;
                 satData.outOfRange = true;
@@ -1158,14 +1168,18 @@ export class CSatellite {
                     // checks still see the real satellite location.
                     if (!satData.ecefApparent) satData.ecefApparent = satData.ecef.clone();
                     if (refractionEnabled) {
-                        applyRefractionFromObserver(satData.ecef, lookPos, refractionOpts, satData.ecefApparent);
+                        applyPreparedObserverRefraction(satData.ecef, refractionPrep, satData.ecefApparent);
                     } else {
                         satData.ecefApparent.copy(satData.ecef);
                     }
 
                     this.lightCloud.setPosition(i, satData.ecefApparent.x, satData.ecefApparent.y, satData.ecefApparent.z);
                     satData.invalidPosition = false;
-                    satData.currentPosition = satData.ecef.clone();
+                    if (satData.currentPosition) {
+                        satData.currentPosition.copy(satData.ecef);
+                    } else {
+                        satData.currentPosition = satData.ecef.clone();
+                    }
 
                     if (satData.spriteText) {
                         satData.spriteText.position.set(satData.ecefApparent.x, satData.ecefApparent.y, satData.ecefApparent.z);
