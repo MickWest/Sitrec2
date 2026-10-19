@@ -191,17 +191,27 @@ export function refractionOptsFromUniforms() {
 // atmosphere on its way to the observer's eye, lifting the satellite's
 // *apparent* direction toward the observer's zenith. Distance from observer
 // is preserved.
-const _obsZenith = new Vector3();
+//
+// Everything that depends only on the observer (its zenith, its height, the
+// enabled flag) is split into prepareObserverRefraction(), so a caller bending
+// thousands of positions from one observer per frame — the satellite loop —
+// can do that part once and call applyPreparedObserverRefraction() per point.
+// The one-off form below is just the two halves back to back.
 const _obsDir = new Vector3();
-const _obsOpts = {};
+const _obsPrep = {observer: new Vector3(), zenith: new Vector3(), opts: {}, enabled: false};
 export function applyRefractionFromObserver(pos, observerECEF, opts = {}, target = null) {
-    const out = target ?? new Vector3();
-    out.copy(pos);
-    const enabled = opts.enabled ?? REFRACTION_DEFAULTS.enabled;
-    if (!enabled) return out;
-    _obsDir.subVectors(pos, observerECEF);
-    const dist = _obsDir.length();
-    if (dist < 1) return out;
+    prepareObserverRefraction(observerECEF, opts, _obsPrep);
+    return applyPreparedObserverRefraction(pos, _obsPrep, target);
+}
+
+// The observer-only half of applyRefractionFromObserver. Returns `prep`, which
+// holds a COPY of the observer, so later moves of the caller's vector do not
+// leak in. Re-prepare whenever the observer, radii or weather change.
+export function prepareObserverRefraction(observerECEF, opts = {},
+        prep = {observer: new Vector3(), zenith: new Vector3(), opts: {}, enabled: false}) {
+    prep.enabled = !!(opts.enabled ?? REFRACTION_DEFAULTS.enabled);
+    prep.observer.copy(observerECEF);
+    if (!prep.enabled) return prep;
     // GEODETIC zenith, not the geocentric radial. Refraction is symmetric
     // about the local vertical — perpendicular to the local horizon — and on
     // an ellipsoid the two differ by up to 11.55' (11.5' at 45° latitude,
@@ -216,21 +226,33 @@ export function applyRefractionFromObserver(pos, observerECEF, opts = {}, target
     // hard-coded WGS84 inversion would reintroduce the same ~11.5' tilt in the
     // opposite direction. Passing equal radii collapses this to the radial
     // exactly, which is what a sphere wants.
-    zenithECEFFromPosition(observerECEF, _obsZenith, opts.equatorRadius, opts.polarRadius);
+    zenithECEFFromPosition(observerECEF, prep.zenith, opts.equatorRadius, opts.polarRadius);
     // How much atmosphere the sightline crosses depends on how high the
     // observer is — and the observer's own ECEF position already says. Callers
     // don't have to supply a height (none did before this existed), but an
     // explicit opts.observerHeight still wins. Only the fields the bend itself
     // reads are forwarded, so nothing can leak between calls.
     const surfaceR = ellipsoidRadiusUnder(observerECEF, opts.equatorRadius, opts.polarRadius);
-    _obsOpts.enabled = true;
-    _obsOpts.pressureHPa = opts.pressureHPa;
-    _obsOpts.tempC = opts.tempC;
-    _obsOpts.observerHeight = opts.observerHeight ?? (observerECEF.length() - surfaceR);
-    _obsOpts.earthRadius = opts.earthRadius ?? surfaceR;
+    const bendOpts = prep.opts;
+    bendOpts.enabled = true;
+    bendOpts.pressureHPa = opts.pressureHPa;
+    bendOpts.tempC = opts.tempC;
+    bendOpts.observerHeight = opts.observerHeight ?? (observerECEF.length() - surfaceR);
+    bendOpts.earthRadius = opts.earthRadius ?? surfaceR;
+    return prep;
+}
+
+// The per-point half: bend `pos` as seen from a prepared observer.
+export function applyPreparedObserverRefraction(pos, prep, target = null) {
+    const out = target ?? new Vector3();
+    out.copy(pos);
+    if (!prep.enabled) return out;
+    _obsDir.subVectors(pos, prep.observer);
+    const dist = _obsDir.length();
+    if (dist < 1) return out;
     // Bend the direction vector using the same routine as celestial bending.
-    applyRefractionECI(_obsDir, _obsZenith, _obsOpts);
-    out.copy(_obsDir).add(observerECEF);
+    applyRefractionECI(_obsDir, prep.zenith, prep.opts);
+    out.copy(_obsDir).add(prep.observer);
     return out;
 }
 

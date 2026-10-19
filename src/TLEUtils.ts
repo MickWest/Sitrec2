@@ -48,8 +48,51 @@ export function bestSat(sats: SatRec[], date: Date): SatRec {
     }
 
     // Convert the date object to the TLE format and then to a number for comparison.
-    const tleDate = dateToTLE(date);
-    const dateNum = Number(tleDate);
+    return bestSatAtTLENumber(sats, dateToTLENumber(date));
+}
+
+// The date as bestSat compares it: Number(dateToTLE(date)), YYDDD.DDDDDD.
+// Loops over many satellites should compute this once, not once per satellite —
+// it formats and re-parses a string.
+export function dateToTLENumber(date: Date): number {
+    return Number(dateToTLE(date));
+}
+
+// bestSat with the date already converted by dateToTLENumber.
+export function bestSatAtTLENumber(sats: SatRec[], dateNum: number): SatRec {
+    return bestSatScan(sats, dateNum).sat;
+}
+
+// The choice bestSat makes stays the same for every date in [lo, hi), so a
+// per-frame loop can keep it until the time crosses the next record's epoch
+// instead of rescanning every record of every satellite each frame.
+interface BestSatCache {
+    sats: SatRec[];
+    length: number;
+    lo: number;
+    hi: number;
+    sat: SatRec;
+}
+
+// bestSatAtTLENumber, remembered on `holder` (the satellite's satData). The
+// cache is dropped if the satrecs array is replaced or grows (merged TLEs).
+export function bestSatCached(holder: {satrecs: SatRec[], _bestSat?: BestSatCache}, dateNum: number): SatRec {
+    const sats = holder.satrecs;
+    if (sats.length === 1) return sats[0];
+    const c = holder._bestSat;
+    if (c && c.sats === sats && c.length === sats.length && dateNum >= c.lo && dateNum < c.hi) {
+        return c.sat;
+    }
+    const scan = bestSatScan(sats, dateNum);
+    holder._bestSat = {sats, length: sats.length, lo: scan.lo, hi: scan.hi, sat: scan.sat};
+    return scan.sat;
+}
+
+function bestSatScan(sats: SatRec[], dateNum: number): {sat: SatRec, lo: number, hi: number} {
+    assert(sats !== undefined && sats.length > 0, "No satellite records provided");
+    if (sats.length === 1) {
+        return {sat: sats[0], lo: -Infinity, hi: Infinity};
+    }
 
     let bestBefore: SatRec | null = null;
     let bestBeforeDate = -Infinity; // So that any valid satDate will be greater.
@@ -67,12 +110,18 @@ export function bestSat(sats: SatRec[], date: Date): SatRec {
         }
     }
 
+    // No record epoch lies strictly between bestBeforeDate and bestAfterDate, so
+    // any date in [bestBeforeDate, bestAfterDate) makes the same choice.
     // Prefer a record that is before (or equal) to the target date.
     if (bestBefore !== null) {
-        return bestBefore;
+        return {sat: bestBefore, lo: bestBeforeDate, hi: bestAfterDate};
     }
     // If none is before, return the earliest after.
-    return bestAfter || sats[0];
+    if (bestAfter !== null) {
+        return {sat: bestAfter, lo: -Infinity, hi: bestAfterDate};
+    }
+    // Only reachable with unusable dates (NaN); never cache it.
+    return {sat: sats[0], lo: NaN, hi: NaN};
 }
 
 /**
@@ -222,6 +271,18 @@ function tleEpochToDate(epochYr: number, epochDays: number): Date {
 export function satRecToDate(satrec: SatRec): Date {
     // Convert the TLE epoch to a Date object
     return tleEpochToDate(satrec.epochyr, satrec.epochdays);
+}
+
+// satRecToDate(satrec).getTime(), worked out once and kept on the satrec. A
+// record's epoch never changes, and per-frame loops ask for it for every
+// satellite, where building two Dates each time adds up.
+export function satRecEpochMS(satrec: SatRec): number {
+    let ms = satrec._epochMS as number | undefined;
+    if (ms === undefined) {
+        ms = satRecToDate(satrec).getTime();
+        satrec._epochMS = ms;
+    }
+    return ms;
 }
 
 // The OMM (CCSDS Orbit Mean-Elements Message) fields that satellite.js's
