@@ -9,6 +9,11 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.183.2 (2026-10-20)
+
+### Bug Fixes
+- Fixed satellites missing from the main view, for example after *Load LEO Satellites For Date* (Satellites). Since 2.181.0, the main view showed only the satellites that the look camera could see. Now it shows all the loaded satellites that the category switches and filters allow, and the look view does not change.
+
 ## Version 2.183.1 (2026-10-17)
 
 ### Bug Fixes

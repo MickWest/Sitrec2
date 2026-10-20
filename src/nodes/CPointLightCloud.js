@@ -171,6 +171,8 @@ export class CPointLightCloud extends CNode3D {
         this.brightnessArray = null;
         /** @type {Float32Array|null} */
         this.baseBrightnessArray = null;
+        /** @type {Float32Array|null} - Brightness read by the main view points only */
+        this.mainBrightnessArray = null;
 
         /** @type {number} */
         this.count = 0;
@@ -401,8 +403,15 @@ export class CPointLightCloud extends CNode3D {
         const minPointSize = config.minPointSize ?? this.minPointSize;
         const maxPointSize = config.maxPointSize ?? this.maxPointSize;
 
+        // The main view has its own brightness attribute. The look view brightness can
+        // depend on the look camera (e.g. zero below its horizon), which must not hide
+        // points in the main view. setBrightness() writes both, so they stay equal
+        // unless the caller writes mainBrightnessArray directly.
+        this.mainBrightnessArray = this.brightnessArray.slice();
+        this.geometry.setAttribute('mainBrightness', new BufferAttribute(this.mainBrightnessArray, 1));
+
         const vertexShader = `
-            attribute float brightness;
+            attribute float mainBrightness;
             ${usesPerPointColor ? 'attribute vec3 color;' : ''}
             
             uniform float baseScale;
@@ -421,25 +430,25 @@ export class CPointLightCloud extends CNode3D {
             ${FISHEYE_VERTEX_GLSL}
 
             void main() {
-                if (brightness <= 0.0) {
+                if (mainBrightness <= 0.0) {
                     gl_Position = vec4(0.0);
                     gl_PointSize = 0.0;
                     return;
                 }
 
                 ${usesPerPointColor ? 'vColor = color;' : 'vColor = uColor;'}
-                vBrightness = brightness;
+                vBrightness = mainBrightness;
 
                 vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
                 gl_Position = projectionMatrix * mvPosition;
                 if (uFishOn > 0.0) { gl_Position = fisheyeClip(mvPosition); }
                 ${this.useLogDepth ? 'vDepth = gl_Position.w;' : ''}
-                
+
                 float dist = length(mvPosition.xyz);
                 float t = clamp((dist - nearDist) / (farDist - nearDist), 0.0, 1.0);
                 float distScale = mix(nearScale, farScale, t);
-                
-                float brightnessSize = mix(0.0, maxPointSize, brightness) * baseScale;
+
+                float brightnessSize = mix(0.0, maxPointSize, mainBrightness) * baseScale;
                 float size = minPointSize + brightnessSize * distScale;
                 gl_PointSize = size;
                 vAlpha = 1.0;
@@ -543,15 +552,15 @@ export class CPointLightCloud extends CNode3D {
         }
 
         if (brightness !== undefined) {
-            this.brightnessArray[index] = brightness;
-            this.baseBrightnessArray[index] = brightness;
-            this.geometry.attributes.brightness.needsUpdate = true;
+            this.setBrightness(index, brightness);
+            this.markBrightnessNeedUpdate();
         }
     }
 
     setLightVisible(index, visible) {
         this.brightnessArray[index] = visible ? this.baseBrightnessArray[index] : 0.0;
-        this.geometry.attributes.brightness.needsUpdate = true;
+        if (this.mainBrightnessArray) this.mainBrightnessArray[index] = this.brightnessArray[index];
+        this.markBrightnessNeedUpdate();
     }
 
     setPosition(index, x, y, z) {
@@ -571,6 +580,7 @@ export class CPointLightCloud extends CNode3D {
     setBrightness(index, brightness) {
         this.brightnessArray[index] = brightness;
         this.baseBrightnessArray[index] = brightness;
+        if (this.mainBrightnessArray) this.mainBrightnessArray[index] = brightness;
     }
 
     markPositionsNeedUpdate() {
@@ -588,6 +598,9 @@ export class CPointLightCloud extends CNode3D {
     markBrightnessNeedUpdate() {
         if (this.geometry?.attributes.brightness) {
             this.geometry.attributes.brightness.needsUpdate = true;
+        }
+        if (this.geometry?.attributes.mainBrightness) {
+            this.geometry.attributes.mainBrightness.needsUpdate = true;
         }
     }
 
@@ -689,6 +702,7 @@ export class CPointLightCloud extends CNode3D {
         this.colorArray = null;
         this.brightnessArray = null;
         this.baseBrightnessArray = null;
+        this.mainBrightnessArray = null;
         this.points = null;
         this.mainViewPoints = null;
 
