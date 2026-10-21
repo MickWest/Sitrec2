@@ -1302,6 +1302,7 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
 
         const toSun = this.satellites.toSun;
         const magnitudes = this.satellites.lightCloud.brightnessArray;
+        const mainMagnitudes = this.satellites.lightCloud.mainBrightnessArray;
         const cameraPos = this.camera.position;
 
         this.satTimeStep = 10;
@@ -1316,11 +1317,13 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
 
             if (!satData.visible || satData.tleFrameHidden) {
                 magnitudes[i] = 0;
+                mainMagnitudes[i] = 0;
                 continue;
             }
 
             if (satData.invalidPosition) {
                 magnitudes[i] = 0;
+                mainMagnitudes[i] = 0;
                 this.satellites.removeSatelliteArrows(satData);
                 this.satellites.removeSatSunArrows(satData);
                 continue;
@@ -1332,6 +1335,7 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
             // TLE load, or the time just jumped discontinuously (fullBrightnessUpdate)
             if (!this.firstRenderTLE && !this.fullBrightnessUpdate && (i - this.satStartTime) % this.satTimeStep !== 0 && !satData.hasSunArrow) {
                 magnitudes[i] = satData.lastScale || 0;
+                mainMagnitudes[i] = satData.lastMainScale || 0;
                 continue;
             }
 
@@ -1394,6 +1398,11 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
                 satData.isFlaring = false;
             }
 
+            // The main view is an overview of the whole constellation, so it keeps
+            // the legacy brightness (lit or shadow-dimmed, wherever the satellite
+            // is). The photometric value is what the look camera sees, and is zero
+            // for every satellite below its horizon.
+            let mainBrightness = brightness;
             if (this.satellites.brightnessModel === "Photometric estimate") {
                 satData.apparentMagnitude = appearance?.magnitude ?? Infinity;
                 // The live cloud is a visibility aid whose disk area represents
@@ -1403,12 +1412,18 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
                     appearance.rangeM / 3000000 : 0;
             }
             // need the /5 as brightness calculation has changed
-            if (brightness < Sit.satCutOff/5) {
+            const cutOff = Sit.satCutOff / 5;
+            if (brightness < cutOff) {
                 brightness = 0;
+            }
+            if (mainBrightness < cutOff) {
+                mainBrightness = 0;
             }
 
             satData.lastScale = brightness;
+            satData.lastMainScale = mainBrightness;
             magnitudes[i] = brightness;
+            mainMagnitudes[i] = mainBrightness;
         }
         this.satellites.lightCloud.markBrightnessNeedUpdate();
         this.firstRenderTLE = false;

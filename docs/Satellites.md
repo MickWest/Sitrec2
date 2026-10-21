@@ -179,6 +179,10 @@ Each filter has a checkbox. Only the checked filters are used.
 | **Flare Model** | Geocentric Nadir | How "down" is found for that mirror. **Geocentric Nadir** points at the Earth's center. **Geodetic Nadir** is perpendicular to the WGS84 ellipsoid. The two differ by at most about 0.18° |
 | **Earth's Penumbra Depth** | 5000 | In Legacy fade mode, shadow depth in metres over which illumination fades |
 
+The brightness model sets what the look view and long exposures show. The main view always
+draws satellites at the Legacy cone brightness, wherever they are, so it shows the whole
+constellation and not only the satellites above the look camera's horizon.
+
 The photometric model uses approximate digitizations of the fitted horizon-flare curves
 in [Mallama and Cole (2024)](https://arxiv.org/abs/2405.13091), with explicit estimated
 continuations outside their roughly 2–20° range. The authors do not give an unobscured-Sun
