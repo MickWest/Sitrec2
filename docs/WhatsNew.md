@@ -9,6 +9,11 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.183.3 (2026-10-21)
+
+### Security
+- The Docker image, and the production site that runs it, are rebuilt on an updated base image with PHP 8.4.27 and Apache 2.4.69. PHP 8.4.27 fixes two critical vulnerabilities, announced on 2026-10-21, that let an attacker run code on the server without a login. Apache 2.4.69 fixes the Apache advisories that were open against the 2.183.2 image. There is no change to how the app behaves. The serverless and desktop builds have no PHP or Apache and are not affected.
+
 ## Version 2.183.2 (2026-10-20)
 
 ### Bug Fixes
