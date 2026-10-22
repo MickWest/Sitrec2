@@ -9,6 +9,16 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.183.4 (2026-10-21)
+
+### Improvements
+- Playback with many satellites loaded is faster, for example after *Load LEO Satellites For Date* (Satellites). The satellite update in each frame now takes about a third of its earlier time, and it gives the same satellite positions as before. With 15,671 satellites on a 2016 MacBook Pro, it went from about 37 ms to about 13 ms per frame.
+- At high playback speeds, a large satellite set now needs close to half the orbit calculations in each frame.
+- Sitrec lowers its frame rate when frames are slow. It now raises the rate again after a slow stretch, when at most 1 of the last 30 frames is too slow for the higher rate. Before, one slow frame in 30 kept the lower rate.
+
+### Security
+- Fixed a cross-site scripting (XSS) problem in the server script that gets historical satellite data for a date, for example for *Load LEO Satellites For Date* (Satellites). When a request gave this script an incorrect date, the script put that text into its error message, and the browser read the message as a web page. So a crafted link could run a script on the Sitrec site. Now the script shows that text only as text, and it sends all its messages as plain text, not as a web page. There is no change to how satellites load. The serverless and desktop builds have no PHP server and are not affected.
+
 ## Version 2.183.3 (2026-10-21)
 
 ### Security

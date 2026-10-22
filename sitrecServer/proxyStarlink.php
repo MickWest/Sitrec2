@@ -5,6 +5,10 @@ require_once __DIR__ . '/config_paths.php';
 require_once __DIR__ . '/curlGetRequest.php';
 require_once __DIR__ . '/gpData.php';
 
+// SECURITY: every response from this script is data or a plain-text message. Without this,
+// an early exit() would go out as PHP's default text/html.
+header('Content-Type: text/plain; charset=UTF-8');
+
 // SECURITY: Rate limiting by IP - max 20 requests per minute (Space-Track has strict limits)
 $clientIP = $_SERVER['REMOTE_ADDR'] ?? 'unknown';
 $rateLimitDir = sys_get_temp_dir() . '/sitrec_starlink_ratelimit/';
@@ -59,7 +63,7 @@ if (!$request) {
 // validate the request and make sure it's in the right format
 // (and for security)
 if (!preg_match("/^\d{4}-\d{2}-\d{2}$/", $request)) {
-    exit("Invalid request key ".$request);
+    exit("Invalid request key ".htmlspecialchars($request, ENT_QUOTES, 'UTF-8'));
 }
 
 // Whitelist the allowed types explicitly
