@@ -10,6 +10,7 @@ import {Globals, NodeMan, TrackManager, FileManager, Sit, setRenderOne} from "./
 import {CTrackFile} from "./TrackFiles/CTrackFile";
 import {CNodeDisplayTrack} from "./nodes/CNodeDisplayTrack";
 import {blockViewEvents, makeDraggable} from "./DragResizeUtils";
+import {t} from "./i18n";
 
 
 // ─── Track Preview Extraction ────────────────────────────────────────────────
@@ -549,11 +550,14 @@ export function showFilterPanel(previewInfos, hasFrustum, cameraPosition, onPrev
 // ─── Multi-Track Load Dialog ─────────────────────────────────────────────────
 
 // Main entry point for the multi-track dialog.
-// Returns Promise<number[]|null> — selected track indices, all indices, or null (cancel).
-export function showMultiTrackLoadDialog(previewInfos, hasFrustum, cameraPosition) {
+// Returns Promise<{selected, pairByLoadOrder}>. selected is the selected track indices, all
+// indices, or null (cancel). pairByLoadOrder is false when askPairing put the "first two
+// tracks as camera and target" checkbox in the dialog and the user cleared it (see
+// TrackManager.shouldAskLoadOrderPairing); otherwise true.
+export function showMultiTrackLoadDialog(previewInfos, hasFrustum, cameraPosition, {askPairing = false} = {}) {
     // Skip dialog only in automated regression tests
     if (Globals.regression) {
-        return Promise.resolve(previewInfos.map(info => info.trackIndex));
+        return Promise.resolve({selected: previewInfos.map(info => info.trackIndex), pairByLoadOrder: true});
     }
 
     return new Promise((resolve, reject) => {
@@ -569,17 +573,34 @@ export function showMultiTrackLoadDialog(previewInfos, hasFrustum, cameraPositio
         msg.style.cssText = MSG_STYLE;
         dialog.appendChild(msg);
 
+        // The load-order pairing question, here so that a file with a picker is asked once.
+        let pairCheckbox = null;
+        if (askPairing) {
+            const pairRow = document.createElement('label');
+            pairRow.style.cssText = 'display: flex; align-items: center; gap: 8px; margin: 0 5px 12px 5px; '
+                + 'font-size: 14px; color: #eee; cursor: pointer;';
+            pairRow.title = t("trackManager.pairTracks.checkboxTooltip");
+            pairCheckbox = document.createElement('input');
+            pairCheckbox.type = 'checkbox';
+            pairCheckbox.checked = true;
+            pairCheckbox.style.cssText = 'width: 16px; height: 16px; flex-shrink: 0;';
+            pairRow.appendChild(pairCheckbox);
+            pairRow.appendChild(document.createTextNode(t("trackManager.pairTracks.checkbox")));
+            dialog.appendChild(pairRow);
+        }
+        const finish = (selected) => resolve({selected, pairByLoadOrder: !pairCheckbox || pairCheckbox.checked});
+
         // Load All
         dialog.appendChild(makeButton('Load All', '#1976d2', () => {
             cleanup(overlay);
-            resolve(previewInfos.map(info => info.trackIndex));
+            finish(previewInfos.map(info => info.trackIndex));
         }));
 
         // Select...
         dialog.appendChild(makeButton('Select...', '#388e3c', async () => {
             cleanup(overlay);
             const selected = await showCheckboxList(previewInfos, null);
-            resolve(selected);
+            finish(selected);
         }));
 
         // Filter...
@@ -588,18 +609,18 @@ export function showMultiTrackLoadDialog(previewInfos, hasFrustum, cameraPositio
             const filterResults = await showFilterPanel(previewInfos, hasFrustum, cameraPosition);
             if (filterResults === null) {
                 // User cancelled filter — resolve null to skip loading
-                resolve(null);
+                finish(null);
                 return;
             }
             // Show checkbox list with filter results pre-checked
             const selected = await showCheckboxList(previewInfos, filterResults);
-            resolve(selected);
+            finish(selected);
         }));
 
         // Cancel
         dialog.appendChild(makeButton('Cancel', '#757575', () => {
             cleanup(overlay);
-            resolve(null);
+            finish(null);
         }));
 
         document.body.appendChild(overlay);

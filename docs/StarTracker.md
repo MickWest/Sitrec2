@@ -250,8 +250,8 @@ Detection walks every frame in the In/Out range before anything can be solved, s
 
 ![Enough and Abort during an analysis](star-images/startracker-progress.jpg)
 
-- **Enough (solve what we have)** — stop scanning, keep every frame measured so far, and run the full solve on that shorter stretch. If you started from **Full Analysis**, identification and camera sync still follow exactly as on a complete run; if you started from **Find Candidate Stars**, only the analysis runs, as it would anyway. The Status line records how much of the clip the numbers came from, e.g. `(stopped early, 60/300 frames)`.
-- **Abort** — stop and discard the run. Note that Abort is checked between stages rather than continuously, so pressing it during the final lens fit may not take effect until that stage finishes.
+- **Enough (solve what we have)** — stop scanning, keep every frame measured so far, and run the full solve on that shorter stretch. If you started from **Full Analysis**, identification and camera sync still follow exactly as on a complete run; if you started from **Find Candidate Stars**, only the analysis runs, as it would anyway. The Status line records how much of the clip the numbers came from, e.g. `(stopped early, 60/300 frames)`. The button goes away when scanning ends, because after that there is nothing left to stop short of.
+- **Abort** — stop and discard the run. It takes effect within a fraction of a second while frames are scanned, and while the camera motion and the star map are solved. The stages after those check it only between steps, so pressing it during the lens fit may not take effect until that stage finishes.
 
 Use **Enough** when the answer has clearly settled, or when you set the range wider than you meant to.
 
@@ -268,7 +268,7 @@ With **Display during analysis** on (the default), each stage shows what it is d
 | **Solving sky rotation** / **Re-solving on stars only** | The residual being minimised, how far it has come, and the **step size against the tolerance that stops the loop** — so you can tell "nearly done" from "stuck" |
 | **Identifying** | Verified quads drawn over the field, line weight scaling with how much of the whole field each hypothesis explains. Usually invisible: on a good map identification finishes in well under a tenth of a second. You will mostly see this when it is *struggling*, which is when it is worth seeing |
 
-Two stages — **Solving camera motion** and **Building star map** — have no display yet.
+Two stages — **Solving camera motion** and **Building star map** — draw nothing on the video. On a long clip they take up to a minute, so they run in a background thread: the page stays responsive, the progress bar moves through them, and its text gives the percentage of the solve done.
 
 ## How it works
 

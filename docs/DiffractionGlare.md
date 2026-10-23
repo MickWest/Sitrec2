@@ -218,7 +218,8 @@ apparent size, so most of the sky becomes very small dots. That is why it is off
 Planets get the same treatment from the same switch, but they are handled differently, because
 a planet is genuinely *resolved* — it really does have an angular size worth drawing.
 
-Normally a planet is sized by magnitude too, and it is even further out than a star: Jupiter
+Normally a planet is sized by magnitude too (every planet except Venus and Jupiter is drawn at
+least as large as a star of the same magnitude), and it is even further out than a star: Jupiter
 rendered **1006 arcseconds** across against a true diameter of about 38, so 26× too wide and
 roughly 700× too much area. Convolved with a PSF that produced a striped smear, not a pattern.
 

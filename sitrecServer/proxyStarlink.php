@@ -272,9 +272,22 @@ function gpFailSoft($message) {
     die($message);
 }
 
+// Time limits for the upstream, in seconds. Every failure path below already
+// reports a failed fetch through gpFailSoft(), and a timeout is one more of those.
+//
+// The history query gets a long limit on purpose: it legitimately downloads
+// a large body (a LEO set runs to ~35 MB even with the column list above),
+// Space-Track is slow to build it, and the result is cached for good, so each
+// date is fetched once. Login plus query stays under the three minutes that
+// the production reverse proxy allows a request. A CUSTOM source stands in
+// for the same history and gets the same limit.
+$gpLoginTimeoutSec = 20;
+$gpHistoryTimeoutSec = 150;
+$gpConnectTimeoutSec = 10;
+
 // For CUSTOM type, use simple GET request without Space-Track login
 if ($type == "CUSTOM") {
-    $result = curlGetRequest($url);
+    $result = curlGetRequest($url, [], $gpHistoryTimeoutSec);
     $data = $result['data'];
     $http_status = $result['http_status'];
 } else {
@@ -307,6 +320,8 @@ if ($type == "CUSTOM") {
     curl_setopt($ch, CURLOPT_HEADER, true);
     curl_setopt($ch, CURLOPT_COOKIEJAR, $cookieFile); // Save cookies for subsequent requests
     curl_setopt($ch, CURLOPT_COOKIEFILE, $cookieFile); // Use saved cookies
+    curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, $gpConnectTimeoutSec);
+    curl_setopt($ch, CURLOPT_TIMEOUT, $gpLoginTimeoutSec);
 
     // Execute login request
     $response = curl_exec($ch);
@@ -331,6 +346,7 @@ if ($type == "CUSTOM") {
     curl_setopt($ch, CURLOPT_HTTPGET, true);
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
     curl_setopt($ch, CURLOPT_HEADER, false); // Set to false to exclude headers from the response
+    curl_setopt($ch, CURLOPT_TIMEOUT, $gpHistoryTimeoutSec);
 
     // Execute data query request
     $data = curl_exec($ch);

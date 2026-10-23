@@ -41,6 +41,24 @@ test('a new pool keeps only the builds the live manifest names, at most three wi
     expect(call(`retainedBuilds({shipped:{id:${JSON.stringify(shipped)}},beta:{id:${JSON.stringify(beta)}}},${JSON.stringify(fresh)},2);`).status).not.toBe(0);
 });
 
+test('a new pool does not keep a Beta that its Shipped has retired', () => {
+    const shipped = 'shipped-20261013212807292-4e5786cf3f78';
+    const beta = 'beta-20260909221048500-dfbcb581e84a';
+    const fresh = 'beta-20261024000000000-0123456789ab';
+    const at = (shippedVersion, betaVersion) => ({manifest: {shipped: {id: shipped, version: shippedVersion},
+        beta: {id: beta, version: betaVersion}}});
+    const kept = state => {
+        const result = call(`console.log(JSON.stringify(retainedBuilds(${JSON.stringify(state)},${JSON.stringify(fresh)})));`);
+        expect(result.status).toBe(0);
+        return JSON.parse(result.stdout);
+    };
+    expect(kept(at('2.183.4', '2.156.4'))).toEqual([shipped]);
+    // Numeric, not lexical; equal versions are not superseded.
+    expect(kept(at('2.10.0', '2.9.9'))).toEqual([shipped]);
+    expect(kept(at('2.183.4', '2.183.4'))).toEqual([shipped, beta]);
+    expect(kept(at('2.183.4', '2.183.5'))).toEqual([shipped, beta]);
+});
+
 test('Beta scope permits display changes and refuses runtime, auth, dependency and backend changes', () => {
     expect(call(`checkScope(['src/CUIBar.js','src/nodes/CNodeDisplayTrack.js','tests/display.test.js','tests_regression/fast-regression/run.mjs','scripts/quickship.mjs','data/custom/SitCustom.js','tools/shf/app.js','tools/shf/manifest.webmanifest']);`).status).toBe(0);
     for (const name of ['sitrecServer/channels.php', 'src/release/bootstrap.js', 'src/SettingsManager.js',

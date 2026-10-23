@@ -1111,11 +1111,14 @@ export const saveMethods = {
                 fileEntry.localPesSidecarURL = sidecarPath;
             }
 
-            if (fileEntry.dataType === "videoImage" && NodeMan.exists("video")) {
-                const videoNode = NodeMan.get("video");
-                const videoItem = videoNode.videos?.find(v => v.imageFileID === key);
-                if (videoItem) {
-                    videoItem.localStaticURL = chosenPath;
+            if (fileEntry.dataType === "videoImage") {
+                // The image can be in the main Video view or the second one.
+                for (const vid of ["video", "video2"]) {
+                    if (!NodeMan.exists(vid)) continue;
+                    const videoItem = NodeMan.get(vid).videos?.find(v => v.imageFileID === key);
+                    if (videoItem) {
+                        videoItem.localStaticURL = chosenPath;
+                    }
                 }
             }
         }
@@ -1410,14 +1413,18 @@ export const saveMethods = {
                     console.log("AS PROMISED: " + staticURL)
                     fileEntry.staticURL = staticURL;
 
-                    if (fileEntry.dataType === "videoImage" && NodeMan.exists("video")) {
-                        const videoNode = NodeMan.get("video");
-                        const videoEntry = videoNode.videos?.find(v => v.imageFileID === fileKey);
-                        if (videoEntry) {
-                            console.log(`[rehostDynamicLinks] Updated video entry staticURL for image ${fileKey}`);
-                            videoEntry.staticURL = staticURL;
-                            if (videoNode.imageFileID === fileKey) {
-                                videoNode.staticURL = staticURL;
+                    if (fileEntry.dataType === "videoImage") {
+                        // The image can be in the main Video view or the second one.
+                        for (const vid of ["video", "video2"]) {
+                            if (!NodeMan.exists(vid)) continue;
+                            const videoNode = NodeMan.get(vid);
+                            const videoEntry = videoNode.videos?.find(v => v.imageFileID === fileKey);
+                            if (videoEntry) {
+                                console.log(`[rehostDynamicLinks] Updated ${vid} entry staticURL for image ${fileKey}`);
+                                videoEntry.staticURL = staticURL;
+                                if (videoNode.imageFileID === fileKey) {
+                                    videoNode.staticURL = staticURL;
+                                }
                             }
                         }
                     }

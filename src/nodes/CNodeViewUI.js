@@ -6,6 +6,33 @@ import {NodeMan, setRenderOne} from "../Globals";
 import {CNodeViewCanvas2D} from "./CNodeViewCanvas";
 import {resolveHUDColor} from "../HUDColor";
 
+// The outline color for text filled with fillStyle: black for light text, white for
+// dark text, whichever gives the fill more contrast. null for a translucent fill.
+// A canvas reads its fillStyle back as "#rrggbb", or "rgba(r, g, b, a)" when it is
+// translucent; "#rrggbbaa" is also accepted. Anything else gets black.
+function textOutlineColor(fillStyle) {
+    let rgba;
+    const hex = /^#([0-9a-f]{6})([0-9a-f]{2})?$/i.exec(fillStyle);
+    const rgb = /^rgba?\(([^)]*)\)$/i.exec(fillStyle);
+    if (hex) {
+        rgba = [0, 2, 4].map(i => parseInt(hex[1].slice(i, i + 2), 16));
+        rgba.push(hex[2] ? parseInt(hex[2], 16) / 255 : 1);
+    } else if (rgb) {
+        rgba = rgb[1].split(/[\s,/]+/).filter(Boolean).map(parseFloat);
+    } else {
+        return "#000000";
+    }
+    const [r, g, b, a = 1] = rgba;
+    if (a < 1) return null;
+    // sRGB relative luminance. At 0.179 black and white give the same contrast.
+    const linear = c => {
+        const s = c / 255;
+        return s <= 0.04045 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4;
+    };
+    const luminance = 0.2126 * linear(r) + 0.7152 * linear(g) + 0.0722 * linear(b);
+    return luminance > 0.179 ? "#000000" : "#ffffff";
+}
+
 export class CNodeViewUI extends CNodeViewCanvas2D {
     // constructor is passed a CView object or id, if null then this is stand-alone
     constructor(v) {
@@ -261,8 +288,6 @@ export class CNodeViewUI extends CNodeViewCanvas2D {
             this.ctx.strokeStyle = "black"; // t.color;
             this.ctx.textAlign = t.align;
             this.drawText(t.text, x, y);
-            // this.ctx.lineWidth = Math.floor(this.sx(0.2));                 // Set the width of the outline
-            // this.ctx.strokeText(t.text, x, y);
             t.bbox = getTextBBox(this.ctx, t.text)
             const w = t.bbox.width
             const h = t.bbox.height
@@ -273,7 +298,21 @@ export class CNodeViewUI extends CNodeViewCanvas2D {
 
     }
 
+    // Outline the glyphs so the text reads on a background of its own color (yellow
+    // text on a yellow haze). The stroke goes UNDER the fill, so only its outer half
+    // shows, about one pixel at 16px. It is in canvas units, so it scales with the
+    // font and the devicePixelRatio. Translucent text is filled plain: an opaque
+    // outline would swamp a faint fill and read as dark text.
     drawText(text, x, y) {
+        const outline = textOutlineColor(this.ctx.fillStyle);
+        if (outline) {
+            this.ctx.save();
+            this.ctx.strokeStyle = outline;
+            this.ctx.lineWidth = parseFloat(this.ctx.font) / 8;
+            this.ctx.lineJoin = "round";
+            this.ctx.strokeText(text, x, y);
+            this.ctx.restore();
+        }
         this.ctx.fillText(text, x, y);
     }
 

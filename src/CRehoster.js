@@ -457,7 +457,7 @@ export class CRehoster {
 
         if (data.byteLength > limit * 1024 * 1024) {
             console.warn("File exceeds the upload size limit");
-            alert("File is too big to rehost: " + filename + " size: " + data.byteLength + " bytes. Please use a smaller file. Limit = " + limit + " MB");
+            showError("File is too big to rehost: " + filename + " size: " + data.byteLength + " bytes. Please use a smaller file. Limit = " + limit + " MB");
             return Promise.reject(new Error("File is too big to rehost: " + filename + " size: " + data.byteLength + " bytes. Please use a smaller file."));
         }
 

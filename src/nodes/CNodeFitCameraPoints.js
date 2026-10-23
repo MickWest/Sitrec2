@@ -43,8 +43,8 @@ import {FitPointHandles3D, surfaceAlongRay} from "../FitPointHandles3D";
 import {FitPointSightLines3D} from "../FitPointSightLines3D";
 import {drawFitHandle, GRAB_RADIUS, OFF_FRAME_ALPHA, POINT_COLORS} from "../FitHandleDraw";
 import {
-    azElRollFromBasis, basisFromAzElRoll, evaluateCamera, fitCameraToPoints, MAX_ABS_EL,
-    projectWorldPoint,
+    azElRollFromBasis, basisFromAzElRoll, clampStartElevation, evaluateCamera, fitCameraToPoints,
+    MAX_ABS_EL, projectWorldPoint,
 } from "../CameraPointFit";
 import {fitCameraByPlaneHomography} from "../CameraPlaneHomography";
 import {liftCameraRelative, liftWorldPoint} from "../atmosphere/terrestrialRefraction";
@@ -1776,11 +1776,6 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
         const state = this.currentCameraState();
         if (!state) { this.updateStatus("No look camera"); return false; }
 
-        if (Math.abs(state.elDeg) > MAX_ABS_EL) {
-            this.updateStatus(`Camera is within ${90 - MAX_ABS_EL} deg of vertical — cannot fit`);
-            return false;
-        }
-
         const free = {
             position: !this.lockPosition,
             az: true,
@@ -1828,7 +1823,12 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
             ? this.fitHomographyRefracted({...solverSpec, initial})
             : fitCameraToPoints({...solverSpec, initial}));
 
-        let result = solveFrom(state);
+        // A camera within 90 - MAX_ABS_EL deg of vertical used to be refused before the solve,
+        // and since every Fit Now read the same pose, nothing the user could press got them out.
+        // Start from the pose tilted back to the limit instead — see clampStartElevation.
+        // `current` above still scores the camera as it really is, so the acceptance gate is
+        // unchanged.
+        let result = solveFrom(clampStartElevation(state));
         // Re-solve from the answer until the answer stops improving — see SOLVE_PASSES.
         for (let pass = 1; pass < SOLVE_PASSES && result.ok; pass++) {
             const again = solveFrom({

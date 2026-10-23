@@ -19,9 +19,11 @@ import {
     GlobalDateTimeNode,
     Globals,
     guiMenus,
+    isSitchEstablishedByUser,
     NodeMan,
     setRenderOne,
     setSitchEstablished,
+    setSitchEstablishedByTrackImport,
     Sit,
     TrackManager
 } from "./Globals";
@@ -452,6 +454,84 @@ class CTrackManager extends CManager {
     constructor() {
         super();
         this.usedShortNames = new Set(); // Track all used short names for uniqueness
+        this.candidateTrackNames = new Set(); // see setCandidateTrackNames
+    }
+
+    // The tracks an analysis handoff sends as FITTED CANDIDATES, by the names the
+    // sender gives them (meta.candidateTrackNames, read by the ?handoff= loader in
+    // index.js). Their markers stay lit where an ordinary track's is not; see the
+    // default marker in makeMotionTrack.
+    //
+    // Set BEFORE the handoff's files are imported: the marker is built as each track
+    // arrives. By name, and only from the sender: nothing in a candidate's own file
+    // says it is one, and guessing from its c_/w_ prefix would catch a real track a
+    // user happened to name that way.
+    setCandidateTrackNames(names) {
+        this.candidateTrackNames = new Set(names ?? []);
+    }
+
+    isCandidateTrack(shortName) {
+        return this.candidateTrackNames.has(shortName);
+    }
+
+    // New Sitch empties the manager. The names belong to the handoff that set them, so they
+    // go too: an ordinary track that later reuses a former candidate's name gets the
+    // ordinary marker.
+    disposeAll() {
+        super.disposeAll();
+        this.candidateTrackNames.clear();
+    }
+
+    // LOAD-ORDER PAIRING. A file that declares no camera/target roles is paired by
+    // load order in a fresh sitch: the first track loaded becomes the camera and the
+    // second the target (the -1/-2 drop targets, see updateDropTargets), and the
+    // second also turns Camera Heading to "To Target". For two single-track files
+    // dropped one after the other, that is what the user is setting up. For ONE file
+    // of many aircraft it is a guess, and it locks the look view on to whichever
+    // aircraft came second — so that import asks first, once.
+    //
+    // True when this import should ask. Only where the pairing would happen, and only
+    // where there is someone to answer: the callers already skip the question for a
+    // saved sitch, a sitch definition and preselected tracks (as they skip the
+    // multi-track picker), and the regression harness and the MCP bridge are skipped
+    // here, as for "Enable Bad Data Filter?". Those all keep the pairing.
+    shouldAskLoadOrderPairing(file, trackFiles) {
+        if (Globals.regression || window._mcpDebug) return false;
+        if (trackFiles.length !== 1 || Globals.sitchEstablished || this.size() !== 0) return false;
+        // Independent tracks, as the picker counts them: a MISB file's Center_ track is
+        // the same flight, and pairing the two is that file's normal setup.
+        if (!(file?.getImportTrackCount?.() >= 2)) return false;
+        if (file.autoSelectAsCamera || file.isSondeTrack?.()) return false;
+        for (let i = 0; i < file.getTrackCount(); i++) {
+            if (file.trackRoleHint?.(i)) return false;
+        }
+        if (Sit.dropAsController) return false;
+        const dropTargets = Sit.dropTargets?.track ?? [];
+        const isDropTarget = (id) => NodeMan.exists(id)
+            && dropTargets.some(target => target.replace(/-\d+$/, "") === id);
+        return isDropTarget("cameraTrackSwitch") && isDropTarget("targetTrackSwitch");
+    }
+
+    // Ask the load-order pairing question for a file that has no picker. Resolves true
+    // to pair. Dismissing the dialog pairs too: that is what an import did before it
+    // asked, so closing the dialog changes nothing.
+    async askLoadOrderPairing(file, trackFileName) {
+        const names = {
+            count: file.getImportTrackCount(),
+            camera: file.getShortName(0, trackFileName),
+            target: file.getShortName(1, trackFileName),
+        };
+        const choice = await showChoice(t("trackManager.pairTracks.question", names), {
+            title: t("trackManager.pairTracks.title"),
+            cancelValue: "pair",
+            options: [
+                {label: t("trackManager.pairTracks.yes"), value: "pair", primary: true,
+                    description: t("trackManager.pairTracks.yesDescription", names)},
+                {label: t("trackManager.pairTracks.no"), value: "noPair",
+                    description: t("trackManager.pairTracks.noDescription")},
+            ],
+        });
+        return choice !== "noPair";
     }
 
     // Next auto colour for a track that is created directly by the user rather
@@ -747,6 +827,8 @@ class CTrackManager extends CManager {
     async addTracks(trackFiles, removeDuplicates = false, sphereMask = LAYER.MASK_HELPERS, options = {}) {
 
         let settingSitchEstablished = false;
+        // Read before any track is built; see setSitchEstablishedByTrackImport.
+        const establishedByUserBeforeImport = isSitchEstablishedByUser();
         const showDialog = options.showDialog !== false && !Globals.deserializing;
         const syncTime = options.syncTime !== false;
 
@@ -792,6 +874,8 @@ class CTrackManager extends CManager {
 
         // Pre-scan: for files with 3+ independently-selectable tracks, show selection dialog
         const selectedIndicesMap = new Map(); // filename -> Set<number>
+        // Files whose load-order pairing the user turned down. See shouldAskLoadOrderPairing.
+        const declinedPairing = new Set();
 
         // If pre-selected track indices are provided (e.g. from saved sitch), use them directly
         if (options.selectedTracks) {
@@ -823,6 +907,8 @@ class CTrackManager extends CManager {
                     // that loads together, so its 2-3 sub-tracks must not trigger the picker.
                     const trackCount = file.getTrackCount();
                     const tIdx = targetTrackIndex(file);
+                    // Asked once: inside the picker when the file gets one, else on its own below.
+                    let askPairing = this.shouldAskLoadOrderPairing(file, trackFiles);
                     if (file.getImportTrackCount() >= 3) {
                         // Build preview info for all tracks
                         const previewInfos = [];
@@ -832,7 +918,10 @@ class CTrackManager extends CManager {
                         }
                         if (previewInfos.length >= 3) {
                             const {hasFrustum, cameraPosition} = getCameraFilterState();
-                            const selected = await showMultiTrackLoadDialog(previewInfos, hasFrustum, cameraPosition);
+                            const {selected, pairByLoadOrder} = await showMultiTrackLoadDialog(
+                                previewInfos, hasFrustum, cameraPosition, {askPairing});
+                            askPairing = false;
+                            if (!pairByLoadOrder) declinedPairing.add(trackFileName);
                             if (selected === null) {
                                 // User cancelled — skip this file entirely
                                 selectedIndicesMap.set(trackFileName, new Set());
@@ -866,6 +955,9 @@ class CTrackManager extends CManager {
                             selectedIndicesMap.set(trackFileName, new Set([tIdx]));
                         }
                         // "all" (or dismiss) → leave unset → load every sub-track
+                    }
+                    if (askPairing && !await this.askLoadOrderPairing(file, trackFileName)) {
+                        declinedPairing.add(trackFileName);
                     }
                 }
             }
@@ -1180,7 +1272,8 @@ class CTrackManager extends CManager {
 
                     let hasAngles = false;
                     if (!isSondeTrack) {
-                        hasAngles = this.updateDropTargets(trackNumber, shortName, trackID, trackDataID, trackNode, hasFOV, trackOb);
+                        hasAngles = this.updateDropTargets(trackNumber, shortName, trackID, trackDataID, trackNode, hasFOV, trackOb,
+                            !declinedPairing.has(trackFileName));
                     }
 
                     this.makeMotionTrack(trackOb, shortName, trackColor, dropColor, trackID);
@@ -1257,7 +1350,7 @@ class CTrackManager extends CManager {
         } // and go to the next track
 
         if (settingSitchEstablished) {
-            setSitchEstablished(true);
+            setSitchEstablishedByTrackImport(establishedByUserBeforeImport);
         }
 
         // Make auto-assigned track colours deterministic (order-independent) BEFORE
@@ -1443,7 +1536,10 @@ class CTrackManager extends CManager {
                 id: sphereId + "_ob",
                 geometry: "sphere",
                 radius: isObject ? DEFAULT_TRACK_SPHERE_RADIUS_M : 2,
-                material: "phong",     // as the other auto track markers
+                // Unlit, as the default track marker below: a reported target in a
+                // real recording is an ordinary object, not a fitted candidate, and
+                // must be as easy to see at night as the platform it came with.
+                material: "basic",
                 color: trackColor,
                 label: shortName,
                 visible: isObject,
@@ -1468,13 +1564,18 @@ class CTrackManager extends CManager {
                 id: sphereId + "_ob",
                 geometry: "sphere",
                 radius: DEFAULT_TRACK_SPHERE_RADIUS_M,
-                // Phong rather than the lambert default: these markers are
-                // untextured solids, and a lambert sphere reads as a flat disc
-                // from most angles because nothing on it catches a highlight.
-                // A specular term is what makes it legible as a 3-D body, which
-                // matters most for exactly the case these markers exist for —
-                // several of them close together at different depths.
-                material: "phong",
+                // UNLIT ("basic") for an ordinary track, such as an aircraft from a
+                // KML: the marker shows its full track colour by day and by night. A
+                // lit marker is dark on the side away from the Sun, and at night that
+                // is the whole marker, so the aircraft was hard to see after dark.
+                //
+                // Phong for a fitted candidate from an analysis handoff (see
+                // setCandidateTrackNames). Those are several markers close together at
+                // different depths, and an unlit or lambert sphere reads as a flat disc
+                // from most angles; the specular highlight is what makes each one
+                // legible as a 3-D body. The ground-truth icosahedron (above) is phong
+                // for the same reason.
+                material: this.isCandidateTrack(sphereId) ? "phong" : "basic",
                 color: trackColor,
                 label: shortName,
 
@@ -1835,7 +1936,10 @@ class CTrackManager extends CManager {
         }
     }
 
-    updateDropTargets(trackNumber, shortName, trackID, trackDataID, trackNode, hasFOV, trackOb) {
+    // pairByLoadOrder false: the user turned down load-order pairing for this track's file
+    // (see shouldAskLoadOrderPairing), so a file without roles selects into neither the
+    // camera nor the target switch.
+    updateDropTargets(trackNumber, shortName, trackID, trackDataID, trackNode, hasFOV, trackOb, pairByLoadOrder = true) {
         let hasAngles = false;
 
         // Camera/target role hints from the source file (see CTrackFile.trackRoleHint).
@@ -1952,12 +2056,16 @@ class CTrackManager extends CManager {
                         // Auto-selection. For the camera/target switches, a role-declaring
                         // file selects by role (camera track into cameraTrackSwitch, target
                         // track into targetTrackSwitch) and its roleless tracks select into
-                        // neither; everything else uses the load-order selectNumber rule.
+                        // neither; everything else uses the load-order selectNumber rule,
+                        // unless the user turned that down for this file. Not selecting the
+                        // target also leaves Camera Heading alone (the "To Target" below).
                         const isRoleSwitch = switchNode.id === "cameraTrackSwitch" || switchNode.id === "targetTrackSwitch";
                         let autoSelect;
                         if (isRoleSwitch && fileHasRoleHints) {
                             const wantedRole = switchNode.id === "cameraTrackSwitch" ? "camera" : "target";
                             autoSelect = roleHint === wantedRole;
+                        } else if (isRoleSwitch && !pairByLoadOrder) {
+                            autoSelect = false;
                         } else {
                             autoSelect = trackNumber === selectNumber;
                         }
@@ -2370,7 +2478,9 @@ class CTrackManager extends CManager {
     // - removes the track from the "Sync Time to" menu
     // - drops the backing FileManager entry when no imported track still uses it
     // - resets sitchEstablished when the last track goes away, so the next first
-    //   imported track can once again establish time/location automatically
+    //   imported track can once again establish time/location automatically -
+    //   but only when track imports alone established it, never over a camera,
+    //   time or view the user set up
     disposeRemove(id) {
         if (id === undefined) {
             return;
@@ -2384,6 +2494,11 @@ class CTrackManager extends CManager {
         const trackOb = this.get(trackID);
         const trackFileName = trackOb?.trackFileName;
         const syncTrackID = trackOb?.trackDataNode?.id;
+
+        // Read before the track is disposed: disposing the track the camera switch has
+        // selected makes the switch fall back to its first option through the same change
+        // event a user edit fires, and that is not the user setting the camera up.
+        const establishedByUserBeforeRemove = isSitchEstablishedByUser();
 
         if (syncTrackID && GlobalDateTimeNode?.removeSyncToTrack) {
             GlobalDateTimeNode.removeSyncToTrack(syncTrackID);
@@ -2412,7 +2527,11 @@ class CTrackManager extends CManager {
             }
         }
 
-        if (this.size() === 0) {
+        if (!establishedByUserBeforeRemove && Globals.sitchEstablished) {
+            setSitchEstablishedByTrackImport(false);
+        }
+
+        if (this.size() === 0 && !isSitchEstablishedByUser()) {
             setSitchEstablished(false);
         }
 

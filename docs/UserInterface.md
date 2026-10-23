@@ -210,7 +210,7 @@ Custom graphs are available in a custom sitch and in other sitches you can modif
 - **Show Attribution** — the credit for the map and elevation data, drawn over the view.
 - **Show Filename** — the name of the current video file, drawn at the bottom of the view and in exported videos.
 - **New Sitch Startup** — how a new sitch begins: its **Units**, and an optional start location (**Use Start Location**, **Start Latitude**, **Start Longitude**, **Start Altitude (m)**), and **3D Buildings** when a 3D buildings source is available. A saved sitch always uses its own units and camera.
-- **Use Beta updates** — on installations that offer a Beta version, use it instead of the fully reviewed Shipped version. After a change, Sitrec asks whether to reload now.
+- **Use Beta updates** — on installations that offer a Beta version, use it instead of the fully reviewed Shipped version. After a change, Sitrec asks whether to reload now. When a Shipped version that is newer than the Beta arrives, that Beta is retired: everyone gets Shipped until a newer Beta is available. A sitch saved with a retired Beta opens in Shipped without a question.
 
 ## Dark and light themes
 

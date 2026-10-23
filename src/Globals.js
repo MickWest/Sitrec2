@@ -172,8 +172,30 @@ export function getEffectiveMSAASamples() {
     return Math.max(0, Math.min(8, Math.round(s)));
 }
 
+// Globals.sitchEstablished: the camera, time and location are set up, so an imported track
+// must not set them up again. Globals.sitchEstablishedByTrackImport: track imports are the
+// only thing that set it up, so removing every track can make the sitch fresh again (see
+// TrackManager.disposeRemove). Every other way in - a camera, time or position edit, a
+// loaded save, URL parameters - either comes through setSitchEstablished, which clears it,
+// or sets Globals.sitchEstablished directly while it is still clear (page start, a
+// ?custom= or handoff load, just after New Sitch), so removing tracks never undoes a setup
+// the user made.
 export function setSitchEstablished(bool) {
     Globals.sitchEstablished = bool;
+    Globals.sitchEstablishedByTrackImport = false;
+}
+
+// A track import establishes the sitch. byUserBeforeImport is isSitchEstablishedByUser()
+// read when the import began: building the tracks can select the camera track through the
+// same switch event a user edit fires, so it cannot be read at the end.
+export function setSitchEstablishedByTrackImport(byUserBeforeImport) {
+    Globals.sitchEstablished = true;
+    Globals.sitchEstablishedByTrackImport = !byUserBeforeImport;
+}
+
+// True when something other than a track import established the sitch.
+export function isSitchEstablishedByUser() {
+    return !!Globals.sitchEstablished && !Globals.sitchEstablishedByTrackImport;
 }
 
 // --- V5 OBB tile-culling stats (Phase 0.1.a) ---

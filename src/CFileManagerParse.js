@@ -597,8 +597,12 @@ export const parseMethods = {
         }
 
         if (fileManagerEntry.dataType === "videoImage") {
-            if (NodeMan.exists("video")) {
-                const videoNode = NodeMan.get("video");
+            // An image the sitch was saved with in the second video view goes back there,
+            // not into the main Video view.
+            const viewId = Sit.videos2?.some(entry => entry.imageFileID === filename || entry.fileName === filename)
+                ? "video2" : "video";
+            if (NodeMan.exists(viewId)) {
+                const videoNode = NodeMan.get(viewId);
                 const alreadyLoaded = Globals.deserializing && videoNode.videos?.some(videoEntry =>
                     (videoEntry.imageFileID === filename || videoEntry.fileName === filename) && videoEntry.videoData
                 );
@@ -616,8 +620,8 @@ export const parseMethods = {
             if (buffer) {
                 const ext = getFileExtension(filename).toLowerCase();
                 const finishRestore = (img) => {
-                    if (NodeMan.exists("video")) {
-                        const videoNode = NodeMan.get("video");
+                    if (NodeMan.exists(viewId)) {
+                        const videoNode = NodeMan.get(viewId);
                         videoNode.makeImageVideo(filename, img, false, filename);
                         videoNode.imageFileID = filename;
                         console.log(`Restored video image "${filename}" (${img.width}x${img.height})`);

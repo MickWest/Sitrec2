@@ -1302,6 +1302,22 @@ const en = {
             label: "Show Object Menu",
             tooltip: "Open the menu of the object that moves along this track",
         },
+        // Asked when one file with two or more tracks, and no camera or target of its own,
+        // goes into a new sitch. See TrackManager.shouldAskLoadOrderPairing.
+        pairTracks: {
+            title: "Camera and Target",
+            question: "This file has {{count}} tracks. Use the first track, \"{{camera}}\", as the camera "
+                + "and the second track, \"{{target}}\", as the target?\n\n"
+                + "The camera then moves with \"{{camera}}\" and always points at \"{{target}}\".",
+            yes: "Use as camera and target",
+            yesDescription: "The camera moves with \"{{camera}}\" and points at \"{{target}}\"",
+            no: "Only load the tracks",
+            noDescription: "The camera and target do not change. You can select the tracks later "
+                + "in Camera → Location → Position and in Target → Target Track",
+            checkbox: "Use the first two tracks as camera and target",
+            checkboxTooltip: "On: the camera moves with the first track that loads and always points at the second. "
+                + "Off: the tracks load, but the camera and target do not change.",
+        },
     },
     altitudeLock: {
         lock: {
@@ -2132,6 +2148,13 @@ const en = {
         loadActive: { label: "Load ACTIVE Satellites", tooltip: "Get the CURRENT (not historical, now, real time) ACTIVE satellite positions. This will download the data from the internet, so it may take a few seconds.\n" },
         loadSlow: { label: "(Experimental) Load SLOW Satellites", tooltip: "Get the latest SLOW Satellite TLE data for the set simulator date/time. This will download the data from the internet, so it may take a few seconds.\nWill also enable the satellites to be displayed in the night sky. Might time-out for recent dates" },
         loadAll: { label: "(Experimental) Load ALL Satellites", tooltip: "Get the latest Satellite TLE data for ALL the satellites for the set simulator date/time. This will download the data from the internet, so it may take a few seconds.\nWill also enable the satellites to be displayed in the night sky. Might time-out for recent dates" },
+        tleRange: {
+            fromLabel: "TLEs From",
+            fromTooltip: "Date and time (UTC) of the oldest elements in the loaded TLE data. This is the date in the data, not the date you asked for.",
+            toLabel: "TLEs To",
+            toTooltip: "Date and time (UTC) of the newest elements in the loaded TLE data. This is the date in the data, not the date you asked for.",
+            none: "None loaded",
+        },
         flareAngle: { label: "Flare Angle Spread", tooltip: "Off-specular angle used for flare arrows and the legacy cone model.\nPhotometric estimates use a continuous measured brightness curve, including light outside this angle." },
         brightnessModel: { label: "Satellite Brightness Model", tooltip: "Photometric estimate: continuous Starlink flare curves, estimated diffuse light, range and phase.\nUsed by both the live view and HDR long exposures. Individual spacecraft attitude and brightness remain uncertain.\nLegacy cone restores the earlier display approximation." },
         starlinkProfile: { label: "Starlink Design", tooltip: "Choose a known design when supported by independent information.\nUnknown uses an estimated equal-weight flux mixture; it does not infer design from catalogue numbers or orbit inclination." },
@@ -2157,7 +2180,7 @@ const en = {
         labelFlaresOnly: { label: "Label Flares Only", tooltip: "Only label satellites that are currently flaring" },
         labelLitOnly: { label: "Label Lit Only", tooltip: "Only label satellites that are sunlit (not in Earth's shadow)" },
         labelLookVisibleOnly: { label: "Label Look Visible Only", tooltip: "Only label satellites visible in the look view camera frustum" },
-        flareRegion: { label: "Flare Region", tooltip: "Show the sky region where satellite flares are visible" },
+        flareRegion: { label: "Flare Region", tooltip: "Show the sky region where satellite flares are visible from the look camera.\nIt assumes Starlink geometry: a flat surface that faces the Earth, at one altitude of 550 km. It does not check the Flare Band and marks the best match even when no reflection is close, so it is valid only when the camera is inside the Flare Band." },
         flareBand: { label: "Flare Band", tooltip: "Show the band on the ground where flares from a satellite track sweep" },
         filterTLEs: { label: "Filter TLEs", tooltip: "Filter visible satellites by altitude, position, orbital parameters, or name" },
         clearTLEFilter: { label: "Clear TLE Filter", tooltip: "Remove all TLE spatial/orbital filters, restoring category-based visibility" },
@@ -3204,17 +3227,20 @@ const en = {
         aspect: {
             label: "Aspect Ratio",
             tooltip: "Width divided by height of the frame that VFOV and HFOV are quoted " +
-                "against.\n\nWith a video loaded this is the video's own pixel dimensions and " +
-                "cannot be changed. Otherwise it is either pinned (Lock Aspect on) or taken " +
-                "from the view pane, which changes when you resize the window.",
+                "against.\n\nWith Lock Aspect on and a video loaded, this is the video's shape, " +
+                "shown with its own pixel dimensions. With Lock Aspect on and no video, it is " +
+                "the pinned value. With Lock Aspect off, it is taken from the view pane, which " +
+                "changes when you resize the window.",
         },
         lockAspect: {
             label: "Lock Aspect",
             tooltip: "Hold the aspect ratio fixed instead of letting it follow the view pane, " +
-                "so HFOV stays put when the window is resized.\n\nAlways on, and not editable, " +
-                "while a video is loaded: the video defines the frame.\n\nThis is separate from " +
-                "Match Video Aspect, which changes how the 3D is RENDERED rather than what the " +
-                "FOV numbers mean.",
+                "so HFOV stays put when the window is resized.\n\nLoading a video turns this on " +
+                "at the video's aspect, because the video defines the frame. Turn it off to " +
+                "quote HFOV against the view pane instead. Turning it on again locks to the " +
+                "video's aspect if a video is loaded, and to the view pane's current aspect if " +
+                "not.\n\nThis is separate from Match Video Aspect, which changes how the 3D is " +
+                "RENDERED rather than what the FOV numbers mean.",
         },
         roll: {
             label: "Roll",
@@ -3951,7 +3977,8 @@ const en = {
     positionLLA: {
         aboveGroundLevel: {
             label: "Above Ground Level",
-            tooltip: "Altitude is relative to ground level, not sea level",
+            tooltip: "Altitude is relative to ground level, not sea level. Switching it keeps " +
+                "the position and converts the altitude.",
         },
         lookup: {
             label: "Lookup",

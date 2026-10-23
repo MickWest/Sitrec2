@@ -177,6 +177,9 @@ export class CNodeControllerPTZUI extends CNodeControllerAzElZoom {
         // ratio, and setting it writes back through the same one. See fovAspect for which ratio.
         this.lockAspect = v.lockAspect ?? false;
         this.lockedAspect = v.lockedAspect ?? 16 / 9;
+        // The aspect of the video the lock has already followed; see followVideoAspect. Saved, so
+        // a sitch reloads with the lock as the user left it, not as loading a new video sets it.
+        this.videoAspectSeen = v.videoAspectSeen;
         // Plain field rather than a getter: lil-gui assigns to the property it is handed, and a
         // getter-only accessor would throw if anything ever wrote back. Refreshed in apply().
         this.aspectDisplay = "-";
@@ -261,27 +264,35 @@ export class CNodeControllerPTZUI extends CNodeControllerAzElZoom {
                     .name(t("ptzUI.aspect.label", {defaultValue: "Aspect Ratio"}))
                     .tooltip(t("ptzUI.aspect.tooltip", {defaultValue:
                         "Width divided by height of the frame that VFOV and HFOV are quoted " +
-                        "against.\n\nWith a video loaded this is the video's own pixel " +
-                        "dimensions and cannot be changed. Otherwise it is either pinned (Lock " +
-                        "Aspect on) or taken from the view pane, which changes when you resize " +
-                        "the window."}));
+                        "against.\n\nWith Lock Aspect on and a video loaded, this is the " +
+                        "video's shape, shown with its own pixel dimensions. With Lock Aspect " +
+                        "on and no video, it is the pinned value. With Lock Aspect off, it is " +
+                        "taken from the view pane, which changes when you resize the window."}));
 
                 this.lockAspectController = fovFolder.add(this, "lockAspect")
                     .listen()
                     .name(t("ptzUI.lockAspect.label", {defaultValue: "Lock Aspect"}))
                     .tooltip(t("ptzUI.lockAspect.tooltip", {defaultValue:
                         "Hold the aspect ratio fixed instead of letting it follow the view " +
-                        "pane, so HFOV stays put when the window is resized.\n\nAlways on, and " +
-                        "not editable, while a video is loaded: the video defines the frame.\n\n" +
-                        "This is separate from Match Video Aspect, which changes how the 3D is " +
-                        "RENDERED rather than what the FOV numbers mean."}))
+                        "pane, so HFOV stays put when the window is resized.\n\nLoading a " +
+                        "video turns this on at the video's aspect, because the video defines " +
+                        "the frame. Turn it off to quote HFOV against the view pane instead. " +
+                        "Turning it on again locks to the video's aspect if a video is loaded, " +
+                        "and to the view pane's current aspect if not.\n\nThis is separate from " +
+                        "Match Video Aspect, which changes how the 3D is RENDERED rather than " +
+                        "what the FOV numbers mean."}))
                     .onChange((on) => {
-                        // Freeze whatever it is right now, so ticking the box never moves the
-                        // camera — it only stops the number from drifting afterwards.
-                        if (on) this.lockedAspect = this.liveAspect() ?? this.lockedAspect;
+                        // Lock to the frame HFOV should be quoted against: the video, when one is
+                        // loaded, else the pane as it is right now. VFOV is what is stored, so
+                        // ticking the box never moves the camera — without a video it only stops
+                        // the number from drifting afterwards.
+                        if (on) this.lockedAspect = this.videoAspect() ?? this.liveAspect() ?? this.lockedAspect;
+                        // Here as well as in apply(), which does not run while another heading
+                        // source owns the camera or Free Look is on - the readout must name the
+                        // aspect HFOV is now quoted against, not the one before the click.
+                        this.updateAspectReadout();
                         this.refresh();
                     });
-                this.updateAspectLockAvailability();
             }
             if (this.roll !== undefined ) {
                 this.rollController = guiPTZ.add(this, "roll", -180, 180, 0.005).listen().name(t("ptzUI.roll.label")).tooltip(t("ptzUI.roll.tooltip")).onChange(v => this.refresh()).setLabelColor(pszUIColor)
@@ -399,15 +410,23 @@ export class CNodeControllerPTZUI extends CNodeControllerAzElZoom {
     // is not a measurement of anything, and getting exactly this wrong by 10 degrees is how a
     // published reconstruction can put a sensor 60% too high.
 
-    /** The aspect of the loaded video, from its ORIGINAL coded dimensions. Undefined if none. */
-    videoAspect() {
-        const videoNode = NodeMan.get("video", false);
-        if (!videoNode) return undefined;
+    /** The ORIGINAL coded pixel dimensions of the loaded video (or photo). Undefined if none. */
+    videoSize() {
+        const videoData = NodeMan.get("video", false)?.videoData;
         // Originals rather than the working dimensions: a resolution cap rewrites the working
         // pair, and metadata rotation can swap it, while the coded pair stays as delivered.
-        const w = videoNode.originalVideoWidth || videoNode.videoData?.videoWidth || 0;
-        const h = videoNode.originalVideoHeight || videoNode.videoData?.videoHeight || 0;
-        return (w > 0 && h > 0) ? w / h : undefined;
+        // They are also what says the video has loaded at all. Until its coded size is known, a
+        // new videoData carries placeholder working dimensions (CVideoData's 100x100), which
+        // would read as a square video and make followVideoAspect lock to it.
+        const w = videoData?.originalVideoWidth || 0;
+        const h = videoData?.originalVideoHeight || 0;
+        return (w > 0 && h > 0) ? {w, h} : undefined;
+    }
+
+    /** The aspect of the loaded video, from its ORIGINAL coded dimensions. Undefined if none. */
+    videoAspect() {
+        const size = this.videoSize();
+        return size ? size.w / size.h : undefined;
     }
 
     /** The aspect of the pane this camera is actually being rendered into. Undefined if none. */
@@ -426,21 +445,20 @@ export class CNodeControllerPTZUI extends CNodeControllerAzElZoom {
     /**
      * The aspect ratio the horizontal FOV is quoted against.
      *
-     * A video wins outright and cannot be overridden — the footage IS the frame, so its shape is
-     * not a preference. Otherwise Lock Aspect chooses between a pinned value and the live pane,
-     * which drifts every time the window is resized and would otherwise make HFOV wander while
-     * nothing about the camera changed.
+     * Lock Aspect chooses between a pinned value and the live pane, which drifts every time the
+     * window is resized and would otherwise make HFOV wander while nothing about the camera
+     * changed. A loaded video sets the pinned value - loading one turns the lock on at the
+     * video's shape, because the footage IS the frame (see followVideoAspect) - but the user may
+     * turn the lock off to quote HFOV against the pane instead.
+     *
+     * Catches up with the video first, so a reader in a frame where apply() did not run (another
+     * heading source owns the camera, so this controller is disabled) still gets the lock that
+     * a newly loaded video sets.
      */
     get fovAspect() {
-        const video = this.videoAspect();
-        if (video !== undefined) return video;
+        this.followVideoAspect();
         if (this.lockAspect) return this.lockedAspect;
         return this.liveAspect() ?? this.lockedAspect;
-    }
-
-    /** True when the aspect is dictated by a video, so Lock Aspect is not the user's to set. */
-    get aspectForcedByVideo() {
-        return this.videoAspect() !== undefined;
     }
 
     get hfov() {
@@ -502,28 +520,49 @@ export class CNodeControllerPTZUI extends CNodeControllerAzElZoom {
     }
 
     /**
-     * Grey out Lock Aspect while a video owns the aspect, and show it ticked, because that is
-     * what is actually happening. A checkbox that stays unticked while the value it controls is
-     * being overridden reads as the app ignoring it.
+     * Keep Lock Aspect in step with the loaded video.
      *
-     * Called every frame from apply(), so a video dropped in later takes effect; the controller
-     * is only touched when the state actually changes.
+     *  - A video the lock has not seen yet (a load, or a change to a video of another shape)
+     *    turns Lock Aspect on at the video's aspect. The footage IS the frame, so that is what
+     *    HFOV means until the user says otherwise. What they had before is remembered.
+     *  - While the lock is on with a video loaded, the locked aspect is the video's.
+     *  - Turning the lock off is the user's choice, and it stays off: the video is already seen,
+     *    so the lock does not come back on until a video of another shape arrives.
+     *  - When the video goes, the setting from before it comes back, unless the user turned
+     *    the lock off meanwhile. That is a setting they made, so it stays.
+     *
+     * videoAspectSeen is saved with the sitch. A save from before it existed has none, so its
+     * video counts as new when it loads and the lock follows it. That is how such a save always
+     * loaded - quoted against the video - so it shows the same VFOV and HFOV as before.
+     *
+     * Called every frame from apply() and on every fovAspect read. It is cheap, and writes only
+     * when something has changed.
      */
-    updateAspectLockAvailability() {
-        if (!this.lockAspectController) return;
-        const forced = this.aspectForcedByVideo;
-        if (forced === this._aspectLockForced) return;
-        this._aspectLockForced = forced;
-        if (forced) {
-            // Remember what the user had, so unloading the video puts it back rather than
-            // leaving the tick behind as a setting they never made.
-            this._userLockAspect = this.lockAspect;
-            this.lockAspect = true;
-        } else if (this._userLockAspect !== undefined) {
-            this.lockAspect = this._userLockAspect;
-            this._userLockAspect = undefined;
+    followVideoAspect() {
+        const video = this.videoAspect();
+        if (video === undefined) {
+            // Only a video seen to load counts as removed. A sitch that is loading has no video
+            // for its first frames, and that must not erase the lock that was saved with it.
+            if (this._videoWasLoaded) {
+                if (this._preVideoLock && this.lockAspect) {
+                    this.lockAspect = this._preVideoLock.lockAspect;
+                    this.lockedAspect = this._preVideoLock.lockedAspect;
+                }
+                this._preVideoLock = undefined;
+                this.videoAspectSeen = undefined;
+                this._videoWasLoaded = false;
+            }
+            return;
         }
-        this.lockAspectController.enable(!forced);
+        this._videoWasLoaded = true;
+        if (video !== this.videoAspectSeen) {
+            // Kept from the FIRST video only: changing straight to another still goes back to
+            // what the user had before any of them.
+            this._preVideoLock ??= {lockAspect: this.lockAspect, lockedAspect: this.lockedAspect};
+            this.videoAspectSeen = video;
+            this.lockAspect = true;
+        }
+        if (this.lockAspect) this.lockedAspect = video;
     }
 
     /**
@@ -551,17 +590,16 @@ export class CNodeControllerPTZUI extends CNodeControllerAzElZoom {
         }
     }
 
-    /** Refresh the read-only readout: the ratio, plus what it is in human terms. */
+    /** Refresh the read-only readout: the ratio HFOV is quoted against, plus what it is in human terms. */
     updateAspectReadout() {
         const a = this.fovAspect;
         if (!(a > 0)) { this.aspectDisplay = "-"; return; }
-        const videoNode = NodeMan.get("video", false);
-        const w = videoNode?.originalVideoWidth ?? 0;
-        const h = videoNode?.originalVideoHeight ?? 0;
-        // The video's own pixel dimensions say more than any named ratio, and say it exactly:
-        // a clip that is 1440x1080 stretched to 16:9 is a thing that happens.
-        const note = (this.aspectForcedByVideo && w > 0 && h > 0)
-            ? `${w}×${h}` : nameAspect(a);
+        // Locked with a video loaded, the ratio IS the video's, and its own pixel dimensions say
+        // more than any named ratio, and say it exactly: a clip that is 1440x1080 stretched to
+        // 16:9 is a thing that happens. Unlocked, the ratio is the pane's, and the video's pixels
+        // next to it would say that HFOV is quoted against the video when it is not.
+        const size = this.lockAspect ? this.videoSize() : undefined;
+        const note = size ? `${size.w}×${size.h}` : nameAspect(a);
         this.aspectDisplay = note ? `${a.toFixed(4)}  (${note})` : a.toFixed(4);
     }
 
@@ -573,6 +611,7 @@ export class CNodeControllerPTZUI extends CNodeControllerAzElZoom {
             fov: this.fov,
             lockAspect: this.lockAspect,
             lockedAspect: this.lockedAspect,
+            videoAspectSeen: this.videoAspectSeen,
             roll: this.roll,
             xOffset: this.xOffset,
             yOffset: this.yOffset,
@@ -604,6 +643,9 @@ export class CNodeControllerPTZUI extends CNodeControllerAzElZoom {
         this.pan360 = v.pan360 ?? (v.az > 180);
         this.lockAspect = v.lockAspect ?? false;
         this.lockedAspect = v.lockedAspect ?? 16 / 9;
+        this.videoAspectSeen = v.videoAspectSeen;
+        // What was remembered from before a video belongs to the state just replaced.
+        this._preVideoLock = undefined;
         this.updatePanRange();
         this.updateSatelliteSliderVisibility();
         this.updateLockForwardControl();
@@ -639,7 +681,7 @@ export class CNodeControllerPTZUI extends CNodeControllerAzElZoom {
         // here rather than in the constructor because the controller is attached to the camera
         // after it is built.
         this._objectNode = objectNode;
-        this.updateAspectLockAvailability();
+        this.followVideoAspect();
         this.updateAspectReadout();
         this.updateLensReadout();
     }

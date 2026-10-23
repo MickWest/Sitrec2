@@ -1,6 +1,10 @@
 <?php
 
-session_start();
+// No PHP session: behind a proxy that strips cookies the session never comes back, so the
+// one thing that has to survive between requests, a tool-call continuation, is keyed by a
+// token instead (see savePendingContinuation). session_start() used to send this header;
+// keep it, as the fetchModels reply below is per user.
+header('Cache-Control: no-store');
 
 require_once __DIR__ . '/config.php';
 require_once __DIR__ . '/config_paths.php';
@@ -208,17 +212,142 @@ foreach (($data['toolResults'] ?? []) as $toolResult) {
     }
 }
 
+// ── Tool-call continuations ────────────────────────────────────────────────────────────
+// An action tool runs in the browser, which then posts the results back (continueSession)
+// so the model can finish the turn. That second request needs the first one's prompt,
+// tools and history. They used to be in $_SESSION, but behind a proxy that strips cookies
+// the session never came back, so every continuation failed; and two turns in one session
+// overwrote each other's state. Now each state is a file named by a hash of a random token
+// (never the token itself), the reply carries the token, and the browser sends it back.
+// One use, for the same user only, and void after CHAT_PENDING_TTL seconds. A state the
+// browser never continues (it skips the call after a successful action-only batch) is
+// deleted by the cleanup in a later chat request.
+//
+// The state holds no credential: the continuation looks the provider key up again from
+// the provider name, and a user's own key (BYOK) never reaches this endpoint.
+const CHAT_PENDING_TTL = 900;
+const CHAT_PENDING_CLEANUP_SCAN = 100;
+
+function chatPendingDir() {
+    return rtrim(sys_get_temp_dir(), '/') . '/sitrec_chat_pending/';
+}
+
+function chatPendingPath($token) {
+    return chatPendingDir() . hash('sha256', $token) . '.json';
+}
+
+// Deletes expired state files, looking at no more than CHAT_PENDING_CLEANUP_SCAN entries
+// so a large directory cannot slow one request down; later requests reach the rest.
+function cleanupPendingContinuations() {
+    $dir = chatPendingDir();
+    $handle = @opendir($dir);
+    if (!$handle) return;
+    $cutoff = time() - CHAT_PENDING_TTL;
+    $scanned = 0;
+    while ($scanned < CHAT_PENDING_CLEANUP_SCAN && ($name = readdir($handle)) !== false) {
+        if ($name === '.' || $name === '..') continue;
+        $scanned++;
+        $mtime = @filemtime($dir . $name);
+        if ($mtime !== false && $mtime < $cutoff) @unlink($dir . $name);
+    }
+    closedir($handle);
+}
+
+// Returns the token for the stored state, or null if it could not be stored.
+function savePendingContinuation($userId, $state) {
+    $dir = chatPendingDir();
+    if (!is_dir($dir) && !@mkdir($dir, 0700, true) && !is_dir($dir)) return null;
+    $json = json_encode(['user_id' => (int)$userId, 'created' => time(), 'state' => $state]);
+    if ($json === false) return null;
+    $token = bin2hex(random_bytes(32));
+    $path = chatPendingPath($token);
+    // Write aside and rename, so a reader never sees a part-written file.
+    $tmp = $path . '.' . bin2hex(random_bytes(8)) . '.tmp';
+    if (@file_put_contents($tmp, $json) !== strlen($json) || !@chmod($tmp, 0600) || !@rename($tmp, $path)) {
+        @unlink($tmp);
+        return null;
+    }
+    return $token;
+}
+
+// json_decode(..., true) would turn the tools' empty "properties" objects (new stdClass())
+// into [], which a provider rejects as not an object. So decode objects, and turn each
+// non-empty one back into the array it was written from. Only an empty object encodes as
+// {}, so this restores the state exactly.
+function pendingStateFromJson($value) {
+    if ($value instanceof stdClass) {
+        $fields = get_object_vars($value);
+        if (empty($fields)) return $value;
+        $value = $fields;
+    }
+    if (is_array($value)) {
+        foreach ($value as $key => $item) $value[$key] = pendingStateFromJson($item);
+    }
+    return $value;
+}
+
+// Returns [state, null], and deletes the file, or [null, reason] with reason one of
+// no_token, unknown_token, expired_token, other_user.
+function takePendingContinuation($token, $userId) {
+    if ($token === null || $token === '') return [null, 'no_token'];
+    if (!is_string($token) || !preg_match('/^[0-9a-f]{64}$/', $token)) return [null, 'unknown_token'];
+    $path = chatPendingPath($token);
+    $raw = @file_get_contents($path);
+    if ($raw === false) return [null, 'unknown_token'];
+    $record = pendingStateFromJson(json_decode($raw));
+    if (!is_array($record) || !is_array($record['state'] ?? null)) {
+        @unlink($path);
+        return [null, 'unknown_token'];
+    }
+    if (time() - (int)($record['created'] ?? 0) > CHAT_PENDING_TTL) {
+        @unlink($path);
+        return [null, 'expired_token'];
+    }
+    // Left in place, so the owner can still use it.
+    if ((int)($record['user_id'] ?? -1) !== (int)$userId) return [null, 'other_user'];
+    // Claim it by a rename: of two requests racing on one token, only one rename() succeeds.
+    // unlink() alone does not do this everywhere; on macOS two racing unlinks can both
+    // report success.
+    $claimed = $path . '.' . bin2hex(random_bytes(8)) . '.taken';
+    if (!@rename($path, $claimed)) return [null, 'unknown_token'];
+    @unlink($claimed);
+    return [$record['state'], null];
+}
+
+// Stores the state and tells the browser to continue. If the state cannot be stored, the
+// browser still continues and gets the 409 below, so the user learns the turn failed
+// instead of silently losing a query result the model was waiting for.
+function offerContinuation(&$result, $userId, $state) {
+    $token = savePendingContinuation($userId, $state);
+    if ($token === null) {
+        error_log('chatbot.php: continuation_state_save_failed user_id=' . (int)$userId);
+    } else {
+        $result['continuationToken'] = $token;
+    }
+    $result['sessionContinue'] = true;
+}
+
 // Get user info early; the rate limit is consumed immediately before EACH provider call.
 $userInfo = getUserInfo();
 
-// Check if this is a session continuation with tool results
+// Check if this is a continuation with tool results
 $toolResults = $data['toolResults'] ?? null;
 $continueSession = isset($data['continueSession']) && $data['continueSession'];
 
-if ($continueSession && $toolResults && isset($_SESSION['chatbot_pending'])) {
-    $pendingState = $_SESSION['chatbot_pending'];
-    unset($_SESSION['chatbot_pending']);
-    
+$pendingState = null;
+$pendingMissing = 'no_tool_results';
+if ($continueSession && $toolResults) {
+    [$pendingState, $pendingMissing] = takePendingContinuation(
+        $data['continuationToken'] ?? null,
+        (int)($userInfo['user_id'] ?? 0)
+    );
+}
+// Every chat request, not only a save: the docs promise that a later request removes an
+// expired state. After the take, so an expired token is still logged as expired_token.
+cleanupPendingContinuations();
+
+if ($pendingState !== null) {
+
     $toolResultsText = "[Tool Results]\n";
     foreach ($toolResults as $tr) {
         $resultJson = json_encode($tr['result'] ?? null);
@@ -276,7 +405,7 @@ if ($continueSession && $toolResults && isset($_SESSION['chatbot_pending'])) {
     if (!empty($result['apiCalls'])) {
         $newRemaining = $pendingState['remainingIterations'] - 1;
         if ($newRemaining > 0) {
-            $_SESSION['chatbot_pending'] = [
+            offerContinuation($result, (int)($userInfo['user_id'] ?? 0), [
                 'provider' => $pendingState['provider'],
                 'systemPrompt' => $pendingState['systemPrompt'],
                 'systemParts' => $pendingState['systemParts'] ?? null,
@@ -289,8 +418,7 @@ if ($continueSession && $toolResults && isset($_SESSION['chatbot_pending'])) {
                 'available3DModels' => $pendingState['available3DModels'],
                 'availableDocs' => $pendingState['availableDocs'] ?? [],
                 'remainingIterations' => $newRemaining
-            ];
-            $result['sessionContinue'] = true;
+            ]);
         }
     }
     unset($result['history']);
@@ -317,9 +445,18 @@ if ($continueSession && $toolResults && isset($_SESSION['chatbot_pending'])) {
     exit;
 }
 
-// A new user turn supersedes any abandoned action-only continuation left in the session.
-// The browser intentionally skips that paid confirmation call, so nothing else clears it.
-unset($_SESSION['chatbot_pending']);
+// A continuation that gets here had no saved state to continue. It carries no prompt, so it
+// used to fall through to the empty-prompt reply, "Please enter a message.", which hid the
+// real failure from the user. Say what happened, and log it so it shows in the server log.
+// reason= is which check failed: no_token, unknown_token (never issued, or already used),
+// expired_token, other_user, or no_tool_results.
+if ($continueSession) {
+    error_log('chatbot.php: continuation_state_missing user_id=' . (int)($userInfo['user_id'] ?? 0)
+        . ' toolResults=' . (is_array($toolResults) ? count($toolResults) : 0)
+        . ' reason=' . $pendingMissing);
+    failChatRequest('The assistant lost track of this request on the server, so it could not finish it. '
+        . 'Please ask again.', 409, 'continuation_state_missing');
+}
 
 // Validate and sanitize prompt
 $prompt = $data['prompt'] ?? '';
@@ -413,6 +550,20 @@ function getHelpDocContent($docName, $availableDocs) {
 $aiModels = getAvailableModels($userInfo['user_groups']);
 $selectedProvider = null;
 $selectedModel = null;
+
+// Logged out, there are no server models. Say how to get one, rather than "No models
+// available for your account", or "not available for this account" when the browser still
+// sends a model it saved while the user was logged in.
+if (empty($aiModels) && (int)($userInfo['user_id'] ?? 0) <= 0) {
+    header('Content-Type: application/json');
+    echo json_encode([
+        'text' => "Sitrec's AI models need you to be logged in. You can also use your own API key: "
+            . 'Sitrec → Settings → API Keys…',
+        'apiCalls' => [],
+        'debug' => ['error' => 'login_required'],
+    ]);
+    exit;
+}
 
 if (($requestedProvider && !$requestedModel) || (!$requestedProvider && $requestedModel)) {
     failChatRequest('Both provider and model are required', 400, 'invalid_model');
@@ -917,7 +1068,7 @@ $systemMenu = $menuDocForPrompt;
 
 $systemVolatile = "\n\n" . str_replace('{{simDateTime}}', $simDateTime ?? '', promptSection('simTime')) . "\n";
 
-// The single-string form every non-Anthropic provider takes, and what the session stores.
+// The single-string form every non-Anthropic provider takes, and what a continuation stores.
 // The order still matters for them: OpenAI and Gemini cache a stable prefix automatically,
 // so putting the clock last earns a hit there too even with no explicit breakpoints.
 $systemPrompt = $systemStatic . $systemMenu . $systemVolatile;
@@ -1612,7 +1763,7 @@ if (!$selectedProvider) {
     $result = runToolLoop($selectedProvider, $apiKey, $systemPrompt, $history, $tools, $selectedModel, $menuSummary, $available3DModels, $availableDocs, 5, $systemParts, $userInfo, $specialistTools);
 
     if (!empty($result['apiCalls'])) {
-        $_SESSION['chatbot_pending'] = [
+        offerContinuation($result, (int)($userInfo['user_id'] ?? 0), [
             'provider' => $selectedProvider,
             'systemPrompt' => $systemPrompt,
             'systemParts' => $systemParts,
@@ -1625,8 +1776,7 @@ if (!$selectedProvider) {
             'available3DModels' => $available3DModels,
             'availableDocs' => $availableDocs,
             'remainingIterations' => 4
-        ];
-        $result['sessionContinue'] = true;
+        ]);
     }
     unset($result['history']);
 }

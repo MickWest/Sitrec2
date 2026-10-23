@@ -21,8 +21,9 @@ import {hideProgress, initProgress, updateProgress} from "../CProgressIndicator"
 
 import {STAR_DETECT_DEFAULTS, calibrateDetection, chooseDetectionSigma, detectSources,
     rejectReason} from "./StarDetect";
-import {applyTransform, invertTransform, solveFrameChain} from "./StarMatch";
-import {STAR_SOLVE_DEFAULTS, solveStarField} from "./StarSolve";
+import {applyTransform, invertTransform} from "./StarMatch";
+import {STAR_SOLVE_DEFAULTS} from "./StarSolve";
+import {solveAfterDetectionOffThread} from "./StarSolveOffThread";
 import {STAR_CLUSTER_DEFAULTS, groupMovingClusters} from "./StarCluster";
 import {calibrateLens} from "./StarCalibrate";
 import {
@@ -81,6 +82,10 @@ let liveQuads = [];
 // rather than a view of it working, and the five that explain the most of the field are the
 // five worth leaving on screen.
 const MAX_LIVE_QUADS = 5;
+// Where detection's share of the progress bar ends and the camera-motion / star-map solve's
+// begins. On a long clip the solve takes about as long as detection, so it needs a part of the
+// bar that visibly moves; the lens and sky stages that follow start at 96%.
+const DETECT_PROGRESS_END = 60;
 // The solve stage currently running, for the stages that are ONE GLOBAL OPTIMISATION over the
 // whole clip rather than a walk through frames. Those have no "frame N of M" to report - every
 // frame is being solved at once - so what is shown instead is the thing each stage is actually
@@ -2540,18 +2545,20 @@ async function runStarTrackerAtResolution(opts) {
         // The later updateProgress calls need no guard: with no overlay shown they write to
         // hidden elements and do nothing. Only initProgress blocks input, and only hideProgress
         // un-blocks it, so those are the two that a quiet run must not make.
-        if (!quiet) {
-            initProgress({
-                title: "Star Tracker",
-                filename: `Analyzing frames ${frame0}-${frame1}`,
-                showAbort: true,
-                onAbort: () => { aborted = true; },
-                // Only worth offering when there is more than one frame to stop short of.
-                showEnough: !still && total > 1,
-                onEnough: () => { enough = true; },
-                enoughLabel: "Enough (solve what we have)",
-            });
-        }
+        //
+        // "Enough" is only worth offering when there is more than one frame to stop short of,
+        // and only while frames are being scanned - see where detection ends.
+        const offerEnough = !still && total > 1;
+        const showProgressOverlay = (withEnough) => initProgress({
+            title: "Star Tracker",
+            filename: `Analyzing frames ${frame0}-${frame1}`,
+            showAbort: true,
+            onAbort: () => { aborted = true; },
+            showEnough: withEnough,
+            onEnough: () => { enough = true; },
+            enoughLabel: "Enough (solve what we have)",
+        });
+        if (!quiet) showProgressOverlay(offerEnough);
 
         const perFrame = [];
         let videoW = 0, videoH = 0;
@@ -2687,7 +2694,7 @@ async function runStarTrackerAtResolution(opts) {
                 const done = f - frame0 + 1;
                 params.status = still ? "detecting (still image)" : `detecting ${done}/${total}`;
                 updateProgress({
-                    percent: still ? 40 : (done / total) * 90,
+                    percent: still ? 40 : (done / total) * DETECT_PROGRESS_END,
                     status: still ? "Detecting sources in the still image"
                         : `Detecting sources: ${done}/${total}`,
                 });
@@ -2741,7 +2748,7 @@ async function runStarTrackerAtResolution(opts) {
             const announce = () => {
                 params.status = `detecting ${nextIdx}/${total}`;
                 updateProgress({
-                    percent: (nextIdx / total) * 90,
+                    percent: (nextIdx / total) * DETECT_PROGRESS_END,
                     status: `Detecting sources: ${nextIdx}/${total}`,
                 });
             };
@@ -2882,28 +2889,55 @@ async function runStarTrackerAtResolution(opts) {
             params.status = aborted ? "aborted" : "cancelled (video changed)";
             return null;
         }
-        params.status = "solving";
-        // The two solves below are synchronous and cannot be interrupted, so yield first to let
-        // the message paint - otherwise the bar sits at 90% with no explanation while they run.
-        updateProgress({percent: 93, status: "Solving camera motion"});
-        await yieldToBrowser();
-        const chain = solveFrameChain(perFrame);
 
-        updateProgress({percent: 96, status: "Building star map"});
+        // Detection is over, and so is the only thing "Enough" can cut short: the solve below
+        // already solves what we have. The overlay is shown again without the button rather than
+        // leaving one that does nothing.
+        if (!quiet && offerEnough) showProgressOverlay(false);
+
+        // The camera-motion and star-map solves: most of a minute on a long clip, so they run in
+        // a worker (see StarSolveJob.js) and the page stays live - the bar moves, Abort works.
+        // Detection filled the bar to DETECT_PROGRESS_END; the solve fills it from there to where
+        // the next stage starts, which is the lens fit's 96% when one follows, so the bar never
+        // moves backwards.
+        const solveTop = !still && (params.fitLens || fisheye.enabled) ? 96 : 99;
+        const showSolveProgress = (stage, fraction) => {
+            const pct = Math.floor(fraction * 100);
+            setStatus(`solving ${pct}%`);
+            updateProgress({
+                percent: DETECT_PROGRESS_END + (solveTop - DETECT_PROGRESS_END) * fraction,
+                status: `${stage === "chain" ? "Solving camera motion" : "Building star map"}: ${pct}%`,
+            });
+        };
+        showSolveProgress("chain", 0);
         await yieldToBrowser();
-        const solved = solveStarField(perFrame, chain.cumulative, {
-            // On a still, single observations carry the whole claim, and two detections in
-            // one frame are two stars by definition - so merging is off.
-            minObservations: still ? 1 : ctx.minObservations,
-            ...(still ? {starMergeRadius: 0} : {}),
-            driftSignificance: ctx.driftSignificance,
-            driftMinSigmas: ctx.driftMinSigmas,
-            ...ctx.calSolve,
-        });
-        if (ctx.stale()) {
+        let solvedOut;
+        try {
+            solvedOut = await solveAfterDetectionOffThread(perFrame, {
+                // On a still, single observations carry the whole claim, and two detections in
+                // one frame are two stars by definition - so merging is off.
+                minObservations: still ? 1 : ctx.minObservations,
+                ...(still ? {starMergeRadius: 0} : {}),
+                driftSignificance: ctx.driftSignificance,
+                driftMinSigmas: ctx.driftMinSigmas,
+                ...ctx.calSolve,
+            }, {
+                onProgress: showSolveProgress,
+                shouldAbort: () => ctx.stale(),
+                onYield: yieldToBrowser,
+            });
+        } catch (e) {
+            // The solve threw, or its worker failed to load or crashed. Reported like any failed
+            // run: the finally below takes the overlay down and releases playback.
+            console.warn("[StarTrack] solve failed", e);
+            params.status = `solve failed: ${e?.message ?? e}`;
+            return null;
+        }
+        if (!solvedOut || ctx.stale()) {
             params.status = aborted ? "aborted" : "cancelled (video changed)";
             return null;
         }
+        const {chain, solved} = solvedOut;
 
         // A still's solve covers one frame; the overlay indexes transforms by the CURRENT
         // slider position, and the image is the same at every one of them - so the single

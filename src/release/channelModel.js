@@ -31,8 +31,11 @@ export function validateManifest(value, appBase) {
             coveredBetaIds: Array.isArray(entry.coveredBetaIds)
                 ? entry.coveredBetaIds.filter(id => typeof id === 'string' && BUILD_ID_PATTERN.test(id)) : []};
     };
-    return {format: CHANNEL_FORMAT, shipped: parse(value.shipped, 'shipped'),
+    const manifest = {format: CHANNEL_FORMAT, shipped: parse(value.shipped, 'shipped'),
         beta: value.beta && value.betaEnabled !== false ? parse(value.beta, 'beta') : null};
+    // A newer Shipped retires the Beta: it is unavailable, as if the manifest had none.
+    if (betaSuperseded(manifest)) manifest.beta = null;
+    return manifest;
 }
 
 export function compareVersions(a, b) {
@@ -41,20 +44,22 @@ export function compareVersions(a, b) {
     return 0;
 }
 
-// A full release can overtake the current Beta: Shipped 2.157.0 beside Beta
-// 2.156.4b. Both builds carry a validated numeric version, so "newer" means the
-// version, not the build time. Equal versions are not superseded.
+// A full release can overtake the current Beta, which retires it: Shipped 2.157.0
+// beside Beta 2.156.4b. Both builds carry a validated numeric version, so "newer"
+// means the version, not the build time. Equal versions are not superseded.
 export function betaSuperseded(manifest) {
     return !!manifest.beta && compareVersions(manifest.shipped.version, manifest.beta.version) > 0;
 }
 
 export function selectBuild(manifest, preference, override) {
-    if (override === 'beta') return manifest.beta || manifest.shipped;
-    if (override === 'shipped' || preference !== true || !manifest.beta) return manifest.shipped;
-    // A Beta preference means "the newest build", never older code than a
-    // visitor gets. The explicit ?channel=beta above still opens that exact
-    // Beta, which is what a Beta-saved sitch's handoff relies on.
-    return betaSuperseded(manifest) ? manifest.shipped : manifest.beta;
+    // Neither a Beta preference nor an explicit ?channel=beta opens older code
+    // than a visitor gets: a superseded Beta is retired, so both get Shipped. A
+    // sitch saved with it opens in Shipped without a warning (betaSaveNeedsWarning).
+    // validateManifest already drops it; this keeps selection safe without that.
+    const beta = betaSuperseded(manifest) ? null : manifest.beta;
+    if (override === 'beta') return beta || manifest.shipped;
+    if (override === 'shipped' || preference !== true || !beta) return manifest.shipped;
+    return beta;
 }
 
 export function betaSaveNeedsWarning(sitch, current, manifest) {
@@ -62,6 +67,10 @@ export function betaSaveNeedsWarning(sitch, current, manifest) {
     if (current?.channel === 'beta') return false;
     if (!creator) return sitch?.exportBuild?.channel === 'beta';
     if (creator.channel !== 'beta') return false;
+    // Shipped is newer than the Beta that saved the sitch, so that Beta is retired
+    // and Shipped is the right build to open it in.
+    const shipped = cleanBuild(manifest?.shipped);
+    if (shipped && compareVersions(shipped.version, creator.version) > 0) return false;
     return !manifest?.shipped?.coveredBetaIds?.includes(creator.id);
 }
 

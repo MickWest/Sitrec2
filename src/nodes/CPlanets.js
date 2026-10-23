@@ -30,10 +30,12 @@ import {
     SpriteMaterial,
     SRGBColorSpace,
     TextureLoader,
-    Vector3
+    Vector3,
+    Vector4
 } from "three";
-import {Sit} from "../Globals";
+import {NodeMan, Sit} from "../Globals";
 import {raDec2Celestial, getECEFToEQJMatrix} from "../CelestialMath";
+import {fisheyeEquivalentFOVDeg} from "../FisheyeProjection";
 import {
     applyRefractionECI,
     zenithEQJFromLatLon,
@@ -146,6 +148,10 @@ const MOON_ECLIPSE_GLSL = /* glsl */`
     }
 `;
 
+// Scratch for the per-render star-size floor (CPlanets._applyStarSizeFloor).
+const _floorPos = new Vector3();
+const _floorViewport = new Vector4();
+
 export class CPlanets {
     /** Equatorial radii in metres, for true angular diameters in physical point-source mode.
      *  The Sun and Moon are not here: both already have their own physical sizing. */
@@ -164,6 +170,30 @@ export class CPlanets {
      *  (a 3 px point at about 8 arcsec/px covers roughly 500 square arcsec), so a planet and a
      *  star of equal magnitude deliver comparable light there. */
     static REFERENCE_SOLID_ARCSEC2 = 500;
+
+    /** Planets the default-mode star-size floor leaves alone, so they look as they always
+     *  have. A floor that follows the stars would enlarge them in the look view and at higher
+     *  Planet Brightness, since a star's size grows faster than a planet's there. */
+    static FLOOR_EXEMPT = new Set(["Venus", "Jupiter"]);
+
+    /**
+     * Sprite scale, in world units, that draws a planet sprite `px` framebuffer pixels across.
+     *
+     * A sprite with size attenuation spans scale/depth in tangent units, and a perspective
+     * view maps a tangent of tan(fov/2) to half the viewport height. Used to floor a planet
+     * at the size of a star of the same magnitude: a star is a gl_PointSize point, so its
+     * size arrives in pixels, and a planet sprite's size is a world scale.
+     *
+     * @param {number} px Wanted diameter, in framebuffer pixels
+     * @param {number} depth The sprite's distance in front of the camera, in world units
+     * @param {number} fovDeg Vertical field of view, in degrees
+     * @param {number} viewportHeightPx Height of the viewport, in framebuffer pixels
+     * @returns {number} 0 when there is nothing to draw
+     */
+    static spriteScaleForPixels(px, depth, fovDeg, viewportHeightPx) {
+        if (!(px > 0) || !(depth > 0) || !(viewportHeightPx > 0)) return 0;
+        return px * depth * 2 * Math.tan(fovDeg * Math.PI / 360) / viewportHeightPx;
+    }
 
     /**
      * Creates a new CPlanets instance
@@ -631,6 +661,10 @@ export class CPlanets {
                 const texture = this._getTextureForPlanet(planet);
                 const spriteMaterial = new SpriteMaterial({map: texture, color: color, depthWrite: false});
                 const sprite = new Sprite(spriteMaterial);
+                // Per view: the star a planet is floored at is drawn at a size that depends
+                // on the view's pixel ratio and projection. See _applyStarSizeFloor.
+                sprite.onBeforeRender = (renderer, scene, camera) =>
+                    this._applyStarSizeFloor(sprite, renderer, camera);
 
                 let daySkySprite = null;
                 this.updatePlanetSprite(planet, sprite, params.date, observer, daySkySprite);
@@ -959,6 +993,14 @@ export class CPlanets {
             scale *= Math.pow(10, 0.4 * Math.log10(Sit.planetScale));
         }
 
+        // The planet's own size. In the default mode _applyStarSizeFloor raises it, per view,
+        // to the size of a star of the same magnitude. Physical mode has its own sizing, and
+        // Venus and Jupiter keep the size they have always had (see FLOOR_EXEMPT).
+        if (planet !== "Sun") {
+            sprite.userData.planetBaseScale = (physical || CPlanets.FLOOR_EXEMPT.has(planet)) ? undefined : scale;
+            sprite.userData.planetMag = mag;
+        }
+
         if (planet === "Sun") {
             // Sun mesh is placed at its geometric center so the per-vertex
             // refraction in the Sun shader produces the correct apparent
@@ -1017,6 +1059,72 @@ export class CPlanets {
                 }
             }
         }
+    }
+
+    /**
+     * Diameter, in framebuffer pixels, at which the star field draws a star of magnitude
+     * `mag` in the render under way, with Planet Brightness in place of Star Brightness.
+     *
+     * Read from the star shader's own baseScale uniform rather than worked out again here:
+     * each view sets it just before it draws the sky (CStarField.updateStarScales, and the
+     * water reflection's cube capture), so it already holds this view's pixel ratio, height,
+     * field of view and daylight fade. The uniform carries Sit.starScale linearly, which is
+     * divided out so the Planet Brightness slider drives the floor in the same way that Star
+     * Brightness drives the stars. With the two sliders locked (the default) the ratio is 1,
+     * and the floor is the size of the star exactly as drawn.
+     *
+     * The star shader draws a point smaller than minPointSize at that minimum with its alpha
+     * faded. This returns the size before that clamp.
+     *
+     * @returns {number} 0 when there is no star field, when Star Brightness is 0 and there is
+     *     no star size to compare with, or when a star of this magnitude is fainter than Star
+     *     Limit and so is not drawn at all
+     */
+    _starPixelsForMagnitude(mag) {
+        const starField = NodeMan.get("NightSkyNode", false)?.starField;
+        const uniforms = starField?.lightCloud?.material?.uniforms;
+        if (!uniforms || !(Sit.starScale > 0)) return 0;
+        if (Sit.starLimit !== undefined && !(mag <= Sit.starLimit)) return 0;
+        return starField.magnitudeToFlux(mag) * uniforms.baseScale.value
+            * (Sit.planetScale ?? 1) / Sit.starScale;
+    }
+
+    /**
+     * Default mode: a planet is never drawn smaller than a star of the same magnitude.
+     *
+     * The size depends on the view. The star shader sizes a star in framebuffer pixels from
+     * the view's pixel ratio and height (CNodeView.adjustPointScale), and a planet is a sprite
+     * whose size is a world scale, so the floor can only be worked out against the camera and
+     * viewport actually being drawn. This runs as the sprite's onBeforeRender, which three.js
+     * calls once per camera per render; the main and look views, an XR eye, and a cube face
+     * each get their own floor. Venus and Jupiter get none (FLOOR_EXEMPT): they are drawn
+     * exactly as before in every view, at every slider setting and at every magnitude.
+     *
+     * Every render sets the scale again from sprite.userData.planetBaseScale, so one view's
+     * floor never leaks into the next. three.js forms modelViewMatrix from matrixWorld
+     * straight after this hook, so matrixWorld is brought up to date here too. Nothing here
+     * requests a render: the floor only follows what is drawn.
+     */
+    _applyStarSizeFloor(sprite, renderer, camera) {
+        const base = sprite.userData.planetBaseScale;
+        if (base === undefined) return;     // physical point-source mode, or not sized yet
+
+        let scale = base;
+        const starPx = camera.isPerspectiveCamera ? this._starPixelsForMagnitude(sprite.userData.planetMag) : 0;
+        if (starPx > 0) {
+            const depth = -_floorPos.setFromMatrixPosition(sprite.matrixWorld)
+                .applyMatrix4(camera.matrixWorldInverse).z;
+            const viewportHeight = renderer.getCurrentViewport(_floorViewport).w;
+            // From the projection matrix rather than camera.fov, so the zoom and an XR eye's
+            // projection are included. Under the fisheye projection, the pinhole field with
+            // the same pixels per radian at the center, as the star sizing uses.
+            const fovDeg = fisheyeEquivalentFOVDeg(camera)
+                ?? 2 * Math.atan(1 / camera.projectionMatrix.elements[5]) * 180 / Math.PI;
+            scale = Math.max(base, CPlanets.spriteScaleForPixels(starPx, depth, fovDeg, viewportHeight));
+        }
+
+        sprite.scale.set(scale, scale, 1);
+        sprite.updateMatrixWorld();
     }
 
     /**

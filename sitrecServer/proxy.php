@@ -123,7 +123,11 @@ $haveCache = ($cacheEntry !== null);
 $isFresh = $haveCache && (time() - filemtime($cacheEntry)) < $lifetime;
 
 if (!$isFresh) {
-    $result = curlGetRequest($url);
+    // 30 s rather than curlGetRequest's 20 s default: a current catalogue is a
+    // body of about 2 MB from one host that is sometimes slow. It is normally fetched
+    // once per cache lifetime for all users together, and a timeout falls back to
+    // the copy already cached (or the 502 below), like any other failed fetch.
+    $result = curlGetRequest($url, [], 30);
     $dataBlob = $result['data'];
     $httpStatus = $result['http_status'];
 

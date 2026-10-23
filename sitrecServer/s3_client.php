@@ -39,6 +39,26 @@ const S3_CLIENT_ENV_NAMES = [
 ];
 
 /**
+ * Time limits, in seconds, for every request the S3 client sends. Without them the
+ * SDK's HTTP layer has no total limit, so a stalled object store would hold a PHP
+ * worker for the life of the request. A timeout raises the same S3Exception as any
+ * other transport failure, so each caller treats it exactly as it already treats a
+ * failed S3 request.
+ *
+ * The total limit is not short because one client serves every caller. The largest
+ * single request is rehost.php's server-side upload: one PutObject of up to 16 MB
+ * (the SDK's multipart threshold), or one 5 MB part of a larger file. Most other
+ * requests are small JSON objects and list pages. A streamed read
+ * ('@http' => ['stream' => true], as s3-proxy.php uses) is limited only up to the
+ * response headers; its body has Guzzle's idle limit instead, so a long download
+ * is not cut off.
+ */
+const S3_HTTP_TIMEOUTS = [
+    'connect_timeout' => 10,
+    'timeout' => 60,
+];
+
+/**
  * Reads one string setting from an env map. A missing entry (or getenv()'s `false`)
  * is null; everything else is trimmed to a string. injectEnv.php turns an unquoted
  * `true`/`false` into a PHP bool before putenv(), which getenv() then hands back as
@@ -91,6 +111,8 @@ function s3EnvFlag(array $env, $name) {
  *   ABSENT for role credentials so the SDK runs its default provider chain
  * - credentialSource: 'static' | 'role' | 'anonymous', for callers; stripped before
  *   the array reaches the SDK
+ * - http: always; the connect and total time limits (S3_HTTP_TIMEOUTS) for every
+ *   request the client sends
  *
  * S3_CREDENTIAL_SOURCE unset means: static when both keys are present, otherwise
  * anonymous. That is exactly the pre-existing behaviour, so an install that has no
@@ -108,6 +130,7 @@ function buildS3ClientConfig(array $env) {
     $config = [
         'version' => 'latest',
         'region' => $region,
+        'http' => S3_HTTP_TIMEOUTS,
     ];
 
     $useFips = s3EnvFlag($env, 'S3_USE_FIPS');

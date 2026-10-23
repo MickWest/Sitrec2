@@ -350,7 +350,8 @@ Controller.prototype.setUnitType = function (unitType) {
         const unitInfo = Units.factors[Units.units][this._unitType];
         if (unitInfo) {
             this._name = this._originalName + ' (' + unitInfo.abbrev + ')';
-            this.$name.innerHTML = this._name;
+            // textContent, as in the patched lil-gui name(): a name can carry sitch text.
+            this.$name.textContent = this._name;
         }
     };
 
@@ -403,7 +404,7 @@ Controller.prototype.setUnitType = function (unitType) {
                         const mirrorUnitInfo = Units.factors[Units.units][mirror._unitType];
                         if (mirrorUnitInfo) {
                             mirror._name = mirror._originalName + ' (' + mirrorUnitInfo.abbrev + ')';
-                            mirror.$name.innerHTML = mirror._name;
+                            mirror.$name.textContent = mirror._name;
                             mirror._min = mirror._originalMinSI / mirrorUnitInfo.toM;
                             mirror._max = mirror._originalMaxSI / mirrorUnitInfo.toM;
                             mirror._step = mirror._originalStepSI / mirrorUnitInfo.toM;

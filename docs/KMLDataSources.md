@@ -276,6 +276,9 @@ sequence for the timed-point path. This avoids zero-duration steps that would br
 2. **Detect type** — `CTrackFileKML` claims anything with a `kml` root.
 3. **Count tracks** — `getTrackCount()` returns the number of groups the walk found. For
    files with 3 or more tracks the UI shows a selection dialog (2-track files load all tracks directly).
+   In a new sitch, a file with two or more tracks also asks whether its first two tracks are the
+   camera and the target (`TrackManager.shouldAskLoadOrderPairing`): a checkbox in the selection
+   dialog, or a separate question for a 2-track file.
 4. **Convert to MISB** — for each selected track index, `toMISB(trackIndex)` (`:27`) calls
    `getKMLTrackWhenCoord()` and copies the group's samples into a MISB row array:
 

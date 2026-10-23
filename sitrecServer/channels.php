@@ -16,6 +16,11 @@ try {
     }
     $appPath = rtrim(parse_url($APP_URL, PHP_URL_PATH) ?: '/', '/') . '/';
     $manifest = publicChannelManifest(json_decode(file_get_contents($path), true, 32, JSON_THROW_ON_ERROR), $appPath);
+    // A newer Shipped retires the Beta, even for an older cached bootstrap. Both
+    // versions are validated x.y.z; equal versions are not superseded.
+    if ($manifest['beta'] !== null && version_compare($manifest['shipped']['version'], $manifest['beta']['version'], '>')) {
+        $manifest['beta'] = null;
+    }
     $userId = (int)getUserID();
     $method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
     if ($method === 'POST') {

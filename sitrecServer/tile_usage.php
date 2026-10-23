@@ -15,6 +15,7 @@ $userInfo = getUserInfo();
 $userId = $userInfo['user_id'];
 $userGroups = $userInfo['user_groups'];
 $isGuest = false;
+$isNewGuest = false;
 
 if ($userId <= 0) {
     $isGuest = true;
@@ -25,9 +26,12 @@ if ($userId <= 0) {
         }
     }
     if ($userId <= 0) {
+        // A new ID. Behind a proxy that strips cookies it never comes back, and every
+        // request mints another, so no usage file is written for it (see the POST handler).
         $guestId = bin2hex(random_bytes(16));
         setcookie('sitrec_guest_id', $guestId, time() + 86400 * 30, '/', '', true, true);
         $userId = 'guest_' . $guestId;
+        $isNewGuest = true;
     }
     $userGroups = [0];
 }
@@ -255,6 +259,30 @@ function saveUserUsage($userId, $usageDir, $data) {
     file_put_contents($file, json_encode($data), LOCK_EX);
 }
 
+// A guest file not written for this long has expired hourly and daily counts, so it holds
+// nothing and is deleted. The sweep runs at most once an hour and checks at most
+// GUEST_CLEANUP_MAX_FILES files, picked at random so that recent files cannot block it.
+const GUEST_USAGE_MAX_AGE = 3 * 86400;
+const GUEST_CLEANUP_INTERVAL = 3600;
+const GUEST_CLEANUP_MAX_FILES = 2000;
+
+function cleanupGuestUsageFiles($usageDir) {
+    if (!is_dir($usageDir)) return;
+    $marker = $usageDir . '.guest_cleanup';
+    $now = time();
+    if (file_exists($marker) && $now - filemtime($marker) < GUEST_CLEANUP_INTERVAL) return;
+    @touch($marker);
+
+    $files = glob($usageDir . 'user_guest_*.json', GLOB_NOSORT) ?: [];
+    shuffle($files);
+    foreach (array_slice($files, 0, GUEST_CLEANUP_MAX_FILES) as $file) {
+        $mtime = @filemtime($file);
+        if ($mtime !== false && $now - $mtime > GUEST_USAGE_MAX_AGE) {
+            @unlink($file);
+        }
+    }
+}
+
 // Handle GET request - fetch current usage and limits
 if ($_SERVER['REQUEST_METHOD'] === 'GET') {
     $limits = getTileLimitsForUser($userGroups);
@@ -359,7 +387,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
     }
     
-    saveUserUsage($userId, $TILE_USAGE_DIR, $currentUsage);
+    // A guest's usage is kept once the guest comes back with its ID. Where cookies reach PHP
+    // the client's first request (the limits GET) gets the cookie, so its reports are kept.
+    if (!$isNewGuest) {
+        saveUserUsage($userId, $TILE_USAGE_DIR, $currentUsage);
+    }
+    cleanupGuestUsageFiles($TILE_USAGE_DIR);
 
     // Record to 28-day stats history
     require_once __DIR__ . '/stats_history.php';

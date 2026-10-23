@@ -760,7 +760,9 @@ and `connect-src` directives. These browser requests never traverse the task sec
 `proxy.php` and `customWindProxy.php` fetch their configured URLs from the application task.
 The Terraform module deliberately grants the task egress only to its AWS endpoints and S3,
 so a separate route and narrowly scoped security-group egress rule are required before those
-services can work. `CUSTOM_TLE` is not listed here because its historical-data endpoint,
+services can work. Without them each fetch fails within its connect limit of 5 seconds, with
+an HTTP 502 (or, for `proxy.php`, the cached copy when there is one), so a missing route
+does not hold a server worker. `CUSTOM_TLE` is not listed here because its historical-data endpoint,
 `proxyStarlink.php`, is intentionally absent from the secure server artifact.
 
 Today each URL must resolve to a service your deployment provides. A built-in endpoint that

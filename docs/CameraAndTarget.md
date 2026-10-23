@@ -44,7 +44,7 @@ source left it.
 | **Manual** | The camera stays at the fixed point in **Cam [C] Lat / Lon / Alt**. This is the default in a new sitch. |
 | **Flight Sim** | The camera flies a simple simulated aircraft path. The path starts at the Manual position and is controlled from **Physics → Simple Flight Sim**. See [Flight Sim](#flight-sim). |
 | **Orbit** | The camera circles a chosen track or point at a set radius, altitude and period. The settings are in **Camera → Camera Tweaks**. See [Orbit](#orbit). |
-| *An imported track* | Each track you import is added to this list. The first track you import is selected as the camera position. |
+| *An imported track* | Each track you import is added to this list. In a new sitch, the first track you import is selected as the camera position. If that first import is one file with two or more tracks, and the file does not say which track is the camera, Sitrec asks first. See [Camera and Target from One File](Tracks.md#camera-and-target-from-one-file). After you set up the camera, time or position yourself, imported tracks do not change them, even after **Remove All Tracks**. |
 
 Holding **C** with the pointer over a 3D view moves the Manual camera position to the
 point under the pointer. If the Position was following an imported track, this switches
@@ -55,7 +55,7 @@ it back to **Manual**. **Shift+C** also puts the camera 7 ft above the ground.
 | Choice | What it does |
 |---|---|
 | **Manual** | You aim the camera with **Pan (Az)**, **Tilt (El)** and **Roll**. This is the default. Pan 0 is north and Tilt 0 is level, unless **Relative Heading** is on. |
-| **To Target** | The camera points at the target, which is set in the [Target menu](#c-the-target-menu). **Roll** still applies. When you import a second track, Sitrec selects **To Target** for you. |
+| **To Target** | The camera points at the target, which is set in the [Target menu](#c-the-target-menu). **Roll** still applies. When a second imported track becomes the target, Sitrec selects **To Target** for you. |
 | **Celestial Lock** | The camera follows a sky object, chosen in the **Celestial Object** box that appears under the selector. See [Long Exposure/Stacking](LongExposure.md). |
 | **Horizon Flare Region** | The camera points toward the Sun's azimuth, just above the horizon, where Starlink horizon flares appear. See [Long Exposure/Stacking](LongExposure.md). |
 | **Custom Az/El** | The camera follows azimuth and elevation columns from a CSV file. This choice appears only after you import a file with `az` or `el` columns. See [Camera Angle Tracks in Tracks](Tracks.md). |
@@ -110,7 +110,7 @@ them.
 | **Cam [C] Lat** | 31.980814 | Latitude of the Manual position, in degrees. You can paste a full "lat, lon" pair in any format (decimal, degrees-minutes-seconds, N/S/E/W, MGRS, or ECEF x,y,z in meters). It fills both boxes. |
 | **Cam [C] Lon** | -118.428486 | Longitude of the Manual position, in degrees. |
 | **Cam [C] Alt** | 10,000 m | Altitude of the Manual position, above mean sea level. The label shows the current unit. |
-| **Above Ground Level** | Off | When on, **Cam [C] Alt** is a height above the ground under the camera, not above sea level. |
+| **Above Ground Level** | Off | When on, **Cam [C] Alt** is a height above the ground under the camera, not above sea level. Switching it does not move the camera: **Cam [C] Alt** changes to the same position measured the new way. If the ground under the camera has not loaded yet, the number stays as it is. |
 | **Lookup** | (empty) | Type a place name or coordinates and press Enter. The camera moves there. For a place name, the altitude is set to the ground height at that place. |
 | **Geolocate from browser** | — | Sets the position from your browser's location. |
 | **Go To the above position** | — | Moves the terrain and the main view to the entered position. It does not move the look camera. It is always available, whatever the Position source. |
@@ -172,8 +172,8 @@ wins, because it is applied last.
 | **HFOV (deg)** | from VFOV | Horizontal field of view, across the full width of the frame. It is VFOV read through the **Aspect Ratio**. Editing it sets VFOV to match. |
 | **35mm Equiv (mm)** | from VFOV | The lens that would give this field of view on a 36×24 mm full-frame camera, measured across the long side of the frame. Editing it sets HFOV and VFOV to match. The slider range grows when you push past its right end. |
 | **Lens (EXIF)** | Hidden | Read only. The real focal length and lens recorded in an imported photo's EXIF data. This is the true focal length on that camera's sensor, not the 35mm equivalent. On a smaller sensor, the 35mm Equiv above is the larger number. |
-| **Aspect Ratio** | from the view | Read only. Width divided by height of the frame that VFOV and HFOV refer to. With a video loaded, it is the video's own pixel dimensions. Otherwise it follows the look view pane, unless **Lock Aspect** is on. |
-| **Lock Aspect** | Off | Holds the aspect ratio fixed, so HFOV does not change when you resize the window. Ticking it does not move the camera. While a video is loaded it is always on and cannot be changed, because the video defines the frame. |
+| **Aspect Ratio** | from the view | Read only. Width divided by height of the frame that VFOV and HFOV refer to. With **Lock Aspect** on and a video loaded, it is the video's shape, shown with the video's own pixel dimensions. With **Lock Aspect** on and no video, it is the locked value. With **Lock Aspect** off, it follows the look view pane. |
+| **Lock Aspect** | Off | Holds the aspect ratio fixed, so HFOV does not change when you resize the window. Loading a video turns it on at the video's aspect, because the video defines the frame. Turn it off to give HFOV for the look view pane instead. Turning it on again locks to the video's aspect if a video is loaded, and to the pane's current aspect if not. Turning it on or off does not move the camera, because VFOV is the value the camera stores. When you remove the video, the setting from before the video comes back, unless you turned the lock off. |
 | **Fisheye** (folder) | Off | See [Fisheye (Allsky) Projection](Fisheye.md). |
 | **Panoramic Camera** (folder) | Off | See [Panoramic Camera](PanoramicCamera.md). |
 
@@ -269,7 +269,7 @@ is measured at it.
 | **Target [X] Lat** | 32.5 | Latitude of the fixed target, in degrees. Accepts a pasted "lat, lon" pair, like the camera's. |
 | **Target [X] Lon** | -118.428486 | Longitude of the fixed target, in degrees. |
 | **Target [X] Alt** | 5,000 m | Altitude of the fixed target, above mean sea level. The label shows the current unit. |
-| **Above Ground Level** | Off | When on, **Target [X] Alt** is a height above the ground. |
+| **Above Ground Level** | Off | When on, **Target [X] Alt** is a height above the ground. Switching it does not move the target: **Target [X] Alt** changes to the same position measured the new way. |
 | **Lookup** | (empty) | Type a place name or coordinates to move the fixed target there. |
 | **Geolocate from browser** | — | Sets the fixed target from your browser's location. |
 | **Go To the above position** | — | Moves the terrain and the main view to the target position. |
@@ -282,7 +282,7 @@ is measured at it.
 |---|---|
 | **Manual** | The target stays at **Target [X] Lat/Lon/Alt** for the whole sitch. |
 | **Manual + Wind** | The target starts at **Target [X] Lat/Lon/Alt** and drifts with the target wind (**Physics → Wind**). The target wind is 0 knots by default, so set a wind first. |
-| *An imported track* | Each imported track is added here. The second track you import is selected as the target. |
+| *An imported track* | Each imported track is added here. In a new sitch, the second track you import is selected as the target. For one file with two or more tracks, Sitrec asks first. See [Camera and Target from One File](Tracks.md#camera-and-target-from-one-file). |
 
 Holding **X** with the pointer over a 3D view moves the fixed target to the point under the
 pointer, and keeps its altitude. **Shift+X** puts it 7 ft above the ground. The Target
@@ -300,6 +300,13 @@ Wind**.
 2. Import the other aircraft's track. It becomes the **Target Track**, and **Camera
    Heading** changes to **To Target**. Sitrec also finds the closest approach of the two
    tracks and moves the start of the sitch there. See [Tracks](Tracks.md).
+
+   If both aircraft are in one file, import only that file. Sitrec asks whether to use
+   the first track as the camera and the second as the target: choose **Use as camera
+   and target**. For a file with three or more tracks, keep **Use the first two tracks as
+   camera and target** on in the **Multiple Tracks Detected** dialog. If the tracks are the
+   wrong way round, select them in **Camera → Location → Position** and **Target → Target
+   Track**.
 3. If the video shows a tilted horizon, try **Camera → Heading → Roll From MX-Style
    Camera** for a ball-turret camera, and adjust **MX Roll Amount** until the horizon
    matches. For a view from the cockpit, use **Roll View with Bank** in **Physics → Simple
@@ -323,7 +330,7 @@ Wind**.
      at, and set **Camera Heading** to **To Target**.
 5. Set the field of view with **VFOV (deg)**, or type the phone's or camera's 35mm
    equivalent focal length into **35mm Equiv (mm)**. With a video loaded, the aspect ratio
-   comes from the video.
+   comes from the video, unless you turn off **Lock Aspect**.
 
 ### Orbit around a point, for a presentation
 

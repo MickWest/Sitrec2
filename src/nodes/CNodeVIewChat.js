@@ -1052,7 +1052,7 @@ class CNodeViewChat extends CNodeViewText {
                 // their result or repair the call.
                 if (response.sessionContinue
                     && !(allSucceeded && actionOnly && !response.requiresContinuation)) {
-                    await this.continueSession(toolResults, provider, model, 0, turn);
+                    await this.continueSession(toolResults, provider, model, 0, turn, response.continuationToken);
                 } else if (allSucceeded && actionOnly && !response.text) {
                     this.addSystemMessage("Done.");
                 }
@@ -1347,7 +1347,10 @@ class CNodeViewChat extends CNodeViewText {
         return {toolResults, changesSerializedState, allSucceeded, actionOnly};
     }
     
-    async continueSession(toolResults, provider, model, depth = 0, turn = null) {
+    // continuationToken is the one the server returned with the tool calls. It names the
+    // turn's saved state on the server, which cannot use a session cookie: a proxy in front
+    // of it may strip cookies, and two turns in flight would share one session.
+    async continueSession(toolResults, provider, model, depth = 0, turn = null, continuationToken = null) {
         const maxContinuationDepth = 5;
         if (depth >= maxContinuationDepth) {
             console.warn(`Session continuation stopped: reached max depth (${maxContinuationDepth})`);
@@ -1356,6 +1359,7 @@ class CNodeViewChat extends CNodeViewText {
         try {
             const body = JSON.stringify({
                 continueSession: true,
+                continuationToken,
                 toolResults,
                 provider,
                 model,
@@ -1387,7 +1391,8 @@ class CNodeViewChat extends CNodeViewText {
 
                 if (response.sessionContinue
                     && !(allSucceeded && actionOnly && !response.requiresContinuation)) {
-                    await this.continueSession(newResults, provider, model, depth + 1, turn);
+                    await this.continueSession(newResults, provider, model, depth + 1, turn,
+                        response.continuationToken);
                 } else if (allSucceeded && actionOnly && !response.text) {
                     this.addSystemMessage("Done.");
                 }

@@ -24,6 +24,11 @@ class Handler(SimpleHTTPRequestHandler):
             return False
         if os.path.splitext(path)[1].lower() in ('.php', '.py', '.sh', '.env', '.map'):
             return False
+        # A build's own top-level page would start that build without the channel manifest, so
+        # a retired Beta or an older Shipped could still be opened by its URL. The bootstrap
+        # loads only app-entry.json and the files it names; per-build tools live below tools/.
+        if re.fullmatch(r'/builds/[a-z0-9][a-z0-9-]{0,95}/[^/]+\.html?', path, re.IGNORECASE):
+            return False
         # Normalize first, then check containment on the string, and only then touch
         # the file system. realpath follows symlinks, so a link out of ROOT is refused.
         candidate = os.path.realpath(os.path.join(ROOT, path.lstrip('/')))

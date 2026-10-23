@@ -3289,6 +3289,10 @@ function loadStartupHandoffAfterSitchSetup() {
                 console.log("Handoff: track markers will be raised along the sightline "
                     + "rather than straight up.");
             }
+            // BEFORE the import, for the same reason: a fitted candidate's marker is
+            // built as its track arrives, and it stays lit (phong) where an ordinary
+            // track's marker is unlit. The sender names its candidates exactly.
+            TrackManager.setCandidateTrackNames(handoff.meta?.candidateTrackNames);
             // Sequentially: the importer resolves name collisions and mutates
             // shared state, and two BOT tracks racing through it can end up
             // fighting over a name. Note that the await returns once a file is

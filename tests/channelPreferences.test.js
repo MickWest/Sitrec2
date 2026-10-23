@@ -81,6 +81,27 @@ function sitrecAuditRequest($value) {} function sitrecAuditResult() {}
         expect(JSON.stringify(result.body)).not.toContain('must-not-be-exposed');
         expect(result.body.manifest.shipped.assetBase).toBe('/sitrec/builds/shipped-fixture/');
     });
+    test('a newer Shipped retires the Beta; an equal or newer Beta is still returned', async () => {
+        const file = path.join(directory, 'manifest.json');
+        const original = fs.readFileSync(file);
+        const shipped = {id: 'shipped-fixture', channel: 'shipped', version: '2.155.2', builtAt: '2026-09-09T00:00:00Z'};
+        const betaAt = async (shippedVersion, betaVersion) => {
+            fs.writeFileSync(file, JSON.stringify({format: 1, shipped: {...shipped, version: shippedVersion},
+                beta: {...shipped, id: 'beta-fixture', channel: 'beta', version: betaVersion}}));
+            const result = await request({identity: 42});
+            expect(result.status).toBe(200);
+            return result.body.manifest.beta;
+        };
+        try {
+            expect(await betaAt('2.183.4', '2.156.4')).toBeNull();
+            // Numeric, not lexical: Shipped 2.10.0 retires Beta 2.9.9.
+            expect(await betaAt('2.10.0', '2.9.9')).toBeNull();
+            expect((await betaAt('2.155.2', '2.155.2')).id).toBe('beta-fixture');
+            expect((await betaAt('2.155.2', '2.155.3')).id).toBe('beta-fixture');
+        } finally {
+            fs.writeFileSync(file, original);
+        }
+    });
     test('an unreadable or malformed preference falls back to Shipped rather than enrolling the member', async () => {
         await save(99, false);
         fs.writeFileSync(path.join(directory, 'uploads/settings/99/channel.json'), '{}');

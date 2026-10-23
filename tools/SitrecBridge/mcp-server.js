@@ -415,7 +415,18 @@ function startServer(port) {
             });
             res.end();
         });
-        const wss = new WebSocketServer({ server });
+        const wss = new WebSocketServer({
+            server,
+            verifyClient: ({origin}, done) => {
+                if (isAllowedWebSocketOrigin(origin)) {
+                    done(true);
+                    return;
+                }
+                log(`Refused WebSocket from origin ${origin}`);
+                diag.record("ws-origin-refused", {origin});
+                done(false, 403, "Forbidden");
+            },
+        });
         wsServer = wss;
         httpServer = server;
         boundPort = port;
@@ -450,13 +461,29 @@ function startServer(port) {
             // normal extension connection.
             let identified = false;
 
+            // verifyClient admitted this socket, but a Sitrec page (local.metabunk.org,
+            // localhost) is admitted only to be a Local Compute client. It must never become
+            // the extension, which receives every agent request.
+            const origin = req.headers.origin;
+            const extensionAllowed = isExtensionOrigin(origin);
+            const becomeExtension = (force) => {
+                if (extensionAllowed) {
+                    setupExtensionConnection(ws, force);
+                    return true;
+                }
+                log(`Refused extension role for origin ${origin}`);
+                diag.record("ws-extension-refused", {origin});
+                ws.close(1008, "Origin may not act as the extension");
+                return false;
+            };
+
             const earlyHandler = (raw) => {
                 try {
                     const msg = JSON.parse(raw.toString());
                     if (msg.type === "force-extension") {
                         identified = true;
                         ws.removeListener("message", earlyHandler);
-                        setupExtensionConnection(ws, true);
+                        becomeExtension(true);
                         return;
                     }
                     if (msg.type === "local-compute-client") {
@@ -469,8 +496,7 @@ function startServer(port) {
                 if (!identified) {
                     identified = true;
                     ws.removeListener("message", earlyHandler);
-                    setupExtensionConnection(ws, false);
-                    handleExtensionMessage(raw);
+                    if (becomeExtension(false)) handleExtensionMessage(raw);
                 }
             };
 
@@ -480,7 +506,7 @@ function startServer(port) {
                 if (!identified) {
                     identified = true;
                     ws.removeListener("message", earlyHandler);
-                    setupExtensionConnection(ws, false);
+                    becomeExtension(false);
                 }
             }, 500);
         });
@@ -636,6 +662,26 @@ function isAllowedLocalComputeOrigin(origin) {
     } catch {
         return false;
     }
+}
+
+// May this WebSocket act as the extension? A browser attaches Origin to every upgrade and a web
+// page can neither omit nor change it. The extension connects from chrome-extension://<id>. The id
+// is not fixed: the extension is loaded unpacked with no "key" in its manifest, so Chrome derives
+// it from the folder it was loaded from. Any chrome-extension:// origin is therefore accepted. No
+// Origin means a local process, not a page, and a local process already runs as the user.
+function isExtensionOrigin(origin) {
+    if (!origin) return true;
+    try {
+        return new URL(origin).protocol === "chrome-extension:";
+    } catch {
+        return false;
+    }
+}
+
+// Upgrade gate: refuse any origin that may hold neither role, before a single message is read.
+// Without it, any web page could connect, send force-extension, and receive the agent's requests.
+function isAllowedWebSocketOrigin(origin) {
+    return isExtensionOrigin(origin) || isAllowedLocalComputeOrigin(origin);
 }
 
 function localComputeCapabilities() {

@@ -56,6 +56,18 @@ function proxyError($status, $message) {
 }
 
 /**
+ * Sends the object's type headers, which come from its key (objectProxyContentHeaders),
+ * never from the type stored with the object.
+ *
+ * @param string $key
+ */
+function sendObjectContentHeaders($key) {
+    foreach (objectProxyContentHeaders($key) as $name => $value) {
+        header($name . ': ' . $value);
+    }
+}
+
+/**
  * A short sha256 prefix of an object key, for the log. An object key is
  * `<userId>/<fileName>/<newFileName>`, so the key itself carries the user's file
  * name and is the capability that grants access to the object; neither belongs in
@@ -109,9 +121,7 @@ function proxyObjectWithSdk($key, $rangeHeader) {
 
     $status = (int)($result['@metadata']['statusCode'] ?? 200);
     http_response_code($status === 206 ? 206 : 200);
-    if (!empty($result['ContentType'])) {
-        header('Content-Type: ' . $result['ContentType']);
-    }
+    sendObjectContentHeaders($key);
     if (isset($result['ContentLength'])) {
         header('Content-Length: ' . $result['ContentLength']);
     }
@@ -187,8 +197,9 @@ curl_setopt_array($ch, [
     CURLOPT_HTTPHEADER => $forwardedHeaders,
 ]);
 
-// Capture response headers so we can forward Content-Type / Content-Length
-// while dropping anything cookie- or cache-related we don't want to proxy.
+// Capture response headers so we can forward Content-Length and the range headers
+// while dropping anything cookie- or cache-related we don't want to proxy. The
+// stored Content-Type is captured but never sent (see sendObjectContentHeaders).
 $responseHeaders = [];
 $statusCode = 0;
 curl_setopt($ch, CURLOPT_HEADERFUNCTION, function ($ch, $headerLine) use (&$responseHeaders, &$statusCode) {
@@ -210,12 +221,10 @@ curl_setopt($ch, CURLOPT_HEADERFUNCTION, function ($ch, $headerLine) use (&$resp
 });
 
 $headersSent = false;
-$emitHeaders = function () use (&$headersSent, &$responseHeaders, &$statusCode) {
+$emitHeaders = function () use (&$headersSent, &$responseHeaders, &$statusCode, $key) {
     if ($headersSent) return;
     http_response_code($statusCode ?: 502);
-    if (!empty($responseHeaders['content-type'])) {
-        header('Content-Type: ' . $responseHeaders['content-type']);
-    }
+    sendObjectContentHeaders($key);
     if (!empty($responseHeaders['content-length'])) {
         header('Content-Length: ' . $responseHeaders['content-length']);
     }

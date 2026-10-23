@@ -56,13 +56,23 @@ export function snapshot(destination, extraFiles = [], root = ROOT) {
 
 // A rollback keeps the newest pool and selects the previous manifest, so a new
 // pool must hold every build the live manifest names. Nothing older is kept: a
-// pool holds at most POOL_BUILD_LIMIT builds, the new one included.
+// pool holds at most POOL_BUILD_LIMIT builds, the new one included. A Beta older
+// than its Shipped is retired (equal versions are not), so it is not kept either.
 export const POOL_BUILD_LIMIT = 3;
 const BUILD_ID = /^(?:shipped|beta)-\d{17}-[a-f0-9]{12}$/;
+const VERSION = /^\d+\.\d+\.\d+$/;
+function betaRetired(manifest) {
+    const shipped = manifest.shipped.version, beta = manifest.beta?.version;
+    if (!VERSION.test(shipped ?? '') || !VERSION.test(beta ?? '')) return false;
+    const a = shipped.split('.').map(Number), b = beta.split('.').map(Number);
+    const i = a.findIndex((part, n) => part !== b[n]);
+    return i >= 0 && a[i] > b[i];
+}
 export function retainedBuilds(state, newId, limit = POOL_BUILD_LIMIT) {
     const manifest = state?.manifest ?? state;
     if (!manifest?.shipped?.id) throw new Error('The channel manifest names no Shipped build');
-    const ids = [...new Set([manifest.shipped.id, manifest.beta?.id])].filter(id => id && id !== newId);
+    const beta = betaRetired(manifest) ? null : manifest.beta?.id;
+    const ids = [...new Set([manifest.shipped.id, beta])].filter(id => id && id !== newId);
     const unexpected = ids.find(id => !BUILD_ID.test(id));
     if (unexpected) throw new Error(`Unexpected build ID in the channel manifest: ${unexpected}`);
     if (ids.length + 1 > limit) throw new Error(`The manifest names ${ids.length} builds; a pool holds at most ${limit}`);

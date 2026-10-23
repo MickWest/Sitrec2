@@ -87,6 +87,10 @@ reviewed**, each on a runner of its own architecture with no emulation. `smoke-t
 `package` and `manifest` needs both, so an image carrying a credential never becomes a
 version tag or `latest`.
 
+The workflow installs a pinned Trivy release (the `version` input of the setup-trivy step),
+not the newest one, because the `package` job holds a registry write token and signing
+rights. Raise that version deliberately, after reading the release.
+
 The report is written to the run summary, so it renders as formatted Markdown on the run
 page in the browser — no download. The report, the bill of materials and the evidence are
 also uploaded as a `container-security-review-amd64` / `-arm64` artifact with 90-day
@@ -324,7 +328,8 @@ one is unsigned and unnamed, so it proves less. The signed attestation above is 
 cite.
 
 The release pipeline records the immutable build-index and platform digests as
-per-architecture workflow artifacts. Security reviews and smoke tests use those
+per-architecture workflow artifacts. Each record is uploaded as soon as the digest is
+resolved, before the scanners run. Security reviews and smoke tests use those
 platform digests, and final assembly consumes those same build indexes. Temporary
 tags include the run ID and attempt; retries may reuse a successful architecture's
 record from an earlier attempt of the same run and commit.

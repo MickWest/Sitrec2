@@ -670,6 +670,22 @@ export function matchByOffsetVote(prev, cur, opts = {}) {
     return m;
 }
 
+/**
+ * Split one progress callback into consecutive stages, for the long solves that report progress.
+ *
+ * `weights` gives each stage its share of the work - measured running times, in any one unit -
+ * and the stages run in the object's key order. stage(name) returns a callback that takes that
+ * stage's OWN fraction, 0 to 1, and reports it to `onProgress` as the matching fraction of the
+ * whole. A stage that reports nothing inside is completed by calling its callback with 1.
+ */
+export function progressStages(onProgress, weights) {
+    const start = {};
+    let total = 0;
+    for (const [name, w] of Object.entries(weights)) { start[name] = total; total += w; }
+    return (name) => (fraction) =>
+        onProgress((start[name] + weights[name] * Math.min(1, Math.max(0, fraction))) / total);
+}
+
 /** Largest corner displacement a transform produces over a frame of the given size. */
 function motionMagnitude(T, W, H) {
     let worst = 0;
@@ -705,23 +721,57 @@ export function findCameraFixed(perFrame, opts = {}) {
     if (nFrames < 3) return {fixed, clusters: [], applied: false};
 
     // Greedy clustering on RAW pixel position, across the whole clip.
+    //
+    // Clusters are found through a spatial hash rather than by scanning every cluster so far for
+    // every detection: under a pan the cluster count grows with the clip, so the full scan was
+    // quadratic - 1.5 billion distance tests on a synthetic 1600-frame clip, and 12 s at 3247
+    // frames. The cell is TWICE the radius, so the 3x3 neighbourhood holds every cluster within
+    // the radius with room to spare for rounding. The plain scan took the nearest cluster and, on
+    // an exact tie, the earliest created; ties here go to the lowest index for the same answer,
+    // whatever order the buckets surface candidates in. A cluster whose running mean crosses a
+    // cell edge is moved to its new cell.
     const clusters = [];
     const r2 = O.fixedRadius * O.fixedRadius;
+    const cell = Math.max(2 * Math.abs(O.fixedRadius), 1e-6);
+    const cellKey = (x, y) => (Math.floor(x / cell) + 50000) * 100000 + (Math.floor(y / cell) + 50000);
+    const grid = new Map();
+    const place = (k, key) => {
+        let bucket = grid.get(key);
+        if (!bucket) grid.set(key, bucket = []);
+        bucket.push(k);
+    };
     for (let f = 0; f < nFrames; f++) {
         for (let i = 0; i < perFrame[f].length; i++) {
             const s = perFrame[f][i];
-            let best = null, bd = r2;
-            for (const c of clusters) {
-                const d2 = (c.x - s.x) * (c.x - s.x) + (c.y - s.y) * (c.y - s.y);
-                if (d2 < bd) { bd = d2; best = c; }
+            const cx = Math.floor(s.x / cell), cy = Math.floor(s.y / cell);
+            let best = -1, bd = r2;
+            for (let ox = -1; ox <= 1; ox++) {
+                for (let oy = -1; oy <= 1; oy++) {
+                    const bucket = grid.get((cx + ox + 50000) * 100000 + (cy + oy + 50000));
+                    if (!bucket) continue;
+                    for (const k of bucket) {
+                        const c = clusters[k];
+                        const d2 = (c.x - s.x) * (c.x - s.x) + (c.y - s.y) * (c.y - s.y);
+                        if (d2 < bd || (best >= 0 && d2 === bd && k < best)) { bd = d2; best = k; }
+                    }
+                }
             }
-            if (best) {
-                best.members.push([f, i]);
-                best.frames.add(f);
+            if (best >= 0) {
+                const c = clusters[best];
+                const before = cellKey(c.x, c.y);
+                c.members.push([f, i]);
+                c.frames.add(f);
                 // Running mean keeps the cluster centred as members accumulate.
-                best.x += (s.x - best.x) / best.members.length;
-                best.y += (s.y - best.y) / best.members.length;
+                c.x += (s.x - c.x) / c.members.length;
+                c.y += (s.y - c.y) / c.members.length;
+                const after = cellKey(c.x, c.y);
+                if (after !== before) {
+                    const bucket = grid.get(before);
+                    bucket.splice(bucket.indexOf(best), 1);
+                    place(best, after);
+                }
             } else {
+                place(clusters.length, cellKey(s.x, s.y));
                 clusters.push({x: s.x, y: s.y, members: [[f, i]], frames: new Set([f])});
             }
         }
@@ -745,9 +795,16 @@ export function findCameraFixed(perFrame, opts = {}) {
     // an undecoded frame, or one the laser swept across - would otherwise drive the minimum to
     // zero and switch artifact removal off for the entire clip, leaving hot pixels to corrupt
     // every other frame because one frame was empty.
+    //
+    // Candidate members are counted per frame in ONE pass over them. Filtering every candidate's
+    // member list once per frame was frames x members - 4.7 s at 3247 frames with 40 camera-fixed
+    // sources (burnt-in text), for the same integer counts.
+    const fixedInFrame = new Array(nFrames).fill(0);
+    for (const c of candidates) {
+        for (const [mf] of c.members) fixedInFrame[mf]++;
+    }
     const remaining = perFrame
-        .map((d, f) => d.length - candidates
-            .reduce((a, c) => a + c.members.filter(([mf]) => mf === f).length, 0))
+        .map((d, f) => d.length - fixedInFrame[f])
         .sort((a, b) => a - b);
     const medianRemaining = remaining.length ? remaining[remaining.length >> 1] : 0;
     const applied = total > 0
@@ -769,10 +826,11 @@ export function findCameraFixed(perFrame, opts = {}) {
  * dropout, an abrupt jerk - it falls back to triangle invariants, which need no prediction at all.
  *
  * @param {Array<Array>} perFrame - detections per frame, each entry an array of {x, y, flux}
+ * @param {function(number)} [onProgress] - called with the fraction of frames done, 0 to 1
  * @returns {{steps:Array, cumulative:Array, reacquired:number[], failed:number[]}}
  *   `cumulative[f]` maps frame-0 coordinates into frame f.
  */
-function solveChainOnce(usable, O) {
+function solveChainOnce(usable, O, onProgress = () => {}) {
     const n = usable.length;
     const steps = new Array(n).fill(null);
     const cumulative = new Array(n).fill(null);
@@ -823,6 +881,7 @@ function solveChainOnce(usable, O) {
     const extent = frameExtent(usable);
 
     for (let f = 1; f < n; f++) {
+        onProgress(f / n);
         const prev = usable[f - 1], cur = usable[f];
         let base = f - 1;
         const predicted = matchByPrediction(prev, cur, prediction, O);
@@ -938,11 +997,16 @@ function solveChainOnce(usable, O) {
             if (anchorPool.length > O.bridgeAnchorPool) anchorPool.shift();
         }
     }
+    onProgress(1);
 
     return {steps, cumulative, reacquired, failed, weakFrames};
 }
 
-export function solveFrameChain(perFrame, opts = {}) {
+/**
+ * @param {function(number)} [onProgress] - called with the fraction of the solve done, 0 to 1.
+ *   Optional, and it changes nothing about the answer.
+ */
+export function solveFrameChain(perFrame, opts = {}, onProgress = () => {}) {
     const O = {...STAR_MATCH_DEFAULTS, ...opts};
     const empty = {
         steps: [], cumulative: [], reacquired: [], failed: [], weakFrames: [],
@@ -952,7 +1016,14 @@ export function solveFrameChain(perFrame, opts = {}) {
 
     let cameraFixed = {fixed: perFrame.map(() => new Set()), clusters: [], applied: false};
 
-    if (O.excludeCameraFixed && perFrame.length >= 3) {
+    // Progress shares, in seconds measured on a synthetic 3247-frame clip: the probe pass and the
+    // real pass cost the same, and the camera-fixed search about 1% of either.
+    const probing = O.excludeCameraFixed && perFrame.length >= 3;
+    const stage = progressStages(onProgress, probing
+        ? {probe: 12.3, cameraFixed: 0.3, chain: 12.2}
+        : {chain: 1});
+
+    if (probing) {
         // Decide whether the camera moves BEFORE deciding what is camera-fixed.
         //
         // With a still camera the two are indistinguishable by position alone - every star also
@@ -965,17 +1036,18 @@ export function solveFrameChain(perFrame, opts = {}) {
         // artifacts it has not removed yet, but bias is irrelevant here: the only question is
         // whether the frame moved at all, and the artifacts can only bias the estimate DOWNWARD,
         // toward the stationary answer. So if this pass still sees motion, there is motion.
-        const probe = solveChainOnce(perFrame, O);
+        const probe = solveChainOnce(perFrame, O, stage("probe"));
         const extent = frameExtent(perFrame);
         let moved = 0;
         for (const T of probe.cumulative) {
             if (T) moved = Math.max(moved, motionMagnitude(T, extent.W, extent.H));
         }
         if (moved > O.staticMotionThreshold) cameraFixed = findCameraFixed(perFrame, O);
+        stage("cameraFixed")(1);
     }
 
     const usable = perFrame.map((d, f) => d.filter((_, i) => !cameraFixed.fixed[f].has(i)));
-    return {...solveChainOnce(usable, O), cameraFixed};
+    return {...solveChainOnce(usable, O, stage("chain")), cameraFixed};
 }
 
 /** Approximate frame size from the detections themselves, for motion measurement. */

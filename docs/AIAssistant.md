@@ -216,7 +216,11 @@ Nothing in either path includes your stored API keys: the assistant is never tol
 no tool that can read one.
 
 **Your prompts and replies are not kept.** Sitrec's server passes a conversation to the model
-provider and does not retain its text. What the server does keep, when the installation has
+provider and does not retain its text. The one short exception is a tool call: while your
+browser carries out an action the assistant asked for, the server keeps that conversation in
+a temporary file so the assistant can finish its reply. The server deletes the file when your
+browser answers. A file that is not used expires after 15 minutes, and a later request deletes
+it. What the server does keep, when the installation has
 usage statistics turned on, is accounting data for the AI feature: for each of the last 500
 requests, who made it (your user id), what kind of request it was (a chat or a ground mask),
 which model answered, how many tokens it used and what it cost, plus daily totals. None of

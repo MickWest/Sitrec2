@@ -66,6 +66,23 @@ import {lensFromVFOV, rayToPixel} from "./CameraLens";
 /** Beyond this elevation the azimuth parameter stops being identifiable. See the header. */
 export const MAX_ABS_EL = 85;
 
+/**
+ * A start pose the solver will accept: the same pose, with its elevation tilted back to
+ * +/-MAX_ABS_EL when it is past that.
+ *
+ * fitCameraToPoints refuses a START past the limit, and a look camera left pointing near straight
+ * down then stopped every fit with no way out but to tilt it by hand. The limit protects the
+ * parameters, not the answer: the tilted start is at most 90 - MAX_ABS_EL degrees from the real
+ * one, the pose scan takes no azimuth or elevation from the start (only its position, and its
+ * roll under Lock Roll, which the tilt leaves alone), and the solve itself never steps past the
+ * limit. A start already inside the limit comes back as the SAME object, so it solves exactly as
+ * before.
+ */
+export function clampStartElevation(initial) {
+    if (!(Math.abs(initial.elDeg) > MAX_ABS_EL)) return initial;
+    return {...initial, elDeg: Math.sign(initial.elDeg) * MAX_ABS_EL};
+}
+
 export const CAMERA_FIT_DEFAULTS = {
     // --- Levenberg-Marquardt (LM), the optimiser. ---------------------------------------------
     //

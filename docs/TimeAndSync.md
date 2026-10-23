@@ -63,7 +63,9 @@ Sitrec stores all times in UTC. The time zone only changes how times are **shown
 
 The list has fixed offsets, for example `PST UTC-8` and `PDT UTC-7`. Sitrec does not
 change between standard time and daylight time for you, so select the zone that was in
-effect on the date.
+effect on the date. For example, Chile is `CLT UTC-4` in its winter and `CLST UTC-3` in
+its summer. China is `BJT UTC+8` (Beijing Time), because `CST UTC-6` is US Central
+Standard Time.
 
 For a new sitch, the zone is the one that the sitch names, if it names one. If not, it is
 your computer's zone **on the date of the sitch**, so an old date gets the daylight-saving

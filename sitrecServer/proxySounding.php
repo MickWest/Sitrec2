@@ -136,7 +136,10 @@ if ($rateData['count'] >= 20) {
 $rateData['count']++;
 file_put_contents($rateLimitFile, json_encode($rateData), LOCK_EX);
 
-$result = curlGetRequest($url);
+// 30 s rather than curlGetRequest's 20 s default: the body is small, but UWYO is
+// slow to answer, and a cold miss can take ~16 s (see the 4xx note below). A
+// timeout is reported as the 502 below and is not negative-cached.
+$result = curlGetRequest($url, [], 30);
 $data = $result['data'];
 $httpStatus = $result['http_status'];
 

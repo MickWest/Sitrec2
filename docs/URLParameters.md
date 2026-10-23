@@ -176,7 +176,7 @@ with `?action=new`.
 | Parameter | Values | Effect |
 |---|---|---|
 | `ignoreunload` | Any value, or none (`?ignoreunload`) | Turns off the "Leave site?" warning when you close or reload the page |
-| `channel` | `beta` or `shipped` | On installations that offer a Beta build, opens that build for this visit. If there is no Beta build, `beta` opens the normal build and says so |
+| `channel` | `beta` or `shipped` | On installations that offer a Beta build, opens that build for this visit. If there is no Beta build, or the Beta is older than the Shipped build and so is retired, `beta` opens the normal build and says so |
 | `handoff` | A key | Loads files that another Sitrec window passed to this one. Sitrec makes these links itself, for example when the Track Browser opens a file in a new tab. The files are kept for one hour |
 | `fromapp` | `1`, with other values | Builds a sitch from a prediction sent by the standalone Starlink Horizon Flares app. That app makes these links |
 

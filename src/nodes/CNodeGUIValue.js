@@ -227,7 +227,8 @@ export class CNodeGUIValue extends CNodeGUIConstant {
         for (const mirror of this.guiEntry._mirrorControllers) {
             if (!mirror.domElement) continue;
             mirror._name = name;
-            mirror.$name.innerHTML = name;
+            // textContent, as in the patched lil-gui name(): desc can come from a sitch.
+            mirror.$name.textContent = name;
             mirror._min = this.guiEntry._min;
             mirror._max = this.guiEntry._max;
             mirror._maxMax = this.guiEntry._maxMax;

@@ -249,6 +249,16 @@ The three empty ACL settings are important for buckets with bucket-owner-enforce
 ownership: such buckets reject any upload request that carries an ACL. Reads and writes in
 this configuration remain on the application's origin.
 
+`s3-proxy.php` sets the response type from the extension of the object key. It never uses
+the type stored with the object, because a direct upload does not fix that type. Images,
+video and audio get their own types. Situation files and other text data (JSON, KML, XML,
+CSV, TLE, SRT, TXT) are `text/plain` or `application/json`. All other keys, including keys
+with no extension, are `application/octet-stream`. Every response has
+`X-Content-Type-Options: nosniff`, and every response that is not an image, video or audio
+has `Content-Disposition: attachment`. Thus the proxy does not serve an object as a page or
+a script on the application's origin. Sitrec loads data with `fetch()`, which ignores
+`Content-Disposition`.
+
 For public objects, `s3ObjectUrl()` produces the standard virtual-hosted URL with each key
 segment encoded. FIPS and custom endpoints are resolved through the SDK, and
 `S3_PUBLIC_BASE_URL` overrides the public base. Private reads use the resolver and a
@@ -292,4 +302,5 @@ uploads and reads stay on the application server.
    another user's prefix.
 
 The focused implementation tests are `tests/SitrecObjectResolver.test.js`,
-`tests/s3ClientConfig.test.js`, and `tests/s3ReadsViaServer.test.js`.
+`tests/s3ClientConfig.test.js`, `tests/s3ReadsViaServer.test.js`, and
+`tests/s3ProxyContentType.test.js`.

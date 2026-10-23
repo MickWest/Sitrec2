@@ -1829,6 +1829,7 @@ export const serializeMethods = {
                 "loadGeneration", "deserializing", "disposing",
                 "dontAutoZoom", "dontRecalculate",
                 "parsing", "pendingActions", "loadingTerrain", "sitchEstablished",
+                "sitchEstablishedByTrackImport",
             ]);
             for (let key in sitchData.globals) {
                 if (lifecycleGlobals.has(key)) {

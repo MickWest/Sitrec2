@@ -19,10 +19,9 @@ describe('release channel selection', () => {
         const overtaken = {...manifest, shipped: newer};
         expect(selectBuild(overtaken, true).id).toBe(newer.id);
         expect(selectBuild(overtaken, false).id).toBe(newer.id);
-        // An explicit one-load Beta still opens that exact Beta: a Beta-saved
-        // sitch's handoff depends on reaching the build that saved it.
-        expect(selectBuild(overtaken, true, 'beta').id).toBe(beta.id);
-        expect(selectBuild(overtaken, false, 'beta').id).toBe(beta.id);
+        // A superseded Beta is retired: an explicit one-load Beta gets Shipped too.
+        expect(selectBuild(overtaken, true, 'beta').id).toBe(newer.id);
+        expect(selectBuild(overtaken, false, 'beta').id).toBe(newer.id);
         // Equal versions keep the preference; a newer Beta is still Beta.
         expect(selectBuild(manifest, true).id).toBe(beta.id);
         expect(selectBuild({...manifest, beta: {...beta, version: '2.155.3'}}, true).id).toBe(beta.id);
@@ -33,6 +32,22 @@ describe('release channel selection', () => {
         expect(compareVersions('2.10.0', '2.9.9')).toBe(1);
         expect(compareVersions('2.9.9', '2.10.0')).toBe(-1);
         expect(compareVersions('2.9.9', '2.9.9')).toBe(0);
+    });
+    test('a newer Shipped retires the Beta; an equal or newer Beta stays available', () => {
+        const at = version => validateManifest({...manifest, beta: {...beta, version}}, base);
+        const retired = validateManifest({...manifest, shipped: {...shipped, version: '2.183.4'}}, base);
+        expect(retired.beta).toBeNull();
+        expect(retired.shipped.id).toBe(shipped.id);
+        // An explicit ?channel=beta then opens Shipped.
+        expect(selectBuild(retired, false, 'beta').id).toBe(shipped.id);
+        expect(selectBuild(retired, true).id).toBe(shipped.id);
+        expect(at('2.155.1').beta).toBeNull();
+        expect(at('2.155.2').beta.id).toBe(beta.id);
+        expect(at('2.155.3').beta.id).toBe(beta.id);
+        expect(selectBuild(at('2.155.2'), false, 'beta').id).toBe(beta.id);
+        // Numeric, not lexical: Shipped 2.10.0 retires Beta 2.9.9.
+        expect(validateManifest({...manifest, shipped: {...shipped, version: '2.10.0'},
+            beta: {...beta, version: '2.9.9'}}, base).beta).toBeNull();
     });
     test('kill switch excludes beta and keeps shipped available', () => {
         const result = validateManifest({...manifest, betaEnabled: false}, base);
@@ -60,6 +75,16 @@ describe('release channel selection', () => {
         expect(betaSaveNeedsWarning(file, shipped, {...manifest,
             shipped: {...shipped, coveredBetaIds: [beta.id]}})).toBe(false);
         expect(betaSaveNeedsWarning(file, {...shipped, version: '99.0.0'}, manifest)).toBe(true);
+    });
+    test('a sitch saved with a Beta older than Shipped needs no warning', () => {
+        const at = version => ({exportBuild: {...beta, version}});
+        expect(betaSaveNeedsWarning(at('2.155.1'), shipped, manifest)).toBe(false);
+        expect(betaSaveNeedsWarning(at('2.9.9'), shipped, {...manifest, shipped: {...shipped, version: '2.10.0'}})).toBe(false);
+        // A Beta at least as new as Shipped still warns unless Shipped covers it.
+        expect(betaSaveNeedsWarning(at('2.155.2'), shipped, manifest)).toBe(true);
+        expect(betaSaveNeedsWarning(at('2.155.3'), shipped, manifest)).toBe(true);
+        expect(betaSaveNeedsWarning(at('2.155.3'), shipped, {...manifest,
+            shipped: {...shipped, coveredBetaIds: [beta.id]}})).toBe(false);
     });
     test('beta display suffix never enters the numeric migration version', () => {
         const info = channelBuild('2.155.3', {SITREC_BUILD_CHANNEL: 'beta', SITREC_BUILD_TIME: beta.builtAt, SITREC_SOURCE_HASH: 'example'});

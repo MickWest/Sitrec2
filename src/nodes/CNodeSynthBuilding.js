@@ -1428,7 +1428,7 @@ export class CNodeSynthBuilding extends CNode3DGroup {
             set height(v) { this._displayValue = v; }
         };
         this.roofEdgeProxy = roofEdgeProxy;
-        this.roofEdgeHeightController = heightFolder.add(roofEdgeProxy, 'height', 0.1, 100, 0.01)
+        this.roofEdgeHeightController = heightFolder.add(roofEdgeProxy, 'height', 0.1, 1000, 0.01)
             .name(t("synthBuilding.roofEdgeHeight.label"))
             .setUnitType('small')
             .onChange(() => {
@@ -1444,7 +1444,7 @@ export class CNodeSynthBuilding extends CNode3DGroup {
             set height(v) { this._displayValue = v; }
         };
         this.ridgelineProxy = ridgelineHeightProxy;
-        this.ridgelineHeightController = heightFolder.add(ridgelineHeightProxy, 'height', 0.1, 100, 0.01)
+        this.ridgelineHeightController = heightFolder.add(ridgelineHeightProxy, 'height', 0.1, 1000, 0.01)
             .name(t("synthBuilding.ridgelineHeight.label"))
             .setUnitType('small')
             .onChange(() => {

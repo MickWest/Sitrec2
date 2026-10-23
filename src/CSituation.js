@@ -217,8 +217,10 @@ export class CSituation {
 
             // videoFile is a special case, we don't want to load it here
             if (key !== "videoFile") {
+                // As text, never HTML: these names come from the sitch, and a sitch
+                // can be loaded from any URL with ?custom=, so markup here would run.
                 if(!isConsole)
-                    infoDiv.innerHTML += assets[key] + "<br>";
+                    infoDiv.append(String(assets[key]), document.createElement("br"));
                 await FileManager.loadAsset(assets[key], key)
             }
         }

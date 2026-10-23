@@ -32,7 +32,15 @@ export const EPHEMERIS_MAX_YEAR = 2200;
 // draw, and an empty sky reads as a bug unless we say so.
 const FIRST_SATELLITE_YEAR = 1957;
 
-const timeZoneOffsets = {
+// Fixed offsets, mostly listed by offset (the zones after AEST were added later). A
+// zone that shares an offset with zones already here goes AFTER them:
+// setTimeZoneNameFromOffset() takes the first key with that offset, so putting it
+// first would rename what a browser zone, or the offset of an ISO date-time given to
+// setStartDateTime() (the AI assistant's setDateTime), resolves to. And
+// Sit.timeZone is a prefix match where the last matching key wins (see
+// timeZoneKeyFromSitTimeZone), so a new key must not start with an existing
+// abbreviation - which is why China is "BJT" and not "CST" (US Central).
+export const timeZoneOffsets = {
     "IDLW UTC-12": -12,     // International Date Line West
     "NT UTC-11": -11,       // Nome Time
     "HST UTC-10": -10,      // Hawaii Standard Time
@@ -48,8 +56,12 @@ const timeZoneOffsets = {
     "EST UTC-5": -5,        // Eastern Standard Time
     "EDT UTC-4": -4,        // Eastern Daylight Time
     "AST UTC-4": -4,        // Atlantic Standard Time
+    "CLT UTC-4": -4,        // Chile Standard Time
     "ADT UTC-3": -3,        // Atlantic Daylight Time
     "FKST UTC-3": -3,       // Falkland Islands Summer Time
+    "CLST UTC-3": -3,       // Chile Summer Time
+    "ART UTC-3": -3,        // Argentina Time
+    "BRT UTC-3": -3,        // Brasilia Time
     "GST UTC-2": -2,        // South Georgia and the South Sandwich Islands
     "AZOT UTC-1": -1,       // Azores Standard Time
     "GMT UTC+0": 0,         // Greenwich Mean Time
@@ -70,7 +82,10 @@ const timeZoneOffsets = {
     "MMT UTC+6.5": 6.5,      // Myanmar Time
     "KRAT UTC+7": 7,        // Krasnoyarsk Time
     "IRKT UTC+8": 8,        // Irkutsk Time
+    "BJT UTC+8": 8,         // China Standard Time (Beijing Time)
     "YAKT UTC+9": 9,        // Yakutsk Time
+    "JST UTC+9": 9,         // Japan Standard Time
+    "KST UTC+9": 9,         // Korea Standard Time
     "VLAT UTC+10": 10,      // Vladivostok Time
     "AEST UTC+10": 10,      // Australian Eastern Standard Time
     "ACST UTC+9.5": 9.5,    // Australian Central Standard Time
@@ -93,6 +108,19 @@ for (const key in timeZoneOffsets) {
     if (timeZoneOffsets.hasOwnProperty(key)) {
         timeZoneKeys.push(key)
     }
+}
+
+// The key a sitch's Sit.timeZone names: an abbreviation ("EET") or a whole key.
+// Every key that starts with it matches and the LAST one wins.
+// Returns undefined if nothing matches.
+export function timeZoneKeyFromSitTimeZone(sitTimeZone) {
+    let match;
+    for (const tz of timeZoneKeys) {
+        if (tz.startsWith(sitTimeZone)) {
+            match = tz;
+        }
+    }
+    return match;
 }
 
 // given a start time in ms, calculate the current "now" time based on the frame and the simSpeed and fps
@@ -261,12 +289,11 @@ export class CNodeDateTime extends CNode {
         this.timeZoneName = "PDT UTC-7";
         let sitTimeZoneApplied = false;
         if (Sit.timeZone !== undefined) {
-            for (const tz of timeZoneKeys) {
-                if (tz.startsWith(Sit.timeZone)) {
-                    this.timeZoneName = tz;
-                    this.timeZoneOffset = timeZoneOffsets[tz];
-                    sitTimeZoneApplied = true;
-                }
+            const tz = timeZoneKeyFromSitTimeZone(Sit.timeZone);
+            if (tz !== undefined) {
+                this.timeZoneName = tz;
+                this.timeZoneOffset = timeZoneOffsets[tz];
+                sitTimeZoneApplied = true;
             }
             if (!sitTimeZoneApplied) {
                 console.warn("CNodeDateTime - Sit.timeZone '" + Sit.timeZone

@@ -231,6 +231,12 @@ export class CNodeADSBLiveTraffic extends CNode3DGroup {
             new SceneLineMaterial({vertexColors: true, transparent: true, opacity: 0.65}));
         this.trails.frustumCulled = false;
         this.group.add(this.trails);
+
+        // A layer mask applies to its own object only, never to its children, and
+        // three.js tests each mesh separately. Without this the darts and trails
+        // keep the default WORLD mask and the look camera draws them too, sized
+        // for the main camera's distance.
+        this.propagateLayerMask();
     }
 
     // CNode3DGroup exposes the THREE.Group as _object; named here so the intent

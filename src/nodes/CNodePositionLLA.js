@@ -120,6 +120,7 @@ export class CNodePositionLLA extends CNodeTrack {
                 const gui = guiMenus[v.gui];
 
                 this.aglController = gui.add(this, "agl").name(t("positionLLA.aboveGroundLevel.label")).tooltip(t("positionLLA.aboveGroundLevel.tooltip")).onChange((v) => {
+                    this.keepPositionOnAGLToggle(v);
                     this.recalculateCascade()
                     markSitchDirty();
                 }).listen();
@@ -283,6 +284,42 @@ export class CNodePositionLLA extends CNodeTrack {
         }
         this.recalculateCascade();
         return true;
+    }
+
+    /**
+     * The "Above Ground Level" checkbox changes what the Altitude number MEANS (height
+     * above the ground, or above sea level). Left alone, the same number put the camera
+     * somewhere else — by the whole ground height, often underground under 3D tiles,
+     * which made it hard to place a camera on a building. So the toggle keeps the
+     * position and rewrites the number in the new reference instead.
+     *
+     * `agl` is the NEW state; this.ecef is still the position from the old one. The
+     * result does not depend on the old state, so a redundant set (setMenuValue can
+     * send one) leaves the number as it is.
+     *
+     * Only the checkbox calls this. Loading a saved sitch sets `agl` directly
+     * (simpleDeserialize), so a saved altitude and AGL flag load unchanged.
+     */
+    keepPositionOnAGLToggle(agl) {
+        const lla = ECEFToLLAVD_radii(this.ecef);   // HAE
+        let alt;
+        if (agl) {
+            // The same ground recalculate() will measure from: the 3D-tile surface if
+            // one is accepted, else the elevation map.
+            const terrainNode = NodeMan.get("TerrainModel", false);
+            if (!terrainNode) return;
+            const queryPos = LLAToECEF(this._LLA[0], this._LLA[1], 100000);
+            const ground = this._aglGroundPoint(terrainNode, queryPos, 0, 0);
+            // tileZ -1: no elevation tile is loaded here yet, so the terrain only
+            // answered sea level. The ground is not known; keep the old behaviour.
+            if (!(this.elevationCache?.[0]?.tileZ >= 0)) return;
+            // Same lat/lon, so the HAE difference is the MSL difference.
+            alt = lla.z - ECEFToLLAVD_radii(ground).z;
+        } else {
+            alt = lla.z - meanSeaLevelOffset(lla.x, lla.y);
+        }
+        this._LLA[2] = alt;
+        this.guiAlt.setValueWithUnits(alt, "metric", "small", true);
     }
 
 //     updateAltituide() {

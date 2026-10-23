@@ -53,6 +53,7 @@ Some things worth knowing:
 - **It follows the camera, not the sitch origin.** The search is centered on wherever you are currently looking, so flying somewhere else brings up that area's traffic on the next update.
 - **It sets the clock to now and pauses playback.** The feed is the live present, so the scene has to be the present too — otherwise the sun, the sky and the traffic would all disagree. Scrubbing the playhead has no meaning while it is on.
 - **It is not saved with the sitch.** This is a view of the live present, not part of a recreation, so switching it on never changes what a saved sitch contains.
+- **It is drawn in the main view only.** The darts are sized for the main view's zoom, so the look view, which shows the recreation, does not draw them. To see one aircraft in the look view, click it to import it as a track.
 - **It needs the Sitrec server**, so it is unavailable in the desktop app and other serverless builds.
 
 **Click an aircraft to promote it to a real track.** A single click on any of the darts fetches that aircraft's full ~24-hour trace and adds it as an ordinary Sitrec track, with all the usual measurement tools — the same thing **Import ADS-B Track...** does, without needing to know the hex address. The Traffic readout says `importing …` while the trace is fetched, which takes a second or two.
@@ -88,6 +89,7 @@ Some notes on reading them:
 - **Weather balloons are live only.** The feed shows the radiosondes that SondeHub has received in the last hour, each at its latest reported position, with altitude and climb rate. It shows only sondes that the SondeHub network tracks, and it does not show past flights.
 - **Earthquakes are drawn at the epicentre**, on the surface. Depth is in the details rather than the position — a quake plotted at its true hypocentre is inside the Earth and invisible.
 - **None of it is saved with your sitch.** These are views of the live present, not part of a recreation.
+- **They are drawn in the main view only**, like Live ADS-B Traffic; the look view does not show them.
 - **The keyless feeds need the Sitrec server**, so they are unavailable in the desktop app and other serverless builds. The three keyed feeds work everywhere.
 
 Credit the source shown in the table when publishing imagery made with one of these feeds.
@@ -507,6 +509,17 @@ When the second track loads, Sitrec finds the time of closest approach between t
 
 ![Two aircraft tracks over Lake Michigan](docimages/tracks-two-aircraft-lakemichigan.jpg)
 
+### Camera and Target from One File
+
+When the first thing you import into a new sitch is one file with two or more tracks (an ADS-B Exchange KML of an area, for example), and the file does not say which track is the camera, Sitrec asks before it uses the first two tracks as the camera and the target:
+
+- For a file with two tracks, the **Camera and Target** question opens. **Use as camera and target** does what the Two-Track Setup above describes. **Only load the tracks** loads the tracks, but does not change the camera position, the target or the **Camera Heading**. If you close the question, Sitrec uses the tracks as camera and target.
+- For a file with three or more tracks, the **Multiple Tracks Detected** dialog has a **Use the first two tracks as camera and target** box. It is on by default. Turn it off to load the tracks without changing the camera position, the target or the **Camera Heading**.
+
+Either way, Sitrec sets the start time from the tracks and moves the main view to them. You can select any track later in **Camera → Location → Position** and **Target → Target Track**. Sitrec does not ask for a file that declares its own camera and target (STANAG, BOT, NITF), for two one-track files that you import one after the other, or when it loads a saved sitch.
+
+Once you have set up the camera, time or position yourself, imported tracks do not change them, even after **Remove All Tracks**.
+
 ### Selecting from Multi-Track Files
 
 When you import a file containing **three or more tracks** (common with ADS-B KML exports covering an area), Sitrec shows a **Multiple Tracks Detected** dialog with four buttons:
@@ -515,6 +528,8 @@ When you import a file containing **three or more tracks** (common with ADS-B KM
 - **Select...** opens a **Select Tracks** list: each track is shown with its callsign/name and altitude range (in feet), with a checkbox to choose it
 - **Filter...** opens the filter panel (see below), then shows the **Select Tracks** list with the tracks that pass the filters already checked
 - **Cancel** loads nothing from the file
+
+When the import would use the first two tracks as the camera and the target, the dialog also has a **Use the first two tracks as camera and target** box. See [Camera and Target from One File](#camera-and-target-from-one-file).
 
 ### Multi-Track Filter Panel
 

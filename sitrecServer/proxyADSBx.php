@@ -111,6 +111,7 @@ $url = "https://adsbexchange-com1.p.rapidapi.com/v2/lat/{$lat}/lon/{$lon}/dist/{
 $ch = curl_init();
 curl_setopt($ch, CURLOPT_URL, $url);
 curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 5);
 curl_setopt($ch, CURLOPT_TIMEOUT, 15);
 curl_setopt($ch, CURLOPT_HTTPHEADER, [
     'X-RapidAPI-Key: ' . $apiKey,

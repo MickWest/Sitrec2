@@ -62,21 +62,43 @@ function findObjectFolder(folders, name) {
         ?? folders.find(f => wanted.includes(title(f)));
 }
 
-// Flexible RA parser: accepts decimal hours, "3h47m10s", "03:47:10", "3h47m", "3h 47m 10s", etc.
+const RA_FORMS = "Use decimal hours 0-24 (e.g. 3.79), sexagesimal hours (e.g. '3h47m10s'), " +
+    "or degrees 0-360 with a unit (e.g. '56.9 deg').";
+
+// Flexible RA parser. Returns {hours} or {error}.
+// Hours: decimal ("3.79", "3.79h") or sexagesimal ("3h47m10s", "03:47:10", "3h 47m 10s").
+// Degrees: with a unit ("56.9 deg", "56.9°", "56.9d"), the form Astrometry.net gives.
+// A plain number up to 24 is hours. Above 24 it cannot be hours, so up to 360 it is read as
+// degrees, with a warning. Anything else out of range is an error.
 function parseRA(input) {
-    if (input == null) return null;
+    const fail = (why) => ({error: `${why} ${RA_FORMS}`});
+    if (input == null) return fail(`Could not parse RA '${input}'.`);
+    const outOfRange = fail(`RA '${input}' is out of range.`);
     const n = Number(input);
-    if (!isNaN(n) && isFinite(n)) return n; // decimal hours
+    if (!isNaN(n) && isFinite(n)) {
+        if (n >= 0 && n <= 24) return {hours: n};
+        if (n > 24 && n <= 360) {
+            console.warn(`RA ${n} is more than 24, so it is read as degrees (${(n / 15).toFixed(4)} h)`);
+            return {hours: n / 15};
+        }
+        return outOfRange;
+    }
     const s = String(input).trim();
+    const deg = s.match(/^(\d+(?:\.\d+)?)\s*(?:°|deg(?:rees?|s)?|d)$/i);
+    if (deg) {
+        const d = parseFloat(deg[1]);
+        return d <= 360 ? {hours: d / 15} : outOfRange;
+    }
     // sexagesimal: h/m/s or colon-separated
     const m = s.match(/^(\d+(?:\.\d+)?)\s*[h:]\s*(\d+(?:\.\d+)?)?\s*[m:]?\s*(\d+(?:\.\d+)?)?\s*s?$/i);
     if (m) {
         const h = parseFloat(m[1]);
         const min = m[2] ? parseFloat(m[2]) : 0;
         const sec = m[3] ? parseFloat(m[3]) : 0;
-        return h + min / 60 + sec / 3600;
+        const hours = h + min / 60 + sec / 3600;
+        return hours <= 24 ? {hours} : outOfRange;
     }
-    return null;
+    return fail(`Could not parse RA '${input}'.`);
 }
 
 // Flexible Dec parser: accepts decimal degrees, "+24d07m00s", "24:07:00", "-24d07m", etc.
@@ -671,9 +693,9 @@ class CSitrecAPI {
             },
 
             pointCameraAtRaDec: {
-                doc: "Set the camera orientation (one-shot, no tracking) based on Right Ascension and Declination. Use for looking at stars and other fixed sky objects (not planets or the Sun). RA can be decimal hours (e.g. 3.79) or sexagesimal ('3h47m' or '03:47:00'). Dec can be decimal degrees (e.g. 24.12) or sexagesimal ('+24d07m' or '24:07:00').",
+                doc: "Set the camera orientation (one-shot, no tracking) based on Right Ascension and Declination. Use for looking at stars and other fixed sky objects (not planets or the Sun). RA can be hours, as decimal hours 0-24 (e.g. 3.79) or sexagesimal ('3h47m' or '03:47:00'), or degrees 0-360 with a unit (e.g. '56.9 deg' — Astrometry.net gives RA in degrees). A plain RA above 24 is read as degrees. Dec can be decimal degrees (e.g. 24.12) or sexagesimal ('+24d07m' or '24:07:00').",
                 params: {
-                    ra: "Right Ascension — decimal hours or sexagesimal string (e.g. 5.92 or '5h55m')",
+                    ra: "Right Ascension — decimal hours 0-24, sexagesimal hours, or degrees with a unit (e.g. 5.92, '5h55m' or '88.8 deg')",
                     dec: "Declination — decimal degrees or sexagesimal string (e.g. 7.41 or '+7d24m')",
                 },
                 fn: (v) => {
@@ -681,9 +703,9 @@ class CSitrecAPI {
                     if (!camera) return { success: false, error: "lookCamera node not found" };
                     const ra = parseRA(v.ra);
                     const dec = parseDec(v.dec);
-                    if (ra === null) return { success: false, error: `Could not parse RA '${v.ra}'. Use decimal hours (e.g. 3.79) or sexagesimal (e.g. '3h47m10s').` };
+                    if (ra.error) return { success: false, error: ra.error };
                     if (dec === null) return { success: false, error: `Could not parse Dec '${v.dec}'. Use decimal degrees (e.g. 24.12) or sexagesimal (e.g. '+24d07m00s').` };
-                    camera.setFromRaDec(ra, dec);
+                    camera.setFromRaDec(ra.hours, dec);
                     return { success: true };
                 }
             },
@@ -717,9 +739,9 @@ class CSitrecAPI {
             },
 
             lockCameraOnRaDec: {
-                doc: "Lock (continuously track) the camera onto a fixed sky position given by Right Ascension and Declination. The camera will follow the position as the sky rotates. RA can be decimal hours (e.g. 3.79) or sexagesimal ('3h47m' or '03:47:00'). Dec can be decimal degrees (e.g. 24.12) or sexagesimal ('+24d07m' or '24:07:00'). Use for stars, star clusters, galaxies, constellations, etc.",
+                doc: "Lock (continuously track) the camera onto a fixed sky position given by Right Ascension and Declination. The camera will follow the position as the sky rotates. RA can be hours, as decimal hours 0-24 (e.g. 3.79) or sexagesimal ('3h47m' or '03:47:00'), or degrees 0-360 with a unit (e.g. '56.9 deg' — Astrometry.net gives RA in degrees). A plain RA above 24 is read as degrees. Dec can be decimal degrees (e.g. 24.12) or sexagesimal ('+24d07m' or '24:07:00'). Use for stars, star clusters, galaxies, constellations, etc.",
                 params: {
-                    ra: "Right Ascension — decimal hours or sexagesimal string (e.g. 5.92 or '5h55m')",
+                    ra: "Right Ascension — decimal hours 0-24, sexagesimal hours, or degrees with a unit (e.g. 5.92, '5h55m' or '88.8 deg')",
                     dec: "Declination — decimal degrees or sexagesimal string (e.g. 7.41 or '+7d24m')",
                 },
                 fn: (v) => {
@@ -727,10 +749,10 @@ class CSitrecAPI {
                     if (!camera) return { success: false, error: "lookCamera node not found" };
                     const ra = parseRA(v.ra);
                     const dec = parseDec(v.dec);
-                    if (ra === null) return { success: false, error: `Could not parse RA '${v.ra}'. Use decimal hours (e.g. 3.79) or sexagesimal (e.g. '3h47m10s').` };
+                    if (ra.error) return { success: false, error: ra.error };
                     if (dec === null) return { success: false, error: `Could not parse Dec '${v.dec}'. Use decimal degrees (e.g. 24.12) or sexagesimal (e.g. '+24d07m00s').` };
-                    camera.lockOnRaDec(ra, dec);
-                    return { success: true, locked: { ra, dec } };
+                    camera.lockOnRaDec(ra.hours, dec);
+                    return { success: true, locked: { ra: ra.hours, dec } };
                 }
             },
 

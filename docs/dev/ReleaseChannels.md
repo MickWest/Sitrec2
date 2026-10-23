@@ -11,18 +11,21 @@ Use Beta updates** to stay on Shipped. Anonymous visitors default to Shipped and
 can explicitly select Beta on that browser. A missing or disabled Beta falls back
 to Shipped. All of this is silent: only a load that explicitly asked for Beta with
 `?channel=beta` is told when Beta could not be opened, so anyone who did not choose
-Beta never sees a channel message. When a full release is newer than the current Beta, a Beta preference
-opens that release instead, so a Beta user never runs older code than a visitor;
-an explicit one-load Beta selection still opens the exact Beta, which a Beta-saved
-sitch's handoff relies on. Choosing a version for a single shared file does not
-change the saved preference. Changing the preference does not immediately reload
-unsaved work.
+Beta never sees a channel message. When a full release has a higher version than
+the current Beta, that Beta is retired, so a Beta user never runs older code than a
+visitor. The release tool removes it from every manifest it writes, `channels.php`
+does not return it, and the bootstrap ignores it, so a Beta preference and an
+explicit `?channel=beta` both open Shipped. Equal versions do not retire a Beta.
+Choosing a version for a single shared file does not change the saved preference.
+Changing the preference does not immediately reload unsaved work.
 
 Beta labels include `b`, a UTC build time and a unique internal build ID. Saved
 files retain the creating build's metadata separately from their numeric migration
 version. A Shipped reader opening a beta save can open the available Beta, cancel,
 or continue in Shipped. Once a reviewed release includes that beta, the release
-manifest can suppress the warning for that build ID. Old files continue to load.
+manifest can suppress the warning for that build ID. A save from a Beta older than
+Shipped opens in Shipped with no warning, because that Beta is retired. Old files
+continue to load.
 
 ## Container setup
 
@@ -87,7 +90,8 @@ and lazy-chunk URLs remain within their immutable build directory.
   immutable reviewed runtime. Supply the reviewed delta hash for Beta. With a
   previous static image, also supply the live channel manifest: the new image copies
   only the builds that the manifest names, so it holds at most three builds (the new
-  build, the current Shipped and the current Beta).
+  build, the current Shipped and the current Beta). It does not copy a Beta that is
+  older than the manifest's Shipped, because that Beta is retired.
 - `import-image`: import Shipped frontend bytes from a reviewed release image whose
   source revision matches the snapshot, avoiding an unnecessary rebuild.
 

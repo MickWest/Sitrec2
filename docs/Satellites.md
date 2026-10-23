@@ -83,9 +83,13 @@ turned on, Sitrec turns on **Other Satellites** so that you can see them.
 
 When TLE data is loaded, the top right of the main view shows the date range the data covers,
 and **In Range**, the percentage of the shown satellites that Sitrec can place at the current
-time. A satellite whose elements are more than 90 days from the current time is not drawn. The
-text is green at 100%, yellow from 95% up to 100%, and red below 95%. If it is red, load the
-data for the sitch date.
+time. The date range is the oldest and newest element dates in the data (UTC), not the date
+you asked for. **Satellites → TLEs From** and **TLEs To**, below the load buttons, show the
+same two dates, or *None loaded*.
+
+A satellite whose elements are more than 90 days from the current time is not drawn. The
+text at the top right of the main view is green when **In Range** is 100%, yellow from 95% up
+to 100%, and red below 95%. If it is red, load the data for the sitch date.
 
 When you reopen a sitch of your own that was saved with incomplete data, Sitrec offers to add
 the missing satellites. See
@@ -215,7 +219,7 @@ not predict the number of detectable trails in a photograph.
 | **Satellite Arrows** | Off | Arrows showing the direction each satellite is moving |
 | **Flare Lines** | Off | Lines that connect flaring satellites to the camera and to the Sun |
 | **Satellite Ground Arrows** | Off | Arrows from each satellite down to the ground below it |
-| **Flare Region** | Off | The region of the sky where satellite flares are visible |
+| **Flare Region** | Off | The region of the sky where satellite flares are visible from the look camera. It assumes Starlink geometry: a flat surface that faces the Earth, at one altitude of 550 km. It does not check the Flare Band and marks the best match even when no reflection is close, so it is valid only when the camera is inside the Flare Band |
 | **Flare Region in Look View** | Off | Also draws the flare region in the look view |
 | **Flare Band** | Off | The band on the ground from which flares can be seen: between the smaller green circle and the larger yellow circle |
 | **Satellite Labels (Look View)** | Off | Name labels in the look view |
@@ -327,7 +331,7 @@ combined data.
 ### No satellites appear
 
 - Check that TLE data is loaded: the date range and **In Range** show at the top right of the
-  main view.
+  main view, and the date range shows in **Satellites → TLEs From** and **TLEs To**.
 - Check **Show Satellites (Global)** and the category switches. A satellite that is in no
   category needs **Other Satellites**.
 - Check **Sat Brightness** is not 0, and that **Sat Cut-Off** is not too high.

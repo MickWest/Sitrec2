@@ -24,6 +24,7 @@ import {
     composeTransform,
     fitSimilarity,
     invertTransform,
+    progressStages,
 } from "./StarMatch";
 import {maxOf, minOf} from "../SafeArrays";
 
@@ -145,18 +146,31 @@ export const STAR_SOLVE_DEFAULTS = {
  *
  * @param {Array<Array>} perFrame - detections per frame, each {x, y, ...}
  * @param {Array} cumulative - per-frame transform mapping reference coordinates into that frame
+ * @param {function(number)} [onProgress] - called with the fraction of frames done, 0 to 1
  * @returns {Array} tracklets, each {obs: [{f, x, y, rx, ry, src}], first, last}
  */
-export function buildTracklets(perFrame, cumulative, opts = {}) {
+export function buildTracklets(perFrame, cumulative, opts = {}, onProgress = () => {}) {
     const O = {...STAR_SOLVE_DEFAULTS, ...opts};
     const tracks = [];
     const r2 = O.trackRadius * O.trackRadius;
+    // Indices of the tracks still inside the gap allowance, ascending. A track's `last` only ever
+    // grows and so does f, so once a track falls outside the allowance it can never be matched
+    // again - and scanning every track ever created, on every frame, made association quadratic
+    // in clip length: by the end of a synthetic 3247-frame clip each detection was tested against
+    // ~15000 tracks, of which ~120 were live. Ascending order keeps each detection's candidate
+    // list in the same order as the full scan, so the result is unchanged.
+    let live = [];
 
     for (let f = 0; f < perFrame.length; f++) {
+        onProgress(f / perFrame.length);
         const C = cumulative[f];
         if (!C) continue;
         const inv = invertTransform(C);
         if (!inv) continue;
+
+        // A gap of `trackMaxGap` MISSING frames is the documented allowance, and the count of
+        // missing frames between `last` and `f` is (f - last - 1), not (f - last).
+        live = live.filter((t) => !(f - tracks[t].last - 1 > O.trackMaxGap));
 
         const mapped = perFrame[f].map((d) => {
             const [rx, ry] = applyTransform(inv, d.x, d.y);
@@ -171,19 +185,16 @@ export function buildTracklets(perFrame, cumulative, opts = {}) {
         // fragmented for no better reason than which frames its detections dropped out on. A
         // star's fitted velocity is zero within noise, so for stars this predicts the same place
         // the last position did and nothing about their association changes.
-        const predicted = tracks.map((t) => (O.predictiveAssociation
-            ? trackPrediction(t, f)
-            : [t.lx, t.ly]));
+        const predicted = live.map((t) => (O.predictiveAssociation
+            ? trackPrediction(tracks[t], f)
+            : [tracks[t].lx, tracks[t].ly]));
 
         // Candidate pairings for this frame, each detection's options ordered by distance.
         const options = mapped.map(() => []);
         for (let m = 0; m < mapped.length; m++) {
-            for (let t = 0; t < tracks.length; t++) {
-                // A gap of `trackMaxGap` MISSING frames is the documented allowance, and the count
-                // of missing frames between `last` and `f` is (f - last - 1), not (f - last).
-                if (f - tracks[t].last - 1 > O.trackMaxGap) continue;
-                const dd = (predicted[t][0] - mapped[m].rx) ** 2 + (predicted[t][1] - mapped[m].ry) ** 2;
-                if (dd <= r2) options[m].push([dd, t]);
+            for (let k = 0; k < live.length; k++) {
+                const dd = (predicted[k][0] - mapped[m].rx) ** 2 + (predicted[k][1] - mapped[m].ry) ** 2;
+                if (dd <= r2) options[m].push([dd, live[k]]);
             }
             options[m].sort((a, b) => a[0] - b[0]);
         }
@@ -217,7 +228,10 @@ export function buildTracklets(perFrame, cumulative, opts = {}) {
                 }
             }
         }
-        const trackOwner = new Array(tracks.length).fill(-1);
+        // Track index -> detection index. A map rather than an array over every track, for the
+        // same reason as `live`; each track takes at most one detection, so the order the
+        // updates below are applied in does not matter.
+        const trackOwner = new Map();
         const matchedDet = new Set();
         if (cand.length) {
             const nDet = mapped.length;
@@ -238,15 +252,13 @@ export function buildTracklets(perFrame, cumulative, opts = {}) {
             for (let m = 0; m < nDet; m++) {
                 const c = rowCol[m];
                 if (c >= 0 && c < cand.length) {
-                    trackOwner[cand[c]] = m;
+                    trackOwner.set(cand[c], m);
                     matchedDet.add(m);
                 }
             }
         }
 
-        for (let t = 0; t < trackOwner.length; t++) {
-            const m = trackOwner[t];
-            if (m === -1) continue;
+        for (const [t, m] of trackOwner) {
             const {d, rx, ry} = mapped[m];
             const tr = tracks[t];
             tr.obs.push({f, x: d.x, y: d.y, rx, ry, src: d});
@@ -255,6 +267,7 @@ export function buildTracklets(perFrame, cumulative, opts = {}) {
         for (let m = 0; m < mapped.length; m++) {
             if (matchedDet.has(m)) continue;
             const {d, rx, ry} = mapped[m];
+            live.push(tracks.length);
             tracks.push({
                 obs: [{f, x: d.x, y: d.y, rx, ry, src: d}],
                 lx: rx, ly: ry, first: f, last: f,
@@ -262,6 +275,7 @@ export function buildTracklets(perFrame, cumulative, opts = {}) {
         }
     }
     for (const t of tracks) t.last = t.obs[t.obs.length - 1].f;
+    onProgress(1);
     return tracks;
 }
 
@@ -448,9 +462,11 @@ function starPosition(track, transforms) {
  *
  * @param {Array} tracks - tracklets from {@link buildTracklets}
  * @param {Array} initialTransforms - Stage 2's chained transforms, used only as a starting point
+ * @param {function(number)} [onProgress] - called with iterations done over the refineIterations
+ *   cap, and with 1 when it stops - a converged refinement jumps to the end
  * @returns {{transforms: Array, stars: Array, rms: number, iterations: number, converged: boolean}}
  */
-export function refineGlobal(tracks, initialTransforms, opts = {}) {
+export function refineGlobal(tracks, initialTransforms, opts = {}, onProgress = () => {}) {
     const O = {...STAR_SOLVE_DEFAULTS, ...opts};
     const nFrames = initialTransforms.length;
     let transforms = initialTransforms.slice();
@@ -540,7 +556,9 @@ export function refineGlobal(tracks, initialTransforms, opts = {}) {
         const next = count ? Math.sqrt(sse / count) : Infinity;
         if (Math.abs(rms - next) < O.refineTolerance) { rms = next; converged = true; break; }
         rms = next;
+        onProgress(iterations / O.refineIterations);
     }
+    onProgress(1);
 
     return {transforms, stars, rms, iterations, converged};
 }
@@ -1177,14 +1195,18 @@ function mergeSplitStarTracks(tracks, classified, transforms, O, forbidden = [])
  * merges. A genuine mover is never touched by any of this - only star-classified tracks are
  * merged in the first place.
  *
+ * Progress is reported per round against the cap, so it jumps to the end when a round verifies.
+ *
  * @returns {{tracks: Array, stars: Array, classified: Array}|null} null when nothing merged
  */
-function mergeAndVerify(tracks, classified, transforms, O) {
+function mergeAndVerify(tracks, classified, transforms, O, onProgress = () => {}) {
     const forbidden = [];
     let merged = mergeSplitStarTracks(tracks, classified, transforms, O, forbidden);
     if (!merged) return null;
 
-    for (let round = 0; round < 20; round++) {
+    const rounds = 20;
+    for (let round = 0; round < rounds; round++) {
+        onProgress(round / rounds);
         const stars = merged.map((t) => starPosition(t, transforms));
         const cls = classifyTracks(merged, transforms, stars, O);
         const refuted = cls.filter((c) => c.klass !== "star" && merged[c.index].mergedFrom);
@@ -1197,6 +1219,15 @@ function mergeAndVerify(tracks, classified, transforms, O) {
     return null;
 }
 
+// Progress shares of solveStarField's stages, in seconds measured on a synthetic 3247-frame clip.
+// The three refinements are most of it, and the most variable: each runs until it converges, 2 to
+// 40 iterations from clip to clip, so each reports against its cap and jumps to its end when it
+// converges.
+const SOLVE_FIELD_PROGRESS = {
+    tracklets1: 0.4, refine1: 10.0, tracklets2: 0.4, refine2: 4.0, classify1: 0.6, merge1: 1.3,
+    refine3: 10.0, tracklets3: 0.4, classify2: 0.6, merge2: 1.2,
+};
+
 /**
  * The whole of Stage 3: tracklets, a globally refined map, classification, and a second refinement
  * using only the confirmed stars.
@@ -1205,14 +1236,18 @@ function mergeAndVerify(tracks, classified, transforms, O) {
  * artifacts among them - and those pull on the very transforms used to judge them. Re-solving on
  * the confirmed stars alone gives a map built from things that actually belong to the sky, and the
  * classification is then repeated against it.
+ *
+ * `onProgress`, optional, is called with the fraction of the solve done, 0 to 1. It changes
+ * nothing about the answer.
  */
-export function solveStarField(perFrame, cumulative, opts = {}) {
+export function solveStarField(perFrame, cumulative, opts = {}, onProgress = () => {}) {
     const O = {...STAR_SOLVE_DEFAULTS, ...opts};
     // Stage timings, printed once per solve. This is a minute-scale operation on a dense field and
     // guessing at where the time goes has already cost two wrong optimisations.
     const T0 = Date.now(); let tPrev = T0; const timing = [];
     const stamp = (name) => { const now = Date.now(); timing.push(`${name} ${now - tPrev}ms`); tPrev = now; };
-    let tracks = buildTracklets(perFrame, cumulative, O);
+    const stage = progressStages(onProgress, SOLVE_FIELD_PROGRESS);
+    let tracks = buildTracklets(perFrame, cumulative, O, stage("tracklets1"));
     stamp(`buildTracklets#1(${tracks.length})`);
     if (!tracks.length) {
         // Same shape as every other return, so callers need one code path rather than two.
@@ -1261,7 +1296,7 @@ export function solveStarField(perFrame, cumulative, opts = {}) {
 
     let solveSet = anchors(tracks);
     if (solveSet.length < 3) solveSet = tracks;
-    const first = refineGlobal(solveSet, cumulative, O);
+    const first = refineGlobal(solveSet, cumulative, O, stage("refine1"));
     stamp("refineGlobal#1");
 
     // Rebuild the tracklets against the refined transforms before believing any of them.
@@ -1272,15 +1307,16 @@ export function solveStarField(perFrame, cumulative, opts = {}) {
     // drift: it really did move against the map, just not because anything in the sky did.
     // Re-associating in a drift-free frame removes the cause rather than trying to filter the
     // symptom.
-    tracks = buildTracklets(perFrame, first.transforms, O);
+    tracks = buildTracklets(perFrame, first.transforms, O, stage("tracklets2"));
     stamp("buildTracklets#2");
     let solveSet2 = anchors(tracks);
     if (solveSet2.length < 3) solveSet2 = tracks;
-    let refined = refineGlobal(solveSet2, first.transforms, O);
+    let refined = refineGlobal(solveSet2, first.transforms, O, stage("refine2"));
     stamp("refineGlobal#2");
     // Place every track - including the short ones - in the map the anchors define.
     let allStars = tracks.map((t) => starPosition(t, refined.transforms));
     let classified = classifyTracks(tracks, refined.transforms, allStars, O);
+    stage("classify1")(1);
     stamp("classify#1");
 
     // Rejoin the pieces of any star that association could not keep whole - a dropout longer
@@ -1288,7 +1324,8 @@ export function solveStarField(perFrame, cumulative, opts = {}) {
     // star constrains that refinement across its full span rather than as two half-weight
     // fragments. Classification is redone on the merged list, and any merge falsified by its
     // own result is undone (see mergeAndVerify).
-    const firstMerge = mergeAndVerify(tracks, classified, refined.transforms, O);
+    const firstMerge = mergeAndVerify(tracks, classified, refined.transforms, O, stage("merge1"));
+    stage("merge1")(1);
     stamp("merge#1");
     if (firstMerge) {
         tracks = firstMerge.tracks;
@@ -1302,8 +1339,9 @@ export function solveStarField(perFrame, cumulative, opts = {}) {
         .filter((c) => c.klass === "star" && tracks[c.index].obs.length >= O.minObservations)
         .map((c) => tracks[c.index]);
     if (starTracks.length >= 3) {
-        refined = refineGlobal(starTracks, refined.transforms, O);
+        refined = refineGlobal(starTracks, refined.transforms, O, stage("refine3"));
     }
+    stage("refine3")(1);
     stamp(`refineGlobal#3(${starTracks.length})`);
 
     // One FINAL association against the settled transforms, and a final merge and classification
@@ -1314,12 +1352,14 @@ export function solveStarField(perFrame, cumulative, opts = {}) {
     // the star-only refinement smooth the very stretch where a track had been cut, which is how
     // the object's two halves ended up 2.6 px apart at a seam and still in different tracks. The
     // transforms are settled now, so this costs one tracklet build and no further refinement.
-    tracks = buildTracklets(perFrame, refined.transforms, O);
+    tracks = buildTracklets(perFrame, refined.transforms, O, stage("tracklets3"));
     stamp("buildTracklets#3");
     allStars = tracks.map((t) => starPosition(t, refined.transforms));
     classified = classifyTracks(tracks, refined.transforms, allStars, O);
+    stage("classify2")(1);
     stamp("classify#2");
-    const finalMerge = mergeAndVerify(tracks, classified, refined.transforms, O);
+    const finalMerge = mergeAndVerify(tracks, classified, refined.transforms, O, stage("merge2"));
+    stage("merge2")(1);
     stamp("merge#2");
     if (finalMerge) {
         tracks = finalMerge.tracks;

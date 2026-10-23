@@ -238,8 +238,8 @@ These are in **Objects → Building: *name*** and in the editor.
 | **Name** | *Building 1*, *Building 2*, ... | The name in the menus and the editor title |
 | **Visible** (title checkbox) | on | Show or hide the building |
 | **Edit Mode** | on when created | Show the handles and the editor |
-| **Height → Roof Edge Height** | 4 m | Height of the top of the walls, above the highest ground point under the building |
-| **Height → Ridgeline Height** | same as Roof Edge Height | Height of the roof ridge. When it equals Roof Edge Height, the roof is flat. It cannot be lower than the roof edge |
+| **Height → Roof Edge Height** | 4 m | Height of the top of the walls, above the highest ground point under the building. The slider goes up to 1000 m. The grey roof handle has no upper limit |
+| **Height → Ridgeline Height** | same as Roof Edge Height | Height of the roof ridge, up to 1000 m. When it equals Roof Edge Height, the roof is flat. It cannot be lower than the roof edge |
 | **Height → Ridgeline Inset** | 0 | Moves both ends of the ridge inward, which slopes the end faces of the roof |
 | **Height → Roof Eaves** | 0 | Extends the roof beyond the walls |
 | **Material → Type** | lambert | Lighting model: basic, lambert, phong or physical |

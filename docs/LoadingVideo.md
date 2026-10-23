@@ -80,8 +80,19 @@ When you drop an image, the **Import Image** dialog asks how to use it:
 | **Ground Overlay** | Place it as an image overlay on the ground or map |
 | **Cancel** | Do not import the image |
 
-If a video or image is already loaded, the **Media Already Loaded** dialog then offers
-**Replace**, **Add** (keep both and switch with the selector) or **Cancel**.
+If a video or image is already loaded, the **Second Video** dialog then asks where the image
+goes:
+
+| Choice | What it does |
+|---|---|
+| **Second Video View** | Show the image side by side with the video, in the second video view |
+| **Add to Video View** | Keep both in the video view. A **Video → Current Video** selector appears, so you can switch between them |
+| **Replace Video** | Remove the current video and use the image |
+| **Cancel** | Do not import the image |
+
+If the second video view already holds a video or image, the **Media Already Loaded** dialog
+then offers **Replace**, **Add** (keep both and switch with the selector) or **Cancel** for
+that view.
 
 A photo with EXIF data can position the scene for you. When the image loads, Sitrec applies
 what the EXIF provides to the camera: its GPS position, the capture date and time, the heading,

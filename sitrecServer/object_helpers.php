@@ -156,6 +156,59 @@ function buildServerObjectUrl($key, $appUrl = null) {
 }
 
 /**
+ * The type headers s3-proxy.php sends for an object, decided from the key's extension only.
+ *
+ * The stored Content-Type is never used. A presigned PUT does not sign it, so the uploader
+ * chooses it, and passing it through would let an upload be served as HTML, SVG or XML that
+ * runs script on this application's origin. Images, video and audio get their real types.
+ * Text data (sitch .js, JSON, KML, CSV, TLE, SRT) gets text/plain or application/json, never
+ * a type the browser renders as a document or runs as script. Everything else, including a
+ * key with no extension, is application/octet-stream.
+ *
+ * Every type that is not image, video or audio is also sent as an attachment, so opening the
+ * URL downloads it. fetch() ignores Content-Disposition, so Sitrec's own loading is unchanged.
+ *
+ * @param string $key Object key.
+ * @return array<string,string> Header name => value, Content-Type first.
+ */
+function objectProxyContentHeaders($key) {
+    static $MEDIA_TYPES = [
+        'png' => 'image/png', 'jpg' => 'image/jpeg', 'jpeg' => 'image/jpeg', 'gif' => 'image/gif',
+        'webp' => 'image/webp', 'bmp' => 'image/bmp', 'tif' => 'image/tiff', 'tiff' => 'image/tiff',
+        'heic' => 'image/heic', 'heif' => 'image/heif',
+        'mp4' => 'video/mp4', 'm4v' => 'video/mp4', 'mp4v' => 'video/mp4', 'mov' => 'video/quicktime',
+        'webm' => 'video/webm', 'avi' => 'video/x-msvideo', 'mpg' => 'video/mpeg', 'mpeg' => 'video/mpeg',
+        'm1v' => 'video/mpeg', 'm2v' => 'video/mpeg', 'ts' => 'video/mp2t', 'm2ts' => 'video/mp2t',
+        'mts' => 'video/mp2t',
+        'mp3' => 'audio/mpeg', 'm4a' => 'audio/mp4', 'wav' => 'audio/wav', 'ogg' => 'audio/ogg',
+        'flac' => 'audio/flac', 'aac' => 'audio/aac', 'aif' => 'audio/aiff', 'aiff' => 'audio/aiff',
+        'caf' => 'audio/x-caf',
+    ];
+    static $TEXT_TYPES = [
+        'json' => 'application/json; charset=utf-8', 'geojson' => 'application/json; charset=utf-8',
+        'js' => 'text/plain; charset=utf-8', 'kml' => 'text/plain; charset=utf-8',
+        'ksv' => 'text/plain; charset=utf-8', 'xml' => 'text/plain; charset=utf-8',
+        'csv' => 'text/plain; charset=utf-8', 'txt' => 'text/plain; charset=utf-8',
+        'tle' => 'text/plain; charset=utf-8', '2le' => 'text/plain; charset=utf-8',
+        '3le' => 'text/plain; charset=utf-8', 'srt' => 'text/plain; charset=utf-8',
+    ];
+
+    // The extension of the last path segment, so a dot in a folder name does not count.
+    $segments = explode('/', (string)$key);
+    $name = end($segments);
+    $ext = preg_match('/\.([A-Za-z0-9]+)\z/', $name, $m) ? strtolower($m[1]) : '';
+
+    if (isset($MEDIA_TYPES[$ext])) {
+        return ['Content-Type' => $MEDIA_TYPES[$ext], 'X-Content-Type-Options' => 'nosniff'];
+    }
+    return [
+        'Content-Type' => $TEXT_TYPES[$ext] ?? 'application/octet-stream',
+        'Content-Disposition' => 'attachment',
+        'X-Content-Type-Options' => 'nosniff',
+    ];
+}
+
+/**
  * URL-encodes each path segment of an object key while preserving `/` separators.
  *
  * @param string $key

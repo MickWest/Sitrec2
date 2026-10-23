@@ -81,6 +81,12 @@ import {showError} from "../showError";
 import {t} from "../i18n";
 
 
+// A date of the loaded TLE range as "YYYY-MM-DD HH:MM:SS" (UTC), as shown at the top right of
+// the main view and in the Satellites menu.
+function formatTLEDate(date) {
+    return date.toISOString().slice(0, 19).replace("T", " ");
+}
+
 // other source of stars, if we need more (for zoomed-in pics)
 // https://www.astronexus.com/hyg
 
@@ -232,6 +238,8 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
                 })
                 .tooltip(t("nightSky.loadAll.tooltip"))
         }
+
+        this.addTLERangeMenu(satGUI);
 
         satGUI.add(this.satellites, 'flareAngle', 0, 20, 0.1).listen().name(t("nightSky.flareAngle.label")).tooltip(t("nightSky.flareAngle.tooltip"))
         this.addSimpleSerial("flareAngle")
@@ -765,12 +773,7 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
         // same for the flare region
         this.showFlareRegionLook = false;
         satGUI.add(this, "showFlareRegionLook").listen().onChange(() => {
-            if (this.showFlareRegionLook) {
-                this.flareRegionGroup.layers.mask = LAYER.MASK_LOOKRENDER;
-            } else {
-                this.flareRegionGroup.layers.mask = LAYER.MASK_HELPERS;
-            }
-            propagateLayerMaskObject(this.flareRegionGroup);
+            this.applyFlareRegionLookMask();
         }).name(t("nightSky.flareRegionLook.label")).tooltip(t("nightSky.flareRegionLook.tooltip"));
         this.addSimpleSerial("showFlareRegionLook");
 
@@ -810,9 +813,7 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
 
             const TLEData = nightSky.satellites.TLEData;
             if (TLEData !== undefined && TLEData.satData !== undefined && TLEData.satData.length > 0) {
-                // format dates as YYYY-MM-DD HH:MM
-                this.text = "TLEs: " + TLEData.startDate.toISOString().slice(0, 19).replace("T", " ") + " - " +
-                    TLEData.endDate.toISOString().slice(0, 19).replace("T", " ") + "   ";
+                this.text = "TLEs: " + formatTLEDate(TLEData.startDate) + " - " + formatTLEDate(TLEData.endDate) + "   ";
             }
 
             this.text += par.validPct ? "In Range:" + par.validPct.toFixed(1) + "%" : "";
@@ -1047,6 +1048,16 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
         propagateLayerMaskObject(this.equatorialSphereGroup)
     }
 
+    // Set the flare region's layer mask from showFlareRegionLook, and copy it to the children
+    // (layer masks are not inherited). The menu, modDeserialize and updateFlareRegion all call
+    // this, as a loaded flag never fires onChange, and updateFlareRegion creates its arrows and
+    // sphere lazily with MASK_HELPERS.
+    applyFlareRegionLookMask() {
+        if (!this.flareRegionGroup) return;
+        this.flareRegionGroup.layers.mask = this.showFlareRegionLook ? LAYER.MASK_LOOKRENDER : LAYER.MASK_HELPERS;
+        propagateLayerMaskObject(this.flareRegionGroup);
+    }
+
     // Properties that live on this.satellites but are serialized via addSimpleSerial on this node.
     // modSerialize/modDeserialize bridge the gap so values round-trip correctly.
     getSatelliteSerials() {
@@ -1101,6 +1112,7 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
         // perhaps better to flag the gui system to update it?
         this.satellites.filterSatellites();
         this.updateVis();
+        this.applyFlareRegionLookMask();
 
 
     }
@@ -1547,6 +1559,29 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
         if (revealImported) this.satellites.revealImportedSatellites(imported);
     }
 
+    // Satellites menu rows with the date range of the loaded TLE data: the same dates as the top
+    // right of the main view, for users who work in the look view only. Two rows, as the whole
+    // range does not fit in one. Every load, merge or replacement of the data fires "tleLoaded".
+    addTLERangeMenu(satGUI) {
+        this.tleRange = {from: "", to: ""};
+        satGUI.add(this.tleRange, "from").name(t("nightSky.tleRange.fromLabel"))
+            .tooltip(t("nightSky.tleRange.fromTooltip")).listen().disable();
+        satGUI.add(this.tleRange, "to").name(t("nightSky.tleRange.toLabel"))
+            .tooltip(t("nightSky.tleRange.toTooltip")).listen().disable();
+        this.updateTLERange();
+        EventManager.addEventListener("tleLoaded", () => {
+            this.updateTLERange();
+        });
+    }
+
+    updateTLERange() {
+        const TLEData = this.satellites.TLEData;
+        const loaded = TLEData?.satData?.length > 0;
+        const none = t("nightSky.tleRange.none");
+        this.tleRange.from = loaded ? formatTLEDate(TLEData.startDate) : none;
+        this.tleRange.to = loaded ? formatTLEDate(TLEData.endDate) : none;
+    }
+
     openTLEFilterDialog() {
         if (!this.satellites.TLEData || this.satellites.TLEData.satData.length === 0) {
             showError("No TLE data loaded. Load satellites first.");
@@ -1889,9 +1924,13 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
 
             } while (bestGlintAngle > 0.0001 && attempts < maxAttempts)
 
-            DebugArrowAB("ToGlint", this.camera.position, bestX, "#FF0000", true, this.flareRegionGroup, 20, LAYER.MASK_HELPERS)
-            DebugArrow("ToSunFromGlint", Globals.toSun, bestX, 5000000, "#FF0000", true, this.flareRegionGroup, 20, LAYER.MASK_HELPERS)
+            // The arrows take the region's mask, as DebugArrow resets a changed mask on each update,
+            // which would fight applyFlareRegionLookMask and request a render every frame.
+            const flareRegionMask = this.flareRegionGroup.layers.mask;
+            DebugArrowAB("ToGlint", this.camera.position, bestX, "#FF0000", true, this.flareRegionGroup, 20, flareRegionMask)
+            DebugArrow("ToSunFromGlint", Globals.toSun, bestX, 5000000, "#FF0000", true, this.flareRegionGroup, 20, flareRegionMask)
             DebugWireframeSphere("ToGlint", bestX, 500000, "#FF0000", 4, this.flareRegionGroup)
+            this.applyFlareRegionLookMask();
 
         }
 

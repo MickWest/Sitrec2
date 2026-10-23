@@ -53,14 +53,32 @@ function recordDailyStats($stats) {
     saveStatsHistory($history);
 }
 
+// A day's visits file is read and rewritten whole on every visit, so its size sets the cost
+// of each visit. Once the file reaches this size, the rest of the day's visits are not
+// recorded. An entry is about 100 bytes, so this holds about 20,000 visits.
+const VISITS_FILE_MAX_BYTES = 2097152;
+
 // Record a visit with user ID and IP address
 function recordVisit($userId, $ip, $sitch = null) {
     $today = date('Y-m-d');
     $file = getVisitsFile($today);
 
+    // The read, append and write run under one lock, so two visits at the same time cannot
+    // both read the old file (losing one entry), and no visit reads a file that another
+    // visit is halfway through writing.
+    $fh = @fopen($file, 'c+');
+    if ($fh === false) return;
+    if (!flock($fh, LOCK_EX)) { fclose($fh); return; }
+    if (fstat($fh)['size'] >= VISITS_FILE_MAX_BYTES) {
+        flock($fh, LOCK_UN);
+        fclose($fh);
+        return;
+    }
+
     $data = ['entries' => [], 'users' => [], 'ips' => []];
-    if (file_exists($file)) {
-        $loaded = json_decode(file_get_contents($file), true);
+    $raw = stream_get_contents($fh);
+    if ($raw) {
+        $loaded = json_decode($raw, true);
         if (is_array($loaded)) $data = $loaded;
     }
 
@@ -75,7 +93,12 @@ function recordVisit($userId, $ip, $sitch = null) {
     $data['users'][$uid] = ($data['users'][$uid] ?? 0) + 1;
     $data['ips'][$ip] = ($data['ips'][$ip] ?? 0) + 1;
 
-    file_put_contents($file, json_encode($data), LOCK_EX);
+    ftruncate($fh, 0);
+    rewind($fh);
+    fwrite($fh, json_encode($data));
+    fflush($fh);
+    flock($fh, LOCK_UN);
+    fclose($fh);
 
     // Also update stats history with visit counts
     $history = loadStatsHistory();

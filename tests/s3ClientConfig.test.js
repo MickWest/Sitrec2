@@ -65,6 +65,12 @@ if ($mode === 'configs') {
         ];
     }
     $out['__hasCredentials'] = s3HasCredentials();
+} elseif ($mode === 'http') {
+    // The request options a real SDK command carries, for each named argument set.
+    $client = createS3Client(buildS3ClientConfig($input['env']));
+    foreach ($input['commands'] as $name => $args) {
+        $out[$name] = $client->getCommand('GetObject', $args)['@http'];
+    }
 }
 echo json_encode($out);
 `;
@@ -120,10 +126,17 @@ if (!canRun) {
             expect(cfg.commercial).toEqual({
                 version: "latest",
                 region: "us-west-2",
+                http: { connect_timeout: 10, timeout: 60 },
                 use_fips_endpoint: false,
                 credentials: ["static", "AKIAEXAMPLE", "secretExample"],
                 credentialSource: "static",
             });
+        });
+
+        test("every configuration limits connect and total time, whatever the credentials or endpoint", () => {
+            for (const name of ["commercial", "fipsDefault", "role", "anonymous", "noKeysNoSource", "endpoint"]) {
+                expect(cfg[name].http).toEqual({ connect_timeout: 10, timeout: 60 });
+            }
         });
 
         test("FIPS defaults on for a us-gov- region and can be switched off explicitly", () => {
@@ -167,6 +180,23 @@ if (!canRun) {
 
         test("an unknown S3_CREDENTIAL_SOURCE is refused", () => {
             expect(cfg.badSource.exception).toBe("InvalidArgumentException");
+        });
+    });
+
+    describe("request time limits", () => {
+        // Without them a stalled object store holds a PHP worker for the life of the
+        // request. The SDK copies the client's http options into every command, and a
+        // caller's own @http options (s3-proxy.php streams) are merged, not replaced.
+        test("an SDK command carries the limits, alongside a caller's own @http options", () => {
+            const out = runHarness("http", {
+                env: { S3_REGION: "us-west-2", S3_ACCESS_KEY_ID: "AKIAEXAMPLE", S3_SECRET_ACCESS_KEY: "secretExample" },
+                commands: {
+                    plain: { Bucket: "sitrec", Key: "settings/1.json" },
+                    streamed: { Bucket: "sitrec", Key: "7/x/y/z.mp4", "@http": { stream: true } },
+                },
+            });
+            expect(out.plain).toEqual({ connect_timeout: 10, timeout: 60 });
+            expect(out.streamed).toEqual({ stream: true, connect_timeout: 10, timeout: 60 });
         });
     });
 

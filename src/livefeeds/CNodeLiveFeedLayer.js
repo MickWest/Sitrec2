@@ -137,6 +137,12 @@ export class CNodeLiveFeedLayer extends CNode3DGroup {
         this.instances.count = 0;
         this.instances.frustumCulled = false;
         this.group.add(this.instances);
+
+        // A layer mask applies to its own object only, never to its children, and
+        // three.js tests each mesh separately. Without this the markers keep the
+        // default WORLD mask and the look camera draws them too, sized for the
+        // main camera's distance.
+        this.propagateLayerMask();
     }
 
     /**

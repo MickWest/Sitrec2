@@ -89,6 +89,8 @@ Most tools accept an optional `tab` parameter to target a specific Sitrec tab (b
 
 The Chrome extension scans ports 9780–9799 for MCP servers and opens a connection to each. Multi-sandbox isolation: `wt sandbox` pairs build port `8080+N` ↔ MCP port `9780+N`, advertising `pairedOrigin: http://localhost:80NN`. The extension routes commands by matching the originating server's `pairedOrigin` to the tab's URL origin.
 
+The server checks the `Origin` header of every WebSocket upgrade, because any web page can open a socket to `127.0.0.1`. Only a `chrome-extension://` origin, or a connection with no `Origin` (a local process, not a browser page), can become the extension. A Sitrec page at `local.metabunk.org`, `localhost` or `127.0.0.1` can connect only as a Local Compute client. The server refuses every other origin with HTTP 403. The extension is loaded unpacked and has no fixed ID, so the server accepts any `chrome-extension://` ID.
+
 ### Ports are leased, not owned
 
 A host-fallback bridge borrows a port rather than keeping one for life. This matters because most

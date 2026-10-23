@@ -282,6 +282,22 @@ jobs:
             '{index: $index, platform: $platform, arch: $arch, commit: $commit, run: $run, attempt: $attempt}' \
             > "image-digests/${ARCH}.json"
 
+      # Download actions default to this workflow run. Overwrite only this arch on
+      # a retry, retaining a successful sibling's record from an earlier attempt.
+      #
+      # Uploaded as soon as it is written, before any third-party tool runs in this
+      # job (the scanners below), so none of them can replace the record first. A
+      # record from a job that then fails is never read: smoke-test and manifest
+      # need every package job to succeed, and a rerun overwrites it.
+      - name: Upload tested image digests
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: image-digest-${{ matrix.suffix }}
+          path: image-digests/${{ matrix.suffix }}.json
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 7
+
       # Signed build provenance: which workflow, at which commit, on which runner,
       # produced this exact image. BuildKit already attaches its own provenance
       # attestation when it pushes, but that one is unsigned and nothing names it, so
@@ -334,8 +350,15 @@ jobs:
         # Pinned to a tag that exists: this action publishes only v0.2.6, v0.3.0 and
         # v0.3.1, and has no moving v0. An unresolvable action ref fails the job at
         # "Set up job", before any step runs, which is what happened on 2.149.1.
+        #
+        # The action is pinned, and so is the Trivy binary it installs. With no
+        # version the action fetches the newest Trivy release at run time, and this
+        # job holds a registry write token and signing rights. The installer checks
+        # the binary only against that same release's checksums. Raise the version
+        # on purpose, after reading the release. Pinned, the binary is also cached.
         uses: aquasecurity/setup-trivy@81e514348e19b6112ce2a7e3ecbafe19c1e1f567 # v0.3.1
         with:
+          version: v0.76.1
           cache: true
 
       - name: Install syft
@@ -354,17 +377,6 @@ jobs:
             --profile=published \
             --out=dist-audit \
             --fail-on=critical
-
-      # Download actions default to this workflow run. Overwrite only this arch on
-      # a retry, retaining a successful sibling's record from an earlier attempt.
-      - name: Upload tested image digests
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
-        with:
-          name: image-digest-${{ matrix.suffix }}
-          path: image-digests/${{ matrix.suffix }}.json
-          if-no-files-found: error
-          overwrite: true
-          retention-days: 7
 
       - name: Publish the review to the run summary
         if: always()

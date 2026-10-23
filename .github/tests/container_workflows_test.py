@@ -214,6 +214,24 @@ docker() {
                 self.assertNotEqual(failed.returncode, 0)
                 self.assertEqual(failed.stdout, '')
 
+    def test_digest_record_is_uploaded_before_any_scanner_runs(self):
+        # smoke-test and manifest trust this record. Uploaded before the third-party
+        # scanners run, it cannot be replaced by one of them first.
+        names = [s.get('name') for s in RELEASE['jobs']['package']['steps']]
+        upload = names.index('Upload tested image digests')
+        self.assertEqual(upload, names.index('Resolve the platform manifest digest') + 1)
+        for scanner in ['Install trivy', 'Install syft', 'Container security review']:
+            with self.subTest(step=scanner):
+                self.assertLess(upload, names.index(scanner))
+
+    def test_scanner_binary_is_pinned(self):
+        # With no version, setup-trivy installs the newest Trivy release at run time,
+        # in a job that holds a registry write token and signing rights.
+        installer = next(s for s in RELEASE['jobs']['package']['steps']
+                         if s.get('uses', '').startswith('aquasecurity/setup-trivy@'))
+        self.assertRegex(installer['uses'], r'@[0-9a-f]{40} *$')
+        self.assertRegex(str(installer.get('with', {}).get('version', '')), r'^v\d+\.\d+\.\d+$')
+
     def test_smoke_tests_use_recorded_platform(self):
         mock = r'''
 docker() { printf '%s\n' "$*" >> "$FIXTURES/docker-calls"; }

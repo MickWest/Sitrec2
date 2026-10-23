@@ -159,9 +159,10 @@ if (!consumeRateToken($rateLimitFile, 30)) {
 // polite thing: the aggregator is volunteer-run and asks callers to identify
 // themselves so it can see who its traffic is.
 //
-// The 10-second timeout is NOT optional for this endpoint. curlGetRequest waits
-// forever by default, and this proxy is polled every few seconds: when
-// api.adsb.lol stalled instead of answering (observed 2026-08-29) every request
+// The 10-second timeout is NOT optional for this endpoint, and is shorter than
+// curlGetRequest's 20-second default on purpose: this proxy is polled every few
+// seconds. When api.adsb.lol stalled instead of answering (observed 2026-08-29,
+// when curlGetRequest still waited forever by default) every request
 // held a PHP-FPM worker until the pool was exhausted, at which point the whole
 // PHP backend stopped answering — every other server feature with it. A polled
 // upstream must always be given a deadline.

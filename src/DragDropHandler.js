@@ -80,22 +80,25 @@ class CDragDropHandler {
     }
 
     /**
-     * Shown when a video is dropped while the primary video view already has one.
-     * Lets the user choose where the new video goes.
-     * @param {string} filename - The name of the dropped video file
+     * Shown when a video, or an image used as video, is dropped while the primary
+     * video view already has one. Lets the user choose where the new one goes.
+     * @param {string} filename - The name of the dropped file
+     * @param {boolean} [isImage=false] - True for an image; changes only the wording
      * @returns {Promise<string>} Resolves 'secondView' | 'add' | 'replace', rejects if cancelled
      */
-    async showSecondVideoChoiceDialog(filename) {
+    async showSecondVideoChoiceDialog(filename, isImage = false) {
+        const media = isImage ? 'image' : 'video';
         const options = [];
         // Only offer the side-by-side option when a secondary view exists.
         if (NodeMan.exists("video2")) {
-            options.push({label: 'Second Video View', description: 'Show the new video side by side in the second view.', value: 'secondView', color: '#1976d2'});
+            options.push({label: 'Second Video View', description: `Show the new ${media} side by side in the second view.`, value: 'secondView', color: '#1976d2'});
         }
-        options.push({label: 'Add to Video View', description: 'Keep both videos; switch between them with the selector.', value: 'add', primary: true, color: '#388e3c'});
+        options.push({label: 'Add to Video View', description: isImage ? 'Keep both; switch between them with the selector.' : 'Keep both videos; switch between them with the selector.', value: 'add', primary: true, color: '#388e3c'});
         options.push({label: 'Replace Video', description: "Replace the Video view's current video with the new one.", value: 'replace', color: '#b8860b'});
-        options.push({label: 'Cancel', description: "Don't import the video.", value: null, cancel: true});
+        options.push({label: 'Cancel', description: `Don't import the ${media}.`, value: null, cancel: true});
 
-        const choice = await showChoice(`A video is already loaded. How would you like to use "${filename}"?`, {
+        const loaded = isImage ? 'A video or image is already loaded' : 'A video is already loaded';
+        const choice = await showChoice(`${loaded}. How would you like to use "${filename}"?`, {
             title: 'Second Video',
             cancelValue: null,
             options,
@@ -868,24 +871,57 @@ class CDragDropHandler {
      * @param {File} file - The image file
      */
     async loadImageAsVideoSource(file) {
-        const videoNode = NodeMan.get("video");
+        let videoNode = NodeMan.get("video");
         const hasExistingVideo = videoNode.videoData !== null && videoNode.videoData !== undefined;
-        
+        let toSecondView = false;
+
         if (hasExistingVideo) {
             if (videoNode.alwaysReplace) {
                 videoNode.disposeAllVideos();
             } else {
-                const action = await videoNode.promptAddOrReplace();
+                // With a second video view, ask the same question as for a second
+                // dropped video, so the image can go side by side with the video.
+                const action = NodeMan.exists("video2")
+                    ? await this.showSecondVideoChoiceDialog(file.name, true).catch(() => "cancel")
+                    : await videoNode.promptAddOrReplace();
                 if (action === "cancel") {
                     console.log("Image import cancelled by user: " + file.name);
                     return;
                 }
-                if (action === "replace") {
+                if (action === "secondView") {
+                    videoNode = NodeMan.get("video2");
+                    toSecondView = true;
+                    // As uploadFile does for a video sent there, the second view asks
+                    // add or replace for itself when it already holds media.
+                    if (videoNode.videoData) {
+                        const secondAction = await videoNode.promptAddOrReplace();
+                        if (secondAction === "cancel") {
+                            console.log("Image import cancelled by user: " + file.name);
+                            return;
+                        }
+                        if (secondAction === "replace") {
+                            videoNode.disposeAllVideos();
+                        }
+                    }
+                } else if (action === "replace") {
                     videoNode.disposeAllVideos();
                 }
             }
         }
 
+        await this.loadImageIntoView(videoNode, file);
+        if (toSecondView) {
+            this.revealSecondVideoView();
+        }
+    }
+
+    /**
+     * Decode an image file and show it in a video view as a single-frame video
+     * Also registers it with FileManager for persistence
+     * @param {CNodeVideoView} videoNode - The view to show it in ("video" or "video2")
+     * @param {File} file - The image file
+     */
+    async loadImageIntoView(videoNode, file) {
         // Read file as ArrayBuffer for FileManager registration
         const arrayBuffer = await file.arrayBuffer();
         const importMetadata = await extractJPEGImportMetadata(arrayBuffer, file.name).catch(error => {
