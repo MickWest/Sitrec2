@@ -5,12 +5,15 @@ import {raycastGroundElevationFast} from "./raycastGround";
 
 // A deterministic sensor simulation. Detection is supplied by projected scene
 // geometry, before the HUD is composited. It does not analyze loaded video.
+// It steps whole frames only, and par.frame is fractional after playback, so incoming
+// frames are floored: a command at frame 37.4 would otherwise never match a step.
 export class MQ9TrackingSimulation {
     constructor({camera, fps = 30, startFrame = 0, sensorAt, lensAt, observationAt,
         manualAimAt, wobbleAt, commands = [], options = {}, groundAt = raycastGroundElevationFast}) {
+        startFrame = Math.floor(startFrame);
         Object.assign(this, {camera, fps, startFrame, sensorAt, lensAt, observationAt, manualAimAt, wobbleAt, groundAt});
         this.model = new MQ9TrackingModel(options);
-        this.commands = commands.map(c => ({...c, frame: c.frame ?? Math.round(c.timeSeconds * fps)}));
+        this.commands = commands.map(c => ({...c, frame: Math.floor(c.frame ?? Math.round(c.timeSeconds * fps))}));
         this.initial = {position: camera.position.toArray(), quaternion: camera.quaternion.toArray(), fov: camera.fov};
         this.cache = new Map(); this.lastFrame = startFrame - 1;
         this.offset = [0, 0]; this.manualQuaternion = camera.quaternion.clone();
@@ -21,6 +24,7 @@ export class MQ9TrackingSimulation {
     }
 
     command(action, frame, extra = {}) {
+        frame = Math.floor(frame);
         this.commands.push({action, frame, ...extra});
         for (const f of this.cache.keys()) if (f >= frame) this.cache.delete(f);
         if (this.lastFrame >= frame) this.lastFrame = frame - 1;
@@ -82,11 +86,12 @@ export class MQ9TrackingSimulation {
     }
 
     applyCachedFrame(frame) {
-        const record = this.cache.get(frame);
+        const record = this.cache.get(Math.floor(frame));
         if (record) this.applyPose(record);
     }
 
     applyFrame(frame) {
+        frame = Math.floor(frame);
         if (frame < this.startFrame || this.applying) return;
         if (this.cache.has(frame)) { this.restoreFrame(this.cache.get(frame)); return; }
         this.applying = true;

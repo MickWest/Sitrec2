@@ -334,14 +334,21 @@ export class CTrackFileKML extends CTrackFile {
                 }
             }
 
+            // a repeated tag (e.g. several Polygons in a MultiGeometry) parses as an array
             if (key === "LineString") {
-                this.extractKMLLineString(value, style, name)
+                for (const lineString of this.asArray(value)) {
+                    this.extractKMLLineString(lineString, style, name)
+                }
             }
             else if (key === "Polygon") {
-                this.extractKMLPolygon(value, style, name)
+                for (const polygon of this.asArray(value)) {
+                    this.extractKMLPolygon(polygon, style, name)
+                }
             }
             else if (key === "GroundOverlay") {
-                this.extractKMLGroundOverlay(value, name)
+                for (const overlay of this.asArray(value)) {
+                    this.extractKMLGroundOverlay(overlay, name)
+                }
             }
             else if (typeof value === 'object') {
                 if (
@@ -389,7 +396,14 @@ export class CTrackFileKML extends CTrackFile {
                 }
                 for (let style of styles) {
                     if (style.id === id) {
-                        const result = {...defaultStyle, ...style};
+                        // merge the sub-styles too, so one that only sets <width> or <fill>
+                        // keeps the default <color> instead of losing it
+                        const result = {
+                            ...defaultStyle,
+                            ...style,
+                            LineStyle: {...defaultStyle.LineStyle, ...style.LineStyle},
+                            PolyStyle: {...defaultStyle.PolyStyle, ...style.PolyStyle},
+                        };
                         return result;
                     }
                 }

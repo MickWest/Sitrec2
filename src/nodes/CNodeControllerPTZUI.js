@@ -1144,12 +1144,14 @@ export class CNodeControllerCustomAzEl extends CNodeControllerAzElZoom {
             this.fov = this.fallback.fov;
         }
 
+        // f is fractional during playback, so floor it (as TrackingWobble does) and keep it
+        // inside the per-frame arrays, or the lookup is undefined and the camera goes NaN
         if (this.azArray) {
-            this.az = this.azArray[f];
+            this.az = this.azArray[Math.max(0, Math.min(this.azArray.length - 1, Math.floor(f)))];
         }
 
         if (this.elArray) {
-            this.el = this.elArray[f];
+            this.el = this.elArray[Math.max(0, Math.min(this.elArray.length - 1, Math.floor(f)))];
         }
 
 
@@ -1197,7 +1199,8 @@ export class CNodeControllerCustomHeading extends CNodeController {
         // fallback input is jetHeadingManual, a GUIValue) so the data graph
         // still produces a valid number — otherwise readers like
         // CNodeJetTrack.recalculate crash on `undefined[0]`.
-        if (this.headingArray) return this.headingArray[f];
+        // f can be fractional during playback, so floor and clamp it as CustomAzEl does
+        if (this.headingArray) return this.headingArray[Math.max(0, Math.min(this.headingArray.length - 1, Math.floor(f)))];
         if (this.fallback) {
             return this.fallback.getValueFrame
                 ? this.fallback.getValueFrame(f)

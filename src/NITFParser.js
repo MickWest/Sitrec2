@@ -11,6 +11,7 @@ import {CTrackFileNITF} from "./TrackFiles/CTrackFileNITF";
 import {createImageFromArrayBuffer} from "./FileUtils";
 import {decodeJPEG2000ToBlobURL, decodeJ2KTiledToCanvas} from "./JPEG2000Utils";
 import {initProgress, updateProgress, hideProgress} from "./CProgressIndicator";
+import {showError} from "./showError";
 import {MISB} from "./MISBFields";
 import {Globals} from "./Globals";
 import {dmsToDegrees, parseSingleCoordinate} from "./CoordinateParser";
@@ -181,133 +182,141 @@ export class NITFParser {
 
         const shortName = filename.replace(/^.*[\\/]/, '');
         initProgress({title: 'Loading NITF', filename: shortName});
-        updateProgress({status: 'Parsing NITF header...'});
+        // try/finally because a truncated or malformed file throws from deep in the parse,
+        // and the input blocker would otherwise stay up until the page is reloaded
+        try {
+            updateProgress({status: 'Parsing NITF header...'});
 
-        const nitf = this.parseNITF(buffer);
-        if (!nitf) {
-            hideProgress();
-            console.error("NITFParser: Failed to parse NITF file: " + filename);
-            return [];
-        }
-
-        console.log(`NITFParser: Found ${nitf.images.length} image segment(s)`);
-
-        const results = [];
-
-        for (let i = 0; i < nitf.images.length; i++) {
-            const image = nitf.images[i];
-            console.log(`NITFParser: Segment ${i}: ${image.ncols}×${image.nrows}, IC=${image.ic}, IREP=${image.irep}, `
-                + `IMODE=${image.imode}, NBANDS=${image.nbands}, ABPP=${image.abpp}, `
-                + `blocks=${image.nbpr}×${image.nbpc} (${image.nppbh}×${image.nppbv}), `
-                + `data=${image.dataLength} bytes`);
-
-            // Skip very small segments that are likely masks/thumbnails
-            // when a large primary image is present
-            if (nitf.images.length > 1 && image.nrows * image.ncols < 1024 * 1024) {
-                console.log(`NITFParser: Skipping segment ${i} (small, likely mask/thumbnail)`);
-                continue;
+            const nitf = this.parseNITF(buffer);
+            if (!nitf) {
+                console.error("NITFParser: Failed to parse NITF file: " + filename);
+                return [];
             }
 
-            // Determine whether to include image and at what resolution.
-            // Ask the user BEFORE decoding so tiles decode at the chosen size.
-            let includeImage = true;
-            let maxDimension = null;
-            let img = null;
-            let imageBuffer = null;
+            console.log(`NITFParser: Found ${nitf.images.length} image segment(s)`);
 
-            // Show resize dialog for images larger than ~1600×1600 (2.5M pixels)
-            const totalPixels = image.ncols * image.nrows;
-            if (totalPixels > 2.5 * 1024 * 1024) {
-                hideProgress();
-                try {
-                    const choice = await this.showNITFImageDialog(
-                        filename, image.ncols, image.nrows);
-                    includeImage = choice.includeImage;
-                    maxDimension = choice.maxDimension;
-                } catch (e) {
-                    // User cancelled — skip image but still process track
-                    console.log("NITFParser: User cancelled NITF image dialog, loading track only");
-                    includeImage = false;
+            const results = [];
+
+            for (let i = 0; i < nitf.images.length; i++) {
+                const image = nitf.images[i];
+                console.log(`NITFParser: Segment ${i}: ${image.ncols}×${image.nrows}, IC=${image.ic}, IREP=${image.irep}, `
+                    + `IMODE=${image.imode}, NBANDS=${image.nbands}, ABPP=${image.abpp}, `
+                    + `blocks=${image.nbpr}×${image.nbpc} (${image.nppbh}×${image.nppbv}), `
+                    + `data=${image.dataLength} bytes`);
+
+                // Skip very small segments that are likely masks/thumbnails
+                // when a large primary image is present
+                if (nitf.images.length > 1 && image.nrows * image.ncols < 1024 * 1024) {
+                    console.log(`NITFParser: Skipping segment ${i} (small, likely mask/thumbnail)`);
+                    continue;
                 }
-            }
 
-            if (includeImage) {
-                try {
-                    initProgress({title: 'Loading NITF', filename: shortName});
-                    updateProgress({status: `Decoding segment ${i} (${image.ncols}×${image.nrows}, ${image.ic})...`});
-                    imageBuffer = await this.imageToPNG(image, maxDimension);
-                    if (imageBuffer === null) {
-                        // imageToPNG explicitly rejected (e.g. unsupported CADRG VQ)
+                // Determine whether to include image and at what resolution.
+                // Ask the user BEFORE decoding so tiles decode at the chosen size.
+                let includeImage = true;
+                let maxDimension = null;
+                let img = null;
+                let imageBuffer = null;
+
+                // Show resize dialog for images larger than ~1600×1600 (2.5M pixels)
+                const totalPixels = image.ncols * image.nrows;
+                if (totalPixels > 2.5 * 1024 * 1024) {
+                    hideProgress();
+                    try {
+                        const choice = await this.showNITFImageDialog(
+                            filename, image.ncols, image.nrows);
+                        includeImage = choice.includeImage;
+                        maxDimension = choice.maxDimension;
+                    } catch (e) {
+                        // User cancelled — skip image but still process track
+                        console.log("NITFParser: User cancelled NITF image dialog, loading track only");
                         includeImage = false;
-                    } else {
-                        // Detect format from magic bytes: JPEG=FFD8, PNG=8950
-                        const head = new Uint8Array(imageBuffer, 0, 2);
-                        const isJPEG = head[0] === 0xFF && head[1] === 0xD8;
-                        const mime = isJPEG ? 'image/jpeg' : 'image/png';
-                        img = await createImageFromArrayBuffer(imageBuffer, mime);
                     }
-                } catch (e) {
-                    console.error("NITFParser: Failed to decode image:", e);
-                    includeImage = false;
+                }
+
+                if (includeImage) {
+                    try {
+                        initProgress({title: 'Loading NITF', filename: shortName});
+                        updateProgress({status: `Decoding segment ${i} (${image.ncols}×${image.nrows}, ${image.ic})...`});
+                        imageBuffer = await this.imageToPNG(image, maxDimension);
+                        if (imageBuffer === null) {
+                            // imageToPNG explicitly rejected (e.g. unsupported CADRG VQ)
+                            includeImage = false;
+                        } else {
+                            // Detect format from magic bytes: JPEG=FFD8, PNG=8950
+                            const head = new Uint8Array(imageBuffer, 0, 2);
+                            const isJPEG = head[0] === 0xFF && head[1] === 0xD8;
+                            const mime = isJPEG ? 'image/jpeg' : 'image/png';
+                            img = await createImageFromArrayBuffer(imageBuffer, mime);
+                        }
+                    } catch (e) {
+                        console.error("NITFParser: Failed to decode image:", e);
+                        includeImage = false;
+                    }
+                }
+
+                // Convert image to JPG (with optional resize) for serialization
+                if (includeImage && img) {
+                    try {
+                        updateProgress({status: `Converting image to JPEG...`});
+                        const jpgResult = await this.resizeImageToJPG(img, maxDimension, 0.92);
+                        const jpgImg = await createImageFromArrayBuffer(jpgResult.buffer, 'image/jpeg');
+                        const imageFilename = `${filename}_image_${i}.jpg`;
+
+                        results.push({
+                            filename: imageFilename,
+                            parsed: jpgImg,
+                            dataType: "image",
+                            convertedBuffer: jpgResult.buffer,
+                            nitfConverted: true,
+                        });
+                        console.log(`NITFParser: Created image virtual file: ${imageFilename} `
+                            + `(${jpgResult.width}x${jpgResult.height}, ${(jpgResult.buffer.byteLength / 1024).toFixed(0)} KB)`);
+                    } catch (e) {
+                        console.error("NITFParser: Failed to convert image to JPG:", e);
+                    }
+                }
+
+                // Create track virtual file if we have geolocation
+                if (image.corners && image.corners.length === 4) {
+                    try {
+                        const trackFile = new CTrackFileNITF({
+                            corners: image.corners,
+                            datetime: image.datetime || nitf.fileHeader.datetime,
+                            title: image.iid2 || nitf.fileHeader.title,
+                            tres: image.tres,
+                            width: image.ncols,
+                            height: image.nrows,
+                        });
+
+                        // Convert track to MISB CSV for serialization
+                        const misbRows = trackFile.toMISB();
+                        const csvString = this.misbRowsToCSV(misbRows);
+                        const csvBuffer = new TextEncoder().encode(csvString).buffer;
+                        const trackFilename = `${filename}_track_${i}.csv`;
+
+                        results.push({
+                            filename: trackFilename,
+                            parsed: trackFile,
+                            dataType: "trackfile",
+                            convertedBuffer: csvBuffer,
+                            nitfConverted: true,
+                        });
+                        console.log(`NITFParser: Created track virtual file: ${trackFilename} (${csvBuffer.byteLength} bytes)`);
+                    } catch (e) {
+                        console.error("NITFParser: Failed to create track:", e);
+                    }
                 }
             }
 
-            // Convert image to JPG (with optional resize) for serialization
-            if (includeImage && img) {
-                try {
-                    updateProgress({status: `Converting image to JPEG...`});
-                    const jpgResult = await this.resizeImageToJPG(img, maxDimension, 0.92);
-                    const jpgImg = await createImageFromArrayBuffer(jpgResult.buffer, 'image/jpeg');
-                    const imageFilename = `${filename}_image_${i}.jpg`;
-
-                    results.push({
-                        filename: imageFilename,
-                        parsed: jpgImg,
-                        dataType: "image",
-                        convertedBuffer: jpgResult.buffer,
-                        nitfConverted: true,
-                    });
-                    console.log(`NITFParser: Created image virtual file: ${imageFilename} `
-                        + `(${jpgResult.width}x${jpgResult.height}, ${(jpgResult.buffer.byteLength / 1024).toFixed(0)} KB)`);
-                } catch (e) {
-                    console.error("NITFParser: Failed to convert image to JPG:", e);
-                }
-            }
-
-            // Create track virtual file if we have geolocation
-            if (image.corners && image.corners.length === 4) {
-                try {
-                    const trackFile = new CTrackFileNITF({
-                        corners: image.corners,
-                        datetime: image.datetime || nitf.fileHeader.datetime,
-                        title: image.iid2 || nitf.fileHeader.title,
-                        tres: image.tres,
-                        width: image.ncols,
-                        height: image.nrows,
-                    });
-
-                    // Convert track to MISB CSV for serialization
-                    const misbRows = trackFile.toMISB();
-                    const csvString = this.misbRowsToCSV(misbRows);
-                    const csvBuffer = new TextEncoder().encode(csvString).buffer;
-                    const trackFilename = `${filename}_track_${i}.csv`;
-
-                    results.push({
-                        filename: trackFilename,
-                        parsed: trackFile,
-                        dataType: "trackfile",
-                        convertedBuffer: csvBuffer,
-                        nitfConverted: true,
-                    });
-                    console.log(`NITFParser: Created track virtual file: ${trackFilename} (${csvBuffer.byteLength} bytes)`);
-                } catch (e) {
-                    console.error("NITFParser: Failed to create track:", e);
-                }
-            }
+            return results;
+        } catch (e) {
+            console.error("NITFParser: Failed to parse NITF file: " + filename, e);
+            showError(`Could not load NITF file ${shortName}: ${e.message}`);
+            return [];
+        } finally {
+            hideProgress();
         }
-
-        hideProgress();
-        return results;
     }
 
     /**
@@ -476,6 +485,11 @@ export class NITFParser {
 
             image.dataOffset = subPos + imageSegments[i].subheaderLength;
             image.dataLength = imageSegments[i].dataLength;
+            // a partial download declares more image data than the file holds
+            if (image.dataOffset + image.dataLength > buffer.byteLength) {
+                throw new Error(`image segment ${i} needs ${image.dataOffset + image.dataLength} bytes, `
+                    + `but the file has only ${buffer.byteLength}. The file may be truncated or corrupt.`);
+            }
             image.rawData = new Uint8Array(buffer, image.dataOffset, image.dataLength);
 
             images.push(image);
@@ -608,6 +622,10 @@ export class NITFParser {
             const luts = [];
             if (nluts > 0) {
                 const nelut = readInt(pos, 5); pos += 5;
+                if (pos + nluts * nelut > bytes.length) {
+                    throw new Error("image band lookup tables run past the end of the file. "
+                        + "The file may be truncated or corrupt.");
+                }
                 for (let l = 0; l < nluts; l++) {
                     luts.push(new Uint8Array(bytes.buffer, bytes.byteOffset + pos, nelut));
                     pos += nelut;
@@ -684,7 +702,8 @@ export class NITFParser {
 
         const tres = {};
         let pos = offset;
-        const end = offset + length;
+        // clamped so a TRE length that runs past a truncated file is skipped, not a RangeError
+        const end = Math.min(offset + length, bytes.length);
 
         while (pos + 11 <= end) {
             const cetag = readStr(pos, 6).trim(); pos += 6;
