@@ -570,9 +570,10 @@ class CSitrecAPI {
                     const lla = camera._LLA;
                     const ground = this.groundAltitudeAt(lla[0], lla[1]);
                     if (!ground.success) return ground;
-                    // setLLA takes MSL, which is what groundAltitudeAt reports as altMSL.
+                    // setLLA takes MSL, which is what groundAltitudeAt reports as altMSL,
+                    // except in AGL mode, where the altitude is the height above the ground.
                     const altMSL = ground.altMSL + eye;
-                    camera.setLLA(lla[0], lla[1], altMSL);
+                    camera.setLLA(lla[0], lla[1], camera.agl ? eye : altMSL);
                     setRenderOne(true);
                     return {
                         success: true, lat: lla[0], lon: lla[1],

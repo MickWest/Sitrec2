@@ -461,9 +461,12 @@ export const menuMethods = {
             setCameraOnGround: () => {
                 if (NodeMan.exists("fixedCameraPosition")) {
                     const camera = NodeMan.get("fixedCameraPosition");
-                    // Set camera at ground level (2m above ground for eye level)
-                    camera.setLLA(lat, lon, altMSL + 2);
-                    console.log(`Camera set to ground: ${lat}, ${lon}, ${altMSL + 2}m MSL`);
+                    // Set camera at ground level (2m above ground for eye level). In AGL
+                    // mode the altitude is already measured from the ground, so adding the
+                    // ground's MSL height would count it twice.
+                    const alt = camera.agl ? 2 : altMSL + 2;
+                    camera.setLLA(lat, lon, alt);
+                    console.log(`Camera set to ground: ${lat}, ${lon}, ${alt}m ${camera.agl ? "AGL" : "MSL"}`);
                 }
                 this.groundContextMenu = null;
                 menu.destroy();
@@ -482,9 +485,10 @@ export const menuMethods = {
             setTargetOnGround: () => {
                 if (NodeMan.exists("fixedTargetPositionWind")) {
                     const target = NodeMan.get("fixedTargetPositionWind");
-                    // Set target at ground level
-                    target.setLLA(lat, lon, altMSL);
-                    console.log(`Target set to ground: ${lat}, ${lon}, ${altMSL}m MSL`);
+                    // Set target at ground level (0 above the ground in AGL mode)
+                    const alt = target.agl ? 0 : altMSL;
+                    target.setLLA(lat, lon, alt);
+                    console.log(`Target set to ground: ${lat}, ${lon}, ${alt}m ${target.agl ? "AGL" : "MSL"}`);
                 }
                 this.groundContextMenu = null;
                 menu.destroy();

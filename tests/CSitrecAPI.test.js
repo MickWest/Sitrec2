@@ -1173,3 +1173,81 @@ describe('CSitrecAPI frame repaint', () => {
         expect(mockSetRenderOne).not.toHaveBeenCalled();
     });
 });
+
+// Forum bug (Metabunk thread 15147): with the camera's Above Ground Level (AGL) box on,
+// setLLA reads its altitude as metres above the ground, so passing the ground's MSL
+// height plus eye height put the camera that far above the ground again. In AGL mode
+// setCameraToEyeLevel must pass the eye height alone, and otherwise the MSL height.
+// The reported altMSL is the same in both modes. The ground stub has a non-zero geoid
+// offset (HAE 970 = MSL 1000 - 30), so an MSL/HAE mix-up shows.
+describe('CSitrecAPI setCameraToEyeLevel', () => {
+    const LAT = 37.5;
+    const LON = -122.25;
+    const GROUND = {success: true, altMSL: 1000, altHAE: 970, geoidOffset: -30, source: 'tiles'};
+    let groundSpy;
+
+    function useCamera(agl) {
+        const camera = {agl, _LLA: [LAT, LON, 5000], setLLA: jest.fn()};
+        mockNodeGet.mockImplementation((id) => id === 'fixedCameraPosition' ? camera : undefined);
+        return camera;
+    }
+
+    beforeEach(() => {
+        groundSpy = jest.spyOn(sitrecAPI, 'groundAltitudeAt').mockReturnValue(GROUND);
+    });
+
+    afterEach(() => {
+        groundSpy.mockRestore();
+    });
+
+    test.each([
+        ['the default eye height', {}, 1.6],
+        ['an explicit eye height', {eyeHeight: 2.5}, 2.5],
+    ])('AGL on: setLLA gets %s alone, not the ground height', (label, args, eye) => {
+        const camera = useCamera(true);
+
+        const result = sitrecAPI.api.setCameraToEyeLevel.fn(args);
+
+        expect(groundSpy).toHaveBeenCalledWith(LAT, LON);
+        expect(camera.setLLA).toHaveBeenCalledTimes(1);
+        expect(camera.setLLA).toHaveBeenCalledWith(LAT, LON, eye);
+        expect(result).toEqual({
+            success: true, lat: LAT, lon: LON,
+            groundAltMSL: 1000, groundAltHAE: 970,
+            eyeHeight: eye, altMSL: 1000 + eye, source: 'tiles',
+        });
+        expect(mockSetRenderOne).toHaveBeenCalledWith(true);
+    });
+
+    test.each([
+        ['the default eye height', {}, 1.6],
+        ['an explicit eye height', {eyeHeight: 2.5}, 2.5],
+    ])('AGL off: setLLA gets the ground MSL height plus %s', (label, args, eye) => {
+        const camera = useCamera(false);
+
+        const result = sitrecAPI.api.setCameraToEyeLevel.fn(args);
+
+        expect(groundSpy).toHaveBeenCalledWith(LAT, LON);
+        expect(camera.setLLA).toHaveBeenCalledTimes(1);
+        // MSL (1000), not HAE (970)
+        expect(camera.setLLA).toHaveBeenCalledWith(LAT, LON, 1000 + eye);
+        expect(result).toEqual({
+            success: true, lat: LAT, lon: LON,
+            groundAltMSL: 1000, groundAltHAE: 970,
+            eyeHeight: eye, altMSL: 1000 + eye, source: 'tiles',
+        });
+        expect(mockSetRenderOne).toHaveBeenCalledWith(true);
+    });
+
+    test.each([true, false])('no ground found (agl %s): setLLA is not called and the failure is returned', (agl) => {
+        const failure = {success: false, error: 'no ground found under that position'};
+        groundSpy.mockReturnValue(failure);
+        const camera = useCamera(agl);
+
+        const result = sitrecAPI.api.setCameraToEyeLevel.fn({eyeHeight: 2.5});
+
+        expect(result).toEqual(failure);
+        expect(camera.setLLA).not.toHaveBeenCalled();
+        expect(mockSetRenderOne).not.toHaveBeenCalled();
+    });
+});

@@ -569,10 +569,15 @@ function applyRelativeAltitude() {
     }
 
     const newAltitudeMSL = groundMSL + offer.relativeAltitude;
-    positionNode.setLLA(offer.latitude, offer.longitude, newAltitudeMSL);
+    // In AGL mode the altitude is the height above the ground, so the relative height
+    // goes in as it is.
+    positionNode.setLLA(offer.latitude, offer.longitude,
+        positionNode.agl ? offer.relativeAltitude : newAltitudeMSL);
     setRenderOne(true);
-    console.log(`[EXIF] Camera altitude set from RelativeAltitude: ground ` +
-        `${groundMSL.toFixed(1)}m + ${offer.relativeAltitude}m = ${newAltitudeMSL.toFixed(1)}m MSL ` +
+    const placedAt = positionNode.agl
+        ? `${offer.relativeAltitude}m AGL`
+        : `ground ${groundMSL.toFixed(1)}m + ${offer.relativeAltitude}m = ${newAltitudeMSL.toFixed(1)}m MSL`;
+    console.log(`[EXIF] Camera altitude set from RelativeAltitude: ${placedAt} ` +
         `(the file's own absolute altitude was ${offer.absoluteAltitude.toFixed(1)}m)`);
 }
 
