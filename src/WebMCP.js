@@ -13,7 +13,7 @@ import {
     hasPendingVideoFrames,
 } from "./indexRender";
 import {asyncOperationRegistry} from "./AsyncOperationRegistry";
-import {sanitizeLabelForPrompt} from "./PromptSafety";
+import {looksLikeURL, sanitizeLabelForPrompt} from "./PromptSafety";
 
 export const SITREC_WEBMCP_SOURCE = "webmcp";
 
@@ -162,27 +162,6 @@ function validateISODateTime(value, name) {
         return compactFailure("INVALID_ARGUMENT", `${name} is not a real date-time.`);
     }
     return null;
-}
-
-// CHAT_DENIED_URL_PARAMS guards named parameters of specific functions, so it cannot see a
-// URL handed to a generic menu setter. A free-text control that holds a texture or feed URL
-// would otherwise become an unreviewed fetch primitive, persisted on the node and refetched
-// after a save. Refuse anything carrying a scheme or protocol-relative prefix.
-//
-// Test the string the *URL parser* will see, not the one that was typed. WHATWG URL strips
-// leading and trailing C0 controls and spaces, discards tab, CR and LF from anywhere in the
-// input, and treats a backslash as a slash in a special scheme. A leading NUL, an embedded
-// tab, and "/\evil/x" therefore all resolve to a remote origin while matching none of them
-// as typed. Apply the same three rules before testing. Verified against new URL() rather
-// than reasoned from the spec.
-function looksLikeURL(value) {
-    const normalized = value
-        // eslint-disable-next-line no-control-regex
-        .replace(/^[\u0000-\u0020]+|[\u0000-\u0020]+$/g, "")
-        // eslint-disable-next-line no-control-regex
-        .replace(/[\u0009\u000A\u000D]/g, "")
-        .replace(/\\/g, "/");
-    return /^[a-z][a-z0-9+.-]*:/i.test(normalized) || normalized.startsWith("//");
 }
 
 // lil-gui gives buttons and colors their own controller classes, but the class names are
