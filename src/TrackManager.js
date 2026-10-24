@@ -1758,6 +1758,8 @@ class CTrackManager extends CManager {
             const mainCamera = mainCameraNode.camera;
             const mainView = NodeMan.get("mainView");
             const bbox = trackBoundingBox(trackOb.trackDataNode);
+            // no valid positions at all, so nothing to center on or re-time to
+            if (!bbox) return;
 //                    console.log(`Track ${shortName} bounding box: ${bbox.min.x}, ${bbox.min.y}, ${bbox.min.z} to ${bbox.max.x}, ${bbox.max.y}, ${bbox.max.z}`)
             const center = bbox.min.clone().add(bbox.max).multiplyScalar(0.5);
             // get point on sphere
@@ -1819,7 +1821,12 @@ class CTrackManager extends CManager {
             // co-located reference, not a distinct flight. The track file decides; KML
             // overrides to say every track is distinct, so multi-aircraft KML drops
             // trigger CPA against track 0.
-            const track0 = TrackManager.getByIndex(0);
+            // "Track 0" is the first IMPORTED track: synthetic and balloon tracks have no
+            // timestamped data to compare, and a sonde is wind reference data, not a flight.
+            const track0 = TrackManager.findFirstData(entry => {
+                const t = entry.data;
+                return !t.isSynthetic && !t.isBalloon && !t.isSondeTrack && !!t.trackDataNode?.misb;
+            });
             const trackFile = FileManager.get(trackOb.trackFileName);
             // Ask the CPA question directly rather than inferring it from
             // isSupplementaryTrack. The default answer is still "any primary track",
@@ -1830,8 +1837,11 @@ class CTrackManager extends CManager {
             const cpaCandidate = trackFile
                 ? trackFile.cpaCandidate(trackIndex)
                 : trackIndex === 0;
-            if (track0 !== trackOb && cpaCandidate) {
-                let time = closestIntersectionTime(track0.trackDataNode, trackOb.trackDataNode);
+            // null when the two tracks never overlap in time, so there is nothing to re-time to
+            const time = (track0 && track0 !== trackOb && cpaCandidate)
+                ? closestIntersectionTime(track0.trackDataNode, trackOb.trackDataNode)
+                : null;
+            if (time !== null) {
 //                console.log("Closest intersection time: ", time);
 
                 // we want this in the middle, so subtract half the Sit.frames

@@ -71,30 +71,42 @@ export function closingSpeed(jet, target, f) {
 
 }
 
+// returns null when no frame has a valid position (e.g. every row lacks a GPS fix)
 export function trackBoundingBox(track) {
     track = NodeMan.get(track);
     const frames = track.frames;
-    let p = track.p(0);
-    let min = p.clone();
-    let max = p.clone();
-    for (let f = 1; f < frames; f++) {
+    let min = null;
+    let max = null;
+    // seed from the first valid frame, as invalid rows (like a leading 0,0 before GPS lock) are stored as {}
+    for (let f = 0; f < frames; f++) {
         if (track.validPoint(f)) {
             const p = track.p(f);
-            min.min(p);  // using min.min instead of Math.min to avoid creating a new vector
-            max.max(p);
+            if (min === null) {
+                min = p.clone();
+                max = p.clone();
+            } else {
+                min.min(p);  // using min.min instead of Math.min to avoid creating a new vector
+                max.max(p);
+            }
         }
     }
+    if (min === null) return null;
     return {min:min, max:max};
 }
 
 // given two CNodeMISBDataTrack data nodes, find the time at which they are closest
 // simply find the start and end overlap times
 // then iterate over that time range for both tracks to find the closest time
+// returns null if either track has no MISB data or the two never overlap in time
 export function closestIntersectionTime(track1, track2) {
     console.log(track1, track2)
 
-    const misb1 = NodeMan.get(track1).misb;
-    const misb2 = NodeMan.get(track2).misb;
+    track1 = NodeMan.get(track1);
+    track2 = NodeMan.get(track2);
+    const misb1 = track1.misb;
+    const misb2 = track2.misb;
+    // synthetic and balloon tracks are computed per frame and have no timestamps to compare
+    if (!misb1?.length || !misb2?.length) return null;
     const frames1 = misb1.length;
     const frames2 = misb2.length;
 
@@ -119,8 +131,9 @@ export function closestIntersectionTime(track1, track2) {
     assert(end2 !== undefined, "Missing end2");
     const start = Math.max(start1, start2);
     const end = Math.min(end1, end2);
-    // assert that start is less than end
-    assert(start < end, "No overlap between tracks");
+    // a real check, not an assert (those are stripped in production): with no overlap
+    // there is no closest approach, and the midpoint of the gap is meaningless
+    if (!(start < end)) return null;
 
     const startString = new Date(start).toISOString();
     const endString = new Date(end).toISOString();

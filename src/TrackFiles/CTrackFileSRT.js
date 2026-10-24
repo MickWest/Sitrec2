@@ -76,7 +76,7 @@ function parseSRT2(lines) {
 
 function parseSRT1(lines) {
     const numPoints = Math.floor(lines.length / 6);
-    let MISBArray = new Array(numPoints);
+    const MISBArray = [];
 
     for (let i = 0; i < lines.length; i++) {
         // Strip HTML tags using a character-level scan (avoids regex-based HTML sanitization)
@@ -93,29 +93,28 @@ function parseSRT1(lines) {
     for (let i = 0; i < numPoints; i++) {
         let dataIndex = i * 6;
         let frameInfo = lines[dataIndex + 2].split(', ');
-        let detailInfo = lines[dataIndex + 4].match(/\[(.*?)\]/g);
+        let detailInfo = lines[dataIndex + 4].match(/\[(.*?)\]/g) ?? [];
 
-        MISBArray[i] = new Array(MISBFields).fill(null);
+        const row = new Array(MISBFields).fill(null);
+        let hasTelemetry = false;
 
         frameInfo.forEach(info => {
             let [key, value] = info.split(': ');
-            if (SRT.hasOwnProperty(key)) {
+            if (SRT.hasOwnProperty(key) && value !== undefined) {
                 if(SRTMapMISB[key] !== null) {
-                    MISBArray[i][SRTMapMISB[key]] = srtNumber(value.replace('ms', ''));
+                    row[SRTMapMISB[key]] = srtNumber(value.replace('ms', ''));
                 }
             }
         });
 
         detailInfo.forEach(info => {
-            let details = info.replace(/[\[\]]/g, '');
-            let tokens = details.split(' ');
-            for (let j = 0; j < tokens.length; j += 2) {
-                let key = tokens[j].replace(':', '');
-                let value = tokens[j + 1].trim();
-
+            // Match "key: value" pairs rather than splitting on spaces, so "[iso : 100]" or
+            // "[dzoom_ratio: 10000, delta:0]" can't throw and reject the whole file
+            for (const [, key, value] of info.matchAll(/(\w+)\s*:\s*([^\s,\]]+)/g)) {
                 if (SRT.hasOwnProperty(key)) {
+                    hasTelemetry = true;
                     if(SRTMapMISB[key] !== null) {
-                        MISBArray[i][SRTMapMISB[key]] = srtNumber(value);
+                        row[SRTMapMISB[key]] = srtNumber(value);
                     }
 
                     if (key === 'focal_len') {
@@ -127,15 +126,20 @@ function parseSRT1(lines) {
                         const sensorSize = 2 * referenceFocalLength * tan(radians(referenceFOV) / 2)
                         const vFOV = degrees(2 * atan(sensorSize / 2 / focal_len))
 
-                        MISBArray[i][MISB.SensorVerticalFieldofView] = vFOV;
+                        row[MISB.SensorVerticalFieldofView] = vFOV;
                     }
                 }
             }
         });
 
+        // A block with no recognised [key: value] telemetry (e.g. a cut-off one) is skipped,
+        // not fatal. Requiring it also stops other text files being taken for an SRT.
+        if (!hasTelemetry) continue;
+
         const date = timeStrToEpoch(lines[dataIndex + 3].trim());
         const dateMS = new Date(date).getTime();
-        MISBArray[i][MISB.UnixTimeStamp] = dateMS;
+        row[MISB.UnixTimeStamp] = dateMS;
+        MISBArray.push(row);
     }
 
     return MISBArray;
