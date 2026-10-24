@@ -47,6 +47,9 @@ export class CSitchBrowser {
         // Labels
         this.userLabels = [];    // [{name, color, permanent?}, ...]
         this.sitchLabels = {};   // {sitchName: [labelName, ...]}
+        // The user's metadata as last read from metadata.php, or null if that read failed.
+        // A label save replaces the whole server file, so it starts from this.
+        this._serverMetadata = null;
         this.featuredSitches = new Map(); // key -> {name, userID, screenshotUrl, date} (global, shared)
         this.activeLabel = null; // sidebar filter, or null = All
 
@@ -208,14 +211,18 @@ export class CSitchBrowser {
             ? fetch(withTestUser(SITREC_SERVER + "getsitches.php?get=myfiles"), {mode: 'cors'})
                 .then(r => { if (r.status !== 200) throw new Error(`Server ${r.status}`); return r.json(); })
             : Promise.resolve([]);
+        // A failed read resolves to null so the browser still opens, but label edits stay off.
+        this._serverMetadata = null;
         const metaP = loggedIn
             ? fetch(withTestUser(SITREC_SERVER + "metadata.php"), {mode: 'cors'})
-                .then(r => r.ok ? r.json() : {labels: [], sitchLabels: {}})
-                .catch(() => ({labels: [], sitchLabels: {}}))
-            : Promise.resolve({labels: [], sitchLabels: {}});
+                .then(r => { if (!r.ok) throw new Error(`Server ${r.status}`); return r.json(); })
+                .catch(err => { console.warn("Could not load label metadata:", err); return null; })
+            : Promise.resolve(null);
 
         Promise.all([sitchesP, metaP, featuredP])
-            .then(([sitchData, metaData, featuredData]) => {
+            .then(([sitchData, serverMetadata, featuredData]) => {
+                this._serverMetadata = serverMetadata;
+                const metaData = serverMetadata || {labels: [], sitchLabels: {}};
                 const ssVersions = metaData.screenshotVersions || {};
                 this.sitches = sitchData.map(e => {
                     let screenshotUrl = e[2] || null;
@@ -1965,7 +1972,15 @@ export class CSitchBrowser {
 
     // ==================== LABEL MUTATIONS ====================
 
+    // Saving labels overwrites the server's copy, so after a failed read it would wipe them.
+    _canEditLabels() {
+        if (this._serverMetadata) return true;
+        showError("Your labels could not be loaded from the server, so they cannot be changed now.\nClose and reopen the sitch browser to try again.");
+        return false;
+    }
+
     async _promptAddLabel(assignToSitches) {
+        if (!this._canEditLabels()) return;
         // showPrompt/showError rather than the native dialogs, which block the page and
         // cannot be styled; showPrompt also resolves to null under Globals.validationMode
         // so a headless run never stalls here. Both call sites are click/drop handlers
@@ -2006,6 +2021,7 @@ export class CSitchBrowser {
 
     async _deleteLabel(labelName) {
         if (this._isPermanentLabel(labelName)) return;
+        if (!this._canEditLabels()) return;
         if (!await showConfirm(`Delete label "${labelName}"? This will remove it from all sitches.`, {title: "Delete Label"})) return;
 
         this.userLabels = this.userLabels.filter(l => l.name !== labelName);
@@ -2056,6 +2072,7 @@ export class CSitchBrowser {
             }
             return;
         }
+        if (!this._canEditLabels()) return;
         const changed = [];
         for (const sitchKey of sitchKeys) {
             const sitch = this._getSitch(sitchKey);
@@ -2097,6 +2114,7 @@ export class CSitchBrowser {
             }
             return;
         }
+        if (!this._canEditLabels()) return;
         const changed = [];
         for (const sitchKey of sitchKeys) {
             const sitch = this._getSitch(sitchKey);
@@ -2120,7 +2138,10 @@ export class CSitchBrowser {
     }
 
     _saveMetadata(changedSitches) {
+        // Carry over what the server stores besides labels (screenshotVersions),
+        // which the POST would otherwise reset.
         const body = {
+            ...this._serverMetadata,
             labels: this.userLabels,
             sitchLabels: this.sitchLabels,
         };

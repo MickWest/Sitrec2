@@ -146,8 +146,8 @@ export class CFileManager extends CManager {
         this._localImportErrorLastKey = null;
         this._localImportErrorLastMs = 0;
         // Session cache for local rehost path resolution.
-        // Maps normalizedPreferredPath -> {path, reusedExisting} so we skip re-reading
-        // large files (e.g. 500MB video) on every save after the first.
+        // Maps normalizedPreferredPath -> {result: {path, reusedExisting}, sourceBuffer, directoryHandle}
+        // so we skip re-reading large files (e.g. 500MB video) on every save after the first.
         this._localRehostPathCache = new Map();
 
         this.rehoster = new CRehoster();
@@ -2385,6 +2385,7 @@ export class CFileManager extends CManager {
         );
 
         if (isWorkingFolderPath || isImportedLocalPath) {
+            let readDirectoryHandle = null;
             const localReadPromise = (isWorkingFolderPath
                 ? Promise.resolve(true)
                 : this.ensureWorkingFolderForImportedLocalAsset(filename))
@@ -2392,7 +2393,8 @@ export class CFileManager extends CManager {
                     if (!canReadLocalAsset) {
                         throw new Error(`Local folder not selected for "${filename}"`);
                     }
-                    return this.readWorkingFolderFile(filename);
+                    readDirectoryHandle = this.directoryHandle;
+                    return this.readWorkingFolderFile(filename, readDirectoryHandle);
                 });
 
             loadingPromise = localReadPromise
@@ -2402,9 +2404,11 @@ export class CFileManager extends CManager {
                     // Cache entries are keyed on source-buffer identity (see C2 in
                     // chooseLocalRehostPath); store the buffer we just read so a
                     // same-buffer save hits, and a different buffer correctly misses.
+                    // The entry only holds for the folder it was read from.
                     if (normalizedWorkingFolderPath) {
                         this._localRehostPathCache.set(normalizedWorkingFolderPath,
-                            {result: {path: normalizedWorkingFolderPath, reusedExisting: true}, sourceBuffer: arrayBuffer});
+                            {result: {path: normalizedWorkingFolderPath, reusedExisting: true}, sourceBuffer: arrayBuffer,
+                                directoryHandle: readDirectoryHandle});
                     }
                     LoadingManager.completeLoading(loadingId);
                     return this.parseResult(filename, arrayBuffer, null, {metadataOverride}).then(result => {
