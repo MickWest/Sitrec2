@@ -39,6 +39,12 @@ app.use((req, res, next) => {
 });
 const PORT = process.env.SITREC_PORT || process.env.PORT || 3000;
 const PHP_PORT = process.env.SITREC_PHP_PORT || process.env.PHP_PORT || 8000;
+// PHP only ever sees requests from the proxy below, so every one arrives from loopback, and
+// the default config treats a loopback caller as the local admin (rehost.php also hands it
+// the server's Google and Cesium keys). Listen on loopback unless told otherwise, so that
+// caller really is this machine. SITREC_HOST=0.0.0.0 opens it to the network.
+const HOST = process.env.SITREC_HOST || '127.0.0.1';
+const isLoopbackHost = (host) => host === 'localhost' || host === '::1' || /^127\./.test(host);
 const DIST_DIR = path.resolve(__dirname, 'dist-standalone');
 
 let phpServer = null;
@@ -274,10 +280,15 @@ async function startServer() {
         });
 
         // Start the Express server
-        app.listen(PORT, () => {
+        app.listen(PORT, HOST, () => {
             console.log(`\n🚀 Sitrec standalone server is running!`);
             console.log(`📱 Frontend: http://localhost:${PORT}/sitrec`);
             console.log(`🐘 PHP Backend: http://localhost:${PHP_PORT}`);
+            if (!isLoopbackHost(HOST)) {
+                console.log(`\nWARNING: listening on ${HOST}, not just this machine. PHP sees every request`
+                    + ` as local, so anyone who can reach port ${PORT} is treated as the local admin`
+                    + ` and can read the server's API keys. Use only on a network you trust.`);
+            }
             console.log(`\nPress Ctrl+C to stop the server`);
         });
 

