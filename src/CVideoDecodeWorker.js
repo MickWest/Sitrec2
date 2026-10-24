@@ -11,6 +11,11 @@ let effectiveRotation = 0;
 let videoMaxSize = null;
 let lastConfig = null;
 let configGeneration = 0; // incremented on each configure to ignore stale error callbacks
+let openGroupId = null;   // group being decoded whose result has not been posted yet
+let failedRecoveries = 0; // rapid decoder errors since the last configure or group
+let lastFailureTime = 0;
+const MAX_FAILED_RECOVERIES = 3;
+const FAILURE_WINDOW_MS = 5000; // errors further apart than this start a new count
 
 // --- Decode backpressure ---------------------------------------------------
 // Each decoded frame is a VideoFrame -> ImageBitmap carrying large EXTERNAL
@@ -45,6 +50,26 @@ const resolutionMap = {
     "360P": 640
 };
 
+// A decoder that fails again as soon as it is recreated will never work. One
+// that fails now and then can, so only errors in quick succession count. Chrome
+// reclaims idle decoders with QuotaExceededError, and a new one always works.
+function failingRepeatedly(e) {
+    if (e.name === 'QuotaExceededError') return false;
+    const now = performance.now();
+    if (now - lastFailureTime > FAILURE_WINDOW_MS) failedRecoveries = 0;
+    lastFailureTime = now;
+    return ++failedRecoveries >= MAX_FAILED_RECOVERIES;
+}
+
+// Post the open group's result. The main thread holds every other group until
+// this one is answered, and treats an answer for a finished group as another
+// failure, so each group is answered once.
+function answerGroup(msg) {
+    if (openGroupId === null) return;
+    openGroupId = null;
+    self.postMessage(msg);
+}
+
 function createDecoder() {
     if (decoder && decoder.state !== 'closed') {
         try { decoder.close(); } catch(e) {}
@@ -55,6 +80,26 @@ function createDecoder() {
         error: (e) => {
             // Ignore error callbacks from a previous decoder generation
             if (myGeneration !== configGeneration) return;
+            // The error discards the open group's queued chunks, so it can never
+            // flush. Answer it now, or the main thread waits out its 45s timeout.
+            const groupId = openGroupId;
+            openGroupId = null;
+            // An unsupported codec fails asynchronously after configure() has
+            // succeeded, and fails again on every recreated decoder. Recovering
+            // would loop forever, so leave the decoder down until the main thread
+            // configures again.
+            if (e.name === 'NotSupportedError' || failingRepeatedly(e)) {
+                const msg = { type: 'error', message: e.message, name: e.name, fatal: true };
+                if (groupId !== null) msg.groupId = groupId;
+                self.postMessage(msg);
+                lastConfig = null;
+                configured = false;
+                decodeGeneration++;
+                inFlightFrames = 0;
+                wakeDrainWaiters();
+                return;
+            }
+            if (groupId !== null) self.postMessage({ type: 'groupError', groupId: groupId, message: e.message });
             self.postMessage({ type: 'error', message: e.message, name: e.name });
             recoverDecoder();
         }
@@ -179,6 +224,8 @@ self.onmessage = async function(e) {
             decodeGeneration++;
             inFlightFrames = 0;
             wakeDrainWaiters();
+            openGroupId = null;
+            failedRecoveries = 0;
             createDecoder();
             const config = { codec: msg.codec };
             if (msg.description) {
@@ -209,6 +256,8 @@ self.onmessage = async function(e) {
                 }
             }
             currentGroupId = msg.groupId;
+            openGroupId = msg.groupId;
+            failedRecoveries = 0;
             const myGen = ++decodeGeneration; // abort this loop if a reset/new group supersedes it
             timestampToFrameNumber.clear();
             for (const mapping of msg.timestampMap) {
@@ -249,7 +298,7 @@ self.onmessage = async function(e) {
                 }
                 if (decodeErrors === chunks.length) {
                     // All chunks failed — no point flushing
-                    self.postMessage({ type: 'groupError', groupId: currentGroupId,
+                    answerGroup({ type: 'groupError', groupId: currentGroupId,
                         message: 'All ' + chunks.length + ' chunks failed to decode' });
                     break;
                 }
@@ -264,7 +313,7 @@ self.onmessage = async function(e) {
                     self.postMessage({ type: 'log', level: 'error',
                         message: 'Worker: decoder.flush() TIMED OUT after ' + elapsed + 's for group ' + currentGroupId
                             + ' (' + chunks.length + ' chunks). Decoder may be stuck on corrupt data.' });
-                    self.postMessage({ type: 'groupError', groupId: currentGroupId,
+                    answerGroup({ type: 'groupError', groupId: currentGroupId,
                         message: 'Decoder flush timed out after ' + FLUSH_TIMEOUT_MS + 'ms — possible corrupt video data' });
                     // Attempt decoder recovery
                     try {
@@ -291,18 +340,18 @@ self.onmessage = async function(e) {
                         clearTimeout(flushTimer);
                         flushing = false;
                         const elapsed = ((performance.now() - groupStartTime) / 1000).toFixed(1);
-                        self.postMessage({ type: 'groupFlushed', groupId: msg.groupId });
+                        answerGroup({ type: 'groupFlushed', groupId: msg.groupId });
                     }
                 }).catch((err) => {
                     if (decodeGeneration !== myGen) { clearTimeout(flushTimer); return; }
                     if (!flushTimedOut) {
                         clearTimeout(flushTimer);
                         flushing = false;
-                        self.postMessage({ type: 'groupError', groupId: currentGroupId, message: err.message });
+                        answerGroup({ type: 'groupError', groupId: currentGroupId, message: err.message });
                     }
                 });
             } catch (err) {
-                self.postMessage({ type: 'groupError', groupId: currentGroupId, message: err.message });
+                answerGroup({ type: 'groupError', groupId: currentGroupId, message: err.message });
             }
             break;
         }
@@ -319,6 +368,7 @@ self.onmessage = async function(e) {
             decodeGeneration++;   // abort any in-flight decodeGroup loop awaiting backpressure
             inFlightFrames = 0;
             wakeDrainWaiters();
+            openGroupId = null;
             self.postMessage({ type: 'resetDone' });
             break;
         }
@@ -484,9 +534,24 @@ export class VideoDecodeWorkerManager {
                 }
                 break;
             case 'error':
+                // The worker posts 'configured' before any error from that config,
+                // so a fatal error while a configure is pending comes from the
+                // decoder being replaced. The new config still gets its chance.
+                if (msg.fatal && this.configured) {
+                    // The worker gave up on this decoder, which also ends any group
+                    // in flight. Nothing decodes again until the next configure.
+                    this.configured = false;
+                    this.busy = false;
+                    console.warn(`Worker decoder failed (${msg.name}): ${msg.message}`);
+                    if (this.onError) {
+                        this.onError(msg.message, msg.groupId, true);
+                    }
+                    break;
+                }
+                if (msg.groupId !== undefined) this.busy = false;
                 console.debug(`Worker decoder error (recovered): ${msg.message}`);
                 if (this.onError) {
-                    this.onError(msg.message);
+                    this.onError(msg.message, msg.groupId);
                 }
                 break;
             case 'resetDone':

@@ -116,7 +116,7 @@ export class CVideoWebCodecBase extends CVideoAndAudio {
         this._workerManager = new VideoDecodeWorkerManager(
             (groupId, frameNumber, bitmap, width, height) => this._onWorkerFrame(groupId, frameNumber, bitmap, width, height),
             (groupId) => this._onWorkerGroupFlushed(groupId),
-            (message, groupId) => this._onWorkerError(message, groupId),
+            (message, groupId, fatal) => this._onWorkerError(message, groupId, fatal),
         );
         this._workerManager.onConfigured = (hwAccel) => this._onWorkerConfigured(hwAccel);
         this._workerManager.init();
@@ -251,7 +251,10 @@ export class CVideoWebCodecBase extends CVideoAndAudio {
         this.handleGroupComplete();
     }
 
-    _onWorkerError(message, groupId) {
+    // fatal: the worker's decoder cannot run with this configuration (an
+    // unsupported codec, or one that fails on every recreate), so no later
+    // group can succeed either.
+    _onWorkerError(message, groupId, fatal = false) {
         this.flushing = false;
         if (groupId !== undefined) {
             const group = this._activeGroupMap.get(groupId);
@@ -264,7 +267,7 @@ export class CVideoWebCodecBase extends CVideoAndAudio {
 
                 const decodedCount = group.decodeOrder ? group.decodeOrder.length : 0;
 
-                if (decodedCount > 0) {
+                if (decodedCount > 0 && !fatal) {
                     // PARTIAL SUCCESS: flush rejected but some frames WERE decoded.
                     // The decoder works — some frames are just corrupt (common in .TS extracts).
                     // Accept whatever we got and don't count this as a decoder failure.
@@ -302,7 +305,7 @@ export class CVideoWebCodecBase extends CVideoAndAudio {
                 // codec mismatches (every group fails from the start)
                 // still escalate normally because no group will ever
                 // have loaded.
-                if (this.groups) {
+                if (this.groups && !fatal) {
                     const otherLoaded = this.groups.filter(g => g !== group && g.loaded).length;
                     if (otherLoaded >= 1 && group._decodeFailures >= 2) {
                         const groupIdx = this.groups.indexOf(group);
@@ -321,13 +324,15 @@ export class CVideoWebCodecBase extends CVideoAndAudio {
                     }
                 }
             }
-        } else {
+        } else if (!fatal) {
             // Generic decoder error (not group-specific) — informational only, don't count as group failure
             console.debug(`[Video] Worker decoder error (non-group): ${message}`);
             return; // Don't count toward consecutive errors or trigger fallback
         }
 
         this._consecutiveGroupErrors++;
+        // Escalate a fatal error at once: to software, or from software to failed
+        if (fatal) this._consecutiveGroupErrors = Math.max(this._consecutiveGroupErrors, 3);
 
         // After first error, try falling back to software decoder
         if (!this._softwareDecoderMode && this._consecutiveGroupErrors >= 1 && this._workerConfig) {
@@ -407,7 +412,7 @@ export class CVideoWebCodecBase extends CVideoAndAudio {
         }
 
         this.errorImage = canvas;
-        showError(`[Video] Decode permanently failed for ${this.filename}. Hardware and software decoders both rejected this H.264 stream.`);
+        showError(`[Video] Decode permanently failed for ${this.filename}. Hardware and software decoders both rejected this ${this._workerConfig?.codec || 'video'} stream.`);
     }
 
     createDecoder() {
@@ -1070,6 +1075,8 @@ export class CVideoWebCodecBase extends CVideoAndAudio {
                 group.loaded = false;
                 this.groupsPending = Math.max(0, this.groupsPending - 1);
                 this._activeGroupMap.delete(groupId);
+                // Count it, so requestGroup stops re-requesting a group that never decodes
+                group._decodeFailures = (group._decodeFailures || 0) + 1;
                 if (this._workerManager) {
                     this._workerManager.busy = false;
                 }
