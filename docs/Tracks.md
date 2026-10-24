@@ -507,6 +507,8 @@ A common setup for analyzing a video uses two tracks:
 
 When the second track loads, Sitrec finds the time of closest approach between the two tracks and re-times the sitch so it starts there, moves the main view over the closest approach, and sets the **Camera Heading** to **To Target** so the camera points at the second track.
 
+Sitrec re-times the sitch only when the two tracks overlap in time. If they have no time in common (for example, one track ends before the other starts, or ends at the same moment the other starts), the start time of the sitch does not change and the main view is not moved to a closest approach.
+
 ![Two aircraft tracks over Lake Michigan](docimages/tracks-two-aircraft-lakemichigan.jpg)
 
 ### Camera and Target from One File

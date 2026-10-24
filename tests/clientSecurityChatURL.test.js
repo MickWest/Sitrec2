@@ -82,6 +82,41 @@ describe('setMenuValue from a model-driven source', () => {
     });
 });
 
+describe('looksLikeURL end trim', () => {
+    const NUL = String.fromCharCode(0);
+    const US = String.fromCharCode(0x1f);
+    const NBSP = String.fromCharCode(0xa0);
+
+    // Like the URL parser, the trim drops every code unit up to U+0020 at both ends and nothing
+    // else. String.prototype.trim would be wrong both ways: it keeps NUL and drops NBSP.
+    test.each([
+        ['', false],
+        [NUL + ' ' + US, false],
+        [' //evil.example/x', true],
+        [NUL + US + ' https://evil.example/x ' + NUL, true],
+        ['javascript:alert(1)' + NUL + ' ', true],
+        ['Overlay 1 ' + NUL, false],
+        ['!https://evil.example/x', false],
+        [NBSP + 'https://evil.example/x', false],   // new URL() resolves this as a relative path
+    ])('looksLikeURL(%j) is %p', (value, expected) => {
+        expect(looksLikeURL(value)).toBe(expected);
+    });
+
+    // The trim was a regex that took quadratic time on an inner run (100,000 characters: about
+    // 4 s), and a chat-sourced value has no length cap.
+    test('returns quickly on a 1,000,000-character run of spaces and NULs', () => {
+        const run = (' ' + NUL).repeat(500000);
+        for (const [value, expected] of [
+            ['x' + run + 'x', false],
+            [run + 'https://evil.example/x' + run, true],
+        ]) {
+            const started = performance.now();
+            expect(looksLikeURL(value)).toBe(expected);
+            expect(performance.now() - started).toBeLessThan(100);
+        }
+    });
+});
+
 describe('handleAPICall setMenuValue URL guard', () => {
     let setter;
     beforeEach(() => {

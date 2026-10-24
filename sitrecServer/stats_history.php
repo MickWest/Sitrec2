@@ -22,17 +22,43 @@ function getPrivateStatsDir($name, $legacyDir) {
 
 // Best effort: a file that cannot be moved stays where it is and the request carries on.
 // A file already in the new directory is newer than the old copy, so it is never replaced.
+//
+// The move runs under a lock in the new directory. A request that arrives during the move
+// waits for it, then finds the old directory gone and does nothing. Without the lock it would
+// see a file that is not yet complete, take it as moved and delete the old copy.
 function moveLegacyStatsFiles($legacyDir, $dir) {
     if (!$legacyDir || !is_dir($legacyDir) || !is_dir($dir)) return;
     if (realpath($legacyDir) === realpath($dir)) return;
-    foreach (glob($legacyDir . '*') ?: [] as $old) {
-        if (!is_file($old)) continue;
-        $new = $dir . basename($old);
-        if (file_exists($new) || @rename($old, $new) || @copy($old, $new)) {
-            @unlink($old);
+    $lock = @fopen($dir . '.migration.lock', 'c');
+    if ($lock === false) return;
+    if (!flock($lock, LOCK_EX)) { fclose($lock); return; }
+    clearstatcache();
+    if (is_dir($legacyDir)) {
+        foreach (glob($legacyDir . '*') ?: [] as $old) {
+            if (!is_file($old)) continue;
+            $new = $dir . basename($old);
+            if (file_exists($new) || copyIntoPlace($old, $new)) {
+                @unlink($old);
+            }
         }
+        @rmdir($legacyDir);
     }
-    @rmdir($legacyDir);
+    flock($lock, LOCK_UN);
+    fclose($lock);
+}
+
+// The two directories are often on different mounts, where rename() falls back to copying
+// straight to the final name. So the file is copied to a hidden name beside its final name
+// and renamed into place, which is atomic within one directory: $new is either absent or
+// complete. A copy that comes out short (a full disk) is discarded.
+function copyIntoPlace($old, $new) {
+    $tmp = dirname($new) . '/.' . basename($new) . '.migrating';
+    if (@copy($old, $tmp)) {
+        clearstatcache();
+        if (filesize($tmp) === filesize($old) && @rename($tmp, $new)) return true;
+    }
+    @unlink($tmp);
+    return false;
 }
 
 function getStatsDir() {

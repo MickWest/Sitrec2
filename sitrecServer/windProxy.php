@@ -127,20 +127,6 @@ if ($python === null) {
     exit;
 }
 
-// ── throttle cache misses ────────────────────────────────────────
-// The fetch slots below are what protect the PHP workers; this only stops one
-// address queueing misses without end. It is generous because behind a reverse
-// proxy without mod_remoteip every visitor shares one REMOTE_ADDR, and then this
-// is one budget for the whole site. 120 per 10 minutes is a full level set for
-// several cycles. The token is taken before the slot, so a flood that only meets
-// busy slots still runs out of tokens.
-if (!sitrecConsumeRateToken('wind', 120, 600)) {
-    http_response_code(429);
-    header('Retry-After: 60');
-    echo json_encode(['error' => 'Too many wind data requests; please wait and retry']);
-    exit;
-}
-
 /**
  * Claim one of $count fetch slots: a lock file held until it is released or
  * the request ends. The Python child inherits the descriptor, so a slot stays
@@ -164,6 +150,14 @@ function claimFetchSlot($count) {
     return $busy ? false : null;
 }
 
+/** Give back a slot from claimFetchSlot(); a null slot holds nothing. */
+function releaseFetchSlot($slot) {
+    if ($slot) {
+        flock($slot, LOCK_UN);
+        fclose($slot);
+    }
+}
+
 // Four at once: one client fetches up to three levels in parallel plus the
 // one on screen, and the rest of the PHP worker pool stays free.
 $slot = claimFetchSlot(4);
@@ -171,6 +165,21 @@ if ($slot === false) {
     http_response_code(503);
     header('Retry-After: 10');
     echo json_encode(['error' => 'Wind data fetcher is busy; please retry']);
+    exit;
+}
+
+// ── throttle cache misses ────────────────────────────────────────
+// The fetch slots are what protect the PHP workers; this only stops one
+// address queueing misses without end. It is generous because behind a reverse
+// proxy without mod_remoteip every visitor shares one REMOTE_ADDR, and then this
+// is one budget for the whole site. 120 per 10 minutes is a full level set for
+// several cycles. The token is taken only after a slot is claimed, so a request
+// that meets busy slots costs nothing, and a flood of 503s cannot empty the budget.
+if (!sitrecConsumeRateToken('wind', 120, 600, $resetAt)) {
+    releaseFetchSlot($slot);
+    http_response_code(429);
+    header('Retry-After: ' . max(1, $resetAt - time()));
+    echo json_encode(['error' => 'Too many wind data requests; please wait and retry']);
     exit;
 }
 
@@ -210,10 +219,7 @@ if (is_resource($process)) {
 } else {
     $output = 'Unable to start the wind data fetcher';
 }
-if ($slot) {
-    flock($slot, LOCK_UN);
-    fclose($slot);
-}
+releaseFetchSlot($slot);
 
 if ($timedOut) {
     http_response_code(504);

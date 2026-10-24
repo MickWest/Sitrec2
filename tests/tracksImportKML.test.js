@@ -47,14 +47,37 @@ beforeEach(() => {
 afterEach(() => jest.restoreAllMocks());
 
 describe('KML styles without a color', () => {
-    test('an outline-only PolyStyle keeps the default fill color', () => {
+    // <fill>0</fill> asks for an outline only: no fill, and an invisible fill must not
+    // write depth and hide what is behind it.
+    test('an outline-only PolyStyle draws no fill', () => {
         const file = kml(
             `<Style id="outline"><LineStyle><color>ff0000ff</color></LineStyle><PolyStyle><fill>0</fill></PolyStyle></Style>`,
             `<Placemark><name>Zone</name><styleUrl>#outline</styleUrl><Polygon>${ring(-1)}</Polygon></Placemark>`);
         expect(() => file.extractObjects()).not.toThrow();
         expect(displayed()).toHaveLength(1);
         expect(displayed()[0].color).toBe('#ff0000ff');
-        expect(displayed()[0].dropColor).toBe('#ffc0c0c0');
+        expect(displayed()[0].lineOpacity).toBe(1);
+        expect(displayed()[0].polyOpacity).toBe(0);
+        expect(displayed()[0].depthWrite).toBe(false);
+    });
+
+    test('a filled PolyStyle keeps its fill', () => {
+        const file = kml(
+            `<Style id="filled"><PolyStyle><color>800000ff</color><fill>1</fill></PolyStyle></Style>`,
+            `<Placemark><name>Zone</name><styleUrl>#filled</styleUrl><Polygon>${ring(-1)}</Polygon></Placemark>`);
+        file.extractObjects();
+        expect(displayed()[0].dropColor).toBe('#800000ff');
+        expect(displayed()[0].polyOpacity).toBeCloseTo(0x80 / 255, 6);
+        expect(displayed()[0].depthWrite).toBe(true);
+    });
+
+    test('a PolyStyle with outline 0 draws no wall outline', () => {
+        const file = kml(
+            `<Style id="nooutline"><PolyStyle><color>800000ff</color><outline>0</outline></PolyStyle></Style>`,
+            `<Placemark><name>Zone</name><styleUrl>#nooutline</styleUrl><Polygon>${ring(-1)}</Polygon></Placemark>`);
+        file.extractObjects();
+        expect(displayed()[0].lineOpacity).toBe(0);
+        expect(displayed()[0].polyOpacity).toBeCloseTo(0x80 / 255, 6);
     });
 
     test('a LineStyle with only a width keeps the default line color', () => {
@@ -96,6 +119,40 @@ describe('KML MultiGeometry', () => {
         <Placemark><name>After</name><Polygon>${ring(-4)}</Polygon></Placemark>`);
         file.extractObjects();
         expect(CNodeTrackFromLLAArray).toHaveBeenCalledTimes(3);
+    });
+
+    // A MultiGeometry has no style or name of its own: each part takes its Placemark's.
+    test('every part keeps the style of its Placemark', () => {
+        const file = kml(
+            `<Style id="red"><LineStyle><color>ff0000ff</color></LineStyle><PolyStyle><color>800000ff</color></PolyStyle></Style>`,
+            `<Placemark><name>Airspace</name><styleUrl>#red</styleUrl><MultiGeometry>
+                <Polygon>${ring(-1)}</Polygon><Polygon>${ring(-2)}</Polygon>
+            </MultiGeometry></Placemark>`);
+        file.extractObjects();
+        expect(displayed()).toHaveLength(2);
+        for (const v of displayed()) {
+            expect(v.color).toBe('#ff0000ff');
+            expect(v.dropColor).toBe('#800000ff');
+            expect(v.polyOpacity).toBeCloseTo(0x80 / 255, 6);
+        }
+    });
+
+    test('parts are named after their Placemark', () => {
+        const file = kml('', `<Placemark><name>Airspace</name><MultiGeometry>
+            <Polygon>${ring(-1)}</Polygon><Polygon>${ring(-2)}</Polygon><Polygon>${ring(-3)}</Polygon>
+        </MultiGeometry></Placemark>`);
+        file.extractObjects();
+        expect(CNodeTrackFromLLAArray.mock.calls.map(([v]) => v.id)).toEqual(['Airspace', 'Airspace 2', 'Airspace 3']);
+        expect(displayed().map(v => v.id)).toEqual(['Airspace-display', 'Airspace 2-display', 'Airspace 3-display']);
+    });
+
+    test('parts of an unnamed Placemark still get readable names', () => {
+        const file = kml('', `<Placemark><MultiGeometry>
+            <LineString><coordinates>-1,50,0 -0.99,50.01,0</coordinates></LineString>
+            <LineString><coordinates>-2,50,0 -1.99,50.01,0</coordinates></LineString>
+        </MultiGeometry></Placemark>`);
+        file.extractObjects();
+        expect(CNodeTrackFromLLAArray.mock.calls.map(([v]) => v.id)).toEqual(['KML Shape', 'KML Shape 2']);
     });
 
     test('imports every GroundOverlay in a Folder', () => {

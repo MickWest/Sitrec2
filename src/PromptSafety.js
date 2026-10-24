@@ -124,10 +124,16 @@ export const CHAT_DENIED_URL_VALUES = {
 // tab, and "/\evil/x" therefore all resolve to a remote origin while matching none of them
 // as typed. Apply the same three rules before testing. Verified against new URL() rather
 // than reasoned from the spec.
+//
+// The end trim is a loop, not /^[\u0000-\u0020]+|[\u0000-\u0020]+$/g. That regex retries its
+// trailing branch from every position of an inner run, so "x" + a long run of spaces + "x"
+// takes quadratic time (100,000 characters: about 4 s) and freezes the tab.
 export function looksLikeURL(value) {
-    const normalized = value
-        // eslint-disable-next-line no-control-regex
-        .replace(/^[\u0000-\u0020]+|[\u0000-\u0020]+$/g, "")
+    let start = 0;
+    let end = value.length;
+    while (start < end && value.charCodeAt(start) <= 0x20) start++;
+    while (end > start && value.charCodeAt(end - 1) <= 0x20) end--;
+    const normalized = value.slice(start, end)
         // eslint-disable-next-line no-control-regex
         .replace(/[\u0009\u000A\u000D]/g, "")
         .replace(/\\/g, "/");

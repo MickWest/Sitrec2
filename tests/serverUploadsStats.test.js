@@ -246,10 +246,12 @@ function getUserInfoCustom() { return ['user_id' => 42, 'user_groups' => [2]]; }
     const privateDir = () => path.join(root, 'tmp/sitrec-stats');
     const legacyDir = () => path.join(root, 'cache/sitrec-stats');
 
+    const phpArgs = code => ['-d', 'date.timezone=UTC', '-d', 'display_errors=stderr', '-r',
+        `require $argv[1]; ${code}`, path.join(root, 'sitrecServer/stats_history.php')];
+    const phpEnv = () => ({...process.env, TMPDIR: path.join(root, 'tmp')});
+
     function runPhp(code) {
-        const result = spawnSync('php', ['-d', 'date.timezone=UTC', '-d', 'display_errors=stderr', '-r',
-            `require $argv[1]; ${code}`, path.join(root, 'sitrecServer/stats_history.php')],
-        {encoding: 'utf8', timeout: 10000, env: {...process.env, TMPDIR: path.join(root, 'tmp')}});
+        const result = spawnSync('php', phpArgs(code), {encoding: 'utf8', timeout: 10000, env: phpEnv()});
         expect(result.stderr).toBe('');
         return result.stdout;
     }
@@ -273,8 +275,61 @@ function getUserInfoCustom() { return ['user_id' => 42, 'user_groups' => [2]]; }
 
         expect(history[today()]).toEqual({ai_requests: 3});
         expect(fs.existsSync(legacyDir())).toBe(false);
-        expect(fs.readdirSync(privateDir()).sort()).toEqual(['history.json', `visits_${today()}.json`]);
+        // The move's lock stays; no partial copy is left behind.
+        expect(fs.readdirSync(privateDir()).sort()).toEqual(['.migration.lock', 'history.json', `visits_${today()}.json`]);
         expect(JSON.parse(runPhp('echo json_encode(getVisitDetails(date("Y-m-d")));')).users).toEqual({7: 1});
+    });
+
+    // A request that ran during the move used to see the file at its final name before the
+    // copy was complete, take it as moved and delete the original, losing the 28-day history.
+    // Here another process holds the move's lock, as a request part way through the copy does.
+    test('a request that arrives during the move waits for it to finish', async () => {
+        fs.mkdirSync(legacyDir());
+        fs.mkdirSync(privateDir());
+        fs.writeFileSync(path.join(legacyDir(), 'history.json'), JSON.stringify({[today()]: {visits: 5}}));
+
+        const holder = spawn('php', ['-r', '$h = fopen($argv[1], "c"); flock($h, LOCK_EX); echo "locked\\n"; fgets(STDIN);',
+            path.join(privateDir(), '.migration.lock')], {stdio: ['pipe', 'pipe', 'ignore']});
+        let caller;
+        try {
+            await new Promise(resolve => holder.stdout.once('data', resolve));
+            caller = spawn('php', phpArgs('echo json_encode(getStatsHistory28());'),
+                {env: phpEnv(), stdio: ['ignore', 'pipe', 'ignore']});
+            let output = '';
+            caller.stdout.on('data', chunk => { output += chunk; });
+            const finished = new Promise(resolve => caller.once('exit', resolve));
+
+            await new Promise(resolve => setTimeout(resolve, 500));
+            expect(caller.exitCode).toBeNull();
+            expect(fs.existsSync(path.join(legacyDir(), 'history.json'))).toBe(true);
+            expect(fs.existsSync(path.join(privateDir(), 'history.json'))).toBe(false);
+
+            holder.stdin.end('\n');
+            await finished;
+            expect(JSON.parse(output)[today()]).toEqual({visits: 5});
+            expect(fs.existsSync(legacyDir())).toBe(false);
+        } finally {
+            holder.kill();
+            if (caller) caller.kill();
+        }
+    });
+
+    // Across mounts PHP's rename() copies straight to the final name, which is the move that
+    // is not atomic. So the file must arrive as a new copy renamed within the private
+    // directory. On one filesystem that shows as a new inode; a second link keeps the old
+    // inode in use, so its number cannot be given to the new file.
+    // A new inode shows a copy rather than a cross-directory rename. It does not show the
+    // temporary name and the rename inside the private directory; no test sees that step.
+    test('a file is copied into the private directory, not renamed across directories', () => {
+        fs.mkdirSync(legacyDir());
+        const old = path.join(legacyDir(), 'history.json');
+        fs.writeFileSync(old, JSON.stringify({[today()]: {visits: 2}}));
+        const kept = path.join(root, 'kept.json');
+        fs.linkSync(old, kept);
+
+        expect(JSON.parse(runPhp('echo json_encode(getStatsHistory28());'))[today()]).toEqual({visits: 2});
+        expect(fs.statSync(path.join(privateDir(), 'history.json')).ino).not.toBe(fs.statSync(kept).ino);
+        expect(fs.existsSync(old)).toBe(false);
     });
 
     test('a file already in the private directory is not replaced by an old copy', () => {
@@ -335,23 +390,30 @@ function getUserInfoCustom() {
 describe('the container serves uploads and cached files sandboxed', () => {
     const conf = fs.readFileSync(path.resolve(__dirname, '../docker/cache-headers.conf'), 'utf8');
     const dockerfile = fs.readFileSync(path.resolve(__dirname, '../Dockerfile.release'), 'utf8');
-    const block = conf.match(/<If "%\{REQUEST_FILENAME\} =~ m#([^#]+)#">\s*(Header[^\n]*Content-Security-Policy[^\n]*)\s*<\/If>/);
+    // The rule matches the request URL. A rule on the path on disk missed every install that
+    // mounts these directories outside /var/www/html or serves Sitrec under a subpath.
+    const block = conf.match(/<If "%\{REQUEST_URI\} =~ m#([^#]+)#">\s*(Header[^\n]*Content-Security-Policy[^\n]*)\s*<\/If>/);
 
-    test('a path rule sets a sandbox CSP', () => {
+    test('a URL rule sets a sandbox CSP', () => {
         expect(block).not.toBeNull();
-        expect(block[2]).toMatch(/^Header always set Content-Security-Policy "[^"]*\bsandbox\b[^"]*"$/);
-        expect(block[2]).toContain("default-src 'none'");
+        expect(block[2]).toBe(`Header always set Content-Security-Policy "default-src 'none'; style-src 'unsafe-inline'; sandbox"`);
     });
 
+    // Each URL as the app at the site root, and under the /sitrec/ subpath.
     test.each([
         ['sitrec-upload/42/x-0123.klv', true],
         ['sitrec-upload/42/My Sitch/20261024_120000.js', true],
         ['sitrec-cache/starlink/current.json', true],
         ['index.html', false],
+        ['', false],
         ['sitrecServer/rehost.php', false],
         ['bootstrap.beacfc8a97c4825cb3dd.bundle.js', false],
+        ['sitrec-terrain/1/2/3.png', false],
+        ['sitrec-uploads/x.xml', false],
     ])('%s sandboxed: %s', (file, sandboxed) => {
-        expect(new RegExp(block[1]).test('/var/www/html/' + file)).toBe(sandboxed);
+        const rule = new RegExp(block[1]);
+        expect(rule.test('/' + file)).toBe(sandboxed);
+        expect(rule.test('/sitrec/' + file)).toBe(sandboxed);
     });
 
     test('the release image enables the conf and mod_headers', () => {

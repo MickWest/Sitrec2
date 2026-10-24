@@ -19,14 +19,6 @@ if ($_SERVER['REQUEST_METHOD'] !== 'GET') {
     exit;
 }
 
-// ── Per-IP rate limiting: 20 req/min ──
-if (!sitrecConsumeRateToken('flysfo', 20)) {
-    http_response_code(429);
-    header('Content-Type: application/json');
-    echo json_encode(['error' => 'Rate limit exceeded']);
-    exit;
-}
-
 // ── Response cache (5 min TTL, shared across all users) ──
 $CACHE_TTL = 300; // 5 minutes
 $cacheDir = sys_get_temp_dir() . '/sitrec_flysfo_cache/';
@@ -48,6 +40,16 @@ if (file_exists($cacheFile)) {
             exit;
         }
     }
+}
+
+// ── Per-IP rate limiting of upstream fetches: 20/min ──
+// Only a cache miss spends a token; cached answers are never refused.
+if (!sitrecConsumeRateToken('flysfo', 20, 60, $resetAt)) {
+    http_response_code(429);
+    header('Content-Type: application/json');
+    header('Retry-After: ' . max(1, $resetAt - time()));
+    echo json_encode(['error' => 'Rate limit exceeded']);
+    exit;
 }
 
 // ── Fetch from FlySFO ──

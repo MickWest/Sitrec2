@@ -7,7 +7,7 @@
  * Features:
  * - Per-airport response caching (30s TTL) — all users watching the same
  *   airport share one API call per cache window
- * - Per-IP rate limiting (10 req/min)
+ * - Per-IP rate limiting of upstream calls (10/min); cache hits are free
  * - API key stored in shared.env (ADSBX_RAPIDAPI_KEY)
  *
  * Cache key is rounded lat/lon (2 decimals) + dist, so nearby requests
@@ -22,16 +22,6 @@ if ($_SERVER['REQUEST_METHOD'] !== 'GET') {
     http_response_code(405);
     header('Content-Type: application/json');
     echo json_encode(['error' => 'Method not allowed']);
-    exit;
-}
-
-// ── Rate limiting: 10 req/min per IP ──
-// Keyed on REMOTE_ADDR, not a forwarding header: a caller that could choose its
-// own bucket would spend the paid API key without limit.
-if (!sitrecConsumeRateToken('adsbx', 10)) {
-    http_response_code(429);
-    header('Content-Type: application/json');
-    echo json_encode(['error' => 'Rate limit exceeded. Max 10 requests per minute.']);
     exit;
 }
 
@@ -77,6 +67,19 @@ if (file_exists($cacheFile)) {
             exit;
         }
     }
+}
+
+// ── Rate limiting: 10 upstream calls/min per IP ──
+// Only a cache miss spends a token, so the cap is on the paid API key, and
+// clients sharing a cached airport are never refused. Keyed on REMOTE_ADDR, not
+// a forwarding header: a caller that could choose its own bucket would spend
+// the key without limit.
+if (!sitrecConsumeRateToken('adsbx', 10, 60, $resetAt)) {
+    http_response_code(429);
+    header('Content-Type: application/json');
+    header('Retry-After: ' . max(1, $resetAt - time()));
+    echo json_encode(['error' => 'Rate limit exceeded. Max 10 uncached requests per minute.']);
+    exit;
 }
 
 // ── Get API key ──

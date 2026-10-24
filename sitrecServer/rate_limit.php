@@ -3,7 +3,10 @@
  * Per-IP rate limiting shared by the proxies.
  *
  *   require_once __DIR__ . '/rate_limit.php';
- *   if (!sitrecConsumeRateToken('adsbx', 10)) { ...answer 429... }
+ *   if (!sitrecConsumeRateToken('adsbx', 10, 60, $resetAt)) {
+ *       header('Retry-After: ' . max(1, $resetAt - time()));
+ *       ...answer 429...
+ *   }
  *
  * Each bucket keeps one small JSON counter per client IP in
  * sys_get_temp_dir()/sitrec_<bucket>_ratelimit/.
@@ -35,8 +38,13 @@ function sitrecRateLimitClientIP() {
  * observing the same count and bypassing the limit. Returns true when a token
  * was granted. Fails OPEN on filesystem trouble — a broken temp dir must
  * degrade the limiter, not the proxy.
+ *
+ * $resetAt, when passed, receives the Unix time at which the bucket refills
+ * (null when the limiter failed open). A caller that waits until then gets a
+ * token, so $resetAt - time() is the right Retry-After for a refusal.
  */
-function sitrecConsumeRateToken($bucket, $limit, $windowSec = 60) {
+function sitrecConsumeRateToken($bucket, $limit, $windowSec = 60, &$resetAt = null) {
+    $resetAt = null;
     $dir = sys_get_temp_dir() . '/sitrec_' . $bucket . '_ratelimit/';
     if (!is_dir($dir)) {
         @mkdir($dir, 0755, true);
@@ -47,9 +55,11 @@ function sitrecConsumeRateToken($bucket, $limit, $windowSec = 60) {
     $now = time();
     $raw = stream_get_contents($fh);
     $rateData = $raw ? json_decode($raw, true) : null;
-    if (!$rateData || $now > ($rateData['reset'] ?? 0)) {
+    // 'reset' is the first second of the next window.
+    if (!$rateData || $now >= ($rateData['reset'] ?? 0)) {
         $rateData = ['count' => 0, 'reset' => $now + $windowSec];
     }
+    $resetAt = (int)$rateData['reset'];
     $allowed = $rateData['count'] < $limit;
     if ($allowed) {
         $rateData['count']++;

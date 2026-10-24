@@ -96,7 +96,6 @@ function parseSRT1(lines) {
         let detailInfo = lines[dataIndex + 4].match(/\[(.*?)\]/g) ?? [];
 
         const row = new Array(MISBFields).fill(null);
-        let hasTelemetry = false;
 
         frameInfo.forEach(info => {
             let [key, value] = info.split(': ');
@@ -110,14 +109,16 @@ function parseSRT1(lines) {
         detailInfo.forEach(info => {
             // Match "key: value" pairs rather than splitting on spaces, so "[iso : 100]" or
             // "[dzoom_ratio: 10000, delta:0]" can't throw and reject the whole file
-            for (const [, key, value] of info.matchAll(/(\w+)\s*:\s*([^\s,\]]+)/g)) {
+            for (const [, key, spaceBeforeColon, value] of info.matchAll(/(\w+)(\s*):\s*([^\s,\]]+)/g)) {
                 if (SRT.hasOwnProperty(key)) {
-                    hasTelemetry = true;
                     if(SRTMapMISB[key] !== null) {
                         row[SRTMapMISB[key]] = srtNumber(value);
                     }
 
-                    if (key === 'focal_len') {
+                    // The reference below is for "[focal_len: 166.00]" in mm. No real file confirms
+                    // the scale of the "[focal_len : 240]" form (24 mm or 240 mm?), so that form
+                    // gives no FOV rather than one that may be wrong.
+                    if (key === 'focal_len' && spaceBeforeColon === '') {
                         let focal_len = parseFloat(value);
 
                         let referenceFocalLength = 166;
@@ -132,9 +133,10 @@ function parseSRT1(lines) {
             }
         });
 
-        // A block with no recognised [key: value] telemetry (e.g. a cut-off one) is skipped,
-        // not fatal. Requiring it also stops other text files being taken for an SRT.
-        if (!hasTelemetry) continue;
+        // A block without a readable latitude and longitude (e.g. a cut-off one, or one with
+        // only camera settings) is skipped, not fatal. Requiring a position also stops other
+        // text files being taken for an SRT.
+        if (row[MISB.SensorLatitude] === null || row[MISB.SensorLongitude] === null) continue;
 
         const date = timeStrToEpoch(lines[dataIndex + 3].trim());
         const dateMS = new Date(date).getTime();

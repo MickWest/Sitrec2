@@ -107,7 +107,7 @@ If they request data 12 hours later for the same date, the cycle walk lands on 1
 #### GFS retention
 
 - **NOMADS** keeps a rolling ~10 days of cycles. Older requests will 404.
-- **AWS S3 (noaa-gfs-bdp-pds)** is the deeper archive — years of data, but not infinite. The bucket is read-only public, no key required.
+- **AWS S3 (noaa-gfs-bdp-pds)** is the deeper archive — years of data, but not infinite. The bucket is read-only public, no key required. The `atmos/` layout that `fetch_wind.py` reads starts with the 12Z cycle of **2021-03-22**, so `windProxy.php` refuses earlier dates with a 400.
 - For dates outside both windows, the user has to switch to one of the sounding sources.
 
 ### Soundings (UWYO / IGRA2 / Manual)
@@ -195,7 +195,7 @@ A checklist for "wind isn't working" reports, pre-checked against the layers abo
 
 1. **What does the browser say?** Read `wn.statusText` (also displayed as **Status** in the GUI). Errors there name the failing source — start there.
 2. **Is the wind node actually trying?** In the browser console: `NodeMan.get("windField").source` and `.windAltFt`. Confirm they match what the user thinks they picked.
-3. **Did the request reach the proxy?** Network tab → filter `windProxy` (or `proxySounding`). Status code, response size. A 502 from the proxy means upstream failed; a 200 with empty / wrong content means cache or parse problem.
+3. **Did the request reach the proxy?** Network tab → filter `windProxy` (or `proxySounding`). Status code, response size. For `windProxy.php`, the [status table below](#windproxyphp-replies) gives the meaning of each status; a 200 with empty / wrong content means cache or parse problem.
 4. **Did the proxy cache miss / hit?** Server logs show the Python invocation; for soundings, inspect `X-Sounding-Cache` for `hit`, `miss`, `miss-hit`, or `miss-store`.
 5. **Did `fetch_wind.py` succeed?** Run it by hand: `python3 tools/fetch_wind.py --date 20260427 --hour 12 --level 500 --output /tmp/`. If eccodes import fails, the deployer's missing the system library.
 6. **Did the JSON make it back?** `ls -la data/wind/` for an entry matching the date / hour / level. Truncated files (`size < 1KB`) usually mean a partial GRIB decode — delete and retry.
@@ -206,6 +206,22 @@ External dependencies that can fail silently:
 - **PHP `curl` extension** — without it, `proxySounding.php` fails to talk to UWYO. Some minimal PHP installs omit it.
 - **eccodes shared library** — Python `import eccodes` fails if `libeccodes.so` isn't on the system. Linux: `apt install libeccodes0`. macOS: `brew install eccodes`.
 - **Python `certifi`** — used to validate NOMADS/AWS HTTPS. The fetcher falls back to unverified HTTPS if certifi isn't importable; this is acceptable for local dev but not great in production.
+
+### windProxy.php replies
+
+Every error reply is JSON with an `error` field.
+
+| Status | Meaning | `Retry-After` |
+|---|---|---|
+| 200 | The wind JSON, from the cache or from a new fetch. | — |
+| 400 | A bad request: `date` is not a real `YYYYMMDD` date, is before 2021-03-22 or is after tomorrow (UTC); `hour` is not 0–23; or `level` is not `surface` or a level in `PRESSURE_LEVELS` in `fetch_wind.py`. Python does not start. | — |
+| 429 | The miss budget is used up: 120 uncached requests per 10 minutes per client address. | The seconds until the budget refills. |
+| 500 | `tools/fetch_wind.py` is missing. | — |
+| 502 | No file was written for the requested cycle or an earlier cycle on the same day: upstream did not supply the data, or the fetcher could not start. `details` holds the fetcher's output (at most 32 KB). | — |
+| 503 | All 4 fetch slots are busy, or no `python3` was found. | 10 when the slots are busy; none when Python is missing. |
+| 504 | The fetch took longer than 100 s and was stopped. | — |
+
+The proxy checks in this order: the request values (400), the disk cache (200), the fetcher script (500), Python (503), a free fetch slot (503), then the miss budget (429). Cache hits therefore use no slot and no budget. A request takes a budget token only after it claims a fetch slot, so a 503 for busy slots does not use the budget. The budget is keyed on the address that PHP sees as the client. Behind a reverse proxy that does not give PHP the visitor's address, all visitors have the same address, and the budget is shared by the whole site.
 
 ## On-the-wire formats
 

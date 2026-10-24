@@ -55,3 +55,31 @@ test('text that is not an SRT is still rejected', () => {
     const html = Array.from({length: 12}, (_, i) => `<p>row ${i}</p> <script>a[${i}] = 1</script>`).join('\n');
     expect(CTrackFileSRT.canHandle('page.html', html)).toBe(false);
 });
+
+// A block needs a position to count as telemetry. Camera settings on their own (iso, ct)
+// used to be enough, so a file with no usable position loaded as a track of empty rows.
+test('a block with camera settings but no position is skipped', () => {
+    const settings = '[iso : 100] [shutter : 1/640.0] [ev : 0] [ct : 5500]';
+    expect(CTrackFileSRT.canHandle('drone.SRT', srt(settings, settings))).toBe(false);
+
+    const misb = new CTrackFileSRT(srt(settings, position(36.1, -119.1))).toMISB();
+    expect(misb.map(row => row[MISB.SensorLatitude])).toEqual([36.1]);
+});
+
+test('a block with a latitude but no readable longitude is skipped', () => {
+    const data = srt('[latitude: 46.1] [longtitude : 7.1] [altitude: 1300]');
+    expect(CTrackFileSRT.canHandle('drone.SRT', data)).toBe(false);
+    const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
+    expect(new CTrackFileSRT(data).toMISB()).toBe(false);
+    warn.mockRestore();
+});
+
+// No real file in the "[focal_len : 240]" form is available to show its scale, so it
+// gives no FOV rather than one taken from the 166 mm reference.
+test('focal_len with a space before the colon gives no FOV', () => {
+    const data = srt(`[iso : 100] [fnum : 280] [focal_len : 240] ${position(46.1, 7.1)}`);
+    const misb = new CTrackFileSRT(data).toMISB();
+    expect(misb).toHaveLength(1);
+    expect(misb[0][MISB.SensorLatitude]).toBe(46.1);
+    expect(misb[0][MISB.SensorVerticalFieldofView]).toBeNull();
+});

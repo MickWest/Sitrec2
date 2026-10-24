@@ -306,7 +306,9 @@ export class CTrackFileKML extends CTrackFile {
         return null;
     }
 
-    extractKMLObjectsInternal(root, kml=root, depth=0) {
+    // multiGeometry is set inside a <MultiGeometry>: {style, name, parts} of its Placemark,
+    // shared by every part (and by a nested MultiGeometry), with parts counting them.
+    extractKMLObjectsInternal(root, kml=root, depth=0, multiGeometry=null) {
         const defaultStyle = {
             LineStyle: {
                 color: {"#text": "ffffffff"},
@@ -316,8 +318,9 @@ export class CTrackFileKML extends CTrackFile {
             }
         };
 
-        let style = defaultStyle;
-        let name = "";
+        // a MultiGeometry has no style or name of its own, so its parts use their Placemark's
+        let style = multiGeometry?.style ?? defaultStyle;
+        let name = multiGeometry?.name ?? "";
 
         if (kml.styleUrl !== undefined) {
             style = this.getKMLStyle(root, kml.styleUrl["#text"].substring(1), defaultStyle);
@@ -326,6 +329,14 @@ export class CTrackFileKML extends CTrackFile {
         if (kml.name !== undefined) {
             name = kml.name["#text"];
         }
+
+        // Each part of a MultiGeometry gets its own readable name: "Zone", "Zone 2", "Zone 3"
+        const shapeName = () => {
+            if (!multiGeometry) return name;
+            const base = name || "KML Shape";
+            multiGeometry.parts++;
+            return multiGeometry.parts === 1 ? base : base + " " + multiGeometry.parts;
+        };
 
         for (let [key, value] of Object.entries(kml)) {
             if (key === "Folder" && Array.isArray(value) && value.length === 2) {
@@ -337,12 +348,18 @@ export class CTrackFileKML extends CTrackFile {
             // a repeated tag (e.g. several Polygons in a MultiGeometry) parses as an array
             if (key === "LineString") {
                 for (const lineString of this.asArray(value)) {
-                    this.extractKMLLineString(lineString, style, name)
+                    this.extractKMLLineString(lineString, style, shapeName())
                 }
             }
             else if (key === "Polygon") {
                 for (const polygon of this.asArray(value)) {
-                    this.extractKMLPolygon(polygon, style, name)
+                    this.extractKMLPolygon(polygon, style, shapeName())
+                }
+            }
+            else if (key === "MultiGeometry") {
+                const placemark = multiGeometry ?? {style, name, parts: 0};
+                for (const geometry of this.asArray(value)) {
+                    this.extractKMLObjectsInternal(root, geometry, depth + 1, placemark)
                 }
             }
             else if (key === "GroundOverlay") {
@@ -483,8 +500,12 @@ export class CTrackFileKML extends CTrackFile {
             const lineColor = "#" + style.LineStyle.color["#text"]
             const polyColor = "#" + style.PolyStyle.color["#text"]
 
-            const lineOpacity = parseInt(lineColor.substring(1, 3), 16) / 255
-            const polyOpacity = parseInt(polyColor.substring(1, 3), 16) / 255
+            // <PolyStyle><fill>0</fill> draws no fill, and <outline>0</outline> no wall outline
+            const fill = !this.isKMLFalse(style.PolyStyle.fill)
+            const outline = !this.isKMLFalse(style.PolyStyle.outline)
+
+            const lineOpacity = outline ? parseInt(lineColor.substring(1, 3), 16) / 255 : 0
+            const polyOpacity = fill ? parseInt(polyColor.substring(1, 3), 16) / 255 : 0
 
             const trackDisplay = new CNodeDisplayTrack({
                 id: id + "-display",
@@ -498,7 +519,8 @@ export class CTrackFileKML extends CTrackFile {
                 extendToGround: true,
                 showCap: showCap,
                 depthFunc: "LessDepth",
-                depthWrite: true,
+                // an invisible fill must not hide what is behind it
+                depthWrite: fill,
                 layers: LAYERS.MASK_WORLD,
                 minWallStep: 0,
 
@@ -576,6 +598,12 @@ export class CTrackFileKML extends CTrackFile {
 
         CustomManager.ignore(ignoreID);
         console.log(`Added KML GroundOverlay: ${overlayName}`);
+    }
+
+    // A KML boolean such as <fill> is on when it is missing; "0" or "false" turns it off
+    isKMLFalse(element) {
+        const text = element?.["#text"];
+        return text !== undefined && /^\s*(0|false)\s*$/i.test(text);
     }
 
     getBoolean(obj, key) {

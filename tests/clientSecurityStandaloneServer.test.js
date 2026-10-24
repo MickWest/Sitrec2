@@ -27,7 +27,10 @@ function get(host, port) {
         http.get({host, port, path: '/debug/status', timeout: 3000}, res => {
             res.resume();
             resolve(res.statusCode);
-        }).on('error', err => resolve(err.code)).on('timeout', function () { this.destroy(); });
+        }).on('error', err => resolve(err.code)).on('timeout', function () {
+            resolve('TIMEOUT');
+            this.destroy();
+        });
     });
 }
 
@@ -73,7 +76,13 @@ function get(host, port) {
     test('listens on loopback by default', async () => {
         const {port, output} = await start();
         expect(await get('127.0.0.1', port)).toBe(200);
-        if (lanAddress) expect(await get(lanAddress, port)).toBe('ECONNREFUSED');
+        // Some hosts refuse a closed port on the LAN address and others drop the packets, so the
+        // request times out. Either way the server must not answer there: any HTTP status at
+        // all would mean it is reachable from the network.
+        if (lanAddress) {
+            expect(['ECONNREFUSED', 'ECONNRESET', 'ETIMEDOUT', 'EHOSTUNREACH', 'TIMEOUT'])
+                .toContain(await get(lanAddress, port));
+        }
         expect(output).not.toMatch(/WARNING/);
     }, 20000);
 

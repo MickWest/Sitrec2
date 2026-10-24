@@ -31,6 +31,9 @@ Parameter names are case-sensitive: `mapType` works, `maptype` does not. Values 
 the built-in sitches by name; these names are the ones Sitrec writes into the address bar
 when you select a sitch from the menus.
 
+If this build of Sitrec has no sitch with that name (for example, a typo or an old link to
+a sitch that was renamed), Sitrec shows an error and opens the custom sitch instead.
+
 ### custom and mod
 
 `custom` accepts these forms:
@@ -137,6 +140,8 @@ elevation source `AWS_Terrarium`.
 
 The value is read by the browser's standard date parser. Use the full ISO 8601 form
 `YYYY-MM-DDThh:mm:ssZ`; without the `Z` the browser may read the time as local time.
+If the browser cannot read the value as a date, Sitrec shows an error and ignores the
+parameter: the sitch keeps its own start time.
 
 `datetime` **overrides the start time of a saved sitch**. When you load a sitch with `custom`
 and also give `datetime`, the saved start time is not restored; everything else is. After

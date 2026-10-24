@@ -299,7 +299,8 @@ Wind**.
    the camera **Position**.
 2. Import the other aircraft's track. It becomes the **Target Track**, and **Camera
    Heading** changes to **To Target**. Sitrec also finds the closest approach of the two
-   tracks and moves the start of the sitch there. See [Tracks](Tracks.md).
+   tracks and moves the start of the sitch there. If the two tracks do not overlap in
+   time, the start of the sitch does not change. See [Tracks](Tracks.md).
 
    If both aircraft are in one file, import only that file. Sitrec asks whether to use
    the first track as the camera and the second as the target: choose **Use as camera
