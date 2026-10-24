@@ -1,5 +1,9 @@
 import {assert} from "./assert";
 
+// Each stabilized frame is a full-size canvas (8 MB at 1080p), so keep only the
+// most recent few. Caching every frame played used gigabytes within a minute.
+const STABILIZED_CACHE_FRAMES = 8;
+
 export function interpolatePosition(positionsMap, frame) {
     if (positionsMap.has(frame)) {
         return positionsMap.get(frame);
@@ -305,6 +309,10 @@ export class CVideoData {
         // Only cache if this is the exact frame, not a substitute
         if (isExactFrame) {
             this.stabilizedImageCache[f] = canvas;
+            // Evict the oldest. A frame left over from a cleared cache costs only a re-render.
+            const order = this._stabilizedCacheOrder ??= [];
+            order.push(f);
+            if (order.length > STABILIZED_CACHE_FRAMES) delete this.stabilizedImageCache[order.shift()];
         }
 
         return canvas;
