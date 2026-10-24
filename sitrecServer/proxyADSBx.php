@@ -15,6 +15,7 @@
  */
 
 require_once __DIR__ . '/config.php';
+require_once __DIR__ . '/rate_limit.php';
 
 // Only allow GET requests
 if ($_SERVER['REQUEST_METHOD'] !== 'GET') {
@@ -25,32 +26,14 @@ if ($_SERVER['REQUEST_METHOD'] !== 'GET') {
 }
 
 // ── Rate limiting: 10 req/min per IP ──
-// Use X-Forwarded-For or CF-Connecting-IP if behind a reverse proxy
-$clientIP = $_SERVER['HTTP_CF_CONNECTING_IP']
-    ?? $_SERVER['HTTP_X_FORWARDED_FOR']
-    ?? $_SERVER['REMOTE_ADDR']
-    ?? 'unknown';
-// X-Forwarded-For may contain multiple IPs — use the first (client)
-$clientIP = explode(',', $clientIP)[0];
-$clientIP = trim($clientIP);
-$rateLimitDir = sys_get_temp_dir() . '/sitrec_adsbx_ratelimit/';
-if (!is_dir($rateLimitDir)) {
-    @mkdir($rateLimitDir, 0755, true);
-}
-$rateLimitFile = $rateLimitDir . md5($clientIP) . '.json';
-$now = time();
-$rateData = file_exists($rateLimitFile) ? json_decode(file_get_contents($rateLimitFile), true) : null;
-if (!$rateData || $now > ($rateData['reset'] ?? 0)) {
-    $rateData = ['count' => 0, 'reset' => $now + 60];
-}
-if ($rateData['count'] >= 10) {
+// Keyed on REMOTE_ADDR, not a forwarding header: a caller that could choose its
+// own bucket would spend the paid API key without limit.
+if (!sitrecConsumeRateToken('adsbx', 10)) {
     http_response_code(429);
     header('Content-Type: application/json');
     echo json_encode(['error' => 'Rate limit exceeded. Max 10 requests per minute.']);
     exit;
 }
-$rateData['count']++;
-file_put_contents($rateLimitFile, json_encode($rateData), LOCK_EX);
 
 // ── Validate parameters ──
 $lat  = isset($_GET['lat'])  ? floatval($_GET['lat'])  : null;

@@ -3,13 +3,20 @@
  * Wind data proxy for Sitrec — fetches GFS wind data and returns cached JSON.
  *
  * Usage: windProxy.php?date=20220919&hour=18&level=surface
- * Levels: surface, 1000, 925, 850, 700, 500, 300, 250, 200
+ * Levels: surface, or a pressure level in hPa from fetch_wind.py's
+ * PRESSURE_LEVELS (1000 down to 10); anything else is a 400.
  *
  * Results are cached as JSON files in ../data/wind/ — subsequent requests for
  * the same date/hour/level are served instantly from cache.
  * If the exact cycle isn't available (GFS takes ~4h to process), earlier cycles
  * on the same day are tried automatically.
+ *
+ * Cache hits are unthrottled. A miss starts tools/fetch_wind.py and holds this
+ * PHP worker for up to 100 s, so misses are limited per IP and only a few
+ * fetches run at once (429 and 503 respectively, both with a JSON error).
  */
+
+require_once __DIR__ . '/rate_limit.php';
 
 header('Content-Type: application/json');
 header('Access-Control-Allow-Origin: *');
@@ -28,6 +35,26 @@ if (!preg_match('/^\d{8}$/', $date)) {
 if ($hour < 0 || $hour > 23) {
     http_response_code(400);
     echo json_encode(['error' => 'Invalid hour']);
+    exit;
+}
+
+// fetch_wind.py can only fetch real days from 2021-03-22 (the AWS archive's
+// atmos/ layout, the one it builds, starts with that day's 12Z cycle) up to
+// today; one day of slack allows for a client clock ahead of the server's.
+// Anything else would start Python only to fail.
+if (!checkdate((int)substr($date, 4, 2), (int)substr($date, 6, 2), (int)substr($date, 0, 4))
+    || $date < '20210322' || $date > gmdate('Ymd', time() + 86400)) {
+    http_response_code(400);
+    echo json_encode(['error' => 'Date out of range for GFS wind data']);
+    exit;
+}
+
+// The levels fetch_wind.py lists in PRESSURE_LEVELS, plus surface.
+$levels = ['surface', '1000', '975', '950', '925', '900', '850', '800', '700', '600',
+    '500', '400', '300', '250', '200', '150', '100', '70', '50', '30', '20', '10'];
+if (!in_array($level, $levels, true)) {
+    http_response_code(400);
+    echo json_encode(['error' => 'Invalid level']);
     exit;
 }
 
@@ -99,6 +126,54 @@ if ($python === null) {
     echo json_encode(['error' => 'Python is unavailable for wind data fetching']);
     exit;
 }
+
+// ── throttle cache misses ────────────────────────────────────────
+// The fetch slots below are what protect the PHP workers; this only stops one
+// address queueing misses without end. It is generous because behind a reverse
+// proxy without mod_remoteip every visitor shares one REMOTE_ADDR, and then this
+// is one budget for the whole site. 120 per 10 minutes is a full level set for
+// several cycles. The token is taken before the slot, so a flood that only meets
+// busy slots still runs out of tokens.
+if (!sitrecConsumeRateToken('wind', 120, 600)) {
+    http_response_code(429);
+    header('Retry-After: 60');
+    echo json_encode(['error' => 'Too many wind data requests; please wait and retry']);
+    exit;
+}
+
+/**
+ * Claim one of $count fetch slots: a lock file held until it is released or
+ * the request ends. The Python child inherits the descriptor, so a slot stays
+ * taken while an orphaned fetch still runs. Returns the handle, false when
+ * every slot is busy, or null when no slot can be locked for any other reason,
+ * which fails open like the rate limiter.
+ */
+function claimFetchSlot($count) {
+    $dir = sys_get_temp_dir() . '/sitrec_wind_fetch_slots/';
+    if (!is_dir($dir)) {
+        @mkdir($dir, 0755, true);
+    }
+    $busy = false;
+    for ($i = 0; $i < $count; $i++) {
+        $fh = @fopen($dir . "slot{$i}.lock", 'c');
+        if ($fh === false) continue;
+        if (flock($fh, LOCK_EX | LOCK_NB, $wouldBlock)) return $fh;
+        fclose($fh);
+        $busy = $busy || $wouldBlock;
+    }
+    return $busy ? false : null;
+}
+
+// Four at once: one client fetches up to three levels in parallel plus the
+// one on screen, and the rest of the PHP worker pool stays free.
+$slot = claimFetchSlot(4);
+if ($slot === false) {
+    http_response_code(503);
+    header('Retry-After: 10');
+    echo json_encode(['error' => 'Wind data fetcher is busy; please retry']);
+    exit;
+}
+
 $command = [$python, $script, '--date', $date, '--hour', (string)$cycleHour,
     '--level', $level, '--output', $cacheDir];
 $process = proc_open($command, [0 => ['pipe', 'r'], 1 => ['pipe', 'w'],
@@ -134,6 +209,10 @@ if (is_resource($process)) {
     proc_close($process);
 } else {
     $output = 'Unable to start the wind data fetcher';
+}
+if ($slot) {
+    flock($slot, LOCK_UN);
+    fclose($slot);
 }
 
 if ($timedOut) {

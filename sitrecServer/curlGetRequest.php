@@ -1,6 +1,13 @@
 <?php
 require_once __DIR__ . '/audit.php';
-// Simple cURL proxy function to forward requests with Authorization header (if present)
+// Simple cURL GET helper for the proxies.
+//
+// Only the headers a caller passes in $extraHeaders go upstream. The browser's
+// own request headers are never forwarded, Authorization included: every caller
+// fetches a third-party host, and browsers attach HTTP Basic credentials to
+// every request in a protected realm, so forwarding it would hand a site's
+// password to CelesTrak, adsb.lol and the rest. A caller that needs upstream
+// auth passes its own server-side header in $extraHeaders.
 //
 // $extraHeaders: optional additional request headers, e.g.
 //   ['User-Agent: Sitrec/1.0 (+https://www.metabunk.org/sitrec)']
@@ -46,17 +53,8 @@ function curlGetRequest($url, $extraHeaders = [], $timeoutSec = null) {
     curl_setopt($ch, CURLOPT_TIMEOUT, $totalSec);
     curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, $connectSec);
 
-    // check for Authorization header and pass it along if present
-    $headers = getallheaders();
-    $curl_headers = [];
-    if (array_key_exists('Authorization', $headers)) {
-        $curl_headers[] = 'Authorization: ' . $headers['Authorization'];
-    }
-    foreach ($extraHeaders as $h) {
-        $curl_headers[] = $h;
-    }
-    if (!empty($curl_headers)) {
-        curl_setopt($ch, CURLOPT_HTTPHEADER, $curl_headers);
+    if (!empty($extraHeaders)) {
+        curl_setopt($ch, CURLOPT_HTTPHEADER, array_values($extraHeaders));
     }
     curl_setopt($ch, CURLOPT_URL, $url);
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
