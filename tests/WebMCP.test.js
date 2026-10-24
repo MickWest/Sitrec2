@@ -558,6 +558,60 @@ describe('WebMCP menu setter refusals', () => {
         }
     });
 
+    // Only a scheme the browser fetches from or runs is a URL. "Sighting:" is free text, and
+    // refusing it blocked marker labels, graph titles and grid names.
+    test('sets free text with a word-colon prefix, but not a real URL scheme', async () => {
+        const setMenuValue = findTool(createTools(), 'sitrec_set_menu_value');
+        mockMenuValues['view/Timeline/Marker Label'] = 'Marker 1';
+
+        for (const value of ['Plane: N123', 'Sighting: 21:30', 'Note: see frame 12', 'ISO: 100']) {
+            await expect(setMenuValue.execute({menu: 'view', control: 'Timeline/Marker Label', value}))
+                .resolves.toMatchObject({success: true, requestedValue: value, currentValue: value});
+        }
+        for (const value of [' JaVaScRiPt:x', 'vbscript:x', 'ws://x', 'blob:x', 'file:///etc/passwd']) {
+            await expect(setMenuValue.execute({menu: 'view', control: 'Timeline/Marker Label', value}))
+                .resolves.toMatchObject({success: false, code: 'URL_REFUSED'});
+        }
+        expect(mockMenuValues['view/Timeline/Marker Label']).toBe('ISO: 100');
+    });
+
+    // An <img> or a TextureLoader loads an installed extension's web-accessible files.
+    test('refuses browser-extension URLs', async () => {
+        const setMenuValue = findTool(createTools(), 'sitrec_set_menu_value');
+
+        for (const value of [
+            'chrome-extension://abcdefghijklmnopabcdefghijklmnop/icon.png',
+            'moz-extension://0b1c2d3e-4f50-4a6b-8c7d-9e0f1a2b3c4d/icon.png',
+            'safari-web-extension://ABCDEF01-2345-6789-ABCD-EF0123456789/icon.png',
+        ]) {
+            await expect(setMenuValue.execute({menu: 'view', control: 'Sky/overlay', value}))
+                .resolves.toMatchObject({success: false, code: 'URL_REFUSED'});
+        }
+        expect(mockHandleAPICall).not.toHaveBeenCalledWith(
+            expect.objectContaining({fn: 'setMenuValue'}),
+            expect.anything(),
+        );
+    });
+
+    // The schema said "URLs are refused", but a relative path such as data/images/x.png and
+    // free text such as "Plane: N123" are accepted. It must name what is refused.
+    test('the value schema names each kind of refused URL', async () => {
+        const setMenuValue = findTool(createTools(), 'sitrec_set_menu_value');
+        const {description} = setMenuValue.inputSchema.properties.value;
+
+        for (const kind of ['web', 'data', 'file', 'blob', 'browser-extension', 'script']) {
+            expect(description).toMatch(new RegExp(`\\b${kind}\\b`, 'i'));
+        }
+        expect(description).toContain('starts with //');
+        expect(description).not.toMatch(/(^|\. )URLs are refused/);
+
+        // The free-text example it gives is accepted.
+        const example = description.match(/such as '([^']+)'/)[1];
+        mockMenuValues['view/Timeline/Marker Label'] = 'Marker 1';
+        await expect(setMenuValue.execute({menu: 'view', control: 'Timeline/Marker Label', value: example}))
+            .resolves.toMatchObject({success: true, currentValue: example});
+    });
+
     test('refuses a button, whose function lil-gui would overwrite with the value', async () => {
         const result = await findTool(createTools(), 'sitrec_set_menu_value')
             .execute({menu: 'view', control: 'Sky/Add Object', value: 'anything'});

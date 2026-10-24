@@ -11,15 +11,25 @@
 const HOLD_MS = 3000;    // fully visible for this long...
 const FADE_MS = 600;     // ...then fades out over this long
 
+// The two layouts. One line is the default: a short message, cut with an ellipsis when the view
+// is too narrow for it. A wrapped message goes onto more lines instead, for a notice that must
+// be read to its end. The element is reused, so every message sets one or the other.
+const ONE_LINE = {whiteSpace: 'nowrap', textOverflow: 'ellipsis', overflowWrap: '', width: '', textAlign: ''};
+// max-content makes the box as wide as the text, up to its max-width. Without it, a box placed
+// at left: 50% wraps at half the width of the view.
+const WRAPPED = {whiteSpace: 'normal', textOverflow: 'clip', overflowWrap: 'break-word',
+    width: 'max-content', textAlign: 'center'};
+
 /**
  * Show `text` at the top centre of `view`, then fade it out.
  *
  * @param {object} view      a CNodeView (anything with a positioned .div)
  * @param {string} text      the message; plain text, never markup
- * @param {object} [options] {hold, fade} in ms
+ * @param {object} [options] {hold, fade} in ms; {wrap: true} puts a message that is too long
+ *                           for the view on more lines, where by default it is cut with an ellipsis
  * @returns {HTMLElement|null} the message element, or null if there was no view to put it in
  */
-export function showViewMessage(view, text, {hold = HOLD_MS, fade = FADE_MS} = {}) {
+export function showViewMessage(view, text, {hold = HOLD_MS, fade = FADE_MS, wrap = false} = {}) {
     const host = view?.div;
     if (!host) return null;
 
@@ -33,6 +43,7 @@ export function showViewMessage(view, text, {hold = HOLD_MS, fade = FADE_MS} = {
     }
 
     el.textContent = text;
+    Object.assign(el.style, wrap ? WRAPPED : ONE_LINE);
     clearTimeout(el._viewMessageTimer);
 
     // Restart from fully opaque with the transition OFF. A message that arrives while the last

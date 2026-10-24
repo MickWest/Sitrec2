@@ -58,6 +58,7 @@ import {isVideoRestoredByStreaming} from "./VideoStreaming";
 import {forceUpdateUIText} from "./nodes/CNodeViewUI";
 import {configParams} from "./runtimeConfig";
 import {showError} from "./showError";
+import {showViewMessage} from "./ViewMessage";
 import {showPostLoadFilterDialog} from "./TrackFilterDialog";
 import {textSitchToObject} from "./RegisterSitches";
 import {isResolvableSitrecReference} from "./SitrecObjectResolver";
@@ -1438,6 +1439,9 @@ export const serializeMethods = {
             Globals.deserializing = false;
             Globals.sitchDirty = false;
             setRenderOne(3);
+            // What did load looks complete, and a save now would write the skipped parts out of
+            // the sitch, so say so. Over the main view, and gone by itself: the app carries on.
+            showViewMessage(ViewMan.get("mainView", false), t("file.sitchNotFullyLoaded"), {hold: 8000, wrap: true});
         })
 
 

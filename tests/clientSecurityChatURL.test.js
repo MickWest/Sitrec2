@@ -51,7 +51,7 @@ const setMenu = (value, path = 'Overlay: X/Properties/Image URL') =>
 describe('setMenuValue from a model-driven source', () => {
     test.each([
         'https://evil.example/x.png?d=share-link',
-        'http://localhost/x.png',               // same origin is still a URL: no URL at all
+        'http://localhost/x.png',               // refused by scheme, whatever the origin
         '//evil.example/x.png',
         '\u0000https://evil.example/x',         // the URL parser strips the leading control
         'ht\ttps://evil.example/x',             // and an embedded tab
@@ -117,6 +117,51 @@ describe('looksLikeURL end trim', () => {
     });
 });
 
+// Only a scheme the browser fetches from or runs is a URL. Any "word:" prefix used to count, so
+// chat could not set a timeline marker label, graph title or grid name like "Plane: N123".
+describe('looksLikeURL refuses real URL schemes only', () => {
+    const freeText = ['Plane: N123', 'Sighting: 21:30', 'Note: see frame 12', 'ISO: 100'];
+
+    test.each(freeText)('accepts the free text %p', (value) => {
+        expect(looksLikeURL(value)).toBe(false);
+        expect(refuseExternalURLParams(setMenu(value, 'Marker/Label'))).toBeNull();
+    });
+
+    test.each([
+        'javascript:alert(1)',
+        ' JaVaScRiPt:x',
+        'java\tscript:x',            // the URL parser discards the tab
+        'https://x',
+        'HTTP://x',
+        'data:text/html,x',
+        'blob:x',
+        'file:///etc/passwd',
+        '//evil.example',
+        '\\\\evil.example',          // folds to //evil.example
+        'ws://x',
+        'wss://x',
+        'ftp://x',
+        'vbscript:x',
+        'filesystem:https://x/temporary/y',
+    ])('refuses the URL %p', (value) => {
+        expect(looksLikeURL(value)).toBe(true);
+        expect(refuseExternalURLParams(setMenu(value)).error).toMatch(/cannot be a URL/);
+    });
+
+    // An <img> or a TextureLoader loads an installed extension's web-accessible files from
+    // these schemes, so they are URLs like https: is.
+    test.each([
+        'chrome-extension://abcdefghijklmnopabcdefghijklmnop/icon.png',
+        'moz-extension://0b1c2d3e-4f50-4a6b-8c7d-9e0f1a2b3c4d/icon.png',
+        'safari-web-extension://ABCDEF01-2345-6789-ABCD-EF0123456789/icon.png',
+        ' Chrome-Extension://x/y.png',
+        'moz-ext\tension://x/y.png',         // the URL parser discards the tab
+    ])('refuses the browser-extension URL %p', (value) => {
+        expect(looksLikeURL(value)).toBe(true);
+        expect(refuseExternalURLParams(setMenu(value)).error).toMatch(/cannot be a URL/);
+    });
+});
+
 describe('handleAPICall setMenuValue URL guard', () => {
     let setter;
     beforeEach(() => {
@@ -135,6 +180,12 @@ describe('handleAPICall setMenuValue URL guard', () => {
         const result = await sitrecAPI.handleAPICall(setMenu('Overlay 2', 'Overlay: X/Name'), 'chat');
         expect(result.success).toBe(true);
         expect(setter).toHaveBeenCalledWith('objects', 'Overlay: X/Name', 'Overlay 2');
+    });
+
+    test.each(['chat', 'webmcp'])('a %s-sourced label with a colon still goes through', async (source) => {
+        const result = await sitrecAPI.handleAPICall(setMenu('Sighting: 21:30', 'Marker/Label'), source);
+        expect(result.success).toBe(true);
+        expect(setter).toHaveBeenCalledWith('objects', 'Marker/Label', 'Sighting: 21:30');
     });
 
     test('the user setting a URL from the UI is unaffected', async () => {

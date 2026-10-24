@@ -1914,6 +1914,12 @@ class CTrackManager extends CManager {
 
 
             } else {
+                // A re-time was tried but found no closest approach: the two tracks have no
+                // time in common, or one has no timestamps. Say so in the console only.
+                if (track0 && track0 !== trackOb && cpaCandidate) {
+                    console.warn(`Not re-timed to a closest approach: "${trackOb.menuText}" has no time in common with "${track0.menuText}"`);
+                }
+
                 // this is the first track loaded, or a supplementary track (like center track)
                 // so just center on this track
                 if (NodeMan.exists("terrainUI")) {

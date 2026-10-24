@@ -1240,7 +1240,8 @@ export function createSitrecWebMCPTools(dependencyOverrides = {}) {
             description:
                 "Set one Sitrec menu control to a value and read the result back. The menu and "
                 + "control must be exact names returned by sitrec_list_menu_controls. Cannot press "
-                + "buttons, set a URL, load a file, or save or upload the situation.",
+                + "buttons, set a web, data, file, blob or script URL, load a file, or save or "
+                + "upload the situation.",
             inputSchema: {
                 type: "object",
                 properties: {
@@ -1260,7 +1261,9 @@ export function createSitrecWebMCPTools(dependencyOverrides = {}) {
                         type: ["string", "number", "boolean"],
                         description:
                             "New value. For a dropdown it must be one of the listed options. "
-                            + "URLs are refused.",
+                            + "Web, data, file, blob, browser-extension and script URLs are "
+                            + "refused, as is a value that starts with //. Other text with a "
+                            + "colon, such as 'Plane: N123', is accepted.",
                     },
                 },
                 required: ["menu", "control", "value"],

@@ -944,6 +944,12 @@ const en = {
             tooltip: "Create a new sitch (will reload this page, resetting everything)",
         },
         savingDisabled: "Saving Disabled (click to log in)",
+        // Shown over the main view when a step late in restoring a saved sitch fails, and the
+        // app carries on with what did load (CustomManagerSerialize.deserialize).
+        sitchNotFullyLoaded: "This sitch did not fully load. Saving it now may lose parts of it.",
+        // Shown over the main view when the startup login check fails (network error, or an
+        // error page instead of an answer) and the app carries on logged out (src/login.js).
+        loginCheckFailed: "Could not check your login. Reload the page to try again.",
         tweaks: {
             folder: {
                 label: "File Tweaks",

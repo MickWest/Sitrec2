@@ -10,9 +10,12 @@ const code = babel.transformSync(source, {configFile: false, plugins: [() => ({v
     ExportNamedDeclaration(p) { p.replaceWith(p.node.declaration); },
 }})]}).code;
 
+const {t} = require('../src/i18n');
+
 function harness() {
     const settings = {chatModel: 'default-model', aiEffort: 'low', tileSegments: 64};
     const Globals = {loadGeneration: 1, settings, showLabelsMain: true, objectScale: 1};
+    const mainView = {id: 'mainView'};
     const context = {
         console: {log: jest.fn(), warn: jest.fn(), error: jest.fn()},
         Globals, Sit: {}, par: {}, GlobalDateTimeNode: null,
@@ -20,7 +23,9 @@ function harness() {
         NodeMan: {exists: () => false, get: () => undefined, list: {}, recalculateAllRootFirst: jest.fn()},
         TrackManager: {applyDisplayNames() {}},
         TimelineMarkers: {deserialize() {}},
-        ViewMan: {restoreFullscreenFromMods() {}},
+        ViewMan: {restoreFullscreenFromMods() {}, get: id => (id === 'mainView' ? mainView : undefined)},
+        showViewMessage: jest.fn(),
+        t,
         setSitchEstablished: jest.fn(),
         setRenderOne: jest.fn(),
         updateDocumentTitle() {}, refreshLabelsAfterLoading() {}, refreshLatLonGridVisibility() {},
@@ -39,7 +44,7 @@ function harness() {
         refreshLookViewTracks() {}, applyTrackLimit() {}, markChapterBaseline() {},
         deserializeMods: jest.fn(async () => true),
     };
-    return {manager, Globals, settings, context};
+    return {manager, Globals, settings, context, mainView};
 }
 
 // deserialize() starts its chain without returning it; let that chain run out.
@@ -143,5 +148,32 @@ describe('a failure late in a sitch restore', () => {
         expect(Globals.deserializing).toBe(true);
         expect(Globals.dontRecalculate).toBe(true);
         expect(context.NodeMan.recalculateAllRootFirst).not.toHaveBeenCalled();
+        // The newer sitch is the one on screen, so nothing is said about this one.
+        expect(context.showViewMessage).not.toHaveBeenCalled();
+    });
+
+    // The partly restored sitch is interactive and not marked dirty, so without a notice a
+    // save writes the skipped parts out of it. The notice must not block: no dialog, no click.
+    test.each([
+        ['finishDeserialization', context => openCVFailure(context)],
+        ['deserializeMods', (context, manager) => manager.deserializeMods.mockRejectedValue(new Error('bad mod'))],
+    ])('a failure in %s says once, over the main view, that the sitch did not fully load', async (_, fail) => {
+        const {manager, context, mainView} = harness();
+        fail(context, manager);
+        manager.deserialize({mods: {}, motionAnalysis: {}});
+        await settle();
+        expect(context.console.error).toHaveBeenCalledWith('Deserialization did not complete cleanly:', expect.any(Error));
+        expect(context.showViewMessage).toHaveBeenCalledTimes(1);
+        expect(context.showViewMessage).toHaveBeenCalledWith(mainView,
+            'This sitch did not fully load. Saving it now may lose parts of it.', expect.any(Object));
+    });
+
+    test('a sitch that loads completely shows no notice', async () => {
+        const {manager, Globals, context} = harness();
+        manager.deserialize({mods: {}, motionAnalysis: {}});
+        await settle();
+        expect(Globals.deserializing).toBe(false);
+        expect(context.console.error).not.toHaveBeenCalled();
+        expect(context.showViewMessage).not.toHaveBeenCalled();
     });
 });
