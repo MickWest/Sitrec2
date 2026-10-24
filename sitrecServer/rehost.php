@@ -224,6 +224,7 @@ if (isset($_GET['action']) && $_GET['action'] === 'getPresignedUrl') {
     $contentHash = isset($requestData['contentHash']) ? $requestData['contentHash'] : null;
 
     $fileName = preg_replace('/[^\w\s\.\-\(\),]/', '_', $fileName);
+    $fileName = storedUploadName($fileName, $version);
 
     if (!isSafeName($fileName) || !isSafeExtension($fileName) ||
         ($version && (!isSafeName($version) || !isSafeExtension($version)))) {
@@ -340,6 +341,7 @@ if (isset($_GET['action']) && $_GET['action'] === 'initiateMultipart') {
     $totalParts = (int)$requestData['parts'];
     
     $fileName = preg_replace('/[^\w\s\.\-\(\),]/', '_', $fileName);
+    $fileName = storedUploadName($fileName, $version);
     
     if (!isSafeName($fileName) || !isSafeExtension($fileName) ||
         ($version && (!isSafeName($version) || !isSafeExtension($version)))) {
@@ -468,6 +470,7 @@ if (isset($_GET['action']) && $_GET['action'] === 'completeMultipart') {
     $parts = $requestData['parts'];
     
     $fileName = preg_replace('/[^\w\s\.\-\(\),]/', '_', $fileName);
+    $fileName = storedUploadName($fileName, $version);
     
     if (!isSafeName($fileName) || !isSafeExtension($fileName) ||
         ($version && (!isSafeName($version) || !isSafeExtension($version)))) {
@@ -600,15 +603,34 @@ function isSafeName($name): bool {
         && preg_match('/\A[A-Za-z0-9 _().,-]+\z/D', $name) === 1;
 }
 
-// Extensions that must never be stored — server-side executables and config overrides
+// Extensions that must never be stored — server-side executables and config overrides, and
+// documents a browser runs script in, which filesystem storage would serve from the app's
+// own origin. .js and .xml stay allowed: saved sitches are .js, and Sitrec imports XML and
+// KML. A .js file runs only if a page on the origin loads it, and the container serves
+// uploads with a sandbox CSP (docker/cache-headers.conf). A final .html/.htm on an
+// unversioned upload is renamed by storedUploadName() before this check.
+// Apache takes a type or handler from every extension in a name, not only the last
+// ("x.html.klv" is text/html when klv has no type), so every one is checked.
 function isSafeExtension($filename) {
     static $DANGEROUS_EXTENSIONS = [
         'php', 'php3', 'php4', 'php5', 'php7', 'phtml', 'phar',
         'shtml', 'shtm', 'cgi', 'pl', 'py', 'rb', 'sh', 'bash',
-        'asp', 'aspx', 'jsp', 'cfm', 'htaccess', 'htpasswd'
+        'asp', 'aspx', 'jsp', 'cfm', 'htaccess', 'htpasswd',
+        'html', 'htm', 'xhtml', 'xht', 'mht', 'mhtml', 'svg', 'svgz', 'mjs',
+        'xsl', 'xslt', 'xul', 'xbl', 'rdf', 'rss', 'atom', 'mml', 'swf'
     ];
-    $ext = strtolower(pathinfo($filename, PATHINFO_EXTENSION));
-    return !in_array($ext, $DANGEROUS_EXTENSIONS, true);
+    // Trailing spaces and commas pass the name sanitiser, and "x.html " is served with no type,
+    // which a browser may sniff as HTML, so compare each extension without them.
+    $extensions = array_map(fn($ext) => rtrim($ext, ' ,'), array_slice(explode('.', strtolower($filename)), 1));
+    return !array_intersect($extensions, $DANGEROUS_EXTENSIONS);
+}
+
+// Sitrec imports HTML itself: University of Wyoming soundings are named *.html (SondeFetch.js)
+// and are rehosted when a sitch is saved. An unversioned .html/.htm is stored as .txt, which
+// the client parses by content the same way, so it is never served as a page from the app's
+// own origin. A versioned save's name is its sitch folder, so it is left as it is.
+function storedUploadName($fileName, $version) {
+    return $version ? $fileName : preg_replace('/\.html?\z/i', '.txt', $fileName);
 }
 
 // check to see if we have delete = true
@@ -701,6 +723,7 @@ $version = isset($_POST['version']) ? basename($_POST['version']) : null;
 // sanitize the filename by removing any path components
 // or any characters that are not alphanumeric, space, _, -, ., (, )
 $fileName = preg_replace('/[^\w\s\.\-\(\),]/', '_', $fileName);
+$fileName = storedUploadName($fileName, $version);
 
 
 // Validate names and extensions
@@ -725,9 +748,10 @@ $baseName = pathinfo($fileName, PATHINFO_FILENAME);
 $newFileName = $baseName . '-' . $md5Checksum . '.' . $extension;
 
 if ($version) {
-    // versioned files sit in a folder based on the file name
-    // like /sitrec-upload/99999998/MyFile/versionnumber.jpg
-    $userDir = $userDir . $baseName . '/';
+    // versioned files sit in a folder named by the whole file name, as in the S3 key, the
+    // returned URL and delete, like /sitrec-upload/99999998/MyFile/versionnumber.jpg
+    // Sitch names may contain dots ("Mt. Shasta"), so it is not $baseName.
+    $userDir = $userDir . $fileName . '/';
     $newFileName = $version;  // Assume front-end has supplied a unique version number with correct extension
 }
 
@@ -778,7 +802,7 @@ if (!file_exists($userDir)) {
 }
 
 $userFilePath = $userDir . $newFileName;
-sitrecAuditResource($user_id . '/' . ($version ? $baseName . '/' : '') . $newFileName);
+sitrecAuditResource($user_id . '/' . ($version ? $fileName . '/' : '') . $newFileName);
 
 
 // Move the file to the user's directory

@@ -895,6 +895,8 @@ Open **http://localhost:3000/sitrec**
 
 This starts a Node.js Express server on port 3000 and PHP's built-in server on port 8000, with proxying between them.
 
+The Express server listens on `127.0.0.1` only, so other machines cannot reach it. To open it to your network, set `SITREC_HOST=0.0.0.0` (or one interface's address), and only on a network you trust: every request reaches PHP through the proxy, so PHP sees it coming from this machine, and the default configuration treats such a caller as the local admin and gives it the server's Google and Cesium keys.
+
 ---
 
 ## Local Web Server Installation
@@ -1140,6 +1142,7 @@ After building, verify with these URL tests (adjust the path if not at `/sitrec/
 | Dev server | 3000 | `SITREC_PORT` |
 | Dev backend proxy | 8081 | `SITREC_BACKEND_PORT` |
 | Standalone PHP | 8000 | `SITREC_PHP_PORT` |
+| Standalone listen address | 127.0.0.1 | `SITREC_HOST` |
 | Docker / Docker Image | 8080 host → **8080 container** | `SITREC_DOCKER_INTERNAL_PORT` (container port) |
 | Docker Dev | 8080/8081 | (docker-compose.dev.yml) |
 

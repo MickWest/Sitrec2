@@ -39,7 +39,8 @@ function getUserInfo() {
         }
         fs.writeFileSync(path.join(root, 'sitrecServer/config_paths.php'),
             `<?php $CACHE_PATH = ${JSON.stringify(path.join(root, 'cache') + '/')};\n`);
-        statsDir = path.join(root, 'cache/sitrec-stats');
+        // sys_get_temp_dir() follows TMPDIR, which keeps the stats files in the fixture.
+        statsDir = path.join(root, 'tmp/sitrec-stats');
     });
 
     afterEach(() => fs.rmSync(root, {recursive: true, force: true}));
@@ -70,7 +71,8 @@ function getUserInfo() {
     function readVisits() {
         const script = 'require $argv[1]; echo json_encode(getVisitDetails(date("Y-m-d")));';
         const result = spawnSync('php', ['-d', 'date.timezone=UTC', '-r', script,
-            path.join(root, 'sitrecServer/stats_history.php')], {encoding: 'utf8', timeout: 10000});
+            path.join(root, 'sitrecServer/stats_history.php')],
+            {encoding: 'utf8', timeout: 10000, env: {...process.env, TMPDIR: path.join(root, 'tmp')}});
         return JSON.parse(result.stdout);
     }
 

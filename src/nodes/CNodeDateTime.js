@@ -1059,13 +1059,20 @@ export class CNodeDateTime extends CNode {
         }
     }
 
+    // Returns false, changing nothing, if utcString is not a valid date (e.g. a
+    // mistyped ?datetime=), as populate() cannot serialize an Invalid Date.
     populateStartTimeFromUTCString(utcString, skipLiveModeReset = false) {
+        if (isNaN(new Date(utcString).getTime())) {
+            console.warn("CNodeDateTime - ignoring invalid start time: " + utcString);
+            return false;
+        }
         // make a copy of the the original start time, so we can reset to it later with a UI button
         this.originalPopulatedStartTime = new Date(utcString);
         this.setStartDateTime(new Date(utcString), skipLiveModeReset);
         // Loading a sitch (fresh, serialized, or URL override all reach here)
         // establishes the loaded date as the slider reset target.
         this.establishDateTimeDefaults();
+        return true;
     }
 
 

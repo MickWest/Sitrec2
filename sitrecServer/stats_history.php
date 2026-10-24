@@ -3,16 +3,46 @@
 
 require_once __DIR__ . '/config_paths.php';
 
-function getStatsDir() {
-    global $CACHE_PATH;
-    $base = (isset($CACHE_PATH) && is_dir(dirname(rtrim($CACHE_PATH, '/'))))
-        ? $CACHE_PATH
-        : sys_get_temp_dir() . '/';
-    $dir = $base . 'sitrec-stats/';
+// The visit and UI logs hold user ids and IP addresses, so they live in the private temp dir
+// like the other per-user state (ai_log.php, tile_usage.php), never under sitrec-cache/ or
+// sitrec-upload/, which the web server publishes. $legacyDir is where an earlier version
+// wrote them: its files are moved here on first use, so that they stop being served.
+function getPrivateStatsDir($name, $legacyDir) {
+    static $migrated = [];
+    $dir = rtrim(sys_get_temp_dir(), '/') . '/' . $name . '/';
     if (!is_dir($dir)) {
-        @mkdir($dir, 0755, true);
+        @mkdir($dir, 0700, true);
+    }
+    if (!isset($migrated[$dir])) {
+        $migrated[$dir] = true;
+        moveLegacyStatsFiles($legacyDir, $dir);
     }
     return $dir;
+}
+
+// Best effort: a file that cannot be moved stays where it is and the request carries on.
+// A file already in the new directory is newer than the old copy, so it is never replaced.
+function moveLegacyStatsFiles($legacyDir, $dir) {
+    if (!$legacyDir || !is_dir($legacyDir) || !is_dir($dir)) return;
+    if (realpath($legacyDir) === realpath($dir)) return;
+    foreach (glob($legacyDir . '*') ?: [] as $old) {
+        if (!is_file($old)) continue;
+        $new = $dir . basename($old);
+        if (file_exists($new) || @rename($old, $new) || @copy($old, $new)) {
+            @unlink($old);
+        }
+    }
+    @rmdir($legacyDir);
+}
+
+function getStatsDir() {
+    global $CACHE_PATH;
+    return getPrivateStatsDir('sitrec-stats', isset($CACHE_PATH) ? $CACHE_PATH . 'sitrec-stats/' : null);
+}
+
+function getUIStatsDir() {
+    global $UPLOAD_PATH;
+    return getPrivateStatsDir('sitrec-ui-stats', isset($UPLOAD_PATH) ? $UPLOAD_PATH . 'ui-stats/' : null);
 }
 
 function getStatsHistoryFile() {

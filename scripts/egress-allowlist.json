@@ -650,6 +650,7 @@
     {"endpoint": "ai_models.php", "purpose": "server-internal include", "trigger": "never requested", "mayReceive": ["none"]},
     {"endpoint": "ai_log.php", "purpose": "server-internal include", "trigger": "never requested", "mayReceive": ["none"]},
     {"endpoint": "curlGetRequest.php", "purpose": "server-internal include", "trigger": "never requested", "mayReceive": ["none"]},
+    {"endpoint": "rate_limit.php", "purpose": "server-internal include", "trigger": "never requested", "mayReceive": ["none"]},
     {"endpoint": "shared.env.php", "purpose": "generated at build time from the configuration; read by the server, never requested by the browser", "trigger": "never requested", "mayReceive": ["none"]}
   ]
 }

@@ -23,9 +23,6 @@ const canRun = phpCheck.status === 0 && phpCheck.stdout === "ok";
 // curlGetRequest() with no timeout against a listener that never answers. Mode
 // "silentOverride" keeps the 20-second default and passes a 1-second timeout instead.
 const HARNESS = `<?php
-// curlGetRequest() forwards the caller's Authorization header through
-// getallheaders(), which PHP's CLI does not define.
-function getallheaders() { return []; }
 $mode = $argv[2];
 if ($mode === 'silent') {
     define('CURL_GET_DEFAULT_TIMEOUT_SEC', 1);

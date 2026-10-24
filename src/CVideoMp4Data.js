@@ -243,6 +243,11 @@ export class CVideoMp4Data extends CVideoWebCodecBase {
                 // could maybe do partial loads, but this is local, so it's loading fast
                 // however would be a faster start.
                 reader.onloadend = () => {
+                    // onloadend also fires after a failed read, which leaves no result
+                    if (reader.error || !reader.result) {
+                        this._reportReadError(reader.error);
+                        return;
+                    }
                     this._markStatus(`dropped file read (${reader.result.byteLength} bytes), inspecting container`);
                     const detection = detectVideoContainer(reader.result);
                     this._detectedContainer = detection;
@@ -365,6 +370,29 @@ export class CVideoMp4Data extends CVideoWebCodecBase {
             const err = new Error(`Unsupported container: ${detection.format}`);
             err.detection = detection;
             this.errorCallback(err);
+        }
+    }
+
+    /**
+     * A dropped file that cannot be read (moved or deleted since the drop, or
+     * too large for an ArrayBuffer) never reaches the demuxer. Report the read
+     * error, and stop the getConfig watchdog from blaming a corrupt MP4 later.
+     */
+    _reportReadError(error) {
+        // Disposed before the read finished, or the watchdog already reported
+        if (this._fetchAbort?.signal.aborted) return;
+        this._aborted = true;
+        if (this._getConfigTimer) {
+            clearTimeout(this._getConfigTimer);
+            this._getConfigTimer = null;
+        }
+        const reason = error?.message || error?.name || "unknown error";
+        console.error(`[CVideoMp4Data] Could not read "${this.filename}":`, error);
+        this._markStatus(`error: file read failed (${reason})`);
+        showError(`Cannot load "${this.filename}" — the file could not be read (${reason}).\n\n` +
+            `It may have been moved or deleted since it was dropped, or be too large for the browser to load.`);
+        if (this.errorCallback) {
+            this.errorCallback(error || new Error(`Could not read "${this.filename}"`));
         }
     }
 

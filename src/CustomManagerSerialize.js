@@ -111,6 +111,28 @@ import {Color} from "three";
 import {currentBuild} from './release/ChannelUI';
 import {restoreRefractionTool} from "./refraction/RefractionLoader";
 
+// The globals a saved sitch can set on load, and the type each must have: the same keys
+// getCustomSitchString writes (globalsNeeded). A ?custom= sitch can come from anyone, so
+// nothing else is restored, in particular not Globals.settings, which the next settings save
+// would write to the viewer's account.
+const RESTORABLE_GLOBALS = {
+    showMeasurements: "boolean",
+    showMeasurementsLook: "boolean",
+    showLabelsMain: "boolean",
+    showLabelsLook: "boolean",
+    showFeaturesMain: "boolean",
+    showFeaturesLook: "boolean",
+    showLatLonGridMain: "boolean",
+    showLatLonGridLook: "boolean",
+    objectScale: "number",
+    objectScaleMain: "number",
+    showAllTracksInLook: "boolean",
+    showTracks: "boolean",
+    showTracksLook: "boolean",
+    limitTracksInOut: "boolean",
+    showTimeDisplay: "boolean",
+};
+
 export const serializeMethods = {
     getCustomSitchString(local = false) {
         // the output object
@@ -552,6 +574,7 @@ export const serializeMethods = {
             "raytracedRefraction",
         ]
 
+        // A key added here must also go in RESTORABLE_GLOBALS, or loading ignores it.
         const globalsNeeded = [
             "showMeasurements",         // "Measurements in Main" — name kept for older saves
             "showMeasurementsLook",
@@ -1382,32 +1405,39 @@ export const serializeMethods = {
             if (sitchData.mods) {
                 // apply the mods — passing the generation captured before file loading,
                 // so the mods-loop supersede guard measures against the RIGHT baseline
-                this.deserializeMods(sitchData.mods, myGeneration).then((completed) => {
-                    // deserializeMods returns false when a newer sitch load superseded
-                    // this one mid-flight. finishDeserialization applies pars, restores
-                    // fullscreen-from-mods, etc. — all of which would land on the NEW
-                    // sitch's graph/views, so skip it for a dead load.
-                    if (completed === false || Globals.loadGeneration !== myGeneration) {
-                        console.warn("Deserialization superseded by a newer sitch load; skipping finishDeserialization for the stale load.");
-                        return;
-                    }
-                    setSitchEstablished(true); // flag that we've done some editing, so any future drag-and-drop will not mess with the sitch
-                    this.finishDeserialization(sitchData, myGeneration);
-                }).catch((err) => {
-                    // Last-resort guard so the app is never wedged in "deserializing" state.
-                    // Part 1 (per-node try/catch in deserializeMods) already tolerates a single
-                    // bad mod; this additionally covers an unexpected throw in the post-mods
-                    // recalcs inside finishDeserialization.
-                    console.error("Deserialization did not complete cleanly:", err);
-                    Globals.deserializing = false;
-                    Globals.sitchDirty = false;
-                    setRenderOne(3);
-                });
-                return; // Exit early, finishDeserialization will continue the process
-            } else {
-                this.finishDeserialization(sitchData, myGeneration);
+                const completed = await this.deserializeMods(sitchData.mods, myGeneration);
+                // deserializeMods returns false when a newer sitch load superseded
+                // this one mid-flight. finishDeserialization applies pars, restores
+                // fullscreen-from-mods, etc. — all of which would land on the NEW
+                // sitch's graph/views, so skip it for a dead load.
+                if (completed === false || Globals.loadGeneration !== myGeneration) {
+                    console.warn("Deserialization superseded by a newer sitch load; skipping finishDeserialization for the stale load.");
+                    return;
+                }
+                setSitchEstablished(true); // flag that we've done some editing, so any future drag-and-drop will not mess with the sitch
             }
-
+            // Awaited, so that a rejection inside it (an OpenCV load timing out in the
+            // motion-analysis restore, say) reaches the catch below.
+            await this.finishDeserialization(sitchData, myGeneration);
+        }).catch((err) => {
+            // Last-resort guard so the app is never wedged in "deserializing" state.
+            // Part 1 (per-node try/catch in deserializeMods) already tolerates a single
+            // bad mod; this covers an unexpected throw anywhere else in the restore,
+            // including the awaits and post-mods recalcs inside finishDeserialization.
+            console.error("Deserialization did not complete cleanly:", err);
+            // A newer load owns these flags now.
+            if (Globals.loadGeneration !== myGeneration) return;
+            // Recalculation was held off for the mods pass. Left off, edits stop updating
+            // anything, so turn it back on and bring the graph up to date with what loaded.
+            Globals.dontRecalculate = false;
+            try {
+                NodeMan.recalculateAllRootFirst();
+            } catch (e) {
+                console.error("Recalculation after the failed restore also failed:", e);
+            }
+            Globals.deserializing = false;
+            Globals.sitchDirty = false;
+            setRenderOne(3);
         })
 
 
@@ -1820,27 +1850,21 @@ export const serializeMethods = {
 
         // and the globals
         if (sitchData.globals) {
-            // Serialization only writes the display toggles in globalsNeeded, but this
-            // restore loop copies ANY key from the save file — so a hand-edited or
-            // hostile save could overwrite lifecycle state (loadGeneration in
-            // particular would defeat every stale-load guard above). Refuse the
-            // lifecycle fields; everything else restores as before.
-            const lifecycleGlobals = new Set([
-                "loadGeneration", "deserializing", "disposing",
-                "dontAutoZoom", "dontRecalculate",
-                "parsing", "pendingActions", "loadingTerrain", "sitchEstablished",
-                "sitchEstablishedByTrackImport",
-            ]);
-            for (let key in sitchData.globals) {
-                if (lifecycleGlobals.has(key)) {
-                    console.warn(`finishDeserialization: ignoring lifecycle global "${key}" from saved sitch`);
+            // Only the display toggles the save writes. A hand-edited or hostile save could
+            // otherwise overwrite anything on Globals: lifecycle state (loadGeneration would
+            // defeat every stale-load guard above), Globals.settings or Globals.env.
+            for (const key in sitchData.globals) {
+                const value = sitchData.globals[key];
+                const type = Object.hasOwn(RESTORABLE_GLOBALS, key) ? RESTORABLE_GLOBALS[key] : null;
+                if (typeof value !== type || (type === "number" && !Number.isFinite(value))) {
+                    console.warn(`finishDeserialization: ignoring global "${key}" from saved sitch`);
                     continue;
                 }
-                Globals[key] = sitchData.globals[key];
+                Globals[key] = value;
             }
             // A save from before Show Tracks was per view has one gate, which hid the tracks
             // in every view. It now means Main, so give Look the same value.
-            if (sitchData.globals.showTracks !== undefined && sitchData.globals.showTracksLook === undefined) {
+            if (typeof sitchData.globals.showTracks === "boolean" && sitchData.globals.showTracksLook === undefined) {
                 Globals.showTracksLook = sitchData.globals.showTracks;
             }
         }

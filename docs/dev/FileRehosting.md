@@ -101,9 +101,17 @@ Direct presigned uploads avoid those request-body limits, but they do not bypass
 `MAX_FILE_SIZE_MB` in the normal Sitrec flow.
 
 The server accepts only a restricted filename character set and rejects executable or
-server-configuration extensions. Unversioned uploads are content-addressed by a short
-client hash on the presigned path or an MD5 suffix on the server-POST path. Versioned
-situation files live under `<user-id>/<situation-name>/<version>`.
+server-configuration extensions, and document types a browser runs script in (XHTML, SVG,
+XSLT and similar). Every extension in a name is checked, not only the last, because
+Apache takes a type from an inner one (`x.html.klv`). `.js` and `.xml` stay allowed, because
+saved situations are `.js` and Sitrec imports XML and KML. An unversioned `.html` or `.htm`
+upload (Sitrec imports University of Wyoming soundings as HTML) is stored as `.txt`, which
+the client parses by content in the same way, and the returned URL names the `.txt` file.
+An `.html` version name, or `html` as an inner extension, is still refused. Unversioned
+uploads are content-addressed by a short client hash on the presigned path or an MD5 suffix
+on the server-POST path. Versioned situation files live under
+`<user-id>/<situation-name>/<version>`, with the whole situation name, dots included, as
+the folder on disk, the S3 key, the returned URL and the delete path.
 
 ## Authentication and user folders
 
@@ -144,6 +152,13 @@ Files are written beneath the `$UPLOAD_PATH` calculated by
 writable by the PHP process and served at the matching `$UPLOAD_URL`. Filesystem storage is
 local to one server: use shared persistent storage or object storage when more than one app
 instance must see the same saves.
+
+These files are served from the application's own origin. The container sends
+`Content-Security-Policy: default-src 'none'; style-src 'unsafe-inline'; sandbox` for
+`sitrec-upload/` and `sitrec-cache/` (`docker/cache-headers.conf`), so an uploaded file that
+a browser would render as a page (XML, KML, or an extension with no type) runs no script
+there. If you serve these directories from your own web server, send the same header and
+`X-Content-Type-Options: nosniff` for them.
 
 ## Upload input and generated names
 

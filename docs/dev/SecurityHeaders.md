@@ -71,6 +71,23 @@ application's own directory only, not for uploads or server endpoints below it. 
 front can also add or override browser cache times, so check the response it sends, not
 only the origin's.
 
+## Uploaded and cached files
+
+The same conf sends this on every file under `sitrec-upload/` and `sitrec-cache/`:
+
+```
+Content-Security-Policy: default-src 'none'; style-src 'unsafe-inline'; sandbox
+```
+
+These are files that users uploaded or that the server fetched from other hosts, served
+from the application's origin. `rehost.php` refuses SVG and similar uploads and stores HTML
+as `.txt`, but Sitrec imports XML and KML, which a browser also renders as a page that can
+run script. The sandbox gives such a page its own origin and no script. It does not affect
+the application: Sitrec reads these files with `fetch()`, `<img>` and `<video>`, and a
+policy on a fetched file applies only when that file is opened as a page. It is not the
+site-wide policy discussed below. If you serve these directories from your own web server,
+set the same header for them.
+
 ## What Sitrec deliberately does not set
 
 Each of these needs a decision about *your* deployment. Two of them break features outright

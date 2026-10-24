@@ -26,6 +26,13 @@ import {
     supportsDirectoryPicker,
 } from "./CFileManagerUtils";
 
+// Browser folder handles compare by identity (re-picking a folder just misses
+// the cache and re-verifies); desktop handles are rebuilt per pick, so compare paths.
+function isSameDirectoryHandle(a, b) {
+    if (!a || !b) return false;
+    return a === b || (typeof a.path === "string" && a.path === b.path);
+}
+
 export const saveMethods = {
 
     /**
@@ -930,8 +937,13 @@ export const saveMethods = {
         // dropped files are distinct ArrayBuffer objects, so reference identity
         // separates them; a genuine re-resolution of the same buffer still hits.
         // On a miss the collision-suffix loop below dedups by content correctly.
+        //
+        // It must also be keyed on the target folder: a load seeds
+        // reusedExisting:true for folder A, and Save Local As into folder B
+        // would otherwise skip the copy and reference files B does not have.
         const cached = this._localRehostPathCache.get(normalizedPreferred);
-        if (cached && cached.sourceBuffer === sourceBuffer) {
+        if (cached && cached.sourceBuffer === sourceBuffer
+            && isSameDirectoryHandle(cached.directoryHandle, directoryHandle)) {
             return cached.result;
         }
 
@@ -955,7 +967,7 @@ export const saveMethods = {
                 // Reuse existing file if identical bytes (no recopy needed).
                 if (areArrayBuffersEqual(existingBuffer, sourceBuffer)) {
                     const result = {path: candidatePath, reusedExisting: true};
-                    this._localRehostPathCache.set(normalizedPreferred, {result, sourceBuffer});
+                    this._localRehostPathCache.set(normalizedPreferred, {result, sourceBuffer, directoryHandle});
                     return result;
                 }
 
@@ -964,7 +976,7 @@ export const saveMethods = {
             } catch (error) {
                 if (error?.name === "NotFoundError") {
                     const result = {path: candidatePath, reusedExisting: false};
-                    this._localRehostPathCache.set(normalizedPreferred, {result, sourceBuffer});
+                    this._localRehostPathCache.set(normalizedPreferred, {result, sourceBuffer, directoryHandle});
                     return result;
                 }
                 throw error;

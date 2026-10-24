@@ -15,6 +15,7 @@
 
 import {guiMenus, markSitchDirty, NodeMan, Sit, setRenderOne} from "../Globals";
 import {getCanvasDisplayRect} from "../VideoExporter";
+import {showErrorOnce} from "../showError";
 import {
     applyScreenPreset,
     applySignalPreset,
@@ -261,12 +262,15 @@ export function updateVideoFormatLayer() {
     const ratio = window.devicePixelRatio || 1;
     const width = Math.max(2, Math.ceil(host.widthPx * ratio / 2) * 2);
     const height = Math.max(2, Math.ceil(host.heightPx * ratio / 2) * 2);
-    if (!layer || layer.host !== host || layer.width !== width || layer.height !== height) {
-        buildLayer(host, width, height);
-        if (!layer) return;
-    }
 
     try {
+        // Building is inside the try too: the filter cannot be built at all on a GPU
+        // without WebGL2 or renderable half-float targets, and that has to switch the
+        // effect off rather than throw out of the render loop on every frame.
+        if (!layer || layer.host !== host || layer.width !== width || layer.height !== height) {
+            buildLayer(host, width, height);
+            if (!layer) return;
+        }
         layer.osdViews = videoFormatOSDViews(host);
         compositeVideoFormatHost(host, layer.composite, layer.osdViews);
         layer.filter.filterFrame(layer.composite);
@@ -276,6 +280,8 @@ export function updateVideoFormatLayer() {
         releaseLayer();
         // The checkbox has to follow, or it reads as on while nothing is happening.
         refreshControllers();
+        showErrorOnce("videoFormatLayerFailed",
+            "Video Format Effects could not run on this device, so they have been switched off.\n\n" + (e?.message ?? e), e);
         return;
     }
 
