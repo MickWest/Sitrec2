@@ -363,9 +363,8 @@ $tileUsage = loadTileUsageData($TILE_USAGE_DIR);
 $statsHistory = getStatsHistory28();
 $todayVisits = getVisitDetails(date('Y-m-d'));
 
-// UI menu-item click stats (written by uilog.php to sitrec-upload/ui-stats/).
-global $UPLOAD_PATH;
-$topMenuItems = loadTopMenuItems($UPLOAD_PATH . 'ui-stats/', $expand === 'menu' ? $EXPAND_LIMIT : 10);
+// UI menu-item click stats (written by uilog.php to the same getUIStatsDir()).
+$topMenuItems = loadTopMenuItems(getUIStatsDir(), $expand === 'menu' ? $EXPAND_LIMIT : 10);
 
 $aiTotalHour = array_sum(array_column($aiUsage, 'hour_count'));
 $tileTotalHour = [];

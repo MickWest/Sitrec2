@@ -426,11 +426,14 @@ state does persist in the named volumes from section 4.4. Three Sitrec directori
 state and are not:
 
 - **`sitrec-cache`** is the server's scratch space: current satellite element sets from
-  CelesTrak with a freshness window, ADS-B traces, soundings, live-feed responses, a
-  street-view session token, and 28 days of usage counters. Every one regenerates on
-  demand. The earlier per-tile cache proxy is gone. What made this directory large on the
-  original production server was a permanent archive of historical element sets, which
-  needs credentials this site does not have and is not wanted here.
+  CelesTrak with a freshness window, ADS-B traces, soundings, live-feed responses and a
+  street-view session token. Every one regenerates on demand. The earlier per-tile cache
+  proxy is gone. What made this directory large on the original production server was a
+  permanent archive of historical element sets, which needs credentials this site does not
+  have and is not wanted here. The 28 days of usage counters, the visit records and the UI
+  click logs are not here: they hold user ids and IP addresses, so they are kept in PHP's
+  temporary directory (`sitrec-stats/` and `sitrec-ui-stats/`), which the web server does
+  not serve. Like the rest, they are lost when the container is replaced.
 - **`sitrec-upload`** receives nothing while visitors are anonymous.
 - **`sitrec-videos`** holds the clips the legacy sitches play. This site does not carry
   them. A site that does needs a read-only bind mount and one `rsync` of the files, and

@@ -4,8 +4,9 @@
 //
 // Receives a batch of UI menu-item click events from the client (see
 // src/UILogging.js) and appends them, with the user id and client IP, to a
-// per-day JSON-Lines file under sitrec-upload/ui-stats/. The admin dashboard
-// aggregates these into a "Top 10 Clicked Menu Items" panel.
+// per-day JSON-Lines file in the private getUIStatsDir() (stats_history.php),
+// which the web server does not publish. The admin dashboard aggregates these
+// into a "Top 10 Clicked Menu Items" panel.
 //
 // Gated by the LOG_UI_INTERACTIONS env var (config/shared.env): if it is off,
 // this endpoint silently discards the data. This is the server-side half of the
@@ -16,6 +17,7 @@ session_start();
 require_once __DIR__ . '/config.php';
 require_once __DIR__ . '/config_paths.php';
 require_once __DIR__ . '/user.php';
+require_once __DIR__ . '/stats_history.php';
 
 header('Content-Type: application/json');
 
@@ -100,11 +102,7 @@ if (count($lines) === 0) {
 }
 
 // --- Append to the per-day JSON-Lines file ----------------------------------
-global $UPLOAD_PATH;
-$uiStatsDir = $UPLOAD_PATH . 'ui-stats/';
-if (!is_dir($uiStatsDir)) {
-    @mkdir($uiStatsDir, 0755, true);
-}
+$uiStatsDir = getUIStatsDir();
 if (!is_dir($uiStatsDir) || !is_writable($uiStatsDir)) {
     http_response_code(500);
     echo json_encode(['error' => 'ui-stats directory not writable']);
