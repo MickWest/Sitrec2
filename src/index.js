@@ -337,6 +337,14 @@ let toTest;
 let testing = false;
 let fpsInterval, rafInterval, startTime, now, then, thenRender, elapsed;
 
+// Sitch transitions run one at a time. setupFunctions() reads the global Sit, NodeMan
+// and FileManager after each of its awaits, so a second transition that disposed and
+// replaced them part way through would leave the first building on the wrong sitch.
+// sitchTransition settles when the running transition does; latestSitchRequest lets
+// a queued request that has since been superseded skip itself.
+let sitchTransition = Promise.resolve();
+let latestSitchRequest = 0;
+
 let animationFrameId;
 // isTransitioning lives in indexRender.js; writes go through setIsTransitioning.
 
@@ -947,7 +955,11 @@ if (Sit.TerrainModel) {
 }
 
 legacySetup();
-await setupFunctions();
+// The first sitch's setup counts as a transition too: the sitch menus already exist,
+// so a sitch picked while it loads must wait for it (see sitchTransition).
+const startupSetup = setupFunctions();
+sitchTransition = startupSetup.catch(() => {});
+await startupSetup;
 loadStartupDropURLAfterSitchSetup();
 loadStartupHandoffAfterSitchSetup();
 runStartupToolAction(startupAction, {
@@ -959,10 +971,14 @@ const dateTime = urlParams.get("datetime");
 if (dateTime) {
     // expecting something like: datetime=2022-02-22T12:34:56Z
     console.log("Setting GlobalDateTimeNode start date time to " + dateTime);
-    GlobalDateTimeNode.populateStartTimeFromUTCString(dateTime);
-    Globals.timeOverride = true; // flag to ignore deserializing date time
-    console.log("GlobalDateTimeNode dateStart  = " + GlobalDateTimeNode.dateStart.toISOString());
-    setSitchEstablished(true); // so loading tracks won't set the date time again
+    if (GlobalDateTimeNode.populateStartTimeFromUTCString(dateTime)) {
+        Globals.timeOverride = true; // flag to ignore deserializing date time
+        console.log("GlobalDateTimeNode dateStart  = " + GlobalDateTimeNode.dateStart.toISOString());
+        setSitchEstablished(true); // so loading tracks won't set the date time again
+    } else {
+        showError("Invalid datetime in URL: " + dateTime
+            + "\nExpected something like 2022-02-22T12:34:56Z. Using the sitch's own start time.");
+    }
 }
 
 
@@ -1532,6 +1548,16 @@ async function checkFornewSitchObject() {
 
 async function newSitch(situation, customSetup = false ) {
     if (customSetup && !await approveSitchChannel(situation)) return false;
+    // Wait for any running transition (see sitchTransition). If several requests
+    // queue up behind it, only the most recent one runs; the others return false.
+    const request = ++latestSitchRequest;
+    const transition = sitchTransition.then(() =>
+        request === latestSitchRequest ? transitionToSitch(situation, customSetup) : false);
+    sitchTransition = transition.catch(() => {});
+    return transition;
+}
+
+async function transitionToSitch(situation, customSetup) {
     setIsTransitioning(true);
 
     // Everything from here runs inside a try/finally so that isTransitioning is
@@ -3408,6 +3434,15 @@ function selectInitialSitch(force) {
     par.name = lower;
 
     let startSitch = SitchMan.findFirstData(s => {return lower === s.data.name;})
+    if (startSitch === null && lower !== "custom") {
+        // An old link to a renamed or removed sitch, a typo, or one this build leaves out
+        // (e.g. ?sitch=gimbal when serverless). The assert below is stripped in production,
+        // so fall back to the default sitch rather than build a CSituation from null.
+        showError("Can't find the sitch \"" + situation + "\", so the default sitch was loaded instead.");
+        situation = "custom";
+        par.name = situation;
+        startSitch = SitchMan.findFirstData(s => {return s.data.name === "custom";})
+    }
     assert(startSitch !== null, "Can't find startup Sitch: "+lower)
 
     console.log("");

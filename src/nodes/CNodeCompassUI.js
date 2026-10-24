@@ -355,20 +355,9 @@ export class   CNodeCompassUI extends CNodeViewUI {
     }
     
     dispose() {
-        // Clean up touch event listeners
-        if (Globals.isMobile) {
-            this.canvas.removeEventListener('touchstart', this.handleTouchStart.bind(this));
-            this.canvas.removeEventListener('touchend', this.handleTouchEnd.bind(this));
-            this.canvas.removeEventListener('touchmove', this.handleTouchMove.bind(this));
-        }
-        
-        // Clear any pending timers
-        if (this.longPressTimer) {
-            clearTimeout(this.longPressTimer);
-            this.longPressTimer = null;
-        }
-        
-        // Call parent dispose
+        // The surface interaction from installInteraction() is the compass's only
+        // listener; touch and long press are handled by the interaction router.
+        this.unregisterCompassInteraction?.();
         super.dispose();
     }
 
