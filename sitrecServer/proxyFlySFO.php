@@ -9,6 +9,7 @@
  */
 
 require_once __DIR__ . '/config.php';
+require_once __DIR__ . '/rate_limit.php';
 
 // Only allow GET requests
 if ($_SERVER['REQUEST_METHOD'] !== 'GET') {
@@ -19,29 +20,12 @@ if ($_SERVER['REQUEST_METHOD'] !== 'GET') {
 }
 
 // ── Per-IP rate limiting: 20 req/min ──
-$clientIP = $_SERVER['HTTP_CF_CONNECTING_IP']
-    ?? $_SERVER['HTTP_X_FORWARDED_FOR']
-    ?? $_SERVER['REMOTE_ADDR']
-    ?? 'unknown';
-$clientIP = trim(explode(',', $clientIP)[0]);
-$rateLimitDir = sys_get_temp_dir() . '/sitrec_flysfo_ratelimit/';
-if (!is_dir($rateLimitDir)) {
-    @mkdir($rateLimitDir, 0755, true);
-}
-$rateLimitFile = $rateLimitDir . md5($clientIP) . '.json';
-$now = time();
-$rateData = file_exists($rateLimitFile) ? json_decode(file_get_contents($rateLimitFile), true) : null;
-if (!$rateData || $now > ($rateData['reset'] ?? 0)) {
-    $rateData = ['count' => 0, 'reset' => $now + 60];
-}
-if ($rateData['count'] >= 20) {
+if (!sitrecConsumeRateToken('flysfo', 20)) {
     http_response_code(429);
     header('Content-Type: application/json');
     echo json_encode(['error' => 'Rate limit exceeded']);
     exit;
 }
-$rateData['count']++;
-file_put_contents($rateLimitFile, json_encode($rateData), LOCK_EX);
 
 // ── Response cache (5 min TTL, shared across all users) ──
 $CACHE_TTL = 300; // 5 minutes

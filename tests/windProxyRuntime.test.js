@@ -14,8 +14,9 @@ const php = phpResult.status === 0 ? phpResult.stdout : null;
         for (const dir of ['sitrecServer', 'tools', 'home/.pyenv/shims', 'parent-bin']) {
             fs.mkdirSync(path.join(root, dir), {recursive: true});
         }
-        fs.copyFileSync(path.join(__dirname, '../sitrecServer/windProxy.php'),
-            path.join(root, 'sitrecServer/windProxy.php'));
+        for (const file of ['windProxy.php', 'rate_limit.php']) {
+            fs.copyFileSync(path.join(__dirname, '../sitrecServer', file), path.join(root, 'sitrecServer', file));
+        }
         fs.writeFileSync(path.join(root, 'tools/fetch_wind.py'), '# fixture\n');
     });
 
@@ -37,7 +38,7 @@ const php = phpResult.status === 0 ? phpResult.stdout : null;
             '$_GET=["date"=>"20250919","hour"=>18,"level"=>"surface"]; require $argv[1];',
             path.join(root, 'sitrecServer/windProxy.php')], {
             encoding: 'utf8', timeout: 10000,
-            env: {...process.env, HOME: path.join(root, 'home'), PATH: path.join(root, 'parent-bin')},
+            env: {...process.env, HOME: path.join(root, 'home'), PATH: path.join(root, 'parent-bin'), TMPDIR: root},
         });
         expect(result.status).toBe(0);
         expect(result.stderr).toBe('');
