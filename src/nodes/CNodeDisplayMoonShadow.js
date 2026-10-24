@@ -1090,7 +1090,10 @@ export class CNodeDisplayMoonShadow extends CNode3DGroup {
             const b = -oc.dot(shadowDir);
             const c = oc.dot(oc) - Globals.equatorRadius * Globals.equatorRadius;
             const discriminant = b * b - c;
-            if (discriminant >= 0) {
+            // Only a hit AHEAD of the Moon counts. In a lunar eclipse the Earth is
+            // behind it on the axis, so both roots are negative; treat that as a miss,
+            // as a negative distance makes calculateShadowRadii throw.
+            if (discriminant >= 0 && b - Math.sqrt(discriminant) > 0) {
                 coneReferenceDistance = b - Math.sqrt(discriminant);
             } else {
                 const t = -oc.dot(shadowDir);

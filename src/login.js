@@ -9,7 +9,16 @@ import {configParams} from "./runtimeConfig";
 import {isServerless, SITREC_SERVER} from "./configUtils";
 
 export async function checkLogin()  {
-    await asyncCheckLogin();
+    try {
+        await asyncCheckLogin();
+    } catch (err) {
+        // Startup awaits this, so a failed check (network error, or an HTML error page
+        // from rehost.php) must not stop the app loading. Carry on logged out, which
+        // only turns off the login-gated features.
+        console.warn("Login check failed, continuing as logged out", err);
+        Globals.userID = 0;
+        Globals.userData = { userID: 0, userGroups: [] };
+    }
 }
 
 export function asyncCheckLogin() {

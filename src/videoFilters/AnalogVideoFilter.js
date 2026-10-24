@@ -63,50 +63,59 @@ export class AnalogVideoFilter {
         this.screenEnabled = !!this.screen.enabled;
 
         this.ctx = new GLFilterContext(width, height);
-        this.programs = {
-            resample: this.ctx.program("resample", RESAMPLE_SHADER),
-            copy: this.ctx.program("copy", COPY_SHADER),
-        };
-        this.t0 = this.ctx.createTarget(width, height);
+        // Any program or target below can still fail (a shader that will not compile,
+        // a half-float target the GPU cannot render to). Release the WebGL2 context
+        // before rethrowing: the caller never gets a filter to dispose, and the
+        // browser only allows a handful of live contexts.
+        try {
+            this.programs = {
+                resample: this.ctx.program("resample", RESAMPLE_SHADER),
+                copy: this.ctx.program("copy", COPY_SHADER),
+            };
+            this.t0 = this.ctx.createTarget(width, height);
 
-        if (this.analogEnabled) {
-            this.programs.modulate = this.ctx.program("modulate", MODULATE_SHADER);
-            this.programs.demodulate = this.ctx.program("demodulate", DEMODULATE_SHADER);
-            this.programs.chromaLowpass = this.ctx.program("chromaLowpass", CHROMA_LOWPASS_SHADER);
-            this.programs.tape = this.ctx.program("tape", TAPE_SHADER);
-            this.programs.downsample = this.ctx.program("downsample", DOWNSAMPLE_SHADER);
+            if (this.analogEnabled) {
+                this.programs.modulate = this.ctx.program("modulate", MODULATE_SHADER);
+                this.programs.demodulate = this.ctx.program("demodulate", DEMODULATE_SHADER);
+                this.programs.chromaLowpass = this.ctx.program("chromaLowpass", CHROMA_LOWPASS_SHADER);
+                this.programs.tape = this.ctx.program("tape", TAPE_SHADER);
+                this.programs.downsample = this.ctx.program("downsample", DOWNSAMPLE_SHADER);
 
-            // The analog chain runs on its own raster, wide enough to carry the colour
-            // subcarrier at four samples per cycle - the rate a real digitiser uses.
-            // At the export raster it can be far below that (a 640-wide NTSC frame has
-            // only 3.4, and a small preview barely clears Nyquist), and an undersampled
-            // subcarrier does not decode into softened colour, it decodes into garbage.
-            // Only the width matters: every analog filter here works along the line, and
-            // everything vertical is indexed by the signal's own line count.
-            this.subcarrier = (this.format.subcarrierMHz ?? 3.579545) * (this.format.activeLineUs ?? 52.6);
-            this.signalWidth = Math.max(width, Math.ceil(this.subcarrier * 4));
-            this.sigA = this.ctx.createTarget(this.signalWidth, height);
-            this.sigB = this.ctx.createTarget(this.signalWidth, height);
-            this.sigC = this.ctx.createTarget(this.signalWidth, height);
-            this.prev = this.ctx.createTarget(this.signalWidth, height);
-            this.hasPrev = false;
-        }
+                // The analog chain runs on its own raster, wide enough to carry the colour
+                // subcarrier at four samples per cycle - the rate a real digitiser uses.
+                // At the export raster it can be far below that (a 640-wide NTSC frame has
+                // only 3.4, and a small preview barely clears Nyquist), and an undersampled
+                // subcarrier does not decode into softened colour, it decodes into garbage.
+                // Only the width matters: every analog filter here works along the line, and
+                // everything vertical is indexed by the signal's own line count.
+                this.subcarrier = (this.format.subcarrierMHz ?? 3.579545) * (this.format.activeLineUs ?? 52.6);
+                this.signalWidth = Math.max(width, Math.ceil(this.subcarrier * 4));
+                this.sigA = this.ctx.createTarget(this.signalWidth, height);
+                this.sigB = this.ctx.createTarget(this.signalWidth, height);
+                this.sigC = this.ctx.createTarget(this.signalWidth, height);
+                this.prev = this.ctx.createTarget(this.signalWidth, height);
+                this.hasPrev = false;
+            }
 
-        if (this.screenEnabled) {
-            this.programs.bright = this.ctx.program("bright", BRIGHT_SHADER);
-            this.programs.blur = this.ctx.program("blur", BLUR_SHADER);
-            this.programs.screen = this.ctx.program("screen", SCREEN_SHADER);
-            const bw = Math.max(2, Math.floor(width / 2));
-            const bh = Math.max(2, Math.floor(height / 2));
-            this.b0 = this.ctx.createTarget(bw, bh);
-            this.b1 = this.ctx.createTarget(bw, bh);
+            if (this.screenEnabled) {
+                this.programs.bright = this.ctx.program("bright", BRIGHT_SHADER);
+                this.programs.blur = this.ctx.program("blur", BLUR_SHADER);
+                this.programs.screen = this.ctx.program("screen", SCREEN_SHADER);
+                const bw = Math.max(2, Math.floor(width / 2));
+                const bh = Math.max(2, Math.floor(height / 2));
+                this.b0 = this.ctx.createTarget(bw, bh);
+                this.b1 = this.ctx.createTarget(bw, bh);
 
-            // Auto-exposure state, and the small canvas it meters from.
-            this.exposure = 1;
-            this.meterCanvas = document.createElement("canvas");
-            this.meterCanvas.width = 32;
-            this.meterCanvas.height = 18;
-            this.meterCtx = this.meterCanvas.getContext("2d", {willReadFrequently: true});
+                // Auto-exposure state, and the small canvas it meters from.
+                this.exposure = 1;
+                this.meterCanvas = document.createElement("canvas");
+                this.meterCanvas.width = 32;
+                this.meterCanvas.height = 18;
+                this.meterCtx = this.meterCanvas.getContext("2d", {willReadFrequently: true});
+            }
+        } catch (e) {
+            this.dispose();
+            throw e;
         }
     }
 
