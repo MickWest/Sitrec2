@@ -26,8 +26,9 @@ Sitrec has three video-derived line-of-sight sources, selected in **Traverse →
 | Camera + Object Track (Traverse → Manual Tracking) | a video pixel, keyframed by hand | yes |
 | **Camera + Ground Track** | **a place on the earth** | **no** |
 
-The first two start from the camera's centreline and rotate it by the angle a tracked *pixel*
-sits off centre, so both are only as good as the field of view you have given the camera. A
+The first two turn a tracked *pixel* into a line of sight from the camera's pointing and its
+field of view (both use the same pinhole calculation), so both are only as good as the field of
+view you have given the camera. A
 ground track needs none of that: a place is a place, so the line of sight is simply the line from
 the camera to it.
 

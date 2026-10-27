@@ -3,11 +3,22 @@ import {ViewMan} from './CViewManager';
 import {t} from './i18n';
 
 const VIEW_ID = 'pointTrackFrequencyGraph';
-export const FREQUENCY_DEFAULTS = {radius: 4, percent: true, showBackground: true, perMinute: false};
+// minPeakHz is the peak-search floor in Hz (0 = off), also when flashes per
+// minute are shown. 0.5 Hz (30 a minute) is below the slowest aircraft
+// anti-collision beacon (40 a minute). A floor above a flash rate does not just
+// hide that rate: a short flash has strong harmonics, and one of them gets the label.
+export const FREQUENCY_DEFAULTS = {radius: 4, percent: true, showBackground: true, perMinute: false, minPeakHz: 0.5};
 // At 1 px the 1.75–2.5 radius background ring holds at most 14 pixels, fewer
 // than measurePointFlux requires, so no frame would ever give a sample.
 export const MIN_APERTURE_RADIUS = 2;
 export const clampApertureRadius = value => Math.max(MIN_APERTURE_RADIUS, Math.min(100, Number(value) || 4));
+export const MAX_PEAK_FLOOR_HZ = 30;
+export const clampPeakFloor = value => {
+    const hz = value === null || value === '' ? NaN : Number(value);
+    return Number.isNaN(hz) ? FREQUENCY_DEFAULTS.minPeakHz : Math.max(0, Math.min(MAX_PEAK_FLOOR_HZ, hz));
+};
+const sanitizeOption = (key, value) => key === 'radius' ? clampApertureRadius(value)
+    : key === 'minPeakHz' ? clampPeakFloor(value) : !!value;
 let settings = {...FREQUENCY_DEFAULTS};
 let wanted = false;
 const currentView = () => NodeMan.get(VIEW_ID, false);
@@ -49,7 +60,7 @@ export function addPointTrackFrequencyMenu(folder) {
     for (const key of Object.keys(FREQUENCY_DEFAULTS)) Object.defineProperty(proxy, key, {
         get() { return (currentView()?.options ?? settings)[key]; },
         set(value) {
-            value = key === 'radius' ? clampApertureRadius(value) : !!value;
+            value = sanitizeOption(key, value);
             settings[key] = value;
             const view = currentView();
             if (view) {
@@ -63,6 +74,7 @@ export function addPointTrackFrequencyMenu(folder) {
     controls.add(proxy, 'radius', MIN_APERTURE_RADIUS, 100, 1).name(t('pointFrequency.radius')).tooltip(t('pointFrequency.radiusTooltip')).listen().perm();
     controls.add(proxy, 'percent').name(t('pointFrequency.percent')).listen().perm();
     controls.add(proxy, 'showBackground').name(t('pointFrequency.showBackground')).listen().perm();
+    controls.add(proxy, 'minPeakHz', 0, MAX_PEAK_FLOOR_HZ, .1).name(t('pointFrequency.minPeakHz')).tooltip(t('pointFrequency.minPeakHzTooltip')).listen().perm();
     controls.add(proxy, 'refresh').name(t('videoTonal.refresh')).perm();
     controls.add(proxy, 'exportCSV').name(t('videoTonal.exportCSV')).perm();
     controls.add(proxy, 'perMinute').name(t('pointFrequency.perMinute')).tooltip(t('pointFrequency.perMinuteTooltip')).listen().perm();

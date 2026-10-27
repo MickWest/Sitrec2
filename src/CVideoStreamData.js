@@ -374,8 +374,11 @@ export class CVideoStreamData extends CVideoWebCodecBase {
     }
 
     getMediaInfo() {
+        // videoBytes is MP4Box's size of the first video track, as CVideoMp4Data reports it.
+        // The Camera Motion cache key uses it. A raw H.264 stream has no MP4 track, so none.
         return {...super.getMediaInfo(), fps: this.originalFps, videoCodec: this.config?.codec,
-            durationSeconds: this.frames / this.originalFps};
+            durationSeconds: this.frames / this.originalFps,
+            videoBytes: this.mp4?.info?.tracks?.find(track => track.type === 'video')?.size};
     }
 
     dispose() {

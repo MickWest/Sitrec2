@@ -114,7 +114,12 @@ export function irregularTransform(samples, positions, re, im) {
 
 // times (seconds) are given only for irregular frame timing. Each sample is
 // then placed at its real time, in units of the mean frame step 1/fps.
-export function amplitudeSpectrum(values, fps, times = null) {
+// minPeakHz is the lowest frequency the peak search considers. Slow brightness
+// drift that the linear detrend and Hann window leave can otherwise be labeled
+// as the peak. The spectrum itself is the same for every floor. A floor at or
+// above Nyquist leaves nothing to search: peak is null and peakFloorAboveNyquist
+// is set.
+export function amplitudeSpectrum(values, fps, times = null, {minPeakHz = 0} = {}) {
     const count = values.length;
     if (count < 16 || !(fps > 0) || !Number.isFinite(fps)) throw new Error('At least 16 timed samples are required');
     const positions = times ? Array.from(times, time => (time - times[0]) * fps) : null;
@@ -147,11 +152,15 @@ export function amplitudeSpectrum(values, fps, times = null) {
         frequencies[i] = i * fps / size;
         amplitude[i] = Math.hypot(re[i], im[i]) * (i === 0 || i === size / 2 ? 1 : 2) / weight;
     }
+    const nyquist = fps / 2, peakFloor = Math.max(0, Number(minPeakHz) || 0);
+    const peakFloorAboveNyquist = peakFloor >= nyquist;
+    // The search starts about one independent bin above 0 Hz, or at the floor.
     let peak = Math.ceil(size / count);
+    while (peak < frequencies.length && frequencies[peak] < peakFloor) peak++;
     for (let i = peak + 1; i < amplitude.length; i++) if (amplitude[i] > amplitude[peak]) peak = i;
     return {frequencies, amplitude, mean, count, fps, duration: count / fps,
-        binSpacing: fps / count, nyquist: fps / 2,
-        peak: amplitude[peak] > 1e-9 ? {frequency: frequencies[peak], amplitude: amplitude[peak]} : null};
+        binSpacing: fps / count, nyquist, peakFloor, peakFloorAboveNyquist,
+        peak: !peakFloorAboveNyquist && amplitude[peak] > 1e-9 ? {frequency: frequencies[peak], amplitude: amplitude[peak]} : null};
 }
 
 // Presentation timestamps, rather than scene playback speed, set the frequency

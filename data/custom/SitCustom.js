@@ -648,7 +648,7 @@ sitch = {
 
     // // // the actual LOS source can be the camera's centerline or the tracking overlay
     // // // (or maybe others later)
-    // NOTE: "Camera + Auto Track" is added dynamically by CustomSupport.setup() so it works
+    // NOTE: "Camera + Point Track" is added dynamically by CustomSupport.setup() so it works
     // for saved sitches that predate the autoTrackLOS node.
     JetLOS: {kind: "Switch", inputs: {
             "Camera Center": "JetLOSCameraCenter",
@@ -656,7 +656,7 @@ sitch = {
         },
         desc: "LOS Source",
         gui: "traverse",
-        tooltip: "Select where the LOS (Lines Of Sight) used for traversal calculations come from.\nCamera Center is the centerline of the camera, which is used for most traversals.\nCamera + Object Track uses the manual tracking overlay to modify the LOS to follow an object in the video.\nCamera + Auto Track uses the Auto Tracking system (Video menu) to modify the LOS to follow an automatically tracked object.",
+        tooltip: "Select where the LOS (Lines Of Sight) used for traversal calculations come from.\nCamera Center is the centerline of the camera, which is used for most traversals.\nCamera + Object Track uses the manual tracking overlay to modify the LOS to follow an object in the video.\nCamera + Point Track uses Point Track (Video menu) to modify the LOS to follow an automatically tracked object.",
     },
 
 

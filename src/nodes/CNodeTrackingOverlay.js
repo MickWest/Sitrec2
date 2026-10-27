@@ -18,9 +18,9 @@ import {t} from "../i18n";
 import {
     angleBetween,
     endpointRangeFromAngularSize,
-    focalLengthPixels,
     speedBetween,
 } from "../AngularSizeMath";
+import {videoPixelRay} from "../VideoPixelRay";
 
 /*
     the intent of a tracking overlay is to track point on a video
@@ -938,41 +938,13 @@ export class CNodeTrackingOverlay extends CNodeActiveOverlay {
 
     // Unit direction of the ray through original-video pixel (vx, vy), for a camera
     // LOS carrying orthonormal heading/up/right and a vertical FOV in degrees.
-    //
-    // Angles are computed ENTIRELY in original-video pixel space. An older path
-    // round-tripped through the live canvas (letterbox fovCoverage, widthPx/heightPx
-    // from div.clientWidth, zoom, and a panOffset zero/restore hack) purely to invert
-    // the display mapping. That transform cancels analytically, but it made the
-    // physical LOS depend on window/layout state down to float rounding — and it
-    // mixed zoom.v0 (inside the mapping) with zoom.v(f) (in the unscale). Direct
-    // form: the video's vertical FOV spans originalVideoHeight pixels, so the focal
-    // length in original pixels is oh / (2 tan(vFOV/2)).
-    //
-    // The ray itself is a true rectilinear pinhole projection. This replaced a
-    // yaw-then-pitch Euler construction — rotate heading by atan(dx/fpx) about up,
-    // then by atan(dy/fpx) about the new right — which is an EQUIRECTANGULAR
-    // mapping, not a pinhole one. Under it a vertical pixel step subtended the same
-    // angle everywhere in the frame, because the pitch was applied about the already
-    // yawed axis by an angle depending only on dy. A real lens compresses that step
-    // away from the vertical centre line, since the ray to an off-axis pixel is
-    // longer: the effective focal length in that plane is hypot(fpx, dx). At the
-    // 22.8° FOV of a 1920-wide frame the old mapping overstated a vertical angle by
-    // 2.2% a third of the way out and 6.2% at the frame edge. That error was
-    // invisible for a single tracked point near the centre but scales the whole LOS
-    // near the edges, and it directly corrupts angular-size ranging, which reads the
-    // local scale of the mapping rather than just a position.
+    // A true rectilinear pinhole, computed entirely in original-video pixel space;
+    // see VideoPixelRay.js for why, and for the Euler construction it replaced.
+    // Point Track (CNodeAutoTrackLOS) uses the same function.
     rayForVideoXY(los, vFOVDegrees, vx, vy) {
-        const ow = this.overlayView.originalVideoWidth;
-        const oh = this.overlayView.originalVideoHeight;
-        const fpx = focalLengthPixels(vFOVDegrees, oh);
-
-        const dx = vx - ow / 2;
-        const dy = vy - oh / 2;   // downward, as in image coordinates
-
-        return los.heading.clone().multiplyScalar(fpx)
-            .addScaledVector(los.right, dx)
-            .addScaledVector(los.up, -dy)
-            .normalize();
+        return videoPixelRay(los, vFOVDegrees, vx, vy,
+            this.overlayView.originalVideoWidth, this.overlayView.originalVideoHeight,
+            this.overlayView.videoData?.effectiveRotation ?? 0);
     }
 
     getValueFrame(f) {

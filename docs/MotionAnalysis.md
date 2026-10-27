@@ -132,9 +132,14 @@ This turns the measured motion into a track on the ground in the 3D view:
   traverse track, the target track, or the camera track. If there is none, it says
   *No origin track found*.
 - It converts pixels to meters with one fixed scale:
-  `meters per pixel = 2 × distance × tan(FOV / 2) ÷ image width`. The FOV is the sitch's field
-  of view at frame 0 (30° if there is none). The distance is the target distance at frame 0
-  (1000 m if there is none).
+  `meters per pixel = 2 × distance × tan(FOV / 2) ÷ image height`. The FOV is the sitch's
+  vertical field of view at frame 0, from **Camera FOV**. If the sitch has no **Camera FOV**, it
+  uses the field of view of the look camera, and if there is no look camera, 30°. The distance
+  is the range from the camera to the start position at frame 0. If Sitrec finds no camera
+  track, if the start position is the camera track itself, or if the range is less than 1 m,
+  the distance is 1000 m. The image height is the height of the analyzed frames, so it follows
+  **Analysis Resolution**.
+- The browser console shows the scale, and where the FOV and the distance came from.
 - Horizontal motion in the image moves the track east or west, and vertical motion moves it
   north or south. The track stays 1 m above the terrain, or 1 m above the ellipsoid when there
   is no terrain.
@@ -350,8 +355,11 @@ center (for a reticle). It does not use the **Video → Masking** mask.
 
 The path starts at the camera position at frame 0 and is drawn in orange with a line down to the
 ground and a marker at the current frame. It is also added as **Camera Motion Path** to the
-camera source options. The measured motion is kept in the browser's storage for this video
-file, so the path comes back after a page reload.
+camera source options. The measured motion is kept in the browser's storage for this video,
+so the path comes back after a page reload. Sitrec uses the stored motion again only for a video
+with the same file name and the same number of frames, and, for an MP4 file, the same video track
+size. It keeps one stored motion for each file name. Older versions of Sitrec stored the motion by
+file name only. That motion is not used, and it is removed when you analyze the video again.
 
 ### Horizon Extractor
 

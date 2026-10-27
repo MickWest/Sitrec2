@@ -4,6 +4,7 @@ import {H264Decoder} from '../src/H264Decoder';
 
 jest.mock('../src/CVideoWebCodecBase', () => ({CVideoWebCodecBase: class {
     async waitForFrame(frame) { return !!this.isFrameCached(frame); }
+    getMediaInfo() { return {frames: this.frames}; }
 }}));
 jest.mock('../src/CVideoMp4Data', () => ({}));
 jest.mock('../src/CVideoByteStream', () => ({}));
@@ -34,6 +35,14 @@ test('an earlier stream failure does not hide an exact decoded frame from analys
     expect(await v.waitForFrame(32)).toBe(true);
     expect(await v.waitForFrame(33)).toBe(false);
     expect(await CVideoWebCodecBase.prototype.waitForFrame.call(v, 32)).toBe(true);
+});
+
+test('a streamed MP4 reports its video track size, as a local MP4 does', () => {
+    const v = Object.assign(video(), {frames: 3247, originalFps: 24, config: {codec: 'avc1'},
+        mp4: {info: {tracks: [{type: 'audio', size: 99}, {type: 'video', size: 34318032}]}}});
+    expect(v.getMediaInfo()).toMatchObject({frames: 3247, videoCodec: 'avc1', videoBytes: 34318032});
+    // A raw H.264 stream has no MP4 track to measure.
+    expect(Object.assign(video(), {frames: 10, originalFps: 30}).getMediaInfo().videoBytes).toBeUndefined();
 });
 
 test('missing bytes after stream failure and disposed sources fail promptly', async () => {

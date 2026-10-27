@@ -139,6 +139,21 @@ uses the same aperture area and scale. Values are
 recorded brightness, not temperature. **Export CSV** includes the spectrum, measurements and
 analysis settings.
 
+**Peak search floor (Hz)** sets the lowest frequency that the largest-peak label uses. The
+default is 0.5 Hz (30 a minute). Removing a linear trend does not remove slow, curved brightness
+drift, and in the lowest bins that drift can be larger than a real flicker. The spectrum is
+plotted in full: below the floor, only the label is not given. A dashed vertical line shows the
+floor, and the peak line reads "Largest peak above …". The value is always in Hz, also when
+Flashes per minute is on; the graph prints it in the chosen unit. Set 0 to search from about one
+frequency bin above 0 Hz. If the floor is at or above the Nyquist limit, no peak is labeled and
+the graph says why. The exported CSV records the floor in its `peak_floor_hz` column.
+
+Keep the floor below the rate you are looking for. A short flash, such as an aircraft
+anti-collision beacon (40–100 a minute), puts much of its power in harmonics at 2, 3, 4… times
+its rate. With the floor above the flash rate, the label goes to one of those harmonics, not to
+the flash rate. Slow drift has no peak of its own: when the label sits just above the dashed
+line, it is probably drift. Move the floor and see if the label follows it.
+
 **Flashes per minute**, the last item in the settings, shows the frequencies as flashes per
 minute (Hz × 60) instead of Hz. The axis covers the same range; only its units change. The
 exported CSV stays in Hz.
@@ -166,8 +181,12 @@ background curve before interpreting one.
 
 ### From a point track to a line of sight
 
-Sitrec turns the tracked pixel into a direction. It starts from the camera's centre line and
-rotates it by the angle at which the pixel sits off the centre of the frame. To use it:
+Sitrec turns the tracked pixel into a direction. It treats the camera as a pinhole: the line of
+sight goes from the camera through the pixel, and the camera's vertical field of view spans the
+full height of the video as it is shown (after any rotation). Manual Tracking (**Camera + Object
+Track**) uses the same calculation, so the same pixel gives the same line of sight in both. The
+size of the video pane, and how you zoom or pan the video, do not change the line of sight. To use
+it:
 
 1. Track the object as in part A.
 2. Set **Traverse → LOS Source** to **Camera + Point Track**.
@@ -283,7 +302,7 @@ Manual Tracking) is the answer.
 |---|---|
 | **Motion (Background)** | The object is small, or looks like the clutter it crosses: the same brightness, size or texture. Best on the three terrain/sea test clips (see the table below) |
 | **Template Match** | The object is large and has visible structure, such as a vehicle. Place a user point when it turns on screen |
-| **Optical Flow** | The object is textured and moves smoothly. Faster than template matching |
+| **Optical Flow** | The object is textured and moves smoothly. Faster than template matching. When it finds no corners to follow, or follows none of them, it marks the frame as missing instead of repeating the last position |
 | **Center on Bright** | A bright point on a darker or plain background, such as a light at night or a dot on sky |
 | **Center on Dark** | A dark point on a bright background, such as a distant object against overcast sky |
 | **Center on Color** | The object is distinguished by color rather than brightness |
@@ -379,7 +398,7 @@ nothing tells it apart from the picture. Mask it.
 | Control | Default | Range | What it does |
 |---|---|---|---|
 | **Tracking Method** | Motion (Background) | — | See [Choosing a tracking method](#choosing-a-tracking-method). Changing it during a run clears the track |
-| **Track Radius** | 30 | 1–100 | The inner solid circle: the template size, or the maximum extent of the connected object used for a centroid. Optical Flow needs 6 or more; below that it records no measurements |
+| **Track Radius** | 30 | 1–100 | The inner solid circle: the template size, or the maximum extent of the connected object used for a centroid. Optical Flow needs 6 or more in the decoded video (more when the video plays at a lower resolution); below that every frame is marked as missing |
 | **Search Radius** | 50 | 1–300 | The outer dashed circle: how far from the predicted position the tracker looks |
 | **Feature Size** | 4 | 1–20 | The size of the object in pixels. Used by High/Low Peak and Motion (Background). Set by Analyse Object |
 | **Motion Polarity** | Either | — | Whether the object is brighter or darker than its background. *Either* works but is noisier; Analyse Object picks one |
@@ -395,6 +414,10 @@ nothing tells it apart from the picture. Mask it.
 | **Show N Keyframes** | 20 | 0–100 | Draws only this many user points (magenta crosses), the ones nearest the current frame |
 | **Clear from Here** | — | — | Delete all points, user points included, from the current frame to B |
 | **Clear User Points** / **Clear Auto Points** | — | — | Delete only your points (asks first), or only the tracker's |
+
+You can set these controls before you press **Enable Point Track**. The tracker starts with the
+values the menu shows. A saved sitch always loads with its own saved values, and a setting that
+the save does not have gets the default in this table.
 
 Track Radius and Search Radius are in **original video** pixels, so they do not change when you
 resize the view or when the video plays at a lower resolution. Feature Size and Parallax Slack

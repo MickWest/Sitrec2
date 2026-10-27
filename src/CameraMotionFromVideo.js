@@ -122,15 +122,67 @@ function getVideo() {
 }
 
 // Cache the analysed motion so the path survives a page reload and can be re-tuned/rebuilt
-// without re-running the (slow) optical-flow pass. Keyed by the video filename.
-function cacheKey() {
+// without re-running the (slow) optical-flow pass. Keyed by the video filename PLUS its frame
+// count and (MP4 only) video-track byte size, so a different video with the same name, or a
+// re-encode of the same one, does not silently load the wrong motion. Every unnamed video is
+// named "video", so for those the frame count and size are all that tell them apart.
+const CACHE_PREFIX = "cameraMotion:";
+
+const isCount = (n) => Number.isInteger(n) && n > 0;
+
+// The localStorage key for one video's motion. The frame count is required (null = do not
+// cache): the motion is per-frame, so an entry with no frame count can't be tied to a video.
+// The byte size is added when known. The result never equals the legacy name-only key.
+export function cameraMotionCacheKey(name, frames, bytes) {
+    if (!isCount(frames)) return null;
+    let key = `${CACHE_PREFIX}${name}|frames=${frames}`;
+    if (isCount(bytes)) key += `|bytes=${bytes}`;
+    return key;
+}
+
+// Older builds keyed the cache by the name alone. Loading never reads this key.
+export function legacyCameraMotionCacheKey(name) {
+    return CACHE_PREFIX + name;
+}
+
+// Write `json` under the video's key. Every older entry for the same name (the legacy
+// name-only one, and any for another frame count or size) is removed first: an entry is often
+// hundreds of KB, so this keeps one per name, as the name-only key did, and frees the space
+// for the new one. `video` is {name, frames, bytes}. Returns false when there is no key.
+export function writeCameraMotionCache(storage, video, json) {
+    const key = cameraMotionCacheKey(video.name, video.frames, video.bytes);
+    if (!key) return false;
+    const legacy = legacyCameraMotionCacheKey(video.name);
+    const stale = [];
+    for (let i = 0; i < storage.length; i++) {
+        const k = storage.key(i);
+        if (k === legacy || k?.startsWith(legacy + "|")) stale.push(k);
+    }
+    for (const k of stale) storage.removeItem(k);
+    storage.setItem(key, json);
+    return true;
+}
+
+export function readCameraMotionCache(storage, video) {
+    const key = cameraMotionCacheKey(video.name, video.frames, video.bytes);
+    return key ? storage.getItem(key) : null;
+}
+
+// Name, frame count and video-track byte size of the current video, for the cache key. The
+// frame count is videoData.frames, the same count the analysis pass and matchesVideo use;
+// videoBytes is reported only for MP4 video, local or streamed (getMediaInfo), so it is
+// undefined otherwise.
+function cacheVideoIdentity() {
     const vv = getVideo();
     const fromList = vv?.videos?.[vv.currentVideoIndex]?.fileName;
     const fromData = vv?.videoData?.filename;
     const name = (fromList && fromList !== "Unknown") ? fromList
         : (fromData && fromData !== "Unknown") ? fromData
         : "video";
-    return "cameraMotion:" + name;
+    const vd = vv?.videoData;
+    let bytes;
+    try { bytes = vd?.getMediaInfo?.()?.videoBytes; } catch (e) { /* no media info */ }
+    return { name, frames: vd?.frames, bytes };
 }
 
 function saveMotionCache(motionData) {
@@ -139,13 +191,13 @@ function saveMotionCache(motionData) {
             +(m.dx ?? 0).toFixed(3), +(m.dy ?? 0).toFixed(3),
             +(m.theta ?? 0).toFixed(5), +(m.scale ?? 1).toFixed(5), +(m.confidence ?? 0).toFixed(3),
         ] : null);
-        localStorage.setItem(cacheKey(), JSON.stringify(compact));
+        writeCameraMotionCache(localStorage, cacheVideoIdentity(), JSON.stringify(compact));
     } catch (e) { /* quota / unavailable - non-fatal */ }
 }
 
 function loadMotionCache() {
     try {
-        const s = localStorage.getItem(cacheKey());
+        const s = readCameraMotionCache(localStorage, cacheVideoIdentity());
         if (!s) return null;
         return JSON.parse(s).map(a => a ? { dx: a[0], dy: a[1], theta: a[2], scale: a[3], confidence: a[4] } : { dx: 0, dy: 0, theta: 0, scale: 1, confidence: 0 });
     } catch (e) { return null; }
@@ -881,8 +933,8 @@ export function setupCameraMotionMenu() {
     permAll(folder);
 
     // If a previous analysis was cached for this video, restore the path automatically.
-    // The video filename (used as the cache key) may not be populated at setup time, so retry
-    // a few times until it resolves.
+    // The video filename and frame count (used in the cache key) may not be populated at setup
+    // time, so retry a few times until they resolve.
     const tryRestore = (attempt) => {
         if (NodeMan.exists("cameraMotionTrack")) return;
         const cached = loadMotionCache();

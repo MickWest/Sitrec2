@@ -4,6 +4,7 @@ import {par, resetPar, stopControlledPlayback} from '../src/par';
 import {KeyMan} from '../src/KeyBoardHandler';
 import {loadOpenCV} from '../src/openCVLoader';
 import {getJsfeat} from '../src/jsfeatLoader';
+import {showError} from '../src/showError';
 
 jest.mock('../src/Globals', () => ({
     Globals: {}, Sit: {frames: 20, aFrame: 0, bFrame: 19},
@@ -131,6 +132,71 @@ test('optical flow too small for corner detection records a missing measurement,
         delete global.document;
         getJsfeat.mockReturnValue(null);
     }
+});
+
+// A jsfeat stand-in for the optical flow branches. yape06.detect finds no
+// corners and optical_flow_lk.track leaves every status at 0 (no keypoint
+// followed) unless a test replaces them.
+function withFakeJsfeat(fn) {
+    const jsfeat = {U8_t: 0, C1_t: 0, imgproc: {grayscale: () => {}},
+        matrix_t: class { constructor(w, h) { this.data = new Uint8Array(w * h); } },
+        pyramid_t: class { allocate() {} build() {} },
+        keypoint_t: class { constructor() { this.x = 0; this.y = 0; } },
+        yape06: {detect: jest.fn(() => 0)},
+        optical_flow_lk: {track: jest.fn()}};
+    getJsfeat.mockReturnValue(jsfeat);
+    const context = {drawImage: () => {}, getImageData: (x, y, w, h) => ({data: new Uint8ClampedArray(w * h * 4)})};
+    global.document = {createElement: () => ({getContext: () => context})};
+    try {
+        fn(jsfeat);
+    } finally {
+        delete global.document;
+        getJsfeat.mockReturnValue(null);
+    }
+}
+
+test('optical flow that finds no corners records a missing measurement and initialises again', () => {
+    withFakeJsfeat(jsfeat => {
+        const {t, image} = makeTracker();
+        t.updateSliderStatus = jest.fn();
+        // An old auto point, as a forced re-track of this frame would find.
+        t.trackedPositions.set(1, {x: 10, y: 10});
+        t.trackOpticalFlow(1, image, {x: 500, y: 200});
+        expect(jsfeat.yape06.detect).toHaveBeenCalled();
+        expect(t.trackedPositions.has(1)).toBe(false);
+        expect(t.trackedPositions.unmeasuredFrames.has(1)).toBe(true);
+        expect([t.trackX, t.trackY]).toEqual([500, 200]);
+        expect(t.initialPyramid).toBeNull();
+        expect(t.updateSliderStatus).toHaveBeenCalled();
+    });
+});
+
+test('optical flow that follows no keypoint records a missing measurement and keeps the keypoints', () => {
+    withFakeJsfeat(jsfeat => {
+        const {t, image} = makeTracker();
+        t.updateSliderStatus = jest.fn();
+        const pyramid = {};
+        const keypoints = new Float32Array([490, 190, 510, 210]);
+        Object.assign(t, {initialPyramid: pyramid, initialKeypoints: keypoints, initialCenter: {x: 500, y: 200}});
+        t.trackOpticalFlow(2, image, {x: 520, y: 220});
+        expect(jsfeat.optical_flow_lk.track).toHaveBeenCalled();
+        expect(t.trackedPositions.has(2)).toBe(false);
+        expect(t.trackedPositions.unmeasuredFrames.has(2)).toBe(true);
+        expect([t.trackX, t.trackY]).toEqual([520, 220]);
+        expect(t.initialPyramid).toBe(pyramid);
+        expect(t.initialKeypoints).toBe(keypoints);
+        expect(t.updateSliderStatus).toHaveBeenCalled();
+    });
+});
+
+test('after a missing optical flow frame the next frame searches from the last measured position', () => {
+    const {t} = makeTracker();
+    t.trackingMethod = 'opticalflow';
+    t.trackedPositions.set(0, {x: 800, y: 300});
+    t.trackedPositions.markUnmeasured(1);
+    t.runAlgorithm = jest.fn();
+    t.trackFrame(2);
+    expect(t.runAlgorithm).toHaveBeenCalledWith(2, expect.anything(), {x: 800, y: 300}, expect.any(Function));
 });
 
 test('tracking circles show the source-pixel radii at the current video zoom', () => {
@@ -269,6 +335,18 @@ test('a stopped server tracking request cannot resume after its response arrives
         expect(par.paused).toBe(false);
         expect(t.trackedPositions.size).toBe(0);
     } finally { globalThis.fetch = originalFetch; }
+});
+
+test('server tracking without a video file says so in a Sitrec dialog, not a native alert', async () => {
+    const {t} = startTestRun();
+    t.trackingMethod = 'sam2';
+    showError.mockClear();
+    t.startTracking();
+    await t.trackingPromise;
+    expect(showError).toHaveBeenCalledTimes(1);
+    expect(showError).toHaveBeenCalledWith(expect.stringMatching(/^SAM2 tracking requires a loaded video file/));
+    expect(t.tracking).toBe(false);
+    expect(par.playbackLocked).toBe(false);
 });
 
 test.each([false, true])('a user point resets the search even with force=%s', force => {

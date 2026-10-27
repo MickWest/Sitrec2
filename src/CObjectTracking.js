@@ -63,7 +63,8 @@ function anchorsFromUserPoint(tracker, frame, x, y) {
 // that is, before the tracker object exists at all. Without somewhere to hold
 // them the menu silently reverts: the setter has no tracker to write to and
 // drops the value, then .listen() repaints the old one, with no error anywhere.
-// These are applied to the tracker the moment it is created.
+// These are applied to the tracker the moment it is created. The defaults are the
+// ObjectTracker constructor's, so a tracker made with no menu changes is unchanged.
 const pendingTrackingSettings = {
     // Motion (Background) is the default: it is the method that tracks small objects over
     // moving terrain, sea or sky, which is most of what gets tracked. Saves that never
@@ -75,10 +76,20 @@ const pendingTrackingSettings = {
     motionSlack: 0,
     motionThreshold: 6,
     smoothingFrames: 0,
+    trackRadius: 30,
+    searchRadius: 50,
+    featureSize: 4,
+    useMask: true,
+    brightnessThreshold: 128,
+    trackingColor: new Color(0xff0000),
+    colorDistance: 80,
 };
 
 function applyPendingTrackingSettings(tracker) {
-    for (const [key, value] of Object.entries(pendingTrackingSettings)) tracker[key] = value;
+    // A Color is copied, never shared: the menu edits the pending one in place.
+    for (const [key, value] of Object.entries(pendingTrackingSettings)) {
+        tracker[key] = value instanceof Color ? value.clone() : value;
+    }
 }
 
 // Auto Tracking - Automatic object tracking using OpenCV template matching or centroid tracking
@@ -1972,10 +1983,13 @@ export class ObjectTracker {
             const detectedCount = jsfeat.yape06.detect(cornerMat, cornersArray, 5);
             const count = Math.min(detectedCount, 100);
 
+            // No corners to follow. As above, prevPos is not a measurement:
+            // record the frame as missing. The cursor stays at prevPos, and the
+            // next frame initialises again.
             if (count === 0) {
                 this.trackX = prevPos.x;
                 this.trackY = prevPos.y;
-                this.trackedPositions.set(frame, {x: this.trackX, y: this.trackY});
+                this.trackedPositions.markUnmeasured(frame);
                 this.updateSliderStatus();
                 this.initialPyramid = null;
                 return;
@@ -2033,17 +2047,23 @@ export class ObjectTracker {
             }
         }
 
-        if (validCount > 0) {
-            const avgX = sumX / validCount;
-            const avgY = sumY / validCount;
-            const initialAvgX = this.initialKeypoints.reduce((sum, v, i) => i % 2 === 0 ? sum + v : sum, 0) / count;
-            const initialAvgY = this.initialKeypoints.reduce((sum, v, i) => i % 2 === 1 ? sum + v : sum, 0) / count;
-            this.trackX = this.initialCenter.x + (avgX - initialAvgX);
-            this.trackY = this.initialCenter.y + (avgY - initialAvgY);
-        } else {
+        // No keypoint was followed: record the frame as missing rather than
+        // holding prevPos as if it were measured. The cursor stays at prevPos,
+        // and the keypoints are kept for the next frame.
+        if (validCount === 0) {
             this.trackX = prevPos.x;
             this.trackY = prevPos.y;
+            this.trackedPositions.markUnmeasured(frame);
+            this.updateSliderStatus();
+            return;
         }
+
+        const avgX = sumX / validCount;
+        const avgY = sumY / validCount;
+        const initialAvgX = this.initialKeypoints.reduce((sum, v, i) => i % 2 === 0 ? sum + v : sum, 0) / count;
+        const initialAvgY = this.initialKeypoints.reduce((sum, v, i) => i % 2 === 1 ? sum + v : sum, 0) / count;
+        this.trackX = this.initialCenter.x + (avgX - initialAvgX);
+        this.trackY = this.initialCenter.y + (avgY - initialAvgY);
 
         this.trackedPositions.set(frame, {x: this.trackX, y: this.trackY});
         this.updateSliderStatus();
@@ -2912,7 +2932,7 @@ export function resetObjectTracking() {
 function toggleEnableTracking() {
     const videoView = NodeMan.get("video", false);
     if (!videoView) {
-        alert("No video view found");
+        showError("No video view found");
         return;
     }
 
@@ -2975,14 +2995,14 @@ async function runSAM2Tracking(objectTracker, runId) {
     const videoData = videoView?.videoData;
 
     if (!videoData) {
-        alert("No video loaded.");
+        showError("No video loaded.");
         return;
     }
 
     // Get the video file data (ArrayBuffer stored from file load or drop)
     const videoBuffer = videoData.videoDroppedData;
     if (!videoBuffer) {
-        alert("SAM2 tracking requires a loaded video file (drag-and-drop or file picker). URL-only videos are not yet supported.");
+        showError("SAM2 tracking requires a loaded video file (drag-and-drop or file picker). URL-only videos are not yet supported.");
         return;
     }
 
@@ -2998,7 +3018,7 @@ async function runSAM2Tracking(objectTracker, runId) {
         const healthResp = await fetch(`${sam2Base}/health`).catch(() => null);
         if (!isCurrentRun()) return;
         if (!healthResp || !healthResp.ok) {
-            alert("SAM2 service is not running.\n\nStart it with:\n  cd sam2-service && ./start.sh\n\nMake sure your web server proxies /sam2/ to port 8001.");
+            showError("SAM2 service is not running.\n\nStart it with:\n  cd sam2-service && ./start.sh\n\nMake sure your web server proxies /sam2/ to port 8001.");
             if (startMenuItem) startMenuItem.name(t("tracking.start.label"));
             return;
         }
@@ -3086,7 +3106,7 @@ async function runSAM2Tracking(objectTracker, runId) {
     } catch (e) {
         if (!isCurrentRun()) return;
         console.error("[SAM2] Tracking failed:", e);
-        alert("SAM2 tracking failed: " + e.message);
+        showError("SAM2 tracking failed: " + e.message, e);
         if (startMenuItem) startMenuItem.name(t("tracking.start.label"));
     }
 }
@@ -3108,12 +3128,12 @@ function clearFromHere() {
 
 function stabilizeVideo() {
     if (!objectTracker || !objectTracker.enabled) {
-        alert("Please enable tracking first and track an object before stabilizing.");
+        showError("Please enable tracking first and track an object before stabilizing.");
         return;
     }
 
     if (objectTracker.trackedPositions.size === 0) {
-        alert("No tracking data available. Please track an object first.");
+        showError("No tracking data available. Please track an object first.");
         return;
     }
 
@@ -3121,7 +3141,7 @@ function stabilizeVideo() {
     const videoData = videoView?.videoData;
 
     if (!videoData) {
-        alert("No video data available.");
+        showError("No video data available.");
         return;
     }
 
@@ -3131,7 +3151,7 @@ function stabilizeVideo() {
     const referencePoint = outputPositions.get(firstFrame);
 
     if (!referencePoint) {
-        alert("Could not determine reference point.");
+        showError("Could not determine reference point.");
         return;
     }
 
@@ -3155,7 +3175,7 @@ function toggleStabilization() {
     const videoData = videoView?.videoData;
 
     if (!videoData || !videoData.stabilizationData) {
-        alert("No stabilization data available. Use 'Stabilize' first.");
+        showError("No stabilization data available. Use 'Stabilize' first.");
         return;
     }
 
@@ -3213,12 +3233,12 @@ let includeVideoInfoOnExport = false;
 
 async function renderStabilizedVideo(expanded = false) {
     if (!objectTracker || !objectTracker.enabled) {
-        alert("Please enable tracking first and track an object before rendering.");
+        showError("Please enable tracking first and track an object before rendering.");
         return;
     }
 
     if (objectTracker.trackedPositions.size === 0) {
-        alert("No tracking data available. Please track an object first.");
+        showError("No tracking data available. Please track an object first.");
         return;
     }
 
@@ -3226,7 +3246,7 @@ async function renderStabilizedVideo(expanded = false) {
     const videoData = videoView?.videoData;
 
     if (!videoData) {
-        alert("No video data available.");
+        showError("No video data available.");
         return;
     }
 
@@ -3260,7 +3280,7 @@ async function renderStabilizedVideo(expanded = false) {
 
     const bestFormat = await getBestFormatForResolution(DefaultVideoFormat, width, height);
     if (!bestFormat.formatId) {
-        alert(`Video export failed: ${bestFormat.reason}`);
+        showError(`Video export failed: ${bestFormat.reason}`);
         return;
     }
 
@@ -3374,7 +3394,7 @@ async function renderStabilizedVideo(expanded = false) {
 
     } catch (e) {
         console.error('Export failed:', e);
-        alert('Video export failed: ' + e.message);
+        showError('Video export failed: ' + e.message, e);
     } finally {
         progress.remove();
         par.frame = savedFrame;
@@ -3514,14 +3534,19 @@ export function addObjectTrackingMenu() {
         .listen()
         .perm();
 
-    const radiusParams = {
-        get trackRadius() { return objectTracker?.trackRadius ?? 30; },
-        set trackRadius(v) { 
-            if (objectTracker) {
-                objectTracker.trackRadius = v;
-                setRenderOne(true);
-            }
+    // Settings that also have to survive being set before Enable: kept in
+    // pendingTrackingSettings, and in the tracker when there is one.
+    const setTrackingSetting = (key, value) => {
+        pendingTrackingSettings[key] = value;
+        if (objectTracker) {
+            objectTracker[key] = value;
+            setRenderOne(true);
         }
+    };
+
+    const radiusParams = {
+        get trackRadius() { return objectTracker?.trackRadius ?? pendingTrackingSettings.trackRadius; },
+        set trackRadius(v) { setTrackingSetting('trackRadius', v); }
     };
     
     radiusController = trackingFolder.add(radiusParams, 'trackRadius', 1, 100, 1)
@@ -3531,13 +3556,8 @@ export function addObjectTrackingMenu() {
         .perm();
 
     const searchRadiusParams = {
-        get searchRadius() { return objectTracker?.searchRadius ?? 50; },
-        set searchRadius(v) { 
-            if (objectTracker) {
-                objectTracker.searchRadius = v;
-                setRenderOne(true);
-            }
-        }
+        get searchRadius() { return objectTracker?.searchRadius ?? pendingTrackingSettings.searchRadius; },
+        set searchRadius(v) { setTrackingSetting('searchRadius', v); }
     };
     
     trackingFolder.add(searchRadiusParams, 'searchRadius', 1, 300, 1)
@@ -3715,13 +3735,8 @@ export function addObjectTrackingMenu() {
     // methods. Sliding shows a peak-marker preview overlay so the user can see
     // which features the algorithm currently treats as blobs.
     const featureSizeParams = {
-        get featureSize() { return objectTracker?.featureSize ?? 1.5; },
-        set featureSize(v) {
-            if (objectTracker) {
-                objectTracker.featureSize = v;
-                setRenderOne(true);
-            }
-        }
+        get featureSize() { return objectTracker?.featureSize ?? pendingTrackingSettings.featureSize; },
+        set featureSize(v) { setTrackingSetting('featureSize', v); }
     };
 
     trackingFolder.add(featureSizeParams, 'featureSize', 1, 20, 0.5)
@@ -3743,28 +3758,19 @@ export function addObjectTrackingMenu() {
         .perm();
 
     const maskParams = {
-        get useMask() { return objectTracker?.useMask ?? true; },
-        set useMask(v) {
-            if (objectTracker) {
-                objectTracker.useMask = v;
-                setRenderOne(true);
-            }
-        }
+        get useMask() { return objectTracker?.useMask ?? pendingTrackingSettings.useMask; },
+        set useMask(v) { setTrackingSetting('useMask', v); }
     };
 
     trackingFolder.add(maskParams, 'useMask')
         .name(t("tracking.useMask.label"))
         .tooltip(t("tracking.useMask.tooltip"))
+        .listen()
         .perm();
 
     const brightnessParams = {
-        get brightnessThreshold() { return objectTracker?.brightnessThreshold ?? 128; },
-        set brightnessThreshold(v) {
-            if (objectTracker) {
-                objectTracker.brightnessThreshold = v;
-                setRenderOne(true);
-            }
-        }
+        get brightnessThreshold() { return objectTracker?.brightnessThreshold ?? pendingTrackingSettings.brightnessThreshold; },
+        set brightnessThreshold(v) { setTrackingSetting('brightnessThreshold', v); }
     };
 
     trackingFolder.add(brightnessParams, 'brightnessThreshold', 0, 255, 1)
@@ -3787,16 +3793,15 @@ export function addObjectTrackingMenu() {
 
     // Center on Color controls. Same getter/setter shape as the brightness
     // threshold so listen() can keep the GUI in sync if the tracker is
-    // created or replaced after the menu is built.
+    // created or replaced after the menu is built. The pending and tracker
+    // colors are separate objects: each is copied into, never shared.
     const colorParams = {
-        get trackingColor() { return objectTracker?.trackingColor ?? new Color(0xff0000); },
+        get trackingColor() { return objectTracker?.trackingColor ?? pendingTrackingSettings.trackingColor; },
         set trackingColor(v) {
+            const color = v instanceof Color ? v : new Color(v);
+            pendingTrackingSettings.trackingColor.copy(color);
             if (objectTracker) {
-                if (v instanceof Color) {
-                    objectTracker.trackingColor.copy(v);
-                } else {
-                    objectTracker.trackingColor = new Color(v);
-                }
+                objectTracker.trackingColor.copy(color);
                 setRenderOne(true);
             }
         }
@@ -3807,6 +3812,9 @@ export function addObjectTrackingMenu() {
         .tooltip(t("tracking.trackingColor.tooltip"))
         .onChange(() => {
             if (objectTracker) {
+                // lil-gui edits a Color object in place, through the getter,
+                // and never calls the setter. Keep the pending copy in step.
+                pendingTrackingSettings.trackingColor.copy(objectTracker.trackingColor);
                 objectTracker.thresholdPreview = true;
                 setRenderOne(true);
             }
@@ -3821,13 +3829,8 @@ export function addObjectTrackingMenu() {
         .perm();
 
     const colorDistanceParams = {
-        get colorDistance() { return objectTracker?.colorDistance ?? 80; },
-        set colorDistance(v) {
-            if (objectTracker) {
-                objectTracker.colorDistance = v;
-                setRenderOne(true);
-            }
-        }
+        get colorDistance() { return objectTracker?.colorDistance ?? pendingTrackingSettings.colorDistance; },
+        set colorDistance(v) { setTrackingSetting('colorDistance', v); }
     };
 
     // Max RGB Euclidean distance is sqrt(3) * 255 ≈ 441; rounded to 442 so the
@@ -4002,12 +4005,12 @@ export async function deserializeAutoTracking(data) {
     objectTracker.trackRadius = data.trackRadius ?? 30;
     objectTracker.searchRadius = data.searchRadius ?? 50;
     objectTracker.brightnessThreshold = data.brightnessThreshold ?? 128;
-    if (data.trackingColor !== undefined) {
-        objectTracker.trackingColor = new Color(data.trackingColor);
-    }
+    // Like every setting here, a value the save lacks gets the default, never the
+    // menu's pending one: a save loads the same whatever was set before it.
+    objectTracker.trackingColor = new Color(data.trackingColor ?? 0xff0000);
     objectTracker.colorDistance = data.colorDistance ?? 80;
     objectTracker.useMask = data.useMask ?? true;
-    objectTracker.featureSize = data.featureSize ?? 1.5;
+    objectTracker.featureSize = data.featureSize ?? 4;
     objectTracker.smoothingFrames = normalizeTrackSmoothing(data.smoothingFrames);
     objectTracker.showMaxKeyframes = data.showMaxKeyframes ?? 20;
     objectTracker.editHeadOnly = data.editHeadOnly ?? false;

@@ -7,7 +7,7 @@ import {getObjectTracker} from '../CObjectTracking';
 import {abFrameRange} from '../TraverseAnalysisData';
 import {displayIndexForFrame, sourceVideoOf} from '../videoQP/VideoQPAnalysis';
 import {startTonalAnalysis} from '../videoTonal/VideoTonalAnalysis';
-import {clampApertureRadius, FREQUENCY_DEFAULTS, pointFrequencyTargetColor} from '../PointTrackFrequencyGraph';
+import {clampApertureRadius, clampPeakFloor, FREQUENCY_DEFAULTS, pointFrequencyTargetColor} from '../PointTrackFrequencyGraph';
 import {amplitudeSpectrum, captureFrequencyTargets, frequencySampling} from './PointFrequencyStatistics';
 
 const MARGIN = 60;
@@ -32,6 +32,7 @@ export class CNodePointTrackFrequencyGraphView extends CNodeCustomGraphView {
         this.options.percent = !!this.options.percent;
         this.options.showBackground = !!this.options.showBackground;
         this.options.perMinute = !!this.options.perMinute;
+        this.options.minPeakHz = clampPeakFloor(this.options.minPeakHz);
         this.refreshAnalysis();
     }
     refreshAnalysis() {
@@ -115,10 +116,10 @@ export class CNodePointTrackFrequencyGraphView extends CNodeCustomGraphView {
             const flux = input.plan.indices.map(i => result.flux[i]);
             if (flux.some(value => !Number.isFinite(value))) this.spectrumError = t('pointFrequency.invalidAperture');
             else {
-                const {fps, irregular, times} = input.sampling;
-                this.spectrum = amplitudeSpectrum(flux, fps, irregular ? times : null);
+                const {fps, irregular, times} = input.sampling, peakOptions = {minPeakHz: this.options.minPeakHz};
+                this.spectrum = amplitudeSpectrum(flux, fps, irregular ? times : null, peakOptions);
                 const area = input.plan.indices.reduce((sum, i) => sum + result.area[i], 0) / flux.length;
-                this.backgroundSpectrum = amplitudeSpectrum(input.plan.indices.map(i => result.background[i] * area), fps, irregular ? times : null);
+                this.backgroundSpectrum = amplitudeSpectrum(input.plan.indices.map(i => result.background[i] * area), fps, irregular ? times : null, peakOptions);
             }
         }
         this._plotKey = '';
@@ -172,13 +173,26 @@ export class CNodePointTrackFrequencyGraphView extends CNodeCustomGraphView {
         ctx.fillText(status ? t('pointFrequency.unavailable') : (s ? t('pointFrequency.window', {a: input.range.frame0, b: input.range.frame1,
             count: s.count, duration: s.duration.toFixed(2), fps: s.fps.toFixed(3), resolution: (s.binSpacing * xUnit).toPrecision(3),
             frequencyUnit}) : ''), width / 2, 34, width - 20);
-        const peak = s?.peak;
-        ctx.fillText(!status && s ? (peak ? t('pointFrequency.peak', {frequency: frequencyText(peak.frequency), frequencyUnit,
-            amplitude: (peak.amplitude * this.scale).toFixed(2), unit: this.percent ? '%' : 'DN·px'}) : t('pointFrequency.flat')) : '', width / 2, 49, width - 20);
+        // The peak search floor is stored in Hz and printed in the chosen unit.
+        const peak = s?.peak, floor = s?.peakFloor ?? 0;
+        let peakText = '';
+        if (!status && s) {
+            if (s.peakFloorAboveNyquist) peakText = t('pointFrequency.floorAboveNyquist', {floor: frequencyText(floor), nyquist: frequencyText(s.nyquist), frequencyUnit});
+            else if (peak) peakText = t(floor > 0 ? 'pointFrequency.peakAboveFloor' : 'pointFrequency.peak', {floor: frequencyText(floor),
+                frequency: frequencyText(peak.frequency), frequencyUnit, amplitude: (peak.amplitude * this.scale).toFixed(2), unit: this.percent ? '%' : 'DN·px'});
+            else peakText = t('pointFrequency.flat');
+        }
+        ctx.fillText(peakText, width / 2, 49, width - 20);
         const xs = this.calculateStep(this.maxX * xUnit, w) / xUnit, ys = this.calculateStep(this.maxY, h);
         ctx.save(); ctx.beginPath(); ctx.rect(MARGIN, MARGIN, w, h); ctx.clip(); ctx.strokeStyle = c.grid;
         for (let x = 0; x <= this.maxX; x += xs) { const p = this.point(x, 0); ctx.beginPath(); ctx.moveTo(p.x, MARGIN); ctx.lineTo(p.x, height - MARGIN); ctx.stroke(); }
         for (let y = 0; y <= this.maxY; y += ys) { const p = this.point(0, y); ctx.beginPath(); ctx.moveTo(MARGIN, p.y); ctx.lineTo(width - MARGIN, p.y); ctx.stroke(); }
+        // In the text color at half strength: in the grid color it vanishes on a grid line.
+        if (!status && s && floor > 0) {
+            const p = this.point(floor, 0);
+            ctx.save(); ctx.strokeStyle = c.text; ctx.globalAlpha = .5; ctx.setLineDash([4, 4]);
+            ctx.beginPath(); ctx.moveTo(p.x, MARGIN); ctx.lineTo(p.x, height - MARGIN); ctx.stroke(); ctx.restore();
+        }
         for (const [spectrum, color] of [[this.spectrum, c.target], [this.options.showBackground ? this.backgroundSpectrum : null, c.background]]) {
             if (!spectrum) continue;
             ctx.strokeStyle = color; ctx.lineWidth = 1.5; ctx.beginPath();
@@ -230,10 +244,10 @@ export class CNodePointTrackFrequencyGraphView extends CNodeCustomGraphView {
         const rows = ['frequency_hz,object_semi_amplitude_dn_px,background_semi_amplitude_dn_px,object_semi_amplitude_percent'];
         s.frequencies.forEach((f, i) => rows.push([f, s.amplitude[i], this.backgroundSpectrum.amplitude[i],
             Math.abs(s.mean) > 1e-6 ? s.amplitude[i] * 100 / Math.abs(s.mean) : ''].join(',')));
-        rows.push('', 'scene_in,scene_out,samples,fps,duration_s,bin_spacing_hz,nyquist_hz,radius_px,position_smoothing_frames,mean_signed_flux_dn_px,representation,source_bits,mask_enabled,irregular_timing,min_fps,max_fps',
+        rows.push('', 'scene_in,scene_out,samples,fps,duration_s,bin_spacing_hz,nyquist_hz,radius_px,position_smoothing_frames,mean_signed_flux_dn_px,representation,source_bits,mask_enabled,irregular_timing,min_fps,max_fps,peak_floor_hz',
             [input.range.frame0, input.range.frame1, s.count, s.fps, s.duration, s.binSpacing, s.nyquist, this.options.radius,
                 input.smoothing, s.mean, result.mode, result.bits, result.masked,
-                input.sampling.irregular, input.sampling.minFps, input.sampling.maxFps].join(','), '',
+                input.sampling.irregular, input.sampling.minFps, input.sampling.maxFps, s.peakFloor].join(','), '',
             'source_frame,time_s,x_original_px,y_original_px,signed_flux_dn_px,local_background_dn,aperture_area_px,clipped_fraction');
         input.plan.indices.forEach((i, n) => {
             const target = input.plan.targets[i], video = input.video;

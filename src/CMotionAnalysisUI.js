@@ -36,6 +36,7 @@ import {resolveURLForFetch} from "./SitrecObjectResolver";
 import {CNodeVelocityFromMotion} from "./nodes/CNodeVelocityFromMotion";
 import {CNodeTrackFromVelocity} from "./nodes/CNodeTrackFromVelocity";
 import {CNodeDisplayTrack} from "./nodes/CNodeDisplayTrack";
+import {motionTrackScale} from "./MotionTrackScale";
 import {startMaskGroundPick, applyQuadTreeGroundMask} from "./SkyMaskTool";
 import {maskGroundWithAI} from "./SkyMaskAI";
 import {BRUSH_MAX_AT_720} from "./nodes/CNodeMaskOverlay";
@@ -1315,26 +1316,46 @@ async function createTrackFromMotion() {
 
     setMenuItemLabel(createTrackMenuItem, "status.creatingTrack");
 
-    const originNode = NodeMan.get("LOSTraverseSelect", false) 
+    // Legacy jet sitches name the selected traverse "LOSTraverseSelect"; custom sitches name
+    // it "LOSTraverseSelectTrack" and have no "targetTrack" or "cameraTrack" node.
+    const originNode = NodeMan.get("LOSTraverseSelect", false)
+        ?? NodeMan.get("LOSTraverseSelectTrack", false)
         ?? NodeMan.get("targetTrack", false)
         ?? NodeMan.get("cameraTrack", false);
-    
+
     if (!originNode) {
-        alert(mt("errors.noOriginTrack"));
+        showError(mt("errors.noOriginTrack"));
         setMenuItemLabel(createTrackMenuItem, "menu.createTrack.label");
         return;
     }
 
-    const fovNode = NodeMan.get("fov", false) ?? NodeMan.get("cameraFOV", false);
-    const fovDegrees = fovNode ? fovNode.v(0) : 30;
-    const dims = motionAnalyzer.getImageDimensions();
+    // Height of the image the motion vectors were measured in. Each analyzed frame records
+    // it (imgHeight). getImageDimensions() reads frame 0 as decoded NOW, which is at the
+    // playback size when the Analysis Resolution differs from Settings: the analysis session
+    // ended in analyzeAllFrames(), which flushes the decoded frames for the playback size.
+    let imageHeight = 0;
+    for (const entry of motionAnalyzer.resultCache.values()) {
+        if (entry?.imgHeight > 0) { imageHeight = entry.imgHeight; break; }
+    }
+    if (!imageHeight) imageHeight = motionAnalyzer.getImageDimensions().height;
 
-    const distanceNode = NodeMan.get("targetDistance", false);
-    const distance = distanceNode ? distanceNode.v(0) : 1000;
+    // The camera track the look camera follows: custom sitches, legacy jet sitches,
+    // data-driven sitches (the same pairs the Traverse Distance graphs use), then the
+    // custom camera sources geometricMetersPerPixel in CameraMotionFromVideo.js reads.
+    const cameraNode = NodeMan.get("cameraTrackSwitchSmooth", false)
+        ?? NodeMan.get("jetTrack", false)
+        ?? NodeMan.get("cameraTrack", false)
+        ?? NodeMan.get("fixedCameraPosition", false)
+        ?? NodeMan.get("flightSimCameraPosition", false);
 
-    const fovRadians = fovDegrees * Math.PI / 180;
-    const imageWidthMeters = 2 * distance * Math.tan(fovRadians / 2);
-    const metersPerPixel = imageWidthMeters / dims.width;
+    const scale = motionTrackScale({
+        fovNode: NodeMan.get("fovSwitch", false),
+        lookCamera: NodeMan.get("lookCamera", false),
+        originNode,
+        cameraNode,
+        imageHeight,
+    });
+    const metersPerPixel = scale.metersPerPixel;
 
     // Track creation wants a smooth curve: gap-fill interpolates over
     // low-quality frames so the synthesized velocity track stays continuous.
@@ -1374,7 +1395,8 @@ async function createTrackFromMotion() {
 
     setMenuItemLabel(createTrackMenuItem, "menu.createTrack.label");
     setRenderOne(true);
-    console.log(`Created motion track '${trackId}' from ${motionAnalyzer.resultCache.size} analyzed frames, ${metersPerPixel.toFixed(3)} m/px`);
+    console.log(`Created motion track '${trackId}' from ${motionAnalyzer.resultCache.size} analyzed frames, ${metersPerPixel.toFixed(3)} m/px`
+        + ` (vFOV ${scale.fovDegrees.toFixed(3)}° from ${scale.fovSource}; distance ${scale.distance.toFixed(1)} m from ${scale.distanceSource}; image height ${imageHeight} px)`);
 }
 
 async function exportMotionCSV() {
