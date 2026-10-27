@@ -86,7 +86,9 @@ FROM php:8.4-apache AS runtime
 # security repository even when the other build dependencies are already satisfied.
 # curl depends on exactly its own version of libcurl, which PHP's curl extension links,
 # so naming curl upgrades both without a release-specific library package name.
-RUN apt-get update && apt-get install -y linux-libc-dev curl libzip-dev libonig-dev libpng-dev libjpeg62-turbo-dev \
+# libbrotli1 (which libcurl links) is named for the same reason; it has had that
+# name in every Debian release since 2018.
+RUN apt-get update && apt-get install -y linux-libc-dev curl libbrotli1 libzip-dev libonig-dev libpng-dev libjpeg62-turbo-dev \
     python3 python3-pip \
     && docker-php-ext-configure gd --with-jpeg \
     && docker-php-ext-install zip mbstring iconv gd \

@@ -9,6 +9,49 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.183.6 (2026-10-26)
+
+### Improvements
+- **Peak search floor** (Video → Point Track → Frequency Analysis Settings → *Peak search floor (Hz)*): the frequency graph now labels the largest peak only at or above this frequency, so slow brightness drift no longer gets the label. The default is 0.5 Hz (30 a minute), and a dashed line on the graph shows it. The spectrum does not change, and the exported CSV records the floor. Set 0 to search as before. A saved sitch also gets 0.5 Hz, so a peak below 0.5 Hz that had the label before does not have it now.
+- An MP4 video that streams from a URL now shows its *Video Track Size* in Video → *Show EXIF/Metadata*, as a local MP4 file already did.
+
+### Bug Fixes
+- Fixed the line of sight of *Camera + Point Track* (Traverse → LOS Source) away from the center of the frame. Sitrec now calculates it in the same way as *Camera + Object Track* (Manual Tracking). Before, it was wrong by up to 1.4° at the corners of a 1920x1080 video with a 30° vertical field of view. A saved sitch that uses Camera + Point Track can give a slightly different traverse when the object is near the edges of the frame.
+- Fixed the line of sight of *Camera + Object Track* (Manual Tracking) on a video that is rotated by 90° or 270°, for example a portrait phone clip. The horizontal angles were wrong. A saved sitch with such a video can give a different traverse. Videos that are not rotated do not change.
+- Fixed *Create Track from Motion* (Video → Motion Analysis) always using a field of view of 30° and a distance of 1000 m. It now uses the sitch's vertical field of view and the distance from the camera to the position the track starts from, and it now works in a custom sitch. The browser console shows the scale and where its values came from.
+- Fixed *Optical Flow* (Video → Point Track) recording the last position again on a frame where it had nothing to follow. That frame is now marked as missing.
+- Fixed Point Track settings that you change before *Enable Point Track* going back to their old values: *Track Radius*, *Search Radius*, *Feature Size*, *Use Mask*, *Brightness Threshold*, *Tracking Color* and *Color Distance*.
+- Fixed Point Track and Motion Analysis messages, such as *No origin track found*, opening as browser alerts. They now open in Sitrec's error dialog.
+- Fixed *Camera Motion (Background)* (Video) restoring the camera path of a different video with the same file name. Sitrec now uses a stored path only for a video with the same file name and number of frames, and, for an MP4 file, the same video track size. A path stored by an earlier version is not used: analyze the video again.
+- Fixed *Set Camera on Ground* and *Set Target on Ground* (right-click on the ground), *Use Relative Altitude* (Camera → Location) and the eye-level camera command of the AI Assistant putting the camera or target too high when *Above Ground Level* is on.
+- Fixed Sitrec not loading when the *sitch=* URL parameter names a sitch that does not exist, or when *datetime=* is not a valid date. Sitrec now shows an error, and opens the default sitch or keeps the sitch's own start time.
+- Fixed Sitrec not loading when the login check at startup fails. Sitrec now continues as logged out and shows "Could not check your login. Reload the page to try again." over the main view.
+- Fixed choosing a sitch while another sitch is still loading. The new sitch now waits for the first one, and if you choose more than one, only the last one loads. Before, two sitches could set up at the same time.
+- Fixed changing to another sitch on phones and tablets.
+- Fixed an error on every frame when *Show Moon's Shadow* is on during a lunar eclipse.
+- Fixed *Video Format Effects* (Effects) causing an error on every frame on a device whose graphics cannot run them. They now switch off, with a message.
+- Fixed Sitrec staying in the loading state when a late step of loading a saved sitch fails. Sitrec now continues with what loaded and shows "This sitch did not fully load. Saving it now may lose parts of it." over the main view.
+- Fixed video decoding that could hang, retry without end or use more and more memory. Stabilized playback now keeps only the last 8 frames in memory. A video that the browser cannot decode, for example an HEVC .mov file in Firefox, now goes to the software decoder, or to the "decode failed" message, at once. A dropped video file that cannot be read now shows that error, not a "corrupt MP4" error later.
+- Fixed track import when Sitrec moves the sitch start to the closest approach of two tracks. It now compares the new track with the first imported track that has times. Before, a synthetic or balloon track first made the import fail, and a sounding first moved the start to a time with no meaning. When the two tracks have no time in common, the start does not change.
+- Fixed importing a track whose first points have no position, for example before the GPS had a fix.
+- Fixed KML import: a style that sets only the line width or the fill keeps its color, every shape of a multi-part placemark is imported with the style and name of that placemark, and a shape whose style turns off the fill draws no fill.
+- Fixed DJI subtitle (SRT) files with a value such as "[iso : 100]" failing to import. Blocks with no position are now skipped.
+- Fixed an incomplete or damaged NITF file leaving Sitrec blocked behind its progress display. Sitrec now shows an error.
+- Fixed *Custom Az/El* (Camera Heading) and headings from a file giving a broken camera during playback. Also fixed MQ9 Tracking actions (Camera → MQ9 Tracking) that you gave after playback not running.
+- Fixed *Save Local As...* (File → Local) into a new folder not copying the sitch's local files, such as its video, into that folder. The saved sitch referred to files that were not there.
+- Fixed the sitch browser (File → Server → Open) deleting your labels on the server after it failed to read them. Until the labels are read, label changes are now refused with a message.
+- Fixed saving a version of a sitch whose name has a dot, for example "Mt. Shasta", on a server that keeps files on its own disk. The saved version could not be opened. Servers with S3 storage were not affected.
+
+### Security
+- The server now refuses uploads of file types that a browser can open as a page with scripts, for example SVG, XHTML and XSLT, and it checks every extension in a file name. An HTML sounding from the University of Wyoming, which Sitrec uploads itself, is stored as a text file, and Sitrec still reads it. The Docker image also tells the browser not to run scripts in an uploaded or cached file that is opened as a page. Before, on a server that keeps uploads on its own disk, an uploaded HTML or SVG file could run a script on the Sitrec site.
+- The server's visit records, daily statistics and menu click logs hold user IDs and IP addresses. They were kept in folders that the web server makes public. They are now in a private folder, and existing files move there automatically.
+- Sitrec's server no longer sends the password of a password-protected Sitrec site (HTTP Basic authentication) to the other sites it gets data from, such as satellite and aircraft data services.
+- A changed request header can no longer get around the request limits of the ADS-B Exchange and FlySFO data proxies, and the limits now count only requests that go to the outside service. The wind data service now refuses incorrect dates and levels, runs at most 4 downloads at the same time, and limits downloads from each address, so a flood of requests cannot stop the server.
+- A sitch opened from a link can now set only the display options that Sitrec saves with a sitch. Before, a crafted sitch could replace your Sitrec settings, which Sitrec then saved to your account the next time it saved settings.
+- The AI Assistant can no longer put a web address into a menu control, for example a ground overlay's *Image URL*, which makes Sitrec load data from that address. Text with a colon, such as "Plane: N123", is accepted. The WebMCP site tools refused such text before, and now accept it. A very long value no longer freezes the page while Sitrec checks it.
+- The standalone server now accepts connections only from the computer it runs on. Before, any computer that could reach it was treated as the administrator and could read the server's API keys. The installation documentation tells how to open it to a trusted network.
+- The Docker image now installs a patched version of the Brotli compression library, which the server's curl library uses. This fixes one security advisory rated high. There is no change to how the app behaves.
+
 ## Version 2.183.5 (2026-10-23)
 
 ### Improvements
