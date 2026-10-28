@@ -50,6 +50,7 @@ import {requestCameraFocusSync} from "./CameraFocusUI";
 import {isKeyHeld, toggler} from "./KeyBoardHandler";
 import {registerMirrorSource, syncMirroredSource} from "./MenuMirror";
 import {LayoutMan} from "./CLayoutManager";
+import {placeVideoInset} from "./VideoInsetLayout";
 import {ECEFToLLAVD_radii, LLAToECEF} from "./LLA-ECEF-ENU";
 import {par} from "./par";
 import {GlobalScene} from "./LocalFrame";
@@ -1670,11 +1671,17 @@ export class CCustomManager {
                 }
             }
 
-            // The secondary video view only appears in the two-video preset.
-            // Any preset that doesn't mention it should hide it, so an empty
-            // video2 box doesn't linger over another view after switching back.
+            // Only the two-video preset places the secondary video view. Every other preset
+            // shows it as an inset over the main (or look) view while it holds media, so it
+            // stays in sight through the presets, and hides it when empty, so an empty video2
+            // box doesn't linger over another view.
             if (NodeMan.exists("video2") && preset.video2 === undefined) {
-                NodeMan.get("video2").setVisible(false);
+                const video2 = NodeMan.get("video2");
+                if (video2.videoData) {
+                    placeVideoInset(video2, ViewMan);
+                } else {
+                    video2.setVisible(false);
+                }
             }
 
             forceUpdateUIText();

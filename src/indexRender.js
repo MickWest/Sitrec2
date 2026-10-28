@@ -40,6 +40,7 @@ import {isKeyHeld} from "./KeyBoardHandler";
 import {updateLockTrack} from "./updateLockTrack";
 import {assert} from "./assert";
 import {updateSize} from "./JetStuff";
+import {updateVideoInsets} from "./VideoInsetLayout";
 
 export function windowChanged() {
     updateSize();
@@ -484,6 +485,7 @@ export function renderMain(elapsed) {
     // render each viewport
     if (globalProfiler) globalProfiler.push('#2ca02c', 'Viewports');
     
+    updateVideoInsets(ViewMan);
     ViewMan.updateZOrder();
     ViewMan.computeEffectiveVisibility();
     ViewMan.updateDOMVisibility();

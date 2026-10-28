@@ -22,10 +22,20 @@ same thing through a file picker.
 
 | Choice | What it does |
 |---|---|
-| **Second Video View** | Show the new video side by side in the second video view. Only offered when the sitch has a second video view |
+| **Side-by-Side Videos** | Show the new video in the second video view, with the two videos side by side (the **Two videos** view preset). Only offered when the sitch has a second video view |
+| **Extra Video View** | Show the new video in the second video view, as a smaller view over the main view. The view preset does not change. Only offered when the sitch has a second video view |
 | **Add to Video View** | Keep both videos in the same view. A **Video → Current Video** selector appears, so you can switch between them |
 | **Replace Video** | Remove the current video and use the new one |
 | **Cancel** | Do not import the video |
+
+While the second video view holds a video or image, every view preset except **Two videos**
+shows it as a smaller view over the main view, so it stays visible when you change presets.
+It keeps the video's shape, its longer side is 75% of the main view's shorter side, and it is
+in the main view's bottom-right corner. If the main view is hidden, it goes over the look view
+in the same way. If both are hidden, it is in the middle of the screen, at up to 30% of the
+screen's width and height. It stays there when you resize the window or the main view, or
+load another video into it. To move or resize it, hold **Q** and drag; after that it stays
+where you put it.
 
 A video in the second view does not define the sitch timeline. Its menu entries have
 **(2)** after the name. **Video → Lock to In Frame (2)** plays it relative to the In frame
@@ -85,7 +95,8 @@ goes:
 
 | Choice | What it does |
 |---|---|
-| **Second Video View** | Show the image side by side with the video, in the second video view |
+| **Side-by-Side Videos** | Show the image side by side with the video, in the second video view |
+| **Extra Video View** | Show the image in the second video view, as a smaller view over the main view |
 | **Add to Video View** | Keep both in the video view. A **Video → Current Video** selector appears, so you can switch between them |
 | **Replace Video** | Remove the current video and use the image |
 | **Cancel** | Do not import the image |

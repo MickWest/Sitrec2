@@ -87,6 +87,18 @@ test("interactive side-by-side import still uses the second view", async () => {
     expect(primary.disposeAllVideos).not.toHaveBeenCalled();
 });
 
+test("interactive Extra Video View import uses the second view as an inset", async () => {
+    showChoice.mockResolvedValue("extraView");
+    jest.spyOn(DragDropHandler, "revealExtraVideoView").mockImplementation(() => {});
+    jest.spyOn(DragDropHandler, "revealSecondVideoView").mockImplementation(() => {});
+    const file = video();
+    await DragDropHandler.importDroppedFile(file);
+    expect(secondary.uploadFile).toHaveBeenCalledWith(file);
+    expect(DragDropHandler.revealExtraVideoView).toHaveBeenCalledTimes(1);
+    expect(DragDropHandler.revealSecondVideoView).not.toHaveBeenCalled();
+    expect(primary.uploadFile).not.toHaveBeenCalled();
+});
+
 test.each([false, true])("filename collisions outside replaceVideo video imports remain interactive (replaceVideo=%s)", async replaceVideo => {
     FileManager.exists = () => true;
     showChoice.mockResolvedValue(null);

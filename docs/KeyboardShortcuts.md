@@ -71,7 +71,9 @@ the view.
 | `7` | Video + look, vertical |
 | `8` | Two videos |
 
-The same presets are in the **View** menu, so you can see which one you are on.
+The same presets are in the **View** menu, so you can see which one you are on. While the
+second video view holds a video or image, each preset except **Two videos** shows it as a
+smaller view over the main view (see [Loading Video](LoadingVideo.md)).
 
 ## Placing things in the world
 

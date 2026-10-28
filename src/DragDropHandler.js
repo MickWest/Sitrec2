@@ -13,6 +13,7 @@ import {MP4_DEMUXER_EXTENSIONS, WEBAUDIO_SUPPORTED_EXTENSIONS} from "./AudioForm
 import {filesAreTrackImport, IMAGE_EXTENSIONS as DROPPABLE_IMAGE_EXTENSIONS,
     urlLooksDroppable} from "./DroppableTypes";
 import {ViewMan} from "./CViewManager";
+import {placeVideoInset} from "./VideoInsetLayout";
 import {quickFetch} from "./quickFetch";
 import {isResolvableSitrecReference, resolveURLForFetch} from "./SitrecObjectResolver";
 import {convertTiffBufferToBlobURL} from "./TIFFUtils";
@@ -84,14 +85,15 @@ class CDragDropHandler {
      * video view already has one. Lets the user choose where the new one goes.
      * @param {string} filename - The name of the dropped file
      * @param {boolean} [isImage=false] - True for an image; changes only the wording
-     * @returns {Promise<string>} Resolves 'secondView' | 'add' | 'replace', rejects if cancelled
+     * @returns {Promise<string>} Resolves 'secondView' | 'extraView' | 'add' | 'replace', rejects if cancelled
      */
     async showSecondVideoChoiceDialog(filename, isImage = false) {
         const media = isImage ? 'image' : 'video';
         const options = [];
-        // Only offer the side-by-side option when a secondary view exists.
+        // Only offer the second-view options when a secondary view exists.
         if (NodeMan.exists("video2")) {
-            options.push({label: 'Second Video View', description: `Show the new ${media} side by side in the second view.`, value: 'secondView', color: '#1976d2'});
+            options.push({label: 'Side-by-Side Videos', description: `Show the new ${media} side by side with the current video.`, value: 'secondView', color: '#1976d2'});
+            options.push({label: 'Extra Video View', description: `Show the new ${media} in a smaller view over the main view.`, value: 'extraView', color: '#7b1fa2'});
         }
         options.push({label: 'Add to Video View', description: isImage ? 'Keep both; switch between them with the selector.' : 'Keep both videos; switch between them with the selector.', value: 'add', primary: true, color: '#388e3c'});
         options.push({label: 'Replace Video', description: "Replace the Video view's current video with the new one.", value: 'replace', color: '#b8860b'});
@@ -752,8 +754,9 @@ class CDragDropHandler {
             }
 
             // A second (or later) video dropped while one is already loaded.
-            // Offer: load into the secondary side-by-side view, add it to the
-            // primary view (old stays selectable), or replace the primary video.
+            // Offer: load into the secondary view, side by side or as an inset over
+            // the main view, add it to the primary view (old stays selectable), or
+            // replace the primary video.
             let choice;
             try {
                 // A scripted import that asked for replaceVideo takes the same path
@@ -767,6 +770,9 @@ class CDragDropHandler {
             if (choice === "secondView" && NodeMan.exists("video2")) {
                 NodeMan.get("video2").uploadFile(file);
                 this.revealSecondVideoView();
+            } else if (choice === "extraView" && NodeMan.exists("video2")) {
+                NodeMan.get("video2").uploadFile(file);
+                this.revealExtraVideoView();
             } else if (choice === "add") {
                 // autoAdd: keep the existing video, add the new one, select it.
                 primary.uploadFile(file, true);
@@ -866,6 +872,17 @@ class CDragDropHandler {
     }
 
     /**
+     * Show the secondary video view as an inset over the main view, or the look view
+     * with no main view, or centred on the screen with neither (placeVideoInset).
+     * The view preset does not change. A video still loading gets its own shape when
+     * it has loaded (updateVideoInsets).
+     */
+    revealExtraVideoView() {
+        if (!NodeMan.exists("video2")) return;
+        placeVideoInset(NodeMan.get("video2"), ViewMan);
+    }
+
+    /**
      * Load an image file and set it as the video source
      * Also registers it with FileManager for persistence
      * @param {File} file - The image file
@@ -873,14 +890,15 @@ class CDragDropHandler {
     async loadImageAsVideoSource(file) {
         let videoNode = NodeMan.get("video");
         const hasExistingVideo = videoNode.videoData !== null && videoNode.videoData !== undefined;
-        let toSecondView = false;
+        // "secondView" or "extraView" when the image goes to video2.
+        let secondViewChoice = null;
 
         if (hasExistingVideo) {
             if (videoNode.alwaysReplace) {
                 videoNode.disposeAllVideos();
             } else {
                 // With a second video view, ask the same question as for a second
-                // dropped video, so the image can go side by side with the video.
+                // dropped video, so the image can go beside or over the video.
                 const action = NodeMan.exists("video2")
                     ? await this.showSecondVideoChoiceDialog(file.name, true).catch(() => "cancel")
                     : await videoNode.promptAddOrReplace();
@@ -888,9 +906,9 @@ class CDragDropHandler {
                     console.log("Image import cancelled by user: " + file.name);
                     return;
                 }
-                if (action === "secondView") {
+                if (action === "secondView" || action === "extraView") {
                     videoNode = NodeMan.get("video2");
-                    toSecondView = true;
+                    secondViewChoice = action;
                     // As uploadFile does for a video sent there, the second view asks
                     // add or replace for itself when it already holds media.
                     if (videoNode.videoData) {
@@ -910,8 +928,10 @@ class CDragDropHandler {
         }
 
         await this.loadImageIntoView(videoNode, file);
-        if (toSecondView) {
+        if (secondViewChoice === "secondView") {
             this.revealSecondVideoView();
+        } else if (secondViewChoice === "extraView") {
+            this.revealExtraVideoView();
         }
     }
 

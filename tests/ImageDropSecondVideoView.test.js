@@ -31,6 +31,7 @@ beforeEach(() => {
     URL.createObjectURL = jest.fn(() => "blob:image-test");
     showChoice.mockReset();
     jest.spyOn(DragDropHandler, "revealSecondVideoView").mockImplementation(() => {});
+    jest.spyOn(DragDropHandler, "revealExtraVideoView").mockImplementation(() => {});
 });
 afterEach(() => {
     setFileManager(previous.fileManager);
@@ -64,7 +65,7 @@ describe("an image dropped while a video is loaded", () => {
 
         expect(showChoice.mock.calls.map(call => call[1].title)).toEqual(["Import Image", "Second Video"]);
         const offered = showChoice.mock.calls[1][1].options.map(option => option.value);
-        expect(offered).toEqual(["secondView", "add", "replace", null]);
+        expect(offered).toEqual(["secondView", "extraView", "add", "replace", null]);
         expect(showChoice.mock.calls[1][0]).toContain("frame.png");
 
         expect(secondary.makeImageVideo).toHaveBeenCalledTimes(1);
@@ -78,6 +79,17 @@ describe("an image dropped while a video is loaded", () => {
         // Registered for saving like an image in the main view.
         expect(FileManager.list["frame.png"]).toMatchObject({dataType: "videoImage", dynamicLink: true, handled: true});
         expect(Globals.sitchDirty).toBe(true);
+    });
+
+    test("choosing Extra Video View shows the image in the second view as an inset", async () => {
+        await drop("video", "extraView");
+        expect(secondary.makeImageVideo).toHaveBeenCalledTimes(1);
+        expect(primary.makeImageVideo).not.toHaveBeenCalled();
+        // After the load, so the inset takes the image's shape at once.
+        expect(DragDropHandler.revealExtraVideoView).toHaveBeenCalledTimes(1);
+        expect(DragDropHandler.revealExtraVideoView.mock.invocationCallOrder[0])
+            .toBeGreaterThan(secondary.makeImageVideo.mock.invocationCallOrder[0]);
+        expect(DragDropHandler.revealSecondVideoView).not.toHaveBeenCalled();
     });
 
     test("asks add or replace for the second view when it already holds media", async () => {
