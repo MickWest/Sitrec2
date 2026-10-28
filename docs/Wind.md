@@ -116,6 +116,8 @@ To use a file, drag the `.xml` file onto the page, or use **File ▸ Import File
 
 Sitrec reads one position and one profile from a file. Wind direction is taken as degrees true. If the file has no time (or no time setting), the profile takes the start time of the sitch. If a file does nothing when you drop it, open the browser console. A layout with an unknown unit or a missing setting is reported there by name, and so is a file that was identified as a layout but has no position and levels where the settings say they are. If the console has neither message, no layout identified the file: check the two lists against the file.
 
+**Sounding arrows.** While the wind field shows, each loaded sounding has one arrow at the wind altitude. The arrow is at the balloon's position at that altitude and points in the direction that the wind blows to. A pink arrow is a sounding that the current **Wind Source** uses. A gray arrow is a sounding that it does not use: for example, an XML file or an IGRA2 sounding when the source is **UWYO Soundings**, or every sounding when the source is **GFS**. **Manual Soundings** uses every loaded sounding.
+
 **Selecting GFS, UWYO, IGRA2, Manual Soundings or a Track: source for the first time** auto-toggles **Show Wind Lines** on once and triggers the data load — both happen in one step, so the streamlines appear as soon as the data arrives. If you turn the lines off explicitly, that auto-show won't fire again for that source in the same session.
 
 ### Separate Wind Sources

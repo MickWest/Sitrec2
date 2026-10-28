@@ -9,6 +9,38 @@ lockstep with docs/WhatsNew.md.
 
 ---
 
+## Version 2.183.9 (2026-10-28)
+
+A small feature release. A video or image in the second video view now stays in sight, as a smaller view, in every view preset except `TwoVideos`, and a new drop choice, *Extra Video View*, shows it that way. The wind arrow of each loaded sounding is now pink only when the current Wind Source uses that sounding. There is no 2.183.8 entry: 2.183.8 was a Beta only, and its one change, the sounding arrow colors, is described here. The new and changed tests are not described.
+
+### New Features
+- **Extra Video View: a drop choice that shows the new video or image as an inset** — the *Second Video* dialog (`a7141376`; `src/DragDropHandler.js` `showSecondVideoChoiceDialog`, `importDroppedFile`, `loadImageAsVideoSource`, new `revealExtraVideoView`; new `src/VideoInsetLayout.js` `placeVideoInset`; `docs/LoadingVideo.md`; tests `VideoDropReplacement`, `ImageDropSecondVideoView`).
+  - **Dialog.** In a sitch with a `video2` view, the *Second Video* dialog now has two second-view choices. It shows when a video is dropped, or an image is used as a *Video Image*, while the Video view already has media. The side-by-side choice (value `secondView`) changes its name from *Second Video View* to *Side-by-Side Videos*. Its description is now *Show the new video side by side with the current video.* (image wording for an image). The new choice *Extra Video View* (value `extraView`) has the description *Show the new video in a smaller view over the main view.* The order is now *Side-by-Side Videos*, *Extra Video View*, *Add to Video View*, *Replace Video*, *Cancel*. The labels are literal strings in `DragDropHandler.js`, not i18n keys. A sitch without `video2` does not get either second-view choice, as before.
+  - **Action.** For a video, `importDroppedFile` calls `video2.uploadFile(file)` and then `revealExtraVideoView()`. For an image, `loadImageAsVideoSource` first loads the image into `video2` (`loadImageIntoView`) and then calls `revealExtraVideoView()`, so the inset takes the image's shape at once. `revealExtraVideoView` only calls `placeVideoInset(video2, ViewMan)`. Unlike `revealSecondVideoView`, it does not set `CustomManager.currentViewPreset` to `TwoVideos`, so the view preset does not change. If the video's size is not known yet, the inset uses 16:9 and is fitted again when the size is known (`updateVideoInsets`, below). The placement rules are in the next entry.
+
+### Improvements
+- **The second video view stays in sight in every view preset** — View → *View Preset*, keys 1–8 (`a7141376`; `src/CustomSupport.js` `updateViewFromPreset`; new `src/VideoInsetLayout.js` `computeVideoInsetRect`, `insetHostView`, `placeVideoInset`, `updateVideoInsets`, `INSET_HOST_FRACTION`, `INSET_SCREEN_FRACTION`, `INSET_MARGIN_PX`; `src/indexRender.js` `renderMain`; `docs/LoadingVideo.md`, `docs/KeyboardShortcuts.md`; test `VideoInsetLayout`).
+  - **Before.** `updateViewFromPreset` hid `video2` for every preset that has no `video2` entry. That is every preset except `TwoVideos` (key 8). A video or image in the second view therefore went out of sight when the user changed preset, for example after a side-by-side drop.
+  - **Now.** For such a preset, `video2` is hidden only when it has no media (`videoData` not set). When it has media, `placeVideoInset(video2, ViewMan)` shows it as an inset. `TwoVideos` still places `video2` itself, on the right half of the screen.
+  - **Placement** (`computeVideoInsetRect`). The host is the first visible view of `mainView`, `lookView` (`insetHostView`). It skips a view that another view's fullscreen hides (`ViewMan.fullscreenSuppressed`). The inset keeps the video's aspect ratio, or 16:9 when the size is not known. Its longer side is `INSET_HOST_FRACTION` (0.75) of the host's shorter side. It sits `INSET_MARGIN_PX` (10 px) in from the host's bottom-right corner, and it does not go past the host's left or top edge. In `VideoLookHorizontal` and `VideoLookVertical` (keys 6 and 7), `mainView` is hidden, so the inset goes over the look view. With no host, the inset is centered on the screen and fitted into `INSET_SCREEN_FRACTION` (30%) of the screen's width and height. The rect uses the aspect-locked encoding (negative `height`, `heightPx = widthPx × -height`, see `CNodeView.updateWH`). Because of this, `CLayoutManager` leaves the inset out of its shared-edge seams.
+  - **Fitting** (`updateVideoInsets`). `renderMain` calls it every frame, before `ViewMan.updateZOrder`. `placeVideoInset` stores `view.insetAnchor = {rect, state}`, where the state is:
+    - the container size
+    - the host id
+    - the host rect (from its pixel size when the host's width or height is aspect-locked)
+    - the video's size
+
+    When any of these changes, the inset is placed again. This happens on a window resize, when the host is resized or a different view becomes the host, and when a video of a different size loads. The anchor is cleared, and the view left alone, in two conditions: the view is hidden, or it no longer has the rect it was given (the user moved or resized it, or a preset such as `TwoVideos` placed it). So a load that ends after the user chose `TwoVideos` cannot put `video2` back into the inset.
+- **Sounding arrows show which soundings the Wind Source uses** — Physics → Wind → *Wind Source* (working-tree change; `src/nodes/CNodeDisplayWindField.js` `preRender`; `docs/Wind.md` "Sounding arrows").
+  - **Before.** While the wind field shows (`CNodeDisplayWindField.visible`, the Show/Hide *Wind Field* entry), `_updateSondeWindArrows` gives every loaded `CNodeAtmosphericProfile` one arrow (`sondeWindAtAlt_<id>`, 100 px on screen). The arrow is at the balloon's position at the wind altitude and points where the wind blows to. `preRender` drew every arrow pink (`#ff66ff`), so a profile that the field did not use looked like part of the field.
+  - **Now.** `preRender` gets the profiles of `this._soundingSet()` for the current `source`. That is the *Wind Source* dropdown, or *Target Wind Source* when *Separate Wind Sources* is on. An arrow is pink when its `profileId` is in that set and gray (`#a0a0a0`) when it is not. Each source uses these profiles:
+    - *UWYO Soundings* or *IGRA2 Soundings*: only the profiles from that source (`_gatherSondeProfiles("uwyo"|"igra2")`).
+    - *Manual Soundings*: every loaded profile.
+    - The *Track:* entry of a sounding track: that one profile.
+    - Every other source, for example *GFS (NOAA)*, open-meteo, *Manual* or the *Track:* entry of a telemetry track: no sounding set, so every arrow is gray.
+
+    Every loaded sounding still gets an arrow.
+  - **Where the test runs.** The color is decided at each render, against the source selected now. It is not decided in `rebuildStreamlines()`, because a source change whose data load fails never gets to `rebuildStreamlines()`. `preRender` also skips the arrow loop when there are no arrows (`_sondeArrows?.size`).
+
 ## Version 2.183.7 (2026-10-27)
 
 A small feature and bug-fix release. It adds satellites to the Add Measurement dialog, with a filter box for long lists. It changes when Sitrec counts a map or elevation service as unavailable, and a map that fell back now changes back by itself when its service answers again. The new tests are not described.

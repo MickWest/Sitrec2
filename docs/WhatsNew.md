@@ -9,6 +9,15 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.183.9 (2026-10-28)
+
+### New Features
+- **Extra Video View** (the *Second Video* dialog): in a sitch with a second video view, when you drop a video, or an image as a *Video Image*, while a video is loaded, a new choice shows it in the second video view as a smaller view over the main view, without a change to the view preset. The side-by-side choice, before called *Second Video View*, is now called *Side-by-Side Videos*.
+
+### Improvements
+- **Second video in every view preset** (View → *View Preset*): a video or image in the second video view now stays in sight in every preset except *Two videos* (key 8). Before, these presets hid it. It is a smaller view in the bottom-right corner of the main view, with the video's shape, and its longer side is 75% of the main view's shorter side. If the main view is hidden, it goes over the look view. If both are hidden, it is in the middle of the screen, at up to 30% of the screen's width and height. It stays fitted when you resize the window or the main view, or load another video into it. If you move or resize it, it stays where you put it.
+- **Sounding arrows show which soundings are used** (Physics → Wind → *Wind Source*): while the wind field shows, the arrow of a loaded sounding is now pink when the current Wind Source uses that sounding, and gray when it does not. For example, with *UWYO Soundings* an IGRA2 sounding or an XML wind profile is gray, and with *GFS (NOAA)* every sounding is gray. *Manual Soundings* uses every loaded sounding. Before, every arrow was pink.
+
 ## Version 2.183.7 (2026-10-27)
 
 ### New Features

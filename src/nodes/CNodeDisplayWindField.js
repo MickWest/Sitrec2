@@ -532,11 +532,19 @@ export class CNodeDisplayWindField extends CNode3DGroup {
     preRender(view) {
         if (view.pixelsToMeters) {
             const PX = 100; // arrow length in screen pixels
-            if (this._sondeArrows) {
+            if (this._sondeArrows?.size) {
+                // Every loaded sonde gets an arrow, but only the current
+                // source's set (_soundingSet) shapes the field; the others are
+                // gray, so an unused profile (an XML file under UWYO, any sonde
+                // under GFS) does not look like part of the field. Tested here,
+                // against the source selected NOW, because a source change
+                // whose load fails never reaches rebuildStreamlines().
+                const inUse = new Set((this._soundingSet()?.profiles ?? []).map(p => p.id));
                 for (const [name, entry] of this._sondeArrows) {
                     const lengthM = view.pixelsToMeters(entry.start, PX);
                     _scratchEnd.copy(entry.start).addScaledVector(entry.dir, lengthM);
-                    DebugArrowAB(name, entry.start, _scratchEnd, "#ff66ff", true,
+                    DebugArrowAB(name, entry.start, _scratchEnd,
+                        inUse.has(entry.profileId) ? "#ff66ff" : "#a0a0a0", true,
                         this.group, 50, LAYER.MASK_HELPERS);
                 }
             }
