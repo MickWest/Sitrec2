@@ -649,7 +649,7 @@ export class CNodeTerrainUI extends CNode {
         this.oldElevationScale = this.elevationScale;
 
 
-        this.mapTypeMenu.onChange(v => this.onMapTypeChanged(v));
+        this.mapTypeMenu.onChange(v => this.onMapTypeMenuChanged(v));
 
         this.debugElevationGrid = false;
 
@@ -997,17 +997,23 @@ export class CNodeTerrainUI extends CNode {
         this.updateAttribution();
 
         // Register fallback callbacks for when internet services become unavailable.
+        // ServiceAvailability is a singleton, so dispose() removes them again
+        // ([serviceName, callback] pairs).
+        this._serviceCallbacks = [];
         // Elevation: switch to "Flat" if the elevation service goes down
-        ServiceAvailability.onUnavailable("aws", () => {
+        const elevationFallback = () => {
             if (this.elevationType !== "Flat" && this.elevationSources["Flat"]) {
                 this.elevationType = "Flat";
                 this.terrainNode.reloadMap(this.mapType);
                 this.updateAttribution();
             }
-        });
+        };
+        ServiceAvailability.onUnavailable("aws", elevationFallback);
+        this._serviceCallbacks.push(["aws", elevationFallback]);
 
-        // Map textures: switch to an offline fallback if map services go down
-        const mapFallback = (serviceName) => {
+        // Map textures: switch to an offline fallback if map services go down,
+        // and back again when the service answers.
+        const mapFallback = (serviceName, failedUrl) => {
             // Only switch if we're currently using a source that depends on this service
             const currentDef = this.mapSources[this.mapType];
             if (!currentDef) return;
@@ -1018,6 +1024,9 @@ export class CNodeTerrainUI extends CNode {
                 if (sampleUrl && identifyServiceFromUrl(sampleUrl) === serviceName) {
                     const fallbackType = this.mapSources["NoClouds"] ? "NoClouds"
                         : this.mapSources["FlatShading"] ? "FlatShading" : "Debug";
+                    // Probe the tile that failed, not the sample: a CDN can still
+                    // serve a cached zoom-0 tile while its origin is down.
+                    this.watchMapRecovery(this.mapType, fallbackType, failedUrl ?? sampleUrl);
                     this.mapType = fallbackType;
                     this.setMapType(fallbackType).then(() => {
                         this.terrainNode.loadMapTexture(fallbackType);
@@ -1028,8 +1037,46 @@ export class CNodeTerrainUI extends CNode {
         };
         for (const svcName of ["mapbox", "maptiler", "osm", "eox", "esri"]) {
             ServiceAvailability.onUnavailable(svcName, mapFallback);
+            this._serviceCallbacks.push([svcName, mapFallback]);
         }
 
+    }
+
+    // After the map fell back from fromType to toType because its service went
+    // down, ask the service for probeUrl once a minute. When it answers, go back
+    // to fromType, unless the map is no longer the fallback. A map the user
+    // picks stops the watch (see onMapTypeMenuChanged).
+    watchMapRecovery(fromType, toType, probeUrl) {
+        this.stopMapRecoveryWatch();
+        this._stopMapRecovery = ServiceAvailability.watchRecovery(probeUrl, () => {
+            this._stopMapRecovery = null;
+            if (this.mapType !== toType || !this.mapSources[fromType]) return;
+            // Flat Earth locks out per-tile-billed maps (setPaidProvidersLocked).
+            // Leave the map to the lock, whose unlock brings it back.
+            if (this._paidProvidersLocked && isPaidTileSource(this.mapSources[fromType])) {
+                if (this._paidLockRestore && !this._paidLockRestore.mapType) {
+                    this._paidLockRestore.mapType = fromType;
+                }
+                return;
+            }
+            console.log(`Map service answers again; switching the map back to ${fromType}`);
+            // Tiles that failed during the outage are not bad tiles.
+            badTextureUrls.clear();
+            this.mapType = fromType;
+            this.onMapTypeChanged(fromType);
+        });
+    }
+
+    stopMapRecoveryWatch() {
+        this._stopMapRecovery?.();
+        this._stopMapRecovery = null;
+    }
+
+    // The map dropdown's onChange: the user chose a map, so an automatic
+    // switch back from a fallback must not override it.
+    onMapTypeMenuChanged(v) {
+        this.stopMapRecoveryWatch();
+        this.onMapTypeChanged(v);
     }
 
     // Shared handler for an elevation-source change (the dropdown's onChange and
@@ -1077,7 +1124,7 @@ export class CNodeTerrainUI extends CNode {
                 .listen()
                 .name(t("terrainUI.mapType.label"))
                 .tooltip(t("terrainUI.mapType.tooltip"));
-            this.mapTypeMenu.onChange(v => this.onMapTypeChanged(v));
+            this.mapTypeMenu.onChange(v => this.onMapTypeMenuChanged(v));
         }
     }
 
@@ -1986,6 +2033,11 @@ export class CNodeTerrainUI extends CNode {
     // but if the terrain is being removed, then we assume the GUI is too
     // this might not be the case, in the future
     dispose() {
+        this.stopMapRecoveryWatch();
+        for (const [serviceName, callback] of this._serviceCallbacks ?? []) {
+            ServiceAvailability.offUnavailable(serviceName, callback);
+        }
+        this._serviceCallbacks = [];
         if (this.buildingsNode) {
             NodeMan.disposeRemove(this.buildingsNode);
             this.buildingsNode = null;
@@ -2055,8 +2107,7 @@ export class CNodeTerrainUI extends CNode {
         this.log("Refreshing terrain")
         assert(this.terrainNode.maps[this.mapType].map !== undefined, "Terrain map not defined when trying the set startLoading")
 
-        // Refresh is the recovery gesture the ServiceAvailability error message
-        // advertises. The dynamic branch clears these inside reloadMap(), but the
+        // Refresh is the user's "try again". The dynamic branch clears these inside reloadMap(), but the
         // non-dynamic branch (startLoading → recalculate) bypasses reloadMap, so
         // clear here too: forget per-URL failures and re-close the service
         // circuit breaker (which can never self-heal — while tripped, its

@@ -3597,7 +3597,7 @@ const en = {
     measurements: {
         add: {
             label: "Add Measurement",
-            tooltip: "Measure the altitude of something, or the distance between two things: the camera, the traverse, a track, a 3D object, a pin or a building",
+            tooltip: "Measure the altitude of something, or the distance between two things: the camera, the traverse, a track, a satellite, a 3D object, a pin or a building",
         },
         entry: {
             tooltip: "Click to change, hide or delete this measurement",
@@ -3611,6 +3611,7 @@ const en = {
             camera: "Camera",
             traverse: "Traverse",
             track: "Track",
+            satellite: "Satellite",
             object: "3D Object",
             pin: "Pin",
             building: "Building",
@@ -3628,6 +3629,8 @@ const en = {
             point: "Measure the altitude of",
             nothingToPick: "There is nothing else in this sitch to measure to",
             missing: "{{id}} (not found)",
+            filterPlaceholder: "Type a name or number to filter the list",
+            moreItems: "{{count}} more. Type in the box above to find them.",
             label: "Label",
             labelPlaceholder: "Optional text shown above the value",
             color: "Color",

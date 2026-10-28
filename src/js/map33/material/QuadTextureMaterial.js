@@ -3,6 +3,7 @@ import {createTerrainDayNightMaterial} from "./TerrainDayNightMaterial";
 import {TileUsageTracker} from "../../../TileUsageTracker";
 import {ServiceAvailability} from "../../../ServiceAvailability";
 import {badTextureUrls} from "../../../QuadTreeTileCache";
+import {OSM_TILE_URL_PATTERN, tileFetchOptions} from "../../../tileFetchOptions";
 
 function logNetwork(url, status) {
     // if (Globals.regression) {
@@ -15,7 +16,6 @@ function logNetwork(url, status) {
 const requestQueue = [];
 let activeRequests = 0;
 const MAX_CONCURRENT_REQUESTS = 5;
-const OSM_TILE_URL_PATTERN = /^https:\/\/(?:[abc]\.)?tile\.openstreetmap\.org\//i;
 
 // ESRI World Imagery's "Map Data Not Yet Available" placeholder tile is
 // returned with HTTP 200 OK for any tile beyond the available zoom level
@@ -110,13 +110,8 @@ export function loadTextureWithRetries(url, maxRetries = 0, delay = 100, current
       const currentUrl = url[urlIndex];
       logNetwork(currentUrl, 'pending');
 
-      // Mapbox token restrictions and OSM's tile policy require the app origin.
-      // Limit this exception to those hosts; never send the page path/query.
-      // Keep default browser caching and identification (no custom headers).
-      const fetchOptions = {signal: abortSignal ?? undefined};
-      if (/^https:\/\/api\.mapbox\.com\//.test(currentUrl) || OSM_TILE_URL_PATTERN.test(currentUrl)) {
-        fetchOptions.referrerPolicy = 'strict-origin';
-      }
+      // The referrer rule for Mapbox and OSM is in tileFetchOptions.js.
+      const fetchOptions = {signal: abortSignal ?? undefined, ...tileFetchOptions(currentUrl)};
       fetch(currentUrl, fetchOptions)
         .then(response => {
           if (abortSignal?.aborted) throw new Error('Aborted');

@@ -5,8 +5,9 @@
 // serialization as the sitch's `measurements` block.
 //
 // A measurement is the altitude of one point, or the distance between two. A point is a
-// {kind, id} reference to something in the sitch — the camera, the traverse, a track, a 3D
-// object, a pin or a building — resolved to a position every frame by resolvePosition().
+// {kind, id} reference to something in the sitch — the camera, the traverse, a track, a
+// satellite, a 3D object, a pin or a building — resolved to a position every frame by
+// resolvePosition().
 //
 // Custom sitches only. A fresh custom sitch gets the three defaults that SitCustom.js used to
 // define as nodes (camera altitude, traverse altitude, camera-to-traverse distance). An old save
@@ -16,10 +17,12 @@
 // Lifecycle: setup() runs once per custom sitch load (from CustomManager). disposeAll() runs on
 // each reload, after NodeMan.disposeAll() has already disposed the nodes.
 
-import {Globals, guiMenus, NodeMan, setRenderOne, Sit, Synth3DManager, TrackManager} from "./Globals";
+import {GlobalDateTimeNode, Globals, guiMenus, NodeMan, setRenderOne, Sit, Synth3DManager, TrackManager} from "./Globals";
 import {FeatureManager} from "./CFeatureManager";
 import {CNodeMeasurement, setupMeasurementUI} from "./nodes/CNodeLabels3D";
 import {CNode3DObject, shortObjectName} from "./nodes/CNode3DObject";
+import {CNodeSatelliteTrack} from "./nodes/CNodeSatelliteTrack";
+import {bestSat} from "./TLEUtils";
 import {applyMeasurementDialog, closeMeasurementDialog, openMeasurementDialog, setMeasurementDialogShow} from "./MeasurementDialog";
 import {V3} from "./threeUtils";
 import {t} from "./i18n";
@@ -29,9 +32,14 @@ import {DISPLAY_NAME_CHANGED} from "./DisplayName";
 // The kinds of thing a measurement can point at, in the order the dialog shows them.
 // "node" is only for an old save whose measurement used some other node id; the dialog shows
 // it only while a measurement still points at one.
-export const MEASUREMENT_SOURCE_KINDS = ["camera", "traverse", "track", "object", "pin", "building", "node"];
+export const MEASUREMENT_SOURCE_KINDS = ["camera", "traverse", "track", "satellite", "object", "pin", "building", "node"];
 
 const DEFAULT_COLOR = "#00ff00";
+
+// A "satellite" source is either a Satellite to Track node (its node id) or a satellite in the
+// loaded orbital data (this prefix and its NORAD number). The prefix keeps the two apart: a bare
+// number could also be some node's id.
+const NORAD_PREFIX = "norad:";
 
 const CAMERA = {kind: "camera", id: "lookCamera"};
 const TRAVERSE = {kind: "traverse", id: "traverseSmoothedTrack"};
@@ -113,6 +121,8 @@ class CMeasurementManager {
         EventManager.addEventListener("tracksChanged", this.tracksChangedListener);
         // A renamed track or object: its measurements' menu names change with it.
         EventManager.addEventListener(DISPLAY_NAME_CHANGED, this.tracksChangedListener);
+        // Satellite names come from the orbital data, which can load after this runs.
+        EventManager.addEventListener("tleLoaded", this.tracksChangedListener);
         folder.onOpenClose(() => this.refreshMenuNames());
     }
 
@@ -123,6 +133,7 @@ class CMeasurementManager {
         if (this.tracksChangedListener) {
             EventManager.removeEventListener("tracksChanged", this.tracksChangedListener);
             EventManager.removeEventListener(DISPLAY_NAME_CHANGED, this.tracksChangedListener);
+            EventManager.removeEventListener("tleLoaded", this.tracksChangedListener);
             this.tracksChangedListener = null;
         }
         for (const node of Object.values(this.list)) {
@@ -311,6 +322,18 @@ class CMeasurementManager {
                     out.push({id, name});
                 });
                 break;
+            case "satellite":
+                // The Satellites menu's "Satellite to Track" tracks first (by node id), then
+                // every satellite in the loaded orbital data (by NORAD_PREFIX + NORAD number).
+                NodeMan.iterate((id, node) => {
+                    if (node instanceof CNodeSatelliteTrack && node.norad && node.satData) {
+                        out.push({id, name: node.trackName + ": " + node.satData.name});
+                    }
+                });
+                for (const satData of NodeMan.get("NightSkyNode", false)?.TLEData?.satData ?? []) {
+                    out.push({id: NORAD_PREFIX + satData.number, name: `${satData.name} (${satData.number})`});
+                }
+                break;
             case "object":
                 NodeMan.iterate((id, node) => {
                     if (node instanceof CNode3DObject) out.push({id, name: node.menuName ?? id});
@@ -350,6 +373,13 @@ class CMeasurementManager {
                 case "building": {
                     const building = Synth3DManager?.getBuilding(ref.id);
                     return building ? buildingRoofCenter(building) : null;
+                }
+                case "satellite": {
+                    if (ref.id.startsWith(NORAD_PREFIX)) {
+                        return catalogSatellitePosition(Number(ref.id.slice(NORAD_PREFIX.length)), f);
+                    }
+                    const node = NodeMan.get(ref.id, false);
+                    return node instanceof CNodeSatelliteTrack && node.validPoint(f) ? node.p(f) : null;
                 }
                 default: {
                     // camera, traverse, object, node: a node that can report a position.
@@ -411,6 +441,18 @@ function addRowCheckbox(controller, tooltip, onChange) {
     controller.domElement.classList.add("lil-has-row-checkbox");
     controller.domElement.appendChild(box);
     return box;
+}
+
+// Where a satellite in the loaded orbital data is at frame f, or null if it is not loaded or
+// does not propagate. It uses the best element set for that frame's time, as the satellites
+// drawn in the sky do. A "Satellite to Track" track instead uses one element set, the best for
+// frame 0, for the whole sitch, so across a burn the two can differ.
+function catalogSatellitePosition(norad, f) {
+    const nightSky = NodeMan.get("NightSkyNode", false);
+    const satData = nightSky?.TLEData?.getRecordFromNORAD(norad);
+    if (!satData?.satrecs?.length) return null;
+    const date = GlobalDateTimeNode.frameToDate(f);
+    return nightSky.calcSatECEF(bestSat(satData.satrecs, date), date);
 }
 
 // The middle of a building's roof: the mean of its top corners.

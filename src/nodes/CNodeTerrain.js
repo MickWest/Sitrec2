@@ -524,15 +524,14 @@ export class CNodeTerrain extends CNode {
         // A reload is the "try again" gesture (Terrain Refresh button, map-type
         // change, imagery un-suppression) — forget the per-URL failure history
         // so tiles that failed transiently, or while a service was down, get a
-        // fresh fetch instead of the session blacklist. This is the recovery
-        // path the ServiceAvailability error message points users at.
+        // fresh fetch instead of the session blacklist.
         badTextureUrls.clear();
         // Also re-close the service-level circuit breaker. Once a service trips
-        // (5 failures) its pre-flight rejects every request, so no success can
-        // ever be recorded and it would stay "unavailable" until a full page
-        // reload — despite the error message promising Refresh will retry. If
-        // the outage persists, real traffic re-trips the breaker after 5
-        // failures, which is the intended behavior.
+        // (most of its recent requests failed) its pre-flight rejects every
+        // request, so no tile success can be recorded and it would stay
+        // "unavailable" until a full page reload. If the outage persists, real
+        // traffic re-trips the breaker, which is the intended behavior. (A map
+        // that fell back also has its own probe, CNodeTerrainUI.watchMapRecovery.)
         ServiceAvailability.reset();
         // clear elevation and texture maps
         // and reload the map

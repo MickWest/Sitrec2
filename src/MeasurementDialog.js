@@ -2,7 +2,8 @@
 //
 // One large panel with everything a measurement has: the type (altitude or distance), the
 // point(s) it measures, and how it is drawn. A point is picked in two steps: a row of kind
-// tabs (Camera, Traverse, Track, 3D Object, Pin, Building), then the list of that kind's items.
+// tabs (Camera, Traverse, Track, Satellite, 3D Object, Pin, Building), then the list of that
+// kind's items. A long list (a loaded satellite catalog can hold thousands) gets a filter box.
 //
 // It is a floating panel, not a modal: the scene stays visible and usable, and the panel can
 // be moved by its title bar. Every edit is passed to onChange at once so the caller can show
@@ -13,6 +14,7 @@
 import {Globals} from "./Globals";
 import {makeDraggable, removeDraggable} from "./DragResizeUtils";
 import {t} from "./i18n";
+import {FILTER_MIN_ITEMS, filterSourceItems} from "./MeasurementSourceFilter";
 
 // Units a measurement can override the sitch units with. The keys are the values saved in
 // the sitch (see MEASUREMENT_UNITS in CNodeLabels3D.js).
@@ -166,6 +168,8 @@ export function openMeasurementDialog({config, isNew, manager, onChange}) {
 
         // The kind tab each picker is showing. Starts on the kind of the current choice.
         const shownKind = {from: state.from?.kind ?? "camera", to: state.to?.kind ?? "traverse"};
+        // The text in each picker's filter box. Cleared when its kind tab changes.
+        const filterText = {from: "", to: ""};
 
         const sameRef = (a, b) => !!a && !!b && a.kind === b.kind && a.id === b.id;
 
@@ -217,8 +221,28 @@ export function openMeasurementDialog({config, isNew, manager, onChange}) {
                     color: ${selected ? "white" : "#222"};
                 `, manager.kindLabel(kind) + (kind === "node" ? "" : ` (${count})`));
                 tab.type = "button";
-                tab.onclick = () => { shownKind[which] = kind; render(); };
+                tab.onclick = () => {
+                    if (shownKind[which] !== kind) filterText[which] = "";
+                    shownKind[which] = kind;
+                    render();
+                };
                 tabs.appendChild(tab);
+            }
+
+            const kind = shownKind[which];
+            const items = kinds.length > 0 ? choices(which, kind) : [];
+
+            // Typing redraws only the list, so the box keeps the focus.
+            if (items.length > FILTER_MIN_ITEMS) {
+                const filterInput = el("input", `
+                    width: 100%; box-sizing: border-box; margin-bottom: 6px; padding: 5px 8px;
+                    font-family: inherit; font-size: 14px; border: 1px solid #ccc; border-radius: 4px;
+                `);
+                filterInput.type = "search";
+                filterInput.value = filterText[which];
+                filterInput.placeholder = t("measurements.dialog.filterPlaceholder");
+                filterInput.oninput = () => { filterText[which] = filterInput.value; fillList(); };
+                container.appendChild(filterInput);
             }
 
             const list = el("div", `
@@ -232,25 +256,34 @@ export function openMeasurementDialog({config, isNew, manager, onChange}) {
                     t("measurements.dialog.nothingToPick")));
                 return;
             }
-            const kind = shownKind[which];
-            for (const item of choices(which, kind)) {
-                const selected = current?.kind === kind && current.id === item.id;
-                const row = el("div", `
-                    padding: 7px 12px; cursor: pointer; font-size: 14px; border-bottom: 1px solid #eee;
-                    background: ${selected ? BLUE : "transparent"};
-                    color: ${selected ? "white" : (item.missing ? "#999" : "#222")};
-                `, item.name);
-                row.title = item.id;
-                row.onclick = () => {
-                    state[which] = {kind, id: item.id};
-                    // "From" moved onto the thing "To" was set to: move "To" to something else.
-                    if (which === "from" && sameRef(state.from, state.to)) {
-                        state.to = defaultOtherRef();
-                        if (state.to) shownKind.to = state.to.kind;
-                    }
-                    render();
-                };
-                list.appendChild(row);
+            fillList();
+
+            function fillList() {
+                list.textContent = "";
+                const {shown, hidden} = filterSourceItems(items, filterText[which]);
+                for (const item of shown) {
+                    const selected = current?.kind === kind && current.id === item.id;
+                    const row = el("div", `
+                        padding: 7px 12px; cursor: pointer; font-size: 14px; border-bottom: 1px solid #eee;
+                        background: ${selected ? BLUE : "transparent"};
+                        color: ${selected ? "white" : (item.missing ? "#999" : "#222")};
+                    `, item.name);
+                    row.title = item.id;
+                    row.onclick = () => {
+                        state[which] = {kind, id: item.id};
+                        // "From" moved onto the thing "To" was set to: move "To" to something else.
+                        if (which === "from" && sameRef(state.from, state.to)) {
+                            state.to = defaultOtherRef();
+                            if (state.to) shownKind.to = state.to.kind;
+                        }
+                        render();
+                    };
+                    list.appendChild(row);
+                }
+                if (hidden > 0) {
+                    list.appendChild(el("div", "padding: 7px 12px; color: #888; font-size: 13px;",
+                        t("measurements.dialog.moreItems", {count: hidden})));
+                }
             }
         }
 

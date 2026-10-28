@@ -9,6 +9,17 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.183.7 (2026-10-27)
+
+### New Features
+- **Satellites in measurements** (Show → Measurements → *Add Measurement*): in a custom sitch, a measurement can now give the altitude of a satellite, or the distance to or from one. The new *Satellite* tab lists the two *Satellite to Track* tracks of the Satellites menu, then every satellite in the loaded satellite data, by name and NORAD number. A satellite from that list uses the best orbital elements for each frame, as the satellites in the sky do, so use it when the satellite fires its engine during the sitch. Every list in the dialog with more than 12 items now has a filter box, and a list shows at most 300 items.
+
+### Improvements
+- When a map service stops working and Sitrec changes the map to the offline fallback, Sitrec now checks the service once a minute and changes back to your map when the service answers again. If you choose a different map in *Map Type* (Terrain) before then, Sitrec keeps your choice. Elevation does not change back: select the elevation source again in *Elevation Type* (Terrain).
+
+### Bug Fixes
+- Fixed Sitrec changing the map to the offline fallback, or the elevation to Flat, with a "service appears to be unavailable" message, when some tiles failed but the rest loaded. Sitrec now does this only when most of the recent requests to the service fail.
+
 ## Version 2.183.6 (2026-10-26)
 
 ### Improvements

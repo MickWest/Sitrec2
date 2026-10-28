@@ -100,37 +100,37 @@
     {
       "host": "api.mapbox.com",
       "purpose": "map imagery and terrain tiles",
-      "trigger": "automatic while a layer from this provider is shown",
+      "trigger": "automatic while a layer from this provider is shown; after the provider fails and the map falls back to an offline map, the last failed tile again once a minute until the provider answers or the user chooses a map",
       "mayReceive": ["coarse-area"]
     },
     {
       "host": "c.tile.openstreetmap.org",
       "purpose": "map tiles",
-      "trigger": "automatic while a layer from this provider is shown",
+      "trigger": "automatic while a layer from this provider is shown; after the provider fails and the map falls back to an offline map, the last failed tile again once a minute until the provider answers or the user chooses a map",
       "mayReceive": ["coarse-area"]
     },
     {
       "host": "tile.openstreetmap.org",
       "purpose": "map tiles",
-      "trigger": "automatic while a layer from this provider is shown",
+      "trigger": "automatic while a layer from this provider is shown; after the provider fails and the map falls back to an offline map, the last failed tile again once a minute until the provider answers or the user chooses a map",
       "mayReceive": ["coarse-area"]
     },
     {
       "host": "api.maptiler.com",
       "purpose": "map and water-mask tiles",
-      "trigger": "automatic while a layer from this provider is shown",
+      "trigger": "automatic while a layer from this provider is shown; after the provider fails and the map falls back to an offline map, the last failed tile again once a minute until the provider answers or the user chooses a map",
       "mayReceive": ["coarse-area"]
     },
     {
       "host": "tiles.maps.eox.at",
       "purpose": "Sentinel-2 cloudless imagery tiles",
-      "trigger": "automatic while a layer from this provider is shown",
+      "trigger": "automatic while a layer from this provider is shown; after the provider fails and the map falls back to an offline map, the last failed tile again once a minute until the provider answers or the user chooses a map",
       "mayReceive": ["coarse-area"]
     },
     {
       "host": "services.arcgisonline.com",
       "purpose": "map imagery, hillshade, topographic and relief tiles",
-      "trigger": "automatic while a layer from this provider is shown",
+      "trigger": "automatic while a layer from this provider is shown; after the provider fails and the map falls back to an offline map, the last failed tile again once a minute until the provider answers or the user chooses a map",
       "mayReceive": ["coarse-area"]
     },
     {
