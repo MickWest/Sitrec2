@@ -499,6 +499,9 @@ does not repair a track that has followed a different object.
 ### Editing the track
 
 - **Drag the cursor onto the object** to place or replace the point at the current frame.
+- Near the top edge of the video, the cursor and the user points are under the view's header
+  bar and its resize edge. A press on them still grabs them, and the header stays hidden while
+  the mouse is over them.
 - **`Delete`** or **`Backspace`** removes the user point (magenta cross) within 5 screen pixels
   of the mouse. It does not remove auto points; use **Clear from Here** or **Clear Auto Points**.
 - Placing new points partway through a track is normal. It is usually better than fighting the

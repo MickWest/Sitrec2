@@ -4,7 +4,8 @@ import {getCV, loadOpenCV} from "./openCVLoader";
 import {getJsfeat, loadJsfeat} from "./jsfeatLoader";
 import {interpolatePosition} from "./CVideoData";
 import {EventManager} from "./CEventManager";
-import {KeyMan} from "./KeyBoardHandler";
+import {isKeyHeld, KeyMan} from "./KeyBoardHandler";
+import {registerSurfaceInteraction} from "./SurfaceInteraction";
 import {createVideoExporter, DefaultVideoFormat, getBestFormatForResolution, getVideoExtension} from "./VideoExporter";
 import {drawVideoWatermark, ExportProgressWidget, getExportPrefix} from "./utils";
 import {showConfirm, showError} from "./showError";
@@ -326,47 +327,39 @@ export class ObjectTracker {
     }
     
     hookMouseHandler() {
-        const mouse = this.videoView.mouse;
+        const view = this.videoView;
+        const mouse = view.mouse;
         if (!mouse) return;
-        
-        const originalDrag = mouse.handlers.drag;
-        
-        mouse.handlers.down = (e) => {
-            if (this.enabled) {
-                const x = mouse.x;
-                const y = mouse.y;
-                const [vX, vY] = this.videoView.canvasToVideoCoordsOriginal(x, y);
-                
-                // Edit Head Only: skip the keyframe hit-test entirely, so an
-                // old keyframe lying near the cursor cannot take the drag. What
-                // is left is isWithinTrackPoint, which moves the head.
-                const clickedKeyframe = this.editHeadOnly
-                    ? null : this.findClickedKeyframe(vX, vY);
-                if (clickedKeyframe !== null) {
-                    this.isDragging = true;
-                    this.draggingKeyframe = clickedKeyframe;
-                    this.lastMouseX = vX;
-                    this.lastMouseY = vY;
-                } else if (this.isWithinTrackPoint(vX, vY)) {
-                    this.isDragging = true;
-                    this.draggingKeyframe = null;
-                    this.lastMouseX = vX;
-                    this.lastMouseY = vY;
-                }
-            }
-        };
-        
-        mouse.handlers.drag = (e) => {
-            if (this.enabled && this.isDragging) {
-                const x = mouse.x;
-                const y = mouse.y;
-                const [vX, vY] = this.videoView.canvasToVideoCoordsOriginal(x, y);
-                
+
+        // The cursor and the keyframes are grabbed through the interaction router, above the
+        // view's own chrome: the header strip (priority 100) and the edge-resize handles (110).
+        // Both lie over the top of the video, so a point near the top edge could not be picked
+        // up - the press moved or resized the view instead. Header icons and open menus still
+        // keep their presses, because they stop pointerdown before it reaches the router.
+        this.unregisterGrabInteraction = registerSurfaceInteraction(view.div, {
+            view, model: this, content: false, profile: "video",
+            intent: {priority: 120},
+            // Step aside for the view-edit key, as the view's own handler does (CMouseHandler).
+            enabled: () => this.enabled && !(view.dragKey && isKeyHeld(view.dragKey)),
+            hitTest: e => this.grabAt(e.clientX, e.clientY) ? {} : null,
+            begin: e => {
+                const grab = this.grabAt(e.clientX, e.clientY);
+                if (!grab) return false;
+                mouse.newPosition(e, true);
+                this.isDragging = true;
+                this.draggingKeyframe = grab.keyframe;
+                this.lastMouseX = grab.vX;
+                this.lastMouseY = grab.vY;
+            },
+            move: e => {
+                mouse.newPosition(e);
+                const [vX, vY] = view.canvasToVideoCoordsOriginal(mouse.x, mouse.y);
+
                 const dx = vX - this.lastMouseX;
                 const dy = vY - this.lastMouseY;
                 this.lastMouseX = vX;
                 this.lastMouseY = vY;
-                
+
                 if (this.draggingKeyframe !== null) {
                     const pos = this.trackedPositions.get(this.draggingKeyframe);
                     if (pos) {
@@ -382,23 +375,25 @@ export class ObjectTracker {
                     this.manualKeyframes.add(frame);
                 }
                 this.updateSliderStatus();
-                
-                setRenderOne(true);
-                return;
-            }
-            if (originalDrag) originalDrag(e);
-        };
-        
-        mouse.handlers.up = (e) => {
-            if (this.isDragging) {
+            },
+            end: () => {
+                if (!this.isDragging) return;
                 this.isDragging = false;
                 this.draggingKeyframe = null;
                 if (this.tracking) {
                     this.initializeTracker();
                 }
-            }
-        };
-        
+            },
+            // Winning the press here also wins the hover, so the view's own handler stops
+            // hearing the pointer over a grabbable point. Pass the moves on: the Delete key
+            // finds its keyframe from mouse.x / mouse.y.
+            hover: e => { if (e) mouse.handleMouseMove(e); },
+        });
+
+        // An unpinned header must not come up over a point it would hide and take the press of.
+        this.removeHeaderRevealBlocker = view.addHeaderRevealBlocker?.(
+            (x, y) => this.enabled && this.grabAt(x, y) !== null);
+
         EventManager.addEventListener("keydown", (data) => {
             if (!this.enabled) return;
             // Ignore OS auto-repeat — hold loops start once on first keydown
@@ -786,6 +781,19 @@ export class ObjectTracker {
         const dx = vX - this.trackX;
         const dy = vY - this.trackY;
         return (dx * dx + dy * dy) <= (this.trackRadius * this.trackRadius);
+    }
+
+    // What a press at this page point would pick up: a manual keyframe ({keyframe: frame}),
+    // the head ({keyframe: null}), or nothing (null). vX / vY are the point in original-video
+    // coordinates. Edit Head Only skips the keyframe test entirely, so an old keyframe lying
+    // near the cursor cannot take the drag.
+    grabAt(clientX, clientY) {
+        const rect = this.videoView.canvas.getBoundingClientRect();
+        const [vX, vY] = this.videoView.canvasToVideoCoordsOriginal(clientX - rect.left, clientY - rect.top);
+        const keyframe = this.editHeadOnly ? null : this.findClickedKeyframe(vX, vY);
+        if (keyframe !== null) return {keyframe, vX, vY};
+        if (this.isWithinTrackPoint(vX, vY)) return {keyframe: null, vX, vY};
+        return null;
     }
 
     findClickedKeyframe(vX, vY) {
@@ -2908,6 +2916,9 @@ export function resetObjectTracking() {
         }
 
         objectTracker.disable();
+        // The video view outlives this tracker; a new one registers its own.
+        objectTracker.unregisterGrabInteraction?.();
+        objectTracker.removeHeaderRevealBlocker?.();
         // Every cv.Mat the motion tracker holds lives in the OpenCV heap and is
         // freed only by hand, so dropping the reference alone leaks the whole
         // cache on every sitch or video reload.
@@ -3972,8 +3983,8 @@ export async function deserializeAutoTracking(data) {
     } else if (objectTracker.enabled) {
         // Only when a live tracker carried over from a previous sitch; a freshly
         // constructed one is already disabled. The overlay is deliberately left
-        // uncreated - creating it would install the tracker's mouse handlers over
-        // the video view's own, and createOverlay() no longer recenters a restored
+        // uncreated - creating it would hook the tracker's pointer and key handling
+        // into the video view, and createOverlay() no longer recenters a restored
         // track, so deferring it to the user's first enable is safe.
         objectTracker.disable();
     }

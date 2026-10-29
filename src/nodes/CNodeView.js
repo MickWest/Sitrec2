@@ -601,8 +601,12 @@ class CNodeView extends CNode {
     //   - a HUD companion of this view (compass, OSD frame, video readout). A companion never
     //     occludes the header — the header's shape is clipped straight out of it, see
     //     _clipHUDsBelowHeader — so the bar will paint over it.
+    //
+    // A blocker (addHeaderRevealBlocker) declines it too: the pointer is on something drawn in
+    // the view that a press there would grab, which the opaque bar would hide.
     _headerRevealClear(x, y) {
         if (!this.div) return false;
+        for (const blocks of this._headerRevealBlockers ?? []) if (blocks(x, y)) return false;
         const el = (this.div.ownerDocument ?? document).elementFromPoint(x, y);
         if (!el) return false;
         if (this.div.contains(el)) return true;
@@ -612,6 +616,14 @@ class CNodeView extends CNode {
             if (view.div?.contains(el)) companion = true;
         });
         return companion;
+    }
+
+    // Keep the unpinned header down while blocks(x, y) is true for the pointer's page position —
+    // for content near the top edge that the strip would cover, such as the Point Track cursor.
+    // Returns the function that removes it.
+    addHeaderRevealBlocker(blocks) {
+        (this._headerRevealBlockers ??= new Set()).add(blocks);
+        return () => this._headerRevealBlockers.delete(blocks);
     }
 
     _updateHeaderShown() {
