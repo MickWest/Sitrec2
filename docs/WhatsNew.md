@@ -9,6 +9,12 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.183.10 (2026-10-29)
+
+### Bug Fixes
+- Fixed a press on the Point Track cursor or on a user point near the top of the video moving or resizing the view (Video → Point Track). The view's header bar also came up over the point and covered it. Now the press grabs the point, and the header does not come up while the mouse is over the point. Away from the point, the header and the resize edge work as before.
+- Fixed the crosshair lock in the video view (hold `/` and click) not working after Point Track had been enabled, also after it was disabled again.
+
 ## Version 2.183.9 (2026-10-28)
 
 ### New Features
