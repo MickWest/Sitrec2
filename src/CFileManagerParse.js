@@ -159,6 +159,8 @@ export const parseMethods = {
                     if (parsedResult && metadataOverride && Array.isArray(metadataOverride.pesEntries)) {
                         parsedResult.pesEntries = metadataOverride.pesEntries;
                         parsedResult.videoFirstPESus = metadataOverride.videoFirstPESus;
+                        parsedResult.streamIndex = metadataOverride.index;
+                        parsedResult.streamType = metadataOverride.stream_type;
                         // tsParentFilename isn't in the live-demux metadata but
                         // is carried in the sidecar reload's loadedFilesMetadata —
                         // pull from there if available so the entry's tsParentFilename
@@ -223,6 +225,10 @@ export const parseMethods = {
                         if (typeof x.videoFirstPESus === "number") {
                             fileManagerEntry.videoFirstPESus = x.videoFirstPESus;
                         }
+                        // The PMT position and stream_type, saved in the sidecar
+                        // so reports can name the stream after a reload.
+                        if (Number.isInteger(x.streamIndex)) fileManagerEntry.streamIndex = x.streamIndex;
+                        if (x.streamType != null) fileManagerEntry.streamType = x.streamType;
                         if (x.tsParentFilename) {
                             fileManagerEntry.tsParentFilename = x.tsParentFilename;
                             isTSArchive = true;
@@ -1218,6 +1224,8 @@ export const parseMethods = {
                             if (streamMetadata && Array.isArray(streamMetadata.pesEntries)) {
                                 parsedSubstream.pesEntries = streamMetadata.pesEntries;
                                 parsedSubstream.videoFirstPESus = streamMetadata.videoFirstPESus;
+                                parsedSubstream.streamIndex = streamMetadata.index;
+                                parsedSubstream.streamType = streamMetadata.stream_type;
                                 parsedSubstream.tsParentFilename = filename;
                             }
                         }
@@ -1427,6 +1435,22 @@ export const parseMethods = {
                         dataType = "klv";
                         break;
                     }
+                    // For reports: the TS packet id, the PMT position (ffprobe's
+                    // "#0:N") and the stream_type. All three come from the demux
+                    // on a drop. On a reload the PID is in the substream name
+                    // "<ts>_klv_<pid>.klv", and the other two are in the PES
+                    // sidecar when the stream has one.
+                    const pidMatch = /_klv_(\d+)/i.exec(filename);
+                    const klvPid = metadata?.pid ?? (pidMatch ? Number(pidMatch[1]) : null);
+                    if (klvPid !== null) klvMisb.klvPid = klvPid;
+                    if (Number.isInteger(metadata?.index)) klvMisb.klvStreamIndex = metadata.index;
+                    // The demux gives stream_type as a hex string ("0x15").
+                    const streamType = typeof metadata?.stream_type === "string"
+                        ? parseInt(metadata.stream_type, 16) : metadata?.stream_type;
+                    if (Number.isInteger(streamType)) klvMisb.klvStreamType = streamType;
+                    // The file the user loaded: the TS on a drop, else this file.
+                    klvMisb.sourceFile = metadata?.tsFilename ?? filename;
+                    klvMisb.sourceBytes = metadata?.tsBytes ?? buffer.byteLength;
                     parsed = new CTrackFileMISB(klvMisb);
                     dataType = "trackfile";
                     break;

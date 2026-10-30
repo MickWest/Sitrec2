@@ -61,10 +61,10 @@ export class TSParser {
             const streamPromises = streams.map(stream => {
                 const streamFilename = filename + "_" + stream.type + "_" + stream.pid + "." + stream.extension;
                 // Augment with cross-stream PCR origin so metadata streams
-                // (KLV) can align themselves to the video timeline.
-                const metadata = videoFirstPESus !== null
-                    ? Object.assign({}, stream, { videoFirstPESus })
-                    : stream;
+                // (KLV) can align themselves to the video timeline, and with
+                // the TS file's name and size for reports.
+                const metadata = Object.assign({}, stream, {tsFilename: filename, tsBytes: buffer.byteLength},
+                    videoFirstPESus !== null ? {videoFirstPESus} : {});
                 return parseAssetCallback(streamFilename, id, stream.data, metadata);
             });
 
@@ -132,6 +132,9 @@ export class TSParser {
                     }
                     
                     elementaryStreams.set(pid, {
+                        // Position in the PMT stream list, numbered across all
+                        // programs: the N in ffprobe's "Stream #0:N".
+                        index: stream.index,
                         codec_name: stream.codec_name,
                         codec_type: stream.codec_type,
                         stream_type: stream.stream_type,
@@ -352,6 +355,7 @@ export class TSParser {
                 console.log(`extractTSStreams: PID ${pid} (${streamInfo.codec_name}) — captured ${pesEntriesForStream.length} PES PTS entries`);
                 streams.push({
                     pid: pid,
+                    index: streamInfo.index,
                     type: streamInfo.codec_name,
                     extension: extension,
                     data: arrayBuffer,

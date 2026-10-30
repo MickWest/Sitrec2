@@ -267,6 +267,21 @@ describe('CTrackFileMISB', () => {
             expect(centerMisb[0][MISB.SensorTrueAltitude]).toBe(500);
         });
 
+        test('marks the center rows as derived, and the source rows as not', () => {
+            expect(trackFileWithCenter.toMISB(1).derivedTrack).toBe("center");
+            expect(trackFileWithCenter.toMISB(0).derivedTrack).toBeUndefined();
+        });
+
+        test('copies the source stream ids onto the center rows', () => {
+            const rows = createTestMISBArray(true, true);
+            rows.klvPid = 4098;
+            rows.klvStreamIndex = 3;
+            rows.klvStreamType = 0x15;
+            const center = new CTrackFileMISB(rows).toMISB(1);
+            expect(center).toMatchObject({klvPid: 4098, klvStreamIndex: 3, klvStreamType: 0x15});
+            expect(trackFileWithCenter.toMISB(1).klvPid).toBeUndefined();
+        });
+
         test('toMISB(1) returns false for track without center', () => {
             const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
             const result = trackFile.toMISB(1);

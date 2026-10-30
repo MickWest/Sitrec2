@@ -1,5 +1,9 @@
 import {MISB, MISBFields} from "../src/MISBFields";
-import {analyzeMisbTiming, analyzePtsSync, analyzeTimelineValues, summarizeTimingAnalysis} from "../src/analysis/MisbTimingStats";
+import {
+    analyzeMisbTiming, analyzePtsSync, analyzeTimelineValues, klvStreamLabels, localFieldValues,
+    renderLocalFieldValues, renderSourceFiles, summarizeTimingAnalysis,
+} from "../src/analysis/MisbTimingStats";
+import {otherKLVPacketList} from "../src/MISBUtils";
 
 function makeMisbFromIntervals(intervalsS) {
     const rows = [];
@@ -72,5 +76,95 @@ describe("MisbTimingStats", () => {
             pairingMethod: "exact_pes",
             pairingQuality: "ok",
         });
+    });
+
+    test("lists every field with local in its name and its first unique values", () => {
+        const misb = makeMisbFromIntervals(new Array(7).fill(1));
+        const security = [{key: 1, name: "Security Classification", value: "TEST//"}, {key: 22, name: "Version", value: 10}];
+        misb.forEach((row, i) => {
+            row[MISB.SecurityLocalSet] = security.map(item => ({...item}));
+            row[MISB.Geo_RegistrationLocalSet] = `geo${i}`;
+        });
+        misb[3][MISB.Geo_RegistrationLocalSet] = "geo0";
+
+        const fields = localFieldValues(misb);
+        expect(fields.map(f => f.name)).toEqual(
+            ["SecurityLocalSet", "RVTLocalSet", "VMTILocalSet", "Geo_RegistrationLocalSet"]);
+
+        const byName = Object.fromEntries(fields.map(f => [f.name, f]));
+        expect(byName.SecurityLocalSet).toMatchObject({tag: 48, recordCount: 8});
+        expect(byName.SecurityLocalSet.values).toEqual(["Security Classification=TEST//; Version=10"]);
+        expect(byName.RVTLocalSet).toMatchObject({recordCount: 0, values: []});
+        expect(byName.Geo_RegistrationLocalSet.recordCount).toBe(8);
+        expect(byName.Geo_RegistrationLocalSet.values).toEqual(
+            ['"geo0"', '"geo1"', '"geo2"', '"geo4"', '"geo5"']);
+
+        const lines = renderLocalFieldValues(fields);
+        expect(lines).toContain("  RVTLocalSet (tag 73): empty");
+        expect(lines).toContain("  Geo_RegistrationLocalSet (tag 98): 8 record(s) with a value");
+        expect(lines.some(line => line.includes("not ST 0601"))).toBe(false);
+    });
+
+    test("lists the KLV packets that are not ST 0601, named when the key is known", () => {
+        const vmti = "060e2b34020b01010e01030306000000";
+        const unknown = "060e2b34020301010e01030302000000";
+        const tally = new Map([[unknown, {count: 2, bytes: 120}], [vmti, {count: 5, bytes: 900}]]);
+        const list = otherKLVPacketList(tally, new Map([[vmti, "ST 0903 VMTI"]]));
+        expect(list).toEqual([
+            {key: vmti, standard: "ST 0903 VMTI", count: 5, bytes: 900},
+            {key: unknown, standard: null, count: 2, bytes: 120},
+        ]);
+
+        const fields = localFieldValues([]);
+        expect(renderLocalFieldValues(fields, {otherPackets: []}))
+            .toContain("  KLV packets that are not ST 0601: none");
+        const lines = renderLocalFieldValues(fields, {otherPackets: list});
+        expect(lines).toContain(`    key ${vmti} (ST 0903 VMTI): 5 packet(s), 900 bytes`);
+        expect(lines).toContain(`    key ${unknown}: 2 packet(s), 120 bytes`);
+    });
+
+    test("names streams from the container ids, not from their place in the list", () => {
+        const withIds = (props) => Object.assign([], props);
+        const async = withIds({klvPid: 4096, klvStreamIndex: 1, klvStreamType: 0x06});
+        const center = withIds({klvPid: 4096, klvStreamIndex: 1, klvStreamType: 0x06, derivedTrack: "center"});
+        const sync = withIds({klvPid: 4098, klvStreamIndex: 3, klvStreamType: 0x15});
+        const reloaded = withIds({klvPid: 4098});
+        const odd = withIds({klvPid: 300, klvStreamIndex: 2, klvStreamType: 0x16});
+        const file = withIds({});
+
+        expect(klvStreamLabels([async, center, sync, reloaded, odd, file])).toEqual([
+            "KLV #0:1 [0x1000 = PID 4096], async (stream_type 0x06)",
+            "Center (derived from KLV #0:1 [0x1000], async)",
+            "KLV #0:3 [0x1002 = PID 4098], sync (stream_type 0x15)",
+            "KLV [0x1002 = PID 4098]",
+            "KLV #0:2 [0x12c = PID 300], stream_type 0x16",
+            "MISB file",
+        ]);
+        expect(klvStreamLabels([sync, file, withIds({})], {short: true})).toEqual([
+            "KLV #0:3 [0x1002], sync", "MISB file 1", "MISB file 2",
+        ]);
+        expect(klvStreamLabels([sync, withIds({...sync})])).toEqual([
+            "KLV #0:3 [0x1002 = PID 4098], sync (stream_type 0x15) (1 of 2)",
+            "KLV #0:3 [0x1002 = PID 4098], sync (stream_type 0x15) (2 of 2)",
+        ]);
+
+        const lines = renderLocalFieldValues(localFieldValues([]), {stream: "KLV #0:3 [0x1002 = PID 4098]"});
+        expect(lines[0]).toBe("LOCAL FIELDS — KLV #0:3 [0x1002 = PID 4098]");
+    });
+
+    test("names each source file one time, with its size", () => {
+        const withIds = (props) => Object.assign([], props);
+        const a = withIds({sourceFile: "falls.ts", sourceBytes: 38812345});
+        const b = withIds({sourceFile: "falls.ts", sourceBytes: 38812345});
+        const center = withIds({sourceFile: "falls.ts", sourceBytes: 38812345, derivedTrack: "center"});
+        expect(renderSourceFiles([a, center, b])).toEqual(["FILE: falls.ts (38,812,345 bytes, 38.8 MB)"]);
+
+        const url = withIds({sourceFile: "https://example.com/u/My%20Flight.ts_klv_4098.klv?v=2", sourceBytes: 1500});
+        expect(renderSourceFiles([a, url, withIds({})])).toEqual([
+            "FILES:",
+            "  falls.ts (38,812,345 bytes, 38.8 MB)",
+            "  My Flight.ts_klv_4098.klv (1,500 bytes)",
+        ]);
+        expect(renderSourceFiles([withIds({})])).toEqual([]);
     });
 });

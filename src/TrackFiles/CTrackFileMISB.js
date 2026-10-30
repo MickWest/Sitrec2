@@ -249,6 +249,13 @@ export class CTrackFileMISB extends CTrackFile {
             return false;
         }
         if (derivedPES) derivedMisb.pesPTSus = derivedPES;
+        // The rows hold only time and position, so a per-stream report (the
+        // Timing Analysis "Local Fields") must not list this as a KLV stream.
+        // The source's stream ids let that report say which stream it came from.
+        derivedMisb.derivedTrack = label;
+        for (const key of ["klvPid", "klvStreamIndex", "klvStreamType"]) {
+            if (this.data[key] !== undefined) derivedMisb[key] = this.data[key];
+        }
         return derivedMisb;
     }
 

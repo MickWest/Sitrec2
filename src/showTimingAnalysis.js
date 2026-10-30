@@ -4,8 +4,11 @@ import {saveAs} from "file-saver";
 // shape of showError() but with two action buttons (Copy / Download) plus
 // Close, since the content is something the user typically wants to share
 // with someone else looking at the data.
+// fileHeader: text that names the loaded file. When given, a "Show Filename"
+// checkbox (on at the start) puts it before the text, in the view, the copy
+// and the download.
 export function showTimingAnalysis(text, suggestedFilename = "sitrec-timing-analysis.txt",
-                                   title = "MISB Timing Analysis") {
+                                   title = "MISB Timing Analysis", {fileHeader = null} = {}) {
     const overlay = document.createElement("div");
     overlay.style.cssText = `
         position: fixed; top: 0; left: 0; width: 100%; height: 100%;
@@ -41,6 +44,23 @@ export function showTimingAnalysis(text, suggestedFilename = "sitrec-timing-anal
     const buttons = document.createElement("div");
     buttons.style.cssText = "display: flex; gap: 10px; justify-content: flex-end; margin-top: 12px; flex: 0 0 auto;";
 
+    let currentText = () => text;
+    if (fileHeader) {
+        const label = document.createElement("label");
+        label.style.cssText = `
+            margin-right: auto; display: flex; align-items: center; gap: 6px;
+            font-size: 14px; color: #333; cursor: pointer;
+        `;
+        const checkbox = document.createElement("input");
+        checkbox.type = "checkbox";
+        checkbox.checked = true;
+        label.append(checkbox, "Show Filename");
+        currentText = () => (checkbox.checked ? fileHeader + text : text);
+        checkbox.onchange = () => { textarea.value = currentText(); };
+        textarea.value = currentText();
+        buttons.appendChild(label);
+    }
+
     const mkButton = (label, color) => {
         const b = document.createElement("button");
         b.textContent = label;
@@ -54,7 +74,7 @@ export function showTimingAnalysis(text, suggestedFilename = "sitrec-timing-anal
     const copyBtn = mkButton("Copy Analysis", "#1976d2");
     copyBtn.onclick = async () => {
         try {
-            await navigator.clipboard.writeText(text);
+            await navigator.clipboard.writeText(currentText());
             copyBtn.textContent = "Copied!";
             setTimeout(() => { copyBtn.textContent = "Copy Analysis"; }, 1500);
         } catch (e) {
@@ -67,7 +87,7 @@ export function showTimingAnalysis(text, suggestedFilename = "sitrec-timing-anal
 
     const downloadBtn = mkButton("Download Analysis", "#388e3c");
     downloadBtn.onclick = () => {
-        saveAs(new Blob([text], {type: "text/plain;charset=utf-8"}), suggestedFilename);
+        saveAs(new Blob([currentText()], {type: "text/plain;charset=utf-8"}), suggestedFilename);
     };
 
     const closeBtn = mkButton("Close", "#757575");

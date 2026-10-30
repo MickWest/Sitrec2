@@ -1084,6 +1084,9 @@ export const serializeMethods = {
         return {
             pesEntries: sidecar.pesEntries,
             videoFirstPESus: typeof sidecar.videoFirstPESus === "number" ? sidecar.videoFirstPESus : null,
+            // Same names as the live demux metadata, for the KLV parse.
+            index: Number.isInteger(sidecar.streamIndex) ? sidecar.streamIndex : undefined,
+            stream_type: sidecar.streamType ?? undefined,
         };
     },
 

@@ -1007,6 +1007,10 @@ export const saveMethods = {
             kind: "klv-pes-pts",
             videoFirstPESus: typeof fileEntry.videoFirstPESus === "number" ? fileEntry.videoFirstPESus : null,
             pesEntries: fileEntry.pesEntries,
+            // The PMT position and stream_type, so reports can name the
+            // stream after a reload. Older sidecars do not have them.
+            streamIndex: Number.isInteger(fileEntry.streamIndex) ? fileEntry.streamIndex : null,
+            streamType: fileEntry.streamType ?? null,
         };
         const json = JSON.stringify(sidecar);
         return new TextEncoder().encode(json).buffer;

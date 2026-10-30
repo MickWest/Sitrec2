@@ -590,3 +590,161 @@ export function summarizeTimingAnalysis(analysis) {
         ptsMaxDeltaUs: analysis.ptsSync?.maxDeltaUs ?? null,
     };
 }
+
+const LOCAL_VALUE_MAX_CHARS = 400;
+
+function jsonText(value) {
+    try {
+        return JSON.stringify(value, (key, v) => (typeof v === "bigint" ? v.toString() : v)) ?? String(value);
+    } catch (e) {
+        return String(value);
+    }
+}
+
+// One value as report text. A nested local set (Security, RVT, VMTI) is parsed
+// as a list of {key, name, value} items, written as "name=value; ...". Other
+// objects are written as JSON. The text is also what values are compared by
+// when finding unique values.
+function localValueText(value) {
+    const isItemList = Array.isArray(value) && value.length > 0
+        && value.every(item => item && typeof item === "object" && "name" in item && "value" in item);
+    const text = isItemList
+        ? value.map(item => `${item.name}=${typeof item.value === "string" ? item.value : jsonText(item.value)}`).join("; ")
+        : jsonText(value);
+    return text.length > LOCAL_VALUE_MAX_CHARS ? text.slice(0, LOCAL_VALUE_MAX_CHARS - 1) + "…" : text;
+}
+
+// Every MISB field whose name contains "local", with the number of records
+// that have a value and the first maxUnique unique values in record order.
+export function localFieldValues(misb, maxUnique = 5) {
+    const rows = Array.isArray(misb) ? misb : [];
+    return Object.entries(MISB)
+        .filter(([name]) => /local/i.test(name))
+        .map(([name, tag]) => {
+            const values = [];
+            const seen = new Set();
+            let recordCount = 0;
+            for (const row of rows) {
+                const value = row?.[tag];
+                if (value === null || value === undefined || value === "") continue;
+                recordCount++;
+                if (values.length >= maxUnique) continue;
+                const text = localValueText(value);
+                if (!seen.has(text)) {
+                    seen.add(text);
+                    values.push(text);
+                }
+            }
+            return {name, tag, recordCount, values};
+        });
+}
+
+// stream: the stream's report name (klvStreamLabels), or null.
+// otherPackets: the KLV packets that are not ST 0601 (parseKLVFile's
+// otherKLVPackets), or null when the data did not come from a KLV file.
+export function renderLocalFieldValues(fields, {stream = null, maxUnique = 5, otherPackets = null} = {}) {
+    const lines = [];
+    lines.push(stream ? `LOCAL FIELDS — ${stream}` : "LOCAL FIELDS");
+    lines.push("─".repeat(60));
+    lines.push(`  (MISB fields with "local" in the name, first ${maxUnique} unique values)`);
+    for (const field of fields) {
+        if (field.recordCount === 0) {
+            lines.push(`  ${field.name} (tag ${field.tag}): empty`);
+            continue;
+        }
+        lines.push(`  ${field.name} (tag ${field.tag}): ${field.recordCount} record(s) with a value`);
+        for (const text of field.values) lines.push(`    ${text}`);
+    }
+    if (Array.isArray(otherPackets)) {
+        if (otherPackets.length === 0) {
+            lines.push("  KLV packets that are not ST 0601: none");
+        } else {
+            lines.push("  KLV packets that are not ST 0601 (not decoded, so not in the fields above):");
+            for (const p of otherPackets) {
+                lines.push(`    key ${p.key}${p.standard ? ` (${p.standard})` : ""}: ${p.count} packet(s), ${p.bytes} bytes`);
+            }
+        }
+    }
+    return lines;
+}
+
+// MPEG-TS stream_type values that carry KLV (MISB ST 1402): 0x15 is metadata in
+// PES packets (synchronous carriage), 0x06 is private data in PES packets
+// (asynchronous carriage).
+const KLV_CARRIAGE = {0x15: "sync", 0x06: "async"};
+
+function hexId(n, digits = 0) {
+    return "0x" + n.toString(16).padStart(digits, "0");
+}
+
+// Report names for MISB streams, from the container's ids, not from a stream's
+// place in the list: "KLV #0:3 [0x1002 = PID 4098], sync (stream_type 0x15)".
+// #0:N is the stream's place in the PMT, the same number that ffprobe prints and
+// ffmpeg -map uses; [0x1002] is its packet id (PID). A stream with no PID (a .klv
+// or CSV file) is "MISB file", numbered when there are two or more. A derived
+// track is "Center (derived from KLV #0:3 [0x1002], sync)". short leaves out
+// "= PID n" and the stream_type. Names that are the same (two files with the
+// same layout) get "(1 of 2)", "(2 of 2)".
+export function klvStreamLabels(misbs, {short = false} = {}) {
+    const files = misbs.filter(misb => misb && !misb.derivedTrack && misb.klvPid == null);
+    const streamLabel = (misb, brief) => {
+        if (misb?.klvPid == null) {
+            const n = files.indexOf(misb);
+            return files.length > 1 && n >= 0 ? `MISB file ${n + 1}` : "MISB file";
+        }
+        let label = "KLV ";
+        if (Number.isInteger(misb.klvStreamIndex)) label += `#0:${misb.klvStreamIndex} `;
+        label += brief ? `[${hexId(misb.klvPid)}]` : `[${hexId(misb.klvPid)} = PID ${misb.klvPid}]`;
+        const type = misb.klvStreamType;
+        if (Number.isInteger(type)) {
+            const mode = KLV_CARRIAGE[type];
+            if (!brief) label += mode ? `, ${mode} (stream_type ${hexId(type, 2)})` : `, stream_type ${hexId(type, 2)}`;
+            else if (mode) label += `, ${mode}`;
+        }
+        return label;
+    };
+    const labels = misbs.map(misb => {
+        if (!misb?.derivedTrack) return streamLabel(misb, short);
+        const kind = misb.derivedTrack.charAt(0).toUpperCase() + misb.derivedTrack.slice(1);
+        return `${kind} (derived from ${streamLabel(misb, true)})`;
+    });
+    const totals = new Map();
+    for (const label of labels) totals.set(label, (totals.get(label) ?? 0) + 1);
+    const seen = new Map();
+    return labels.map(label => {
+        const total = totals.get(label);
+        if (total < 2) return label;
+        const n = (seen.get(label) ?? 0) + 1;
+        seen.set(label, n);
+        return `${label} (${n} of ${total})`;
+    });
+}
+
+// The last part of a file name or URL, without a query, decoded.
+function fileBaseName(name) {
+    const base = String(name).split(/[?#]/)[0].split("/").pop();
+    try {
+        return decodeURIComponent(base);
+    } catch (e) {
+        return base;
+    }
+}
+
+// The files that the MISB streams came from (sourceFile and sourceBytes, set
+// when a KLV file or TS is parsed), each one time, with its size.
+export function renderSourceFiles(misbs) {
+    const files = new Map();
+    for (const misb of misbs) {
+        if (!misb || misb.derivedTrack || misb.sourceFile == null) continue;
+        const name = fileBaseName(misb.sourceFile);
+        if (!files.has(name)) files.set(name, misb.sourceBytes);
+    }
+    const lines = [...files].map(([name, bytes]) => {
+        if (!Number.isFinite(bytes)) return name;
+        const mb = bytes >= 1e6 ? `, ${(bytes / 1e6).toFixed(1)} MB` : "";
+        return `${name} (${bytes.toLocaleString("en-US")} bytes${mb})`;
+    });
+    if (lines.length === 0) return [];
+    if (lines.length === 1) return [`FILE: ${lines[0]}`];
+    return ["FILES:", ...lines.map(line => `  ${line}`)];
+}

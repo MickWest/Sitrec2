@@ -12,6 +12,7 @@ import {frameTimeOffsetMS, getOffsetFromDateTimeString} from "../DateTimeUtils";
 import {EventManager} from "../CEventManager";
 import {t} from "../i18n";
 import {showTimingAnalysis} from "../showTimingAnalysis";
+import {klvStreamLabels, localFieldValues, renderLocalFieldValues, renderSourceFiles} from "../analysis/MisbTimingStats";
 
 // The Year slider normally starts at 1947 - Kenneth Arnold, and earlier than the
 // date of any sitch we ship - which keeps dragging fine-grained for ordinary use.
@@ -608,10 +609,35 @@ export class CNodeDateTime extends CNode {
         // analysis below.
         // Anonymous prelude: the report is paste-safe, so we replace
         // node ids (which often carry tail numbers like CG2314 / N97826)
-        // with positional labels (Stream 1, Stream 2, ...). The diagnostic
-        // signal — record counts, PES PTS availability, gap counts, max
-        // interval — is preserved.
+        // with names from the container's ids: "KLV #0:3 [0x1002 = PID 4098]"
+        // (see klvStreamLabels). The diagnostic signal — record counts, PES
+        // PTS availability, gap counts, max interval — is preserved.
+        // The one exception is the name and size of the loaded file, at the
+        // start of the report. The dialog's "Show Filename" checkbox adds or
+        // removes it, in the text, the copy and the download.
         let prelude = "";
+        const fileLines = renderSourceFiles(misbNodes.map(n => n.misb));
+        const fileHeader = fileLines.length > 0 ? fileLines.join("\n") + "\n\n" : null;
+        const streamLabels = klvStreamLabels(misbNodes.map(n => n.misb));
+        const shortStreamLabels = klvStreamLabels(misbNodes.map(n => n.misb), {short: true});
+
+        // ── Local fields ─────────────────────────────────────────────
+        // First in the report: every MISB field with "local" in its name and
+        // its first unique values, per loaded stream. Unlike the rest of the
+        // report, this section prints tag values. Derived tracks (Center,
+        // Target, Truth) are left out: their rows hold only time and position.
+        let derivedCount = 0;
+        for (let si = 0; si < misbNodes.length; si++) {
+            const misb = misbNodes[si].misb;
+            if (misb?.derivedTrack) { derivedCount++; continue; }
+            const lines = renderLocalFieldValues(localFieldValues(misb),
+                {stream: streamLabels[si], otherPackets: misb?.otherKLVPackets ?? null});
+            prelude += lines.join("\n") + "\n\n";
+        }
+        if (derivedCount > 0) {
+            prelude += `  (${derivedCount} derived track(s) not listed: their rows hold only time and position.)\n\n`;
+        }
+
         if (misbNodes.length > 1) {
             prelude += "MULTIPLE MISB DATA STREAMS LOADED\n";
             prelude += "─".repeat(60) + "\n";
@@ -643,7 +669,7 @@ export class CNodeDateTime extends CNode {
                 } catch (e) {
                     gapInfo = ` (gap survey failed: ${e.message})`;
                 }
-                prelude += `  Stream ${si + 1}\n`;
+                prelude += `  ${streamLabels[si]}\n`;
                 prelude += `    records: ${len}, hasRecordPTS: ${has}${gapInfo}${tag}\n`;
             }
             prelude += "\n  Sync-mode (hasRecordPTS=yes) is preferred for the deep analysis\n";
@@ -659,8 +685,8 @@ export class CNodeDateTime extends CNode {
         // resulted. This answers "is the displayed track on the sync or the
         // async KLV stream?" for multi-PID files. "pts" = PES-PTS pairing
         // (synchronous, PCR-locked); "uts" = UnixTimeStamp wall-clock fallback
-        // (asynchronous, nominal rate). Structural only: positional Stream
-        // labels + track counts, no node ids and no tag values.
+        // (asynchronous, nominal rate). Structural only: stream names from
+        // container ids + track counts, no node ids and no tag values.
         // Detected by the presence of the .pairingInfo stamp that
         // CNodeTrackFromMISB.recalculate() leaves behind (so subclasses like
         // CNodeLazyMISBFlightTrack are included without an instanceof import).
@@ -682,7 +708,7 @@ export class CNodeDateTime extends CNode {
             }
             const ordered = [...groups.values()].sort((a, b) => (a.si - b.si) || a.mode.localeCompare(b.mode));
             for (const g of ordered) {
-                const streamLabel = g.si >= 0 ? `Stream ${g.si + 1}` : "an unlisted stream";
+                const streamLabel = g.si >= 0 ? shortStreamLabels[g.si] : "an unlisted stream";
                 const hasLabel = g.has ? "hasRecordPTS=yes" : "hasRecordPTS=no";
                 const modeLabel = g.mode === "pts"
                     ? "PTS pairing (PES PTS, PCR-locked per-record)"
@@ -710,7 +736,7 @@ export class CNodeDateTime extends CNode {
         const report = prelude + misbNode.generateTimingAnalysis();
         // Generic download filename — never include sitch name (may
         // contain platform / mission text the user wrote).
-        showTimingAnalysis(report, "sitrec-timing-analysis.txt");
+        showTimingAnalysis(report, "sitrec-timing-analysis.txt", undefined, {fileHeader});
     }
 
     changedFrames() {

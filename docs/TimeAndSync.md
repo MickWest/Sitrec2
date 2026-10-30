@@ -190,6 +190,37 @@ with the positions. If there is more than one KLV stream, it lists all of them a
 which one each track uses. You can copy the report or download it as
 `sitrec-timing-analysis.txt`. The report does not include track or node names.
 
+The first line gives the name and size of the loaded file (the `.ts` file, or the `.klv`
+file). Clear **Show Filename** to remove this line from the text, from **Copy Analysis** and
+from **Download Analysis**.
+
+Each KLV stream is named by its ids in the file, for example
+`KLV #0:3 [0x1002 = PID 4098], sync (stream_type 0x15)`:
+
+- `#0:3` is the stream's position in the TS program map, the same number that `ffprobe`
+  shows as `Stream #0:3` and that `ffmpeg -map 0:3` uses.
+- `[0x1002 = PID 4098]` is the TS packet id (PID), in hexadecimal and decimal.
+- `sync` (stream_type 0x15) or `async` (stream_type 0x06) is how the file says the KLV is
+  carried: synchronous with the video frames, or not.
+
+A derived track is named after its source stream, for example
+`Center (derived from KLV #0:3 [0x1002], sync)`. KLV that did not come from a `.ts` file
+is `MISB file`. After you reload a saved sitch, the PID is always shown. The position and
+stream_type are shown only if they were saved with the stream's frame timing; older saves
+do not have them.
+
+Next is **Local Fields**: the MISB fields with "Local" in their names
+(Security Local Set, RVT Local Set, VMTI Local Set and Geo-Registration Local Set), one list
+for each KLV stream. Each field shows how many records have a value and its first five
+different values, or "empty". The values are shown as they are in the file; a nested local set is shown as
+`name=value` pairs. Derived tracks (Center, Target, Truth) are not listed, because their
+records hold only time and position.
+
+These fields are read only from inside the ST 0601 records. A local set sent as separate KLV
+packets with its own key (for example ST 0903 VMTI or ST 0806 RVT) is not decoded. For each
+stream, the section lists the KLV packets that are not ST 0601, by key, with a count and size,
+so you can see that they are in the file.
+
 If the sitch has no MISB data, the button shows a message that says so.
 
 ---

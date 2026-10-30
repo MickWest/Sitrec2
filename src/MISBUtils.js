@@ -609,6 +609,30 @@ for(const standard of standards) {
 // so we have an 11 byte key????
 
 
+export function bytesToHex(bytes) {
+    let hex = "";
+    for (const b of bytes) hex += b.toString(16).padStart(2, "0");
+    return hex;
+}
+
+// Keys of the standards misb.js can name, as hex. Read when called, not at
+// import: a standard's module may have no key (it is a stub in Jest).
+function knownKLVKeys() {
+    const known = new Map();
+    for (const [module, label] of [[st0806, "ST 0806 RVT"], [st0903, "ST 0903 VMTI"], [st0104, "ST 0104"]]) {
+        if (module?.key) known.set(bytesToHex(module.key), label);
+    }
+    return known;
+}
+
+// The packets that are not ST 0601, as a list for a report. tally maps a key
+// (hex) to {count, bytes}. A key misb.js knows gets its standard's name.
+export function otherKLVPacketList(tally, known = knownKLVKeys()) {
+    return [...tally.entries()]
+        .map(([key, t]) => ({key, standard: known.get(key) ?? null, count: t.count, bytes: t.bytes}))
+        .sort((a, b) => b.count - a.count);
+}
+
 export function parseKLVFile(data, pesEntries = null, videoFirstPESus = null, options = {}) {
     const reportError = (...args) => {
         if (options?.silent) {
@@ -640,6 +664,11 @@ export function parseKLVFile(data, pesEntries = null, videoFirstPESus = null, op
     // Used to pair each KLV record to its source PES packet's PTS, when
     // pesEntries are provided by the TS demuxer.
     const validPacketOffsets = [];
+    // Packets that are not ST 0601, by key. The scanner keeps them, but
+    // klv.decode below is given only st0601, so they are not decoded. A
+    // separate local set (e.g. ST 0903 VMTI) is one of these.
+    const st0601KeyHex = st0601.key ? bytesToHex(st0601.key) : null;
+    const otherPackets = new Map();
     let offset = 0;
     let packetCount = 0;
     let skippedIncomplete = 0;
@@ -710,6 +739,14 @@ export function parseKLVFile(data, pesEntries = null, videoFirstPESus = null, op
         validPackets.push(completePacket);
         validPacketOffsets.push(packetStart);
         packetCount++;
+
+        const keyHex = bytesToHex(completePacket.subarray(0, keyLength));
+        if (keyHex !== st0601KeyHex) {
+            const t = otherPackets.get(keyHex) ?? {count: 0, bytes: 0};
+            t.count++;
+            t.bytes += completePacket.length;
+            otherPackets.set(keyHex, t);
+        }
 
         offset = packetEnd;
     }
@@ -841,6 +878,8 @@ export function parseKLVFile(data, pesEntries = null, videoFirstPESus = null, op
             }
         }
     }
+
+    MISBArray.otherKLVPackets = otherKLVPacketList(otherPackets);
 
     return MISBArray;
 
