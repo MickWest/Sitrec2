@@ -9,6 +9,14 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.183.11 (2026-10-30)
+### Improvements
+- **Timing Analysis report** (Time → *Timing Analysis...*): the report now names each KLV stream by its ids in the file, for example *KLV #0:3 [0x1002 = PID 4098]*. Before, the name was *Stream 1*. A new *Local Fields* section shows, for each stream, the MISB fields with "Local" in their names and their first five different values, and lists the KLV packets that Sitrec does not decode. For KLV data, the report now also starts with the name and size of the file. Before, the report had no file name. Clear the new *Show Filename* checkbox to remove the file line from the text, the copy and the download. This checkbox does not remove the Local Fields values.
+- **How the Balloon Algorithms Work** (Help → Documentation → Analysis, or Traverse → Help): a new guide explains how Sitrec calculates the Balloon results of *Analyze Traverse Methods...*, with diagrams and a numerical example.
+
+### Bug Fixes
+- Fixed a custom satellite source, a custom wind source or a configured current satellite catalog that needs the sign-in the browser sent. From version 2.183.6, such a source could not load, and a custom satellite source showed a *TLE Loading Error*. The server now sends that sign-in only to these configured sources. It does not send it to celestrak.org or to the fixed public sources.
+
 ## Version 2.183.10 (2026-10-29)
 
 ### Bug Fixes
