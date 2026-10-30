@@ -765,6 +765,10 @@ an HTTP 502 (or, for `proxy.php`, the cached copy when there is one), so a missi
 does not hold a server worker. `CUSTOM_TLE` is not listed here because its historical-data endpoint,
 `proxyStarlink.php`, is intentionally absent from the secure server artifact.
 
+If the browser sends an `Authorization` header, these proxies forward it to the configured
+host, so a source can sit behind the same sign-on as the site. They do not forward it to
+`celestrak.org`, or to any fixed public host that another proxy fetches.
+
 Today each URL must resolve to a service your deployment provides. A built-in endpoint that
 serves these data sets from the module's mirror bucket is planned.
 

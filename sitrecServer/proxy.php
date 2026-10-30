@@ -127,7 +127,7 @@ if (!$isFresh) {
     // body of about 2 MB from one host that is sometimes slow. It is normally fetched
     // once per cache lifetime for all users together, and a timeout falls back to
     // the copy already cached (or the 502 below), like any other failed fetch.
-    $result = curlGetRequest($url, [], 30);
+    $result = curlGetRequest($url, curlConfiguredSourceHeaders($url), 30);
     $dataBlob = $result['data'];
     $httpStatus = $result['http_status'];
 

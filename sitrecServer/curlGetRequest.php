@@ -3,11 +3,13 @@ require_once __DIR__ . '/audit.php';
 // Simple cURL GET helper for the proxies.
 //
 // Only the headers a caller passes in $extraHeaders go upstream. The browser's
-// own request headers are never forwarded, Authorization included: every caller
-// fetches a third-party host, and browsers attach HTTP Basic credentials to
+// own request headers are not forwarded by default, Authorization included: most
+// callers fetch a third-party host, and browsers attach HTTP Basic credentials to
 // every request in a protected realm, so forwarding it would hand a site's
-// password to CelesTrak, adsb.lol and the rest. A caller that needs upstream
-// auth passes its own server-side header in $extraHeaders.
+// password to CelesTrak, adsb.lol and the rest. A caller that fetches a source
+// the site's operator configured passes curlConfiguredSourceHeaders($url), which
+// does forward it. Any other caller that needs upstream auth passes its own
+// server-side header in $extraHeaders.
 //
 // $extraHeaders: optional additional request headers, e.g.
 //   ['User-Agent: Sitrec/1.0 (+https://www.metabunk.org/sitrec)']
@@ -44,6 +46,24 @@ const CURL_GET_CONNECT_TIMEOUT_SEC = 5;
 function curlGetTimeouts($timeoutSec = null) {
     $total = (int)$timeoutSec > 0 ? (int)$timeoutSec : max(1, (int)CURL_GET_DEFAULT_TIMEOUT_SEC);
     return [$total, min(CURL_GET_CONNECT_TIMEOUT_SEC, $total)];
+}
+
+/**
+ * The headers for a fetch from a source the site's operator set in shared.env
+ * (CUSTOM_TLE, CUSTOM_WIND_URL, CURRENT_STARLINK, CURRENT_ACTIVE): the browser's
+ * Authorization header, if it sent one. Such a source can sit behind the same
+ * sign-on as the site, and without the header it answers with a login page. The
+ * operator chose the host, so the credential goes nowhere they did not pick.
+ *
+ * CelesTrak is the exception. It needs no credential, and it is the default and
+ * the sample value of these settings, so an unedited install must not send it one.
+ */
+function curlConfiguredSourceHeaders($url) {
+    if (strcasecmp((string)parse_url($url, PHP_URL_HOST), 'celestrak.org') === 0) {
+        return [];
+    }
+    $headers = function_exists('getallheaders') ? array_change_key_case(getallheaders(), CASE_LOWER) : [];
+    return isset($headers['authorization']) ? ['Authorization: ' . $headers['authorization']] : [];
 }
 
 function curlGetRequest($url, $extraHeaders = [], $timeoutSec = null) {

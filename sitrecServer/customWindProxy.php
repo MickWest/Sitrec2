@@ -97,7 +97,7 @@ if ($caching) {
 
 // curlGetRequest's default time limit (20 s): a GFS-shaped 1-degree grid is
 // about 1 MB of JSON. A timeout is reported as the 502 below.
-$result = curlGetRequest($url);
+$result = curlGetRequest($url, curlConfiguredSourceHeaders($url));
 $data = $result['data'];
 $http_status = $result['http_status'];
 

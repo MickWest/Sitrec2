@@ -318,6 +318,6 @@ One deployment-configured gridded source is implemented already:
 - Set `CUSTOM_WIND_URL` to a server-side URL template containing `{YYYY}`, `{MM}`, `{DD}`, `{HH}`, and `{LEVEL}`.
 - Optionally set `CACHE_CUSTOM_WIND=true` to cache responses in `data/wind/`.
 
-The browser calls `sitrecServer/customWindProxy.php`; the upstream URL and any credentials remain server-side. The upstream must return the same gridded JSON used by GFS. The proxy waits at most 20 seconds for the upstream (5 seconds to connect) and answers HTTP 502 when it does not respond in time. The proxy rounds requests to a six-hour cycle for its cache key and expands `{LEVEL}` to `10m` for the surface or `<n>hPa` for a pressure level.
+The browser calls `sitrecServer/customWindProxy.php`; the upstream URL and any credentials in it remain server-side. If the browser sends an `Authorization` header, the proxy forwards it to the upstream, so the source can sit behind the same sign-on as the site. The upstream must return the same gridded JSON used by GFS. The proxy waits at most 20 seconds for the upstream (5 seconds to connect) and answers HTTP 502 when it does not respond in time. The proxy rounds requests to a six-hour cycle for its cache key and expands `{LEVEL}` to `10m` for the surface or `<n>hPa` for a pressure level.
 
 This hook adds one GFS-shaped source. It is not a general runtime source registry: changing the wire format, adding source-specific controls, or adding a new fetch strategy still requires code and a build.

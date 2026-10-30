@@ -287,7 +287,7 @@ $gpConnectTimeoutSec = 10;
 
 // For CUSTOM type, use simple GET request without Space-Track login
 if ($type == "CUSTOM") {
-    $result = curlGetRequest($url, [], $gpHistoryTimeoutSec);
+    $result = curlGetRequest($url, curlConfiguredSourceHeaders($url), $gpHistoryTimeoutSec);
     $data = $result['data'];
     $http_status = $result['http_status'];
 } else {
