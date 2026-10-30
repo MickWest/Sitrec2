@@ -2,6 +2,10 @@
 
 A **traverse** finds a 3D position for each frame by combining a Line of Sight (LOS) with some physical assumption. Each LOS frame provides a sensor position and a direction vector. The traverse decides *where along* (or near) that ray the target is.
 
+[How the Balloon Algorithms Work](BalloonAlgorithms.md) explains the analysis
+gallery's Balloon fits step by step, with motion equations, diagrams, charts,
+wind treatments and a numerical example.
+
 > ## Range and assumptions
 >
 > - A camera measures **direction**, not distance. Given the sensor positions **S**(t) and the
@@ -9,10 +13,13 @@ A **traverse** finds a 3D position for each frame by combining a Line of Sight (
 >   **S**(t) + *R*(t)·**D**(t) that fits the sightlines exactly.
 > - Each traverse method selects one path by adding an assumption. The speeds, sizes,
 >   altitudes and accelerations derived from that path depend on the assumption.
-> - Range is constrained only when the sensor moves *across* the sightlines (**parallax**).
->   With a stationary camera, or one flying straight at the target, the fits still return a
->   path with a low residual; its range comes from the method's assumption, not from the
->   sightlines. See [Traverse Analysis and the Verdict](TraverseAnalysis.md).
+> - How tightly the bearings constrain range depends on **both camera motion and the
+>   target-motion assumption**. Camera motion across the sightlines (**parallax**) can
+>   constrain a restricted target model. An arbitrary curved target remains ambiguous
+>   even with a moving camera. A specified constant-speed turn can constrain range from
+>   a moving, constant-velocity camera in suitable geometry; constant speed alone does
+>   not guarantee it. See [curved targets and constrained turns](TraverseConcepts.md#a-curved-target-with-a-straight-flying-camera)
+>   and [Traverse Analysis and the Verdict](TraverseAnalysis.md).
 
 Sitrec offers two families of traverse:
 
@@ -29,7 +36,7 @@ Sitrec offers two families of traverse:
 |--------|---------------|--------------|-----------------|-----------------------|
 | **Target Object** (default) | Target track, Target Smooth Window | Uses the selected target track itself (smoothed), not a traverse along the LOS. The Custom sitch's default. | That the target track is right | Anything the target track does not already contain |
 | **Use Range** | Range Source | Applies a loaded MISB range column, in metres, along the current LOS. Appears when range data is loaded. | The selected range belongs to the observed target and has the correct units | Range calibration or target identity. Ground Range is applied directly, without conversion to slant range |
-| **Constant Distance** | Start Distance (**Tgt Start Dist**) | Places the target at Tgt Start Dist along every LOS ray. | The range | Anything. The range is 100 % your input, and every speed, size and acceleration scales with it |
+| **Constant Distance** | Start Distance (**Tgt Start Dist**) | Places the target at Tgt Start Dist along every LOS ray. | The range | Anything. Range is your input. Implied size and camera-relative motion scale with it; target speed and acceleration in world coordinates also depend on camera motion |
 | **Constant Ground Speed** | Start Distance, Target Speed | Finds the point on each LOS ray that maintains a fixed ground speed from the previous frame. | The speed, the start range, and that every earlier frame was right | The speed (you supplied it) or the range. Errors compound forward and never self-correct |
 | **Constant Air Speed** | Start Distance, Target Speed, Wind | Same as ground speed, but subtracts wind to maintain constant airspeed. | All of the above **plus** that the wind field is right at the target's unknown altitude | The same — and wind error and range error are confounded, so you cannot separate them from sightlines alone |
 | **Straight Line** | Start Distance, Heading | Moves in a fixed compass heading. Each frame intersects the LOS ray with a vertical plane aligned to that heading. | Perfectly straight horizontal motion on a heading you supply | The heading. Curvature shows up as residual you cannot attribute between "it wasn't straight" and "your heading is wrong" |
@@ -231,7 +238,13 @@ smooth platform track and can produce a false low score. A monotonic score with
 no interior valley therefore reports failure instead of returning an endpoint.
 The altitude depends on the level, constant-speed assumption.
 
-Unlike sequential traversals, global fits have no start distance parameter: every sightline in the window takes part in determining the whole trajectory. CV, CA and the polynomial fits solve all frames in one step; the Kalman Smoother propagates state frame to frame but is seeded from the all-frame CV fit and smoothed backward, so its output also depends on every frame.
+Unlike sequential traverses, global fits use observations throughout the window
+to determine the whole trajectory. Some, including Physics and the analysis
+Balloon fits, search an initial range as one of their parameters; they do not
+take it as a fixed distance supplied by the user. CV, CA and the polynomial
+fits solve all frames in one step; the Kalman Smoother propagates state frame
+to frame but is seeded from the all-frame CV fit and smoothed backward, so its
+output also depends on every frame.
 
 BOTBench exposes these same direct CV and CA implementations as **Global Fit:
 Constant Velocity** and **Global Fit: Constant Acceleration**. BOT files retain
@@ -240,10 +253,18 @@ direct fits use both.
 
 #### Range observability and collapse (CV-family conditioning)
 
-Bearings-only data only determines range through **parallax**: the sensor has
-to move *around* the sightlines, not just along them. When the sensor flies a
-path the constant-velocity model can represent — straight and level cruise
-exactly, a gently curving arc over a short clip approximately — the sensor's
+For a constant-velocity target model, useful camera **parallax** can break the
+range ambiguity; a constant-velocity camera leaves a family of target
+positions and velocities with the same bearings. A target turn alone does
+not remove that ambiguity if arbitrary curved motion is allowed. A
+specified constant-speed circular turn or equal-speed pair of straight legs
+can constrain range under that different motion model; see
+[the distinction and its limits](TraverseConcepts.md#when-a-constant-speed-turn-can-constrain-range).
+This does not make the CV fit a turn-model fit.
+
+When the sensor flies a path the constant-velocity model can represent —
+straight and level cruise exactly, a gently curving arc over a short clip
+approximately — the sensor's
 own trajectory is a (near-)zero-residual solution to every
 perpendicular-distance fit, and the CV family (Constant Velocity, Constant
 Acceleration, the Kalman smoother whose process model is CV, and the Monte
@@ -285,7 +306,7 @@ Two limits:
 
 #### Constant Velocity (CV)
 
-**Model**: P(t) = P0 + V * t (6 unknowns: 3 position + 3 velocity)
+**Model**: P(t) = P0 + V * t (6 unknowns: 3 target-position + 3 target-velocity components). `V` is the target's fixed velocity in the world coordinate system; the measured camera positions are inputs, not part of this target-motion assumption.
 
 **Method**: Perpendicular-distance least-squares. For each LOS ray with sensor origin S and unit direction D, the perpendicular projection matrix is:
 
@@ -303,11 +324,11 @@ Substituting the linear model and stacking all frames builds a 6x6 normal equati
 
 **When to use**: Fits a straight line at constant speed with no user input. When the Fit Diagnostics folder reads poor conditioning, the benchmark measured a high collapse rate (see "Range observability and collapse" above). The residual measures fit to a straight-line model, not range accuracy.
 
-**Limits**: Cannot capture turns, climbs, or speed changes. With fewer than 3 frames the system is underdetermined, so the fit is exact (zero residuals) regardless of the true trajectory. Prone to collapsing onto the sensor when the sensor's own path is (approximately) CV-representable — check the conditioning diagnostic.
+**Limits**: Cannot capture target turns or speed changes. A straight climb at constant 3D velocity is allowed; a changing climb rate is not. With fewer than 3 frames the system is underdetermined, so the fit is exact (zero residuals) regardless of the true trajectory. Prone to collapsing onto the sensor when the sensor's own path is (approximately) CV-representable — check the conditioning diagnostic.
 
 #### Constant Acceleration (CA)
 
-**Model**: P(t) = P0 + V * t + 0.5 * A * t^2 (9 unknowns: 3 position + 3 velocity + 3 acceleration)
+**Model**: P(t) = P0 + V * t + 0.5 * A * t^2 (9 unknowns: 3 target-position, 3 initial target-velocity and 3 target-acceleration components). The target's acceleration vector `A` is constant; its velocity is `V + A*t` and need not be constant. The camera's motion is a separate known input.
 
 **Method**: Same perpendicular-distance least-squares as CV, but with quadratic time terms in the design matrix. The design rows become `[P_perp | P_perp * tau | P_perp * 0.5 * tau^2]` where tau is normalized time.
 
@@ -376,7 +397,7 @@ The trial with the lowest mean angular error wins.
 **Parameters**:
 - *Num Trials* (default 1000): More trials explore more of the solution space but take longer.
 - *LOS Uncertainty* (default 2 degrees): The maximum random perturbation applied to each LOS direction. Should match your estimate of the actual LOS measurement error. Too small = the fit follows noise in the LOS data. Too large = the fit is too loose.
-- *Polynomial Order* (default 1 = linear): Order 1 fits a straight line (like CV), order 2 fits a parabola (like CA), order 3 fits a cubic, etc. Higher orders need more frames and more trials.
+- *Polynomial Order* (default 1 = linear): The degree of the **target position as a function of time**, with the camera track held as a known input. Degree 1 is constant target velocity; degree 2 permits constant target acceleration; degree 3 permits constant target jerk (acceleration changing linearly with time). These are nested models: higher degrees permit, rather than require, more changes in target motion. Higher orders need more frames and more trials. This fit setting differs from the benchmark's `maxObservableOrder` diagnostic, whose value 0 is a failed-check flag; see [dynamics order](TraverseConcepts.md#15-dynamics-order-which-target-motion-models-pass-the-check).
 
 **Minimum data**: (order + 1) frames.
 

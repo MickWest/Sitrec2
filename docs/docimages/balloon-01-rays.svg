@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1100" height="440" viewBox="0 0 1100 440" role="img" aria-labelledby="title desc">
+<title id="title">1. A trial starts on the first ray; later rays test its motion</title><desc id="desc">Left: initial range selects one point on the first observed ray. Right: the integrated path can miss a later observed ray, producing an angular residual at the camera.</desc>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10Z" fill="#526779"/></marker></defs>
+<rect width="1100" height="440" rx="14" fill="#f5f8fb"/>
+<g font-family="Arial, Helvetica, sans-serif" fill="#17324d">
+<text x="34" y="40" font-size="27" fill="#17324d" text-anchor="start" font-weight="bold">1. A trial starts on the first ray; later rays test its motion</text>
+<text x="40" y="88" font-size="22" fill="#17324d" text-anchor="start" font-weight="bold">First selected frame: t = 0</text>
+<text x="580" y="88" font-size="22" fill="#17324d" text-anchor="start" font-weight="bold">A later frame: t &gt; 0</text>
+<line x1="550.00" y1="75.00" x2="550.00" y2="365.00" stroke="#d8e2ea" stroke-width="2"/>
+<circle cx="65.00" cy="320.00" r="8" fill="#17324d"/>
+<text x="45" y="353" font-size="19" fill="#17324d" text-anchor="start" font-weight="normal">Camera S(0)</text>
+<line x1="65.00" y1="320.00" x2="495.00" y2="135.00" stroke="#2166ac" stroke-width="3" marker-end="url(#arrow)"/>
+<circle cx="320.00" cy="210.00" r="8" fill="#007f73"/>
+<text x="310" y="175" font-size="20" fill="#007f73" text-anchor="start" font-weight="normal">Trial P(0)</text>
+<circle cx="432.00" cy="162.00" r="5" fill="#526779"/>
+<text x="380" y="125" font-size="18" fill="#526779" text-anchor="start" font-weight="normal">Other range</text>
+<text x="116" y="226" font-size="20" fill="#17324d" text-anchor="start" font-weight="normal">R₀: slant range</text>
+<text x="70" y="391" font-size="23" fill="#2166ac" text-anchor="start" font-weight="normal">P(0) = S(0) + R₀ D(0)</text>
+<circle cx="610.00" cy="320.00" r="8" fill="#17324d"/>
+<text x="585" y="353" font-size="19" fill="#17324d" text-anchor="start" font-weight="normal">Camera S(t)</text>
+<line x1="610.00" y1="320.00" x2="1035.00" y2="128.00" stroke="#2166ac" stroke-width="3" marker-end="url(#arrow)"/>
+<line x1="610.00" y1="320.00" x2="960.00" y2="235.00" stroke="#bd5700" stroke-width="2"/>
+<circle cx="960.00" cy="235.00" r="8" fill="#bd5700"/>
+<text x="850" y="214" font-size="20" fill="#bd5700" text-anchor="start" font-weight="normal">Predicted P(t)</text>
+<text x="826" y="133" font-size="19" fill="#2166ac" text-anchor="start" font-weight="normal">Observed direction</text>
+<path d="M697 281 A95 95 0 0 1 703 297" stroke="#bd5700" stroke-width="3" fill="none"/>
+<text x="720" y="314" font-size="20" fill="#bd5700" text-anchor="start" font-weight="normal">θ(t): angular error</text>
+<text x="585" y="391" font-size="19" fill="#17324d" text-anchor="start" font-weight="normal">Later points come from the motion equations.</text>
+</g></svg>

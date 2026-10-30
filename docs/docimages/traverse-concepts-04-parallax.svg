@@ -44,5 +44,5 @@
 <text x="410.0" y="60.0" font-family="Helvetica, Arial, sans-serif" font-size="14" font-weight="700" fill="#17202A" text-anchor="start" style="">turning platform</text>
 <text x="575.0" y="442.0" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#4E5A66" text-anchor="middle" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">both members inherit the turn as a bow,</text>
 <text x="575.0" y="456.0" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#4E5A66" text-anchor="middle" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">and a bow costs sideways g</text>
-<text x="380.0" y="482.0" font-family="Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#7E8893" text-anchor="middle" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">The rays all pass through the balloon, so sliding a track along them pivots it about the balloon.</text>
+<text x="380.0" y="482.0" font-family="Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#7E8893" text-anchor="middle" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">This example assumes a stationary balloon. Motion ratios shown are specific to that assumption.</text>
 </svg>

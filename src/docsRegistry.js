@@ -319,6 +319,11 @@ export const helpDocs = [
         chatDesc: "How the target/UAP path (the 'traverse') is computed from the camera lines of sight, method by method — constant distance, constant speed, constant altitude, straight line, wind-blown, terrain, and the global fits (constant velocity, constant acceleration, Kalman, Monte Carlo, minimum acceleration, minimum speed, and the physics models for balloons, sky lanterns, fixed-wing aircraft and quadcopters). Each method's entry says what it ASSUMES and what it does NOT establish. Read for 'how does method X work', 'which traverse should I use', or 'why do the methods disagree'.",
     },
     {
+        file: "docs/BalloonAlgorithms", labelKey: "menus.help.documentation.balloonAlgorithms",
+        section: "analysis", menuId: "traverse", role: "tutorial",
+        chatDesc: "How the Balloon analysis algorithms work, explained in Plain Technical English with diagrams, equations and a numerical example. Covers passive drift, fitted/supplied/corrected wind, constant vertical speed, changing wind, altitude shear, lantern cooling, angular residual and prior costs, numerical search and model selection. Explains range ambiguity and distinguishes Balloon analysis from Physics Sky Lantern, Wind Tracer and Add Balloon. Read for 'how does the balloon fit work', 'what wind does it assume', or 'why can a lantern keep rising after flame-out'.",
+    },
+    {
         file: "docs/TraverseAnalysis", labelKey: "menus.help.documentation.traverseAnalysis",
         section: "analysis", menuId: "traverse", role: "reference",
         chatDesc: "The Analyze Traverse Methods button and what it produces: the hypothesis gallery, how tiles are ranked, solution families and range bands, the plausibility checks, the Ordinariness and Implied object size disclosure lines, and the executive verdict: its five codes, every headline wording, what sets each one, and the list of causes Sitrec has no model for. Read this for 'how do I read the analysis gallery', 'what do the tile badges mean', 'what is a solution family', 'what does the verdict mean', or 'why does a good fit read Unresolved'.",

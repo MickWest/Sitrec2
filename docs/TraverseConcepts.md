@@ -18,6 +18,14 @@ through whatever it saw. Every point on that line looks identical to the
 camera, so one frame of video places the object somewhere along a line, and
 nowhere in particular on it. A *bearing* is the direction of that line.
 
+The **target** is the object being observed. The **platform** is the vehicle
+or other support carrying the camera. In these examples, the camera's
+positions and sightline directions are known inputs; the target's positions
+are unknown. A camera's direction of travel is different from the direction
+it points: panning or rotating the camera without moving it adds no parallax.
+**Velocity** means speed and direction together, measured in the common
+world coordinate system, rather than motion across the image.
+
 ## 2. Many rays over time: the exact-ray family
 
 ![Many rays over time: the exact-ray family](docimages/traverse-concepts-02-family.svg)
@@ -51,18 +59,20 @@ range**.
 
 ![Parallax: the rays pivot about the object](docimages/traverse-concepts-04-parallax.svg)
 
-If the camera moves, its rays all pass through the object and so they *pivot*
-about it. Sliding a track along the rays now changes its implied motion: a
-nearer member is carried along *with* the platform at a fraction of the
-platform's speed (half, for a member at half the range); a farther member is
-swung the *opposite* way, faster than the platform. Their speeds scale with the
-platform's speed. If the platform flies straight, the near and far members are
-straight too and only their speeds differ — nothing but a speed assumption
-could prefer one. If the platform
-*turns*, its turn is stamped
-on every wrong-range member as a bend, and a bend costs sideways acceleration
-(g) that a real object may not be able to produce. That is what **parallax
-buys**: not a range directly, but a price on every wrong range.
+Moving the camera changes the motion implied by different ranges. At half
+the range, an alternative track blends half the reference target's motion
+with half the camera's motion. Beyond the reference range, the camera's
+contribution reverses direction. These alternatives still reproduce every
+bearing.
+
+If **both camera and target move straight at constant velocity**, the
+alternatives do too. Their positions and velocities differ, but the
+straight-line, constant-velocity assumption cannot select a range. If the
+camera's *flight path turns* while the reference target keeps constant velocity, that turn
+is stamped on wrong-range members as a bend. That bend costs sideways
+acceleration (g) that a real object may not be able to produce. That is what
+**parallax buys under this target assumption**: a price on wrong ranges,
+rather than a range independently of how the target can move.
 
 The g cost can be small. On the Aguadilla sitch the stamped bend cost a
 wrong-range member 0.48 g at 51 kt, which passes the broad kinematic screen.
@@ -72,22 +82,82 @@ the share of time that matches one fixed scaling of it. It does not convert
 that match into a range. See
 [Does it fly the camera's path?](TraverseAnalysis.md#does-it-fly-the-cameras-path).
 
+### A curved target with a straight-flying camera
+
+**Knowing only that the target curves does not determine its range.** Suppose
+the camera position is `C(t)`, one possible target path is `T(t)`, and `k` is
+any positive constant. Another possible path is:
+
+    T_k(t) = C(t) + k·[T(t) − C(t)]
+
+Its camera-to-target vector is `k` times the original vector, so it has
+exactly the same bearing at every instant. `k = 0.5` puts it at half the range;
+`k = 2` puts it at twice the range. This construction works for curved paths
+as well as straight ones. It is one family among all the possible range
+profiles; the bearings do not require the range ratio to stay constant.
+
+When the camera moves at **constant velocity**, its acceleration is zero, so:
+
+    a_k(t) = k·a_T(t)
+
+The half-range target has half the acceleration, and the double-range target
+has twice the acceleration, with the same timing and direction. Alternatives
+generally remain curved. A smooth bend, or even a constant but unknown
+acceleration, therefore supplies no absolute range scale. The target's
+velocity is a blend of target and camera velocities; its speed does not
+simply multiply by `k`.
+
+Here, straight flight must include constant speed. A camera that speeds up
+or slows down has acceleration even on a straight path. The general
+constant-ratio relation is `a_k = k·a_T + (1 − k)·a_C`; known camera
+acceleration can help constrain range under a stated target-motion model.
+
+### When a constant-speed turn can constrain range
+
+A **specified turn model** adds more information than "the target curves":
+
+- **A circular arc at constant speed about one fixed centre.** With a moving,
+  constant-velocity camera, changing `k` generally adds a uniform drift to the
+  scaled circle. The alternative is then a drifting circular motion rather
+  than another circle about a fixed centre. Requiring a fixed-centre,
+  constant-speed turn can constrain range without supplying its numeric
+  speed or radius in advance.
+- **Two straight, constant-velocity legs joined continuously at the same
+  ground speed.** Most range changes give the two legs different speeds, so
+  requiring their speeds to agree can select a range. This fails in special
+  geometries, including when the target's velocity component along the
+  camera's direction is unchanged by the turn.
+
+**Constant speed alone, with an otherwise unrestricted curved path, does not
+guarantee a unique range.** It still leaves freedom to vary range over time.
+The speed here is ground speed; applying an airspeed constraint also requires
+a wind model. A stationary camera retains the scale ambiguity even for a
+constant-speed circle of unknown size. With a moving camera, short or noisy
+arcs can still constrain range very weakly.
+
+A range found this way is conditional on the turn model being right. It does
+not follow from curvature alone. A supplied start range in the sequential
+Constant Ground Speed or Constant Air Speed traverse is still an input;
+those methods do not independently fit a circular turn or a pair of legs.
+
 ## 5. Conditioning: can the rays pin a range at all?
 
 ![Conditioning: can the rays pin a range at all?](docimages/traverse-concepts-05-conditioning.svg)
 
-Two rays that cross steeply meet at a crisp point; two rays that are nearly
-parallel meet in a long smear, and anywhere along the smear fits. The
-**conditioning** of a clip is a score of how sharply its rays cross, reported
-as `rcond` on a 0–1 scale and usually quoted as its log10: near −1 is a clean
-crossing, −3 or below means range is not determined by the rays. When it is
-not, the fitting cost is flat in range except for a dip at the camera, and a
-**free fit rolls into that dip** — the analysis reports the nearest range its
-search allows. That failure is called a *collapse*. Why the one slope left
-points toward the camera is a property of the fitting arithmetic, not of the
-scene, and this page does not derive it. The conditioning diagnostic reports
-when the rays give no range slope of their own; in that case a near-camera
-result is a collapse of the fit.
+For a stationary point, two rays that cross steeply meet at a crisp point;
+nearly parallel rays leave a long smear. A moving-target fit has a similar
+question: can it separate the trajectory parameters, including range?
+The **CV-family conditioning** diagnostic measures this for the
+constant-velocity design system. It is reported as `rcond` on a 0–1 scale,
+usually quoted as its log10: near −1 is well conditioned; −3 or below warns
+that the CV family's range is unreliable.
+
+In weak geometry, a free fit can **collapse onto the camera**, returning a
+very small range with a low residual. That result reflects the fitting
+arithmetic rather than a measured distance. The warning belongs to this
+solver family: it does not establish that every target model is unable to
+constrain range. A constrained turn or another physical model can still be
+informative. See [CV-family conditioning and its limits](TraverseMethods.md#range-observability-and-collapse-cv-family-conditioning).
 
 ## 6. Priors: how a choice gets made when the rays cannot choose
 
@@ -160,14 +230,19 @@ and is motion within the broad limits (at most 1.5 g and 650 kt). These broad
 limits are separate from each physical class's limits.
 
 The **verdict** first applies an evidence gate: if the sightlines were built
-from the target being tested (a circular LOS), or the sensor's motion gives no
-usable parallax, it reads *Insufficient evidence to discriminate*. Otherwise it
+from the same target track being tested, the test would be circular — it
+would compare the track with observations generated from itself. The label
+*circular LOS* refers to that dependence, not a circular camera flight path.
+If this applies, or the sensor's motion gives no usable parallax, the live
+gate reports *Insufficient evidence to discriminate*. Otherwise it
 counts the interpretation classes with a viable tile: none gives *Unresolved*,
 one gives *Consistent with a …, but not identified*, and two or more give
 *Consistent with several conventional interpretations*. It also distinguishes
-complete forward-model fits from compatible path envelopes. A path from HSV can
-meet bird or multirotor limits without establishing that a bird or multirotor
-dynamics model fits. Several compatible classes leave the object type
+complete **forward-model fits**, which simulate assumed target dynamics,
+from compatible path envelopes, which only meet limits on a reconstructed
+path. For example, a path from **Horizontal Speed Valley (HSV)** can meet
+bird or multirotor speed and acceleration limits without demonstrating that
+a simulation of either object's dynamics fits. Several compatible classes leave the object type
 unresolved even if only one forward model passed, and the headline then reads
 *Object type unresolved — close-fitting paths meet several physical class
 limits*. The affirmative wording *Probably a wind-blown balloon* needs a viable
@@ -239,30 +314,65 @@ in the sets it is the aircraft that is high).
 
 ![The existence test: success is not finding the truth](docimages/traverse-concepts-14-existence.svg)
 
-With the scoring of section 10 in hand, what counts as a pass? Since the rays
-cannot pick a range, the benchmark does not score whether the true track was
-found. Instead the truth sets a bar (its own residual, or the 0.02° floor) and
+With the scoring of section 10 in hand, what counts as a pass? Different
+tracks can fit the same bearings, so this existence test does not require
+the true track to be found. Instead the truth sets a bar (its own residual,
+or the 0.02° floor) and
 its own ordinariness cost; among the candidates that fit at least as well, the
 benchmark takes the lowest cost. **A pass is finding something as ordinary as
 the truth**, not the truth. If no admitted candidate is as ordinary as a
 mundane truth, the benchmark scores a miss.
 
-## 15. Dynamics order: how much motion the rays can still range
+## 15. Dynamics order: which target-motion models pass the check
 
-![Dynamics order: how much motion the rays can still range](docimages/traverse-concepts-15-order.svg)
+![Dynamics order tests target models, not camera motion](docimages/traverse-concepts-15-order.svg)
 
-Before any fitting, the geometry is graded (the *pre-fit triage*) by the most
-complicated motion model it could still range: **order 0** means not even a
-straight line at constant speed can be ranged, 1 means constant velocity can,
-2 adds constant acceleration, 3 adds changing acceleration. A clip that reads
-0 and still receives a committed verdict — *consistent with one class* rather
-than *unresolved* — is called the *fast-far trap*: a Mach-5 object at 116 km
-and a 330 kt aircraft at 7 km can fit the same rays. On an order-0 clip the
-benchmark scores a committed ordinary verdict on a declared anomaly as a
-*false negative*. This triage is part of the benchmark; the live verdict's
-evidence gate is the separate parallax test of section 9. The distinction the
-triage turns on is **identifiability** (can a range be found at all) versus
-**attributability** (can a class be named).
+**The order describes the target-motion model allowed in a fit. It does not
+describe the camera's motion or identify the target's actual motion.** The
+camera track is a known input. Before solving for a target track, the
+benchmark uses the observed directions and sample times to check the
+conditioning of three target-position models. This is the *pre-fit triage*:
+a preliminary check on whether those models' unknown parameters can be
+separated by the observations.
+
+| Reported value | Assumed target motion | What the reported maximum means |
+|---|---|---|
+| **0** | No accepted model in this ladder | The constant-velocity check failed. This is a failure flag, not a motion model. |
+| **1** | **Constant velocity (CV)**: one fixed velocity vector, so straight 3D motion at constant speed | CV passes; the constant-acceleration model does not pass or could not be checked. |
+| **2** | **Constant acceleration (CA)**: one fixed acceleration vector; target velocity may change | CV and CA pass; the cubic model does not pass or could not be checked. |
+| **3** | **Constant jerk**: the target's acceleration vector changes linearly with time | All three tested models pass. Jerk is the rate of change of acceleration. |
+
+The models are **nested**: a constant-velocity path is also a CA path with
+zero acceleration, and a CA path is also a constant-jerk path with zero jerk.
+A higher order *allows* more target motion; it does not require the target
+to accelerate. For example, a grade of 2 allows an unknown constant
+acceleration in the fit without making the range parameters too poorly
+conditioned by this check. It does not show that the target accelerated.
+
+**Grade 0 means "this distance-conditioning check failed", not "the target's
+velocity is nonconstant".** It is not the degree-0 polynomial for a
+stationary target. A stationary-target, constrained-turn or physical model
+can still constrain range when this polynomial ladder reports 0. Similarly,
+grade 3 does not cover arbitrary changing acceleration or arbitrary turns:
+the target position is a cubic polynomial in time, and its acceleration
+changes at one constant rate. Models above degree 3 are not tested here.
+
+The recorded field is `maxObservableOrder`: the highest consecutive passing
+step, starting at CV. A pass uses `log10(rcond) >= −3`; using that threshold
+for CA and cubic motion is provisional, not a measured accuracy guarantee.
+A missing value means the sampling was insufficient to compute the ladder.
+Even a passing grade does not show that the target obeys the assumed model
+or that a fitted range will be accurate. The live verdict uses the separate
+evidence gate in section 9, not this benchmark grade.
+
+The *fast-far trap* illustrates why these limits matter: a Mach-5 object at
+116 km and a 330 kt aircraft at 7 km can fit the same bearings. A confident
+ordinary-object verdict can therefore miss the fast, distant target. In the
+benchmark, an ordinary verdict on a declared anomaly is a *false negative*;
+grade 0 warns that the polynomial conditioning check provides no basis for
+resolving that ambiguity. **Identifiability** asks whether the observations
+constrain the unknown parameters under a stated model; **attributability**
+asks whether they distinguish an object class.
 
 ## 16. The benchmark: a deck of scenarios with answer keys
 
@@ -294,12 +404,16 @@ have sitches in Sitrec.
   candidate, the pass/fail test on each card, and turning a motion requirement
   into a cost.
 - **Seed** — the starting guess handed to an optimiser. **Tractability set**
-  — the scenarios whose geometry can range the object at all (order 1 or
-  more), used to separate "the method failed" from "the data could not".
+  — a benchmark subset selected by a stated feasibility check. In the
+  dynamics-order screening, order 1 or more means the CV conditioning check
+  passed; it is not proof that a fit will recover range, or that other
+  target models fail on the excluded cases.
 - **Plate** — a numbered explanatory figure in the analysis write-ups.
 
 ## Read next
 
 - [Traverse Methods](TraverseMethods.md) — each fitting method in turn.
+- [How the Balloon Algorithms Work](BalloonAlgorithms.md) — the drift models,
+  wind assumptions and search, explained with diagrams and a worked example.
 - [Traverse Analysis and the Verdict](TraverseAnalysis.md) — the gallery, the
   ranking and the badges.

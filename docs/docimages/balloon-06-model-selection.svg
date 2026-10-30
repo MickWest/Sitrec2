@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1100" height="580" viewBox="0 0 1100 580" role="img" aria-labelledby="title desc">
+<title id="title">6. Prefer a simpler completed model when its error is close</title><desc id="desc">Fit steady drift first. Stop if complete and mean error at most 0.002 degrees. Otherwise fit the permitted alternatives. Prefer completed fits, find best residual, retain models within the tolerance, then choose fewest free parameters.</desc>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10Z" fill="#526779"/></marker></defs>
+<rect width="1100" height="580" rx="14" fill="#f5f8fb"/>
+<g font-family="Arial, Helvetica, sans-serif" fill="#17324d">
+<text x="34" y="40" font-size="27" fill="#17324d" text-anchor="start" font-weight="bold">6. Prefer a simpler completed model when its error is close</text>
+<rect x="30" y="80" width="320" height="130" rx="9" fill="white" stroke="#2166ac" stroke-width="2"/>
+<text x="190.0" y="110" font-size="21" fill="#2166ac" text-anchor="middle" font-weight="bold">Fit steady drift</text>
+<text x="190.0" y="140" font-size="18" fill="#17324d" text-anchor="middle" font-weight="normal">Complete and mean error</text>
+<text x="190.0" y="165" font-size="18" fill="#17324d" text-anchor="middle" font-weight="normal">≤ 0.002°?</text>
+<rect x="750" y="80" width="320" height="130" rx="9" fill="white" stroke="#007f73" stroke-width="2"/>
+<text x="910.0" y="110" font-size="21" fill="#007f73" text-anchor="middle" font-weight="bold">Use steady drift</text>
+<text x="910.0" y="140" font-size="18" fill="#17324d" text-anchor="middle" font-weight="normal">Yes: no more motion models</text>
+<text x="910.0" y="165" font-size="18" fill="#17324d" text-anchor="middle" font-weight="normal">are needed for this tolerance.</text>
+<line x1="350.00" y1="145.00" x2="750.00" y2="145.00" stroke="#526779" stroke-width="2" marker-end="url(#arrow)"/>
+<text x="550" y="130" font-size="19" fill="#007f73" text-anchor="middle" font-weight="normal">Yes</text>
+<rect x="30" y="285" width="450" height="135" rx="9" fill="white" stroke="#2166ac" stroke-width="2"/>
+<text x="255.0" y="315" font-size="21" fill="#2166ac" text-anchor="middle" font-weight="bold">If no: try permitted alternatives</text>
+<text x="255.0" y="345" font-size="18" fill="#17324d" text-anchor="middle" font-weight="normal">Fitted: linear, lifecycle, shear, quadratic</text>
+<text x="255.0" y="370" font-size="18" fill="#17324d" text-anchor="middle" font-weight="normal">Supplied / corrected: lifecycle only</text>
+<line x1="190.00" y1="210.00" x2="190.00" y2="285.00" stroke="#526779" stroke-width="2" marker-end="url(#arrow)"/>
+<text x="215" y="252" font-size="19" fill="#17324d" text-anchor="start" font-weight="normal">No</text>
+<rect x="600" y="285" width="470" height="135" rx="9" fill="white" stroke="#2166ac" stroke-width="2"/>
+<text x="835.0" y="315" font-size="21" fill="#2166ac" text-anchor="middle" font-weight="bold">Prefer completed fits</text>
+<text x="835.0" y="345" font-size="18" fill="#17324d" text-anchor="middle" font-weight="normal">If none completed, retain that warning.</text>
+<text x="835.0" y="370" font-size="18" fill="#17324d" text-anchor="middle" font-weight="normal">Find their lowest mean angular error e.</text>
+<line x1="480.00" y1="351.00" x2="600.00" y2="351.00" stroke="#526779" stroke-width="2" marker-end="url(#arrow)"/>
+<rect x="250" y="460" width="690" height="93" rx="9" fill="white" stroke="#7546a3" stroke-width="2"/>
+<text x="595.0" y="490" font-size="21" fill="#7546a3" text-anchor="middle" font-weight="bold">Choose the fewest free parameters</text>
+<text x="595.0" y="520" font-size="18" fill="#17324d" text-anchor="middle" font-weight="normal">Among errors ≤ e + max(0.002°, 0.1 × e); ties: lower error.</text>
+<line x1="835.00" y1="420.00" x2="835.00" y2="460.00" stroke="#526779" stroke-width="2" marker-end="url(#arrow)"/>
+</g></svg>

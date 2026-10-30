@@ -887,6 +887,7 @@ const en = {
                 traverseConcepts: "Traverse Analysis: the Ideas First",
                 groundTrack: "Ground Track (Points on the Ground)",
                 traverseMethods: "Traverse Methods",
+                balloonAlgorithms: "How the Balloon Algorithms Work",
                 traverseAnalysis: "Traverse Analysis and the Verdict",
                 losErrorAnalysis: "LOS Error Analysis",
                 botBench: "BOTBench — Bearings-Only Traversal Bulk Analysis",

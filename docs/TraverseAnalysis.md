@@ -6,6 +6,10 @@ shows.
 
 For how each individual method computes a path, see [Traverse Methods](TraverseMethods.md).
 
+[How the Balloon Algorithms Work](BalloonAlgorithms.md) gives a detailed
+explanation of the Balloon results, including the three wind treatments,
+motion equations, numerical search, model selection and interpretation limits.
+
 To characterize recorded pointing against a known target and generate fresh
 operator-style or statistical errors, see [LOS Error Analysis](LOSErrorAnalysis.md).
 
@@ -23,6 +27,16 @@ assumption. The targets define the question each fit asks; they are not a
 preference of the analysis. The output includes the family of solutions and the
 maneuvering each range requires.
 
+A curved target does not by itself remove the range ambiguity. With a
+constant-velocity camera, scaling each camera-to-target vector by one
+positive constant preserves every bearing while scaling the target's
+acceleration by the same factor. A specific constant-speed turn model, such
+as a fixed-centre circular arc or two equal-speed straight legs, can
+constrain range in suitable geometry because most alternatives violate
+that model. Constant speed with an unrestricted curved path does not
+guarantee a unique range. See
+[curved targets and constrained turns](TraverseConcepts.md#a-curved-target-with-a-straight-flying-camera).
+
 ### Global Fit: Minimum Acceleration
 
 (Formerly "Global Fit: Plausible" — the display name now describes the
@@ -37,9 +51,10 @@ over ~half-second strides so that jitter cannot dominate it.
 
 **Method**: two-stage. Stage 1 solves a pure-smoothness (no speed target)
 coarse sweep over range: when the sensor itself maneuvers (an orbit, a hard
-turn), geometry alone pins the range — the smoothness-vs-range valley is
-decisive and the speed target is *not used* (the Minimum Acceleration Fit
-Results folder shows "not needed (geometry)"). Only when that valley is flat — for
+turn), its motion can give a decisive smoothness-vs-range valley under the
+minimum-acceleration assumption. In that case the speed target is *not used*
+(the Minimum Acceleration Fit Results folder shows "not needed (geometry)").
+Only when that valley is flat — for
 example on the Gimbal sitch, where range is unobservable from geometry —
 does Stage 2 fall back to the soft air-speed target
 `((airspeed − Target Speed)/σ)²` with σ ≈ 60 kt (IRLS), which is then what
@@ -49,6 +64,12 @@ and re-solved at full quality (the result appears as **Found Range**; the
 search). Where Constant Air Speed holds a speed *exactly*, Minimum
 Acceleration treats speed (when used at all) as a loose target and finds the
 smoothest path consistent with the rays.
+
+"Not needed (geometry)" means no speed target was used; the smoothness
+assumption still applies. With a constant-velocity camera, the scaled curved
+alternatives have accelerations that tend to zero as their ranges tend to
+zero. A low acceleration cost near the camera therefore does not establish
+the true range or independently enforce a constant-speed turn model.
 
 **When to use**: as the "best fit" interpretation of a hypothesis like
 "a ~350 kt aircraft at ~30 NM" — it shows what the *smoothest* version of that
@@ -225,6 +246,8 @@ determine:
   Incomplete searches and all attempted alternatives remain in the diagnostics.
   Range bands retain the selected model. Vertical speed is separate from
   horizontal drift and horizontal air-relative speed in the results.
+  [The Balloon guide](BalloonAlgorithms.md) works through these calculations
+  with diagrams and a numerical example.
 - **Supplied wind plus correction**: balloon analysis also adds a constant
   east/north correction to the complete supplied series, with a quadratic
   penalty on the correction alone. *Wind correction scale* defaults to 15 kt
@@ -233,8 +256,8 @@ determine:
   The comparison table shows supplied, required, and corrected total winds
   with their LOS errors. Available independent weather is evaluated along each
   candidate's own locations and altitudes for balloon, aircraft and quadcopter.
-- **Deterministic global search**: the analysis injects seeds derived from the
-  input/run into its stochastic searches and records optimizer metadata. This
+- **Deterministic global search**: the analysis uses repeatable pseudorandom
+  sequences in its stochastic searches and records optimizer metadata. This
   makes supported runs repeatable for the same code and inputs; it does not
   prove that a retained basin is the global optimum.
 - **GPU search**: *Traverse Analysis Tweaks → GPU search (WebGPU)* is enabled
@@ -262,7 +285,7 @@ determine:
 - **Physical fits are seeded from the smoother**: the balloon and the drone
   control-input candidate start from the best geometric approximation — the
   Kalman-smoother path (or, if the smoother fails, the Minimum Acceleration
-  track; with neither, the fitted-wind balloon is not run) — and refine from
+  track; with neither, the Balloon fitter can use default parameters) — and refine from
   there, rather than searching their high-dimensional parameter spaces blind.
   The smoother is regularised, and its constant-velocity start is given an
   explicit 500 m range floor because regularisation alone cannot remove an LOS
@@ -677,10 +700,14 @@ Notes on the gallery tiles:
 *Traverse Analysis Tweaks → "Solution families (range bands)". Off by default;
 it re-fits each physics model several times.*
 
-Bearings determine range only with enough parallax. For **any** distance
-profile R(t), the path `S(t) + R(t)·D(t)` reproduces the sightlines exactly —
-so a distance is only pinned once you assume something about how the object
-moves, and then only as far as that assumption actually constrains it.
+How tightly bearings constrain range depends on camera motion and the
+target model. For **any** distance profile R(t), the path
+`S(t) + R(t)·D(t)` reproduces the sightlines exactly — so a distance is only
+pinned once you assume something about how the object moves, and then only
+as far as that assumption actually constrains it. This includes a range
+constrained by a specified target turn while the camera flies straight at
+constant velocity; curvature alone is insufficient. See
+[when a constant-speed turn can constrain range](TraverseConcepts.md#when-a-constant-speed-turn-can-constrain-range).
 
 With this enabled, each physically-based interpretation (balloon, quadcopter,
 fixed-wing) is re-fitted at a ladder of **held** ranges: the start distance is
@@ -930,8 +957,11 @@ That is exact, frame by frame. Over a clip where the range ratio holds roughly
 steady it reads as a single blend with a constant `k`, and the coefficient on
 the platform is `(1 − k)`: **guess the range wrong and the camera aircraft's own
 motion is added into the solved trajectory**, scaled by how wrong the guess is,
-and reversed in sign when the guess is too far. The result is a turning path
-whose turn is the platform's, scaled. This path is called a *Coryat curve*.
+and reversed in sign when the guess is too far. For a constant-velocity
+target, the resulting bend is the platform's turn, scaled. If the target
+also accelerates, its scaled acceleration and the platform's contribution
+combine; the whole bend need not match the platform. The bend introduced
+by the platform's contribution is called a *Coryat curve*.
 
 ![A wrong range stamps the platform's turn on the object](docimages/traverse-mirror-01-blend.svg)
 

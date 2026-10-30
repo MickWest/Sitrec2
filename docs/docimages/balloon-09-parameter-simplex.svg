@@ -1,0 +1,55 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1100" height="660" viewBox="0 0 1100 660" role="img" aria-labelledby="title desc">
+<title id="title">9. Nelder–Mead moves whole trials in parameter space</title>
+<desc id="desc">Two-parameter illustration with north wind fixed at 2 metres per second and vertical rate fixed at 0.5 metres per second. Axes are initial range and east wind, not scene positions. A, B and C form the original simplex. The midpoint M of A and B is the centroid excluding worst vertex C. Reflecting C through M gives trial R. If accepted, triangle A B R replaces triangle A B C. Each vertex represents a complete parameter set and a whole object path; cost is not a plotted axis.</desc>
+<defs>
+  <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10Z" fill="#bd5700"/></marker>
+</defs>
+<rect width="1100" height="660" rx="14" fill="#f5f8fb"/>
+<g font-family="Arial, Helvetica, sans-serif" fill="#17324d">
+  <text x="34" y="40" font-size="27" font-weight="bold">9. Nelder–Mead moves whole trials in parameter space</text>
+  <text x="34" y="80" font-size="19">Two free parameters here; hold north wind v = 2 m/s and vertical rate w = 0.5 m/s fixed.</text>
+  <text x="80" y="122" font-size="20">East wind u (m/s)</text>
+  <g stroke="#d8e2ea" stroke-width="1">
+    <path d="M80 150H650 M80 256.67H650 M80 363.33H650 M80 470H650"/>
+    <path d="M206.67 150V470 M365 150V470 M523.33 150V470"/>
+  </g>
+  <path d="M80 150V470H650" fill="none" stroke="#526779" stroke-width="2"/>
+  <g font-size="18" fill="#526779" text-anchor="end">
+    <text x="65" y="476">0</text><text x="65" y="369.33">2</text>
+    <text x="65" y="262.67">4</text><text x="65" y="156">6</text>
+  </g>
+  <g font-size="18" fill="#526779" text-anchor="middle">
+    <text x="206.67" y="499">3000</text><text x="365" y="499">3250</text><text x="523.33" y="499">3500</text>
+  </g>
+  <text x="365" y="535" font-size="20" text-anchor="middle">Initial slant range R₀ (m)</text>
+  <path d="M206.67 310L523.33 310L460 203.33Z" fill="#2166ac" fill-opacity="0.10" stroke="#2166ac" stroke-width="3"/>
+  <path d="M206.67 310L523.33 310L270 416.67Z" fill="#007f73" fill-opacity="0.08" stroke="#007f73" stroke-width="3" stroke-dasharray="8 6"/>
+  <path d="M460 203.33L270 416.67" fill="none" stroke="#bd5700" stroke-width="3" marker-end="url(#arrow)"/>
+  <g fill="#2166ac"><circle cx="206.67" cy="310" r="7"/><circle cx="523.33" cy="310" r="7"/><circle cx="460" cy="203.33" r="7"/></g>
+  <circle cx="365" cy="310" r="6" fill="white" stroke="#bd5700" stroke-width="3"/>
+  <circle cx="270" cy="416.67" r="7" fill="#007f73"/>
+  <g font-size="20" font-weight="bold">
+    <text x="181" y="305" fill="#2166ac">A</text><text x="536" y="305" fill="#2166ac">B</text>
+    <text x="477" y="192" fill="#2166ac">C: worst trial</text>
+    <text x="378" y="339" fill="#bd5700">M</text>
+    <text x="286" y="441" fill="#007f73">R: reflected trial</text>
+  </g>
+  <rect x="705" y="135" width="360" height="170" rx="9" fill="white" stroke="#2166ac" stroke-width="2"/>
+  <text x="885" y="169" text-anchor="middle" font-size="21" font-weight="bold">One vertex = one full trial</text>
+  <g font-size="19" text-anchor="middle">
+    <text x="885" y="207">A = (3000 m, 3 m/s, 2 m/s, 0.5 m/s)</text>
+    <text x="885" y="241">One complete proposed path</text>
+    <text x="885" y="274">One calculated cost J(A)</text>
+  </g>
+  <rect x="705" y="335" width="360" height="166" rx="9" fill="white" stroke="#bd5700" stroke-width="2"/>
+  <text x="885" y="369" text-anchor="middle" font-size="21" font-weight="bold">Construct a reflected trial</text>
+  <g font-size="19" text-anchor="middle">
+    <text x="885" y="406">M = (A + B) / 2</text>
+    <text x="885" y="440">R = 2M − C</text>
+    <text x="885" y="474">M is not an extra simplex vertex.</text>
+  </g>
+  <path d="M80 573H127" stroke="#2166ac" stroke-width="3"/><text x="140" y="579" font-size="19">Original simplex: A, B, C</text>
+  <path d="M570 573H617" stroke="#007f73" stroke-width="3" stroke-dasharray="8 6"/><text x="630" y="579" font-size="19">If R is accepted: A, B, R</text>
+  <text x="550" y="625" font-size="18" fill="#526779" text-anchor="middle">Axes show parameter values. Cost is a score assigned to each trial; it is not an axis in this drawing.</text>
+</g>
+</svg>

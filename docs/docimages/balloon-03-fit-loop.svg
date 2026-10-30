@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1100" height="435" viewBox="0 0 1100 435" role="img" aria-labelledby="title desc">
+<title id="title">3. How one set of parameters receives a score</title><desc id="desc">Trial parameters define the initial point and motion. Integration gives a track. Predicted directions are compared with measured directions. Angular error and assumption penalties give a cost returned to the optimizer.</desc>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10Z" fill="#526779"/></marker></defs>
+<rect width="1100" height="435" rx="14" fill="#f5f8fb"/>
+<g font-family="Arial, Helvetica, sans-serif" fill="#17324d">
+<text x="34" y="40" font-size="27" fill="#17324d" text-anchor="start" font-weight="bold">3. How one set of parameters receives a score</text>
+<rect x="35" y="80" width="300" height="115" rx="9" fill="white" stroke="#2166ac" stroke-width="2"/>
+<text x="185.0" y="110" font-size="21" fill="#2166ac" text-anchor="middle" font-weight="bold">Choose parameters</text>
+<text x="185.0" y="140" font-size="18" fill="#17324d" text-anchor="middle" font-weight="normal">Range, horizontal wind,</text>
+<text x="185.0" y="165" font-size="18" fill="#17324d" text-anchor="middle" font-weight="normal">vertical motion</text>
+<rect x="400" y="80" width="300" height="115" rx="9" fill="white" stroke="#2166ac" stroke-width="2"/>
+<text x="550.0" y="110" font-size="21" fill="#2166ac" text-anchor="middle" font-weight="bold">Place the first point</text>
+<text x="550.0" y="140" font-size="18" fill="#17324d" text-anchor="middle" font-weight="normal">Use the first camera position</text>
+<text x="550.0" y="165" font-size="18" fill="#17324d" text-anchor="middle" font-weight="normal">and first observed direction</text>
+<rect x="765" y="80" width="300" height="115" rx="9" fill="white" stroke="#2166ac" stroke-width="2"/>
+<text x="915.0" y="110" font-size="21" fill="#2166ac" text-anchor="middle" font-weight="bold">Calculate the path</text>
+<text x="915.0" y="140" font-size="18" fill="#17324d" text-anchor="middle" font-weight="normal">Integrate the motion</text>
+<text x="915.0" y="165" font-size="18" fill="#17324d" text-anchor="middle" font-weight="normal">to the observation times</text>
+<rect x="765" y="265" width="300" height="125" rx="9" fill="white" stroke="#2166ac" stroke-width="2"/>
+<text x="915.0" y="295" font-size="21" fill="#2166ac" text-anchor="middle" font-weight="bold">Predict directions</text>
+<text x="915.0" y="325" font-size="18" fill="#17324d" text-anchor="middle" font-weight="normal">From each camera position</text>
+<text x="915.0" y="350" font-size="18" fill="#17324d" text-anchor="middle" font-weight="normal">toward the calculated point</text>
+<rect x="400" y="265" width="300" height="125" rx="9" fill="white" stroke="#2166ac" stroke-width="2"/>
+<text x="550.0" y="295" font-size="21" fill="#2166ac" text-anchor="middle" font-weight="bold">Measure angular error</text>
+<text x="550.0" y="325" font-size="18" fill="#17324d" text-anchor="middle" font-weight="normal">Compare predicted and</text>
+<text x="550.0" y="350" font-size="18" fill="#17324d" text-anchor="middle" font-weight="normal">observed directions</text>
+<rect x="35" y="265" width="300" height="125" rx="9" fill="white" stroke="#2166ac" stroke-width="2"/>
+<text x="185.0" y="295" font-size="21" fill="#2166ac" text-anchor="middle" font-weight="bold">Return total cost</text>
+<text x="185.0" y="325" font-size="18" fill="#17324d" text-anchor="middle" font-weight="normal">Scaled mean angular error</text>
+<text x="185.0" y="350" font-size="18" fill="#17324d" text-anchor="middle" font-weight="normal">+ assumption penalties</text>
+<line x1="335.00" y1="138.00" x2="400.00" y2="138.00" stroke="#526779" stroke-width="2" marker-end="url(#arrow)"/>
+<line x1="700.00" y1="138.00" x2="765.00" y2="138.00" stroke="#526779" stroke-width="2" marker-end="url(#arrow)"/>
+<line x1="915.00" y1="195.00" x2="915.00" y2="265.00" stroke="#526779" stroke-width="2" marker-end="url(#arrow)"/>
+<line x1="765.00" y1="327.00" x2="700.00" y2="327.00" stroke="#526779" stroke-width="2" marker-end="url(#arrow)"/>
+<line x1="400.00" y1="327.00" x2="335.00" y2="327.00" stroke="#526779" stroke-width="2" marker-end="url(#arrow)"/>
+<text x="550" y="234" font-size="20" fill="#526779" text-anchor="middle" font-weight="normal">The optimizer repeats this loop with different parameter values.</text>
+</g></svg>

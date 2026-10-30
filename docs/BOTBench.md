@@ -359,9 +359,10 @@ figures to see system-wide memory commitments; see
   [degeneracy](#degenerate): enough frames, a real sensor
   [baseline](#baseline), a sightline that actually swept, and good
   [conditioning](#conditioning-and-rcond) (see the **Src** column below).
-- **Range unobservable** — files where the sensor baseline is too small for
-  *any* [free-range method](#free-range-methods) to determine distance. No fit can recover range from
-  such a file.
+- **Range unobservable** — files flagged by the analysis's sensor-baseline
+  gate as lacking usable camera parallax. This is a diagnostic label, not a
+  proof that every possible target-motion assumption fails. A distance
+  constrained by a stronger assumption remains conditional on that assumption.
 - **Resolved** — files whose executive verdict was something other than
   "unresolved" *and* whose top candidate does not contradict the file's declared
   `MaxRange` (the longest distance the file says its sensor could plausibly
@@ -424,20 +425,20 @@ the data can support.
   available parallax.
 - **n** — usable samples in the file, at its own native rate.
 - **Dur** — clip duration in seconds.
-- **Base** — straight-line extent of the sensor's own path, in metres. This is
-  the *aperture* of the whole problem: range comes from [parallax](#parallax),
-  parallax comes from the sensor moving, and a sensor that barely moved gives
-  every range the same sightlines. A large [baseline](#baseline) does not
-  guarantee success, but a tiny one guarantees a specific failure.
-- **Sweep** — total angular path travelled by the sightline, in degrees. A
-  bearing that never moves carries no information about the target's motion.
+- **Base** — spatial extent of the sensor's own path, in metres. This is the
+  [baseline](#baseline) available for camera-motion [parallax](#parallax).
+  A large baseline does not guarantee range recovery; a tiny one provides
+  little parallax. The target-motion assumption still matters.
+- **Sweep** — total angular path travelled by the sightline, in degrees.
+  A constant bearing does not by itself establish the target's distance or
+  motion along that sightline.
 - **CV rcond** — [conditioning](#conditioning-and-rcond) of the
   [Constant Velocity (CV) family](#constant-velocity-cv-family)'s fit design
   (0–1, higher is better; the same diagnostic the live analysis computes).
   The "CV" in the header is load-bearing: this number speaks for the
   constant-velocity family of fits and nothing else.
   It answers one narrow question: *could a linear fit determine range here?*
-  It is one-way — poor rcond genuinely rules the linear family out, but good
+  It is one-way — poor rcond warns that this fit's range is unreliable, but good
   rcond is not a promise, and [physics](#physics-models) or
   [stationary-point](#stationary-point-methods) methods may still work where
   it is poor.
@@ -897,16 +898,19 @@ along this line", and nothing more.
 
 #### Parallax
 
-The apparent shift of an object against distant background when the viewpoint
-moves — near things shift more than far things. Parallax from the sensor's own
-motion is the only geometric source of distance information in bearings-only data,
-which is why the sensor's [baseline](#baseline) matters so much.
+The apparent shift caused by moving the viewpoint — near things shift more
+than far things for the same sideways displacement. Here the motion is a
+change in the camera's **position**, not just a pan or rotation. Camera-motion
+parallax can constrain distance under a target-motion assumption. A specified
+target turn can also constrain range with a straight-flying camera; see
+[curved targets and constrained turns](TraverseConcepts.md#a-curved-target-with-a-straight-flying-camera).
 
 #### Baseline
 
-How far the sensor itself travelled, end to end, while recording. It is the
-aperture of the whole problem: no baseline, no parallax, no way to tell a
-small near object from a large far one.
+The spatial extent of the camera positions while recording, rather than the
+distance accumulated along its path. Little baseline means little
+camera-motion parallax; it does not by itself settle what a stronger target
+model or an independent measurement could determine.
 
 #### Residual
 
@@ -932,21 +936,25 @@ each one does and does not claim, are documented in
 
 #### Constant Velocity (CV) family
 
-The group of fitting methods that model the target as moving in a straight
-line at constant speed, and their close linear relatives. Some tooltips
-abbreviate this to "CV family" — it is the same thing. These methods are the
-mathematically simplest, which is why their [conditioning](#conditioning-and-rcond)
-is used as a data-quality diagnostic.
+**CV itself** models the target as moving at one fixed velocity vector in
+world coordinates: both its speed and direction stay constant. The camera's
+known motion is a separate input. A straight, steady climb is allowed.
+
+"CV family" also groups related or CV-seeded methods that can share its
+collapse problem, including CA, the Kalman smoother and polynomial fits.
+Those methods do not all require constant target velocity. The **CV rcond**
+diagnostic tests the CV design system, not every family member's motion model.
 
 #### Conditioning and rcond
 
 How well-posed a fitting problem is: whether the data pins the answer down, or
 whether tiny changes in the input swing the answer enormously. `rcond`
 (reciprocal condition number) scores this from 0 to 1 for the
-[CV family](#constant-velocity-cv-family): near 1, the fit is stable; near 0,
-the fit is *degenerate* — it cannot determine range, and any range it reports
-is an artifact. It is a one-way test: poor rcond genuinely closes the linear
-route to range, but good rcond is not a guarantee of success.
+[CV design system](#constant-velocity-cv-family): near 1 is well conditioned;
+near 0 warns that the fit can be unstable or degenerate, making its range
+unreliable. This is a warning about the specified fit, not proof that every
+target model fails. Good rcond does not show that the target follows the
+assumed motion or guarantee an accurate range.
 
 #### Degenerate
 
@@ -958,8 +966,10 @@ consistent with a near-slow object and a far-fast one.
 
 Fitting methods that treat the object's distance as an unknown to be
 determined from the data, rather than assuming it. When the summary tiles say
-a file is *range unobservable*, they mean no free-range method can succeed on
-it — distance is simply not in the data.
+a file is *range unobservable*, they report the analysis's baseline gate.
+That label does not exclude every stronger target-motion assumption.
+For example, a stationary-target model or a specified turn model can add
+constraints absent from a generic moving-target fit.
 
 #### Stationary-point methods
 
@@ -983,9 +993,18 @@ Named after the casino.
 
 #### Polynomial order
 
-How bendy a fitted curve is allowed to be: order 1 is a straight line, order 2
-can curve once, order 5 can wiggle several times. Higher orders fit the data
-more closely but are more prone to fitting the noise.
+The highest power of time allowed in the fitted **target position**, with
+the camera track treated as known. Degree 1 gives constant target velocity;
+degree 2 allows constant target acceleration; degree 3 allows constant jerk,
+so acceleration changes linearly with time. Higher degrees add coefficients,
+not a specified number of bends or arbitrary manoeuvres. The models are
+nested: the extra coefficients can be zero.
+
+This fit setting is distinct from the benchmark's **maximum observable
+dynamics order**, a conditioning grade for models of degree 1–3. That grade's
+value **0** means the CV check failed, not that the target is stationary or
+accelerating. A grade does not identify the target's actual motion. See
+[dynamics order](TraverseConcepts.md#15-dynamics-order-which-target-motion-models-pass-the-check).
 
 #### Sigma
 

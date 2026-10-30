@@ -1,0 +1,88 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1100" height="1060" viewBox="0 0 1100 1060" role="img" aria-labelledby="title desc">
+<title id="title">8. Differential evolution generates a trial, then tests its cost</title>
+<desc id="desc">The range and east-wind coordinates show donor generation from three full parameter vectors: donor equals A plus 0.7 times B minus C. A crossover table mixes the donor with a separate target vector. The resulting complete trial is repaired if outside bounds, scored, and compared only against its own target. It replaces that target when its cost is lower or equal. Replacements take effect immediately; repeat for all population members and generations.</desc>
+<defs>
+  <marker id="arrowGray" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10Z" fill="#526779"/></marker>
+  <marker id="arrowBlue" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10Z" fill="#2166ac"/></marker>
+  <marker id="arrowPurple" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10Z" fill="#7546a3"/></marker>
+</defs>
+<rect width="1100" height="1060" rx="14" fill="#f5f8fb"/>
+<g font-family="Arial, Helvetica, sans-serif" fill="#17324d">
+  <text x="34" y="40" font-size="27" font-weight="bold">8. Differential evolution generates a trial, then tests its cost</text>
+  <text x="34" y="79" font-size="19">Every member is a complete parameter vector. The plot shows only its range and east-wind coordinates.</text>
+
+  <text x="50" y="122" font-size="23" font-weight="bold">1. Subtract two members; add a scaled difference to a third</text>
+  <text x="80" y="157" font-size="19">East wind u (m/s)</text>
+  <g stroke="#d8e2ea" stroke-width="1">
+    <path d="M80 180H540 M80 245H540 M80 310H540 M80 375H540 M80 440H540"/>
+    <path d="M137.5 180V440 M252.5 180V440 M367.5 180V440 M482.5 180V440"/>
+  </g>
+  <path d="M80 180V440H540" fill="none" stroke="#526779" stroke-width="2"/>
+  <g font-size="17" fill="#526779" text-anchor="end">
+    <text x="66" y="446">0</text><text x="66" y="381">2</text><text x="66" y="316">4</text><text x="66" y="251">6</text><text x="66" y="186">8</text>
+  </g>
+  <g font-size="17" fill="#526779" text-anchor="middle">
+    <text x="137.5" y="467">3000</text><text x="252.5" y="467">3200</text><text x="367.5" y="467">3400</text><text x="482.5" y="467">3600</text>
+  </g>
+  <text x="310" y="499" text-anchor="middle" font-size="19">Initial slant range R₀ (m)</text>
+  <path d="M195 375L482.5 245" fill="none" stroke="#2166ac" stroke-width="3" stroke-dasharray="7 5" marker-end="url(#arrowBlue)"/>
+  <path d="M137.5 310L338.75 219" fill="none" stroke="#7546a3" stroke-width="4" marker-end="url(#arrowPurple)"/>
+  <g fill="#2166ac"><circle cx="195" cy="375" r="6"/><circle cx="482.5" cy="245" r="6"/></g>
+  <g fill="#7546a3"><circle cx="137.5" cy="310" r="6"/><circle cx="338.75" cy="219" r="7"/></g>
+  <g font-size="19" font-weight="bold">
+    <text x="112" y="309" fill="#7546a3">A</text><text x="496" y="243" fill="#2166ac">B</text>
+    <text x="173" y="402" fill="#2166ac">C</text><text x="352" y="211" fill="#7546a3">Donor</text>
+  </g>
+  <text x="350" y="345" font-size="18" fill="#2166ac">B − C</text>
+  <text x="139" y="247" font-size="18" fill="#7546a3">0.7 (B − C)</text>
+
+  <rect x="610" y="174" width="440" height="178" rx="9" fill="white" stroke="#7546a3" stroke-width="2"/>
+  <text x="830" y="209" text-anchor="middle" font-size="22" font-weight="bold">Donor = A + 0.7 (B − C)</text>
+  <g font-size="19" text-anchor="middle">
+    <text x="830" y="247">Range: 3000 + 0.7 (3600 − 3100)</text>
+    <text x="830" y="276">= 3350 m</text>
+    <text x="830" y="309">East wind: 4 + 0.7 (6 − 2) = 6.8 m/s</text>
+  </g>
+  <g font-size="18" text-anchor="middle" fill="#526779">
+    <text x="830" y="395">A, B and C are randomly selected members.</text>
+    <text x="830" y="424">All three are distinct from this target.</text>
+    <text x="830" y="453">This arithmetic is done for every coordinate.</text>
+  </g>
+
+  <text x="50" y="550" font-size="23" font-weight="bold">2. Mix coordinates: one possible crossover</text>
+  <text x="50" y="582" font-size="18" fill="#526779">Force one donor choice; each other coordinate takes the donor with probability 0.9. Here range is forced.</text>
+  <g font-size="18" font-weight="bold" text-anchor="middle">
+    <text x="330" y="621">Range (m)</text><text x="535" y="621">East wind (m/s)</text>
+    <text x="740" y="621">North wind (m/s)</text><text x="945" y="621">Vertical rate (m/s)</text>
+  </g>
+  <g stroke="#d8e2ea" stroke-width="1"><path d="M50 635H1050 M50 677H1050 M50 719H1050 M50 769H1050"/></g>
+  <g font-size="19">
+    <text x="60" y="663" fill="#2166ac">Target</text><text x="60" y="705" fill="#7546a3">Donor</text>
+    <text x="60" y="751" font-weight="bold">Trial</text>
+  </g>
+  <g font-size="20" text-anchor="middle">
+    <g fill="#2166ac"><text x="330" y="663">3200</text><text x="535" y="663">3</text><text x="740" y="663">2</text><text x="945" y="663">0.5</text></g>
+    <g fill="#7546a3"><text x="330" y="705">3350</text><text x="535" y="705">6.8</text><text x="740" y="705">1.7</text><text x="945" y="705">0.55</text></g>
+  </g>
+  <g fill="#7546a3" fill-opacity="0.10"><rect x="235" y="723" width="190" height="40" rx="5"/><rect x="645" y="723" width="190" height="40" rx="5"/><rect x="850" y="723" width="190" height="40" rx="5"/></g>
+  <rect x="440" y="723" width="190" height="40" rx="5" fill="#2166ac" fill-opacity="0.10"/>
+  <g font-size="20" font-weight="bold" text-anchor="middle">
+    <text x="330" y="751" fill="#7546a3">3350</text><text x="535" y="751" fill="#2166ac">3</text><text x="740" y="751" fill="#7546a3">1.7</text><text x="945" y="751" fill="#7546a3">0.55</text>
+  </g>
+  <text x="550" y="802" text-anchor="middle" font-size="18" fill="#526779">Purple trial cells came from the donor; the blue cell stayed from the target.</text>
+
+  <text x="50" y="849" font-size="23" font-weight="bold">3. Repair bounds if needed, calculate the cost, and select</text>
+  <rect x="50" y="881" width="260" height="78" rx="9" fill="white" stroke="#526779" stroke-width="2"/>
+  <text x="180" y="913" text-anchor="middle" font-size="20">Repair → full trial path</text>
+  <text x="180" y="941" text-anchor="middle" font-size="20">→ cost J(trial)</text>
+  <path d="M310 920H375" stroke="#526779" stroke-width="2" marker-end="url(#arrowGray)"/>
+  <rect x="375" y="881" width="300" height="78" rx="9" fill="white" stroke="#526779" stroke-width="2"/>
+  <text x="525" y="925" text-anchor="middle" font-size="22">J(trial) ≤ J(target)?</text>
+  <path d="M675 920H720V893H775 M720 920V957H775" fill="none" stroke="#526779" stroke-width="2" marker-end="url(#arrowGray)"/>
+  <rect x="780" y="870" width="270" height="47" rx="8" fill="white" stroke="#007f73" stroke-width="2"/>
+  <text x="915" y="900" text-anchor="middle" font-size="20" fill="#007f73">Yes: replace this target</text>
+  <rect x="780" y="934" width="270" height="47" rx="8" fill="white" stroke="#bd5700" stroke-width="2"/>
+  <text x="915" y="964" text-anchor="middle" font-size="20" fill="#bd5700">No: keep this target</text>
+  <text x="550" y="1024" text-anchor="middle" font-size="18" fill="#526779">Apply replacements immediately. Repeat for all 48 target slots, then repeat for 120 generations.</text>
+</g>
+</svg>

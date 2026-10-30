@@ -69,6 +69,7 @@ assistant — so if you add a doc, add it there.
 - [Traverse Concepts - What a traverse is and what can be inferred from line of sight](docs/TraverseConcepts.md)
 - [Ground Track - Intersecting a line of sight with terrain](docs/GroundTrack.md)
 - [Traverse Methods - How LOS + physical assumptions resolve target positions per frame](docs/TraverseMethods.md)
+- [Balloon Algorithms - Drift models, wind treatments and numerical search, with diagrams and a worked example](docs/BalloonAlgorithms.md)
 - [Traverse Analysis and the Verdict - The Analyze button, the gallery, and the verdict codes](docs/TraverseAnalysis.md)
 - [LOS Error Analysis - Measure recorded pointing against a truth track, and model the tracking noise](docs/LOSErrorAnalysis.md)
 - [BOTBench - Evaluating bearings-only tracking methods against known truth](docs/BOTBench.md)

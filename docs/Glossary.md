@@ -152,8 +152,25 @@ much the real atmosphere differs from the standard one. See [GIS](GIS.md).
 **Residual** — how far a fitted path misses the observed sightlines, on average. A small
 residual means the model fits; it does **not** mean the range is right.
 
-**Conditioning** — a measure of how well the geometry constrains the fit. Bad conditioning
-means the answer is unconstrained regardless of how small the residual is.
+**Conditioning** — a measure of how well the observations constrain a specified fit's
+parameters. Poor conditioning makes that fit's answer sensitive or unreliable even with a
+small residual; it does not show that every other target model fails.
+
+**Constant velocity (CV)** — a target-motion model with one fixed velocity vector in world
+coordinates: both target speed and direction stay constant. A steady straight climb is
+allowed. The camera's known motion is a separate input.
+
+**Constant acceleration (CA)** — a target-motion model with one fixed acceleration vector.
+The target's velocity may change. A constant-speed circular turn is not CA because its
+acceleration vector rotates.
+
+**Jerk** — the rate of change of acceleration. Constant jerk gives a cubic target-position
+model whose acceleration vector changes linearly with time.
+
+**Dynamics order** — in the benchmark's conditioning diagnostic, a grade for the target
+models whose checks pass, not a measurement of target or camera motion. Grades 1–3 refer
+to CV, CA and constant jerk; 0 means the CV check failed. See
+[the target-model ladder](TraverseConcepts.md#15-dynamics-order-which-target-motion-models-pass-the-check).
 
 **Collapse** — the failure mode where a constant-velocity fit puts the "object" a few metres
 from the camera with a near-zero residual, because the geometry cannot tell it otherwise.
