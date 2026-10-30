@@ -155,6 +155,19 @@ The example below shows some commonly used settings. For the full list of availa
 > is missing the newest satellites. These settings override the built-in
 > defaults, so an old value keeps taking effect until you change it.
 
+> **A source behind a sign-on:** if the browser sends an `Authorization` header to
+> Sitrec, the server forwards it to the host in `CUSTOM_TLE`, `CUSTOM_WIND_URL`,
+> `CURRENT_STARLINK` and `CURRENT_ACTIVE`, so a source can use the same sign-on as
+> the site. Set these only to hosts that you trust with that credential.
+> `celestrak.org` never receives it. Versions 2.183.6 to 2.183.10 did not forward
+> the header ([SR-17](SecurityRequirements.md)).
+>
+> If a custom satellite source shows a **TLE Loading Error** that says `Space-Track
+> returned HTML instead of TLE data` or `Space-Track query failed`, the message
+> is about your source, not Space-Track. The source answered with a web page,
+> usually a login page. Read the text after `Response:`, then test the URL with
+> `curl` from the server, with and without the header.
+
 After editing `.env`, apply your changes with the management script — it safely recreates the container and your `.env` file is never modified:
 ```bash
 ./sitrec.sh restart

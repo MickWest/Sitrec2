@@ -8,6 +8,10 @@ const path = require('path');
 // upstream request, so a site behind HTTP Basic auth sent its password to CelesTrak,
 // adsb.lol, SondeHub and the rest. A source the operator configured still needs that
 // header, so those callers ask for it with curlConfiguredSourceHeaders().
+//
+// This file is what holds SR-17 in docs/dev/SecurityRequirements.md, and both halves
+// matter: 2.183.6 closed the leak by removing all forwarding, which broke a configured
+// source. Do not relax a test here without withdrawing SR-17 in writing.
 const SERVER_DIR = path.resolve(__dirname, '..', 'sitrecServer');
 
 const phpCheck = spawnSync('php', ['-r', 'echo extension_loaded("curl") ? "ok" : "no";'], {encoding: 'utf8'});

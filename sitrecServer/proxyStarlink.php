@@ -285,7 +285,9 @@ $gpLoginTimeoutSec = 20;
 $gpHistoryTimeoutSec = 150;
 $gpConnectTimeoutSec = 10;
 
-// For CUSTOM type, use simple GET request without Space-Track login
+// For CUSTOM type, use simple GET request without Space-Track login.
+// The source can sit behind the site's sign-on, so it needs the browser's
+// Authorization header: see curlConfiguredSourceHeaders() before changing this.
 if ($type == "CUSTOM") {
     $result = curlGetRequest($url, curlConfiguredSourceHeaders($url), $gpHistoryTimeoutSec);
     $data = $result['data'];

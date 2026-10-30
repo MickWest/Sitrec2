@@ -57,6 +57,13 @@ function curlGetTimeouts($timeoutSec = null) {
  *
  * CelesTrak is the exception. It needs no credential, and it is the default and
  * the sample value of these settings, so an unedited install must not send it one.
+ *
+ * This forwarding is a requirement, not a leftover: see SR-17 in
+ * docs/dev/SecurityRequirements.md. 2.183.6 removed it because nothing seemed to need
+ * it, and a custom satellite source then failed with "returned HTML instead of TLE
+ * data". The public site has no such source, so its checks cannot show that failure:
+ * a clean production run is not evidence that this can go. To change it, withdraw
+ * SR-17 in writing first. tests/serverProxiesCurlAuth.test.js holds the rule in place.
  */
 function curlConfiguredSourceHeaders($url) {
     if (strcasecmp((string)parse_url($url, PHP_URL_HOST), 'celestrak.org') === 0) {
