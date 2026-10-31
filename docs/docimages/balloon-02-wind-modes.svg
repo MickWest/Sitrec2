@@ -1,7 +1,7 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1100" height="410" viewBox="0 0 1100 410" role="img" aria-labelledby="title desc">
+<svg xmlns="http://www.w3.org/2000/svg" width="1100" height="440" viewBox="0 0 1100 440" role="img" aria-labelledby="title desc">
 <title id="title">2. Three different questions about wind</title><desc id="desc">Fitted wind searches the total drift without supplied weather. Supplied wind fixes the whole input series. Corrected wind adds a fitted constant vector to that series.</desc>
-<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10Z" fill="#526779"/></marker></defs>
-<rect width="1100" height="410" rx="14" fill="#f5f8fb"/>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10Z" fill="#526779"/></marker><marker id="arrowB" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="11" markerHeight="11" markerUnits="userSpaceOnUse" orient="auto-start-reverse"><path d="M0 0L10 5L0 10Z" fill="#2166ac"/></marker><marker id="arrowT" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="11" markerHeight="11" markerUnits="userSpaceOnUse" orient="auto-start-reverse"><path d="M0 0L10 5L0 10Z" fill="#007f73"/></marker><marker id="arrowP" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="11" markerHeight="11" markerUnits="userSpaceOnUse" orient="auto-start-reverse"><path d="M0 0L10 5L0 10Z" fill="#7546a3"/></marker></defs>
+<rect width="1100" height="440" rx="14" fill="#f5f8fb"/>
 <g font-family="Arial, Helvetica, sans-serif" fill="#17324d">
 <text x="34" y="40" font-size="27" fill="#17324d" text-anchor="start" font-weight="bold">2. Three different questions about wind</text>
 <rect x="30" y="75" width="320" height="178" rx="9" fill="white" stroke="#2166ac" stroke-width="2"/>
@@ -9,21 +9,21 @@
 <text x="190.0" y="135" font-size="18" fill="#17324d" text-anchor="middle" font-weight="normal">Search total horizontal wind.</text>
 <text x="190.0" y="160" font-size="18" fill="#17324d" text-anchor="middle" font-weight="normal">No supplied series in this fit.</text>
 <text x="190.0" y="185" font-size="18" fill="#17324d" text-anchor="middle" font-weight="normal">Steady model: 4 unknowns.</text>
-<line x1="80.00" y1="335.00" x2="245.00" y2="290.00" stroke="#2166ac" stroke-width="5" marker-end="url(#arrow)"/>
+<line x1="110.00" y1="335.00" x2="245.00" y2="290.00" stroke="#2166ac" stroke-width="3" marker-end="url(#arrowB)"/><text x="275" y="312" font-size="30" fill="#2166ac" text-anchor="middle" font-weight="bold">?</text>
 <text x="190" y="377" font-size="19" fill="#2166ac" text-anchor="middle" font-weight="normal">wind = fitted drift</text>
 <rect x="390" y="75" width="320" height="178" rx="9" fill="white" stroke="#007f73" stroke-width="2"/>
 <text x="550.0" y="105" font-size="21" fill="#007f73" text-anchor="middle" font-weight="bold">Supplied wind</text>
 <text x="550.0" y="135" font-size="18" fill="#17324d" text-anchor="middle" font-weight="normal">Keep every input wind interval.</text>
 <text x="550.0" y="160" font-size="18" fill="#17324d" text-anchor="middle" font-weight="normal">Search range and vertical rate.</text>
 <text x="550.0" y="185" font-size="18" fill="#17324d" text-anchor="middle" font-weight="normal">Steady model: 2 unknowns.</text>
-<line x1="440.00" y1="335.00" x2="605.00" y2="290.00" stroke="#007f73" stroke-width="5" marker-end="url(#arrow)"/>
+<line x1="410.00" y1="324.00" x2="442.00" y2="300.00" stroke="#007f73" stroke-width="2.6" marker-end="url(#arrowT)"/><line x1="455.00" y1="322.00" x2="490.00" y2="309.00" stroke="#007f73" stroke-width="2.6" marker-end="url(#arrowT)"/><line x1="502.00" y1="320.00" x2="540.00" y2="320.00" stroke="#007f73" stroke-width="2.6" marker-end="url(#arrowT)"/><line x1="550.00" y1="322.00" x2="586.00" y2="332.00" stroke="#007f73" stroke-width="2.6" marker-end="url(#arrowT)"/><line x1="596.00" y1="330.00" x2="630.00" y2="349.00" stroke="#007f73" stroke-width="2.6" marker-end="url(#arrowT)"/>
 <text x="550" y="377" font-size="19" fill="#007f73" text-anchor="middle" font-weight="normal">wind = input series</text>
 <rect x="750" y="75" width="320" height="178" rx="9" fill="white" stroke="#7546a3" stroke-width="2"/>
 <text x="910.0" y="105" font-size="21" fill="#7546a3" text-anchor="middle" font-weight="bold">Supplied + correction</text>
 <text x="910.0" y="135" font-size="18" fill="#17324d" text-anchor="middle" font-weight="normal">Keep input changes over time.</text>
 <text x="910.0" y="160" font-size="18" fill="#17324d" text-anchor="middle" font-weight="normal">Search a constant correction.</text>
 <text x="910.0" y="185" font-size="18" fill="#17324d" text-anchor="middle" font-weight="normal">Steady model: 4 unknowns.</text>
-<line x1="800.00" y1="335.00" x2="965.00" y2="290.00" stroke="#7546a3" stroke-width="5" marker-end="url(#arrow)"/>
+<line x1="770.00" y1="324.00" x2="802.00" y2="300.00" stroke="#007f73" stroke-width="2.6" marker-end="url(#arrowT)"/><line x1="815.00" y1="322.00" x2="850.00" y2="309.00" stroke="#007f73" stroke-width="2.6" marker-end="url(#arrowT)"/><line x1="862.00" y1="320.00" x2="900.00" y2="320.00" stroke="#007f73" stroke-width="2.6" marker-end="url(#arrowT)"/><line x1="910.00" y1="322.00" x2="946.00" y2="332.00" stroke="#007f73" stroke-width="2.6" marker-end="url(#arrowT)"/><line x1="956.00" y1="330.00" x2="990.00" y2="349.00" stroke="#007f73" stroke-width="2.6" marker-end="url(#arrowT)"/><line x1="802.00" y1="300.00" x2="817.00" y2="291.00" stroke="#7546a3" stroke-width="2.6" marker-end="url(#arrowP)"/><line x1="850.00" y1="309.00" x2="865.00" y2="300.00" stroke="#7546a3" stroke-width="2.6" marker-end="url(#arrowP)"/><line x1="900.00" y1="320.00" x2="915.00" y2="311.00" stroke="#7546a3" stroke-width="2.6" marker-end="url(#arrowP)"/><line x1="946.00" y1="332.00" x2="961.00" y2="323.00" stroke="#7546a3" stroke-width="2.6" marker-end="url(#arrowP)"/><line x1="990.00" y1="349.00" x2="1005.00" y2="340.00" stroke="#7546a3" stroke-width="2.6" marker-end="url(#arrowP)"/>
 <text x="910" y="377" font-size="19" fill="#7546a3" text-anchor="middle" font-weight="normal">wind = input + correction</text>
-<text x="550" y="285" font-size="19" fill="#526779" text-anchor="middle" font-weight="normal">Each fit retains its own wind for later motion checks.</text>
+<text x="550" y="417" font-size="19" fill="#526779" text-anchor="middle" font-weight="normal">Each fit retains its own wind for later motion checks.</text>
 </g></svg>

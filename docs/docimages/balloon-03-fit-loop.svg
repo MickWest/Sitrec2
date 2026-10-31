@@ -32,6 +32,6 @@
 <line x1="700.00" y1="138.00" x2="765.00" y2="138.00" stroke="#526779" stroke-width="2" marker-end="url(#arrow)"/>
 <line x1="915.00" y1="195.00" x2="915.00" y2="265.00" stroke="#526779" stroke-width="2" marker-end="url(#arrow)"/>
 <line x1="765.00" y1="327.00" x2="700.00" y2="327.00" stroke="#526779" stroke-width="2" marker-end="url(#arrow)"/>
-<line x1="400.00" y1="327.00" x2="335.00" y2="327.00" stroke="#526779" stroke-width="2" marker-end="url(#arrow)"/>
+<line x1="400.00" y1="327.00" x2="335.00" y2="327.00" stroke="#526779" stroke-width="2" marker-end="url(#arrow)"/><line x1="185.00" y1="265.00" x2="185.00" y2="195.00" stroke="#526779" stroke-width="2" marker-end="url(#arrow)"/>
 <text x="550" y="234" font-size="20" fill="#526779" text-anchor="middle" font-weight="normal">The optimizer repeats this loop with different parameter values.</text>
 </g></svg>

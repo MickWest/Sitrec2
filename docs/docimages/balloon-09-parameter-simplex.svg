@@ -1,12 +1,12 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1100" height="660" viewBox="0 0 1100 660" role="img" aria-labelledby="title desc">
-<title id="title">9. Nelder–Mead moves whole trials in parameter space</title>
+<title id="title">7. Nelder–Mead moves whole trials in parameter space</title>
 <desc id="desc">Two-parameter illustration with north wind fixed at 2 metres per second and vertical rate fixed at 0.5 metres per second. Axes are initial range and east wind, not scene positions. A, B and C form the original simplex. The midpoint M of A and B is the centroid excluding worst vertex C. Reflecting C through M gives trial R. If accepted, triangle A B R replaces triangle A B C. Each vertex represents a complete parameter set and a whole object path; cost is not a plotted axis.</desc>
 <defs>
   <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10Z" fill="#bd5700"/></marker>
 </defs>
 <rect width="1100" height="660" rx="14" fill="#f5f8fb"/>
 <g font-family="Arial, Helvetica, sans-serif" fill="#17324d">
-  <text x="34" y="40" font-size="27" font-weight="bold">9. Nelder–Mead moves whole trials in parameter space</text>
+  <text x="34" y="40" font-size="27" font-weight="bold">7. Nelder–Mead moves whole trials in parameter space</text>
   <text x="34" y="80" font-size="19">Two free parameters here; hold north wind v = 2 m/s and vertical rate w = 0.5 m/s fixed.</text>
   <text x="80" y="122" font-size="20">East wind u (m/s)</text>
   <g stroke="#d8e2ea" stroke-width="1">

@@ -1,42 +1,38 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="760" height="432" viewBox="0 0 760 432" font-family="Helvetica, Arial, sans-serif" role="img" aria-labelledby="order-title order-desc">
-<title id="order-title">Dynamics order tests target models, not camera motion</title>
-<desc id="order-desc">Grade zero means the constant-velocity target conditioning check failed. Grades one, two and three admit successively constant velocity, constant acceleration and constant jerk target models. A grade describes a conditioning check, not the actual motion of the target or camera, and does not guarantee accurate range.</desc>
+<svg xmlns="http://www.w3.org/2000/svg" width="760" height="432" viewBox="0 0 760 432" font-family="Helvetica, Arial, sans-serif" role="img">
+<title>Dynamics order tests target models, not camera motion</title>
+<desc>Grade zero means the constant-velocity target conditioning check failed. Grades one, two and three admit successively constant velocity, constant acceleration and constant jerk target models.</desc>
 <rect width="760" height="432" fill="#FFFFFF"/>
-<text x="380" y="28" font-size="18" font-weight="700" fill="#17202A" text-anchor="middle">Dynamics order tests target models, not camera motion</text>
-<text x="380" y="52" font-size="12" fill="#4E5A66" text-anchor="middle">How flexible can the assumed target model be before its parameters become poorly constrained?</text>
-<text x="40" y="84" font-size="12" font-weight="700" fill="#17202A">Grade</text>
-<text x="132" y="84" font-size="12" font-weight="700" fill="#17202A">Allowed target-motion model</text>
-<text x="422" y="84" font-size="12" font-weight="700" fill="#17202A">Conditioning result</text>
-
-<rect x="24" y="100" width="712" height="56" rx="3" fill="#F4DEDB"/>
-<text x="44" y="132" font-size="18" font-weight="700" fill="#B5372E">0</text>
-<text x="132" y="122" font-size="13" font-weight="700" fill="#17202A">No accepted rung</text>
-<text x="132" y="142" font-size="12" fill="#4E5A66">Failure flag; not zero motion</text>
-<text x="422" y="122" font-size="12" fill="#17202A">CV target check failed.</text>
-<text x="422" y="142" font-size="12" fill="#4E5A66">Other target models may still help.</text>
-
-<rect x="24" y="164" width="712" height="56" rx="3" fill="#DDEFEC"/>
-<text x="44" y="196" font-size="18" font-weight="700" fill="#0A9384">1</text>
-<text x="132" y="186" font-size="13" font-weight="700" fill="#17202A">Constant velocity (CV)</text>
-<text x="132" y="206" font-size="12" fill="#4E5A66">Target speed and direction fixed</text>
-<text x="422" y="186" font-size="12" fill="#17202A">CV passes.</text>
-<text x="422" y="206" font-size="12" fill="#4E5A66">CA check fails or is unavailable.</text>
-
-<rect x="24" y="228" width="712" height="56" rx="3" fill="#DDEFEC"/>
-<text x="44" y="260" font-size="18" font-weight="700" fill="#0A9384">2</text>
-<text x="132" y="250" font-size="13" font-weight="700" fill="#17202A">Constant acceleration (CA)</text>
-<text x="132" y="270" font-size="12" fill="#4E5A66">Target acceleration vector fixed</text>
-<text x="422" y="250" font-size="12" fill="#17202A">CV and CA pass.</text>
-<text x="422" y="270" font-size="12" fill="#4E5A66">Cubic check fails or is unavailable.</text>
-
-<rect x="24" y="292" width="712" height="56" rx="3" fill="#DDEFEC"/>
-<text x="44" y="324" font-size="18" font-weight="700" fill="#0A9384">3</text>
-<text x="132" y="314" font-size="13" font-weight="700" fill="#17202A">Constant jerk (cubic position)</text>
-<text x="132" y="334" font-size="12" fill="#4E5A66">Target acceleration varies linearly</text>
-<text x="422" y="314" font-size="12" fill="#17202A">All three checks pass.</text>
-<text x="422" y="334" font-size="12" fill="#4E5A66">No claim about higher degrees.</text>
-
-<text x="380" y="375" font-size="12" fill="#4E5A66" text-anchor="middle">The known camera path is an input. These grades do not identify actual target motion.</text>
-<text x="380" y="395" font-size="12" fill="#4E5A66" text-anchor="middle">Higher models include lower ones when their extra coefficients are zero.</text>
-<text x="380" y="415" font-size="12" fill="#4E5A66" text-anchor="middle">Passing is a conditioning screen, not a guarantee of accurate distance.</text>
+<defs></defs>
+<text x="380.0" y="26.0" font-family="Helvetica, Arial, sans-serif" font-size="18" font-weight="700" fill="#17202A" text-anchor="middle" style="">Dynamics order tests target models, not camera motion</text>
+<text x="380.0" y="52.0" font-family="Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#4E5A66" text-anchor="middle" style="">How flexible can the assumed target model be before its parameters become poorly constrained?</text>
+<text x="40.0" y="84.0" font-family="Helvetica, Arial, sans-serif" font-size="12" font-weight="700" fill="#17202A" text-anchor="start" style="">Grade</text>
+<text x="132.0" y="84.0" font-family="Helvetica, Arial, sans-serif" font-size="12" font-weight="700" fill="#17202A" text-anchor="start" style="">Allowed target-motion model</text>
+<text x="422.0" y="84.0" font-family="Helvetica, Arial, sans-serif" font-size="12" font-weight="700" fill="#17202A" text-anchor="start" style="">Conditioning result</text>
+<rect x="24.0" y="100.0" width="712.0" height="56.0" rx="3" fill="#F4DEDB"/>
+<text x="44.0" y="132.0" font-family="Helvetica, Arial, sans-serif" font-size="18" font-weight="700" fill="#B5372E" text-anchor="start" style="">0</text>
+<text x="132.0" y="122.0" font-family="Helvetica, Arial, sans-serif" font-size="13" font-weight="700" fill="#17202A" text-anchor="start" style="">No accepted model</text>
+<text x="132.0" y="142.0" font-family="Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#4E5A66" text-anchor="start" style="">Failure flag; not zero motion</text>
+<text x="422.0" y="122.0" font-family="Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#17202A" text-anchor="start" style="">CV target check failed.</text>
+<text x="422.0" y="142.0" font-family="Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#4E5A66" text-anchor="start" style="">Other target models may still help.</text>
+<rect x="24.0" y="164.0" width="712.0" height="56.0" rx="3" fill="#DDEFEC"/>
+<text x="44.0" y="196.0" font-family="Helvetica, Arial, sans-serif" font-size="18" font-weight="700" fill="#0A9384" text-anchor="start" style="">1</text>
+<text x="132.0" y="186.0" font-family="Helvetica, Arial, sans-serif" font-size="13" font-weight="700" fill="#17202A" text-anchor="start" style="">Constant velocity (CV)</text>
+<text x="132.0" y="206.0" font-family="Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#4E5A66" text-anchor="start" style="">Target speed and direction fixed</text>
+<text x="422.0" y="186.0" font-family="Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#17202A" text-anchor="start" style="">CV passes.</text>
+<text x="422.0" y="206.0" font-family="Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#4E5A66" text-anchor="start" style="">CA check fails or is unavailable.</text>
+<rect x="24.0" y="228.0" width="712.0" height="56.0" rx="3" fill="#DDEFEC"/>
+<text x="44.0" y="260.0" font-family="Helvetica, Arial, sans-serif" font-size="18" font-weight="700" fill="#0A9384" text-anchor="start" style="">2</text>
+<text x="132.0" y="250.0" font-family="Helvetica, Arial, sans-serif" font-size="13" font-weight="700" fill="#17202A" text-anchor="start" style="">Constant acceleration (CA)</text>
+<text x="132.0" y="270.0" font-family="Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#4E5A66" text-anchor="start" style="">Target acceleration vector fixed</text>
+<text x="422.0" y="250.0" font-family="Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#17202A" text-anchor="start" style="">CV and CA pass.</text>
+<text x="422.0" y="270.0" font-family="Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#4E5A66" text-anchor="start" style="">Cubic check fails or is unavailable.</text>
+<rect x="24.0" y="292.0" width="712.0" height="56.0" rx="3" fill="#DDEFEC"/>
+<text x="44.0" y="324.0" font-family="Helvetica, Arial, sans-serif" font-size="18" font-weight="700" fill="#0A9384" text-anchor="start" style="">3</text>
+<text x="132.0" y="314.0" font-family="Helvetica, Arial, sans-serif" font-size="13" font-weight="700" fill="#17202A" text-anchor="start" style="">Constant jerk (cubic position)</text>
+<text x="132.0" y="334.0" font-family="Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#4E5A66" text-anchor="start" style="">Target acceleration varies linearly</text>
+<text x="422.0" y="314.0" font-family="Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#17202A" text-anchor="start" style="">All three checks pass.</text>
+<text x="422.0" y="334.0" font-family="Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#4E5A66" text-anchor="start" style="">No claim about higher degrees.</text>
+<text x="380.0" y="375.0" font-family="Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#4E5A66" text-anchor="middle" style="">The known camera path is an input. These grades do not identify actual target motion.</text>
+<text x="380.0" y="395.0" font-family="Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#4E5A66" text-anchor="middle" style="">Higher models include lower ones when their extra coefficients are zero.</text>
+<text x="380.0" y="415.0" font-family="Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#4E5A66" text-anchor="middle" style="">Passing is a conditioning screen, not a guarantee of accurate distance.</text>
 </svg>

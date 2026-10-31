@@ -1,9 +1,9 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1100" height="545" viewBox="0 0 1100 545" role="img" aria-labelledby="title desc">
-<title id="title">7. Worked example: a slow object seen from a fast camera</title><desc id="desc">Top view of a camera moving north at 50 m/s and an object drifting east at 4 m/s and north at 2 m/s while rising at 0.5 m/s. Rays join simultaneous positions. Range curve includes vertical separation and reference-surface curvature.</desc>
+<title id="title">9. Worked example: a slow object seen from a fast camera</title><desc id="desc">Top view of a camera moving north at 50 m/s and an object drifting east at 4 m/s and north at 2 m/s while rising at 0.5 m/s. Rays join simultaneous positions. Range curve includes vertical separation and reference-surface curvature.</desc>
 <defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10Z" fill="#526779"/></marker></defs>
 <rect width="1100" height="545" rx="14" fill="#f5f8fb"/>
 <g font-family="Arial, Helvetica, sans-serif" fill="#17324d">
-<text x="34" y="40" font-size="27" fill="#17324d" text-anchor="start" font-weight="bold">7. Worked example: a slow object seen from a fast camera</text>
+<text x="34" y="40" font-size="27" fill="#17324d" text-anchor="start" font-weight="bold">9. Worked example: a slow object seen from a fast camera</text>
 <line x1="95.00" y1="420.00" x2="515.00" y2="420.00" stroke="#d8e2ea" stroke-width="1"/>
 <text x="83" y="426.0" font-size="17" fill="#526779" text-anchor="end" font-weight="normal">0</text>
 <line x1="95.00" y1="327.69" x2="515.00" y2="327.69" stroke="#d8e2ea" stroke-width="1"/>
@@ -45,7 +45,7 @@
 <circle cx="460.40" cy="408.92" r="5" fill="#007f73"/>
 <text x="107.0" y="135.07692307692304" font-size="16" fill="#2166ac" text-anchor="start" font-weight="normal">120 s</text>
 <text x="222" y="164" font-size="20" fill="#2166ac" text-anchor="start" font-weight="normal">Camera</text>
-<text x="307" y="393" font-size="20" fill="#007f73" text-anchor="start" font-weight="normal">Object</text>
+<text x="470" y="404" font-size="20" fill="#007f73" text-anchor="start" font-weight="normal">Object</text>
 <text x="95" y="85" font-size="18" fill="#526779" text-anchor="start" font-weight="normal">Top view: east and north axes use different scales.</text>
 <line x1="665.00" y1="420.00" x2="1025.00" y2="420.00" stroke="#d8e2ea" stroke-width="1"/>
 <text x="653" y="426.0" font-size="17" fill="#526779" text-anchor="end" font-weight="normal">3</text>

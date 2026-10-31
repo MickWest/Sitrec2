@@ -11,7 +11,7 @@ assumptions.
 This guide explains the calculation, the search, and the selection of a result.
 It assumes basic algebra. Terms are defined when they first appear. The diagrams
 and numerical examples are teaching examples, calculated from the equations
-below. They are not measurements from a recorded case.
+below. They are not measurements from a recording.
 
 For the other traverse methods, see [Traverse Methods](TraverseMethods.md).
 For the gallery and its ratings, see
@@ -19,19 +19,12 @@ For the gallery and its ratings, see
 
 ## 1. Which Balloon algorithm?
 
-Several Sitrec tools can produce a drifting path. They solve different problems.
-
-| Tool | What it calculates | How it uses the observed directions |
-|---|---|---|
-| **Balloon**, in the analysis gallery | Selects from a small set of drift and vertical-motion models, under three wind treatments | Fits the model parameters to directions throughout the selected window |
-| **Global Fit: Physics → Sky Lantern** | Fits the broader lantern model, which has a rise/cooling/descent profile and can combine wind variation with altitude shear | Fits a physical-motion model to the selected directions; it does not use the reduced Balloon model-selection procedure |
-| **Global Fit: Wind Tracer** | Fits passive drift with a separately solved initial 3D position and a model of camera pointing motion | Solves the position in closed form within its search and allows specified forms of pointing error |
-| **Windblown Object (on first LOS)** | Starts at the supplied distance and moves with the supplied wind | Uses the first direction only; later directions do not alter its path |
-| **Add Balloon**, from the ground context menu | Generates a flight from a chosen release point, launch delay, ascent rate, wind field and optional gusts | Does not fit camera directions |
-
-The main subject of this guide is the first row. Section 12 explains the other
-tools in more detail. **LOS** means **line of sight**: a ray that starts at the
-camera and extends in the observed direction.
+Several Sitrec tools can produce a drifting path. This guide is about **Balloon**
+in the analysis gallery. It selects from a small set of drift and vertical-motion
+models under three wind treatments, and it fits the model parameters to the
+directions throughout the selected window. These are **reduced** models: they
+have fewer parameters than the broader Sky Lantern model of the Physics method.
+Section 12 compares the other tools.
 
 ## 2. What the camera supplies
 
@@ -48,8 +41,9 @@ system's origin, in metres. A **unit vector** has length one, so multiplying it
 by a distance gives a displacement of that length.
 
 The camera position comes from the selected camera track. The direction comes
-from the selected LOS source. It can include a tracked pixel's offset from the
-camera centre. Errors in track timing, camera pointing or pixel tracking become
+from the selected **line-of-sight (LOS)** source. An LOS is a ray that starts at
+the camera and extends in the observed direction. It can include a tracked
+pixel's offset from the camera centre. Errors in track timing, camera pointing or pixel tracking become
 errors in these inputs.
 
 Time `t = 0` means the first frame of the selected analysis window. It need not
@@ -57,8 +51,8 @@ be the beginning of the video. For `N` consecutive frames at effective `fps`
 frames per simulated second, the elapsed span is `T = (N − 1) / fps`. At the
 normal simulation speed this is the video's frame rate. If simulation speed
 is changed, effective `fps = video fps / simulation speed`. Analyze needs at least ten
-selected frames. A useful fit usually needs a much longer span and suitable
-camera motion.
+selected frames. Range information depends on camera motion during the window
+(section 9).
 
 ### A direction does not give a distance
 
@@ -81,7 +75,9 @@ P(0) = S(0) + R₀ D(0)
 `R₀` is a parameter that the search adjusts. A **parameter** is a number held
 fixed during one trial calculation, then changed between trials. The first
 point is exactly on the first ray. The model's motion equations calculate every
-later point. Those later points can miss their observed rays.
+later point. Those later points can miss their observed rays. A best-fitting
+`R₀` does not by itself establish range: section 9 shows that, in a flat
+approximation, many values of `R₀` can match every direction.
 
 ![Initial range places a trial on the first ray; angular error tests the later path.](docimages/balloon-01-rays.svg)
 
@@ -104,7 +100,8 @@ The simplest model has four parameters:
 | `v` (`windN`) | Wind velocity toward north | m/s |
 | `w` (`verticalSpeed`) | Constant rate of height change; positive up, negative down | m/s |
 
-Its equations, expressed using height `h`, are:
+Its equations, expressed using height `h` above a reference surface (defined
+below), are:
 
 ```text
 x(t) = x₀ + u t
@@ -143,7 +140,7 @@ up-coordinate rate is:
 dz/dt = w − (x u + y v) / Rearth
 ```
 
-The notation `dx/dt` means the rate at which `x` changes with time. This
+The notation `dz/dt` means the rate at which `z` changes with time. This
 correction lets a level drifting object follow the curved reference surface
 instead of travelling in a flat tangent plane. It is a local approximation,
 not a detailed Earth or terrain model. The fit's approximate reference height
@@ -166,11 +163,14 @@ a fitted correction. These are different assumptions.*
 | **Balloon (supplied wind)** | The complete per-frame input wind series is fixed, including calm when selected | `R₀, w`: two |
 | **Balloon (supplied wind + correction)** | The fixed input series plus a searched constant east/north correction | `R₀, Δu, Δv, w`: four |
 
-The supplied series can change during the window. Sitrec retains each interval's
-wind rather than replacing the series with its average. It captures that series
-as an input to the fit. It does not resample the weather field at each proposed
-object altitude while searching Balloon parameters. A later weather comparison
-can sample independent weather at each candidate path's locations and heights.
+The input series comes from the **Target Wind** of the sitch (the saved Sitrec
+scene), or calm when **Wind for analysis** is **Zero wind**. It changes during the
+window only when the Target Wind source is a track file with wind columns, other
+than a sounding. Otherwise every frame has the same speed and direction.
+Sitrec retains each interval's wind rather than replacing the series with its
+average. The search never reads the weather field at a proposed object altitude.
+A later weather comparison can sample independent weather at each candidate
+path's locations and heights.
 
 For supplied horizontal wind, position is the starting position plus the sum of
 all previous intervals' wind displacements. If an interval lasts `Δt` seconds,
@@ -178,10 +178,10 @@ its east displacement is `u_input × Δt`. The corrected fit adds `Δu × t` eas
 and `Δv × t` north to that accumulated drift. A constant correction preserves
 all changes already present in the supplied series.
 
-In the code, `dataset.W` stores displacement per frame, not velocity in m/s.
-Multiplying it by `fps` recovers interval velocity. The integrator accumulates
-the supplied displacements directly so a large numerical step cannot skip a
-short wind change. If the supplied series has an up component, that displacement
+The series is stored as displacement per frame, in metres, not as velocity in
+m/s. Multiplying it by `fps` recovers interval velocity. The calculation adds up
+the stored displacements directly, so a large numerical step cannot skip a short
+wind change. If the supplied series has an up component, that displacement
 is retained too; the fitted vertical rate describes motion in addition to it.
 
 The fitted-wind result describes the **required wind under the motion model**.
@@ -216,8 +216,7 @@ procedure.
 
 Default maximum substeps are 0.5 seconds for reduced drift models and 0.25
 seconds for the lantern lifecycle. Observation times can make steps smaller.
-Search options can use coarser steps during fitting; the final path uses the
-model's own step limit.
+Balloon fits use these limits in the search and for the final path.
 
 ### Step 2: predict a camera direction
 
@@ -265,19 +264,19 @@ The angular cost is `0.010 / 0.02 = 0.5`. The default wind penalty is
 
 The distinction matters: a penalty can change which range and wind the fit
 chooses, even though the displayed residual does not include that penalty.
-Diagnostics disclose the model penalties separately, including their equivalent
-cost in degrees.
+The result card multiplies the penalties by `0.02°` to give degrees, and shows
+**Model priors cost** when the total exceeds 0.005°.
 
 ### The default penalties
 
 A **prior** is an assumption supplied before examining the answer. Here priors
-appear as **regularization**: extra costs that discourage unnecessarily large
-or variable values when several paths fit similarly well.
+appear as **regularization**: extra costs on large or variable values. They
+decide the answer when several paths fit similarly well.
 
 | Treatment | Wind penalty |
 |---|---|
 | Fitted steady drift | `(u² + v²) / 20²` |
-| Fitted changing drift | Squared mean wind magnitude divided by `20²`, plus mean squared variation about that mean divided by `2²` |
+| Fitted changing drift | Squared magnitude of the mean wind vector divided by `20²`, plus mean squared variation about that mean divided by `2²` |
 | Fitted lifecycle | The same `20 m/s` component scale for its constant wind; time variation and shear are fixed to zero |
 | Supplied wind | No penalty on the fixed supplied wind |
 | Supplied wind + correction | `(Δu² + Δv²) / σcorrection²`; no calm-wind penalty on the total supplied wind |
@@ -285,7 +284,7 @@ or variable values when several paths fit similarly well.
 The reduced changing-drift models evaluate their wind mean and variation at
 17 equally spaced times, including both ends. The `20 m/s` and `2 m/s` scales
 are analysis assumptions, not weather measurements. The correction scale
-defaults to **15 knots per component**, about `7.71666 m/s`. It is also an
+`σcorrection` defaults to **15 knots per component**, about `7.71666 m/s`. It is also an
 analyst assumption. Increasing it makes a given correction cheaper; decreasing
 it makes that correction more expensive.
 
@@ -312,8 +311,8 @@ their freedoms in one large model.
 | `shear` | Fitted wind speed changes with height; direction stays fixed | Constant signed height rate | 5 / not tried / not tried |
 | `quadratic` | Wind has linear and quadratic time terms | Constant signed height rate | 8 / not tried / not tried |
 
-Counts include the initial range. They describe the normal unlocked fits;
-fixing a parameter for a range study reduces the searched count.
+Counts include the initial range. They describe the normal fits. Holding a
+parameter fixed for a range study reduces the searched count.
 
 ### Wind changing with time
 
@@ -370,8 +369,10 @@ wind in the shear model. The analysis tries these explanations separately.*
 
 ### A lantern lifecycle: rise, cool, descend
 
-The lifecycle alternative prescribes a vertical-speed curve. It uses four
-vertical parameters:
+A **sky lantern** is a small paper balloon lifted by a flame. It rises while the
+flame burns, then cools and sinks. **Flame-out** is the moment the flame stops.
+The lifecycle alternative prescribes a vertical-speed curve for this behaviour.
+It uses four vertical parameters:
 
 - `vRise`: upward speed before flame-out, in m/s.
 - `vSink`: eventual downward speed, expressed as a positive magnitude in m/s.
@@ -410,20 +411,20 @@ To calculate height after flame-out, first define an elapsed cooling time `q`
 and its accumulated height change:
 
 ```text
-F(q) = −vSink q + (vRise + vSink) τ [1 − exp(−q / τ)]
+G(q) = −vSink q + (vRise + vSink) τ [1 − exp(−q / τ)]
 ```
 
 If flame-out occurs within or after the window starts, use:
 
 ```text
 before flame-out: h(t) = h₀ + vRise t
-after flame-out:  h(t) = h₀ + vRise tBurn + F(t − tBurn)
+after flame-out:  h(t) = h₀ + vRise tBurn + G(t − tBurn)
 ```
 
 If `tBurn < 0`, cooling started before the window. Then:
 
 ```text
-h(t) = h₀ + F(t − tBurn) − F(−tBurn)
+h(t) = h₀ + G(t − tBurn) − G(−tBurn)
 ```
 
 The subtraction makes height equal `h₀` at `t = 0`. A negative `tBurn` does
@@ -583,7 +584,7 @@ parameter values can tie in cost.
 
 ![Differential evolution creates a donor from three parameter vectors, mixes donor and target coordinates, repairs bounds, and retains the trial only if its cost is no greater than its own target's.](docimages/balloon-08-differential-evolution.svg)
 
-*Figure 8. The upper plot shows range and east-wind coordinates of the example
+*Figure 6. The upper plot shows range and east-wind coordinates of the example
 vectors; their north and vertical coordinates are shown in the arithmetic
 above. The table shows one possible crossover. Selection requires a new cost
 calculation; the donor construction alone does not establish an improvement.*
@@ -621,13 +622,14 @@ for the general geometry.
 
 ![Two-parameter Nelder–Mead illustration: each triangle vertex is a complete range-and-wind trial, with the other parameters fixed. The worst vertex is reflected through the midpoint of the other two.](docimages/balloon-09-parameter-simplex.svg)
 
-*Figure 9. Hold north wind and vertical rate fixed for this illustration, leaving
+*Figure 7. Hold north wind and vertical rate fixed for this illustration, leaving
 two free parameters: initial range and east wind. Three complete trials form a
 triangle. If the reflected trial is accepted, it replaces C. The full
 four-parameter fit uses five vertices in four dimensions.*
 
 The method compares the costs at the vertices, then tries to replace the
-highest-cost vertex. It calculates the **centroid** of the other vertices by
+highest-cost vertex. Figure 7 labels its vertices A, B and C. These are not the
+members A, B and C of differential evolution. The method calculates the **centroid** of the other vertices by
 averaging each coordinate separately. In the two-parameter drawing this is
 the midpoint of A and B. It first tests a **reflection** of C through that
 centroid: `q_reflected = 2 × centroid − q_worst`. This moves every parameter
@@ -651,11 +653,11 @@ inside the simplex. The axes also have different units, so distance across
 this drawing is not a physical distance in the scene.
 
 Once an earlier model has produced a fit, subsequent motion alternatives use
-local refinement. They normally start from the best earlier parameters. The
-lifecycle alternative returns to the geometric seed so a changing-wind fit's
+local refinement. They start from the earlier fit with the lowest mean angular
+error. The lifecycle alternative returns to the geometric seed so a changing-wind fit's
 range and wind do not determine the starting vertical lifecycle.
 
-The Balloon search uses a fixed repeatable random seed by default, unless
+The Balloon search uses a fixed repeatable random-number seed by default, unless
 explicitly overridden. The geometric starting estimate depends on the run
 inputs. The supported calculation is repeatable for the same code, inputs and options.
 It does not prove that the search found the best possible answer. A local
@@ -666,7 +668,7 @@ WebGPU search is enabled for other gallery methods.
 To reduce work, the normal physics search evaluates direction error at roughly
 half-second spacing, with the last observation included. The retained path and
 its reported mean error are then calculated at every observation frame.
-Sampling and optimizer completion are recorded in diagnostics.
+The diagnostics show optimizer completion.
 
 ### Search bounds
 
@@ -690,12 +692,15 @@ wind.
 
 A fitted value at an active bound can mean the search needs more space, or
 the model needs a form of motion it cannot supply. It is not proof that every
-balloon interpretation fails. Zero rise, zero sink or zero shear can instead
-be legitimate simple cases. Read the completion and bound diagnostics together.
+balloon interpretation fails. Zero rise or zero sink can instead be a legitimate
+simple result. Read the completion and bound diagnostics together.
 
 ## 8. How Sitrec selects the motion model
 
-Each wind treatment starts with steady drift. If that fit completes and its
+For model selection, a fit is **complete** unless Nelder–Mead reaches its
+5,000-iteration limit with its simplex still spread. The differential evolution budget plays no part.
+
+Each wind treatment starts with steady drift. If that fit is complete and its
 mean angular error is at most `0.002°`, the analysis stops adding motion
 models for that treatment.
 
@@ -705,7 +710,7 @@ series already specifies horizontal wind changes.
 
 ![Model-selection flow from steady fit to permitted alternatives and selection by parameter count within a residual tolerance.](docimages/balloon-06-model-selection.svg)
 
-*Figure 6. The model with the smallest residual does not automatically win.
+*Figure 8. The model with the smallest residual does not automatically win.
 A simpler completed model can be preferred when its error is close.*
 
 The selection rule is:
@@ -752,7 +757,7 @@ these parameters.
 
 ![Top-view camera and object tracks with simultaneous sightlines, and calculated slant range over time.](docimages/balloon-07-worked-example.svg)
 
-*Figure 7. The object moves slowly, but the camera moves a long way. The
+*Figure 9. The object moves slowly, but the camera moves a long way. The
 observed direction depends on both motions.*
 
 | Time (s) | Camera north (m) | Object east (m) | Object north (m) | Object reference height (m) | Slant range (m, rounded) |
@@ -784,7 +789,7 @@ far more than the object's small drift alone would suggest. This is why apparent
 motion across an image cannot be read directly as object ground speed.
 
 The horizontal wind magnitude is `sqrt(4² + 2²) ≈ 4.47 m/s`, about 8.69 knots,
-from roughly 243°. Horizontal airspeed is zero under the model. Vertical
+from roughly 243° (clockwise from north). Horizontal airspeed is zero under the model. Vertical
 airspeed is 0.5 m/s if the surrounding air has no vertical motion.
 
 Now compare three assumptions:
@@ -823,10 +828,13 @@ Vλ = VS + λ (VP − VS)
 
 A fitted-wind model can assign its horizontal wind to that new horizontal
 velocity. Within its bounds, many scaled paths can therefore match the same
-directions. Earth curvature changes this exact flat-geometry relation but does
-not guarantee useful practical range accuracy. A camera turn or independently
-supported wind can constrain the family. Their usefulness must be checked for
-the actual scene.
+directions. On a curved Earth the scaled paths match only approximately. That
+difference does not guarantee a useful range. This example's camera does not
+accelerate. If it turned, a wrong-range path would have to bend with the turn,
+and the steady model cannot bend. The linear and quadratic wind terms can supply
+a bend, so they can absorb most of that constraint, within their ±15 m/s limits.
+Independently supported wind can also constrain the scaled paths. Their usefulness must be checked for the actual
+scene.
 
 This ambiguity is deliberate in the teaching example: it separates **generating
 the correct directions** from **proving a unique solution**. A longer list of
@@ -841,32 +849,46 @@ Read several quantities together:
 | Mean LOS error | How closely does this path reproduce the selected directions? | Whether its range or identity is correct |
 | Selected motion stage | Which permitted model was preferred under the practical tolerance? | Whether that model is physically unique |
 | Required, supplied or corrected wind | What wind does this particular calculation use? | Whether the weather is independently established |
-| Prior costs | How strongly did the declared assumptions influence the retained solution? | A probability that the assumptions are true |
+| Prior costs | What did the declared assumptions cost at the retained solution, in degrees? | How far they moved the solution, or a probability that they are true |
 | Completion and bounds | Did the numerical search finish, and do active limits matter? | An exclusion of every path outside the search |
 | Terrain and physical checks | Does this path pass the implemented compatibility checks? | A direct observation of the object's type |
-| Balloon consistency | Does the path have sufficiently steady horizontal drift and vertical trend? | An identity probability; it also does not alter BOT Score |
+| Balloon consistency | Does the path keep one horizontal direction and one vertical trend? | Whether its speed is steady, or an identity probability; it also does not alter the gallery's BOT Score |
+
+When many paths fit equally well, a small prior cost can still decide range and
+wind. In one run on the scene of section 9, a prior cost under 0.001° moved the
+north wind from 2 to about 1 m/s. The card shows no row for a cost this small.
 
 The lifecycle result is labelled **Possible sky lantern (rise then fall)** only
-when the fitted curve has appreciable rise and sink, a vertical reversal inside
-the observed interval, and descent by the end. A lifecycle fit showing only
+when the fitted curve has appreciable rise and sink, flame-out at or after the
+window's start, a vertical reversal inside the observed interval, and descent by
+the end. A lifecycle fit showing only
 descent can remain labelled **Balloon**. Neither label identifies the object.
 
-The fitted-wind Balloon can also receive a **conditional range family**. Sitrec
-fixes a succession of starting ranges, retains the selected motion stage, and
-refits the remaining parameters. This shows which ranges that model can admit.
-It does not reselect the motion stage at each range. The supplied and corrected
-variants do not currently get this same Balloon range-family calculation.
-These bands are sensitivity results, not calibrated confidence intervals.
+Turn on **Solution families (range bands)** before the run to give the
+fitted-wind Balloon a **conditional range family**. This is the held-range ladder
+of [Traverse Concepts](TraverseConcepts.md). Sitrec fixes a succession of starting
+ranges, retains the selected motion stage, and refits the remaining parameters.
+This shows which ranges that model can admit: a range is admitted when its refit
+stays within an acceptance residual set from the best fit and passes a physical
+screen. It does not reselect the motion
+stage at each range. The supplied and corrected variants do not currently get
+this same Balloon range-family calculation. The admitted ranges form a band. A
+band is a sensitivity result, not a calibrated confidence interval.
 
-Independent weather can support or contradict the required wind, but a supplied
-fit's agreement with its own input weather is circular. Likewise, directions
+Independent weather can support the required wind or be in tension with it. The
+comparison runs at the fitted range only, so a mismatch does not by itself
+exclude a balloon at another range. A supplied fit cannot confirm its own input weather, although its residual can
+still reject that wind. Likewise, directions
 constructed from a known target test internal consistency rather than discover
 that target independently. The gallery marks constructed LOS accordingly.
 
 The executive verdict combines more than the best Balloon residual. An
-affirmative Balloon verdict requires a viable complete free-wind fit,
-independent supporting wind evidence, sufficient Balloon consistency, and the
-analysis's geometry and competing-explanation checks. See
+affirmative Balloon verdict requires a viable free-wind fit, independent
+supporting wind evidence, Balloon consistency of at least 0.75, sightlines that
+were not built from the tested target, a camera track that spans at least the
+minimum baseline (0.1% of the analysis start distance, at least 2 m), and no
+viable catalogued object. A viable
+aircraft or drone class does not block this verdict. See
 [The executive verdict](TraverseAnalysis.md#the-executive-verdict) for the
 current gates. Three wind variants are tests of one interpretation class;
 they are not three independent votes for a balloon.
@@ -890,22 +912,31 @@ they are not three independent votes for a balloon.
 7. Use independent information before naming an object: weather, size,
    release location, other cameras or another measured range constraint.
 
-For a recording such as Aguadilla, the same procedure can test a descending
-wind-driven path against other interpretations. A fitted negative flame-out
-time would mean the lifecycle starts cooling before the chosen window. It
-would not by itself establish a lantern, its launch time or its launch site.
-The teaching values in this guide must not be substituted for case measurements.
+A fitted negative flame-out time means that the lifecycle starts cooling before
+the chosen window. It does not by itself establish a lantern, its launch time or
+its launch site. The teaching values in this guide are not measurements from a
+recording.
 
 ## 12. How the related tools differ
+
+Several Sitrec tools can produce a drifting path. They solve different problems.
+
+| Tool | What it calculates | How it uses the observed directions |
+|---|---|---|
+| **Balloon**, in the analysis gallery | Selects from a small set of drift and vertical-motion models, under three wind treatments | Fits the model parameters to directions throughout the selected window |
+| **Global Fit: Physics → Sky Lantern** | Fits the broader lantern model, which has a rise/cooling/descent profile and can combine wind variation with altitude shear | Fits a physical-motion model to the selected directions; it does not use the reduced Balloon model-selection procedure |
+| **Global Fit: Wind Tracer** | Fits passive drift with a separately solved initial 3D position and a model of camera pointing motion | Solves the position in closed form within its search and allows specified forms of pointing error |
+| **Windblown Object (on first LOS)** | Starts at the supplied distance and moves with the supplied wind | Uses the first direction only; later directions do not alter its path |
+| **Add Balloon**, from the ground context menu | Generates a flight from a chosen release point, launch delay, ascent rate, wind field and optional gusts | Does not fit camera directions |
 
 ### The live Physics Sky Lantern model
 
 **Global Fit: Physics → Sky Lantern** uses the same basic passive horizontal
 drift and vertical lifecycle equations, but its broader parameterization can
 include both time-varying wind and altitude shear. It has twelve declared
-parameters before any locks: range, two base wind components, shear, four
+parameters when none is held fixed: range, two base wind components, shear, four
 vertical lifecycle quantities, and four time-wind coefficients. Its priors
-and solver configuration follow that live node's settings.
+and solver configuration follow the Physics method's settings.
 
 The reduced analysis Balloon procedure explicitly tests simpler alternatives
 and selects among them. A statement about the broad live model's parameter
@@ -957,6 +988,10 @@ Balloon label is broader than that key.
 | [TraverseWind.js](https://github.com/MickWest/Sitrec2/blob/main/src/TraverseWind.js) | Shared wind search and correction scales |
 | [TraverseBattery.js](https://github.com/MickWest/Sitrec2/blob/main/src/TraverseBattery.js) | Analysis seeds, wind variants and conditional range studies |
 | [TraverseHypotheses.js](https://github.com/MickWest/Sitrec2/blob/main/src/TraverseHypotheses.js) | Candidate metrics, labels and compatibility information |
+| [DifferentialEvolution.js](https://github.com/MickWest/Sitrec2/blob/main/src/DifferentialEvolution.js) | Global search |
+| [NelderMead.js](https://github.com/MickWest/Sitrec2/blob/main/src/NelderMead.js) | Local refinement |
+| [TraverseRanking.js](https://github.com/MickWest/Sitrec2/blob/main/src/TraverseRanking.js) | Fit completion, ranking and the executive verdict |
+| [TraverseMotion.js](https://github.com/MickWest/Sitrec2/blob/main/src/TraverseMotion.js) | Balloon consistency |
 | [BalloonPhysics.js](https://github.com/MickWest/Sitrec2/blob/main/src/BalloonPhysics.js) | Generated Add Balloon flight |
 
 Related reading: [Traverse Concepts](TraverseConcepts.md),
