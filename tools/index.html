@@ -67,7 +67,7 @@
         <p>Interactive 3D visualization tool for Line of Sight (LOS) CSV data exported from Sitrec.</p>
         <p><strong>Features:</strong></p>
         <ul>
-            <li>50km x 50km ground grid (1km divisions) with white lines on grey background</li>
+            <li>Two 50km x 50km white grids with 10km squares: one on a green plane at the base altitude, one at z=0</li>
             <li>Large red north arrow with "N" label at origin</li>
             <li>3D track visualization with sensor positions</li>
             <li>Ground projection lines</li>
@@ -99,17 +99,18 @@
         <p>Parse and visualize PX4 flight logs (ULog format) in 3D with CSV export capabilities.</p>
         <p><strong>Features:</strong></p>
         <ul>
-            <li>Binary ULog parser supporting ULogV1 format</li>
+            <li>Binary parser for the ULog format</li>
             <li>3D flight path visualization with auto-fit camera</li>
             <li>GPS to local coordinate conversion (ENU frame)</li>
             <li>Start/end position markers (green/red spheres)</li>
             <li>Optional velocity vector display</li>
-            <li>Export track data or complete message dump to CSV</li>
+            <li>Export track data, or the first 10,000 data records, to CSV</li>
         </ul>
         <a href="px4-viewer.html">Open PX4 Viewer</a>
         <p style="margin-top: 10px;">
             Sample files: <a href="https://review.px4.io" class="sample-link" target="_blank" rel="noopener">PX4 Flight Review</a>
         </p>
+        <p style="margin-top: 10px;"><a href="PX4_README.md" class="sample-link">Documentation</a></p>
     </div>
 
     <div class="tool">
@@ -152,6 +153,7 @@
             <li>Per-flare time, compass direction, elevation, satellite, range and relative brightness</li>
         </ul>
         <a href="shf/">Open Starlink Flare Predictor</a>
+        <p style="margin-top: 10px;"><a href="shf/README.md" class="sample-link">Documentation</a></p>
     </div>
 
     <div class="tool">
@@ -169,6 +171,7 @@
             <li>Exports <code>.psf.json</code> (RGBE PNG + the generator spec) for Sitrec's camera glare</li>
         </ul>
         <a href="psf/">Open Diffraction PSF Studio</a>
+        <p style="margin-top: 10px;"><a href="psf/README.md" class="sample-link">Documentation</a></p>
     </div>
 
     <div class="tool">
@@ -181,6 +184,7 @@
             <li>Save editable designs, take snapshots, and export GLB models for Sitrec or other 3D editors</li>
         </ul>
         <a href="vehicles/">Open Vehicle Designer</a>
+        <p style="margin-top: 10px;"><a href="vehicles/README.md" class="sample-link">Documentation</a></p>
     </div>
 
     <div class="tool">
@@ -197,11 +201,12 @@
         <p style="margin-top: 10px;">
             <a href="xml-wind/sample.xml" class="sample-link" download>Download Sample XML</a> for testing
         </p>
+        <p style="margin-top: 10px;"><a href="xml-wind/README.md" class="sample-link">Documentation</a></p>
     </div>
 
     <h2>Usage</h2>
     <ol>
-        <li>For LOS Viewer: Export LOS data from Sitrec using the "CSV" button on any LOS node</li>
+        <li>For LOS Viewer: Export LOS data from Sitrec with <strong>File → Export → Lines of Sight → Lines of Sight CSV</strong></li>
         <li>For PX4 Viewer: Obtain a .ulg file from PX4 autopilot or Flight Review</li>
         <li>Open the appropriate tool from the list above</li>
         <li>Load your file</li>
@@ -209,7 +214,7 @@
     </ol>
 
     <h2>Documentation</h2>
-    <p>For detailed information about each tool, see the <a href="README.md">README.md</a> file.</p>
+    <p>For detailed information, see each tool's page. The tool's card links to it, where a page exists. The <a href="README.md">README.md</a> file lists all the tools and describes the LOS CSV Viewer.</p>
 
     <h2>Technical Details</h2>
     <p>The 3D tools use local copies of <strong>Three.js</strong>, with no external CDN dependencies. Vehicle Designer packages its renderer, controls, and exporter together from Sitrec's installed Three.js version.</p>
