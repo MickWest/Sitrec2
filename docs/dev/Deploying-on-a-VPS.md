@@ -240,7 +240,7 @@ same box with a throwaway container answering on a scratch port:
 | Container network | Address it saw for an outside client |
 |---|---|
 | bridge (`podman network create`) | `10.89.0.9`, the proxy |
-| `pasta` | `104.176.36.231`, the client's real address |
+| `pasta` | `198.51.100.7`, the client's real address |
 
 Without the real address there is no answering "who was that" after the fact, no per-client
 limits, and nothing for a future `mod_remoteip` to use. pasta is the fix, and it costs
