@@ -29,6 +29,7 @@ spec:
       securityContext:
         runAsNonRoot: true
         runAsUser: 1000
+        # fsGroup: 1000            # uncomment with the PVCs below, so UID 1000 can write to them
         seccompProfile: { type: RuntimeDefault }
       containers:
         - name: sitrec
@@ -42,6 +43,10 @@ spec:
             - { name: SAVE_TO_S3, value: "true" }
             - { name: S3_BUCKET,  value: "your-bucket" }
             - { name: S3_REGION,  value: "us-west-2" }
+            # A save needs an identity, and this manifest sets none, so visitors through the
+            # Ingress cannot save (see README). For a closed single-user install only, never
+            # on a public site, where every visitor becomes that user, by default an administrator:
+            # - { name: SITREC_DEFAULT_USERID, value: "1" }
           envFrom:
             - secretRef:
                 name: sitrec-s3    # injects S3_ACCESS_KEY_ID + S3_SECRET_ACCESS_KEY

@@ -42,6 +42,16 @@ kubectl port-forward deploy/sitrec 8080:8080                            # then o
 kubectl apply -f sitrec-ingress.yaml
 ```
 
+**A save needs an identity:** a closed single-user install sets `SITREC_DEFAULT_USERID=1`;
+never on a public site, because every visitor becomes that user, by default an administrator.
+A save through the tunnel in step 4 shows nothing about the Ingress: the tunnel connects from
+loopback, so Sitrec treats you as the local administrator, but each Ingress visitor is
+anonymous. [Step 4 of the install guide](../Installing-and-configuring.md#step-4--test-that-it-worked)
+gives the option for a site with several users. The validation list above does not include a save.
+
+**A save also needs a CORS (cross-origin resource sharing) rule:** the browser uploads directly to
+S3, so the bucket [needs one](../FileRehosting.md#cors-for-direct-browser-uploads) for each Sitrec origin.
+
 Add `-n your-namespace` to every command if you're not using `default`. All referenced
 objects (Secret, imagePullSecret, ConfigMap, PVCs) must share the Deployment's namespace.
 
@@ -49,7 +59,7 @@ objects (Secret, imagePullSecret, ConfigMap, PVCs) must share the Deployment's n
 
 If you already have an S3 Secret with its own key names (e.g. `aws-creds` with
 `aws_access_key_id` / `aws_secret_access_key`), don't rename it — map each key to the
-variable Sitrec expects. Replace the `envFrom:` block in `sitrec-deployment.yaml` with:
+variable Sitrec expects. Replace both the `env:` and the `envFrom:` blocks in `sitrec-deployment.yaml` with:
 
 ```yaml
           env:

@@ -2,6 +2,12 @@
 # Requires an ingress controller (nginx-ingress, Traefik, or your cloud provider's)
 # already installed. Sitrec serves at the container web root, so no /sitrec path prefix.
 #
+# This sample has no `tls:` section, so it serves plain HTTP. For HTTPS, add a `tls:`
+# section that names a certificate Secret in the same namespace. If the cluster has no
+# default IngressClass, also set `ingressClassName`.
+#
+# Visitors through this Ingress are anonymous and cannot save. See README.md.
+#
 #   kubectl apply -f sitrec-ingress.yaml
 ---
 apiVersion: networking.k8s.io/v1
