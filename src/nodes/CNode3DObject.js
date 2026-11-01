@@ -116,6 +116,7 @@ import {copyProceduralModel} from "../../tools/vehicles/recipeFormat.js";
 import {ObjectFlock} from "../ObjectFlock";
 import {installTerrestrialRefractionOnShaderMaterial} from "../atmosphere/terrestrialRefraction";
 import {CNodeSwitch} from "./CNodeSwitch";
+import {findStockModelKey} from "../StockModelFiles";
 
 // Map old/renamed model file paths to their current equivalents.
 // Used to remap file paths in loadedFiles and model name references in serialized sitches.
@@ -125,8 +126,14 @@ export const ModelAliases = {
     "data/models/PA28-181.glb": "data/models/PA28.glb",
 };
 
+// The ModelFiles key of a stock model, given a file reference, or null if it is not one.
+export function stockModelKey(fileRef) {
+    return findStockModelKey(fileRef, ModelFiles, ModelAliases);
+}
+
 // Resolve a model name or file path through ModelAliases, returning the canonical value.
-// Also checks if an alias maps to a known ModelFiles key.
+// Also checks if an alias maps to a known ModelFiles key. A stock file path gives its menu name:
+// older saves can hold a path here, from when a reload added stock models to the menu as paths.
 export function resolveModelAlias(name) {
     const alias = ModelAliases[name];
     if (alias) {
@@ -136,7 +143,7 @@ export function resolveModelAlias(name) {
         }
         return alias;
     }
-    return name;
+    return stockModelKey(name) ?? name;
 }
 
 // Note these files are CASE SENSIVE. Mac OS is case insensitive, so be careful. (e.g. F-15.glb will not work on my deployed server)

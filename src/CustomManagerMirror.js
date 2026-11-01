@@ -38,6 +38,7 @@ import {UpdateHUD} from "./JetStuff";
 import {degrees, getDateTimeFilename} from "./utils";
 import {ViewMan} from "./CViewManager";
 import {EventManager} from "./CEventManager";
+import {cancelDropdownHold, runWhenDropdownsClosed} from "./DropdownWatch";
 import {isAdmin, SITREC_APP, SITREC_SERVER} from "./configUtils";
 import {CNodeDisplayTrack} from "./nodes/CNodeDisplayTrack";
 import {DebugArrowAB, elevationAtLL} from "./threeExt";
@@ -282,6 +283,7 @@ export const mirrorMethods = {
         const originalDestroy = standaloneMenu.destroy.bind(standaloneMenu);
         standaloneMenu.destroy = (...args) => {
             unregisterGUIRoot(standaloneMenu);
+            cancelDropdownHold(standaloneMenu);
             if (standaloneMenu._mirrorUpdateInterval) {
                 clearInterval(standaloneMenu._mirrorUpdateInterval);
                 standaloneMenu._mirrorUpdateInterval = null;
@@ -542,11 +544,15 @@ export const mirrorMethods = {
      * @param {GUI} standaloneMenu - Target standalone menu to rebuild
      */
     rebuildMirror(sourceFolder, standaloneMenu) {
-        // Clear existing controllers and folders
-        this.clearMirror(standaloneMenu);
+        // A rebuild destroys every control, so it must not run under an open dropdown: a model
+        // that finishes loading would close the menu and lose the pick.
+        runWhenDropdownsClosed(standaloneMenu, () => {
+            // Clear existing controllers and folders
+            this.clearMirror(standaloneMenu);
 
-        // Rebuild from source
-        this.mirrorGUIControls(sourceFolder, standaloneMenu);
+            // Rebuild from source
+            this.mirrorGUIControls(sourceFolder, standaloneMenu);
+        });
     },
 
     /**

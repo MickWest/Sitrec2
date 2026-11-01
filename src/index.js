@@ -125,6 +125,7 @@ import {CGuiMenuBar, setupHelpSearch} from "./lil-gui-extras";
 import {exportFOVForEditor} from "./FOVInterchange";
 import {exportCameraAsKML} from "./ExportCameraKML";
 import {initUILogging} from "./UILogging";
+import {initDropdownWatch} from "./DropdownWatch";
 import {assert} from "./assert";
 import {CNodeFactory} from "./nodes/CNodeFactory";
 import {extraCSS} from "./extra.css";
@@ -1946,6 +1947,9 @@ async function initializeOnce() {
 
     // Opt-in logging of menu-item clicks (gated by LOG_UI_INTERACTIONS env var).
     initUILogging();
+
+    // Logs each use of a dropdown, for Help > Export Debug Log.
+    initDropdownWatch();
 
 
     // these area accessed like:

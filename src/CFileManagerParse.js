@@ -82,7 +82,7 @@ import {EventManager} from "./CEventManager";
 import {CTLEData, isOMMCSV} from "./TLEUtils";
 import {extractFeaturesFromFile, isFeaturesCSV} from "./ParseFeaturesCSV";
 import {createImageFromArrayBuffer} from "./FileUtils";
-import {CNode3DObject, ModelFiles} from "./nodes/CNode3DObject";
+import {CNode3DObject, ModelFiles, stockModelKey} from "./nodes/CNode3DObject";
 import {convertTiffBufferToPngImage} from "./TIFFUtils";
 import {extractFlightClubInfo, flightClubToCSVStrings, isFlightClubJSON} from "./ParseFlightClubJSON";
 import {isSupportedModelFile} from "./ModelLoader";
@@ -876,6 +876,14 @@ export const parseMethods = {
                 setNewSitchObject(copy);
                 return false;
             } else if (fileManagerEntry.dataType === "model" || fileManagerEntry.dataType === "glb" || isSupportedModelFile(filename)) {
+                // A save lists every model that was used, so a reload brings stock models here
+                // too. They are already in every Model menu, and each saved object has its own model.
+                if (stockModelKey(filename) !== null) {
+                    console.log(`Stock model not added to the Model menus: ${filename}`);
+                    return false;
+                }
+
+                console.log(`Adding model to the Model menus: ${filename}`);
                 this.registerDroppedModel(filename);
 
                 const targetObject = this.getPreferredDroppedModelTarget();
