@@ -56,6 +56,21 @@ export const STARLINK_PROFILES = Object.freeze({
 const MEASURED_PROFILES = [STARLINK_PROFILES["v1.0"], STARLINK_PROFILES.visor,
     STARLINK_PROFILES["v1.5"], STARLINK_PROFILES.mini];
 
+// Kuiper (Amazon Leo): an ESTIMATE. No horizon-flare curve is published for these
+// spacecraft. Mallama et al. (2026), arXiv:2601.07708, report a partly mirror-faced
+// nadir panel and reflective characteristics "similar to Version 1 Starlink
+// spacecraft", so the V1.0 curve is assumed. It is not scaled for panel size, which is
+// not published. It assumes the operational attitude; the paper shows a different
+// attitude during orbit raising. The diffuse reference is read by eye from the
+// operational points near 90 degrees phase in the paper's Figure 8. The paper's 6.8
+// mean is not used, because it averages over the bright ends of the phase curve.
+export const KUIPER_PHOTOMETRY = Object.freeze({
+    label: "Kuiper (Amazon Leo) estimate",
+    source: "arXiv:2601.07708",
+    flareProfile: "v1.0",
+    diffuseMagnitudeAt90Deg: 7.1,
+});
+
 export function magnitudeToFlux(magnitude) {
     return magnitude === Infinity ? 0 : 10 ** (-0.4 * magnitude);
 }
@@ -119,6 +134,8 @@ export function starlinkFlareMagnitude(glintAngleDeg, profile = "unknown") {
  * phaseAngleRad: Sun-satellite-observer angle, 0=fully lit, pi=backlit.
  * glintAngleDeg: angle from the nadir-chassis specular ray, in degrees.
  * starlink/profile: explicitly supplied classification, never inferred here.
+ * flareProfile: a STARLINK_PROFILES key that gives a satellite that is not a
+ *   Starlink an assumed flare curve, independent of the selected Starlink design.
  * illumination: solar flux fraction, including eclipse/limb transmission, 0..1.
  * diffuseMagnitudeAt90Deg: optional assumed magnitude at 1000 km/90-degree
  *   phase, for known large objects or a sensitivity study. No built-in ISS
@@ -135,6 +152,7 @@ export function satelliteFlux({
     glintAngleDeg,
     starlink = false,
     profile = "unknown",
+    flareProfile,
     illumination = 1,
     diffuseMagnitudeAt90Deg,
     diffuseAreaM2 = 1,
@@ -162,7 +180,8 @@ export function satelliteFlux({
         baseline = magnitudeToFlux(SUN_VISUAL_MAGNITUDE) * (2 / 3) * diffuseAlbedo
             * (diffuseAreaM2 / Math.PI) / REFERENCE_RANGE_M ** 2 * phase;
     }
-    const horizon = starlink ? flareFluxAt1000km(glintAngleDeg, profile) : 0;
+    const curve = starlink ? profile : flareProfile;
+    const horizon = curve === undefined ? 0 : flareFluxAt1000km(glintAngleDeg, curve);
     return lit * (baseline + horizon) * (REFERENCE_RANGE_M / rangeM) ** 2;
 }
 

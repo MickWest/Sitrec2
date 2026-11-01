@@ -10,7 +10,7 @@ import {Vector3} from "three";
 import * as satellite from "satellite.js";
 import {satelliteIllumination} from "../tools/shf/solarIllumination.js";
 import {penumbraFade, shadowOcclusion} from "../tools/shf/flarePhysics.js";
-import {fluxToMagnitude, satelliteFlux} from "../tools/shf/satellitePhotometry.js";
+import {fluxToMagnitude, KUIPER_PHOTOMETRY, satelliteFlux} from "../tools/shf/satellitePhotometry.js";
 
 const RAD2DEG = 180 / Math.PI;
 
@@ -48,6 +48,21 @@ export function satelliteSunlitFraction(position, toSun, settings) {
         {equatorRadius: a, polarRadius: b, atmosphere: settings.illuminationModel !== "Finite Sun"});
 }
 
+// The photometric class of a satellite, from its catalog name and number, as
+// options for satelliteFlux. Any other satellite gets the generic diffuse estimate.
+function photometryClass(satData, settings) {
+    const name = satData.name ?? "";
+    if (/STARLINK/i.test(name)) return {starlink: true, profile: settings.starlinkProfile};
+    if (/KUIPER/i.test(name)) {
+        return {flareProfile: KUIPER_PHOTOMETRY.flareProfile,
+            diffuseMagnitudeAt90Deg: KUIPER_PHOTOMETRY.diffuseMagnitudeAt90Deg};
+    }
+    // Retain the previous ISS magnitude as an explicit estimated
+    // 1000-km/90-degree reference, now with range and phase dependence.
+    if (satData.number === 25544) return {diffuseMagnitudeAt90Deg: -2};
+    return {};
+}
+
 // Flux, magnitude and the angles behind them, for a satellite at `position`
 // seen from `observer`. `satData` needs only name and number. The reflecting
 // surface faces the zenith: geocentric (from the Earth's centre) or geodetic (the
@@ -74,9 +89,6 @@ export function satelliteAppearance(satData, position, observer, toSun, illumina
         -(dx * toSun.x + dy * toSun.y + dz * toSun.z) / rangeM)));
     illumination ??= satelliteSunlitFraction(position, toSun, settings);
     const flux = satelliteFlux({rangeM, phaseAngleRad, glintAngleDeg, illumination,
-        starlink: /STARLINK/i.test(satData.name ?? ""), profile: settings.starlinkProfile,
-        // Retain the previous ISS magnitude as an explicit estimated
-        // 1000-km/90-degree reference, now with range and phase dependence.
-        diffuseMagnitudeAt90Deg: satData.number === 25544 ? -2 : undefined});
+        ...photometryClass(satData, settings)});
     return {flux, magnitude: fluxToMagnitude(flux), rangeM, glintAngleDeg, phaseAngleRad, illumination};
 }

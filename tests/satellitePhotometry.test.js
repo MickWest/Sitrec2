@@ -1,5 +1,5 @@
 import {
-    SATELLITE_PHOTOMETRY, STARLINK_PROFILES, fluxToMagnitude, lambertPhaseFunction,
+    KUIPER_PHOTOMETRY, SATELLITE_PHOTOMETRY, STARLINK_PROFILES, fluxToMagnitude, lambertPhaseFunction,
     magnitudeToFlux, satelliteFlux, satelliteMagnitude, starlinkFlareMagnitude,
 } from "../tools/shf/satellitePhotometry.js";
 
@@ -65,6 +65,20 @@ describe("continuous satellite photometry", () => {
         expect(satelliteFlux({...generic, diffuseAreaM2: 10}) / satelliteFlux(generic)).toBeCloseTo(10, 12);
         expect(satelliteFlux({...generic, diffuseAlbedo: 0.1}) / satelliteFlux(generic)).toBeCloseTo(0.5, 12);
         expect(satelliteMagnitude({...generic, diffuseMagnitudeAt90Deg: 3})).toBeCloseTo(3, 12);
+    });
+
+    test("the Kuiper estimate adds the assumed V1.0 flare curve to its own diffuse reference", () => {
+        const {flareProfile, diffuseMagnitudeAt90Deg} = KUIPER_PHOTOMETRY;
+        expect(flareProfile).toBe("v1.0");
+        const kuiper = {rangeM: 1e6, phaseAngleRad: Math.PI / 2, flareProfile, diffuseMagnitudeAt90Deg};
+        expect(satelliteMagnitude({...kuiper, glintAngleDeg: 90})).toBeCloseTo(diffuseMagnitudeAt90Deg, 10);
+        const flareAndDiffuse = magnitudeToFlux(starlinkFlareMagnitude(8, "v1.0"))
+            + magnitudeToFlux(diffuseMagnitudeAt90Deg);
+        expect(satelliteFlux({...kuiper, glintAngleDeg: 8})).toBeCloseTo(flareAndDiffuse, 10);
+    });
+
+    test("the Kuiper estimate is not a selectable Starlink design", () => {
+        expect(Object.keys(STARLINK_PROFILES)).toEqual(["unknown", "v1.0", "visor", "v1.5", "mini"]);
     });
 
     test("illumination scales flux once and dark or invalid orbits cannot poison an exposure", () => {

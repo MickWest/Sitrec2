@@ -173,7 +173,7 @@ Each filter has a checkbox. Only the checked filters are used.
 
 | Control | Default | What it does |
 |---|---|---|
-| **Satellite Brightness Model** | Photometric estimate | Continuous Starlink flare curves, estimated diffuse light, range and phase. **Legacy cone** selects the previous cone approximation |
+| **Satellite Brightness Model** | Photometric estimate | Continuous Starlink flare curves, an estimated flare curve for Kuiper satellites, estimated diffuse light, range and phase. **Legacy cone** selects the previous cone approximation |
 | **Starlink Design** | Unknown design (estimated mixture) | Select a design supported by independent information. Unknown uses an equal-weight flux mixture of the available designs, not an inferred population |
 | **Satellite Sunlight** | Finite Sun + atmosphere | Integrates the solar disk through a clear standard atmosphere at Earth's limb. **Finite Sun** omits atmosphere; **Legacy fade** uses the adjustable shadow depth |
 | **Sat Brightness** | 2 | Scale factor for the brightness of the satellites. 0 is invisible |
@@ -195,6 +195,15 @@ Individual design, attitude and flight state can change brightness by several ma
 Other satellites use an estimated diffuse reference because orbital records do not provide
 their optical size and reflectance. The ISS retains an estimated magnitude −2 reference at
 1000 km and 90° phase, with range and phase scaling.
+
+**Kuiper.** Kuiper (Amazon Leo) satellites, named `KUIPER-` in the catalog, also flare in this
+model, but as an estimate. No horizon-flare curve is published for them.
+[Mallama et al. (2026)](https://arxiv.org/abs/2601.07708) report a partly mirror-faced nadir
+panel and reflective characteristics similar to Version 1 Starlink spacecraft, so Sitrec uses
+the V1.0 curve, whatever **Starlink Design** is set to. The curve is not scaled for panel size.
+It assumes the operational attitude, which is not the attitude during orbit raising. The
+diffuse reference is magnitude 7.1 at 1000 km and 90° phase, read from that paper's Figure 8.
+These satellites are in the **Other Satellites** category.
 
 The sunlight model follows the finite solar disk, limb darkening, atmospheric transmission
 and refraction described by [Mallama (2021)](https://arxiv.org/abs/2112.08310). It uses a
