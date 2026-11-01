@@ -103,7 +103,7 @@ export const helpDocs = [
     {
         file: "docs/CustomSitchTool", labelKey: "menus.help.gettingStarted",
         section: "start", top: true, role: "tutorial",
-        chatDesc: "START HERE for any 'how do I use Sitrec / how do I get started / how do I make a sitch' question. The main getting-started guide: what Sitrec and a 'sitch' are, why a camera gives you a direction but not a distance, then three routes in depending on what the user has — filmed it themselves from the ground, has an aircraft flight track, or has a video with embedded metadata. Covers loading a Featured example to watch first, importing data (drag-and-drop or File → Import File), setting up the camera (position/heading/FOV) and target, two-track (camera+target) setups, syncing video, setting the date/time (Start Time vs Now Time), setting a location by name (Lookup/Geolocate), terrain, and adding satellites. Recommend this first for general 'how do I' questions, then point to the more specific docs.",
+        chatDesc: "START HERE for any 'how do I use Sitrec / how do I get started / how do I make a sitch' question. The main getting-started guide: what Sitrec and a 'sitch' are, why a camera gives you a direction but not a distance, then three routes in depending on what the user has — filmed it themselves from the ground (a step-by-step route that loads the original file first), has an aircraft flight track, or has a video with embedded metadata. Covers loading a Featured example to watch first, importing data (drag-and-drop or File → Import File), setting up the camera (position/heading/FOV) and target, two-track (camera+target) setups, syncing video, setting the date/time (Start Time vs Now Time), setting a location by name (Lookup/Geolocate), terrain, adding satellites, and the 'What was in the sky?' section for planets, stars, satellites and aircraft. Recommend this first for general 'how do I' questions, then point to the more specific docs.",
     },
     {
         file: "docs/WhatsNew", labelKey: "menus.help.whatsNew",
@@ -148,19 +148,19 @@ export const helpDocs = [
     {
         file: "docs/Glossary", labelKey: "menus.help.documentation.glossary",
         section: "start", role: "reference",
-        chatDesc: "Definitions of Sitrec and UAP-analysis vocabulary: sitch, traverse, line of sight (LOS), node, track, ADS-B, TLE and OMM, MISB and KLV, FMV, PTZ, FOV, azimuth and elevation, frustum, HAE/MSL/AGL, geoid undulation, ECEF/ENU/LLA, QNE/QNH, flight level, parallax, and more. Use when the user asks 'what is a X' or 'what does X mean'.",
+        chatDesc: "Definitions of Sitrec and UAP-analysis vocabulary: sitch, traverse, line of sight (LOS), main view and look view, node, track, Point Track, keyframe, UTC, DTLD, ADS-B, TLE and OMM, MISB and KLV, FMV, PTZ, FOV, azimuth and elevation, frustum, HAE/MSL/AGL, geoid undulation, ECEF/ENU/LLA, QNE/QNH, flight level, parallax, BOT, residual, collapse, and more. Use when the user asks 'what is a X' or 'what does X mean'.",
     },
 
     // ── Data and tracks ─────────────────────────────────────────────────────
     {
         file: "docs/Tracks", labelKey: "menus.help.documentation.tracks",
         section: "data", menuId: "contents", role: "reference",
-        chatDesc: "Importing and working with tracks (aircraft ADS-B/KML/KMZ, drone CSV/SRT, MISB/KLV, FlightRadar24, GeoJSON, ASTERIX radar, balloon): how a track is created from data, importing via drag-and-drop or the File menu, the Generic CSV column format, filtering bad data and why that filter encodes a physical assumption, what smoothing costs you, altitude handling and the altitude lock's datum (Lock Altitude, Height From), hand-drawn tracks and their menu (Edit Track, Path, Smoothing and Display groups, Show Object Menu), track and object names (Track N / Object N), multi-track (camera+target) setups, and exporting. Read this for 'how do I make/have a track of azimuth/elevation (az/el)' — covered under 'Camera Angle Tracks': a CSV of frame-or-time plus az/el/heading/fov columns that drives the camera's pointing angles.",
+        chatDesc: "Importing and working with tracks (aircraft ADS-B/KML/KMZ, drone CSV/SRT, MISB/KLV, FlightRadar24, GeoJSON, ASTERIX radar, balloon): how a track is created from data, importing via drag-and-drop or the File menu, the Generic CSV column format, filtering bad data and why Max G is an assumption about the object, what smoothing costs you, altitude handling and the altitude lock's datum (Lock Altitude, Height From), hand-drawn tracks and their menu (Edit Track, Path, Smoothing and Display groups, Show Object Menu), track and object names (Track N / Object N), multi-track (camera+target) setups, exporting, and live feeds. Read this for 'how do I make/have a track of azimuth/elevation (az/el)' — covered under 'Camera Angle Tracks': a CSV of frame-or-time plus az/el/fov columns that drives the camera's pointing angles and field of view (a heading column drives the Simple Flight Sim jet, not the camera).",
     },
     {
         file: "docs/KMLDataSources", labelKey: "menus.help.documentation.kmlDataSources",
         section: "data", role: "reference",
-        chatDesc: "Where to GET flight data, and which export option to choose. Read this for 'how do I find out if it was a plane', 'how do I get ADS-B data', 'how do I download a flight track', or any question naming ADS-B Exchange, FlightRadar24, FlightAware, Planefinder or RadarBox. Names the exact export button per service, explains ADS-B Exchange's three altitude options and which one to pick, warns that pasting a live map URL does not import a track, and covers the KML/KMZ structures Sitrec understands.",
+        chatDesc: "Where to GET flight data, and which export option to choose. Read this for 'how do I find out if it was a plane', 'how do I get ADS-B data', 'how do I download a flight track', or any question naming ADS-B Exchange, FlightRadar24 or FlightAware. Says where to export the KML on each service, which ADS-B Exchange altitude option to pick (GIS has all three), and what pressure altitude does to a track. Warns that pasting a live map URL does not import a track, points to Contents → Import ADS-B Track... for the last ~24 hours, says how to check what loaded, and covers the KML/KMZ structures Sitrec understands.",
     },
     {
         file: "docs/RecordedFireballs", labelKey: "menus.help.documentation.recordedFireballs",
@@ -170,22 +170,22 @@ export const helpDocs = [
     {
         file: "docs/SitchChapters", labelKey: "menus.help.documentation.sitchChapters",
         section: "data", menuId: "file", role: "reference",
-        chatDesc: "Sitch Chapters (File → Sitch Chapters): keeping several setups of one sitch, each chapter with its own views, cameras, date and time, frame and timeline markers while tracks, objects and the rest are shared. Covers adding, renaming, deleting and switching chapters, that edits stay in the chapter you leave, each chapter's own timeline markers, Add satellite rise / set markers and how the crossing times are found, Revert sitch to last save / load, restoring one chapter from a server version or a saved file and the recovery chapter it keeps, and the capture and restore scope. Read for 'what is a chapter', 'how do I keep two camera setups in one sitch', 'why did my markers change when I switched chapters', or 'how do I get back an older version of a chapter'.",
+        chatDesc: "Sitch Chapters (File → Sitch Chapters): keeping several setups of one sitch, each chapter with its own views, cameras, date and time, frame, measurement points and timeline markers while tracks, objects and the rest are shared. Covers adding, renaming, deleting and switching chapters, that edits to a chapter's setup stay in that chapter and edits to shared parts show in all chapters, which chapter a saved sitch opens at, each chapter's own timeline markers, Add satellite rise / set markers and how the crossing times are found, Revert sitch to last save / load, restoring one chapter from a server version or a saved file and the recovery chapter it keeps, and the capture and restore scope. Read for 'what is a chapter', 'how do I keep two camera setups in one sitch', 'why did my markers change when I switched chapters', or 'how do I get back an older version of a chapter'.",
     },
     {
         file: "docs/SavingAndLoading", labelKey: "menus.help.documentation.savingLoading",
         section: "data", menuId: "file", role: "reference",
-        chatDesc: "Saving, loading, and sharing sitches — versioned server/S3 saves vs fast local-folder saves, what a saved sitch does and does not capture, and how to hand an analysis to someone else so they can reproduce it.",
+        chatDesc: "Saving, loading, and sharing sitches — versioned server saves vs local-folder saves, what a save stores (uploaded files, satellite data, chapters), what a local folder copies, and how to hand an analysis to someone else with a share link or the local folder.",
     },
     {
         file: "docs/CustomModels", labelKey: "menus.help.documentation.customModels",
         section: "data", menuId: "objects", role: "reference",
-        chatDesc: "Displaying and importing 3D models and the Model Inspector. Sitrec imports two model file formats: GLB (binary glTF) and PLY (mesh, Gaussian splat, or point cloud). Plain .gltf is NOT accepted — export as .glb. Also covers the built-in aircraft/aerostat models, simple shapes, sizing, and preparing a model in Blender.",
+        chatDesc: "Displaying and importing 3D models and the Model Inspector. Sitrec imports two model file formats: GLB (binary glTF) and PLY (mesh, Gaussian splat, or point cloud). Plain .gltf is NOT accepted — export as .glb. Also covers the built-in aircraft and other models, the preset vehicle library, flocks of birds, simple shapes, sizing, and preparing a model in Blender.",
     },
     {
         file: "docs/ObjectReferences", labelKey: "menus.help.documentation.objectReferences",
         section: "data", menuId: "objects", role: "reference",
-        chatDesc: "Reference objects: placing a known object in the scene to check the reconstruction against something whose position or size you already know.",
+        chatDesc: "For server operators and developers: how a saved sitch and a share link point to stored files. Covers sitrec:// object references, raw keys in ?custom= links, the object.php resolver, direct URLs on filesystem storage, public and private storage visibility, and what a person with a link can read. Not about 3D objects in a scene: for those, read SceneObjects.",
     },
     {
         file: "docs/SceneObjects", labelKey: "menus.help.documentation.sceneObjects",
@@ -197,7 +197,7 @@ export const helpDocs = [
     {
         file: "docs/CameraAndTarget", labelKey: "menus.help.documentation.cameraAndTarget",
         section: "world", menuId: ["camera", "target"], role: "reference",
-        chatDesc: "Every control in the Camera and Target menus: where the camera is (Manual position, Flight Sim, Orbit, an imported track), which way it points (Manual pan/tilt, To Target, Custom Az/El, Relative Heading, MX-style roll) and its field of view (VFOV/HFOV, 35mm equivalent, Lock Aspect), plus Camera Tweaks, Smoothing, Tracking Wobble, Export Camera as KML, and the target's position, Target Track and Stop At. Read for 'how do I put the camera at a spot', 'how do I point the camera at another plane', 'how do I orbit around something', or 'what does this camera setting do'.",
+        chatDesc: "Every control in the Camera and Target menus: where the camera is (Manual position, Flight Sim, Orbit, an imported track), which way it points (Manual pan/tilt, To Target, Custom Az/El, Relative Heading, MX-style roll) and its field of view (VFOV/HFOV, 35mm equivalent, Lock Aspect), plus Camera Tweaks, Smoothing, Tracking Wobble, Fit Camera to Points, Export Camera as KML, and the target's position, Target Track and Stop At. Read for 'how do I put the camera at a spot', 'how do I point the camera at another plane', 'how do I aim a ground camera at an aircraft track', 'how do I find an unknown camera position from landmarks', 'how do I orbit around something', or 'what does this camera setting do'.",
     },
     {
         file: "docs/GIS", labelKey: "menus.help.documentation.gis",
@@ -207,22 +207,22 @@ export const helpDocs = [
     {
         file: "docs/Terrain", labelKey: "menus.help.documentation.terrain",
         section: "world", menuId: "terrain", role: "reference",
-        chatDesc: "The Terrain menu: map imagery vs elevation source (two different dropdowns), the elevation sources and their real ground resolution, Google Photorealistic and Cesium 3D buildings, which surface a ground or AGL query actually hits and why three different answers are possible, the sea and why bathymetry is discarded, dynamic subdivision, and the settings that silently change elevation accuracy. Read for 'why is my object underground', 'what altitude is the sea', 'why did the ground height change', or anything about terrain accuracy.",
+        chatDesc: "The Terrain menu: map imagery vs elevation source (two different dropdowns), the elevation sources and their real ground resolution, Google Photorealistic and Cesium 3D buildings, which surface a ground or AGL query actually hits and why different parts of the app can give different answers, the sea and why bathymetry is discarded, dynamic subdivision, and the settings that silently change elevation accuracy. Read for 'why is my object underground', 'what altitude is the sea', 'why did the ground height change', or anything about terrain accuracy.",
     },
     {
         file: "docs/Refraction", labelKey: "menus.help.documentation.refraction",
         section: "world", menuId: ["view", "effects"], role: "reference",
-        chatDesc: "Atmospheric refraction: why distant things appear higher than geometry says, the celestial and terrestrial models Sitrec implements, that refraction is OFF by default and where the switch is (View menu), and how much it moves the horizon. Read for any question about the horizon distance, whether something was hidden behind the Earth's curvature, 'could I see X from Y', mirages, or looming.",
+        chatDesc: "Atmospheric refraction: why distant things appear higher than geometry says, the celestial and terrestrial models Sitrec implements, that refraction is ON by default and where the switch is (View menu), and how much it moves the horizon. Read for any question about the horizon distance, whether something was hidden behind the Earth's curvature, 'could I see X from Y', mirages, or looming.",
     },
     {
         file: "docs/Wind", labelKey: "menus.help.documentation.wind",
         section: "world", menuId: "physics", role: "reference",
-        chatDesc: "The Wind menu: setting wind speed and direction, pulling real-world atmospheric data, and drawing streamlines and arrows.",
+        chatDesc: "The Wind folder in the Physics menu: setting wind speed and direction, pulling real-world atmospheric data, and drawing streamlines and arrows.",
     },
     {
         file: "docs/HistoricSkies", labelKey: "menus.help.documentation.historicSkies",
         section: "world", role: "reference",
-        chatDesc: "Reconstructing the sky for dates long before the modern UFO era - the 1896-97 airship waves, the 1909 scareships, and anything else back to 1700. How to reach a historic date (Go To box, the Year field, ?datetime=, a sitch's startTime) and how the Year slider's range extends. What is accurate and to what: Sun/Moon/planet positions, the EQJ-to-ECEF frame transform, precession, and Delta-T. What is not: stellar proper motion (catalogue epoch J1991.25, a few arcminutes by 1897), UT1-UTC, and the legacy sidereal helpers that skip precession. Time zones before standard time, and why daylight saving did not exist before 1916/1918. What is anachronistic (modern imagery and buildings, no satellites before 1957). Read for 'can Sitrec do historic dates', 'how far back does it go', 'why is the year slider limited', 'is the sky accurate for 1897', or any question about a 19th- or early-20th-century sighting.",
+        chatDesc: "Reconstructing the sky for dates long before the modern UFO era - the 1896-97 airship waves, the 1909 scareships, and anything else back to 1700. How to reach a historic date (Go To box, the Year field, ?datetime=, a sitch's startTime) and how the Year slider's range extends. What is accurate and to what: Sun/Moon/planet positions, the conversion from sky coordinates to Earth coordinates, precession, and Delta-T. What is not: stellar proper motion (catalogue epoch J1991.25, up to a few arcminutes by 1897) and UT1-UTC. Time zones before standard time, setting the zone before typing a local time, and why daylight saving did not exist before 1916/1918. What is anachronistic (modern imagery and buildings, no satellites before 1957). A worked example that follows Venus in 1897 with Celestial Lock. Read for 'can Sitrec do historic dates', 'how far back does it go', 'why is the year slider limited', 'is the sky accurate for 1897', or any question about a 19th- or early-20th-century sighting.",
     },
     {
         file: "docs/Lighting", labelKey: "menus.help.documentation.lighting",
@@ -232,12 +232,12 @@ export const helpDocs = [
     {
         file: "docs/LunarEclipse", labelKey: "menus.help.documentation.lunarEclipse",
         section: "world", menuId: "lighting", role: "reference",
-        chatDesc: "Lunar eclipses (Lighting menu -> Lunar Eclipse): the Earth's shadow on the Moon. What the penumbra and umbra are and why the umbral edge is soft, why a totally eclipsed Moon turns red (sunlight refracted through the Earth's atmosphere, with the blue scattered out) and why there is a turquoise fringe at the umbral edge (ozone). The controls: Atmospheric Clarity and how it walks the Danjon L0-L4 scale of how dark an eclipse looks, why exposure has to be raised at all when totality is ten magnitudes below a full Moon, and Shadow Outlines, which rings the whole umbra and penumbra at the Moon's distance. Also the 88 km shadow enlargement and the Chauvenet/Danjon dispute behind it. Includes dates of recent and forthcoming eclipses, and what is and is not modelled. Read this for 'why is the Moon red', 'blood moon', 'how do I show a lunar eclipse', 'what is the umbra', 'what is the Danjon scale', or any question about eclipses of the Moon. NOT for solar eclipses or for the Moon's shadow on the Earth.",
+        chatDesc: "Lunar eclipses (Lighting → Lunar Eclipse): the Earth's shadow on the Moon. What the penumbra and umbra are and why the umbral edge is soft, why a totally eclipsed Moon turns red (sunlight refracted through the Earth's atmosphere, with the blue scattered out) and why there is a turquoise fringe at the umbral edge (ozone). The controls: Atmospheric Clarity and how it moves along the Danjon L0-L4 scale of how dark an eclipse looks, why exposure has to be raised at all when totality is ten magnitudes below a full Moon, and Shadow Outlines, which rings the whole umbra and penumbra at the Moon's distance. Also the 88 km shadow enlargement and the Chauvenet/Danjon dispute behind it. Includes dates of recent and forthcoming eclipses, and what is and is not modelled. Read this for 'why is the Moon red', 'blood moon', 'how do I show a lunar eclipse', 'what is the umbra', 'what is the Danjon scale', or any question about eclipses of the Moon. NOT for solar eclipses or for the Moon's shadow on the Earth.",
     },
     {
         file: "docs/AtmosphericAerialPerspective", labelKey: "menus.help.documentation.aerialPerspective",
         section: "world", menuId: "lighting", role: "reference",
-        chatDesc: "Atmospheric haze and aerial perspective: how distance washes out contrast and colour, and what that implies about how far away something in a photograph was.",
+        chatDesc: "Atmospheric haze and aerial perspective in the look view: the Atmosphere and Distance haze controls, how to set Atmo Visibility and what its values mean, how Sitrec computes the fade with distance and altitude, and what the model leaves out. Read for 'why does distant terrain look too sharp', 'what does Atmo Visibility mean', or 'is the haze physically modelled'.",
     },
 
     // ── Video ───────────────────────────────────────────────────────────────
@@ -254,7 +254,7 @@ export const helpDocs = [
     {
         file: "docs/Masking", labelKey: "menus.help.documentation.masking",
         section: "video", menuId: "video", role: "reference",
-        chatDesc: "Masking out part of the video frame (Video → Masking) so analysis ignores it: painting a mask by hand, the automatic ground/sky methods for masking out trees and terrain, auto-masking a burned-in OSD or redactions, and which tools obey the mask (Star Tracker 'Use mask', Point Track 'Use Mask', Motion Analysis, panorama export). Read this for 'how do I stop it detecting the trees as stars', 'how do I ignore the timestamp / on-screen text', 'how do I mask out the ground', or any question about the Masking menu.",
+        chatDesc: "Masking out part of the video frame (Video → Masking) so analysis ignores it: painting a mask by hand, the automatic ground/sky methods for masking out trees and terrain, auto-masking a burned-in OSD or redactions, and which tools obey the mask (Star Tracker 'Use mask', Point Track 'Use Mask', Motion Analysis, panorama export, the Tonal Range Graph, Frequency Analysis) and which do not read it. Read this for 'how do I stop it detecting the trees as stars', 'how do I ignore the timestamp / on-screen text', 'how do I mask out the ground', or any question about the Masking menu.",
     },
     {
         file: "docs/StarTracker", labelKey: "menus.help.documentation.starTracker",
@@ -269,7 +269,7 @@ export const helpDocs = [
     {
         file: "docs/MotionAnalysis", labelKey: "menus.help.documentation.motionAnalysis",
         section: "video", menuId: "video", role: "reference",
-        chatDesc: "How do I measure camera or background motion in a video, stabilize a shaky pan, or stitch a pan into a panorama? Covers Video > Motion Analysis (Analyze Motion, Export Motion CSV, Create Track from Motion, Stabilize Video, Motion and Feature panoramas, De-Fence). Also covers Camera Motion (Background), Horizon Extractor and OSD Tracker.",
+        chatDesc: "How do I measure camera or background motion in a video, stabilize shaky video, or stitch a pan into a panorama? Covers Video → Motion Analysis (Analyze Motion, Export Motion CSV, Create Track from Motion, Stabilize Video, Motion and Feature panoramas, De-Fence). Also covers Camera Motion (Background), Horizon Extractor and OSD Tracker.",
     },
     {
         file: "docs/LongExposure", labelKey: "menus.help.documentation.longExposure",
@@ -284,12 +284,12 @@ export const helpDocs = [
     {
         file: "docs/VideoQPGraph", labelKey: "menus.help.documentation.videoQPGraph",
         section: "video", menuId: "video", role: "reference",
-        chatDesc: "The video QP graph (Video → Forensics → QP Graph): a graph of the H.264 quantization parameter (QP) of the loaded video, with the maximum, mean and minimum macroblock QP of every frame, read from the bitstream itself (the same values as FFmpeg -debug qp). Covers what QP means for compression loss, how to read the three lines, which streams it cannot read (non-H.264 codecs, CAVLC, interlaced), and why one QP number does not describe a whole video. Read for 'how compressed is this video', 'what QP was this encoded at', 'how much did the compression change during the clip', or questions about compression quality of on-screen text.",
+        chatDesc: "The video QP graph (Video → Forensics → QP Graph): a graph of the H.264 quantization parameter (QP) of the loaded video, with the maximum, mean and minimum macroblock QP of every frame, read from the bitstream itself (the same values as FFmpeg -debug qp). Covers what QP means for compression loss, how to read the three lines, which streams it cannot read (non-H.264 codecs, CAVLC, interlaced), how QP can vary by frame, block and picture type, and what the graph does not show (last encode only, no position in the frame, no test for editing). Read for 'how compressed is this video', 'what QP was this encoded at', 'how much did the compression change during the clip', or questions about compression quality of on-screen text.",
     },
     {
         file: "docs/VideoNoisePattern", labelKey: "menus.help.documentation.videoNoisePattern",
         section: "video", menuId: "video", role: "reference",
-        chatDesc: "Video Noise Pattern Detection (Video → Forensics → Noise Pattern Detection): finds noise that appears again in later frames, such as a looping noise layer, also when the layer is cut into vertical strips that change order (XOR or cyclic shift) or moves sideways. A camera makes new noise in every frame, so repeating noise was added. Covers the results window (verdict, repeat score by lag, where the repeat is, frame pair, Show on video, details), the optional Search offset patches (noise texture that appears again at a different place, its candidates, screening and Export overlap fade), the settings, how the robust z score and the period are calculated, and what a repeat does and does not show. Read for 'is the noise in this video looped', 'was this noise added', 'what does the strength mean', or questions about NPD results. The batch NPD Folder Scan is in LoadingVideo.",
+        chatDesc: "Video Noise Pattern Detection (Video → Forensics → Noise Pattern Detection): finds noise that appears again in later frames, such as a looping noise layer, also when the layer is cut into vertical strips that change order (XOR or cyclic shift) or moves sideways. The random noise of a camera sensor is new in every frame; a repeat can come from a noise layer that loops, from repeated footage or from compression. Covers the results window (verdict, repeat score by lag, where the repeat is, frame pair, Show on video, details), the optional Search offset patches (noise texture that appears again at a different place, its candidates, screening and Export overlap fade), the settings, the batch NPD Folder Scan, how the robust z score and the period are calculated, and what a repeat does and does not show. Read for 'is the noise in this video looped', 'was this noise added', 'what does the strength mean', 'how do I scan a folder of videos', or questions about NPD results.",
     },
     {
         file: "docs/MQ9TrackingSimulation", labelKey: "menus.help.documentation.mq9Tracking",
@@ -311,7 +311,7 @@ export const helpDocs = [
     {
         file: "docs/GroundTrack", labelKey: "menus.help.documentation.groundTrack",
         section: "analysis", menuId: "traverse", role: "reference",
-        chatDesc: "Ground Track (Traverse \u2192 Ground Track): placing points ON THE GROUND behind the object \u2014 the hillside or coast it is silhouetted against \u2014 to get a line of sight that needs no field of view, and a hard ceiling on the object's range. Covers the Ctrl+click (Cmd+click) and click gestures in the look and main views, why a plain click still orbits, Spline vs Linear interpolation, why a rooftop point stays on the roof, why the track HOLDS rather than extrapolates outside the keyframes, Limit A/B to Track, placing against 3D tiles and objects, the Ground Range readout, and the 'Camera + Ground Track' LOS Source. Read for 'how far away could it have been', 'it passed in front of that hill', 'how do I get a line of sight without knowing the FOV', or any question about the Ground Track menu.",
+        chatDesc: "Ground Track (Traverse \u2192 Ground Track): placing points ON THE GROUND behind the object \u2014 the hillside or coast it is silhouetted against \u2014 to get a line of sight that does not use the field of view once the points are placed, and a ceiling on the object's range at the points placed. Covers the Ctrl+click (Cmd+click) and click gestures in the look and main views, why a plain click stays with the view, Spline vs Linear interpolation, why a rooftop point stays on the roof, why the track HOLDS rather than extrapolates outside the keyframes, Limit A/B to Track, placing against 3D tiles and objects, the Ground Range readout, and the 'Camera + Ground Track' LOS Source. Read for 'how far away could it have been', 'it passed in front of that hill', 'how do I get a line of sight without knowing the FOV', or any question about the Ground Track menu.",
     },
     {
         file: "docs/TraverseMethods", labelKey: "menus.help.documentation.traverseMethods",
@@ -326,12 +326,12 @@ export const helpDocs = [
     {
         file: "docs/TraverseAnalysis", labelKey: "menus.help.documentation.traverseAnalysis",
         section: "analysis", menuId: "traverse", role: "reference",
-        chatDesc: "The Analyze Traverse Methods button and what it produces: the hypothesis gallery, how tiles are ranked, solution families and range bands, the plausibility checks, the Ordinariness and Implied object size disclosure lines, and the executive verdict: its five codes, every headline wording, what sets each one, and the list of causes Sitrec has no model for. Read this for 'how do I read the analysis gallery', 'what do the tile badges mean', 'what is a solution family', 'what does the verdict mean', or 'why does a good fit read Unresolved'.",
+        chatDesc: "The Analyze Traverse Methods button and what it produces: the hypothesis gallery, how tiles are ranked, solution families and range bands, the Physical compatibility and Implied object size disclosure lines, and the executive verdict: its five codes, every headline wording, what sets each one, and the list of causes Sitrec has no model for. Read this for 'how do I read the analysis gallery', 'what do the tile badges mean', 'what is a solution family', 'what does the verdict mean', or 'why does a good fit read Unresolved'.",
     },
     {
         file: "docs/LOSErrorAnalysis", labelKey: "menus.help.documentation.losErrorAnalysis",
         section: "analysis", menuId: "traverse", role: "reference",
-        chatDesc: "Traverse → Analyze LOS Error…: measuring how far recorded pointing (a camera's line of sight) is from a synchronized target truth track, given a platform track. Covers choosing the truth track and the pointing source, the A–B interval, the horizontal/vertical error and its statistics (bias, RMS, percentiles, step RMS, correlation, stationarity), the three charts, sampling at the original rate, 10 Hz and 1 Hz (decimation, not averaging), the Operator drift-reaction-correction model and the statistical Gaussian autoregression model, the dashed model realizations, and exporting the parameter model or a synthetic LOS CSV for other tracks. Read this for 'how accurate is this recorded pointing', 'how do I model tracking noise', or 'what do the dashed lines mean'.",
+        chatDesc: "Traverse → Analyze LOS Error…: measuring how far recorded pointing (a camera's line of sight) is from a synchronized target truth track, given a platform track. Covers choosing the truth track and the pointing source, the In/Out range, the horizontal/vertical error and its statistics (bias, RMS, percentiles, step RMS, correlation, stationarity), the three charts, sampling at the original rate, 10 Hz and 1 Hz (decimation, not averaging), the Operator drift-reaction-correction model and the statistical Gaussian autoregression model, the dashed model realizations, exporting the parameter model and importing it after an Analyze on other tracks, and exporting a synthetic LOS CSV. Read this for 'how accurate is this recorded pointing', 'how do I model tracking noise', or 'what do the dashed lines mean'.",
     },
     {
         file: "docs/BOTBench", labelKey: "menus.help.documentation.botBench",
@@ -345,7 +345,7 @@ export const helpDocs = [
         // it separates cleanly and leaves the main page room to grow.
         file: "docs/BOTBenchScenarios", labelKey: "menus.help.documentation.botBenchScenarios",
         section: "analysis", menuId: "file", role: "reference",
-        chatDesc: "Where BOTBench's scenario files come from: how the BOT benchmark scenarios are generated in the Sitrec source repository rather than shipped with it, the curated interchange set (bench-bot-interchange) versus the swept botsets and the single question each set was built to answer, the Input/Truth/All folder layout with its index.json and MANIFEST.json, sealed releases and their hash commitment, and the npm commands that build and export each set. Read for 'where do the bot-NNNN.input.csv files come from', 'how do I regenerate the benchmark scenarios', 'what is a botset', or 'what is a sealed release'.",
+        chatDesc: "Where BOTBench's scenario files come from: how the BOT benchmark scenarios are generated in the Sitrec source repository rather than shipped with it, the curated interchange set (bench-bot-interchange) versus the swept botsets and the single question each set was built to answer, rock_v3 and Anomalies2, clean copies of both (bench-bot-clean), the optional scenario videos, the Input/Truth/All folder layout with its index.json and MANIFEST.json, sealed releases and their hash commitment, and the npm commands that build and export each set. Read for 'where do the bot-NNNN.input.csv files come from', 'how do I regenerate the benchmark scenarios', 'what is a botset', 'what is rock_v3', 'what is Anomalies2', or 'what is a sealed release'.",
     },
     {
         file: "docs/BuildingMotionDatasets", labelKey: "menus.help.documentation.buildingMotionDatasets",
@@ -370,7 +370,7 @@ export const helpDocs = [
     {
         file: "docs/PanoramicCamera", labelKey: "menus.help.documentation.panoramicCamera",
         section: "analysis", menuId: "camera", role: "reference",
-        chatDesc: "Panoramic Camera mode under Camera → FOV (Zoom): horizontal FOV from 1 to 360 degrees, with a read-only vertical FOV derived from the horizontal FOV and the view's shape so both axes have the same scale (letterboxed at 180 degrees), wheel zoom, saved settings, and matching a swept panorama photograph. Equirectangular rendering with panorama-aware terrain and 3D tile detail.",
+        chatDesc: "Panoramic Camera mode under Camera → FOV (Zoom): horizontal FOV from 1 to 360 degrees, with a read-only vertical FOV derived from the horizontal FOV and the view's shape so both axes have the same scale (letterboxed at 180 degrees), wheel zoom, saved settings, and matching a panorama photograph. Equirectangular rendering with panorama-aware terrain and 3D tile detail.",
     },
     {
         file: "docs/Satellites", labelKey: "menus.help.documentation.satellites",
@@ -396,7 +396,7 @@ export const helpDocs = [
     {
         file: "docs/Nimitz", labelKey: "menus.help.documentation.nimitz",
         role: "case-study",
-        chatDesc: "The Nimitz / 'Tic Tac' 2004 case as a worked example of handling conflicting evidence: a per-parameter table of every reconstruction value with its source and a confidence grade, a catalogue of the conflicts between different tellings, competing hypotheses set up as switchable configurations, and an explicit list of what remains unknown.",
+        chatDesc: "The Nimitz / 'Tic Tac' 2004 case as a worked example of handling conflicting evidence: a per-parameter table of the reconstruction values, each with its source or marked as derived or assumed, and a confidence grade, a catalogue of the conflicts between different tellings, competing hypotheses set up as switchable configurations, and an explicit list of what remains unknown.",
     },
     {
         file: "docs/LensGhostCaseStudy", labelKey: "menus.help.documentation.lensGhostCaseStudy",
@@ -408,12 +408,12 @@ export const helpDocs = [
     {
         file: "docs/URLParameters", labelKey: "menus.help.documentation.urlParameters",
         section: "advanced", role: "reference",
-        chatDesc: "Every query parameter you can add to a Sitrec address: opening a sitch (sitch, custom, mod), loading a file from a URL (drop), setting the location, map and elevation source (latlon, mapType, elevationType), setting the start time or pinning a frame (datetime, frame), and startup actions (action=new, trackbrowser, botbench). Read for 'how do I link to a location or time', 'what does ?custom= accept', 'why does ?latlon= do nothing', or 'what URL do I share'.",
+        chatDesc: "The query parameters you can add to a Sitrec address: opening a sitch (sitch, custom, mod), loading a file from a URL (drop), setting the location, map and elevation source (latlon, mapType, elevationType), setting the start time or pinning a frame (datetime, frame), and startup actions (action=new, trackbrowser, botbench). Read for 'how do I link to a location or time', 'what does ?custom= accept', 'why does ?latlon= do nothing', or 'what URL do I share'.",
     },
     {
         file: "docs/APIKeys", labelKey: "menus.help.documentation.apiKeys",
         section: "advanced", role: "reference",
-        chatDesc: "How Sitrec stores the user's own API keys (Anthropic, Google 3D tiles, Cesium Ion, Mapbox, MapTiler, Space-Track) and what protects them. Read for any question about where a key is kept, whether a key is sent to the Sitrec server, whether keys are encrypted, who can read them, how to remove one, or whether it is safe to enter one. Also covers the recommended practice of scoping a key and setting a spending cap at the provider, and states plainly what is NOT protected.",
+        chatDesc: "How Sitrec stores the user's own API keys (Anthropic, OpenAI, OpenRouter, a custom endpoint, Google 3D tiles, Cesium Ion, and the Windy, AISStream and TomTom live feeds) and what protects them. Read for any question about where a key is kept, whether a key is sent to the Sitrec server, whether keys are encrypted, who can read them, how to add or remove one, or whether it is safe to enter one. Also covers which models a key offers, running the assistant on a local server, the OpenAI voice key, the recommended practice of scoping a key and setting a spending cap at the provider, and states plainly what is NOT protected.",
     },
     {
         file: "docs/WebMCP", labelKey: "menus.help.documentation.webmcp",
@@ -428,7 +428,7 @@ export const helpDocs = [
     {
         file: "docs/LocalCustomSitches", labelKey: "menus.help.documentation.localCustomSitches",
         section: "advanced", role: "reference",
-        chatDesc: "Hand-authoring a sitch as JSON, for setups the drag-and-drop tool cannot express. Covers the file structure, where local sitches live, and how they are loaded.",
+        chatDesc: "Deprecated, and kept for existing hand-written Sit*.js sitch files. New sitches use the custom sitch tool: read CustomSitchTool. Covers the file structure, the local folder that holds a sitch, how File → Local → Open Local Sitch loads it, and sharing one by URL.",
     },
     {
         file: "docs/ScriptedVideo", labelKey: "menus.help.documentation.scriptedVideo",
@@ -438,7 +438,7 @@ export const helpDocs = [
     {
         file: "docs/DiffractionGlare", labelKey: "menus.help.documentation.diffractionGlare",
         section: "advanced", menuId: "camera", role: "reference",
-        chatDesc: "Diffraction spikes and starburst glare: why a bright point of light grows spikes in a camera, what the aperture geometry that causes them looks like, and how to build a camera's point spread function in the Diffraction PSF Studio (tools/psf) and import it into a Sitrec camera. Read for 'why does that light have spikes', 'what causes a starburst', 'is that shape the object or the camera', 'diffraction', 'point spread function', 'PSF', 'spider vanes', 'aigrette', or any question about whether a spiked or star-shaped object in footage is a camera artefact.",
+        chatDesc: "Diffraction spikes and starburst glare, and modelling a camera's diffraction spikes: why a bright point of light grows spikes in a camera, what the aperture geometry that causes them looks like, how to build a camera's point spread function in the Diffraction PSF Studio (tools/psf) and import it into a Sitrec camera, and how to compare the modelled pattern with a bright source in footage. Read for 'why does that light have spikes', 'what causes a starburst', 'how do I model a camera's spikes', 'diffraction', 'point spread function', 'PSF', 'spider vanes', 'aigrette', or any question about comparing a spiked or star-shaped light in footage with a camera's diffraction pattern.",
     },
     {
         file: "docs/WhatsNew-Details", labelKey: "menus.help.documentation.whatsNewDetails",
