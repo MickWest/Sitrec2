@@ -1,108 +1,10 @@
 # Vehicle Designer
 
-## Infrared preview
-
-Choose **IR preview** under Preview mode, then the **IR view**:
-
-- **Near** uses the normal view's camera: the same position, direction and field
-  of view, so both preview modes show the same picture. Drag to orbit, scroll to
-  zoom, use the view buttons, or type the **Distance to the vehicle**; the
-  camera is shared, so the normal view follows. The image keeps the selected
-  sensor's detector rows, pixel pitch and f-number at this field of view (the
-  focal length follows the field and the aperture follows the f-number); the
-  detector columns follow the preview's shape.
-- **Far** places the sensor at a range and aspect around the vehicle, as below.
-
-Both views use the real distance for the atmospheric path and as the
-point-response range (PSF source range). In the near view that range follows the
-distance once a zoom has stopped.
-
-For the far view, start with **A340-600**, range
-**125000 m**, aspect azimuth **0°** and elevation **0°** for a direct rear view.
-Positive aspect elevation puts the sensor above the vehicle. Azimuth turns from
-the tail toward the port side. These are body-relative viewing angles; the
-atmospheric ray elevation and sensor altitude are independent environment inputs.
-The default MX-15 class sensor uses 675 mm focal length, a 640 × 512 detector
-and 0.915° vertical optical field: about **3.899 m per detector pixel at 125 km**.
-The image keeps the detector aspect ratio inside the available preview area.
-Optical field/focal length and digital zoom are separate. **Fit** never changes
-sensor range; use the range and aspect controls to change the physical view.
-
-The **Thermal** recipe folder contains propulsion/material profile, power,
-local ambient temperature, Mach and skin emissivity. These scalar parameters
-save with the existing version-1 design and GLB recipe metadata. Old designs
-receive defaults without changing their visible geometry. Camera, atmosphere,
-processing and display controls persist separately in this browser and do not
-travel with the design. The sensor menu is generated from the shared thermal
-schema, including units, tooltips and each preset value's published, measured,
-calculated or estimated status. An edited preset value is marked **Edited**.
-
-The picture comes from surface photon radiance, atmospheric transfer, diffraction
-and scatter, native detector sampling, exposure, noise and 14-bit conversion,
-then gain/level and 8-bit display processing. Choose manual, automatic, plateau
-equalization or fixed radiometric gain, black/white hot polarity, and radiance
-or detector-count diagnostics. Automatic gain is the initial preview setting.
-The readout shows the detector count under the pointer and the full detector
-frame's minimum, maximum and median. Pointer coordinates include digital zoom;
-statistics include pixels outside the displayed crop. With detector noise on,
-the preview draws a new noise frame at the sensor frame rate, and the readout
-updates after an edit or a camera move and when the pointer moves. With noise
-off, the preview draws only after a change. **Snapshot** saves the
-selected mode. Library thumbnails and the preset picker use the normal view.
-
-Vehicle surface temperatures, emissivities and their equilibrium power response
-are family estimates. The A340 cavity uses the shared 720 K reference scenario;
-it is not a measured engine operating point. Jet outlets reuse the visible rear
-discs, with an estimated radius of 0.28 times nacelle diameter, and add a short
-nozzle wall/rim only for IR. The heated rear nacelle occupies its rear quarter.
-Propeller stacks and helicopter outlets are approximate placements derived from
-the generated engine/cabin dimensions. Road hood regions and exhaust outlets,
-electric motor/controller/battery covers, and balloon envelopes carry distinct
-zones. Internal brakes and concealed engine parts are not exposed as hot skins.
-Paint markings are omitted in IR so they do not add a second emitting surface.
-The existing lantern flame is a crude continuum proxy supplied by the shared
-signature model; it is not a resolved gas flame.
-
-Aperture, scatter, exposure and electronics remain estimates where the preset
-says so. The atmosphere is a reduced transfer model and the sky is a uniform
-brightness temperature. Plumes, trails, sensor nonuniformity, transient cooling
-and material spectra are not modeled here. Gain and blur can merge the four
-engine sources into two broad groups; a display match alone does not establish
-source size, temperature or detector saturation. No video-frame match is implied.
-The renderer requires WebGL 2 with floating-point color targets. Allocation or
-render errors appear above the image; reduce optical sampling/support if needed.
-
-On `localhost` and `local.metabunk.org` only, enabling IR exposes
-`window.vehicleThermal`: `pipeline`, current `settings` (including sensor range
-and aspect), `set(key, value)`, and `readDetectorCounts()`. It is removed when
-the editor closes and is not exposed on other hosts. Counts are native-grid
-14-bit values in bottom-row-first order.
-
-## Use a procedural model in Sitrec
-
-Open an object's controls and select **Browse vehicles…**. The visual picker has
-all 292 presets, with search, type/region filters, Favorites, Recently used, and
-**My models**. Select a tile to orbit its preview, then **Use this vehicle**.
-**Customize…** opens the full live designer. **Apply to object** accepts the
-draft; **Cancel** leaves the scene unchanged. **Edit design…** reopens the
-current object's parameters and preserves its independent size and material
-settings. **Use file model** returns to the existing model selector.
-
-Sitches save a complete parameter snapshot, its name and a generator revision.
-They do not depend on the preset still existing, or on another user's library.
-My models are stored locally in IndexedDB; use **Export design** / **Import
-design…** to move editable recipes between browsers. Older standalone aircraft
-and vehicle JSON files are accepted. Recipe previews and the catalog load only
-when needed; opening an ordinary sitch does not load the designer.
-
-**Freeze as GLB** stores generated geometry, materials and lights as an ordinary
-sitch asset. Normal local-folder and shared-sitch saving includes that asset.
-The parameter snapshot remains attached, so **Edit design…** can create a new
-procedural version later. Frozen geometry can still load when its generator
-revision is unavailable. For long-term exact geometry, keep a frozen copy.
-Procedural strobes and moving parts use simulation-frame time, so scrubbing and
-frame exports repeat the same pose. Light edits in the object's Lights folder
-survive design edits and freezing.
+The Vehicle Designer builds 3D models of aircraft, helicopters, drones, cars,
+trucks, balloons and sky lanterns from presets and sliders. Put a model on a
+Sitrec object, or export it as a GLB (binary glTF) 3D model file. The models are
+procedural: code generates them from a set of parameters. They are visual
+models, and they do not simulate flight or lift.
 
 ## Standalone editor
 
@@ -111,28 +13,18 @@ on a built Sitrec site. It fills the browser window, with collapsible parameter
 folders on the left and a Three.js preview on the right. On narrow screens the
 preview sits above the controls. The fullscreen button hides browser chrome where supported.
 
-Both entry points use the same editor markup, styles, parameter controls and
-model code. Shared modules live in `tools/vehicles/`: `generator.js` prepares
-models and metadata, `exportGLB.js` handles clean exports, `studio.js` handles
-preview rendering and camera fitting, `motion.js` poses moving parts, and
-`catalog.js` / `files.js` handle filtering and recipe files. The Sitrec modules
-adapt these to object controls, scene persistence and the model library.
-Keep vehicle behavior in the shared modules; the standalone entry point only
-mounts the editor. GLB export and Freeze as GLB use the same exporter and retain
-the same recipe, light and motion metadata.
-
-Choose one of 292 presets, then drag sliders or type exact values. Slider `input`
-events update the mesh on the next animation frame, including during a drag.
-Edits preserve the camera; **Fit** (or **F**) frames the new shape. Drag to orbit,
+Choose one of 292 presets, then drag sliders or type exact values. The model
+updates live, including during a drag. Edits preserve the camera; **Fit** (or **F**) frames the new shape. Drag to orbit,
 scroll to zoom, and right-drag to pan. The presets use approximate proportions
 inspired by common vehicles, not manufacturer engineering geometry. Filter by vehicle
 type or region, or search a name. The previous/next buttons cycle through the filtered
 results, with wrapping. Left/right arrow keys (or [ and ]) also cycle when you are
 not editing a control. Selecting an entry previews it immediately.
 
-Folders cover the fuselage, cockpit glazing, wings, tail and canards, engines and propellers, and
-livery and details. Winglets, biplanes, support struts, T-tails, V-tails, twin fins,
-canards, unpowered gliders, and one to eight engines are supported. Wing tips can
+Aircraft folders are **Airframe**, **Cockpit glazing**, **Wings**, **Tail & canards**,
+**Engines & propellers**, **Rotors & mission details**, **Livery & details**,
+**SITREC livery**, **Lights** and **Thermal**. Winglets, biplanes, support struts, T-tails,
+V-tails, twin fins, canards, unpowered gliders, and 1, 2, 3, 4 or 8 engines are supported. Wing tips can
 be straight, blended/sharklet, split, fences, or raked. The tip size is vertical
 height for winglets and horizontal extension per side for raked tips. Wing sweep is
 leading-edge sweep. The **Main wing span** parameter excludes winglets; the
@@ -149,87 +41,60 @@ gliders and jets with no cabin windows, a crown windshield for light aircraft,
 and a six-pane front-and-side windscreen for other aircraft. The airliner layout
 has two front, two sliding side and two aft panes. A separate four-pane layout
 serves the 787 and A220 presets. The pane count follows the selected airliner
-layout. A dark cockpit surround is available for the A350, A330neo and A220.
+layout. **Dark surround / mask** is on by default for the A350, A330neo and A220
+presets, and it works on any airliner, transport or helicopter windscreen.
 Those panes share a continuous wraparound outline; pillar width controls the thin
 gaps between them without separating the front and side window bands.
-Both styles stay attached to the fuselage as their position changes. The new
-controls also save with the design; older parameter files receive suitable defaults.
+Both styles stay attached to the fuselage as their position changes. These
+controls save with the design; older parameter files receive suitable defaults.
 
-## Cars, trucks and civil helicopters
+## Save and export
 
-The catalog adds 36 generic road classes and 15 civil helicopter families. Cars
-include hatchbacks, sedans, wagons, sports cars, SUVs, taxis and patrol cars.
-Trucks include pickups, vans, ambulances, box trucks, flatbeds, tippers, tankers,
-tractors, fire/refuse trucks, buses and coaches. These are generic classes, not
-named production vehicles. Road controls cover cabin proportions, conforming
-windows, pillars, wheelbase, axles, tire size, steering, cargo bodies, tipper lift,
-roof equipment and paint. Dimensions and wheelbase readouts update live.
+The editor has these file and preview controls:
 
-Civil helicopter presets include R22/R44/R66, Bell 206/407/505, H125/130/135/145/160,
-AW109/139, S-76 and S-92 families. The Airbus H130/H135/H145/H160 use enclosed tail
-rotors. The military catalog also includes single, coaxial, tandem and tiltrotor
-layouts. Rotor diameter and fuselage length are separate: neither is the full
-turning-rotor envelope. Fuselage/glazing proportions remain family approximations.
+- **Save design / Open** round-trip a versioned `.vehicle.json` parameter file. Legacy `.aircraft.json` files still open.
+  The last design also restores from browser storage when available. Preset
+  selection replaces the current parameters; save a design before switching if
+  you want to retain it. **Reset preset** restores the selected built-in preset.
+- **Export GLB** downloads only the vehicle, including materials, vehicle lights and parameter
+  metadata. The grid, camera, studio lights and preview effects are excluded.
+  Coordinates are metres, +Y up, +Z forward, +X port. The filename includes the
+  actual model length as `~L…m~` for Sitrec's model import. Load it via
+  **File → Import File** or drop the GLB into Sitrec.
+- **Snapshot** saves the current 3D view as a PNG, excluding the control panel.
+- **Spin rotors / props** (or **Spin wheels**) animates the relevant assemblies; GLB exports retain their static design pose.
 
-## Drones, balloons and sky lanterns
+## Use a procedural model in Sitrec
 
-**Drones** includes the existing fixed-wing drones and 29 multirotor examples:
-DJI Mini, Air, Mavic, Phantom, Inspire, Neo, Avata, FPV, Matrice and Agras families;
-Autel EVO, Parrot ANAFI, Skydio, Yuneec and Freefly; and generic FPV, hexacopter
-and octocopter layouts. Body profile, motor spacing, propeller diameter, blade count,
-coaxial pairs, guards, camera pitch/yaw, antennas, payload and gear are editable.
-The frame expands when larger propellers need more clearance. Dimensions describe
-the generated model, not a verified reproduction of the manufacturer's airframe.
-The reference readout includes the swept rotor envelope; live overall dimensions
-use the current blade positions. Status LEDs have editable visual defaults.
+Each object in a sitch has a folder in the **Objects** menu (see
+[Objects and 3D Models](https://github.com/MickWest/Sitrec2/blob/main/docs/CustomModels.md)).
+Open the folder and select **Browse vehicles…**. The visual picker has all 292
+presets, with search, type/region filters, Favorites, Recently used, and
+**My models**. Select a tile to orbit its preview, then **Use this vehicle**. The
+object in the sitch changes to the chosen model.
 
-**Balloons & sky lanterns** adds 22 examples: hot-air and gas balloons, weather
-and pilot balloons, latex party balloons, round/star/heart foil balloons, blimps,
-a tethered aerostat, a solar tube, and round, square and tapered paper lanterns.
-Change envelope dimensions, panel count, bulge, colors, rainbow/striped/checker
-patterns, metallic finish, opacity, basket, radiosonde, gondola, fins and tether.
-Lanterns have open lower rims, support frames, a flame and adjustable warm glow;
-**Night** shows that glow clearly. Balloon models have no aircraft navigation lights.
-These are visual models; lift, buoyancy and heating are not simulated.
+**Customize…** opens the full live designer. **Apply to object** accepts the
+draft, **Back** returns to the picker and keeps the draft, and **Cancel** leaves
+the scene unchanged. **Edit design…** reopens the current object's parameters and
+preserves its independent size and material settings. **Use file model** returns to the existing model selector.
 
-The former `tools/aircraft/` URL redirects to `tools/vehicles/`, retaining query
-parameters and fragments. Existing saved aircraft and vehicle files still open.
+Sitches save a complete parameter snapshot, its name and a generator revision.
+They do not depend on the preset still existing, or on another user's library.
+Save a design with **Save to My models** in the picker or **My models +** in the
+editor. My models are stored locally in IndexedDB; use **Export design** / **Import
+design…** to move editable recipes between browsers. **Import design…** only
+selects the design, so save it to keep it in My models. Older standalone aircraft
+and vehicle JSON files are accepted. Recipe previews and the catalog load only
+when needed; opening an ordinary sitch does not load the designer.
 
-## Adaptive SITREC livery
-
-In **SITREC livery**, select **SITREC · globe & lettering**. It applies a white and
-blue identity with original SITREC lettering and a latitude/longitude globe.
-Body markings fit airliners and helicopter cabins; slender jets and flying wings
-use the wing surfaces. Road markings fit the lower body or cargo box. Fin globes
-follow the fin surface. Drone markings fit the battery deck, and balloon markings
-follow the envelope or inflated foil surface. Marking scale and blue color are editable. The identity
-stays selected while cycling presets; Reset preset restores the original paint.
-Artwork is mesh geometry, so GLB exports need no external font or texture files.
-
-## Procedural vehicle lights
-
-The **Lights** folder controls position lights, landing lights/headlights, beacons,
-aircraft strobes, taxi lights, beam angle, aim, intensity, flash timing and road
-indicators. **Night** changes the preview lighting, and **Flash lights** animates
-beacons/strobes/indicators. Switching the procedural lights off leaves unlit lenses.
-
-The implementation was compared with the repository's `PA28.glb` and
-`B737Max8.glb` assets and Sitrec's light importer. Exports contain
-`KHR_lights_punctual` point/spot lights and `strobeEvery`/`strobeLength` extras;
-Sitrec detects these and creates its normal Lights controls. Landing beams point
-forward with an adjustable downward angle. Only the vehicle lights are exported.
-Preview light output is reduced for the studio; the exported intensities are
-editable visual defaults, not calibrated photometry.
-
-Aircraft use red port, green starboard and white rear position lights following
-the [FAA night operations handbook](https://www.faa.gov/sites/faa.gov/files/regulations_policies/handbooks_manuals/aviation/airplane_handbook/12_afh_ch11.pdf).
-Transport defaults use wing-root landing lights, light aircraft/helicopters use
-nose lights, and fighters use nose-gear lights when their gear is extended. These
-are family defaults, not a claim about the exact lamp fit of every variant.
-Helicopter position lights attach to the cabin rather than rotating blades.
-Road vehicles use headlights, red tail lights and selectable amber indicators;
-service presets can add flashing roof lamps. See [reference review](ReferenceReview.md)
-for the source coverage and remaining geometry limits.
+**Freeze as GLB** stores generated geometry, materials and lights as an ordinary
+sitch asset. Normal local-folder and shared-sitch saving includes that asset.
+The parameter snapshot remains attached, so **Edit design…** can create a new
+procedural version later. Frozen geometry can still load when its generator
+revision is unavailable. For long-term exact geometry, keep a frozen copy.
+Procedural strobes and moving parts use simulation-frame time, so scrubbing and
+frame exports repeat the same pose. Light edits in the object's Lights folder
+survive design edits and freezing.
 
 ## Boeing and Airbus presets
 
@@ -278,10 +143,22 @@ and individual model specifications linked in the selector. The 757/767 use the
 plan-view overall lengths in their manuals. A320ceo presets use the original
 34.10 m fence configuration; neo presets use the 35.80 m sharklet configuration.
 
+## 737-800 paint reference
+
+The **737-800 · British Airways reference** preset has a lowered radome, a low
+six-pane windscreen, a cranked main wing, blended winglets, fuller tail, flattened
+nacelles, cabin window rows, doors and overwing exits. The generated envelope is 39.47 m long and about 35.78 m across
+the winglets, consistent with the rounded 39.5 m / 35.8 m dimensions in
+[Boeing's 737NG specifications](https://www.boeing.com/commercial/737ng).
+Pane contours and paint markings are hand-built procedural approximations. They are not manufacturer geometry or
+official airline artwork. The red/navy ribbons and wordmark use mesh geometry,
+so they export without fonts or texture files. Cabin window size, vertical level,
+start/end positions and count remain editable.
+
 ## Military aircraft presets
 
-The catalog includes 136 military presets in addition to the 54 civil and general
-presets. Search by aircraft name or role, then filter by region. Region groups
+The catalog includes 136 military presets. The other 156 presets appear under the
+**Civil & general** region filter. Search by aircraft name or role, then filter by region. Region groups
 refer to design families or the named operator scheme, not exclusive ownership.
 The set covers modern and Cold War families; it is not an inventory of every
 historical aircraft, subvariant or current fleet. Demonstrators are named as such.
@@ -292,7 +169,7 @@ historical aircraft, subvariant or current fleet. Demonstrators are named as suc
 | Europe | 24 | Typhoon, Rafale, Mirage 2000, Gripen, Tornado, Harrier, Jaguar, A400M, C295, C-27J, A330 MRTT, Atlantique, GlobalEye, Hawk, M-346, PC-21, Tiger, NH90, H225M, AW101/159, nEUROn |
 | China | 24 | J-7/8/10/11/15/16/20, JH-7, JF-17, H-6K, Y-8/9/20, YY-20, KJ-200/500, L-15, K-8, Z-8/10/19/20, Wing Loong II, CH-4 |
 | Iran | 16 | F-14/4/5, MiG-29, Su-24, Saeqeh, Kowsar, C-130, P-3, Yak-130, Yasin, PC-7, CH-47, AH-1J, Shahed 129, Mohajer-6 |
-| Russia / Soviet-origin | 30 | MiG-21/23/29/31, Su-24/25/27/30/33/34/35/57, Tu-22M/95/160, Il-76/78, A-50, An-12/26/124, Yak-130, Mi-8/24/26/28, Ka-27/52, Orion, S-70 |
+| Russia (Soviet-origin types included) | 30 | MiG-21/23/29/31, Su-24/25/27/30/33/34/35/57, Tu-22M/95/160, Il-76/78, A-50, An-12/26/124, Yak-130, Mi-8/24/26/28, Ka-27/52, Orion, S-70 |
 
 Antonov presets identify their Ukrainian design origin in their notes. Iranian
 imported types reuse the appropriate family geometry with generic colors, not
@@ -307,7 +184,7 @@ counts and component placements are visual estimates. Reference dimensions stay
 fixed while the live readouts show edits. Helicopters state fuselage length and
 one main rotor diameter separately; neither is the overall turning-rotor envelope.
 
-Additional editable geometry includes:
+Other editable geometry includes:
 
 - Framed single and tandem canopies; tall transport and helicopter windscreens
   with two, four, six or eight panes, upper cockpit windows, and lower navigator glazing.
@@ -339,49 +216,205 @@ exact camouflage, markings, folding blades/wings and external stores are not
 modeled. Flying-wing area is an approximate planform area. No aerodynamic or
 operational performance is simulated.
 
-## 737-800 paint reference
+## Cars, trucks and civil helicopters
 
-The **737-800 · British Airways reference** preset follows the supplied visual
-reference with a lowered radome, a low six-pane windscreen, a cranked main wing,
-blended winglets, fuller tail, flattened nacelles, cabin window rows, doors and
-overwing exits. The generated envelope is 39.47 m long and about 35.78 m across
-the winglets, consistent with the rounded 39.5 m / 35.8 m dimensions in
-[Boeing's 737NG specifications](https://www.boeing.com/commercial/737ng).
-The screenshot supplies the visual reference; pane contours and paint markings
-are hand-built procedural approximations. They are not manufacturer geometry or
-official airline artwork. The red/navy ribbons and wordmark use mesh geometry,
-so they export without fonts or texture files. Cabin window size, vertical level,
-start/end positions and count remain editable.
+The catalog has 36 generic road classes and 15 civil helicopter families. Cars
+include hatchbacks, sedans, wagons, sports cars, SUVs, taxis and patrol cars.
+Trucks include pickups, vans, ambulances, box trucks, flatbeds, tippers, tankers,
+tractors, fire/refuse trucks, buses and coaches. These are generic classes, not
+named production vehicles. Road controls cover cabin proportions, conforming
+windows, pillars, wheelbase, axles, tire size, steering, cargo bodies, tipper lift,
+roof equipment and paint. Dimensions and wheelbase readouts update live.
+
+Civil helicopter presets include R22/R44/R66, Bell 206/407/505, H125/130/135/145/160,
+AW109/139, S-76 and S-92 families. The Airbus H130/H135/H145/H160 use enclosed tail
+rotors. The military catalog also includes single, coaxial, tandem and tiltrotor
+layouts. Rotor diameter and fuselage length are separate: neither is the full
+turning-rotor envelope. Fuselage/glazing proportions remain family approximations.
+
+## Drones, balloons and sky lanterns
+
+**Drones** has fixed-wing drones and 29 multirotor examples:
+DJI Mini, Air, Mavic, Phantom, Inspire, Neo, Avata, FPV, Matrice and Agras families;
+Autel EVO, Parrot ANAFI, Skydio, Yuneec and Freefly; and generic FPV, hexacopter
+and octocopter layouts. Body profile, motor spacing, propeller diameter, blade count,
+coaxial pairs, guards, camera pitch/yaw, antennas, payload and gear are editable.
+The frame expands when larger propellers need more clearance. Dimensions describe
+the generated model, not a verified reproduction of the manufacturer's airframe.
+The reference readout includes the swept rotor envelope; live overall dimensions
+use the current blade positions. Status LEDs have editable visual defaults.
+
+**Balloons & sky lanterns** has 22 examples: hot-air and gas balloons, weather
+and pilot balloons, latex party balloons, round/star/heart foil balloons, blimps,
+a tethered aerostat, a solar tube, and round, square and tapered paper lanterns.
+Change envelope dimensions, panel count, bulge, colors, rainbow/striped/checker
+patterns, metallic finish, opacity, basket, radiosonde, gondola, fins and tether.
+Lanterns have open lower rims, support frames, a flame and adjustable warm glow;
+**Night** shows that glow clearly. Balloon models have no aircraft navigation lights.
+These are visual models; lift, buoyancy and heating are not simulated.
+
+## Adaptive SITREC livery
+
+In **SITREC livery**, select **SITREC · globe & lettering**. It applies a white and
+blue identity with original SITREC lettering and a latitude/longitude globe.
+Body markings fit airliners and helicopter cabins; slender jets and flying wings
+use the wing surfaces. Road markings fit the lower body or cargo box. Fin globes
+follow the fin surface. Drone markings fit the battery deck, and balloon markings
+follow the envelope or inflated foil surface. Marking scale and blue color are editable. The identity
+stays selected while cycling presets; Reset preset restores the original paint.
+Artwork is mesh geometry, so GLB exports need no external font or texture files.
+
+## Procedural vehicle lights
+
+The **Lights** folder controls position lights, landing lights/headlights, beacons,
+aircraft strobes, taxi lights (with **Landing gear extended** on), beam angle, aim,
+intensity, flash timing and road indicators. **Night** changes the preview lighting,
+and **Flash lights** animates beacons/strobes/indicators. Switching the procedural lights off leaves unlit lenses.
+
+The implementation was compared with the repository's `PA28.glb` and
+`B737Max8.glb` assets and Sitrec's light importer. Exports contain
+`KHR_lights_punctual` point/spot lights and `strobeEvery`/`strobeLength` extras;
+Sitrec detects these and creates its normal Lights controls. Landing beams point
+forward with an adjustable downward angle. Only the vehicle lights are exported.
+Preview light output is reduced for the studio; the exported intensities are
+editable visual defaults, not calibrated photometry.
+
+Aircraft use red port, green starboard and white rear position lights following
+the [FAA night operations handbook](https://www.faa.gov/sites/faa.gov/files/regulations_policies/handbooks_manuals/aviation/airplane_handbook/12_afh_ch11.pdf).
+Transport defaults use wing-root landing lights, light aircraft/helicopters use
+nose lights, and fighters use nose-gear lights when their gear is extended. These
+are family defaults, not a claim about the exact lamp fit of every variant.
+Helicopter position lights attach to the cabin rather than rotating blades.
+Road vehicles use headlights, red tail lights and selectable amber indicators;
+service presets can add flashing roof lamps. See [reference review](ReferenceReview.md)
+for the source coverage and remaining geometry limits.
+
+## Infrared preview
+
+Choose **IR preview** under Preview mode, then the **IR view**:
+
+- **Near** uses the normal view's camera: the same position, direction and field
+  of view, so both preview modes show the same picture. Drag to orbit, scroll to
+  zoom, use the view buttons, or type the **Distance to the vehicle**; the
+  camera is shared, so the normal view follows. The image keeps the selected
+  sensor's detector rows, pixel pitch and f-number at this field of view (the
+  focal length follows the field and the aperture follows the f-number); the
+  detector columns follow the preview's shape. **Digital zoom** has no effect
+  in this view.
+- **Far** places the sensor at a range and aspect around the vehicle, as below.
+
+Both views use the real distance for the atmospheric path and as the
+point-response range (PSF source range). In the near view that range follows the
+distance once a zoom has stopped.
+
+For an example far view, use **A340-600**, range **125000 m**, aspect azimuth
+**0°** and elevation **0°** for a direct rear view.
+Positive aspect elevation puts the sensor above the vehicle. Azimuth turns from
+the tail toward the port side. These are body-relative viewing angles; the
+atmospheric ray elevation and sensor altitude are independent environment inputs.
+The default MX-15 class sensor uses 675 mm focal length, a 640 × 512 detector
+and 0.869° vertical optical field: about **3.704 m per detector pixel at 125 km**.
+The readout shows the current field and metres per detector pixel.
+The image keeps the detector aspect ratio inside the available preview area.
+Optical field/focal length and digital zoom are separate. The far view hides the
+view buttons and **Fit**; use the range and aspect controls to change the
+physical view.
+
+The **Thermal** recipe folder contains propulsion/material profile, power,
+local ambient temperature, Mach and skin emissivity. These scalar parameters
+save with the design and GLB recipe metadata. Old designs receive defaults without changing their visible geometry. Camera, atmosphere,
+processing and display controls persist separately in this browser and do not
+travel with the design. The sensor menu is generated from the shared thermal
+schema, including units, tooltips and each preset value's published, measured,
+calculated or estimated status. An edited preset value is marked **Edited**.
+
+The picture comes from surface photon radiance, atmospheric transfer, diffraction
+and scatter, native detector sampling, exposure, noise and 14-bit conversion,
+then gain/level and 8-bit display processing. Choose manual, automatic, plateau
+equalization or fixed radiometric gain, black/white hot polarity, and radiance
+or detector-count diagnostics. Automatic gain is the initial preview setting.
+The readout shows the detector count under the pointer and the full detector
+frame's minimum, maximum and median. Pointer coordinates include digital zoom;
+statistics include pixels outside the displayed crop. With detector noise on,
+the preview draws a new noise frame at the sensor frame rate, and the readout
+updates after an edit or a camera move and when the pointer moves. With noise
+off, the preview draws only after a change. **Snapshot** saves the
+selected mode. Library thumbnails and the preset picker use the normal view.
+
+Vehicle surface temperatures, emissivities and their equilibrium power response
+are family estimates. The hot aperture at the rear of the A340 engine is about
+630 K at the preset's default **Thermal** values. It changes with power, Mach and
+ambient temperature, and it is not a measured engine operating point.
+Podded engines on a **Streamlined jet** body reuse the visible rear disc, with an
+estimated radius of 0.28 times nacelle diameter, and add a short nozzle wall and
+rim only for IR. Other podded jet engines, including the A340-600, replace that
+disc in IR with an estimated fan duct, core nozzle, plug and pylon shield, scaled
+from the nacelle diameter. Integrated exhausts use their visible opening. The
+heated rear nacelle occupies its rear quarter.
+Propeller stacks and helicopter outlets are approximate placements derived from
+the generated engine/cabin dimensions. Road hood regions and exhaust outlets,
+electric motor/controller/battery covers, and balloon envelopes carry distinct
+zones. Internal brakes and concealed engine parts are not exposed as hot skins.
+Paint markings are omitted in IR so they do not add a second emitting surface.
+The lantern flame is a crude continuum proxy supplied by the shared signature model; it is not a resolved gas flame.
+
+Aperture, scatter, exposure and electronics remain estimates where the preset
+says so. The atmosphere is a reduced transfer model. By default the background
+comes from that model and changes with ray elevation, and rays below the horizon
+meet the sea model. Set **Sky source** to **Manual temperature** for one uniform
+brightness temperature. Plumes, trails, transient cooling and material spectra
+are not modeled here. Sensor nonuniformity is limited to the estimated **Edge
+shading** and **Residual fixed pattern** controls, which are on by default. Gain
+and blur can merge the four engine sources into two broad groups; a display match
+alone does not establish source size, temperature or detector saturation. The
+preview is not compared with any video.
+The renderer requires WebGL 2 with floating-point color targets. Allocation or
+render errors appear above the image; reduce optical sampling/support if needed.
+
+## Limits
 
 The generator permits unusual combinations; it does not check structural
 feasibility, aerodynamics, or component interference. The geometry is intended
 for visual reconstruction and prototyping. Glazing is opaque and there is no
-interior. Procedural lights include exportable point and spot lights as described below.
+interior.
 
-- **Save design / Open** round-trip a versioned `.vehicle.json` parameter file. Legacy `.aircraft.json` files still open.
-  The last design also restores from browser storage when available. Preset
-  selection replaces the current parameters; save a design before switching if
-  you want to retain it. **Reset preset** restores the selected built-in preset.
-- **Export GLB** downloads only the vehicle, including materials, vehicle lights and parameter
-  metadata. The grid, camera, studio lights and preview effects are excluded.
-  Coordinates are metres, +Y up, +Z forward, +X port. The filename includes the
-  actual model length as `~L…m~` for Sitrec's model import. Load it via
-  **File → Import File** or drop the GLB into Sitrec.
-- **Snapshot** saves the current 3D view as a PNG, excluding the control panel.
-- **Spin rotors / props** (or **Spin wheels**) animates the relevant assemblies; GLB exports retain their static design pose.
+## Standalone copy
 
-There are no runtime network services or CDN dependencies. The normal webpack
-build copies these files and a matching Three.js renderer, OrbitControls and
-GLTFExporter from the installed dependency. For a standalone copy, keep
-**all files in `tools/vehicles/`**, including the `vendor/` modules and license
-and the `thumbnails/` directory, plus the sibling **`tools/thermal/`** directory.
-Its runtime files are `ThermalPipeline.js`, `shaders.js`, `radiometry.js`,
-`atmosphere.js`, `signatures.js`, `sensorPresets.js`, `sensorMath.js` and
-`thermalSchema.js`; `selfTest.js` is optional for browser verification.
-Keep the two directories beside each other so relative imports resolve.
+There are no runtime network services or CDN dependencies. For a standalone
+copy, start from a built site, not from the source tree: only the build has the
+`vendor/` modules and license, and the version stamps in `index.html`. Copy these
+built directories and keep them beside each other so relative imports resolve:
+
+- **`tools/vehicles/`**, including `vendor/` and `thumbnails/`
+- **`tools/thermal/`**
+- **`tools/psf/`**: the IR preview imports its `fft.js`
+
+Open the standalone copy over HTTP(S), not `file://`, so browser module loading
+works.
+
+## Development
+
+Both entry points use the same editor markup, styles, parameter controls and
+model code. Shared modules live in `tools/vehicles/`: `generator.js` prepares
+models and metadata, `exportGLB.js` handles clean exports, `studio.js` handles
+preview rendering and camera fitting, `motion.js` poses moving parts, and
+`catalog.js` / `files.js` handle filtering and recipe files. The Sitrec modules
+adapt these to object controls, scene persistence and the model library.
+Keep vehicle behavior in the shared modules; the standalone entry point only
+mounts the editor. GLB export and Freeze as GLB use the same exporter and retain
+the same recipe, light and motion metadata.
+
+The normal webpack build copies these files, stamps the import map in
+`index.html` with the build version, and adds a matching Three.js renderer,
+OrbitControls and GLTFExporter from the installed dependency, with its license.
 Thermal code loads on first use, including in the embedded editor's separate
-webpack chunk. No new Three.js addons are required. The existing copy pattern
-carries both directories and stamps the complete import map.
-Open the standalone copy over HTTP(S), not
-`file://`, so browser module loading works. The import map versions the complete
-module graph, and the bundled dependency includes its license.
+webpack chunk.
+
+On `localhost`, `127.0.0.1`, `[::1]` and `local.metabunk.org` only, enabling IR
+exposes `window.vehicleThermal`, which includes `pipeline`, current `settings`
+(including sensor range and aspect), `set(key, value)`, and
+`readDetectorCounts()`. It is removed when the editor closes and is not exposed
+on other hosts. Counts are native-grid 14-bit values in bottom-row-first order.
+
+The former `tools/aircraft/` URL redirects to `tools/vehicles/`, retaining query
+parameters and fragments.
