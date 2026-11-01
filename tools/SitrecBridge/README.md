@@ -1,10 +1,16 @@
 # SitrecBridge
 
+SitrecBridge lets an AI assistant on your computer control Sitrec in Chrome. The
+assistant can load a sitch, move to a frame, read values and take screenshots. You do
+not need the Bridge to use Sitrec. It is an MCP (Model Context Protocol) server plus a
+Chrome extension.
+
+This page is the technical reference for people who debug the Bridge or work on it.
+To install and use it, see
+[Control Sitrec from an AI assistant (MCP Bridge)](https://www.metabunk.org/sitrec/docs/MCPBridge.html).
+
 For browser-wide development controls, full-page and screen/window screenshots,
 see the separate [SitrecBridge Dev build](README-dev.md).
-
-An MCP (Model Context Protocol) server that bridges AI assistants to a running
-Sitrec instance via a Chrome extension.
 
 ## Architecture
 
@@ -13,7 +19,7 @@ Codex / Claude Code / Claude Desktop
     │  (MCP protocol, stdio)
     ▼
 mcp-server  (Node.js)
-    │  (WebSocket, ws://localhost:9780)
+    │  (WebSocket, ws://127.0.0.1, port 9780–9799)
     ▼
 Chrome Extension  (background service worker)
     │  (chrome.tabs.sendMessage)
@@ -34,7 +40,7 @@ The step-by-step setup for people who use Sitrec at `https://www.metabunk.org/si
 the connection, Local Compute and updating) is in
 [Control Sitrec from an AI assistant (MCP Bridge)](https://www.metabunk.org/sitrec/docs/MCPBridge.html).
 The downloaded Bridge folder has the same guide as `SETUP.md`. Its source is
-[`docs/MCPBridge.md`](../../docs/MCPBridge.md) in the Sitrec repository; edit it there, not here.
+[`docs/MCPBridge.md`](https://github.com/MickWest/Sitrec2/blob/main/docs/MCPBridge.md) in the Sitrec repository; edit it there, not here.
 
 To work on the Bridge itself from a Sitrec checkout, see [Development Setup](#development-setup).
 
@@ -43,8 +49,8 @@ To work on the Bridge itself from a Sitrec checkout, see [Development Setup](#de
 | Tool | Description |
 |------|-------------|
 | `sitrec_status` | Check bridge connection status |
-| `sitrec_diagnostics` | Diagnose connection/port problems: port-pool census, this bridge's event trail, and the extension's persisted service-worker log |
-| `sitrec_list_tabs` | List all open Sitrec tabs (ID, URL, title) |
+| `sitrec_diagnostics` | Diagnose connection/port problems: port-pool census, this bridge's event trail, and the extension's status |
+| `sitrec_list_tabs` | List all open Sitrec tabs (ID, URL, origin, build directory) |
 | `sitrec_get_sitch` | Get current situation info (name, frames, FPS, coordinates) |
 | `sitrec_load_sitch` | Load a named sitch (e.g. `gimbal`, `chilean`) |
 | `sitrec_list_sitches` | List all available sitches |
@@ -60,9 +66,10 @@ To work on the Bridge itself from a Sitrec checkout, see [Development Setup](#de
 | `sitrec_api_call` | Call a named Sitrec API function |
 | `sitrec_api_list` | List Sitrec API functions and menu controls |
 | `sitrec_reload_extension` | Reload the SitrecBridge Chrome extension after extension-file changes |
+| `sitrec_reload_tab` | Reload a Sitrec tab, so that a new build is running |
 | `sitrec_guide` | Return the full Sitrec MCP agent guide |
 
-Most tools accept an optional `tab` parameter to target a specific Sitrec tab (by URL substring like `"build2"` or numeric Chrome tab ID). Omit to use the default (first) tab.
+Most tools accept an optional `tab` parameter to target a specific Sitrec tab (by URL substring like `"build2"` or numeric Chrome tab ID). If you omit it, the extension looks at the tabs that this server can use (see `SITREC_BRIDGE_PAIRED_ORIGIN`). It takes the tab whose build directory equals the server's working directory, or else the first of those tabs. With several tabs open, pass `tab`.
 
 ## MCP Resources
 
@@ -79,57 +86,19 @@ Most tools accept an optional `tab` parameter to target a specific Sitrec tab (b
 | `SITREC_BRIDGE_PORT` | `9780` (sandbox) / scan 9799→9780 (host fallback) | WebSocket server port |
 | `SITREC_BRIDGE_HOST` | `127.0.0.1` | Bind address (set to `0.0.0.0` inside Docker) |
 | `SITREC_BRIDGE_PAIRED_ORIGIN` | (unset) | If set (e.g. `http://localhost:8081`), this server is paired to that browser origin and the extension routes only matching tabs here. Unset = host fallback (catches any unmatched tab). |
-| `SITREC_BRIDGE_IDLE_TIMEOUT_MS` | `3600000` (one hour) | Idle exit. Left unset, a quiet bridge exits only once its parent process has gone; a value you set is obeyed literally. Under a batch Codex thread the default is ten minutes, literal (see below). Never fires while a request or Local Compute job is in flight. Set to `0` to disable. |
-| `SITREC_LOCAL_COMPUTE_PYTHON` | `python3` | Python executable used for Local Compute installs and jobs |
+| `SITREC_BRIDGE_IDLE_TIMEOUT_MS` | `3600000` (one hour) | Idle exit: how long a bridge waits without an MCP message. Left unset, a bridge exits after this time only if its parent process has gone. A value you set applies even while the parent is alive. Under a batch Codex thread the default is ten minutes, and it also applies while the parent is alive (see [Internals](#internals)). Never fires while a request or Local Compute job is in flight. Set to `0` to disable. |
+| `SITREC_LOCAL_COMPUTE_PYTHON` | `python3` (the Windows installer tries `py -3` and `python` first) | Python executable used for Local Compute installs and jobs |
 | `SITREC_LOCAL_COMPUTE_GRAY_CACHE_MB` | `1024` | Local Compute Motion Analysis grayscale-frame cache memory budget |
 | `SITREC_LOCAL_COMPUTE_GRAY_CACHE_LIMIT` | (unset) | Optional hard frame-count cap for the grayscale cache; overrides the memory-budget cap |
 | `SITREC_BRIDGE_UNUSED_RELEASE_MS` | `180000` (3 min) | How long a bridge that has never relayed a call keeps its port before returning it to the pool |
 | `SITREC_BRIDGE_IDLE_RELEASE_MS` | `1800000` (30 min) | How long a bridge that *has* been used keeps its port after going quiet |
 | `SITREC_BRIDGE_LOG_DIR` | `~/.sitrec-bridge/logs` | Where the JSONL diagnostic trail is written |
 
-The Chrome extension scans ports 9780–9799 for MCP servers and opens a connection to each. Multi-sandbox isolation: `wt sandbox` pairs build port `8080+N` ↔ MCP port `9780+N`, advertising `pairedOrigin: http://localhost:80NN`. The extension routes commands by matching the originating server's `pairedOrigin` to the tab's URL origin.
+While a Sitrec tab is open, the Chrome extension scans ports 9780–9799 for MCP servers and opens a connection to each. Multi-sandbox isolation: a sandbox setup pairs host build port `8080+N` with host MCP port `9780+N` and sets `SITREC_BRIDGE_PAIRED_ORIGIN=http://localhost:<build port>`. The extension routes commands by matching the originating server's `pairedOrigin` to the tab's URL origin. An explicit `tab` parameter skips this match and can reach any Sitrec tab.
 
 The server checks the `Origin` header of every WebSocket upgrade, because any web page can open a socket to `127.0.0.1`. Only a `chrome-extension://` origin, or a connection with no `Origin` (a local process, not a browser page), can become the extension. A Sitrec page at `local.metabunk.org`, `localhost` or `127.0.0.1` can connect only as a Local Compute client. The server refuses every other origin with HTTP 403. The extension is loaded unpacked and has no fixed ID, so the server accepts any `chrome-extension://` ID.
 
-### Ports are leased, not owned
-
-A host-fallback bridge borrows a port rather than keeping one for life. This matters because most
-bridges are started by processes that will never touch Sitrec: `claude bg-spare` pre-warms,
-`claude --remote-control` instances, and `codex app-server` daemons that outlive their conversations
-by days. Measured on a normal working machine, 7 of the 20 ports were held by bridges that had
-served zero tool calls between them.
-
-- A bridge that has never relayed a call gives its port back after `SITREC_BRIDGE_UNUSED_RELEASE_MS`;
-  one that has been used but gone quiet gives it back after `SITREC_BRIDGE_IDLE_RELEASE_MS`.
-- **Releasing is not fatal.** The process stays alive and silently takes a port again on the next
-  tool call that needs the browser. Nothing needs reconnecting.
-- Four things pin a port: an in-flight request, a paired sandbox origin, a connected Local Compute
-  client, and being the bridge the extension has chosen to route through.
-- The oldest bound fallback bridge is the *anchor* and always keeps its port, so the range is never
-  left empty — the Sitrec page discovers Local Compute by scanning the range directly, with no MCP
-  call involved.
-
-If every port is occupied when a bridge starts, it asks the least-useful peer (never-used first) to
-*release* rather than exit, and falls back to asking it to shut down only for pre-v5 bridges that
-have no release endpoint. A bridge that still cannot get a port stays alive without one and retries
-later; it no longer exits, which used to leave the session with a permanently dead MCP server.
-
-### Bridges under batch Codex threads exit on their own
-
-The Codex plugin for Claude Code runs Codex through a detached broker that keeps one
-`codex app-server` per workspace, starts a fresh thread in it for every stop-time review and rescue
-task, and never unloads a thread. Codex starts every configured MCP server afresh for each thread, so
-with the bridge listed in `~/.codex/config.toml` every one of those threads left a bridge behind for
-the life of the app-server, which is days. Measured on a working machine: 99 bridges under two such
-app-servers, 4.6 GB resident, the oldest 29 hours old, and one bridge call in 2,421 of those threads
-over three months.
-
-A bridge whose parent is a `codex app-server` with that broker above it therefore treats itself as
-disposable: it exits after ten minutes without an MCP message even though its parent is alive
-(`SITREC_BRIDGE_IDLE_TIMEOUT_MS` still overrides). An interactive Codex — the desktop app, or
-`codex` in a terminal — has no broker above it and keeps the normal rule, because its threads do
-come back to the browser after long silences. `sitrec_diagnostics` reports the verdict as
-`batchHost`.
+[Internals](#internals) explains how a bridge leases a port and when it exits.
 
 ## Troubleshooting
 
@@ -142,12 +111,15 @@ come back to the browser after long silences. `sitrec_diagnostics` reports the v
   relay timings, timeouts.
 - **`crossSessionLog`** — the same trail merged across *all* bridge processes, from
   `~/.sitrec-bridge/logs/bridge-YYYY-MM-DD.jsonl`. This is what shows a port changing hands.
-- **`extensionLog`** — the extension's own event log, kept in `chrome.storage.local` so it
-  **survives service-worker restarts**. A burst of `worker-start` entries means Chrome is killing
-  the worker repeatedly; that is the signature of the connection dropping on its own.
+- **`extensionLog`** — the extension's status: installed version, when the service worker started
+  (`workerStartedAt`, `workerAliveMs`), connections, known tabs and recent commands.
 
 **Bridge keeps disconnecting / "extension is not connected":**
-- Check `extensionLog` for repeated `worker-start` events. Chrome suspends an MV3 service worker
+- Call `sitrec_diagnostics`, wait for the next drop, call it again, and compare
+  `extensionLog.workerStartedAt`. A new value means that Chrome restarted the worker. If
+  `extensionLog` shows `unavailable`, this bridge has no connection to the extension at that moment.
+  Call `sitrec_list_tabs`, which takes a port if needed and waits for the extension, then call
+  `sitrec_diagnostics` again. Chrome suspends an MV3 service worker
   after 30 s of inactivity, and a WebSocket *protocol ping* does not count as activity — Chrome
   answers it in the network stack without waking the extension's JavaScript. The bridge therefore
   sends an application-level `server-ping` every 10 s, and the content script sends a port heartbeat
@@ -157,10 +129,11 @@ come back to the browser after long silences. `sitrec_diagnostics` reports the v
   the Reload button on `chrome://extensions`) — the old worker keeps running otherwise.
 
 **Popup shows "No MCP servers":**
+- Open a Sitrec tab. The extension scans for servers only while it knows of a Sitrec tab
 - Make sure at least one configured MCP client is running (Codex, Claude Code,
   or Claude Desktop)
 - Check the client first with `/mcp`, `codex mcp list`, or `claude mcp list`
-- Click "Reconnect" in the popup to force a fresh port scan
+- Click "Reconnect" in the popup to force a fresh port scan, even with no Sitrec tab open
 - Check the service worker console (`chrome://extensions` → SitrecBridge → "service worker") for `probe error` lines
 
 **The MCP client reports that SitrecBridge failed to start:**
@@ -168,27 +141,36 @@ come back to the browser after long silences. `sitrec_diagnostics` reports the v
 - Run `node --version` and confirm it reports version 18 or later
 - On macOS/Linux, run `chmod +x /absolute/path/to/SitrecBridge/run.sh` if the
   launcher is not executable
-- From the downloaded folder, `node mcp-server.mjs` should start silently and
-  wait for MCP input; press Ctrl+C after this check
+- From the downloaded folder, `node mcp-server.mjs` should print
+  `[SitrecBridge] MCP server running (stdio transport)` and keep running to wait for
+  MCP input; press Ctrl+C after this check
 
 **"No Sitrec tab found":**
 - Open Sitrec in Chrome (not Firefox/Safari)
-- The URL must match: `metabunk.org/sitrec*`, `metabunk.org/build*`, `localhost:*/sitrec*`, `localhost:*/build*`, or `127.0.0.1:*`
+- The tab must be at `https://www.metabunk.org/sitrec…`, or at any path on `local.metabunk.org`, `localhost` or `127.0.0.1`
 - If targeting a specific tab with `tab: "build2"`, make sure that tab is open
 
 **"Sitrec is not ready yet":**
-- Wait for the page to fully load (all assets, terrain, etc.)
-- The page sets `data-ready="complete"` when ready
+- Wait a few seconds and retry
+- The page sets `data-ready="complete"` on the `#sitrec-objects-ready` element as soon as the
+  sitch object exists. That clears this error, but terrain and other assets can still be loading
 
 **Timeouts:**
-- Default timeout is 15 seconds per request
-- Complex operations (loading sitches) may need more time
-- The `sitrec_load_sitch` tool waits for the sitch to finish loading
+- A request that reaches the page times out after 12 seconds, and the server gives up after
+  15 seconds. No setting changes these limits
+- The `sitrec_load_sitch` tool waits for the sitch setup to finish. A longer load returns
+  `Timed out waiting for Sitrec page response`, but the page keeps loading. Wait before the next call
 
 **Local Compute is unavailable or Motion Analysis falls back to browser analysis:**
+- Local Compute works only for a Sitrec page at `local.metabunk.org`, `localhost` or `127.0.0.1`.
+  The server refuses a page at `www.metabunk.org`, so Motion Analysis uses browser analysis there
+- The **Local Compute** line in **Video → Motion Analysis** shows the reason after `Fallback:`
 - Click **Install/Update Local Compute** in the SitrecBridge extension popup
 - Make sure `python3`, `pip`, `ffmpeg`, and `ffprobe` are available in the environment that starts SitrecBridge
-- If you use a virtual environment or non-default Python, set `SITREC_LOCAL_COMPUTE_PYTHON` before starting SitrecBridge
+- If you use a virtual environment, a non-default Python or Windows, set `SITREC_LOCAL_COMPUTE_PYTHON` in your MCP client,
+  because the client starts SitrecBridge. Section 6 of
+  [Control Sitrec from an AI assistant (MCP Bridge)](https://www.metabunk.org/sitrec/docs/MCPBridge.html#6-install-or-update-local-compute)
+  shows how for each client
 - On Windows, install Python 3 and ffmpeg, then restart the app that starts SitrecBridge so updated `PATH` entries are visible
 
 ## Development Setup
@@ -203,14 +185,14 @@ npm install
 The extension has no build step — edit files directly and reload in
 `chrome://extensions/`. The MCP server also runs directly with Node.js (ESM).
 
-For development, point your MCP config at the source file instead:
+For development, point your MCP client at the source file, with an absolute path:
 
 ```json
 {
   "mcpServers": {
     "sitrec-bridge": {
       "command": "node",
-      "args": ["./tools/SitrecBridge/mcp-server.js"]
+      "args": ["/absolute/path/to/sitrec/tools/SitrecBridge/mcp-server.js"]
     }
   }
 }
@@ -228,3 +210,45 @@ This bundles all npm dependencies into a single `mcp-server.mjs` file so end
 users don't need to run `npm install`.
 
 To regenerate placeholder icons: `node generate-icons.cjs`
+
+## Internals
+
+These two sections explain how a bridge manages its port and its lifetime.
+
+### Ports are leased, not owned
+
+A host-fallback bridge (one with no `SITREC_BRIDGE_PAIRED_ORIGIN`) borrows a port rather than keeping
+one for life. This matters because many bridges are started by processes that may never touch Sitrec:
+`claude bg-spare` pre-warms, `claude --remote-control` instances, and `codex app-server` daemons that
+outlive their conversations by days.
+
+- A bridge that has never relayed a call gives its port back after `SITREC_BRIDGE_UNUSED_RELEASE_MS`;
+  one that has been used but gone quiet gives it back after `SITREC_BRIDGE_IDLE_RELEASE_MS`.
+- **Releasing is not fatal.** The process stays alive and silently takes a port again on the next
+  tool call that needs the browser. Nothing needs reconnecting.
+- Besides the anchor rule below, four things pin a port: an in-flight request, a paired sandbox
+  origin, a connected Local Compute client, and being the bridge the extension has chosen to route
+  through.
+- The oldest bound fallback bridge is the *anchor* and does not release its port when idle, so the
+  range is never left empty — the Sitrec page discovers Local Compute by scanning the range directly,
+  with no MCP call involved.
+
+If every port is occupied when a bridge starts, it asks the least-useful peer (never-used first) to
+*release* rather than exit. It asks the peer to shut down only if the release request gets no usable
+answer, as from a bridge older than protocol version 5. A bridge that still cannot get a port stays
+alive without one and retries on its next tool call that needs the browser.
+
+### Bridges under batch Codex threads exit on their own
+
+The Codex plugin for Claude Code runs Codex through a detached broker that keeps one
+`codex app-server` per workspace, starts a fresh thread in it for every batch task, and never unloads
+a thread. Codex starts every configured MCP server afresh for each thread, so with the bridge listed
+in `~/.codex/config.toml` every one of those threads would leave a bridge behind for the life of the
+app-server, which can be days.
+
+A bridge whose parent is a `codex app-server` with that broker above it therefore treats itself as
+disposable: it exits after ten minutes without an MCP message even though its parent is alive
+(`SITREC_BRIDGE_IDLE_TIMEOUT_MS` still overrides). An interactive Codex — the desktop app, or
+`codex` in a terminal — has no broker above it and keeps the normal rule, because its threads do
+come back to the browser after long silences. `sitrec_diagnostics` reports the verdict as
+`batchHost`.

@@ -56,10 +56,9 @@ tab key (`tabID`, `tab_id`, `tabTarget`) is refused for the same reason — sile
 against the default tab yields normal-looking results describing the wrong page.
 
 ### Reloading a page after a build
-Use **`sitrec_reload_tab`**. Do *not* evaluate `location.reload()` — a reload returned from
-`sitrec_eval` never executes, the page keeps running its old bundle, and the stale build then
-looks like a fix that did not work. To confirm a reload really happened, check
-`performance.now()/1000` (seconds, not hundreds) and the running bundle:
+Use **`sitrec_reload_tab`**. A stale build looks like a fix that did not work, so confirm that
+the reload happened. Check `performance.now()/1000` (seconds, not hundreds) and the running
+bundle:
 
 ```js
 [...document.querySelectorAll("script")].map(s => s.src.split("/").pop()).filter(x => x.startsWith("index."))
@@ -77,7 +76,7 @@ measuring anything ground-related.
 | `par` | object | Runtime state: `frame`, `paused`, `renderOne`, `speed` |
 | `Globals` | object | Managers: `SitchMan`, `ViewMan`, `GPUMemoryMonitor` |
 | `ViewMan` | CViewManager | View layout. `setVisibleByName(name, vis)`, `updateViewFromPreset()` |
-| `LocalFrame` | object | ENU coordinate origin for the current sitch |
+| `LocalFrame` | object | Three.js group left from the old local frame. It is not a separate coordinate system |
 | `GlobalScene` | THREE.Scene | Main 3D scene |
 | `sitrecAPI` | CSitrecAPI | Chatbot API. `call(fn, args)`, `handleAPICall({fn, args})` |
 | `guiMenus` | object | All lil-gui menu folders, keyed by menu ID |
@@ -151,7 +150,7 @@ Setting `node.visible = false` or `container.visible = false` does NOT work — 
 `CNodeSmoothedPositionTrack.getValue(frame)` returns:
 ```js
 {
-  position: Vector3,   // ENU coordinates (local frame)
+  position: Vector3,   // world position (ECEF)
   lla: [lat, lon, alt], // Note: may be in internal scaled units, not degrees
   misbRow: Array       // Raw MISB row (indices 13/14 = lat/lon in degrees)
 }
@@ -250,9 +249,9 @@ Path can be nested with `/` separator. Matching is flexible (case-insensitive, s
 
 ## Scripting (Cinematic Camera)
 
-The **Scripting** system (Video ▸ Scripting; `Globals.scriptedVideo`) drives a cinematic
-camera from a text script on its own timeline, independent of the frame slider. The world's
-playhead advances linearly across the whole scripted duration, so tracks/objects animate
+The **Scripting** system (**Video → Scripting**; `Globals.scriptedVideo`) drives a cinematic
+camera from a text script on its own timeline, independent of the playback bar's timeline. The
+world's playhead advances linearly across the whole scripted duration, so tracks/objects animate
 *while* the camera moves. Author it programmatically with `setScriptedVideoScript({script})`,
 then `previewScriptedVideo({at})` / `stopScriptedVideo()`. Multiple scripts live on tabs and
 save with the sitch.
@@ -513,7 +512,7 @@ The `dateTimeStart` node (`CNodeDateTime`) owns the authoritative time state. It
 
 Browser security prevents programmatic file picker dialogs (the `<input type="file">.click()` call is blocked without a real user gesture). To import a local file (KML, CSV, video, etc.) into Sitrec from the MCP:
 
-1. **Spin up a one-shot Node.js HTTP server** on port 9781 that serves the file once then exits:
+1. **Spin up a one-shot Node.js HTTP server** on port 9755 that serves the file once then exits:
 ```bash
 node -e "
 const http = require('http');
@@ -525,14 +524,14 @@ const server = http.createServer((req, res) => {
   res.end(data);
   server.close();
 });
-server.listen(9781, () => console.log('ready'));
+server.listen(9755, () => console.log('ready'));
 "
 ```
 
 2. **Fetch and parse in Sitrec** via `sitrec_eval`:
 ```js
 (window._importResult = 'fetching',
- fetch('http://localhost:9781/file.kml')
+ fetch('http://localhost:9755/file.kml')
    .then(r => r.arrayBuffer())
    .then(buf => FileManager.parseResult('file.kml', buf, null, {returnMeta: true}))
    .then(r => window._importResult = 'done')
@@ -547,7 +546,7 @@ This works because `FileManager.parseResult()` is the same pipeline used by drag
 **Videos** go through the drop path instead. When a video is already loaded, a drop opens the **Second Video** dialog, and a repeated filename opens **Name Already Used**. An agent cannot answer either one. Pass `{replaceVideo: true}` to replace the primary video without both dialogs:
 ```js
 (window._importResult = 'fetching',
- fetch('http://localhost:9781/clip.mp4')
+ fetch('http://localhost:9755/clip.mp4')
    .then(r => r.blob())
    .then(blob => DragDropHandler.uploadDroppedFile(new File([blob], 'clip.mp4', {type: 'video/mp4'}), {}, {replaceVideo: true}))
    .then(() => window._importResult = 'done')
@@ -557,11 +556,7 @@ This works because `FileManager.parseResult()` is the same pipeline used by drag
 The option applies to that call only. `window._mcpDebug` does not skip these dialogs, because the bridge sets it in every tab it attaches to, and a video that the user drops by hand must still ask.
 
 ### Reloading the Sitrec tab
-When the MCP bridge is active (`window._mcpDebug` is set by `page-bridge.js`), the `beforeunload` "Leave Site?" dialog is **automatically suppressed**. Just reload directly:
-```js
-(location.reload(), 'reloading')
-```
-No need to set `Globals.allowUnload` — the MCP bridge handles it.
+Use `sitrec_reload_tab` (see [Reloading a page after a build](#reloading-a-page-after-a-build)). When the MCP bridge is active (`window._mcpDebug` is set by `page-bridge.js`), the `beforeunload` "Leave Site?" dialog is **automatically suppressed**. No need to set `Globals.allowUnload` — the MCP bridge handles it.
 
 ### Generated track duration and start time
 When generating track data (KML, CSV, etc.) for import into Sitrec, default to the sitch's existing duration and start time unless the user specifies otherwise:
@@ -607,10 +602,8 @@ Once you've identified the code fix:
 ```bash
 npm run build          # Build the updated code
 ```
-Then reload via eval:
-```js
-(location.reload(), 'reloading')
-```
+Then reload the tab with `sitrec_reload_tab`.
+
 Wait for the page to load (check with `Sit.name`), re-enable the feature under test, and screenshot again to confirm.
 
 **Verify the build:** `sitrec_get_sitch` returns a `buildTime` field (e.g., `"03/22/2026 10:39:50"`) — the `document.lastModified` timestamp. After a build + reload, check this to confirm the browser is running your updated code.
@@ -634,7 +627,7 @@ subsystems where that matters, Sitrec exposes curated `window._*` hooks:
 | Hook | Exposes | Availability |
 |------|---------|--------------|
 | `window._traverseDebug` | Traverse-analysis internals: `buildAnalysisDataset(losNode, windNode, anchorDist)`, `resolveLOSNode()`, `fitPhysicsModel(dataset, excluded, model, options)` (async), `SkyLanternModel` (class), `traverseMinSpeed(dataset)`, `trackMetrics(dataset, track)`, `meanAngularError(dataset, track)` | Local builds only (`isLocal`); set once a sitch with a traverse menu has loaded |
-| `window._objectTracker` | The live `ObjectTracker` instance (video Auto Tracking internals) | Local builds only; set the first time tracking is enabled (Video ▸ Tracking) |
+| `window._objectTracker` | The live `ObjectTracker` instance (Point Track internals) | Local builds only; set the first time Point Track is enabled (**Video → Point Track**) |
 | `window._treeFlattenDebug` | Aggregate diagnostics for Edit Geometry (Trees) tile flattening: counters (`tiles`, `verts`, `snapped`, ...) plus `reset()` | Always (production too); a plain counters object |
 
 Example — extract the current sitch's LOS analysis dataset (ENU arrays) for offline work:
