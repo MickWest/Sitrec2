@@ -5,11 +5,26 @@ operates it. Ask it to move the camera to a place, set the date and time, load t
 satellites that were up that night, point at Jupiter, or change a menu setting, and it does
 the thing rather than telling you where the control is.
 
+It cannot see your video or the 3D view. Give it the facts, such as the place, the time and the
+direction. It can then set up the scene, and you compare the result with your video.
+
+To use it, log in, or add your own key or server: see [Choosing a model](#choosing-a-model). You
+log in from **File → Server**, as [What the Server menu does](SavingAndLoading.md#what-the-server-menu-does)
+explains. An installation can turn the assistant off, and then Help has no AI Assistant entry.
+
 Open it with **Help → AI Assistant**, or press **Tab**. It is an ordinary Sitrec window, so you
 can drag it, resize it, scroll the log with the wheel, and select and copy text from the log.
 Click outside it to give the keyboard back to Sitrec's shortcuts. **Tab** again, or the **X**,
 hides it; so does **Esc** when the window floats. The up arrow recalls what you last typed, and the **+** in its header starts a fresh
 conversation.
+
+![The Assistant window below the menu bar. Its header has the title Assistant, a plus icon, a microphone, the model id gpt-5-mini and five window icons. The log holds three typed commands and their replies, above a greater-than prompt](docimages/ai-assistant-window.jpg)
+
+Type at the **>** prompt, under the log. In the header, click **Assistant** to open the header menu.
+**+** and the 🎤 come next, then the model id, here gpt-5-mini. The other icons are the usual
+[view header](UserInterface.md#the-view-header) icons. The 🎤 in the menu bar is the
+[second microphone button](#speaking-to-it). The three replies here came from the
+[pattern matcher](#some-commands-never-reach-a-model), not from a model.
 
 ## What it can do
 
@@ -22,59 +37,70 @@ number of extras that have no menu entry at all.
 | --- | --- |
 | Camera and place | "go to 51.5, -0.12 at 200 m", "put the camera at eye level", "what is the ground altitude here?" |
 | Time and playback | "set the time to 21:40 on 3 June 2024", "go to frame 300", "play", "what time is it now?" |
-| The sky | "point at Jupiter", "lock onto the Moon", "show me Orion's Belt", "load LEO satellites for this date", "find the satellite called Starlink-1234" |
-| Menus | "use OSM imagery", "ambient lighting only", "turn the frustum off", "show satellite names in the look view" |
+| The sky | "point at Jupiter", "lock onto the Moon", "point at Orion's Belt", "load LEO satellites for this date", "find the satellite called Starlink-1234" |
+| Menus | "use OSM imagery", "ambient lighting only", "turn the frustum off", "put satellite names in the look view" |
 | Objects | "make all the objects spheres", "use a 737 model", "make it 3 m across", "add an object at 33.1, -117.3, 1500 m" |
-| Views and layout | "hide the video window", "arrange the views in columns", "full screen", "hide the menu bar and the timeline" |
-| Tracks and files | "what tracks are loaded?", "where is the target at frame 120?", "which files are loaded?" |
+| Views and layout | "hide the video view", "arrange the views in columns", "full screen", "please hide the menu bar and the timeline" |
+| Tracks | "what tracks are loaded?", "where is the target at frame 120?" |
 | Notes, saving, sharing | "add a note saying …", "save the sitch", "give me a share link" |
 | The documentation | "how do I mask out the trees?", "what is a traverse?", "what's new?" |
 
 Some of the more specialist things are there too, but are worth asking for by name: the Fit
 Camera to Points tool, synthetic buildings, cloud layers and ground overlays, the nearest
-weather-balloon soundings, and an object that walks a list of waypoints. The four
-constructors (buildings, cloud layers, ground overlays and the waypoint walker) are not loaded
-into every conversation — the assistant asks for them when it
-decides it needs them, which costs it one extra step.
+weather-balloon soundings, and an object that walks a list of waypoints. The assistant loads
+the tools for buildings, cloud layers, ground overlays and waypoints only when it needs them,
+which adds one step.
 
 Two things it deliberately cannot do. It cannot fetch a web address of its own choosing, and
 it cannot write or run a [scripted camera move](ScriptedVideo.md), because those scripts are
 real code. Both are withheld because a sitch opened from a link can contain text somebody
-else wrote — see [Your API Keys](APIKeys.md) for the reasoning.
+else wrote. [Your API Keys](APIKeys.md) gives the reason for web addresses.
 
 ## Some commands never reach a model
 
 A small pattern matcher inside Sitrec recognises common phrasings and carries them out on the
-spot, with no model involved: `play`, `pause`, `frame 300`, `zoom in`, `load starlink`,
-`ambient only`, `vFOV = 0.7`, `go to Denver`, `point at Saturn`, `what is 2+2`. You will
+spot, with no model involved: `play`, `pause`, `frame 300`, `load starlink`,
+`ambient only`, `go to Denver`, `point at Saturn`, `what is 2+2`. You will
 notice these because they answer instantly.
 
 Anything it does not recognise goes to the model, and anything beginning "how" or "why" always
-goes to the model — those are questions, and letting the pattern matcher guess at them turned
-"how do I get a track of az/el" into a toggle being switched on.
+goes to the model.
+
+The matcher also tries any typed message that starts with show, hide, enable, disable, turn on
+or turn off, or that ends with on, off, visible, hidden, enabled or disabled. It sets the first
+control whose name overlaps your words, in any menu. That can be the wrong control. The reply
+only repeats your words, as in "Disabled the video window", and does not name the control that
+changed. To avoid this, start the request with another word, as in "please hide …", and do not
+end it with one of those words.
 
 ## It changes your sitch
 
-Most of what the assistant does is a real edit, not a preview. When a call changes anything
-that gets saved, Sitrec marks the sitch as having unsaved changes, exactly as if you had made
-the change yourself: closing the tab warns you, and **File → Save** writes a new version. Camera
-moves, time changes, playback and view layout do not count as changes, because they are not
-saved with the sitch.
+Most of what the assistant does is a real edit, not a preview. Sitrec marks the sitch as having
+unsaved changes, exactly as if you had made the change yourself: closing the tab warns you, and
+**File → Server → Save** writes a new version. Most time changes, playback, view layout changes
+and "point at" requests are the exception. They do not mark the sitch as changed, so closing the tab
+gives no warning for them alone. A save still stores the camera, the start time and the view layout.
 
-**Undo covers the assistant's edits exactly as far as it covers your own, which is not
-everything.** Creating an object, adding a synthetic building or cloud layer, and placing camera
-fit points can all be undone with **Ctrl+Z**. Most menu settings cannot be undone, whoever
-changed them. If you are about to ask for something sweeping — "make all the objects spheres" —
-save first.
+**Undo does not cover everything the assistant does.** An object that the assistant adds at a
+position and camera fit points that it places can be undone with **Ctrl+Z** (**Cmd+Z** on a Mac).
+Click outside the Assistant window first, because its input box keeps that key for its own text. A
+synthetic building, cloud layer, ground overlay or waypoint object that the assistant creates has no
+undo step, so undo skips it and undoes the action before it. Ask the assistant to delete a building,
+cloud layer or overlay. It cannot delete a waypoint object, but it can hide one. Most menu settings
+cannot be undone, whoever changed them. If you are about to ask for something sweeping — "make
+all the objects spheres" — save first.
 
 The assistant can also undo and redo on request, which drives the same stack: "undo that" works.
 
-**Sitches you did not make ask for confirmation.** If the loaded sitch came from a link or
-another external source, the first thing the assistant tries to do that changes saved state or
-sends data outward raises a dialog naming the function, with **Allow once**, **Trust this sitch**
-and **Don't allow**. Reading and analysing an external sitch is unaffected — the guard is on
-what the assistant can *do*, because a shared sitch's notes and labels were written by whoever
-shared it.
+**Sitches from a link ask for confirmation.** A sitch counts as external if it loads from a web
+address, or from a Sitrec share link to another user's sitch while you are logged in. A sitch file
+that you open from your computer counts as your own, whoever made it. In an external sitch, each
+call that changes saved state or sends data outward raises a dialog naming the function, with
+**Allow once**, **Trust this sitch** and **Don't allow**. Most camera, time, playback and view
+layout calls raise no dialog. **Allow once** covers that one call.
+**Trust this sitch** stops the dialogs for the rest of the session, and the next time you open the
+link they return. The guard is on what the assistant can *do*, because a shared sitch's notes and
+labels were written by whoever shared it.
 
 ## Getting good results
 
@@ -95,9 +121,9 @@ again with.
 set, and phrasing a question as a question ("how do I stabilize the video?") is what prompts it
 to. Its answer will normally include a link to the page it read, so you can check it.
 
-**Be specific about units and datums** — metres or feet, local time or UTC, altitude above the
-ground or above sea level. It will otherwise pick a reasonable default, and reasonable is not
-always right.
+**Be specific about units and reference levels** — metres or feet, local time or UTC, altitude above
+ground level (AGL) or above mean sea level (MSL): see [Three Kinds of Height](GIS.md#three-kinds-of-height).
+It will otherwise pick a reasonable default, and reasonable is not always right.
 
 **"Point at" and "lock onto" are different requests.** Point moves the camera once and leaves
 it there; lock keeps following the object as time advances. Say which you mean.
@@ -134,7 +160,13 @@ appear, what a custom endpoint needs, and what happens to your key are all cover
 for your own keys; tick **Enable old AI models** in the same Settings folder to list the older
 generations too.
 
-If a request keeps going wrong, try it on a larger model.
+**AI Effort** applies to your own key or custom endpoint. It sets how much the model thinks
+before it answers. Higher effort is slower and uses more tokens. The default is Medium.
+**Refusal Fallback** applies to Claude models on your own Anthropic key. When the model declines
+a request, Anthropic tries it again on a different Claude model, and that attempt is also charged
+to your key. It is off by default. Both are in **Sitrec → Settings**.
+
+If a request keeps going wrong, try a different model from the list.
 
 **Sitrec Focused** is on by default, in **Sitrec → Settings** and the Assistant header menu. For models
 using **your own API key or custom endpoint**, turn it off to discuss any topic. It also
@@ -144,15 +176,16 @@ settings, and changing it takes effect on the next typed request.
 
 Turning focus off shows an **API usage costs** notice. General conversations still send the
 Sitrec instructions and recent chat history, and longer conversations or replies can use
-more tokens. Your provider's charges apply. Review usage and local limits in
-**Sitrec → Settings → API Keys…**, and set spending caps or budget alerts with the provider;
-Sitrec's local limits are not provider billing controls. See [Your API Keys](APIKeys.md).
+more tokens. Your provider's charges apply. Review usage in **Sitrec → Settings → API Keys…**.
+AI keys have no spending limit in Sitrec (see [Your API Keys](APIKeys.md)); set caps or budget
+alerts at the provider.
 
 ## The header bar
 
-The Assistant window's header shows the name of the model that is currently answering. It is
-read from the setting each time rather than remembered, so it is right after you change models,
-after a saved session is restored, and after the assistant changes the setting itself.
+The Assistant window's header shows the model id from the AI Model setting, such as gpt-5-mini.
+It is read from the setting each time rather than remembered, so it is right after you change
+models, after a saved session is restored, and after the assistant changes the setting itself.
+With **Auto (economy)** selected it shows economy, not the model that Sitrec picked for the request.
 
 While the microphone is live it shows the voice model instead, prefixed with a microphone
 glyph, because that is a different model on a different API, billed at the provider's
@@ -172,9 +205,10 @@ typing while it is listening adds your text to the same spoken conversation rath
 a second one.
 
 While a session is running, **both** microphone buttons turn into a pulsing red badge, and the
-menu-bar one reads **REC**. Either one stops the session, and so does closing the Assistant or
-loading a different sitch. The menu-bar button is the one to rely on: the Assistant window can
-be scrolled, hidden or covered, and the menu bar cannot.
+menu-bar one reads **REC**. Either one stops the session, and so does closing the Assistant,
+pressing **+**, or loading a different sitch. The menu-bar button is the better indicator, because
+another window can cover the Assistant header. If you ask the assistant to hide the menu bar, the
+button hides with it.
 
 **Sitrec → Settings → Voice Model** chooses which realtime model is used; it is mirrored into the
 Assistant header menu alongside AI Model. The spoken assistant requires **your own OpenAI key** —
@@ -200,9 +234,9 @@ covered in [Your API Keys](APIKeys.md).
   did not want changed. Check the result.
 - **It does not know your sitch's history.** It sees the current state, not why you set it up
   that way.
-- **Documentation answers can be truncated.** A very long help page is cut off when it is read,
-  and the assistant is told to say so when that happens. If it warns you its answer may be
-  incomplete, open the page itself.
+- **Documentation answers can be truncated.** The What's New page is longer than the 80,000-character
+  limit, so the assistant reads only its first part, which holds the newest entries. It is told
+  to say so. If it warns you its answer may be incomplete, open the page itself.
 
 ## Privacy in short
 
@@ -212,15 +246,20 @@ model provider on its own account. On your own key or your own server, the same 
 straight from your browser to the provider or address you chose, and Sitrec's server sees
 neither the credential nor the conversation.
 
+On every route, a typed command such as `go to Denver` that the pattern matcher handles sends
+the place text from your browser to OpenStreetMap's Nominatim service.
+
 Nothing in either path includes your stored API keys: the assistant is never told them and has
 no tool that can read one.
 
-**Your prompts and replies are not kept.** Sitrec's server passes a conversation to the model
-provider and does not retain its text. The one short exception is a tool call: while your
-browser carries out an action the assistant asked for, the server keeps that conversation in
-a temporary file so the assistant can finish its reply. The server deletes the file when your
-browser answers. A file that is not used expires after 15 minutes, and a later request deletes
-it. What the server does keep, when the installation has
+**Sitrec's server does not store your prompts and replies, except in temporary files.** The
+server passes a conversation to the model provider and does not retain its text. The exception
+is a tool call: while your browser carries out an action the assistant asked for, the server
+keeps that conversation in a temporary file so the assistant can finish its reply. If the browser
+sends results back, the server deletes the file at once. After a batch of actions that all
+succeed, the browser often sends nothing back, so the file stays. It goes out of date after 15
+minutes, and a later chat request to the server then deletes it. What the server does keep, when
+the installation has
 usage statistics turned on, is accounting data for the AI feature: for each of the last 500
 requests, who made it (your user id), what kind of request it was (a chat or a ground mask),
 which model answered, how many tokens it used and what it cost, plus daily totals. None of

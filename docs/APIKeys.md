@@ -1,27 +1,48 @@
 # Your API Keys: where they are stored and how they are protected
 
-Sitrec lets you supply your own API keys — for the AI assistant, for Google's 3D tiles,
-for Cesium Ion, and for other providers — instead of using Sitrec's shared quota. You
-manage them in **Settings → API Keys…**.
+Sitrec lets you supply your own API keys — for the AI assistant, for Google's 3D tiles, for
+Cesium Ion, and for live data feeds. An AI, Google or Cesium Ion key replaces Sitrec's shared
+quota. A live-feed key turns on a feed that Sitrec does not provide by itself. You manage them
+in **Sitrec → Settings → API Keys…**.
 
 This page tells what Sitrec does with your keys, what protects them, what does not, and how
-to limit the damage if something goes wrong. It describes what the code does today.
+to limit the damage if something goes wrong. It describes what the code does today. The last
+section covers model choice, local servers and voice.
 
 ---
 
 ## The short version
 
-- Your keys are stored **only in your own browser**, in IndexedDB, on the machine you typed
-  them into. They are **never sent to the Sitrec server**.
+- Your keys are stored **only in your own browser**, in IndexedDB (the browser's built-in
+  database), on the machine you typed them into. They are **never sent to the Sitrec server**.
 - Each key is sent **only to the provider it belongs to** — your Anthropic key to
   Anthropic, your OpenRouter key to OpenRouter, your Google key to Google, and so on.
 - Sitrec **never displays a stored key back to you**, not even the last few characters. The
-  dialog shows only "Set" or "Not set".
+  dialog shows only "Set", "Off" or "Not set".
 - Keys are **obscured at rest**, so they are not sitting in the database as readable text.
   This is a guard against accidental exposure, **not** real encryption — see below.
-- Anything that can run JavaScript on the Sitrec page can still obtain them.
+- Anything that can run JavaScript on the Sitrec site can still obtain them.
 - Use **narrowly scoped keys with spending limits set at the provider**. Sitrec cannot do
   this for you.
+
+---
+
+## Adding a key
+
+Every key is optional. The table under "Where each key *is* sent" lists what each one is for.
+
+1. Open **Sitrec → Settings → API Keys…**.
+2. Find the row for the provider. To get a key, click the row and follow **Where to get one**.
+3. Press **Set…**, paste the key in the box, and press **Save**.
+4. Check that the row now reads "Set". For an AI key, the **AI Model** list gains
+   "(your … key)" entries.
+
+Reload Sitrec after you add a Google or Cesium Ion key. The Terrain menu builds its 3D building
+controls when it loads. The key alone does not load buildings: your login also needs access to
+3D buildings. If you are not logged in, or you use the desktop app or a serverless build, the
+**3D Buildings** box appears and takes a tick, but no buildings load.
+
+A custom endpoint is set up differently: see "Your own server" below.
 
 ---
 
@@ -31,9 +52,11 @@ Keys live in your browser's **IndexedDB**, in a database named `SitrecDB`, in th
 `settings` object store, under names prefixed `byok_` — for example `byok_anthropic`,
 `byok_openrouter`, or `byok_google-maps`.
 
-IndexedDB is **origin-scoped**: data saved by `https://www.metabunk.org` can only be read
-by pages served from `https://www.metabunk.org`. Another website cannot read Sitrec's
-storage, and Sitrec cannot read another site's.
+IndexedDB is **origin-scoped**. An origin is the scheme and site name of a web address, such as
+`https://www.metabunk.org`. Data saved by that origin can only be read by pages served from it.
+An origin is the whole site, not one path, so every page on the site shares this storage,
+including pages that are not part of Sitrec. Another website cannot read Sitrec's storage, and
+Sitrec cannot read another site's.
 
 Practical consequences of storing them there:
 
@@ -41,8 +64,8 @@ Practical consequences of storing them there:
   are not part of your Sitrec account.
 - They **survive a reload** and a browser restart, which is the point — you enter a key
   once, not every session.
-- Clearing site data, browsing "cookies and site data", or using the browser's "forget this
-  site" will delete them, along with your other Sitrec settings.
+- Clearing "cookies and site data", or using the browser's "forget this site", will delete
+  them, along with your other Sitrec settings.
 - A **private/incognito window** gets its own storage that is discarded when the window
   closes.
 
@@ -80,28 +103,24 @@ settings fields and silently drop everything else — so even a bug that put a k
 settings object would not get it as far as the server.
 
 **Never in a saved or exported sitch.** A sitch records the scene, not your credentials.
-Sharing a sitch file, or a share link, does not share your keys.
+Sharing a sitch file, or a share link, does not share your keys. Someone who opens it uses
+their own keys and what Sitrec offers them. If they have no access to 3D buildings, the sitch
+opens without them.
 
-**Never in the AI assistant's context.** The assistant is never told your key, and it has no
-tool that can read it. This matters because a sitch loaded from a link can contain text
-written by someone else, and that text can try to manipulate the assistant. It cannot make
-the assistant reveal a key it was never given.
+**Never in the built-in AI assistant's context.** The assistant built into Sitrec is never told
+your key, and it has no tool that can read it. This matters because a sitch loaded from a link
+can contain text written by someone else, and that text can try to manipulate the assistant.
+It cannot make the assistant reveal a key it was never given. An outside AI client is a
+different matter: see "What is *not* protected" below, and [SitrecBridge](MCPBridge.md).
 
-**Never in Sitrec's usage logs.** When you use your own key, the request goes straight from
-your browser to the provider. Sitrec's server is not involved and does not count it — your
-usage on your own key is not reported to Sitrec at all. Usage figures shown in the API Keys
-dialog are counted locally, in your browser, for your benefit.
+**Never in Sitrec's usage logs.** When you use your own AI key, the request goes straight from
+your browser to the provider. Sitrec's server is not involved and does not count it. Usage
+figures shown in the API Keys dialog are counted locally, in your browser, for your benefit.
 
-**Never in the interface.** No label, tooltip, menu, or chat message contains any part of a
-key. This is deliberate and was tightened after review: menu labels in Sitrec are collected
+**Never in the interface.** Sitrec puts no part of a key in any label, tooltip, menu or chat
+message. This is deliberate and was tightened after review: menu labels in Sitrec are collected
 and sent to the AI provider as part of describing the app, so a key fragment in a label
 would have travelled further than expected. The dialog shows only "Set", "Off" or "Not set".
-
-**Keeping a key without using it.** Each row in the dialog has a tick box. Clearing it
-leaves the key stored but stops Sitrec reading it, so that service falls back to Sitrec's
-own shared quota — useful for running a session on Sitrec's account without having to paste
-the key again afterwards. The row then reads "Off". Untick every AI key and the "(your key)"
-entries disappear from the AI Model list, exactly as if no key were stored.
 
 ---
 
@@ -113,23 +132,22 @@ Each key goes to exactly one destination — the provider that issued it:
 |---|---|---|
 | Anthropic | `api.anthropic.com` | Runs the AI assistant on your account |
 | OpenAI | `api.openai.com` | Runs the typed and spoken assistant on your account |
-| OpenRouter | `openrouter.ai` | Runs OpenAI-family models through OpenRouter on your account |
+| OpenRouter | `openrouter.ai` | Runs the assistant on models from many vendors, through OpenRouter, on your account |
 | Custom endpoint | the address you enter | Runs the assistant on your own server |
 | Google | `tile.googleapis.com` | Photorealistic 3D tiles |
-| Cesium Ion | Cesium Ion servers | Terrain and building tilesets |
+| Cesium Ion | Cesium Ion servers | OpenStreetMap (OSM) 3D buildings |
 | Windy | `api.windy.com` | Worldwide live webcams |
 | AISStream | `stream.aisstream.io` | Worldwide live ship positions |
 | TomTom | `api.tomtom.com` | Live road traffic incidents |
-| Mapbox / MapTiler | Their tile servers | Map imagery |
-| Space-Track | `space-track.org` | Satellite element sets |
 
 These requests go **directly from your browser to the provider**. They do not pass through
 the Sitrec server, which means Sitrec cannot see them — and also means the provider sees
 your browser's IP address rather than Sitrec's.
 
-One request is made without any key: Sitrec fetches OpenRouter's public price list so it
-can estimate what a model costs (see "Which models you get" below). It carries no
-credential and says nothing about you beyond the fact that a browser asked for the list.
+One request is made without any key, and whether or not you have stored one: Sitrec fetches
+OpenRouter's public price list so it can estimate what a model costs (see "Which models you
+get" below). With no AI key stored, this happens each time Sitrec loads. It carries no
+credential. OpenRouter sees your browser's IP address, as any provider does.
 
 For OpenRouter, the key itself goes only to OpenRouter, but the request is routed onward to
 the selected upstream model provider. That means the Sitrec system instructions, your chat
@@ -144,119 +162,6 @@ Two consequences worth knowing:
 - Some providers do not permit direct browser access at all, which is why not every service
   can be used this way.
 
-**Sitrec Focused** (Settings or the Assistant header menu) defaults to on. Switch it off to
-allow general conversation with your own-key models or custom endpoint, including voice.
-This changes the topic instructions, not billing: requests still include Sitrec context and
-recent chat history. Longer conversations and replies can increase your API costs. Turning
-it off shows a cost notice; provider spending caps or budget alerts remain the billing
-protection. Sitrec-provided models keep their existing topic restriction.
-
-### Which models you get
-
-**Every model your key can reach**, not a shortlist Sitrec chose. When you save a key,
-Sitrec asks that provider what your account has access to — `/v1/models` at Anthropic,
-OpenAI and OpenRouter — and puts the answer in the **AI Model** list, newest first, marked
-"(your … key)". A model released after your copy of Sitrec was built appears anyway, with
-no update needed.
-
-Two things are left out, both because they cannot run the assistant rather than as a
-judgement about them: models for a different job entirely (embeddings, speech, images,
-moderation, video), and the web-search and deep-research variants, which bring their own
-fixed tool set and refuse Sitrec's. The spoken assistant's realtime models are absent from
-the typed list too — they serve a different API and get their own **Voice Model** dropdown,
-just below AI Model in Settings.
-
-Anything else your key lists is offered. If one of them turns out not to work, the
-provider's own message says so and names the model. The list is refreshed when you change
-a key, and at most once a day otherwise.
-
-**By default you see only each provider's newest generation.** Tick **Enable old AI
-models**, directly under the AI Model list in Settings, to see the rest. Sitrec works out what "newest" means from the version numbers
-the provider reports, so a family released tomorrow is current the day it appears. A model
-you have already selected stays in the list either way, so turning the option off never
-moves you to a different model.
-
-**Cost for those models** is estimated from a public price list published by OpenRouter,
-which covers the same upstream models. It is fetched without any key and tells the provider
-nothing about you. Where a model is not on that list, Sitrec shows the tokens it used and
-no dollar figure, rather than inventing one. As always, the provider's own dashboard is the
-authority.
-
-### Your own server: local models and internal endpoints
-
-**Custom endpoint** points the assistant at a server you run — a model on this machine, or
-an endpoint inside your network — instead of a hosted provider. Enter three things:
-
-- **Address.** Where the API lives, for example `http://localhost:11434/v1` for Ollama,
-  `http://localhost:1234/v1` for LM Studio, or `https://llm.internal.example/v1` for a
-  gateway. A base address is enough; the exact call paths are shown underneath so you can
-  see what Sitrec will request. If your server mounts the API somewhere unusual, paste the
-  full path to the completions endpoint and that is used as given.
-- **Format.** The wire protocol the server speaks, not the vendor. Most self-hosted
-  servers use the **OpenAI-compatible** format — Ollama (at its `/v1` path), LM
-  Studio, llama.cpp's server, vLLM, LocalAI, Jan, text-generation-webui, and LiteLLM, which
-  can put that shape in front of almost anything else. **Anthropic-compatible** is there for
-  gateways that serve `/v1/messages`.
-- **Key** — optional, and usually not needed for a model running on your own machine. Leave
-  it empty and no credential header is sent at all.
-
-Press **Test** to check the address before starting a conversation. It reports which of the
-three things went wrong — nothing listening, the origin not permitted, or a rejected key —
-and lists the models it found.
-
-**The one thing that usually needs configuring is CORS.** A browser will only talk to
-another origin if that origin says it may, and most local servers permit only requests from
-`localhost` by default. Sitrec is not served from localhost, so you have to add its origin.
-For Ollama that means setting `OLLAMA_ORIGINS` to include the address shown in the dialog
-before starting it; other servers have an equivalent setting. This is a property of every
-browser, not something Sitrec can work around.
-
-Plain `http://` addresses work even though Sitrec itself is served over HTTPS, as long as
-they are on this machine (`localhost` or `127.0.0.1`) — browsers treat the local machine as
-trusted for this purpose. An address on your network that is not this machine will need
-`https://`, because browsers refuse plain HTTP to anywhere else from a secure page.
-
-Two consequences of running your own model are worth stating plainly: **the conversation
-still leaves the browser**, to your server, with the same system instructions, tool
-definitions and tool results any other route sends — the difference is that you control
-where it lands. And **cost cannot be estimated**, because Sitrec has no price for a model it
-has never heard of; the usage readout reports tokens used and no dollar figure.
-
-### The OpenAI key
-
-The **OpenAI** key runs both halves of the assistant on your account: the typed chat, via
-the "(your OpenAI key)" entries in the AI Model list, and the microphone button in the
-Assistant window.
-
-OpenRouter also reaches models OpenAI does not serve.
-
-Three things about the spoken assistant are worth knowing before you supply a key:
-
-- **Your microphone audio leaves your browser.** While a voice session is running, what
-  your microphone hears is streamed live to OpenAI, along with the same Sitrec system
-  instructions, tool definitions and tool results a typed session sends. The connection is
-  browser-to-OpenAI; the Sitrec server is not in the path and sees none of it. The session
-  starts only when you press the microphone button, and it ends when you press it again,
-  close the Assistant, or load a different sitch.
-- **Your browser will ask for microphone permission.** If you refuse, nothing is sent and
-  no request is spent.
-- **Spoken tokens are billed at realtime-audio rates**, which are higher than text rates.
-  Check OpenAI's current pricing. Sitrec's usage readout reports audio and text tokens
-  separately, and the spending limit you set at OpenAI is the limit that binds.
-
-**Choosing a voice model.** Settings → **Voice Model** lists every realtime model your
-OpenAI key can reach. Leaving it on *Default* uses `gpt-realtime-2`, which is the one with
-a published price on file, so the usage readout can estimate what a conversation cost.
-Another model may work perfectly well and simply report the tokens it used with no dollar
-figure — the usage report says so where that happens. The Assistant window's header shows
-which model is answering, and switches to the voice one while the microphone is open.
-
-While the session is live, **both** microphone buttons — the one in the Assistant header and
-the one in the menu bar, left of the version number — turn into a pulsing red badge, and the
-menu-bar one reads **REC**. Either one stops the session. The menu-bar button is the
-dependable indicator: the Assistant window can be scrolled, closed or hidden behind
-another, and the menu bar cannot.
-
 ---
 
 ## What protects the keys
@@ -270,7 +175,8 @@ a key, the field starts empty rather than pre-filled with the old one, so the st
 is never put back on screen. Entry fields are password-type.
 
 **Separate storage namespace plus allowlist sanitisers**, as described above — two
-independent mechanisms that must both fail before a key could reach the server.
+independent mechanisms that must both fail before a key could reach the server through your
+settings.
 
 **Escaping untrusted text in the interface.** Sitrec displays names that come from files you
 open — track names from a KML, titles from a shared sitch. Those are inserted as plain text,
@@ -287,7 +193,7 @@ added — this is checked automatically when Sitrec's code changes.
 
 ## What is *not* protected
 
-**Anything running on the Sitrec page can read the keys.** IndexedDB is readable by
+**Anything running on a page of the same site can read the keys.** IndexedDB is readable by
 JavaScript on the same origin. That includes:
 
 - **Browser extensions** you have installed that are permitted to run on the page.
@@ -296,10 +202,13 @@ JavaScript on the same origin. That includes:
   known to matter, and this is tested automatically, but no application can promise it has
   found every such flaw. Code running on the page can read the stored values *and* unwrap
   them, because it has the same fixed passphrase the app does.
+- **An AI client connected through [SitrecBridge](MCPBridge.md).** The Bridge has a tool that
+  runs JavaScript in the Sitrec page, so a connected client can read stored keys. Connect only a
+  client that you trust. The [ChatGPT site tools](WebMCP.md) have no such tool.
 
 **Sitrec's Content-Security-Policy is partial.** It blocks a few specific injection routes
-(`object-src`, `base-uri`, `form-action`), but it does **not** restrict which addresses the
-page may send data to. That restriction — the one that would contain an exfiltration attempt
+(`object-src`, `base-uri`, `form-action`), but it does **not** restrict which `https://` addresses
+the page may send data to. That restriction — the one that would contain an exfiltration attempt
 — is not currently possible, because Sitrec can be asked to load a situation file from *any*
 web address, and that feature and a restrictive policy are mutually exclusive.
 
@@ -307,10 +216,12 @@ web address, and that feature and a restrictive policy are mutually exclusive.
 The obfuscation described above makes casual discovery harder, but it is not a barrier to
 anyone who is actually looking. A shared or unlocked machine means shared keys.
 
-**Sitrec cannot limit your spending at the provider.** The daily limits in the API Keys
-dialog are enforced in your browser only. They are a useful guard against a session quietly
-running up a bill, but they are not a billing control: clearing site data resets them, and
-they cannot restrict anything outside Sitrec.
+**Sitrec cannot limit your spending at the provider.** AI keys have no limit in Sitrec, so the
+provider's cap is the only limit on AI spend. The API Keys dialog has **Max Google 3D sessions
+per day** and **Max Cesium data per day** boxes, but do not use them as caps. After you reach the
+Google limit, each new page load can still start a session. Sitrec counts Cesium data but does
+not stop at the Cesium limit. Both counts are kept in your browser only: clearing site data
+resets them.
 
 ---
 
@@ -320,11 +231,13 @@ they cannot restrict anything outside Sitrec.
    affects nothing else.
 2. **Restrict the key at the provider.** Most allow limiting a key to specific APIs, and
    Google keys can be restricted to specific websites (HTTP referrers). A key restricted to
-   the Maps Tiles API and to the Sitrec address is of little use to anyone who steals it.
+   the Maps Tiles API and to the Sitrec site is of little use to anyone who steals it. Enter
+   the whole site, for example `https://www.metabunk.org/*`, not the `/sitrec/` path. The
+   browser sends Google only the site address.
 3. **Set a spending cap or budget alert with the provider.** This is the only limit that
    cannot be bypassed by clearing browser data.
-4. **Set a daily limit in the API Keys dialog** as an early warning, in addition to (not
-   instead of) the provider's cap.
+4. **For Google 3D tiles, check the session count in the API Keys dialog.** Click the row to see
+   it. Do not use Max Google 3D sessions per day as a cap: see "What is *not* protected".
 5. **Do not use your own keys on a shared or public computer.**
 6. **Check the provider's dashboard occasionally.** It is the authoritative record.
 7. **Remove keys you have stopped using** — "Clear" in the dialog deletes the stored value.
@@ -333,7 +246,7 @@ they cannot restrict anything outside Sitrec.
 
 ## Removing a key
 
-Open **Settings → API Keys…** and press **Clear** on that provider. The stored value is
+Open **Sitrec → Settings → API Keys…** and press **Clear** on that provider. The stored value is
 deleted from IndexedDB immediately.
 
 Clearing the browser's site data for Sitrec removes all of them at once, along with your
@@ -342,3 +255,143 @@ other Sitrec settings.
 If you believe a key may have been exposed, **revoke it at the provider**. Deleting it from
 Sitrec removes your copy, but only the provider can invalidate a key that has already been
 copied elsewhere.
+
+**Keeping a key without using it.** Each row in the dialog has a tick box. Untick it to keep
+the key stored but stop Sitrec reading it. The row then reads "Off". Terrain and typed AI then
+use what Sitrec itself offers you — useful for running a session on Sitrec's account without
+having to paste the key again afterwards. The spoken assistant, the live feeds and a custom
+endpoint have no Sitrec fallback, so they stop until you tick the box again. Untick every AI key
+and the "(your … key)" and "(your endpoint)" entries disappear from the AI Model list, exactly
+as if no key were stored.
+
+---
+
+## Using your own AI models
+
+The AI controls in Settings exist only when the installation has the assistant switched on. The
+desktop app and serverless builds have it off. A self-hosted server needs
+`CHATBOT_ENABLED=true` in `shared.env`. With the assistant off, an AI key has nothing to run.
+
+**Sitrec Focused** (Settings or the Assistant header menu) defaults to on. Switch it off to
+allow general conversation with your own-key models or custom endpoint, including voice.
+This changes the topic instructions, not billing: requests still include Sitrec context and
+recent chat history. Longer conversations and replies can increase your API costs. Turning
+it off shows a cost notice; provider spending caps or budget alerts remain the billing
+protection. Sitrec-provided models keep their existing topic restriction.
+
+### Which models you get
+
+**Every model your key can reach**, not a shortlist Sitrec chose. When you save a key,
+Sitrec asks that provider what your account has access to — `/v1/models` at Anthropic,
+OpenAI and OpenRouter — and puts the answer in the **AI Model** list, newest first, marked
+"(your … key)". A model released after your copy of Sitrec was built appears anyway, with
+no update needed.
+
+From an OpenAI key, some models are left out, because they cannot run the assistant rather than
+as a judgement about them: models for a different job entirely (embeddings, speech, images,
+moderation, video), older completion-only models, and the web-search and deep-research variants,
+which bring their own fixed tool set and refuse Sitrec's. The spoken assistant's realtime models
+are absent from the typed list too — they serve a different API and get their own **Voice
+Model** dropdown, below Sitrec Focused in Settings. From OpenRouter, only models that accept
+tools are listed.
+
+Any other model your key lists is offered. If one of them turns out not to work, the
+provider's own message says so and names the model. The list is refreshed when you change
+a key, and at most once a day otherwise.
+
+**By default you see only each provider's newest generation.** Tick **Enable old AI
+models**, below Voice Model in Settings, to see the rest. Sitrec works out what "newest"
+means from the version numbers the provider reports, so a family released tomorrow is current the day it appears. A model
+you have already selected stays in the list either way, so turning the option off never
+moves you to a different model.
+
+**Cost for those models** is estimated from a public price list published by OpenRouter,
+which covers the same upstream models. It is fetched without any key. Where a model is not on
+that list, Sitrec has no price for it, and the dollar total leaves it out. **AI Effort** and
+**Refusal Fallback** change what the provider charges; see
+[Choosing a model](AIAssistant.md#choosing-a-model). As always, the provider's own dashboard is
+the authority.
+
+### Your own server: local models and internal endpoints
+
+**Custom endpoint** points the assistant at a server you run — a model on this machine, or
+an endpoint inside your network — instead of a hosted provider. In the API Keys dialog, click
+the **Custom endpoint** row to open it, then enter three things:
+
+- **Address.** Where the API lives, for example `http://localhost:11434/v1` for Ollama,
+  `http://localhost:1234/v1` for LM Studio, or `https://llm.internal.example/v1` for a
+  gateway. The `http://` examples fail on `www.metabunk.org`: see below. A base address is
+  enough; the exact call paths are shown underneath so you can
+  see what Sitrec will request. If your server mounts the API somewhere unusual, paste the
+  full path to the completions endpoint and that is used as given. The address is saved when
+  you leave the box or press Enter.
+- **Format.** The wire protocol the server speaks, not the vendor. Most self-hosted
+  servers use the **OpenAI-compatible** format — Ollama (at its `/v1` path), LM
+  Studio, llama.cpp's server, vLLM, LocalAI, Jan, text-generation-webui, and LiteLLM, which
+  can put that shape in front of almost anything else. **Anthropic-compatible** is there for
+  gateways that serve `/v1/messages`.
+- **Key** — optional, and usually not needed for a model running on your own machine. Use the
+  **Key…** button on the row. Leave it empty and no credential header is sent at all.
+
+Press **Test** to check the address before starting a conversation. If it cannot reach the
+server, its message names two causes: nothing is listening, or the origin is not permitted. It
+cannot tell which, and a request that the browser blocks for another reason gives the same
+message. See the `http://` rules below. It also reports a rejected key. On success it gives the
+number of models and the first four names.
+
+**The first thing to configure is CORS (cross-origin resource sharing).** A browser will only talk to
+another origin if that origin says it may, and most local servers permit only requests from
+`localhost` by default. Sitrec is not served from localhost, so you have to add its origin.
+For Ollama that means setting `OLLAMA_ORIGINS` to include the address shown in the dialog
+before starting it; other servers have an equivalent setting. This is a property of every
+browser, not something Sitrec can work around.
+
+**On `www.metabunk.org`, the address must start with `https://`.** That site's security policy
+blocks every plain `http://` address, including `localhost`, whatever your server allows. To use
+a local model there, give it an `https://` address that your browser trusts.
+
+The `http://` examples work only on an installation with no such policy. There, Chrome allows
+plain `http://` from a secure page to this machine (`localhost` or `127.0.0.1`), and to an
+address on your network written as an IP number or a `.local` name. Any other address needs
+`https://`. Chrome asks for your permission before a public page can reach your machine or your
+network. Allow it, or the request fails.
+
+Two consequences of running your own model are worth stating plainly: **the conversation
+still leaves the browser**, to your server, with the same system instructions, tool
+definitions and tool results any other route sends — the difference is that you control
+where it lands. And **cost cannot be estimated**, because Sitrec has no price for a model it
+has never heard of, so the dollar total leaves those requests out.
+
+### The OpenAI key
+
+The **OpenAI** key runs both halves of the assistant on your account: the typed chat, via
+the "(your OpenAI key)" entries in the AI Model list, and the microphone button in the
+Assistant window.
+
+OpenRouter also reaches models OpenAI does not serve.
+
+Three things about the spoken assistant are worth knowing before you supply a key:
+
+- **Your microphone audio leaves your browser.** While a voice session is running, what
+  your microphone hears is streamed live to OpenAI, along with the same Sitrec system
+  instructions, tool definitions and tool results a typed session sends. The connection is
+  browser-to-OpenAI; the Sitrec server is not in the path and sees none of it. The session
+  starts only when you press the microphone button, and it ends when you press it again,
+  press New Chat, close the Assistant, or load a different sitch.
+- **Your browser will ask for microphone permission.** If you refuse, nothing is sent and
+  no request is spent.
+- **Spoken tokens are billed at realtime-audio rates**, which are higher than text rates.
+  Check OpenAI's current pricing. Sitrec's estimate prices audio and text tokens at their own
+  rates, and the spending limit you set at OpenAI is the limit that binds.
+
+**Choosing a voice model.** **Sitrec → Settings → Voice Model** lists every realtime model your
+OpenAI key can reach. Leaving it on *Default* uses `gpt-realtime-2`, which is the one with
+a published price on file, so the API Keys dialog can estimate what a conversation cost.
+Another model may work, but if it has no price on file, the dollar total leaves it out. The
+Assistant window's header shows which model is answering, and switches to the voice one while the microphone is open.
+
+While the session is live, **both** microphone buttons — the one in the Assistant header and
+the one in the menu bar, left of the version number — turn into a pulsing red badge, and the
+menu-bar one reads **REC**. Either one stops the session. The menu-bar button is the
+dependable indicator: the Assistant window can be scrolled, closed or hidden behind
+another, and the menu bar cannot.
