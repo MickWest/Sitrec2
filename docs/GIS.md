@@ -1,6 +1,14 @@
 # GIS Concepts in Sitrec
 
-Sitrec models the Earth as either a sphere or an oblate ellipsoid depending on the `useEllipsoid` setting. This document explains the reference surfaces and vertical datums involved, and how Sitrec converts between them.
+This page explains what an altitude means and how Sitrec handles it. Read it if a track sits at the wrong height, or if you need to know what an altitude in a file refers to. The [Glossary](Glossary.md) defines terms such as HAE, MSL, AGL, QNE and QNH.
+
+Sitrec works in height [above the WGS84 ellipsoid (HAE)](#three-kinds-of-height). The **Alt** boxes in the Camera and Target menus hold height above mean sea level (MSL), or height above ground level (AGL) when **Above Ground Level** is on. A KML track altitude and a CSV `ALTITUDE` column are read as MSL, and Sitrec converts them to HAE. A CSV `TPHAE` column is read as HAE. For the details, see [Altitude in the file](KMLDataSources.md#altitude-in-the-file) and [Altitude Handling](Tracks.md#altitude-handling).
+
+A custom sitch uses the WGS84 ellipsoid. Most older built-in sitches use a sphere.
+
+- A track at the wrong height: [How to tell you have a datum error](#how-to-tell-you-have-a-datum-error)
+- What the altitude from a data source means: [What Each Source's Altitude Actually Means](#summary-what-each-sources-altitude-actually-means)
+- How to enter a location: [Coordinate formats](#coordinate-formats)
 
 ## The WGS84 Ellipsoid
 
@@ -21,14 +29,14 @@ The difference between the equatorial and polar radii is about 21.4 km. This is 
 
 When `useEllipsoid` is **false**, Sitrec treats both radii as equal to *a*, degenerating to a sphere. When **true**, the real WGS84 polar radius is used.
 
-**The default is `false` — a sphere** (`CSituation.js`). Only the `custom` sitch and the night-sky/Starlink sitch opt in to the ellipsoid; every legacy sitch (gimbal, gofast, aguadilla, Nimitz, chilean, …) runs on a sphere, for regression stability.
+A custom sitch uses the ellipsoid. So do the night-sky sitch and the sitches built on these two (Starlink Horizon Flares, FAA 2023). Every other legacy sitch (gimbal, gofast, aguadilla, Nimitz, chilean, …) runs on a sphere, for regression stability, because the code default is `false` (`CSituation.js`). The errors below apply only to sphere mode.
 
 In sphere mode the radius differs from the ellipsoid by up to ~21 km, but that offset is *common-mode*: it moves the whole scene together and barely affects local geometry. The error that affects measurements is the **anisotropic horizontal scale error**. In sphere mode the geodetic latitude is used as if it were the spherical polar angle, so north–south and east–west distances are scaled differently:
 
 | Latitude | N–S scale error | E–W scale error | Differential over a 50 km baseline |
 |---|---|---|---|
 | 0° | +0.674 % | 0.000 % | 337 m |
-| 20° | +0.556 % | −0.039 % | 298 m |
+| 20° | +0.556 % | −0.039 % | 297 m |
 | 34° (Southern California) | +0.358 % | −0.105 % | 231 m |
 | 45° | +0.169 % | −0.167 % | 168 m |
 | 60° | −0.083 % | −0.251 % | 84 m |
@@ -66,9 +74,9 @@ At a given location *N* is a nearly constant offset. Some values:
 | London | +46.1 m |
 | Sydney | +22.9 m |
 
-So in most of the continental US, a track whose altitudes were treated as the wrong datum will sit roughly 20–40 m out — uniformly, at every point. That signature is how you recognise the mistake; see "How to tell you have a datum error" below.
+So a track whose altitudes were treated as the wrong datum sits off by the size of *N*: about 8–40 m in the continental US. The offset is almost constant over a short track and changes slowly over a long one. That signature is how you recognise the mistake; see "How to tell you have a datum error" below.
 
-Sitrec looks *N* up from a compact EGM96 grid shipped with the app (`data/egm96/egm96-15.bin`, decoded lazily by `EGM96Geoid.js`). The `egm96-universal` npm package is now only used at build time, by `scripts/extractEGM96Geoid.js`, to generate that grid — the interpolation and the values are unchanged. If a synchronous geoid lookup happens before the grid has finished loading, Sitrec returns *N* = 0 and warns once rather than throwing, which can show up as a single-frame altitude jump of tens of metres on startup.
+Sitrec looks *N* up from a compact EGM96 grid shipped with the app (`data/egm96/egm96-15.bin`, decoded lazily by `EGM96Geoid.js`). Sitrec waits for the grid before it builds a sitch. A lookup that still runs too early returns *N* = 0 and warns once in the console.
 
 ## Three Kinds of Height
 
@@ -83,28 +91,32 @@ h = H + N
 ```
 
 In plain terms:
-- **Orthometric height (H)** is what most people mean by "altitude above sea level" (MSL). It is what you see on a topographic map or an altimeter.
-- **Ellipsoid height (h)** is the height above the WGS84 reference ellipsoid. It is what GPS receivers natively measure.
+- **Orthometric height (H)** is what most people mean by "altitude above sea level" (MSL). It is what you see on a topographic map. An altimeter shows a barometric value; see "The MSL Confusion Problem" below.
+- **Ellipsoid height (h)**, or HAE (height above ellipsoid), is the height above the WGS84 reference ellipsoid. It is what GPS receivers natively measure.
 - **Geoid undulation (N)** is the difference. It varies smoothly across the Earth's surface and is provided by models like EGM96.
+
+Height above ground level (AGL) is different. It is measured from the terrain under the point, so it changes with the ground.
 
 ## How to tell you have a datum error
 
-Sitrec does not detect datum errors. Nothing crashes and no warning appears — the track is in slightly the wrong place, and every angle, range and speed derived from it inherits the error. The table below lists the pattern each error makes.
+A datum is the surface that a height is measured from. Sitrec does not detect datum errors. Nothing crashes and no warning appears — the track is in slightly the wrong place. Every angle and range derived from it inherits the error, and so does any speed where the error changes along the track. The table below lists the pattern each error makes.
 
 | What you see | What it probably is |
 |---|---|
-| Track sits uniformly ~20–40 m **underground** in the continental US, by the same amount everywhere | An MSL→HAE conversion that did not happen. Your source was orthometric and was read as ellipsoidal |
-| Track sits uniformly ~20–40 m **too high**, by the same amount everywhere | The conversion was applied **twice** — for example, a manual Alt offset added to a track that Sitrec had already converted |
-| Error is small near the ground and grows to hundreds or thousands of feet at cruise | Pressure altitude. See "Barometric Altimetry" below — Sitrec has no pressure-altitude correction |
-| Error follows the shape of the terrain — right over flat ground, wrong on hills | AGL and MSL have been mixed up |
+| Track sits **too high** by the size of *N* (about 8–40 m in the continental US), by almost the same amount along the track | An MSL→HAE conversion that did not happen. Your source was orthometric and was read as ellipsoidal (for example, MSL values in a `TPHAE` column) |
+| Track sits **too low or underground** by the size of *N* (about 8–40 m in the continental US), by almost the same amount along the track | *N* was added to a number that did not need it. Your source was already HAE and was read as MSL (for example, GPS ellipsoidal heights in an `ALTITUDE` column), or the conversion was applied **twice** (for example, a manual Alt offset equal to *N* on a track that Sitrec had already converted) |
+| An error of tens to hundreds of feet near the ground, plus a part that grows with height to hundreds or thousands of feet at cruise | Pressure altitude. The first part comes from sea-level pressure and the second from temperature. See "Barometric Altimetry" below — Sitrec has no pressure-altitude correction |
+| Error follows the shape of the terrain — right over flat ground, wrong on hills | AGL (above ground level) and MSL have been mixed up |
 | An aircraft on the ground at a high-elevation airport reads ~5,400 ft, then snaps to 0 | Not a datum error — that is the ADS-B "on ground" bit taking over |
-| Everything is fine near the scene origin and drifts as you move away | Sphere mode. See the scale table above |
+| Objects line up with each other, but ranges and bearings disagree with an outside reference by a few tenths of a percent, depending on direction | Sphere mode. See the scale table above |
+
+The first two rows are for places where *N* is negative, such as the continental US. Where *N* is positive, such as Honolulu or London, those two rows swap.
 
 Tip: to check the altitude datum, compare an object of known height (a building, a runway, a mountain summit, the sea surface) with its position in Sitrec.
 
 ## AWS Terrain Tiles (Terrarium Format)
 
-Sitrec loads elevation data from the **AWS Open Data Terrain Tiles** in Terrarium PNG format:
+With the example configuration, Sitrec loads elevation data from the **AWS Open Data Terrain Tiles** in Terrarium PNG format. To choose another source, use **Terrain → Elevation Type** (see [Terrain and Elevation](Terrain.md)). The Terrarium tile address is:
 
 ```
 https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png
@@ -118,9 +130,9 @@ elevation = R * 256 + G + B / 256 - 32768   (meters)
 
 These elevations are **orthometric heights** — heights above sea level, not above the WGS84 ellipsoid — and Sitrec corrects them with EGM96 (below).
 
-As with Mapbox (see the note further down), the source datums are not all EGM96: Terrarium is a mosaic of SRTM, 3DEP/NED, GMTED and ETOPO1, whose native vertical datums are not all EGM96. Sitrec applies the same single EGM96 correction to every source by the same code path.
+The source datums are not all EGM96: Terrarium is a mosaic of SRTM, 3DEP/NED, GMTED and ETOPO1. Sitrec applies the same single EGM96 correction to every source by the same code path.
 
-Terrarium also encodes **negative** elevations over water — seafloor depth from global bathymetry. Sitrec discards these: every ground query clamps to `max(terrain, geoid)`. **Over water, Sitrec's ground is the EGM96 geoid, and bathymetry is thrown away.**
+Terrarium also encodes **negative** seafloor elevations, but every ground query clamps to `max(terrain, geoid)` with no test for water, so the ground is the EGM96 geoid over water and on land below sea level, such as Death Valley; see [The sea](Terrain.md#the-sea).
 
 ### The Geoid Correction
 
@@ -139,7 +151,7 @@ elevation[ij] = R * 256 + G + B / 256 - 32768
               + interpolateGeoidOffset(geoidCorners, xFrac, yFrac);
 ```
 
-The same correction is currently applied to Mapbox Terrain-RGB tiles (`computeElevationFromRGBA_MB`) for consistency with Sitrec's EGM96-based altitude handling.
+The same correction applies to a Mapbox Terrain-RGB source (`computeElevationFromRGBA_MB`), if a deployment configures one. The default configuration has none.
 
 Mapbox's own documentation states Terrain-RGB is built from mixed vertical datums (for example NAVD88, EGM96, and local datums), so the correction is approximate where a tile's source datum is not EGM96.
 
@@ -159,27 +171,32 @@ The conversion chain is: **LLA <-> ECEF <-> ENU**, implemented in `LLA-ECEF-ENU.
 
 ### Coordinate formats
 
-Anywhere Sitrec takes a coordinate — the `G` (Go To) prompt, the **Lookup** box, the Lat/Lon boxes in the Camera, Target and Terrain menus, the **Add Object** prompt, the AI assistant's "go to", a paste onto the app, a dropped Google Maps / ADS-B Exchange / Flightradar24 link, the `?latlon=` URL parameter, and the latitude and longitude columns of an imported CSV — the text goes through one parser (`src/CoordinateParser.js`), so any form that works in one place works in all of them:
+Sitrec takes a coordinate in the `G` (Go To) prompt, the **Lookup** box, the Lat/Lon boxes in the Camera, Target and Terrain menus, the **Add Object** prompt, the AI assistant's "go to", a paste onto the app, a dropped Google Maps / ADS-B Exchange / Flightradar24 link, the `?latlon=` URL parameter, and the latitude and longitude columns of an imported CSV. All of these use one parser (`src/CoordinateParser.js`), but the forms each place takes differ:
+
+- A Lat/Lon box takes one coordinate, a pair, MGRS, or a comma-separated ECEF triple.
+- The Go To prompt, the Lookup box, the Add Object prompt, `?latlon=`, the assistant and a paste onto the app take a whole location, not a lone latitude. In Go To, a lone `40.446` is a frame number.
+- A CSV latitude or longitude column takes one coordinate.
+- A dropped link gives the location in its URL.
 
 | Form | Examples |
 |---|---|
 | Decimal degrees | `40.446`, `-79.982`, `40.446°N`, `N 40.446` |
 | Degrees and decimal minutes | `40 26.767`, `40°26.767'N`, `N40 26.767 W074 00.36` |
 | Degrees, minutes, seconds | `40 26 46`, `40°26'46"N`, `40°26′46″N`, `33:53:05N`, `40-26-46N` |
-| A pair | `40.446, -79.982`, `40.446; -79.982`, `40°26'46"N 79°58'56"W`, `40.446° -79.982°`, and for a submitted string (not while typing in a Lat box) a bare `40.446 -79.982` or `40 26 46 79 58 56` |
-| With altitude | `40.446, -79.982, 300` (metres, feet for `?latlon=` and the Add Object prompt's `300ft`) |
+| A pair | `40.446, -79.982`, `40.446; -79.982`, `40°26'46"N 79°58'56"W`, `40.446° -79.982°`, and, where a whole location is expected (never in a Lat/Lon box), a bare `40.446 -79.982` or `40 26 46 79 58 56` |
+| With altitude | `40.446, -79.982, 300`. The number is metres, except for `?latlon=` (feet) and `300ft` in the Add Object prompt |
 | MGRS | `18T WL 80 60`, `37SCR1192692923` |
 | ECEF | `x, y, z` in metres — see below |
+
+What the altitude in that form is measured from depends on where you enter it. In the `G` prompt, a paste onto the app and the Add Object prompt, it is HAE. In the Lookup box it goes into the **Alt** box, so it is MSL, or height above ground when **Above Ground Level** is on. For `?latlon=` and the AI assistant's "go to", it is height above ground.
 
 Pasted text is tidied first: the Unicode minus sign (`−`) and dashes read as a minus, Word's curly quotes as minute and second marks, `''` as a second mark, and a stray trailing comma is dropped.
 
 **The sign belongs to the whole coordinate.** `-40° 26' 46"` is 40°26'46" *South*, that is −(40 + 26/60 + 46/3600) = −40.446, never −40 + 26/60 + 46/3600. A minus sign, like a hemisphere letter, says which side of the equator or meridian the whole angle lies on, and that includes a minus on zero degrees: `-0° 13'` is 0°13'S (Quito), not 0°13'N. The all-negative form some tools write, `-45 -30 -30`, is read the same way; a minus on the minutes or seconds alone is rejected.
 
-**A minus sign or an S/W letter makes the coordinate negative; N and E never override a minus.** So `-45.5 N` is −45.5 (south), and so is `-45.5 S`. The two notations are not meant to be combined (ISO 6709 keeps signs and letters in separate forms), so this rule only decides what a contradictory entry does, and it is chosen so that the person who typed a minus always gets a southern or western value. The reasoning: an unsigned, unlettered number already means north or east, so `N` and `E` carry no information of their own and cannot outvote an explicit minus, while a minus and `S`/`W` each carry the information "southern/western" and either alone is enough. This is the rule of the parse-dms package. GeographicLib and geopy multiply the two instead, which turns `-45.5 S` into +45.5; PROJ lets the letter replace the sign, which turns `-45.5 N` into +45.5; Wikipedia's coordinate template rejects the combination outright.
+**A minus sign or an S/W letter makes the coordinate negative; N and E never override a minus.** So `-45.5 N` is −45.5 (south), and so is `-45.5 S`.
 
-A coordinate that is not well formed is rejected rather than guessed at: a letter inside a number (`45 30 3o`), minutes or seconds of 60 or more (`45 75`), or a fraction on anything but the last part (`45.5 30`). Rejected text leaves a Lat/Lon box unchanged and makes the Go To prompt fall back to a place-name lookup.
-
-The reverse direction — a coordinate written out for a display — goes through `src/CoordinateFormat.js`, which rounds the whole angle to the finest unit shown before splitting it into degrees, minutes and seconds, so a readout never shows `60.0"` or `60.000'`, and what it prints parses back to the same value.
+A coordinate that is not well formed is rejected rather than guessed at: a letter inside a number (`45 30 3o`), minutes or seconds of 60 or more (`45 75`), or a fraction on anything but the last part (`45.5 30`). Rejected text leaves a Lat/Lon box unchanged, and in the Go To prompt and the Lookup box it falls back to a place-name lookup. Those two read two bare numbers as a latitude and a longitude, so there `45 75` means 45, 75 and `45.5 30` means 45.5, 30, and neither is rejected.
 
 ### Pasting an ECEF position
 
@@ -187,13 +204,9 @@ Anywhere Sitrec takes a coordinate — the `G` (Go To) prompt, the **Lookup** bo
 
 Nothing in the numbers themselves says "ECEF", so the test is where they land: the triple is converted and kept only if the result sits between 1 km below the ellipsoid and 1000 km above it. Three small numbers (a DMS coordinate, say) come out thousands of km from the surface and are rejected.
 
-The triple is read as **WGS84**, which is what ECEF means everywhere outside Sitrec (EPSG:4978). That choice matters because a sitch defaults to a **spherical** Earth (`useEllipsoid: false`), and the two models name the same point 0.19° of latitude (21 km on the ground) and 10.7 km of altitude apart at 45°.
+The triple is read as **WGS84**, which is what ECEF means everywhere outside Sitrec (EPSG:4978). That choice matters because legacy sitches use a **spherical** Earth (`useEllipsoid: false`), and the two models name the same point 0.19° of latitude (21 km on the ground) and 10.6 km of altitude apart at 45°. The current model is tried only as a fallback, when WGS84 fails the altitude test.
 
-The current model is tried only as a fallback, when WGS84 fails the altitude test. That ordering is deliberate: for any given point the WGS84 altitude is always the higher of the two, so WGS84 can only fail by reading *too high*, and the fallback only fires near the top of the window — where the alternative is rejecting the triple outright. Tried the other way round, a WGS84 point 10 km up reads as 730 m underground on the sphere, passes the test, and lands 21 km from where it belongs.
-
-The same altitude test separates ECEF from a `lat, lon, altitude` triple, so neither has to be preferred over the other. A triple only reaches the surface if its magnitude is ~6400 km, and one whose `x` and `y` are small enough to pass for a lat/lon can only manage that along `z` — so read as a lat/lon its altitude comes out around 6400 km, outside the window, and the LLA reading is declined. Conversely, a lat/lon altitude inside the window leaves the triple far too short to be a position on Earth.
-
-That overlap is not hypothetical: `0, 0, 6356752` is the north pole *and* a lat/lon 6356 km up, and at a pole the "ECEF numbers are far too big to be degrees" intuition fails outright, because `x` and `y` are zero there. An altitude outside the window that is not a position on Earth either — a geostationary subsatellite point at 35,786 km — stays a lat/lon.
+The same altitude test separates ECEF from a `lat, lon, altitude` triple. A triple that fails it both ways, such as a geostationary subsatellite point at 35,786 km, stays a lat/lon.
 
 ## Lat/Lon Grid
 
@@ -203,6 +216,10 @@ meridian brighter. Each view's header bar has the same toggle as a globe button.
 drawn over terrain and buildings, so they never hide it, but lines on the far side of the
 Earth are not drawn. It follows the Earth model (sphere or ellipsoid), Declutter hides it,
 and a saved sitch keeps both settings.
+
+![The Lat/Lon Grid over the globe in the main view, with the globe button lit in the header bar](docimages/gis-latlon-grid.jpg)
+
+The two brighter lines are the equator and the prime meridian. The lit globe button in the header bar shows that the grid is on. The header bar is pinned in this picture, so it stays on screen.
 
 ## 3D Tiles (Cesium / Google)
 
@@ -248,7 +265,7 @@ Cesium Ion and Google Photorealistic 3D Tiles are delivered as 3D Tiles in Carte
 h (HAE) = H (orthometric/MSL) + N (geoid undulation)
 ```
 
-The geoid undulation **N** ranges globally from approximately **−107 m** to **+85 m** (EGM96). Over continental US *land* it is always **negative**, roughly **−36 m to −7 m**. (A wider CONUS bounding box reaches −53 m, but that minimum is out in the Atlantic, not over land.)
+The geoid undulation **N** ranges globally from approximately **−107 m** to **+85 m** (EGM96). Over continental US *land* it is always **negative**, from about **−40 m** at the North Carolina coast to about **−8 m** at Yellowstone. (A wider continental US bounding box reaches −53 m, but that minimum is out in the Atlantic, not over land.)
 
 ---
 
@@ -317,7 +334,7 @@ Google's `gx:` extension namespace adds two sea-floor variants (`clampToSeaFloor
 
 **Spec point:** KML `absolute` altitude is sea-level referenced (OGC KML: EGM96 geoid vertical datum in the standard geodetic CRS definition).
 
-**Sitrec implementation note:** Sitrec treats KML `absolute` altitude as **MSL** (EGM96 geoid), per the OGC KML vertical datum. KML feature import (`CNodeTrackFromLLAArray`, absolute mode) passes `altitudeReference: "MSL"` and the track KML exporters (`CNodeArray.exportTrackKML`, `CNode3DObject.exportToKML`) convert HAE→MSL on the way out, so exported tracks and objects open at the correct height in Google Earth. (`CNodeTrackFromLLAArray` / `CNodeTrack` still default `altitudeReference` to `"HAE"` for non-KML callers that supply raw ellipsoidal data.)
+**Sitrec implementation note:** Sitrec treats KML `absolute` altitude as **MSL** (EGM96 geoid), per the OGC KML vertical datum. A KML track (`gx:Track`, or timed Placemarks) is always read as MSL, whatever its `<altitudeMode>` says. Only LineString and Polygon features read the mode. The track KML exporters (`CNodeArray.exportTrackKML`, `CNode3DObject.exportToKML`) convert HAE→MSL on the way out, so exported tracks and objects open at the correct height in Google Earth.
 
 ---
 
@@ -325,7 +342,7 @@ Google's `gx:` extension namespace adds two sea-floor variants (`clampToSeaFloor
 
 ADS-B Extended Squitter (1090ES) mandates two altitude fields per FAR 91.227(d):
 
-**Barometric (pressure) altitude** — always required, always referenced to **1013.25 hPa (QNE)**. This is the raw transponder Mode C output. It is *never* QNH-corrected in the transmitted data stream — QNH correction only happens onboard the aircraft and in ATC systems on the ground.
+**Barometric (pressure) altitude** — always required, always referenced to **1013.25 hPa (QNE, the standard pressure setting)**. This is the raw transponder Mode C output. It is *never* corrected for local sea-level pressure (QNH) in the transmitted data stream — QNH correction only happens onboard the aircraft and in ATC systems on the ground.
 
 **Geometric (GNSS) altitude** — also required, transmitted as **HAE (height above WGS84 ellipsoid)**. This is GPS-derived.
 
@@ -338,9 +355,9 @@ The two values differ. The difference depends on the air temperature and the sea
 When exporting a KML track from globe.adsbexchange.com, three altitude options are offered:
 
 ### 1. Geometric altitude (EGM96)
-- Takes the raw `alt_geom` field (HAE, WGS84 ellipsoid) and applies the EGM96 geoid undulation *N* for the aircraft's position to get orthometric height: **H = h − N**. Since *N* is negative across the continental US, the resulting MSL figure is *higher* than the ellipsoidal one, typically by 20–40 m
+- Takes the raw `alt_geom` field (HAE, WGS84 ellipsoid) and applies the EGM96 geoid undulation *N* for the aircraft's position to get orthometric height: **H = h − N**. Since *N* is negative across the continental US, the resulting MSL figure is *higher* than the ellipsoidal one, by about 8–40 m
 - Result: orthometric height (MSL, EGM96)
-- This is the **correct option for Google Earth** since KML `absolute` mode uses EGM96
+- This is the **correct option for Google Earth** since KML `absolute` mode uses EGM96. Sitrec reads it the same way, as MSL, and adds *N* on import
 - The aircraft will appear at the right height above the terrain model
 
 ### 2. Baro + avg.(EGM96 − baro)
@@ -409,7 +426,7 @@ A barometric altimeter is calibrated to ISA (15°C at sea level, lapse rate of 2
 error (ft) ≈ 4 × (height in thousands of ft) × (ISA deviation in °C)
 ```
 
-Two cautions on using it. The operational version of this rule — the one in the FAA's cold-temperature guidance — is defined for **height above the altimeter setting source** (the airport), using the *reported* surface temperature, because that is the case pilots need for obstacle clearance. Applying it to a full flight level against a single cruise-level temperature reading is an extrapolation, not the published procedure.
+One caution on using it. The operational version of this rule — the one in the FAA's cold-temperature guidance — is defined for **height above the altimeter setting source** (the airport), using the *reported* surface temperature, because that is the case pilots need for obstacle clearance. Applying it to a full flight level against a single cruise-level temperature reading is an extrapolation, not the published procedure.
 
 For FL350 at ISA −10 °C the rule gives about 4 × 35 × 10 = 1,400 ft. For an exact value, integrate the temperature profile from a sounding.
 
@@ -434,15 +451,18 @@ For FL350 at ISA −10 °C the rule gives about 4 × 35 × 10 = 1,400 ft. For an
 
 ## Converting ADS-B altitudes to HAE
 
+**Import ADS-B Track...** and **Live ADS-B Traffic** do step 1 below for you. They use geometric altitude as HAE when the data has it, and otherwise read barometric altitude as MSL with no pressure correction. In a generic CSV, put HAE in a `TPHAE` column. An `ALTITUDE` column is read as MSL, and *N* is added.
+
 To get HAE for an aircraft from ADS-B data:
 
 1. Use `alt_geom` (HAE) if available — it's geometrically clean and can be used directly with WGS84 lat/lon.
 2. If only `alt_baro` (QNE) is available, you need to apply two corrections to get HAE:
-    - **QNH correction**: convert from QNE to orthometric height using local pressure (requires meteorological data for that time/place)
+    - **QNH correction**: convert from QNE to an altitude above sea level using local pressure (requires meteorological data for that time/place). The temperature error remains; see "Temperature error" above.
     - **Geoid correction**: add EGM96 undulation N to convert from orthometric to HAE
-3. ADSBx's "geometric (EGM96)" KML export already does this correctly and is suitable for Google Earth rendering and 3D reconstruction.
+3. ADSBx's "geometric (EGM96)" KML export holds orthometric height and needs no QNH correction. Sitrec adds *N* on import, which gives HAE, so do not add your own offset.
 4. Uncorrected QNE altitude includes the temperature and pressure error described above.
 
+Sitrec has no pressure-altitude correction, so step 2 is manual work. The track's [Alt offset](Tracks.md#altitude-adjustments) control adds one fixed amount to every point. A pressure error changes along the flight, so a fixed offset can only approximate it.
 
 
 ---
@@ -454,8 +474,6 @@ To get HAE for an aircraft from ADS-B data:
 | Raw GPS / GNSS receiver output | Depends on the receiver and the output sentence |
 | NMEA $GPGGA "MSL altitude" field | Orthometric (geoid), quality varies    |
 | Aviation altimeter / ATC reports | Barometric MSL                         |
-| Military KLV/MISB Tag 15 | EGM96 orthometric MSL                  |
-| Military KLV/MISB Tag 75/104 | HAE (WGS84)                            |
-| ArcGIS / web mapping elevation | Orthometric, but check the datum. The National Map 3DEP source Sitrec ships is **NAVD88**, not EGM96 — Sitrec applies an EGM96 correction to it, leaving a systematic bias of roughly 0.5–1.5 m across CONUS (more in Alaska) |
-| KML ADSB Tracks | Sea-level referenced. Sitrec treats KML `absolute` altitude as **MSL** (EGM96) and adds *N* on import — see the implementation note under "KML Altitude Modes" above. Do **not** apply your own MSL→HAE offset on top of this |
+| ArcGIS / web mapping elevation | Orthometric, but check the datum. The National Map 3DEP source Sitrec ships is **NAVD88**, not EGM96 — Sitrec applies an EGM96 correction to it, leaving a systematic bias of roughly 0.5–1.5 m across the continental US (more in Alaska) |
+| KML ADSB Tracks | Whatever the exporter wrote. Sitrec treats KML `absolute` altitude as **MSL** (EGM96) and adds *N* on import — see the implementation note under "KML Altitude Modes" above. It cannot tell whether the number was really pressure altitude; see "Barometric Altimetry" above. Do **not** apply your own MSL→HAE offset on top of this |
 | SRTM terrain data | EGM96 orthometric MSL                  |

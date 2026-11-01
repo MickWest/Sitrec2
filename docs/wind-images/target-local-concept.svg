@@ -41,7 +41,7 @@
   <!-- Caption -->
   <text x="380" y="30" text-anchor="middle" font-size="16" font-weight="700" fill="#222">Two winds, two places</text>
   <text x="380" y="52" text-anchor="middle" fill="#444">Sitrec tracks <tspan fill="#0a7" font-weight="600">Local Wind</tspan> at the camera platform and <tspan fill="#c33" font-weight="600">Target Wind</tspan> at the tracked object.</text>
-  <text x="380" y="70" text-anchor="middle" fill="#444">By default both come from the same source. Turn on <tspan font-style="italic">Separate Wind Sources</tspan> to feed them independently.</text>
+  <text x="380" y="70" text-anchor="middle" fill="#444">By default both come from the same source. <tspan font-style="italic">Separate Wind Sources</tspan> can give them different inputs, within limits.</text>
 
   <!-- footer -->
   <text x="380" y="335" text-anchor="middle" fill="#888" font-size="11">Wind direction shown is the meteorological "from" — wind blows away from the arrow tail.</text>
