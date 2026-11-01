@@ -9,7 +9,9 @@
 // the option list changing, and the main thread stalling. Several closes in a row on one control
 // with no pick are logged as a warning.
 //
-// It sends nothing over the network, and it polls only while a dropdown is in use.
+// It sends nothing over the network, and it polls only while a dropdown is in use. It logs the
+// control's name and whether its value changed, never the value or the panel title, because
+// those can be a user's own file or track name, and the log can be exported and posted.
 //
 // runWhenDropdownsClosed() is here too, because destroying an open dropdown closes its menu and
 // loses the pick. It logs each wait, so the debug log still shows work that finished during a menu.
@@ -52,7 +54,7 @@ function offsetFromClose(time, closedAt) {
 export function formatDropdownClose(record, cause, noPickCount) {
     const fromClose = (time) => offsetFromClose(time, record.closedAt);
     return `Dropdown "${record.label}": cause=${cause}`
-        + `, value "${record.valueBefore}" -> "${record.valueAfter}"`
+        + `, valueChanged=${record.valueAfter !== record.valueBefore}`
         + `, open ${Math.round(record.closedAt - record.openedAt)} ms`
         + `, changeEvents=${record.changeEvents}`
         + `, inPageAtClose=${record.inPageAtClose}`
@@ -66,9 +68,7 @@ export function formatDropdownClose(record, cause, noPickCount) {
 }
 
 function controlLabel(select) {
-    const name = select.closest(".controller")?.querySelector(".name")?.textContent ?? "";
-    const panel = select.closest(".lil-gui.root")?.querySelector(":scope > .title")?.textContent ?? "";
-    return `${panel}/${name}`;
+    return select.closest(".controller")?.querySelector(".name")?.textContent ?? "";
 }
 
 function countNoPicks(record, cause) {
@@ -213,7 +213,7 @@ function endHold(menu) {
 function runHeldAction(menu) {
     const {action} = menu._dropdownHold;
     const waited = endHold(menu);
-    console.log(`Dropdown: "${menu.$title.textContent}" panel update waited ${waited} ms for an open menu`);
+    console.log(`Dropdown: panel update waited ${waited} ms for an open menu`);
     action();
 }
 

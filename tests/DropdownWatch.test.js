@@ -9,7 +9,7 @@ const CLOSED_AT = 5000;
 
 function closeRecord(overrides = {}) {
     return {
-        label: "Edit: G-EZGY/Model",
+        label: "Model",
         valueBefore: "F/A-18F",
         valueAfter: "F/A-18F",
         openedAt: 3000,
@@ -73,7 +73,7 @@ describe("runWhenDropdownsClosed", () => {
         jest.useFakeTimers();
         globalThis.CSS = {supports: () => true};
         isMenuOpen = false;
-        menu = {$title: {textContent: "Object 1"}, domElement: {querySelector: () => (isMenuOpen ? {} : null)}};
+        menu = {domElement: {querySelector: () => (isMenuOpen ? {} : null)}};
         logSpy = jest.spyOn(console, "log").mockImplementation(() => {});
     });
 
@@ -102,7 +102,7 @@ describe("runWhenDropdownsClosed", () => {
         jest.advanceTimersByTime(1000);
         expect(action).toHaveBeenCalledTimes(1);
         expect(logSpy).toHaveBeenCalledTimes(1);
-        expect(logSpy.mock.calls[0][0]).toContain('"Object 1" panel update waited');
+        expect(logSpy.mock.calls[0][0]).toContain("panel update waited");
     });
 
     test("a newer action replaces the waiting one", () => {
@@ -152,11 +152,19 @@ describe("runWhenDropdownsClosed", () => {
 });
 
 describe("formatDropdownClose", () => {
+    test("a line never holds a value, which can be a user's own file or track name", () => {
+        const record = closeRecord({valueBefore: "MyTrack.kml", valueAfter: "MyModel.glb", changeEvents: 1});
+        const line = formatDropdownClose(record, "pick", 0);
+        expect(line).toContain("valueChanged=true");
+        expect(line).not.toContain("MyTrack");
+        expect(line).not.toContain("MyModel");
+    });
+
     test("times are relative to the close, and an event that did not happen reads no", () => {
         const record = closeRecord({focusLostAt: CLOSED_AT + 12, mouseLeftAt: CLOSED_AT - 30});
         const line = formatDropdownClose(record, "none seen", 3);
-        expect(line).toContain('Dropdown "Edit: G-EZGY/Model": cause=none seen');
-        expect(line).toContain('value "F/A-18F" -> "F/A-18F"');
+        expect(line).toContain('Dropdown "Model": cause=none seen');
+        expect(line).toContain("valueChanged=false");
         expect(line).toContain("open 2000 ms");
         expect(line).toContain("focusLost=+12 ms");
         expect(line).toContain("mouseLeft=-30 ms");

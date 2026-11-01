@@ -9,6 +9,16 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.183.12 (2026-11-01)
+
+### Improvements
+- **Kuiper satellite flares** (Satellites → *Satellite Brightness Model*, with *Photometric estimate*): Kuiper satellites now flare in the look view, long exposures and timelapse previews, and they have their own estimate of brightness away from a flare. No flare curve is published for them, so Sitrec assumes the Starlink *Original V1.0* curve, and *Starlink Design* does not change it. The main view and *Legacy cone* do not change.
+- **Dropdowns in the debug log** (Help → *Export Debug Log*): a dropdown that you open with the mouse now adds a line to the debug log, with the name of the control, whether its value changed and what the page saw close the menu. This needs a browser that can report an open menu. If a pick is lost, export the log and add it to your report. The cause of the lost picks in the forum report is not known yet, and this log is there to help find it (#15159 "Dropdowns unresponsive").
+
+### Bug Fixes
+- Fixed an open dropdown closing, and its pick being lost, when a panel rebuilt after a model finished loading. In a browser that can report an open menu, the panel now waits until the menu closes. This is a related fault: the lost picks in the forum report are not proven to be fixed (#15159 "Dropdowns unresponsive").
+- Fixed a reload of a saved sitch adding its stock models to every *Model* menu as file paths, and applying them to an object. A custom model is added as before, and an older save that holds a stock model path now shows the model's normal name (#15159 "Dropdowns unresponsive").
+
 ## Version 2.183.11 (2026-10-30)
 ### Improvements
 - **Timing Analysis report** (Time → *Timing Analysis...*): the report now names each KLV stream by its ids in the file, for example *KLV #0:3 [0x1002 = PID 4098]*. Before, the name was *Stream 1*. A new *Local Fields* section shows, for each stream, the MISB fields with "Local" in their names and their first five different values, and lists the KLV packets that Sitrec does not decode. For KLV data, the report now also starts with the name and size of the file. Before, the report had no file name. Clear the new *Show Filename* checkbox to remove the file line from the text, the copy and the download. This checkbox does not remove the Local Fields values.
