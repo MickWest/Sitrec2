@@ -65,10 +65,10 @@
   </g>
 
   <g transform="translate(24,318)">
-    <rect width="772" height="88" rx="6" fill="#f7f7f9" stroke="#bbc"/>
+    <rect width="772" height="98" rx="6" fill="#f7f7f9" stroke="#bbc"/>
     <text x="16" y="22" font-weight="700" fill="#345">Two consequences worth knowing</text>
-    <text x="16" y="41" fill="#456">• Detections are linked into tracks in reference coordinates, so the matching radius can be tight without</text>
-    <text x="28" y="56" fill="#456">losing anything — which is what stops neighbouring stars being confused during a fast pan.</text>
+    <text x="16" y="41" fill="#456">• Detections are linked into tracks in reference coordinates, so the matching radius can be tight,</text>
+    <text x="28" y="56" fill="#456">which is what stops neighbouring stars being confused during a fast pan.</text>
     <text x="16" y="76" fill="#456">• The map is solved twice: once with everything in it, then again using only the confirmed stars, because</text>
     <text x="28" y="91" fill="#456">a mover in the first pass pulls on the very transforms used to judge it.</text>
   </g>

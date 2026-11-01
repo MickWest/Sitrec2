@@ -6,7 +6,7 @@ Motion Analysis measures how the whole picture moves from one frame to the next.
 pans, tilts or flies over the ground, the background slides across the frame; Motion Analysis
 measures that slide on every frame, as a direction and a speed in pixels per frame. From that
 measurement it can draw the motion over the video, export it as a CSV file, stabilize the
-video, build a ground track, and stitch the frames into a panorama.
+video, build a track on the ground, and stitch the frames into a panorama.
 
 This page has seven parts:
 
@@ -30,10 +30,12 @@ turning, not from the scene itself.
 For each frame it records:
 
 - a **direction** and a **magnitude** (pixels per frame) of the background motion
-- a **confidence**, from how well the features agree
+- a **confidence**, a score from how many features agree and how good their tracks are. It is
+  not the probability that the measurement is correct
 - whether the frame is **good** (enough features and enough agreement) or **bad**
 
-A bad frame keeps the last good value on screen and is marked *BAD FRAME* on the overlay.
+A bad frame shows a value taken from the nearest good frames, and is marked *BAD FRAME* on the
+overlay.
 
 ### Motion Analysis, Point Track and "Motion (Background)"
 
@@ -70,8 +72,13 @@ Use Motion Analysis when you want the motion of the scene itself.
    - a line of text with *mag*, *conf* and *vec* (magnitude, confidence and the number of
      vectors), or *BAD FRAME* when the frame fails the quality checks
    - a small **Motion Angle** graph in the bottom-right corner, with the recent history of the
-     direction from −180° to +180°
+     direction from −180° to +180°. On this graph 0° is to the right, not straight up. Positive
+     angles are clockwise
 4. Press **Stop Analysis** to hide the overlay.
+
+![The Analyze Motion overlay on a generated aerial pan. Small green arrows cover the ground and point to the right. Longer red arrows end on three trucks and point in other directions. A large yellow arrow at the center is labelled 97.6° (100%). Below it is the text mag=6.00 conf=1.00 vec=280. A Motion Angle graph is in the bottom-right corner.](docimages/motion-analysis-overlay.jpg)
+
+Analyze Motion on a generated test clip: a pan over a drawn landscape, with three trucks that move on their own. The ground features have green arrows, because they agree with the background motion. The trucks have red arrows, because they do not. A red arrow shows the motion of the truck in the frame. This is the truck's own motion plus the pan, so the arrow does not follow the road exactly. Each small arrow is three times as long as the motion of its feature in one frame. The yellow arrow shows *97.6° (100%)*: the background moves to the right and slightly down. The text line shows *mag=6.00 conf=1.00 vec=280*. The line on the **Motion Angle** graph stays above the center of the graph, which is 0°. On this graph a positive angle is clockwise, so a line above the center means motion that points below straight right.
 
 While Analyze Motion is on, playback waits for each frame to be analyzed before it moves on,
 so playback runs at the speed of the analysis until those frames are done.
@@ -88,7 +95,16 @@ so playback runs at the speed of the analysis until those frames are done.
 2. Press **Stabilize Video**. Sitrec analyzes the range if necessary, then shifts every frame to
    cancel the background motion. The button changes to **Disable Stabilization**.
 3. Press **Disable Stabilization** to see the original video. Press **Stabilize Video** again to
-   switch the same stabilization back on without analyzing again.
+   switch the same stabilization back on without analyzing again. This keeps the old shifts even
+   if you have changed In/Out or the Tracking Parameters. To use new settings, reload the sitch.
+   Then, with Analyze Motion on, set the In/Out range and the Tracking Parameters again, and press
+   **Stabilize Video**. A reload keeps only what the sitch saved.
+4. To save the result, leave stabilization on and press **Render Source Video** in
+   **Video → Video Render & Export**.
+
+Stabilize Video reduces the shake of a camera that stays pointed roughly the same way. It does
+not undo a pan: the shift adds up over the range, so on a pan the picture slides out of the view
+at the speed of the pan, and black fills the rest. For a pan, make a panorama.
 
 ### Make a panorama
 
@@ -110,22 +126,33 @@ so playback runs at the speed of the analysis until those frames are done.
 |---|---|---|
 | **Analysis Resolution** | Original (no limit) | The video resolution used for analysis. Shared with the other video analysis tools. See [Performance](#performance) |
 | **Analysis pixels** | — | Shows the size that is analyzed, and warns when it is smaller than the source |
-| **Analyze Motion** / **Stop Analysis** | — | Switches the live analysis and its overlay on and off. **Stop Analysis** also stops a running analysis pass or panorama export |
+| **Analyze Motion** / **Stop Analysis** | — | Switches the live analysis and its overlay on and off. **Stop Analysis** also ends a running analysis pass |
 | **Use Local Compute** | on | Runs the full-range analysis in the optional SitrecBridge helper on your own computer, when it is installed and running. See [Local Compute](#local-compute) |
-| **Local Compute** | — | Status of the helper: *Not checked*, *Connecting...*, *Done (N frames)* or *Fallback:* and the reason |
-| **Create Track from Motion** | — | Analyzes the range and builds a green ground track from the motion. See below |
+| **Local Compute** | — | Status of the helper, for example *Not checked*, *Connecting...*, *Done (N frames)* or *Fallback:* and the reason |
+| **Create Track from Motion** | — | Analyzes the range and builds a green track on the ground from the motion. See below |
 | **Export Motion** | — | Downloads the per-frame motion as a CSV file. See below |
 | **Align with Flow** | off | Rotates the video on screen so that the background motion points to the right. Only has an effect while Analyze Motion is on |
 | **Stabilize Video** / **Disable Stabilization** | — | Shifts each frame to cancel the background motion. See below |
 | **Speed Overlay** | off | Appears while Analyze Motion is on. Shows a heat map of the feature speeds over the video, averaged in a grid. The color range is set from the slowest and fastest cells in the current frame |
 
-The **De-Fence** and **Panorama** folders are described in parts [D](#d-panoramas) and
+![The same video frame with Speed Overlay on. A blue tint covers most of the picture, and green and yellow patches spread down from the three trucks. The arrows and the Motion Angle graph stay on screen.](docimages/motion-analysis-speed-overlay.jpg)
+
+**Speed Overlay** on the clip and frame from [See the motion](#see-the-motion). The color of a cell shows its speed, from blue (the slowest cell in the frame) through green and yellow to red (the fastest). The ground is blue. The trucks move faster in the frame than the ground does, so the color moves to yellow and orange near them. Only a cell that holds a truck feature comes near full red. These cells are small, and the cells around them get lower values, so this picture shows almost no red. Most cells have no feature. Sitrec fills them in order from the top left, so values carry down and to the right. Each patch is therefore larger than its truck and spreads below it. The green ground below a truck is filled in, not measured. Each speed goes at the tail of its arrow, so a patch also sits behind its truck. The strip at the right edge has no tint, because no arrow starts there.
+
+**Create Track from Motion**, **Export Motion**, the first press of **Stabilize Video**, every
+panorama button and **Optimize Feature Tracking** also switch Analyze Motion on. It stays on,
+with its overlay, until you press **Stop Analysis**. Until then, playback waits for any frame
+that has not been analyzed.
+
+The **Panorama** and **De-Fence** folders are described in parts [D](#d-panoramas) and
 [E](#e-de-fence). The mask is in its own folder, **Video → Masking** (see
 [Masking](Masking.md)).
 
 ### Create Track from Motion
 
-This turns the measured motion into a track on the ground in the 3D view:
+This turns the measured motion into a track on the ground in the 3D view. On each frame the track
+moves by that frame's image motion, converted to meters. So it follows the motion of the picture.
+It is not the measured path of the camera or of an object.
 
 - It analyzes the In/Out range first, if that is not done yet.
 - It starts from the frame-0 position of the first of these that exists: the selected
@@ -141,21 +168,22 @@ This turns the measured motion into a track on the ground in the 3D view:
   **Analysis Resolution**.
 - The browser console shows the scale, and where the FOV and the distance came from.
 - Horizontal motion in the image moves the track east or west, and vertical motion moves it
-  north or south. The track stays 1 m above the terrain, or 1 m above the ellipsoid when there
-  is no terrain.
-- Frames without a good measurement are filled in from the nearest good frames.
+  north or south. The track stays 1 m above the terrain, or 1 m above the WGS84 ellipsoid (HAE,
+  see [Three Kinds of Height](GIS.md#three-kinds-of-height)) when there is no terrain.
+- Frames without a good measurement are filled in from the nearest good frames. This includes
+  frames outside the In/Out range: the track starts at frame 0, moves at the first good value
+  until In, and moves at the last good value after Out.
 
 Each press makes a new track (`motionTrack`, `motionTrack_2`, …), drawn in green.
 
 Because the scale is fixed and the image axes are mapped directly onto east/west and
-north/south, the result is a rough guide. It is not a camera reconstruction. Check the
-direction against something you know before you rely on it. For a camera path, use
-[Camera Motion (Background)](#camera-motion-background).
+north/south, the result is a rough guide. Check the direction against something you know before
+you rely on it. For a camera path, use [Camera Motion (Background)](#camera-motion-background).
 
 ### Export Motion
 
-**Export Motion** downloads a file named `<sitch>_motion_<date-time>.csv` with one row for each
-frame from In to Out:
+**Export Motion** downloads a file named `Sitrec-<sitch>_motion_<date-time>.csv` with one row for
+each frame from In to Out:
 
 | Column | Meaning |
 |---|---|
@@ -168,17 +196,25 @@ frame from In to Out:
 The angle and magnitude are the smoothed values (see **Smoothing** below). A frame with no
 result is written as 0.
 
-The same numbers are also available for custom graphs (**Show → Graphs → Add Custom Graph**), by choosing
-the **Analyze Motion** entity, then **X (raw)**, **Y (raw)**, **X (smoothed)** or **Y (smoothed)**, all in pixels.
+The motion is also available as X and Y components for custom graphs (**Show → Graphs → Add
+Custom Graph**), by choosing the **Analyze Motion** entity, then **X (raw)**, **Y (raw)**,
+**X (smoothed)** or **Y (smoothed)**, in pixels per frame. Raw is the value before **Smoothing**.
 
 ### Stabilize Video
 
 **Stabilize Video** adds up the frame-to-frame motion and shifts each frame back by the total, so
-the background stays still on screen. It moves the frame only; it does not rotate or scale it.
-Frames that were not analyzed count as no motion.
+the background stays close to where it was at the In frame. On a pan the picture leaves the view (see
+[Stabilize the video on the background](#stabilize-the-video-on-the-background)). It moves the
+frame only; it does not rotate or scale it. Frames that were not analyzed count as no motion.
+With **Skip Duplicates** on, a full-range pass measures a bad frame again over one frame step. If
+that also fails, the frame takes its motion from the nearest good frames.
 
-Point Track can also stabilize a video, but on a tracked object instead of the background. See
+A clip of plain sky has little for this to follow. Point Track can also stabilize a video, but on
+a tracked object instead of the background. See
 [Stabilization and stabilized rendering](PointTrack.md#c-stabilization-and-stabilized-rendering).
+
+Turn stabilization off before Point Track runs: the tracker reads the shifted picture (see
+[Point Tracking](PointTrack.md#the-standard-procedure)).
 
 ### Tracking Parameters
 
@@ -191,10 +227,10 @@ methods is shown only to administrators.)
 
 | Control | Default | Range | What it does |
 |---|---|---|---|
-| **Tracklet Length** | 3 | 1–10 | Number of frames in each tracklet. Longer is stricter about coherent motion |
+| **Tracklet Length** | 3 | 1–10 | Number of frame-to-frame steps in each tracklet. The default of 3 follows a feature across 4 frames. Longer is stricter about coherent motion |
 | **Skip Duplicates** | on | — | Finds repeated (duplicate) video frames, gives them zero motion, and leaves them out of the measurement |
 | **Blur Size** | 5 | 1–15 (odd) | Blur applied before features are found, so larger shapes are tracked instead of noise |
-| **Min Motion** | 0.2 | 0–2 | Smallest motion to use, in pixels per frame |
+| **Min Motion** | 0.2 | 0–2 | Motion below this, in pixels per frame, counts for less: its quality is multiplied by 0.7. It is left out if that puts it below **Min Quality** |
 | **Max Motion** | 100 | 10–200 | Largest motion to use |
 | **Smoothing** | 0.9 | 0.5–0.99 | How strongly the direction is smoothed from frame to frame. Higher is smoother but slower to react |
 | **Min Vector Count** | 5 | 1–50 | A frame with fewer motion vectors is a bad frame |
@@ -203,10 +239,10 @@ methods is shown only to administrators.)
 | **Min Distance** | 10 | 5–50 | Smallest spacing between features, in pixels |
 | **Quality Level** | 0.01 | 0.001–0.1 | How strong a corner must be to count as a feature |
 | **Max Track Error** | 15 | 5–50 | Largest tracking error for a feature to be kept |
-| **Min Quality** | 0.3 | 0–1 | Smallest quality for a feature's arrow to be drawn |
-| **Static Threshold** | 0.3 | 0.1–2 | Motion below this counts as static, as for burned-in text |
-| **Static Frames** | 15 | 5–30 | Frames needed to confirm that something is static |
-| **Inlier Threshold** | 0.6 | 0.3–0.9 | How closely vectors must agree with the consensus direction |
+| **Min Quality** | 0.3 | 0–1 | Smallest quality for a feature to be used. A feature below this is left out of the measurement and has no arrow. Quality falls with tracking error, and with a less straight or less even tracklet |
+| **Static Threshold** | 0.3 | 0.1–2 | Motion below this counts as static, as for burned-in text. The features of a steady pan slower than this can also count as static, so lower it for very slow pans |
+| **Static Frames** | 15 | 5–30 | Sets how soon an area counts as static: at 70% of this number, which is 11 frames at the default |
+| **Inlier Threshold** | 0.6 | 0.3–0.9 | How closely vectors must agree with the consensus direction. With **Reject Moving Objects** on, this only picks the starting group |
 | **Reject Moving Objects** | on | — | Fits one model of the background motion and leaves out things that move on their own, such as cars, whatever their direction or speed |
 | **Object Reject Px** | 3 | 1–10 | How far, in pixels, a vector may be from the background model and still count as background. Lower rejects movers more strictly |
 | **Linearity Threshold** | 0.9 | 0.5–1 | How straight a tracklet must be (1 = a perfect line) |
@@ -214,11 +250,12 @@ methods is shown only to administrators.)
 
 **Optimize** runs a search for better settings for the current frame. While it runs, the
 **Status** line shows its progress, and **Enough (Accept)** keeps the best settings found so
-far. **Abort (Reset)** puts the original settings back. When it finishes, **Status** lists what
-changed (Tracklet Length, Blur Size, Max Features, Min Quality).
+far. **Abort (Reset)** puts the original settings back. When it finishes, the sliders show the
+new settings. It changes only Tracklet Length, Blur Size, Max Features and Min Quality.
 
-The tracking parameters, and whether Analyze Motion was on, are saved with the sitch. The
-panorama and De-Fence options are not.
+If Analyze Motion is on when you save, the sitch keeps that state and the tracking parameters:
+analysis starts again with them when the sitch loads. The panorama and De-Fence options are not
+saved.
 
 ---
 
@@ -237,21 +274,26 @@ A panorama puts every frame of a pan in its place on one large image. Sitrec has
 Both use only the frames from In to Out. Frames are drawn in order, so later frames cover
 earlier ones.
 
+![A panorama of a generated landscape: a curved band from the upper left to the lower right, on a black background. Roads and field edges run on across the band with no break. On the long road that runs down to the right, left of center, only a jagged piece of one truck is left.](docimages/motion-analysis-panorama.jpg)
+
+A panorama from **Export Motion Pano Image** with the default options, made from the generated clip in [See the motion](#see-the-motion). The band follows the path of the pan, and black fills the area that no frame covers. The roads and field edges run on across the band with no break, which shows that the frames are aligned. The trucks moved during the pan, so each frame shows them at a different place on the ground. Two trucks are still in the last frame, which covers the earlier frames, so these two are whole. The third truck left the frame before the end. On the long road that runs down to the right, left of center, only a jagged piece of it is left, because later frames cover the rest.
+
 ### Motion Pano
 
 | Control | Output |
 |---|---|
-| **Export Motion Pano Image** | A PNG file, `<sitch>_motion_panorama_<date-time>.png`. A full-screen preview updates while it builds |
+| **Export Motion Pano Image** | A PNG file, `Sitrec-<sitch>_motion_panorama_<date-time>.png`. A full-screen preview updates while it builds |
 | **Export Motion Pano Video** | A 3840×2160 video at the sitch frame rate: the finished panorama, fitted and centered, with each live frame drawn over it in its place. MP4 (H.264) when the browser supports it, otherwise WebM. A progress panel has **Enough** and **Abort** buttons |
 
-The image uses **Pano Frame Step**; the video always uses every frame. There is no cancel button
-on the image preview: press **Stop Analysis** to stop it.
+The image uses **Pano Frame Step**; the video always uses every frame. The image preview covers
+the whole window and has no cancel button, so wait for it to finish. **Stop Analysis** can stop
+the image export only during the analysis pass, before the preview appears.
 
 **Motion Pano Options**
 
 | Control | Default | What it does |
 |---|---|---|
-| **Projection** | Similarity (2D) | **Similarity (2D)** places frames with a move, a turn and a scale only. It is fast, but for a camera that pans, tilts or zooms the error builds up across the panorama. **Perspective (Homography)** fits a full perspective transform to each frame, which registers pan/tilt/zoom footage correctly from edge to edge. If that fit fails, Sitrec falls back to Similarity |
+| **Projection** | Similarity (2D) | **Similarity (2D)** places frames with a flat move, plus a turn with **Rotate Frames (SfM)** and a scale with **Allow Frame Scaling**. It is fast, but for a camera that pans, tilts or zooms the error builds up across the panorama. **Perspective (Homography)** fits a full perspective transform to each frame, which registers pan/tilt/zoom footage correctly from edge to edge. If that fit fails, Sitrec falls back to Similarity |
 | **Rotate Frames (SfM)** | on | Turns each frame by its measured rotation as well as moving it, so camera roll is followed. When off, frames are only moved |
 | **Allow Frame Scaling** | off | With Rotate Frames: also applies the measured scale of each frame. Off keeps every frame the same size; on can make frames grow or shrink across the panorama |
 | **Pano Frame Step** | 1 | 1–60. Use every Nth frame (1 = every frame) |
@@ -268,7 +310,7 @@ only when **Rotate Frames (SfM)** is off and **Projection** is **Similarity (2D)
 
 | Control | Output |
 |---|---|
-| **Export Feature Pano Image** | A PNG file, `<sitch>_feature_panorama_<date-time>.png` |
+| **Export Feature Pano Image** | A PNG file, `Sitrec-<sitch>_feature_panorama_<date-time>.png` |
 | **Export Feature Pano Video** | A video in which each frame is warped into its place on the stitched panorama. Its size fits the panorama inside 3840×2160. MP4 (H.264) when supported, otherwise WebM |
 
 The frames are placed relative to the middle frame of the range. A full-screen overlay shows the
@@ -278,7 +320,7 @@ progress and has a **Cancel** button.
 
 | Control | Default | What it does |
 |---|---|---|
-| **Feature Source** | ORB Features | **ORB Features** finds and matches corner features again in each frame. **Motion Tracklets** uses the Motion Analysis tracklets, the same points followed across many frames. This is more consistent on soft or low-contrast content, and runs a Motion Analysis pass over the range first |
+| **Feature Source** | ORB Features | **ORB Features** finds and matches corner features again in each frame. **Motion Tracklets** uses the Motion Analysis tracklets, the same points followed across many frames. This is more consistent on soft or low-contrast content, and runs a Motion Analysis pass over the range first. With Motion Tracklets, **Feature Scale**, **Feature Contrast**, **Feature Count** and **Optimize Feature Tracking** have no effect: change the Tracking Parameters instead |
 | **Frame Step** | 1 | 1–60. Frames between stitched frames. Higher is faster |
 | **Crop** | 0 | 0–100 pixels to ignore at each edge of the frame |
 | **Use Mask** | on | Leaves masked regions out of feature detection and blending |
@@ -309,7 +351,7 @@ not need Motion Analysis, and it does not use the mask.
 
 | Control | Default | What it does |
 |---|---|---|
-| **Start De-Fence** | — | Builds the rebuilt scene and downloads it as a PNG file (`<sitch>_defence_<date-time>.png`), at half the video resolution on each axis. A preview shows the progress and has a **Cancel** button |
+| **Start De-Fence** | — | Builds the rebuilt scene and downloads it as a PNG file (`Sitrec-<sitch>_defence_<date-time>.png`), at half the video resolution on each axis. A preview shows the progress and has a **Cancel** button |
 | **Export De-Fence Video** | — | Downloads a video of the process: the original video, then the fence dissolving as the scene builds up, then the final result held for 2.5 seconds. At most 1920 pixels on the long side |
 | **Technique** | Colour + Motion | How fence and background are told apart. **Colour + Motion** uses both the color of the lit gaps and the motion. **Colour only** uses gap brightness and green, best when the fence is a distinct color. **Motion only** uses only the motion, best on fences with little texture |
 | **Variance Threshold** | 0.45 | 0–1. How much a pixel must change, once the fence is aligned, to count as background. Lower fills more holes but lets more fence through |
@@ -320,8 +362,9 @@ not need Motion Analysis, and it does not use the mask.
 
 ## F. Related Video tools
 
-These are separate folders in the **Video** menu. Each has its own **Analysis Resolution**
-control, which is shared with the others.
+These are separate folders in the **Video** menu. Camera Motion (Background), Horizon Extractor
+and Text Extraction show the same **Analysis Resolution** control as Motion Analysis: a change
+in one changes them all. The OSD Tracker does not have this control.
 
 ### Camera Motion (Background)
 
@@ -340,7 +383,7 @@ center (for a reticle). It does not use the **Video → Masking** mask.
 | **Visualize motion** | off | Draws the flow vectors over the video: green for background, red for outliers. Runs the analysis if there is no result yet |
 | **Auto scale (FOV/alt)** | on | Sets meters per pixel from the look camera's field of view, the camera altitude, the look-down angle and **Background alt** |
 | **Background alt (m)** | 0 | 0–12,000. Altitude of the surface seen in the video, such as a cloud top. The video cannot show this, so you must supply it |
-| **Manual m / pixel** | 12 | 1–100. The scale used when Auto scale is off |
+| **Manual m / pixel** | 12 | 1–100. The scale used when Auto scale is off. Sitrec also uses it when Auto scale cannot work: when the camera is not above **Background alt**, or looks down by 0.5° or less |
 | **Smoothing window** | 4 | 1–21 frames. Moving average of the per-frame motion. An even window cancels a two-frame repeat pattern in the source. Changing it works without a new analysis in the same session |
 | **dx -> East sign** / **dy -> North sign** | East - / North - | Which way image motion maps onto east and north |
 | **Swap dx/dy** | off | Swaps the two image axes |
@@ -353,9 +396,10 @@ center (for a reticle). It does not use the **Video → Masking** mask.
 | **Rebuild Path (no re-analyze)** | — | Rebuilds the path with new signs or scale, from the stored motion |
 | **Clear Path** | — | Removes the path |
 
-The path starts at the camera position at frame 0 and is drawn in orange with a line down to the
-ground and a marker at the current frame. It is also added as **Camera Motion Path** to the
-camera source options. The measured motion is kept in the browser's storage for this video,
+In a custom sitch the path starts at the **Manual** camera position at frame 0, even when the
+camera **Position** control uses a track, and **Auto scale** takes the camera altitude from the
+same point. The path is drawn in orange with a line down to the ground and a marker at the
+current frame. It is also added as **Camera Motion Path** to the camera source options. The measured motion is kept in the browser's storage for this video,
 so the path comes back after a page reload. Sitrec uses the stored motion again only for a video
 with the same file name and the same number of frames, and, for an MP4 file, the same video track
 size. It keeps one stored motion for each file name. Older versions of Sitrec stored the motion by
@@ -407,36 +451,38 @@ is a way to type those numbers in by hand, frame by frame, and turn them into da
    Altitude (ft) or Slant Range. Give it a **Name**.
 3. Click the series on the video, or press `\`, to start editing. Type the value you see.
 4. Press `]` or `[` to save the value and go one frame forward or back. Type a new value only
-   where the readout changes: each value is a **keyframe**, and it stays until the next one.
+   where the readout changes: each value is a **keyframe**, and it stays on screen until the
+   next one.
 5. Press `Enter` or `Esc` to stop editing.
 
 | Control or key | What it does |
 |---|---|
 | **Add New OSD Data Series** | Adds a series |
-| **Make Track** | Makes a position track from the shown, unlocked series: MGRS Zone + East + North, or Latitude + Longitude, with an optional altitude series |
+| **Make Track** | Makes a position track from MGRS Zone + East + North, or Latitude + Longitude, with an optional altitude series. If two series have the same type, it uses a shown, unlocked one |
 | **Show All** | Shows or hides every series |
 | **Export All Data** | Downloads `OSDData.zip` for the In/Out range (see below) |
 | **Graph** | **Show**, **X Axis**, **Y1 Axis**, **Y2 Axis**: plot series against the frame or against each other |
 | Per series: **Name**, **Type**, **Show**, **Lock**, **Remove Track** | **Lock** stops a series from being edited |
-| `\` | Start editing, or go to the next editable series |
+| `\` | Start editing the first shown, unlocked series. While you edit, `\` types a backslash |
 | `Tab` | While editing: the next editable series |
 | `PageUp` / `PageDown` | Go to the previous / next keyframe of any series |
 | `←` `→` `Home` `End` `Backspace` `Delete` | Edit the text while editing |
 
 Frames with keyframes are marked on the timeline. In a track made with **Make Track**, numeric
-values are interpolated in a straight line between keyframes, and the MGRS zone is held. An
-altitude is taken as above mean sea level. Without an altitude series, the track follows the
-ground.
+values are interpolated in a straight line between keyframes, and the MGRS zone is held. Before
+the first and after the last keyframe, numeric values continue along the line through the
+nearest two keyframes. An altitude is taken as above mean sea level (MSL). Without an altitude series,
+the track follows the ground.
 
 `OSDData.zip` holds one CSV file for each series (its keyframes only), plus `EveryKeyframe.csv`,
 `EverySecond.csv` and `EveryFrame.csv` with all the series side by side. Each row has `Frame`,
-`Time`, `Epoch` and `DateTime` columns. In the combined files, numeric series are interpolated
-between keyframes and other series hold their last value.
+`Time`, `Epoch` and `DateTime` columns. In the combined files, numeric series follow the same
+line as the track, and other series hold their last value.
 
 ### Text Extraction
 
 **Video → [BETA] Text Extraction** is shown only when Sitrec runs on your own computer
-(localhost or a local network address). It reads text in the video by optical character
+(localhost or a 192.168.x.x address). It reads text in the video by optical character
 recognition (OCR).
 
 1. Press **Enable Text Extraction**, then **Add Region**, and drag a box around the text.
@@ -455,15 +501,11 @@ stay in the page; there is no export.
 ### Masking
 
 Burned-in text, a reticle, a fence or trees can pull the measured motion away from the real
-background. Mask them in **Video → Masking** ([Masking](Masking.md)). The mask is shared by the
-video tools. With **Enable Mask** on:
-
-- Motion Analysis ignores features inside the mask
-- the motion panorama makes masked pixels transparent (**Use Mask in Pano**)
-- the feature panorama leaves masked regions out of detection and blending (**Use Mask**)
-
-Camera Motion (Background) and De-Fence do not use this mask. Changing the mask clears the
-Motion Analysis results, so the frames are analyzed again.
+background. Mask them in **Video → Masking** ([Masking](Masking.md)). With **Enable Mask** on,
+Motion Analysis ignores features inside the mask, and each panorama method has its own mask
+control (**Use Mask in Pano** and **Use Mask**). Camera Motion (Background) and De-Fence do not
+use this mask. For every tool, see [What uses the mask](Masking.md#what-uses-the-mask). Changing
+the mask clears the Motion Analysis results, so the frames are analyzed again.
 
 ### The In/Out range
 
@@ -474,7 +516,7 @@ Out, the Motion Analysis results are cleared.
 
 ### Performance
 
-- **One pass, then cached.** A full-range pass has up to three steps, shown on the button:
+- **One pass, then cached.** A full-range pass has several steps, shown on the button:
   *Detecting duplicate frames*, *Analyzing motion*, and *Filling motion gaps*. Results are kept
   for each frame, so the next export or stabilization uses them without a new pass.
 - **What clears the results:** any change in Tracking Parameters, the mask, the In/Out range,
@@ -483,7 +525,11 @@ Out, the Motion Analysis results are cleared.
   follows the video playback limit in Settings, and 1080p, 720p, 480p and 360p set a limit.
   A smaller size is faster and uses less memory, but can hide small detail. Changing it clears
   the decoded frames and stops a running analysis; start it again.
-- **Stopping.** **Stop Analysis** stops a running analysis pass or panorama export cleanly.
+- **Stopping.** **Stop Analysis** ends a running analysis pass, and a panorama export in that
+  pass then stops without a file. **Export Motion Pano Video** opens its progress panel only
+  after the panorama is built. Until then, **Stop Analysis** stops it, and no file is saved. A
+  full-screen panorama preview covers the button: see [Motion Pano](#motion-pano) and
+  [Feature Pano](#feature-pano).
 - **Large panoramas** are scaled down to fit the browser's canvas limits (see
   [Size limits](#size-limits)).
 
@@ -494,7 +540,10 @@ to the optional SitrecBridge helper on your own computer, which runs it with nat
 Python/OpenCV and returns the result. The overlay, graph, panoramas, stabilization, CSV export
 and track creation then work as usual. If the helper is not running, or cannot open the video,
 Sitrec analyzes in the browser and the **Local Compute** line shows *Fallback:* with the reason.
-To install the helper, see [Install or update Local Compute](MCPBridge.md#6-install-or-update-local-compute)
+
+Local Compute works only when Sitrec runs at `local.metabunk.org`, `localhost` or `127.0.0.1`. At
+any other address, such as `www.metabunk.org`, the analysis runs in the browser. To install the
+helper, see [Install or update Local Compute](MCPBridge.md#6-install-or-update-local-compute)
 in the MCP Bridge guide.
 
 ### Tips
@@ -513,7 +562,7 @@ in the MCP Bridge guide.
 
 - [Point Tracking](PointTrack.md) — follow one object through the video, and stabilize on it
 - [Masking](Masking.md) — keep the analysis off overlays, fences and trees
-- [Loading Video](LoadingVideo.md)
-- [Star Tracker](StarTracker.md) — measure the field of view from the stars
+- [Loading and Adjusting Video](LoadingVideo.md)
+- [Star Tracker](StarTracker.md) — estimate the field of view from the stars
 - [The Ideas Behind the Traverse Analysis](TraverseConcepts.md)
 - [Keyboard Shortcuts](KeyboardShortcuts.md)
