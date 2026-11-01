@@ -1,54 +1,62 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="780" height="600" viewBox="0 0 780 600" font-family="Helvetica, Arial, sans-serif">
-  <rect width="780" height="600" fill="#ffffff"/>
+<svg xmlns="http://www.w3.org/2000/svg" width="780" height="610" viewBox="0 0 780 610" font-family="Helvetica, Arial, sans-serif">
+  <rect width="780" height="610" fill="#ffffff"/>
   <text x="390" y="30" text-anchor="middle" font-size="20" font-weight="700" fill="#1a1a1a">Building the ghost in pixel space</text>
   <defs>
-    <marker id="m1" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#c0392b"/></marker>
-    <marker id="m2" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#8e44ad"/></marker>
+    <marker id="m2" markerUnits="userSpaceOnUse" markerWidth="13" markerHeight="13" refX="11.0" refY="6.5" orient="auto"><path d="M0,0 L13,6.5 L0,13 z" fill="#8e44ad"/></marker>
+    <marker id="m3" markerUnits="userSpaceOnUse" markerWidth="9" markerHeight="9" refX="7.6" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#16a085"/></marker>
   </defs>
 
-  <!-- video frame -->
-  <rect x="200" y="150" width="380" height="290" fill="#f7f9fa" stroke="#9fb0bd" stroke-width="1.5"/>
-  <text x="210" y="170" font-size="12" fill="#9aa">video frame (original pixels)</text>
+  <!-- Worked example, computed with the formulas of CNodeLensGhost.js:
+       vFOV 40 deg, frame 390 x 220, fpx 302.2, sr/sf 0.2, su/sf 0.72, lean 6 deg,
+       centre offset (50, -15), magX 0.9, magY 0.3. -->
 
-  <!-- principal point (centre + offset) -->
-  <circle cx="390" cy="295" r="5" fill="#2980b9"/>
-  <text x="400" y="290" font-size="13" fill="#2980b9" font-weight="700">principal point</text>
-  <text x="400" y="306" font-size="11" fill="#2980b9">(centre + offset)</text>
+  <!-- video frame -->
+  <rect x="195" y="190" width="390" height="220" fill="#f7f9fa" stroke="#9fb0bd" stroke-width="1.5"/>
+  <text x="205" y="208" font-size="12" fill="#7f8c8d">video frame (original pixels)</text>
+
+  <!-- step 1: the mirror of the Sun image through the frame centre (lean 0) -->
+  <line x1="450.4" y1="82.4" x2="329.6" y2="517.6" stroke="#c0392b" stroke-width="1.5" stroke-dasharray="7 5" opacity="0.55"/>
+  <text x="414" y="166" text-anchor="end" font-size="12" fill="#c0392b" font-weight="600">1. mirror through the frame centre</text>
+
+  <!-- on-video reflection line, first segment: Sun image to principal point -->
+  <line x1="450.4" y1="82.4" x2="440" y2="285" stroke="#555" stroke-width="1.3" stroke-dasharray="3 4"/>
+  <text x="462" y="150" font-size="12" fill="#555" font-weight="600">reflection line on the video:</text>
+  <text x="462" y="166" font-size="12" fill="#555">Sun image → principal point → ghost</text>
+
+  <!-- frame centre -->
+  <circle cx="390" cy="300" r="4" fill="#fff" stroke="#555" stroke-width="1.5"/>
+  <text x="380" y="298" text-anchor="end" font-size="12" fill="#555">frame centre</text>
 
   <!-- Sun's direct image, off the top -->
-  <circle cx="455" cy="72" r="15" fill="#f5b301"/>
-  <g stroke="#f5b301" stroke-width="2.5" stroke-linecap="round">
-    <line x1="455" y1="51" x2="455" y2="44"/><line x1="476" y1="72" x2="483" y2="72"/>
-    <line x1="439" y1="56" x2="433" y2="50"/><line x1="471" y1="56" x2="477" y2="50"/>
-  </g>
-  <text x="478" y="76" font-size="13" fill="#c98a00" font-weight="700">Sun image</text>
-  <text x="478" y="92" font-size="11" fill="#c98a00">(off the top)</text>
+  <circle cx="450" cy="82" r="15" fill="#f5b301"/>
+  <g stroke="#f5b301" stroke-width="2.5" stroke-linecap="round"><line x1="471" y1="82" x2="479" y2="82"/><line x1="464.8" y1="96.8" x2="470.5" y2="102.5"/><line x1="450" y1="103" x2="450" y2="111"/><line x1="435.2" y1="96.8" x2="429.5" y2="102.5"/><line x1="429" y1="82" x2="421" y2="82"/><line x1="435.2" y1="67.2" x2="429.5" y2="61.5"/><line x1="450" y1="61" x2="450" y2="53"/><line x1="464.8" y1="67.2" x2="470.5" y2="61.5"/></g>
+  <text x="496" y="78" font-size="13" fill="#b07a00" font-weight="700">Sun image</text>
+  <text x="496" y="94" font-size="11" fill="#b07a00">(off the top of the frame)</text>
 
-  <!-- reflection line: sun -> through principal point -> reflected source -->
-  <!-- pure mirror of (455,72) through (390,295) = (325,518); lean shifts it up to (350,470) -->
-  <line x1="455" y1="72" x2="350" y2="470" stroke="#c0392b" stroke-width="2" stroke-dasharray="7 5" marker-end="url(#m1)"/>
-  <text x="120" y="250" font-size="12" fill="#c0392b" font-weight="600">reflect off window,</text>
-  <text x="120" y="266" font-size="12" fill="#c0392b" font-weight="600">through the centre</text>
+  <!-- step 2: lean moves the mirror image to the reflected source -->
+  <circle cx="329.6" cy="517.6" r="4" fill="#c0392b" opacity="0.45"/>
+  <text x="341.6" y="522.6" font-size="11" fill="#c0392b">mirror image (lean 0)</text>
+  <line x1="329.6" y1="517.6" x2="336.4" y2="439" stroke="#16a085" stroke-width="1.8" marker-end="url(#m3)"/>
+  <text x="354" y="476" font-size="12" fill="#16a085" font-weight="600">2. lean shift (2θ)</text>
 
-  <!-- pure-mirror point (faint) and lean shift -->
-  <circle cx="325" cy="518" r="4" fill="#c0392b" opacity="0.35"/>
-  <text x="250" y="540" font-size="11" fill="#c0392b" opacity="0.6">mirror (lean=0)</text>
-  <line x1="325" y1="518" x2="350" y2="470" stroke="#16a085" stroke-width="1.5" stroke-dasharray="3 3"/>
-  <text x="360" y="500" font-size="11" fill="#16a085" font-weight="600">lean shift (2θ)</text>
+  <circle cx="336.4" cy="433" r="5" fill="#c0392b"/>
+  <text x="324.4" y="438" text-anchor="end" font-size="13" fill="#c0392b" font-weight="700">reflected source</text>
 
-  <!-- reflected source point -->
-  <circle cx="350" cy="470" r="5" fill="#c0392b"/>
-  <text x="360" y="466" font-size="13" fill="#c0392b" font-weight="700">reflected source</text>
+  <!-- step 3: ghost = p - mag*(refl - p). A positive mag puts the ghost on the far side of p.
+       magX differs from magY, so the path bends at p. -->
+  <polyline points="336.4,433 440,285 514.3,249.6" fill="none" stroke="#8e44ad" stroke-width="2.5" marker-end="url(#m2)"/>
+  <text x="404" y="362" font-size="13" fill="#8e44ad" font-weight="700">3. × magnification</text>
+  <text x="404" y="378" font-size="11" fill="#8e44ad">(to the far side of the principal point)</text>
 
-  <!-- magnify about principal point: ghost = pp + mag*(refl-pp), mag~0.45 -> (372,374) -->
-  <line x1="350" y1="470" x2="374" y2="380" stroke="#8e44ad" stroke-width="2.5" marker-end="url(#m2)"/>
-  <text x="392" y="430" font-size="13" fill="#8e44ad" font-weight="700">× magnification</text>
-  <text x="392" y="446" font-size="11" fill="#8e44ad">(about principal point)</text>
+  <!-- principal point -->
+  <circle cx="440" cy="285" r="5" fill="#2980b9"/>
+  <text x="452" y="302" font-size="13" fill="#2980b9" font-weight="700">principal point</text>
+  <text x="452" y="317" font-size="11" fill="#2980b9">(frame centre + offset)</text>
 
   <!-- the ghost disc -->
-  <circle cx="372" cy="374" r="22" fill="#c0392b" fill-opacity="0.22" stroke="#c0392b" stroke-width="1.5"/>
-  <circle cx="372" cy="374" r="7" fill="#fff" stroke="#c0392b" stroke-width="1.2"/>
-  <text x="372" y="338" text-anchor="middle" font-size="14" fill="#c0392b" font-weight="700">GHOST</text>
+  <circle cx="533.2" cy="240.6" r="20" fill="#c0392b" fill-opacity="0.22" stroke="#c0392b" stroke-width="1.5"/>
+  <text x="533.2" y="213.6" text-anchor="middle" font-size="14" fill="#c0392b" font-weight="700">GHOST</text>
 
-  <text x="390" y="582" text-anchor="middle" font-size="13" fill="#555">ghostX = pX − magX·(reflX − pX)   ·   ghostY = pY − magY·(reflY − pY)</text>
+  <text x="390" y="564" text-anchor="middle" font-size="12" fill="#555">Here Window Lean and the centre offset are not 0, and magX ≠ magY, so the path bends.</text>
+  <text x="390" y="590" text-anchor="middle" font-size="13" fill="#555">ghostX = pX − magX·(reflX − pX)   ·   ghostY = pY − magY·(reflY − pY)</text>
 </svg>

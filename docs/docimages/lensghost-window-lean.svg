@@ -2,55 +2,57 @@
   <rect width="800" height="470" fill="#ffffff"/>
   <text x="400" y="30" text-anchor="middle" font-size="20" font-weight="700" fill="#1a1a1a">Window lean: tilt the window by θ → reflected ray rotates by 2θ</text>
   <defs>
-    <marker id="o2" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#e8920c"/></marker>
-    <marker id="r2" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#c0392b"/></marker>
-    <marker id="n2" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#16a085"/></marker>
+    <marker id="o2" markerUnits="userSpaceOnUse" markerWidth="13" markerHeight="13" refX="11.0" refY="6.5" orient="auto"><path d="M0,0 L13,6.5 L0,13 z" fill="#e8920c"/></marker>
+    <marker id="r2" markerUnits="userSpaceOnUse" markerWidth="13" markerHeight="13" refX="11.0" refY="6.5" orient="auto"><path d="M0,0 L13,6.5 L0,13 z" fill="#c0392b"/></marker>
+    <marker id="n2" markerUnits="userSpaceOnUse" markerWidth="11" markerHeight="11" refX="9.3" refY="5.5" orient="auto"><path d="M0,0 L11,5.5 L0,11 z" fill="#16a085"/></marker>
+    <marker id="b2" markerUnits="userSpaceOnUse" markerWidth="13" markerHeight="13" refX="11.0" refY="6.5" orient="auto"><path d="M0,0 L13,6.5 L0,13 z" fill="#2980b9"/></marker>
   </defs>
 
+  <!-- The camera looks LEFT. n = (0, sin th, cos th) in (right, up, heading), th = 15 deg.
+       The Sun is 35 deg above the boresight. Reflected rays are at 2 th - 35 deg. -->
   <!-- reflection point P=(400,270) -->
-  <!-- boresight -->
-  <line x1="150" y1="270" x2="690" y2="270" stroke="#2980b9" stroke-width="2.5"/>
-  <text x="600" y="262" font-size="14" fill="#2980b9" font-weight="700">boresight (heading)</text>
+  <!-- boresight: heading points left, toward the scene -->
+  <line x1="690" y1="270" x2="150" y2="270" stroke="#2980b9" stroke-width="2.5" marker-end="url(#b2)"/>
+  <text x="150" y="262" font-size="14" fill="#2980b9" font-weight="700">boresight (heading)</text>
+  <text x="690" y="262" text-anchor="end" font-size="12" fill="#777">telescope</text>
 
   <!-- window at theta=0 (reference): vertical, dashed -->
-  <line x1="400" y1="160" x2="400" y2="380" stroke="#16a085" stroke-width="3" stroke-dasharray="7 5" opacity="0.6"/>
-  <text x="408" y="175" font-size="12" fill="#16a085" opacity="0.85">window θ=0</text>
+  <line x1="400" y1="152" x2="400" y2="392" stroke="#16a085" stroke-width="3" stroke-dasharray="7 5" opacity="0.6"/>
+  <text x="400" y="144" text-anchor="middle" font-size="12" fill="#0f7a66">window θ=0</text>
 
-  <!-- window leaned by theta=15 deg: along (-0.256,0.967) -->
-  <line x1="428" y1="164" x2="372" y2="376" stroke="#16a085" stroke-width="7" stroke-linecap="round"/>
-  <text x="436" y="372" font-size="13" fill="#16a085" font-weight="700">flat window (lean θ)</text>
+  <!-- window leaned by theta: the top edge leans back, toward the telescope -->
+  <line x1="428.5" y1="163.7" x2="371.5" y2="376.3" stroke="#16a085" stroke-width="7" stroke-linecap="round"/>
+  <text x="442" y="180" font-size="13" fill="#16a085" font-weight="700">flat window (lean θ)</text>
 
-  <!-- window normal (outward, up-left): from P toward (313,237) -->
-  <line x1="400" y1="270" x2="313" y2="237" stroke="#16a085" stroke-width="2" marker-end="url(#n2)"/>
-  <text x="300" y="228" font-size="13" fill="#16a085" font-weight="600">window normal n</text>
+  <!-- window normal, perpendicular to the window: 15 deg above the boresight -->
+  <line x1="400" y1="270" x2="293.7" y2="241.5" stroke="#16a085" stroke-width="2" marker-end="url(#n2)"/>
+  <text x="287.7" y="233.5" text-anchor="end" font-size="13" fill="#16a085" font-weight="600">window normal n</text>
 
-  <!-- theta arc between boresight(-x) and normal -->
-  <path d="M 320 270 A 80 80 0 0 0 322.4 249.6" fill="none" stroke="#1a1a1a" stroke-width="1.5"/>
-  <text x="300" y="262" font-size="14" fill="#1a1a1a" font-weight="700">θ</text>
+  <!-- theta arc between the boresight and the normal -->
+  <path d="M 320 270 A 80 80 0 0 1 322.7 249.3" fill="none" stroke="#1a1a1a" stroke-width="1.5"/>
+  <text x="330" y="264" font-size="14" fill="#1a1a1a" font-weight="700">θ</text>
 
-  <!-- incoming sun ray: from sun(190,100) to P -->
-  <circle cx="178" cy="92" r="16" fill="#f5b301"/>
-  <g stroke="#f5b301" stroke-width="2.5" stroke-linecap="round">
-    <line x1="178" y1="69" x2="178" y2="61"/><line x1="201" y1="92" x2="209" y2="92"/>
-    <line x1="161" y1="75" x2="155" y2="69"/><line x1="195" y1="75" x2="201" y2="69"/>
-  </g>
-  <text x="150" y="125" font-size="14" fill="#c98a00" font-weight="700">Sun</text>
-  <line x1="196" y1="108" x2="394" y2="266" stroke="#e8920c" stroke-width="3" marker-end="url(#o2)"/>
+  <!-- incoming sun ray -->
+  <circle cx="179" cy="115" r="16" fill="#f5b301"/>
+  <g stroke="#f5b301" stroke-width="2.5" stroke-linecap="round"><line x1="201" y1="115" x2="209" y2="115"/><line x1="194.6" y1="130.6" x2="200.2" y2="136.2"/><line x1="179" y1="137" x2="179" y2="145"/><line x1="163.4" y1="130.6" x2="157.8" y2="136.2"/><line x1="157" y1="115" x2="149" y2="115"/><line x1="163.4" y1="99.4" x2="157.8" y2="93.8"/><line x1="179" y1="93" x2="179" y2="85"/><line x1="194.6" y1="99.4" x2="200.2" y2="93.8"/></g>
+  <text x="214.8" y="120.1" font-size="14" fill="#b07a00" font-weight="700">Sun</text>
+  <line x1="199.3" y1="129.5" x2="394.3" y2="266" stroke="#e8920c" stroke-width="3" marker-end="url(#o2)"/>
 
-  <!-- reflected ray at theta=0: direction (-0.819,0.573) -> (269,362) faint -->
-  <line x1="400" y1="270" x2="269" y2="362" stroke="#c0392b" stroke-width="2" stroke-dasharray="7 5" opacity="0.55"/>
-  <text x="210" y="382" font-size="12" fill="#c0392b" opacity="0.8">reflected (θ=0)</text>
+  <!-- reflected ray at theta=0 -->
+  <line x1="400" y1="270" x2="268.9" y2="361.8" stroke="#c0392b" stroke-width="2" stroke-dasharray="7 5" opacity="0.55"/>
+  <text x="262.9" y="375.8" text-anchor="end" font-size="12" fill="#c0392b">reflected (θ=0)</text>
 
-  <!-- reflected ray at theta=15: direction (-0.996,0.087) -> (241,284) solid -->
-  <line x1="400" y1="270" x2="241" y2="284" stroke="#c0392b" stroke-width="3" marker-end="url(#r2)"/>
-  <text x="150" y="300" font-size="13" fill="#c0392b" font-weight="700">reflected ray (θ)</text>
+  <!-- reflected ray at theta -->
+  <line x1="400" y1="270" x2="240.6" y2="283.9" stroke="#c0392b" stroke-width="3" marker-end="url(#r2)"/>
+  <text x="232.6" y="289.9" text-anchor="end" font-size="13" fill="#c0392b" font-weight="700">reflected ray (θ)</text>
 
-  <!-- 2theta arc between the two reflected rays -->
-  <path d="M 290 332 A 120 120 0 0 0 281.5 290" fill="none" stroke="#1a1a1a" stroke-width="1.5"/>
-  <text x="262" y="322" font-size="14" fill="#1a1a1a" font-weight="700">2θ</text>
+  <!-- 2 theta arc between the two reflected rays -->
+  <path d="M 289.4 347.4 A 135 135 0 0 1 265.5 281.8" fill="none" stroke="#1a1a1a" stroke-width="1.5"/>
+  <text x="259" y="326.3" text-anchor="middle" font-size="14" fill="#1a1a1a" font-weight="700">2θ</text>
 
   <!-- reflection point -->
   <circle cx="400" cy="270" r="4.5" fill="#1a1a1a"/>
 
-  <text x="400" y="445" text-anchor="middle" font-size="13" fill="#555">A forward lean tilts the window in the vertical plane, so the ghost shifts mostly vertically.</text>
+  <text x="400" y="430" text-anchor="middle" font-size="13" fill="#555">The window leans back in the vertical plane, so the ghost shifts mostly vertically.</text>
+  <text x="400" y="450" text-anchor="middle" font-size="13" fill="#555">This is the geometry of the model, not a light path into the telescope.</text>
 </svg>

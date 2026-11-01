@@ -1,47 +1,49 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="840" height="430" viewBox="0 0 840 430" font-family="Helvetica, Arial, sans-serif">
   <rect width="840" height="430" fill="#ffffff"/>
-  <text x="420" y="30" text-anchor="middle" font-size="20" font-weight="700" fill="#1a1a1a">Image roll makes the disc reverse horizontally (the scene never does)</text>
+  <text x="420" y="30" text-anchor="middle" font-size="20" font-weight="700" fill="#1a1a1a">In the model, image roll can reverse the disc horizontally</text>
   <defs>
-    <marker id="sv" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#e8920c"/></marker>
-    <marker id="rot" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#8e44ad"/></marker>
+    <marker id="sv" markerUnits="userSpaceOnUse" markerWidth="13" markerHeight="13" refX="11.0" refY="6.5" orient="auto"><path d="M0,0 L13,6.5 L0,13 z" fill="#e8920c"/></marker>
+    <marker id="sv0" markerUnits="userSpaceOnUse" markerWidth="13" markerHeight="13" refX="11.0" refY="6.5" orient="auto"><path d="M0,0 L13,6.5 L0,13 z" fill="#efc07a"/></marker>
+    <marker id="rot" markerUnits="userSpaceOnUse" markerWidth="10" markerHeight="10" refX="8.5" refY="5.0" orient="auto"><path d="M0,0 L10,5.0 L0,10 z" fill="#8e44ad"/></marker>
   </defs>
 
   <!-- ===== Panel A: mechanism ===== -->
-  <text x="200" y="72" text-anchor="middle" font-size="15" font-weight="700" fill="#444">Mechanism</text>
+  <text x="200" y="70" text-anchor="middle" font-size="15" font-weight="700" fill="#444">Mechanism</text>
   <!-- frame -->
-  <rect x="95" y="95" width="210" height="210" fill="#f7f9fa" stroke="#9fb0bd" stroke-width="1.5"/>
-  <circle cx="200" cy="200" r="4" fill="#2980b9"/>
-  <text x="200" y="320" text-anchor="middle" font-size="12" fill="#2980b9">frame centre</text>
-  <!-- sun offset vector (large, up, slight right) at phi=0 (faint) -->
-  <line x1="200" y1="200" x2="223" y2="60" stroke="#e8920c" stroke-width="2.5" stroke-dasharray="6 4" opacity="0.55" marker-end="url(#sv)"/>
-  <!-- rolled vector phi=-14 (rotate CW ~14 deg about centre): (223,60) rotated -->
-  <line x1="200" y1="200" x2="257" y2="73" stroke="#e8920c" stroke-width="3" marker-end="url(#sv)"/>
-  <text x="262" y="70" font-size="12" fill="#c98a00" font-weight="700">Sun offset</text>
-  <text x="262" y="86" font-size="11" fill="#c98a00">(rolled by φ)</text>
-  <text x="150" y="58" font-size="11" fill="#c98a00" opacity="0.8">φ=0</text>
-  <!-- roll arc -->
-  <path d="M 223 60 A 145 145 0 0 1 257 73" fill="none" stroke="#8e44ad" stroke-width="2" marker-end="url(#rot)"/>
-  <text x="232" y="44" font-size="13" fill="#8e44ad" font-weight="700">φ</text>
+  <rect x="95" y="140" width="210" height="210" fill="#f7f9fa" stroke="#9fb0bd" stroke-width="1.5"/>
+  <circle cx="200" cy="245" r="4" fill="#2980b9"/>
+  <text x="190" y="262" text-anchor="end" font-size="12" fill="#2980b9">frame centre</text>
   <!-- X projections -->
-  <line x1="223" y1="60" x2="223" y2="305" stroke="#bbb" stroke-width="1" stroke-dasharray="3 3"/>
-  <line x1="257" y1="73" x2="257" y2="305" stroke="#bbb" stroke-width="1" stroke-dasharray="3 3"/>
-  <text x="200" y="356" text-anchor="middle" font-size="13" fill="#444" font-weight="600">sr′ = sr·cos φ + su·sin φ</text>
-  <text x="200" y="375" text-anchor="middle" font-size="11" fill="#777">large vertical su bleeds into the X channel</text>
+  <line x1="223" y1="105" x2="223" y2="350" stroke="#bbb" stroke-width="1" stroke-dasharray="3 3"/>
+  <line x1="256.2" y1="114.7" x2="256.2" y2="350" stroke="#bbb" stroke-width="1" stroke-dasharray="3 3"/>
+  <text x="223" y="367" text-anchor="middle" font-size="12" fill="#777">sr</text>
+  <text x="256.2" y="367" text-anchor="middle" font-size="12" fill="#777">sr′</text>
+  <!-- Sun offset at phi=0 (faint) -->
+  <line x1="200" y1="245" x2="223" y2="105" stroke="#efc07a" stroke-width="2.5" stroke-dasharray="6 4" marker-end="url(#sv0)"/>
+  <!-- Sun offset rolled by 14 deg. sr' = sr cos(phi) + su sin(phi) moves it to the right for su > 0 -->
+  <line x1="200" y1="245" x2="256.2" y2="114.7" stroke="#e8920c" stroke-width="3" marker-end="url(#sv)"/>
+  <text x="266.2" y="116.7" font-size="12" fill="#b07a00" font-weight="700">Sun offset</text>
+  <text x="266.2" y="132.7" font-size="11" fill="#b07a00">(rolled by φ)</text>
+  <text x="215" y="109" text-anchor="end" font-size="11" fill="#b07a00">φ = 0</text>
+  <!-- roll arc -->
+  <path d="M 223 93 A 153.9 153.9 0 0 1 260.9 103.7" fill="none" stroke="#8e44ad" stroke-width="2" marker-end="url(#rot)"/>
+  <text x="239.6" y="85" text-anchor="middle" font-size="13" fill="#8e44ad" font-weight="700">φ</text>
+  <text x="200" y="395" text-anchor="middle" font-size="13" fill="#444" font-weight="600">sr′ = sr·cos φ + su·sin φ</text>
+  <text x="200" y="414" text-anchor="middle" font-size="11" fill="#777">part of the large vertical su moves into the X channel</text>
 
-  <!-- ===== Panel B: result ===== -->
-  <text x="640" y="72" text-anchor="middle" font-size="15" font-weight="700" fill="#444">Result — disc X vs frame</text>
+  <!-- ===== Panel B: result. A sketch: not tool output ===== -->
+  <text x="635" y="70" text-anchor="middle" font-size="15" font-weight="700" fill="#444">Sketch: disc X against frame</text>
   <!-- axes -->
   <line x1="470" y1="100" x2="470" y2="320" stroke="#888" stroke-width="1.5"/>
   <line x1="470" y1="320" x2="800" y2="320" stroke="#888" stroke-width="1.5"/>
-  <text x="455" y="210" text-anchor="middle" font-size="12" fill="#888" transform="rotate(-90 455 210)">disc X (px)</text>
-  <text x="635" y="345" text-anchor="middle" font-size="12" fill="#888">frame</text>
+  <text x="455" y="210" text-anchor="middle" font-size="12" fill="#777" transform="rotate(-90 455 210)">disc X (px)</text>
+  <text x="635" y="345" text-anchor="middle" font-size="12" fill="#777">frame</text>
   <!-- no-roll monotonic line -->
   <line x1="478" y1="300" x2="795" y2="150" stroke="#888" stroke-width="2.5" stroke-dasharray="7 5"/>
-  <text x="690" y="135" font-size="12" fill="#888" font-weight="600">no roll → monotonic</text>
-  <!-- with-roll V curve -->
-  <polyline points="478,212 533,272 590,307 645,272 705,205 795,118" fill="none" stroke="#c0392b" stroke-width="3"/>
+  <text x="640" y="208" text-anchor="end" font-size="12" fill="#666" font-weight="600">no roll → monotonic</text>
+  <!-- with-roll curve -->
+  <path d="M 478 212 C 487.2 222 514.3 256.2 533 272 C 551.7 287.8 571.3 307 590 307 C 608.7 307 625.8 289 645 272 C 664.2 255 680 230.7 705 205 C 730 179.3 780 132.5 795 118" fill="none" stroke="#c0392b" stroke-width="3"/>
   <circle cx="590" cy="307" r="4.5" fill="#c0392b"/>
-  <text x="560" y="300" text-anchor="end" font-size="11" fill="#c0392b" font-weight="700">turnaround</text>
-  <text x="610" y="135" font-size="12" fill="#c0392b" font-weight="700">with measured roll → reverses</text>
-  <text x="640" y="405" text-anchor="middle" font-size="12" fill="#555">R² of fit:  no roll ≈ 0.44   ·   with roll ≈ 0.99</text>
+  <text x="590" y="281" text-anchor="middle" font-size="11" fill="#666" font-weight="600">turnaround</text>
+  <text x="772" y="128" text-anchor="end" font-size="12" fill="#666" font-weight="600">with roll → reverses</text>
 </svg>
