@@ -5,14 +5,17 @@
 The Satellites menu loads orbital data for satellites and controls how they are drawn. Sitrec
 calculates where every loaded satellite is at the sitch time, whether it is in sunlight, and
 whether it is flaring (reflecting the Sun toward the camera). Satellites appear as points of
-light in both 3D views.
+light in the 3D views. The main view shows the whole constellation. The look view shows only what
+the brightness model and **Sat Cut-Off** allow: see [Brightness and flares](#brightness-and-flares).
 
 Satellite orbits are described by **TLEs** (two-line element sets) or by **OMM** records
 (Orbit Mean-Elements Messages, the newer format that the same catalogs now publish). Sitrec reads
-both. This page says "TLE data" for either.
+both. This page says "TLE data" for either. The numbers in these records that describe an orbit
+are called **elements**. They apply at a known date, and they get less accurate as time passes
+from that date.
 
 This page is a reference for every control. For a step-by-step guide to recreating a
-Starlink flare sighting, see [Investigating Starlink Flares](Starlink.md).
+Starlink flare sighting, see [Investigating Starlink Flares With Sitrec](Starlink.md).
 
 - [Loading satellite data](#loading-satellite-data)
 - [Which satellites are shown](#which-satellites-are-shown)
@@ -28,8 +31,9 @@ Starlink flare sighting, see [Investigating Starlink Flares](Starlink.md).
 
 ## Loading satellite data
 
-No satellites are shown until TLE data is loaded. There are two ways to load it: from the
-server with a button in the Satellites menu, or by dragging a file into Sitrec.
+No satellites are shown until TLE data is loaded. There are three ways to load it: from the
+server with a button in the Satellites menu, by dragging a file into Sitrec, or by pasting the
+lines of a TLE into the Sitrec window.
 
 ### From the server
 
@@ -38,7 +42,7 @@ server with a button in the Satellites menu, or by dragging a file into Sitrec.
 | Button | What it loads |
 |---|---|
 | **Load LEO Satellites For Date** | Low Earth orbit payloads (satellites, not rocket bodies or debris) for the sitch date. This is the normal choice |
-| **Load CURRENT Starlink** | The Starlink satellites as they are **now**, in real time. Not for a past date |
+| **Load CURRENT Starlink** | The Starlink satellites as they are **now**, in real time. Not for a past date, except an event in the last day or two, where it is the closest set available (see [Investigating Starlink Flares With Sitrec](Starlink.md#wait-a-few-days-before-analysing-a-very-recent-event)) |
 | **Load ACTIVE Satellites** | All active satellites as they are **now**, in real time. Not for a past date |
 | **(Experimental) Load SLOW Satellites** | Objects in higher, slower orbits (fewer than about 11.25 orbits per day) for the sitch date. Can time out for recent dates |
 | **(Experimental) Load ALL Satellites** | Every object in the catalog for the sitch date. Can time out for recent dates |
@@ -63,7 +67,7 @@ A progress window shows the download. It has a button to stop the download.
 
 Drag a TLE file onto the Sitrec window. Sitrec accepts `.tle`, `.2le` and `.3le` files,
 `.txt` files that contain TLEs, and OMM files in CSV format (`.csv`), such as those from
-CelesTrak or Space-Track.
+CelesTrak or Space-Track. A pasted TLE follows the same steps as a dragged file.
 
 If TLE data is already loaded, Sitrec asks what to do with the new file:
 
@@ -76,20 +80,24 @@ If TLE data is already loaded, Sitrec asks what to do with the new file:
 
 The same dialog also compares the two sets against the sitch date, to help you choose.
 
-If none of the satellites you drag in is shown, because they belong to no category that is
-turned on, Sitrec turns on **Other Satellites** so that you can see them.
+If none of the new satellites is shown, Sitrec turns on **Other Satellites**, if that shows them.
+It does not turn on **Starlink** or **ISS** for you.
 
 ### Is the data good for this time?
 
 When TLE data is loaded, the top right of the main view shows the date range the data covers,
-and **In Range**, the percentage of the shown satellites that Sitrec can place at the current
+and **In Range**, the percentage of the shown satellites that Sitrec can place at the sitch
 time. The date range is the oldest and newest element dates in the data (UTC), not the date
 you asked for. **Satellites → TLEs From** and **TLEs To**, below the load buttons, show the
 same two dates, or *None loaded*.
 
-A satellite whose elements are more than 90 days from the current time is not drawn. The
+A satellite whose elements are more than 90 days from the sitch time is not drawn. The
 text at the top right of the main view is green when **In Range** is 100%, yellow from 95% up
 to 100%, and red below 95%. If it is red, load the data for the sitch date.
+
+**In Range** does not measure accuracy. Elements age, and Starlink satellites change their
+orbits, so data that is weeks from the sitch time can show 100% and still place satellites away
+from where they were. Compare **TLEs From** and **TLEs To** with the sitch time.
 
 When you reopen a sitch of your own that was saved with incomplete data, Sitrec offers to add
 the missing satellites. See
@@ -106,7 +114,7 @@ switch that applies to it is on.
 
 | Control | Default | What it does |
 |---|---|---|
-| **Show Satellites (Global)** | On | Master switch for all satellites. It is also in the header menus of the 3D views |
+| **Show Satellites (Global)** | On | Master switch for all satellites. It is also in the header menus of the 3D views, as **Satellites** |
 | **Starlink** | On | SpaceX Starlink satellites (names that start with STARLINK) |
 | **ISS** | On | The International Space Station |
 | **Celestrack's Brightest** | On | The satellites on CelesTrak's list of brightest satellites |
@@ -116,7 +124,7 @@ switch that applies to it is on.
 **List adds satellites; it does not hide the others.** To see only the satellites on the list,
 turn off **Starlink**, **ISS**, **Celestrack's Brightest** and **Other Satellites**.
 
-Satellites below 100 km altitude are never drawn.
+Satellites below 100 km or above 40,000 km altitude are never drawn.
 
 Starlink satellites are drawn pale yellow, or orange for those with a five-digit Starlink
 number. Other satellites are white.
@@ -135,13 +143,16 @@ The window shows the result live, as *N / M satellites match*, while you change 
 keeps the filter and closes the window. **Cancel** restores the filter you had before. **Clear
 All** unchecks every filter. **Clear TLE Filter** in the menu removes the filter completely.
 
-Each filter has a checkbox. Only the checked filters are used.
+Each filter has a checkbox. Only the checked filters are used. The window opens with only **Not
+Hidden by Earth** checked, and that filter acts at once: satellites below the look camera's
+horizon disappear from the views. **Cancel** brings them back. Each time the window opens, it
+starts from these defaults, not from the filter you applied last.
 
 **Spatial filters** use the position of the look camera.
 
 | Filter | Default | Passes a satellite that is… |
 |---|---|---|
-| **Any frame in range** | Off | (A mode, not a filter.) When checked, the spatial filters pass a satellite that meets them at any time during the sitch. This is slower. When unchecked, only the current frame is tested, and the result updates as you move the camera or the time |
+| **Any frame in range** | Off | (A mode, not a filter.) When checked, the spatial filters test each satellite at up to 60 moments across the sitch. A satellite passes if it meets them at any of these moments, and it shows only around those moments. This is slower. When unchecked, only the current frame is tested. The result updates as you move the camera or the time while the window is open. **Apply** keeps the result of that moment, and it does not update after that |
 | **Above Camera** | Off | higher than the look camera |
 | **Below Camera** | Off | lower than the look camera |
 | **Altitude Range** | 200 – 2000 km | between the two altitudes |
@@ -153,7 +164,7 @@ Each filter has a checkbox. Only the checked filters are used.
 
 | Filter | What it matches |
 |---|---|
-| **Name** | A name pattern with `*` as a wildcard, for example `STARLINK*`. Ignores case |
+| **Name** | A pattern for the whole name, with `*` as a wildcard, for example `STARLINK*`. `STARLINK` alone finds nothing. Ignores case |
 | **Name RE** | A regular expression. Ignores case |
 
 **Orbital parameters**
@@ -171,30 +182,41 @@ Each filter has a checkbox. Only the checked filters are used.
 
 **Satellites → (brightness and flare controls)**
 
+A flare is sunlight reflected from a flat surface on the satellite, as from a mirror. The flare
+calculation assumes that this surface faces straight down. The **off-specular angle** is how many
+degrees the reflected ray misses the camera.
+
 | Control | Default | What it does |
 |---|---|---|
-| **Satellite Brightness Model** | Photometric estimate | Continuous Starlink flare curves, an estimated flare curve for Kuiper satellites, estimated diffuse light, range and phase. **Legacy cone** selects the previous cone approximation |
-| **Starlink Design** | Unknown design (estimated mixture) | Select a design supported by independent information. Unknown uses an equal-weight flux mixture of the available designs, not an inferred population |
-| **Satellite Sunlight** | Finite Sun + atmosphere | Integrates the solar disk through a clear standard atmosphere at Earth's limb. **Finite Sun** omits atmosphere; **Legacy fade** uses the adjustable shadow depth |
-| **Sat Brightness** | 2 | Scale factor for the brightness of the satellites. 0 is invisible |
-| **Flare Brightness** | 0.2 | In Legacy cone mode, scale factor for extra flare brightness. 0 adds nothing |
-| **Sat Cut-Off** | 0.06 | Satellites dimmed to this level or less are not drawn |
-| **Flare Angle Spread** | 5 | Off-specular angle for flare arrows and the Legacy cone model. Photometric estimates include continuous light outside this angle |
-| **Flare Model** | Geocentric Nadir | How "down" is found for that mirror. **Geocentric Nadir** points at the Earth's center. **Geodetic Nadir** is perpendicular to the WGS84 ellipsoid. The two differ by at most about 0.18° |
+| **Satellite Brightness Model** | Photometric estimate | Continuous Starlink flare curves, an estimated flare curve for Kuiper satellites, estimated diffuse light, range and phase. **Legacy cone** adds a set flare brightness only inside **Flare Angle Spread** |
+| **Starlink Design** | Unknown design (estimated mixture) | The Starlink version, if another source tells you: **Original V1.0**, **VisorSat**, **V1.5** or **V2 Mini**. **Unknown design** averages these four. It does not work out a satellite's version |
+| **Satellite Sunlight** | Finite Sun + atmosphere | Integrates the solar disk through a clear standard atmosphere at Earth's limb (the edge of the Earth, as seen from the satellite). **Finite Sun** omits atmosphere; **Legacy fade** uses the adjustable shadow depth |
+| **Sat Brightness** | 2 | Scale factor for the brightness of the satellites in the look view. 0 is invisible. It does not change the main view |
+| **Flare Brightness** | 0.2 | Scale factor for extra flare brightness in the Legacy cone calculation. 0 adds nothing |
+| **Sat Cut-Off** | 0.06 | Satellites dimmer than this are not drawn. With **Photometric estimate**, the default hides many satellites in the look view: every satellite that uses the generic estimate (see below), and most Starlink satellites away from a flare. Set 0 to draw every sunlit satellite above the horizon |
+| **Flare Angle Spread** | 5 | A satellite counts as flaring when its off-specular angle is less than this many degrees. This sets **Sun Angle Arrows**, **Flare Lines**, **Label Flares Only** and the Legacy cone model. Photometric estimates include continuous light outside this angle |
+| **Flare Model** | Geocentric Nadir | How "down" is found for the flat surface. **Geocentric Nadir** points at the Earth's center. **Geodetic Nadir** is perpendicular to the WGS84 ellipsoid. The two differ by at most about 0.18° |
 | **Earth's Penumbra Depth** | 5000 | In Legacy fade mode, shadow depth in metres over which illumination fades |
+
+**Flare Brightness** appears only with **Legacy cone**, **Starlink Design** only with **Photometric
+estimate**, and **Earth's Penumbra Depth** only with **Legacy fade**.
 
 The brightness model sets what the look view and long exposures show. The main view always
 draws satellites at the Legacy cone brightness, wherever they are, so it shows the whole
 constellation and not only the satellites above the look camera's horizon.
 
-The photometric model uses approximate digitizations of the fitted horizon-flare curves
-in [Mallama and Cole (2024)](https://arxiv.org/abs/2405.13091), with explicit estimated
-continuations outside their roughly 2–20° range. The authors do not give an unobscured-Sun
-normalization; applying the calculated sunlight fraction to those curves is an assumption.
-Individual design, attitude and flight state can change brightness by several magnitudes.
-Other satellites use an estimated diffuse reference because orbital records do not provide
-their optical size and reflectance. The ISS retains an estimated magnitude −2 reference at
-1000 km and 90° phase, with range and phase scaling.
+### How Sitrec estimates brightness
+
+These numbers are estimates, with an uncertainty of at least about 1 magnitude. Individual
+design, attitude and flight state can change brightness by several magnitudes. A larger magnitude
+is dimmer, and 5 magnitudes is a factor of 100. Phase is the angle at the satellite between the
+Sun and the camera.
+
+**Starlink.** The photometric model uses approximate digitizations of the fitted horizon-flare
+curves in [Mallama and Cole (2024)](https://arxiv.org/abs/2405.13091), with explicit estimated
+continuations outside their range of roughly 2–20° off-specular. The authors do not state a
+correction for dimming near the Earth's shadow; applying the calculated sunlight fraction to
+those curves is an assumption.
 
 **Kuiper.** Kuiper (Amazon Leo) satellites, named `KUIPER-` in the catalog, also flare in this
 model, but as an estimate. No horizon-flare curve is published for them.
@@ -205,16 +227,23 @@ It assumes the operational attitude, which is not the attitude during orbit rais
 diffuse reference is magnitude 7.1 at 1000 km and 90° phase, read from that paper's Figure 8.
 These satellites are in the **Other Satellites** category.
 
-The sunlight model follows the finite solar disk, limb darkening, atmospheric transmission
-and refraction described by [Mallama (2021)](https://arxiv.org/abs/2112.08310). It uses a
-smooth clear atmosphere; local weather and terrain at the remote limb are unknown.
+**The ISS.** The ISS retains an estimated magnitude −2 reference at 1000 km and 90° phase, with
+range and phase scaling.
+
+**All other satellites** use a generic estimate, because orbital records do not provide their
+optical size and reflectance. Each gets the same projected area of 1 square metre and diffuse
+reflectance of 0.2, whatever its real size.
+
+**Sunlight.** The sunlight model follows the finite solar disk, limb darkening, atmospheric
+transmission and refraction described by [Mallama (2021)](https://arxiv.org/abs/2112.08310). It
+uses a smooth clear atmosphere; local weather and terrain at the remote limb are unknown.
 This sunlight path is separate from the atmosphere between the satellite and the camera.
 
-The live view uses the calculated brightness as a display aid. HDR long exposures integrate
-the estimated linear flux with the same zero point as stars. Display brightness and cut-off
-sliders do not calibrate a photograph's camera response. Flare-region overlays and the
-standalone horizon-flare scanner retain a geometric cone criterion; their event counts do
-not predict the number of detectable trails in a photograph.
+**Display and exposure.** The look view uses the calculated brightness as a display aid.
+With **HDR Point Sources** on, [long exposures](LongExposure.md) add up the estimated flux (the
+light received) on the same scale as the stars. Display brightness and cut-off sliders do not
+calibrate a photograph's camera response. The Starlink Flare Predictor (**Sitrec → Extra Tools**) keeps a geometric cone test. Its
+event counts do not predict the number of detectable trails in a photograph.
 
 ---
 
@@ -224,18 +253,18 @@ not predict the number of detectable trails in a photograph.
 
 | Control | Default | What it does |
 |---|---|---|
-| **Sun Angle Arrows** | Off | When a flare is found, draws arrows from the camera to the satellite and from the satellite to the Sun |
+| **Sun Angle Arrows** | Off | When a flare is found, draws arrows in the main view from the camera to the satellite and from the satellite to the Sun |
 | **Satellite Arrows** | Off | Arrows showing the direction each satellite is moving |
-| **Flare Lines** | Off | Lines that connect flaring satellites to the camera and to the Sun |
+| **Flare Lines** | Off | A yellow arrow, 100 km long, on each flaring satellite, along its direction of travel. For lines to the camera and the Sun, use **Sun Angle Arrows** |
 | **Satellite Ground Arrows** | Off | Arrows from each satellite down to the ground below it |
 | **Flare Region** | Off | The region of the sky where satellite flares are visible from the look camera. It assumes Starlink geometry: a flat surface that faces the Earth, at one altitude of 550 km. It does not check the Flare Band and marks the best match even when no reflection is close, so it is valid only when the camera is inside the Flare Band |
 | **Flare Region in Look View** | Off | Also draws the flare region in the look view |
-| **Flare Band** | Off | The band on the ground from which flares can be seen: between the smaller green circle and the larger yellow circle |
+| **Flare Band** | Off | A fixed guide: two circles about 38° (green) and 62° (yellow) from the point opposite the Sun, between which horizon flares can be seen. It is not computed from the loaded satellites. See [Flare Band and Sun Angle Arrows](Starlink.md#flare-band-and-sun-angle-arrows) |
 | **Satellite Labels (Look View)** | Off | Name labels in the look view |
 | **Satellite Labels (Main View)** | Off | Name labels in the main view |
 | **Label Flares Only** | Off | Label only satellites that are flaring |
 | **Label Lit Only** | Off | Label only satellites that are in sunlight |
-| **Label Look Visible Only** | Off | Label only satellites inside the look camera's field of view |
+| **Label Look Visible Only** | Off | In the main view, label only satellites inside the look camera's field of view. **Satellite Labels (Look View)** must also be on, or no main view label appears |
 | **Max Labels Displayed** | 1000 | The largest number of satellite labels drawn at one time (100 to 10,000) |
 | **Display Range (km)** | 100000 | Satellites farther away than this get no name labels or arrows |
 
@@ -265,9 +294,10 @@ of a name is enough, for example `ISS`. The default is the ISS (catalog number 2
 If the satellite is not in the loaded TLE data, the field shows *… not found*. The track is
 calculated again when new TLE data is loaded.
 
-Each satellite track has a **Show in look view** checkbox in its folder, as other tracks do. It is
-off by default. The look view's **Show Tracks** button and **Show → All Tracks in Look** include
-the satellite tracks too.
+Each satellite track has a **Show in look view** checkbox, off by default, in its folder in the
+Contents menu, as other tracks do. The folders are named **satelliteDisplayTrack** and
+**satelliteDisplayTrack2**, and they appear when the satellite is in the loaded data. The look
+view's **Show Tracks** button and **Show → All Tracks in Look** include the satellite tracks too.
 
 ---
 
@@ -288,7 +318,7 @@ satellites that are shown, highest first:
 | **Range** | Distance from the camera, in km |
 | **Alt** | Altitude, in km |
 | **Vis** | **VIS**: sunlit, with the observer in darkness (Sun more than 6° below the horizon). **DAY**: sunlit, but the observer's sky is too bright. **ECL**: in the Earth's shadow |
-| **Next Event** | The time until the satellite sets (**LOS**) or rises (**AOS**), searching up to two hours ahead |
+| **Next Event** | The time until the satellite sets (**LOS**, loss of signal), searching up to two hours ahead. **>2h** means that it stays up longer |
 
 The **Only VIS** checkbox, on by default, limits the table to satellites in the VIS state.
 
@@ -296,8 +326,15 @@ The **Only VIS** checkbox, on by default, limits the table to satellites in the 
 
 **Show → Celestial → Sky Plot** draws the same satellites as the Satellite Ephemeris table on a
 circular map of the sky. The center is straight up (the zenith) and the edge is the horizon,
-with rings at 30° and 60° elevation. North is at the top and east is on the right. It follows
-the ephemeris table's **Only VIS** setting.
+with rings at 30° and 60° elevation. Like a map, it has north at the top and east on the right,
+so it is the mirror image of the [Star Chart](#star-chart). It follows the ephemeris table's
+**Only VIS** setting. Each green dot is a satellite, with its name beside it.
+
+![Two windows side by side. On the left, the Ephemeris table lists 13 Starlink satellites, highest first, with Only VIS unchecked. On the right, the Sky Plot shows the same 13 satellites as green dots on a circular green grid, with rings labeled 30° and 60°, 90° at the center and north at the top](docimages/satellites-ephemeris-sky-plot.jpg)
+
+The **Ephemeris** window and the **Sky Plot** window at the same moment, with a small sample of
+Starlink data. **Only VIS** is off, so the table has VIS and ECL rows. The first row,
+STARLINK-4489, has the highest **El**, 53.6, so it is the dot nearest the center.
 
 ### Star Chart
 
@@ -311,6 +348,15 @@ the Moon, for the current time and look camera location, in the style of a print
 | **Satellite Track** | On | Draws the path of **Satellite to Track** across the chart, with times |
 
 Like a paper star chart, it shows the sky as seen looking up, so east is on the **left**.
+
+![The Star Chart window: a white disk with black star dots, gray constellation lines and names, and the planets Venus, Mars and Mercury labeled, with the Mercury label cut off at the rim. North is at the top and east is on the left. A straight black line crosses the disk from the southwest to the northeast, with boxed times from 20:06 to 20:14 and an arrowhead at the northeast end](docimages/satellites-star-chart.jpg)
+
+The **Star Chart** in the **White** color scheme. **Satellite to Track** is a Starlink satellite
+that passes nearly overhead, and the black line is its path over the whole sitch. Each box gives
+the local time at that point on the path, here from 20:06 to 20:14. The arrowhead shows the
+direction of travel. A larger black dot is a brighter star. A label that reaches the rim of the
+disk is cut off, as Mercury and Corona Borealis are here. The numbers around the edge are
+azimuth, in degrees.
 
 ### Other celestial items
 
@@ -343,27 +389,33 @@ combined data.
   main view, and the date range shows in **Satellites → TLEs From** and **TLEs To**.
 - Check **Show Satellites (Global)** and the category switches. A satellite that is in no
   category needs **Other Satellites**.
-- Check **Sat Brightness** is not 0, and that **Sat Cut-Off** is not too high.
+- Check **Sat Brightness** is not 0. If the look view shows few satellites, lower **Sat Cut-Off**:
+  at the default, most satellites do not pass it there. Set it to 0 to draw every sunlit satellite.
 - Check that no TLE filter is active: use **Clear TLE Filter**.
-- A satellite in the Earth's shadow is not lit, so it fades out. Check the time of night.
+- Check the time of day. With **Photometric estimate**, the look view does not draw a satellite
+  in the Earth's shadow, though the main view still draws it, dimly. Satellites also fade in the
+  look view as the sky brightens at the camera, and in daylight they are nearly invisible or gone.
 
 ### Too many satellites to see what is going on
 
 Use **Filter TLEs** with **Crosses View Frustum** and **Not Hidden by Earth** to keep only the
-satellites the look camera can see. Add **Label Look Visible Only** to label just those.
+satellites the look camera can see. **Apply** keeps the satellites in view at that moment, so
+leave the window open while the time or the camera changes. To label just those satellites in
+the main view, also turn on both **Satellite Labels** switches and **Label Look Visible Only**.
 
 ### Find which satellite made a flare
 
-Turn on **Flare Lines** and **Label Flares Only**, then step through the frames around the
-flare. Right-click a satellite for its catalog number. The full procedure is in
-[Investigating Starlink Flares](Starlink.md).
+Turn on **Satellite Labels (Look View)** or **Satellite Labels (Main View)**, then **Label Flares
+Only**. Turn on **Sun Angle Arrows** to see the lines to the camera and the Sun in the main view.
+Then step through the frames around the flare. Right-click a satellite for its catalog number.
+The full procedure is in [Investigating Starlink Flares With Sitrec](Starlink.md).
 
 ---
 
 ## See also
 
-- [Investigating Starlink Flares](Starlink.md): a step-by-step guide to horizon flares
+- [Investigating Starlink Flares With Sitrec](Starlink.md): a step-by-step guide to horizon flares
 - [Long Exposure/Stacking](LongExposure.md): star trails and satellite streaks
 - [Historic Skies](HistoricSkies.md): the sky for dates before the space age
-- [Lighting](Lighting.md): the sun, ambient light and night scenes
+- [The Lighting Menu](Lighting.md): the sun, ambient light and night scenes
 - [User Interface](UserInterface.md)
