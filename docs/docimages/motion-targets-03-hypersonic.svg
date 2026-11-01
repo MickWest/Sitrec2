@@ -1,0 +1,160 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="760" height="706" viewBox="0 0 760 706" font-family="Helvetica, Arial, sans-serif" role="img">
+<title>Extreme set: hypersonic vehicles</title>
+<desc>Four panels: a straight level track, a level track with a 5 degree descent, a 10 degree level turn, and a 10 degree heading change during a 5 degree descent. Speed is constant in all four.</desc>
+<rect width="760" height="706" fill="#FFFFFF"/>
+<defs></defs>
+<text x="380.0" y="26.0" font-family="Helvetica, Arial, sans-serif" font-size="18" font-weight="700" fill="#17202A" text-anchor="middle" style="">Extreme set: hypersonic vehicles</text>
+<text x="380.0" y="45.0" font-family="Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#4E5A66" text-anchor="middle" style="">Test limits in the generator: 10,593 m/s (38,136 km/h) and 52.0 g. They are not measured vehicle performance.</text>
+<text x="380.0" y="61.0" font-family="Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#4E5A66" text-anchor="middle" style="">At this speed, a turn that peaks at 52 g takes 6.8 s to change heading by only 10°.</text>
+<circle cx="19.0" cy="81.0" r="4" fill="#FFFFFF" stroke="#0A9384" stroke-width="2"/>
+<circle cx="32.0" cy="81.0" r="4" fill="#0A9384"/>
+<text x="41.0" y="85.0" font-family="Helvetica, Arial, sans-serif" font-size="11.5" font-weight="normal" fill="#4E5A66" text-anchor="start" style="">start and end of the part drawn</text>
+<line x1="210.0" y1="81.0" x2="230.0" y2="81.0" stroke="#0A9384" stroke-width="3"/>
+<text x="235.0" y="85.0" font-family="Helvetica, Arial, sans-serif" font-size="11.5" font-weight="normal" fill="#4E5A66" text-anchor="start" style="">maneuver</text>
+<line x1="296.0" y1="81.0" x2="316.0" y2="81.0" stroke="#0A9384" stroke-width="1.5"/>
+<text x="321.0" y="85.0" font-family="Helvetica, Arial, sans-serif" font-size="11.5" font-weight="normal" fill="#4E5A66" text-anchor="start" style="">before, after</text>
+<polygon points="406.4,81.0 396.5,85.5 396.5,76.5" fill="#0A9384" stroke="#FFFFFF" stroke-width="0.8" stroke-linejoin="round" stroke-linecap="round"/>
+<text x="411.0" y="85.0" font-family="Helvetica, Arial, sans-serif" font-size="11.5" font-weight="normal" fill="#4E5A66" text-anchor="start" style="">direction</text>
+<circle cx="467.0" cy="81.0" r="1.7" fill="#17202A"/>
+<circle cx="471.0" cy="81.0" r="1.7" fill="#17202A"/>
+<circle cx="477.0" cy="81.0" r="1.7" fill="#17202A"/>
+<circle cx="487.0" cy="81.0" r="1.7" fill="#17202A"/>
+<text x="494.0" y="85.0" font-family="Helvetica, Arial, sans-serif" font-size="11.5" font-weight="normal" fill="#4E5A66" text-anchor="start" style="">equal time steps: wide is fast</text>
+<text x="14.0" y="102.0" font-family="Helvetica, Arial, sans-serif" font-size="11.5" font-weight="normal" fill="#4E5A66" text-anchor="start" style="">Each panel is a short part of a 300 s track, at its own scale. g is acceleration in units of 9.81 m/s².</text>
+<text x="14.0" y="118.0" font-family="Helvetica, Arial, sans-serif" font-size="11.5" font-weight="normal" fill="#4E5A66" text-anchor="start" style="">Outside the part drawn, the target flies straight and level at constant speed, or hovers.</text>
+<rect x="14.0" y="128.0" width="360.0" height="276.0" rx="0" fill="#FFFFFF" stroke="#D3D8DC" stroke-width="1"/>
+<text x="22.0" y="145.0" font-family="Helvetica, Arial, sans-serif" font-size="13.5" font-weight="700" fill="#17202A" text-anchor="start" style="">straight-flat</text>
+<text x="22.0" y="160.0" font-family="Helvetica, Arial, sans-serif" font-size="11.5" font-weight="normal" fill="#4E5A66" text-anchor="start" style="">Straight and level: no maneuver</text>
+<text x="22.0" y="174.0" font-family="Helvetica, Arial, sans-serif" font-size="10.5" font-weight="normal" fill="#4E5A66" text-anchor="start" style="">From above, north up. Dots every 1 s.</text>
+<polyline points="29.0,259.5 359.0,259.5" fill="none" stroke="#0A9384" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"/>
+<circle cx="60.9" cy="259.5" r="1.7" fill="#17202A"/>
+<circle cx="94.2" cy="259.5" r="1.7" fill="#17202A"/>
+<circle cx="127.5" cy="259.5" r="1.7" fill="#17202A"/>
+<circle cx="160.8" cy="259.5" r="1.7" fill="#17202A"/>
+<circle cx="194.0" cy="259.5" r="1.7" fill="#17202A"/>
+<circle cx="227.3" cy="259.5" r="1.7" fill="#17202A"/>
+<circle cx="260.6" cy="259.5" r="1.7" fill="#17202A"/>
+<circle cx="293.9" cy="259.5" r="1.7" fill="#17202A"/>
+<circle cx="327.1" cy="259.5" r="1.7" fill="#17202A"/>
+<polygon points="199.4,259.5 189.5,264.0 189.5,255.0" fill="#0A9384" stroke="#FFFFFF" stroke-width="0.8" stroke-linejoin="round" stroke-linecap="round"/>
+<circle cx="29.0" cy="259.5" r="4" fill="#FFFFFF" stroke="#0A9384" stroke-width="2"/>
+<circle cx="359.0" cy="259.5" r="4" fill="#0A9384"/>
+<line x1="22.0" y1="333.0" x2="84.8" y2="333.0" stroke="#17202A" stroke-width="2"/>
+<line x1="22.0" y1="330.0" x2="22.0" y2="336.0" stroke="#17202A" stroke-width="1.2"/>
+<line x1="84.8" y1="330.0" x2="84.8" y2="336.0" stroke="#17202A" stroke-width="1.2"/>
+<text x="53.4" y="328.0" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#4E5A66" text-anchor="middle" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">20 km</text>
+<line x1="76.0" y1="369.0" x2="366.0" y2="369.0" stroke="#D3D8DC" stroke-width="1"/>
+<polyline points="76.0,346.0 366.0,346.0" fill="none" stroke="#0A9384" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"/>
+<text x="68.0" y="351.0" font-family="Helvetica, Arial, sans-serif" font-size="10.5" font-weight="normal" fill="#4E5A66" text-anchor="end" style="">10.6 km/s</text>
+<text x="68.0" y="370.0" font-family="Helvetica, Arial, sans-serif" font-size="10.5" font-weight="normal" fill="#4E5A66" text-anchor="end" style="">0</text>
+<text x="366.0" y="381.0" font-family="Helvetica, Arial, sans-serif" font-size="10.5" font-weight="normal" fill="#4E5A66" text-anchor="end" style="">speed over 9.9 s</text>
+<text x="22.0" y="397.0" font-family="Helvetica, Arial, sans-serif" font-size="11.5" font-weight="normal" fill="#17202A" text-anchor="start" style="">Peak acceleration 0.0 g</text>
+<rect x="386.0" y="128.0" width="360.0" height="276.0" rx="0" fill="#FFFFFF" stroke="#D3D8DC" stroke-width="1"/>
+<text x="394.0" y="145.0" font-family="Helvetica, Arial, sans-serif" font-size="13.5" font-weight="700" fill="#17202A" text-anchor="start" style="">straight-descending</text>
+<text x="394.0" y="160.0" font-family="Helvetica, Arial, sans-serif" font-size="11.5" font-weight="normal" fill="#4E5A66" text-anchor="start" style="">Level, a 5° descent, then level again</text>
+<text x="394.0" y="174.0" font-family="Helvetica, Arial, sans-serif" font-size="10.5" font-weight="normal" fill="#4E5A66" text-anchor="start" style="">From the side. Dots every 2 s.</text>
+<polyline points="401.0,250.2 446.6,250.3 464.2,250.8 663.7,267.9 683.7,268.7 731.0,268.8" fill="none" stroke="#0A9384" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"/>
+<polyline points="433.2,250.2 455.1,250.4 472.6,251.4 662.9,267.9 678.6,268.6 699.0,268.8" fill="none" stroke="#0A9384" stroke-width="3" stroke-linejoin="round" stroke-linecap="round"/>
+<circle cx="401.3" cy="250.2" r="1.7" fill="#17202A"/>
+<circle cx="433.0" cy="250.2" r="1.7" fill="#17202A"/>
+<circle cx="464.8" cy="250.8" r="1.7" fill="#17202A"/>
+<circle cx="496.4" cy="253.4" r="1.7" fill="#17202A"/>
+<circle cx="528.1" cy="256.2" r="1.7" fill="#17202A"/>
+<circle cx="559.7" cy="258.9" r="1.7" fill="#17202A"/>
+<circle cx="591.4" cy="261.7" r="1.7" fill="#17202A"/>
+<circle cx="623.0" cy="264.5" r="1.7" fill="#17202A"/>
+<circle cx="654.7" cy="267.2" r="1.7" fill="#17202A"/>
+<circle cx="686.4" cy="268.7" r="1.7" fill="#17202A"/>
+<circle cx="718.1" cy="268.8" r="1.7" fill="#17202A"/>
+<polygon points="571.4,260.0 561.1,263.6 561.9,254.6" fill="#0A9384" stroke="#FFFFFF" stroke-width="0.8" stroke-linejoin="round" stroke-linecap="round"/>
+<circle cx="401.0" cy="250.2" r="4" fill="#FFFFFF" stroke="#0A9384" stroke-width="2"/>
+<circle cx="731.0" cy="268.8" r="4" fill="#0A9384"/>
+<line x1="394.0" y1="333.0" x2="469.0" y2="333.0" stroke="#17202A" stroke-width="2"/>
+<line x1="394.0" y1="330.0" x2="394.0" y2="336.0" stroke="#17202A" stroke-width="1.2"/>
+<line x1="469.0" y1="330.0" x2="469.0" y2="336.0" stroke="#17202A" stroke-width="1.2"/>
+<text x="431.5" y="328.0" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#4E5A66" text-anchor="middle" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">50 km</text>
+<line x1="448.0" y1="369.0" x2="738.0" y2="369.0" stroke="#D3D8DC" stroke-width="1"/>
+<polyline points="448.0,346.0 738.0,346.0" fill="none" stroke="#0A9384" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"/>
+<text x="440.0" y="351.0" font-family="Helvetica, Arial, sans-serif" font-size="10.5" font-weight="normal" fill="#4E5A66" text-anchor="end" style="">10.6 km/s</text>
+<text x="440.0" y="370.0" font-family="Helvetica, Arial, sans-serif" font-size="10.5" font-weight="normal" fill="#4E5A66" text-anchor="end" style="">0</text>
+<text x="738.0" y="381.0" font-family="Helvetica, Arial, sans-serif" font-size="10.5" font-weight="normal" fill="#4E5A66" text-anchor="end" style="">speed over 21 s</text>
+<text x="394.0" y="397.0" font-family="Helvetica, Arial, sans-serif" font-size="11.5" font-weight="normal" fill="#17202A" text-anchor="start" style="">Peak acceleration 52.0 g</text>
+<rect x="14.0" y="416.0" width="360.0" height="276.0" rx="0" fill="#FFFFFF" stroke="#D3D8DC" stroke-width="1"/>
+<text x="22.0" y="433.0" font-family="Helvetica, Arial, sans-serif" font-size="13.5" font-weight="700" fill="#17202A" text-anchor="start" style="">turn-flat</text>
+<text x="22.0" y="448.0" font-family="Helvetica, Arial, sans-serif" font-size="11.5" font-weight="normal" fill="#4E5A66" text-anchor="start" style="">10° level turn</text>
+<text x="22.0" y="462.0" font-family="Helvetica, Arial, sans-serif" font-size="10.5" font-weight="normal" fill="#4E5A66" text-anchor="start" style="">From above, north up. Dots every 1 s.</text>
+<polyline points="29.0,561.9 99.9,561.9 133.6,561.5 165.5,560.3 194.9,558.3 224.3,555.2 255.9,550.8 289.2,545.3 359.0,533.1" fill="none" stroke="#0A9384" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"/>
+<polyline points="61.3,561.9 109.4,561.8 140.1,561.3 168.4,560.2 194.9,558.3 221.4,555.5 249.5,551.8 279.8,546.9 327.2,538.7" fill="none" stroke="#0A9384" stroke-width="3" stroke-linejoin="round" stroke-linecap="round"/>
+<circle cx="61.1" cy="561.9" r="1.7" fill="#17202A"/>
+<circle cx="100.5" cy="561.9" r="1.7" fill="#17202A"/>
+<circle cx="139.9" cy="561.3" r="1.7" fill="#17202A"/>
+<circle cx="179.3" cy="559.5" r="1.7" fill="#17202A"/>
+<circle cx="218.5" cy="555.9" r="1.7" fill="#17202A"/>
+<circle cx="257.5" cy="550.5" r="1.7" fill="#17202A"/>
+<circle cx="296.4" cy="544.1" r="1.7" fill="#17202A"/>
+<circle cx="335.2" cy="537.3" r="1.7" fill="#17202A"/>
+<polygon points="200.3,557.8 190.9,563.2 190.1,554.2" fill="#0A9384" stroke="#FFFFFF" stroke-width="0.8" stroke-linejoin="round" stroke-linecap="round"/>
+<circle cx="29.0" cy="561.9" r="4" fill="#FFFFFF" stroke="#0A9384" stroke-width="2"/>
+<circle cx="359.0" cy="533.1" r="4" fill="#0A9384"/>
+<line x1="22.0" y1="621.0" x2="96.4" y2="621.0" stroke="#17202A" stroke-width="2"/>
+<line x1="22.0" y1="618.0" x2="22.0" y2="624.0" stroke="#17202A" stroke-width="1.2"/>
+<line x1="96.4" y1="618.0" x2="96.4" y2="624.0" stroke="#17202A" stroke-width="1.2"/>
+<text x="59.2" y="616.0" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#4E5A66" text-anchor="middle" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">20 km</text>
+<line x1="76.0" y1="657.0" x2="366.0" y2="657.0" stroke="#D3D8DC" stroke-width="1"/>
+<polyline points="76.0,634.0 366.0,634.0" fill="none" stroke="#0A9384" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"/>
+<text x="68.0" y="639.0" font-family="Helvetica, Arial, sans-serif" font-size="10.5" font-weight="normal" fill="#4E5A66" text-anchor="end" style="">10.6 km/s</text>
+<text x="68.0" y="658.0" font-family="Helvetica, Arial, sans-serif" font-size="10.5" font-weight="normal" fill="#4E5A66" text-anchor="end" style="">0</text>
+<text x="366.0" y="669.0" font-family="Helvetica, Arial, sans-serif" font-size="10.5" font-weight="normal" fill="#4E5A66" text-anchor="end" style="">speed over 8.4 s</text>
+<text x="22.0" y="685.0" font-family="Helvetica, Arial, sans-serif" font-size="11.5" font-weight="normal" fill="#17202A" text-anchor="start" style="">Peak acceleration 52.0 g</text>
+<rect x="386.0" y="416.0" width="360.0" height="276.0" rx="0" fill="#FFFFFF" stroke="#D3D8DC" stroke-width="1"/>
+<text x="394.0" y="433.0" font-family="Helvetica, Arial, sans-serif" font-size="13.5" font-weight="700" fill="#17202A" text-anchor="start" style="">turn-descending</text>
+<text x="394.0" y="448.0" font-family="Helvetica, Arial, sans-serif" font-size="11.5" font-weight="normal" fill="#4E5A66" text-anchor="start" style="">10° heading change in a 5° descent</text>
+<text x="394.0" y="462.0" font-family="Helvetica, Arial, sans-serif" font-size="10.5" font-weight="normal" fill="#4E5A66" text-anchor="start" style="">Two views, one scale. Dots every 2 s.</text>
+<polyline points="401.0,525.3 528.9,525.2 545.4,524.8 559.9,523.8 573.8,522.2 589.8,519.7 731.0,494.9" fill="none" stroke="#0A9384" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"/>
+<polyline points="433.4,525.3 530.7,525.2 546.2,524.8 560.1,523.8 573.4,522.3 588.6,519.9 699.1,500.5" fill="none" stroke="#0A9384" stroke-width="3" stroke-linejoin="round" stroke-linecap="round"/>
+<circle cx="404.7" cy="525.3" r="1.7" fill="#17202A"/>
+<circle cx="433.3" cy="525.3" r="1.7" fill="#17202A"/>
+<circle cx="461.8" cy="525.3" r="1.7" fill="#17202A"/>
+<circle cx="490.3" cy="525.3" r="1.7" fill="#17202A"/>
+<circle cx="518.8" cy="525.2" r="1.7" fill="#17202A"/>
+<circle cx="547.3" cy="524.7" r="1.7" fill="#17202A"/>
+<circle cx="575.7" cy="521.9" r="1.7" fill="#17202A"/>
+<circle cx="603.8" cy="517.3" r="1.7" fill="#17202A"/>
+<circle cx="631.8" cy="512.3" r="1.7" fill="#17202A"/>
+<circle cx="659.9" cy="507.4" r="1.7" fill="#17202A"/>
+<circle cx="688.0" cy="502.4" r="1.7" fill="#17202A"/>
+<circle cx="716.2" cy="497.5" r="1.7" fill="#17202A"/>
+<polygon points="572.5,522.4 563.2,528.0 562.2,519.1" fill="#0A9384" stroke="#FFFFFF" stroke-width="0.8" stroke-linejoin="round" stroke-linecap="round"/>
+<circle cx="401.0" cy="525.3" r="4" fill="#FFFFFF" stroke="#0A9384" stroke-width="2"/>
+<circle cx="731.0" cy="494.9" r="4" fill="#0A9384"/>
+<line x1="394.0" y1="553.1" x2="738.0" y2="553.1" stroke="#E4E8E9" stroke-width="1"/>
+<polyline points="401.0,581.0 445.4,581.0 462.0,581.5 667.7,599.4 685.9,600.1 731.0,600.1" fill="none" stroke="#0A9384" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"/>
+<polyline points="433.4,581.0 452.2,581.1 466.8,581.8 663.8,599.1 679.5,600.0 699.1,600.1" fill="none" stroke="#0A9384" stroke-width="3" stroke-linejoin="round" stroke-linecap="round"/>
+<circle cx="404.7" cy="581.0" r="1.7" fill="#17202A"/>
+<circle cx="433.3" cy="581.0" r="1.7" fill="#17202A"/>
+<circle cx="461.8" cy="581.5" r="1.7" fill="#17202A"/>
+<circle cx="490.3" cy="583.8" r="1.7" fill="#17202A"/>
+<circle cx="518.8" cy="586.3" r="1.7" fill="#17202A"/>
+<circle cx="547.3" cy="588.8" r="1.7" fill="#17202A"/>
+<circle cx="575.7" cy="591.3" r="1.7" fill="#17202A"/>
+<circle cx="603.8" cy="593.8" r="1.7" fill="#17202A"/>
+<circle cx="631.8" cy="596.3" r="1.7" fill="#17202A"/>
+<circle cx="659.9" cy="598.8" r="1.7" fill="#17202A"/>
+<circle cx="688.0" cy="600.1" r="1.7" fill="#17202A"/>
+<circle cx="716.2" cy="600.1" r="1.7" fill="#17202A"/>
+<polygon points="571.6,590.9 561.4,594.6 562.2,585.6" fill="#0A9384" stroke="#FFFFFF" stroke-width="0.8" stroke-linejoin="round" stroke-linecap="round"/>
+<circle cx="401.0" cy="581.0" r="4" fill="#FFFFFF" stroke="#0A9384" stroke-width="2"/>
+<circle cx="731.0" cy="600.1" r="4" fill="#0A9384"/>
+<text x="394.0" y="546.1" font-family="Helvetica, Arial, sans-serif" font-size="10.5" font-weight="normal" fill="#4E5A66" text-anchor="start" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">from above</text>
+<text x="394.0" y="621.0" font-family="Helvetica, Arial, sans-serif" font-size="10.5" font-weight="normal" fill="#4E5A66" text-anchor="start" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">from the side</text>
+<line x1="670.5" y1="546.1" x2="738.0" y2="546.1" stroke="#17202A" stroke-width="2"/>
+<line x1="670.5" y1="543.1" x2="670.5" y2="549.1" stroke="#17202A" stroke-width="1.2"/>
+<line x1="738.0" y1="543.1" x2="738.0" y2="549.1" stroke="#17202A" stroke-width="1.2"/>
+<text x="704.3" y="541.1" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#4E5A66" text-anchor="middle" style="paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round;">50 km</text>
+<line x1="448.0" y1="657.0" x2="738.0" y2="657.0" stroke="#D3D8DC" stroke-width="1"/>
+<polyline points="448.0,634.0 738.0,634.0" fill="none" stroke="#0A9384" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"/>
+<text x="440.0" y="639.0" font-family="Helvetica, Arial, sans-serif" font-size="10.5" font-weight="normal" fill="#4E5A66" text-anchor="end" style="">10.6 km/s</text>
+<text x="440.0" y="658.0" font-family="Helvetica, Arial, sans-serif" font-size="10.5" font-weight="normal" fill="#4E5A66" text-anchor="end" style="">0</text>
+<text x="738.0" y="669.0" font-family="Helvetica, Arial, sans-serif" font-size="10.5" font-weight="normal" fill="#4E5A66" text-anchor="end" style="">speed over 23 s</text>
+<text x="394.0" y="685.0" font-family="Helvetica, Arial, sans-serif" font-size="11.5" font-weight="normal" fill="#17202A" text-anchor="start" style="">Peak acceleration 52.0 g</text>
+</svg>

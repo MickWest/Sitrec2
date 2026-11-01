@@ -5,7 +5,8 @@ Read this before [Traverse Analysis and the Verdict](TraverseAnalysis.md) or the
 *conditioning* or *relSep* are new to you. A **traverse** is a 3D path for an
 object, found by combining the camera's sightlines with a physical assumption.
 Sections 1 to 9 build the analysis in order, one idea and one picture each.
-Sections 10 to 16 each add one further topic.
+Sections 10 to 16 each add one further topic. Sections 10, 14, 15 and 16 are
+about the BOTBench benchmark, so you can skip them unless you use it.
 
 The whole problem in one line: **each frame gives a direction to the object,
 not a distance.** Everything else follows from that.
@@ -28,6 +29,12 @@ it points. Panning or rotating the camera without moving it adds no
 position.
 **Velocity** means speed and direction together, measured in the common
 world coordinate system, rather than motion across the image.
+
+To run the analysis on your own video, you need the camera's position over
+time, the date and time of the video, and a sightline for each frame.
+[The Camera and Target Menus](CameraAndTarget.md) set up the camera.
+[Point Tracking](PointTrack.md) and [Ground Track](GroundTrack.md) turn the
+video into sightlines.
 
 ## 2. Many rays over time: the exact-ray family
 
@@ -77,11 +84,13 @@ move. The price depends on range. A member at `k` times the reference range
 needs `|1 − k|` times the platform's acceleration, so a nearer member never needs
 more acceleration than the platform, and a far member needs more as range grows.
 
-The acceleration needed can be small. On the Aguadilla sitch (a saved Sitrec
-scene) the stamped bend asked a wrong-range member for 0.48 g at 51 kt (knots),
-which is inside the motion limits of section 9. The *shape* of that bend is the platform's own turn,
-scaled. So the analysis also compares the candidate's acceleration with the
-platform's, and reports the share of time that matches one fixed scaling of it.
+The acceleration needed can be small. A platform in a level 30° banked turn
+accelerates at about 0.58 g, so a member at half the reference range needs about
+0.29 g. That is inside the motion limits of section 9, and those limits cannot
+show whether a bend comes from the platform. The *shape* of a stamped bend is the
+platform's own turn, scaled. So the analysis also compares the candidate's
+acceleration with the platform's, and reports the share of time that matches one
+fixed scaling of it.
 A significant match over half or more of the assessed time fails the screen of
 section 9 and adds to the BOT Score defined there. The analysis does not convert that match
 into a range. See
@@ -110,8 +119,10 @@ Pointing error and target turns raise `rcond`, so a noisier clip can score
 higher.
 
 In weak geometry, a free fit can **collapse onto the camera**, returning a
-very small range with a low residual. Every ray starts at the camera, so a track
-that stays with the camera touches every ray. That result reflects the fitting
+very small range. A CV fit minimizes the perpendicular distance from the track
+to each ray, not the angle of section 3. Every ray starts at the camera, so a
+track that stays with the camera has almost no perpendicular distance to any
+ray, whatever its angle. That result reflects the fitting
 arithmetic rather than a measured distance. The warning belongs to this
 solver family: it does not establish that every target model is unable to
 constrain range. A constrained turn or another physical model can still be
@@ -155,7 +166,13 @@ contains the candidate. For one requirement, 0.3 means a factor of two outside
 its band; 1, ten times; 2, a hundred times. Smaller excesses on two or three
 requirements add up to the same totals.
 
-The cost is reported beside each candidate. It says how ordinary an explanation
+On a tile the cost appears in the **Physical compatibility** line. That line
+lists the classes that contain the candidate. If there are none, it names the
+closest class and gives the cost as a factor, so a cost of 0.3 reads as
+*2.0× outside*. BOTBench shows the lowest cost in the gallery, in decades, as
+**OrdMin** (section 14).
+
+The cost says how ordinary an explanation
 is, not which one to prefer, and it does not move the ranking. The one exception
 is size: with angular-size judging on, a candidate whose implied size is outside
 every class its motion allows is marked as a size conflict, and that conflict
@@ -170,9 +187,11 @@ box** — for the balloon model, first-ray ranges from 0.2 to 30 km. If the best
 answer lies outside the box, the optimiser ends up pressed against the wall: a
 **bound hit**. That is a gap in the search, not a finding about the object: the
 search did not go beyond the bound. A bound counts only when a step inward makes
-the fit worse. It then fails that tile as *search incomplete*, and the tile
-shows *Model limit hit*, or *Wind search edge* for a wind parameter. Section 11
-gives the other way a search can be incomplete.
+the fit worse. The tile then shows *Model limit hit*, and its label can read
+*Not fully tested*, or it shows *Wind search edge* for a wind parameter, and its
+label stays. In the verdict, both fail the tile as *search incomplete*.
+[How the tiles are ranked](TraverseAnalysis.md#how-the-tiles-are-ranked) lists
+the badges. Section 11 gives the other way a search can be incomplete.
 
 The physical limits of a class (how fast a balloon can go) are a different
 thing, the *envelope*, and they are costed (section 7). A box can share a number
@@ -206,13 +225,16 @@ Each tile passes or fails a **screen**:
   track, clamped between 0.02° and 0.20°. That scale is not a measured noise
   level. A catalogued star has a 0.10° limit (0.15° for a
   satellite) and no motion screen.
-- Is the motion within the broad limits, at most 1.5 g and 650 kt? These are
+- Is the motion within the broad limits, at most 1.5 g and 650 kt (knots)? These are
   separate from each physical class's limits.
 - Does it avoid a sustained match to the platform's acceleration (section 4)?
 
 A tile that passes the screen is **viable**: a survivor. With angular-size
 judging on, a size conflict (section 7) also removes viability, and the tile
-keeps its *Passes broad screen* label. Tiles first compare screening outcomes. When those tie, the **BOT Score** orders them (BOT means
+keeps its *Passes broad screen* label. An *Internal clamp reached* badge also
+removes viability and leaves that label, but it does not demote the tile in the
+ranking. The badge means that the balloon model's wind shear (change in wind with
+height) reached its 0.25× or 3× limit. Tiles first compare screening outcomes. When those tie, the **BOT Score** orders them (BOT means
 bearings-only traversal). It adds weighted acceleration, turn-rate and climb
 terms, so gentler motion ranks higher, plus the residual divided by 0.05° and a
 penalty for a platform match. It has no pass/fail limit and no class preference.
@@ -226,10 +248,18 @@ Score orders them only as a heuristic tie-break.
   itself. The label *circular LOS* refers to that dependence, not a circular
   camera flight path. The gate reports *Insufficient independent evidence to
   discriminate*.
-- If the camera barely moved (its track spans under 0.1% of the analysis start
-  distance, with a 2 m minimum), the gate reports *Insufficient evidence to
-  discriminate*. This gate does not detect a straight, constant-speed camera,
-  which can still leave range to the priors.
+- If the camera barely moved, the gate reports *Insufficient evidence to
+  discriminate*. The test is a camera track that spans under 0.1% of **Tgt Start
+  Dist** (a slider in the Traverse menu), with a 2 m minimum, so 20 m at a 20 km
+  setting. Range then comes from each model and its priors. Two readouts can
+  check that range, but the analysis does not use them. At a frame where you
+  placed a [Ground Track](GroundTrack.md) point on the terrain behind the object,
+  **Ground Range** is an upper limit on its range. In **Traverse → Manual
+  Tracking**, **Use Size Point** measures the angle across the object, and
+  **Size Range** gives the range for the **Assumed Size**. For an object smaller
+  than a pixel, a size gives only a near limit (section 12). Passing this gate
+  does not show that the camera moved enough to fix a range: a straight,
+  constant-speed camera can still leave range to the priors.
 
 It then tests for *Probably a wind-blown balloon*. That wording needs a viable
 balloon tile, independent wind corroboration, a balloon-like motion consistency
@@ -261,7 +291,8 @@ limits without showing that a simulation of either object's dynamics fits.
 - Two or more give *Consistent with several conventional interpretations*.
 
 The headline states no range, but each tile is judged at its fit's one selected
-range, which a prior can set. Every wording is listed in
+range, which a prior can set. A fast, distant object and a slower, nearer
+aircraft can fit the same bearings (section 15). Every wording is listed in
 [The executive verdict](TraverseAnalysis.md#the-executive-verdict).
 
 ## 10. relSep: how far the found track is from the truth
@@ -400,10 +431,11 @@ Several numbers on a result page come from a test series rather than from one
 fit. A **rung** is one step of such a series, and this work has two ladders that
 never meet:
 
-- The *pointing-error ladder* adds an operator model to the sightlines, at nine
-  rungs from 0° (no added error) to 2°. The aim drifts off the object, the
-  operator notices and recentres, so the rays wander about the object over the
-  clip. This is the observation-error model.
+- The *pointing-error ladder* adds an operator model (the default model that
+  [LOS Error Analysis](LOSErrorAnalysis.md) fits to a recording) to the
+  sightlines, at nine rungs from 0° (no added error) to 2°. The aim drifts off
+  the object, the operator notices and recentres, so the rays wander about the
+  object over the clip. This is the observation-error model.
 - The *held-range ladder* re-solves a model with its range held at eleven
   log-spaced ranges across the searched bracket, plus the fit's own range. This
   maps a solution family.
@@ -571,8 +603,11 @@ those methods do not independently fit a circular turn or a pair of legs.
 
 ## Words used without pictures
 
-- **LOS** — line of sight; a ray. **A–B range** — the frame interval selected
-  for analysis. **Sitch** — a Sitrec situation file: the scene, tracks and video.
+- **LOS** — line of sight; a ray. **In/Out range** — the frames between the In
+  and Out frames, selected for analysis.
+- A **sitch** (short for *situation*) is one Sitrec scene: a place, a span of
+  time, and the camera, tracks, objects and video that recreate an event. You can
+  save and share a sitch, but it is a sitch before you save it.
 - **Kalman smoother** — a sequential filter that estimates a track frame by
   frame and then smooths it backwards; one of the curve fits.
 - **B-spline** — a smooth curve built from control points; the flexible fit.
@@ -581,9 +616,9 @@ those methods do not independently fit a circular turn or a pair of legs.
 - **RK4** — a standard way of integrating a physics model forward in time.
   **DE** — differential evolution, a global optimiser used to seed the physics
   fits before Nelder–Mead polishes them.
-- **Gallery / tile / screen / price** — the results view, one card per
-  candidate, the pass/fail test on each card, and turning a motion requirement
-  into a cost.
+- **Gallery / tile / screen / price** — the results view, one candidate's
+  result in that view, the pass/fail test on each tile, and turning a motion
+  requirement into a cost.
 - **Seed** — the starting guess handed to an optimiser.
 
 ## Read next

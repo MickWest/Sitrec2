@@ -1,6 +1,6 @@
 # How the Balloon Algorithms Work
 
-The **Balloon** results in **Traverse ▸ Analyze Traverse Methods...** test a
+The **Balloon** results in **Traverse → Analyze Traverse Methods...** test a
 specific explanation: an object drifts horizontally with the wind while it
 rises, stays at the same height, or descends. Sitrec calculates paths under
 that assumption and compares them with the camera's recorded directions.
@@ -13,6 +13,11 @@ It assumes basic algebra. Terms are defined when they first appear. The diagrams
 and numerical examples are teaching examples, calculated from the equations
 below. They are not measurements from a recording.
 
+To check a recording, go to [How to read the result](#10-how-to-read-the-result)
+and [A practical way to check a recording](#11-a-practical-way-to-check-a-recording).
+Sections 2 to 9 explain the calculation behind them. Read those sections when
+you need a term or a step.
+
 For the other traverse methods, see [Traverse Methods](TraverseMethods.md).
 For the gallery and its ratings, see
 [Traverse Analysis and the Verdict](TraverseAnalysis.md).
@@ -22,7 +27,9 @@ For the gallery and its ratings, see
 Several Sitrec tools can produce a drifting path. This guide is about **Balloon**
 in the analysis gallery. It selects from a small set of drift and vertical-motion
 models under three wind treatments, and it fits the model parameters to the
-directions throughout the selected window. These are **reduced** models: they
+directions throughout the In/Out range: the span between the In and Out frames
+(see [Time, Frames and Syncing](TimeAndSync.md#in-out-and-playback)). This page
+calls that span the **window**. These are **reduced** models: they
 have fewer parameters than the broader Sky Lantern model of the Physics method.
 Section 12 compares the other tools.
 
@@ -46,7 +53,7 @@ the camera and extends in the observed direction. It can include a tracked
 pixel's offset from the camera centre. Errors in track timing, camera pointing or pixel tracking become
 errors in these inputs.
 
-Time `t = 0` means the first frame of the selected analysis window. It need not
+Time `t = 0` means the first frame of the In/Out range. It need not
 be the beginning of the video. For `N` consecutive frames at effective `fps`
 frames per simulated second, the elapsed span is `T = (N − 1) / fps`. At the
 normal simulation speed this is the video's frame rate. If simulation speed
@@ -163,8 +170,10 @@ a fitted correction. These are different assumptions.*
 | **Balloon (supplied wind)** | The complete per-frame input wind series is fixed, including calm when selected | `R₀, w`: two |
 | **Balloon (supplied wind + correction)** | The fixed input series plus a searched constant east/north correction | `R₀, Δu, Δv, w`: four |
 
-The input series comes from the **Target Wind** of the sitch (the saved Sitrec
-scene), or calm when **Wind for analysis** is **Zero wind**. It changes during the
+The input series comes from the **Target Wind** of the sitch (one Sitrec
+scene; see the [Glossary](Glossary.md)), set in **Physics → Wind**. It is calm
+when **Traverse → Traverse Analysis Tweaks → Wind for analysis** is
+**Zero wind**. It changes during the
 window only when the Target Wind source is a track file with wind columns, other
 than a sounding. Otherwise every frame has the same speed and direction.
 Sitrec retains each interval's wind rather than replacing the series with its
@@ -264,8 +273,8 @@ The angular cost is `0.010 / 0.02 = 0.5`. The default wind penalty is
 
 The distinction matters: a penalty can change which range and wind the fit
 chooses, even though the displayed residual does not include that penalty.
-The result card multiplies the penalties by `0.02°` to give degrees, and shows
-**Model priors cost** when the total exceeds 0.005°.
+The details panel of a gallery tile multiplies the penalties by `0.02°` to give
+degrees, and shows **Model priors cost** when the total exceeds 0.005°.
 
 ### The default penalties
 
@@ -303,7 +312,7 @@ changes. The analysis then tries a limited set of alternatives. The fitted-wind
 run treats each row below as a separate candidate. It does not combine all
 their freedoms in one large model.
 
-| Stage recorded in diagnostics | Horizontal motion | Vertical motion | Free parameters: fitted / supplied / corrected |
+| Stage | Horizontal motion | Vertical motion | Free parameters: fitted / supplied / corrected |
 |---|---|---|---|
 | `steady` | Constant fitted wind, or the supplied series | Constant signed height rate | 4 / 2 / 4 |
 | `linear` | Wind changes linearly with time | Constant signed height rate | 6 / not tried / not tried |
@@ -311,8 +320,9 @@ their freedoms in one large model.
 | `shear` | Fitted wind speed changes with height; direction stays fixed | Constant signed height rate | 5 / not tried / not tried |
 | `quadratic` | Wind has linear and quadratic time terms | Constant signed height rate | 8 / not tried / not tried |
 
-Counts include the initial range. They describe the normal fits. Holding a
-parameter fixed for a range study reduces the searched count.
+The **Model selection** row of a result names its stage. Counts include the
+initial range. They describe the normal fits. Holding a parameter fixed for a
+range study reduces the searched count.
 
 ### Wind changing with time
 
@@ -376,7 +386,7 @@ It uses four vertical parameters:
 
 - `vRise`: upward speed before flame-out, in m/s.
 - `vSink`: eventual downward speed, expressed as a positive magnitude in m/s.
-- `tBurn`: flame-out time, in seconds relative to the analysis window's start.
+- `tBurn`: flame-out time, in seconds relative to the start of the In/Out range.
 - `tauCool` (`τ`): the cooling time scale, in seconds.
 
 ```text
@@ -668,7 +678,6 @@ WebGPU search is enabled for other gallery methods.
 To reduce work, the normal physics search evaluates direction error at roughly
 half-second spacing, with the last observation included. The retained path and
 its reported mean error are then calculated at every observation frame.
-The diagnostics show optimizer completion.
 
 ### Search bounds
 
@@ -693,7 +702,8 @@ wind.
 A fitted value at an active bound can mean the search needs more space, or
 the model needs a form of motion it cannot supply. It is not proof that every
 balloon interpretation fails. Zero rise or zero sink can instead be a legitimate
-simple result. Read the completion and bound diagnostics together.
+simple result. [Section 11](#11-a-practical-way-to-check-a-recording) lists the
+badges that mark a bound or an incomplete search.
 
 ## 8. How Sitrec selects the motion model
 
@@ -732,8 +742,8 @@ There are two distinct decisions here. Within each model, the optimizer
 minimizes angular error **plus penalties**. Between those fitted models, the
 selection rule uses completion, **pure reported angular error**, and free
 parameter count. This is a practical rule for avoiding unnecessary complexity.
-It is not a statistical significance test. The attempted alternatives and
-their completion states remain in the result diagnostics.
+It is not a statistical significance test. The **Model selection** row lists
+the attempted alternatives with their errors, and marks an unfinished one.
 
 ## 9. A numerical example from start to finish
 
@@ -852,11 +862,11 @@ Read several quantities together:
 | Prior costs | What did the declared assumptions cost at the retained solution, in degrees? | How far they moved the solution, or a probability that they are true |
 | Completion and bounds | Did the numerical search finish, and do active limits matter? | An exclusion of every path outside the search |
 | Terrain and physical checks | Does this path pass the implemented compatibility checks? | A direct observation of the object's type |
-| Balloon consistency | Does the path keep one horizontal direction and one vertical trend? | Whether its speed is steady, or an identity probability; it also does not alter the gallery's BOT Score |
+| Balloon consistency | Does the path keep one horizontal direction and one vertical trend? Consistency is the smaller of horizontal directness (net displacement over distance travelled) and vertical directness (net height change over total vertical travel). | Whether its speed is steady, or an identity probability; it also does not alter the gallery's BOT Score |
 
 When many paths fit equally well, a small prior cost can still decide range and
 wind. In one run on the scene of section 9, a prior cost under 0.001° moved the
-north wind from 2 to about 1 m/s. The card shows no row for a cost this small.
+north wind from 2 to about 1 m/s. The details panel shows no row for a cost this small.
 
 The lifecycle result is labelled **Possible sky lantern (rise then fall)** only
 when the fitted curve has appreciable rise and sink, flame-out at or after the
@@ -864,9 +874,10 @@ window's start, a vertical reversal inside the observed interval, and descent by
 the end. A lifecycle fit showing only
 descent can remain labelled **Balloon**. Neither label identifies the object.
 
-Turn on **Solution families (range bands)** before the run to give the
-fitted-wind Balloon a **conditional range family**. This is the held-range ladder
-of [Traverse Concepts](TraverseConcepts.md). Sitrec fixes a succession of starting
+Turn on **Solution families (range bands)** in **Traverse → Traverse Analysis
+Tweaks** before the run to give the fitted-wind Balloon a **conditional range
+family**. This is the held-range ladder
+of [The Ideas Behind the Traverse Analysis](TraverseConcepts.md). Sitrec fixes a succession of starting
 ranges, retains the selected motion stage, and refits the remaining parameters.
 This shows which ranges that model can admit: a range is admitted when its refit
 stays within an acceptance residual set from the best fit and passes a physical
@@ -886,8 +897,8 @@ The executive verdict combines more than the best Balloon residual. An
 affirmative Balloon verdict requires a viable free-wind fit, independent
 supporting wind evidence, Balloon consistency of at least 0.75, sightlines that
 were not built from the tested target, a camera track that spans at least the
-minimum baseline (0.1% of the analysis start distance, at least 2 m), and no
-viable catalogued object. A viable
+minimum baseline, and no viable catalogued object. The minimum baseline is
+0.1% of **Tgt Start Dist** (a slider in the Traverse menu), at least 2 m. A viable
 aircraft or drone class does not block this verdict. See
 [The executive verdict](TraverseAnalysis.md#the-executive-verdict) for the
 current gates. Three wind variants are tests of one interpretation class;
@@ -895,25 +906,58 @@ they are not three independent votes for a balloon.
 
 ## 11. A practical way to check a recording
 
-1. Check the camera track, timestamps, field of view and LOS source. A fit
-   cannot correct an unknown timing or pointing error simply by fitting well.
-2. Select the In/Out window that you intend to analyze. Record it so another
+1. Check the camera track, timestamps, field of view and LOS source. See
+   [The Camera and Target Menus](CameraAndTarget.md). A fit cannot correct an
+   unknown timing or pointing error simply by fitting well. Then check that the
+   sightlines follow the object. **Traverse → LOS Source** must be a source that
+   follows it, such as **Camera + Point Track**, unless the object stays at the
+   centre of the frame. The track must cover every frame that you analyze.
+   [Point Tracking](PointTrack.md#from-a-point-track-to-a-line-of-sight) gives
+   the setup steps and these checks.
+2. Select the In/Out range that you intend to analyze. Record it so another
    person can use the same observations.
-3. Select the wind input and record its source. State whether it is measured,
-   modelled, estimated or deliberately calm. Record the correction scale.
-4. Run **Traverse ▸ Analyze Traverse Methods...**. Compare all three Balloon
+3. Load winds aloft for the date and place. In **Physics → Wind**, set
+   **Wind Source** to weather data such as **GFS (NOAA)** (see [Wind in Sitrec](Wind.md)).
+   With **Manual**, or with **Traverse → Traverse Analysis Tweaks → Wind for
+   analysis** at **Zero wind**, the independent wind check is **Inconclusive**,
+   so the verdict cannot be **Probably a wind-blown balloon**. Record the source.
+   State whether it is measured, modelled, estimated or deliberately calm.
+   Record the **Wind correction scale (kt)** from **Traverse → Traverse Analysis Tweaks**.
+4. To see which ranges a model admits, turn on **Solution families (range
+   bands)** in **Traverse → Traverse Analysis Tweaks**. It is off by default, and the run
+   takes longer.
+5. Run **Traverse → Analyze Traverse Methods...**. Compare all three Balloon
    wind treatments and the competing motion models.
-5. Inspect the selected stage, completion, active bounds, residual through
-   time, prior costs, vertical rate, wind and terrain clearance. Check for a
-   short bad segment hidden by a small overall mean.
-6. Examine the range family where available. Repeat with reasonable changes
-   to the window, pointing and weather assumptions. Record how range and wind
-   move together.
-7. Use independent information before naming an object: weather, size,
+6. Click a Balloon result in the gallery. The details panel shows these items:
+   - **Selected stage:** the **Model selection** row.
+   - **Completion and bounds:** the badges beside the result name. **Optimizer
+     incomplete** marks a search that did not converge. **Model limit hit** and
+     **Wind search edge** mark a fitted value at a search bound that the fit
+     depends on. **Unconstrained at bound** marks a value at a bound that the
+     fit does not depend on. **Internal clamp reached** marks a shear fit whose
+     wind multiplier reached its limit of 0.25 or 3. The subtitle gives the
+     parameter.
+   - **Residual through time:** the **LOS fit error** graph under
+     **Frame-by-frame behaviour**. Check for a short bad segment hidden by a
+     small overall mean.
+   - **Prior costs:** the **Model priors cost** row, when the total exceeds 0.005°.
+   - **Vertical rate:** the **Vertical air speed** row and graph.
+   - **Wind:** the **Fitted wind** or **Supplied wind** row. For the fitted-wind
+     result, **Independent wind check** follows the wind profile table.
+   - **Terrain:** a path has the label **Underground** when at least 5% of its
+     samples are more than 40 m below the sampled terrain. A shorter or shallower
+     dip gets no label. The **Terrain clearance** row in **Compare leaders** gives
+     the path's minimum height above that terrain.
+7. If you turned on **Solution families (range bands)**, read the **Range band
+   (model-conditional)** row of the fitted-wind result. If no sampled range
+   passes, the row is absent, and the **Range band** heading lower in the panel
+   says so. Repeat with reasonable changes to the window, pointing and weather
+   assumptions. Record how range and wind move together.
+8. Use independent information before naming an object: weather, size,
    release location, other cameras or another measured range constraint.
 
 A fitted negative flame-out time means that the lifecycle starts cooling before
-the chosen window. It does not by itself establish a lantern, its launch time or
+the In/Out range. It does not by itself establish a lantern, its launch time or
 its launch site. The teaching values in this guide are not measurements from a
 recording.
 
@@ -923,7 +967,7 @@ Several Sitrec tools can produce a drifting path. They solve different problems.
 
 | Tool | What it calculates | How it uses the observed directions |
 |---|---|---|
-| **Balloon**, in the analysis gallery | Selects from a small set of drift and vertical-motion models, under three wind treatments | Fits the model parameters to directions throughout the selected window |
+| **Balloon**, in the analysis gallery | Selects from a small set of drift and vertical-motion models, under three wind treatments | Fits the model parameters to directions throughout the In/Out range |
 | **Global Fit: Physics → Sky Lantern** | Fits the broader lantern model, which has a rise/cooling/descent profile and can combine wind variation with altitude shear | Fits a physical-motion model to the selected directions; it does not use the reduced Balloon model-selection procedure |
 | **Global Fit: Wind Tracer** | Fits passive drift with a separately solved initial 3D position and a model of camera pointing motion | Solves the position in closed form within its search and allows specified forms of pointing error |
 | **Windblown Object (on first LOS)** | Starts at the supplied distance and moves with the supplied wind | Uses the first direction only; later directions do not alter its path |
@@ -994,7 +1038,7 @@ Balloon label is broader than that key.
 | [TraverseMotion.js](https://github.com/MickWest/Sitrec2/blob/main/src/TraverseMotion.js) | Balloon consistency |
 | [BalloonPhysics.js](https://github.com/MickWest/Sitrec2/blob/main/src/BalloonPhysics.js) | Generated Add Balloon flight |
 
-Related reading: [Traverse Concepts](TraverseConcepts.md),
+Related reading: [The Ideas Behind the Traverse Analysis](TraverseConcepts.md),
 [Traverse Methods](TraverseMethods.md),
 [Traverse Analysis and the Verdict](TraverseAnalysis.md), and
-[Wind](Wind.md).
+[Wind in Sitrec](Wind.md).
