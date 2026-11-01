@@ -1,16 +1,16 @@
 ## Adding A Sitch in Code
 
 ### (The following approach has largely been replaced by setting up a custom sitch. See:
-- [The Custom Sitch Tool - Drag and Drop Sitches](../CustomSitchTool.md)
-- [Local custom Sitch with JSON files - More complex custom sitches](../LocalCustomSitches.md)
+- [Getting Started](../CustomSitchTool.md) - the drag-and-drop custom sitch tool
+- [Local Custom Sitches - hand-written sitch files (deprecated)](../LocalCustomSitches.md)
 
 ### So this approach would only apply if you need to add custom code
 
-A "sitch" is a situation - i.e. a scenario that is being recreated. Each sitch is defined by one Javascript file, and (optionally) some data files.
+A **sitch** (short for *situation*) is one Sitrec scene: a place, a span of time, and the camera, tracks, objects and video that recreate an event. You can save and share a sitch, but it is a sitch before you save it. A sitch in code is defined by one Javascript file, and (optionally) some data files.
 
 To create a new sitch, the simplest way is to copy and rename an existing one that does something similar to what you want. So, for example, if you want to recreate a video of one plane being viewed from another plane, you could use the "Lake Michigan" sitch as a base.
 
-Let's call the new stitch "Springfield" (just an example name), and assume you have KML files for the two planes, along with a location and time.
+Let's call the new sitch "Springfield" (just an example name), and assume you have KML files for the two planes, along with a location and time.
 
 - Copy data/lakemichigan/SitLakeMichigan.js to data/springfield/SitSpringfield.js (Sitch files must start with "Sit")
 - Edit three names at the start of the Sitch definition:
@@ -105,7 +105,7 @@ sitch = {
     altitudeLabel:      { kind: "MeasureAltitude",position: "lookCamera"},
 }
 ```
-WestJet is a case of Starlink satellites observed from a plane. This new case was similar to the PVS14 sitch, so we use that as a base with the include_pvs14 line.
+WestJet is a sitch of Starlink satellites observed from a plane. It was similar to the PVS14 sitch, so we use that as a base with the include_pvs14 line.
 
 The remaining lines show everything that needs to change
 

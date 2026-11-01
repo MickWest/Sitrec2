@@ -2,11 +2,11 @@
 
 Sitrec uses two related layers for GUI mirroring:
 
-- [`src/MenuMirror.js`](../../src/MenuMirror.js) clones an individual lil-gui controller. The
+- [`src/MenuMirror.js`](https://github.com/MickWest/Sitrec2/blob/main/src/MenuMirror.js) clones an individual lil-gui controller. The
   source and twin bind to the same `object[property]`, and the helper copies controller type,
   label, tooltip, range, units, visibility, options, and relevant callbacks. Its keyed
   `shareAs()`/`addMirror()` API is used when independently built menus need the same control.
-- [`src/CustomManagerMirror.js`](../../src/CustomManagerMirror.js) manages a whole-folder mirror
+- [`src/CustomManagerMirror.js`](https://github.com/MickWest/Sitrec2/blob/main/src/CustomManagerMirror.js) manages a whole-folder mirror
   in a draggable standalone menu. It uses `GUI.mirrorFolderFrom()` from `MenuMirror.js` for the
   controller clones, then rebuilds the folder when supported structural or visibility changes
   are detected.
@@ -177,7 +177,7 @@ headerMenu.addMirror("view:lookView:labels", {
 ```
 
 Registration and subscription are order-independent. The target must be a polled root; see
-[`src/GUIRootRegistry.js`](../../src/GUIRootRegistry.js). Register the source after its
+[`src/GUIRootRegistry.js`](https://github.com/MickWest/Sitrec2/blob/main/src/GUIRootRegistry.js). Register the source after its
 `.name().tooltip().onChange()` chain so `shareAs()` captures its finished side effect.
 
 For a one-off controller clone when both controllers are already in hand:

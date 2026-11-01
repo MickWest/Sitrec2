@@ -1,9 +1,9 @@
 # Settings Manager
 
-[`src/SettingsManager.js`](../../src/SettingsManager.js) owns Sitrec's per-user application
+[`src/SettingsManager.js`](https://github.com/MickWest/Sitrec2/blob/main/src/SettingsManager.js) owns Sitrec's per-user application
 preferences. It creates defaults, validates the persisted allowlist, selects a storage path,
 and suppresses unchanged writes. The Settings UI and save debounce live on `CCustomManager` in
-[`src/CustomSupport.js`](../../src/CustomSupport.js).
+[`src/CustomSupport.js`](https://github.com/MickWest/Sitrec2/blob/main/src/CustomSupport.js).
 
 Settings are not part of a sitch. They should contain only small, JSON-serializable preferences,
 never credentials or other secrets.
@@ -12,14 +12,14 @@ never credentials or other secrets.
 
 - `src/SettingsManager.js` provides defaults, sanitization, storage helpers,
   `initializeSettings()`, `saveSettings()`, and `SettingsSaver`.
-- [`sitrecServer/settings.php`](../../sitrecServer/settings.php) authenticates GET and POST
+- [`sitrecServer/settings.php`](https://github.com/MickWest/Sitrec2/blob/main/sitrecServer/settings.php) authenticates GET and POST
   requests, repeats the allowlist validation, and stores one JSON object per user.
 - `src/CustomSupport.js` initializes settings, builds the Settings menu, applies settings with
   live side effects, and exposes `saveGlobalSettings(immediate)`.
-- [`src/StartupDefaults.js`](../../src/StartupDefaults.js) applies new-sitch preferences before
+- [`src/StartupDefaults.js`](https://github.com/MickWest/Sitrec2/blob/main/src/StartupDefaults.js) applies new-sitch preferences before
   setup.
 - `tests/SettingsManager.test.js` covers selected sanitizer behavior, while
-  [`tests/settingsAllowlistParity.test.js`](../../tests/settingsAllowlistParity.test.js) enforces
+  [`tests/settingsAllowlistParity.test.js`](https://github.com/MickWest/Sitrec2/blob/main/tests/settingsAllowlistParity.test.js) enforces
   identical browser and PHP key lists.
 
 ## Storage Flags

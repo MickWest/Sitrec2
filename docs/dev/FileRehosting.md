@@ -1,51 +1,63 @@
 # File rehosting and object references
 
-Sitrec rehosts files so a saved situation does not depend on a file that exists only on
-one user's computer or on a changing external URL. A full-server installation can store
-rehosted files either on its own filesystem or in S3-compatible object storage.
+To rehost a file is to copy it to the site's own storage, so that a saved
+[sitch](../Glossary.md) does not depend on a file that exists only on one user's computer
+or on a changing external URL. A full-server installation can store rehosted files either
+on its own filesystem or in S3-compatible object storage. This page is for operators who
+configure that storage and for developers who work on the upload code.
 
 ## What is rehosted
 
 Two broad classes of file go through this system:
 
 1. **Dynamic external data.** In particular, current and historical satellite orbital
-   data (OMM CSV, or legacy TLE) is copied when a situation is saved. Reopening the save
+   data (OMM CSV, or legacy TLE) is copied when a sitch is saved. Reopening the save
    therefore uses the same element sets rather than whatever the upstream source serves
    later.
 
    Orbital data is published after the time it describes, so a set downloaded within a
    couple of days of its date may still be incomplete. Rehosting preserves that incomplete
-   set. When the owner reopens the situation, Sitrec can offer to merge in data published
+   set. When the owner reopens the sitch, Sitrec can offer to merge in data published
    since the save; it does not modify or delete the original copy. See `src/TLERefresh.js`
    and [Saving and Loading](../SavingAndLoading.md#satellite-data-in-a-saved-sitch).
 2. **User files.** These include files dropped into Sitrec, files opened from a local
-   situation folder, videos, tracks, overlays, screenshots, and saved situation versions.
+   sitch folder, videos, tracks, overlays, screenshots, and saved sitch versions.
 
 The browser-side transport is `src/CRehoster.js`; the upload endpoint is
 `sitrecServer/rehost.php`.
 
 ## Stable object references
 
-Object-storage uploads prefer a host-independent reference over a permanent storage URL:
+For a direct object-storage upload, the client stores a host-independent reference instead
+of a permanent storage URL:
 
 ```text
-sitrec://42/My Situation/20260904_120000.js
+sitrec://42/My Sitch/20260904_120000_9f3a1c7b4e2d8a6f0c1b2d3e4f5a6b7c.js
 ```
 
-The part after `sitrec://` is the object key. Share links normally put the compact raw key
-in the `custom` query parameter instead of exposing the bucket host:
+The part after `sitrec://` is the object key. A share link for an object-storage save puts
+the compact raw key in the `custom` query parameter, so that the link does not expose the
+bucket host:
 
 ```text
-?custom=42/My%20Situation/20260904_120000.js
+?custom=42/My%20Sitch/20260904_120000_9f3a1c7b4e2d8a6f0c1b2d3e4f5a6b7c.js
 ```
+
+A [filesystem](#filesystem-storage) save's link carries a direct URL in that parameter.
 
 `src/SitrecObjectResolver.js` sends canonical references, raw keys, and compatible legacy
 S3 URLs to `sitrecServer/object.php`. The server returns the canonical reference, key,
 share value, fetchable URL, and an expiry time when the URL is temporary. This indirection
 allows storage hosts and public/private read modes to change without changing saved
-situations. Legacy direct URLs remain supported.
+sitches. Legacy direct URLs remain supported.
 
-A folder reference such as `42/My Situation/` shares the newest public `.js` version with
+The indirection applies only to `sitrec://` references, raw keys, and URLs on standard AWS
+S3 hostnames. A [server-POST upload](#upload-paths), which goes through `rehost.php`, stores
+its fetch URL. With `S3_READS_VIA_SERVER=true` that URL names the application host, and with
+`S3_PUBLIC_BASE_URL` it names that base. The resolver does not process these URLs. A share
+link carries such a URL whole, and the URL stops working if that host goes away.
+
+A folder reference such as `42/My Sitch/` shares the newest public `.js` version with
 anyone who knows that URL. This follows `S3_DEFAULT_VISIBILITY` (public by default) and
 its prefix exceptions. Private folders remain restricted to their owner or an administrator;
 private versions within a public folder are excluded for other readers. Owners and admins
@@ -69,7 +81,8 @@ There are two transports:
 - **Server POST.** The browser sends multipart form data to `rehost.php`. The server writes
   it to the filesystem, or streams it into object storage when `SAVE_TO_S3=true`. Upload
   progress is reported with `XMLHttpRequest` events. This is also the only upload path in
-  the secure build, which forces `USE_S3_PRESIGNED_URLS=false`.
+  the [secure build](Secure-Build.md) (what `npm run build-secure` makes), which forces
+  `USE_S3_PRESIGNED_URLS=false`.
 - **Direct object-storage upload.** When both `SAVE_TO_S3=true` and
   `USE_S3_PRESIGNED_URLS=true`, the browser first asks `rehost.php` for a presigned PUT.
   Files larger than `S3_MULTIPART_THRESHOLD_MB` use presigned multipart uploads with
@@ -97,27 +110,36 @@ Sitrec's limit, including:
 - PHP `upload_max_filesize`; and
 - PHP `post_max_size` (which must be larger than the complete multipart form request).
 
+The Sitrec container images do not set these PHP limits, so PHP's built-in values apply:
+`upload_max_filesize=2M` and `post_max_size=8M`. A server-POST upload above 2 MB fails until
+you add an `.ini` file with higher values to `/usr/local/etc/php/conf.d/` in the container.
+`rehost.php` also reads the whole file into memory, and `memory_limit` stays at PHP's built-in
+128 MB. If you set `MAX_FILE_SIZE_MB` or `ADMIN_MAX_FILE_SIZE_MB` above 100, set a higher
+`memory_limit` in that file too.
+
 Direct presigned uploads avoid those request-body limits, but they do not bypass
 `MAX_FILE_SIZE_MB` in the normal Sitrec flow.
 
-The server accepts only a restricted filename character set and rejects executable or
-server-configuration extensions, and document types a browser runs script in (XHTML, SVG,
-XSLT and similar). Every extension in a name is checked, not only the last, because
+The server replaces any character outside a restricted set in an upload filename with `_`,
+and it refuses a version name or delete name that has such a character. It also rejects
+executable or server-configuration extensions, and document types a browser runs script in
+(XHTML, SVG, XSLT and similar). Every extension in a name is checked, not only the last, because
 Apache takes a type from an inner one (`x.html.klv`). `.js` and `.xml` stay allowed, because
-saved situations are `.js` and Sitrec imports XML and KML. An unversioned `.html` or `.htm`
+saved sitches are `.js` and Sitrec imports XML and KML. An unversioned `.html` or `.htm`
 upload (Sitrec imports University of Wyoming soundings as HTML) is stored as `.txt`, which
 the client parses by content in the same way, and the returned URL names the `.txt` file.
 An `.html` version name, or `html` as an inner extension, is still refused. Unversioned
 uploads are content-addressed by a short client hash on the presigned path or an MD5 suffix
-on the server-POST path. Versioned situation files live under
-`<user-id>/<situation-name>/<version>`, with the whole situation name, dots included, as
+on the server-POST path. Versioned sitch files live under
+`<user-id>/<sitch-name>/<version>`, with the whole sitch name, dots included, as
 the folder on disk, the S3 key, the returned URL and the delete path.
 
 ## Authentication and user folders
 
 Every upload and delete request resolves identity on the server. User id `0` means
 anonymous and is refused. The nonzero id becomes the first path segment of every uploaded
-object, so callers cannot choose another user's directory.
+object, so a normal caller cannot choose another user's directory. An administrator can act
+as another user with the `testUserID` query parameter.
 
 `getUserInfoCustom()` in `config/config.php` returns:
 
@@ -125,12 +147,15 @@ object, so callers cannot choose another user's directory.
 ['user_id' => $userId, 'user_groups' => $groupIds]
 ```
 
-The tracked [configuration example](../../config/config.php.example) supports three modes:
+The tracked [configuration example](https://github.com/MickWest/Sitrec2/blob/main/config/config.php.example) supports three modes:
 
 - `AUTH_MODE=forum` (the default): use the configured forum session, then
-  `SITREC_DEFAULT_USERID`, then the loopback-only development identity;
+  `SITREC_DEFAULT_USERID`, then the loopback-only development identity.
+  `SITREC_DEFAULT_USERID` gives that id to every request without a forum session, with
+  administrator rights unless `SITREC_DEFAULT_USER_GROUPS` sets other groups.
+  `config/shared.env.example` sets it to `1`, so remove that line on any shared server;
 - `AUTH_MODE=cert`: resolve a mapped X.509 client identity as described in
-  [Installing and configuring](Installing-and-configuring.md#client-certificate-authentication);
+  [Installing Sitrec](Installing-and-configuring.md#client-certificate-authentication);
 - `AUTH_MODE=none`: make every request anonymous.
 
 `getUserIDCustom()` is only a wrapper around `getUserInfoCustom()`. A custom installation
@@ -153,7 +178,7 @@ writable by the PHP process and served at the matching `$UPLOAD_URL`. Filesystem
 local to one server: use shared persistent storage or object storage when more than one app
 instance must see the same saves.
 
-These files are served from the application's own origin. The container sends
+These files are served from the application's own origin. The released container image sends
 `Content-Security-Policy: default-src 'none'; style-src 'unsafe-inline'; sandbox` for
 `sitrec-upload/` and `sitrec-cache/` (`docker/cache-headers.conf`), so an uploaded file that
 a browser would render as a page (XML, KML, or an extension with no type) runs no script
@@ -219,7 +244,9 @@ All endpoints create their client through `getS3Client()` in
 | `S3_ENDPOINT` | empty | Custom S3-compatible endpoint. |
 | `S3_USE_PATH_STYLE` | `true` with a custom endpoint | Set `false` if that endpoint requires virtual-hosted bucket URLs. |
 
-A role-based private deployment normally starts with:
+A deployment that uses a workload role starts with the settings below. They set credentials
+only. Sitrec treats objects as public until you set `S3_DEFAULT_VISIBILITY=private`, as shown
+in the next section.
 
 ```dotenv
 SAVE_TO_S3=true
@@ -235,9 +262,9 @@ credential so the normal provider chain can use a task, instance, or workload ro
 
 | Setting | Default | Purpose |
 |---|---|---|
-| `USE_S3_PRESIGNED_URLS` | `true` | Let the browser upload directly; `false` sends file bytes through `rehost.php`. |
-| `S3_MULTIPART_THRESHOLD_MB` | `40` | Files larger than this use multipart upload. |
-| `S3_CHUNK_SIZE_MB` | `16` | Part size. Respect the storage service's multipart minimum and maximum part counts. |
+| `USE_S3_PRESIGNED_URLS` | `true` in the example file; off if unset | Let the browser upload directly; `false` sends file bytes through `rehost.php`. |
+| `S3_MULTIPART_THRESHOLD_MB` | `40` in the example file; `100` if unset | Files larger than this use multipart upload. |
+| `S3_CHUNK_SIZE_MB` | `16` | Part size. Stay at or above the storage service's minimum part size (5 MiB on AWS). A file can have at most 10,000 parts, so 16 MB allows about 156 GiB. |
 | `S3_PARALLEL_UPLOADS` | `8` | Maximum concurrent part uploads. |
 | `S3_PRESIGNED_GET_EXPIRY_SECONDS` | `1800` | Lifetime of private read URLs. |
 | `S3_PRESIGNED_PUT_EXPIRY_SECONDS` | `900` | Lifetime of a single-part PUT URL. |
@@ -246,8 +273,11 @@ credential so the normal provider chain can use a task, instance, or workload ro
 | `S3_PRIVATE_PREFIXES`, `S3_PUBLIC_PREFIXES` | empty | Comma-separated exceptions to the default visibility. |
 | `S3_READS_VIA_SERVER` | `false` | Return a same-origin `s3-proxy.php?key=...` URL and stream reads with server credentials. Supports range requests. |
 | `S3_PUBLIC_BASE_URL` | empty | Optional public/CDN base used for unsigned object URLs. |
-| `S3_ACL` | empty | Legacy default ACL override. |
+| `S3_ACL` | empty | Legacy fallback for `S3_PUBLIC_OBJECT_ACL` when that setting is empty. |
 | `S3_PUBLIC_OBJECT_ACL`, `S3_PRIVATE_OBJECT_ACL` | `public-read`, `private` in the example file | ACL selected from the key's visibility. |
+
+The published container image is built from the example file, so it keeps the example values
+of `USE_S3_PRESIGNED_URLS` and `S3_MULTIPART_THRESHOLD_MB` when you leave them unset.
 
 For a private bucket whose browser clients cannot reach the storage endpoint, use:
 
@@ -266,7 +296,7 @@ this configuration remain on the application's origin.
 
 `s3-proxy.php` sets the response type from the extension of the object key. It never uses
 the type stored with the object, because a direct upload does not fix that type. Images,
-video and audio get their own types. Situation files and other text data (JSON, KML, XML,
+video and audio get their own types. Sitch files and other text data (JSON, KML, XML,
 CSV, TLE, SRT, TXT) are `text/plain` or `application/json`. All other keys, including keys
 with no extension, are `application/octet-stream`. Every response has
 `X-Content-Type-Options: nosniff`, and every response that is not an image, video or audio
@@ -307,14 +337,17 @@ uploads and reads stay on the application server.
    the expected groups, and `maxFileSizeMB`.
 2. Upload a small file and a file above the multipart threshold (when direct uploads are
    enabled). Confirm both complete and reload.
-3. Inspect the saved situation: new direct-object-storage uploads should use a
+3. Inspect the saved sitch: new direct-object-storage uploads should use a
    `sitrec://...` reference rather than a bucket hostname.
-4. Resolve the reference through `sitrecServer/object.php?ref=...` and check whether the
-   returned URL is public, presigned, or same-origin as configured.
+4. Resolve the reference through `sitrecServer/object.php?ref=<value>`, with the whole value
+   URL-encoded as the client does (for example
+   `sitrec%3A%2F%2F42%2FMy%20Sitch%2F<version>.js`). Check whether the returned URL is public,
+   presigned, or same-origin as configured.
 5. Seek within a rehosted video. This exercises range requests, including the
    `s3-proxy.php` path.
-6. Verify an unauthenticated upload is refused and that one user cannot upload to or delete
-   another user's prefix.
+6. From another machine, with `SITREC_DEFAULT_USERID` unset, verify that an unauthenticated
+   upload is refused. With a non-administrator account, verify that one user cannot upload to
+   or delete another user's prefix.
 
 The focused implementation tests are `tests/SitrecObjectResolver.test.js`,
 `tests/s3ClientConfig.test.js`, `tests/s3ReadsViaServer.test.js`, and

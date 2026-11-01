@@ -8,16 +8,16 @@ sitch.
 
 A persisted setting normally touches six places in five files:
 
-1. Its default in [`src/SettingsManager.js`](../../src/SettingsManager.js).
+1. Its default in [`src/SettingsManager.js`](https://github.com/MickWest/Sitrec2/blob/main/src/SettingsManager.js).
 2. The browser allowlist in `sanitizeSettings()` in that file.
-3. The server allowlist in [`sitrecServer/settings.php`](../../sitrecServer/settings.php).
-4. Its control and behavior in [`src/CustomSupport.js`](../../src/CustomSupport.js).
-5. Its English label and tooltip in [`src/i18n/en.js`](../../src/i18n/en.js).
-6. Its unit tests in [`tests/SettingsManager.test.js`](../../tests/SettingsManager.test.js).
+3. The server allowlist in [`sitrecServer/settings.php`](https://github.com/MickWest/Sitrec2/blob/main/sitrecServer/settings.php).
+4. Its control and behavior in [`src/CustomSupport.js`](https://github.com/MickWest/Sitrec2/blob/main/src/CustomSupport.js).
+5. Its English label and tooltip in [`src/i18n/en.js`](https://github.com/MickWest/Sitrec2/blob/main/src/i18n/en.js).
+6. Its unit tests in [`tests/SettingsManager.test.js`](https://github.com/MickWest/Sitrec2/blob/main/tests/SettingsManager.test.js).
 
 The two sanitizers are both allowlists. A key omitted from either one is discarded. The
 parity test in
-[`tests/settingsAllowlistParity.test.js`](../../tests/settingsAllowlistParity.test.js)
+[`tests/settingsAllowlistParity.test.js`](https://github.com/MickWest/Sitrec2/blob/main/tests/settingsAllowlistParity.test.js)
 checks that the browser and PHP lists contain exactly the same keys.
 
 ## 1. Add the Default

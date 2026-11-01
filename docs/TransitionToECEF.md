@@ -84,6 +84,8 @@ In ECEF, Z is also the north pole — the celestial sphere's Z-up orientation al
 
 **Note:** The `celestialToECEF()` function in `CelestialMath.js` performs the same ECI→ECEF rotation (by -GST around Z) for individual celestial body directions. This is consistent with the new celestial sphere rotation.
 
+**Developer note:** `calculateGST()` and `getLST()` return mean sidereal time of date, measured from the equinox of the same date. The star catalog uses J2000 coordinates (EQJ in the code), measured from the equinox of the year 2000. Pairing the two omits precession (the slow drift of Earth's axis), an error of about 1.4° in 1897. Use `getEQJToECEFMatrix()` in `src/CelestialMath.js`, which corrects for precession and nutation (a small wobble of the axis) before it applies Earth's rotation. The celestial sphere now uses this matrix, in place of the `-GMST` rotation above.
+
 ### 9. Globe Rotation and Lighting (`src/Globe.js`)
 
 **Problem:** The globe had no visible day/night shading — lighting appeared uniform.

@@ -5,20 +5,29 @@ Sitrec terrain combines two independent tile layers:
 - a **map source**, the image draped over the ground; and
 - an **elevation source**, the height samples used to shape the ground.
 
-![Example of terrain](../docimages/terrain/Example-of-terrain.jpg)
+![Satellite imagery draped over elevation tiles, with the Terrain menu open](../docimages/terrain/Example-of-terrain.jpg)
 
-Both sources must use the same tile projection. Sitrec supports the usual Web Mercator
-slippy-map grid (`EPSG:3857`, the default), an equirectangular/GoogleCRS84Quad-style grid
-selected with `mapping: 4326`, custom URL templates, and limited WMS/WMTS adapters.
+*The **Terrain** menu selects both layers. Here **Map Type** is ESRI World Imagery and
+**Elevation Type** is AWS Terrarium.
+[Imagery powered by Esri](https://www.esri.com/en-us/legal/terms/data-attributions).*
+
+Sitrec supports the usual Web Mercator slippy-map grid (`EPSG:3857`, the default), an
+equirectangular/GoogleCRS84Quad-style grid selected with `mapping: 4326`, custom URL
+templates, and limited WMS/WMTS adapters.
+
+A `mapping: 4326` map works over a `3857` or a `4326` elevation source. A `3857` map needs a
+`3857` elevation source: over a `4326` source, the drawn ground does not follow the height
+data.
 
 There are two ways to add a source:
 
 1. add a URL-template source through `config/shared.env`; or
 2. add a JavaScript source definition to the per-install `config/config.js`, based on
-   [config/config.js.example](../../config/config.js.example).
+   [config/config.js.example](https://github.com/MickWest/Sitrec2/blob/main/config/config.js.example).
 
 Use the environment form for ordinary `{z}/{x}/{y}` tile servers. Use `config.js` when the
 URL needs computed bounds, a date, a layer-dependent extension, or other JavaScript logic.
+A `config.js` source is compiled into the build, so a change to it needs a rebuild.
 
 ## URL-template sources from `shared.env`
 
@@ -56,40 +65,41 @@ browser, so these settings can be supplied at container start as well as build t
 | `_ZOFFSET` | `0` | `0` | Integer added to the value substituted for `{z}`. `{x}` and `{y}` are unchanged. |
 | `_ATTRIBUTION` | empty | empty | On-screen source credit. |
 | `_TERMS_URL` | empty | empty | Link opened from the attribution. |
-| `_WATER_COLOR` | unset | not used | Flat map colour used by Water Reflection; see below. |
+| `_WATER_COLOR` | unset | not used | Flat map color used by Water Reflection; see below. |
 
 A negative `_ZOFFSET` automatically raises the effective minimum zoom to at least its
 absolute value, and the substituted zoom is clamped to zero. This prevents negative tile
 URLs. The offset changes only the `{z}` value; it does not rescale `{x}` or `{y}`.
 
-To remove the built-in internet providers from the menus and retain only custom and
-offline-safe sources, set:
+To remove the built-in internet providers from the menus, set:
 
 ```dotenv
 SITREC_ENABLE_DEFAULT_MAP_SOURCES=false
 SITREC_ENABLE_DEFAULT_ELEVATION_SOURCES=false
 ```
 
-The remaining map choices include local/debug/flat sources; elevation retains Flat and
-Local. The secure build forces both settings to `false`.
+Only `SITREC_CUSTOM_*` sources and the built-in offline-safe sources stay. Your own
+`config.js` sources are also removed, unless an entry sets `offlineSafe: true`. The
+remaining map choices include local/debug/flat sources; elevation retains Flat and Local.
+The [secure build](Secure-Build.md) forces both settings to `false`.
 
 ### Elevation format detection
 
-Environment-defined elevation is decoded as Terrarium RGB when its generated URL ends
+Every elevation source is decoded as Terrarium RGB when its generated URL ends
 exactly in `.png`, or as Mapbox Terrain-RGB when the URL contains `.pngraw`. Any other URL
 is sent to the GeoTIFF decoder. Consequently, a Terrarium URL with a query string after
 `.png` will currently be misclassified; use a URL that ends in `.png`, or define a
 `config.js` function that returns one.
 
-The projection setting does not select the elevation encoding. Map and elevation sources
-in use must still have matching `mapping` values.
+The projection setting does not select the elevation encoding.
 
 ## JavaScript source definitions
 
 `config/config.js` is installation-specific and is not tracked. Its
 `customMapSources` and `customElevationSources` objects are merged into the Terrain menus.
 The object key is the source type used by `DEFAULT_MAP_TYPE` or
-`DEFAULT_ELEVATION_TYPE`.
+`DEFAULT_ELEVATION_TYPE`. In a serverless or desktop build, a `config.js` source appears only
+if it sets `allowInServerless: true`. `SITREC_CUSTOM_*` sources always appear.
 
 A basic map source is:
 
@@ -104,6 +114,7 @@ customMapSources: {
         mapping: 3857,
         waterColor: [170, 211, 223],
         attribution: "© OpenStreetMap contributors",
+        requiredAttribution: true,
         termsURL: "https://www.openstreetmap.org/copyright",
     },
 },
@@ -122,31 +133,37 @@ Common map-definition fields include:
 |---|---|
 | `name` | Menu label. |
 | `mapURL(z, x, y, layerName, layerType)` | Returns the tile URL. |
-| `minZoom`, `maxZoom` | Source coverage. |
+| `minZoom`, `maxZoom` | Source coverage. Defaults are `0` and `14`. |
 | `mapping` | `3857` by default; `4326` for an equirectangular grid. |
 | `layer` | Default layer name. Required when `capabilities` is used. |
-| `layers` | Static layer definitions, including file type when the URL function needs it. |
+| `layers` | Static layer definitions, including file type when the URL function needs it. If `layer` is not set, the first entry is the default. |
 | `capabilities` | WMS/WMTS capabilities URL from which Sitrec builds the layer menu. |
-| `requiredToken` | Name of an environment setting required before the source is shown. |
+| `requiredToken` | `MAPBOX_TOKEN` or `MAPTILER_KEY`. Hides the source until that setting has a real value. No other name is supported. |
 | `attribution`, `termsURL` | On-screen credit and its link. |
-| `waterColor` | Flat RGB water fill used by colour-based water reflection. |
+| `requiredAttribution` | `true` keeps the map credit on screen when the user turns off **Show Attribution**. |
+| `waterColor` | Flat RGB water fill used by color-based water reflection. |
+| `offlineSafe` | `true` keeps the source when the default sources are turned off. |
+| `allowInServerless` | `true` shows the source in a serverless or desktop build. |
 
-The tracked Mapbox and MapTiler sources read their browser-visible credentials from
-`process.env` and declare the corresponding supported name (`MAPBOX_TOKEN` or
-`MAPTILER_KEY`) as `requiredToken`. This hides the source when the setting is absent or is
-still `EXAMPLEKEY`. Never put a real value directly in `config.js`:
+The tracked Mapbox and MapTiler sources read their browser-visible credentials through
+`getEnv()`, which prefers a runtime value and falls back to the build-time one. They declare
+the corresponding supported name (`MAPBOX_TOKEN` or `MAPTILER_KEY`) as `requiredToken`. This
+hides the source when the setting is absent or is still `EXAMPLEKEY`. Never put a real value
+directly in `config.js`:
 
 ```javascript
+import {getEnv} from "../src/envUtils"; // at the top of config.js
+
 maptiler: {
     name: "MapTiler",
     requiredToken: "MAPTILER_KEY",
     layers: {
-        "satellite-v2": {type: "jpg", minZoom: 0, maxZoom: 22},
+        "satellite-v2": {type: "jpg"},
     },
     layer: "satellite-v2",
     mapURL: (z, x, y, layerName, layerType) =>
         `https://api.maptiler.com/tiles/${layerName}/${z}/${x}/${y}.${layerType}` +
-        `?key=${process.env.MAPTILER_KEY}`,
+        `?key=${getEnv("MAPTILER_KEY", process.env.MAPTILER_KEY)}`,
     maxZoom: 16,
     attribution: "© MapTiler © OpenStreetMap contributors",
     termsURL: "https://www.maptiler.com/copyright/",
@@ -194,10 +211,10 @@ NRL_WMTS: {
 },
 ```
 
-`capabilities` is fetched by the browser and parsed for layer names. The source must also
-provide a valid default `layer`; omitting it stops the source with an alert. The first
-capability layer is only a fallback selection inside the populated layer menu, not a
-substitute for the default.
+`capabilities` is fetched by the browser and parsed for layer names, so that server must
+allow cross-origin requests. If the fetch fails, Sitrec logs a console error and sets
+**Map Type** to **Debug Info**. The source must also provide a default `layer`; omitting it
+stops the source with an alert.
 
 The adapters are intentionally narrow rather than general WMS/WMTS clients. If a service
 uses a different matrix set, axis order, image format, style, dimensions, or request
@@ -260,18 +277,35 @@ compressed tiles, integer samples, and other layouts are not supported by this p
 `src/QuadTreeTile.js` coordinates the fetch and height conversion;
 `src/TIFFUtils.js` reads the tiled float data.
 
-Sitrec applies its geoid correction when loading both Terrarium and GeoTIFF elevation.
-Keep **Elevation Scale** at `1` for measurements. Raising it is only a temporary visual
-debugging aid: it exaggerates the terrain and currently scales the geoid correction too,
-so geometry is no longer geodetically accurate.
+Elevation tiles must hold height [above mean sea level (MSL)](../GIS.md#three-kinds-of-height).
+Sitrec adds the [geoid](../Glossary.md) offset to every tile, in all three formats, to give height
+above the WGS84 ellipsoid (HAE). Tiles that already hold ellipsoidal heights are corrected twice.
 
-![Elevation scale demonstration](../docimages/terrain/elevationScale-demo.jpg)
+Keep **Terrain → Terrain Tweaks → elevationScale** at `1` for measurements. Raising it is a
+debugging aid: every ground query also uses the scaled value, and after you set it back to
+`1`, press **Terrain → Refresh**. It exaggerates the terrain and currently scales the geoid
+correction too, so geometry is no longer geodetically accurate.
+
+![The same mountains twice, with the Terrain Tweaks folder open: elevationScale 1 above, and elevationScale 10 below, where the peaks are drawn ten times too tall](../docimages/terrain/elevationScale-demo.jpg)
+
+*The same view with **elevationScale** at `1` (top) and `10` (bottom). At `10`, the terrain is
+ten times too tall. [Imagery powered by Esri](https://www.esri.com/en-us/legal/terms/data-attributions).*
+
+## Local terrain mirror
+
+The **Local** map and elevation sources read a folder of pre-downloaded tiles, laid out as
+`imagery/esri/{z}/{y}/{x}.jpg` (`y` before `x`) and `elevation/{z}/{x}/{y}.png`. To build it,
+run `SITREC_TERRAIN_DIR=<folder> MAX_IMG=8 node scripts/download_local_tiles.js`. This reaches
+imagery zoom 8 and elevation zoom 6, the deepest that Local reads. It downloads about 93,000
+tiles. The imagery is Esri World Imagery, so check that licence first. Put the folder beside the
+application as `sitrec-terrain/`. In a container, mount it at `/var/www/html/sitrec-terrain`.
+For a serverless build, see [Sitrec Serverless Build](https://github.com/MickWest/Sitrec2/blob/main/SERVERLESS.md#terrain).
 
 ## Water Reflection source metadata
 
 The **Effects → Water Reflection** effect can identify water in three ways.
 
-### Flat map colour
+### Flat map color
 
 For a cartographic map with a uniform water fill, declare the source's RGB value:
 
@@ -287,20 +321,28 @@ SITREC_CUSTOM_MAP_HOUSE_WATER_COLOR="#AAD3DF"
 ```
 
 The standard OpenStreetMap tile hosts are recognized by URL and get the standard OSM fill
-automatically, including when the URL is encoded inside `cachemaps.php`. Existing
-`config.js` entries keyed `osm` or `osmHighlight` are backfilled when `waterColor` is
-undefined. An explicit value always wins; an invalid value is ignored.
+automatically. Existing `config.js` entries keyed `osm` or `osmHighlight` are backfilled when
+`waterColor` is undefined. An explicit value always wins. An invalid `_WATER_COLOR` is ignored.
 
-Do not assign a flat water colour to satellite imagery. Similar-coloured ground would be
+![A lake on the Open Streetmap source, twice: with a pale blue map fill on the left, and dark, reflecting the Sun, on the right](../docimages/terrain/custom-terrain-water-reflection.jpg)
+
+*The **Open Streetmap** source with **Water Reflection** off (left) and on (right). Pixels that
+match the water color become dark water that reflects the sky. The map's boundary line across
+the lake does not match, so it stays a map color. The effect shows only in the look view.
+Map data © [OpenStreetMap contributors](https://www.openstreetmap.org/copyright).*
+
+Do not assign a flat water color to satellite imagery. Similar-colored ground would be
 misclassified. Use a vector mask or **Combine Terrain with OSM** instead. The combine uses
 the `osm` source when available, otherwise a compatible non-4326 map source that declares
-a water colour.
+a water color.
 
 ### Vector water polygons
 
 **Vector Water Mask** and **Water on 3D Tiles** use a `water` polygon layer in OpenMapTiles
 Mapbox Vector Tile (`.pbf`) format. The `swimming_pool` class is omitted; other polygon
-classes are rasterized to an antialiased coverage mask.
+classes are rasterized to an antialiased coverage mask. **Vector Water Mask** works only on
+Web Mercator map sources. On a `mapping: 4326` source it has no effect, although the control
+stays enabled.
 
 With a valid `MAPTILER_KEY`, MapTiler is the default. It is not required: point Sitrec at a
 self-hosted or compatible service with:
@@ -311,6 +353,10 @@ SITREC_VECTOR_WATER_MAX_ZOOM=14
 SITREC_VECTOR_WATER_ATTRIBUTION="Water: © Example data provider"
 SITREC_VECTOR_WATER_TERMS_URL="https://tiles.example.org/terms"
 ```
+
+These settings are read when Sitrec is built. The container entrypoint does not forward them
+and the [secure build](Secure-Build.md) drops them, so a value set at container start, or in
+a secure build, has no effect.
 
 `SITREC_VECTOR_WATER_MAX_ZOOM` defaults to `14`. Above it, Sitrec magnifies the appropriate
 ancestor polygons. Setting it higher than the server supports is a quiet failure: a 404 is
@@ -324,10 +370,11 @@ no credit and should be used only when the data genuinely requires none.
 ### Photorealistic 3D tiles
 
 Photorealistic 3D tiles replace the terrain surface instead of sitting on top of it, so
-there is no map texture on which colour matching or a terrain mask can operate. **Water on
+there is no map texture on which color matching or a terrain mask can operate. **Water on
 3D Tiles** shades the tiles' own material. It requires the same vector water source, then
 combines the polygon mask with a height band around the water surface and an upward-facing
-surface test. **3D Tile Water Band** and **3D Tile Mask Span** control those filters.
+surface test. **3D Tile Water Band (m)** sets the height band. **3D Tile Mask Span (m)** sets
+the width of ground that the polygon mask covers.
 
 ## Testing a source
 
@@ -337,10 +384,12 @@ surface test. **3D Tile Water Band** and **3D Tile Mask Span** control those fil
    types, CORS headers, and attribution.
 3. Test the minimum and maximum zooms. Below `minZoom` there should be no request; above
    `maxZoom` ancestor data should remain aligned.
-4. Switch between map sources and press **Terrain → Refresh** to distinguish cache state
-   from a URL or decoding problem.
-5. For elevation, keep **Elevation Scale** at `1` while comparing known heights and tile
-   seams.
-6. For water, test the colour mask, vector mask, and 3D-tile path separately. A missing
-   vector source should hide or disable the vector-dependent controls rather than silently
-   use a map colour.
+4. Switch between map sources and press **Terrain → Refresh** to retry tiles that failed.
+   Refresh does not clear the browser's HTTP cache. GeoTIFF elevation tiles also stay in
+   browser storage for 7 days. After a change on the server, clear the site data before you
+   test again.
+5. For elevation, keep **Terrain → Terrain Tweaks → elevationScale** at `1` while comparing
+   known heights and tile seams.
+6. For water, test the color mask, vector mask, and 3D-tile path separately. A missing
+   vector source should disable **Vector Water Mask** and **Water on 3D Tiles** rather than
+   silently use a map color.

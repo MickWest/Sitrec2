@@ -2,8 +2,8 @@
 
 This is the process used to put a public Sitrec site on its own domain, as a container on a
 small virtual private server, with HTTPS and with updates that need no further deploy step.
-It is written from doing it once end to end, and the second half is the list of things that
-went wrong or nearly did.
+It is written from doing it once end to end, and [section 11](#11-gotchas-collected) lists the
+things that went wrong or nearly did.
 
 What you get:
 
@@ -16,8 +16,8 @@ What you get:
 What it assumes: a domain whose DNS you control, a VPS with root SSH, and about an hour.
 
 Tested with: AlmaLinux 9.8, Podman 5.8, Caddy 2, and a 2 vCPU / 2 GB / 40 GB VPS.
-The image and configuration details were rechecked against Sitrec 2.151.1. This is how
-`sitrec.work` is deployed.
+The image and configuration details were last compared with the code at Sitrec 2.183.11, by
+reading, not by a new deployment.
 
 ---
 
@@ -31,8 +31,12 @@ server should track. Nothing is compiled on the VPS.
 
 **Configuration is an environment file, not a build.** The image's entrypoint rewrites the
 PHP settings file from the container's environment at every start and injects the client
-settings into the page. Only the variables you set exist; the file on the VPS is the whole
-configuration of the site. Changing a setting is editing one file and restarting one service.
+settings into the page. Only the variables you set reach PHP. In the browser, most client settings
+that you leave out keep the value built into the image, which comes from
+`config/shared.env.example`. So to turn one of these off, set it to `false`; do not only delete its
+line. The browser reads `SITREC_ENABLE_DEFAULT_TLE_SOURCES` and `ALLOW_OVERRIDE` from PHP instead,
+so these two are off when you leave them out, even though the example file sets them (see
+section 4.1). Changing a setting is editing one file and restarting one service.
 
 **Rootless Podman under a dedicated user, managed by systemd.** Quadlet turns a
 `.container` file into a systemd service, so the site starts at boot, restarts on failure,
@@ -44,9 +48,10 @@ terminates HTTPS, obtains certificates from Let's Encrypt, renews them, and prox
 Sitrec container. Its whole configuration is one small Caddyfile.
 
 **Two containers, each in its own pasta network namespace. Not one pod, and not a bridge
-network.** Both halves of that are correctness requirements, not style: the pod would make
-every visitor an administrator (see [the administrator trap](#the-administrator-trap)), and a
-rootless bridge network throws away every visitor's address (see
+network.** Both halves of that are correctness requirements, not style: without
+`AUTH_MODE=none` the pod would make every visitor an administrator (see
+[the administrator trap](#the-administrator-trap)), and a rootless bridge network throws away
+every visitor's address (see
 [section 4.2](#42-networking-why-pasta)).
 
 ---
@@ -54,12 +59,14 @@ rootless bridge network throws away every visitor's address (see
 ## 2. Choosing the VPS
 
 - **Size.** 2 vCPU, 2 GB RAM, 40 GB disk is comfortable: the two containers idle at about
-  20 MB each, the image is about a gigabyte, and the legacy videos are 1.7 GB. 1 GB of RAM is
-  too little once Apache, PHP workers and the wind proxy's GRIB parsing are all busy. Bandwidth
+  20 MB each, the image is about a gigabyte, and the public legacy videos are about 1.3 GB.
+  1 GB of RAM is too little once Apache, PHP workers and the wind proxy's GRIB parsing are all
+  busy. Bandwidth
   of 1 TB a month covers a demonstration site many times over.
 - **OS.** AlmaLinux or Rocky 9. Podman and Quadlet are the supported container stack there
-  and ship in the base repositories, and SELinux is on by default once you turn it on (see
-  below). Ubuntu works too, with older Podman and different package names; this document
+  and ship in the base repositories, and SELinux is available, though some provider templates
+  turn it off (see [section 3](#3-host-baseline-as-root)). Ubuntu works too, with older Podman
+  and different package names; this document
   assumes the RHEL family.
 - **No control panel.** A cPanel or Plesk add-on installs its own Apache on ports 80 and 443,
   which Caddy needs. Order the plain OS.
@@ -68,14 +75,22 @@ rootless bridge network throws away every visitor's address (see
   is served from before you cancel that hosting (see [DNS](#7-dns-and-certificates)).
 
 A provider's OS template is not a clean install. The one used here had SELinux disabled, no
-firewall, no Podman, and password SSH login for root. The baseline script below assumes all
-of that and fixes it.
+firewall, no Podman, and password SSH login for root. The baseline script below fixes all of
+that, but root must already hold your key.
 
 ---
 
 ## 3. Host baseline, as root
 
-Run this once, as root, piped over SSH. It is idempotent. It ends by printing
+First put your public key on root, and prove that it works with key login alone. The script
+turns password login off, and it refuses to run if root has no key.
+
+```bash
+ssh-copy-id root@203.0.113.10
+ssh -o PreferredAuthentications=publickey root@203.0.113.10 true
+```
+
+Then run the script once, as root, piped over SSH. It is idempotent. It ends by printing
 `REBOOT_REQUIRED` when a reboot is needed, which on a fresh template it always is.
 
 ```bash
@@ -89,7 +104,7 @@ set -euo pipefail
 SITE_USER=sitrec
 
 # This script turns password login off. Refuse to start unless root already has a key, so a
-# run over a password session can never lock the operator out.
+# run with no key at all stops here.
 if [ ! -s /root/.ssh/authorized_keys ]; then
   echo "refusing: /root/.ssh/authorized_keys is empty. Authorize your key and log in with it first."
   exit 1
@@ -152,8 +167,9 @@ What each block is for, and what bit us:
 - **Keys only, last, and guarded.** Within minutes of the VPS existing, the SSH log showed
   password guesses for `root`, `test` and `admin` from the internet, so password login goes
   off. The script refuses to run at all unless root already has an authorized key, and it
-  disables passwords only after the service user has a copy of that key, so a run from a
-  password session cannot lock you out. Keep the provider's web console as the fallback.
+  disables passwords only after the service user has a copy of that key. It checks only that
+  `authorized_keys` is not empty. It cannot tell whether you hold the matching private key,
+  which is why you test key login first. Keep the provider's web console as the fallback.
 - **UDP 443.** `--add-service=https` opens TCP only. Caddy advertises HTTP/3, which runs
   over UDP 443; without that port open, browsers try it, fail silently, and fall back to
   TCP on every visit.
@@ -169,14 +185,8 @@ What each block is for, and what bit us:
 - **SELinux.** The template had it disabled. Going straight from disabled to enforcing is
   not the safe path: files created while it was off carry no label at all (`ls -Z` shows `?`)
   and an enforcing kernel then refuses to read them. The script sets **permissive** and
-  requests a full relabel on the next boot. After the setup below is running, check for
-  denials and switch to enforcing:
-
-  ```bash
-  ausearch -m avc -ts boot        # expect "<no matches>"
-  setenforce 1
-  sed -i 's/^SELINUX=.*/SELINUX=enforcing/' /etc/selinux/config
-  ```
+  requests a full relabel on the next boot. [Section 8](#8-verifying) ends by switching to
+  enforcing.
 
   With the files below, the relabel took about thirty seconds and there were no denials.
   Also check `/proc/cmdline` for `selinux=0`; some templates disable it in the boot
@@ -190,13 +200,27 @@ Reboot, wait for it to come back, and confirm `getenforce` says `Permissive`.
 
 Everything below lives in `/home/sitrec/sitrec/` and `~/.config/`, owned by the `sitrec`
 user. Keep the originals in a directory on your own machine and copy them over with `rsync`;
-the VPS is then reproducible from that directory.
+the VPS is then reproducible from that directory. It holds these files, which arrive on the VPS
+in `~/sitrec/`:
+
+```
+sitrec.env
+Caddyfile
+quadlet/sitrec.container
+quadlet/caddy.container
+systemd/podman-prune.service
+systemd/podman-prune.timer
+```
+
+[Section 4.7](#47-install-and-start) copies the units from there to the paths that sections
+4.3, 4.4 and 4.6 name.
 
 ### 4.1 `sitrec.env`, the site's configuration
 
 ```bash
 # Runtime settings for the Sitrec container. The image's entrypoint writes these into the PHP
-# settings file and into the page at every start. Only variables set here exist there.
+# settings file and into the page at every start.
+AUTH_MODE=none
 DEFAULT_MAP_TYPE=ESRI
 DEFAULT_ELEVATION_TYPE=AWS_Terrarium
 LOCAL_DOCS=true
@@ -209,20 +233,42 @@ CHATBOT_ENABLED=false
 ```
 
 This is a keyless, anonymous configuration: ESRI imagery and AWS Terrarium elevation need
-no API key, and with no `SITREC_DEFAULT_USERID` every visitor is user 0, who can load and
-view everything and save to their own disk but cannot write to the server. Add a key by
-adding its line and restarting the service. `chmod 600` the file once it holds one.
+no API key, and `AUTH_MODE=none` makes every visitor user 0, who can load and view everything
+except features that need a key, such as 3D buildings and Street View panoramas, and can save
+to their own disk but cannot write to the server.
+That setting also turns off `SITREC_DEFAULT_USERID` and the localhost rule (see
+[the administrator trap](#the-administrator-trap)).
+
+Add a key by adding its line and restarting the service. `chmod 600` the file once it holds one.
+`MAPBOX_TOKEN` and `MAPTILER_KEY` work for anonymous visitors, and they are visible in the page.
+`CESIUM_ION_TOKEN` and `GOOGLE_MAPS_API_KEY` do not give anonymous visitors 3D buildings: the
+server sends those two to the browser only for logged-in user groups. The server also uses
+`GOOGLE_MAPS_API_KEY` itself to fetch Street View panoramas, and it does this for anonymous
+visitors too. Each new panorama is about 32 billed Google tile fetches at the default zoom.
+Anonymous visitors can start 10 new panoramas an hour for each client address, and behind
+Caddy that is one address for all of them (see [section 9](#9-a-sitrec-bug-this-deployment-exposed)).
+
+The listing sets neither `SITREC_ENABLE_DEFAULT_TLE_SOURCES` nor `ALLOW_OVERRIDE`, so the site does
+not show **Load LEO Satellites For Date**, the two **(Experimental)** satellite load entries or
+**SITREC_ ENV Override…**. To use those satellite entries, add
+`SITREC_ENABLE_DEFAULT_TLE_SOURCES=true` with `SPACEDATA_USERNAME` and `SPACEDATA_PASSWORD`, the
+login for a Space-Track account. Without that login, these requests fail.
 
 **Only the settings the entrypoint knows are forwarded.** `docker/entrypoint.sh` copies the
 variables on its `CLIENT_VARS` and `SERVER_VARS` lists, plus any `SITREC_CUSTOM_MAP_*`,
 `SITREC_CUSTOM_ELEVATION_*` and `SITREC_CUSTOM_SOUNDING_*`, and silently ignores everything else. In the current release,
-those lists cover every setting in `config/shared.env.example` that applies to a server
-build; settings marked serverless-only in the example are intentionally omitted. If a
-setting has no effect, check the entrypoint lists and the spelling in `sitrec.env` first.
+those lists cover most of the settings in `config/shared.env.example`; settings marked
+serverless-only in the example are intentionally omitted. If a setting has no effect, check
+the entrypoint lists and the spelling in `sitrec.env` first.
 
 **Do not set `SITREC_DEFAULT_USERID` on a public site.** It exists for closed, single-user
-installs. On a public site it makes every visitor that user, with that user's groups, which
-by default include administrator.
+installs. Unless `AUTH_MODE` is `none` or `cert`, it makes every visitor that user, with that
+user's groups, which by default include administrator. `config/shared.env.example` sets it to 1,
+so do not use that file as your `sitrec.env`. Copy only the lines you need.
+
+A save to the server needs a user other than user 0. The image has no login page, so a site with
+several users gets each identity from
+[client certificate authentication](Installing-and-configuring.md#client-certificate-authentication).
 
 ### 4.2 Networking: why pasta
 
@@ -252,6 +298,24 @@ log shows it), not from `127.0.0.1`, so the localhost rule in `config.php` is no
 That was measured, not assumed: a first guess that it would be pasta's `169.254.1.2` host
 alias was wrong, which is exactly why the smoke test's `getuser` check exists and must be
 re-run after any networking change.
+
+### The administrator trap
+
+`config.php` grants a request from `127.0.0.1` a synthetic administrator identity, so a
+developer running the PHP built-in server is logged in. Two ways to hand that identity to
+the whole internet:
+
+1. Put Caddy and Sitrec in one **pod**. Containers in a pod share a network namespace, so
+   Caddy proxies to `127.0.0.1:8080` and Apache sees every visitor as localhost.
+2. Make PHP take `REMOTE_ADDR` from `X-Forwarded-For`. Any client can send that header
+   with `127.0.0.1` in it.
+
+Separate namespaces avoid the first: with pasta, Apache sees the host's own address (on a
+bridge network it would see Caddy's `10.89.0.x`). Not trusting forwarded addresses
+avoids the second. `AUTH_MODE=none` in `sitrec.env` is a further guard: it turns the rule off,
+so neither mistake gives administrator rights. The `getuser` smoke check exists to catch any of
+this regressing, and it is the first thing to run after any change to how the two containers
+are connected.
 
 ### 4.3 The Sitrec service
 
@@ -455,8 +519,12 @@ http://203.0.113.10 {
 }
 ```
 
-Then run the checks in [section 8](#8-verifying) against `http://203.0.113.10/`. Remove the
-block once DNS is switched; do not leave a plain-HTTP door open.
+Then run `systemctl --user restart caddy.service`, because Caddy reads this file when it starts.
+
+Run the checks in [section 8](#8-verifying) against `http://203.0.113.10/`, except the `APP`
+URL check and browser video playback. Those two need the real domain, so run them after
+section 7. Remove the block once DNS is switched, and restart Caddy again; do not leave a
+plain-HTTP door open.
 
 Expect Caddy's log to show certificate failures for the real hostnames during this period.
 It is trying, DNS still points elsewhere, and it backs off. That is fine, up to a point: see
@@ -491,12 +559,13 @@ that pointed at the shared host go with it too.
 
 ## 8. Verifying
 
-A smoke test over plain `curl`, run from anywhere. Each check has caught something real:
+A smoke test over plain `curl`, run from anywhere:
 
 | Check | What it proves |
 |---|---|
 | `GET /` returns 200 | Caddy reaches Apache |
-| `sitrecServer/config_paths.php?FETCH_CONFIG` returns JSON | PHP runs and the settings file loaded |
+| `sitrecServer/config_paths.php?FETCH_CONFIG` returns JSON | PHP runs |
+| `GET /sitrec-runtime-env.js` contains `DEFAULT_MAP_TYPE` | the entrypoint read `sitrec.env` and wrote the client settings |
 | `sitrecServer/rehost.php?getuser` reports `userID: 0` | **a visitor is not an administrator** |
 | `sitrecServer/proxy.php?request=CURRENT_STARLINK` returns CSV text | the server can fetch from the internet and write its cache |
 | `GET /shared.env.php` contains no setting names | the settings file is executed as PHP, not served as text |
@@ -513,9 +582,19 @@ the browser:
   through Playwright with `channel: 'chrome'` and `--ignore-gpu-blocklist`, rendered both
   sitches in about thirteen seconds. The repository's `playwright.config.js` shows the
   SwiftShader flags that make the bundled Chromium work in CI.
-- **Headless Chrome cannot decode the videos.** The video panes report that WebCodec
-  playback is unsupported. That is the browser; the `curl` check above proves the server
-  delivers the file. Confirm playback in a normal browser.
+- **Video needs HTTPS.** The browser offers WebCodecs (`VideoDecoder`), which Sitrec uses to
+  decode video, only on a secure page. On `http://203.0.113.10/` the video panes report that
+  WebCodec playback is unsupported. Test video on the `https://` site, after DNS is switched.
+  The `curl` check above proves only that the server delivers the file.
+
+Next, as root, check for SELinux denials and switch to enforcing. Do this after the checks pass
+on the real domain, so that the audit log covers real use.
+
+```bash
+ausearch -m avc -ts boot        # expect "<no matches>"
+setenforce 1
+sed -i 's/^SELINUX=.*/SELINUX=enforcing/' /etc/selinux/config
+```
 
 Finally, **reboot the VPS and do nothing.** Both services were back 33 seconds after boot
 and every check passed. If they are not, `loginctl enable-linger` was skipped or the
@@ -533,32 +612,17 @@ Caddy, Apache is spoken to over plain HTTP, so it reported `http://` while the p
 Releases after 2.147.2 read the standard `X-Forwarded-Proto` header
 (`sitrecServer/requestScheme.php`), which Caddy sends by default and nginx sends with
 `proxy_set_header X-Forwarded-Proto $scheme;`. Only the scheme is taken from the proxy.
-The client address is deliberately not, for the reason below.
+The client address is deliberately not (see [the administrator trap](#the-administrator-trap)).
 
 With the default configuration the impact was nil, because the browser fetches ESRI and
 Terrarium tiles directly and server saves are off. It would have bitten the first time
-someone chose a server-proxied source or uploaded a file.
+someone chose a server-proxied source.
 
 A related limitation remains: per-caller throttles in the backend key on the client
-address, which behind the proxy is always Caddy's. They act as global limits. Trusting
-`X-Forwarded-For` in PHP would be wrong (see the trap below); the correct fix is Apache's
+address, which behind the proxy is always the host's own address. They act as global limits.
+Trusting `X-Forwarded-For` in PHP would be wrong (see
+[the administrator trap](#the-administrator-trap)); the correct fix is Apache's
 `mod_remoteip` inside the image, trusting only the proxy's network.
-
-### The administrator trap
-
-`config.php` grants a request from `127.0.0.1` a synthetic administrator identity, so a
-developer running the PHP built-in server is logged in. Two ways to hand that identity to
-the whole internet:
-
-1. Put Caddy and Sitrec in one **pod**. Containers in a pod share a network namespace, so
-   Caddy proxies to `127.0.0.1:8080` and Apache sees every visitor as localhost.
-2. Make PHP take `REMOTE_ADDR` from `X-Forwarded-For`. Any client can send that header
-   with `127.0.0.1` in it.
-
-Separate namespaces avoid the first: with pasta, Apache sees the host's own address (on a
-bridge network it would see Caddy's `10.89.0.x`). Not trusting forwarded addresses
-avoids the second. The `getuser` smoke check exists to catch either regressing, and it is
-the first thing to run after any change to how the two containers are connected.
 
 ---
 
@@ -572,6 +636,8 @@ ssh sitrec@203.0.113.10 podman auto-update
 ```
 
 **Pinning.** Change `latest` to a version tag in `sitrec.container`, `daemon-reload`, restart.
+The project keeps only the newest 20 version tags in the registry, so a pinned tag can stop
+being available for a rebuild. To keep a version, save the image with `podman save`.
 
 **Changing a setting or adding a key.** Edit `sitrec.env`, then
 `systemctl --user restart sitrec.service`. A key with a referrer restriction at its provider
@@ -583,7 +649,7 @@ must have the new domain added there first.
   `caddy-data` volume. `podman exec caddy cat /data/access.log`, or copy it out with
   `podman cp caddy:/data/access.log .`. Rotated at 50 MB, ten files kept.
 - *What PHP did and any PHP errors:* `podman logs sitrec`. Apache's access lines here show
-  Caddy's address as the client, not the visitor's; use them for paths and status codes.
+  the host's own address as the client, not the visitor's; use them for paths and status codes.
   This log restarts empty whenever the container is replaced.
 - *SSH and the host:* `/var/log/secure` and `/var/log/messages`, kept by rsyslog. The
   systemd journal on a default EL9 install is volatile and is lost at every reboot, so
@@ -629,13 +695,14 @@ Things that cost time, in the order they were met.
 - **`www` is a separate certificate.** Give it an `A` record or leave it out of the Caddyfile.
 - **The image reports `http://` behind a TLS proxy** on releases up to 2.147.2. Newer
   releases honour `X-Forwarded-Proto`.
-- **Never one pod for proxy and app.** Localhost is an administrator.
+- **Never one pod for proxy and app.** Localhost is an administrator unless `AUTH_MODE=none`
+  is set.
 - **A rootless bridge network hides every visitor's address.** Its port proxy rewrites the
   source, so the access log showed one internal address for the whole internet. Use pasta
   and the host's loopback instead; it was a two-line change once measured.
 - **`journalctl --user` needs group membership** a fresh user lacks. `podman logs` does not.
 - **Headless Chromium and WebGL.** Use the installed Chrome or the harness's SwiftShader
-  flags; and expect no video decoding in headless mode either way.
+  flags. Video decoding needs an `https://` page; on plain HTTP the browser has no WebCodecs.
 - **The journal does not survive a reboot** on a default EL9 install, and `podman logs`
   does not survive a container replacement. Look in `/var/log/secure` and Caddy's access
   log for anything older than the current boot or the current image.
