@@ -1,7 +1,5 @@
 # Adding Objects and Tracks
 
-**Right-click the ground in a 3D view**
-
 In a Custom sitch, right-clicking the ground opens a menu that places things at that point: a
 camera or target position, a pin, a 3D object, a track, a balloon, a building, a cloud layer, a
 ground overlay or a measurement grid. This page describes each item in that menu, the editors for
@@ -20,13 +18,14 @@ This page has four parts:
 ## A. The ground menu
 
 Right-click the ground (terrain, or the globe) in the main view or the look view. The menu is
-titled **Ground**. It is only available in a Custom sitch, which is the default starting point.
+titled **Ground**. It is only available in a Custom sitch. **File → New Sitch** starts a fresh
+one, and so does the **New Sitch** button in the sitch browser.
 
 The top of the menu shows the location of the point you clicked:
 
 - latitude and longitude, to six decimal places
-- the altitude above mean sea level (MSL)
-- the WGS84 height above the ellipsoid (HAE), with the difference between the two in parentheses
+- the altitude [above mean sea level (MSL)](GIS.md#three-kinds-of-height)
+- the height above the WGS84 ellipsoid (HAE), with the difference between the two in parentheses
 
 You can select and copy this text.
 
@@ -39,16 +38,16 @@ You can select and copy this text.
 | **Set Target Above** | Moves the target's fixed position to the clicked latitude and longitude. The target keeps its current altitude | The target position |
 | **Set Target on Ground** | Moves the target's fixed position to the clicked point, on the ground | The target position |
 | **Drop Pin** | Places a labelled pin (a feature marker) and opens its edit window with the label text selected, ready to type | See [Pins](#pins) |
-| **Add 3D Object** | Places a grey 5 m sphere that stays in one place. It has no track | **Objects** menu, as *Object 1*, *Object 2*, ... |
-| **Add Moving Object** | Starts a new hand-drawn track at the clicked point, at the current frame, with a grey 5 m sphere riding on it. The track opens in edit mode | Track in **Contents** and object in **Objects**, with the same number: *Track 3* and *Object 3*, one more than the highest track or object number |
-| **Add Moving Object (In→Out)** | Makes a straight track with an object riding on it, from the In frame to the Out frame. See [In→Out tracks](#in-out-tracks) | Track in **Contents**, object in **Objects**, named as above |
+| **Add 3D Object** | Places a grey sphere, 5 m in radius (10 m across), that stays in one place. It has no track | **Objects** menu, as *Object 1*, *Object 2*, ... |
+| **Add Moving Object** | Starts a new hand-drawn track at the clicked point, at the current frame, with a grey sphere, 5 m in radius, riding on it. The track opens in edit mode | Track in **Contents** and object in **Objects**, with the same number: *Track 3* and *Object 3*, one more than the highest track or object number |
+| **Add Moving Object (In→Out)** | Makes a straight track with an object riding on it, with control points at the In and Out frames. See [In→Out tracks](#in-out-tracks) | Track in **Contents**, object in **Objects**, named as above |
 | **Add Flight Path** | Starts a new hand-drawn track, with no object, at the clicked point, at the current frame, in edit mode | **Contents**, as *Track 1*, *Track 2*, ... |
 | **Add Balloon** | Adds a balloon that launches from the clicked point, rises and drifts with the wind. See [Balloons](#balloons) | **Contents**, as *Balloon*, *Balloon_1*, ...; its sphere in **Objects**, as *Object N* |
 | **Add Building** | Adds a 15 × 15 m building, 4 m high, centered on the clicked point, and opens its editor | **Objects**, as *Building: Building 1* |
 | **Add Clouds** | Adds a round layer of clouds at 10,000 ft, 500 m in radius, centered above the clicked point, and opens its editor | **Objects**, as *Clouds: Clouds 1* |
 | **Add Ground Overlay** | Adds an image overlay draped on the ground, 0.02° square, centered on the clicked point, and opens its editor. It has no image until you give it one | **Objects**, as *Overlay: Overlay 1* |
 | **Add Ground Grid** | Adds a measurement grid draped on the ground, 1000 × 1000 of your current small units (meters or feet), with major lines every 100 and minor lines every 10, and opens its editor | **Objects**, as *Grid: Grid 1* |
-| **Center Terrain square here** | Moves the center of the terrain square to the clicked point. Only shown when **Dynamic Subdivision** is off (see [Terrain](Terrain.md)) | The terrain |
+| **Center Terrain square here** | Moves the center of the terrain square to the clicked point. Only shown when **Dynamic Subdivision** is off (see [Terrain and Elevation](Terrain.md)) | The terrain |
 | **Google Maps Here** | Opens Google Maps at the clicked point in a new browser tab | A new tab |
 | **Google Earth Here** | Downloads a small KML file, *Sitrec Pin.kml*, with a pin at the clicked point. Open it in Google Earth | Your downloads |
 
@@ -78,41 +77,46 @@ the main view. You can change this later with **Show in look view** in the track
 
 ### In->Out tracks
 
-**Add Moving Object (In→Out)** makes a track with two keyframes:
+**Add Moving Object (In→Out)** makes a track with two control points:
 
 - the first at the **In** frame, at the point you clicked
-- the second at the **Out** frame, level with the first and 200 screen pixels to its right in the
-  view you clicked
+- the second at the **Out** frame, 200 screen pixels to the right of the first in the view you
+  clicked
 
 Both ends are therefore on screen and easy to grab, and left to right matches In to Out on the
-timeline. **Constant Speed** is on, so the object moves at a steady speed between the keyframes.
-**Lock Altitude** is on, at 0 above the ground, so the whole track stays at one height: drag the
-object or either keyframe up, and the whole track rises.
+timeline. **Constant Speed** is on, so the object moves at a steady speed along the track.
+**Lock Altitude** is on, at 0 above the ground, so the whole track stays at one height above the
+ground and follows the terrain under it. Drag the object or either control point up, and the
+whole track rises.
 
-Set the In and Out frames before you use it, with **Time → In Frame [I]** and
-**Time → Out Frame [O]**, or the **I** and **O** keys at those frames. See
-[Keyboard Shortcuts](KeyboardShortcuts.md).
+The control points take their frame numbers when you make the track, so set the In and Out frames
+first, with **Time → In Frame [I]** and **Time → Out Frame [O]**, or the **I** and **O** keys at
+those frames. See
+[Keys for time and frames](TimeAndSync.md#keys-for-time-and-frames).
 
 ### Hand-drawn tracks
 
-All three track items create a *synthetic* track: a spline through control points you place by
-hand. It starts in edit mode. To add, move and delete points, and to leave edit mode, see the
-edit-mode notes under [Sitrec Spline](Tracks.md#sitrec-spline-splinejson) in
+All three track items create a hand-drawn track: a spline through control points you place by
+hand. It starts in edit mode. To add, move and delete control points, and to leave edit mode, see
+[Hand-Drawn Tracks](Tracks.md#hand-drawn-tracks) in
 [Loading and Filtering Tracks](Tracks.md).
 
-A synthetic track's folder in **Contents** starts with **Name**, **Edit Track** and, when an
-object rides the track, **Show Object Menu**. Its other controls are in the **Path**,
-**Smoothing** and **Display** groups, and **Export Spline** and **Delete Track** are at the end.
+A hand-drawn track's folder in **Contents** starts with **Name**, **Edit Track** and, when an
+object rides the track, **Show Object Menu**. Next come **Go to Track**, **Focus Camera Here** and
+**Follow Camera Here**, then the **Path**, **Smoothing** and **Display** groups.
+**Add Custom Graph**, **Export Spline** and **Delete Track** are at the end.
 See [Track Display Controls](Tracks.md#track-display-controls). The object's folder in
 **Objects** has **Show Track Menu**. The track's menu and the object's menu can be open at the
 same time.
 
 ### Balloons
 
-**Add Balloon** makes a balloon target: a 0.5 m white sphere on a generated track. The balloon
-starts at the ground height of the clicked point, rises once launched, and drifts with the wind at
-each altitude (see [Wind](Wind.md)). It is added to the camera and target track lists, so the
-camera can follow or look at it.
+**Add Balloon** makes a balloon target: a white sphere, 0.5 m in radius, on a generated track. The
+balloon starts at the ground height of the clicked point, rises once launched, and drifts with the
+wind (see [Wind in Sitrec](Wind.md)). The **GFS (NOAA)** wind source (Global Forecast System) gives the
+balloon the wind at its altitude. So does a sounding wind source, which uses wind profiles from
+weather balloons. The **Manual** wind source gives it one wind at every altitude. The balloon is
+added to the camera and target track lists, so the camera can follow or look at it.
 
 Its folder in **Contents** has these launch settings:
 
@@ -135,15 +139,16 @@ view. **Delete Pin** removes it (it asks first). **Done**, Escape, or a double-c
 title closes the window.
 
 Pins do not have a folder in a menu. To edit a pin later, right-click it. **Show → Pins in Main**
-and **Show → Pins in Look** show or hide all pins in each view.
+and **Show → Pins in Look** show or hide all pins in each view. **Pins in Look** is off by default,
+so a new pin shows only in the main view until you turn it on.
 
 ### 3D objects
 
-**Add 3D Object** opens the new object's edit window straight away, because a grey 5 m sphere on
-open ground can be hard to find. While the window is open you can drag the object with the move
-widget that appears when the pointer is near it. The window holds the same controls as the
+**Add 3D Object** opens the new object's edit window straight away, because a grey sphere 5 m in
+radius on open ground can be hard to find. While the window is open you can drag the object with
+the move widget that appears when the pointer is near it. The window holds the same controls as the
 object's folder in the **Objects** menu: geometry or model, size, material and so on. See
-[Custom Models and 3D Objects](CustomModels.md).
+[Objects and 3D Models](CustomModels.md).
 
 In the folder, the size of a generated shape (for example **Radius (m)**) is just below
 **Geometry**, and its segment counts are in the closed **Mesh Detail** group. Sizes are in
@@ -159,8 +164,8 @@ A right-click in a 3D view picks the first thing it finds, in this order:
 
 1. a **pin**: opens the pin's edit window
 2. a **3D object** (including buildings): opens its edit window, as described below
-3. a **track** line, within about 10 pixels of the pointer: opens a window titled
-   **Track: *name*** with the same controls as the track's folder in **Contents**
+3. a **track** line, within about 10 pixels of the pointer: opens the track's menu, titled
+   **Track: *name***, with the same controls as the track's folder in **Contents**
 4. a star, planet or satellite
 5. the **ground**: opens the ground menu
 
@@ -178,10 +183,11 @@ pointer.
 
 **While a track is in edit mode**, every right-click goes to that track's edit menus, and nothing
 else opens a menu until you leave edit mode. See
-[Sitrec Spline](Tracks.md#sitrec-spline-splinejson).
+[Hand-Drawn Tracks](Tracks.md#hand-drawn-tracks).
 
-**While an editor is open** for a building, a cloud layer, an overlay or a grid, right-clicking the
-ground does not open the ground menu. Close the editor first.
+**While a track's menu or any edit window is open** (for a building, a cloud layer, an overlay, a
+grid, a 3D object or a pin), right-clicking the ground does not open the ground menu. Close it
+first.
 
 ---
 
@@ -193,17 +199,17 @@ Buildings, clouds, ground overlays and ground grids share one way of working:
 - **The editor** is a floating window titled **Edit: *name***. It holds the same controls as the
   item's folder in the **Objects** menu, so a change in one shows in the other. You can drag the
   window, or dock it in a sidebar.
-- **Closing the editor leaves edit mode.** Close it with its close control, or press **Escape**
-  when it is the top window. You can also clear **Edit Mode** in the item's folder.
-- **Creating an item, or choosing Edit ... in the ground menu,** ends edit mode on any other
-  building, cloud layer, overlay, grid or track.
+- **Closing the editor leaves edit mode.** Double-click its title, or press **Escape** when it is
+  the top window. You can also clear **Edit Mode** in the item's folder.
+- **Only one editor is open at a time.** Opening an editor closes any other editor.
 - **Escape during a drag** cancels that drag and puts the item back where it was.
 - **Delete** or **Backspace** deletes the item being edited, after asking you. This works for a
   building, a cloud layer, an overlay or a grid.
 - **Undo** (**Cmd**/**Ctrl** + **Z**) works for creating, dragging and deleting.
 
 Handles keep the same size on screen at any zoom. Heights and sizes are shown in your current small
-units (meters or feet), unless the label says otherwise.
+units (meters or feet), and the label ends with the unit, for example **Radius (ft)**. Where a
+control has a fixed unit, its row gives that unit.
 
 ### Buildings
 
@@ -214,6 +220,9 @@ A new building is a 15 × 15 m box, 4 m high, with a flat roof. It sits on the g
 terrain or 3D tiles under it change, the building moves back onto the ground.
 
 #### Handles
+
+![A building with a pitched roof in edit mode, with yellow spheres at its corners, a grey sphere at the middle of the roof and a cyan sphere at one end of the ridgeline, beside its editor with the Height folder open](docimages/scene-objects-building-handles.jpg)
+*A building in edit mode, beside its editor. **Ridgeline Height** is raised to 26 ft, so the roof is pitched. The roof hides most of the fourth yellow sphere. The area outside each corner that rotates the building has no mark.*
 
 | Handle | Drag it to |
 |---|---|
@@ -252,7 +261,7 @@ These are in **Objects → Building: *name*** and in the editor.
 | **Delete Building** | | Deletes the building, after asking you |
 
 **Objects → Remove all Buildings** deletes every synthetic building at once. It does not ask first,
-and it does not affect clouds, overlays or grids.
+you cannot undo it, and it does not affect clouds, overlays or grids.
 
 ### Clouds
 
@@ -264,13 +273,16 @@ A cloud layer is a round patch of cloud puffs at one altitude. The puffs always 
 
 #### Handles
 
-Each handle turns green when the pointer is over it.
+Each handle turns white when the pointer is over it.
+
+![A cloud layer seen from above, with grey cloud puffs over a dry lake bed, a yellow sphere at the center, a cyan sphere on the edge and an orange sphere on the other side, beside its editor](docimages/scene-objects-cloud-handles.jpg)
+*A new cloud layer in edit mode, seen from above, beside its editor. The grey shapes are the cloud puffs.*
 
 | Handle | Drag it to |
 |---|---|
 | **Yellow**, at the center | Raise or lower the layer |
-| **Cyan**, on the east edge | Change the radius |
-| **Orange**, halfway to the west edge | Move the layer |
+| **Cyan**, on the edge | Change the radius |
+| **Orange**, opposite the cyan handle, halfway from the center to the edge | Move the layer |
 
 #### Controls
 
@@ -290,7 +302,7 @@ These are in **Objects → Clouds: *name*** and in the editor.
 | **Properties → Sun Reflection** | 0 | Brightens the clouds around the point where the Sun's reflection on the layer is seen from the camera, over this radius in meters. 0 is off |
 | **Properties → Depth** | 0 | Spreads the puffs up and down over this thickness |
 | **Properties → Edge Wiggle** | 0 | Makes the edge of the layer irregular. The value is a fraction of the radius |
-| **Properties → Edge Frequency** | 5 | How many bumps the irregular edge has |
+| **Properties → Edge Frequency** | 5 | How many waves are added together to make the edge. A higher value gives a finer edge |
 | **Properties → Seed** | 0 | Change it for a different, but repeatable, arrangement of puffs |
 | **Properties → Feather** | 1000 m | Distance inside the edge over which the puffs thin out |
 | **Wind → Wind Mode** | No Wind | *No Wind* keeps the layer still. *Use Local* and *Use Target* move it with the local or target wind. *Custom* uses the two settings below |
@@ -317,6 +329,9 @@ or turn on **Edit Mode** in **Objects → Overlay: *name***.
 
 #### Handles
 
+![A grey square with a red circle draped on desert ground, with a yellow sphere at each corner, a cyan sphere near the north edge and a magenta sphere inside it, beside its editor](docimages/scene-objects-overlay-handles.jpg)
+*A new ground overlay in edit mode, with one lock point, beside its editor. It has no image yet, so it shows the grey square with the red circle.*
+
 | Handle | Drag it to |
 |---|---|
 | **Yellow** sphere at each corner | Resize. The opposite corner stays fixed and the overlay stays a rectangle. With **Free Transform** on, each corner moves by itself |
@@ -326,11 +341,7 @@ or turn on **Edit Mode** in **Objects → Overlay: *name***.
 
 **Lock points** help you match an image to the ground. In edit mode, right-click a feature on the
 overlay to pin that point of the image. You can place up to three. Then drag a lock point onto the
-place where that feature really is:
-
-- with one lock point, the image moves
-- with two, it also turns and scales
-- with three, it can also stretch and shear
+place where that feature really is. With one lock point, the image moves.
 
 Dragging a lock point turns on **Free Transform**. **Option** / **Alt** + right-click a lock point
 removes it.
@@ -371,13 +382,12 @@ ground inside it and choose **Edit Grid: *name***, or turn on **Edit Mode** in
 **Objects → Grid: *name***.
 
 The grid has the same **yellow** corner, **cyan** rotation and move-by-dragging handles as a ground
-overlay. It has no lock points: a right-click on a grid goes to the ground menu.
+overlay. It has no lock points.
 
 #### Controls
 
-These are in **Objects → Grid: *name*** and in the editor. The labels of sizes and steps end with
-your current small unit, for example **Width (m)** or **Width (ft)**. The grid keeps its real size
-when you change the unit system.
+These are in **Objects → Grid: *name*** and in the editor. The grid keeps its real size when you
+change the unit system.
 
 | Control | Default | What it does |
 |---|---|---|
@@ -438,26 +448,27 @@ See [The Menu System](UserInterface.md#the-menu-system).
 Tracks, balloons, 3D objects, pins, buildings, cloud layers, overlays and grids are saved with a
 Custom sitch, with their settings. When you load the sitch, they come back where you left them.
 An image you dragged in as a ground overlay is saved with the sitch like other files you drop in.
-An overlay made with **Image URL** keeps that address. See [Saving and Loading](SavingAndLoading.md).
+An overlay made with **Image URL** keeps that address. See
+[Saving and Loading Sitches](SavingAndLoading.md).
 
 ---
 
 ## Tips
 
-- **Can't see a new object?** A 5 m sphere is small from far away. Its edit window opens when you
-  add it; drag it with the move widget, or use **Global Scale** in the **Objects** menu to make all
-  objects larger while you find it. Set it back to 1 for real size.
+- **Can't see a new object?** A sphere 5 m in radius is small from far away. Use **Global Scale** in
+  the **Objects** menu to make all objects larger while you find it. Set it back to 1 for real size.
 - **Satellite image with clouds.** Drag the image in as a ground overlay, turn on
   **Extract Clouds**, pick the cloud color, then set **Altitude (ft)** to the cloud height.
-- **Nothing happens on right-click?** Check for an open editor, or a track still in edit mode
-  (the label at the top of each 3D view names it). Press **Escape** to leave track edit mode.
+- **Right-click does not open the ground menu?** The menu is only in a Custom sitch. Close any open
+  edit window or track menu. If a track is in edit mode, right-click opens its edit menu instead, and the label at
+  the top of each 3D view names the track. Press **Escape** to leave track edit mode.
 
 ## See also
 
 - [Loading and Filtering Tracks](Tracks.md): track edit mode, and the controls in a track's folder
-- [Custom Models and 3D Objects](CustomModels.md): the controls in an object's folder
+- [Objects and 3D Models](CustomModels.md): the controls in an object's folder
 - [Terrain and Elevation](Terrain.md): the terrain square and Dynamic Subdivision
-- [Wind](Wind.md): the wind that moves balloons and cloud layers
+- [Wind in Sitrec](Wind.md): the wind that moves balloons and cloud layers
 - [Sitrec User Interface](UserInterface.md): menus, windows and measurements
-- [Saving and Loading](SavingAndLoading.md)
+- [Saving and Loading Sitches](SavingAndLoading.md)
 - [Keyboard Shortcuts](KeyboardShortcuts.md)

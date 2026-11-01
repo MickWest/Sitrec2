@@ -1,85 +1,57 @@
-To simulate a potential UAP, Sitrec can display a variety of 3D models. There's some built-in, like planes and aerostats. You can also create simple geometric shapes like spheres and boxes. For full flexibility, you can import a custom 3D model. 
+# Objects and 3D Models
 
-To experiment with this functionality, start with the model inspector, found at Sitrec->Model Inspector. 
+An object in Sitrec can be a simple geometric shape such as a sphere or a box, a built-in model such as an aircraft, a drone or a ship, a preset vehicle such as a balloon or a tethered aerostat, a 3D model that you import, or a flock of birds. This page explains each one, the model file formats that Sitrec accepts, and how to prepare a model in Blender. To add an object to a sitch, see [Adding Objects and Tracks](SceneObjects.md).
 
-Once in the Model Inspector, you will get the default object, and two views on that object. You can double-click on a view to make it full screen. 
+- [Built-in Models](#built-in-models) and [Preset Vehicles](#preset-vehicles)
+- [Dimensions](#dimensions)
+- [Supported Model Formats](#supported-model-formats), including [PLY Files](#ply-files)
+- [Custom Models using Blender](#custom-models-using-blender), including [Aircraft navigation lights](#aircraft-navigation-lights)
+- [Flocks](#flocks)
 
-Most of the object-specific adjustments are done with the "Objects" menu. Each object has its own folder there, starting with **Name**: the name shown for the object in menus, labels and lists. An object you make in Sitrec is named **Object 1**, **Object 2** and so on, and has its own name, separate from the name of the track it rides. The folder also has **Show Track Menu** when the object rides a track, and **Delete Object** at the end. For convenience, you can drag this off the menu bar to keep it open. Here I've also opened the "Time" menu, which is used for setting the sun direction.
+To experiment with this functionality, start with the model inspector, found at **Sitrec → Model Inspector**.
 
-![model-inspector-with-menus.jpg](docimages/model-inspector-with-menus.jpg)
+Once in the Model Inspector, you get one object, a 737 MAX 8 BA model, and two views of it. You can double-click on a view to make it full screen.
 
-With "Model or Geometry" set to "geometry" you can experiment with a variety of different shapes.
+Most of the object-specific adjustments are done with the "Objects" menu. Each object has its own folder there, in this sitch and in any other, starting with **Name**: the name shown for the object in menus, labels and lists. An object you make in Sitrec is named **Object 1**, **Object 2** and so on, and has its own name, separate from the name of the track it rides. The folder also has **Show Track Menu** when the object rides a track. An object you made has **Delete Object** at the end. An object that the sitch defines does not have it. You can drag the "Objects" menu off the menu bar to keep it open. The figure shows the main view at full screen. It also shows the "Time" menu, which is used for setting the sun direction. In the Model Inspector, the red, green and blue lines through the object are its axes, and the yellow arrow points toward the sun.
 
-![model-viewer-cylinder-geometry.jpg](docimages/model-viewer-cylinder-geometry.jpg)
+![Time and Objects menus, dragged off the menu bar, beside the 737 MAX 8 BA in the Model Inspector](docimages/model-inspector-with-menus.jpg)
 
-You can also adjust the material (the surface appearance of the object). There are various different types.
-- Basic: No lighting, the object will simply appear all the same color
-- Lambert: Simple illumination where the object is affected by the sunlight. There's an additional "emissive" color, which is how much light the object itself emits (i.e. if it's self-illuminating, like a lantern)
-- Phong: Similar to Lambert  
-- Physical: A more physically realistic material, with more parameters. 
-- EnvMap: A reflective, environment-mapped material - mirror-like at low roughness, controlled by roughness and metalness.
-- Gradient: A custom shader that maps a color gradient across the object, with thermal-imaging palettes (Ironbow, Black Hot, White Hot, etc.). Useful for approximating an IR/thermal appearance.
-- Checkerboard: A simple two-color checkerboard pattern. 
+Set "Model or Geometry" to "geometry" to experiment with a variety of different shapes.
+
+![Cylinder geometry and its settings in the Objects menu](docimages/model-viewer-cylinder-geometry.jpg)
+
+You can also adjust the material (the surface appearance of the object). Set the type with **Material Type** in the Material folder.
+- basic: No lighting, the object will simply appear all the same color
+- lambert: Simple illumination where the object is affected by the sunlight. There's an additional **Emissive** color, which is how much light the object itself emits (i.e. if it's self-illuminating, like a lantern)
+- phong: Like lambert, with a specular highlight set by **Specular** and **Shininess**.
+- physical: A more physically realistic material, with more parameters.
+- envMap: A reflective, environment-mapped material - mirror-like at low roughness, controlled by roughness and metalness.
+- gradient: A custom shader that maps a color gradient across the object, with thermal-imaging palettes (Ironbow, Black Hot, White Hot, etc.). Useful for approximating an IR/thermal appearance.
+- checkerboard: A simple two-color checkerboard pattern.
 
 When experimenting with these settings, use the "Lighting" and "Time" menus to experiment with different lighting situations. For example, here's a very rough approximation of a lantern with an orange glow illuminated by low sun.
-![SuperEgg with low lighting.jpg](docimages/SuperEgg%20with%20low%20lighting.jpg)
+![Superegg shape with an orange emissive color, lit by a low sun, beside the Material, Lighting and Time menus](docimages/SuperEgg%20with%20low%20lighting.jpg)
 
 ### Built-in Models
 
-There are also some built-in models. To use them, change the mode from "geometry" to "model" and select a model from the drop-down.
+There are also some built-in models. To use them, set "Model or Geometry" to "model" and select a model from the "Model" drop-down.
 
-![model-drop-down-with-f-15.jpg](docimages/model-drop-down-with-f-15.jpg)
+![Objects menu with the Model drop-down set to F-15, and the F-15 in the view](docimages/model-drop-down-with-f-15.jpg)
 
-You can also apply the custom material to the object. This is a good way of quickly getting neutral color scheme. Here I'm using a physical material that's similar to the actual material, above. 
-![apply-material-to-f-15.jpg](docimages/apply-material-to-f-15.jpg)
+To replace a model's own materials with the settings in the Material folder, check **Apply Material**. In "model" mode the Material folder stays hidden until you do this. This is a good way of quickly getting a neutral color scheme. The figure shows the F-15 with a physical material.
+![F-15 with Apply Material checked and a physical material, with the Material folder open](docimages/apply-material-to-f-15.jpg)
+
+### Preset Vehicles
+
+**Browse vehicles…** in the object's folder opens a library of preset vehicles: aircraft, helicopters, road vehicles, drones, balloons and sky lanterns. Choose one to put it on the object. **Edit design…** then changes that vehicle, and **Freeze as GLB** stores it as a fixed model. **Sitrec → Extra Tools → Vehicle Designer** builds a vehicle in its own tab and exports it as a GLB file.
 
 ### Dimensions
 
-The geometry specification are in meters. You can see the dimensions of the bounding box of an object by checking "Display Bounding Box" in the Objects menu. This will display the dimensions in your default units (feet or meters).  
+Geometry dimensions are in meters. You can see the dimensions of the bounding box of an object by checking "Display Bounding Box" in the Objects menu. This will display the dimensions in your default units (feet or meters). They show in the main view, not in the look view.
 
-![Model Viewer dimensions.jpg](docimages/Model-Viewer-dimensions.jpg)
+![Superegg shape with its bounding box dimensions in feet, and the Display Bounding Box row highlighted](docimages/Model-Viewer-dimensions.jpg)
 
-### Flocks
-
-Check "Flock" in an object's menu to draw it as a flock of birds in place of the one object. Each bird is the object's own model or geometry, so set that up first: for example, a sphere of radius 0.5 for a bird about one meter across. The flock follows the object's track, and the track runs through the middle of the flock, not through its leader. An object that is not on a track gives a flock that holds station about that one point.
-
-The "Flock Parameters" folder appears below the checkbox:
-
-- **Species**: Sets the flock up as one kind of bird flies, from field measurements where there are any: Northern Bald Ibis, Canada Goose, White Pelican, Starling Murmuration, Starling, Dunlin, Pigeon and Gull. It is a place to start. Change any control and it goes back to Custom. It does not set the number of birds, and it cannot set the size of a bird or the speed of the flock, which are the object's geometry and its track: hover over the control to see the wingspan and flight speed of the species.
-- **Number of Birds**: One bird flies a wavering path about the track. Push against the top of the slider to extend its range into the thousands.
-- **Formation**: V, Echelon (one arm of a V) and Line Astern (one behind another) have a leader. Line Abreast is side by side. Irregular Front is a broad, shallow band with a ragged edge, as gulls, waders and ducks fly. Cluster is a rounded mass, as starlings and pigeons fly. Murmuration is a starling flock over its roost, simulated bird by bird (see below).
-- **V-ness**: How closely the birds hold the lines of the formation, from a loose cluster (0) to a clean formation (1).
-- **V Angle** and **Asymmetry**: The angle between the arms, and how unequal they are. Both vary widely in real flocks. The Canada Goose species sets a V Angle of 70 degrees and an Asymmetry of 0.5, which gives a J (one arm longer).
-- **Shape Drift**: How freely the flock changes shape as birds change places. At 0 the two arms keep their lengths. Above 0, a leader that drops back may join the other arm, and a bird at the end of one arm may cross to the other, so a V becomes a J and a J an Echelon, as flocks of geese do. The Asymmetry is the shape the flock keeps coming back to.
-- **Birds per Formation**: A flock larger than this flies as several formations near each other, as large flocks of geese do.
-- **Front Depth**: For an Irregular Front, its depth as a fraction of its width.
-- **Elongation** and **Long Axis (deg)**: For a Cluster, the length of its long horizontal axis as a multiple of its short one, and the direction of that axis from the direction of flight (0 is along the flight, 90 is across it). The Starling species sets an Elongation of 2 and a Long Axis of 45 degrees.
-- **Spacing (m)**: The distance between neighboring birds. In a V or an Echelon it is measured across the direction of flight, where birds keep about one wingspan apart. The V Angle then sets how far behind each bird is.
-- **Looseness** and **Wander Period (s)**: How far each bird wanders from its place, as a fraction of the spacing, and how long it takes.
-- **Snaking**: How far the line swings from side to side. Each bird follows the path of the bird ahead, so the swing travels down the line from front to back.
-- **Vertical Spread**: The height of the flock as a fraction of its shorter horizontal dimension. The Starling species sets 0.36.
-- **Change of Place (s)**: How often each bird changes place. A bird trades places with the bird next to it: in a formation with a leader, with the bird ahead of it, which is how the lead changes hands. The Northern Bald Ibis species sets one change every 45 seconds. 0 means never.
-- **Wheeling (m)** and **Wheel Period (s)**: How far the whole flock swings away from the track. Over a fixed point the flock circles it; along a moving track it weaves.
-- **Turn Lag (s)**: How long the formation takes to turn to a new direction of flight. Keep it small for geese, whose V points where they fly. Make it large for starlings and pigeons, whose flock keeps its arrangement through a turn, so that birds at the front come out of the turn on the side.
-- **Random Seed**: Changes the random arrangement and motion. The same seed always gives the same flock, and a frame looks the same whether you play to it or jump to it.
-
-#### Murmurations
-
-The Murmuration formation is not a fixed shape. Each bird steers by its six or seven nearest neighbors and banks into its turns, and the flock turns, stretches, splits and changes shape by itself as it sweeps around a roost at the object's position. The **Starling Murmuration** species selects it, with a spacing of 1.1 m, a cruise speed of 10 m/s and a roost radius of 150 m. It is the StarDisplay model of Hildenbrandt, Carere and Hemelrijk (2010), which was checked against measured starling flocks over their roost in Rome. Its controls are:
-
-- **Number of Birds**: Use hundreds or thousands. Real murmurations can be far larger.
-- **Spacing (m)**: The mean distance from a bird to its nearest neighbor. The flocks measured in Rome were 0.7 to 1.5 m.
-- **Cruise Speed (m/s)**: The birds' flying speed. The flocks in Rome flew at 7 to 15 m/s.
-- **Roost Radius (m)**: How far from the object the flock ranges before it turns back.
-- **Random Seed**: A different flight.
-
-The flock is simulated from before the start of the sitch to its end, which for thousands of birds takes a few seconds. It is done in the background: the folder title shows how far it has got, and the flock appears as soon as its first seconds are ready. If the object moves along a track, the whole murmuration moves with it.
-
-The simulated flocks are a little too level: real starling flocks rise and fall more. There is no predator in the model, so there are none of the dark waves that run through a flock under attack.
-
-In a Cluster or an Irregular Front, the model puts a bird's nearest neighbors beside it rather than ahead of it or behind it, and puts the birds a little closer together at the border of the flock than in its middle. A Cluster is not a murmuration: it keeps the shape and spacing that its parameters set. For a flock that moves by itself, use Murmuration.
-
-Each bird points along its own direction of flight and banks into its turns. A bird cannot fly sideways, so a wander that is too large for its period is slowed down until the bird's motion within the flock is no more than about 15% of the speed of the flock.
+For a superegg, **Length (m)** is measured from the center to one end. In the figure, the Length of 4 m gives a height of 8 m (26.25 ft), and the **Radius (m)** of 2.6 m gives a width of 5.2 m (17.06 ft).
 
 ## Supported Model Formats
 
@@ -91,7 +63,9 @@ Sitrec supports two model file formats. Plain `.gltf` files are not accepted; ex
   - **Gaussian Splat PLY** (header contains `scale_0…scale_2` and `rot_0…rot_3` properties): Rendered using instanced elliptical Gaussian splatting with back-to-front sorting. This is the format produced by 3D Gaussian Splatting tools.
   - **Point Cloud PLY** (vertices only, no faces or splat attributes): Rendered as a point cloud with size attenuation.
 
-Both formats can be dragged and dropped into the Model Inspector or any moddable sitch.
+Both formats can be dragged and dropped into the Model Inspector, a custom sitch, or a legacy sitch that accepts dropped files, such as FLIR1. The model is added to the "Model" drop-down of every object. If an object's edit window is open (right-click the object to open it), that object takes the model. If not, the sitch's main object takes it: `targetObject` in the Model Inspector, `traverseObject` in a custom sitch.
+
+To put the model on any other object, open that object's folder, set "Model or Geometry" to "model" and select the model from the "Model" drop-down.
 
 ### Filename Length Parameter
 
@@ -108,6 +82,19 @@ Units are not case-sensitive. A parameter with any other unit is ignored.
 
 This is particularly useful for models that don't have a consistent internal scale, or when you want to quickly try different sizes without editing the model. The length parameter is applied when the model loads — you can still adjust the "Model Length" slider in the Objects menu afterward.
 
+### PLY Files
+
+PLY files don't go through the Blender export pipeline. They are typically produced by:
+- **3D scanning** software (mesh or point cloud output)
+- **Gaussian Splatting** training tools (e.g. from COLMAP → 3DGS training)
+- **Point cloud** capture tools (LiDAR, photogrammetry)
+
+Sitrec auto-detects which type of PLY it is by inspecting the file header. If the PLY has face elements, it's loaded as a mesh. If it has `scale_0`/`rot_0` attributes, it's treated as a Gaussian splat. Otherwise it's rendered as a point cloud.
+
+Sitrec treats a PLY file as Z-up: the file's +Z axis becomes up and its −Y axis becomes forward. If a model comes in on its side, use **Rotate X°** to correct it.
+
+Gaussian splat PLY files are rendered with proper elliptical splatting and per-frame back-to-front sorting for correct transparency. The filename length parameter (`~L...~`) works with PLY files too, and measures along the file's Y axis.
+
 ## Custom Models using Blender
 
 The geometries are only intended for simple tests. For more flexibility you can create or import a custom model.
@@ -115,36 +102,38 @@ The geometries are only intended for simple tests. For more flexibility you can 
 Models are typically authored in GLB format. You don't need to use Blender to make them, but that's the only documented pipeline. Other tools should be similar.
 
 Internally, Sitrec uses the metric system. So you need to set this in Blender if you want your models to be consistently sized.
-![blender-units.jpg](docimages/blender-units.jpg)
+![Blender Units panel with Unit System set to Metric and Length set to Meters](docimages/blender-units.jpg)
 
 ### Blender Orientation and scale
 
-When creating a model, such as an aircraft, the forward direction should be along the negative y-axis. This makes it consistent with the OpenGL coordinate system used by Sitrec. In Blender, you can see the directions of the axes with the axes widget. RGB, Red, Green, and Blue are X, Y, and Z. 
+When creating a model, such as an aircraft, the forward direction should be along the negative y-axis. The glTF export turns Blender −Y into +Z, which is the forward axis in Sitrec. In Blender, you can see the directions of the axes with the axes widget. RGB, Red, Green, and Blue are X, Y, and Z.
 
 The aircraft should be centered so its center of gravity is at the origin. This generally means the Y-axis will pass through the nose.
 
 The aircraft should be level, as if it is wheels down. Angle of attack adjustments are done at run-time. This usually means the wings and horizontal stabilizers are level.
 
-The size of the object can be seen in the bounding box dimensions. Ensure this matches expectations. The bounding box only works for single objects, so if your object is multi-part then you'll have to use another method. 
+The size of the object can be seen in the bounding box dimensions. Ensure this matches expectations. The bounding box only works for single objects. To check the size of a multi-part model, use "Display Bounding Box" in Sitrec.
 
-![blender-dimensions.jpg](docimages/blender-dimensions.jpg)
+![Aircraft in Blender with its rotation applied, so that Dimensions Y is the length, and the Dimensions panel highlighted](docimages/blender-dimensions.jpg)
 
 ### Blender materials 
 
 Blender commonly uses the "Principled BSDF" material, an industry standard "physical" material which is largely supported in WebGL, and hence in Sitrec. For more details, see:
-<https://docs.blender.org/manual/en/2.80/addons/io_scene_gltf2.html>
+<https://docs.blender.org/manual/en/latest/addons/import_export/scene_gltf2.html>
 
-If you import a model from a format like FBX, Collada, or Wavefront/OBJ, you might need to adjust the material in Blender before exporting. If a material is opaque and you expected it to be transparent, then you might simply need to set the Blend Mode to "Alpha Blend"
+If you import a model from a format like FBX, Collada, or Wavefront/OBJ, you might need to adjust the material in Blender before exporting. If a material is opaque and you expected it to be transparent, give the Alpha input of the Principled BSDF a value below 1, or connect an alpha texture to it. The exporter sets the glTF alpha mode from the material's nodes, not from the Blend Mode setting.
 
 ### Blender Exporting
 
 You will edit the model in Blender and save to a .blend file. For Sitrec, export as .glb, which is the binary version of glTF, including both geometry and materials in a single file.
-To export a file, use File->Export-> glTF 2.0 (.glb/.gltf), and choose the .glb (glTF Binary) format — Sitrec does not accept .gltf.
+To export a file, use **File → Export → glTF 2.0 (.glb/.gltf)**, and choose the .glb (glTF Binary) format — Sitrec does not accept .gltf.
 
 Click on "Remember Export Settings" and then ensure the following are set:
-![Blender-glb-export.jpg](docimages/Blender-glb-export.jpg)
+![Blender glTF export settings with Selected Objects, Active Scene, Custom Properties, Punctual Lights and +Y Up on, and Lighting Mode set to Standard](docimages/Blender-glb-export.jpg)
 
-Then export the file. If you want to embed a known real-world length, rename the file to include a length parameter (e.g. `my-drone~L3.5m~.glb`). You should now be able to drag and drop this into the Sitrec model inspector, or any moddable sitch that supports it (e.g. FLIR1).
+With **Selected Objects** on, select the objects to export first. For what these settings do on an aircraft with navigation lights, see [Power and exporter settings](#power-and-exporter-settings).
+
+Then export the file. If you want to embed a known real-world length, rename the file to include a length parameter (e.g. `my-drone~L3.5m~.glb`). You should now be able to drag and drop this into the Sitrec Model Inspector or a custom sitch.
 
 ### Aircraft navigation lights
 
@@ -268,18 +257,22 @@ bpy.ops.export_scene.gltf(
 
 #### What Sitrec does with the lights
 
-`CNode3DObject.extractLightsFromModel()` discovers imported Three.js lights, initially disables their illumination, and makes an **Objects → [model] → Lights** folder. Each light gets its own `CNode3DLight`, a camera-facing glow, and controls:
+Sitrec finds the lights in the imported model, turns off their illumination, and makes an **Objects → [model] → Lights** folder. Each light gets a camera-facing glow and these controls:
 
 | Control | Effect |
 |---|---|
-| Light Visible | Enables the glow and permits illumination; defaults on |
-| Light Illuminates | Allows the actual light to illuminate scene surfaces; defaults off |
+| Light Visible | Enables the glow and permits illumination; defaults to 1 (on) |
+| Light Illuminates | Allows the actual light to illuminate scene surfaces; defaults to 0 (off) |
 | Intensity | Imported glTF intensity; also changes the glow's base size (`intensity / 100`) |
 | Color | Changes both the light and its glow |
 | Radius | Changes the glow's bright central core, not a physical lamp radius |
 | Strobe Every / Length / Offset (s) | Timing controls, present only when flashing was enabled on import |
 
 The live glow faces each view's camera, grows with viewing distance/FOV to remain visible, and is reduced by daylight. It is a display aid, not a physically exact inverse-square lamp image. A point light is omnidirectional; the code does not apply the red/green/aft angular sectors of a real navigation-light assembly.
+
+The figure shows the PA-28-181 at night, with the **Lights** folder open. The red glow is the left position light, the green glow is the right position light, and the white glow is the landing spotlight. **Point_1** is a strobe, so its folder has the three Strobe rows. The two strobes show no glow here because this frame is between flashes.
+
+![PA-28-181 at night with red, green and white light glows, beside the Lights folder of the Objects menu](docimages/custom-models-lights.jpg)
 
 The names `Sky_Dome`, `Light`, `Moon_Light`, `Lensflare_Source`, and `Sun_light` are explicitly ignored. This is a short, case-sensitive list, not a general studio-light detector. Avoid these names for operational lamps and exclude studio lighting from the GLB altogether. Name substrings such as "strobe" or "beacon" do **not** enable flashing; only the custom properties do that.
 
@@ -299,7 +292,7 @@ Common failures are missing Punctual Lights, missing Custom Properties, selectin
 
 The repository's **`data/models/PA28.glb`** contains five punctual lights: two position lights, two strobes, and a landing spotlight.
 
-For agents checking or extending the pipeline, read the current implementation rather than assuming all fields in Blender are supported:
+For developers who check or extend this pipeline, read the current implementation rather than assuming all fields in Blender are supported:
 
 - [`CNode3DObject.js`](https://github.com/MickWest/Sitrec2/blob/main/src/nodes/CNode3DObject.js): `lightNamesToIgnore` and `extractLightsFromModel()`.
 - [`CNode3DLight.js`](https://github.com/MickWest/Sitrec2/blob/main/src/nodes/CNode3DLight.js): custom-property handling, phase generation, controls, flashing, and camera-facing glow placement/scaling.
@@ -307,13 +300,48 @@ For agents checking or extending the pipeline, read the current implementation r
 - The installed Three.js `GLTFLoader.js`: `GLTFLightsExtension._loadLight()` and `assignExtrasToUserData()`.
 - The installed Blender glTF exporter's `blender/exp/lights.py`: property export and power conversion. Exporter behavior described here was checked against Blender 5.2.1 LTS.
 
-### PLY Files
+## Flocks
 
-PLY files don't go through the Blender export pipeline. They are typically produced by:
-- **3D scanning** software (mesh or point cloud output)
-- **Gaussian Splatting** training tools (e.g. from COLMAP → 3DGS training)
-- **Point cloud** capture tools (LiDAR, photogrammetry)
+Check "Flock" in an object's menu to draw it as a flock of birds in place of the one object. Each bird is the object's own model or geometry, so set that up first: for example, a sphere of radius 0.5 for a bird about one meter across. The flock follows the object's track, and the track runs through the middle of the flock, not through its leader. An object that is not on a track gives a flock that holds station about that one point.
 
-Sitrec auto-detects which type of PLY it is by inspecting the file header. If the PLY has face elements, it's loaded as a mesh. If it has `scale_0`/`rot_0` attributes, it's treated as a Gaussian splat. Otherwise it's rendered as a point cloud.
+The figure shows a flock of 18 spheres of radius 0.5, seen from above, with the Canada Goose species. One arm of the V is longer because this species sets an Asymmetry of 0.5.
 
-Gaussian splat PLY files are rendered with proper elliptical splatting and per-frame back-to-front sorting for correct transparency. The filename length parameter (`~L...~`) works with PLY files too.
+![Flock of 18 black spheres in a V seen from above, beside the Flock Parameters folder with the Canada Goose species](docimages/custom-models-flock.jpg)
+
+The "Flock Parameters" folder appears below the checkbox. It shows only the controls that apply to the current Formation. V Angle, Asymmetry and Shape Drift are for V and Echelon. V-ness, Birds per Formation and Snaking are for V, Echelon, Line Astern and Line Abreast.
+
+- **Species**: Sets the flock up as one kind of bird flies, from field measurements where there are any: Northern Bald Ibis, Canada Goose, White Pelican, Starling Murmuration, Starling, Dunlin, Pigeon and Gull. It is a place to start. Change a control that the species sets and it goes back to Custom. It does not set the number of birds, and it cannot set the size of a bird or the speed of the flock, which are the object's geometry and its track: hover over the control to see the wingspan and flight speed of the species.
+- **Number of Birds**: With 1, a single bird flies a wavering path about the track. Push against the top of the slider to extend its range into the thousands.
+- **Formation**: V, Echelon (one arm of a V) and Line Astern (one behind another) have a leader. Line Abreast is side by side. Irregular Front is a broad, shallow band with a ragged edge, as gulls, waders, ducks and pigeons fly. Cluster is a rounded mass, as starlings fly. Murmuration is a starling flock over its roost, simulated bird by bird (see below).
+- **V-ness**: How closely the birds hold the lines of the formation, from a loose cluster (0) to a clean formation (1).
+- **V Angle** and **Asymmetry**: The angle between the arms, and how unequal they are. Both vary widely in real flocks. The Canada Goose species sets a V Angle of 70 degrees and an Asymmetry of 0.5, which gives a J (one arm longer).
+- **Shape Drift**: How freely the flock changes shape as birds change places. At 0 the two arms keep their lengths. Above 0, a bird at the end of one arm may cross to the end of the other, so a V becomes a J and a J an Echelon, as flocks of geese do. The Asymmetry is the shape the flock keeps coming back to, less firmly as Shape Drift grows, and not at all at 1.
+- **Birds per Formation**: A flock larger than this flies as several formations near each other, as large flocks of geese do.
+- **Front Depth**: For an Irregular Front, its depth as a fraction of its width.
+- **Elongation** and **Long Axis (deg)**: For a Cluster, the length of its long horizontal axis as a multiple of its short one, and the direction of that axis from the direction of flight (0 is along the flight, 90 is across it). The Starling species sets an Elongation of 2 and a Long Axis of 45 degrees.
+- **Spacing (m)**: The distance between neighboring birds. In a V or an Echelon it is measured across the direction of flight, where birds keep about one wingspan apart. The V Angle then sets how far behind each bird is.
+- **Looseness** and **Wander Period (s)**: How far each bird wanders from its place, as a fraction of the spacing, and how long it takes.
+- **Snaking**: How far the line swings from side to side, as a fraction of the spacing. Each bird follows the path of the bird ahead, so the swing travels down the line from front to back.
+- **Vertical Spread**: The height of the flock as a fraction of its shorter horizontal dimension. The Starling species sets 0.36.
+- **Change of Place (s)**: How often each bird changes place. A bird trades places with the bird next to it: in a formation with a leader, with the bird ahead of it, which is how the lead changes hands. The Northern Bald Ibis species sets one change every 45 seconds. 0 means never.
+- **Wheeling (m)** and **Wheel Period (s)**: How far the whole flock swings away from the track. Over a fixed point the flock circles it; along a moving track it weaves.
+- **Turn Lag (s)**: How long the formation takes to turn to a new direction of flight. Keep it small for geese, whose V points where they fly. Make it large for starlings and pigeons, whose flock keeps its arrangement through a turn, so that birds at the front come out of the turn on the side.
+- **Random Seed**: Changes the random arrangement and motion. The same seed always gives the same flock, and a frame looks the same whether you play to it or jump to it.
+
+### Murmurations
+
+The Murmuration formation is not a fixed shape. Each bird steers by its six or seven nearest neighbors and banks into its turns, and the flock turns, stretches, splits and changes shape by itself as it sweeps around a roost at the object's position. The **Starling Murmuration** species selects it, with a spacing of 1.1 m, a cruise speed of 10 m/s and a roost radius of 150 m. It is based on the StarDisplay model of Hildenbrandt, Carere and Hemelrijk (2010), which was checked against measured starling flocks over their roost in Rome. Sitrec changes that model's banking rule and its vertical pull toward the roost. Its controls are:
+
+- **Number of Birds**: Use hundreds or thousands. Real murmurations can be far larger.
+- **Spacing (m)**: The mean distance from a bird to its nearest neighbor. The flocks measured in Rome were 0.7 to 1.5 m.
+- **Cruise Speed (m/s)**: The birds' flying speed. The flocks in Rome flew at 7 to 15 m/s.
+- **Roost Radius (m)**: How far from the object the flock ranges before it turns back.
+- **Random Seed**: A different flight.
+
+The flock is simulated from before the start of the sitch to its end, which for thousands of birds in a short sitch takes a few seconds, and longer in a long sitch. It is done in the background: the folder title shows how far it has got, and the flock appears as soon as its first seconds are ready. If the object moves along a track, the whole murmuration moves with it.
+
+The simulated flocks are a little too level: real starling flocks rise and fall more. They also are not denser at the border than in the middle, as real flocks are. There is no predator in the model, so there are none of the dark waves that run through a flock under attack.
+
+In a Cluster or an Irregular Front, the model puts a bird's nearest neighbors beside it rather than ahead of it or behind it, and puts the birds a little closer together at the border of the flock than in its middle. A Cluster is not a murmuration: it keeps the shape and spacing that its parameters set. For a flock that moves by itself, use Murmuration.
+
+Each bird points along its own direction of flight and banks into its turns. A bird cannot fly sideways, so a wander that is too large for its period is slowed down until the bird's motion within the flock is no more than about 15% of the speed of the flock.
