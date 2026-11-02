@@ -33,6 +33,20 @@ function isSameDirectoryHandle(a, b) {
     return a === b || (typeof a.path === "string" && a.path === b.path);
 }
 
+// A rehosted sidecar goes to storage with a shared sitch. The TS stream names come
+// from private PMT descriptors and can be the user's own text, so only the numbers
+// go. The names stay in the loaded session and in a save to the user's own folder.
+export function tsIdsWithoutNames(tsIds) {
+    if (!tsIds) return null;
+    return {
+        pesStreamIds: tsIds.pesStreamIds,
+        pmtName: null,
+        continuityErrors: tsIds.continuityErrors,
+        otherStreams: (tsIds.otherStreams ?? []).map(({pid, codec, streamType, packets, bytes}) =>
+            ({pid, codec, streamType, name: null, packets, bytes})),
+    };
+}
+
 export const saveMethods = {
 
     /**
@@ -996,9 +1010,12 @@ export const saveMethods = {
      * bytes (which round-trip exactly).
      *
      * @param {Object} fileEntry — a FileManager.list[id] entry
+     * @param {Object} [options]
+     * @param {boolean} [options.keepNames=false] — keep the TS stream names.
+     *   Only a save to the user's own folder sets this.
      * @returns {ArrayBuffer|null}
      */
-    _makePesSidecarBuffer(fileEntry) {
+    _makePesSidecarBuffer(fileEntry, {keepNames = false} = {}) {
         if (!fileEntry || !Array.isArray(fileEntry.pesEntries) || fileEntry.pesEntries.length === 0) {
             return null;
         }
@@ -1012,7 +1029,7 @@ export const saveMethods = {
             streamIndex: Number.isInteger(fileEntry.streamIndex) ? fileEntry.streamIndex : null,
             streamType: fileEntry.streamType ?? null,
             // The other TS ids of a KLV stream, for the report's Stream Identifiers.
-            tsIds: fileEntry.tsIds ?? null,
+            tsIds: keepNames ? (fileEntry.tsIds ?? null) : tsIdsWithoutNames(fileEntry.tsIds),
         };
         const json = JSON.stringify(sidecar);
         return new TextEncoder().encode(json).buffer;
@@ -1122,7 +1139,7 @@ export const saveMethods = {
             // For TS-extracted substreams: also write `<path>.pts.json` carrying
             // MISB ST 0604 PES timing. Reload reads this sidecar to reconstruct
             // pesPTSus[] without re-demuxing the (dropped) parent TS.
-            const sidecarBuffer = this._makePesSidecarBuffer(fileEntry);
+            const sidecarBuffer = this._makePesSidecarBuffer(fileEntry, {keepNames: true});
             if (sidecarBuffer) {
                 const sidecarPath = this._sidecarFilename(chosenPath);
                 await this.writeWorkingFolderFile(sidecarPath, sidecarBuffer, directoryHandle);
