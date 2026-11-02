@@ -92,7 +92,7 @@ function lookDepressionDeg() {
 // slant distance from the camera to where the optical axis meets the background plane. This pins
 // the horizontal scale from the sitch's own FOV + altitude; only the background (cloud) altitude
 // is a user assumption, since the video alone can't give the plane's distance.
-function geometricMetersPerPixel(P) {
+export function geometricMetersPerPixel(P, imageHeight) {
     const vv = getVideo();
     const lc = NodeMan.get("lookCamera", false);
     const origin = NodeMan.get("fixedCameraPosition", false)
@@ -101,8 +101,10 @@ function geometricMetersPerPixel(P) {
     if (!vv || !lc || !origin || !origin.p) return null;
     let camHAE;
     try { camHAE = altitudeHAE(origin.p(0)); } catch (e) { return null; }
-    const vFOVdeg = lc.camera.renderedFOV ?? lc.camera.fov;
-    const Hpx = vv.videoData.videoHeight;
+    // The widened viewport FOV includes space outside the video. Motion is measured in
+    // video pixels, so resizing the view must not change its physical scale.
+    const vFOVdeg = lc.camera.fov;
+    const Hpx = imageHeight ?? vv.videoData.videoHeight;
     const depDeg = lookDepressionDeg();
     const dh = camHAE - (P.backgroundAlt ?? 0);
     if (!(dh > 0) || !(depDeg > 0.5) || !(vFOVdeg > 0) || !Hpx) return null;
@@ -187,11 +189,8 @@ function cacheVideoIdentity() {
 
 function saveMotionCache(motionData) {
     try {
-        const compact = motionData.map(m => m ? [
-            +(m.dx ?? 0).toFixed(3), +(m.dy ?? 0).toFixed(3),
-            +(m.theta ?? 0).toFixed(5), +(m.scale ?? 1).toFixed(5), +(m.confidence ?? 0).toFixed(3),
-        ] : null);
-        writeCameraMotionCache(localStorage, cacheVideoIdentity(), JSON.stringify(compact));
+        const json = encodeCameraMotionData(motionData);
+        if (json) writeCameraMotionCache(localStorage, cacheVideoIdentity(), json);
     } catch (e) { /* quota / unavailable - non-fatal */ }
 }
 
@@ -199,8 +198,32 @@ function loadMotionCache() {
     try {
         const s = readCameraMotionCache(localStorage, cacheVideoIdentity());
         if (!s) return null;
-        return JSON.parse(s).map(a => a ? { dx: a[0], dy: a[1], theta: a[2], scale: a[3], confidence: a[4] } : { dx: 0, dy: 0, theta: 0, scale: 1, confidence: 0 });
+        return decodeCameraMotionData(s);
     } catch (e) { return null; }
+}
+
+// Pixel displacements need their measurement dimensions. Playback can use a different
+// decode resolution after analysis ends, including when rebuilding a cached path.
+export function encodeCameraMotionData(motionData) {
+    if (!isCount(motionData.imageWidth) || !isCount(motionData.imageHeight)) return null;
+    const motion = motionData.map(m => m ? [
+        +(m.dx ?? 0).toFixed(3), +(m.dy ?? 0).toFixed(3),
+        +(m.theta ?? 0).toFixed(5), +(m.scale ?? 1).toFixed(5), +(m.confidence ?? 0).toFixed(3),
+    ] : null);
+    return JSON.stringify({version: 1, imageWidth: motionData.imageWidth, imageHeight: motionData.imageHeight, motion});
+}
+
+export function decodeCameraMotionData(json) {
+    const saved = JSON.parse(json);
+    // Old entries did not record the pixel scale and cannot safely be reused.
+    if (saved?.version !== 1 || !isCount(saved.imageWidth) || !isCount(saved.imageHeight)
+        || !Array.isArray(saved.motion)) return null;
+    const motion = saved.motion.map(a => a
+        ? {dx: a[0], dy: a[1], theta: a[2], scale: a[3], confidence: a[4]}
+        : {dx: 0, dy: 0, theta: 0, scale: 1, confidence: 0});
+    motion.imageWidth = saved.imageWidth;
+    motion.imageHeight = saved.imageHeight;
+    return motion;
 }
 
 function makeGrayHelper(cv, W, H) {
@@ -399,7 +422,7 @@ function trackAndFit(cv, prevG, curG, mask, P) {
     return { fit, vectors, tracked, lowQuality };
 }
 
-function smoothMotion(motion, win) {
+export function smoothMotion(motion, win) {
     if (win <= 1) return motion;
     // Centred moving average over `win` consecutive frames, using INTEGER offsets
     // (lo + 1 + hi === win) so EVEN windows work as well as odd. This matters
@@ -411,6 +434,8 @@ function smoothMotion(motion, win) {
     const hi = Math.floor(win / 2);
     const keys = ["dx", "dy", "theta"];
     const out = motion.map(m => ({ ...m }));
+    out.imageWidth = motion.imageWidth;
+    out.imageHeight = motion.imageHeight;
     for (let i = 0; i < motion.length; i++) {
         for (const key of keys) {
             let s = 0, c = 0;
@@ -515,7 +540,9 @@ async function _runCameraMotionAnalysis(opts = {}, resolutionSession) {
 
         S.state = "analyzing";
         const motion = new Array(total);
+        motion.imageWidth = W; motion.imageHeight = H;
         const vizVectors = new Array(total);
+        vizVectors.imageWidth = W; vizVectors.imageHeight = H;
         const interp = new Array(total).fill(false);   // frame's motion must be interpolated
         Globals.cameraMotionVectors = vizVectors;       // publish now so the overlay fills in live
         motion[0] = { dx: 0, dy: 0, theta: 0, scale: 1, confidence: 1 };
@@ -637,11 +664,11 @@ function buildPathNodes(motionData, P) {
     clearPathNodes();
 
     // Horizontal scale: physically derived from FOV + altitude when autoScale is on, else manual.
-    const autoMpp = P.autoScale ? geometricMetersPerPixel(P) : null;
+    const autoMpp = P.autoScale ? geometricMetersPerPixel(P, motionData.imageHeight) : null;
     const metersPerPixel = autoMpp ?? P.metersPerPixel;
     const S = status();
     S.metersPerPixel = +metersPerPixel.toFixed(2);
-    S.scaleSource = autoMpp ? `auto (FOV ${(NodeMan.get("lookCamera").camera.renderedFOV ?? NodeMan.get("lookCamera").camera.fov).toFixed(1)}°, bg ${P.backgroundAlt} m)` : "manual";
+    S.scaleSource = autoMpp ? `auto (FOV ${NodeMan.get("lookCamera").camera.fov.toFixed(1)}°, bg ${P.backgroundAlt} m)` : "manual";
 
     new CNodeCameraMotionTrack({
         id: "cameraMotionTrack",
@@ -727,14 +754,16 @@ const FlowViz = {
         ctx.clearRect(0, 0, w, h);
         const vecs = Globals.cameraMotionVectors && Globals.cameraMotionVectors[Math.floor(frame)];
         if (!vecs || !vecs.length) return;
+        const sx = vv.videoData.videoWidth / (Globals.cameraMotionVectors.imageWidth || vv.videoData.videoWidth);
+        const sy = vv.videoData.videoHeight / (Globals.cameraMotionVectors.imageHeight || vv.videoData.videoHeight);
         // Adaptive amplification: scale so the median vector ~= targetPx. Robust to slow frames
         // (tiny motion -> larger scale) and bad/glitch frames (huge motion -> scale floored).
         const mags = vecs.map(v => Math.hypot(v.dx, v.dy)).sort((a, b) => a - b);
         const median = mags[mags.length >> 1] || 0.01;
         const scale = Math.max(6, Math.min(200, this.targetPx / Math.max(median, 0.01)));
         for (const v of vecs) {
-            const [cx, cy] = vv.videoToCanvasCoords(v.px, v.py);
-            const [ex, ey] = vv.videoToCanvasCoords(v.px + v.dx * scale, v.py + v.dy * scale);
+            const [cx, cy] = vv.videoToCanvasCoords(v.px * sx, v.py * sy);
+            const [ex, ey] = vv.videoToCanvasCoords((v.px + v.dx * scale) * sx, (v.py + v.dy * scale) * sy);
             const dx = ex - cx, dy = ey - cy;
             const mag = Math.hypot(dx, dy);
             if (mag < 0.5) continue;
