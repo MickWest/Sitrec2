@@ -227,6 +227,12 @@ function paramLabel(key) {
     return t(`nodes3dObject.paramLabels.${key}`, {defaultValue: label});
 }
 
+// The object folder's tooltip: the full name (the title may be shortened), then what the
+// folder holds. One folder per object, all made here, so the second line stays generic.
+function objectFolderTooltip(name) {
+    return `${name}\n${t("nodes3dObject.folder.tooltip")}`;
+}
+
 export class CNode3DObject extends CNode3DGroup {
     constructor(v) {
         v.layers ??= LAYER.MASK_LOOKRENDER;
@@ -263,7 +269,7 @@ export class CNode3DObject extends CNode3DGroup {
         this.menuName = shortObjectName(this.displayName);
 
         this.gui = guiMenus.objects.addFolder(this.menuName).close()
-        this.gui.tooltip(this.displayName);
+        this.gui.tooltip(objectFolderTooltip(this.displayName));
         // The Sitrec API and getFolder() can find the folder by id after a rename.
         this.gui._lookupId = this.id;
         this.common = {}
@@ -272,7 +278,8 @@ export class CNode3DObject extends CNode3DGroup {
         this.lights = []; // Initialize lights array
 
         this.common.material = v.material ?? "lambert";
-        this.materialFolder = this.gui.addFolder("Material").close();
+        this.materialFolder = this.gui.addFolder("Material").close()
+            .tooltip(t("nodes3dObject.material.tooltip"));
         this.materialFolder.isCommon = true; //temp patch - not needed?  not a controller???
         // The geometry's segment counts (see arrangeGeometryControls). Empty and hidden until a
         // geometry with segments is built.
@@ -346,7 +353,7 @@ export class CNode3DObject extends CNode3DGroup {
             step: 0.1,
             desc: "Model Length",
             unitType: "small",
-            tooltip: "Model length along the local Z axis. Set to 0 to disable automatic Z-length scaling.",
+            tooltip: "Length of the object along its local Z axis. The whole object is scaled evenly to this length.\n0 = no scaling: the model or geometry keeps its own size.",
             onChange: () => {
                 this.common.modelLength = this.modelLengthNode.value;
                 this.recalculate();
@@ -535,7 +542,7 @@ export class CNode3DObject extends CNode3DGroup {
         this.menuName = shortObjectName(name);
         // The Name control sets the folder title itself; a rename from elsewhere does not.
         this.gui.title(this.menuName);
-        this.gui.tooltip(name);
+        this.gui.tooltip(objectFolderTooltip(name));
         if (!fromControl) this.nameController?.updateDisplay();
         // The 3D label follows only when it showed the name, not a label chosen for it.
         if (this.label && this.label.text === oldMenuName) this.label.changeText(this.menuName);
@@ -1730,7 +1737,8 @@ ${trackPlacemark}    </Document>
         
         // If we have valid lights, create the Lights folder
         if (validLights.length > 0) {
-            this.lightsFolder = this.gui.addFolder("Lights").close();
+            this.lightsFolder = this.gui.addFolder("Lights").close()
+                .tooltip(t("nodes3dObject.lights.tooltip"));
             
             // Create individual light folders and CNode3DLight instances
             for (const child of validLights) {
@@ -2626,7 +2634,25 @@ ${trackPlacemark}    </Document>
     }
 
     setupSolarSurfaceMenu() {
-        const folder = this.gui.addFolder("Solar surface heating (estimated)").close();
+        const folder = this.gui.addFolder("Solar surface heating (estimated)").close()
+            .tooltip("Estimated surface temperatures of this object from direct sunlight, air flow and internal heat, for the physical MWIR (mid-wave infrared) thermal image.\n" +
+                "Used only for a Geometry object (not a model or a flock) with Enable for solid geometry on. While on, it replaces the Thermal surface temperature and emissivity.\n" +
+                "A local steady equilibrium, not identity evidence. Convex solid geometry only; no conduction, thermal inertia, diffuse sun or self-shadowing.");
+        const tips = {
+            enabled: "Turn on the estimated surface heating for this object. Each face then gets its own temperature from its angle to the sun and from the internal heat at its position.\nThe sun position comes from the scene date, time and location.",
+            airTemperatureK: "Air temperature for the surface heat balance, in K. It is separate from the scene atmosphere.",
+            mach: "Mach number of the air flow over the surface. With Recovery factor it raises the air temperature that convection drives the surface toward: air temperature × (1 + recovery factor × 0.2 × Mach²). It is not read from the track.",
+            recoveryFactor: "Fraction of the ram temperature rise that reaches the surface, 0 to 1 (see Object Mach).",
+            solarAbsorptivity: "Fraction of the direct sunlight that the surface absorbs, 0 to 1.",
+            solarIrradianceWm2: "Direct sunlight power on a surface that faces the sun, in W/m². A face at an angle gets less (cosine of the angle). A face turned away, or a sun below the horizon, gives none.",
+            convectionWm2K: "Convective heat-transfer coefficient, in W/m²/K. A larger value holds the surface closer to the air temperature, including its ram heating.",
+            radiationTemperatureK: "Temperature of the surroundings that the surface radiates to, in K.",
+            coolingEmissivity: "Emissivity for radiative cooling over all wavelengths, 0 to 1. It sets how much heat the surface loses by radiation. It is separate from MWIR emissivity.",
+            emissivityMWIR: "Emissivity of the surface in the MWIR band that the thermal sensor sees, 0 to 1.",
+            internalHeatFluxWm2: "Peak heat flux from inside the object that reaches the skin, in W/m². It is not engine power. It falls off as a Gaussian band along the object's local z axis. 0 = no internal heat.",
+            internalHeatCenterFraction: "Center of the internal heat band along the object's local z axis, in half lengths from the center: −1 and 1 are the two ends, 0 is the center.",
+            internalHeatSigmaFraction: "Width (Gaussian sigma) of the internal heat band, in half lengths of the object along its local z axis.",
+        };
         const fields = {enabled: "Enable for solid geometry", airTemperatureK: "Air temperature K", mach: "Object Mach",
             recoveryFactor: "Recovery factor", solarAbsorptivity: "Solar absorptivity", solarIrradianceWm2: "Direct sun W/m²",
             convectionWm2K: "Convection W/m²/K", radiationTemperatureK: "Radiation environment K",
@@ -2640,7 +2666,7 @@ ${trackPlacemark}    </Document>
         for (const [key, label] of Object.entries(fields)) {
             folder.add(this.solarSurface, key, ...(bounds[key] ?? [])).name(label).listen().onChange(() => {
                 markSitchDirty(); setRenderOne(true);
-            }).tooltip("Estimated local steady equilibrium, not identity evidence. Internal Gaussian flux is body-fixed along local z, in W/m² arriving at the skin, not engine power. Convex solid geometry only; no conduction, thermal inertia, diffuse sun or self-shadowing. Overrides uniform temperature while enabled.");
+            }).tooltip(tips[key]);
         }
     }
 

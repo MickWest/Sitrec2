@@ -156,25 +156,25 @@ export function setupStreetViewPanoMenu() {
 
     svFolder = guiMenus.terrain.addFolder("Street View Pano")
         .close()
-        .tooltip("Fetch a Google Street View panorama and render it as a background sphere centred at its location.");
+        .tooltip("Fetch a Google Street View panorama and draw it as a background sphere around the look camera. The panorama shows only in the look view.");
 
     svFolder.add(params, "lat", undefined, undefined, 0.00001).name("Latitude")
         .tooltip("Latitude of the location to fetch a panorama for");
     svFolder.add(params, "lon", undefined, undefined, 0.00001).name("Longitude")
         .tooltip("Longitude of the location to fetch a panorama for");
     svFolder.add(params, "alt", undefined, undefined, 0.5).name("Altitude (m)")
-        .tooltip("Height (HAE, metres) of the sphere centre — roughly ground + eye height");
+        .tooltip("Height of the panorama point, in meters above the ellipsoid (HAE). Set it to about the ground height plus eye height. Center Camera On Street View moves the camera to this height.");
 
     svFolder.add({useCam: () => copyCameraPosition()}, "useCam")
         .name("Use Camera Position")
         .tooltip("Copy the current look (observer) camera lat/lon/alt into the fields above");
 
     svFolder.add(params, "zoom", 0, 5, 1).name("Zoom (detail)")
-        .tooltip("Stitcher zoom level — higher = sharper but more tiles fetched (billed). Clamped per pano.");
+        .tooltip("Detail level of the panorama image, 0 to 5. A higher value is sharper, but fetches more billed image tiles. The server lowers it for a panorama that has less detail. It applies at the next fetch.");
 
     svFolder.add({fetch: () => fetchPano()}, "fetch")
         .name("Fetch Panorama")
-        .tooltip("Resolve the nearest Street View pano and load it as a background sphere");
+        .tooltip("Find the Street View panorama nearest to Latitude and Longitude, and load it as a background sphere.\nThe server limits how many new panoramas you can fetch per hour.");
 
     const fetchHereController = svFolder.add({fetchHere: () => { if (copyCameraPosition()) fetchPano(); }}, "fetchHere")
         .name("Fetch At Camera")
@@ -182,10 +182,10 @@ export function setupStreetViewPanoMenu() {
 
     const centerCamController = svFolder.add({centerCam: () => centerCameraOnPano()}, "centerCam")
         .name("Center Camera On Street View")
-        .tooltip("Move the observer (look) camera to the loaded panorama's exact captured location, so the view sits at the sphere centre (fixes the offset from Google snapping to the nearest pano)");
+        .tooltip("Move the look camera to the point where the loaded panorama was taken. Google uses the panorama nearest to the requested point, which can be a few meters away.\nIf the camera position uses AGL (height above ground level), this turns AGL off, so that the camera height stays fixed.");
 
     svFolder.add(params, "headingOffset", -180, 180, 0.5).name("Heading Offset°")
-        .tooltip("Calibration rotation added to the pano's metadata heading, in case the imagery is rotated")
+        .tooltip("Rotation, in degrees, added to the heading that Google gives for the panorama. Use it if the image is turned relative to the 3D scene.")
         .onChange(v => { getNode()?.setHeadingOffset(v); });
 
     svFolder.add(params, "elevationOffset", -20, 20, 0.1).name("Elevation Offset°")
@@ -193,7 +193,7 @@ export function setupStreetViewPanoMenu() {
         .onChange(v => { getNode()?.setElevationOffset(v); });
 
     svFolder.add(params, "radius", 5, 50000, 1).name("Sphere Radius (m)")
-        .tooltip("Radius of the background sphere")
+        .tooltip("Radius of the panorama sphere around the look camera, in meters.")
         .onChange(v => { getNode()?.setRadius(v); });
 
     svFolder.add(params, "opacity", 0, 1, 0.01).name("Street Opacity")
@@ -208,7 +208,9 @@ export function setupStreetViewPanoMenu() {
         .tooltip("Show/hide the panorama sphere")
         .onChange(v => { getNode()?.show(v); setRenderOne(true); });
 
-    statusController = svFolder.add(params, "status").name("Status").disable().listen();
+    statusController = svFolder.add(params, "status").name("Status")
+        .tooltip("Shows the state of the last fetch: Not loaded, in progress, Loaded (with the copyright and date), or an error.")
+        .disable().listen();
 
     // The parent guiMenus.terrain is a permanent shell, but disposeEverything()'s
     // menuBar.destroy(false) on every sitch reload recurses into children with the same

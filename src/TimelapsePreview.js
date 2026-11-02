@@ -107,7 +107,8 @@ const P = timelapsePreview;
 // Menu
 
 export function setupTimelapsePreviewMenu(parent, manager) {
-    const folder = parent.addFolder("Preview Timelapse").close().perm();
+    const folder = parent.addFolder("Preview Timelapse").close().perm()
+        .tooltip("A live preview, in the look view, of the trails that Render Long Exposure/Stacking will record.");
     const recalc = () => previewNode()?.requestUpdate();
 
     folder.add(P, "enabled").name("Preview Timelapse").perm().listen()
@@ -126,16 +127,21 @@ export function setupTimelapsePreviewMenu(parent, manager) {
         .tooltip("Exposure of the look view while the preview is on, in stops: the trails and\n" +
             "the scene, like the EV slider of the render's result window (which opens at +3).\n" +
             "Use the same value in both to compare them.");
-    folder.add(P, "stars").name("Stars").perm().listen().onChange(recalc);
-    folder.add(P, "planets").name("Planets").perm().listen().onChange(recalc);
-    folder.add(P, "satellites").name("Satellites").perm().listen().onChange(recalc);
+    folder.add(P, "stars").name("Stars").perm().listen().onChange(recalc)
+        .tooltip("Include star trails in the preview.");
+    folder.add(P, "planets").name("Planets").perm().listen().onChange(recalc)
+        .tooltip("Include planet trails in the preview.");
+    folder.add(P, "satellites").name("Satellites").perm().listen().onChange(recalc)
+        .tooltip("Include trails of the loaded satellites that are shown in the look view.");
     folder.add(P, "hideLiveSky").name("Hide Live Sky").perm().listen().onChange(() => setRenderOne(true))
         .tooltip("In the look view, hide what the render hides: the star, planet and satellite\n" +
             "sprites and the sky chart lines (constellations, grid, flare region).");
     folder.add({recalc}, "recalc").name("Recalculate Now").perm()
         .tooltip("Recalculate the trails now, for a change the preview does not watch\n" +
             "(for example a new satellite filter).");
-    folder.add(P, "status").name("Status").perm().listen().disable();
+    folder.add(P, "status").name("Status").perm().listen().disable()
+        .tooltip("Shows how many star, planet and satellite trails the preview draws, and how long the\n" +
+            "calculation took. It also shows when the preview waits, calculates or fails.");
 }
 
 function previewNode() {

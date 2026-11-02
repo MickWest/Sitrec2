@@ -306,6 +306,7 @@ class CFeatureManager extends CManager {
 
         const textController = standaloneMenu.add(editableData, 'text')
             .name(t("featureManager.labelText"))
+            .tooltip(t("featureManager.labelTextTooltip"))
             .listen()
             .onChange((value) => {
                 // Update the feature's text
@@ -322,15 +323,20 @@ class CFeatureManager extends CManager {
             const readout = {lat: "", lon: "", altMSL: "", altHAE: ""};
             this.editReadout = readout;
             this.updateEditReadout(featureNode);
-            standaloneMenu.add(readout, 'lat').name(t("featureManager.latitude")).listen().disable();
-            standaloneMenu.add(readout, 'lon').name(t("featureManager.longitude")).listen().disable();
-            standaloneMenu.add(readout, 'altMSL').name(t("featureManager.altitudeMSL")).listen().disable();
-            standaloneMenu.add(readout, 'altHAE').name(t("featureManager.altitudeHAE")).listen().disable();
+            standaloneMenu.add(readout, 'lat').name(t("featureManager.latitude"))
+                .tooltip(t("featureManager.latitudeTooltip")).listen().disable();
+            standaloneMenu.add(readout, 'lon').name(t("featureManager.longitude"))
+                .tooltip(t("featureManager.longitudeTooltip")).listen().disable();
+            standaloneMenu.add(readout, 'altMSL').name(t("featureManager.altitudeMSL"))
+                .tooltip(t("featureManager.altitudeMSLTooltip")).listen().disable();
+            standaloneMenu.add(readout, 'altHAE').name(t("featureManager.altitudeHAE"))
+                .tooltip(t("featureManager.altitudeHAETooltip")).listen().disable();
         }
 
         // Add arrow length slider
         standaloneMenu.add(featureNode, 'arrowLength', 0, 300, 1)
             .name(t("featureManager.arrowLength"))
+            .tooltip(t("featureManager.arrowLengthTooltip"))
             .listen()
             .onChange((value) => {
                 // Update the offset.y to match the new arrow length
@@ -341,11 +347,13 @@ class CFeatureManager extends CManager {
         // Add arrow color picker
         standaloneMenu.addColor(featureNode, 'arrowColor')
             .name(t("featureManager.arrowColor"))
+            .tooltip(t("featureManager.arrowColorTooltip"))
             .listen();
         
         // Add text color picker
         standaloneMenu.addColor(featureNode, 'textColor')
             .name(t("featureManager.textColor"))
+            .tooltip(t("featureManager.textColorTooltip"))
             .listen()
             .onChange((value) => {
                 // Convert hex number to CSS color string for the overlay text
@@ -366,6 +374,7 @@ class CFeatureManager extends CManager {
         };
         standaloneMenu.add(deleteObj, 'deleteFeature')
             .name('🗑️ ' + t("featureManager.deleteFeature"))
+            .tooltip(t("featureManager.deleteFeatureTooltip"))
             .setLabelColor('#ff4444');
 
         // Done button - the explicit way out of edit mode, same as Escape or a
@@ -375,7 +384,8 @@ class CFeatureManager extends CManager {
                 standaloneMenu.destroy();
             }
         };
-        standaloneMenu.add(doneObj, 'done').name(t("featureManager.done"));
+        standaloneMenu.add(doneObj, 'done').name(t("featureManager.done"))
+            .tooltip(t("featureManager.doneTooltip"));
 
         // Open the menu
         standaloneMenu.open();

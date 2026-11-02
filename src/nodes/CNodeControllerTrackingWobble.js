@@ -57,6 +57,10 @@ export class CNodeControllerTrackingWobble extends CNodeController {
     addGUI() {
         const folder = guiMenus.camera.addFolder(
             t("trackingWobble.folder", {defaultValue: "Tracking Wobble"})).close();
+        folder.tooltip(t("trackingWobble.folderTooltip", {defaultValue:
+            "Add a simulated hand-tracking error to the look camera, on top of any Camera Heading source.\n" +
+            "The aim drifts off the target, and the operator brings it back late and not exactly.\n" +
+            "Turn it on with the checkbox in the folder title."}));
         this.guiFolder = folder;
         const onChange = () => {
             this.recalculate();
@@ -74,7 +78,8 @@ export class CNodeControllerTrackingWobble extends CNodeController {
         folder.add(this, "driftSpeed", 0, 3, 0.01).listen().onChange(onChange)
             .name(t("trackingWobble.driftSpeed.label", {defaultValue: "Drift Speed (deg/s)"}))
             .tooltip(t("trackingWobble.driftSpeed.tooltip", {defaultValue:
-                "Random drift rate away from the target"}));
+                "Typical speed, in degrees per second, at which the aim wanders off the target.\n" +
+                "The drift direction changes at random about once a second."}));
         folder.add(this, "reactionTime", 0, 2, 0.05).listen().onChange(onChange)
             .name(t("trackingWobble.reactionTime.label", {defaultValue: "Reaction Time (s)"}))
             .tooltip(t("trackingWobble.reactionTime.tooltip", {defaultValue:

@@ -200,8 +200,10 @@ export class CNodePhotoBackdrop extends CNode3DGroup {
 
     createGUIFolder() {
         this.guiFolder = guiMenus.objects.addFolder(t("photoBackdrop.folder.label", {name: this.name}));
+        this.guiFolder.tooltip(t("photoBackdrop.folder.tooltip"));
         const changed = () => { this.applyVisibility(); setRenderOne(true); };
-        this.guiFolder.add(this, "visible").name(t("photoBackdrop.visible.label")).onChange(value => {
+        this.guiFolder.add(this, "visible").name(t("photoBackdrop.visible.label"))
+            .tooltip(t("photoBackdrop.visible.tooltip")).onChange(value => {
             this.show(value);
             setRenderOne(true);
         });
@@ -216,11 +218,11 @@ export class CNodePhotoBackdrop extends CNode3DGroup {
         this.guiFolder.add(this, "fill").name(t("photoBackdrop.fill.label"))
             .tooltip(t("photoBackdrop.fill.tooltip")).onChange(changed);
         this.guiFolder.addColor(this, "fillColor").name(t("photoBackdrop.fillColor.label"))
-            .onChange(() => setRenderOne(true));
+            .tooltip(t("photoBackdrop.fillColor.tooltip")).onChange(() => setRenderOne(true));
         this.guiFolder.add(this, "showInMain").name(t("photoBackdrop.showInMain.label"))
             .tooltip(t("photoBackdrop.showInMain.tooltip")).onChange(changed);
         this.guiFolder.add(this, "mainOpacity", 0, 1, 0.01).name(t("photoBackdrop.mainOpacity.label"))
-            .onChange(() => { this.applyMainOpacity(); setRenderOne(true); });
+            .tooltip(t("photoBackdrop.mainOpacity.tooltip")).onChange(() => { this.applyMainOpacity(); setRenderOne(true); });
         this.guiFolder.add(this, "hideTerrain").name(t("photoBackdrop.hideTerrain.label"))
             .tooltip(t("photoBackdrop.hideTerrain.tooltip")).onChange(() => setRenderOne(true));
         this.guiFolder.add(this, "followCamera").name(t("photoBackdrop.followCamera.label"))

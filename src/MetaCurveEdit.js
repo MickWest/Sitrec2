@@ -1011,6 +1011,9 @@ class MetaBezierCurveEditor {
         const x = this.C2DX(e.layerX), y = this.C2DY(e.layerY), handleY = this.C2DY(e.layerY + 25);
         showPointContextMenu(e, "Curve Points", [{
             label: point ? "Delete Point" : "Add Point",
+            tooltip: point
+                ? "Delete this point and its handle. Not available when only two points remain."
+                : "Add a curve point, with its handle, at this place.",
             enabled: !point || this.curve.ps.length > 4,
             action: () => {
                 if (this.curve.override || this.disable || this.c.isConnected === false) return;

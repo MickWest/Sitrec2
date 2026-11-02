@@ -195,7 +195,9 @@ export class CNodeCloudField extends CNode3DGroup {
 
     createGUIFolder() {
         this.guiFolder = guiMenus.objects.addFolder(t("cloudField.folder.label", {name: this.name}));
-        this.guiFolder.add(this, "visible").name(t("cloudField.visible.label")).onChange(value => {
+        this.guiFolder.tooltip(t("cloudField.folder.tooltip"));
+        this.guiFolder.add(this, "visible").name(t("cloudField.visible.label"))
+            .tooltip(t("cloudField.visible.tooltip")).onChange(value => {
             this.show(value);
             setRenderOne(true);
         });
@@ -214,7 +216,8 @@ export class CNodeCloudField extends CNode3DGroup {
                 this.mesh.material.uniforms.refraction.value = value ? 1 : 0;
                 setRenderOne(true);
             });
-        this.guiFolder.addColor(this, "color").name(t("cloudField.color.label")).onChange(() => setRenderOne(true));
+        this.guiFolder.addColor(this, "color").name(t("cloudField.color.label"))
+            .tooltip(t("cloudField.color.tooltip")).onChange(() => setRenderOne(true));
         this.guiFolder.add(this, "blendMode", CLOUD_FIELD_BLEND_MODES).name(t("cloudField.blendMode.label"))
             .tooltip(t("cloudField.blendMode.tooltip")).onChange(() => {
                 this.applyBlendMode(this.mesh.material);

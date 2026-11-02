@@ -164,6 +164,7 @@ export class CNode3DLight extends CNode3D {
         this.lightVisibleControl = new CNodeGUIValue({
             id: this.id + "_lightVisible",
             desc: "Light Visible",
+            tooltip: "1 shows this light: its glow, and its light on the scene when Light Illuminates is 1. 0 hides both.",
             value: this.lightVisible ? 1 : 0,
             start: 0,
             end: 1,
@@ -178,6 +179,7 @@ export class CNode3DLight extends CNode3D {
         this.lightIlluminatesControl = new CNodeGUIValue({
             id: this.id + "_lightIlluminates",
             desc: "Light Illuminates",
+            tooltip: "1 makes this light also light up the scene around it. 0 shows only its glow.\nUsed only when Light Visible is 1.",
             value: this.lightIlluminates ? 1 : 0,
             start: 0,
             end: 1,
@@ -192,6 +194,7 @@ export class CNode3DLight extends CNode3D {
         this.intensityControl = new CNodeGUIValue({
             id: this.id + "_intensity",
             desc: "Intensity",
+            tooltip: "Brightness of the light. It also sets the size of the glow, which is Intensity / 100 meters across.",
             value: this.light.intensity,
             start: 0,
             end: 10000,
@@ -209,11 +212,14 @@ export class CNode3DLight extends CNode3D {
                 this._object.material.uniforms.uColor.value = [this.light.color.r, this.light.color.g, this.light.color.b];
             }
         }, this.gui);
+        // CNodeGUIColor takes no tooltip option, so set it on its controller.
+        this.colorControl.guiEntry?.tooltip("Color of the light and of its glow.");
 
         // Radius control
         this.radiusControl = new CNodeGUIValue({
             id: this.id + "_radius",
             desc: "Radius",
+            tooltip: "Size of the solid bright center of the glow, as a fraction of the glow's radius.",
             value: this._object.material.uniforms.uRadius.value,
             start: 0.1,
             end: 1.0,
@@ -228,6 +234,7 @@ export class CNode3DLight extends CNode3D {
             this.strobeEveryControl = new CNodeGUIValue({
                 id: this.id + "_strobeEvery",
                 desc: "Strobe Every (s)",
+                tooltip: "Time from the start of one flash to the start of the next, in seconds. 0 = no strobe: the light stays on.",
                 value: this.strobeEvery,
                 start: 0,
                 end: 20.0,
@@ -240,6 +247,7 @@ export class CNode3DLight extends CNode3D {
             this.strobeLengthControl = new CNodeGUIValue({
                 id: this.id + "_strobeLength",
                 desc: "Strobe Length (s)",
+                tooltip: "How long each flash lasts, in seconds.",
                 value: this.strobeLength,
                 start: 0.01,
                 end: 1.0,
@@ -252,6 +260,7 @@ export class CNode3DLight extends CNode3D {
             this.strobeOffsetControl = new CNodeGUIValue({
                 id: this.id + "_strobeOffset",
                 desc: "Strobe Offset (s)",
+                tooltip: "Time shift of the flashes, in seconds. Lights with different offsets flash at different times.",
                 value: this.strobeOffset,
                 start: 0,
                 end: 20.0,

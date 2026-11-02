@@ -172,37 +172,56 @@ export class   CNodeMQ9UI extends CNodeViewUI {
 
     setupTrackingMenu() {
         if (!guiMenus.camera) return;
-        const menu = this.trackingMenu = guiMenus.camera.addFolder("MQ9 Tracking").close();
+        const menu = this.trackingMenu = guiMenus.camera.addFolder("MQ9 Tracking").close()
+            .tooltip("Simulate the tracker of the MQ9 overlay: acquire a scene object and follow it, or hold a point on the ground.\n" +
+                "The simulation aims the look camera. Each command is recorded at the current frame and replays when you scrub.\n" +
+                "Turn it on with the checkbox in the folder title.");
         menu.add(this, "trackingEnabled").name("Simulate Tracking").listen().onChange(enabled => {
             if (enabled) this.startTrackingSimulation(); else this.stopTrackingSimulation();
             setRenderOne(true);
-        }).tooltip("Track a projected scene object. Drag in Look View to slew; while locked, slew is relative to the tracked object.")
+        }).tooltip("Track a projected scene object. With the MQ9 overlay shown, drag in the look view to slew;\n" +
+            "while locked, slew is relative to the tracked object.\n" +
+            "While this is on, Camera Tweaks > Free Look Camera is on. Turning this off sets Free Look back as it was.")
             .asFolderToggle();
         this.trackingObjectController = menu.add(this, "trackingObject", {"Target object": "targetObject"})
             .name("Scene Object").onChange(() => {
                 this.trackingProgram = null; this.stopTrackingSimulation(); this.trackingEnabled = true; setRenderOne(true);
-            });
-        menu.add(this, "trackingStatus").name("State").listen().disable();
+            })
+            .tooltip("The scene object that the tracker can detect: the target object or any 3D object in the sitch.\n" +
+                "Changing it clears the recorded commands and starts the simulation again from the current frame.");
+        menu.add(this, "trackingStatus").name("State").listen().disable()
+            .tooltip("Tracker state now: manual, ground, acquiring, refining, tracking, or coasting\n" +
+                "(target lost, box flashing). Off when the simulation is not running.");
         const actions = {acquire: () => this.trackingCommand("acquire"), manual: () => this.trackingCommand("manual"),
             center: () => this.trackingCommand("center"),
             ground: () => this.trackingCommand("ground"), reset: () => {
                 this.trackingProgram = null; this.stopTrackingSimulation(); this.startTrackingSimulation(); setRenderOne(true);
             }};
-        menu.add(actions, "acquire").name("Acquire / Box Target");
+        menu.add(actions, "acquire").name("Acquire / Box Target")
+            .tooltip("Start an acquisition: a box grows at the image center. If the scene object is in the box,\n" +
+                "the tracker locks on, refines, then tracks it. If not, the box flashes and the tracker\n" +
+                "falls back to Ground Track. Starts the simulation if it is not running.");
         menu.add(actions, "center").name("Center Tracked Object").tooltip("Move the tracked object to the image center over one second, then hold it there.");
-        menu.add(actions, "manual").name("Manual Tracking");
-        menu.add(actions, "ground").name("Ground Track");
-        menu.add(actions, "reset").name("Reset Simulation");
+        menu.add(actions, "manual").name("Manual Tracking")
+            .tooltip("Drop the target and hold the camera where it points now. A slew then turns the camera directly.");
+        menu.add(actions, "ground").name("Ground Track")
+            .tooltip("Drop the target and lock the camera on the ground point at the image center.\n" +
+                "The camera stays aimed there as the platform moves. A slew moves the locked point.");
+        menu.add(actions, "reset").name("Reset Simulation")
+            .tooltip("Clear the recorded commands and start the simulation again from the current frame.");
         menu.add(this, "trackingLowConfidence").name("Simulate Low Confidence").listen().onChange(() => {
             // Invalidate from the edited frame while preserving accepted history.
             this.trackingCommand("confidence", {value: this.trackingLowConfidence ? 0 : 1});
-        });
+        }).tooltip("From the current frame, make the scene object undetectable, as if it were hard to see.\n" +
+            "A locked tracker then coasts and falls back to Ground Track. Turn it off to restore full confidence.");
         menu.add(this.trackingSettings, "refineSeconds", .25, 5, .05).name("Refinement (seconds)").onChange(() => {
             if (this.trackingSimulation) { this.stopTrackingSimulation(); this.startTrackingSimulation(); }
-        });
+        }).tooltip("Time the tracker needs a confident lock to go from refining to tracking.\n" +
+            "The box shrinks onto the object over this time. A change replays the recorded commands.");
         menu.add(this.trackingSettings, "boxPixels", 20, 300, 1).name("Acquisition Box (pixels)").onChange(() => {
             if (this.trackingSimulation) { this.stopTrackingSimulation(); this.startTrackingSimulation(); }
-        });
+        }).tooltip("Full size of the acquisition box, in pixels of a 640 x 480 image. The object must be in the box to be acquired.\n" +
+            "A change replays the recorded commands.");
     }
 
     startTrackingSimulation(options) {

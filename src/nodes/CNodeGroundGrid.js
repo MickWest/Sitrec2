@@ -528,18 +528,19 @@ export class CNodeGroundGrid extends CNodeGroundOverlay {
 
     createGridGUI() {
         this.guiFolder = guiMenus.objects.addFolder(`Grid: ${this.name}`);
+        this.guiFolder.tooltip(t("groundGrid.folder.tooltip"));
 
-        this.guiFolder.add(this, 'name').name(t("groundGrid.name.label")).onChange(() => {
+        this.guiFolder.add(this, 'name').name(t("groundGrid.name.label")).tooltip(t("groundGrid.name.tooltip")).onChange(() => {
             this.guiFolder.title = `Grid: ${this.name}`;
         }).keepLiveWhenFolderOff();
 
-        this.guiFolder.add(this, 'visible').name(t("groundGrid.visible.label")).onChange((value) => {
+        this.guiFolder.add(this, 'visible').name(t("groundGrid.visible.label")).tooltip(t("groundGrid.visible.tooltip")).onChange((value) => {
             this.show(value);
             setRenderOne(true);
         }).onFinishChange(() => { CustomManager.saveGlobalSettings(true); }).asFolderToggle();
 
         const editModeData = {editMode: this.editMode};
-        this.editModeController = this.guiFolder.add(editModeData, 'editMode').name(t("groundGrid.editMode.label")).onChange((value) => {
+        this.editModeController = this.guiFolder.add(editModeData, 'editMode').name(t("groundGrid.editMode.label")).tooltip(t("groundGrid.editMode.tooltip")).onChange((value) => {
             this.setEditMode(value);
         });
 
@@ -548,63 +549,63 @@ export class CNodeGroundGrid extends CNodeGroundOverlay {
         this.gridParams = {width: 0, height: 0, majorStep: 0, minorStep: 0, altitude: 0};
         this.syncGridParamsFromState();
 
-        const widthController = this.guiFolder.add(this.gridParams, 'width', 1, 10000, 1).allowInputExpandMax(true).onChange(() => {
+        const widthController = this.guiFolder.add(this.gridParams, 'width', 1, 10000, 1).allowInputExpandMax(true).tooltip(t("groundGrid.width.tooltip")).onChange(() => {
             this.setWidthMeters(this.gridParams.width * Units.small2M);
             this.updateMesh();
         });
 
-        const heightController = this.guiFolder.add(this.gridParams, 'height', 1, 10000, 1).allowInputExpandMax(true).onChange(() => {
+        const heightController = this.guiFolder.add(this.gridParams, 'height', 1, 10000, 1).allowInputExpandMax(true).tooltip(t("groundGrid.height.tooltip")).onChange(() => {
             this.setHeightMeters(this.gridParams.height * Units.small2M);
             this.updateMesh();
         });
 
-        const majorController = this.guiFolder.add(this.gridParams, 'majorStep', 0, 1000, 1).allowInputExpandMax(true).onChange(() => {
+        const majorController = this.guiFolder.add(this.gridParams, 'majorStep', 0, 1000, 1).allowInputExpandMax(true).tooltip(t("groundGrid.majorStep.tooltip")).onChange(() => {
             this.majorStep = this.gridParams.majorStep * Units.small2M;
             this.updateGridUniforms();
         });
         this.majorStepController = majorController;
 
-        const minorController = this.guiFolder.add(this.gridParams, 'minorStep', 0, 1000, 1).allowInputExpandMax(true).onChange(() => {
+        const minorController = this.guiFolder.add(this.gridParams, 'minorStep', 0, 1000, 1).allowInputExpandMax(true).tooltip(t("groundGrid.minorStep.tooltip")).onChange(() => {
             this.minorStep = this.gridParams.minorStep * Units.small2M;
             this.updateGridUniforms();
         });
         this.minorStepController = minorController;
 
-        this.guiFolder.add(this, 'latLonGrid').name(t("groundGrid.latLonGrid.label")).onChange(() => {
+        this.guiFolder.add(this, 'latLonGrid').name(t("groundGrid.latLonGrid.label")).tooltip(t("groundGrid.latLonGrid.tooltip")).onChange(() => {
             this.applyLatLonMode();
         });
 
-        this.minPxController = this.guiFolder.add(this, 'minPixelSpacing', 2, 100, 1).name(t("groundGrid.minPixelSpacing.label")).onChange(() => {
+        this.minPxController = this.guiFolder.add(this, 'minPixelSpacing', 2, 100, 1).name(t("groundGrid.minPixelSpacing.label")).tooltip(t("groundGrid.minPixelSpacing.tooltip")).onChange(() => {
             setRenderOne(true);
         });
 
-        this.maxPxController = this.guiFolder.add(this, 'maxPixelSpacing', 20, 1000, 5).name(t("groundGrid.maxPixelSpacing.label")).onChange(() => {
+        this.maxPxController = this.guiFolder.add(this, 'maxPixelSpacing', 20, 1000, 5).name(t("groundGrid.maxPixelSpacing.label")).tooltip(t("groundGrid.maxPixelSpacing.tooltip")).onChange(() => {
             setRenderOne(true);
         });
 
         // Line widths are screen pixels, so no small-unit conversion or relabeling
-        this.guiFolder.add(this, 'majorLineWidth', 0.5, 8, 0.1).name(t("groundGrid.majorLineWidth.label")).onChange(() => {
+        this.guiFolder.add(this, 'majorLineWidth', 0.5, 8, 0.1).name(t("groundGrid.majorLineWidth.label")).tooltip(t("groundGrid.majorLineWidth.tooltip")).onChange(() => {
             this.updateGridUniforms();
         });
 
-        this.guiFolder.add(this, 'minorLineWidth', 0.5, 8, 0.1).name(t("groundGrid.minorLineWidth.label")).onChange(() => {
+        this.guiFolder.add(this, 'minorLineWidth', 0.5, 8, 0.1).name(t("groundGrid.minorLineWidth.label")).tooltip(t("groundGrid.minorLineWidth.tooltip")).onChange(() => {
             this.updateGridUniforms();
         });
 
-        this.guiFolder.add(this, 'minorBrightness', 0, 1, 0.01).name(t("groundGrid.minorBrightness.label")).onChange(() => {
+        this.guiFolder.add(this, 'minorBrightness', 0, 1, 0.01).name(t("groundGrid.minorBrightness.label")).tooltip(t("groundGrid.minorBrightness.tooltip")).onChange(() => {
             this.updateGridUniforms();
         });
 
-        this.rotationController = this.guiFolder.add(this, 'rotation', -180, 180, 0.1).name(t("groundGrid.rotation.label")).onChange(() => {
+        this.rotationController = this.guiFolder.add(this, 'rotation', -180, 180, 0.1).name(t("groundGrid.rotation.label")).tooltip(t("groundGrid.rotation.tooltip")).onChange(() => {
             this.updateMesh();
         });
 
-        const altitudeController = this.guiFolder.add(this.gridParams, 'altitude', 0, 10000, 1).allowInputExpandMax(true).onChange(() => {
+        const altitudeController = this.guiFolder.add(this.gridParams, 'altitude', 0, 10000, 1).allowInputExpandMax(true).tooltip(t("groundGrid.altitude.tooltip")).onChange(() => {
             this.altitude = this.gridParams.altitude * Units.small2M / scaleF2M;
             this.updateMesh();
         });
 
-        this.guiFolder.addColor(this, 'color').name(t("groundGrid.color.label")).onChange(() => {
+        this.guiFolder.addColor(this, 'color').name(t("groundGrid.color.label")).tooltip(t("groundGrid.color.tooltip")).onChange(() => {
             if (this.lockColors) {
                 this.minorColor = this.color;
                 this.minorColorController.updateDisplay();
@@ -612,17 +613,17 @@ export class CNodeGroundGrid extends CNodeGroundOverlay {
             this.updateGridUniforms();
         });
 
-        this.minorColorController = this.guiFolder.addColor(this, 'minorColor').name(t("groundGrid.minorColor.label")).onChange(() => {
+        this.minorColorController = this.guiFolder.addColor(this, 'minorColor').name(t("groundGrid.minorColor.label")).tooltip(t("groundGrid.minorColor.tooltip")).onChange(() => {
             this.updateGridUniforms();
         });
 
-        this.guiFolder.add(this, 'lockColors').name(t("groundGrid.lockColors.label")).onChange(() => {
+        this.guiFolder.add(this, 'lockColors').name(t("groundGrid.lockColors.label")).tooltip(t("groundGrid.lockColors.tooltip")).onChange(() => {
             this.applyColorLock();
         });
         this.applyColorLock();
         this.applyLatLonMode();
 
-        this.guiFolder.add(this, 'opacity', 0, 1, 0.01).name(t("groundGrid.opacity.label")).onChange(() => {
+        this.guiFolder.add(this, 'opacity', 0, 1, 0.01).name(t("groundGrid.opacity.label")).tooltip(t("groundGrid.opacity.tooltip")).onChange(() => {
             this.updateGridUniforms();
         });
 
@@ -636,8 +637,8 @@ export class CNodeGroundGrid extends CNodeGroundOverlay {
         this.updateUnitLabels();
 
         // Going to or deleting a hidden grid still works, so these stay usable.
-        this.guiFolder.add({goto: () => this.gotoOverlay()}, 'goto').name(t("groundGrid.gotoGrid.label")).keepLiveWhenFolderOff();
-        this.guiFolder.add({remove: () => this.deleteOverlay()}, 'remove').name(t("groundGrid.deleteGrid.label")).keepLiveWhenFolderOff();
+        this.guiFolder.add({goto: () => this.gotoOverlay()}, 'goto').name(t("groundGrid.gotoGrid.label")).tooltip(t("groundGrid.gotoGrid.tooltip")).keepLiveWhenFolderOff();
+        this.guiFolder.add({remove: () => this.deleteOverlay()}, 'remove').name(t("groundGrid.deleteGrid.label")).tooltip(t("groundGrid.deleteGrid.tooltip")).keepLiveWhenFolderOff();
 
         this.guiFolder.domElement.addEventListener('mouseenter', () => {
             this.showHighlightBorder();

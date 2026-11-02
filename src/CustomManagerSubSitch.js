@@ -459,7 +459,8 @@ export const subSitchMethods = {
         this.subSitches.forEach((chapter, index) => {
             const current = index === this.currentSubIndex;
             this.chapterListFolder.add({switchChapter: () => this.switchToSubSitch(index)}, "switchChapter")
-                .name(current ? "● " + chapter.name : chapter.name);
+                .name(current ? "● " + chapter.name : chapter.name)
+                .tooltip(t(current ? "custom.chapters.currentChapter" : "custom.chapters.switchTo"));
         });
     },
 

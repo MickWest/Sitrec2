@@ -3421,7 +3421,8 @@ let stabilizeToggleMenuItem = null;
 export function addObjectTrackingMenu() {
     if (!guiMenus.view) return;
 
-    trackingFolder = guiMenus.video.addFolder("Point Track").close().perm();
+    trackingFolder = guiMenus.video.addFolder("Point Track").close().perm()
+        .tooltip("Follow one object through the video, automatically or with points you place by hand.\nThe track can stabilize the video, and Traverse > LOS Source > Camera + Point Track uses it as the line of sight.");
     addVideoAnalysisResolutionMenu(trackingFolder, () => NodeMan.get('video', false)?.videoData);
     const smoothing = {
         get smoothingFrames() { return objectTracker?.smoothingFrames ?? pendingTrackingSettings.smoothingFrames; },
@@ -3752,7 +3753,7 @@ export function addObjectTrackingMenu() {
 
     trackingFolder.add(featureSizeParams, 'featureSize', 1, 20, 0.5)
         .name("Feature Size")
-        .tooltip("Gaussian blur sigma (px) for High/Low Peak detection. Higher = smoother / larger features. Slide to preview detected peaks.")
+        .tooltip("Size in video pixels of the features the tracker looks for (the sigma of a Gaussian blur). Used by High Peak, Low Peak and Motion (Background).\nHigher values find larger, smoother features and ignore small noise.\nWhile you drag the slider, the video marks the peaks found near the cursor: green for bright, red for dark.")
         .onChange(() => {
             if (objectTracker) {
                 objectTracker.featureSizePreview = true;
@@ -3892,6 +3893,7 @@ export function addObjectTrackingMenu() {
 
     trackingFolder.add(showMaxKeyframesParams, 'showMaxKeyframes', 0, 100, 1)
         .name("Show N Keyframes")
+        .tooltip("How many of the points you placed by hand (the magenta markers) to draw, nearest to the current frame first. 0 draws none.\nThe points stay in the track when they are not drawn.")
         .listen()
         .perm();
 }

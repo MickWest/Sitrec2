@@ -444,9 +444,11 @@ export class PointEditor {
         const frame = this.frameNumbers[index];
         const actions = [{
             label: `Go to Frame ${frame}`, enabled: Math.round(par.frame) !== frame,
+            tooltip: "Move the current frame to this point's frame.",
             action: () => goToFrame(frame),
         }, {
             label: "Delete Point", enabled: this.numPoints > 1,
+            tooltip: "Delete this control point. Undo (Ctrl+Z or Cmd+Z) puts it back.\nNot available when it is the only point.",
             action: () => {
                 if (this.enable) this.deletePointWithUndo(this.splineHelperObjects.indexOf(object));
             },
@@ -454,7 +456,8 @@ export class PointEditor {
         // Sitch-defined editors (agua's lantern) have no track menu and no edit mode to leave.
         if (Globals.editingTrack?.splineEditor === this) {
             actions.push(...trackAndObjectMenuActions(Globals.editingTrack, event.clientX, event.clientY));
-            actions.push({label: "Exit Edit Mode", action: () => exitTrackEditMode()});
+            actions.push({label: "Exit Edit Mode", tooltip: "Stop editing the track. Esc does the same.",
+                action: () => exitTrackEditMode()});
         }
         showPointContextMenu(event, `Point: Frame ${frame}`, actions);
         return true;

@@ -28,7 +28,7 @@ export class CNodeSatelliteTrack extends CNodeTrack {
 
          guiMenus.satellites.add(this, "satelliteText").name(name).onFinishChange(v => {
              this.setSatelliteText(this.satelliteText);
-         }).listen().tooltip("Name or NORAD number of satellite to track. \nStart of name is ok (i.e. ISS)");
+         }).listen().tooltip("Name or NORAD catalog number of a satellite. Sitrec makes its orbit into a track for the whole sitch. The start of a name is enough, for example ISS.\nThe satellite must be in the loaded satellite data, or the field shows \"not found\".");
 
          // Use event listeners to update the track when the satellite changes
          EventManager.addEventListener("tleLoaded", (event, data) => {

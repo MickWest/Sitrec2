@@ -1441,8 +1441,10 @@ export function addAnalyzeButton(folder) {
     const controller = folder.add(proxy, "analyze")
         .name(t("traverseAnalysis.analyzeButton", {defaultValue: "Analyze Traverse Methods..."}));
     if (controller.tooltip) {
-        controller.tooltip("Search for physically plausible object trajectories consistent " +
-            "with the lines of sight, and generate an HTML report");
+        controller.tooltip("Fit many traverse methods and object models to the LOS (lines of sight) " +
+            "in the A-B range, then show the candidate paths in a gallery.\n" +
+            "\"Use exact\" on a result makes it the traverse. Open Full Report opens an HTML report.\n" +
+            "Traverse Analysis Tweaks holds its options.");
     }
     analyzeButtons.set(folder, controller);
     return controller;
@@ -1657,6 +1659,9 @@ export function addAnalyzeTweaks(traverseMenu) {
     if (prev) { try { prev.destroy(); } catch (e) { /* already gone */ } }
 
     const folder = traverseMenu.addFolder("Traverse Analysis Tweaks").close();
+    folder.tooltip("Options for Analyze Traverse Methods: the range to search, ground contact, a truth track, " +
+        "which extra hypotheses to test, and the wind to use.\n" +
+        "Min Dist and Max Dist also limit Global Fit: Minimum Acceleration.");
     tweaksFolders.set(traverseMenu, folder);
 
     // Min/Max distance envelope for the traverse analysis lives here now. The
@@ -1671,7 +1676,8 @@ export function addAnalyzeTweaks(traverseMenu) {
         desc: "Min Dist",
         color: "#C0E0FF",
         unitType: "big",
-        tooltip: "Lower bound on start range used by the traverse analysis (0 = no limit).",
+        tooltip: "Smallest start range that Analyze Traverse Methods and Global Fit: Minimum Acceleration search.\n" +
+            "When Min Dist is 0 and Max Dist is at least 999 NM, the analysis picks its own range around Tgt Start Dist.",
     }, folder);
 
     new CNodeGUIValue({
@@ -1680,7 +1686,8 @@ export function addAnalyzeTweaks(traverseMenu) {
         desc: "Max Dist",
         color: "#C0E0FF",
         unitType: "big",
-        tooltip: "Upper bound on start range used by the traverse analysis.",
+        tooltip: "Largest start range that Analyze Traverse Methods and Global Fit: Minimum Acceleration search.\n" +
+            "When Min Dist is 0 and Max Dist is at least 999 NM, the analysis picks its own range around Tgt Start Dist.",
     }, folder);
 
     const groundMode = folder.add(analyzeTweaks, "groundMode", GROUND_MODES).name("Ground contact");
@@ -1701,7 +1708,7 @@ export function addAnalyzeTweaks(traverseMenu) {
             "completed methods are ordered by mean 3D separation from this track, with incomplete fits shown after them; each rank basis reports " +
             "where they agree/diverge (location, altitude, speed, heading), and the track is drawn dashed " +
             "in the 3D graphs. Selected automatically for a loaded \"Truth_\" track (e.g. from " +
-            "truth_lat/truth_long CSV columns) and for the Truth track of a BOT interchange file.");
+            "truth_lat/truth_long CSV columns) and for the Truth track of a BOT (bearings-only traversal) interchange file.");
     }
     refreshTruthTrackOptions();
     // Re-register the tracksChanged hook on EVERY rebuild. EventManager.removeAll()
@@ -1760,7 +1767,7 @@ export function addAnalyzeTweaks(traverseMenu) {
             "converge) or a fixed point in the sky at infinity like the Moon (parallel sightlines), whichever fits.");
     }
     if (cbSat.tooltip) {
-        cbSat.tooltip("Load the historical LEO satellite catalogue for the sitch's date (via the server, cached " +
+        cbSat.tooltip("Load the historical LEO (low Earth orbit) satellite catalog for the sitch's date (via the server, cached " +
             "permanently — slow the first time) and find the satellite whose pass best matches the sightlines. " +
             "Needs a real sitch date.");
     }

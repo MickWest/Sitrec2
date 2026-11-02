@@ -2205,7 +2205,8 @@ function toggleStabilization() {
 export function addMotionAnalysisMenu() {
     if (!guiMenus.view) return;
     
-    motionFolder = guiMenus.video.addFolder(mt("menu.title")).close().perm();
+    motionFolder = guiMenus.video.addFolder(mt("menu.title")).close().perm()
+        .tooltip(mt("menu.tooltip"));
     addVideoAnalysisResolutionMenu(motionFolder, () => NodeMan.get('video', false)?.videoData);
     
     const menuActions = {
@@ -2236,10 +2237,13 @@ export function addMotionAnalysisMenu() {
     };
     motionFolder.add(localComputeParams, 'useLocalCompute')
         .name("Use Local Compute")
-        .tooltip("Use the local SitrecBridge Python/OpenCV worker for full-range Motion Analysis when available")
+        .tooltip("Run full-range analyses in the SitrecBridge Local Compute helper on this computer, with native Python/OpenCV.\n"
+            + "If the helper is not running, or the video is only in the browser, the analysis runs in the browser.")
         .perm();
     motionFolder.add(localComputeStatus, 'value')
         .name("Local Compute")
+        .tooltip("Shows the state of Local Compute: Not checked, Enabled or Disabled, Connecting..., the helper's port, "
+            + "Done with the frame count, or Fallback with the reason the browser was used.")
         .listen()
         .disable()
         .perm();
@@ -2282,7 +2286,8 @@ export function addMotionAnalysisMenu() {
     defenceTechOptions[mt("menu.defenceOptions.technique.colourVariance")] = "colourVariance";
     defenceTechOptions[mt("menu.defenceOptions.technique.colour")] = "colour";
     defenceTechOptions[mt("menu.defenceOptions.technique.variance")] = "variance";
-    const defenceFolder = motionFolder.addFolder(mt("menu.defenceOptions.title")).close().perm();
+    const defenceFolder = motionFolder.addFolder(mt("menu.defenceOptions.title")).close().perm()
+        .tooltip(mt("menu.defenceOptions.tooltip"));
     defenceMenuItem = defenceFolder.add(menuActions, 'defence')
         .name(mt("menu.defence.label"))
         .tooltip(mt("menu.defence.tooltip"))
@@ -2304,7 +2309,8 @@ export function addMotionAnalysisMenu() {
         .name(mt("menu.defenceOptions.bgBaseline.label"))
         .tooltip(mt("menu.defenceOptions.bgBaseline.tooltip")).perm();
 
-    const panoFolder = motionFolder.addFolder(mt("menu.panorama.title")).close().perm();
+    const panoFolder = motionFolder.addFolder(mt("menu.panorama.title")).close().perm()
+        .tooltip(mt("menu.panorama.tooltip"));
 
     // --- Motion pano (optical-flow translation) ---
     exportPanoMenuItem = panoFolder.add(menuActions, 'exportPanorama')
@@ -2330,7 +2336,8 @@ export function addMotionAnalysisMenu() {
         get allowFrameScale() { return panoAllowFrameScale; }, set allowFrameScale(v) { panoAllowFrameScale = v; },
         get projection() { return panoProjection; }, set projection(v) { panoProjection = v; }
     };
-    const motionOptions = panoFolder.addFolder(mt("menu.panorama.motionOptions.title")).close().perm();
+    const motionOptions = panoFolder.addFolder(mt("menu.panorama.motionOptions.title")).close().perm()
+        .tooltip(mt("menu.panorama.motionOptions.tooltip"));
     const projectionOptions = {};
     projectionOptions[mt("menu.panorama.projection.similarity")] = "similarity";
     projectionOptions[mt("menu.panorama.projection.perspective")] = "perspective";
@@ -2383,7 +2390,8 @@ export function addMotionAnalysisMenu() {
         get featureScale() { return panoFeatureDetectScale; }, set featureScale(v) { panoFeatureDetectScale = v; },
         get featureSource() { return panoFeatureSource; }, set featureSource(v) { panoFeatureSource = v; },
     };
-    const featureOptions = panoFolder.addFolder(mt("menu.panorama.featureOptions.title")).close().perm();
+    const featureOptions = panoFolder.addFolder(mt("menu.panorama.featureOptions.title")).close().perm()
+        .tooltip(mt("menu.panorama.featureOptions.tooltip"));
     featureOptions.add(featurePanoParams, 'featureSource', {'ORB Features': 'orb', 'Motion Tracklets': 'motion'})
         .name(mt("menu.panorama.featureSource.label"))
         .tooltip(mt("menu.panorama.featureSource.tooltip")).perm();
@@ -2431,7 +2439,9 @@ export function addMotionAnalysisMenu() {
 const AI_MASK_BUTTON_NAME = "[ADMIN] Mask Ground with AI";
 
 function createMaskingFolder(parentFolder) {
-    const maskFolder = parentFolder.addFolder("Masking").close().perm();
+    const maskFolder = parentFolder.addFolder("Masking").close().perm()
+        .tooltip("Paint or build a mask of video pixels for analysis tools to ignore, such as burned-in text, a fence or the ground.\n"
+            + "There is one mask for each sitch. It is saved with the sitch.");
 
     // Assigned below, after the params object the button lives on exists. Held here so the
     // handler can rename the button while the (slow, async) AI call is in flight.
@@ -2589,7 +2599,9 @@ function createMaskingFolder(parentFolder) {
     }
 
     const maskEnabledController = maskFolder.add(maskParams, 'maskEnabled').name("Enable Mask").listen().perm()
-        .tooltip("Enable/disable mask filtering");
+        .tooltip("Turn the mask on or off without erasing it. When on, Motion Analysis, both panoramas, "
+            + "the Tonal Range Graph and Frequency Analysis ignore masked pixels.\n"
+            + "The Star Tracker and Point Track use their own mask switch instead.");
 
     const showMaskController = maskFolder.add(maskParams, 'showMask').name("Show Mask").listen().perm()
         .tooltip("Show the mask without painting. The overlay is stronger when Enable Mask is on, dimmer when off.");
@@ -2600,7 +2612,8 @@ function createMaskingFolder(parentFolder) {
             if (a) a.setMaskEditing(v);
             syncBrushSliderMax();
         })
-        .tooltip("Click and drag to paint mask (Alt/Option to erase)");
+        .tooltip("Paint the mask on the video. Drag to add, and Alt/Option-drag to erase.\n"
+            + "Shift-drag fills a rectangle, and Alt/Option-Shift-drag erases one. [ and ] change Brush Size.");
 
     // Also reachable from the video view's own header menu. These two are .perm(), so unlike
     // most mirror sources they are registered ONCE at startup and survive every sitch load —
@@ -2611,7 +2624,7 @@ function createMaskingFolder(parentFolder) {
 
     const brushSizeController = maskFolder.add(maskParams, 'brushSize', 5, BRUSH_MAX_AT_720, 1)
         .name("Brush Size").perm()
-        .tooltip("Mask brush size, in video pixels. The maximum scales with the video's "
+        .tooltip("Mask brush radius, in video pixels. The maximum scales with the video's "
             + "resolution against a 720-line reference, so the brush covers the same fraction "
             + "of the picture whatever the source. [ and ] resize it while painting.");
 
@@ -2626,77 +2639,92 @@ function createMaskingFolder(parentFolder) {
     }
 
     maskFolder.add(maskParams, 'clearMask').name("Clear Mask").perm()
-        .tooltip("Clear all mask data");
+        .tooltip("Erase the whole mask, including the parts the auto tools made. You can undo it.");
 
     // Everything automatic — the ground/sky classifiers, the OSD auto-mask and
     // its tuning, and the redaction-box detector — lives in one sub-folder so
     // the everyday controls above stay uncluttered.
-    const autoFolder = maskFolder.addFolder("Auto Masking").close().perm();
+    const autoFolder = maskFolder.addFolder("Auto Masking").close().perm()
+        .tooltip("Tools that build the mask automatically. Each one adds to the current mask. "
+            + "Clear Mask removes everything.");
 
     autoFolder.add(maskParams, 'maskGroundAuto').name("Mask Ground (auto)").perm()
-        .tooltip("Classify the frame into sky and ground with no clicks, by splitting it into "
-            + "blocks and keeping only what a large uniform block can describe. Rejects anything "
-            + "it cannot - losing a little sky costs a few stars, keeping a treetop costs false "
-            + "detections. Adds to the mask; use Clear Mask to reset.");
+        .tooltip("Mask the ground in the current frame with no clicks. Sitrec splits the frame into "
+            + "blocks and keeps as sky only what a large, smooth block can describe. Everything else "
+            + "is added to the mask.\nIt tests texture only, so ground as smooth as the sky stays "
+            + "unmasked. It turns on Enable Mask and Show Mask.");
     autoFolder.add(maskParams, 'maskGround').name("Mask Ground (click sky, then ground)").perm()
-        .tooltip("Click the sky, then click the ground, and everything that is not sky is added to "
-            + "the mask. Two clicks rather than one because the second lets Sitrec MEASURE which "
-            + "feature separates sky from ground in this clip instead of assuming one. Check the "
-            + "result before relying on it: footage through a vignetted optic - a night-vision "
-            + "tube or a telescope - can over-mask, because the brightness falls off across the "
-            + "sky by more than the sky differs from the ground. Adds to the mask; use Clear Mask "
-            + "to reset, or paint by hand with Edit Mask.");
+        .tooltip("Click the sky, then the ground, in the current frame. Sitrec measures whether "
+            + "brightness or texture separates them, grows the sky from your first click, and adds "
+            + "everything else to the mask. Esc cancels.\nIt turns on Enable Mask and Show Mask. "
+            + "Footage through a vignetted optic, such as a night-vision tube or a telescope, "
+            + "can be over-masked.");
     if (isAdmin()) {
         // Experimental, and admin-only because each press spends money on a provider API.
         // The gate that enforces that is in sitrecServer/aimask.php; this only hides the
         // button from everyone it would fail for.
         aiMaskController = autoFolder.add(maskParams, 'maskGroundAI').name(AI_MASK_BUTTON_NAME).perm()
-            .tooltip("EXPERIMENTAL. Sends the current frame to your selected AI model (Settings > "
-                + "AI Model) and asks it to outline the sky. Everything on the other side of "
-                + "that outline is masked. The result is deliberately ROUGH - it will be a few "
-                + "pixels off the real skyline, so Edit Mask is switched on for you to tidy it. "
-                + "Unlike the other two buttons this one measures nothing about the image, so it "
-                + "works on frames they refuse - a bright horizon glow does not confuse it. "
-                + "Needs a model that can see images: Claude, GPT-5 or Gemini. Adds to the mask; "
-                + "use Clear Mask to reset.");
+            .tooltip("EXPERIMENTAL. Sends the current frame to the AI model chosen in Settings > "
+                + "AI Model, and asks it to outline the sky. The other side of the outline is "
+                + "masked. Sitrec then adds dark areas joined to it, such as a treetop, measured "
+                + "against the nearby sky.\n"
+                + "Each press is a paid request, and the model must accept images. The result is "
+                + "rough, so Edit Mask turns on for you to tidy it. Adds to the mask.");
         autoFolder.add(maskParams, 'aiMaskMargin', 0, 0.05, 0.002).name("[ADMIN] AI Margin").perm()
             .tooltip("Safety band added along the AI's outline, as a fraction of the frame's "
                 + "shorter side. Raise it if trees are left outside the mask, lower it to keep "
                 + "more sky. Applies to the next press.");
     }
     autoFolder.add(maskParams, 'autoMask').name("Auto Mask OSD").perm()
-        .tooltip("Add a mask of static text-coloured pixels over the frame window (adds to the mask; use Clear Mask to reset)");
+        .tooltip("Mask pixels that stay the same over Auto Window frames and are close to Target Color, "
+            + "such as burned-in text (OSD, on-screen display).\nIt adds to the mask, and turns on "
+            + "Enable Mask and Edit Mask. Moving the sliders below runs it again.");
 
     autoFolder.add(maskParams, 'autoMaskWindow', 10, 30, 1).name("Auto Window").perm()
-        .tooltip("Number of frames to analyze for auto mask");
+        .tooltip("Number of frames after the current frame that Auto Mask OSD compares. "
+            + "Only frames that are already decoded are used.\nChanging it runs Auto Mask OSD.");
     autoFolder.add(maskParams, 'autoMaskThreshold', 0.9, 1, 0.001).name("Auto Threshold").perm()
-        .tooltip("Color similarity threshold (higher = stricter)");
+        .tooltip("How unchanged a pixel must stay over Auto Window to be masked. 1 allows no change, "
+            + "and 0.9 allows a change of 10% of the full color range.\nChanging it runs Auto Mask OSD.");
     autoFolder.add(maskParams, 'autoMaskSpread', 1, 10, 0.1).name("Auto Spread").perm()
-        .tooltip("Radius of mask circle at each invariant pixel");
+        .tooltip("Radius, in pixels, of the mask circle drawn at each pixel that Auto Mask OSD finds.\n"
+            + "Changing it runs Auto Mask OSD.");
     autoFolder.addColor(maskParams, 'autoMaskTargetColor', 255).name("Target Color").perm()
         .onChange(() => { const a = ensureMaskingAnalyzer(); if (a) { a.autoMaskTargetColor = {...maskParams.autoMaskTargetColor}; a.autoMask(); } })
-        .tooltip("Target color for auto mask");
+        .tooltip("Color of the text that Auto Mask OSD masks. Set it to match the text, for example "
+            + "green or black.\nChanging it runs Auto Mask OSD.");
     autoFolder.add(maskParams, 'autoMaskCloseToTarget', 0, 255, 1).name("Color Tolerance").perm()
-        .tooltip("How close pixel must be to target color (lower = stricter)");
+        .tooltip("Largest difference from Target Color, as the sum of the red, green and blue "
+            + "differences, for a pixel to be masked. Lower is stricter.\nChanging it runs Auto Mask OSD.");
 
     autoFolder.add(maskParams, 'autoMaskRedactions').name("Auto Mask Redactions").perm()
-        .tooltip("Detect solid black/grey rectangular redaction boxes and add them to the mask (adds to the mask; use Clear Mask to reset)");
+        .tooltip("Find flat rectangles that stay the same over Redaction Frames, such as redaction "
+            + "boxes, and add them to the mask. A box can be any color up to Redaction Max Bright.\n"
+            + "It turns on Enable Mask and Edit Mask. Moving the sliders below runs it again.");
     autoFolder.add(maskParams, 'redactionWindow', 2, 30, 1).name("Redaction Frames").perm()
-        .tooltip("Number of frames analysed to find invariant (unchanging) regions");
+        .tooltip("Number of frames, centered on the current frame, that are compared to find areas "
+            + "that do not change.\nChanging it runs Auto Mask Redactions.");
     autoFolder.add(maskParams, 'redactionInvariance', 1, 15, 0.5).name("Redaction Invariance %").perm()
-        .tooltip("Max % brightness change for a pixel to count as invariant (lower = stricter)");
+        .tooltip("Max % brightness change for a pixel to count as invariant (lower = stricter).\n"
+            + "Changing it runs Auto Mask Redactions.");
     autoFolder.add(maskParams, 'redactionMaxLuma', 0, 255, 1).name("Redaction Max Bright").perm()
-        .tooltip("Ignore pixels brighter than this (keeps black..mid-grey redactions)");
+        .tooltip("Brightest pixel (0–255) that can be part of a box. Raise it to find a white box.\n"
+            + "Changing it runs Auto Mask Redactions.");
     autoFolder.add(maskParams, 'redactionFlatness', 0, 40, 1).name("Redaction Flatness").perm()
-        .tooltip("Max local brightness variation for a solid fill (lower = stricter; this is what rejects textured terrain)");
+        .tooltip("Max local brightness variation for a solid fill (lower = stricter; this is what rejects textured terrain).\n"
+            + "Changing it runs Auto Mask Redactions.");
     autoFolder.add(maskParams, 'redactionMinSize', 4, 100, 1).name("Redaction Min Size").perm()
-        .tooltip("Minimum box width AND height in pixels");
+        .tooltip("Minimum box width AND height in pixels.\nChanging it runs Auto Mask Redactions.");
     autoFolder.add(maskParams, 'redactionFill', 0.3, 1, 0.05).name("Redaction Min Fill").perm()
-        .tooltip("Minimum filled fraction of the bounding box (rectangularity)");
+        .tooltip("Smallest fraction of a flat, unchanging area that its rectangles must cover for "
+            + "it to count as a box. Higher accepts only cleaner rectangles.\n"
+            + "Changing it runs Auto Mask Redactions.");
     autoFolder.add(maskParams, 'redactionSnap', 0, 30, 1).name("Redaction Snap").perm()
-        .tooltip("Bridge slivers up to this many px between adjacent boxes (closes grey↔black transition gaps; 0 = off)");
+        .tooltip("Largest gap, in pixels, to close between neighboring boxes, such as the seam where "
+            + "a gray box meets a black one. 0 = off.\nChanging it runs Auto Mask Redactions.");
     autoFolder.add(maskParams, 'redactionSpread', 0, 20, 1).name("Redaction Expand").perm()
-        .tooltip("Expand each detected box outward by this many pixels (outer margin)");
+        .tooltip("Expand each detected box outward by this many pixels (outer margin).\n"
+            + "Changing it runs Auto Mask Redactions.");
 }
 
 function createParamSliders() {
@@ -2750,7 +2778,8 @@ function createParamSliders() {
     const p = motionAnalyzer.params;
     const invalidate = () => motionAnalyzer.onParamChange();
 
-    const trackingFolder = motionFolder.addFolder(mt("menu.trackingParameters.title")).close();
+    const trackingFolder = motionFolder.addFolder(mt("menu.trackingParameters.title")).close()
+        .tooltip(mt("menu.trackingParameters.tooltip"));
     paramControllers.push(trackingFolder);
     
     if (isAdmin()) {
@@ -2803,13 +2832,16 @@ function createParamSliders() {
         paramControllers.push(trackingFolder.add(p, 'staticThreshold', 0.1, 2, 0.1).name(mt("menu.trackingParameters.staticThreshold.label")).onChange(invalidate)
             .tooltip(mt("menu.trackingParameters.staticThreshold.tooltip")));
         paramControllers.push(trackingFolder.add(p, 'staticFrames', 5, 30, 1).name("Static Frames").onChange(invalidate)
-            .tooltip("Frames to confirm static detection"));
+            .tooltip("Sets how soon an area counts as static. Each slow frame adds 1 to its score and each faster frame takes away 2. "
+                + "It is static at 70% of this number."));
         paramControllers.push(trackingFolder.add(p, 'inlierThreshold', 0.3, 0.9, 0.05).name("Inlier Threshold").onChange(invalidate)
-            .tooltip("Threshold for consensus direction agreement"));
+            .tooltip("How closely a vector's direction must match the consensus direction to count as background. Higher is stricter.\n"
+                + "With Reject Moving Objects on, it picks only the starting group for the background model."));
         paramControllers.push(trackingFolder.add(p, 'rejectMovingObjects').name("Reject Moving Objects").onChange(invalidate)
             .tooltip("Fit a global affine background model and exclude independently-moving objects (cars, trucks) from the consensus, regardless of their direction or speed"));
         paramControllers.push(trackingFolder.add(p, 'objectRejectThreshold', 1, 10, 0.5).name("Object Reject Px").onChange(invalidate)
-            .tooltip("Max reprojection residual (px) for a vector to count as background; lower = stricter rejection of movers"));
+            .tooltip("Largest distance, in pixels, between a vector and the background model for the vector to count as background. "
+                + "Lower rejects moving objects more strictly.\nUsed only when Reject Moving Objects is on."));
     }
 
     if (p.technique === MOTION_TECHNIQUES.ECC_EUCLIDEAN) {
@@ -2826,17 +2858,22 @@ function createParamSliders() {
     
     if (p.technique === MOTION_TECHNIQUES.LINEAR_TRACKLET) {
         paramControllers.push(trackingFolder.add(p, 'minQuality', 0, 1, 0.05).name("Min Quality").onChange(invalidate)
-            .tooltip("Minimum quality to display arrow"));
+            .tooltip("Smallest quality (0–1) for a feature to be used. A feature below it is left out of the measurement and has no arrow.\n"
+                + "Quality falls with tracking error, with slow motion, and with a less straight or less even path."));
         paramControllers.push(trackingFolder.add(p, 'staticThreshold', 0.1, 2, 0.1).name("Static Threshold").onChange(invalidate)
-            .tooltip("Motion below this is considered static (HUD)"));
+            .tooltip("Motion, in pixels per frame, below which an area counts as static, like burned-in text. Static areas are left out.\n"
+                + "The features of a very slow pan can also count as static."));
         paramControllers.push(trackingFolder.add(p, 'staticFrames', 5, 30, 1).name("Static Frames").onChange(invalidate)
-            .tooltip("Frames to confirm static detection"));
+            .tooltip("Sets how soon an area counts as static. Each slow frame adds 1 to its score and each faster frame takes away 2. "
+                + "It is static at 70% of this number."));
         paramControllers.push(trackingFolder.add(p, 'inlierThreshold', 0.3, 0.9, 0.05).name("Inlier Threshold").onChange(invalidate)
-            .tooltip("Threshold for consensus direction agreement"));
+            .tooltip("How closely a vector's direction must match the consensus direction to count as background. Higher is stricter.\n"
+                + "With Reject Moving Objects on, it picks only the starting group for the background model."));
         paramControllers.push(trackingFolder.add(p, 'rejectMovingObjects').name("Reject Moving Objects").onChange(invalidate)
             .tooltip("Fit a global affine background model and exclude independently-moving objects (cars, trucks) from the consensus, regardless of their direction or speed"));
         paramControllers.push(trackingFolder.add(p, 'objectRejectThreshold', 1, 10, 0.5).name("Object Reject Px").onChange(invalidate)
-            .tooltip("Max reprojection residual (px) for a vector to count as background; lower = stricter rejection of movers"));
+            .tooltip("Largest distance, in pixels, between a vector and the background model for the vector to count as background. "
+                + "Lower rejects moving objects more strictly.\nUsed only when Reject Moving Objects is on."));
         paramControllers.push(trackingFolder.add(p, 'linearityThreshold', 0.5, 1, 0.05).name("Linearity Threshold").onChange(invalidate)
             .tooltip("Min trajectory straightness (1=perfect line)"));
         paramControllers.push(trackingFolder.add(p, 'spacingThreshold', 0, 1, 0.05).name("Spacing Threshold").onChange(invalidate)
@@ -2962,7 +2999,8 @@ function createParamSliders() {
     };
     
     optimizeBtn = trackingFolder.add(optimizeControls, 'optimize').name("Optimize")
-        .tooltip("Run genetic algorithm to find optimal params for current frame");
+        .tooltip("Search for the Tracklet Length, Blur Size, Max Features and Min Quality that work best on the current frame. "
+            + "It uses a genetic algorithm, and stops after 5 generations with no gain.\nStatus shows the progress.");
     paramControllers.push(optimizeBtn);
     
     enoughBtn = trackingFolder.add(optimizeControls, 'enough').name("Enough (Accept)")
@@ -2975,7 +3013,9 @@ function createParamSliders() {
     paramControllers.push(abortBtn);
     abortBtn.show(false);
     
-    statusCtrl = trackingFolder.add(statusText, 'value').name("Status").listen().disable();
+    statusCtrl = trackingFolder.add(statusText, 'value').name("Status")
+        .tooltip("Shows the progress of Optimize, then the values that it changed or restored.")
+        .listen().disable();
     paramControllers.push(statusCtrl);
 
     // The Masking folder is NOT built here — it is a persistent folder created
@@ -2984,7 +3024,8 @@ function createParamSliders() {
 
     paramControllers.push(motionFolder.add(motionAnalyzer, 'speedOverlayEnabled').name("Speed Overlay").onChange((v) => {
         motionAnalyzer.setSpeedOverlayEnabled(v);
-    }).tooltip("Show thermal heat map of optical flow speed"));
+    }).tooltip("Show a heat map of the motion-vector speed over the video, averaged in a 100 × 100 grid. "
+        + "Blue is the slowest cell in the frame, and red is the fastest."));
     
     motionFolder.open();
 }

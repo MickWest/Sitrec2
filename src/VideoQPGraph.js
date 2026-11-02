@@ -52,7 +52,8 @@ export function addVideoQPGraphMenu(folder) {
         get show() { return isVideoQPGraphShown(); },
         set show(value) { showVideoQPGraph(value); },
     };
-    const controls = folder.addFolder(t("videoQP.menu.label")).close().perm();
+    const controls = folder.addFolder(t("videoQP.menu.label")).close().perm()
+        .tooltip(t("videoQP.menu.tooltip"));
     controls.add(proxy, "show")
         .name(t("videoQP.menu.label"))
         .tooltip(t("videoQP.menu.tooltip"))

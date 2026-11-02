@@ -248,7 +248,7 @@ export function update_ERROR_circle(scence, circleCenter) {
     ERROR_circle.layers.enable(LAYER.podsEye)
     ERROR_circle.visible = oldErrorCircleVisible
     LocalFrame.add(ERROR_circle)
-    showHider(ERROR_circle, 'showErrorCircle', oldErrorCircleVisible, 'o').name(t("showHiders.showErrorCircle.label"))
+    showHider(ERROR_circle, 'showErrorCircle', oldErrorCircleVisible, 'o').name(t("showHiders.showErrorCircle.label")).tooltip(t("showHiders.showErrorCircle.tooltip"))
 }
 
 let debugText = ""; // stick text in here, and it's show instead of keyboard shortcuts
@@ -620,7 +620,9 @@ export function CreateTraverseNodes(idExtra="", los = "JetLOS") {
             // elastic: true,
             // elasticMin: 1,
             // elasticMax: 10000,
-            tooltip: "Start distance of the traverse object along the first LOS",
+            tooltip: "Distance from the camera, along the frame 0 LOS (line of sight), where the traverse object starts.\n"
+                + "Used by the sequential methods: Constant Distance, Constant Ground Speed, Constant Air Speed, Constant Altitude, Straight Line, Windblown Object and Perspective.\n"
+                + "Most Global Fit methods find their own range.",
         }, guiMenus.traverse)
 
 
@@ -672,7 +674,9 @@ export function CreateTraverseNodes(idExtra="", los = "JetLOS") {
             step: Sit.targetSpeedStep,
             desc: "Target Speed",
             unitType: "speed",
-            tooltip: "Target speed of the traverse object.\ni.e. the speed you want the traverse object to be travelling when in 'Constant Speed' mode",
+            tooltip: "Speed that the traverse object holds in the Constant Ground Speed and Constant Air Speed methods.\n"
+                + "A negative speed takes the nearer point on each new LOS, so the object moves toward the camera.\n"
+                + "Global Fit: Minimum Acceleration uses it as a soft target when the geometry does not fix the range.",
         }, guiMenus.traverse)
     }
 
@@ -729,7 +733,7 @@ export function CreateTraverseNodes(idExtra="", los = "JetLOS") {
             heading: Sit.heading ?? 0,
             name: "Initial",
             arrowColor: "green",
-            tooltip: "Start heading of straight-line traversal"
+            tooltip: "Compass heading, in degrees true, of the Straight Line traverse method.\nTgt Relative Heading is added to it."
 
         }, guiMenus.traverse)
     }
@@ -742,7 +746,7 @@ export function CreateTraverseNodes(idExtra="", los = "JetLOS") {
             end: 180,
             step: 0.01,
             desc: "Tgt Relative Heading",
-            tooltip: "[Deprecated] Relative heading of the target, added to initialHeading to get targetActualHeading.\nUse for fine tuning",
+            tooltip: "Deprecated. Degrees added to Initial Heading to give the heading of the Straight Line traverse method.\nUse it for fine tuning.",
         }, guiMenus.traverse)
     }
 
@@ -908,7 +912,7 @@ export function CreateTraverseNodes(idExtra="", los = "JetLOS") {
             value: 5000, start: 500, end: 20000, step: 500,
             desc: "Physics Max Iterations",
             color: "#C0FFC0",
-            tooltip: "Maximum Nelder-Mead optimizer iterations.",
+            tooltip: "Maximum iterations of the Nelder-Mead polish in Global Fit: Physics.\nA global search runs first. This limit applies only to the polish after it.",
         }, guiMenus.traverse)
 
         // Default the wind guess from the sitch's target-altitude wind when
@@ -1030,7 +1034,7 @@ export function CreateTraverseNodes(idExtra="", los = "JetLOS") {
             id: "windTracerLooseShear",
             value: false,
             desc: "Tracer Loose Shear",
-            tooltip: "Widen the wind-shear bound past the physical marine value (about 5e-4 per metre).\nA fit that needs the loose bound is telling you the drift decelerates more than any ordinary wind profile can explain.",
+            tooltip: "Widen the wind-shear bound of Global Fit: Wind Tracer past the physical marine value (about 5e-4 per meter of height).\nA fit that needs the loose bound is telling you the drift decelerates more than any ordinary wind profile can explain.",
         }, guiMenus.traverse)
     }
 
@@ -1114,6 +1118,8 @@ export function CreateTraverseNodes(idExtra="", los = "JetLOS") {
             elastic: true,
             elasticMin: 1000,
             elasticMax: 100000,
+            tooltip: "Altitude at frame 0 for the Starting Altitude traverse method, as height above the earth model (the WGS84 ellipsoid in the Custom sitch), not above sea level.\n"
+                + "On each frame the traverse takes the first point where the LOS reaches this height, plus the climb from Tgt Vert Spd.",
         }, guiMenus.traverse)
 
 
@@ -1125,7 +1131,8 @@ export function CreateTraverseNodes(idExtra="", los = "JetLOS") {
             step: 1,
             desc: "Tgt Vert Spd",
             unitType: "verticalSpeed",
-            color: "#FFC0C0"
+            color: "#FFC0C0",
+            tooltip: "Vertical speed for the Starting Altitude traverse method. Positive climbs, negative descends, 0 holds Tgt Start Altitude.",
         }, guiMenus.traverse)
     }
 
@@ -1323,7 +1330,7 @@ export function initViews() {
 
     if ((Sit.showGimbalDragMesh || Sit.name.startsWith("gimbal")) && Sit.showGlare) {
         LocalFrame.add(glareSprite);
-        showHider(glareSprite, "Glare Spr[I]te", false, 'i').name(t("showHiders.glareSprite.label"))
+        showHider(glareSprite, "Glare Spr[I]te", false, 'i').name(t("showHiders.glareSprite.label")).tooltip(t("showHiders.glareSprite.tooltip"))
     }
 
     // mobile adjustments, no keyboard, no chart, UI closed
@@ -1375,7 +1382,8 @@ export function SetupCommon(altitude=25000) {
         start: 0,
         end: 26000,
         step: 10,
-        desc: "Cloud Altitude"
+        desc: "Cloud Altitude",
+        tooltip: "Altitude, in feet, of the cloud layer that the Gimbal sitch draws.",
     }, guiTweaks))
 
 }

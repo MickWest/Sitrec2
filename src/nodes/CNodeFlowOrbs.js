@@ -29,6 +29,7 @@ export class CNodeFlowOrbs extends CNodeSpriteGroup {
 
     constructor(v) {
         super(v);
+        this.gui.tooltip(t("flowOrbs.folder.tooltip"));
 
         // generally this is going to be a lookCamera thing
         const cameraNode = NodeMan.get(v.camera ?? "lookCamera")

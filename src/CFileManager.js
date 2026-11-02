@@ -167,7 +167,8 @@ export class CFileManager extends CManager {
                     serverName = getEnv("S3_BUCKET", process.env.S3_BUCKET) + ".s3"
                 }
 
-                this.guiServer = this.guiFolder.addFolder("Server (" + serverName + ") "+getEffectiveUserID()).perm().open();
+                this.guiServer = this.guiFolder.addFolder("Server (" + serverName + ") "+getEffectiveUserID()).perm().open()
+                    .tooltip(t("file.server.folderTooltip"));
 
                 // Server-side rehosting only for logged-in users
                 if (getEffectiveUserID() > 0) {
@@ -176,7 +177,8 @@ export class CFileManager extends CManager {
 
                     // this.guiFolder.add(this, "rehostFile").name("Rehost File").perm().tooltip("Rehost a file from your local system. DEPRECATED");
                 } else {
-                    this.loginButton = this.guiServer.add(this, "loginServer").name(t("file.savingDisabled")).setLabelColor("#FF8080").perm();
+                    this.loginButton = this.guiServer.add(this, "loginServer").name(t("file.savingDisabled")).setLabelColor("#FF8080").perm()
+                        .tooltip(t("file.savingDisabledTooltip"));
                     // Still add Browse button for non-logged-in users so featured sitches remain discoverable.
                     this.ensureBrowseButton(t("file.server.browseFeatured"));
                     this.guiServer.close();
@@ -186,7 +188,8 @@ export class CFileManager extends CManager {
             if (getEnvBool("SAVE_TO_LOCAL", process.env.SAVE_TO_LOCAL)) {
                 const useDesktopLocalUi = this.isDesktopLocalFsAvailable();
                 // Local save/load is always available for the custom sitch, regardless of login status
-                this.guiLocal = this.guiFolder.addFolder("Local").perm().open();
+                this.guiLocal = this.guiFolder.addFolder("Local").perm().open()
+                    .tooltip(t("file.local.folderTooltip"));
                 this._localStatus = {value: useDesktopLocalUi ? t("file.local.noFileSelected") : t("file.local.noFolderSelected")};
                 this._localStatusController = this.guiLocal.add(this._localStatus, "value")
                     .name(t("file.local.status"))
@@ -228,7 +231,8 @@ export class CFileManager extends CManager {
 
 
             this.guiFolder.add(this, "importFile").name(t("file.importFile.label")).perm().tooltip(t("file.importFile.tooltip"));
-            this.guiFolder.add({openFireballBrowser}, "openFireballBrowser").name(t("fireballs.menuItem")).perm();
+            this.guiFolder.add({openFireballBrowser}, "openFireballBrowser").name(t("fireballs.menuItem")).perm()
+                .tooltip(t("fireballs.menuTooltip"));
 
             // Settings that change what importing DOES, as opposed to the
             // commands above that do it. `perm` so the folder and its state
@@ -246,10 +250,14 @@ export class CFileManager extends CManager {
             //this.guiFolder.add(this, "resetOrigin").name("Reset Origin").perm();
 
             if (isLocal) {
-                guiMenus.debug.add(NodeMan, "recalculateAllRootFirst").name(t("file.debug.recalculateAll")).perm();
-                guiMenus.debug.add(this, "dumpNodes").name(t("file.debug.dumpNodes")).perm();
-                guiMenus.debug.add(this, "dumpNodesBackwards").name(t("file.debug.dumpNodesBackwards")).perm();
-                guiMenus.debug.add(this, "dumpRoots").name(t("file.debug.dumpRoots")).perm();
+                guiMenus.debug.add(NodeMan, "recalculateAllRootFirst").name(t("file.debug.recalculateAll")).perm()
+                    .tooltip(t("file.debug.recalculateAllTooltip"));
+                guiMenus.debug.add(this, "dumpNodes").name(t("file.debug.dumpNodes")).perm()
+                    .tooltip(t("file.debug.dumpNodesTooltip"));
+                guiMenus.debug.add(this, "dumpNodesBackwards").name(t("file.debug.dumpNodesBackwards")).perm()
+                    .tooltip(t("file.debug.dumpNodesBackwardsTooltip"));
+                guiMenus.debug.add(this, "dumpRoots").name(t("file.debug.dumpRoots")).perm()
+                    .tooltip(t("file.debug.dumpRootsTooltip"));
             }
 
             this.setupResourcesMenu();
@@ -1489,7 +1497,8 @@ export class CFileManager extends CManager {
      */
     makeExportButton(object, functionName, exportType, folderName) {
         if (this.exportFolder === undefined) {
-            this.exportFolder = this.guiFolder.addFolder("Export").perm().close();
+            this.exportFolder = this.guiFolder.addFolder("Export").perm().close()
+                .tooltip("Save data from this sitch to files: the data of tracks, lines of sight and cameras, sets of images, and copies of the files that the sitch loaded.");
         }
 
         // Some common folder names
@@ -1504,7 +1513,7 @@ export class CFileManager extends CManager {
         // decorate the object with an exportSubFolder property
         if (object.exportSubFolder === undefined) {
             object.exportSubFolder = this.exportFolder.addFolder(folderName).perm().close()
-                .tooltip("Export options for " + folderName);
+                .tooltip("Save the data of " + folderName + " to a file. Each button saves it in one format.");
 
         }
 
@@ -2508,7 +2517,8 @@ export class CFileManager extends CManager {
     setupImageSetExportMenu() {
         if (!guiMenus.file) return;
         if (this.exportFolder === undefined) {
-            this.exportFolder = this.guiFolder.addFolder("Export").perm().close();
+            this.exportFolder = this.guiFolder.addFolder("Export").perm().close()
+                .tooltip("Save data from this sitch to files: the data of tracks, lines of sight and cameras, sets of images, and copies of the files that the sitch loaded.");
         }
         // Construct the exporter once so user-set fields (azStep, trackToOrbit,
         // etc.) survive sitch reloads; setupMenu is idempotent.
@@ -2528,7 +2538,8 @@ export class CFileManager extends CManager {
 
         // Ensure the Export folder exists (same lazy creation as makeExportButton)
         if (this.exportFolder === undefined) {
-            this.exportFolder = this.guiFolder.addFolder("Export").perm().close();
+            this.exportFolder = this.guiFolder.addFolder("Export").perm().close()
+                .tooltip("Save data from this sitch to files: the data of tracks, lines of sight and cameras, sets of images, and copies of the files that the sitch loaded.");
         }
 
         // Drop any previous Resources subfolder before re-adding.
@@ -2613,7 +2624,8 @@ export class CFileManager extends CManager {
         if (count === 0) {
             const empty = {};
             empty.noFiles = () => {};
-            folder.add(empty, 'noFiles').name('(no downloadable files)').disable();
+            folder.add(empty, 'noFiles').name('(no downloadable files)').disable()
+                .tooltip("This sitch has loaded no file that can be downloaded.");
         }
     }
 

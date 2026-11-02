@@ -272,7 +272,9 @@ export class CNodeCamera extends CNode3D {
                 this.clearGroundTrackSwitchCache();
                 setRenderOne(true);
             })
-            .tooltip("0 disables this. Any positive frame bakes the camera's ground intersection at that frame, then aims at that point for all later frames.")
+            .tooltip("Frame at which the look camera locks onto a point on the ground. 0 = off.\n" +
+                "At that frame, Sitrec finds where the line of sight meets the ground.\n" +
+                "From then on the camera aims at that point, whatever the Heading source says.")
             .moveToEnd();
         this.groundTrackSwitchFrameController = controller;
         setTimeout(() => controller.moveToEnd(), 0);
@@ -530,7 +532,9 @@ export class CNodeCamera extends CNode3D {
         const menu = guiMenus.cameraTweaks ?? guiMenus.camera;
         if (!menu) return;
 
-        const folder = menu.addFolder("Diffraction Glare").close();
+        const folder = menu.addFolder("Diffraction Glare").close()
+            .tooltip("Draw diffraction glare (spikes and rings) around bright sources in the look view,\n" +
+                "from an imported PSF (point spread function). Nothing is drawn until a PSF is imported.");
         this.psfGlareFolder = folder;
 
         this.psfNameController = folder.add(this, "psfName")
@@ -542,8 +546,9 @@ export class CNodeCamera extends CNode3D {
 
         folder.add(this, "importPSF").name("Import PSF…")
             .tooltip("Load a .psf.json produced by the Diffraction PSF Studio. It is stored "
-                + "with the sitch, so a saved scenario keeps its optics.");
-        folder.add(this, "clearPSF").name("Clear PSF");
+                + "with the sitch, so a saved sitch keeps its optics.");
+        folder.add(this, "clearPSF").name("Clear PSF")
+            .tooltip("Remove the imported PSF. The look view then draws no diffraction glare.");
 
         folder.add(this.psfGlare, "gainLog", -1, 6, 0.05).name("Glare Gain (10^)")
             .onChange(() => setRenderOne(true))

@@ -619,10 +619,10 @@ async function offerRelativeAltitude(placement, filename = "") {
         }, "useRelativeAltitude").perm()
             .tooltip("Put the camera at the terrain height under it plus the height above " +
                 "takeoff the photo recorded, instead of the absolute altitude the photo " +
-                "claims.\n\nDrone absolute altitudes are barometric and drift, sometimes by " +
-                "tens of metres — enough to bury the camera underground. The height above " +
-                "takeoff is usually the more trustworthy of the two, but it assumes the ground " +
-                "under the drone is level with where it took off.");
+                "claims.\n\nDrone absolute altitudes are barometric and can drift by " +
+                "tens of meters, enough to put the camera underground. The height above " +
+                "takeoff assumes that the ground under the drone is level with where it took off.\n" +
+                "Shown only after a photo with a relative altitude is loaded.");
     }
     relativeAltitudeButton?.name(`Use Relative Altitude (${relativeAltitude} m)`).show();
 

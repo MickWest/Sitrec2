@@ -41,13 +41,18 @@ export function setupRefractionToolMenu() {
         open: () => openRefractionTool().catch(() => {}),
     };
     const folder = guiMenus.raytracedRefraction;
+    folder.tooltip("Trace light rays through an atmosphere that you define by temperature and humidity profiles, for one 3D view.\n"
+        + "Other views keep the normal atmospheric refraction (View > Atmospheric Refraction).");
     folder.add(state, "enabled").name("Enable Ray-traced Refraction").listen().perm()
+        .tooltip("Draw the selected 3D view (the look view by default) through the ray-traced atmosphere.\n"
+            + "Choose the view and edit the atmosphere in Profiles, Rays & Lasers. The setting is saved with the sitch.")
         .onChange(value => {
             if (value) openRefractionTool(false).catch(() => {});
             else instance?.sync();
             setRenderOne(true);
         });
-    folder.add(state, "open").name("Profiles, Rays & Lasers…").perm();
+    folder.add(state, "open").name("Profiles, Rays & Lasers…").perm()
+        .tooltip("Open the Ray-traced Refraction panel. In it you choose the view, edit the temperature and humidity profiles, see the ray paths, add lasers, and export or import a profile.");
 }
 
 export function restoreRefractionTool() {

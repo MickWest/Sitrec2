@@ -189,10 +189,12 @@ function togglerGeneric(key, data, gui, name, callback) {
             genericToggles[key].callback(genericToggles[key], newValue)
         })
     genericToggles[key].guiController = controller;
+    return controller;
 }
 
+// Returns the menu controller, so a caller can chain .tooltip() on it.
 export function togglerNodes(key, nodes, gui, name, callback) {
-    togglerGeneric(key, nodes, gui, name, (toggle, value) => {
+    return togglerGeneric(key, nodes, gui, name, (toggle, value) => {
 //        console.log(nodes)
         nodes.forEach(nodeName => {
 //            ViewMan.get(n).setVisible(value);
@@ -214,12 +216,13 @@ export function togglerNodes(key, nodes, gui, name, callback) {
 // and it will be created if needed
 export const quickToggles = {}
 
-export function quickToggle(key, start = false, toggleGui = gui) {
+export function quickToggle(key, start = false, toggleGui = gui, tooltip = undefined) {
     if (quickToggles[key] === undefined) {
         quickToggles[key] = {gui: null, value: start};
         quickToggles[key].gui = toggleGui.add(quickToggles[key], "value").name(key).onChange(()=>{
             setRenderOne(true);
         })
+        if (tooltip) quickToggles[key].gui.tooltip(tooltip);
     }
     return quickToggles[key].value
 }

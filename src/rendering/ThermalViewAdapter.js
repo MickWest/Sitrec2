@@ -505,11 +505,13 @@ export function setupThermalZoneControls(node, folder) {
     const signature = resolveVehicleThermal(node.proceduralModel.recipe, node._thermalSceneState ?? initial);
     const zones = new Set();
     node.model?.traverse(mesh => {if (mesh.userData.thermal?.zone) zones.add(mesh.userData.thermal.zone);});
-    const parent = folder.addFolder(t("thermal.object.zones")).close(); node._thermalZoneFolder = parent;
+    const parent = folder.addFolder(t("thermal.object.zones")).close().tooltip(t("thermal.object.zonesTooltip"));
+    node._thermalZoneFolder = parent;
     for (const zone of zones) {
         const resolved = signature.resolveZone(zone);
         if (!Number.isFinite(resolved.temperatureK) || !Number.isFinite(resolved.emissivity)) continue;
-        const group = parent.addFolder(t(`thermal.zones.${zone}`, {defaultValue: zone})).close(), state = {};
+        const group = parent.addFolder(t(`thermal.zones.${zone}`, {defaultValue: zone})).close()
+            .tooltip(t("thermal.object.zoneTooltip")), state = {};
         // Thin layers (a lantern canopy) also transmit. The scene adapter limits transmittance to 1 - emissivity;
         // the control shows that effective value.
         const value = key => node.thermal.zones[zone]?.[key] ?? resolved[key];
@@ -519,15 +521,17 @@ export function setupThermalZoneControls(node, folder) {
                 set: value => {node.thermal.zones[zone] = {...node.thermal.zones[zone], [key]: value}; markSitchDirty(); setRenderOne(true);}});
             // Same ranges and steps as the shared schema's objectTemperatureK and emissivity.
             const [min, max, step] = key === "temperatureK" ? [0, 3000, 1] : [0, 1, 0.01];
-            group.add(state, key, min, max, step).name(t(`thermal.object.${key}`)).listen();
+            group.add(state, key, min, max, step).name(t(`thermal.object.${key}`))
+                .tooltip(t(`thermal.object.zoneTooltips.${key}`)).listen();
         }
         group.add({reset() {delete node.thermal.zones[zone]; group.controllers.forEach(c => c.updateDisplay()); setRenderOne(true); markSitchDirty();}}, "reset")
-            .name(t("thermal.object.reset"));
+            .name(t("thermal.object.reset")).tooltip(t("thermal.object.resetTooltip"));
     }
 }
 
 export function setupThermalVehicleControls(node, folder, getValues) {
-    const parent = folder.addFolder(t("thermal.object.vehicleState")).close(); node._thermalVehicleFolder = parent;
+    const parent = folder.addFolder(t("thermal.object.vehicleState")).close().tooltip(t("thermal.object.vehicleStateTooltip"));
+    node._thermalVehicleFolder = parent;
     // A heated canopy (a sky lantern) gets its own heating control; by default it follows the burn power.
     let canopy = false;
     node.model?.traverse(mesh => {if (mesh.userData.thermal?.zone === "lantern_envelope") canopy = true;});
@@ -535,7 +539,7 @@ export function setupThermalVehicleControls(node, folder, getValues) {
         ...(canopy ? [["canopyPower", "thermalPower"]] : [])];
     for (const [key, recipeKey] of rows) {
         const parameter = VEHICLE_THERMAL_GROUP.fields.find(field => field.key === recipeKey);
-        const group = parent.addFolder(t(`thermal.object.${key}`)).close(), state = {};
+        const group = parent.addFolder(t(`thermal.object.${key}`)).close().tooltip(t(`thermal.object.stateTooltips.${key}`)), state = {};
         const sourceKey = `${key}Source`;
         const update = () => {markSitchDirty(); setRenderOne(true);};
         Object.defineProperty(state, key, {get: () => node.thermal[key] ?? getValues()[key],
@@ -544,7 +548,8 @@ export function setupThermalVehicleControls(node, folder, getValues) {
             set: value => {node.thermal[key] = value === "scene" ? null : state[key]; update();}});
         const source = group.add(state, sourceKey, {[t(key === "canopyPower" ? "thermal.object.followsPower" : "thermal.object.fromScene")]: "scene",
             [t("thermal.object.override")]: "override"})
-            .name(t("thermal.object.source")).listen();
+            .name(t("thermal.object.source"))
+            .tooltip(t(key === "canopyPower" ? "thermal.object.canopySourceTooltip" : "thermal.object.sourceTooltip")).listen();
         const control = group.add(state, key, parameter.min, parameter.max, parameter.step)
             .name(t(`thermal.object.${key}`)).tooltip(t(`thermal.object.${key}Tooltip`)).listen();
         const refresh = () => {control.disable(node.thermal[key] == null); control.updateDisplay();};

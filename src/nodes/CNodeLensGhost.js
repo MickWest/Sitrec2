@@ -120,17 +120,20 @@ export class CNodeLensGhost extends CNodeViewUI {
     _setupGUI() {
         const parentMenu = guiMenus.video ?? guiMenus.view ?? guiMenus.main;
         if (!parentMenu) return;
-        this.gui = parentMenu.addFolder("[BETA] Lens Ghost").close();
+        this.gui = parentMenu.addFolder("[BETA] Lens Ghost").close()
+            .tooltip("Model a lens ghost: an internal reflection of the Sun or Moon in a mirror telescope behind a flat window.\n"
+                + "It draws where the ghost disc is predicted to appear on the video, to compare with a tracked disc.");
 
         this.gui.add(this, "show").name("Show Ghost").listen()
             .onChange(() => setRenderOne(true))
-            .tooltip("Draw the MODELLED reflection of the Sun (not the tracked object). " +
-                "Compare its position to your manual disc track.")
+            .tooltip("Draw the PREDICTED ghost disc from the model of the Source's reflection. It is not a tracked object.\n" +
+                "Compare its position with your track of the disc.")
             .asFolderToggle();
 
         this.gui.add(this, "body", ["Sun", "Moon"]).name("Source").listen()
             .onChange(() => { this._sunCache = null; setRenderOne(true); })
-            .tooltip("Celestial source whose internal reflection forms the ghost. (MEASURED direction.)");
+            .tooltip("The body whose internal reflection forms the ghost. " +
+                "COMPUTED: its direction comes from the sitch time, the camera position and the camera LOS (line of sight).");
 
         this.gui.add(this, "magX", -10, 10, 0.01).name("Magnification X").listen()
             .onChange(() => setRenderOne(true))
@@ -141,48 +144,70 @@ export class CNodeLensGhost extends CNodeViewUI {
 
         this._coffXCtrl = this.gui.add(this, "centerOffsetX", -2000, 2000, 1).name("Centre Offset X").listen()
             .onChange(() => setRenderOne(true))
-            .tooltip("Principal-point offset (px) the ghost reflects through. Indeterminate when Magnification X ~= -1.");
+            .tooltip("FITTED. Horizontal offset, in original-video pixels, from the frame center to the point the ghost reflects through. "
+                + "It has no meaning when Magnification X is about -1, so it is then disabled.");
         this._coffYCtrl = this.gui.add(this, "centerOffsetY", -2000, 2000, 1).name("Centre Offset Y").listen()
-            .onChange(() => setRenderOne(true));
+            .onChange(() => setRenderOne(true))
+            .tooltip("FITTED. Vertical offset, in original-video pixels, from the frame center to the point the ghost reflects through. "
+                + "It has no meaning when Magnification Y is about -1, so it is then disabled.");
 
         this.gui.add(this, "diameter", 2, 400, 1).name("Disc Diameter").listen()
             .onChange(() => setRenderOne(true)).tooltip("ASSUMED. Defocus disc diameter (original-video px).");
         this.gui.add(this, "obstruction", 0, 0.95, 0.01).name("Obstruction").listen()
             .onChange(() => setRenderOne(true))
-            .tooltip("ASSUMED. Secondary-mirror central obstruction; >0 draws a dark hole (donut).");
-        this.gui.add(this, "softness", 0, 1, 0.01).name("Edge Softness").listen().onChange(() => setRenderOne(true));
-        this.gui.add(this, "opacity", 0, 1, 0.01).name("Opacity").listen().onChange(() => setRenderOne(true));
-        this.gui.addColor(this, "color").name("Colour").listen().onChange(() => setRenderOne(true));
+            .tooltip("ASSUMED. Size of the dark hole at the disc center, as a fraction of the disc diameter. "
+                + "It models the secondary mirror's central obstruction. 0 = no hole.");
+        this.gui.add(this, "softness", 0, 1, 0.01).name("Edge Softness").listen().onChange(() => setRenderOne(true))
+            .tooltip("Fraction of the disc radius, at the edge, over which the disc fades out. 0 = a hard edge.");
+        this.gui.add(this, "opacity", 0, 1, 0.01).name("Opacity").listen().onChange(() => setRenderOne(true))
+            .tooltip("Opacity of the ghost disc, from 0 (invisible) to 1 (solid).");
+        this.gui.addColor(this, "color").name("Colour").listen().onChange(() => setRenderOne(true))
+            .tooltip("Color of the ghost disc and of its PREDICTED label.");
 
         this.gui.add(this, "rollScale", -3, 3, 0.01).name("Roll Coupling").listen()
             .onChange(() => setRenderOne(true))
-            .tooltip("Scales the image-roll (from " + this.rollTrackID + ") applied to the source offset. " +
-                "This is what makes the ghost reverse against the scene. 0 = use only the camera's LOS roll.");
+            .tooltip("FITTED. Multiplier on the image roll measured by Video > Camera Motion (Background), applied to the source position. " +
+                "This roll is what makes the ghost move against the scene.\n0 = use only the roll in the camera's LOS (line of sight). " +
+                "Do not also use Camera Motion's Look orientation: the roll is then applied twice.");
 
         this.gui.add(this, "windowLean", 0, 30, 0.1).name("Window Lean°").listen()
             .onChange(() => setRenderOne(true))
             .tooltip("Forward lean of the flat front window vs the boresight (deg). A tilted window rotates " +
-                "the reflected sun ray by 2x the lean, shifting the ghost (mostly vertically).");
+                "the reflected sun ray by 2x the lean, shifting the ghost (mostly vertically).\n" +
+                "Set it by hand: Fit to Disc Track does not change it.");
 
         this.gui.add(this, "showGeometry").name("Show Geometry").listen()
             .onChange(() => setRenderOne(true))
-            .tooltip("Draw the reflection line: Sun image -> optical centre -> ghost.");
+            .tooltip("Draw the reflection line from the source image to the optical center (blue cross), then on to the ghost. "
+                + "Also marks the source, or shows an edge arrow when the source is off the frame.");
         this.gui.add(this, "showSun").name("Mark Source").listen()
             .onChange(() => setRenderOne(true))
-            .tooltip("Mark where the source itself images (or an edge arrow when it's off-frame).");
+            .tooltip("Mark where the source itself images (or an edge arrow when it's off-frame).\n"
+                + "Has an effect only when Show Geometry is off, because Show Geometry also draws this mark.");
         this.gui.add(this, "showHUD").name("Show HUD").listen().onChange(() => setRenderOne(true))
-            .tooltip("On-video readout: source geometry, roll provenance, fit quality, warnings.");
+            .tooltip("Show a box at the top right of the video with the source direction, the roll source, "
+                + "the fit quality and any warning.");
 
         this.gui.add(this, "fitToTrack").name("Fit to Disc Track")
-            .tooltip("Least-squares fit magnification, centre offset & roll coupling to the disc track.")
+            .tooltip("Fit the magnifications, the center offsets and Roll Coupling to the tracked disc, by least squares.\n"
+                + "It uses the Video > Point Track points, or else 2 or more manual tracking keyframes. "
+                + "Window Lean° is not fitted.\nA fit turns on Show Ghost and Show Geometry.")
             // fits with the ghost off, then turns it on itself (fitToTrack)
             .keepLiveWhenFolderOff();
 
         // Read-only status fields (MEASURED / provenance / FITTED quality / WARNINGS).
-        this.gui.add(this.readout, "source").name("Sun geometry").listen().disable();
-        this.gui.add(this.readout, "roll").name("Roll source").listen().disable();
-        this.gui.add(this.readout, "fit").name("Fit quality").listen().disable();
-        this.gui.add(this.readout, "warning").name("⚠ Warning").listen().disable();
+        this.gui.add(this.readout, "source").name("Sun geometry").listen().disable()
+            .tooltip("Shows the source's azimuth and elevation, its angle from the camera axis, "
+                + "and whether it is above, below or in the frame, at the current frame.");
+        this.gui.add(this.readout, "roll").name("Roll source").listen().disable()
+            .tooltip("Shows where the image roll comes from: the camera LOS only (Roll Coupling 0), "
+                + "or Roll Coupling times the Camera Motion roll. Also shows the roll's total span over the clip.");
+        this.gui.add(this.readout, "fit").name("Fit quality").listen().disable()
+            .tooltip("Shows the result of Fit to Disc Track: R² (1 = a perfect fit), the RMS (root mean square) error in pixels, "
+                + "the frames used, and the R² for Y. \"X only\" means the track has too little vertical motion to fit Y.");
+        this.gui.add(this.readout, "warning").name("⚠ Warning").listen().disable()
+            .tooltip("Shows the most serious problem with the model at the current frame. For example: the source is behind the camera, "
+                + "the video looks stabilized, the roll is applied twice, or Magnification X is about -1.");
     }
 
     // ---------------- source geometry ----------------

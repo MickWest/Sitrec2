@@ -62,6 +62,10 @@ export class CNodeGUIColor extends CNodeGUIConstant {
         if (v.color !== undefined) {
             this.guiEntry.setLabelColor(v.color)
         }
+
+        // "tip" and "tooltip" are both accepted, as in CNodeGUIValue
+        if (v.tip) this.guiEntry.tooltip(v.tip);
+        if (v.tooltip) this.guiEntry.tooltip(v.tooltip);
     }
 
     // this will need a little work, as it's a color RGBA

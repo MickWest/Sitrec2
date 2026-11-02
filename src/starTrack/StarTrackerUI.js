@@ -1755,30 +1755,37 @@ function updateCameraLensMenu(lensInfo, size) {
             if (tip) c.tooltip(tip);
             lensControllers.push(c);
         };
-        ro("type", "Type", "The curve mapping field angle to image radius. Fitted from the star "
-            + "field by Star Track; everything else in Sitrec assumes a pinhole.");
+        ro("type", "Type", "The lens projection: the curve that maps the angle from the optical axis to "
+            + "the distance from the image center. Set by Video > Star Tracker: fitted from the stars, "
+            + "or taken from Camera > FOV (Zoom) > Fisheye when the look view renders through it.");
         ro("focal", "Focal length", "In the pixels the analysis ran in, not the source video's - "
             + "see the reference size beside the principal point.");
         ro("principal", "Principal point", `Where the optical axis meets the image, in the pixels `
             + `the analysis ran in (${lens.refSize[0]}x${lens.refSize[1]}). On uncropped footage a `
-            + `fitted one lands near the frame centre.`);
-        ro("offset", "Axis off centre", "The signature of CROPPING. A centred digital zoom leaves "
-            + "this near zero (the crop keeps the axis at the new centre, and the focal length is "
-            + "measured in the analysed pixels either way). An UNEVEN crop moves it by whatever "
-            + "was taken off one side, and a hard enough crop puts the axis outside the frame - "
-            + "which is ordinary for cropped video, not an error. \"CLAMPED\" means the fit wanted "
-            + "to move it further than the search is allowed to, so read the value as a floor.");
+            + `fitted one lands near the frame center.`);
+        ro("offset", "Axis off centre", "Distance of the optical axis from the frame center, in pixels "
+            + "and as a percentage of the frame size. It shows CROPPING: a centered digital zoom "
+            + "leaves it near zero, and an UNEVEN crop moves it by what was cut off one side. "
+            + "A hard crop can put the axis outside the frame, which is normal for cropped video.\n"
+            + "\"CLAMPED\" means the fit reached its search limit, so the real value can be larger.");
         ro("distortion", "Distortion (d3, d5, d7)",
-            "theta = rho + d3 rho^3 + d5 rho^5 + d7 rho^7, with the linear term pinned to 1 so "
+            "Coefficients of the fitted Custom lens curve. A General fisheye shows its curve k; "
+            + "a preset type shows none.\n"
+            + "theta = rho + d3 rho^3 + d5 rho^5 + d7 rho^7, with the linear term pinned to 1 so "
             + "the focal length alone sets the paraxial scale.");
-        ro("hfov", "Horizontal FOV", "Measured across the full frame through the fitted curve, so "
-            + "an off-centre principal point is accounted for rather than assumed away.");
-        ro("vfov", "Vertical FOV");
-        ro("dfov", "Diagonal FOV");
-        ro("fit", "Fit residual", "How well one rotation through this lens explains the measured "
-            + "star motion. The held-out figure is scored on correspondences the fit never saw, "
-            + "which is the one that says whether it generalises.");
-        lensControllers.push(folder.add(lensParams, "copy").name("Copy lens JSON"));
+        ro("hfov", "Horizontal FOV", "Horizontal field of view, in degrees, measured across the full "
+            + "frame through the lens curve. An off-center principal point is included.");
+        ro("vfov", "Vertical FOV", "Vertical field of view, in degrees, measured in the same way as "
+            + "Horizontal FOV.");
+        ro("dfov", "Diagonal FOV", "Diagonal field of view, corner to corner, in degrees, measured in "
+            + "the same way as Horizontal FOV.");
+        ro("fit", "Fit residual", "RMS (root mean square) error, in pixels, of the measured star "
+            + "motion against one camera rotation through this lens. The \"held out\" value is "
+            + "scored on star matches that the fit did not use, so it shows whether the fit holds "
+            + "for new data.");
+        lensControllers.push(folder.add(lensParams, "copy").name("Copy lens JSON")
+            .tooltip("Copy the lens values to the clipboard as JSON text. When the clipboard cannot "
+                + "be used, the text goes to the browser console."));
     }
     folder.show();
 }
@@ -4297,11 +4304,18 @@ export function setupStarTrackerMenu() {
     if (folder && folder.domElement && folder.domElement.isConnected) return;
     folder = null;
 
-    folder = guiMenus.video.addFolder("Star Tracker").close();
+    folder = guiMenus.video.addFolder("Star Tracker").close()
+        .tooltip("Find the stars in the video, track them from the In frame to the Out frame, and identify them "
+            + "against a star catalog. The result can point the look camera to match the footage, "
+            + "and finds objects that move against the stars.");
     addVideoAnalysisResolutionMenu(folder, () => videoView()?.videoData);
 
     folder.add({all: () => { runFullStarTracker(); }}, "all")
-        .name("Full Analysis");
+        .name("Full Analysis")
+        .tooltip("Run every step: Detect Star Size on the current frame, Find Candidate Stars from the In frame "
+            + "to the Out frame, then Identify Stars (catalog).\n"
+            + "With Sync Camera to Star Field on, a successful identification also points the look camera. "
+            + "The first identification downloads a 2.5 MB star catalog.");
     // Directly under Full Analysis, not down in Tweaks. Full Analysis syncs the camera itself on
     // success, so this is the button for the case where it did NOT - a run that had to be tuned
     // by hand, or one whose sync was undone by moving the camera afterwards. That is a
@@ -4315,19 +4329,20 @@ export function setupStarTrackerMenu() {
             + "them - so you can compare the solved pointing against your own and switch "
             + "between them.");
     folder.add(params, "fadeAtCompletion").name("Fade at completion")
-        .tooltip("When an identification SUCCEEDS, retire the solver's working annotation by "
-            + "itself - the quad lines, then the circles shrinking into their stars while the "
-            + "names slide out to where the night sky puts star names, then the catalog-number "
-            + "labels. One second each. What is left is the named stars over your footage. The "
-            + "display switches below are turned off as each layer goes, so nothing is hidden "
-            + "behind an invisible setting and any layer can be switched back on. A FAILED run "
-            + "never fades - its annotation is the evidence for what went wrong.");
+        .tooltip("When an identification SUCCEEDS, fade out the working marks one layer at a time, one "
+            + "second each: the quad lines, then the star circles, then the catalog-number labels. "
+            + "The named stars keep their labels. If fewer than 12 stars have names, the brightest "
+            + "numbered stars keep theirs too.\n"
+            + "Each layer's display switch below is turned off as it goes, so you can turn it back on. "
+            + "A FAILED run never fades: its marks show what went wrong.");
     // The same optimization the Video Adjustments folder offers, reachable from here as well: it
     // tunes the picture FOR this analysis, so this is where somebody about to run one looks for it.
     // The builder adds its own Enough / Abort / status alongside, so a run started here can also be
     // stopped here.
     starOptimizeMenuBuilder?.(folder, "Optimize Adjustments for Frame");
-    const statusController = folder.add(params, "status").name("Status").listen().disable();
+    const statusController = folder.add(params, "status").name("Status").listen().disable()
+        .tooltip("Shows what the Star Tracker is doing now, or the result of its last step. "
+            + "Hold the pointer over the value to read a long message in full.");
     // Status strings routinely outgrow the readout ("identify failed: round-0 rematch
     // collapsed" shows as "identify failed: round-...") so the full text rides the row's
     // hover tooltip. The VISIBLE menu rows are MenuMirror twins of this controller, not its
@@ -4364,8 +4379,8 @@ export function setupStarTrackerMenu() {
             + "that the solver would otherwise treat as stars. Masked detections are counted as "
             + "rejections, so nothing goes missing silently.");
     folder.add(params, "applyAdjustments").name("Apply adjustments")
-        .tooltip("Analyse the frame as you SEE it, with the Video Adjustments applied - levels, "
-            + "curves, sharpen, blur, brightness and the rest. Off analyses the raw decoded "
+        .tooltip("Analyze the frame as you SEE it, with the Video Adjustments applied - levels, "
+            + "curves, sharpen, blur, brightness and the rest. Off analyzes the raw decoded "
             + "frame instead, which can find stars that are not visible on screen, or miss ones "
             + "that only the adjustments bring out. Does nothing when no adjustments are set.");
     folder.add(params, "fitLens").name("Fit lens from stars")
@@ -4383,12 +4398,15 @@ export function setupStarTrackerMenu() {
     folder.add(params, "fromTimelapse").name("From timelapse")
         .tooltip("The video is a single stacked timelapse image of star trails, taken by a "
             + "fixed camera between the In and Out frames. Full Analysis then finds the trails "
-            + "and their centre of rotation, takes each trail's START as the star's position at "
+            + "and their center of rotation, takes each trail's START as the star's position at "
             + "the In frame, identifies those stars, and fits the lens (projection, curve, focal "
             + "length and optical centre) and the fixed camera's pointing from both ends of every "
             + "trail, with refraction. Sync Camera to Star Field then sets the Fisheye render and "
             + "holds the camera still relative to the ground.");
-    folder.add(params, "lensStatus").name("Lens").listen().disable();
+    folder.add(params, "lensStatus").name("Lens").listen().disable()
+        .tooltip("Shows the result of the lens fit: the lens type, its field of view and the fit error, "
+            + "or why no lens was fitted. \"off\" means Fit lens from stars is off. "
+            + "The full lens is shown in Camera > Lens.");
     // The overlay switches, in the order they are reached for: the circles, the names beside
     // them, the solver's quad lines, then the less-used classes. Each gates exactly one layer.
     // The three the completion fade retires are .listen()ed, because it turns them off from
@@ -4396,9 +4414,10 @@ export function setupStarTrackerMenu() {
     // checkbox at all. lil-gui polls the value, and the poll reaches the menu-bar mirror twins
     // the same way the Status row's does.
     folder.add(params, "showStars").name("Show star markers").onChange(setRenderOne).listen()
-        .tooltip("Draw the circle round each identified star. Only the circles - the catalog "
-            + "names and the quad lines have their own switches, so the names can be read over "
-            + "clean video with every circle hidden.");
+        .tooltip("Draw a green circle around each star that the tracker found, identified or not. Only the "
+            + "circles - the catalog names and the quad lines have their own switches, so the names "
+            + "can be read over clean video with every circle hidden.\n"
+            + "Click a circle to leave that star out of Identify Stars; click it again to put it back.");
     folder.add(params, "showStarNames").name("Show star names").onChange(setRenderOne)
         .tooltip("Label each identified star with its catalog name. Works whether or not the "
             + "star markers are drawn.");
@@ -4412,26 +4431,40 @@ export function setupStarTrackerMenu() {
         .tooltip("Draw the four-star shapes the blind solve matched against the catalog, with "
             + "line weight showing how much of the field each one explains. They are the visible "
             + "evidence for the identification; turn them off once you trust it.");
-    folder.add(params, "showMoving").name("Show moving").onChange(setRenderOne);
-    folder.add(params, "showClusters").name("Show light clusters").onChange(setRenderOne);
-    folder.add(params, "showRejected").name("Show rejected").onChange(setRenderOne);
+    folder.add(params, "showMoving").name("Show moving").onChange(setRenderOne)
+        .tooltip("Draw a red circle on each track that moves against the stars, labeled with how far it "
+            + "moved, in pixels. It shows only on the frames where the track was seen.");
+    folder.add(params, "showClusters").name("Show light clusters").onChange(setRenderOne)
+        .tooltip("Draw a dashed orange ring around lights that move together, and around faint moving "
+            + "objects that no single track follows. The label gives the number of lights and the "
+            + "distance moved, in pixels.");
+    folder.add(params, "showRejected").name("Show rejected").onChange(setRenderOne)
+        .tooltip("Draw the tracks that are neither stars nor moving objects.\n"
+            + "Gray dashed circle: seen too rarely, or too scattered, to be a steady source.\n"
+            + "Yellow circle: fixed in the frame, not on the sky, for example a hot pixel or burned-in text.");
     folder.add(params, "showDuringAnalysis").name("Display during analysis")
         .tooltip("While an analysis is scanning, circle each frame's detections as they are "
             + "found. Nothing is solved yet at that point, so these are raw detections - every "
             + "one drawn the same, with no classification or names - which is what makes a bad "
             + "detect threshold or blob size obvious without waiting for the run to finish.");
-    folder.add(params, "chartTracks").name("Chart: object tracks");
+    folder.add(params, "chartTracks").name("Chart: object tracks")
+        .tooltip("Include the paths of moving objects (solid red) and light clusters (dashed orange) in "
+            + "Make Star Chart (PNG), with an arrowhead at the end of each path. Off: the chart shows stars only.");
 
-    const tweaks = folder.addFolder("Star Tracker Tweaks").close();
+    const tweaks = folder.addFolder("Star Tracker Tweaks").close()
+        .tooltip("Detection and classification settings, and the separate steps that Full Analysis runs.");
 
     tweaks.add(params, "autoSigma").name("Auto detect threshold")
-        .tooltip("Measure the detection threshold from the footage before each run: probe "
-            + "three spread frames at a permissive threshold and pick the level where the "
-            + "blob count stops falling - above the noise face, below the damage line where "
-            + "airglow swallows real stars. The slider below shows what was chosen; when the "
-            + "frames are too sparse to read, the slider's own value stands.");
+        .tooltip("Set Detect threshold from the footage when Full Analysis or Detect Star Size runs, "
+            + "instead of using the slider value. It tests the In, middle and Out frames, and picks the "
+            + "level where the blob count stops falling as the threshold goes up.\n"
+            + "The slider then shows the chosen value. When the frames have too few blobs to judge, "
+            + "the slider value is used.");
     threshSigmaController =
-        tweaks.add(params, "threshSigma", 2, 10, 0.25).name("Detect threshold (sigma)");
+        tweaks.add(params, "threshSigma", 2, 10, 0.25).name("Detect threshold (sigma)")
+            .tooltip("How far above the local background a blob must be to count as a detection, in "
+                + "sigma (standard deviations of the background noise). Higher = fewer, brighter "
+                + "detections.\nAuto detect threshold sets this value when it is on.");
     // A hand-edited value is a user preference, not a measurement - it must survive sitch
     // teardown, where a calibrated one falls with its calibration. The edit also invalidates
     // any calibration still awaiting its frame, or that request would land afterwards,
@@ -4449,23 +4482,46 @@ export function setupStarTrackerMenu() {
                 calibrationPending = false;
                 params.status = "calibration cancelled by edit";
             }
-        });
+        })
+        .tooltip("Smallest blob, in pixels, that counts as a star. Smaller blobs are rejected as noise.\n"
+            + "Detect Star Size measures it. A value you set by hand is kept by Full Analysis, "
+            + "until you press Detect Star Size.");
     // Blob sizes depend on resolution, zoom and exposure, so the pixel-scale settings are
     // measurable rather than guessable - this measures them from the frame on screen.
     // measure:true - pressing this IS the request to re-measure, so it overwrites a blob size
     // however it was arrived at. The chained call inside Full Analysis deliberately does not.
     tweaks.add({cal: () => { detectStarSize({measure: true}); }}, "cal")
-        .name("Detect Star Size (current frame)");
-    tweaks.add(params, "minObservations", 3, 40, 1).name("Min detections per track");
-    tweaks.add(params, "driftSignificance", 2, 20, 0.5).name("Moving: significance");
-    tweaks.add(params, "driftMinSigmas", 2, 40, 1).name("Moving: min drift (sigma)");
+        .name("Detect Star Size (current frame)")
+        .tooltip("Measure the star blobs on the current frame, and set Min blob area and the measuring "
+            + "apertures from them. Use a typical frame.\n"
+            + "Full Analysis also does this first, but keeps a Min blob area that you set by hand.");
+    tweaks.add(params, "minObservations", 3, 40, 1).name("Min detections per track")
+        .tooltip("Fewest detections a track needs before it is classified. Shorter tracks are ignored.");
+    tweaks.add(params, "driftSignificance", 2, 20, 0.5).name("Moving: significance")
+        .tooltip("How certain a track's drift against the stars must be before the track is called "
+            + "moving: the drift divided by its uncertainty. Higher = fewer false movers.");
+    tweaks.add(params, "driftMinSigmas", 2, 40, 1).name("Moving: min drift (sigma)")
+        .tooltip("Smallest total drift, over the life of a track, for the track to be called moving, in "
+            + "multiples of the measured position noise. It stops a tiny but certain drift from "
+            + "counting as motion.");
 
     tweaks.add({run: async () => { await runStarTracker(); setRenderOne(); }}, "run")
-        .name("Find Candidate Stars");
+        .name("Find Candidate Stars")
+        .tooltip("Detect blobs on every frame from the In frame to the Out frame, link them into tracks, "
+            + "and sort the tracks into stars, moving objects, light clusters and rejects. "
+            + "It does not identify the stars.");
     tweaks.add({identify: () => { identifyStars(); }}, "identify")
-        .name("Identify Stars (catalog)");
+        .name("Identify Stars (catalog)")
+        .tooltip("Match the stars from Find Candidate Stars to a star catalog, and label them. Stars "
+            + "you clicked off are left out. The first use downloads a 2.5 MB catalog.\n"
+            + "With Sync Camera to Star Field on, a success also points the look camera.");
     // Sync Camera to Star Field lives in the MAIN folder, under Full Analysis.
-    tweaks.add({chart: () => { makeStarChart(); }}, "chart").name("Make Star Chart (PNG)");
+    tweaks.add({chart: () => { makeStarChart(); }}, "chart").name("Make Star Chart (PNG)")
+        .tooltip("Download star-chart.png: each star found, drawn once at its place on the solved sky "
+            + "map and sized by its measured brightness. Identified stars get their names.\n"
+            + "Chart: object tracks adds the paths of moving objects.");
 
-    folder.add({clear: () => { resetStarTracker(); setRenderOne(); }}, "clear").name("Clear");
+    folder.add({clear: () => { resetStarTracker(); setRenderOne(); }}, "clear").name("Clear")
+        .tooltip("Discard the analysis, its overlay and the Camera > Lens values, and remove the Star "
+            + "Track choices from the camera heading and FOV. Your settings are kept.");
 }

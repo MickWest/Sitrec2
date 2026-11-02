@@ -94,7 +94,8 @@ export class CNodeStarChartView extends CNodeTabbedCanvasView {
         }).catch(() => {});
 
         this.guiFolder = guiShowHide.addFolder("Star Chart").close()
-            .tooltip("Whole-sky star chart (Heavens-Above style) for the current time and camera location");
+            .tooltip("A whole-sky star chart for the current frame's time and the look camera's location.\n"
+                + "The zenith is at the center and the horizon at the edge, with north up and east on the left, as on a printed sky chart.");
         this.guiFolder.add(this, "visible").listen().name("Show Star Chart")
             .onChange(value => {
                 this.visible = undefined; // force setVisible to apply
@@ -105,7 +106,11 @@ export class CNodeStarChartView extends CNodeTabbedCanvasView {
             .asFolderToggle();
         this.guiFolder.add(this, "colorScheme", Object.keys(starChartSchemes)).listen().name("Color Scheme")
             .onChange(() => setRenderOne(true))
-            .tooltip("Color scheme for the star chart");
+            .tooltip("The colors of the star chart.\n"
+                + "Lavendar: pale blue surround, white sky disk, black stars.\n"
+                + "Black: white stars on black.\n"
+                + "Night Vision: red on black.\n"
+                + "White: black stars on white.");
         this.guiFolder.add(this, "showSatelliteTrack").listen().name("Satellite Track")
             .onChange(() => setRenderOne(true))
             .tooltip("Plot the track of the 'Satellite to Track' across the chart, with times");

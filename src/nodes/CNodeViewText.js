@@ -186,7 +186,8 @@ export class CNodeViewText extends CNodeView {
     addTabButtons() {
         // With a UIBar, the "Clear" action lives in the title menu instead of a floating button.
         if (this.uiBar && this.uiBar.titleMenu) {
-            this.uiBar.titleMenu.add({clear: () => this.clearOutput()}, 'clear').name('Clear');
+            this.uiBar.titleMenu.add({clear: () => this.clearOutput()}, 'clear').name('Clear')
+                .tooltip('Clear all the text shown in this view.');
             return;
         }
         // Add a "Clear" button to the top right corner of the output area

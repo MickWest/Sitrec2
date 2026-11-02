@@ -220,22 +220,22 @@ export function setupRefractionGUI() {
     folder.add(Sit, "refractionTerrain").listen()
         .name("Terrain and Buildings")
         .onChange(changed)
-        .tooltip("Loft distant terrain, buildings and the sea by k*d/(2R) — about 0.7' at 20 km, 3.4' at 100 km. Display only: ground elevations, line-of-sight and altitude readouts stay geometric.");
+        .tooltip("Raise distant terrain, buildings and the sea by the angle k*d/(2R), where d is the distance and R is the Earth's radius. With the default k (about 0.18) and a camera near the ground, that is about 0.9' (arcminutes) at 20 km and 4.7' at 100 km.\nDisplay only: ground elevations, line-of-sight and altitude readouts stay geometric.");
 
     folder.add(Sit, "refractionSky").listen()
         .name("Sky")
         .onChange(changed)
-        .tooltip("Bend Sun/Moon/planet/star apparent positions toward the zenith via Saemundsson's formula — about 29' at the horizon.");
+        .tooltip("Raise the apparent positions of the Sun, Moon, planets, stars and satellites toward the zenith, with Saemundsson's formula. The bend is about 29' (arcminutes) at the horizon, and less for a high camera.");
 
     folder.add(Sit, "refractionPressure", 800, 1100, 1).listen()
         .name("Refraction Pressure (hPa)")
         .onChange(() => setRenderOne(true))
-        .tooltip("Atmospheric pressure. Feeds BOTH halves. Stellarium default: 1010 hPa");
+        .tooltip("Air pressure, in hPa (hectopascals). Both Sky and Terrain and Buildings use it. The default is 1010 hPa.");
 
     folder.add(Sit, "refractionTemp", -40, 50, 1).listen()
         .name("Refraction Temperature (°C)")
         .onChange(() => setRenderOne(true))
-        .tooltip("Air temperature. Feeds BOTH halves. Stellarium default: 10 °C");
+        .tooltip("Air temperature, in °C. Both Sky and Terrain and Buildings use it. The default is 10 °C.");
 
     lapseRateController = folder.add(Sit, "terrestrialLapseRate", -35, 50, 0.5).listen()
         .name("Surface Temp Gradient (K/km)")

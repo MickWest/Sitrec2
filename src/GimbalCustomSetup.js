@@ -178,12 +178,18 @@ export function processGimbalCSVData() {
  * @param {object} config — gimbalSetup configuration (reads fleet* fields)
  */
 function setupFleet(config) {
-    new CNodeGUIValue({id: "fleetTurnStart", value: config.fleetTurnStart ?? 0, start: 0, end: 35, step: 0.1, desc: "Fleet Turn Start"}, guiTweaks);
-    new CNodeGUIValue({id: "fleetTurnRate", value: config.fleetTurnRate ?? 8, start: 0, end: 50, step: 0.1, desc: "Fleet Turn Rate"}, guiTweaks);
-    new CNodeGUIValue({id: "fleetAcceleration", value: config.fleetAcceleration ?? 2, start: 1, end: 50, step: 0.1, desc: "Fleet Acceleration"}, guiTweaks);
-    new CNodeGUIValue({id: "fleetSpacing", value: config.fleetSpacing ?? 0.7, start: 0.01, end: 4, step: 0.01, desc: "Fleet Spacing"}, guiTweaks);
-    new CNodeGUIValue({id: "fleetX", value: config.fleetX ?? 20, start: -10, end: 20, step: 0.01, desc: "Fleet X"}, guiTweaks);
-    new CNodeGUIValue({id: "fleetY", value: config.fleetY ?? -5.27, start: -10, end: 10, step: 0.01, desc: "Fleet Y"}, guiTweaks);
+    new CNodeGUIValue({id: "fleetTurnStart", value: config.fleetTurnStart ?? 0, start: 0, end: 35, step: 0.1, desc: "Fleet Turn Start",
+        tooltip: "Time, in seconds from the sitch start (30 frames per second), when the five fleet aircraft start their turn. Each aircraft has its own small offset from this time."}, guiTweaks);
+    new CNodeGUIValue({id: "fleetTurnRate", value: config.fleetTurnRate ?? 8, start: 0, end: 50, step: 0.1, desc: "Fleet Turn Rate",
+        tooltip: "Turn rate of each fleet aircraft, in degrees per second. Each aircraft stops turning after 180°."}, guiTweaks);
+    new CNodeGUIValue({id: "fleetAcceleration", value: config.fleetAcceleration ?? 2, start: 1, end: 50, step: 0.1, desc: "Fleet Acceleration",
+        tooltip: "Speed multiplier that each fleet aircraft applies when its turn starts. 2 = it doubles its speed.\nBefore the turn, each aircraft flies straight at the traverse object's starting speed."}, guiTweaks);
+    new CNodeGUIValue({id: "fleetSpacing", value: config.fleetSpacing ?? 0.7, start: 0.01, end: 4, step: 0.01, desc: "Fleet Spacing",
+        tooltip: "Spacing of the fleet formation, in nautical miles per formation step. It scales the whole formation."}, guiTweaks);
+    new CNodeGUIValue({id: "fleetX", value: config.fleetX ?? 20, start: -10, end: 20, step: 0.01, desc: "Fleet X",
+        tooltip: "East offset of the fleet from the traverse object's start position, in nautical miles."}, guiTweaks);
+    new CNodeGUIValue({id: "fleetY", value: config.fleetY ?? -5.27, start: -10, end: 10, step: 0.01, desc: "Fleet Y",
+        tooltip: "South offset of the fleet from the traverse object's start position, in nautical miles. Negative = north."}, guiTweaks);
 
     const fleetDefaults = {
         gimbal: "LOSTraverseSelect",
@@ -388,7 +394,8 @@ function setupTargetModel() {
                 start: 0,
                 end: 2000,
                 step: 0.1,
-                desc: "Target size ft"
+                desc: "Target size ft",
+                tooltip: "Size of the target model that rides the traverse, in feet. The value is converted to meters and scales the model.",
             }, gui)
         ),
     });

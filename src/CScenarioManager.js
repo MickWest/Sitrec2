@@ -43,6 +43,7 @@ class CScenarioManagerClass {
 
     // desc: {
     //   id           — guiMenus key of the scenario's permanent folder shell
+    //   tooltip      — optional tooltip for that folder's title (set in setup())
     //   populate()   — build the folder's buttons (async; the dynamic-import
     //                  point). Must be idempotent and create NO nodes.
     //   activate()   — optional: full activation (used by activateForMods;
@@ -61,6 +62,13 @@ class CScenarioManagerClass {
     setup() {
         const parent = guiMenus.scenarios;
         if (!parent) return;
+        // Folder-title tooltips. The folder shells are permanent (index.js), so
+        // setting them here, before the menu is first opened, is enough.
+        parent.tooltip("Self-contained simulations and analyses.\n"
+            + "A scenario adds nothing to the sitch until you enable or load it from its folder.");
+        for (const desc of this.scenarios) {
+            if (desc.tooltip) guiMenus[desc.id]?.tooltip(desc.tooltip);
+        }
         for (const desc of this.scenarios) desc._populated = false;
         // One handler slot per GUI — this is the only onOpenClose user on the
         // Scenarios folder. The callback bubbles up from descendants too; we
@@ -119,6 +127,8 @@ export const ScenarioManager = new CScenarioManagerClass();
 
 ScenarioManager.register({
     id: "football",
+    tooltip: "Simulate a kicked football with drag and spin, a cable cam on four wires, and a broadcast camera view.\n"
+        + "Click Enable Football Simulation or the Load button to start.",
     populate: async () => (await import("./Football")).setupFootball(),
     activate: async () => (await import("./Football")).activateFootball(),
     // Real-usage signals only (see header): a Show flag on, a camera aspect
@@ -138,6 +148,9 @@ ScenarioManager.register({
 
 ScenarioManager.register({
     id: "nimitz",
+    tooltip: "Recreate the Nov 14, 2004 Nimitz tic-tac encounter as the pilots described it: two jets, the object, "
+        + "the whitewater disturbance and the ships, with two hypotheses for how the object moves.\n"
+        + "Click Enable Nimitz Simulation or a Load button to start.",
     populate: async () => (await import("./Nimitz")).setupNimitz(),
     activate: async () => (await import("./Nimitz")).activateNimitz(),
     activeInMods(mods) {
@@ -151,6 +164,9 @@ ScenarioManager.register({
 
 ScenarioManager.register({
     id: "gimbalAnalysis",
+    tooltip: "Build a new sitch that recreates the Gimbal video analysis: the ATFLIR pod on a jet, the glare, the clouds and the fleet.\n"
+        + "Create Gimbal Sitch builds it in one step. Create Gimbal Base (manual build) makes a base to build step by step.\n"
+        + "In a sitch made here, the folder holds its settings and the Manual Build steps instead.",
     // Menu-only: the Gimbal pipeline runs from handleGimbalSetup() (index.js)
     // when Sit.gimbalSetup is present — its own activation mechanism, via the
     // generated sitch. This menu creates no nodes, so no activate/activeInMods.
@@ -159,6 +175,7 @@ ScenarioManager.register({
 
 ScenarioManager.register({
     id: "flatEarth",
+    tooltip: "EXPERIMENTAL. Draw the world as a flat earth map. Display only: physics, tracks and measurements stay on the globe.",
     populate: async () => (await import("./scenarios/FlatEarthScenario")).setupFlatEarth(),
     activate: async () => (await import("./scenarios/FlatEarthScenario")).activateFlatEarth(),
     // Only saves with the mode actually ON re-activate it; a save made

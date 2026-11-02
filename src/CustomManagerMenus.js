@@ -926,10 +926,14 @@ export const menuMethods = {
 
         // The items in groups, each under a heading.
         menu.addHeading(t("custom.contextMenu.groupCameraTarget"));
-        menu.add(menuData, "setCameraAbove").name(t("custom.contextMenu.setCameraAbove"));
-        menu.add(menuData, "setCameraOnGround").name(t("custom.contextMenu.setCameraOnGround"));
-        menu.add(menuData, "setTargetAbove").name(t("custom.contextMenu.setTargetAbove"));
-        menu.add(menuData, "setTargetOnGround").name(t("custom.contextMenu.setTargetOnGround"));
+        menu.add(menuData, "setCameraAbove").name(t("custom.contextMenu.setCameraAbove"))
+            .tooltip(t("custom.contextMenu.tooltips.setCameraAbove"));
+        menu.add(menuData, "setCameraOnGround").name(t("custom.contextMenu.setCameraOnGround"))
+            .tooltip(t("custom.contextMenu.tooltips.setCameraOnGround"));
+        menu.add(menuData, "setTargetAbove").name(t("custom.contextMenu.setTargetAbove"))
+            .tooltip(t("custom.contextMenu.tooltips.setTargetAbove"));
+        menu.add(menuData, "setTargetOnGround").name(t("custom.contextMenu.setTargetOnGround"))
+            .tooltip(t("custom.contextMenu.tooltips.setTargetOnGround"));
 
         // Clouds or an overlay under the pointer can be edited from here.
         if (cloudsAtPoint || overlayAtPoint) {
@@ -938,32 +942,45 @@ export const menuMethods = {
         if (cloudsAtPoint) {
             const cloudsLabel = cloudsAtPoint.name || cloudsAtPoint.id;
             const cloudsMenuLabel = cloudsAtPoint.editMode ? `Exit Edit: ${cloudsLabel}` : `Edit Clouds: ${cloudsLabel}`;
-            menu.add(menuData, "editClouds").name(cloudsMenuLabel);
+            menu.add(menuData, "editClouds").name(cloudsMenuLabel)
+                .tooltip(t("custom.contextMenu.tooltips.editClouds"));
         }
         if (overlayAtPoint) {
             const overlayLabel = overlayAtPoint.name || overlayAtPoint.id;
             const kindLabel = overlayAtPoint.kindName === "grid" ? "Grid" : "Overlay";
             const menuLabel = overlayAtPoint.editMode ? `Exit Edit: ${overlayLabel}` : `Edit ${kindLabel}: ${overlayLabel}`;
-            menu.add(menuData, "editOverlay").name(menuLabel);
+            menu.add(menuData, "editOverlay").name(menuLabel)
+                .tooltip(t("custom.contextMenu.tooltips.editOverlay"));
         }
 
         menu.addHeading(t("custom.contextMenu.groupAdd"));
-        menu.add(menuData, "dropPin").name(t("custom.contextMenu.dropPin"));
-        menu.add(menuData, "addFixedObject").name(t("custom.contextMenu.addFixedObject"));
-        menu.add(menuData, "createTrackWithObject").name(t("custom.contextMenu.createTrackWithObject"));
-        menu.add(menuData, "createInOutObjectTrack").name(t("custom.contextMenu.createInOutObjectTrack"));
-        menu.add(menuData, "createSyntheticTrack").name(t("custom.contextMenu.createTrackNoObject"));
-        menu.add(menuData, "addBalloon").name(t("custom.contextMenu.addBalloon", {defaultValue: "Add Balloon"}));
-        menu.add(menuData, "addBuilding").name(t("custom.contextMenu.addBuilding"));
-        menu.add(menuData, "addClouds").name(t("custom.contextMenu.addClouds"));
-        menu.add(menuData, "addOverlay").name(t("custom.contextMenu.addGroundOverlay"));
-        menu.add(menuData, "addGrid").name(t("custom.contextMenu.addGroundGrid"));
+        menu.add(menuData, "dropPin").name(t("custom.contextMenu.dropPin"))
+            .tooltip(t("custom.contextMenu.tooltips.dropPin"));
+        menu.add(menuData, "addFixedObject").name(t("custom.contextMenu.addFixedObject"))
+            .tooltip(t("custom.contextMenu.tooltips.addFixedObject"));
+        menu.add(menuData, "createTrackWithObject").name(t("custom.contextMenu.createTrackWithObject"))
+            .tooltip(t("custom.contextMenu.tooltips.createTrackWithObject"));
+        menu.add(menuData, "createInOutObjectTrack").name(t("custom.contextMenu.createInOutObjectTrack"))
+            .tooltip(t("custom.contextMenu.tooltips.createInOutObjectTrack"));
+        menu.add(menuData, "createSyntheticTrack").name(t("custom.contextMenu.createTrackNoObject"))
+            .tooltip(t("custom.contextMenu.tooltips.createTrackNoObject"));
+        menu.add(menuData, "addBalloon").name(t("custom.contextMenu.addBalloon", {defaultValue: "Add Balloon"}))
+            .tooltip(t("custom.contextMenu.tooltips.addBalloon"));
+        menu.add(menuData, "addBuilding").name(t("custom.contextMenu.addBuilding"))
+            .tooltip(t("custom.contextMenu.tooltips.addBuilding"));
+        menu.add(menuData, "addClouds").name(t("custom.contextMenu.addClouds"))
+            .tooltip(t("custom.contextMenu.tooltips.addClouds"));
+        menu.add(menuData, "addOverlay").name(t("custom.contextMenu.addGroundOverlay"))
+            .tooltip(t("custom.contextMenu.tooltips.addGroundOverlay"));
+        menu.add(menuData, "addGrid").name(t("custom.contextMenu.addGroundGrid"))
+            .tooltip(t("custom.contextMenu.tooltips.addGroundGrid"));
 
         if (NodeMan.exists("terrainUI")) {
             const terrainUI = NodeMan.get("terrainUI");
             if (!terrainUI.dynamic) {
                 menu.addHeading(t("custom.contextMenu.groupTerrain"));
-                menu.add(menuData, "centerTerrain").name(t("custom.contextMenu.centerTerrain"));
+                menu.add(menuData, "centerTerrain").name(t("custom.contextMenu.centerTerrain"))
+                    .tooltip(t("custom.contextMenu.tooltips.centerTerrain"));
             }
 
         }
@@ -973,9 +990,11 @@ export const menuMethods = {
         if (configParams?.extraHelpLinks) {
             menu.addHeading(t("custom.contextMenu.groupExternal"));
             if (!isSecureBuild) {
-                menu.add(menuData, "googleMapsHere").name(t("custom.contextMenu.googleMapsHere"));
+                menu.add(menuData, "googleMapsHere").name(t("custom.contextMenu.googleMapsHere"))
+                    .tooltip(t("custom.contextMenu.tooltips.googleMapsHere"));
             }
-            menu.add(menuData, "googleEarthHere").name(t("custom.contextMenu.googleEarthHere"));
+            menu.add(menuData, "googleEarthHere").name(t("custom.contextMenu.googleEarthHere"))
+                .tooltip(t("custom.contextMenu.tooltips.googleEarthHere"));
         }
     },
 
@@ -1032,18 +1051,23 @@ export const menuMethods = {
         };
 
         if (hasPointAtFrame) {
-            const move = menu.add(menuData, "movePointHere").name(t("custom.contextMenu.movePointHere", {frame}));
+            const move = menu.add(menuData, "movePointHere").name(t("custom.contextMenu.movePointHere", {frame}))
+                .tooltip(t("custom.contextMenu.tooltips.movePointHere"));
             if (!groundPoint) move.disable();
         } else {
-            const here = menu.add(menuData, "addPointHere").name(t("custom.contextMenu.addPointHere", {frame}));
+            const here = menu.add(menuData, "addPointHere").name(t("custom.contextMenu.addPointHere", {frame}))
+                .tooltip(t("custom.contextMenu.tooltips.addPointHere"));
             if (!groundPoint) here.disable();
-            const onTrack = menu.add(menuData, "addPointOnTrack").name(t("custom.contextMenu.addPointOnTrack", {frame}));
+            const onTrack = menu.add(menuData, "addPointOnTrack").name(t("custom.contextMenu.addPointOnTrack", {frame}))
+                .tooltip(t("custom.contextMenu.tooltips.addPointOnTrack"));
             if (!trackPositionAtFrame()) onTrack.disable();
         }
-        for (const {label, action} of trackAndObjectMenuActions(trackOb, mouseX, mouseY)) {
-            menu.add({run: run(action)}, "run").name(label);
+        for (const {label, tooltip, action} of trackAndObjectMenuActions(trackOb, mouseX, mouseY)) {
+            const item = menu.add({run: run(action)}, "run").name(label);
+            if (tooltip) item.tooltip(tooltip);
         }
-        menu.add(menuData, "exitEditMode").name(t("custom.contextMenu.exitEditMode"));
+        menu.add(menuData, "exitEditMode").name(t("custom.contextMenu.exitEditMode"))
+            .tooltip(t("custom.contextMenu.tooltips.exitEditMode"));
         menu.open();
     },
 

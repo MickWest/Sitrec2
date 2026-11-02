@@ -44,6 +44,7 @@ function fakeCameraMenu() {
             return controller;
         },
         close: () => folder,
+        tooltip: () => folder,
         show: () => { folder.hidden = false; },
         hide: () => { folder.hidden = true; },
         destroy: () => { folder.destroyed = true; },

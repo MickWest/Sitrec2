@@ -140,7 +140,8 @@ export class CNodeDisplayTrack extends CNode3DGroup {
             // so if it does not exist, we create it here
             this.guiFolder = menu.getFolder(this.in.track.id);
             if (!this.guiFolder) {
-                this.guiFolder = guiMenus[this.gui].addFolder(this.id).close();
+                this.guiFolder = guiMenus[this.gui].addFolder(this.id).close()
+                    .tooltip(t("displayTrack.folder.tooltip"));
             }
             assert(this.guiFolder !== undefined, "CNodeDisplayTrack: guiFolder is undefined for track "+this.id);
 
@@ -286,7 +287,8 @@ export class CNodeDisplayTrack extends CNode3DGroup {
 
             // Contrail controls collapsed into a sub-folder so the main track
             // folder isn't cluttered by 6 contrail-only sliders.
-            const contrailFolder = this.guiFolder.addFolder(t("displayTrack.contrail.label")).close();
+            const contrailFolder = this.guiFolder.addFolder(t("displayTrack.contrail.label")).close()
+                .tooltip(t("displayTrack.contrail.folderTooltip"));
             contrailFolder.add(this, "contrail").name(t("displayTrack.contrail.label")).tooltip(t("displayTrack.contrail.tooltip")).listen().onChange(() => {
                 this.updateContrail();
                 setRenderOne(true);
@@ -356,6 +358,7 @@ export class CNodeDisplayTrack extends CNode3DGroup {
                     step: 1,
                     desc: "Alt offset",
                     unitType: "small",
+                    tooltip: "Raise (positive) or lower (negative) the whole track by this height.\nNo effect while Lock Altitude is on.",
                     onChange: (v) => {
                         track.altitudeOffset = v;
                         track.recalculateCascade()
@@ -376,6 +379,7 @@ export class CNodeDisplayTrack extends CNode3DGroup {
                     step: 1,
                     desc: "Lock Height",
                     unitType: "small",
+                    tooltip: "Height at which Lock Altitude holds the whole track, measured as Height From says.\nShown only while Lock Altitude is on.",
                     onChange: (v) => {
                         track.altitudeLock = v;
                         track.recalculateCascade()
@@ -414,6 +418,7 @@ export class CNodeDisplayTrack extends CNode3DGroup {
                     step: 0.001,
                     desc: "Time offset (sec)",
                     unitType: "none",
+                    tooltip: "Shift this track in time, in seconds, to line it up with the sitch.\nA positive value shows each data point that many seconds earlier.",
                     onChange: (v) => {
                         track.timeOffset = v;
                         track.recalculateCascade()
@@ -483,6 +488,7 @@ export class CNodeDisplayTrack extends CNode3DGroup {
         if (this.lookViewController || !this.guiFolder) return;
         this.showInLook ??= false;
         this.lookViewController = this.guiFolder.add(this, "showInLook").name(t("misc.showInLookView.label"))
+            .tooltip(t("misc.showInLookView.tooltip"))
             .listen().onChange(() => this.applyLookLayer());
         this.addSimpleSerial("showInLook");
     }

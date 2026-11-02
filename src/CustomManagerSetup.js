@@ -624,9 +624,10 @@ export const setupMethods = {
                     value: false,
                     desc: "Render Camera Use Traverse Track",
                     gui: "cameraHeading",
-                    tooltip: "Aim the look view at the traverse solution (the yellow cube) for DISPLAY ONLY. " +
-                        "The LOS — and every traverse method's solution — still comes from the selected " +
-                        "Camera Heading, exactly as if this were off.",
+                    tooltip: "Aim the look view at the traverse solution (the yellow cube). " +
+                        "This changes only what the look view shows.\n" +
+                        "The LOS (line of sight) and every traverse solution still come from the " +
+                        "selected Camera Heading, as when this is off.",
                 });
             }
 
@@ -1490,7 +1491,10 @@ export const setupMethods = {
                 if (sa) sa.setVisible(v);
             },
         });
-        guiShowHideViews.add(this, "_showSAPage").name("SA Page").onChange((value) => {
+        guiShowHideViews.add(this, "_showSAPage").name("SA Page")
+            .tooltip("Show or hide the SA (situational awareness) page, a simulated jet cockpit display.\n" +
+                "It shows the loaded tracks as symbols around the camera track, seen from above.")
+            .onChange((value) => {
             if (value && !NodeMan.exists("SAPage")) {
                 this._createSAPage();
                 const sa = ViewMan.get("SAPage", false);
@@ -1518,7 +1522,9 @@ export const setupMethods = {
                     window.location.reload();
                 });
             };
-            guiMenus.gimbalAnalysis.add(this, "_addATFLIR").name("Add ATFLIR Pod (reload)");
+            guiMenus.gimbalAnalysis.add(this, "_addATFLIR").name("Add ATFLIR Pod (reload)")
+                .tooltip("Add the ATFLIR pod and the F/A-18 jet models to this sitch.\n" +
+                    "This saves the sitch to the server, then reloads the page.");
         }
         // ── end ATFLIR Pod ──────────────────────────────────────
 
@@ -1526,7 +1532,8 @@ export const setupMethods = {
         // Gimbal Analysis and is populated lazily by the ScenarioManager
         // (populateGimbalAnalysisMenu below) when Scenarios is first opened.
 
-        guiMenus.help.add({showInteractionHelp}, "showInteractionHelp").name("Mouse, touch and pen controls");
+        guiMenus.help.add({showInteractionHelp}, "showInteractionHelp").name("Mouse, touch and pen controls")
+            .tooltip("Open a window that lists what each mouse, touch and pen gesture does, in the 3D views, the video and each editing tool.");
 
         toggler('k', guiMenus.help.add(par, 'showKeyboardShortcuts').listen().name(t("custom.showHide.keyboardShortcuts.label")).onChange(value => {
             if (value) {
@@ -1763,6 +1770,7 @@ export const setupMethods = {
         this._liveTrafficStatusControl = feedsFolder
             .add(this, "liveTrafficStatus")
             .name(t("custom.showHide.liveTrafficStatus.label"))
+            .tooltip(t("custom.showHide.liveTrafficStatus.tooltip"))
             .listen()
             .disable();
         setInterval(() => {
@@ -1831,6 +1839,7 @@ export const setupMethods = {
 
             feedsFolder.add(this, statusKey)
                 .name(`  ↳ ${feed.label}`)
+                .tooltip(t("custom.showHide.liveFeedStatus.tooltip", {name: feed.label}))
                 .listen()
                 .disable();
         }
@@ -1917,7 +1926,7 @@ export const setupMethods = {
                     intensity: sensorSlider("Thermal Intensity", 1.0, 0.0, 1.0, 0.01,
                         "Crossfade between the unstyled image and the thermal look"),
                     sensitivity: sensorSlider("Thermal Sensitivity", 0.75, 0.0, 1.0, 0.01,
-                        "Contrast/range of the temperature mapping"),
+                        "Width of the brightness range, centered on mid-gray, that fills the thermal scale. Lower values give more contrast; 1 uses the full range.\nThis look is made from image brightness, not from a temperature model."),
                     bloom: sensorSlider("Thermal Bloom", 0.65, 0.0, 1.0, 0.01,
                         "Hot-spot bloom/bleed around bright (hot) areas"),
                     mode: sensorSlider("Thermal Black Hot", 0, 0, 1, 1,
@@ -1932,9 +1941,9 @@ export const setupMethods = {
 
                 insertSensorEffect("NightVision", "Custom_NightVision", "Thermal", {
                     intensity: sensorSlider("NVG Intensity", 1.0, 0.0, 1.0, 0.01,
-                        "Crossfade between the unstyled image and the NVG look"),
+                        "Crossfade between the unstyled image and the NVG (night-vision goggles) look"),
                     gain: sensorSlider("NVG Gain", 0.55, 0.0, 1.0, 0.01,
-                        "Intensifier gain: amplification, noise, and bloom balance"),
+                        "Intensifier gain. Higher values make the image brighter, with more grain noise and more bloom."),
                     bloom: sensorSlider("NVG Bloom", 0.30, 0.0, 1.0, 0.01,
                         "Halo intensity around bright sources"),
                     pixelation: sensorSlider("NVG Pixelation", 2.5, 1.0, 6.0, 0.1,
@@ -2019,7 +2028,8 @@ export const setupMethods = {
         // guiMenus.help.add(this, "showMirrorMenuDemo").name("Mirror Menu Demo").tooltip("Demonstrates how to mirror any GUI menu to create a standalone floating menu");
 
         if (isAdmin()) {
-            const adminFolder = guiMenus.help.addFolder("Admin");
+            const adminFolder = guiMenus.help.addFolder("Admin")
+                .tooltip(t("custom.admin.folder.tooltip"));
             adminFolder.add(this, "openAdminDashboard").name(t("custom.admin.dashboard.label")).tooltip(t("custom.admin.dashboard.tooltip"));
             adminFolder.add(this, "validateAllSitches").name(t("custom.admin.validateAllSitches.label")).tooltip(t("custom.admin.validateAllSitches.tooltip"));
             adminFolder.add(Globals, "testUserID", 0, 99999999, 1).noSlider().name(t("custom.admin.testUserID.label")).tooltip(t("custom.admin.testUserID.tooltip"))
@@ -2429,12 +2439,16 @@ export const setupMethods = {
                 labels: {"fixedCamera": "Manual Camera"},
                 desc: "Orbit Target",
                 gui: "cameraTweaks",
+                tooltip: "Track or position that the orbit camera circles.\n" +
+                    "Used only when Camera > Location > Position is Orbit.",
             });
 
             new CNodeGUIValue({
                 id: "orbitRadius",
                 value: 5000, start: 1, end: 100000, step: 1,
                 desc: "Orbit Radius (m)", gui: "cameraTweaks",
+                tooltip: "Horizontal distance from the Orbit Target to the camera, in meters.\n" +
+                    "Used only when Camera > Location > Position is Orbit.",
             });
 
             // Dedicated orbit altitude (HAE, meters). Replaces using the manual
@@ -2445,6 +2459,8 @@ export const setupMethods = {
                 id: "orbitAltitude",
                 value: 1000, start: 1, end: 20000, step: 1,
                 desc: "Orbit Altitude (m)", gui: "cameraTweaks",
+                tooltip: "Camera altitude for the whole orbit, in meters HAE (height above the ellipsoid).\n" +
+                    "Used only when Camera > Location > Position is Orbit.",
             });
 
             // Compass azimuth (degrees, clockwise from north) of the orbit's
@@ -2455,12 +2471,15 @@ export const setupMethods = {
                 id: "orbitStartAngle",
                 value: 0, start: 0, end: 360, step: 0.1,
                 desc: "Start Angle (°)", gui: "cameraTweaks",
+                tooltip: "Compass direction from the Orbit Target to the camera at frame 0, in degrees (0 = north, 90 = east).\n" +
+                    "The camera then moves clockwise, seen from above.",
             });
 
             new CNodeGUIValue({
                 id: "orbitPeriod",
                 value: 120, start: 60, end: 300, step: 1,
                 desc: "Orbit Period (s)", gui: "cameraTweaks",
+                tooltip: "Time for the camera to go once around the Orbit Target, in seconds.",
             });
 
             new CNodeOrbitTrack({
@@ -2535,13 +2554,25 @@ export const setupMethods = {
         const gc = this._gimbalConfig;
 
         if (Sit.gimbalSetup) {
-            gimbalFolder.add({status: "Active"}, "status").name("Status").disable();
+            gimbalFolder.add({status: "Active"}, "status").name("Status")
+                .tooltip("Shows that this sitch was made by Create Gimbal Sitch, so the Gimbal analysis is set up.")
+                .disable();
         }
 
-        gimbalFolder.add(gc, "cloudWindFrom", 0, 360, 1).name("Cloud Wind From");
-        gimbalFolder.add(gc, "cloudWindKnots", 0, 100, 1).name("Cloud Wind Knots");
-        gimbalFolder.add(gc, "showGlare").name("Show Glare");
-        gimbalFolder.add(gc, "showATFLIR").name("Show ATFLIR Pod");
+        gimbalFolder.add(gc, "cloudWindFrom", 0, 360, 1).name("Cloud Wind From")
+            .tooltip("Direction that the wind at the cloud layer comes FROM, in degrees true (0 = north, 90 = east).\n" +
+                "The Gimbal cloud speed graph uses it.\n" +
+                "A change takes effect when you click Create Gimbal Sitch or Apply Parameter Changes.");
+        gimbalFolder.add(gc, "cloudWindKnots", 0, 100, 1).name("Cloud Wind Knots")
+            .tooltip("Speed of the wind at the cloud layer, in knots.\n" +
+                "The Gimbal cloud speed graph uses it.\n" +
+                "A change takes effect when you click Create Gimbal Sitch or Apply Parameter Changes.");
+        gimbalFolder.add(gc, "showGlare").name("Show Glare")
+            .tooltip("Add the glare sprite to the Gimbal sitch. The sprite turns with the pod derotation.\n" +
+                "A change takes effect when you click Create Gimbal Sitch or Apply Parameter Changes.");
+        gimbalFolder.add(gc, "showATFLIR").name("Show ATFLIR Pod")
+            .tooltip("Add the 3D model of the ATFLIR pod to the Gimbal sitch.\n" +
+                "A change takes effect when you click Create Gimbal Sitch or Apply Parameter Changes.");
 
         const makeBaseGimbalSitch = (pipeline) => {
             // An empty `pipeline` object means "nothing auto-runs" — the
@@ -2668,7 +2699,10 @@ export const setupMethods = {
                     window.location.href = SITREC_SHARE_APP + "?custom=" + encodeShareParam(toShareableCustomValue(staticRef));
                 });
             };
-            gimbalFolder.add(this, "_enableGimbalAnalysis").name(">> Create Gimbal Sitch");
+            gimbalFolder.add(this, "_enableGimbalAnalysis").name(">> Create Gimbal Sitch")
+                .tooltip("Make a new Gimbal analysis sitch from the settings above, and load it.\n" +
+                    "A video and files that you dropped are carried over.\n" +
+                    "The new sitch is uploaded to the server, and the page then opens it.");
 
             // Variant: same base sitch, but with an EMPTY pipeline so nothing
             // auto-runs on load — user then clicks manual-build buttons.
@@ -2684,7 +2718,10 @@ export const setupMethods = {
                     window.location.href = SITREC_SHARE_APP + "?custom=" + encodeShareParam(toShareableCustomValue(staticRef));
                 });
             };
-            gimbalFolder.add(this, "_enableGimbalManualBase").name(">> Create Gimbal Base (manual build)");
+            gimbalFolder.add(this, "_enableGimbalManualBase").name(">> Create Gimbal Base (manual build)")
+                .tooltip("Make the same Gimbal sitch as Create Gimbal Sitch, but with no analysis steps run.\n" +
+                    "You then run each step yourself from the Manual Build folder of the new sitch.\n" +
+                    "The new sitch is uploaded to the server, and the page then opens it. Dropped videos and files are not carried over.");
         } else {
             this._updateGimbalConfig = () => {
                 // preserve pipeline flags, just update config knobs
@@ -2693,7 +2730,8 @@ export const setupMethods = {
                 Sit.showGlare = gc.showGlare;
                 this.serialize("Custom", getDateTimeFilename()).then(() => { window.location.reload(); });
             };
-            gimbalFolder.add(this, "_updateGimbalConfig").name("Apply Parameter Changes");
+            gimbalFolder.add(this, "_updateGimbalConfig").name("Apply Parameter Changes")
+                .tooltip("Save the settings above into this sitch, save the sitch to the server, and reload the page.");
 
             this._setupManualBuildFolder(gimbalFolder);
         }

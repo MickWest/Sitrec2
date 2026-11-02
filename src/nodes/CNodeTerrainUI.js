@@ -701,7 +701,8 @@ export class CNodeTerrainUI extends CNode {
             // Group the assorted tweak/debug controls into a "Terrain Tweaks" sub-folder to
             // keep the top-level Terrain menu uncluttered. Re-created each time the terrain UI
             // builds (per sitch), like the controllers it holds, so it self-heals on reload.
-            this.terrainTweaks = this.gui.addFolder("Terrain Tweaks").close();
+            this.terrainTweaks = this.gui.addFolder("Terrain Tweaks").close()
+                .tooltip("Holds detail, display and debug settings for the terrain and the 3D buildings.");
 
             // a toggle to show or hide the debug elevation grid
 
@@ -713,7 +714,7 @@ export class CNodeTerrainUI extends CNode {
             this.zoomToTrackSwitchObject = new CNodeSwitch({
                 id: "zoomToTrack", kind: "Switch",
                 inputs: {"-": "null"}, desc: "Zoom to track",
-                tip: "Zoom to the extents of the selected track (for the duration of the Sitch frames)",
+                tooltip: "Pick a track to fit the terrain to it. This sets lat, lon and zoom to cover the track over the sitch frames, then loads the terrain again.",
             }, this.gui).onChange(track => {
                 this.zoomToTrack(track)
             })
@@ -888,7 +889,7 @@ export class CNodeTerrainUI extends CNode {
             // conservatively (min 8), and not saved with the sitch.
             if (isAdmin()) {
                 this.terrainTweaks.add(this, "buildingErrorTarget", 8, 40, 1).name("Building Detail (SSE)")
-                    .tooltip("ADMIN: 3D building tile detail = screen-space-error target (px). LOWER = sharper but MORE billed Google tile downloads. Default 20 (Google's recommended).")
+                    .tooltip("Admin only. Screen-space error (SSE) target for the 3D building tiles, in pixels. A lower value is sharper, but loads more billed tiles. Default 20. Not saved with the sitch.")
                     .onChange(v => { if (this.buildingsNode) this.buildingsNode.setErrorTarget(v); });
             }
 
@@ -1304,7 +1305,8 @@ export class CNodeTerrainUI extends CNode {
             // Need to load the globe
             console.log("Loading globe (useGlobe=true, dynamicSubdivision=false)");
             par.globe = addAlignedGlobe(Sit.globeScale ?? (Sit.terrain !== undefined ? 0.9999 : 1.0));
-            showHider(par.globe, "[G]lobe", true, "g").name(t("showHiders.globe.label"));
+            showHider(par.globe, "[G]lobe", true, "g").name(t("showHiders.globe.label"))
+                .tooltip(t("showHiders.globe.tooltip"));
         } else if (!shouldShowGlobe && par.globe) {
             // Need to hide/remove the globe
             console.log("Hiding globe (useGlobe=" + Sit.useGlobe + ", dynamicSubdivision=" + Globals.dynamicSubdivision + ")");
@@ -1428,7 +1430,8 @@ export class CNodeTerrainUI extends CNode {
     // this.treeFlattenParams object.
     buildTreeRemovalGUI() {
         const tf = this.treeFlattenParams;
-        const root = this.gui.addFolder("Remove Geometry").close();
+        const root = this.gui.addFolder("Remove Geometry").close()
+            .tooltip("Flatten or delete parts of the Google Photorealistic 3D tiles, such as trees, with a brush or with the automatic tree removal. Works only while 3D Buildings shows Google Photorealistic tiles.\nThe edits are saved with the sitch.");
         // An automatic-heuristic param changed — restore and re-run with new params.
         const onParamChange = () => {
             if (this.buildingsNode) this.buildingsNode.applyTreeFlattenParams();
@@ -1482,17 +1485,25 @@ export class CNodeTerrainUI extends CNode {
         // Root: reset everything (drop saved edits + restore original geometry).
         root.add({restore: () => { if (this.buildingsNode) this.buildingsNode.clearAllEdits(); }}, "restore")
             .name("Restore Geometry")
-            .tooltip("Reset everything: discard the saved manual edits and restore all tiles to their original geometry");
+            .tooltip("Discard all saved brush strokes and restore all tiles to their original geometry. This cannot be undone.\nIf Flatten Trees is on, the automatic pass runs again.");
 
         // Pass 2 — automatic tree-removal heuristics in a sub-menu at the BOTTOM,
         // with their own sub-sub-folders grouped by def.folder.
-        const autoRoot = root.addFolder("Automatic Tree Removal").close();
+        const autoRoot = root.addFolder("Automatic Tree Removal").close()
+            .tooltip("Settings for the automatic pass that finds trees in the Google Photorealistic tiles near the camera and flattens them. Turn on Flatten Trees to use it.");
+        const subFolderTooltips = {
+            "Ground Plane": "Settings for fitting one ground plane to each tile. The height above this plane decides what is ground.",
+            "Tree Detection": "Color tests that mark a vertex as green foliage.",
+            "Building Detection": "Settings that find buildings, which the automatic pass keeps. Other geometry above the ground is flattened.",
+            "Clustering": "Settings for the flatten grid, and for deleting small or floating pieces of geometry.",
+        };
         const subFolders = {};
         for (const def of TREE_FLATTEN_DEFS) {
             if (def.top) continue;
             let f = autoRoot;
             if (def.folder) {
-                if (!subFolders[def.folder]) subFolders[def.folder] = autoRoot.addFolder(def.folder).close();
+                if (!subFolders[def.folder]) subFolders[def.folder] = autoRoot.addFolder(def.folder).close()
+                    .tooltip(subFolderTooltips[def.folder] ?? "");
                 f = subFolders[def.folder];
             }
             addControl(f, def);
@@ -1500,7 +1511,7 @@ export class CNodeTerrainUI extends CNode {
         // Auto sub-menu: restore + re-run the automatic pass with current params.
         autoRoot.add({rerun: () => { if (this.buildingsNode) this.buildingsNode.applyTreeFlattenParams(); }}, "rerun")
             .name("Re-run")
-            .tooltip("Restore and re-process visible tiles with the current automatic parameters");
+            .tooltip("Restore the original geometry and run the automatic pass again with the current settings. Saved brush strokes are applied again.\nNo effect when Flatten Trees is off.");
     }
 
     // Build the "Paint On Ground" GUI folder, data-driven from GROUND_PAINT_DEFS.
@@ -1510,7 +1521,8 @@ export class CNodeTerrainUI extends CNode {
     buildGroundPaintGUI() {
         const gp = this.groundPaintParams;
         const painter = this.groundPainter;
-        const root = this.gui.addFolder("Paint On Ground").close();
+        const root = this.gui.addFolder("Paint On Ground").close()
+            .tooltip("Paint colors onto the ground images (the terrain map and the 3D tiles) with a brush. The strokes are saved with the sitch.");
 
         for (const def of GROUND_PAINT_DEFS) {
             let ctrl;
@@ -1543,7 +1555,7 @@ export class CNodeTerrainUI extends CNode {
 
         root.add({clear: () => painter.clearAllPaint()}, "clear")
             .name("Clear Paint")
-            .tooltip("Discard every stroke and restore all tiles to their original imagery");
+            .tooltip("Discard every stroke and restore all tiles to their original imagery. This cannot be undone.");
     }
 
     // treeFlattenParams and groundPaintParams are serialized as whole objects, but

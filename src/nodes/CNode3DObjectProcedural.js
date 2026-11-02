@@ -22,15 +22,26 @@ export const proceduralObjectMethods = {
             retry: () => {this.currentModel = undefined; this.rebuild();},
         };
         this.vehicleControls = {};
+        const tips = {
+            browse: "Open the Vehicle Designer to choose a car, truck, aircraft, drone, balloon or sky lantern.\n"
+                + "The design you apply becomes this object's model.",
+            edit: "Open the Vehicle Designer on this object's current design, to change it.",
+            freeze: "Make a GLB model file from this design, and use it in place of the design.\n"
+                + "The file is saved with the sitch. The design is kept, so Edit design… still works.",
+            file: "Stop using the vehicle design, and go back to the model selected in Model.",
+            retry: "Try again to build or load the vehicle model. Shown only after a load fails.",
+        };
         for (const [key, label] of Object.entries({browse:"Browse vehicles…", edit:"Edit design…", freeze:"Freeze as GLB", file:"Use file model", retry:"Retry model load"})) {
-            const control = this.gui.add(actions, key).name(label);
+            const control = this.gui.add(actions, key).name(label).tooltip(tips[key]);
             control.isCommon = true; this.vehicleControls[key] = control;
         }
         const animation = this.gui.add(this, "vehicleAnimation").name("Animate moving parts").onChange(() => {
             this.updateVehicleAnimation(0); markSitchDirty(); setRenderOne(true);
-        });
+        }).tooltip("Spin the propellers of the vehicle design as the sitch time runs. Off holds them still.");
         animation.isCommon = true; this.vehicleControls.animation = animation;
-        const status = this.gui.add(this, "vehicleStatus").name("Vehicle").listen().disable();
+        const status = this.gui.add(this, "vehicleStatus").name("Vehicle")
+            .tooltip("The vehicle design this object uses, and its state: procedural, frozen, loading, or the load error.")
+            .listen().disable();
         status.isCommon = true; this.vehicleControls.status = status;
     },
 

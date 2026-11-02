@@ -77,7 +77,7 @@ test('restore refreshes all permanent controllers and editing marks the sitch di
             all.push(c);
             return c;
         },
-        addFolder() {return this;}, close() {return this;}, perm() {return this;},
+        addFolder() {return this;}, close() {return this;}, perm() {return this;}, tooltip() {return this;},
     };
     guiMenus.videoFormat = folder;
     setupVideoFormatEffectsMenu();

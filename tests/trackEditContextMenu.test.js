@@ -35,7 +35,7 @@ beforeEach(() => {
     menu = {destroy: jest.fn(), open: jest.fn(), add: (data, key) => {
         const action = {run: data[key], enabled: true}; actions.push(action);
         const controller = {name: label => { action.label = label; return controller; },
-            disable: () => { action.enabled = false; }};
+            tooltip: () => controller, disable: () => { action.enabled = false; }};
         return controller;
     }};
     createStandaloneMenu = jest.fn(() => menu);

@@ -930,6 +930,8 @@ export function activateFootball() {
             default: "Target",
             desc: "Launch From Track",
             gui: "football",
+            tooltip: "Track that the ball is kicked from. The ball rests at this track's position at Launch Frame, then flies.\n"
+                + "The ball bounces on a flat plane through that launch point.",
         });
     }
 
@@ -949,7 +951,8 @@ export function activateFootball() {
         "Air Drag Cd", "Drag coefficient. ~0.2-0.25 for a fast soccer ball, 0 = vacuum", folder);
 
     const showBall = guiFlag("footballShowBall", false, "Show Football",
-        "Show the ball, its trajectory, and enable the simulation", folder);
+        "Show the ball and its flight path in white.\n"
+        + "A gray path and a half-transparent ball show the same kick with the opposite Ball Bounces Off Wires setting.", folder);
     const wireCollide = guiFlag("footballWireCollide", true, "Ball Bounces Off Wires",
         "When on, the ball deflects off cable-cam wires; when off it passes through (contacts still reported)", folder);
 
@@ -957,7 +960,9 @@ export function activateFootball() {
     // change, so look the controller up by name rather than caching blindly.
     statusController = folder.controllers.find(c => c._name === "Wire Contact");
     if (!statusController) {
-        statusController = folder.add(footballStatus, "contact").name("Wire Contact");
+        statusController = folder.add(footballStatus, "contact").name("Wire Contact")
+            .tooltip("Shows the first ball-wire contact, by wire and frame, and the number of later contacts.\n"
+                + "With no contact, shows the closest approach of the ball to a wire, in meters. Read-only.");
         statusController.disable();
     }
 
@@ -970,19 +975,22 @@ export function activateFootball() {
         loadScenario: () => loadGoalKickScenario(),
     };
     if (!folder.controllers.find(c => c._name === "Set Launch Frame = Now")) {
-        folder.add(actions, "kickNow").name("Set Launch Frame = Now");
+        folder.add(actions, "kickNow").name("Set Launch Frame = Now")
+            .tooltip("Set Launch Frame to the current frame.");
     }
 
     // ── pitch frame + cable cam ─────────────────────────────────
     // Pitch center defaults to ground under the current target; the scenario
     // (or the user, via the LLA fields) moves it to a real stadium.
-    footballSubFolder("footballPitchLoc", "Pitch Location");
+    footballSubFolder("footballPitchLoc", "Pitch Location")
+        .tooltip("Position of the pitch center. The cable-cam wires, the pitch overlay and the broadcast camera are placed from it.");
     if (!NodeMan.exists("footballPitchCenter")) {
         new CNodePositionLLA({
             id: "footballPitchCenter",
             LLA: worldToPositionLLA(targetTrack.p(0)),
             desc: "Pitch Center",
             gui: "footballPitchLoc",
+            tipName: "Pitch center",
         });
     }
     // getPitchFrame() reads this node's p(0) via the NodeMan side-channel
@@ -1102,7 +1110,7 @@ export function activateFootball() {
 
     // FOV: a wide spidercam lens as a Camera FOV source.
     const cableCamFOV = guiValue("footballCableCamFOV", GOAL_KICK_SCENARIO.cableCamFOV, 10, 120, 0.5,
-        "Cable Cam FOV (°)", "Vertical FOV of the cable-cam lens (used when Camera FOV source = Cable Cam)", folder);
+        "Cable Cam FOV (°)", "Vertical field of view of the cable-cam lens, in degrees.\nUsed only when Camera > FOV (Zoom) > Camera FOV is set to Cable Cam.", folder);
     const fovSwitch = NodeMan.get("fovSwitch", false);
     if (fovSwitch && fovSwitch.inputs["Cable Cam"] === undefined) {
         fovSwitch.addOption("Cable Cam", cableCamFOV);
@@ -1257,7 +1265,8 @@ export function activateFootball() {
     applyWiresLookLayers();   // sync layer mask to the current flag state
 
     // ── broadcast ("center field") camera + view ────────────────
-    footballSubFolder("footballCamLoc", "Broadcast Camera Position");
+    footballSubFolder("footballCamLoc", "Broadcast Camera Position")
+        .tooltip("Where the broadcast camera of Show Broadcast View is: a manual position or a track.");
     if (!NodeMan.exists("footballBroadcastCamPos")) {
         const bc = pitchToWorld(GOAL_KICK_SCENARIO.broadcastCam.along,
             GOAL_KICK_SCENARIO.broadcastCam.across,
@@ -1267,6 +1276,7 @@ export function activateFootball() {
             LLA: bc ? worldToPositionLLA(bc) : [0, 0, 100],
             desc: "Broadcast Camera",
             gui: "footballCamLoc",
+            tipName: "Broadcast camera",
             locationTools: false,   // no Lookup / Geolocate / Go To
         });
     }
@@ -1288,6 +1298,9 @@ export function activateFootball() {
             default: "Manual Position",
             desc: "Position",
             gui: "footballCamLoc",
+            tooltip: "Source of the broadcast camera position.\n"
+                + "Manual Position: the Lat, Lon and Alt values below.\n"
+                + "A track: the camera rides that track, and the manual values are grayed out.",
         });
         sw.controller?.moveToFirst?.();
     }
@@ -1319,7 +1332,7 @@ export function activateFootball() {
     const viewFOV = guiValue("footballViewFOV", 25, 1, 90, 0.1,
         "Broadcast FOV (°)", "Vertical field of view of the broadcast camera view", folder);
     const showView = guiFlag("footballShowView", false, "Show Broadcast View",
-        "Show the view from the center-field broadcast camera, following the ball", folder);
+        "Show the view from the broadcast camera. It aims midway between the ball and the pitch center.", folder);
 
     if (!NodeMan.exists("footballBroadcastCamera")) {
         new CNodeCamera({
@@ -1377,6 +1390,8 @@ export function activateFootball() {
         // not own a tile layer of their own — a third subdivision driver
         // causes tile churn, which cascades into ground-overlay rebuilds.
         fv.tileLayers = 0;
+        fv.showHideController?.tooltip("Show the view from the football broadcast camera. "
+            + "It aims midway between the ball and the pitch center.");
     }
 
     // Show/hide the broadcast view with its checkbox
@@ -1425,8 +1440,10 @@ export function setupFootball() {
         "Create the football launcher, cable cam, and broadcast camera. "
         + "Their controls appear in this folder (and the Camera menu) once enabled.");
     addButton("loadScenario", "Load " + GOAL_KICK_SCENARIO.name,
-        "Enable the simulation and configure the whole scene to replicate the "
-        + "2026 England-Norway goal-kick / spidercam wire incident.");
+        "Enable the simulation and set up the whole scene to replicate the "
+        + "2026 England-Norway goal-kick / spidercam wire incident.\n"
+        + "This moves the Target and the camera, changes the date and time, "
+        + "and adds a ball g-force graph.");
     syncEnableButton();
     folder.close();
 }

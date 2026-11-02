@@ -216,7 +216,8 @@ export class CNodeView3D extends CNodeViewCanvas {
                 setRenderOne(true);
             }).tooltip(t("view3d.atmosphere.tooltip"));
 
-            const atmoFolder = guiMenus.lighting.addFolder("Atmosphere Tweaks").close();
+            const atmoFolder = guiMenus.lighting.addFolder("Atmosphere Tweaks").close()
+                .tooltip(t("view3d.atmosphereTweaks.tooltip"));
             atmoFolder.add(this, "atmosphereHaze").name(t("view3d.atmoHaze.label")).listen()
                 .onChange(() => setRenderOne(true))
                 .tooltip(t("view3d.atmoHaze.tooltip"));
@@ -224,7 +225,8 @@ export class CNodeView3D extends CNodeViewCanvas {
                 setRenderOne(true);
             }).tooltip(t("view3d.atmoVisibility.tooltip"));
 
-            const outputFolder = guiMenus.lighting.addFolder("Look View Output").close();
+            const outputFolder = guiMenus.lighting.addFolder("Look View Output").close()
+                .tooltip(t("view3d.lookViewOutput.tooltip"));
             outputFolder.add(this, "toneMappingEnabled").name(t("view3d.toneMapping.label")).listen()
                 .onChange(() => setRenderOne(true)).tooltip(t("view3d.toneMapping.tooltip"));
             outputFolder.add(this, "viewExposure", 0.1, 5.0, 0.01).name(t("view3d.viewExposure.label")).listen()
@@ -344,28 +346,45 @@ export class CNodeView3D extends CNodeViewCanvas {
         // Setup debug GUI once (shared across all views)
         // Only add debug GUI if this is the first mainView and help menu exists
         if (isLocal && this.id === "mainView" && guiMenus && guiMenus.help && !guiMenus.help._renderDebugFolderAdded) {
-            const debugFolder = guiMenus.debug.addFolder("Render Debug");
+            const debugFolder = guiMenus.debug.addFolder("Render Debug")
+                .tooltip(t("view3d.debugTips.folder"));
 
             // Add controls for global render debug flags (affects ALL views)
-            debugFolder.add(Globals.renderDebugFlags, "dbg_clearBackground").name(t("view3d.debug.clearBackground")).onChange(() => setRenderOne(true));
-            debugFolder.add(Globals.renderDebugFlags, "dbg_renderSky").name(t("view3d.debug.renderSky")).onChange(() => setRenderOne(true));
-            debugFolder.add(Globals.renderDebugFlags, "dbg_renderDaySky").name(t("view3d.debug.renderDaySky")).onChange(() => setRenderOne(true));
-            debugFolder.add(Globals.renderDebugFlags, "dbg_renderMainScene").name(t("view3d.debug.renderMainScene")).onChange(() => setRenderOne(true));
-            debugFolder.add(Globals.renderDebugFlags, "dbg_renderEffects").name(t("view3d.debug.renderEffects")).onChange(() => setRenderOne(true));
-            debugFolder.add(Globals.renderDebugFlags, "dbg_copyToScreen").name(t("view3d.debug.copyToScreen")).onChange(() => setRenderOne(true));
-            debugFolder.add(Globals.renderDebugFlags, "dbg_updateCameraMatrices").name(t("view3d.debug.updateCameraMatrices")).onChange(() => setRenderOne(true));
-            debugFolder.add(Globals.renderDebugFlags, "dbg_mainViewUseLookLayers").name(t("view3d.debug.mainUseLookLayers")).onChange(() => setRenderOne(true));
-            debugFolder.add(Globals.renderDebugFlags, "dbg_sRGBOutputEncoding").name(t("view3d.debug.sRGBOutputEncoding")).onChange(() => setRenderOne(true));
+            debugFolder.add(Globals.renderDebugFlags, "dbg_clearBackground").name(t("view3d.debug.clearBackground")).onChange(() => setRenderOne(true))
+                .tooltip(t("view3d.debugTips.clearBackground"));
+            debugFolder.add(Globals.renderDebugFlags, "dbg_renderSky").name(t("view3d.debug.renderSky")).onChange(() => setRenderOne(true))
+                .tooltip(t("view3d.debugTips.renderSky"));
+            debugFolder.add(Globals.renderDebugFlags, "dbg_renderDaySky").name(t("view3d.debug.renderDaySky")).onChange(() => setRenderOne(true))
+                .tooltip(t("view3d.debugTips.renderDaySky"));
+            debugFolder.add(Globals.renderDebugFlags, "dbg_renderMainScene").name(t("view3d.debug.renderMainScene")).onChange(() => setRenderOne(true))
+                .tooltip(t("view3d.debugTips.renderMainScene"));
+            debugFolder.add(Globals.renderDebugFlags, "dbg_renderEffects").name(t("view3d.debug.renderEffects")).onChange(() => setRenderOne(true))
+                .tooltip(t("view3d.debugTips.renderEffects"));
+            debugFolder.add(Globals.renderDebugFlags, "dbg_copyToScreen").name(t("view3d.debug.copyToScreen")).onChange(() => setRenderOne(true))
+                .tooltip(t("view3d.debugTips.copyToScreen"));
+            debugFolder.add(Globals.renderDebugFlags, "dbg_updateCameraMatrices").name(t("view3d.debug.updateCameraMatrices")).onChange(() => setRenderOne(true))
+                .tooltip(t("view3d.debugTips.updateCameraMatrices"));
+            debugFolder.add(Globals.renderDebugFlags, "dbg_mainViewUseLookLayers").name(t("view3d.debug.mainUseLookLayers")).onChange(() => setRenderOne(true))
+                .tooltip(t("view3d.debugTips.mainUseLookLayers"));
+            debugFolder.add(Globals.renderDebugFlags, "dbg_sRGBOutputEncoding").name(t("view3d.debug.sRGBOutputEncoding")).onChange(() => setRenderOne(true))
+                .tooltip(t("view3d.debugTips.sRGBOutputEncoding"));
 
-            debugFolder.add(Globals, "tileDelay", 0, 5, 0.01).name(t("view3d.debug.tileLoadDelay")).onChange(() => setRenderOne(true));
+            debugFolder.add(Globals, "tileDelay", 0, 5, 0.01).name(t("view3d.debug.tileLoadDelay")).onChange(() => setRenderOne(true))
+                .tooltip(t("view3d.debugTips.tileLoadDelay"));
 
             // Add renderSky sub-folder
-            const skyFolder = debugFolder.addFolder("Sky Steps");
-            skyFolder.add(Globals.renderDebugFlags, "dbg_updateStarScales").name(t("view3d.debug.updateStarScales")).onChange(() => setRenderOne(true));
-            skyFolder.add(Globals.renderDebugFlags, "dbg_updateSatelliteScales").name(t("view3d.debug.updateSatelliteScales")).onChange(() => setRenderOne(true));
-            skyFolder.add(Globals.renderDebugFlags, "dbg_renderNightSky").name(t("view3d.debug.renderNightSky")).onChange(() => setRenderOne(true));
-            skyFolder.add(Globals.renderDebugFlags, "dbg_renderFullscreenQuad").name(t("view3d.debug.renderFullscreenQuad")).onChange(() => setRenderOne(true));
-            skyFolder.add(Globals.renderDebugFlags, "dbg_renderSunSky").name(t("view3d.debug.renderSunSky")).onChange(() => setRenderOne(true));
+            const skyFolder = debugFolder.addFolder("Sky Steps")
+                .tooltip(t("view3d.debugTips.skySteps"));
+            skyFolder.add(Globals.renderDebugFlags, "dbg_updateStarScales").name(t("view3d.debug.updateStarScales")).onChange(() => setRenderOne(true))
+                .tooltip(t("view3d.debugTips.updateStarScales"));
+            skyFolder.add(Globals.renderDebugFlags, "dbg_updateSatelliteScales").name(t("view3d.debug.updateSatelliteScales")).onChange(() => setRenderOne(true))
+                .tooltip(t("view3d.debugTips.updateSatelliteScales"));
+            skyFolder.add(Globals.renderDebugFlags, "dbg_renderNightSky").name(t("view3d.debug.renderNightSky")).onChange(() => setRenderOne(true))
+                .tooltip(t("view3d.debugTips.renderNightSky"));
+            skyFolder.add(Globals.renderDebugFlags, "dbg_renderFullscreenQuad").name(t("view3d.debug.renderFullscreenQuad")).onChange(() => setRenderOne(true))
+                .tooltip(t("view3d.debugTips.renderFullscreenQuad"));
+            skyFolder.add(Globals.renderDebugFlags, "dbg_renderSunSky").name(t("view3d.debug.renderSunSky")).onChange(() => setRenderOne(true))
+                .tooltip(t("view3d.debugTips.renderSunSky"));
 
             // Mark folder + all children permanent so they survive
             // disposeEverything()'s menuBar.destroy(false) on every sitch

@@ -34,12 +34,14 @@ export class CNodeCityLights extends CNode {
         this.addSimpleSerials(SERIALS);
         this.masks = new CityLightsMasks(status => {this.status = status; setRenderOne(true);});
         this.regions = new Map();
-        this.gui = guiMenus.lighting?.addFolder("City Lights").close();
+        this.gui = guiMenus.lighting?.addFolder("City Lights").close()
+            .tooltip("Approximate city lights at night, drawn on the 3D building tiles (Terrain > 3D Buildings): road lamps and lit windows.");
         if (this.gui) {
             this.gui.add(this, "enabled").name("Show City Lights").listen().onChange(() => this.recalculate())
-                .tooltip("Approximate nighttime lights on 3D map tiles. Lamp positions and occupied windows are synthetic.")
+                .tooltip("Approximate nighttime lights on 3D map tiles. Lamp positions and occupied windows are synthetic.\nIt needs Terrain > 3D Buildings. The lights show where the Sun is down.")
                 .asFolderToggle();
-            this.gui.add(this, "method", METHODS).name("Method").listen().onChange(() => this.recalculate());
+            this.gui.add(this, "method", METHODS).name("Method").listen().onChange(() => this.recalculate())
+                .tooltip("How Sitrec places the lights:\nMapped Roads and Buildings: road lamps, and lit windows on mapped buildings, from downloaded map data.\nGeometry Windows: lit windows on the walls of the 3D tiles. No download.\nTexture Regularity: lights where the tile image has straight, regular edges. No download.\nHybrid: Mapped Roads and Buildings, plus dim windows on all walls.");
             this.densityControllers = [];
             for (const [property, label] of [["roads", "Road Lights (%)"], ["paths", "Paths / Parking (%)"], ["windows", "Lit Windows (%)"]]) {
                 const controller = this.gui.add(this, property, 0, 100, 1).name(label).listen()
@@ -48,10 +50,13 @@ export class CNodeCityLights extends CNode {
                 if (property !== "windows") this.densityControllers.push(controller);
                 else this.windowController = controller;
             }
-            this.gui.add(this, "intensity", 0, 3, .05).name("Light Intensity").listen().onChange(() => this.recalculate());
-            this.gui.add(this, "groundBrightness", 0, 1, .02).name("Ground Brightness").listen().onChange(() => this.recalculate());
+            this.gui.add(this, "intensity", 0, 3, .05).name("Light Intensity").listen().onChange(() => this.recalculate())
+                .tooltip("Brightness multiplier for the city lights, from 0 to 3. The default is 1.");
+            this.gui.add(this, "groundBrightness", 0, 1, .02).name("Ground Brightness").listen().onChange(() => this.recalculate())
+                .tooltip("How bright the 3D tiles stay at night, as a fraction of their daytime color. 0 is black and 1 is not darkened. The default is 0.22.");
             this.gui.add(this, "reloadLights").name("Reload Lights").tooltip("Retry loading city-light data for the current views.");
-            this.gui.add(this, "status").name("Status").listen().disable();
+            this.gui.add(this, "status").name("Status").listen().disable()
+                .tooltip("The state of the city lights: Off, Loading, Ready, or a problem such as \"Requires 3D map tiles\".");
         }
         this.recalculate();
     }

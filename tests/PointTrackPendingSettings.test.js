@@ -37,7 +37,7 @@ function fakeFolder(controls) {
         add: (object, property) => controller(controls, object, property),
         addColor: (object, property) => controller(controls, object, property),
         addFolder: () => fakeFolder(controls),
-        close: () => folder, perm: () => folder,
+        close: () => folder, perm: () => folder, tooltip: () => folder,
     };
     return folder;
 }

@@ -33,6 +33,7 @@ function menu() {
         addFolder() { return folder; },
         close() { return folder; },
         perm() { return folder; },
+        tooltip() { return folder; },
     };
     addPointTrackFrequencyMenu(folder);
     return calls.find(call => call.key === 'minPeakHz');

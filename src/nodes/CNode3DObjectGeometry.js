@@ -272,8 +272,8 @@ export const gTypes = {
         g: SphereGeometry,
         params: {
             radius: [[0.5, 0.01, 100, 0.01], "Radius of the sphere"],
-            widthSegments: [10, 4, 40, 1],
-            heightSegments: [10, 3, 40, 1],
+            widthSegments: [[10, 4, 40, 1], "Number of segments around the sphere. More segments look smoother and draw more slowly."],
+            heightSegments: [[10, 3, 40, 1], "Number of segments from the top of the sphere to the bottom. More segments look smoother and draw more slowly."],
         }
     },
     ellipsoid: {
@@ -281,93 +281,93 @@ export const gTypes = {
         params: {
             radius: [[0.5, 0.01, 100, 0.01], "Horizontal radius of the ellipsoid"],
             aspect: [[1.0, 0.01, 5.0, 0.001], "Aspect ratio - vertical radius / horizontal radius"],
-            widthSegments: [32, 4, 64, 1],
-            heightSegments: [16, 3, 32, 1],
+            widthSegments: [[32, 4, 64, 1], "Number of segments around the ellipsoid. More segments look smoother and draw more slowly."],
+            heightSegments: [[16, 3, 32, 1], "Number of segments from the top of the ellipsoid to the bottom. More segments look smoother and draw more slowly."],
         }
     },
     box: {
         g: BoxGeometry,
         params: {
-            width: [1, 0.01, 100, 0.01],
-            height: [1, 0.01, 100, 0.01],
-            depth: [1, 0.01, 100, 0.01],
+            width: [[1, 0.01, 100, 0.01], "Size of the box along its local X axis, in meters."],
+            height: [[1, 0.01, 100, 0.01], "Size of the box along its local Y axis, in meters."],
+            depth: [[1, 0.01, 100, 0.01], "Size of the box along its local Z axis, in meters."],
         }
     },
     capsule: {
         g: CapsuleGeometryTL,
         params: {
-            radius: [0.5, 0.01, 20, 0.01],
-            totalLength: [5, 0.01, 30, 0.01],
-            capSegments: [20, 4, 40, 1],
-            radialSegments: [20, 4, 40, 1],
+            radius: [[0.5, 0.01, 20, 0.01], "Radius of the capsule body and of its rounded ends, in meters."],
+            totalLength: [[5, 0.01, 30, 0.01], "Length of the capsule from end to end, including the rounded ends, in meters."],
+            capSegments: [[20, 4, 40, 1], "Number of segments in each rounded end. More segments look smoother and draw more slowly."],
+            radialSegments: [[20, 4, 40, 1], "Number of segments around the capsule. More segments look smoother and draw more slowly."],
         }
     },
 
     circle: {
         g: CircleGeometry,
         params: {
-            radius: [0.5, 0.01, 100, 0.01],
-            segments: [10, 3, 100, 1],
+            radius: [[0.5, 0.01, 100, 0.01], "Radius of the flat disc, in meters."],
+            segments: [[10, 3, 100, 1], "Number of segments around the edge of the disc. More segments look smoother and draw more slowly."],
         }
     },
 
     cone: {
         g: ConeGeometry,
         params: {
-            radius: [0.5, 0.01, 100, 0.01],
-            height: [1, 0, 100, 0.01],
-            radialSegments: [10, 4, 40, 1],
-            heightSegments: [10, 3, 40, 1],
+            radius: [[0.5, 0.01, 100, 0.01], "Radius of the base of the cone, in meters."],
+            height: [[1, 0, 100, 0.01], "Height of the cone from its base to its tip, in meters."],
+            radialSegments: [[10, 4, 40, 1], "Number of segments around the cone. More segments look smoother and draw more slowly."],
+            heightSegments: [[10, 3, 40, 1], "Number of rows of segments from the base to the tip."],
         }
     },
 
     cylinder: {
         g: CylinderGeometry,
         params: {
-            radiusTop: [0.5, 0.01, 100, 0.01],
-            radiusBottom: [0.5, 0.01, 100, 0.01],
-            height: [1, 0, 100, 0.01],
-            radialSegments: [10, 4, 40, 1],
-            heightSegments: [10, 3, 40, 1],
+            radiusTop: [[0.5, 0.01, 100, 0.01], "Radius of the top end of the cylinder, in meters."],
+            radiusBottom: [[0.5, 0.01, 100, 0.01], "Radius of the bottom end of the cylinder, in meters."],
+            height: [[1, 0, 100, 0.01], "Height of the cylinder, in meters."],
+            radialSegments: [[10, 4, 40, 1], "Number of segments around the cylinder. More segments look smoother and draw more slowly."],
+            heightSegments: [[10, 3, 40, 1], "Number of rows of segments from the bottom to the top."],
             openEnded: [false, "Whether the ends of the cylinder are open or closed"],
-            thetaStart: [0, 0, 2 * Math.PI, 0.01],
-            thetaLength: [2 * Math.PI, 0, 2 * Math.PI, 0.1],
+            thetaStart: [[0, 0, 2 * Math.PI, 0.01], "Angle around the axis, in radians, where the cylinder wall starts. Use it with Theta Length to make part of a cylinder."],
+            thetaLength: [[2 * Math.PI, 0, 2 * Math.PI, 0.1], "Angle, in radians, that the cylinder wall goes around its axis. 6.28 (2π) is a full cylinder."],
         }
     },
 
     dodecahedron: {
         g: DodecahedronGeometry,
         params: {
-            radius: [0.5, 0.1, 100, 0.01],
-            detail: [0, 0, 5, 1],
+            radius: [[0.5, 0.1, 100, 0.01], "Distance from the center of the dodecahedron to each corner, in meters."],
+            detail: [[0, 0, 5, 1], "How many times each face is divided. 0 is a plain dodecahedron. Higher values make it more like a sphere."],
         }
     },
 
     icosahedron: {
         g: IcosahedronGeometry,
         params: {
-            radius: [0.5, 0.01, 100, 0.01],
-            detail: [0, 0, 5, 1],
+            radius: [[0.5, 0.01, 100, 0.01], "Distance from the center of the icosahedron to each corner, in meters."],
+            detail: [[0, 0, 5, 1], "How many times each face is divided. 0 is a plain icosahedron. Higher values make it more like a sphere."],
         }
     },
 
     octahedron: {
         g: OctahedronGeometry,
         params: {
-            radius: [0.5, 0.01, 100, 0.01],
-            detail: [0, 0, 5, 1],
+            radius: [[0.5, 0.01, 100, 0.01], "Distance from the center of the octahedron to each corner, in meters."],
+            detail: [[0, 0, 5, 1], "How many times each face is divided. 0 is a plain octahedron. Higher values make it more like a sphere."],
         }
     },
 
     ring: {
         g: RingGeometry,
         params: {
-            innerRadius: [0.25, 0.0, 100, 0.01],
-            outerRadius: [0.5, 0.01, 100, 0.01],
-            thetaSegments: [10, 3, 100, 1],
-            phiSegments: [10, 3, 100, 1],
-            thetaStart: [0, 0, 2 * Math.PI, 0.01],
-            thetaLength: [2 * Math.PI, 0, 2 * Math.PI, 0.1],
+            innerRadius: [[0.25, 0.0, 100, 0.01], "Radius of the hole in the middle of the ring, in meters. 0 makes a disc."],
+            outerRadius: [[0.5, 0.01, 100, 0.01], "Radius of the outer edge of the ring, in meters."],
+            thetaSegments: [[10, 3, 100, 1], "Number of segments around the ring. More segments look smoother and draw more slowly."],
+            phiSegments: [[10, 3, 100, 1], "Number of rows of segments from the inner edge to the outer edge."],
+            thetaStart: [[0, 0, 2 * Math.PI, 0.01], "Angle, in radians, where the ring starts. Use it with Theta Length to make part of a ring."],
+            thetaLength: [[2 * Math.PI, 0, 2 * Math.PI, 0.1], "Angle, in radians, that the ring goes around. 6.28 (2π) is a full ring."],
 
         }
 
@@ -376,42 +376,42 @@ export const gTypes = {
     tetrahedron: {
         g: TetrahedronGeometry,
         params: {
-            radius: [0.5, 0.1, 100, 0.01],
-            detail: [0, 0, 5, 1],
+            radius: [[0.5, 0.1, 100, 0.01], "Distance from the center of the tetrahedron to each corner, in meters."],
+            detail: [[0, 0, 5, 1], "How many times each face is divided. 0 is a plain tetrahedron. Higher values make it more like a sphere."],
         }
     },
 
     torus: {
         g: TorusGeometry,
         params: {
-            radius: [0.5, 0.01, 100, 0.01],
-            tube: [0.15, 0.001, 100, 0.001],
-            radialSegments: [10, 3, 100, 1],
-            tubularSegments: [20, 3, 100, 1],
-            arc: [Math.PI * 2, 0, Math.PI * 2, 0.1],
+            radius: [[0.5, 0.01, 100, 0.01], "Distance from the center of the torus to the center of its tube, in meters."],
+            tube: [[0.15, 0.001, 100, 0.001], "Radius of the tube, in meters."],
+            radialSegments: [[10, 3, 100, 1], "Number of segments around the tube. More segments look smoother and draw more slowly."],
+            tubularSegments: [[20, 3, 100, 1], "Number of segments along the ring of the torus. More segments look smoother and draw more slowly."],
+            arc: [[Math.PI * 2, 0, Math.PI * 2, 0.1], "Angle, in radians, that the torus goes around. 6.28 (2π) is a full torus."],
         }
     },
 
     torusknot: {
         g: TorusKnotGeometry,
         params: {
-            radius: [0.5, 0.01, 100, 0.01],
-            tube: [0.15, 0.01, 100, 0.01],
-            tubularSegments: [64, 3, 100, 1],
-            radialSegments: [8, 3, 100, 1],
-            p: [2, 1, 10, 1],
-            q: [3, 1, 10, 1],
+            radius: [[0.5, 0.01, 100, 0.01], "Overall radius of the knot, in meters."],
+            tube: [[0.15, 0.01, 100, 0.01], "Radius of the tube, in meters."],
+            tubularSegments: [[64, 3, 100, 1], "Number of segments along the length of the tube. More segments look smoother and draw more slowly."],
+            radialSegments: [[8, 3, 100, 1], "Number of segments around the tube. More segments look smoother and draw more slowly."],
+            p: [[2, 1, 10, 1], "How many times the knot winds around its axis of symmetry."],
+            q: [[3, 1, 10, 1], "How many times the knot winds around a circle inside the torus."],
         }
     },
 
     superegg: {
         g: SuperEggGeometry,
         params: {
-            radius: [0.5, 0.01, 30, 0.01],
-            length: [4, 0.01, 20, 0.01],
-            sharpness: [5.5, 0.1, 10, 0.1],
-            widthSegments: [20, 4, 40, 1],
-            heightSegments: [20, 3, 40, 1],
+            radius: [[0.5, 0.01, 30, 0.01], "Radius of the widest part of the egg, in meters."],
+            length: [[4, 0.01, 20, 0.01], "Distance from the center of the egg to each end, in meters. The full length is twice this."],
+            sharpness: [[5.5, 0.1, 10, 0.1], "Shape of the egg's outline. 2 makes an ellipsoid. Higher values make blunter, more box-like ends. Lower values make pointed ends."],
+            widthSegments: [[20, 4, 40, 1], "Number of segments around the egg. More segments look smoother and draw more slowly."],
+            heightSegments: [[20, 3, 40, 1], "Number of segments from one end of the egg to the other. More segments look smoother and draw more slowly."],
         }
 
     },
@@ -419,16 +419,16 @@ export const gTypes = {
     tictac: {
         g: TicTacGeometry,
         params: {
-            radius: [2.6, 0.01, 30, 0.01],
-            totalLength: [12.2, 0.01, 50, 0.01],
-            capSegments: [20, 4, 40, 1],
-            radialSegments: [30, 4, 40, 1],
-            legRadius: [0.28, 0.001, 5, 0.001],
-            legLength1: [1.4, 0.001, 10, 0.001],
-            legLength2: [1.4, -5, 5, 0.001],
-            legCurveRadius: [0.88, 0.0, 5, 0.001],
-            legOffset: [-0.45, -10, 10, 0.001],
-            legSpacing: [6.2, 0.0, 20, 0.001],
+            radius: [[2.6, 0.01, 30, 0.01], "Radius of the body, in meters."],
+            totalLength: [[12.2, 0.01, 50, 0.01], "Length of the body from end to end, including the rounded ends, in meters."],
+            capSegments: [[20, 4, 40, 1], "Number of segments in each rounded end. More segments look smoother and draw more slowly."],
+            radialSegments: [[30, 4, 40, 1], "Number of segments around the body. More segments look smoother and draw more slowly."],
+            legRadius: [[0.28, 0.001, 5, 0.001], "Radius of the two legs, in meters."],
+            legLength1: [[1.4, 0.001, 10, 0.001], "How far each leg goes out from the body before its bend, in meters."],
+            legLength2: [[1.4, -5, 5, 0.001], "How far each leg goes along the body after its bend, in meters. A negative value bends it the other way."],
+            legCurveRadius: [[0.88, 0.0, 5, 0.001], "Radius of the bend in each leg, in meters. It cannot be more than either leg length."],
+            legOffset: [[-0.45, -10, 10, 0.001], "Distance along the body from its center to the middle of the pair of legs, in meters."],
+            legSpacing: [[6.2, 0.0, 20, 0.001], "Distance between the two legs, along the body, in meters."],
         }
 
 
@@ -650,8 +650,8 @@ export const materialTypes = {
     basic: {
         m: MeshBasicMaterial,
         params: {
-            color: ["white", "Base Color"],
-            fog: [true, "Enable Fog"],
+            color: ["white", "Main color of the surface."],
+            fog: [true, "Let three.js scene fog fade this object with distance. No Sitrec view sets scene fog, so this has no visible effect."],
         }
     },
 
@@ -659,11 +659,11 @@ export const materialTypes = {
     lambert: {
         m: MeshLambertMaterial,
         params: {
-            color: ["white", "Base Color"],
-            emissive: ["black", "Emissive color - i.e. the self illuminated color"],
-            emissiveIntensity: [[1,0,1,0.01],"Intensity of self-illuiminated color"],
-            flatShading: [false, "Enable flat shading - i.e. no smooth shading"],
-            fog: [true, "Enable Fog"],
+            color: ["white", "Main color of the surface."],
+            emissive: ["black", "Color that the surface gives off by itself, even with no light on it. Black is none."],
+            emissiveIntensity: [[1,0,1,0.01],"Strength of the Emissive color, from 0 to 1."],
+            flatShading: [false, "Shade each face as one flat facet, instead of smoothing across the faces."],
+            fog: [true, "Let three.js scene fog fade this object with distance. No Sitrec view sets scene fog, so this has no visible effect."],
 
         }
     },
@@ -671,48 +671,48 @@ export const materialTypes = {
     phong: {
         m: MeshPhongMaterial,
         params: {
-            color: ["white", "Base Color"],
-            emissive: ["black", "Emissive color - i.e. the self illuminated color"],
-            emissiveIntensity: [[1,0,1,0.01],"Intensity of self-illuminated color"],
-            specular: ["white", "Specular Color"],
-            shininess: [[30,0,100,0.1], "Shininess of the specular highlight"],
-            flatShading: [false, "Enable flat shading - i.e. no smooth shading"],
-            fog: [true, "Enable Fog"],
+            color: ["white", "Main color of the surface."],
+            emissive: ["black", "Color that the surface gives off by itself, even with no light on it. Black is none."],
+            emissiveIntensity: [[1,0,1,0.01],"Strength of the Emissive color, from 0 to 1."],
+            specular: ["white", "Color of the shiny highlights."],
+            shininess: [[30,0,100,0.1], "How sharp the shiny highlights are. Higher values make smaller, sharper highlights."],
+            flatShading: [false, "Shade each face as one flat facet, instead of smoothing across the faces."],
+            fog: [true, "Let three.js scene fog fade this object with distance. No Sitrec view sets scene fog, so this has no visible effect."],
         }
     },
 
     physical: {
         m: MeshPhysicalMaterial,
         params: {
-            color: ["white", "Base Color"],
-            clearcoat: [[1, 0, 1, 0.01], "Clearcoat intensity"],
-            clearcoatRoughness: [[0, 0, 1, 0.01], "Clearcoat roughness"],
-            emissive: ["black", "Emissive color - i.e. the self illuminated color"],
-            emissiveIntensity: [[1, 0, 1, 0.01], "Intensity of self-illuminated color"],
-            specularColor: ["white", "Specular Color"],
-            specularIntensity: [[1,0,1,0.01], "Intensity of the specular highlight"],
-            sheen: [[0, 0, 1, 0.01], "Sheen intensity"],
-            sheenRoughness: [[0.5, 0, 1, 0.01], "Sheen roughness"],
-            sheenColor: ["black", "Sheen color"],
-            flatShading: [false, "Enable flat shading - i.e. no smooth shading"],
-            fog: [true, "Enable Fog"],
-            reflectivity: [[1, 0, 1, 0.01], "Reflectivity"],
-            transmission: [[0, 0, 1, 0.01], "Transmission"],
-            ior: [[1.5, 1, 2.33, 0.01], "Index of Refraction"],
-            roughness: [[0.5, 0, 1, 0.01], "Roughness"],
-            metalness: [[0.5, 0, 1, 0.01], "Metalness"],
+            color: ["white", "Main color of the surface."],
+            clearcoat: [[1, 0, 1, 0.01], "Strength of a thin, clear, glossy layer over the surface, like the clear coat on car paint. 0 is none."],
+            clearcoatRoughness: [[0, 0, 1, 0.01], "Roughness of the clear coat layer. 0 is glossy, 1 is matte."],
+            emissive: ["black", "Color that the surface gives off by itself, even with no light on it. Black is none."],
+            emissiveIntensity: [[1, 0, 1, 0.01], "Strength of the Emissive color, from 0 to 1."],
+            specularColor: ["white", "Tint of the reflections from a non-metal surface."],
+            specularIntensity: [[1,0,1,0.01], "Strength of the reflections from a non-metal surface, from 0 to 1."],
+            sheen: [[0, 0, 1, 0.01], "Strength of a soft, velvet-like sheen at the edges of the object. 0 is none."],
+            sheenRoughness: [[0.5, 0, 1, 0.01], "Roughness of the sheen. Lower values make a sharper sheen."],
+            sheenColor: ["black", "Color of the sheen."],
+            flatShading: [false, "Shade each face as one flat facet, instead of smoothing across the faces."],
+            fog: [true, "Let three.js scene fog fade this object with distance. No Sitrec view sets scene fog, so this has no visible effect."],
+            reflectivity: [[1, 0, 1, 0.01], "How much a non-metal surface reflects, from 0 to 1."],
+            transmission: [[0, 0, 1, 0.01], "How much light goes through the surface, as with glass. 0 is opaque, 1 is fully clear."],
+            ior: [[1.5, 1, 2.33, 0.01], "Index of refraction of the material. Glass is about 1.5. It changes the reflections and the light that goes through (Transmission)."],
+            roughness: [[0.5, 0, 1, 0.01], "How rough the surface is. 0 is smooth and glossy, 1 is fully matte."],
+            metalness: [[0.5, 0, 1, 0.01], "How metallic the surface is. 0 is a non-metal, 1 is a metal."],
         }
     },
 
     envmap: {
         m: MeshPhysicalMaterial,
         params: {
-            color: ["white", "Base Color"],
+            color: ["white", "Main color of the surface."],
             roughness: [[0, 0, 1, 0.01], "Roughness - 0 is a perfect mirror"],
             metalness: [[1, 0, 1, 0.01], "Metalness - 1 is fully metallic/reflective"],
             envMapResolution: [[256, 64, 1024, 64], "Cube map resolution per face (higher = sharper reflections, slower)"],
-            flatShading: [false, "Enable flat shading - i.e. no smooth shading"],
-            fog: [true, "Enable Fog"],
+            flatShading: [false, "Shade each face as one flat facet, instead of smoothing across the faces."],
+            fog: [true, "Let three.js scene fog fade this object with distance. No Sitrec view sets scene fog, so this has no visible effect."],
         }
     },
 
@@ -734,10 +734,10 @@ export const materialTypes = {
         params: {
             color1: ["white", "First checker color"],
             color2: ["#808080", "Second checker color"],
-            emissive: ["black", "Emissive color"],
-            emissiveIntensity: [[1, 0, 1, 0.01], "Intensity of self-illuminated color"],
-            flatShading: [false, "Enable flat shading"],
-            fog: [true, "Enable Fog"],
+            emissive: ["black", "Color that the surface gives off by itself, even with no light on it. Black is none."],
+            emissiveIntensity: [[1, 0, 1, 0.01], "Strength of the Emissive color, from 0 to 1."],
+            flatShading: [false, "Shade each face as one flat facet, instead of smoothing across the faces."],
+            fog: [true, "Let three.js scene fog fade this object with distance. No Sitrec view sets scene fog, so this has no visible effect."],
         }
     },
 
@@ -793,12 +793,12 @@ export function radiusIsOnlyDimension(geometryName) {
 }
 
 export const commonMaterialParams = {
-    material: [["basic", "lambert", "phong", "physical", "envMap", "gradient", "checkerboard"],"Type of Material lighting"],
+    material: [["basic", "lambert", "phong", "physical", "envMap", "gradient", "checkerboard"],"How the surface is shaded:\nbasic: flat color, not lit\nlambert: lit, matte\nphong: lit, with shiny highlights\nphysical: lit, with roughness, metalness and other real-material settings\nenvMap: reflects the scene around it, like a mirror\ngradient: a color ramp across the object\ncheckerboard: a checker pattern of two colors"],
     wireframe: [false, "Display geometry object as a wireframe"],
-    edges: [false, "Display geometry object as edges"],
-    depthTest: [true, "Enable depth testing"],
-    opacity: [[1,0,1,0.01], "Opacity of the object"],
-    transparent: [false,"Enable transparency"],
+    edges: [false, "Draw only the hard edges of the geometry, where its faces meet at an angle."],
+    depthTest: [true, "Hide the parts of the object that are behind other things. Off can show the object through terrain and other objects in front of it."],
+    opacity: [[1,0,1,0.01], "Opacity of the object, from 0 (invisible) to 1 (solid). Used only when Transparent, Wireframe or Edges is on."],
+    transparent: [false,"Draw the object see-through, with the Opacity value."],
 }
 
 export const commonParams = {
@@ -817,12 +817,12 @@ export const commonParams = {
         "tetrahedron", 
         "torus", 
         "torusknot", 
-        "superegg"], "Type of Generated Geometry"],
+        "superegg"], "Shape of the generated geometry. Choosing one sets Model or Geometry to geometry."],
     rotateX: [[0, -180, 180, 1], "Rotation about the X-axis"],
     rotateY: [[0, -180, 180, 1], "Rotation about the Y-axis"],
     rotateZ: [[0, -180, 180, 1], "Rotation about the Z-axis"],
     applyMaterial: [false, "Apply Material to the 3D model, overriding the loaded materials"],
-    modelDisplayMode: [["normal", "rawTexture", "rawTextureMipped", "lightingOnly", "lambert"], "Choose whether the model uses normal lit shading, exact texel raw texture, filtered+mipped raw texture, lighting-only grayscale, or lambert with source textures"],
+    modelDisplayMode: [["normal", "rawTexture", "rawTextureMipped", "lightingOnly", "lambert"], "How the 3D model is drawn:\nnormal: lit, with its own materials\nrawTexture: its texture colors only, not lit, each texel exact\nrawTextureMipped: its texture colors only, not lit, filtered and mipmapped\nlightingOnly: only the lighting, in gray\nlambert: lit and matte, with its own textures"],
    // color: "white",
 }
 
