@@ -8,7 +8,7 @@ import {V3} from "../threeUtils";
 // A camera flight path recovered from video-background egomotion (visual odometry).
 //
 // Input is the per-frame apparent motion of the BACKGROUND in the video, in pixels:
-//   motion[f] = { dx, dy, scale }   (dx,dy = background image translation, scale = zoom)
+//   motion[f] = { dx, dy, scale }   (increment from frame f-1 to f; motion[0] = zero)
 //
 // The camera moves OPPOSITE to the background, so per-frame the camera is displaced by
 // (signE*dx, signN*dy) * metersPerPixel in the local East/North frame, integrated from an
@@ -67,11 +67,13 @@ export class CNodeCameraMotionTrack extends CNodeTrack {
         let cumTheta = 0;   // accumulated background image rotation (radians)
 
         for (let f = 0; f < this.frames; f++) {
+            // Store the current pose, then apply the next incoming increment.
+            // motion[f] has already brought us to frame f, so it must not be
+            // delayed until after that frame's pose is stored.
             const alt = baseHAE * Math.exp(-cumLogS * this.climbGain);
-            // imageRot = cumulative background rotation; consumers derive camera roll from it.
             this.array.push({ position: setAltitudeHAE(pos.clone(), alt), imageRot: cumTheta });
 
-            const m = this.motion[f] || { dx: 0, dy: 0, scale: 1, theta: 0 };
+            const m = this.motion[f + 1] || { dx: 0, dy: 0, scale: 1, theta: 0 };
             // Guard every term against NaN/non-finite values from a bad fit — a single NaN would
             // poison the cumulative sums and corrupt the whole path from this frame onward.
             const theta = Number.isFinite(m.theta) ? m.theta : 0;
