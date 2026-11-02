@@ -256,11 +256,13 @@ export class MotionAnalysisCore {
         const sinTheta = warpMatrix.floatAt(1, 0);
         const txRaw = warpMatrix.floatAt(0, 2);
         const tyRaw = warpMatrix.floatAt(1, 2);
+        const centerDx = cosTheta * imgWidth / 2 + warpMatrix.floatAt(0, 1) * imgHeight / 2 + txRaw - imgWidth / 2;
+        const centerDy = sinTheta * imgWidth / 2 + warpMatrix.floatAt(1, 1) * imgHeight / 2 + tyRaw - imgHeight / 2;
         warpMatrix.delete();
         
-        const rotation = Math.atan2(sinTheta, cosTheta);
-        const dx = txRaw * motionScale;
-        const dy = tyRaw * motionScale;
+        const rotation = Math.atan2(sinTheta, cosTheta) * motionScale;
+        const dx = centerDx * motionScale;
+        const dy = centerDy * motionScale;
         const confidence = Math.min(1, cc);
         
         return { dx, dy, confidence, rotation };
@@ -302,6 +304,8 @@ export class MotionAnalysisCore {
         const sinTheta = transform.doubleAt(1, 0);
         const txRaw = transform.doubleAt(0, 2);
         const tyRaw = transform.doubleAt(1, 2);
+        const centerDx = cosTheta * imgWidth / 2 + transform.doubleAt(0, 1) * imgHeight / 2 + txRaw - imgWidth / 2;
+        const centerDy = sinTheta * imgWidth / 2 + transform.doubleAt(1, 1) * imgHeight / 2 + tyRaw - imgHeight / 2;
         transform.delete();
         
         let inlierCount = 0;
@@ -313,9 +317,9 @@ export class MotionAnalysisCore {
         nextPtsMat.delete();
         inliersMask.delete();
         
-        const rotation = Math.atan2(sinTheta, cosTheta);
-        const dx = txRaw * motionScale;
-        const dy = tyRaw * motionScale;
+        const rotation = Math.atan2(sinTheta, cosTheta) * motionScale;
+        const dx = centerDx * motionScale;
+        const dy = centerDy * motionScale;
         const confidence = inlierCount / tracked.prevPoints.length;
         
         return { dx, dy, confidence, rotation, inlierCount };
