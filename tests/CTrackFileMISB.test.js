@@ -282,6 +282,21 @@ describe('CTrackFileMISB', () => {
             expect(trackFileWithCenter.toMISB(1).klvPid).toBeUndefined();
         });
 
+        test('keeps the stream ids on the rows of a multi-TrackID file', () => {
+            const rows = createTestMISBArray(false, false);
+            rows.forEach((row, i) => { row[MISB.TrackID] = i % 2 === 0 ? "5" : "7"; });
+            rows.klvPid = 4098;
+            rows.tsIds = {pesStreamIds: [0xFC]};
+            rows.klvDecodeStats = {packets: 2};
+            rows.sourceFile = "falls.ts";
+            const file = new CTrackFileMISB(rows);
+            expect(file.getTrackCount()).toBe(2);
+            const second = file.toMISB(1);
+            expect(second.every(row => row[MISB.TrackID] === "7")).toBe(true);
+            expect(second).toMatchObject({klvPid: 4098, tsIds: {pesStreamIds: [0xFC]}, klvDecodeStats: {packets: 2}, sourceFile: "falls.ts"});
+            expect(second.derivedTrack).toBeUndefined();
+        });
+
         test('toMISB(1) returns false for track without center', () => {
             const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
             const result = trackFile.toMISB(1);

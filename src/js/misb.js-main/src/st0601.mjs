@@ -101,8 +101,28 @@ export function parse(buffer, options = {}) {
 				contentLength
 			); // read content after key and length
 
-			let parsed =
-				options.value !== false ? convert(key, valueBuffer, options) : { key };
+			// A tag that fails is lost alone: its length is known, so the rest of
+			// the packet can still be read. Each fault goes to options.onTagFault,
+			// so that a report can show it.
+			// A zero-length item is legal: it says that there is no value.
+			let parsed = null;
+			const expectedSize = fixedTagSizes[key];
+			const noValue = expectedSize !== undefined && contentLength === 0;
+			const wrongSize = expectedSize !== undefined && !noValue && contentLength !== expectedSize;
+			if (wrongSize) {
+				options.onTagFault?.(key, readsAnyLength.has(key) ? "wrong length, value read" : "wrong length");
+			}
+			if (!noValue && (!wrongSize || readsAnyLength.has(key))) {
+				try {
+					parsed = options.value !== false ? convert(key, valueBuffer, options) : { key };
+				} catch (error) {
+					if (contentLength > 0) options.onTagFault?.(key, "decode error");
+					if (contentLength > 0 && !warnedTags.has(key)) {
+						warnedTags.add(key);
+						console.warn(`ST0601: ${error.message}. Skipping this tag.`);
+					}
+				}
+			}
 
 			// Per-tag converters return `null` when the encoded value is the
 			// ST 0601 "out-of-range / unknown" sentinel (e.g. 0x80000000 for
@@ -249,6 +269,21 @@ const two16Unsigned = 2 ** 16 - 1;
 const two32max = 2 ** 32 - 1;
 const two32SignedMax = 2 ** 31 - 1;
 const two32SignedMin = -1 * two32SignedMax;
+
+// Tags with one length in ST 0601. A value of another length cannot be read
+// safely, so it is stored as null and reported.
+const fixedTagSizes = {
+	2: 8, 5: 2, 6: 2, 7: 2, 8: 1, 9: 1, 13: 4, 14: 4, 15: 2, 16: 2, 17: 2, 18: 4, 19: 4, 20: 4, 21: 4,
+	22: 2, 23: 4, 24: 4, 25: 2, 26: 2, 27: 2, 28: 2, 29: 2, 30: 2, 31: 2, 32: 2, 33: 2, 34: 1, 35: 2,
+	36: 1, 37: 2, 38: 2, 39: 1, 40: 4, 41: 4, 42: 2, 45: 2, 46: 2, 50: 2, 51: 2, 52: 2, 55: 1, 56: 1,
+	57: 4, 58: 2, 62: 2, 63: 1, 64: 2, 65: 1, 67: 4, 68: 4, 71: 2, 72: 8, 75: 2, 76: 2, 77: 1, 78: 2,
+	79: 2, 80: 2, 82: 4, 83: 4, 84: 4, 85: 4, 86: 4, 87: 4, 88: 4, 89: 4, 90: 4, 91: 4, 92: 4, 93: 4,
+};
+// A wrong length on these is reported, but the value can still be read. Old
+// encoders send tag 22 in 4 bytes on the same scale as the 2-byte form.
+const readsAnyLength = new Set([22]);
+// One warning for each tag: a stream can repeat a fault in every packet.
+const warnedTags = new Set();
 
 // TODO: Keep and use a TextDecoder instance for converting UTF-8 byte sequences into JS Strings.
 
@@ -485,7 +520,9 @@ function convert(key, dataview, options) {
 					key,
 					name: st0601data(key).name,
 					value: klv.scale(
-						dataview.getUint16(0, false),
+						klv.readVariableUInt(
+							new Uint8Array(dataview.buffer, dataview.byteOffset, dataview.byteLength)
+						),
 						[0, two16Unsigned],
 						[0, 10000]
 					),
@@ -608,7 +645,7 @@ function convert(key, dataview, options) {
 					key,
 					name: st0601data(key).name,
 				//	value: buffer.readInt8(0),
-					data: dataview.getInt8(0),
+					value: dataview.getInt8(0),
 					unit: "°C",
 				};
 			case 40:
@@ -661,7 +698,7 @@ function convert(key, dataview, options) {
 					key,
 					name: st0601data(key).name,
 					value: klv.scale(
-						dataview.getInt16(0, false),
+						dataview.getUint16(0, false),
 						[0, two16Unsigned],
 						[0, 4095]
 					),
@@ -749,7 +786,7 @@ function convert(key, dataview, options) {
 					key,
 					name: st0601data(key).name,
 					value: klv.scale(
-						dataview.getInt16(0, false),
+						dataview.getUint16(0, false),
 						[0, two16Unsigned],
 						[0, 10000]
 					),
@@ -796,19 +833,17 @@ function convert(key, dataview, options) {
 					value: dataview.getUint8(0, false),
 				};
 			case 67:
-				klv.checkRequiredSize(key, buffer, 4)
 				return {
 					key,
 					name: st0601data(key).name,
-					value: klv.scale(buffer.readInt32BE(0), [two32SignedMin, two32SignedMax], [-90, 90]),
+					value: klv.scale(dataview.getInt32(0, false), [two32SignedMin, two32SignedMax], [-90, 90]),
 					unit: '°'
 				}
 			case 68:
-				klv.checkRequiredSize(key, buffer, 4)
 				return {
 					key,
 					name: st0601data(key).name,
-					value: klv.scale(buffer.readInt32BE(0), [two32SignedMin, two32SignedMax], [-180, 180]),
+					value: klv.scale(dataview.getInt32(0, false), [two32SignedMin, two32SignedMax], [-180, 180]),
 					unit: '°'
 				}
 			case 70:
@@ -843,13 +878,13 @@ function convert(key, dataview, options) {
 				return {
 					key,
 					name: st0601data(key).name,
-					value: st0806.parseLS(buffer, options),
+					value: st0806.parseLS(Buffer.from(dataview.buffer, dataview.byteOffset, dataview.byteLength), options),
 				};
 			case 74:
 				return {
 					key,
 					name: st0601data(key).name,
-					value: st0903.parseLS(buffer, options),
+					value: st0903.parseLS(Buffer.from(dataview.buffer, dataview.byteOffset, dataview.byteLength), options),
 				};
 			case 75:
 				// klv.checkRequiredSize(key, buffer, 2)
@@ -864,11 +899,10 @@ function convert(key, dataview, options) {
 					unit: "m",
 				};
 			case 76:
-				klv.checkRequiredSize(key, buffer, 2)
 				return {
 					key,
 					name: st0601data(key).name,
-					value: klv.scale(buffer.readUInt16BE(0), [0, two16Unsigned], [-900, 19000]),
+					value: klv.scale(dataview.getUint16(0, false), [0, two16Unsigned], [-900, 19000]),
 					unit: 'm'
 				}
 			case 77:
@@ -1091,18 +1125,19 @@ function convert(key, dataview, options) {
 						)
 					), // todo verify this is supposed to have unicode in it
 				};
-			case 96:
-				klv.checkMaxSize(key, buffer, 8);
+			case 96: {
+				// ST 1201 IMAPB(0, 1500000, length). The range needs 21 bits, so one
+				// unit is 2^(21 - (8 * length - 1)) m. The top bit marks a special value.
+				const bytes = new Uint8Array(dataview.buffer, dataview.byteOffset, dataview.byteLength);
+				klv.checkMaxSize(key, bytes, 8);
+				if (bytes[0] & 0x80) return null;
 				return {
 					key,
 					name: st0601data(key).name,
-					value: klv.scale(
-						klv.readVariableUInt(buffer),
-						[0, 2 ** (buffer.length * 8)],
-						[0, 1500000]
-					), //todo this is not correct
+					value: klv.readVariableUInt(bytes) * 2 ** (22 - 8 * bytes.length),
 					unit: "m",
 				};
+			}
 			case 116:
 				return {
 					key,

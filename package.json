@@ -146,20 +146,24 @@
       "<rootDir>/dist-secure/",
       "<rootDir>/dist-release-audit/"
     ],
+    "setupFiles": [
+      "<rootDir>/tests/setupTextCodec.js"
+    ],
     "moduleFileExtensions": [
       "ts",
       "js",
-      "json"
+      "json",
+      "mjs"
     ],
     "transform": {
       "\\.[jt]s$": "babel-jest",
+      "misb\\.js-main/.+\\.mjs$": "babel-jest",
       "\\.txt$": "<rootDir>/tests/rawTextTransform.js"
     },
     "transformIgnorePatterns": [
       "node_modules/(?!(3d-tiles-renderer|three/examples|three/build|hyparquet|hyparquet-writer)/)"
     ],
     "moduleNameMapper": {
-      ".+\\.mjs$": "<rootDir>/tests/__mocks__/three-addons-stub.js",
       "^3d-tiles-renderer/src/(.*)$": "<rootDir>/node_modules/3d-tiles-renderer/src/$1",
       "^3d-tiles-renderer/three$": "<rootDir>/node_modules/3d-tiles-renderer/src/three/renderer/math/OBB.js"
     }

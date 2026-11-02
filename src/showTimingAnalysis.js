@@ -4,11 +4,12 @@ import {saveAs} from "file-saver";
 // shape of showError() but with two action buttons (Copy / Download) plus
 // Close, since the content is something the user typically wants to share
 // with someone else looking at the data.
-// fileHeader: text that names the loaded file. When given, a "Show Filename"
-// checkbox (on at the start) puts it before the text, in the view, the copy
-// and the download.
+// fileHeader: the start of the report, with the loaded file and the names in the
+// data. plainHeader: the same start without them. When the two differ, a "Show
+// Filename and Names" checkbox (on at the start) chooses which one goes before the
+// text, in the view, the copy and the download.
 export function showTimingAnalysis(text, suggestedFilename = "sitrec-timing-analysis.txt",
-                                   title = "MISB Timing Analysis", {fileHeader = null} = {}) {
+                                   title = "MISB Timing Analysis", {fileHeader = null, plainHeader = ""} = {}) {
     const overlay = document.createElement("div");
     overlay.style.cssText = `
         position: fixed; top: 0; left: 0; width: 100%; height: 100%;
@@ -31,7 +32,7 @@ export function showTimingAnalysis(text, suggestedFilename = "sitrec-timing-anal
     titleEl.style.cssText = "margin: 0 0 12px 0; color: #1976d2; font-size: 18px; flex: 0 0 auto;";
 
     const textarea = document.createElement("textarea");
-    textarea.value = text;
+    textarea.value = plainHeader + text;
     textarea.readOnly = true;
     textarea.style.cssText = `
         width: 100%; flex: 1 1 auto; min-height: 0;
@@ -44,8 +45,8 @@ export function showTimingAnalysis(text, suggestedFilename = "sitrec-timing-anal
     const buttons = document.createElement("div");
     buttons.style.cssText = "display: flex; gap: 10px; justify-content: flex-end; margin-top: 12px; flex: 0 0 auto;";
 
-    let currentText = () => text;
-    if (fileHeader) {
+    let currentText = () => plainHeader + text;
+    if (fileHeader && fileHeader !== plainHeader) {
         const label = document.createElement("label");
         label.style.cssText = `
             margin-right: auto; display: flex; align-items: center; gap: 6px;
@@ -54,8 +55,8 @@ export function showTimingAnalysis(text, suggestedFilename = "sitrec-timing-anal
         const checkbox = document.createElement("input");
         checkbox.type = "checkbox";
         checkbox.checked = true;
-        label.append(checkbox, "Show Filename");
-        currentText = () => (checkbox.checked ? fileHeader + text : text);
+        label.append(checkbox, "Show Filename and Names");
+        currentText = () => (checkbox.checked ? fileHeader : plainHeader) + text;
         checkbox.onchange = () => { textarea.value = currentText(); };
         textarea.value = currentText();
         buttons.appendChild(label);

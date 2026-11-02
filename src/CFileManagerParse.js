@@ -161,6 +161,7 @@ export const parseMethods = {
                         parsedResult.videoFirstPESus = metadataOverride.videoFirstPESus;
                         parsedResult.streamIndex = metadataOverride.index;
                         parsedResult.streamType = metadataOverride.stream_type;
+                        parsedResult.tsIds = metadataOverride.tsIds;
                         // tsParentFilename isn't in the live-demux metadata but
                         // is carried in the sidecar reload's loadedFilesMetadata —
                         // pull from there if available so the entry's tsParentFilename
@@ -229,6 +230,7 @@ export const parseMethods = {
                         // so reports can name the stream after a reload.
                         if (Number.isInteger(x.streamIndex)) fileManagerEntry.streamIndex = x.streamIndex;
                         if (x.streamType != null) fileManagerEntry.streamType = x.streamType;
+                        if (x.tsIds) fileManagerEntry.tsIds = x.tsIds;
                         if (x.tsParentFilename) {
                             fileManagerEntry.tsParentFilename = x.tsParentFilename;
                             isTSArchive = true;
@@ -1234,6 +1236,7 @@ export const parseMethods = {
                                 parsedSubstream.videoFirstPESus = streamMetadata.videoFirstPESus;
                                 parsedSubstream.streamIndex = streamMetadata.index;
                                 parsedSubstream.streamType = streamMetadata.stream_type;
+                                parsedSubstream.tsIds = streamMetadata.tsIds;
                                 parsedSubstream.tsParentFilename = filename;
                             }
                         }
@@ -1456,6 +1459,7 @@ export const parseMethods = {
                     const streamType = typeof metadata?.stream_type === "string"
                         ? parseInt(metadata.stream_type, 16) : metadata?.stream_type;
                     if (Number.isInteger(streamType)) klvMisb.klvStreamType = streamType;
+                    if (metadata?.tsIds) klvMisb.tsIds = metadata.tsIds;
                     // The file the user loaded: the TS on a drop, else this file.
                     klvMisb.sourceFile = metadata?.tsFilename ?? filename;
                     klvMisb.sourceBytes = metadata?.tsBytes ?? buffer.byteLength;

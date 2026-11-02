@@ -2,6 +2,7 @@ import {muxVideoKlv, mpegCRC, encodePTS} from "../../benchmarks/botbench/lib/mux
 import {scanTransportStreamForMetadata} from "../../src/analysis/TSMetadataScanner";
 import {encodeMISBLocalSet} from "../../src/MISBEncoder";
 import {TSParser} from "../../src/TSParser";
+import {parseKLVFile} from "../../src/MISBUtils";
 
 const packet = (pid, payload) => {
     const b = Buffer.alloc(188, 255);
@@ -124,4 +125,78 @@ test("normal file import retains the final complete TS packet, including metadat
     expect(video.data.byteLength).toBe(3 * 170); // three full payloads after PES headers
     const videoLast = await TSParser.extractTSStreamsAsync(fixture());
     expect(new Uint8Array(videoLast[0].data)).toEqual(new Uint8Array(video.data));
+});
+
+describe("the real path from TS bytes to records", () => {
+    const records = [0, 1, 2].map(f => ({klv: encodeMISBLocalSet({2: 1000000 + Math.round(f * 1e6 / 30), 13: 37, 14: -120})}));
+    const klvStream = streams => streams.find(stream => stream.type === "klv");
+    const toBuffer = ts => ts.buffer.slice(ts.byteOffset, ts.byteOffset + ts.byteLength);
+
+    test("AU cell headers do not become records or false packets", async () => {
+        const stream = klvStream(await TSParser.extractTSStreamsAsync(toBuffer(muxVideoKlv(fixture(), records))));
+        const rows = parseKLVFile(stream.data, stream.pesEntries, null, {silent: true});
+        expect(rows).toHaveLength(3);
+        expect(rows.otherKLVPackets).toEqual([]);
+        expect(rows.klvDecodeStats).toMatchObject({packets: 3, rejected: 0, badLengths: 0, badChecksums: 0});
+        expect(rows.pesPTSus).toHaveLength(3);
+    });
+
+    test("saves what the report needs from the TS layer", async () => {
+        const ts = muxVideoKlv(fixture(), records);
+        const stream = klvStream(await TSParser.extractTSStreamsAsync(toBuffer(ts)));
+        expect(stream.tsIds.pesStreamIds).toEqual([0xFC]);
+        expect(stream.tsIds.continuityErrors).toBe(0);
+        expect(stream.tsIds.pmtName).toBeNull();
+        expect(stream.tsIds.otherStreams).toEqual([
+            expect.objectContaining({pid: 0x100, codec: "h264", streamType: "0x1b", name: null, packets: 3}),
+        ]);
+    });
+
+    test("reads the name of a stream from a user-private PMT descriptor, and a private stream's type", () => {
+        const descriptor = text => [0xFF, text.length, ...Buffer.from(text)];
+        const klvName = descriptor("KLV_SYNC");
+        const privateName = descriptor("ARSX");
+        const esInfo = [
+            0x15, 0xE1, 2, 0xF0, klvName.length, ...klvName,
+            0xF1, 0xE1, 3, 0xF0, privateName.length, ...privateName,
+        ];
+        const sectionLength = 9 + esInfo.length + 4;
+        const pmt = psi(0x1000, [2, 0xB0, sectionLength, 0, 1, 0xC1, 0, 0, 0xE1, 0, 0xF0, 0, ...esInfo]);
+        const pat = psi(0, [0, 0xB0, 13, 0, 1, 0xC1, 0, 0, 0, 1, 0xF0, 0]);
+        const info = TSParser.probeTransportStreamBuffer(toBuffer(Buffer.concat([pat, pmt])));
+        const types = Object.fromEntries(info.streams.map(stream => [parseInt(stream.id, 16), stream.codec_name]));
+        expect(types[0x103]).toBe("private_data");
+    });
+
+    test("a jump that the encoder flags in a packet with no payload is not a loss", async () => {
+        const ts = Buffer.from(muxVideoKlv(fixture(), records));
+        const stream = klvStream(await TSParser.extractTSStreamsAsync(toBuffer(ts)));
+        const klvAt = [];
+        for (let at = 0; at + 188 <= ts.length; at += 188) {
+            if (((ts[at + 1] & 31) << 8 | ts[at + 2]) === stream.pid) klvAt.push(at);
+        }
+        expect(klvAt.length).toBeGreaterThan(1);
+        const pid = stream.pid;
+        const flagged = Buffer.alloc(188, 255);
+        flagged.set([0x47, pid >> 8, pid & 255, 0x20, 183, 0x80]);
+        const jump = (ts[klvAt[1] + 3] + 7) & 0x0F;
+        ts[klvAt[1] + 3] = (ts[klvAt[1] + 3] & 0xF0) | jump;
+        for (let i = 2; i < klvAt.length; i++) ts[klvAt[i] + 3] = (ts[klvAt[i] + 3] & 0xF0) | ((ts[klvAt[i] + 3] + 7) & 0x0F);
+        const withFlag = Buffer.concat([ts.subarray(0, klvAt[1]), flagged, ts.subarray(klvAt[1])]);
+        expect(klvStream(await TSParser.extractTSStreamsAsync(toBuffer(withFlag))).tsIds.continuityErrors).toBe(0);
+        expect(klvStream(await TSParser.extractTSStreamsAsync(toBuffer(ts))).tsIds.continuityErrors).toBe(1);
+    });
+
+    test("counts a lost TS packet on a KLV PID", async () => {
+        const ts = Buffer.from(muxVideoKlv(fixture(), records));
+        const stream = klvStream(await TSParser.extractTSStreamsAsync(toBuffer(ts)));
+        const klvAt = [];
+        for (let at = 0; at + 188 <= ts.length; at += 188) {
+            if ((((ts[at + 1] & 31) << 8) | ts[at + 2]) === stream.pid) klvAt.push(at);
+        }
+        expect(klvAt.length).toBeGreaterThan(1);
+        ts[klvAt[1] + 3] = (ts[klvAt[1] + 3] & 0xF0) | ((ts[klvAt[1] + 3] + 5) & 0x0F);
+        const damaged = klvStream(await TSParser.extractTSStreamsAsync(toBuffer(ts)));
+        expect(damaged.tsIds.continuityErrors).toBeGreaterThan(0);
+    });
 });

@@ -1,6 +1,6 @@
 import {LLAToECEF} from "../LLA-ECEF-ENU";
 import {FileManager, Globals, NodeMan, Sit} from "../Globals";
-import {MISB, MISBFields, computeMisbSpans, computeFpsAnalysis} from "../MISBUtils";
+import {MISB, MISBFields} from "../MISBUtils";
 import {decodeMISBTransition, MISBValueDecoders} from "../MISBValueDecoders";
 import {CNodeEmptyArray} from "./CNodeArray";
 import {saveAs} from "file-saver";
@@ -14,7 +14,7 @@ import {parsePartialDateTime} from "../ParseUtils";
 import {meanSeaLevelOffset} from "../EGM96Geoid";
 import {isAGLLockActive, isAltitudeLockActive} from "../AltitudeLock";
 import {t} from "../i18n";
-import {minOf} from "../SafeArrays";
+import {analyzeTimelineValues, streamTiming} from "../analysis/MisbTimingStats";
 
 //export const MISBFields = Object.keys(MISB).length;
 
@@ -146,10 +146,11 @@ export class CNodeMISBDataTrack extends CNodeEmptyArray {
         const hasPTS = Array.isArray(ptsArr) && ptsArr.length > 0;
         const len = this.misb ? this.misb.length : 0;
 
-        // Anonymous header. The report is intended to be paste-safe in
-        // any thread / bug tracker, so we deliberately omit anything that
+        // Anonymous header. This part of the report omits anything that
         // could identify the file's flight time, location, platform tail
-        // number, mission ID, or operating unit. That includes:
+        // number, mission ID, or operating unit. (The sections that
+        // CNodeDateTime puts before it do name these: the file name and
+        // the Streams table.) This part omits:
         //   - Generation timestamp (today's date, narrows down session)
         //   - Sit.name (often contains user-set descriptive text)
         //   - MISB node id (frequently contains a tail number, e.g.
@@ -215,7 +216,7 @@ export class CNodeMISBDataTrack extends CNodeEmptyArray {
         // here surfaces dropped-frame bursts instead of the wrapper's
         // uniform virtual timeline (which would always read as perfect CFR).
         let videoSpanS = null, videoFrameCount = 0;
-        let ptsMin = null, ptsMax = null, ptsMean = null, ptsStddev = null;
+        let ptsMin = null, ptsMax = null, ptsMean = null, ptsStddev = null, ptsMedian = null;
         let videoIntervals = null;
         if (ptsArr && ptsArr.length > 0) {
             videoFrameCount = ptsArr.length;
@@ -233,8 +234,17 @@ export class CNodeMISBDataTrack extends CNodeEmptyArray {
             ptsMean = sum / pIntervals.length;
             const sq = pIntervals.reduce((a, x) => a + (x.dt - ptsMean) * (x.dt - ptsMean), 0);
             ptsStddev = Math.sqrt(sq / pIntervals.length);
+            ptsMedian = pIntervals.map(x => x.dt).sort((a, b) => a - b)[Math.floor(pIntervals.length / 2)];
             videoIntervals = pIntervals;
         }
+
+        // Intervals more than 1 ms from the median. The standard deviation is not the
+        // test: one dropped frame among N intervals of T moves it by about T/√N, which
+        // is 0.38 ms in a 60 fps clip of 33 s, although the rate is constant. Up to 1%
+        // of the intervals can be dropped frames in a video of constant rate.
+        const offRateFrames = videoIntervals ? videoIntervals.filter(g => Math.abs(g.dt - ptsMedian) > 1) : [];
+        const cfrVideo = videoIntervals !== null && videoIntervals.length > 0
+            && offRateFrames.length <= videoIntervals.length * 0.01;
 
         // Compute gap detection up-front so the headline, verdict, and
         // recommendations can all distinguish real stream gaps (discrete
@@ -243,23 +253,52 @@ export class CNodeMISBDataTrack extends CNodeEmptyArray {
         const gapThresholdMs = Math.max(100, klvIntervalMean * 3);
         const gaps = intervals.filter(g => g.dt > gapThresholdMs);
         const hasRealGaps = gaps.length > 0;
-        const highCv = klvCv >= 0.05;
+
+        // An encoder can repeat the last record until the metadata next changes.
+        // Then tag 2 has two kinds of interval, 0 and one steady value, which reads
+        // as scatter if the repeats count, and is none. So the test leaves them out.
+        const moving = analyzeTimelineValues(intervals.reduce((times, {dt}) => {
+            if (dt > 0) times.push(times[times.length - 1] + dt);
+            return times;
+        }, [0]), {unitScale: 1000});
+        const repeatedRecords = intervals.filter(g => g.dt === 0).length;
+        const heldValues = repeatedRecords > 0 && moving.valid && moving.cv < 0.05;
+        const highCv = (heldValues ? moving.cv : klvCv) >= 0.05;
+
+        // The interval figures that the report prints. With held values the repeats
+        // would give a mean of half the update period and a CV near 100%, so these
+        // are the intervals between new values.
+        const klvShown = heldValues
+            ? {mean: moving.meanS * 1000, stddev: moving.stddevS * 1000, min: moving.minIntervalS * 1000, cv: moving.cv}
+            : {mean: klvIntervalMean, stddev: klvStddev, min: klvMin, cv: klvCv};
 
         // Headline assessment.
-        const cfrVideo = (ptsStddev !== null && ptsStddev < 0.05);
         const uniformKlv = !hasRealGaps && !highCv;
         const spanDiff = (videoSpanS !== null) ? (klvSpanS - videoSpanS) : null;
-        const klvHasPES = this.hasRecordPTS();
+        // A stream can have an array of PES PTS with no value in it: the records came
+        // before the first PES.
+        const klvHasPES = this.hasRecordPTS() && this.misb.pesPTSus.some(us => typeof us === "number");
+        const pesTimeline = klvHasPES ? analyzeTimelineValues(this.misb.pesPTSus, {unitScale: 1e6}) : null;
+        const pesClean = klvHasPES && pesTimeline.valid && pesTimeline.cv < 0.05
+            && pesTimeline.gapCount === 0 && pesTimeline.negativeCount === 0;
 
         if (cfrVideo && uniformKlv && Math.abs(spanDiff || 0) < 0.5) {
-            push("✓ Video and KLV are well-aligned — no timing issues detected.");
+            push("✓ No gaps or span mismatch found.");
+            if (klvHasPES && hasPTS) {
+                const sync = streamTiming(this, ptsArr).alignment;
+                push(`  KLV PES PTS: first record ${(sync.firstRecordOffsetUs / 1000).toFixed(3)} ms from the first frame,`);
+                push(`  ${sync.recordsOnFrame} of ${sync.klvPtsNonNull} PTS equal to a frame PTS, nearest frame mean`);
+                push(`  ${(sync.recordMeanAbsUs / 1000).toFixed(2)} ms, max ${(sync.recordMaxAbsUs / 1000).toFixed(2)} ms.`);
+            } else {
+                push("  KLV and video times were not compared: this stream has no PES PTS.");
+            }
         } else if (hasRealGaps) {
             push(`⚠ KLV stream has ${gaps.length} discrete gap${gaps.length === 1 ? "" : "s"} (intervals > ${gapThresholdMs.toFixed(0)} ms).`);
             push("  Track positions are correct where KLV is contiguous; expect");
             push("  brief stale/interpolated values during gap periods.");
         } else if (highCv && klvHasPES) {
-            push(`ℹ KLV UnixTimeStamp intervals scatter widely (CV ${(klvCv * 100).toFixed(2)}%) but PES PTS is clean.`);
-            push("  Sync uses PES PTS, which is uniform on the PCR clock. The UTS");
+            push(`ℹ KLV UnixTimeStamp intervals scatter widely (CV ${(klvCv * 100).toFixed(2)}%)${pesClean ? " but PES PTS is clean" : ""}.`);
+            push(`  Tracks pair by PES PTS${pesClean ? ", which is uniform on the PCR clock" : ""}. The UTS`);
             push("  scatter doesn't affect display. Possible causes vary (write-time");
             push("  vs sample-time stamping, RTC behavior, etc.) and aren't determined");
             push("  by this report alone.");
@@ -269,8 +308,16 @@ export class CNodeMISBDataTrack extends CNodeEmptyArray {
             push("  scatter magnitude as its uncertainty. Usually below the visual");
             push("  threshold; cause not diagnosable from this report alone.");
         }
-        if (!cfrVideo) {
-            push("⚠ Video has variable frame rate (PTS not uniform).");
+        if (heldValues) {
+            const videoEvery = hasPTS ? `, the video every ${ptsMedian.toFixed(1)} ms` : "";
+            push(`ℹ ${repeatedRecords} of ${klvRecords} records repeat the previous time. The metadata updates`);
+            push(`  every ${(moving.meanS * 1000).toFixed(1)} ms${videoEvery}, and the figures below leave the repeats out.`);
+        }
+        if (hasPTS && !cfrVideo) {
+            push(`⚠ Video has variable frame rate: ${offRateFrames.length} of ${videoIntervals.length} intervals are off the median.`);
+        } else if (offRateFrames.length > 0) {
+            const count = offRateFrames.length;
+            push(`ℹ Video has a constant frame rate, except for ${count} interval${count === 1 ? "" : "s"}. See Video PTS jumps.`);
         }
         if (Math.abs(spanDiff || 0) > 0.5 && !hasRealGaps) {
             push(`⚠ KLV span and video span differ by ${spanDiff.toFixed(2)} s.`);
@@ -297,25 +344,11 @@ export class CNodeMISBDataTrack extends CNodeEmptyArray {
             push(pad("Stddev:", fmtMs(ptsStddev)));
             push(pad("Min interval:", fmtMs(ptsMin)));
             push(pad("Max interval:", fmtMs(ptsMax)));
-            push(pad("Verdict:", cfrVideo ? "Constant frame rate (CFR) — reliable" : "Variable frame rate — non-uniform"));
-
-            // Real-world frame-rate estimate via shared computeFpsAnalysis
-            // helper (see MISBUtils.js for the full rationale and math).
-            // Skip when KLV UTS is too scattered to trust (high CV).
-            const _spans = klvCv < 0.5 ? computeMisbSpans(this.misb) : null;
-            const _fps = _spans && _spans.pesSpanS > 0 ? computeFpsAnalysis({
-                videoFrameCount,
-                videoPesSpanS: videoSpanS,
-                klvUtsSpanS: _spans.utsSpanS,
-                klvPesSpanS: _spans.pesSpanS,
-            }) : { valid: false };
-            if (_fps.valid) {
-                push(pad("Real-time fps (from KLV UTS):", `${_fps.realFps.toFixed(4)} fps`));
-                if (_fps.fpsGap > 0.01) {
-                    push(pad("  Labeled vs real fps gap:", `${(_fps.fpsGap * 100).toFixed(2)}% — encoder is writing PTS at the wrong cadence`));
-                    push(pad("  Recommended Sit.fps:", `${_fps.realFps.toFixed(0)} (use real-time fps from KLV UTS)`));
-                }
-            }
+            push(pad("Verdict:", !cfrVideo
+                ? `Variable frame rate — ${offRateFrames.length} of ${videoIntervals.length} intervals off the median of ${fmtMs(ptsMedian)}`
+                : offRateFrames.length > 0
+                    ? `Constant frame rate, except for ${offRateFrames.length} of ${videoIntervals.length} intervals`
+                    : "Constant frame rate (CFR)"));
             push(pad("Frame PTS source:", realPTS === true
                 ? "real PES PTS (TSParser pesEntries[]) — honors dropped frames"
                 : realPTS === false
@@ -395,12 +428,13 @@ export class CNodeMISBDataTrack extends CNodeEmptyArray {
         push(sectionBreak);
         push(pad("Records:", klvRecords));
         push(pad("Span:", fmtS(klvSpanS)));
-        push(pad("Mean interval:", `${fmtMs(klvIntervalMean)} (= ${(1000 / klvIntervalMean).toFixed(4)} eff. fps)`));
-        push(pad("Stddev:", fmtMs(klvStddev)));
-        push(pad("Min interval:", fmtMs(klvMin)));
+        if (heldValues) push(pad("Repeated times:", `${repeatedRecords} (left out of the figures below)`));
+        push(pad("Mean interval:", `${fmtMs(klvShown.mean)} (= ${(1000 / klvShown.mean).toFixed(4)} eff. fps)`));
+        push(pad("Stddev:", fmtMs(klvShown.stddev)));
+        push(pad("Min interval:", fmtMs(klvShown.min)));
         push(pad("Max interval:", fmtMs(klvMax)));
-        push(pad("Coeff. of variation:", `${fmtPct(klvCv)} (stddev / mean) ${klvCv > 0.05 ? "(>5%, scattered)" : "(<5%, tight)"}`));
-        push(pad("Max/mean ratio:", `${(klvMax / klvIntervalMean).toFixed(1)}× ${klvMax > 5 * klvIntervalMean ? "(>5×, gap likely)" : "(<5×, no gap)"}`));
+        push(pad("Coeff. of variation:", `${fmtPct(klvShown.cv)} (stddev / mean) ${highCv ? "(>5%, scattered)" : "(<5%, tight)"}`));
+        push(pad("Max/mean ratio:", `${(klvMax / klvShown.mean).toFixed(1)}× ${hasRealGaps ? "(see KLV GAPS)" : "(no gap)"}`));
         // Verdict distinguishes three observable states: uniform, real gaps
         // (any individual interval > gapThresholdMs), and scattered intervals
         // (high CV but no individual interval over the threshold). Cause of
@@ -431,8 +465,8 @@ export class CNodeMISBDataTrack extends CNodeEmptyArray {
                 push("  per-record processing delay variation, or RTC behavior — this");
                 push("  report can't distinguish among them.");
                 push("  Compare to KLV PES PTS TIMING below: if that section's CV is");
-                push("  low, the encoder-side emission cadence is clean and sync uses");
-                push("  PES PTS as the anchor regardless of the UTS scatter.");
+                push("  low, the encoder-side emission cadence is clean, and tracks pair");
+                push("  by PES PTS regardless of the UTS scatter.");
             } else {
                 push("  None — KLV stream is contiguous.");
             }
@@ -454,7 +488,7 @@ export class CNodeMISBDataTrack extends CNodeEmptyArray {
         // PTS. If gaps appear here too, the camera really paused on the
         // PCR-locked clock; if they only appear in UnixTimeStamp, the camera
         // is fabricating wall-clock timestamps during sensor reconfiguration.
-        push("KLV PES PTS AVAILABILITY (MISB ST 0604 sync anchor)");
+        push("KLV PES PTS AVAILABILITY");
         push(sectionBreak);
         const pesArr = this.misb && this.misb.pesPTSus;
         const pesIsArray = Array.isArray(pesArr);
@@ -513,11 +547,10 @@ export class CNodeMISBDataTrack extends CNodeEmptyArray {
         }
         push("");
 
-        const hasPesPTS = this.hasRecordPTS();
         let pesIntervals = null;
         let pesGaps = null;
         let pesSpanS = null;
-        if (hasPesPTS) {
+        if (klvHasPES) {
             const pes = this.misb.pesPTSus;
             pesSpanS = (pes[lastValid] - pes[firstValid]) / 1e6;
             pesIntervals = [];
@@ -536,7 +569,7 @@ export class CNodeMISBDataTrack extends CNodeEmptyArray {
             const pesStddev = pesCount > 0 ? Math.sqrt(pesSq / pesCount) : 0;
             const pesCv = pesMean > 0 ? pesStddev / pesMean : 0;
 
-            push("KLV PES PTS TIMING (synchronous-mode PCR anchor)");
+            push("KLV PES PTS TIMING");
             push(sectionBreak);
             push(pad("Records:", klvRecords));
             push(pad("Span:", fmtS(pesSpanS)));
@@ -558,13 +591,10 @@ export class CNodeMISBDataTrack extends CNodeEmptyArray {
             push(sectionBreak);
             if (pesGaps.length === 0) {
                 push("  None — PES PTS stream is contiguous on the PCR clock.");
-                push("  → If KLV (UnixTimeStamp) intervals show gaps or high scatter,");
-                push("    the encoder-side emission was uninterrupted regardless: the");
-                push("    differences live in the UnixTimeStamp values written into");
-                push("    successive records, not between record emissions. Possible");
-                push("    causes include write-time scatter, RTC steps, or stream");
-                push("    selection differences — distinguishing them needs more info");
-                push("    than this report has.");
+                if (hasRealGaps || highCv) {
+                    push("  Tag 2 has gaps or scatter here and PES PTS does not, so the difference");
+                    push("  is in the tag 2 values, not in when the records were sent.");
+                }
             } else {
                 const pesGapSum = pesGaps.reduce((a, g) => a + (g.dt - pesMean), 0);
                 push(`  ${pesGaps.length} gaps detected, ${(pesGapSum / 1000).toFixed(2)} s of "missing" emissions:`);
@@ -576,78 +606,6 @@ export class CNodeMISBDataTrack extends CNodeEmptyArray {
                 }
                 if (pesGaps.length > 50) push(`    … and ${pesGaps.length - 50} more`);
             }
-            push("");
-        }
-
-        // ── QUARTILE DRIFT ─────────────────────────────────────────────
-        if (hasPTS) {
-            push("CUMULATIVE DRIFT (KLV vs. Video PTS at quartile points)");
-            push(sectionBreak);
-            const headerCols = hasPesPTS
-                ? "    point     video-time     uts-time     pes-time      uts-diff    pes-diff"
-                : "    point     video-time     klv-time      diff";
-            push(headerCols);
-            push(hasPesPTS
-                ? "    ─────     ──────────     ──────────   ──────────    ────────    ────────"
-                : "    ─────     ──────────     ──────────    ────");
-            const pes = hasPesPTS ? this.misb.pesPTSus : null;
-            for (const q of [0.25, 0.5, 0.75, 1.0]) {
-                const f = Math.floor((videoFrameCount - 1) * q);
-                const k = firstValid + Math.floor((klvRecords - 1) * q);
-                const vidT = (ptsArr[f] - ptsArr[0]) / 1000 / 1000;
-                const klvT = (this.getTime(k) - this.getTime(firstValid)) / 1000;
-                const diff = klvT - vidT;
-                if (hasPesPTS) {
-                    const pesT = (pes[k] - pes[firstValid]) / 1e6;
-                    const pesDiff = pesT - vidT;
-                    push(`    q=${q.toFixed(2)}  ${vidT.toFixed(3).padStart(10)} s  ${klvT.toFixed(3).padStart(10)} s ${pesT.toFixed(3).padStart(10)} s  ${(diff >= 0 ? "+" : "")}${diff.toFixed(3)} s  ${(pesDiff >= 0 ? "+" : "")}${pesDiff.toFixed(3)} s`);
-                } else {
-                    push(`    q=${q.toFixed(2)}  ${vidT.toFixed(3).padStart(10)} s  ${klvT.toFixed(3).padStart(10)} s  ${(diff >= 0 ? "+" : "")}${diff.toFixed(3)} s`);
-                }
-            }
-            push("");
-
-            // Drift decomposition: separate the smooth clock-skew portion from
-            // the discontinuous gap-jump portion. The naive approach of fitting
-            // a line over all gap-free samples is contaminated, because every
-            // sample AFTER a gap inherits the gap's cumulative shift in its
-            // diff value. To get a clean clock-rate ratio we fit only over
-            // the prefix BEFORE the first gap.
-            push("DRIFT DECOMPOSITION");
-            push(sectionBreak);
-            const firstGapIdx = gaps.length > 0 ? minOf(gaps.map(g => g.idx)) : (lastValid + 1);
-            const skewEnd = Math.min(firstGapIdx, lastValid + 1);
-            // Pair record i with the proportionally-i-th video frame (same
-            // pairing used by the CUMULATIVE DRIFT table). Pairing by t_uts
-            // would self-align and zero out the slope.
-            const klvCount = klvRecords;
-            let sX = 0, sY = 0, sXX = 0, sXY = 0, n = 0;
-            for (let i = firstValid + 1; i < skewEnd; i++) {
-                const t_uts = (this.getTime(i) - this.getTime(firstValid)) / 1000;
-                const fIdx = Math.min(videoFrameCount - 1,
-                    Math.round((i - firstValid) * (videoFrameCount - 1) / (klvCount - 1)));
-                const t_vid = (ptsArr[fIdx] - ptsArr[0]) / 1000 / 1000;
-                const diff = t_uts - t_vid;
-                sX += t_vid; sY += diff; sXX += t_vid * t_vid; sXY += t_vid * diff;
-                n++;
-            }
-            const denom = n * sXX - sX * sX;
-            const slope = (n >= 2 && denom > 0) ? (n * sXY - sX * sY) / denom : 0;
-            const intercept = n > 0 ? (sY - slope * sX) / n : 0;
-            const skewPpm = slope * 1e6;
-            const cumGap = gaps.reduce((a, g) => a + (g.dt - klvIntervalMean), 0) / 1000;
-            const observedTotal = klvSpanS - videoSpanS;
-            const linearAtEnd = intercept + slope * videoSpanS;
-            const residual = observedTotal - cumGap - linearAtEnd;
-            const fitRangeS = (skewEnd > firstValid + 1)
-                ? `${((this.getTime(skewEnd - 1) - this.getTime(firstValid)) / 1000).toFixed(0)} s`
-                : "n/a";
-            push(pad("Skew fit range:", `0 s → ${fitRangeS} (pre-first-gap, ${n} samples)`));
-            push(pad("Linear clock skew:", `${slope >= 0 ? "+" : ""}${(slope * 1000).toFixed(3)} ms/s (${skewPpm >= 0 ? "+" : ""}${skewPpm.toFixed(0)} ppm)`));
-            push(pad("Skew at end of run:", `${linearAtEnd >= 0 ? "+" : ""}${linearAtEnd.toFixed(3)} s (extrapolated)`));
-            push(pad("Cumulative gap time:", `${cumGap >= 0 ? "+" : ""}${cumGap.toFixed(3)} s (${gaps.length} gaps)`));
-            push(pad("Observed end drift:", `${observedTotal >= 0 ? "+" : ""}${observedTotal.toFixed(3)} s (KLV − Video span)`));
-            push(pad("Unexplained residual:", `${residual >= 0 ? "+" : ""}${residual.toFixed(3)} s`));
             push("");
         }
 
@@ -679,6 +637,8 @@ export class CNodeMISBDataTrack extends CNodeEmptyArray {
         push(sectionBreak);
         if (dupes.length === 0) {
             push("  None — every KLV record's timestamp is greater than the previous.");
+        } else if (heldValues && dupes.every(d => d.dt === 0)) {
+            push(`  ${dupes.length} repeated times, the held values in SUMMARY. No reversed times.`);
         } else {
             push(`  ${dupes.length} record${dupes.length === 1 ? "" : "s"} with dt ≤ 0 (timestamp not strictly increasing):`);
             push("");
@@ -688,10 +648,10 @@ export class CNodeMISBDataTrack extends CNodeEmptyArray {
             }
             if (dupes.length > 30) push(`    … and ${dupes.length - 30} more`);
             push("");
-            push("  Duplicate timestamps usually mean the camera retransmitted a record");
-            push("  or the demuxer emitted the same KLV packet twice. Negative dt is");
-            push("  worse — out-of-order delivery that the binary search can't handle");
-            push("  cleanly. Cross-reference these with the gap clusters above.");
+            push("  A repeated time can be a held value or a record sent twice, and this");
+            push("  report cannot say which. A reversed time is out of order, and the");
+            push("  lookup by time can't handle that cleanly.");
+            if (hasRealGaps) push("  Compare these with the gaps above.");
         }
         push("");
 
@@ -724,11 +684,13 @@ export class CNodeMISBDataTrack extends CNodeEmptyArray {
         }
         push("");
 
-        // ── RECOMMENDATIONS ────────────────────────────────────────────
-        push("RECOMMENDATIONS");
+        // ── NOTES ──────────────────────────────────────────────────────
+        // Observations only. The report does not propose corrections: it cannot
+        // tell a clock-rate error from a gap-induced span difference.
+        push("NOTES");
         push(sectionBreak);
         if (cfrVideo && uniformKlv && Math.abs(spanDiff || 0) < 0.5) {
-            push("  No action needed.");
+            push("  Nothing to add on this stream's intervals.");
         } else {
             if (hasRealGaps) {
                 push("  • KLV stream has gap discontinuities. Track positions during gap");
@@ -736,45 +698,22 @@ export class CNodeMISBDataTrack extends CNodeEmptyArray {
                 push("    records. No automatic correction is appropriate.");
             }
             if (highCv && !hasRealGaps && klvHasPES) {
-                push("  • UnixTimeStamp interval scatter is high but PES PTS is uniform.");
-                push("    Sync uses PES PTS, so the UTS scatter doesn't affect display.");
-                push("    No action needed.");
+                push(`  • UnixTimeStamp interval scatter is high${pesClean ? " but PES PTS is uniform" : ""}.`);
+                push("    Tracks pair by PES PTS, so the UTS scatter doesn't affect display.");
             }
             if (highCv && !hasRealGaps && !klvHasPES) {
                 push("  • UnixTimeStamp interval scatter is high and no PES PTS is");
-                push("    available. Sync uses UTS lookup; per-record pairing carries");
+                push("    available. Tracks pair by UTS lookup; per-record pairing carries");
                 push("    the scatter as its uncertainty. Magnitude is typically below");
                 push("    the visual-sync threshold.");
             }
             if (cfrVideo && Math.abs(spanDiff || 0) > 0.5 && !hasRealGaps && !highCv) {
-                push("  • Span mismatch with uniform KLV — likely uniform clock-rate error.");
-                push("    Consider applying KLV-derived fps via the Time menu.");
+                push("  • Span mismatch with uniform KLV. This report cannot say why.");
             }
-            if (!cfrVideo) {
+            if (hasPTS && !cfrVideo) {
                 push("  • Variable-rate video. Use video PTS for frame timing rather");
                 push("    than relying on Sit.fps. (Sitrec does this automatically when");
                 push("    framePTSus is real.)");
-            }
-            // Encoder PTS-cadence-mismatch driven Sit.fps recommendation.
-            // Same shared helper as the VIDEO TIMING section above.
-            const _recSpans = klvCv < 0.5 ? computeMisbSpans(this.misb) : null;
-            const _recFps = _recSpans && _recSpans.pesSpanS > 0 ? computeFpsAnalysis({
-                videoFrameCount,
-                videoPesSpanS: videoSpanS,
-                klvUtsSpanS: _recSpans.utsSpanS,
-                klvPesSpanS: _recSpans.pesSpanS,
-                currentSitFps: Sit.fps,
-            }) : { valid: false };
-            if (_recFps.valid && _recFps.fpsGap > 0.01 && _recFps.sitFpsDelta > 0.01) {
-                const { pcrFps: labeledFps, realFps, fpsGap } = _recFps;
-                push(`  • Encoder PTS-cadence mismatch detected (${(fpsGap * 100).toFixed(1)}% gap). PES-labeled fps is ${labeledFps.toFixed(2)},`);
-                push(`    real-time fps from KLV UTS is ${realFps.toFixed(2)}, current Sit.fps is ${Sit.fps.toFixed(2)}.`);
-                push(`    The encoder is writing PTS values at ${labeledFps.toFixed(0)} fps cadence while frames arrive at`);
-                push(`    ${realFps.toFixed(0)} fps (a known ffmpeg ’-r N without fps filter’ footgun, or a similar`);
-                push(`    misconfiguration). The PCR oscillator itself is fine; only the per-frame PTS`);
-                push(`    increment is wrong. Set Sit.fps to ${Math.round(realFps)} so the platform track aligns to`);
-                push(`    real-time playback. Without this, the platform marker reaches end-of-track at`);
-                push(`    Sitrec frame ${Math.round(Sit.fps * klvSpanS)} of ${videoFrameCount} instead of ${Math.round(realFps * klvSpanS)}.`);
             }
         }
 
@@ -1232,9 +1171,22 @@ export class CNodeMISBDataTrack extends CNodeEmptyArray {
                 if (Math.abs(n) >= 1000 || Math.abs(n) < 0.01 && n !== 0) return n.toExponential(3);
                 return n.toFixed(Math.abs(n) >= 100 ? 1 : 3);
             }
-            const s = String(v);
-            return s.length > 24 ? s.slice(0, 21) + "..." : s;
+            return "(text)";
         }
+
+        // This part of the report is anonymous, so a value prints only if it cannot
+        // name a place, a time, a platform or a mission. This is a list of what may
+        // print, so a field that is not on it says only how it changed. Enums and bit
+        // fields are on it because their values come from the standard, not the stream.
+        const printsValue = (f, name) => {
+            const type = MISBValueDecoders[f]?.type;
+            return type === "enum" || type === "bitfield" || /Angle|FieldofView|[Ss]peed|SlantRange/.test(name);
+        };
+        const changeWithoutValue = (before, after) => {
+            const isSet = v => v !== null && v !== undefined && v !== "";
+            if (isSet(before) && isSet(after)) return "changed";
+            return isSet(after) ? "appeared" : "gone";
+        };
 
         // Tally transitions per field across all gaps.
         const fieldHits = new Map();   // index → { name, count, examples: [] }
@@ -1281,6 +1233,7 @@ export class CNodeMISBDataTrack extends CNodeEmptyArray {
                     desc = transition(before[f], after[f]);
                     if (!desc) continue;
                 }
+                if (!printsValue(f, name)) desc = changeWithoutValue(before[f], after[f]);
                 transitions.push({ idx: f, name, desc });
                 let entry = fieldHits.get(f);
                 if (!entry) { entry = { name, count: 0, examples: [] }; fieldHits.set(f, entry); }
@@ -1363,14 +1316,10 @@ export class CNodeMISBDataTrack extends CNodeEmptyArray {
             lines.push(`  ${perGap.length} gaps total — per-gap detail suppressed (>25). Most-correlated fields shown above.`);
         }
 
-        // Interpretation hint based on what we found.
         const topInteresting = interesting[0];
         if (topInteresting && topInteresting.count >= total * 0.5) {
-            lines.push(`  Interpretation: ${topInteresting.name} transitions at ${topInteresting.count}/${total} gaps.`);
-            lines.push("    This is consistent with the user's report that gaps coincide with");
-            lines.push("    active laser/rangefinder/sensor operations. The KLV emitter likely");
-            lines.push("    pauses or stalls when these sensors engage — investigate the source");
-            lines.push("    file's recording mode or the device's documented behavior.");
+            lines.push(`  ${topInteresting.name} changes at ${topInteresting.count} of ${total} gaps. That can be a`);
+            lines.push("  shared cause or chance, and this report cannot say which.");
         }
 
         return lines;

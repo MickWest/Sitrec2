@@ -521,10 +521,11 @@ the trailing telemetry duration. PES-PTS pairing handles this correctly:
 the trailing KLV records simply have no corresponding video frames. The
 "drift" you see in proportional-quartile comparisons (q × records vs.
 q × frames at q < 1.0) is a rate-mismatch artifact, not a clock-skew
-problem. The drift-decomposition section of the Timing Analysis report
-splits the observed end-difference into linear clock skew (regressed
-over the gap-free pre-burst region) + cumulative gap time + residual,
-which lets you see the contributors clearly.
+problem. A line fitted to that proportional pairing measures only
+`(S_k − S_v) / S_v`, where S is the span of each stream, whatever the
+cause. KLV that starts 2 s early on a 32.6 s video gives a slope of
++61 ms/s with both clocks perfect. So the report estimates no skew and no
+fps. It prints the spans and their difference, and that is all.
 
 ### 5f. "Decoder failure = whole-stream failure"
 A single corrupt group (especially a malformed/truncated trailing
@@ -559,15 +560,17 @@ both use the helper. Any future derived path must do the same or it silently
 falls back to UTS pairing.
 
 ### 5h. "There's only one KLV stream"
-Some MISB-compliant transmitters emit **two** KLV streams in the same TS:
-an asynchronous one (no PES PTS, timing carried by Tag 2 UnixTimeStamp
-inside the payload) and a synchronous one (PES PTS present, locked to
-PCR). The two may be at different rates and have different track
-content. Picking the first MISB data node in iteration order can land
-on either; the analyzer prefers one with `hasRecordPTS() === true` so
-the synchronous-mode timing is used. Track-side, the camera platform
-may be locked to whichever PID the user authored, and that determines
-which pairing path runs. See §8f.
+Some transmitters emit **two** KLV streams in the same TS: an asynchronous
+one (stream_type 0x06) and a synchronous one (stream_type 0x15). The two
+may be at different rates and have different track content. ST 1402 says
+that asynchronous PES carries no PTS, but encoders differ: the asynchronous
+stream of `falls.ts` has PTS on every record. So the carriage label does
+not say how a record is timed, and only `hasRecordPTS()` does.
+
+Track-side, the camera platform may be locked to either PID, and that
+determines which pairing path runs. So the analyzer uses the stream of the
+platform track, and only without one the first with `hasRecordPTS()`. See
+§8f.
 
 ---
 
@@ -659,22 +662,59 @@ relative to the first video frame.
 
 ### 6b. KLV record pairing (`src/MISBUtils.js parseKLVFile`)
 
-Three pairing strategies, in priority order:
+Records pair by byte offset: a record's PES is the last one that starts at
+or before the record. The offsets are those of the decoded ST 0601 packets
+only, so a packet of another standard, or a packet that fails to decode,
+does not move the records after it. Do not pair by index when the counts
+match: two records in one PES and no record in the next give equal counts
+and the wrong times.
 
-```
-   if (pesEntries.length === n)
-       → 1:1 by index (synchronous-mode, common case)
-   else if (validPacketOffsets.length === n)
-       → pair by byte offset (each scanned KLV "packet" is a record)
-   else
-       → best-effort interpolation (n records spread across m packets)
-```
-
-Each strategy applies the same shift: `pesPTSus[i] = pesEntries[i].ptsUs - videoFirstPESus`.
+The shift is `pesPTSus[i] = pesEntries[j].ptsUs - videoFirstPESus`.
 This puts KLV PTS values on the video-relative axis used by
 `framePTSus[F] - framePTSus[0]`; the raw video array itself retains its
 source origin. Negative KLV values are valid — they represent records emitted
 before the first video frame on the PCR clock.
+
+#### What `parseKLVFile` does with bad data
+
+In synchronous carriage, a 5-byte `metadata_AU_cell` header comes before the
+KLV. It is not a KLV key. The scanner moves byte by byte to the next
+universal key, so it steps over the header.
+
+Each packet decodes alone. A failed tag loses only that tag, because its
+length is known, and a failed packet loses only that record. A BER length
+that runs past the data sends the scanner on from the next byte. A lost TS
+packet is harder: the length stays inside the data, so the record runs on
+over the next one. A bad checksum shows this, and the scanner then cuts the
+packet at the next whole ST 0601 key. Only a whole key: a good record can hold
+the key of a nested set, and an encoder can use another checksum method. The
+counts are in `misb.klvDecodeStats`, and the report shows them.
+
+| Fault | Effect | Counted as |
+|---|---|---|
+| Length that runs past the data | Packet lost, scan goes on | `badLengths` |
+| Bad checksum, with an ST 0601 key inside the packet | Packet cut there and lost, next one kept | `rejected` |
+| Packet too short, or that does not parse | Record lost | `rejected` |
+| Damaged key: no packet at all | Record lost | `pesWithoutPacket` |
+| Lost TS packet that held the start of a PES | Record lost, and no PES entry | TS continuity errors only |
+| Bad or missing checksum, nothing else | Record kept | `badChecksums` |
+| Tag of the wrong length (`fixedTagSizes` in `st0601.mjs`) | Value is null | `tagFaults` |
+| Tag that throws in `convert`, in practice a nested set | Value is null | `tagFaults` |
+| Tag 22 of the wrong length | All L bytes read | `tagFaults`, `value read` |
+| Zero-length item | Value is null. Legal, so not a fault | none |
+
+Tag 22 is the exception because Day Flight and Night Flight send it in
+4 bytes on the 2-byte scale. Tags 73 and 74 pass a `Buffer` to `parseLS`: a
+`DataView` returns `[]` with no error, and a `Uint8Array` garbles text.
+`Buffer` exists in the browser through webpack's `ProvidePlugin`.
+
+`pesWithoutPacket` is null with no PES entries. Otherwise it counts PES
+entries whose bytes overlap no packet that the scanner found, of any standard
+and whether it decoded or not, so a PES of ST 0903, the rest of a long record
+and a rejected packet do not add to it.
+
+Jest runs the real decoder. Faults here are on error paths, and they show
+as ordinary data, so test them with real bytes: `tests/MISBKlvDecode.test.js`.
 
 #### Saving and reloading PES timing
 
@@ -773,39 +813,122 @@ designed to be the *only* diagnostic surface needed on a system where
 interactive console / MCP access isn't available — every signal that
 matters lives in the dump itself.
 
-The handler iterates *all* CNodeMISBDataTrack nodes in NodeMan and:
-1. Lists every loaded MISB data node with its record count and
-   `hasRecordPTS()` flag (matters when the file has multiple KLV
-   PIDs — see §5h, §8f).
-2. Picks the first one with `hasRecordPTS() === true` for the deep
-   analysis, falling back to the first node otherwise.
+The report has three parts: Streams, Tracks and Analysis. The handler
+iterates *all* CNodeMISBDataTrack nodes in NodeMan and:
+1. Gives each loaded KLV stream a column in the Streams table, with its
+   record count, `hasRecordPTS()` flag, gap count and longest interval
+   (matters when the file has multiple KLV PIDs — see §5h, §8f).
+   `streamTiming` measures these. Derived tracks get no column, only a
+   count under the table.
+2. Picks the stream for the deep analysis: the one that the platform
+   track uses (`cameraTrackSwitch`, with a derived track counted as its
+   source stream), else the first real stream with
+   `hasRecordPTS() === true`, else the first real stream. The heading of
+   the analysis and the **Analyzed below** row both give the reason.
 3. Lists every derived MISB track (`CNodeTrackFromMISB` and subclasses)
    with the loaded stream it bound to and the pairing **mode** it
    resolved to (PTS pairing vs UTS fallback), plus the shared video-PTS /
-   frame-patching state — the **"Track Pairing"** prelude block. This
-   answers "is the displayed track on the sync or the async KLV stream?"
+   frame-patching state — the **"Tracks"** block (`renderTracks`). This
+   answers "is the displayed track on this KLV stream or that one?"
    for multi-PID files (§5h, §8f). Shown only when there are multiple
-   streams or any track falls to the UTS fallback; structural-only
-   (positional Stream labels and counts, no node ids). The mode reported
-   is the actual `usePESPTS` decision the track's last `recalculate()`
-   made, read from its in-memory `pairingInfo` stamp.
+   real streams or any track falls to the UTS fallback; structural-only
+   (stream names from the container's ids and counts, no node ids). The
+   mode reported is the actual `usePESPTS` decision the track's last
+   `recalculate()` made, read from its in-memory `pairingInfo` stamp.
+
+The report starts with a **"Streams"** block (`renderStreams` in
+`src/analysis/MisbTimingStats.js`): one table with a column for each KLV
+stream and a row for each field. It says what each stream is, and how the
+streams compare. The rows have a fixed shape, so that one report can be
+compared with another. The groups and their sources are:
+
+- **In the TS file:** `#0:N`, PID and `stream_type`, plus `misb.tsIds` from
+  the demux: PES `stream_id`, the name in a user-private PMT descriptor
+  (tag 0xFF), the continuity error count and the list of other streams.
+  These are lost with the PES layer, so they are saved in the `.pts.txt`
+  sidecar. A stream with no sidecar shows `?`.
+- **In the KLV:** a fixed list of tags (`IDENTITY_FIELDS`), then the local
+  sets, then a count of tags. `localFieldValues` finds the local sets.
+  Tag 65 is listed first. Its full name is UAS Datalink Local Set Version
+  Number. It is the ST 0601 revision that the encoder states, and no code
+  branches on it: one mapping fits every revision in the samples.
+- **Decoding:** `misb.klvDecodeStats` from `parseKLVFile`.
+- **Timing:** `streamTiming` reads the data node. Intervals are on tag 2,
+  because `getTime` reads tag 2, so the rows say so. A stream that repeats
+  records prints `newValueMeanMs`, the mean with the repeats left out. The
+  clock offset reads both tag 2 clocks at the same PES PTS when it can, to
+  about 25 ms on falls.ts, as held values and the PES difference both stay in
+  it. Otherwise it is the first times, which also hold any difference in when
+  the streams start, so the cell says `(first times)` and no line under the
+  table calls that a clock disagreement. `streamsOnSitchClock` marks only the
+  stream nearest to the sitch start, within 60 s. The sun height uses
+  astronomy-engine at sea level with no refraction. It is the only check that
+  a clock is right, and `falls.ts` needs it: one stream sends local time marked
+  as UTC, and the sun is 19.8° below the horizon on that clock in a daylight
+  picture. It depends on the place and the time, so it is `hidden` with the
+  names. The PES rows come from
+  `analyzePtsSync`: the first-record offset, and each record inside the
+  video against its nearest frame. `framePTSus` keeps the file's clock origin
+  and `pesPTSus` is relative to the first frame, so `streamTiming` makes the
+  frames relative first. Nearest-frame distance alone cannot find a constant
+  lead, so the first-record offset and the count of records outside the video
+  are there too. The rows are computed once and passed to both renders.
+- **Compared with** the first stream, by its short name
+  (`shortStreamName`): the median horizontal distance on a shared clock: PES
+  PTS if both streams have it, else tag 2, in the units of each source
+  (`tag2Ms`).
+- **Tags misb.js does not decode:** it writes `"Not Implemented"` in the
+  row, so the value is gone. `parseKLVFile` reads those tags again from
+  the packets (`undecodedTagValues`) into `misb.undecodedKLVTags`.
+- **KLV packets that are not ST 0601:** `misb.otherKLVPackets` from
+  `parseKLVFile`, one row for each key across the streams. A key misb.js
+  knows prints as its standard's name.
+
+`≠` marks tag rows only, because ids and measurements nearly always differ.
+It is in the Field column, as a mark after the last column is off the screen
+with three streams. It is worked out from all the unique true values, so it
+stays when both cells print `hidden`, and it does not depend on what a cell
+can show, or on how many records have a value.
+
+The block is rendered twice, with and without `hideNames`. The dialog's
+**Show Filename and Names** checkbox chooses between the two headers, so
+the view, the copy and the download always match. With names hidden, only
+whole numbers from 0 to 65535 and a raw value of one byte, or of two bytes
+that are not text, stay. Text is hidden even if it is all digits, as a tail
+number or a mission id can be. Every other tag value prints as `hidden`, one
+for each value. Counts and packet keys stay, because they hold no tag value.
+The first time prints as `hidden`.
+
+The Analysis part is one text for both settings, so it must identify nothing.
+At a KLV gap, the list of tags that changed goes through an allow-list
+(`printsValue`): enums and bit fields from `MISBValueDecoders.js`, and names
+that match angle, field of view, speed or slant range. Every other field
+prints `changed`, `appeared` or `gone`, as a deny-list missed tags 11 and 12,
+numeric text and altitudes. The list is applied after the text is built,
+because the decoders print their values and do not go through `formatVal`.
 
 Sections of the deep analysis:
 
-- **Summary** — span comparison, fps, sync verdict.
-- **Video Timing** — PTS interval mean/stddev, CFR-vs-VFR verdict, plus
+- **Summary** — span comparison and what was measured against the video.
+- **Video Timing** — PTS interval mean/stddev and a CFR-vs-VFR verdict. The
+  verdict counts intervals over 1 ms from the median, and up to 1% of them
+  still count as constant rate, because one dropped frame among N intervals
+  of T moves the stddev by about T/√N. Plus
   a **"Frame PTS source"** line telling you whether `framePTSus[]` is
   real PES PTS (TSParser pesEntries) or synthetic uniform stamps. Also
   lists every **video PTS jump** (interval > 1.5× mean) — the dropped-
   frame bursts that cause the desync described in §5a.
 - **KLV Timing** — interval statistics on UnixTimeStamps, coefficient-
-  of-variation, max-gap ratio.
+  of-variation, max-gap ratio. With held values, the figures are the
+  intervals between new values: `heldValues` is true when records repeat
+  and the rest have a CV under 5%.
 - **KLV Gaps** — every UnixTimeStamp interval > a threshold (typically
   100 ms or 3× mean), with record index, KLV-time, and gap size.
-- **KLV PES PTS Availability** — diagnostics for the synchronous-mode
-  anchor. Reports `hasRecordPTS()`, `pesPTSus[]` length and non-null
-  count, the matching FileManager entry's filename, dataType, parent TS
-  filename, and the stashed `pesEntries` / `videoFirstPESus`. When
+- **KLV PES PTS Availability** — diagnostics for PES PTS pairing.
+  Reports `hasRecordPTS()`, `pesPTSus[]` length and non-null count, and
+  whether a FileManager entry, a parent TS, `pesEntries` and
+  `videoFirstPESus` exist. Names and absolute offsets stay out, so that
+  this part of the report identifies nothing. When
   hasRecordPTS is false this block tells you exactly which step of
   the chain dropped the data (TSParser captured 0, parseKLVFile
   fallback hit, FileManager entry missing, etc.).
@@ -815,20 +938,11 @@ Sections of the deep analysis:
   (visible only in UnixTimeStamp).
 - **KLV PES PTS Gaps** — same threshold check applied to PES PTS
   intervals.
-- **Cumulative Drift** — quartile-by-quartile divergence between video
-  PTS and KLV cumulative time, with both `uts-diff` and `pes-diff`
-  columns when PES PTS is available. Note this is *proportional-index*
-  pairing (q × records vs. q × frames), so it shows rate-mismatch
-  artifacts as well as actual drift — see §5e.
-- **Drift Decomposition** — splits the observed end-of-run KLV-vs-video
-  span difference into linear clock skew (regressed over the gap-free
-  pre-burst region only — pairing post-gap samples corrupts the slope
-  with cumulative gap shifts) + cumulative gap time + unexplained
-  residual. Lets you read the contributors at a glance.
 - **Platform/Sensor GPS Velocity Consistency** — Haversine distance
   between consecutive valid records divided by reported time delta;
   flags samples where velocity exceeds both a relative and absolute
-  threshold (catches teleports / bad timestamps).
+  threshold (catches teleports / bad timestamps). This speed comes from
+  the positions. Tag 56, the ground speed in the file, is not read.
 - **Duplicate / Reversed Timestamps** — records where `getTime(i) ≤ getTime(i-1)`.
 - **Event Correlations With KLV Gaps** — for each gap, which other MISB
   fields transitioned at the boundary. Bitfield/enum tags (Tag 47
@@ -920,26 +1034,39 @@ frames too. Not all KLV gaps coincide with video-side jumps and vice versa.
 Some MISB-compliant transmitters emit two parallel KLV streams in one
 TS program:
 
-- **Asynchronous-mode KLV**: PES packets without PTS (`PTS_DTS_flags = 0`),
-  timing carried only by Tag 2 UnixTimeStamp inside each record's payload.
+- **Asynchronous-mode KLV** (stream_type 0x06, PES stream_id 0xBD): by
+  ST 1402, PES packets without PTS (`PTS_DTS_flags = 0`), with timing
+  carried only by Tag 2 UnixTimeStamp inside each record's payload.
   Survives any pipeline that strips PES headers.
-- **Synchronous-mode KLV**: PES packets with PTS_DTS_flags set, locked to
-  PCR. Provides per-record PCR timing (the `pesPTSus[]` we use for
-  drift-free pairing).
+- **Synchronous-mode KLV** (stream_type 0x15, PES stream_id 0xFC): PES
+  packets with PTS, each with one or more `metadata_AU_cell`s. Provides
+  per-record PCR timing (the `pesPTSus[]` we use for drift-free pairing).
 
 The two streams may have different content (different TrackIDs,
 different rates) or the same content with different timing modes. Both
 get extracted as separate substreams, each with its own FileManager
-entry. The asynchronous one will have `pesEntries: []` (TSParser
-captures zero entries because none of the PES packets carry PTS); the
-synchronous one will have one entry per record.
+entry.
 
-`hasRecordPTS()` is the straightforward way to tell at the data-node
-level. The Timing Analysis "MULTIPLE MISB DATA STREAMS LOADED" prelude lists
-every loaded one. If the user's camera platform is locked to a track
-backed by the async-mode node, only the UTS wall-clock fallback is
-available (nominal-rate UTS lookup); PTS pairing needs the sync-mode node on
-the KLV side.
+Do not trust the carriage label for timing. Day Flight's asynchronous
+stream has `pesEntries: []`, as ST 1402 says. The asynchronous stream of
+`falls.ts` has a PTS on all 1953 records, and all of them equal a video
+PTS. Its synchronous stream has a PTS on all 1953 records, but only 1
+equals a video PTS (mean distance 2.07 ms, max 14.0 ms). Those PTS follow tag
+2 to within 0.05 ms, so they add no independent time. At the same PES PTS, its
+two tag 2 clocks differ by 7 h minus about 0.82 s. The 7 h may be a time zone
+(inference), and the 0.82 s is a true disagreement.
+
+The asynchronous stream of `falls.ts` also shows what a repeated record looks
+like. Its tag 2 intervals are 0 ms 866 times and 30 ms 1086 times, because the
+encoder repeats the last record on each 16.7 ms frame until the metadata
+changes. CV is the wrong measure for that: it reads 89% with no scatter at all.
+So the analysis leaves the repeats out of the scatter test, and says what it
+found.
+
+`hasRecordPTS()` is the way to tell at the data-node level, and the Timing
+Analysis "Streams" table has a column for every loaded one. If the user's
+camera platform is locked to a track backed by a node with no record PTS,
+only the UTS wall-clock fallback is available (nominal-rate UTS lookup).
 
 ---
 
@@ -1005,7 +1132,8 @@ the KLV side.
 | `src/CVideoWebCodecBase.js`           | `framePTSus[]`, `hasRealFramePTS()` impl, per-group decode failure tolerance |
 | `src/nodes/CNodeMISBData.js`          | `getRecordPTSms()`, `hasRecordPTS()`, Timing Analysis |
 | `src/nodes/CNodeTrackFromMISB.js`     | `recalculate()` with two-mode pairing (PTS pairing / nominal-rate UTS wall-clock fallback) |
-| `src/nodes/CNodeDateTime.js`          | Timing Analysis button handler — picks the MISB node with `hasRecordPTS()` if any |
+| `src/nodes/CNodeDateTime.js`          | Timing Analysis button handler — analyzes the stream that the platform track uses, else the first with `hasRecordPTS()` |
+| `src/analysis/MisbTimingStats.js`     | `renderStreams()`, `renderTracks()`, `streamTiming()`, `analyzePtsSync()` |
 | `src/MISBValueDecoders.js`            | Bitfield/enum decoders for ST 0601 tags               |
 | `src/showTimingAnalysis.js`           | Modal viewer for the timing-analysis report           |
 

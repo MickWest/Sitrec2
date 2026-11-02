@@ -16,8 +16,8 @@ const STREAM_TYPE_NAMES = {
     0x81: "AC3",
     0x86: "SCTE-35",
     0x87: "E-AC3",
-    0xF0: "ECM",
-    0xF1: "EMM",
+    0xF0: "User-private data",
+    0xF1: "User-private data",
 };
 
 function fileSize(fileLike) {
@@ -292,8 +292,8 @@ function codecNameForStream(stream) {
         case 0x24: return "hevc";
         case 0x81: return "ac3";
         case 0x87: return "eac3";
-        case 0xF0: return "ecm";
-        case 0xF1: return "emm";
+        case 0xF0:
+        case 0xF1: return "private_data";
         default: return "unknown";
     }
 }
@@ -301,7 +301,7 @@ function codecNameForStream(stream) {
 function codecTypeForName(codecName) {
     if (["h264", "hevc", "mpeg1video", "mpeg2video"].includes(codecName)) return "video";
     if (["aac", "mp3", "ac3", "eac3"].includes(codecName)) return "audio";
-    if (["klv", "timed_id3", "ecm", "emm", "private_data"].includes(codecName)) return "data";
+    if (["klv", "timed_id3", "private_data"].includes(codecName)) return "data";
     return "unknown";
 }
 

@@ -181,7 +181,7 @@ export class CTrackFileMISB extends CTrackFile {
         const uniqueIDs = this._getUniqueTrackIDs();
         if (uniqueIDs) {
             const targetID = uniqueIDs[trackIndex];
-            return this.data.filter(row => row[MISB.TrackID] === targetID);
+            return this._copyStreamIds(this.data.filter(row => row[MISB.TrackID] === targetID));
         }
 
         // Single-track: original behavior
@@ -250,13 +250,20 @@ export class CTrackFileMISB extends CTrackFile {
         }
         if (derivedPES) derivedMisb.pesPTSus = derivedPES;
         // The rows hold only time and position, so a per-stream report (the
-        // Timing Analysis "Local Fields") must not list this as a KLV stream.
+        // Timing Analysis "Streams" table) must not list this as a KLV stream.
         // The source's stream ids let that report say which stream it came from.
         derivedMisb.derivedTrack = label;
-        for (const key of ["klvPid", "klvStreamIndex", "klvStreamType"]) {
-            if (this.data[key] !== undefined) derivedMisb[key] = this.data[key];
+        return this._copyStreamIds(derivedMisb);
+    }
+
+    // Rows made from this.data lose its properties, so the reports' stream ids
+    // are copied to them.
+    _copyStreamIds(rows) {
+        for (const key of ["klvPid", "klvStreamIndex", "klvStreamType", "tsIds", "undecodedKLVTags",
+            "otherKLVPackets", "klvDecodeStats", "sourceFile", "sourceBytes"]) {
+            if (this.data[key] !== undefined) rows[key] = this.data[key];
         }
-        return derivedMisb;
+        return rows;
     }
 
     _centerTrackMISB() {

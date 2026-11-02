@@ -1011,6 +1011,8 @@ export const saveMethods = {
             // stream after a reload. Older sidecars do not have them.
             streamIndex: Number.isInteger(fileEntry.streamIndex) ? fileEntry.streamIndex : null,
             streamType: fileEntry.streamType ?? null,
+            // The other TS ids of a KLV stream, for the report's Stream Identifiers.
+            tsIds: fileEntry.tsIds ?? null,
         };
         const json = JSON.stringify(sidecar);
         return new TextEncoder().encode(json).buffer;

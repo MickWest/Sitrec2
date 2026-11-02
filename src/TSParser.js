@@ -115,7 +115,11 @@ export class TSParser {
             // packet — the offset must reflect what's been pushed *before*
             // this packet's payload is appended).
             const streamAccLen = new Map();
-            
+            // PID -> what the report needs from the TS layer, which is lost
+            // when the headers are stripped: packet and continuity counts, and
+            // the PES stream_ids.
+            const pidStats = new Map();
+
             // Get elementary stream PIDs and their types from analysis
             const elementaryStreams = new Map(); // PID -> stream info
             for (const program of analysis.programs) {
@@ -131,6 +135,7 @@ export class TSParser {
                         }
                     }
                     
+                    pidStats.set(pid, {packets: 0, continuityErrors: 0, lastCounter: null, pesStreamIds: new Set()});
                     elementaryStreams.set(pid, {
                         // Position in the PMT stream list, numbered across all
                         // programs: the N in ffprobe's "Stream #0:N".
@@ -193,6 +198,23 @@ export class TSParser {
                 // Only process elementary stream PIDs
                 if (!elementaryStreams.has(pid)) continue;
 
+                // continuity_counter steps by 1 on each packet with a payload. A
+                // repeat is allowed, and so is a jump the encoder flags, which it
+                // can do in a packet with no payload.
+                const stats = pidStats.get(pid);
+                stats.packets++;
+                if ((adaptationFieldControl & 2) && uint8Array[offset + 4] > 0 && (uint8Array[offset + 5] & 0x80)) {
+                    stats.lastCounter = null;
+                }
+                if (adaptationFieldControl & 1) {
+                    const counter = header3 & 0x0F;
+                    if (stats.lastCounter !== null && counter !== stats.lastCounter
+                        && counter !== ((stats.lastCounter + 1) & 0x0F)) {
+                        stats.continuityErrors++;
+                    }
+                    stats.lastCounter = counter;
+                }
+
                 let payloadStart = 4;
 
                 // Handle adaptation field
@@ -225,6 +247,7 @@ export class TSParser {
                                 const pesDataLength = uint8Array[offset + payloadStart + 8];
                                 // Standard PES header: 6 (start_code + stream_id + length) + 3 (mandatory fields) + pesDataLength (optional)
                                 pesHeaderSkip = 9 + pesDataLength;
+                                stats.pesStreamIds.add(streamId);
 
                                 // Parse PTS from PES header if PTS_DTS_flags
                                 // indicate it's present (bit 7 of byte 7).
@@ -280,6 +303,19 @@ export class TSParser {
                 }
             }
 
+            // The streams that are not KLV, for reports. Sitrec does not read
+            // private data, so this is the only sign that it is in the file.
+            const otherStreams = [...elementaryStreams]
+                .filter(([, info]) => info.codec_name !== "klv")
+                .map(([pid, info]) => ({
+                    pid,
+                    codec: info.codec_name,
+                    streamType: info.stream_type,
+                    name: pmtName(info.descriptors),
+                    packets: pidStats.get(pid).packets,
+                    bytes: streamAccLen.get(pid) ?? 0,
+                }));
+
             // Convert accumulated data to streams
             for (const [pid, dataChunks] of streamData.entries()) {
                 if (dataChunks.length === 0) continue;
@@ -329,12 +365,6 @@ export class TSParser {
                     case 'eac3':
                         extension = 'eac3';
                         break;
-                    case 'ecm':
-                        extension = 'ecm';
-                        break;
-                    case 'emm':
-                        extension = 'emm';
-                        break;
                     case 'klv':
                         extension = 'klv';
                         break;
@@ -355,6 +385,15 @@ export class TSParser {
                 console.log(`extractTSStreams: PID ${pid} (${streamInfo.codec_name}) — captured ${pesEntriesForStream.length} PES PTS entries`);
                 streams.push({
                     pid: pid,
+                    // The TS facts about a KLV stream, for reports. They are
+                    // saved with the stream's PES timing, as the demux will
+                    // not run again when a sitch is reloaded.
+                    tsIds: streamInfo.codec_name === "klv" ? {
+                        pesStreamIds: [...pidStats.get(pid).pesStreamIds],
+                        pmtName: pmtName(streamInfo.descriptors),
+                        continuityErrors: pidStats.get(pid).continuityErrors,
+                        otherStreams,
+                    } : null,
                     index: streamInfo.index,
                     type: streamInfo.codec_name,
                     extension: extension,
@@ -523,8 +562,8 @@ const STREAM_TYPE = {
     0x42: "AVS",
     0x81: "AC3 (ATSC)",
     0x86: "SCTE-35 (Digital Program Insertion)",
-    0xF0: "ECM Stream (Entitlement Control Message)",
-    0xF1: "EMM Stream (Entitlement Management Message)",
+    0xF0: "User-private data",
+    0xF1: "User-private data",
 };
 
 function* packets(buf) {
@@ -616,6 +655,17 @@ function parsePAT(section) {
         }
     }
     return out;
+}
+
+// A stream's own name in the PMT: the text of a user-private descriptor (tag
+// 0xFF), or null. An encoder can write one, for example "KLV_SYNC".
+function pmtName(descriptors) {
+    for (const {tag, data} of descriptors ?? []) {
+        if (tag === 0xFF && data?.length > 1 && data.every(byte => byte >= 0x20 && byte <= 0x7E)) {
+            return String.fromCharCode(...data);
+        }
+    }
+    return null;
 }
 
 // Parse PMT → PCR PID + ES list (pid, stream_type, descriptors)
@@ -729,15 +779,14 @@ export function probeTransportStreamBuffer(buf) {
                                         s.stream_type === 0x03 || s.stream_type === 0x04 ? "mp3" :
                                             s.stream_type === 0x81 ? "ac3" :
                                                 s.stream_type === 0x87 ? "eac3" :
-                                                    s.stream_type === 0xF0 ? "ecm" :
-                                                        s.stream_type === 0xF1 ? "emm" :
+                                                    s.stream_type === 0xF0 || s.stream_type === 0xF1 ? "private_data" :
                                                             s.stream_type === 0x15 && reg === "KLVA" ? "klv" :
                                                                 s.stream_type === 0x15 ? "timed_id3" :
                                                                     s.stream_type === 0x06 && reg ? reg : "unknown");
 
             const codec_type = codec_name === "h264" || codec_name === "hevc" || codec_name === "mpeg1video" || codec_name === "mpeg2video" ? "video" :
                         codec_name === "aac" || codec_name === "mp3" || codec_name === "ac3" || codec_name === "eac3" ? "audio" :
-                            codec_name === "klv" || codec_name === "timed_id3" || codec_name === "ecm" || codec_name === "emm" ? "data" : "unknown";
+                            codec_name === "klv" || codec_name === "timed_id3" || codec_name === "private_data" ? "data" : "unknown";
 
             return {
                 index: index,
@@ -750,8 +799,7 @@ export function probeTransportStreamBuffer(buf) {
                                 codec_name === "mp3" ? "MP3 (MPEG audio layer 3)" :
                                 codec_name === "ac3" ? "AC-3 (Dolby Digital)" :
                                 codec_name === "eac3" ? "E-AC-3 (Dolby Digital Plus)" :
-                                codec_name === "ecm" ? "ECM Stream (Entitlement Control Message)" :
-                                codec_name === "emm" ? "EMM Stream (Entitlement Management Message)" :
+                                codec_name === "private_data" ? "User-private data" :
                                 codec_name === "klv" ? "SMPTE 336M Key-Length-Value (KLV) metadata" :
                                 codec_name === "timed_id3" ? "Timed ID3 metadata" :
                                 "Unknown",

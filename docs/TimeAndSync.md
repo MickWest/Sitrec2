@@ -394,46 +394,184 @@ into account.
 
 ## Timing Analysis
 
-**Time → Timing Analysis...** makes a text report on the timing of a MISB video: the video
-frame timestamps, the KLV record intervals, gaps, drift, and whether the GPS speed agrees
-with the positions. If there is more than one KLV stream, it lists all of them and shows
-which one each track uses. You can copy the report or download it as
-`sitrec-timing-analysis.txt`. The report does not include track or node names, but it does
-show the file name and the values in **Local Fields**.
+**Time → Timing Analysis...** makes a text report on the KLV metadata of a video. KLV is the metadata
+in a MISB video. It comes from a `.ts` file (an MPEG transport stream, or TS, which is a video
+container), a `.klv` file or a MISB CSV file. Load the file first. If the sitch has no MISB data, the
+report is a message that says so. The report opens in a dialog, and **Copy Analysis** and
+**Download Analysis** give you the text as `sitrec-timing-analysis.txt`.
 
-The first line gives the name and size of the loaded file: a `.ts` file (an MPEG transport
-stream, or TS, which is a video container) or a `.klv` file. Clear **Show Filename** to remove
-this line from the text, from **Copy Analysis** and from **Download Analysis**.
+A **stream** is one series of KLV data in the file, and a **record** is one set of values at one
+time. A file can have two KLV streams, for example from two parts of the system on the aircraft, or
+because the encoder sends the data in two ways.
 
-Each KLV stream is named by its ids in the file, for example
-`KLV #0:3 [0x1002 = PID 4098], sync (stream_type 0x15)`:
+The report starts with the name and size of the loaded file, and then has three parts:
 
-- `#0:3` is the stream's position in the TS program map, the same number that `ffprobe`
-  shows as `Stream #0:3` and that `ffmpeg -map 0:3` uses.
-- `[0x1002 = PID 4098]` is the TS packet id (PID), in hexadecimal and decimal.
-- `sync` (stream_type 0x15) or `async` (stream_type 0x06) is how the file says the KLV is
-  carried: synchronous with the video frames, or not.
+- **Streams**: what each KLV stream is and holds.
+- **Tracks**: which stream each track uses. It is shown if there is more than one KLV stream, or if a
+  track does not use PES timestamps (see below).
+- **Analysis**: the timing of one stream in detail. The heading names the stream, and **Analyzed below**
+  in the Streams table gives the reason. Sitrec analyzes the stream that the platform track uses. The
+  platform track is the track that the camera is on: the **Position** setting in the **Camera** menu. If the camera is
+  not on a KLV track, Sitrec uses the first stream with PES timestamps, and then the first stream. The
+  choice says nothing about which stream is better. A stream that is not analyzed can have a different
+  rate and gap pattern, so use the Streams table to compare them.
 
-A derived track is named after its source stream, for example
-`Center (derived from KLV #0:3 [0x1002], sync)`. KLV that did not come from a `.ts` file
-is `MISB file`. After you reload a saved sitch, the PID is always shown. The position and
-stream_type are shown only if they were saved with the stream's frame timing; older saves
-do not have them.
+The report does not include track or node names, but the file line and the Streams table can include
+a tail number, a mission ID, a call sign or a start time. Clear **Show Filename and Names** in the
+dialog to remove these from the text, from **Copy Analysis** and from **Download Analysis**. The file
+line goes, and each text value in the table changes to `hidden`, even if the text is all digits. The
+first time and the sun height change to `hidden` too. Numbers from 0 to 65535 stay, and so does a raw
+value of one byte, or of two bytes that are not text. Counts stay, and so do the keys of KLV packets,
+because a key names a format and not a platform. The Analysis part has no names, positions or absolute
+times at any time, so the setting does not change it. Where it lists the fields that changed at a gap,
+it shows values only for angles, speeds, the field of view, slant range and settings that the standard
+defines. Other fields show only `changed`, `appeared` or `gone`.
 
-Next is **Local Fields**: the MISB fields with "Local" in their names
-(`SecurityLocalSet`, `RVTLocalSet`, `VMTILocalSet` and `Geo_RegistrationLocalSet`), one list
-for each KLV stream. Each field shows how many records have a value and its first five
-different values, or "empty". The values are shown as they are in the file; a nested local set is shown as
-`name=value` pairs. Derived tracks (Center, Target, Truth) are not listed, because their
-records hold only time and position.
+### Streams
 
-ST 0601 is the main MISB metadata format, and these fields are read only from inside the
-ST 0601 records. A local set sent as separate KLV
-packets with its own key (for example ST 0903 VMTI or ST 0806 RVT) is not decoded. For each
-stream, the section lists the KLV packets that are not ST 0601, by key, with a count and size,
-so you can see that they are in the file.
+The table has a column for each KLV stream and a row for each field. The column heading names the
+stream by its ids in the file, for example `KLV #0:3 [0x1002], sync`:
 
-If the sitch has no MISB data, the button shows a message that says so.
+- `#0:3` is the stream's position in the TS program map. In a file with one program and one version
+  of the program map, this is the number that `ffprobe` shows as `Stream #0:3` and that
+  `ffmpeg -map 0:3` uses. The first 0 means the first input file, so it is always 0 in Sitrec.
+- `[0x1002]` is the TS packet id (PID), in hexadecimal.
+- `sync` (stream_type 0x15) or `async` (stream_type 0x06) is how the TS says that the KLV is carried.
+  Another stream_type has no word here. This label does not tell you how a record is timed:
+  **hasRecordPTS** does.
+
+KLV that did not come from a `.ts` file is `MISB file`. After you reload a saved sitch, the PID is
+always shown. The other TS values are shown only if they were saved with the stream's frame timing;
+older saves do not have them.
+
+A cell shows the first five different values, and a long value wraps inside its cell. If there are
+more, the cell says `+2 more`. If only some records have the value, the cell says, for example,
+`(in 371 of 1953)`. Other cell values:
+
+- `none`: the stream has no value for this field.
+- `no TS`: the stream did not come from a TS.
+- `?`: the value was not saved with the stream. Load the TS file to read it.
+- `n/a`: the value cannot be measured here, for example with no video loaded.
+
+`≠` at the start of a row marks a tag where the streams have different values. It compares all the
+values, also those that a cell does not show, and not how many records have them. It stays on the row
+when both cells say `hidden`. It shows only that the values are different, not that one is wrong. Ids
+and measurements have no mark, because they nearly always differ, so read those rows yourself.
+
+Text values are what the file says. Sitrec does not check them, and `Default` and `N/A` can be
+fields that nobody set. Derived tracks are not listed, because their records hold only time and
+position. A line under the table gives their number. They are Center (the frame center), Target (the
+target location) and Truth (a track that the file labels as truth, which Sitrec does not verify).
+
+The rows are in these groups:
+
+- **In the TS file**: the `ffprobe` stream number, the PID, the `stream_type`, the PES `stream_id`, and
+  the stream's own name in the program map, if the encoder wrote one.
+- **In the KLV**: ST 0601 is the main MISB metadata format. Its tags here describe the stream, the
+  platform and the sensor.
+  - `UASDatalinkLSVersionNumber` (tag 65) is the ST 0601 revision that the encoder states: 7 means
+    ST 0601.7. People name a stream by this number and can call it the local set number. That is
+    safe only when the numbers differ. Two streams can have the same number, and a stream can have
+    none. Use the PID to name a stream.
+  - `PlatformCallSign / TrackID` (tag 59) is also the value that Sitrec uses to split one stream into
+    tracks.
+  - A local set is a group of tagged values. ST 0601 is one, and it can hold others inside it.
+    `SecurityLocalSet` (tag 48) is always listed. `RVTLocalSet` and `VMTILocalSet` are listed if a
+    stream has them. A nested local set is shown as `name=value` pairs, and it can have its own
+    version number. `Geo_RegistrationLocalSet` cannot be read, so a stream that has it shows it under
+    **Tags Sitrec does not decode**.
+  - **Tags in the stream** counts the tags that have a value, and how many of them only this stream
+    has.
+- **Decoding**: these rows show that Sitrec read the file. They do not show that the values are true.
+  **Records** is the number of records. **Packets not decoded** counts packets that could not be read.
+  A damaged packet can cost that one record, and the record after it is kept. **PES with no KLV
+  packet** counts PES packets that hold no part of any KLV packet, which can be a record that was lost
+  whole. A PES of another standard, such as ST 0903, is not counted, and neither is the rest of a long
+  record. It says `n/a` if the stream has no PES timestamps. If the lost TS packet held the start of a
+  PES, only **TS continuity errors** shows it. **Bad or missing checksums** counts records that Sitrec
+  kept, although their checksum is wrong or absent. **Tag faults** lists tags with a wrong length or a
+  decode error: the value is lost, and the rest of the record is kept. `value read` means that the
+  length is wrong but the value is good, as with old encoders that send tag 22 in 4 bytes. **TS
+  continuity errors** counts places where TS packets of this stream are missing.
+- **Timing**: **First valid time** is the UnixTimeStamp (tag 2 in the KLV) of the first record with a
+  valid time and position. With two or more streams, **Clock offset from** compares each stream with
+  the first one, which the row names and which shows `—`. Being first says nothing about which clock
+  is right. The offset is whole hours and a remainder, for example `+7 h -0.82 s`. If both streams have
+  PES timestamps, it reads both clocks at the same time, to about 0.03 s. If not, it can only compare
+  the first times, which also hold any difference in when the streams start, and the cell says
+  `(first times)`. If the offset is more than 1 s, a line under the table says that the clocks differ.
+  Tag 2 is UTC, so whole hours can be a time zone that one stream applied, and then at most one clock
+  is right. **Sitch time on this clock** shows which stream the sitch start time matches: Sitrec takes
+  it from the first track of a file, and **Sync Time to** in the Time menu changes it. Only the
+  stream nearest to the start time says `yes`, and only if it is within a minute of it.
+
+  **Sun height at first record** is how far the sun is above the horizon (`+`) or below it (`-`), at
+  the sensor position and the stream's first time. It does not use refraction. It is the one check here
+  that does not come from the stream's clock alone, so use it to choose between clocks: a clock that
+  puts the sun below the horizon is wrong for a video in daylight. The report cannot see the picture,
+  so you must make this comparison yourself.
+
+  **Mean interval**, **Max interval**, **Repeated times** and **Gaps** are all on tag 2, not on PES
+  timestamps. **Repeated times** counts records with the same time as the record before. An encoder
+  can repeat the last record until the metadata next changes, which is not a fault. In that case
+  **Mean interval** says `(repeats left out)` and gives the time between new values. A gap is an
+  interval longer than 3 times the mean and longer than 100 ms, and the cell shows this limit. Read
+  **Max interval** too: a stream with long pauses has a large mean, so its limit is also large. Below
+  10 records the cell says `too few records to test`. Between records, Sitrec interpolates the track
+  position, so a position in a gap is not a measured one.
+
+  **hasRecordPTS** says whether the stream has a PES presentation timestamp (PTS) for its records. PES
+  is the layer of the TS that carries the data, and PTS is the time at which to show or use it. If
+  yes, Sitrec can pair records with video frames by PTS. If no, it times the records by tag 2.
+
+  The next rows compare these timestamps with the video, so they need the video to be loaded.
+  **First PTS minus first frame PTS** is negative for a record before the video. **PTS equal to a frame
+  PTS** counts records stamped with a frame's own time. A low count is not a fault: it means that the
+  encoder stamped the record's own time. **Offset to nearest frame** is for records inside the video.
+  Up to half a frame is normal, and more can occur next to a dropped frame. **Records outside the
+  video** counts the others.
+- **Compared with** and the name of the first stream: the median horizontal distance between the
+  sensor positions, and between the frame centers, of records within 100 ms of each other. Records pair
+  by PES timestamp if both streams have them, and otherwise by tag 2. If the clocks are too far apart
+  for records to pair, the cell says `n/a`. A small distance can be only speed × the time between the
+  records. A large distance means that the streams disagree, and the report cannot say which one is
+  right. A frame center moves far for a small change in camera angle or range, so a large frame center
+  distance with a small sensor distance can be only that. Altitude and camera angles are not compared.
+  This is the only place where the report compares what two streams say.
+- **Tags Sitrec does not decode (raw hex)**: ST 0601 tags that Sitrec cannot read, with the first 32
+  bytes of the raw value in hexadecimal. If the bytes are text, the text is shown too.
+- **KLV packets that are not ST 0601**: the rows above are read only from inside the ST 0601 records.
+  A local set sent as separate KLV packets with its own key (for example ST 0903 VMTI or ST 0806 RVT)
+  is not decoded. This group has a row for each key, with the number of packets and their size. If
+  the KLV has no such packets, a line under the table says so.
+
+With one stream, the table is a summary of what the stream says about itself.
+
+After the table, **Other streams in the TS** lists the streams that are not KLV, such as the video,
+audio and private data. Sitrec does not read private data, so this is the only sign that it is there.
+
+### Tracks
+
+Each line gives a stream, the number of tracks that use it, and how those tracks pair with the video:
+by PES PTS, or by UnixTimeStamp at the nominal rate, which is the video's frame rate. A further line
+says whether the video frame times are real or synthetic, and whether frame patching is on.
+
+### Analysis
+
+This part is about one stream only. It covers the video frame timestamps, the KLV record intervals,
+gaps, and how the KLV and video spans compare. It flags position jumps that imply an impossible speed.
+
+`✓` is a clean result, `ℹ` is a fact to know, and `⚠` is a problem to check. The first line is
+`✓ No gaps or span mismatch found.` if the video has a constant frame rate, the KLV has no gaps or
+scatter, and the spans agree. Under it, a stream with PES timestamps shows the same comparison with
+the video as the Streams table. A stream without them says that the KLV and video times were not
+compared. Scatter is measured by CV, the standard deviation of the intervals divided by their mean,
+so 0% is a steady rate. PCR is the clock of the TS, which the PES timestamps are on.
+
+The video has a constant frame rate if no more than 1% of its intervals are over 1 ms from the median.
+A dropped frame is such an interval, so one dropped frame gets a `ℹ` line and not a warning. If a
+stream repeats records until the metadata changes, the interval figures leave the repeats out and say
+so. These checks are about the intervals only: a clock that is wrong by hours can pass all of them.
 
 ---
 

@@ -6,7 +6,7 @@ import * as st0601 from './js/misb.js-main/src/st0601.mjs'
 import * as st0903 from './js/misb.js-main/src/st0903.mjs'
 import * as st0104 from './js/misb.js-main/src/st0104.mjs'
 import * as st0806 from './js/misb.js-main/src/st0806.mjs'
-import * as klv from './js/misb.js-main/src/klv.mjs'
+import {calculateChecksum} from './js/misb.js-main/src/klv.mjs'
 import {showError} from "./showError";
 
 // this MISB object is for the internal representation of the MISB data
@@ -633,6 +633,68 @@ export function otherKLVPacketList(tally, known = knownKLVKeys()) {
         .sort((a, b) => b.count - a.count);
 }
 
+// A BER length at bytes[p]: {length, next}, where next is the byte after it.
+function readBERLength(bytes, p) {
+    const first = bytes[p];
+    if ((first & 0x80) === 0) return {length: first, next: p + 1};
+    const lengthBytes = first & 0x7f;
+    let length = 0;
+    for (let i = 0; i < lengthBytes; i++) length = length * 256 + bytes[p + 1 + i];
+    return {length, next: p + 1 + lengthBytes};
+}
+
+const UNDECODED_VALUE_MAX_BYTES = 32;
+
+// misb.js writes "Not Implemented" for a tag it cannot decode, so the value is
+// lost, and a newer ST 0601 tag is what could identify a stream. This reads those
+// values from the packets. packets: whole ST 0601 packets (16-byte key, BER length,
+// value). tags: Map of tag number to name, or to null. Returns
+// [{tag, name, count, values}], where values are the first maxUnique different
+// values as hex.
+export function undecodedTagValues(packets, tags, maxUnique = 5) {
+    const found = new Map();
+    for (const packet of packets) {
+        const set = readBERLength(packet, 16);
+        let p = set.next;
+        const end = Math.min(p + set.length, packet.length);
+        while (p < end) {
+            // The tag is a BER-OID: 7 bits in each byte, top bit set on all but the last.
+            let tag = 0;
+            let byte;
+            do {
+                byte = packet[p++];
+                tag = tag * 128 + (byte & 0x7f);
+            } while ((byte & 0x80) && p < end);
+            const item = readBERLength(packet, p);
+            p = item.next;
+            if (tags.has(tag)) {
+                const entry = found.get(tag) ?? {tag, name: tags.get(tag), count: 0, values: []};
+                found.set(tag, entry);
+                entry.count++;
+                if (entry.values.length < maxUnique) {
+                    const stop = Math.min(p + item.length, p + UNDECODED_VALUE_MAX_BYTES, end);
+                    const hex = bytesToHex(packet.subarray(p, stop));
+                    if (!entry.values.includes(hex)) entry.values.push(hex);
+                }
+            }
+            p += item.length;
+        }
+    }
+    return [...found.values()].sort((a, b) => a.tag - b.tag);
+}
+
+function isUniversalKeyAt(bytes, offset) {
+    return offset + 16 <= bytes.length && bytes[offset] === 0x06 && bytes[offset + 1] === 0x0e
+        && bytes[offset + 2] === 0x2b && bytes[offset + 3] === 0x34;
+}
+
+// Whether a packet ends with a 2-byte checksum tag that is right.
+function hasGoodChecksum(packet) {
+    const end = packet.length;
+    if (end < 4 || packet[end - 4] !== 1 || packet[end - 3] !== 2) return false;
+    return calculateChecksum(packet) === ((packet[end - 2] << 8) | packet[end - 1]);
+}
+
 export function parseKLVFile(data, pesEntries = null, videoFirstPESus = null, options = {}) {
     const reportError = (...args) => {
         if (options?.silent) {
@@ -657,144 +719,139 @@ export function parseKLVFile(data, pesEntries = null, videoFirstPESus = null, op
         return;
     }
 
-    // Validate and extract complete KLV packets
-    // KLV structure: Key (variable, often 16 bytes for universal keys) + Length (BER encoded) + Value
-    const validPackets = [];
-    // Per-record byte offset (start of the key) in the input substream.
-    // Used to pair each KLV record to its source PES packet's PTS, when
-    // pesEntries are provided by the TS demuxer.
-    const validPacketOffsets = [];
-    // Packets that are not ST 0601, by key. The scanner keeps them, but
-    // klv.decode below is given only st0601, so they are not decoded. A
-    // separate local set (e.g. ST 0903 VMTI) is one of these.
-    const st0601KeyHex = st0601.key ? bytesToHex(st0601.key) : null;
+    // Validate and extract complete KLV packets. KLV structure: 16-byte universal
+    // key + BER length + value. The scanner moves byte by byte to the next key, so
+    // it steps over what is not KLV, such as the 5-byte metadata_AU_cell header in
+    // front of KLV in synchronous carriage (ISO 13818-1).
+    // Packets that are not ST 0601, by key, are counted and not decoded. A separate
+    // local set (e.g. ST 0903 VMTI) is one of these.
+    const st0601KeyHex = bytesToHex(st0601.key);
     const otherPackets = new Map();
+    const st0601Packets = [];
+    // The byte offset of each packet in the input substream. Used to pair each KLV
+    // record to its source PES packet's PTS, when the TS demuxer gives pesEntries.
+    const st0601Offsets = [];
+    // [start, end) of each thing the scanner took for a KLV packet, of any kind, in
+    // order. Used to find a PES that holds none of them.
+    const packetRanges = [];
     let offset = 0;
     let packetCount = 0;
-    let skippedIncomplete = 0;
-    
+    let skippedBadLength = 0;
+
     while (offset < uint8Data.length) {
-        // Look for potential KLV packet start
-        // Check for local set key (3 bytes: 00 00 df) or universal key (16 bytes starting with 06 0e 2b 34)
-        let keyLength = 0;
-        let packetStart = offset;
-        
-        if (offset + 3 <= uint8Data.length && 
-            uint8Data[offset] === 0x00 && 
-            uint8Data[offset + 1] === 0x00 && 
-            uint8Data[offset + 2] === 0xdf) {
-            // Local set key (3 bytes)
-            keyLength = 3;
-        } else if (offset + 16 <= uint8Data.length && 
-                   uint8Data[offset] === 0x06 && 
-                   uint8Data[offset + 1] === 0x0e && 
-                   uint8Data[offset + 2] === 0x2b && 
-                   uint8Data[offset + 3] === 0x34) {
-            // Universal key (16 bytes)
-            keyLength = 16;
-        } else {
-            // Not a recognized KLV key, skip this byte
+        const packetStart = offset;
+        if (!isUniversalKeyAt(uint8Data, offset)) {
             offset++;
             continue;
         }
-        
-        // Parse BER length
-        offset += keyLength;
-        if (offset >= uint8Data.length) break;
-        
-        let length = 0;
-        const firstLengthByte = uint8Data[offset];
-        
-        if ((firstLengthByte & 0x80) === 0) {
-            // Short form: length is in the first byte (0-127)
-            length = firstLengthByte;
-            offset += 1;
-        } else {
-            // Long form: first byte indicates how many bytes encode the length
-            const numLengthBytes = firstLengthByte & 0x7f;
-            offset += 1;
-            
-            if (offset + numLengthBytes > uint8Data.length) {
-                console.log(`parseKLVFile: Incomplete BER length at offset ${packetStart}, skipping`);
-                skippedIncomplete++;
-                break;
-            }
-            
-            for (let i = 0; i < numLengthBytes; i++) {
-                length = (length << 8) | uint8Data[offset + i];
-            }
-            offset += numLengthBytes;
-        }
-        
-        // Check if we have the complete value
-        const packetEnd = offset + length;
-        if (packetEnd > uint8Data.length) {
-            console.log(`parseKLVFile: Incomplete packet at offset ${packetStart}: expected ${length} bytes but only ${uint8Data.length - offset} available, skipping`);
-            skippedIncomplete++;
-            break;
-        }
-        
-        // Extract complete packet (key + length + value)
-        const completePacket = uint8Data.slice(packetStart, packetEnd);
-        validPackets.push(completePacket);
-        validPacketOffsets.push(packetStart);
-        packetCount++;
 
-        const keyHex = bytesToHex(completePacket.subarray(0, keyLength));
+        // Parse BER length, in the bytes that exist
+        const lengthAt = offset + 16;
+        const firstLengthByte = uint8Data[lengthAt];
+        const isLongForm = (firstLengthByte & 0x80) !== 0;
+        const numLengthBytes = isLongForm ? firstLengthByte & 0x7f : 0;
+        let length = isLongForm ? 0 : firstLengthByte;
+        const valueStart = lengthAt + 1 + numLengthBytes;
+        if (lengthAt < uint8Data.length && valueStart <= uint8Data.length) {
+            for (let i = 0; i < numLengthBytes; i++) length = length * 256 + uint8Data[lengthAt + 1 + i];
+        }
+        let packetEnd = valueStart + length;
+
+        // A length that goes past the data is a damaged or cut packet. Scan on from
+        // the next byte, so that the packets after it are still found.
+        if (lengthAt >= uint8Data.length || packetEnd > uint8Data.length) {
+            console.log(`parseKLVFile: Bad length at offset ${packetStart}, scanning on`);
+            skippedBadLength++;
+            packetRanges.push([packetStart, packetStart + 1]);
+            offset = packetStart + 1;
+            continue;
+        }
+
+        // A length can stay inside the data and still be wrong: a lost TS packet
+        // leaves a record that runs on over the next one. Its checksum shows this.
+        // Cut it at the next ST 0601 key, so that the record after it is not lost
+        // too. Only a whole ST 0601 key: a good record can hold the key of a nested
+        // set, and an encoder can use another checksum method.
+        const keyHex = bytesToHex(uint8Data.subarray(packetStart, packetStart + 16));
+        if (keyHex === st0601KeyHex && !hasGoodChecksum(uint8Data.subarray(packetStart, packetEnd))) {
+            for (let i = packetStart + 16; i < packetEnd; i++) {
+                if (isUniversalKeyAt(uint8Data, i) && bytesToHex(uint8Data.subarray(i, i + 16)) === st0601KeyHex) {
+                    packetEnd = i;
+                    break;
+                }
+            }
+        }
+
+        const completePacket = uint8Data.slice(packetStart, packetEnd);
+        packetCount++;
+        packetRanges.push([packetStart, packetEnd]);
+
         if (keyHex !== st0601KeyHex) {
             const t = otherPackets.get(keyHex) ?? {count: 0, bytes: 0};
             t.count++;
             t.bytes += completePacket.length;
             otherPackets.set(keyHex, t);
+        } else {
+            st0601Packets.push(completePacket);
+            st0601Offsets.push(packetStart);
         }
 
         offset = packetEnd;
     }
-    
-    console.log(`parseKLVFile: Found ${packetCount} complete KLV packets, skipped ${skippedIncomplete} incomplete packets`);
-    
-    if (validPackets.length === 0) {
+
+    console.log(`parseKLVFile: Found ${packetCount} complete KLV packets, ${skippedBadLength} with a bad length`);
+
+    if (packetCount === 0) {
         reportError('parseKLVFile: No valid KLV packets found');
         return;
     }
-    
-    // Concatenate all valid packets
-    const totalLength = validPackets.reduce((sum, packet) => sum + packet.length, 0);
-    const cleanedData = new Uint8Array(totalLength);
-    let writeOffset = 0;
-    for (const packet of validPackets) {
-        cleanedData.set(packet, writeOffset);
-        writeOffset += packet.length;
-    }
-    
-    console.log(`parseKLVFile: Cleaned data size: ${cleanedData.length} bytes (was ${uint8Data.length} bytes)`);
-    
-    let result;
-    try {
-        result = klv.decode(cleanedData.buffer, st0601, null, {debug: false});
-    } catch (error) {
-        reportError(error);
+
+    // Decode each packet alone: a bad packet costs only that record. The counts go
+    // to the report, so that a loss can be seen.
+    const decodeStats = {
+        packets: st0601Packets.length, rejected: 0, badChecksums: 0, badLengths: skippedBadLength, pesWithoutPacket: null,
+    };
+    const tagFaults = new Map();
+    const onTagFault = (tag, kind) => {
+        const id = `${tag} ${kind}`;
+        const fault = tagFaults.get(id) ?? {tag, kind, count: 0};
+        fault.count++;
+        tagFaults.set(id, fault);
+    };
+    const data0601 = [];
+    const recordOffsets = [];
+    st0601Packets.forEach((packet, packetIndex) => {
+        let values;
+        try {
+            values = st0601.parse(packet, {debug: false, onTagFault});
+        } catch (error) {
+            if (decodeStats.rejected === 0) console.warn(`parseKLVFile: ${error.message}`);
+            decodeStats.rejected++;
+            return;
+        }
+        const checksum = values.find(item => item.key === 1);
+        if (!checksum || checksum.valid === false) decodeStats.badChecksums++;
+        data0601.push(values);
+        recordOffsets.push(st0601Offsets[packetIndex]);
+    });
+    decodeStats.tagFaults = [...tagFaults.values()].sort((a, b) => a.tag - b.tag);
+
+    if (data0601.length === 0 && st0601Packets.length > 0) {
+        reportError(`parseKLVFile: None of the ${st0601Packets.length} ST 0601 packets could be decoded`);
         return;
     }
-    // for (const standard of standards) {
-    //     for (const packet of result[standard.name]) {
-    //         packets[standard.name].push(packet)
-    //     }
-    // }
-    //
-    // for (const standard of standards) {
-    //     const name = standard.name
-    //     console.log(`${name}: ${packets[name]?.length ?? 0}`)
-    // }
 
-    const data0601 = result[st0601.name];
     const n = data0601.length;
     const MISBArray = new Array(n);
+    const undecodedTags = new Map();
     for (let i=0; i<n; i++) {
         MISBArray[i] = new Array(MISBFields).fill(null);
         for (const index of Object.keys(data0601[i])) {
             const line = data0601[i][index];
             MISBArray[i][line.key] = line.value;
+            if (line.value === "Not Implemented" && !undecodedTags.has(line.key)) {
+                undecodedTags.set(line.key, line.name === "Unknown" ? null : line.name);
+            }
         }
         const unixTime = MISBArray[i][MISB["UnixTimeStamp"]];
         // display as actual time:
@@ -820,53 +877,35 @@ export function parseKLVFile(data, pesEntries = null, videoFirstPESus = null, op
         // path), normalize KLV to its own first record — at-start
         // alignment without cross-stream calibration.
         const originUs = (videoFirstPESus !== null) ? videoFirstPESus : pesEntries[0].ptsUs;
-        if (pesEntries.length === n) {
-            // Common synchronous-mode case: one KLV PES per decoded record.
-            // 1:1 pairing by index — robust to whatever internal packet
-            // structure the byte scanner counted (wrapper + LS pairs, etc.).
-            pesPTSus = pesEntries.map(e => e.ptsUs - originUs);
-        } else if (validPacketOffsets.length === n) {
-            // The byte scanner found exactly as many "valid packets" as the
-            // decoder returned records — pair by byte offset within the
-            // substream, walking both arrays in order.
-            pesPTSus = new Array(n);
-            let pesIdx = 0;
-            for (let i = 0; i < n; i++) {
-                const recordStart = validPacketOffsets[i];
-                while (pesIdx < pesEntries.length - 1 &&
-                       pesEntries[pesIdx + 1].offset <= recordStart) {
-                    pesIdx++;
-                }
-                pesPTSus[i] = (pesEntries[pesIdx].offset <= recordStart)
-                    ? pesEntries[pesIdx].ptsUs - originUs
-                    : null;
+        // Pair by byte offset within the substream, walking both arrays in order.
+        // Each record's PES is the last one that starts at or before it. Counting
+        // would not do: two records in one PES and no record in the next give
+        // equal counts and the wrong times.
+        pesPTSus = new Array(n);
+        let pesIdx = 0;
+        for (let i = 0; i < n; i++) {
+            const recordStart = recordOffsets[i];
+            while (pesIdx < pesEntries.length - 1 &&
+                   pesEntries[pesIdx + 1].offset <= recordStart) {
+                pesIdx++;
             }
-        } else {
-            // Mismatch we can't reconcile cleanly — e.g., KLV decoder
-            // returned fewer records than the byte scanner found packets,
-            // and the count doesn't match the PES count either. Pair by
-            // best-effort byte offset using the ratio of decoded-records
-            // to scanner-packets, falling back to PES boundaries.
-            console.warn(`parseKLVFile: pesEntries (${pesEntries.length}) doesn't match decoded records (${n}) ` +
-                `and validPacketOffsets (${validPacketOffsets.length}) doesn't either. ` +
-                `Attempting interpolated pairing.`);
-            pesPTSus = new Array(n);
-            // Map decoded record i to its proportional position in the
-            // scanned-packets array, then look up by byte offset.
-            const ratio = validPacketOffsets.length / n;
-            let pesIdx = 0;
-            for (let i = 0; i < n; i++) {
-                const packetIdx = Math.floor(i * ratio);
-                const recordStart = validPacketOffsets[Math.min(packetIdx, validPacketOffsets.length - 1)];
-                while (pesIdx < pesEntries.length - 1 &&
-                       pesEntries[pesIdx + 1].offset <= recordStart) {
-                    pesIdx++;
-                }
-                pesPTSus[i] = (pesEntries[pesIdx].offset <= recordStart)
-                    ? pesEntries[pesIdx].ptsUs - originUs
-                    : null;
-            }
+            pesPTSus[i] = (pesEntries[pesIdx].offset <= recordStart)
+                ? pesEntries[pesIdx].ptsUs - originUs
+                : null;
         }
+
+        // A PES that holds no part of any KLV packet can be a record that was lost
+        // whole. No other count shows that, as a lost key leaves no packet to count.
+        // A PES of another standard, the rest of a long record, or a packet that did
+        // not decode each has a packet in it, so none of those is counted here.
+        decodeStats.pesWithoutPacket = 0;
+        let rangeIndex = 0;
+        pesEntries.forEach((entry, entryIndex) => {
+            const nextStart = pesEntries[entryIndex + 1]?.offset ?? uint8Data.length;
+            while (rangeIndex < packetRanges.length && packetRanges[rangeIndex][1] <= entry.offset) rangeIndex++;
+            const range = packetRanges[rangeIndex];
+            if (!range || range[0] >= nextStart) decodeStats.pesWithoutPacket++;
+        });
         if (pesPTSus) {
             MISBArray.pesPTSus = pesPTSus;
             const nonNull = pesPTSus.filter(v => v !== null).length;
@@ -880,6 +919,10 @@ export function parseKLVFile(data, pesEntries = null, videoFirstPESus = null, op
     }
 
     MISBArray.otherKLVPackets = otherKLVPacketList(otherPackets);
+    MISBArray.klvDecodeStats = decodeStats;
+    if (undecodedTags.size > 0) {
+        MISBArray.undecodedKLVTags = undecodedTagValues(st0601Packets, undecodedTags);
+    }
 
     return MISBArray;
 

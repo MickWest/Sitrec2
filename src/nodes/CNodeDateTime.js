@@ -1,4 +1,4 @@
-import {Globals, guiMenus, NodeMan, setRenderOne, setSitchEstablished, Sit} from "../Globals";
+import {Globals, guiMenus, NodeMan, setRenderOne, setSitchEstablished, Sit, TrackManager} from "../Globals";
 import {CNode} from "./CNode";
 import {par} from "../par";
 import {isKeyCodeHeld, isKeyHeld} from "../KeyBoardHandler";
@@ -12,7 +12,10 @@ import {frameTimeOffsetMS, getOffsetFromDateTimeString} from "../DateTimeUtils";
 import {EventManager} from "../CEventManager";
 import {t} from "../i18n";
 import {showTimingAnalysis} from "../showTimingAnalysis";
-import {klvStreamLabels, localFieldValues, renderLocalFieldValues, renderSourceFiles} from "../analysis/MisbTimingStats";
+import {
+    chooseAnalyzedStream, klvStreamLabels, renderSourceFiles, renderStreams, renderTracks, streamOfDataNode, streamsOnSitchClock,
+    streamTiming,
+} from "../analysis/MisbTimingStats";
 
 // The Year slider normally starts at 1947 - Kenneth Arnold, and earlier than the
 // date of any sitch we ship - which keeps dragging fine-grained for ordinary use.
@@ -575,14 +578,23 @@ export class CNodeDateTime extends CNode {
         return Math.round(totalSeconds * Sit.fps);
     }
 
+    // The MISB stream that the platform track (the camera track) uses, or null when
+    // the camera is on something else.
+    _platformStreamNode(misbNodes) {
+        const choice = NodeMan.get("cameraTrackSwitch", false)?.choice;
+        let dataNode = null;
+        TrackManager.iterate((id, trackOb) => {
+            if (trackOb.menuText === choice) dataNode = trackOb.trackDataNode;
+        });
+        return streamOfDataNode(dataNode, misbNodes);
+    }
+
     // Click handler for the "Timing Analysis..." button. Walks NodeMan to
     // find a CNodeMISBDataTrack, asks it to generate the report, and shows
     // it in a modal with Copy/Download buttons.
     _timingAnalysisAction() {
         // Collect every MISB data node so multi-stream KLV (e.g. async + sync
-        // PES variants on different PIDs) shows up in the report. Prefer the
-        // one with PES PTS data for the full analysis since that one carries
-        // the MISB ST 0604 sync anchor.
+        // PES variants on different PIDs) shows up in the report.
         const misbNodes = [];
         NodeMan.iterate((k, n) => {
             if (n.constructor && n.constructor.name === "CNodeMISBDataTrack") {
@@ -593,150 +605,95 @@ export class CNodeDateTime extends CNode {
             showTimingAnalysis(
                 "No MISB data node loaded in this sitch.\n\n" +
                 "The Timing Analysis report requires a MISB/KLV data source.\n" +
-                "Load a sitch with a .ts file or KLV-bearing .mp4 to enable it."
+                "Load a .ts, .klv or MISB CSV file first."
             );
             return;
         }
-        const withPES = misbNodes.find(n => typeof n.hasRecordPTS === "function" && n.hasRecordPTS());
-        const misbNode = withPES || misbNodes[0];
 
-        // Build a sibling summary so the report names every loaded MISB
-        // stream and which one was analyzed — important when multiple KLV
-        // PIDs exist (e.g. an async-mode UTS-only stream alongside a
-        // sync-mode PES-PTS stream) and they have different gap profiles.
-        // Per-node we also report gap count and max-interval so neither
-        // stream's pattern is hidden by picking only one for the deep
-        // analysis below.
-        // Anonymous prelude: the report is paste-safe, so we replace
-        // node ids (which often carry tail numbers like CG2314 / N97826)
-        // with names from the container's ids: "KLV #0:3 [0x1002 = PID 4098]"
-        // (see klvStreamLabels). The diagnostic signal — record counts, PES
-        // PTS availability, gap counts, max interval — is preserved.
-        // The one exception is the name and size of the loaded file, at the
-        // start of the report. The dialog's "Show Filename" checkbox adds or
-        // removes it, in the text, the copy and the download.
-        let prelude = "";
+        // Three parts: STREAMS (what each KLV stream is), TRACKS (which stream
+        // each track uses) and the ANALYSIS of the stream that matters most: the
+        // one the platform track uses. Failing that, the first stream with PES
+        // PTS. A derived track is never the analyzed stream, because it is a part
+        // of a real stream, unless a sitch has only derived tracks.
+        const realNodes = misbNodes.filter(n => n.misb && !n.misb.derivedTrack);
+        const listedNodes = realNodes.length > 0 ? realNodes : misbNodes;
+        const {node: misbNode, reason: analyzedReason} = chooseAnalyzedStream(listedNodes, this._platformStreamNode(misbNodes));
+
+        // We replace node ids (which often carry tail numbers like CG2314 /
+        // N97826) with names from the container's ids: "KLV #0:3 [0x1002],
+        // sync" (see klvStreamLabels). The report is NOT anonymous: the table
+        // prints tag values such as the tail number and mission id. The name
+        // and size of the loaded file are at the start.
+        // The dialog's "Show Filename and Names" checkbox adds or removes the
+        // file line and the names in the table, in the text, the copy and the
+        // download.
         const fileLines = renderSourceFiles(misbNodes.map(n => n.misb));
-        const fileHeader = fileLines.length > 0 ? fileLines.join("\n") + "\n\n" : null;
         const streamLabels = klvStreamLabels(misbNodes.map(n => n.misb));
-        const shortStreamLabels = klvStreamLabels(misbNodes.map(n => n.misb), {short: true});
 
-        // ── Local fields ─────────────────────────────────────────────
-        // First in the report: every MISB field with "local" in its name and
-        // its first unique values, per loaded stream. Unlike the rest of the
-        // report, this section prints tag values. Derived tracks (Center,
-        // Target, Truth) are left out: their rows hold only time and position.
-        let derivedCount = 0;
-        for (let si = 0; si < misbNodes.length; si++) {
-            const misb = misbNodes[si].misb;
-            if (misb?.derivedTrack) { derivedCount++; continue; }
-            const lines = renderLocalFieldValues(localFieldValues(misb),
-                {stream: streamLabels[si], otherPackets: misb?.otherKLVPackets ?? null});
-            prelude += lines.join("\n") + "\n\n";
-        }
-        if (derivedCount > 0) {
-            prelude += `  (${derivedCount} derived track(s) not listed: their rows hold only time and position.)\n\n`;
-        }
+        // ── Streams ──────────────────────────────────────────────────
+        // Derived tracks (Center, Target, Truth) are left out: their rows hold
+        // only time and position. Both versions of the table use one timing
+        // result, so that the checkbox cannot change a number.
+        const videoData = NodeMan.get("video", false)?.videoData;
+        const videoPTSus = videoData?.source?.framePTSus || videoData?.framePTSus;
+        const realStreams = misbNodes
+            .map((n, si) => ({node: n, misb: n.misb, label: streamLabels[si]}))
+            .filter(stream => stream.misb && listedNodes.includes(stream.node));
+        const measuredStreams = realStreams.map(stream => streamTiming(stream.node, videoPTSus));
+        const onSitchClock = streamsOnSitchClock(measuredStreams.map(measured => measured.firstTimeMs), this.getStartTimeValue());
+        const timing = measuredStreams.map((measured, si) => ({
+            ...measured,
+            analyzed: realStreams[si].node === misbNode ? analyzedReason : null,
+            onSitchClock: onSitchClock[si],
+        }));
+        const derivedCount = misbNodes.length - realStreams.length;
+        const streamsText = (hideNames) => {
+            const lines = renderStreams(realStreams.map(s => s.misb), realStreams.map(s => s.label),
+                {hideNames, timing, derivedCount});
+            return lines.length > 0 ? lines.join("\n") + "\n\n" : "";
+        };
+        const fileText = fileLines.length > 0 ? fileLines.join("\n") + "\n\n" : "";
+        const fileHeader = fileText + streamsText(false);
+        const plainHeader = streamsText(true);
 
-        if (misbNodes.length > 1) {
-            prelude += "MULTIPLE MISB DATA STREAMS LOADED\n";
-            prelude += "─".repeat(60) + "\n";
-            for (let si = 0; si < misbNodes.length; si++) {
-                const n = misbNodes[si];
-                const has = (typeof n.hasRecordPTS === "function" && n.hasRecordPTS()) ? "yes" : "no";
-                const len = (n.misb && n.misb.length) ? n.misb.length : 0;
-                const tag = (n === misbNode) ? "  ← ANALYZED" : "";
-                let gapInfo = "";
-                try {
-                    if (len >= 2 && typeof n.isValid === "function" && typeof n.getTime === "function") {
-                        let firstValid = -1, lastValid = -1;
-                        for (let i = 0; i < len; i++) if (n.isValid(i)) { firstValid = i; break; }
-                        for (let i = len - 1; i >= 0; i--) if (n.isValid(i)) { lastValid = i; break; }
-                        if (firstValid >= 0 && lastValid > firstValid) {
-                            const spanMs = n.getTime(lastValid) - n.getTime(firstValid);
-                            const meanMs = spanMs / (lastValid - firstValid);
-                            const threshMs = Math.max(100, meanMs * 3);
-                            let gapCount = 0, maxIntervalMs = 0;
-                            for (let i = firstValid + 1; i <= lastValid; i++) {
-                                if (!n.isValid(i) || !n.isValid(i - 1)) continue;
-                                const dt = n.getTime(i) - n.getTime(i - 1);
-                                if (dt > maxIntervalMs) maxIntervalMs = dt;
-                                if (dt > threshMs) gapCount++;
-                            }
-                            gapInfo = `, gaps(>${threshMs.toFixed(0)} ms): ${gapCount}, max-interval: ${maxIntervalMs.toFixed(0)} ms`;
-                        }
-                    }
-                } catch (e) {
-                    gapInfo = ` (gap survey failed: ${e.message})`;
-                }
-                prelude += `  ${streamLabels[si]}\n`;
-                prelude += `    records: ${len}, hasRecordPTS: ${has}${gapInfo}${tag}\n`;
-            }
-            prelude += "\n  Sync-mode (hasRecordPTS=yes) is preferred for the deep analysis\n";
-            prelude += "  below because PES PTS gives PCR-locked per-record timing.\n";
-            prelude += "  Async-mode siblings may emit at a different rate and have a\n";
-            prelude += "  different gap pattern — both are reported here so neither is\n";
-            prelude += "  hidden by the choice of analyzed node.\n\n";
-        }
-
-        // ── Track pairing modes ──────────────────────────────────────
-        // For each derived MISB track (CNodeTrackFromMISB and subclasses),
-        // report which loaded stream it bound to and which pairing mode
-        // resulted. This answers "is the displayed track on the sync or the
-        // async KLV stream?" for multi-PID files. "pts" = PES-PTS pairing
-        // (synchronous, PCR-locked); "uts" = UnixTimeStamp wall-clock fallback
-        // (asynchronous, nominal rate). Structural only: stream names from
-        // container ids + track counts, no node ids and no tag values.
-        // Detected by the presence of the .pairingInfo stamp that
+        // ── Tracks ───────────────────────────────────────────────────
+        // For each derived MISB track (CNodeTrackFromMISB and subclasses), the
+        // stream it uses and how it pairs to the video. This answers "is the
+        // displayed track on this KLV stream or that one?" for multi-PID files.
+        // Structural only: stream names from container ids + track counts, no
+        // node ids and no tag values. Detected by the .pairingInfo stamp that
         // CNodeTrackFromMISB.recalculate() leaves behind (so subclasses like
         // CNodeLazyMISBFlightTrack are included without an instanceof import).
+        let prelude = "";
         const misbTracks = [];
         NodeMan.iterate((k, n) => {
             if (n.pairingInfo && n.pairingInfo.misbNode) misbTracks.push(n);
         });
         const anyUTS = misbTracks.some(n => n.pairingInfo.mode === "uts");
-        if (misbTracks.length > 0 && (misbNodes.length > 1 || anyUTS)) {
-            prelude += "TRACK PAIRING (which stream each derived track binds to)\n";
-            prelude += "─".repeat(60) + "\n";
+        if (misbTracks.length > 0 && (realStreams.length > 1 || anyUTS)) {
             const groups = new Map();
             for (const n of misbTracks) {
                 const info = n.pairingInfo;
-                const si = misbNodes.indexOf(info.misbNode); // 0-based, -1 if unlisted
+                const si = misbNodes.indexOf(info.misbNode); // -1 if unlisted
                 const key = si + "|" + info.mode;
-                if (!groups.has(key)) groups.set(key, { si, mode: info.mode, has: info.klvHasRecordPTS, count: 0 });
+                if (!groups.has(key)) {
+                    groups.set(key, {si, label: si >= 0 ? streamLabels[si] : "an unlisted stream",
+                        mode: info.mode, hasRecordPTS: info.klvHasRecordPTS, count: 0});
+                }
                 groups.get(key).count++;
             }
             const ordered = [...groups.values()].sort((a, b) => (a.si - b.si) || a.mode.localeCompare(b.mode));
-            for (const g of ordered) {
-                const streamLabel = g.si >= 0 ? shortStreamLabels[g.si] : "an unlisted stream";
-                const hasLabel = g.has ? "hasRecordPTS=yes" : "hasRecordPTS=no";
-                const modeLabel = g.mode === "pts"
-                    ? "PTS pairing (PES PTS, PCR-locked per-record)"
-                    : "UTS fallback (wall-clock, nominal rate)";
-                prelude += `  bound ${streamLabel} (${hasLabel}): ${g.count} track(s) → ${modeLabel}\n`;
-            }
-            const v = misbTracks[0].pairingInfo;
-            const vpts = v.hasRealVideoPTS ? "real (honors dropped frames)" : "synthetic (uniform)";
-            const wrap = v.wrapped ? "WRAPPED (frame patching active)" : "not wrapped";
-            prelude += `  Video frame PTS: ${vpts};  patching: ${wrap}\n`;
-            if (!anyUTS) {
-                prelude += "\n  Verdict: every derived track pairs on PES PTS (synchronous-\n";
-                prelude += "  mode). The UTS wall-clock fallback is not exercised by this\n";
-                prelude += "  file. Frame patching here affects playback cadence only, not\n";
-                prelude += "  KLV-to-video pairing (which PES PTS locks to the PCR clock).\n\n";
-            } else {
-                prelude += "\n  Verdict: one or more tracks pair via the UTS wall-clock\n";
-                prelude += "  fallback (asynchronous-mode). With frame patching ON (the\n";
-                prelude += "  default) the video timeline is uniform, so the nominal-rate UTS\n";
-                prelude += "  lookup tracks true wall-clock; with patching OFF such a track\n";
-                prelude += "  can desync through dropped-frame bursts. See §6c, §12.\n\n";
-            }
+            const {hasRealVideoPTS, wrapped} = misbTracks[0].pairingInfo;
+            prelude += renderTracks(ordered, {realPTS: hasRealVideoPTS, wrapped}).join("\n") + "\n\n";
         }
+
+        // ── Analysis ─────────────────────────────────────────────────
+        prelude += `ANALYSIS OF ${streamLabels[misbNodes.indexOf(misbNode)]} (${analyzedReason})\n\n`;
 
         const report = prelude + misbNode.generateTimingAnalysis();
         // Generic download filename — never include sitch name (may
         // contain platform / mission text the user wrote).
-        showTimingAnalysis(report, "sitrec-timing-analysis.txt", undefined, {fileHeader});
+        showTimingAnalysis(report, "sitrec-timing-analysis.txt", undefined, {fileHeader, plainHeader});
     }
 
     changedFrames() {
