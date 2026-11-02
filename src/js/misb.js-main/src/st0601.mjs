@@ -270,6 +270,11 @@ const two32max = 2 ** 32 - 1;
 const two32SignedMax = 2 ** 31 - 1;
 const two32SignedMin = -1 * two32SignedMax;
 
+// Symmetric signed mappings reserve the most-negative integer for unknown data.
+// Test the complete value: a valid int32 can begin with the bytes 0x80, 0x00.
+const signed16UnknownTags = new Set([6, 7, 26, 27, 28, 29, 30, 31, 32, 33, 50, 51, 52, 79, 80]);
+const signed32UnknownTags = new Set([13, 14, 19, 23, 24, 40, 41, 67, 68, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93]);
+
 // Tags with one length in ST 0601. A value of another length cannot be read
 // safely, so it is stored as null and reported.
 const fixedTagSizes = {
@@ -291,6 +296,8 @@ const textDecoder = new TextDecoder();
 
 function convert(key, dataview, options) {
 	try {
+		if (signed16UnknownTags.has(key) && dataview.getInt16(0, false) === -0x8000) return null;
+		if (signed32UnknownTags.has(key) && dataview.getInt32(0, false) === -0x80000000) return null;
 		switch (key) {
 			case 1:
 				// Checksum - should be 2 bytes per standard, but handle 1 byte for non-compliant files
@@ -939,10 +946,6 @@ function convert(key, dataview, options) {
 				};
 			case 82:
 				// klv.checkRequiredSize(key, buffer, 4)
-				// if (buffer.compare(Buffer.from("8000", "hex")) === 0) {
-				if (dataview.getUint16(0, false) === 0x8000) {
-					return null;
-				}
 				return {
 					key,
 					name: st0601data(key).name,
@@ -955,10 +958,6 @@ function convert(key, dataview, options) {
 				};
 			case 83:
 				// klv.checkRequiredSize(key, buffer, 4)
-				// if (buffer.compare(Buffer.from("8000", "hex")) === 0) {
-				if (dataview.getUint16(0, false) === 0x8000) {
-					return null;
-				}
 				return {
 					key,
 					name: st0601data(key).name,
@@ -971,10 +970,6 @@ function convert(key, dataview, options) {
 				};
 			case 84:
 				// klv.checkRequiredSize(key, buffer, 4)
-				// if (buffer.compare(Buffer.from("8000", "hex")) === 0) {
-				if (dataview.getUint16(0, false) === 0x8000) {
-					return null;
-				}
 				return {
 					key,
 					name: st0601data(key).name,
@@ -987,10 +982,6 @@ function convert(key, dataview, options) {
 				};
 			case 85:
 				// klv.checkRequiredSize(key, buffer, 4)
-				// if (buffer.compare(Buffer.from("8000", "hex")) === 0) {
-				if (dataview.getUint16(0, false) === 0x8000) {
-					return null;
-				}
 				return {
 					key,
 					name: st0601data(key).name,
@@ -1003,10 +994,6 @@ function convert(key, dataview, options) {
 				};
 			case 86:
 				// klv.checkRequiredSize(key, buffer, 4)
-				// if (buffer.compare(Buffer.from("8000", "hex")) === 0) {
-				if (dataview.getUint16(0, false) === 0x8000) {
-					return null;
-				}
 				return {
 					key,
 					name: st0601data(key).name,
@@ -1019,10 +1006,6 @@ function convert(key, dataview, options) {
 				};
 			case 87:
 				// klv.checkRequiredSize(key, buffer, 4)
-				// if (buffer.compare(Buffer.from("8000", "hex")) === 0) {
-				if (dataview.getUint16(0, false) === 0x8000) {
-					return null;
-				}
 				return {
 					key,
 					name: st0601data(key).name,
@@ -1035,10 +1018,6 @@ function convert(key, dataview, options) {
 				};
 			case 88:
 				// klv.checkRequiredSize(key, buffer, 4)
-				// if (buffer.compare(Buffer.from("8000", "hex")) === 0) {
-				if (dataview.getUint16(0, false) === 0x8000) {
-					return null;
-				}
 				return {
 					key,
 					name: st0601data(key).name,
@@ -1051,10 +1030,6 @@ function convert(key, dataview, options) {
 				};
 			case 89:
 				// klv.checkRequiredSize(key, buffer, 4)
-				// if (buffer.compare(Buffer.from("8000", "hex")) === 0) {
-				if (dataview.getUint16(0, false) === 0x8000) {
-					return null;
-				}
 				return {
 					key,
 					name: st0601data(key).name,
@@ -1071,7 +1046,7 @@ function convert(key, dataview, options) {
 					key,
 					name: st0601data(key).name,
 					value: klv.scale(
-						dataview.getInt16(0, false),
+						dataview.getInt32(0, false),
 						[two32SignedMin, two32SignedMax],
 						[-90, 90]
 					),
@@ -1083,7 +1058,7 @@ function convert(key, dataview, options) {
 					key,
 					name: st0601data(key).name,
 					value: klv.scale(
-						dataview.getInt16(0, false),
+						dataview.getInt32(0, false),
 						[two32SignedMin, two32SignedMax],
 						[-90, 90]
 					),
@@ -1095,7 +1070,7 @@ function convert(key, dataview, options) {
 					key,
 					name: st0601data(key).name,
 					value: klv.scale(
-						dataview.getInt16(0, false),
+						dataview.getInt32(0, false),
 						[two32SignedMin, two32SignedMax],
 						[-90, 90]
 					),
@@ -1107,9 +1082,9 @@ function convert(key, dataview, options) {
 					key,
 					name: st0601data(key).name,
 					value: klv.scale(
-						dataview.getInt16(0, false),
+						dataview.getInt32(0, false),
 						[two32SignedMin, two32SignedMax],
-						[-90, 90]
+						[-180, 180]
 					),
 					unit: "°",
 				};
