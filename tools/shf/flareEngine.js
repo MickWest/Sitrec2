@@ -20,6 +20,8 @@ const astro = await import("./astro.js" + VERSION);
 // ramp, penumbra fade, and "is this flare actually visible?" all live there so the two
 // can't drift. See flarePhysics.js.
 const fp = await import("./flarePhysics.js" + VERSION);
+// Sitrec's photometric estimate, for the peak magnitude of each flare.
+const sp = await import("./satellitePhotometry.js" + VERSION);
 const POLAR_RADIUS_M = geo.WGS84.b * 1000;   // shadow sphere radius (m), matching Sitrec's globe
 
 // ---------------------------------------------------------------------------
@@ -448,6 +450,7 @@ export function createFlareEngine(satellite) {
         let peakMs = 0, peakAz = 0, peakEl = 0, peakRange = 0, peakSatAlt = 0;
         let peakObsLat = 0, peakObsLon = 0;
         let peakSatE = null, peakToSun = null;   // sat ECEF + Sun dir at the peak, for the penumbra fade
+        let peakObsE = null;                      // observer ECEF at the peak, for the phase angle
         let coreStartMs = 0, coreEndMs = 0;       // first/last time glint is in the full-brightness core (0 = never)
 
         for (let i = 0; i < nSats; i++) {
@@ -469,9 +472,22 @@ export function createFlareEngine(satellite) {
                         peakToSun, POLAR_RADIUS_M);
                     fade = fp.penumbraFade(occ);
                 }
+                // Peak magnitude from the same photometric estimate as Sitrec's night sky,
+                // for an unknown Starlink design (the equal-weight mixture).
+                let peakMagnitude = Infinity;
+                if (peakSatE && peakToSun && peakObsE) {
+                    const toObserver = geo.vnorm(geo.vsub(peakObsE, peakSatE));
+                    peakMagnitude = sp.satelliteMagnitude({
+                        rangeM: peakRange * 1000,
+                        phaseAngleRad: acosDeg(geo.vdot(toObserver, peakToSun)) / RAD2DEG,
+                        glintAngleDeg: bestGlint,
+                        starlink: true,
+                        illumination: fade,
+                    });
+                }
                 flares.push(makeFlare(sat, runStartMs, peakMs, runEndMs, bestGlint,
                     peakAz, peakEl, peakRange, peakSatAlt, peakObsLat, peakObsLon,
-                    mot.dAzDeg, mot.dElDeg, fade, spread, coreStartMs, coreEndMs));
+                    mot.dAzDeg, mot.dElDeg, fade, spread, coreStartMs, coreEndMs, peakMagnitude));
                 satsFlaringSet.add(i);
             };
 
@@ -549,6 +565,7 @@ export function createFlareEngine(satellite) {
                             peakObsLon = lla.lon;
                             peakSatE = e;            // {x,y,z} km, fresh per sample
                             peakToSun = f.toSun;     // unit Sun direction at this instant
+                            peakObsE = obsE;         // observer {x,y,z} km at this instant
                         }
                     } else if (inRun) {
                         // Run just ended — emit the flare event.
@@ -592,7 +609,7 @@ export function createFlareEngine(satellite) {
     // the SHARED flarePhysics model, so SHF's "visible flare" definition matches Sitrec's.
     function makeFlare(sat, startMs, peakMs, endMs, peakGlintDeg,
                        azDeg, elDeg, rangeKm, satAltKm, obsLat, obsLon,
-                       dAzDeg, dElDeg, fade, spread, coreStartMs, coreEndMs) {
+                       dAzDeg, dElDeg, fade, spread, coreStartMs, coreEndMs, peakMagnitude) {
         return {
             satName: sat.name,
             noradId: sat.noradId,
@@ -604,6 +621,9 @@ export function createFlareEngine(satellite) {
             coreStartMs: coreStartMs || 0,
             coreEndMs: coreEndMs || 0,
             peakGlintDeg,
+            // Estimated visual magnitude at the peak (satellitePhotometry.js); Infinity
+            // when the geometry was not recorded.
+            peakMagnitude,
             intensity: fp.flareRamp(peakGlintDeg, spread),
             fade,
             visible: fp.isFlareVisible(fade, peakGlintDeg, spread),

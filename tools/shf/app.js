@@ -1607,8 +1607,8 @@ function renderResults(flares, stats, req, origin, dest) {
 
   // Per-flare detail list — hidden in production for a cleaner page, but shown on local
   // dev hosts as a DEBUG aid: each card lists the satellite, peak time, peak glint, az/el,
-  // and relative brightness %, so the SHF flares can be cross-referenced against what
-  // Sitrec actually renders (e.g. faint/low-% flares are the ones Sitrec's brightness
+  // and the estimated peak magnitude, so the SHF flares can be cross-referenced against what
+  // Sitrec actually renders (e.g. faint flares are the ones Sitrec's brightness
   // floor drops). Sorted by time to match scrubbing the Sitrec timeline. Suppressed under
   // automation (navigator.webdriver) — same as the service worker — so the headless e2e test
   // sees the production-clean results page (the local test server is itself a "local host").
@@ -1636,8 +1636,8 @@ function flareCard(f, tz) {
   card.className = "card";
   const compass = f.compass || compass16(f.azDeg);
   const dur = Math.max(0, (f.endMs - f.startMs) / 1000);
-  const intensity = Math.max(0, Math.min(1, f.intensity ?? 0));
-  const pct = Math.round(intensity * 100);
+  // Sitrec's photometric estimate for an unknown Starlink design (flareEngine.js).
+  const magnitude = Number.isFinite(f.peakMagnitude) ? f.peakMagnitude.toFixed(1).replace("-", "−") : "—";
 
   card.innerHTML = `
     <div class="card-top">
@@ -1659,9 +1659,8 @@ function flareCard(f, tz) {
       <span><b>Range</b> ${Math.round(f.rangeKm)} km</span>
       <span><b>Sat altitude</b> ${Math.round(f.satAltKm)} km</span>
     </div>
-    <div class="bar-wrap">
-      <div class="bar-label"><span>Relative brightness</span><span>${pct}%</span></div>
-      <div class="bar"><span style="width:${pct}%"></span></div>
+    <div class="meta">
+      <span><b>Peak magnitude</b> about ${magnitude} (estimate; lower is brighter)</span>
     </div>`;
   return card;
 }

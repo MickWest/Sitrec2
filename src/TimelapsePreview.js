@@ -44,7 +44,7 @@ import {GlobalDateTimeNode, Globals, NodeMan, setRenderOne, Sit} from "./Globals
 import {par} from "./par";
 import {CNode} from "./nodes/CNode";
 import {GlobalNightSkyScene, GlobalScene} from "./LocalFrame";
-import {bestSat, satRecToDate} from "./TLEUtils";
+import {bestSat, isBeforeLaunch, satRecToDate} from "./TLEUtils";
 import {
     getAberrationVOverC, getEQJToECEFMatrix, getGeocentricBodyPositionECEF, raDec2Celestial,
 } from "./CelestialMath";
@@ -436,7 +436,7 @@ class CNodeTimelapsePreview extends CNode {
             P.segments, P.ev, P.stars, P.planets, P.satellites,
             Sit.refractionEnabled, Sit.refractionPressure, Sit.refractionTemp, Sit.fps, Sit.simSpeed,
             GlobalDateTimeNode?.getStartTimeValue(),
-            sats?.TLEData?.satData?.length, sats?.showSatellites, sats?.brightnessModel, sats?.flareAngle,
+            sats?.TLEData?.satData?.length, sats?.satelliteSizesVersion, sats?.showSatellites, sats?.brightnessModel, sats?.flareAngle,
             sats?.starlinkProfile, sats?.illuminationModel, sats?.flareModel, sats?.penumbraDepth,
             Globals.equatorRadius, Globals.polarRadius,
         ].join("|");
@@ -782,12 +782,19 @@ class CNodeTimelapsePreview extends CNode {
                 const range = Math.sqrt(Math.max(0, r * r - earthR * earthR)) + camHorizon + 300000;
                 if (sd.ecef.distanceTo(ctx.camPos) > range + 8000 * reachSeconds) continue;
             }
+            // Not launched by the end of the exposure: the live sky hides it
+            // too (see isBeforeLaunch). One launched during the exposure keeps
+            // only its samples from the launch on (notBeforeMS, read by the
+            // kernel), as the live sky shows it from that moment.
+            if (isBeforeLaunch(sd, endDate.getTime())) continue;
             const satrec = bestSat(sd.satrecs, midDate);
             const epochMS = satRecToDate(satrec).getTime();
             if (Math.abs(midDate.getTime() - epochMS) > 90 * 86400000) continue;
             if (farFromOrbitPlane(satrec, epochMS, planeDates, observerTEME, planeAllowance)) continue;
             list.push({index: i, key: `${i}:${sd.satrecs.indexOf(satrec)}`, satrec, name: sd.name, number: sd.number,
-                filter: Array.isArray(filter) ? filter : undefined});
+                areaM2: sd.areaM2, rcsSize: sd.rcsSize, starlinkDesign: sd.starlinkDesign,
+                filter: Array.isArray(filter) ? filter : undefined,
+                notBeforeMS: isBeforeLaunch(sd, startDate.getTime()) ? sd.launchDate : undefined});
         }
         return list;
     }
@@ -873,6 +880,7 @@ class CPreviewPool {
         this.catalog = null;
         this.satrecVersion = 0;
         this.tleData = null;
+        this.sizesVersion = 0;
         this.gen = 0;
     }
 
@@ -901,9 +909,14 @@ class CPreviewPool {
             this.catalog = catalog;
             for (const slot of this.slots) slot.w.postMessage({type: "catalog", catalog});
         }
-        const tleData = NodeMan.get("NightSkyNode", false)?.satellites?.TLEData ?? null;
-        if (tleData !== this.tleData) {
+        // The workers keep each satellite's entry, so send them again when the data
+        // or its sizes (CSatellite.applySatelliteSizes) change.
+        const sats = NodeMan.get("NightSkyNode", false)?.satellites;
+        const tleData = sats?.TLEData ?? null;
+        const sizesVersion = sats?.satelliteSizesVersion ?? 0;
+        if (tleData !== this.tleData || sizesVersion !== this.sizesVersion) {
             this.tleData = tleData;
+            this.sizesVersion = sizesVersion;
             this.satrecVersion++;
             for (const slot of this.slots) slot.known.clear();
         }
@@ -911,10 +924,11 @@ class CPreviewPool {
         const shares = this.slots.map(() => ({sats: [], entries: []}));
         for (const sat of satellites) {
             const k = sat.index % n, slot = this.slots[k];
-            shares[k].sats.push({key: sat.key, filter: sat.filter});
+            shares[k].sats.push({key: sat.key, filter: sat.filter, notBeforeMS: sat.notBeforeMS});
             if (!slot.known.has(sat.key)) {
                 slot.known.add(sat.key);
-                shares[k].entries.push({key: sat.key, satrec: sat.satrec, name: sat.name, number: sat.number});
+                shares[k].entries.push({key: sat.key, satrec: sat.satrec, name: sat.name, number: sat.number,
+                    areaM2: sat.areaM2, rcsSize: sat.rcsSize, starlinkDesign: sat.starlinkDesign});
             }
         }
         return Promise.all(this.slots.map((slot, k) => new Promise((resolve, reject) => {

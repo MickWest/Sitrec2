@@ -80,8 +80,9 @@ its password to a third party. 2.183.6 met the second half by removing all forwa
 broke the first, and 2.183.11 restored it.
 *Implemented:* `curlGetRequest()` forwards no browser header by itself.
 `curlConfiguredSourceHeaders()` returns the `Authorization` header for the fetches from
-`CUSTOM_TLE`, `CUSTOM_WIND_URL`, `CURRENT_STARLINK` and `CURRENT_ACTIVE`, and nothing for
-`celestrak.org`, the default and sample value of these settings. The proxies that fetch a fixed
+`CUSTOM_TLE`, `CUSTOM_WIND_URL`, `CURRENT_STARLINK`, `CURRENT_ACTIVE`, `CURRENT_ONEWEB`,
+`CURRENT_KUIPER`, `CURRENT_AST` and `CURRENT_IRIDIUM`, and nothing for `celestrak.org`, the
+default and sample value of these settings. The proxies that fetch a fixed
 public host do not call it.
 *Verified:* `tests/serverProxiesCurlAuth.test.js` proves that a configured source receives the
 header, that `curlGetRequest()` alone sends none, that `celestrak.org` receives none, and which
@@ -90,7 +91,7 @@ says nothing about this requirement.
 *Deliberately excluded:* a cached response. Current catalogues always, and custom sources when
 `CACHE_CUSTOM_TLE` or `CACHE_CUSTOM_WIND` is on, are kept per URL and served to every user of the
 site. A site whose users hold different rights to one source must leave those two settings off.
-`CURRENT_STARLINK` and `CURRENT_ACTIVE` should then not name that source.
+The `CURRENT_` settings should then not name that source.
 
 ## Configuration and defaults
 

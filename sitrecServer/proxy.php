@@ -48,6 +48,31 @@ if (getenv("CURRENT_STARLINK")) {
     "CURRENT_ACTIVE" => "https://celestrak.org/NORAD/elements/gp.php?GROUP=active&FORMAT=csv",
 );}
 
+// Operator-supplied orbits (CelesTrak SupGP) for constellations other than
+// Starlink. They are derived from the operators' own ephemerides, so they are
+// usually more accurate than the general catalogue for these satellites, and
+// they appear within hours of a launch. Current data only, like
+// CURRENT_STARLINK. Each can be pointed elsewhere in shared.env under the same
+// name. A deployment that sets its own sources (the CURRENT_STARLINK branch
+// above) gets the CelesTrak default only when SITREC_ENABLE_DEFAULT_TLE_SOURCES
+// is on, so an isolated deployment never calls CelesTrak by surprise.
+$supGPDefaults = array(
+    "CURRENT_ONEWEB" => "https://celestrak.org/NORAD/elements/supplemental/sup-gp.php?FILE=oneweb&FORMAT=csv",
+    "CURRENT_KUIPER" => "https://celestrak.org/NORAD/elements/supplemental/sup-gp.php?FILE=kuiper&FORMAT=csv",
+    "CURRENT_AST" => "https://celestrak.org/NORAD/elements/supplemental/sup-gp.php?FILE=ast&FORMAT=csv",
+    "CURRENT_IRIDIUM" => "https://celestrak.org/NORAD/elements/supplemental/sup-gp.php?FILE=iridium&FORMAT=csv",
+);
+// injectEnv.php turns a literal true in shared.env into "1" through putenv().
+$useSupGPDefaults = !getenv("CURRENT_STARLINK")
+    || in_array(strtolower(trim((string)getenv("SITREC_ENABLE_DEFAULT_TLE_SOURCES"))), ['1', 'true', 'yes', 'on'], true);
+foreach ($supGPDefaults as $key => $defaultUrl) {
+    if (getenv($key)) {
+        $request_url_map[$key] = getenv($key);
+    } else if ($useSupGPDefaults) {
+        $request_url_map[$key] = $defaultUrl;
+    }
+}
+
 $request = isset($_GET["request"]) ? $_GET["request"] : null;
 
 // the request code might have a ?v=8234823958235 parameter at the end (with a random string)

@@ -10,7 +10,9 @@ import {Vector3} from "three";
 import * as satellite from "satellite.js";
 import {satelliteIllumination} from "../tools/shf/solarIllumination.js";
 import {penumbraFade, shadowOcclusion} from "../tools/shf/flarePhysics.js";
-import {fluxToMagnitude, KUIPER_PHOTOMETRY, satelliteFlux} from "../tools/shf/satellitePhotometry.js";
+import {
+    fluxToMagnitude, KUIPER_PHOTOMETRY, satelliteFlux, STARLINK_PER_SATELLITE, starlinkProfileForDesign,
+} from "../tools/shf/satellitePhotometry.js";
 
 const RAD2DEG = 180 / Math.PI;
 
@@ -48,24 +50,47 @@ export function satelliteSunlitFraction(position, toSun, settings) {
         {equatorRadius: a, polarRadius: b, atmosphere: settings.illuminationModel !== "Finite Sun"});
 }
 
-// The photometric class of a satellite, from its catalog name and number, as
-// options for satelliteFlux. Any other satellite gets the generic diffuse estimate.
+// Mean projected area, in square metres, for an object without a GCAT size, from
+// the Space-Track radar size class: SMALL is under 0.1 m², MEDIUM 0.1 to 1 m²,
+// LARGE over 1 m². Each value is near the geometric middle of its class (taking
+// 0.01 and 10 m² as the outer ends). Radar cross-section is only a rough guide
+// to the optical area, so these are estimates.
+export const RCS_SIZE_AREA_M2 = Object.freeze({SMALL: 0.03, MEDIUM: 0.3, LARGE: 3});
+
+// The photometric class of a satellite, from its catalog name, number and size,
+// as options for satelliteFlux. Any other satellite gets the generic diffuse
+// estimate, from its mean projected area: satData.areaM2 (GCAT, set by
+// SatelliteSizes.js), else its radar size class, else 1 m².
 function photometryClass(satData, settings) {
     const name = satData.name ?? "";
-    if (/STARLINK/i.test(name)) return {starlink: true, profile: settings.starlinkProfile};
+    if (/STARLINK/i.test(name)) {
+        const profile = settings.starlinkProfile === STARLINK_PER_SATELLITE
+            ? starlinkProfileForDesign(satData.starlinkDesign) : settings.starlinkProfile;
+        return {starlink: true, profile};
+    }
     if (/KUIPER/i.test(name)) {
         return {flareProfile: KUIPER_PHOTOMETRY.flareProfile,
             diffuseMagnitudeAt90Deg: KUIPER_PHOTOMETRY.diffuseMagnitudeAt90Deg};
     }
     // Retain the previous ISS magnitude as an explicit estimated
     // 1000-km/90-degree reference, now with range and phase dependence.
+    // GCAT sizes only the first module, so its area would be far too small.
     if (satData.number === 25544) return {diffuseMagnitudeAt90Deg: -2};
-    return {};
+    const area = satData.areaM2 ?? RCS_SIZE_AREA_M2[satData.rcsSize];
+    return area > 0 ? {diffuseAreaM2: area} : {};
+}
+
+// The magnitude of a fully lit satellite at 1000 km and 90 degrees phase, away
+// from any flare: the "standard magnitude" that satellite catalogs list.
+export function standardMagnitude(satData, settings) {
+    return fluxToMagnitude(satelliteFlux({rangeM: 1e6, phaseAngleRad: Math.PI / 2,
+        ...photometryClass(satData, settings)}));
 }
 
 // Flux, magnitude and the angles behind them, for a satellite at `position`
-// seen from `observer`. `satData` needs only name and number. The reflecting
-// surface faces the zenith: geocentric (from the Earth's centre) or geodetic (the
+// seen from `observer`. `satData` needs name and number, and uses areaM2, rcsSize
+// and starlinkDesign when it has them. The reflecting surface faces the
+// zenith: geocentric (from the Earth's centre) or geodetic (the
 // ellipsoid normal, as SphericalMath.getLocalUpVector).
 export function satelliteAppearance(satData, position, observer, toSun, illumination, settings) {
     const dx = position.x - observer.x, dy = position.y - observer.y, dz = position.z - observer.z;

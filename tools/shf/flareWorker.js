@@ -98,6 +98,7 @@ handle = (e) => {
                                 g.rangeKm = f.rangeKm; g.satAltKm = f.satAltKm;
                                 g.obsLat = f.obsLat; g.obsLon = f.obsLon;
                                 g.intensity = f.intensity; g.dAzDeg = f.dAzDeg; g.dElDeg = f.dElDeg;
+                                g.peakMagnitude = f.peakMagnitude;
                             }
                             merged = true;
                             break;

@@ -386,6 +386,11 @@ export const serializeMethods = {
                         date: file.tleSource.date,
                         type: file.tleSource.type ?? "",
                     };
+                    // Only a non-standard window is recorded (older dates, see
+                    // gpHistoryWindowDays), so other saves are unchanged.
+                    if (file.tleSource.days !== undefined) {
+                        filesMetadata[id].tleSource.days = file.tleSource.days;
+                    }
                 }
 
                 // PES timing sidecar reference for TS-extracted substreams.

@@ -471,6 +471,24 @@ State University. The grid values are scientific facts (geoid undulation
 heights) and are not subject to copyright restrictions.
 See: https://earth-info.nga.mil/`,
     },
+    {
+        name: "GCAT, General Catalog of Artificial Space Objects",
+        version: "Release 1.8.8 (satcat updated 2026 Nov 2)",
+        license: "CC-BY-4.0",
+        copyright: "(c) 2020-2026 Jonathan McDowell",
+        repository: "https://planet4589.org/space/gcat",
+        notes: "Satellite sizes and Starlink designs derived from the GCAT satcat table: " +
+            "data/nightsky/gcat-sizes.csv.gz, built by scripts/buildSatelliteSizes.js. " +
+            "Sitrec keeps the length, diameter and span, adds a mean projected area computed " +
+            "from them, and adds a Starlink design read from the bus and payload names.",
+        licenseTextOverride: `Data from GCAT (J. McDowell, planet4589.org/space/gcat).
+McDowell, Jonathan C., 2020. General Catalog of Artificial Space Objects,
+Release 1.8.8, https://planet4589.org/space/gcat
+Licence: Creative Commons Attribution 4.0 International (CC-BY-4.0),
+https://creativecommons.org/licenses/by/4.0/
+Changes: Sitrec keeps a subset of the columns, computes a mean projected area
+from the sizes, and derives a Starlink design from the bus and payload names.`,
+    },
 ];
 
 // ---------------------------------------------------------------------------

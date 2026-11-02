@@ -1,4 +1,4 @@
-import {satelliteAppearance} from "../src/SatelliteBrightness";
+import {RCS_SIZE_AREA_M2, satelliteAppearance, standardMagnitude} from "../src/SatelliteBrightness";
 import {KUIPER_PHOTOMETRY, satelliteFlux} from "../tools/shf/satellitePhotometry.js";
 
 const EARTH_RADIUS_M = 6371e3;
@@ -64,5 +64,43 @@ describe("satellite photometric classes", () => {
     test("the ISS keeps its estimated reference", () => {
         const iss = {name: "ISS (ZARYA)", number: 25544};
         expect(magnitude(iss, 70)).toBeLessThan(magnitude(kuiper, 70) - 5);
+    });
+});
+
+describe("brightness from the catalog", () => {
+    const perSatellite = {...settings, starlinkProfile: "catalog"};
+
+    test("Per satellite takes each Starlink's design from the catalog", () => {
+        const dtc = {...starlink, starlinkDesign: "v2md"};
+        const visor = {...starlink, starlinkDesign: "visor"};
+        expect(magnitude(dtc, 70, perSatellite)).toBe(magnitude(starlink, 70, {...settings, starlinkProfile: "dtc"}));
+        expect(magnitude(visor, 70, perSatellite)).toBe(magnitude(starlink, 70, {...settings, starlinkProfile: "visor"}));
+    });
+
+    test("Per satellite treats a Starlink the catalog does not list as unknown", () => {
+        expect(magnitude(starlink, 3, perSatellite)).toBe(magnitude(starlink, 3, settings));
+    });
+
+    test("a fixed design ignores the catalog design", () => {
+        const mini = {...settings, starlinkProfile: "mini"};
+        expect(magnitude({...starlink, starlinkDesign: "visor"}, 3, mini)).toBe(magnitude(starlink, 3, mini));
+    });
+
+    test("an object's brightness follows its catalog area, else its radar size class", () => {
+        const flux = satData => satelliteAppearance(satData, position, observer, sunAtGlint(70), 1, settings).flux;
+        const unsized = flux(generic);
+        expect(flux({...generic, areaM2: 40}) / unsized).toBeCloseTo(40, 10);
+        expect(flux({...generic, rcsSize: "SMALL"}) / unsized).toBeCloseTo(RCS_SIZE_AREA_M2.SMALL, 10);
+        expect(flux({...generic, rcsSize: "LARGE", areaM2: 0.5}) / unsized).toBeCloseTo(0.5, 10);
+        expect(flux({...generic, rcsSize: "N/A"})).toBe(unsized);
+    });
+
+    test("the standard magnitude is the 1000-km, 90-degree value without a flare", () => {
+        // A Lambert sphere of 40 m² and reflectance 0.2: Sun magnitude -26.74,
+        // geometric albedo 2/3 * 0.2, phase function 1/pi at 90 degrees.
+        const expected = -26.74 - 2.5 * Math.log10((2 / 3) * 0.2 * (40 / Math.PI) / 1e12 / Math.PI);
+        expect(standardMagnitude({...generic, areaM2: 40}, settings)).toBeCloseTo(expected, 10);
+        expect(standardMagnitude(starlink, {...settings, starlinkProfile: "mini"})).toBeCloseTo(7.502, 3);
+        expect(standardMagnitude({name: "ISS (ZARYA)", number: 25544, areaM2: 60}, settings)).toBeCloseTo(-2, 10);
     });
 });

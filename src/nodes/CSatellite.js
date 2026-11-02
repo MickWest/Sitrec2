@@ -4,7 +4,7 @@ import {SITREC_SERVER} from "../configUtils";
 import {FileManager, GlobalDateTimeNode, Globals, guiMenus, NodeMan, setRenderOne, Sit} from "../Globals";
 import {par} from "../par";
 import {EventManager} from "../CEventManager";
-import {bestSatWithRange, CTLEData, dateToTLENumber, satRecToDate} from "../TLEUtils";
+import {bestSatWithRange, CTLEData, dateToTLENumber, GP_QUERY_WINDOW_DAYS, gpHistoryWindowDays, isBeforeLaunch, satRecToDate} from "../TLEUtils";
 import {degrees} from "../utils";
 import {hideProgress, initProgress, updateProgress} from "../CProgressIndicator";
 import {DebugArrow, DebugArrowAB, getPointBelow, rayIntersectsEllipsoid, removeDebugArrow} from "../threeExt";
@@ -21,6 +21,7 @@ import {
     REFRACTION_DEFAULTS
 } from "../atmosphere/refraction";
 import {satelliteAppearance, satelliteECEF, satelliteSunlitFraction} from "../SatelliteBrightness";
+import {applySatelliteSizes, ensureSatelliteSizesLoaded} from "../SatelliteSizes";
 
 // The Earth's rotation rate, rad/s, about the ECEF z axis.
 const EARTH_ROTATION_RATE = 7.292115e-5;
@@ -720,6 +721,7 @@ export class CSatellite {
         this.TLEData.satData.forEach(sat => {
             sat.ecef = V3();
         });
+        this.applySatelliteSizes();
         EventManager.dispatchEvent("tleLoaded", {});
         setRenderOne(2); // force a render update after loading the TLE data
 
@@ -736,6 +738,23 @@ export class CSatellite {
         }
 
         return this.TLEData;
+    }
+
+    /**
+     * Give each satellite its GCAT size and Starlink design (SatelliteSizes.js).
+     * The table loads on first use, so the brightness is redone when it arrives
+     * ("satelliteSizesApplied").
+     */
+    applySatelliteSizes() {
+        const data = this.TLEData;
+        ensureSatelliteSizesLoaded().then(() => {
+            if (this.TLEData !== data) return; // replaced meanwhile; that load applies its own
+            if (applySatelliteSizes(data.satData) > 0) {
+                this.satelliteSizesVersion = (this.satelliteSizesVersion ?? 0) + 1;
+                EventManager.dispatchEvent("satelliteSizesApplied", {});
+                setRenderOne(true);
+            }
+        });
     }
 
     /**
@@ -756,6 +775,7 @@ export class CSatellite {
         this.TLEData.satData.forEach(sat => {
             if (!sat.ecef) sat.ecef = V3();
         });
+        this.applySatelliteSizes();
         EventManager.dispatchEvent("tleLoaded", {});
         setRenderOne(2);
 
@@ -1143,8 +1163,11 @@ export class CSatellite {
                 best.epochMS[i] = satRecToDate(satrec).getTime();
             }
 
+            // Hidden like a stale set: an object not launched yet at this time
+            // (see isBeforeLaunch: without this, the earliest later element set
+            // puts it in orbit before its own launch).
             const tleAgeMS = Math.abs(timeMS - best.epochMS[i]);
-            if (tleAgeMS > maxTLEAgeMS) {
+            if (tleAgeMS > maxTLEAgeMS || isBeforeLaunch(satData, timeMS)) {
                 satData.invalidPosition = true;
                 satData.outOfRange = true;
                 this.removeSatSunArrows(satData);
@@ -1351,6 +1374,40 @@ export class CSatellite {
         this.loadSatellites(url, id);
     }
 
+    /**
+     * Merge the CURRENT operator-supplied orbits (CelesTrak SupGP) for OneWeb,
+     * Kuiper, AST SpaceMobile and Iridium into whatever is loaded. They are
+     * more accurate for these satellites than the general catalogue, and appear
+     * within hours of a launch. Always merged, never a replacement: they
+     * supplement a historical or current set rather than stand alone. Loaded
+     * one after another so each merge sees the one before it.
+     */
+    async updateOperatorSupGP() {
+        const feeds = ["CURRENT_ONEWEB", "CURRENT_KUIPER", "CURRENT_AST", "CURRENT_IRIDIUM"];
+        const failed = [];
+        initProgress({title: "Loading TLE Data", filename: "Operator orbits (SupGP)"});
+        for (const request of feeds) {
+            updateProgress({status: request.replace("CURRENT_", "")});
+            try {
+                const response = await fetch(SITREC_SERVER + "proxy.php?request=" + request);
+                if (!response.ok) throw new Error("HTTP " + response.status);
+                const buffer = await response.arrayBuffer();
+                const head = new TextDecoder().decode(new Uint8Array(buffer, 0, Math.min(200, buffer.byteLength)));
+                if (head.trim().startsWith("ERROR:")) throw new Error(head.trim());
+                // "oneweb_current.tle", like "starLink_current.tle" for Starlink.
+                const id = request.replace("CURRENT_", "").toLowerCase() + "_current.tle";
+                await this.processTLEData(id, buffer, null, "merge");
+            } catch (e) {
+                console.warn(`Operator SupGP ${request} failed:`, e);
+                failed.push(request.replace("CURRENT_", ""));
+            }
+        }
+        hideProgress();
+        if (failed.length > 0) {
+            showError("Could not load operator orbits for: " + failed.join(", "));
+        }
+    }
+
 
 
     /**
@@ -1386,17 +1443,22 @@ export class CSatellite {
             startTime = someTimeAgo;
         }
 
-        startTime.setDate(startTime.getDate() - 1);
+        // The query spans [D, D + days], centred on the start. A CUSTOM source
+        // substitutes the date into its own URL and has no window to widen.
+        const days = satType === "CUSTOM" ? GP_QUERY_WINDOW_DAYS : gpHistoryWindowDays(startTime);
+        startTime.setUTCDate(startTime.getUTCDate() - days / 2);
 
-        this.loadDatedTLEWithRetry(startTime, satType, 0);
+        this.loadDatedTLEWithRetry(startTime, satType, 0, days);
     }
 
-    loadDatedTLEWithRetry(startTime, satType, retryCount) {
+    loadDatedTLEWithRetry(startTime, satType, retryCount, days = GP_QUERY_WINDOW_DAYS) {
         const maxRetries = 3;
         const daysBackPerRetry = 3;
 
         const dateStr = startTime.toISOString().split('T')[0];
-        const url = SITREC_SERVER + "proxyStarlink.php?request=" + dateStr + "&type=" + satType;
+        const nonStandard = days !== GP_QUERY_WINDOW_DAYS;
+        const url = SITREC_SERVER + "proxyStarlink.php?request=" + dateStr + "&type=" + satType
+            + (nonStandard ? "&days=" + days : "");
         const id = "starLink_" + dateStr + ".tle";
 
         console.log(`Getting satellites from ${url} (attempt ${retryCount + 1})`);
@@ -1450,7 +1512,7 @@ export class CSatellite {
                             newStartTime.setDate(newStartTime.getDate() - daysBackPerRetry);
                             console.log(`Server error: ${text}`);
                             console.log(`Retrying with date ${newStartTime.toISOString().split('T')[0]} (attempt ${retryCount + 2}/${maxRetries + 1})`);
-                            this.loadDatedTLEWithRetry(newStartTime, satType, retryCount + 1);
+                            this.loadDatedTLEWithRetry(newStartTime, satType, retryCount + 1, days);
                             return;
                         }
                         hideProgress();
@@ -1462,7 +1524,8 @@ export class CSatellite {
                 hideProgress();
                 // Tag with the query that produced it: dateStr + satType is
                 // exactly what a later refresh needs to re-run the same request.
-                this.processTLEData(id, buffer, {date: dateStr, type: satType});
+                this.processTLEData(id, buffer, nonStandard
+                    ? {date: dateStr, type: satType, days} : {date: dateStr, type: satType});
             })
             .catch(error => {
                 if (error.name === 'AbortError') {
@@ -1475,7 +1538,7 @@ export class CSatellite {
                     const newStartTime = new Date(startTime);
                     newStartTime.setDate(newStartTime.getDate() - daysBackPerRetry);
                     console.log(`${error.message}, retrying with date ${newStartTime.toISOString().split('T')[0]} (attempt ${retryCount + 2}/${maxRetries + 1})`);
-                    this.loadDatedTLEWithRetry(newStartTime, satType, retryCount + 1);
+                    this.loadDatedTLEWithRetry(newStartTime, satType, retryCount + 1, days);
                     return;
                 }
 
@@ -1529,13 +1592,14 @@ export class CSatellite {
         return allChunks.buffer;
     }
 
-    processTLEData(id, buffer, tleSource = null) {
+    processTLEData(id, buffer, tleSource = null, tleAction = undefined) {
         // Use FileManager.parseResult to handle unzipping, parsing, and routing
         // The proxyStarlink returns zipped TLE data
         FileManager.remove(id);
         // "downloaded": not a user import, so the satellite filters are left as
-        // they are (see handleParsedFile).
-        FileManager.parseResult(id + ".tle", buffer, null, {trackOptions: {downloaded: true}})
+        // they are (see handleParsedFile). A tleAction ("merge") skips the
+        // merge-or-replace question.
+        return FileManager.parseResult(id + ".tle", buffer, null, {trackOptions: {downloaded: true, tleAction}})
             .then(results => {
                 // parseResult returns an array of results
                 // Mark the files as dynamic links (not static URLs)

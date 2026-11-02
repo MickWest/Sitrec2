@@ -9,6 +9,7 @@
 import * as geo from "../geo.js";
 import * as astro from "../astro.js";
 import { createFlareEngine, FLARE_DEFAULTS } from "../flareEngine.js";
+import { satelliteMagnitude } from "../satellitePhotometry.js";
 
 let fails = 0;
 function ok(name, cond, extra = "") {
@@ -94,6 +95,14 @@ if (res.flares.length) {
         `${f.obsLat},${f.obsLon}`);
     ok("event carries apparent-motion deltas (finite)", Number.isFinite(f.dAzDeg) && Number.isFinite(f.dElDeg),
         `dAz=${f.dAzDeg},dEl=${f.dElDeg}`);
+    // Peak magnitude: Sitrec's photometric estimate at the peak geometry, unknown design.
+    const toObserver = geo.vnorm(geo.vsub(OBS, SAT_POS));
+    const phase = Math.acos(Math.max(-1, Math.min(1, geo.vdot(toObserver, DESIRED_TOSUN))));
+    const expectedMag = satelliteMagnitude({ rangeM: f.rangeKm * 1000, phaseAngleRad: phase,
+        glintAngleDeg: f.peakGlintDeg, starlink: true, illumination: f.fade });
+    ok("peak magnitude is the photometric estimate at the peak", near(f.peakMagnitude, expectedMag, 1e-9),
+        `${f.peakMagnitude?.toFixed?.(3)} vs ${expectedMag.toFixed(3)}`);
+    ok("a flare well inside the cone is brighter than magnitude 2", f.peakMagnitude < 2, f.peakMagnitude?.toFixed?.(2));
 }
 
 console.log("== engine: minElevation gate ==");

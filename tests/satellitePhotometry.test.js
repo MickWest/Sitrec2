@@ -1,7 +1,10 @@
 import {
     KUIPER_PHOTOMETRY, SATELLITE_PHOTOMETRY, STARLINK_PROFILES, fluxToMagnitude, lambertPhaseFunction,
-    magnitudeToFlux, satelliteFlux, satelliteMagnitude, starlinkFlareMagnitude,
+    magnitudeToFlux, satelliteFlux, satelliteMagnitude, starlinkFlareMagnitude, starlinkProfileForDesign,
 } from "../tools/shf/satellitePhotometry.js";
+
+// The four designs with a measured horizon-flare curve; Direct to Cell borrows the V2 Mini's.
+const MEASURED = ["v1.0", "visor", "v1.5", "mini"];
 
 const reference = {rangeM: 1e6, phaseAngleRad: Math.PI / 2, glintAngleDeg: 3, starlink: true, profile: "v1.5"};
 
@@ -42,7 +45,7 @@ describe("continuous satellite photometry", () => {
     });
 
     test("unknown design stays an explicit equal-weight flux mixture", () => {
-        const names = Object.keys(STARLINK_PROFILES).filter(name => name !== "unknown");
+        const names = MEASURED;
         const expected = names.reduce((sum, name) => sum + magnitudeToFlux(starlinkFlareMagnitude(4, name)), 0) / names.length;
         expect(magnitudeToFlux(starlinkFlareMagnitude(4))).toBeCloseTo(expected, 12);
         expect(starlinkFlareMagnitude(4, "unidentified-new-design")).toBe(starlinkFlareMagnitude(4, "unknown"));
@@ -53,9 +56,45 @@ describe("continuous satellite photometry", () => {
         expect(lambertPhaseFunction(0)).toBe(1);
         expect(lambertPhaseFunction(Math.PI / 2)).toBeCloseTo(1 / Math.PI, 12);
         expect(lambertPhaseFunction(Math.PI)).toBe(0);
-        const ordinary = {...reference, glintAngleDeg: 90};
+        const ordinary = {...reference, profile: "mini", glintAngleDeg: 90};
         expect(satelliteMagnitude(ordinary)).toBeCloseTo(7.501719, 10);
         expect(satelliteFlux({...ordinary, phaseAngleRad: 0}) / satelliteFlux(ordinary)).toBeCloseTo(Math.PI, 12);
+    });
+
+    test.each([
+        // The published phase polynomials at 90 degrees (arXiv:2210.17268 and arXiv:2502.03651).
+        ["v1.0", 4.774 + 0.02496 * 90 - 0.0001023 * 8100],
+        ["visor", 3.493 + 0.09481 * 90 - 0.0005412 * 8100],
+        ["v1.5", 3.944 + 0.06893 * 90 - 0.0004089 * 8100],
+        ["mini", 6.657 - 0.05474 * 90 + 0.001438 * 8100 - 0.000008061 * 729000],
+        ["dtc", 3.365 + 0.06376 * 90 - 1.716e-4 * 8100 - 1.139e-6 * 729000],
+    ])("the %s design is its published magnitude at 90 degrees phase, away from a flare", (profile, m90) => {
+        expect(satelliteMagnitude({...reference, profile, glintAngleDeg: 90})).toBeCloseTo(m90, 2);
+    });
+
+    test("an unknown design mixes the four measured diffuse fluxes equally", () => {
+        const flux = MEASURED.reduce((sum, name) =>
+            sum + magnitudeToFlux(STARLINK_PROFILES[name].diffuseMagnitudeAt90Deg), 0) / MEASURED.length;
+        const unknown = satelliteMagnitude({...reference, profile: "unknown", glintAngleDeg: 90});
+        expect(unknown).toBeCloseTo(fluxToMagnitude(flux), 10);
+        expect(unknown).toBeCloseTo(6.88, 2);
+    });
+
+    test("Direct to Cell borrows the V2 Mini flare curve, with its own diffuse brightness", () => {
+        expect(starlinkFlareMagnitude(4, "dtc")).toBe(starlinkFlareMagnitude(4, "mini"));
+        expect(starlinkFlareMagnitude(4, "unknown")).toBe(fluxToMagnitude(MEASURED.reduce((sum, name) =>
+            sum + magnitudeToFlux(starlinkFlareMagnitude(4, name)), 0) / MEASURED.length));
+    });
+
+    test("a catalog design picks its profile, and an unlisted one is unknown", () => {
+        expect(starlinkProfileForDesign("v1.0")).toBe("v1.0");
+        expect(starlinkProfileForDesign("visor")).toBe("visor");
+        expect(starlinkProfileForDesign("v1.5")).toBe("v1.5");
+        expect(starlinkProfileForDesign("v2m")).toBe("mini");
+        expect(starlinkProfileForDesign("v2mo")).toBe("mini");
+        expect(starlinkProfileForDesign("v2md")).toBe("dtc");
+        expect(starlinkProfileForDesign("v0.9")).toBe("unknown");
+        expect(starlinkProfileForDesign(undefined)).toBe("unknown");
     });
 
     test("generic objects use declared area/albedo assumptions, not Starlink flare geometry", () => {
@@ -78,7 +117,7 @@ describe("continuous satellite photometry", () => {
     });
 
     test("the Kuiper estimate is not a selectable Starlink design", () => {
-        expect(Object.keys(STARLINK_PROFILES)).toEqual(["unknown", "v1.0", "visor", "v1.5", "mini"]);
+        expect(Object.keys(STARLINK_PROFILES)).toEqual(["unknown", "v1.0", "visor", "v1.5", "mini", "dtc"]);
     });
 
     test("illumination scales flux once and dark or invalid orbits cannot poison an exposure", () => {

@@ -35,7 +35,7 @@ import {intersectSphere2, V3} from "../threeUtils";
 // Legacy cone controls are shared with the standalone flare scanner. The
 // photometric path uses continuous flux and sunlight models through CSatellite.
 import {FLARE, flareRamp} from "../../tools/shf/flarePhysics.js";
-import {STARLINK_PROFILES} from "../../tools/shf/satellitePhotometry.js";
+import {STARLINK_PER_SATELLITE, STARLINK_PROFILES} from "../../tools/shf/satellitePhotometry.js";
 import {
     getCelestialDirectionFromRaDec,
     getECEFToEQJMatrix,
@@ -183,6 +183,10 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
         EventManager.addEventListener("tleLoaded", () => {
             this.firstRenderTLE = true;
         });
+        // Sizes and Starlink designs arrive after the satellites (CSatellite.applySatelliteSizes).
+        EventManager.addEventListener("satelliteSizesApplied", () => {
+            this.fullBrightnessUpdate = true;
+        });
 
         if (envFlag(Globals.env?.SITREC_USE_CUSTOM_TLE)) {
 
@@ -214,6 +218,23 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
                     this.parent.close()
                 })
                 .tooltip(t("nightSky.loadStarlink.tooltip"))
+        }
+
+        // The server serves these from CelesTrak by default, or from shared.env
+        // (see proxy.php), so the item follows the same switches. A deployment
+        // may set any one of the four; the loader reports the ones it lacks.
+        const operatorSupGPConfigured = [
+            getEnv("CURRENT_ONEWEB", process.env.CURRENT_ONEWEB),
+            getEnv("CURRENT_KUIPER", process.env.CURRENT_KUIPER),
+            getEnv("CURRENT_AST", process.env.CURRENT_AST),
+            getEnv("CURRENT_IRIDIUM", process.env.CURRENT_IRIDIUM),
+        ].some(Boolean);
+        if (defaultTLESources || operatorSupGPConfigured) {
+            satGUI.add(this.satellites, "updateOperatorSupGP").name(t("nightSky.loadOperatorSupGP.label"))
+                .onChange(function (x) {
+                    this.parent.close()
+                })
+                .tooltip(t("nightSky.loadOperatorSupGP.tooltip"))
         }
 
         if (getEnv("CURRENT_ACTIVE", process.env.CURRENT_ACTIVE)) {
@@ -259,7 +280,12 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
             .name(t("nightSky.brightnessModel.label")).tooltip(t("nightSky.brightnessModel.tooltip"))
             .onChange(changedPhotometry);
         const profiles = Object.fromEntries(Object.entries(STARLINK_PROFILES).map(([key, profile]) => [profile.label, key]));
-        this.starlinkProfileController = satGUI.add(this.satellites, "starlinkProfile", profiles).listen()
+        // Second in the list: each satellite's own design, from the GCAT catalog.
+        const [unknownLabel] = Object.keys(profiles);
+        const {[unknownLabel]: unknownKey, ...designs} = profiles;
+        const profileChoices = {[unknownLabel]: unknownKey,
+            [t("nightSky.starlinkProfile.perSatellite")]: STARLINK_PER_SATELLITE, ...designs};
+        this.starlinkProfileController = satGUI.add(this.satellites, "starlinkProfile", profileChoices).listen()
             .name(t("nightSky.starlinkProfile.label")).tooltip(t("nightSky.starlinkProfile.tooltip"))
             .onChange(changedPhotometry);
         satGUI.add(this.satellites, "illuminationModel", ["Finite Sun + atmosphere", "Finite Sun", "Legacy fade"]).listen()

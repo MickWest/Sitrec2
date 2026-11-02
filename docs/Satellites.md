@@ -43,6 +43,7 @@ lines of a TLE into the Sitrec window.
 |---|---|
 | **Load LEO Satellites For Date** | Low Earth orbit payloads (satellites, not rocket bodies or debris) for the sitch date. This is the normal choice |
 | **Load CURRENT Starlink** | The Starlink satellites as they are **now**, in real time. Not for a past date, except an event in the last day or two, where it is the closest set available (see [Investigating Starlink Flares With Sitrec](Starlink.md#wait-a-few-days-before-analysing-a-very-recent-event)) |
+| **Add CURRENT OneWeb, Kuiper, AST, Iridium** | The orbits that the operators of these four constellations supply, as they are **now**, from CelesTrak's supplemental data. For these satellites they are usually more accurate than the general catalog, and a new launch appears within hours. They are always added to the satellites already loaded, never in place of them. Not for a past date |
 | **Load ACTIVE Satellites** | All active satellites as they are **now**, in real time. Not for a past date |
 | **(Experimental) Load SLOW Satellites** | Objects in higher, slower orbits (fewer than about 11.25 orbits per day) for the sitch date. Can time out for recent dates |
 | **(Experimental) Load ALL Satellites** | Every object in the catalog for the sitch date. Can time out for recent dates |
@@ -54,7 +55,10 @@ The dated loads (LEO, SLOW and ALL) ask the server for the elements published ar
 date. The server gets them from Space-Track. "LEO" here means objects that go round the Earth
 more than 11.25 times per day, in orbits that are nearly circular (eccentricity below 0.25).
 
-- Sitrec asks for the set starting the day before the sitch date.
+- Sitrec asks for the elements from the day before the sitch date to the day after it.
+- For a sitch date before 2018 it asks for three days before to three days after. Elements were
+  published less often then, and a satellite with no elements in the request is not shown at
+  all. With the narrower request, about 0.3% of the satellites were missing on old dates.
 - If the sitch date is in the last five days, it asks for the set from six days ago instead,
   because very recent sets are not complete. See
   [Wait a few days before analysing a very recent event](Starlink.md#wait-a-few-days-before-analysing-a-very-recent-event).
@@ -91,13 +95,32 @@ time. The date range is the oldest and newest element dates in the data (UTC), n
 you asked for. **Satellites → TLEs From** and **TLEs To**, below the load buttons, show the
 same two dates, or *None loaded*.
 
-A satellite whose elements are more than 90 days from the sitch time is not drawn. The
+A satellite whose elements are more than 90 days from the sitch time is not drawn. A satellite
+that was not launched yet at the sitch time is not drawn either. Sitrec knows the launch day of
+each satellite in a dated load from Space-Track. An older saved set, or one the server stored
+before launch days were added, does not have them, and Sitrec then draws every satellite as
+before. Because only the day is known, a
+satellite is still drawn earlier on its launch day. The
 text at the top right of the main view is green when **In Range** is 100%, yellow from 95% up
 to 100%, and red below 95%. If it is red, load the data for the sitch date.
 
 **In Range** does not measure accuracy. Elements age, and Starlink satellites change their
 orbits, so data that is weeks from the sitch time can show 100% and still place satellites away
 from where they were. Compare **TLEs From** and **TLEs To** with the sitch time.
+
+**Right-click a satellite** to see how good its data is. The menu shows its catalog details
+when the data has them (international designator, object type, radar size and launch day). From
+the [GCAT catalog](https://planet4589.org/space/gcat) it shows **Size (GCAT)** (length, diameter
+and span) and, for a Starlink, **Starlink Design (GCAT)**. **Standard Magnitude** is Sitrec's
+estimate of the satellite fully lit, 1000 km away, at 90° phase and away from a flare: the
+reference that satellite catalogs list (see
+[How Sitrec estimates brightness](#how-sitrec-estimates-brightness)). It then shows
+**Element Set Age**: how far the elements in use are from the current time, and whether they
+are from before or after it. **Position Error** gives a rough range for how far the satellite
+can be from its drawn place, in kilometers and as an angle seen from the look camera. It uses a
+rule of thumb: about 1 km at the element date, and 1 to 3 km more for each day away from it.
+It cannot know about a maneuver. Use it to judge how close a match must be, not as a measured
+error.
 
 When you reopen a sitch of your own that was saved with incomplete data, Sitrec offers to add
 the missing satellites. See
@@ -176,6 +199,19 @@ starts from these defaults, not from the filter you applied last.
 | **Period** | 80 – 200 min |
 | **Speed** | 0 – 10 km/s |
 
+**Catalog**
+
+These filters use catalog details that only a dated load from Space-Track gives. If some loaded
+satellites do not have them, the window says how many have them. A satellite without the
+detail fails a checked filter.
+
+| Filter | What it matches |
+|---|---|
+| **Object type** | Payload, rocket body, debris, or unknown (TBA) |
+| **Radar size** | Large (over 1 m²), medium (0.1 to 1 m²) or small (under 0.1 m²) radar cross-section |
+| **Launch year** | Launched in this range of years |
+| **Intl. designator** | International designators that start with this text. `2024-123` gives every object from that launch |
+
 ---
 
 ## Brightness and flares
@@ -189,11 +225,11 @@ degrees the reflected ray misses the camera.
 | Control | Default | What it does |
 |---|---|---|
 | **Satellite Brightness Model** | Photometric estimate | Continuous Starlink flare curves, an estimated flare curve for Kuiper satellites, estimated diffuse light, range and phase. **Legacy cone** adds a set flare brightness only inside **Flare Angle Spread** |
-| **Starlink Design** | Unknown design (estimated mixture) | The Starlink version, if another source tells you: **Original V1.0**, **VisorSat**, **V1.5** or **V2 Mini**. **Unknown design** averages these four. It does not work out a satellite's version |
+| **Starlink Design** | Unknown design (estimated mixture) | The Starlink version, if another source tells you: **Original V1.0**, **VisorSat**, **V1.5**, **V2 Mini** or **V2 Mini Direct to Cell**. **Per satellite (GCAT catalog)** uses each satellite's own version from the GCAT catalog (see below). **Unknown design** averages the first four. It does not work out a satellite's version |
 | **Satellite Sunlight** | Finite Sun + atmosphere | Integrates the solar disk through a clear standard atmosphere at Earth's limb (the edge of the Earth, as seen from the satellite). **Finite Sun** omits atmosphere; **Legacy fade** uses the adjustable shadow depth |
 | **Sat Brightness** | 2 | Scale factor for the brightness of the satellites in the look view. 0 is invisible. It does not change the main view |
 | **Flare Brightness** | 0.2 | Scale factor for extra flare brightness in the Legacy cone calculation. 0 adds nothing |
-| **Sat Cut-Off** | 0.06 | Satellites dimmer than this are not drawn. With **Photometric estimate**, the default hides many satellites in the look view: every satellite that uses the generic estimate (see below), and most Starlink satellites away from a flare. Set 0 to draw every sunlit satellite above the horizon |
+| **Sat Cut-Off** | 0.06 | Satellites dimmer than this are not drawn. With **Photometric estimate**, the default hides each satellite that would be fainter than about magnitude 6.2 at 1000 km: most small objects and debris, and most Starlink satellites away from a flare. Large rocket bodies and satellites stay visible. Set 0 to draw every sunlit satellite above the horizon |
 | **Flare Angle Spread** | 5 | A satellite counts as flaring when its off-specular angle is less than this many degrees. This sets **Sun Angle Arrows**, **Flare Lines**, **Label Flares Only** and the Legacy cone model. Photometric estimates include continuous light outside this angle |
 | **Flare Model** | Geocentric Nadir | How "down" is found for the flat surface. **Geocentric Nadir** points at the Earth's center. **Geodetic Nadir** is perpendicular to the WGS84 ellipsoid. The two differ by at most about 0.18° |
 | **Earth's Penumbra Depth** | 5000 | In Legacy fade mode, shadow depth in metres over which illumination fades |
@@ -218,6 +254,31 @@ continuations outside their range of roughly 2–20° off-specular. The authors 
 correction for dimming near the Earth's shadow; applying the calculated sunlight fraction to
 those curves is an assumption.
 
+Away from a flare, each design has its own brightness. It is the design's published phase curve
+(brightness against phase angle) at 90° phase, with a Lambert phase shape for other angles:
+
+| Design | Magnitude at 1000 km, 90° phase | Source |
+|---|---|---|
+| Original V1.0 | 6.19 | [Mallama et al. (2022)](https://arxiv.org/abs/2210.17268), Table 1 |
+| VisorSat | 7.64 | the same table |
+| V1.5 | 6.84 | the same table ("Post-VisorSat") |
+| V2 Mini | 7.50 | [Mallama et al. (2024)](https://arxiv.org/abs/2401.01546), Table 1, after brightness mitigation |
+| V2 Mini Direct to Cell | 6.88 | [Mallama et al. (2025)](https://arxiv.org/abs/2502.03651), Table 1, observed after 2024 June 30 |
+| Unknown design | 6.88 | the average light of the first four |
+
+No horizon-flare curve is published for Direct to Cell satellites, so Sitrec uses the V2 Mini
+curve for them. That is an assumption.
+
+**Per satellite (GCAT catalog).** The [GCAT catalog](https://planet4589.org/space/gcat) by
+Jonathan McDowell lists the bus of each Starlink: V2 Mini, V2 Mini Optimized, V2 Mini Direct to
+Cell, or the earlier bus. For the earlier bus, the payload name gives V1.0 launches before L9 as
+V1.0, and from L9 on as VisorSat (all satellites have had visors since that launch, said
+[Mallama (2021)](https://arxiv.org/abs/2101.00374), and Starlink-1436 on L7 had one too), and the
+"Group" launches that followed as V1.5. No measurements are published for V2 Mini Optimized
+satellites under that name, so they use the V2 Mini values. A Starlink that GCAT does not list,
+or lists as V0.9 or a test flight, uses the unknown design. Starlinks launched after the
+catalog in Sitrec was made are also unknown.
+
 **Kuiper.** Kuiper (Amazon Leo) satellites, named `KUIPER-` in the catalog, also flare in this
 model, but as an estimate. No horizon-flare curve is published for them.
 [Mallama et al. (2026)](https://arxiv.org/abs/2601.07708) report a partly mirror-faced nadir
@@ -230,9 +291,22 @@ These satellites are in the **Other Satellites** category.
 **The ISS.** The ISS retains an estimated magnitude −2 reference at 1000 km and 90° phase, with
 range and phase scaling.
 
-**All other satellites** use a generic estimate, because orbital records do not provide their
-optical size and reflectance. Each gets the same projected area of 1 square metre and diffuse
-reflectance of 0.2, whatever its real size.
+**All other satellites** use a generic estimate: a Lambert sphere with a diffuse reflectance of
+0.2 and the satellite's mean projected area (the average area of its shadow, seen from all
+directions). Orbital records do not give attitude, so this average is used. The area comes from
+the satellite's size in the GCAT catalog:
+
+- The body is a cylinder of the listed length and diameter, a box when GCAT calls the shape a
+  box, or a sphere when it calls it a sphere.
+- When GCAT lists solar panels, they add one flat panel of (span − diameter) × diameter.
+- The mean projected area is a quarter of the total surface, with both faces of the panels
+  counted (Cauchy's formula for a convex body).
+
+For example, a 11.1 m by 3.9 m Zenit-2 second stage gets 40 m², which gives a standard magnitude
+of about 3.9. When GCAT has no size (most debris), the Space-Track radar size gives the area:
+0.03 m² for small, 0.3 m² for medium and 3 m² for large. With neither, the area is 1 m². These
+areas can be wrong by a factor of 2 or more, and the reflectance is assumed, so the result is
+only a rough guide.
 
 **Sunlight.** The sunlight model follows the finite solar disk, limb darkening, atmospheric
 transmission and refraction described by [Mallama (2021)](https://arxiv.org/abs/2112.08310). It
@@ -243,7 +317,8 @@ This sunlight path is separate from the atmosphere between the satellite and the
 With **HDR Point Sources** on, [long exposures](LongExposure.md) add up the estimated flux (the
 light received) on the same scale as the stars. Display brightness and cut-off sliders do not
 calibrate a photograph's camera response. The Starlink Flare Predictor (**Sitrec → Extra Tools**) keeps a geometric cone test. Its
-event counts do not predict the number of detectable trails in a photograph.
+event counts do not predict the number of detectable trails in a photograph. It estimates the
+peak magnitude of each flare with this model, for an unknown design.
 
 ---
 

@@ -42,6 +42,8 @@ import {importADSBTraceByHex} from "../ADSBTraceFetch";
 import {applyAnnualAberration, raDec2Celestial} from "../CelestialMath";
 import {applyRefractionECI, refractionUniforms, refractionOptsFromUniforms} from "../atmosphere/refraction";
 import {findRootTrack} from "../FindRootTrack";
+import {bestSat, elementSetErrorKm, isBeforeLaunch, satRecToDate} from "../TLEUtils";
+import {standardMagnitude} from "../SatelliteBrightness";
 import {raycastLocalGround} from "../raycastGround";
 // NOTE: ChangedPR / UIChangedAz intentionally NOT imported. They are used only
 // inside the legacy "GIMBAL SPECIFIC, NOT USED" dragMode>0 code path below.
@@ -69,6 +71,67 @@ function showControlPointMenuAtEvent(event) {
         }
     });
     return handled;
+}
+
+/**
+ * Extra rows for a satellite's info menu, as [i18n key under view3d.celestial,
+ * text]. Catalog fields appear only when the loaded set carries them (a
+ * Space-Track OMM CSV). The element-set age is for the set in use at the
+ * current time, signed so the user can tell an old set from a later one, with
+ * a rough position error (see elementSetErrorKm) and that error as an angle
+ * from the look camera, which is what decides whether a match is plausible.
+ */
+function satelliteInfoRows(satData) {
+    const rows = [];
+    if (!satData) return rows;
+    if (satData.objectId) rows.push(["objectId", satData.objectId]);
+    if (satData.objectType) rows.push(["objectType", satData.objectType]);
+    if (satData.rcsSize) rows.push(["rcsSize", satData.rcsSize]);
+    if (satData.launchDate !== undefined) {
+        rows.push(["launchDate", new Date(satData.launchDate).toISOString().slice(0, 10)]);
+    }
+    // From GCAT (SatelliteSizes.js), when the catalog has the object.
+    if (satData.sizeM) rows.push(["size", t("view3d.celestial.sizeValue", satData.sizeM)]);
+    if (satData.starlinkDesign) {
+        // i18n keys cannot hold a dot, so "v1.5" is looked up as "v15".
+        rows.push(["starlinkDesign", t("view3d.celestial.starlinkDesigns." + satData.starlinkDesign.replace(".", ""),
+            {defaultValue: satData.starlinkDesign})]);
+    }
+    const settings = NodeMan.get("NightSkyNode", false)?.satellites?.brightnessSettings();
+    const standard = settings ? standardMagnitude(satData, settings) : Infinity;
+    if (Number.isFinite(standard)) {
+        rows.push(["standardMagnitude", t("view3d.celestial.standardMagnitudeValue", {mag: standard.toFixed(1)})]);
+    }
+    if (!satData.satrecs?.length) return rows;
+
+    const date = GlobalDateTimeNode.dateNow;
+    if (isBeforeLaunch(satData, date.getTime())) {
+        rows.push(["elementAge", t("view3d.celestial.notLaunched")]);
+        return rows;
+    }
+    const epochMS = satRecToDate(bestSat(satData.satrecs, date)).getTime();
+    const ageDays = (epochMS - date.getTime()) / 86400000;
+    const absDays = Math.abs(ageDays);
+    const age = absDays < 2 ? `${(absDays * 24).toFixed(1)} h` : `${absDays.toFixed(1)} d`;
+    rows.push(["elementAge", t("view3d.celestial.elementAgeValue", {
+        age, relation: t(ageDays > 0 ? "view3d.celestial.elementAgeAfter" : "view3d.celestial.elementAgeBefore"),
+    })]);
+
+    const [low, high] = elementSetErrorKm(ageDays);
+    const cameraPos = NodeMan.get("lookCamera", false)?.camera?.position;
+    const rangeKm = cameraPos && satData.ecef ? satData.ecef.distanceTo(cameraPos) / 1000 : 0;
+    // Two significant figures: the rule is rough, and a fixed number of
+    // decimals reads "1–1 km" for a fresh set.
+    const sig = x => String(Number(x.toPrecision(2)));
+    const values = {low: sig(low), high: sig(high)};
+    if (rangeKm > 0) {
+        const deg = km => sig(Math.atan(km / rangeKm) * 180 / Math.PI);
+        rows.push(["positionError", t("view3d.celestial.positionErrorValue",
+            {...values, lowDeg: deg(low), highDeg: deg(high)})]);
+    } else {
+        rows.push(["positionError", t("view3d.celestial.positionErrorNoRange", values)]);
+    }
+    return rows;
 }
 
 export const mouseMethods = {
@@ -790,6 +853,9 @@ export const mouseMethods = {
         } else if (celestialObject.type === 'satellite') {
             standaloneMenu.add({noradNum: String(celestialObject.number)}, 'noradNum').name(t("view3d.celestial.noradNumber")).listen().disable();
             standaloneMenu.add({name: celestialObject.name}, 'name').name(t("view3d.celestial.name")).listen().disable();
+            for (const [key, value] of satelliteInfoRows(celestialObject.data)) {
+                standaloneMenu.add({[key]: value}, key).name(t("view3d.celestial." + key)).listen().disable();
+            }
         } else if (celestialObject.type === 'star') {
             if (celestialObject.ra !== undefined) {
                 standaloneMenu.add({raHours: (celestialObject.ra * 12 / Math.PI).toFixed(3)}, 'raHours').name(t("view3d.celestial.raHours")).listen().disable();

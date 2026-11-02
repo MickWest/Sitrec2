@@ -41,9 +41,11 @@ self.onmessage = (e) => {
             const starsMs = performance.now() - started;
             if (msg.sats?.length) {
                 const list = [];
-                for (const {key, filter} of msg.sats) {
+                for (const {key, filter, notBeforeMS} of msg.sats) {
                     const entry = satrecs.get(key);
-                    if (entry) list.push({satrec: entry.satrec, name: entry.name, number: entry.number, filter});
+                    if (entry) list.push({satrec: entry.satrec, name: entry.name, number: entry.number,
+                        areaM2: entry.areaM2, rcsSize: entry.rcsSize, starlinkDesign: entry.starlinkDesign,
+                        filter, notBeforeMS});
                 }
                 satStats = computeSatelliteTrails(job, list, world);
             }

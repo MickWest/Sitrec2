@@ -74,9 +74,21 @@ if (!in_array($type, $allowed_types, true)) {
     exit("Invalid type parameter");
 }
 
+// How many days the query spans, from the requested date: [D, D+days].
+// Two days serves any date since 2018. Older dates had sparser publication, so
+// the client asks for six there (gpHistoryWindowDays() in src/TLEUtils.ts),
+// or an object with no element set inside two days is missing entirely; the
+// measurements are in that function's comment. Only these values are
+// accepted, so a client cannot ask for an arbitrary download size.
+$allowedWindowDays = [2, 6];
+$windowDays = isset($_GET["days"]) ? (int)$_GET["days"] : 2;
+if (!in_array($windowDays, $allowedWindowDays, true)) {
+    exit("Invalid days parameter");
+}
+
 // given request in the form of YYYY-MM-DD
-// calculate nextDay in the same form, and use 2 days later
-$nextDay = date('Y-m-d', strtotime($request . ' +2 days'));
+// calculate nextDay in the same form: the end of the window
+$nextDay = date('Y-m-d', strtotime($request . ' +' . $windowDays . ' days'));
 
 // Ask Space-Track for only the columns we actually use.
 //
@@ -104,9 +116,14 @@ $nextDay = date('Y-m-d', strtotime($request . ' +2 days'));
 //                  about its own completeness, instead of relying on file
 //                  mtime, which copying and backups destroy.
 //   OBJECT_ID      International designator, e.g. 2019-074B - groups a launch.
+//   LAUNCH_DATE    The launch day. When a satellite has no element set before
+//                  the requested time, the client falls back to its earliest
+//                  later one; for an object launched just after the time that
+//                  would put it in orbit before its own launch. Sets cached
+//                  before this column was added lack it and keep that fallback.
 $predicates = "/predicates/OBJECT_NAME,OBJECT_ID,NORAD_CAT_ID,EPOCH,CREATION_DATE,"
     . "MEAN_MOTION,ECCENTRICITY,INCLINATION,RA_OF_ASC_NODE,ARG_OF_PERICENTER,MEAN_ANOMALY,"
-    . "BSTAR,MEAN_MOTION_DOT,MEAN_MOTION_DDOT,OBJECT_TYPE,RCS_SIZE";
+    . "BSTAR,MEAN_MOTION_DOT,MEAN_MOTION_DDOT,OBJECT_TYPE,RCS_SIZE,LAUNCH_DATE";
 
 // the default STARLINK query
 $url = "https://www.space-track.org/basicspacedata/query/class/gp_history/CREATION_DATE/" . $request . "--" . $nextDay . "/orderby/NORAD_CAT_ID,EPOCH/format/csv/OBJECT_NAME/STARLINK~~" . $predicates;
@@ -185,7 +202,9 @@ if ($type == "CUSTOM" && !getenv('CACHE_CUSTOM_TLE')) {
 // New downloads are OMM CSV; anything already cached is TLE. Sitrec parses
 // both, so an existing .tle cache is still served rather than re-downloaded -
 // Space-Track rate limits hard and this archive is expensive to rebuild.
-$baseFileName = $request . $type;
+// A window other than the standard two days is a different query, so it gets
+// its own file; the two-day name is unchanged, so the existing archive is kept.
+$baseFileName = $request . $type . ($windowDays === 2 ? "" : "_d" . $windowDays);
 $cachedCSV = $starlink_cache . $baseFileName . ".csv";
 $cachedTLE = $starlink_cache . $baseFileName . ".tle";
 $cachedZIP = $starlink_cache . $baseFileName . ".tle.zip";
@@ -210,17 +229,17 @@ $cacheMaxAge = 30 * 24 * 60 * 60; // 30 days
 // which its mtime puts it outside the settle window and it is trusted for good.
 if ($caching) {
     // Prefer the CSV cache - it is the only format that can hold everything.
-    if (gpCacheIsUsable($cachedCSV, $request)) {
+    if (gpCacheIsUsable($cachedCSV, $request, $windowDays)) {
         serveGPCached($cachedCSV, $cachedCSV, $cacheMaxAge);
     }
 
     if ($zipIt) {
-        if (gpCacheIsUsable($cachedZIP, $request)) {
+        if (gpCacheIsUsable($cachedZIP, $request, $windowDays)) {
             header("Location: " . $cachedZIP);
             exit();
         }
 
-        if (gpCacheIsUsable($cachedTLE, $request)) {
+        if (gpCacheIsUsable($cachedTLE, $request, $windowDays)) {
             if (zipTLE($cachedTLE, $cachedZIP, $baseFileName . ".tle")) {
                 unlink($cachedTLE);
                 header("Location: " . $cachedZIP);
@@ -230,7 +249,7 @@ if ($caching) {
             }
         }
     } else {
-        if (gpCacheIsUsable($cachedTLE, $request)) {
+        if (gpCacheIsUsable($cachedTLE, $request, $windowDays)) {
             header("Location: " . $cachedTLE);
             exit();
         }

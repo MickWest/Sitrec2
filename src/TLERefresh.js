@@ -82,7 +82,11 @@ function tleSourceFor(id, entry) {
     // nothing at all.
     const saved = FileManager.loadedFilesMetadata?.[id]?.tleSource;
     if (saved?.date && saved.type !== undefined) {
-        return {date: saved.date, type: saved.type, inferred: false};
+        // `days` is recorded only for a window other than the standard one
+        // (older dates, see gpHistoryWindowDays), and sitches saved before it
+        // existed all used the standard window.
+        return {date: saved.date, type: saved.type, days: saved.days ?? GP_QUERY_WINDOW_DAYS,
+            inferred: false};
     }
 
     const match = DATED_TLE_NAME.exec(entry.filename || id || "");
@@ -93,7 +97,8 @@ function tleSourceFor(id, entry) {
     if (type === "UNKNOWN") return null;
 
     // The default (Starlink-only) query is requested with an empty type.
-    return {date: match[1], type: type === "STARLINK" ? "" : type, inferred: true};
+    return {date: match[1], type: type === "STARLINK" ? "" : type, days: GP_QUERY_WINDOW_DAYS,
+        inferred: true};
 }
 
 function getLoadedTLEData() {
@@ -126,7 +131,7 @@ export async function checkAndOfferTLERefresh() {
 
         const setDate = new Date(found.source.date + "T00:00:00Z");
         if (isNaN(setDate.getTime())) return;
-        if (!isGPSetIncomplete(tleData, setDate, found.source.type)) return;
+        if (!isGPSetIncomplete(tleData, setDate, found.source.type, found.source.days)) return;
 
         await offerRefresh(tleData, setDate, found);
     } catch (e) {
@@ -147,8 +152,8 @@ export async function checkAndOfferTLERefresh() {
  * treats a throw as "no offer": the legacy .tle bakes the fallback exists for
  * would be the very sets it silenced.
  */
-export function describeShortfall(tleData, setDate, filterField) {
-    const windowEnd = new Date(setDate.getTime() + GP_QUERY_WINDOW_DAYS * 86400000);
+export function describeShortfall(tleData, setDate, filterField, windowDays = GP_QUERY_WINDOW_DAYS) {
+    const windowEnd = new Date(setDate.getTime() + windowDays * 86400000);
     const measured = (filterField === "creation" && tleData.latestCreationDate instanceof Date)
         ? "creation" : "epoch";
     const reached = measured === "creation" ? tleData.latestCreationDate : tleData.endDate;
@@ -165,7 +170,8 @@ export function describeShortfall(tleData, setDate, filterField) {
 
 async function offerRefresh(tleData, setDate, found) {
     const filterField = gpQueryFilterField(found.source.type);
-    const {percent, reached, measured} = describeShortfall(tleData, setDate, filterField);
+    const {percent, reached, measured} = describeShortfall(tleData, setDate, filterField,
+        found.source.days);
     const dateStr = found.source.date;
     const typeLabel = found.source.type === "" ? "Starlink" : found.source.type;
     const stamp = reached.toISOString().slice(0, 16).replace("T", " ");
@@ -182,7 +188,7 @@ async function offerRefresh(tleData, setDate, found) {
         `This sitch's satellite data was saved before Space-Track had finished ` +
         `publishing for ${dateStr}.\n\n` +
         `It holds ${tleData.satData.length.toLocaleString()} satellites, ${coverage} — about ` +
-        `${percent.toFixed(0)}% of the ${GP_QUERY_WINDOW_DAYS}-day window the data covers. ` +
+        `${percent.toFixed(0)}% of the ${found.source.days}-day window the data covers. ` +
         `Space-Track has since published the rest.\n\n` +
         `Refreshing fetches the ${typeLabel} set for ${dateStr} again and MERGES it in, ` +
         `keeping every satellite already loaded and adding the ones that were missing. ` +
@@ -224,7 +230,8 @@ function refreshedExtension(buffer) {
 async function performRefresh(setDate, found) {
     const dateStr = found.source.date;
     const url = SITREC_SERVER + "proxyStarlink.php?request=" + dateStr
-        + "&type=" + encodeURIComponent(found.source.type);
+        + "&type=" + encodeURIComponent(found.source.type)
+        + (found.source.days !== GP_QUERY_WINDOW_DAYS ? "&days=" + found.source.days : "");
 
     const before = getLoadedTLEData();
     const satsBefore = before ? before.satData.length : 0;
@@ -264,6 +271,7 @@ async function performRefresh(setDate, found) {
         entry.isTLE = true;
         entry.tleMerged = true;
         entry.tleSource = {date: dateStr, type: found.source.type};
+        if (found.source.days !== GP_QUERY_WINDOW_DAYS) entry.tleSource.days = found.source.days;
     }
 
     const after = getLoadedTLEData();

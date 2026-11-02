@@ -355,8 +355,10 @@ function phaseTester(job) {
     };
 }
 
-// The trails of a list of satellites: [{satrec, name, number, filter}], where
-// filter is undefined, "on" or the per-sample visibility array of the TLE filter.
+// The trails of a list of satellites: [{satrec, name, number, areaM2, rcsSize,
+// starlinkDesign, filter, notBeforeMS}] (the size fields feed the brightness), where
+// filter is undefined, "on" or the per-sample visibility array of the TLE filter, and
+// notBeforeMS, when set, is the launch day of a satellite launched during the exposure.
 // Propagated (SGP4) on a coarse grid, first one point a minute, and the rest only
 // for a satellite that may come into view; the render's samples in between by a
 // cubic through four coarse points. Positions are relative to the camera.
@@ -497,6 +499,8 @@ export function computeSatelliteTrails(job, satellites, sink) {
             rel[i] = d;
             stats.fineSamples++;
             if (Array.isArray(sat.filter) && !sat.filter[nearestSampleIndex(job.filterTimesMS, job.fineMS[m])]) continue;
+            // launched during the exposure: nothing before the launch day
+            if (sat.notBeforeMS !== undefined && job.fineMS[m] < sat.notBeforeMS) continue;
             const sinAlt = dir.copy(d).normalize().dot(up);
             if (sinAlt < job.horizonSin) continue;
             // Fully lit or fully dark at both ends of the interval (within 0.5 %):

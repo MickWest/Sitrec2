@@ -190,6 +190,34 @@ function makeValueRow(label, defaultVal, unit, onChange) {
     return {row, checkbox: cb, input};
 }
 
+function makeSelectRow(label, options, onChange) {
+    const row = document.createElement('div');
+    row.style.cssText = ROW_STYLE;
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.style.cssText = 'margin: 0;';
+    const lbl = document.createElement('span');
+    lbl.textContent = label;
+    lbl.style.cssText = LABEL_STYLE;
+    const select = document.createElement('select');
+    select.style.cssText = INPUT_STYLE + 'width: 160px;';
+    for (const [value, text] of options) {
+        const opt = document.createElement('option');
+        opt.value = value;
+        opt.textContent = text;
+        select.appendChild(opt);
+    }
+
+    const fire = () => onChange(cb.checked, select.value);
+    cb.onchange = fire;
+    select.onchange = fire;
+
+    row.appendChild(cb);
+    row.appendChild(lbl);
+    row.appendChild(select);
+    return {row, checkbox: cb, select};
+}
+
 function makeSection(title) {
     const div = document.createElement('div');
     div.textContent = title;
@@ -362,6 +390,23 @@ export function applyTLEFilters(satellites, filterOptions, currentDate) {
             if (!nameRe.test(satData.name)) pass = false;
         }
 
+        // Catalogue fields (Space-Track OMM CSV only). An object without the
+        // field fails an enabled filter, as it does for the orbital ones.
+        if (pass && filterOptions.objectTypeEnabled) {
+            if ((satData.objectType ?? "").toUpperCase() !== filterOptions.objectType) pass = false;
+        }
+        if (pass && filterOptions.rcsSizeEnabled) {
+            if (satData.rcsSize !== filterOptions.rcsSize) pass = false;
+        }
+        if (pass && filterOptions.launchYearEnabled) {
+            const year = satData.launchDate !== undefined ? new Date(satData.launchDate).getUTCFullYear() : null;
+            if (year === null || year < filterOptions.launchYearMin || year > filterOptions.launchYearMax) pass = false;
+        }
+        if (pass && filterOptions.objectIdEnabled && filterOptions.objectIdPrefix.trim() !== "") {
+            const prefix = filterOptions.objectIdPrefix.trim().toUpperCase();
+            if (!(satData.objectId ?? "").toUpperCase().startsWith(prefix)) pass = false;
+        }
+
         // Orbital parameters (from satrec)
         const satrec = bestSat(satData.satrecs, currentDate);
 
@@ -470,6 +515,10 @@ export function showTLEFilterDialog(satellites, onApply, onCancel, currentDate) 
         inclinationEnabled: false, incMin: 0, incMax: 180,
         periodEnabled: false, periodMin: 80, periodMax: 200,
         speedEnabled: false, speedMinKmS: 0, speedMaxKmS: 10,
+        objectTypeEnabled: false, objectType: 'PAYLOAD',
+        rcsSizeEnabled: false, rcsSize: 'LARGE',
+        launchYearEnabled: false, launchYearMin: 1957, launchYearMax: new Date().getUTCFullYear(),
+        objectIdEnabled: false, objectIdPrefix: '',
         anyFrameInRange: false,
     };
 
@@ -660,6 +709,57 @@ export function showTLEFilterDialog(satellites, onApply, onCancel, currentDate) 
     });
     dialog.appendChild(speedRow.row);
 
+    // ── Catalog ──
+    dialog.appendChild(makeSection('Catalog'));
+
+    // Only a Space-Track set downloaded since these columns were requested
+    // carries all of them; say so rather than let a filter silently match nothing.
+    const sats = satellites.TLEData.satData;
+    const withLaunch = sats.filter(sd => sd.launchDate !== undefined).length;
+    const withType = sats.filter(sd => sd.objectType !== undefined).length;
+    if (withLaunch < sats.length || withType < sats.length) {
+        const note = document.createElement('div');
+        note.style.cssText = 'font-size: 12px; color: #888; margin: 4px 0;';
+        note.textContent = `Catalog data: object type for ${withType} and launch date for `
+            + `${withLaunch} of ${sats.length} satellites. Other satellites fail these filters. `
+            + `Only Space-Track sets carry it; reload an older set to get it.`;
+        dialog.appendChild(note);
+    }
+
+    const objectTypeRow = makeSelectRow('Object type', [
+        ['PAYLOAD', 'Payload'], ['ROCKET BODY', 'Rocket body'], ['DEBRIS', 'Debris'], ['TBA', 'Unknown (TBA)'],
+    ], (checked, val) => {
+        filterOptions.objectTypeEnabled = checked;
+        filterOptions.objectType = val;
+        updatePreview();
+    });
+    dialog.appendChild(objectTypeRow.row);
+
+    const rcsRow = makeSelectRow('Radar size', [
+        ['LARGE', 'Large (over 1 m²)'], ['MEDIUM', 'Medium (0.1–1 m²)'], ['SMALL', 'Small (under 0.1 m²)'],
+    ], (checked, val) => {
+        filterOptions.rcsSizeEnabled = checked;
+        filterOptions.rcsSize = val;
+        updatePreview();
+    });
+    dialog.appendChild(rcsRow.row);
+
+    const launchRow = makeRangeRow('Launch year', filterOptions.launchYearMin, filterOptions.launchYearMax, '',
+        (checked, min, max) => {
+            filterOptions.launchYearEnabled = checked;
+            filterOptions.launchYearMin = min;
+            filterOptions.launchYearMax = max;
+            updatePreview();
+        });
+    dialog.appendChild(launchRow.row);
+
+    const objectIdRow = makeTextRow('Intl. designator', 'e.g. 2024-123', (checked, val) => {
+        filterOptions.objectIdEnabled = checked;
+        filterOptions.objectIdPrefix = val;
+        updatePreview();
+    });
+    dialog.appendChild(objectIdRow.row);
+
     // ── Status + Buttons ──
     dialog.appendChild(statusLine);
 
@@ -670,7 +770,8 @@ export function showTLEFilterDialog(satellites, onApply, onCancel, currentDate) 
         // Uncheck all checkboxes
         [aboveRow, belowRow, frustumRow, anyFrameRow, hiddenByEarthRow].forEach(r => { r.checkbox.checked = false; });
         [altRow, eccRow, incRow, periodRow, speedRow].forEach(r => { r.checkbox.checked = false; });
-        [nameWildRow, nameReRow].forEach(r => { r.checkbox.checked = false; });
+        [nameWildRow, nameReRow, objectIdRow].forEach(r => { r.checkbox.checked = false; });
+        [objectTypeRow, rcsRow, launchRow].forEach(r => { r.checkbox.checked = false; });
         centerlineRow.checkbox.checked = false;
         // Reset all filter flags
         Object.keys(filterOptions).forEach(k => {

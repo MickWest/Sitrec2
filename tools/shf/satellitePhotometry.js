@@ -41,20 +41,54 @@ export const SATELLITE_PHOTOMETRY = Object.freeze({
     core: "Estimated smooth finite core; the V1.5 on-beam extension is about magnitude -5 at 1000 km",
     illuminationCalibration: "Published flare fits do not state an eclipse correction; treating them as unobscured references may repeat some calibration dimming",
     wing: "Estimated smooth blend from 20 to 60 degrees into diffuse brightness",
-    diffuse: "Estimated Lambert phase law; Starlink reference is magnitude 7.50 at 90 degrees and 1000 km",
-    other: "Unknown satellites use an assumed 1 square metre projected area and 0.2 diffuse albedo; size and attitude are not known",
+    diffuse: "Estimated Lambert phase law through each Starlink design's published magnitude at 90 degrees and 1000 km",
+    other: "Other satellites: mean projected area from the GCAT size (or the radar size class), 0.2 diffuse albedo; attitude is not known",
 });
 
+// Diffuse brightness of each design: its published phase polynomial (1000-km
+// magnitude against phase angle in degrees) evaluated at 90 degrees. Only that one
+// value is used, through the Lambert phase shape, as before for the V2 Mini.
+//   V1.0, VisorSat, V1.5: Mallama et al. (2022), arXiv:2210.17268, Table 1:
+//     4.774 + .02496a - .0001023a^2 = 6.19; 3.493 + .09481a - .0005412a^2 = 7.64;
+//     3.944 + .06893a - .0004089a^2 = 6.84 ("Post-VisorSat" is V1.5).
+//   V2 Mini: the DARKNESS polynomial, 7.50 (see satelliteFlux).
+//   Direct to Cell: Mallama et al. (2025), arXiv:2502.03651, Table 1, "DTC Late"
+//     (brightness mitigation on, observed after 2024 June 30):
+//     3.365 + .06376a - 1.716e-4a^2 - 1.139e-6a^3 = 6.88.
+// No horizon-flare curve is published for Direct to Cell, so it uses the V2 Mini
+// curve: the same chassis carries the extra antenna. That is an assumption.
+const MINI_DIFFUSE_AT_90 = 7.501719;
 export const STARLINK_PROFILES = Object.freeze({
     unknown: Object.freeze({label: "Unknown design (estimated mixture)"}),
-    "v1.0": Object.freeze({label: "Original V1.0", intercept: -1.10, slope: 4.78}),
-    visor: Object.freeze({label: "VisorSat", intercept: -3.54, slope: 8.52}),
-    "v1.5": Object.freeze({label: "V1.5", intercept: -2.16, slope: 6.02}),
-    mini: Object.freeze({label: "V2 Mini", intercept: -2.40, slope: 5.59}),
+    "v1.0": Object.freeze({label: "Original V1.0", intercept: -1.10, slope: 4.78, diffuseMagnitudeAt90Deg: 6.192}),
+    visor: Object.freeze({label: "VisorSat", intercept: -3.54, slope: 8.52, diffuseMagnitudeAt90Deg: 7.642}),
+    "v1.5": Object.freeze({label: "V1.5", intercept: -2.16, slope: 6.02, diffuseMagnitudeAt90Deg: 6.836}),
+    mini: Object.freeze({label: "V2 Mini", intercept: -2.40, slope: 5.59, diffuseMagnitudeAt90Deg: MINI_DIFFUSE_AT_90}),
+    dtc: Object.freeze({label: "V2 Mini Direct to Cell", intercept: -2.40, slope: 5.59, diffuseMagnitudeAt90Deg: 6.883}),
 });
 
 const MEASURED_PROFILES = [STARLINK_PROFILES["v1.0"], STARLINK_PROFILES.visor,
     STARLINK_PROFILES["v1.5"], STARLINK_PROFILES.mini];
+
+// The unknown design takes the same equal-weight mixture for its diffuse flux as for
+// its flare: about magnitude 6.88 at 90 degrees.
+const UNKNOWN_DIFFUSE_FLUX_AT_90 = MEASURED_PROFILES.reduce(
+    (sum, profile) => sum + 10 ** (-0.4 * profile.diffuseMagnitudeAt90Deg), 0) / MEASURED_PROFILES.length;
+
+// The Starlink Design value that takes each satellite's design from the catalog
+// (GCAT, see src/SatelliteSizes.js) instead of one design for all.
+export const STARLINK_PER_SATELLITE = "catalog";
+
+// GCAT design (scripts/buildSatelliteSizes.js) -> STARLINK_PROFILES key. A design
+// that is not listed (V0.9, test flights) is unknown. V2 Mini Optimized has no
+// published photometry under that name, so the V2 Mini profile is assumed for it.
+export const STARLINK_DESIGN_PROFILES = Object.freeze({
+    "v1.0": "v1.0", visor: "visor", "v1.5": "v1.5", v2m: "mini", v2mo: "mini", v2md: "dtc",
+});
+
+export function starlinkProfileForDesign(design) {
+    return STARLINK_DESIGN_PROFILES[design] ?? "unknown";
+}
 
 // Kuiper (Amazon Leo): an ESTIMATE. No horizon-flare curve is published for these
 // spacecraft. Mallama et al. (2026), arXiv:2601.07708, report a partly mirror-faced
@@ -139,8 +173,10 @@ export function starlinkFlareMagnitude(glintAngleDeg, profile = "unknown") {
  * illumination: solar flux fraction, including eclipse/limb transmission, 0..1.
  * diffuseMagnitudeAt90Deg: optional assumed magnitude at 1000 km/90-degree
  *   phase, for known large objects or a sensitivity study. No built-in ISS
- *   area/attitude guess is made. Otherwise generic satellites use the optional
- *   diffuseAreaM2 (projected disk area) and diffuseAlbedo (Lambert reflectance).
+ *   area/attitude guess is made. A Starlink without it uses its design's value.
+ *   Otherwise generic satellites use the optional diffuseAreaM2 (mean projected
+ *   area; 1 square metre when nothing is known) and diffuseAlbedo (Lambert
+ *   reflectance).
  *
  * Missing phase defaults to 90 degrees, an explicit estimated geometry. Invalid
  * geometry produces zero flux so a failed orbit cannot contaminate HDR buffers.
@@ -165,13 +201,16 @@ export function satelliteFlux({
     const phase = lambertPhaseFunction(phaseAngleRad);
     let baseline;
     if (Number.isFinite(diffuseMagnitudeAt90Deg) || starlink) {
-        // 7.501719 comes from the published Mini DARKNESS polynomial at 90 deg:
-        // 6.657 - .05474*a + .001438*a^2 - .000008061*a^3.
+        // The V2 Mini's 7.501719 comes from the published Mini DARKNESS polynomial
+        // at 90 deg: 6.657 - .05474*a + .001438*a^2 - .000008061*a^3.
         // Mallama et al. (2024), Table 1, https://arxiv.org/pdf/2401.01546 .
-        // The Lambert shape and reuse for other/unknown designs are estimates;
-        // we do not add the polynomial's forward-scatter rise a second time.
-        const m90 = Number.isFinite(diffuseMagnitudeAt90Deg) ? diffuseMagnitudeAt90Deg : 7.501719;
-        baseline = magnitudeToFlux(m90) * Math.PI * phase;
+        // The other designs are listed with STARLINK_PROFILES. The Lambert shape is
+        // an estimate; we do not add the polynomials' forward-scatter rise a second time.
+        const flux90 = Number.isFinite(diffuseMagnitudeAt90Deg) ? magnitudeToFlux(diffuseMagnitudeAt90Deg)
+            : Number.isFinite(STARLINK_PROFILES[profile]?.diffuseMagnitudeAt90Deg)
+                ? magnitudeToFlux(STARLINK_PROFILES[profile].diffuseMagnitudeAt90Deg)
+                : UNKNOWN_DIFFUSE_FLUX_AT_90;
+        baseline = flux90 * Math.PI * phase;
     } else {
         if (!(diffuseAreaM2 >= 0) || !Number.isFinite(diffuseAreaM2)
             || !(diffuseAlbedo >= 0) || !Number.isFinite(diffuseAlbedo)) return 0;

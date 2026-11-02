@@ -18,16 +18,81 @@ interface SatData {
     // PAYLOAD / ROCKET BODY / DEBRIS / TBA, from OMM CSV only. Undefined for
     // TLE-format data, which has no such field.
     objectType?: string;
+    // The catalogue fields below come from a Space-Track OMM CSV only (CelesTrak
+    // sends OBJECT_ID but not the other two). Undefined when the file lacks them:
+    // TLE format, CelesTrak, and Space-Track sets cached before LAUNCH_DATE was
+    // requested.
+    // UTC midnight at the start of the launch day, in ms. Space-Track gives the
+    // day only, so an object is known to be unlaunched only BEFORE this.
+    launchDate?: number;
+    // SMALL / MEDIUM / LARGE: radar cross-section bucket.
+    rcsSize?: string;
+    // International designator, e.g. "2019-074B". Its first 8 characters name
+    // the launch.
+    objectId?: string;
 }
 
-// One row of an OMM CSV: the elements SGP4 needs, plus the two set-level
-// columns used to work out where the data came from and how complete it is.
+// One row of an OMM CSV: the elements SGP4 needs, plus the set-level and
+// catalogue columns (see OMM_EXTRA_FIELDS).
 interface OMMRecord {
     name: string;
     number: number;
     satrec: SatRec;
     objectType?: string;
     creationDate?: string;
+    launchDate?: number;
+    rcsSize?: string;
+    objectId?: string;
+}
+
+/**
+ * Was this object still on the ground at timeMS?
+ *
+ * A historical query asks for elements from a short window, and when a
+ * satellite has none earlier than the time, bestSat() falls back to the
+ * earliest LATER element set. For an object launched just after the time that
+ * puts it in orbit before its own launch. LAUNCH_DATE is a day, not a time, so
+ * this says "not launched" only before the start of the launch day; on the day
+ * itself the object is kept.
+ */
+export function isBeforeLaunch(satData: {launchDate?: number}, timeMS: number): boolean {
+    return satData.launchDate !== undefined && timeMS < satData.launchDate;
+}
+
+/**
+ * A rough range for the position error of an SGP4 element set that is
+ * `ageDays` old, in km: [low, high].
+ *
+ * A rule of thumb, not a measurement of any one object. An element set fits
+ * observations to about a kilometre at its epoch, and the error then grows,
+ * mostly along the track, by roughly 1 to 3 km a day for a typical low orbit.
+ * Drag (low orbits, high solar activity) and manoeuvres make it worse, and
+ * nothing here can see a manoeuvre. Use it to judge how far to trust a match,
+ * never as a confidence interval.
+ */
+export function elementSetErrorKm(ageDays: number): [number, number] {
+    const days = Math.abs(ageDays);
+    return [1 + 1 * days, 1 + 3 * days];
+}
+
+// "2019-11-11" -> ms at UTC midnight that day, or undefined for an empty or
+// unreadable field.
+function parseLaunchDate(value: string | undefined): number | undefined {
+    const m = /^(\d{4})-(\d{2})-(\d{2})/.exec((value ?? "").trim());
+    if (!m) return undefined;
+    const ms = Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+    return Number.isFinite(ms) ? ms : undefined;
+}
+
+// Copy the catalogue fields an entry lacks from another record of the same
+// object. The fields describe the object, not an element set, so any record
+// that carries them will do.
+function fillCatalogueFields(target: SatData, source: {objectType?: string, launchDate?: number,
+        rcsSize?: string, objectId?: string}): void {
+    if (target.objectType === undefined && source.objectType !== undefined) target.objectType = source.objectType;
+    if (target.launchDate === undefined && source.launchDate !== undefined) target.launchDate = source.launchDate;
+    if (target.rcsSize === undefined && source.rcsSize !== undefined) target.rcsSize = source.rcsSize;
+    if (target.objectId === undefined && source.objectId !== undefined) target.objectId = source.objectId;
 }
 
 /** Which proxyStarlink.php query a set of elements came from. */
@@ -261,10 +326,11 @@ const OMM_FIELDS = [
     "BSTAR", "MEAN_MOTION_DOT", "MEAN_MOTION_DDOT",
 ] as const;
 
-// Columns that are not orbital elements but say something about the SET rather
-// than the satellite: which Space-Track query produced it, and whether it had
-// finished publishing when we downloaded it. Only present in OMM CSV.
-const OMM_EXTRA_FIELDS = ["OBJECT_TYPE", "CREATION_DATE"] as const;
+// Columns that are not orbital elements. OBJECT_TYPE and CREATION_DATE say
+// something about the SET: which Space-Track query produced it, and whether it
+// had finished publishing when we downloaded it. LAUNCH_DATE, RCS_SIZE and
+// OBJECT_ID are catalogue facts about the object. Only present in OMM CSV.
+const OMM_EXTRA_FIELDS = ["OBJECT_TYPE", "CREATION_DATE", "LAUNCH_DATE", "RCS_SIZE", "OBJECT_ID"] as const;
 
 // Is this an OMM CSV file (as opposed to TLE/2LE/3LE)? The first non-blank line
 // of an OMM CSV is a header naming the OMM keywords. NORAD_CAT_ID is mandatory
@@ -275,11 +341,29 @@ export function isOMMCSV(firstLine: string): boolean {
 }
 
 /**
- * Days a historical query spans: proxyStarlink.php asks for a two-day window,
- * [D, D+2], so a complete set reaches almost exactly D+2 - in whichever field
- * that query filters on. See gpQueryFilterField().
+ * Days a historical query spans by default: proxyStarlink.php asks for a
+ * two-day window, [D, D+2], so a complete set reaches almost exactly D+2 - in
+ * whichever field that query filters on. See gpQueryFilterField(). Older dates
+ * use a wider window, see gpHistoryWindowDays().
  */
 export const GP_QUERY_WINDOW_DAYS = 2;
+
+/**
+ * Days of history to ask proxyStarlink.php for, centred on `date`.
+ *
+ * Two days, the standard window, from 2018. Before that, publication was
+ * sparser, and an object with no element set inside the window is missing from
+ * the sky altogether, so older dates get six days. Measured on the LEO payload
+ * query (2026-11-02): for 2012-06-15 the two-day window held 1,866 of the 1,871
+ * satellites a six-day window found (median 1.5 sets a day); for 2005-06-15 it
+ * held 1,619 of 1,624, and six days held all 1,624 that fourteen days found.
+ * So two days loses about 0.3% of satellites on old dates, and six days loses
+ * none, at a few hundred kilobytes more. The value must be one
+ * proxyStarlink.php accepts ($allowedWindowDays).
+ */
+export function gpHistoryWindowDays(date: Date): number {
+    return date.getUTCFullYear() >= 2018 ? GP_QUERY_WINDOW_DAYS : 6;
+}
 
 /** Which field bounds the window a query asked for. */
 export type GPQueryFilter = "epoch" | "creation" | "unknown";
@@ -403,15 +487,17 @@ const GP_CREATION_TOLERANCE_MS = 12 * 60 * 60 * 1000;
  * A set whose query we do not define (CUSTOM) gets no test at all: with nothing
  * to judge from, say nothing.
  *
- * @param tleData   The loaded set.
- * @param setDate   The date the set was requested for (start of the window).
- * @param queryType The proxyStarlink.php type it was requested with.
+ * @param tleData    The loaded set.
+ * @param setDate    The date the set was requested for (start of the window).
+ * @param queryType  The proxyStarlink.php type it was requested with.
+ * @param windowDays The days it spans (the `days` it was requested with).
  */
-export function isGPSetIncomplete(tleData: CTLEData, setDate: Date, queryType: string): boolean {
+export function isGPSetIncomplete(tleData: CTLEData, setDate: Date, queryType: string,
+        windowDays: number = GP_QUERY_WINDOW_DAYS): boolean {
     if (!tleData || tleData.satData.length === 0) {
         return false;
     }
-    const windowEnd = setDate.getTime() + GP_QUERY_WINDOW_DAYS * 86400000;
+    const windowEnd = setDate.getTime() + windowDays * 86400000;
 
     switch (gpQueryFilterField(queryType)) {
         case "epoch":
@@ -550,6 +636,9 @@ export function parseOMMCSVLines(lines: string[]): OMMRecord[] | null {
             satrec: satellite.json2satrec(omm as never) as unknown as SatRec,
             objectType: (extra.OBJECT_TYPE ?? "").trim() || undefined,
             creationDate: (extra.CREATION_DATE ?? "").trim() || undefined,
+            launchDate: parseLaunchDate(extra.LAUNCH_DATE),
+            rcsSize: (extra.RCS_SIZE ?? "").trim().toUpperCase() || undefined,
+            objectId: (extra.OBJECT_ID ?? "").trim() || undefined,
         });
     }
     return out;
@@ -588,6 +677,10 @@ export class CTLEData {
     // Compare against the set's own date to tell whether it was captured
     // before publication had finished - see isGPSetIncomplete().
     latestCreationDate?: Date;
+    // The header line of the last block of rawText when that block is OMM CSV,
+    // else undefined. mergeFrom() appends another set's rows under it only when
+    // that set's header is identical.
+    lastCSVHeader?: string;
 
     // constructor is passed in a string that contains the TLE file as \n separated lines
     // extracts in into
@@ -660,6 +753,7 @@ export class CTLEData {
                 }
                 this.parseOMMCSV(block, satDataByKey);
                 sawCSV = true;
+                this.lastCSVHeader = lines[i].trim();
                 i = j;
             } else {
                 // Everything up to the next OMM header is TLE. Pass it as one
@@ -678,6 +772,7 @@ export class CTLEData {
                 if (block.length > 0) {
                     this.parseTLELines(block, satDataByKey);
                     sawTLE = true;
+                    this.lastCSVHeader = undefined;
                 }
             }
         }
@@ -696,7 +791,8 @@ export class CTLEData {
             return;
         }
 
-        for (const {name, number, satrec, objectType, creationDate} of records) {
+        for (const record of records) {
+            const {name, number, satrec, creationDate} = record;
             // The newest CREATION_DATE says when Space-Track last published
             // anything in this set - which is how we later tell whether the set
             // was downloaded before publication for its date had finished.
@@ -717,11 +813,11 @@ export class CTLEData {
                     number: number,
                     visible: true,
                     satrecs: [satrec],
-                    objectType: objectType,
                 };
             } else {
                 satDataByKey[number].satrecs.push(satrec);
             }
+            fillCatalogueFields(satDataByKey[number], record);
         }
     }
 
@@ -916,6 +1012,9 @@ export class CTLEData {
             if (existing) {
                 // Combine satrecs for the same satellite
                 existing.satrecs.push(...otherSat.satrecs);
+                // A set cached before LAUNCH_DATE was requested lacks it; the
+                // other set may carry it.
+                fillCatalogueFields(existing, otherSat);
                 merged++;
             } else {
                 // New satellite -- add it
@@ -925,6 +1024,7 @@ export class CTLEData {
                     visible: otherSat.visible,
                     satrecs: [...otherSat.satrecs],
                 };
+                fillCatalogueFields(newSat, otherSat);
                 this.satData.push(newSat);
                 this.noradIndex.set(newSat.number, newSat);
                 added++;
@@ -953,20 +1053,24 @@ export class CTLEData {
             this.latestCreationDate = other.latestCreationDate;
         }
 
-        // Append raw text for export. Two OMM CSVs are folded into ONE csv by
-        // dropping the second header — the columns are fixed by the OMM
-        // standard, so the first header describes both. Unlike formats are just
-        // concatenated; parseSegments() reads the result block by block, so the
-        // export still round-trips with every satellite intact.
-        if (this.format === "omm-csv" && other.format === "omm-csv") {
-            const otherLines = other.rawText.split("\n");
-            const body = isOMMCSV(otherLines[0] ?? "") ? otherLines.slice(1) : otherLines;
-            this.rawText = this.rawText.replace(/\n+$/, "") + "\n" + body.join("\n");
-        } else {
-            this.rawText = this.rawText.replace(/\n+$/, "") + "\n" + other.rawText;
-            if (this.format !== other.format) {
-                this.format = "mixed";
-            }
+        // Append raw text for export. Two OMM CSVs with the SAME header are
+        // folded into one block by dropping the second header. The header is
+        // not fixed, though: CelesTrak and Space-Track send different columns
+        // in a different order, and a Space-Track set cached before LAUNCH_DATE
+        // was requested has one column fewer than a new one. Under the first
+        // header those rows would be read by the wrong positions, so a
+        // different header is kept, and parseSegments() starts a new block at
+        // it. Unlike formats are just concatenated the same way. The rows are
+        // appended after this text's LAST block, so it is that block's header
+        // that must match.
+        const otherLines = other.rawText.split("\n");
+        const folds = this.lastCSVHeader !== undefined
+            && (otherLines[0] ?? "").trim() === this.lastCSVHeader;
+        this.rawText = this.rawText.replace(/\n+$/, "") + "\n"
+            + (folds ? otherLines.slice(1).join("\n") : other.rawText);
+        this.lastCSVHeader = other.lastCSVHeader;
+        if (this.format !== other.format) {
+            this.format = "mixed";
         }
 
         console.log(`CTLEData.mergeFrom: added ${added} new satellites, merged satrecs for ${merged} existing. Total: ${this.satData.length}`);

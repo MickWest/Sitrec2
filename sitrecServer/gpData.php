@@ -62,9 +62,12 @@ function isValidGPData($dataBlob, $httpStatus, $ext) {
  * tail to 9.7. A same-day fetch of 2025-10-29 LEO captured 10,230 element sets
  * where 59,608 exist today - 17%, missing 3,251 satellites outright. The same
  * query fetched 6 days out was already complete to within one element set.
- * Four days clears the +2 day window plus the p99.9 lag.
+ * Four days clears the +2 day window plus the p99.9 lag. A wider window (older
+ * dates, see proxyStarlink.php) ends later, so its settle time is its own
+ * length plus the same two days.
  */
 define('GP_SETTLE_DAYS', 4);
+define('GP_SETTLE_MARGIN_DAYS', GP_SETTLE_DAYS - 2);
 
 /**
  * Is this cached file trustworthy, or was it captured before the data settled?
@@ -77,14 +80,15 @@ define('GP_SETTLE_DAYS', 4);
  *
  * @param string $file        Path to the cached file.
  * @param string $requestDate The requested date, YYYY-MM-DD.
+ * @param int    $windowDays  Days the query spans from $requestDate.
  */
-function gpCacheIsUsable($file, $requestDate) {
+function gpCacheIsUsable($file, $requestDate, $windowDays = 2) {
     // $file may name the uncompressed form while only the .gz is on disk.
     $entry = gpCacheEntry($file);
     if ($entry === null) {
         return false;
     }
-    $settledTs = strtotime($requestDate . ' +' . GP_SETTLE_DAYS . ' days');
+    $settledTs = strtotime($requestDate . ' +' . ($windowDays + GP_SETTLE_MARGIN_DAYS) . ' days');
     if ($settledTs === false) {
         return true;    // unparseable date - don't throw away a good cache
     }
