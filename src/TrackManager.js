@@ -2291,7 +2291,8 @@ class CTrackManager extends CManager {
         }
 
         // same type of thing for heading angles
-        if (value.misbRow !== undefined && typeof value.misbRow[MISB.PlatformPitchAngle] === 'number' && !isNaN(value.misbRow[MISB.PlatformPitchAngle])) {
+        if (value.misbRow !== undefined && [MISB.PlatformPitchAngleFull, MISB.PlatformPitchAngle]
+            .some(column => Number.isFinite(value.misbRow[column]))) {
             hasAngles = true;
         }
 

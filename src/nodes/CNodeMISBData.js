@@ -2143,9 +2143,11 @@ export function makeLOSNodeFromTrackAngles(trackID, data) {
     const cameraTrackAngles = NodeMan.get(trackID);
     const smooth = data.smooth ?? 0;
 
+    // Prefer full-range platform attitude per row; keep explicit source-column
+    // overrides and retain both recorded representations in the MISB data.
     makeArrayNodeFromMISBColumn(trackID+"platformHeading", cameraTrackAngles, data.platformHeading ?? MISB.PlatformHeadingAngle, smooth, true)
-    makeArrayNodeFromMISBColumn(trackID+"platformPitch", cameraTrackAngles, data.platformPitch ?? MISB.PlatformPitchAngle, smooth, true)
-    makeArrayNodeFromMISBColumn(trackID+"platformRoll", cameraTrackAngles, data.platformRoll ?? MISB.PlatformRollAngle, smooth, true)
+    makeArrayNodeFromMISBColumn(trackID+"platformPitch", cameraTrackAngles, data.platformPitch ?? [MISB.PlatformPitchAngleFull, MISB.PlatformPitchAngle], smooth, true)
+    makeArrayNodeFromMISBColumn(trackID+"platformRoll", cameraTrackAngles, data.platformRoll ?? [MISB.PlatformRollAngleFull, MISB.PlatformRollAngle], smooth, true)
     makeArrayNodeFromMISBColumn(trackID+"sensorAz", cameraTrackAngles, data.sensorAz ?? MISB.SensorRelativeAzimuthAngle, smooth, true)
     makeArrayNodeFromMISBColumn(trackID+"sensorEl", cameraTrackAngles, data.sensorEl ?? MISB.SensorRelativeElevationAngle, smooth, true)
     makeArrayNodeFromMISBColumn(trackID+"sensorRoll", cameraTrackAngles, data.sensorRoll ?? MISB.SensorRelativeRollAngle, smooth, true)

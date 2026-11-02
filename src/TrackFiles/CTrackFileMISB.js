@@ -152,8 +152,10 @@ export class CTrackFileMISB extends CTrackFile {
             return false;
         }
         const firstRow = this.data[0];
-        const pitch = firstRow[MISB.PlatformPitchAngle];
-        return pitch !== undefined && pitch !== null && !isNaN(Number(pitch));
+        return [MISB.PlatformPitchAngleFull, MISB.PlatformPitchAngle].some(column => {
+            const pitch = firstRow[column];
+            return pitch !== undefined && pitch !== null && !isNaN(Number(pitch));
+        });
     }
 
     _hasFOV() {

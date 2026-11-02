@@ -179,6 +179,17 @@ export function SteppedKeyframes(input, outLen, indexCol = 0, dataCol = 1) {
     return ExpandKeyframes(input, outLen, indexCol, dataCol, true)
 }
 
+// A priority list lets a full-range MISB field fall back to its legacy field
+// per row without overwriting either recorded column. A single index retains
+// the existing behavior, including an explicitly selected source column.
+function misbColumnValue(row, columnIndex) {
+    if (!Array.isArray(columnIndex)) return row[columnIndex];
+    for (const column of columnIndex) {
+        if (Number.isFinite(row[column])) return row[column];
+    }
+    return row[columnIndex[columnIndex.length - 1]];
+}
+
 // array is an array of objects, one per frame
 // each object has a "misbRow" array of values
 // misbRow is the MISB data for that frame, a row from the full MISB data 2D array
@@ -211,7 +222,7 @@ export function ExpandMISBKeyframes(array, columnIndex, degrees = false) {
     for (let i=0;i<array.length;i++) {
         const misbRow = array[i].misbRow
         if (misbRow !== lastMISBRow) {
-            const value = misbRow[columnIndex];
+            const value = misbColumnValue(misbRow, columnIndex);
             keyframes.push([i,value])
             lastMISBRow = misbRow
         }
@@ -250,7 +261,7 @@ function expandMISBColumnByTime(array, columnIndex, degrees) {
         const entry = array[i];
         const rowA = entry.misbRow, rowB = entry.misbNextRow, t = entry.misbFraction;
         if (!rowA || !rowB || !Number.isFinite(t)) return null;
-        const a = rowA[columnIndex], b = rowB[columnIndex];
+        const a = misbColumnValue(rowA, columnIndex), b = misbColumnValue(rowB, columnIndex);
         if (typeof a !== "number" || typeof b !== "number"
             || !Number.isFinite(a) || !Number.isFinite(b)) return null;
         let delta = b - a;
