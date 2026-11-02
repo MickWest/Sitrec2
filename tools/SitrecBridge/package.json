@@ -14,7 +14,7 @@
     "test:browser": "node --test tests_browser/*.test.mjs"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.30.0",
+    "@modelcontextprotocol/sdk": "^1.32.2",
     "ws": "^8.22.0"
   },
   "devDependencies": {
