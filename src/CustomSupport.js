@@ -623,8 +623,8 @@ export class CCustomManager {
         // MSAA samples on the offscreen render target. 0 = disabled (fastest).
         tweaksFolder.add(Globals.settings, "msaaSamples", {
             "Off (fastest)": 0,
-            "2x": 2,
-            "4x (default)": 4,
+            "2x (default)": 2,
+            "4x": 4,
             "8x": 8,
         })
             .name(t("custom.settings.msaaSamples.label"))

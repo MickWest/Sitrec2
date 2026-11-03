@@ -142,11 +142,11 @@ export class CNodeLensGhost extends CNodeViewUI {
             .onChange(() => setRenderOne(true))
             .tooltip("FITTED. Vertical magnification. Differs from X when the flat window tilts mainly in one axis.");
 
-        this._coffXCtrl = this.gui.add(this, "centerOffsetX", -2000, 2000, 1).name("Centre Offset X").listen()
+        this._coffXCtrl = this.gui.add(this, "centerOffsetX", -2000, 2000, 1).name("Center Offset X").listen()
             .onChange(() => setRenderOne(true))
             .tooltip("FITTED. Horizontal offset, in original-video pixels, from the frame center to the point the ghost reflects through. "
                 + "It has no meaning when Magnification X is about -1, so it is then disabled.");
-        this._coffYCtrl = this.gui.add(this, "centerOffsetY", -2000, 2000, 1).name("Centre Offset Y").listen()
+        this._coffYCtrl = this.gui.add(this, "centerOffsetY", -2000, 2000, 1).name("Center Offset Y").listen()
             .onChange(() => setRenderOne(true))
             .tooltip("FITTED. Vertical offset, in original-video pixels, from the frame center to the point the ghost reflects through. "
                 + "It has no meaning when Magnification Y is about -1, so it is then disabled.");
@@ -161,7 +161,7 @@ export class CNodeLensGhost extends CNodeViewUI {
             .tooltip("Fraction of the disc radius, at the edge, over which the disc fades out. 0 = a hard edge.");
         this.gui.add(this, "opacity", 0, 1, 0.01).name("Opacity").listen().onChange(() => setRenderOne(true))
             .tooltip("Opacity of the ghost disc, from 0 (invisible) to 1 (solid).");
-        this.gui.addColor(this, "color").name("Colour").listen().onChange(() => setRenderOne(true))
+        this.gui.addColor(this, "color").name("Color").listen().onChange(() => setRenderOne(true))
             .tooltip("Color of the ghost disc and of its PREDICTED label.");
 
         this.gui.add(this, "rollScale", -3, 3, 0.01).name("Roll Coupling").listen()
@@ -196,7 +196,7 @@ export class CNodeLensGhost extends CNodeViewUI {
             .keepLiveWhenFolderOff();
 
         // Read-only status fields (MEASURED / provenance / FITTED quality / WARNINGS).
-        this.gui.add(this.readout, "source").name("Sun geometry").listen().disable()
+        this.gui.add(this.readout, "source").name("Source geometry").listen().disable()
             .tooltip("Shows the source's azimuth and elevation, its angle from the camera axis, "
                 + "and whether it is above, below or in the frame, at the current frame.");
         this.gui.add(this.readout, "roll").name("Roll source").listen().disable()
@@ -493,7 +493,7 @@ export class CNodeLensGhost extends CNodeViewUI {
 
         this.readout.fit = `R² ${best.fx.R2.toFixed(3)} · RMSE ${best.fx.rmse.toFixed(1)}px · ${n}f [${fStart}-${fEnd}]` +
             (best.fy ? ` · Y R² ${best.fy.R2.toFixed(3)}` : " · X only") +
-            (edgeHit ? " · ⚠ rollScale hit scan edge" : "") + (xDegenerate ? " · magX≈-1 (centre n/a)" : "");
+            (edgeHit ? " · ⚠ rollScale hit scan edge" : "") + (xDegenerate ? " · magX≈-1 (center n/a)" : "");
         console.log("CNodeLensGhost fit: rollScale=" + this.rollScale + ", magX=" + this.magX.toFixed(3) +
             ", " + this.readout.fit);
 
@@ -518,9 +518,9 @@ export class CNodeLensGhost extends CNodeViewUI {
 
         // Reflect the magX~=-1 degeneracy in the GUI even when hidden.
         const degenX = Math.abs(this.magX + 1) < MAG_DEGEN;
-        this._setDegenerate(this._coffXCtrl, degenX, "Centre Offset X");
+        this._setDegenerate(this._coffXCtrl, degenX, "Center Offset X");
         const degenY = Math.abs(this.magY + 1) < MAG_DEGEN;
-        this._setDegenerate(this._coffYCtrl, degenY, "Centre Offset Y");
+        this._setDegenerate(this._coffYCtrl, degenY, "Center Offset Y");
 
         if (!this.show) { this.readout.source = "(ghost hidden)"; this.readout.warning = ""; return; }
 
@@ -579,7 +579,7 @@ export class CNodeLensGhost extends CNodeViewUI {
         ctx.restore();
 
         // --- "PREDICTED" label so it can't be mistaken for the tracked object ---
-        this._label(ctx, cgx + rOuter + 6, cgy, "PREDICTED sun ghost" + (extrapolated ? " (extrapolated)" : ""));
+        this._label(ctx, cgx + rOuter + 6, cgy, `PREDICTED ${this.body.toLowerCase()} ghost` + (extrapolated ? " (extrapolated)" : ""));
 
         // --- source marker / off-frame arrow ---
         if (this.showSun || this.showGeometry) this._drawSourceMarker(ctx, ov, src);
@@ -618,7 +618,7 @@ export class CNodeLensGhost extends CNodeViewUI {
             ctx.moveTo(csx - 8, csy); ctx.lineTo(csx + 8, csy);
             ctx.moveTo(csx, csy - 8); ctx.lineTo(csx, csy + 8);
             ctx.stroke();
-            this._label(ctx, csx + 10, csy, "Sun", "#ffd000");
+            this._label(ctx, csx + 10, csy, this.body, "#ffd000");
         } else {
             // clamp to the edge nearest the source direction and draw an arrow toward it
             const cx = W / 2, cy = H / 2;
@@ -632,7 +632,7 @@ export class CNodeLensGhost extends CNodeViewUI {
             ctx.lineTo(ex - 12 * Math.cos(ang - 0.4), ey - 12 * Math.sin(ang - 0.4));
             ctx.lineTo(ex - 12 * Math.cos(ang + 0.4), ey - 12 * Math.sin(ang + 0.4));
             ctx.closePath(); ctx.fill();
-            this._label(ctx, ex - ux * 14 - 12, ey - uy * 14, "Sun (off-frame)", "#ffd000");
+            this._label(ctx, ex - ux * 14 - 12, ey - uy * 14, `${this.body} (off-frame)`, "#ffd000");
         }
         ctx.restore();
     }
@@ -652,7 +652,7 @@ export class CNodeLensGhost extends CNodeViewUI {
     _drawHUD() {
         const ctx = this.ctx;
         const lines = [
-            { t: "Lens Ghost — PREDICTED sun reflection", c: "#ffffff" },
+            { t: `Lens Ghost — PREDICTED ${this.body.toLowerCase()} reflection`, c: "#ffffff" },
             { t: this.readout.source, c: "#cfe8ff" },
             { t: this.readout.roll, c: "#cfe8ff" },
             { t: this.readout.fit, c: "#cfe8ff" },
@@ -676,9 +676,9 @@ export class CNodeLensGhost extends CNodeViewUI {
 
     _updateReadouts(f, geom) {
         if (geom) {
-            this.readout.source = `Sun: az ${geom.az.toFixed(0)}° el ${geom.el.toFixed(1)}° · ${geom.offAxis.toFixed(0)}° off-axis · ${geom.vert}`;
+            this.readout.source = `${this.body}: az ${geom.az.toFixed(0)}° el ${geom.el.toFixed(1)}° · ${geom.offAxis.toFixed(0)}° off-axis · ${geom.vert}`;
         } else {
-            this.readout.source = "Sun behind camera this frame — no ghost";
+            this.readout.source = `${this.body} behind camera this frame — no ghost`;
         }
         const span = this.rollSpanDeg();
         if (this.rollScale === 0) this.readout.roll = `Roll: LOS basis only (${span.toFixed(1)}° span)`;
@@ -686,13 +686,13 @@ export class CNodeLensGhost extends CNodeViewUI {
 
         // Warnings, most-severe first.
         let warn = "";
-        if (!geom) warn = "Sun behind camera — ghost not formed this frame.";
+        if (!geom) warn = `${this.body} behind camera — ghost not formed this frame.`;
         else if (this.rollScale !== 0 && span < ROLL_STABILIZED_DEG)
             warn = `Camera roll ≈ 0 (${span.toFixed(1)}°) — video looks STABILIZED; the ghost can't reverse. Run Camera Motion on the un-stabilized clip.`;
         else if (this.rollDoubleCount())
             warn = "Roll double-count: camera-motion orientation is ON and rollScale≠0 — roll applied twice.";
         else if (Math.abs(this.magX + 1) < MAG_DEGEN)
-            warn = "magX ≈ -1: principal point indeterminate (centre offset has no meaning here).";
+            warn = "magX ≈ -1: principal point indeterminate (center offset has no meaning here).";
         this.readout.warning = warn;
     }
 

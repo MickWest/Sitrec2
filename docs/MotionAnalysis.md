@@ -353,7 +353,7 @@ not need Motion Analysis, and it does not use the mask.
 |---|---|---|
 | **Start De-Fence** | — | Builds the rebuilt scene and downloads it as a PNG file (`Sitrec-<sitch>_defence_<date-time>.png`), at half the video resolution on each axis. A preview shows the progress and has a **Cancel** button |
 | **Export De-Fence Video** | — | Downloads a video of the process: the original video, then the fence dissolving as the scene builds up, then the final result held for 2.5 seconds. At most 1920 pixels on the long side |
-| **Technique** | Colour + Motion | How fence and background are told apart. **Colour + Motion** uses both the color of the lit gaps and the motion. **Colour only** uses gap brightness and green, best when the fence is a distinct color. **Motion only** uses only the motion, best on fences with little texture |
+| **Technique** | Color + Motion | How fence and background are told apart. **Color + Motion** uses both the color of the lit gaps and the motion. **Color only** uses gap brightness and green, best when the fence is a distinct color. **Motion only** uses only the motion, best on fences with little texture |
 | **Variance Threshold** | 0.45 | 0–1. How much a pixel must change, once the fence is aligned, to count as background. Lower fills more holes but lets more fence through |
 | **Gap Brightness** | 0.12 | 0–1. Smallest gap brightness or green to count as background. Lower keeps darker background; higher rejects more boards |
 | **Background Baseline** | 24 | 4–60. Frames between samples when measuring the slower background motion. Larger separates the layers more reliably; too large risks losing the view |
@@ -486,7 +486,7 @@ line as the track, and other series hold their last value.
 recognition (OCR).
 
 1. Press **Enable Text Extraction**, then **Add Region**, and drag a box around the text.
-2. Press **Start Extract**. It reads every region on each frame from the current frame to the
+2. Press **Start Extraction**. It reads every region on each frame from the current frame to the
    Out frame, and shows the text next to the region. Press **Stop Extraction** to stop.
 
 **Fixed Width Font** and **Num Characters** (default 10) split a region into equal character

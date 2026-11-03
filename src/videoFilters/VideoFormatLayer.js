@@ -389,7 +389,7 @@ export function setupVideoFormatEffectsMenu() {
         .tooltip("Darkens the gaps between the format's scan lines, as on a TV screen. 0 = off; 1 makes the gaps 50% darker.\n"
             + "Used only when Format is not Pure digital.")
         .onChange(() => changed());
-    add(sig, "chromaVBlur", 0, 1, 0.01).name("Colour smear")
+    add(sig, "chromaVBlur", 0, 1, 0.01).name("Color smear")
         .tooltip("Vertical color softness, from the delay line on PAL and from color-under on tape.")
         .onChange(() => changed());
 

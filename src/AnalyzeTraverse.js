@@ -1763,8 +1763,8 @@ export function addAnalyzeTweaks(traverseMenu) {
         .tooltip("Assumed one-component uncertainty for the balloon's supplied-wind correction. " +
             "15 kt is an analyst default, not measured weather uncertainty. Smaller values hold the wind closer to the input.");
     if (cbFixed.tooltip) {
-        cbFixed.tooltip("Include the stationary-object interpretation: either a fixed point in space (sightlines " +
-            "converge) or a fixed point in the sky at infinity like the Moon (parallel sightlines), whichever fits.");
+        cbFixed.tooltip("AO = astronomical object. Include the stationary-object interpretation: either a fixed point in space " +
+            "(the sightlines converge) or a fixed point in the sky at infinity, like the Moon (parallel sightlines), whichever fits better.");
     }
     if (cbSat.tooltip) {
         cbSat.tooltip("Load the historical LEO (low Earth orbit) satellite catalog for the sitch's date (via the server, cached " +
@@ -1772,10 +1772,13 @@ export function addAnalyzeTweaks(traverseMenu) {
             "Needs a real sitch date.");
     }
     if (cbKnownNow.tooltip) {
-        cbKnownNow.tooltip("Ephemeris: at the clip's time, find the nearest bright planet or star to the sightlines.");
+        cbKnownNow.tooltip("AO = astronomical object. At the middle of the clip, find the Sun, Moon, planet or bright star that best " +
+            "fits the sightlines. A fainter object must fit more closely. A narrow field of view lets fainter objects count.\n" +
+            "Off by default, because the star search is slow.");
     }
     if (cbKnownOther.tooltip) {
-        cbKnownOther.tooltip("Ephemeris: search a time window for when a bright planet would best align with the mean sightline.");
+        cbKnownOther.tooltip("AO = astronomical object. For each of Mercury, Venus, Mars, Jupiter and Saturn, search from 180 days " +
+            "before to 180 days after the clip for the time when it is nearest to the mean sightline.\nOff by default.");
     }
 
     return folder;

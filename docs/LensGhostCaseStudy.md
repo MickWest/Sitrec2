@@ -46,13 +46,13 @@ described in [Lens Ghost](LensGhost.md) against the disc's motion.
 5. **Source.** Sun.
 6. **Window Lean.** Set by hand before each fit. It is not fitted.
 7. **Fit.** **Fit to Disc Track** was pressed. It scans Roll Coupling and fits the
-   magnification and centre offset for each axis.
+   magnification and center offset for each axis.
 
 ---
 
 ## Geometry
 
-- The Sun stays above the frame for the whole clip. The **Sun geometry** row gives the
+- The Sun stays above the frame for the whole clip. The **Source geometry** row gives the
   value for the current frame, and in this sitch it read about **58° off-axis** and
   "above frame".
 - The measured image roll spans about **14°** from minimum to maximum. The **Roll
@@ -66,18 +66,18 @@ axis and back, which is how the model produces a horizontal reversal.
 ### Window Lean and the reflected image
 
 The reflected source image moves with Window Lean. The model computes the `reflY` values
-below, and no readout shows them. The frame is 1080 pixels high, so its centre is at
+below, and no readout shows them. The frame is 1080 pixels high, so its center is at
 y = 540. At frame 180 (illustrative values):
 
 ```
    lean  0° →  reflY ≈ 5232      (far below the frame)
    lean 10° →  reflY ≈ 2834      (below the frame)
    lean 20° →  reflY ≈ 1482      (below the frame)
-   lean 30° →  reflY ≈  407      (near centre)
+   lean 30° →  reflY ≈  407      (near center)
 ```
 
 Before Window Lean was added to the model, the disc's vertical position needed a very
-large Centre Offset Y. With lean in the model, a normal offset is enough.
+large Center Offset Y. With lean in the model, a normal offset is enough.
 
 ---
 
@@ -103,7 +103,7 @@ use the same Roll Coupling, so the Y figure also includes roll.
 
 The readout also gives the X-axis RMSE (root mean square error, in pixels) and the frame
 range. These values were not recorded for this fit. Neither were the Window Lean, the
-tracker, or the numbers for the magnifications and centre offsets, so this page cannot
+tracker, or the numbers for the magnifications and center offsets, so this page cannot
 give them.
 
 Other outputs:
@@ -124,7 +124,7 @@ Other outputs:
 - **Window Lean** is chosen by hand, not measured.
 - **Date, time, camera pointing and FOV** are inputs. The fit takes them as given.
 - **Fit freedom.** The fit sets five numbers: Roll Coupling, and a magnification and a
-  centre offset for each axis. Window Lean is a sixth, set by hand. R² is measured on
+  center offset for each axis. Window Lean is a sixth, set by hand. R² is measured on
   the same frames that set these numbers, and the tool was developed on this clip. The
   fit does not compare the model with another explanation of the motion.
 - **Smooth tracks.** A simple curve can also reach a high R² on a track of this shape.

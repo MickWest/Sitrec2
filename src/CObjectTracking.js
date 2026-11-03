@@ -3194,7 +3194,7 @@ function toggleStabilization() {
     videoData.setStabilizationEnabled(newState);
 
     if (stabilizeToggleMenuItem) {
-        stabilizeToggleMenuItem.name(newState ? "Disable Stabilization" : "Enable Stabilization");
+        stabilizeToggleMenuItem.name(t(newState ? "tracking.stabilizeToggle.disableLabel" : "tracking.stabilizeToggle.enableLabel"));
     }
 
     setRenderOne(true);

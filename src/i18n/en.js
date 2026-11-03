@@ -887,7 +887,7 @@ const en = {
                 title: "Documentation",
                 localTooltip: "The Sitrec documentation, grouped by subject. Each link opens a page in a new tab.",
                 githubTooltip: "The Sitrec documentation on GitHub, grouped by subject. Each link opens a page in a new tab.",
-                githubLinkLabel: "{{name}} (Github)",
+                githubLinkLabel: "{{name}} (GitHub)",
                 about: "About Sitrec",
                 whatsNewDetails: "What's New (Details)",
                 uiBasics: "User Interface Basics",
@@ -1088,7 +1088,7 @@ const en = {
             recalculateAll: "debug recalculate all",
             dumpNodes: "debug dump nodes",
             dumpNodesBackwards: "debug dump nodes backwards",
-            dumpRoots: "debug dump Root notes",
+            dumpRoots: "debug dump Root nodes",
             recalculateAllTooltip: "Recalculate every node in the node graph, in order of depth: nodes with no inputs first.",
             dumpNodesTooltip: "Print the node graph to the browser console: each root node (a node with no inputs), with the nodes that use it below it.",
             dumpNodesBackwardsTooltip: "Print the node graph to the browser console, from each end node (a node with no outputs) back through its inputs.",
@@ -1612,7 +1612,7 @@ const en = {
             showCueData: "[C]ue Data",
             showGlareGraph: "Sh[o]w Glare Graph",
             showAzGraph: "Show A[Z] Graph",
-            declutter: "[D]eclutter]",
+            declutter: "[D]eclutter",
             jetOffset: "Jet Y offset",
             tas: "TAS True Airspeed",
             integrate: "Integration Steps",
@@ -1674,14 +1674,14 @@ const en = {
                 tooltip: "Remove a near fence from a video that pans past it, and rebuild the distant scene behind it.\nIt does not need Motion Analysis, and it does not use the mask.",
                 technique: {
                     label: "Technique",
-                    tooltip: "How fence pixels are told from background pixels.\nColour + Motion: uses both the gap color and the motion (default).\nColour only: uses gap brightness and green. Best when the fence is a distinct color.\nMotion only: uses only the motion. Best on fences with little texture.",
-                    colourVariance: "Colour + Motion",
-                    colour: "Colour only",
+                    tooltip: "How fence pixels are told from background pixels.\nColor + Motion: uses both the gap color and the motion (default).\nColor only: uses gap brightness and green. Best when the fence is a distinct color.\nMotion only: uses only the motion. Best on fences with little texture.",
+                    colourVariance: "Color + Motion",
+                    colour: "Color only",
                     variance: "Motion only",
                 },
                 varThresh: {
                     label: "Variance Threshold",
-                    tooltip: "How much a pixel must change (once the fence is aligned) to count as background. Lower = fills holes but lets more fence through; higher = cleaner but more gaps.\nNot used with Technique: Colour only.",
+                    tooltip: "How much a pixel must change (once the fence is aligned) to count as background. Lower = fills holes but lets more fence through; higher = cleaner but more gaps.\nNot used with Technique: Color only.",
                 },
                 gapThresh: {
                     label: "Gap Brightness",
@@ -1937,7 +1937,7 @@ const en = {
                 tooltip: "Remove all text extraction regions",
             },
             startExtract: {
-                label: "Start Extract",
+                label: "Start Extraction",
                 stopLabel: "Stop Extraction",
                 tooltip: "Read every region with OCR (optical character recognition) on each frame, from the current frame to the Out frame.\nClick again (Stop Extraction) to stop.",
             },
@@ -2405,7 +2405,7 @@ const en = {
         showSatellitesGlobal: { label: "Show Satellites (Global)", tooltip: "Master toggle: show or hide all satellites" },
         showStarlink: { label: "Starlink", tooltip: "Show SpaceX Starlink satellites" },
         showISS: { label: "ISS", tooltip: "Show the International Space Station" },
-        celestrackBrightest: { label: "Celestrack's Brightest", tooltip: "Show the satellites on CelesTrak's list of the brightest satellites. Sitrec has a built-in copy of the list." },
+        celestrackBrightest: { label: "CelesTrak's Brightest", tooltip: "Show the satellites on CelesTrak's list of the brightest satellites. Sitrec has a built-in copy of the list." },
         otherSatellites: { label: "Other Satellites", tooltip: "Show satellites not in the above categories" },
         list: { label: "List", tooltip: "Also show the satellites in this comma-separated list of names or NORAD catalog numbers, even when their category is off. To show only these, turn the category switches off.\nName matching is case-insensitive and by prefix (e.g. \"starlink-30\" matches STARLINK-30xx).\n\"SL-\" is shorthand for Starlink, so \"SL-1234\" matches STARLINK-1234." },
         satelliteArrows: { label: "Satellite Arrows", tooltip: "Draw a yellow arrow, 500 km long, on each shown satellite, along its direction of travel.\nOnly within Display Range. Label Flares Only, Label Lit Only and Label Look Visible Only also limit the arrows." },
@@ -2429,7 +2429,7 @@ const en = {
         satBrightness: { label: "Sat Brightness", tooltip: "Scale factor for the size of the satellite dots in the look view, which is how Sitrec shows brightness. The default is 2; 0 hides them.\nIt does not change the main view." },
         flareBrightness: { label: "Flare Brightness", tooltip: "Extra brightness of a flaring satellite in the Legacy cone model. 0 adds none.\nShown only when Satellite Brightness Model is Legacy cone." },
         satCutOff: { label: "Sat Cut-Off", tooltip: "Satellites dimmer than this level are not drawn, in either view. Higher values hide more faint satellites; 0 turns the cut-off off." },
-        displayRange: { label: "Display Range (km)", tooltip: "Satellites farther than this, in km, get no name labels or arrows. A label uses the distance from the camera of its view, and an arrow the distance from the look camera.\nSatellites shown by ISS, Celestrack's Brightest or List still get labels." },
+        displayRange: { label: "Display Range (km)", tooltip: "Satellites farther than this, in km, get no name labels or arrows. A label uses the distance from the camera of its view, and an arrow the distance from the look camera.\nSatellites shown by ISS, CelesTrak's Brightest or List still get labels." },
         equatorialGridMain: { label: "Equatorial Grid in Main", tooltip: "Show the celestial equatorial coordinate grid in the main 3D view" },
         constellationLines: { label: "Constellation Lines", tooltip: "Show lines connecting stars in constellations, and label each one with its name" },
         constellationStyle: {
@@ -3335,15 +3335,19 @@ const en = {
             tooltip: "Source of the ground heights. The data gives heights above mean sea level (MSL). Sitrec adds the EGM96 geoid height to get the height above the ellipsoid (HAE).\nGround below sea level is drawn at sea level.\nFlat: no height data.",
         },
         lat: {
+            label: "Latitude",
             tooltip: "Latitude of the center of the terrain",
         },
         lon: {
+            label: "Longitude",
             tooltip: "Longitude of the center of the terrain",
         },
         zoom: {
+            label: "Zoom Level",
             tooltip: "Zoom level of the terrain tiles. Each step up doubles the detail and halves the width of a tile. 2 is the whole world; 15 is a few city blocks.",
         },
         nTiles: {
+            label: "Tiles per Side",
             tooltip: "Number of tiles along each side of the square terrain area (N x N tiles at the zoom level). More tiles cover a larger area at the same detail, but take longer to load.",
         },
         refresh: {
@@ -3355,6 +3359,7 @@ const en = {
             tooltip: "Draw an outline of each terrain tile, high above the ground.\nGreen: map image tiles.\nBlue: elevation tiles.\nGray: inactive tiles.",
         },
         elevationScale: {
+            label: "Elevation Scale",
             tooltip: "Scale factor for the elevation data. 1 is normal, 0.5 is half height, 2 is double height",
         },
         terrainOpacity: {
@@ -3362,9 +3367,11 @@ const en = {
             tooltip: "Opacity of the terrain, from 0 (fully transparent) to 1 (fully opaque). It also fades the 3D building tiles.",
         },
         textureDetail: {
+            label: "Texture Detail",
             tooltip: "Multiplier for the detail of the map images. 1 is normal. 2 loads finer tiles, which means more downloads; 0.5 loads coarser tiles.\nUsed only when Dynamic Subdivision is on.",
         },
         elevationDetail: {
+            label: "Elevation Detail",
             tooltip: "Multiplier for the detail of the elevation data. 1 is normal. 2 loads finer tiles, which means more downloads; 0.5 loads coarser tiles.\nUsed only when Dynamic Subdivision is on.",
         },
         disableDynamicSubdivision: {
@@ -3373,7 +3380,7 @@ const en = {
         },
         dynamicSubdivision: {
             label: "Dynamic Subdivision",
-            tooltip: "On: load terrain tiles at the detail that each view needs, from the whole globe down to street level.\nOff: load a fixed square of tiles set by lat, lon, zoom and nTiles.\nIt stays on while 3D Buildings is on.",
+            tooltip: "On: load terrain tiles at the detail that each view needs, from the whole globe down to street level.\nOff: load a fixed square of tiles set by Latitude, Longitude, Zoom Level and Tiles per Side.\nIt stays on while 3D Buildings is on.",
         },
         showBuildings: {
             label: "3D Buildings",
@@ -3393,7 +3400,7 @@ const en = {
         },
         buildingMaterial: {
             label: "Building Material",
-            tooltip: "Surface style of the 3D building tiles.\nPhoto: the original photo texture.\nFlat: one plain color (Building Flat Colour).\nHalf-photo: the photo texture at 60% brightness.\nIt applies only to tiles that load after the change. Turn 3D Buildings off and on to restyle all tiles.",
+            tooltip: "Surface style of the 3D building tiles.\nPhoto: the original photo texture.\nFlat: one plain color (Building Flat Color).\nHalf-photo: the photo texture at 60% brightness.\nIt applies only to tiles that load after the change. Turn 3D Buildings off and on to restyle all tiles.",
             modes: {
                 photo: "Photo",
                 flat: "Flat",
@@ -3401,7 +3408,7 @@ const en = {
             },
         },
         buildingFlatColor: {
-            label: "Building Flat Colour",
+            label: "Building Flat Color",
             tooltip: "Color of the 3D building tiles when Building Material is Flat. The default depends on the source: warm concrete for Google Photorealistic, neutral gray for Cesium OSM.\nIt applies only to tiles that load after the change.",
         },
         useEllipsoid: {
@@ -4314,7 +4321,7 @@ const en = {
             tooltip: "Enter coordinates in any format (decimal, degrees/minutes/seconds, N/S/E/W, MGRS, lat/lon/altitude, or ECEF x,y,z in meters) or a place name to move to",
         },
         geolocate: {
-            label: "Geolocate from browser",
+            label: "Geolocate from IP Address",
             tooltip: "Set this position to your approximate location, 3 m above the ground.\nThe location comes from your internet (IP) address, through an online lookup service",
         },
         goTo: {

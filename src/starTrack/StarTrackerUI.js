@@ -1763,7 +1763,7 @@ function updateCameraLensMenu(lensInfo, size) {
         ro("principal", "Principal point", `Where the optical axis meets the image, in the pixels `
             + `the analysis ran in (${lens.refSize[0]}x${lens.refSize[1]}). On uncropped footage a `
             + `fitted one lands near the frame center.`);
-        ro("offset", "Axis off centre", "Distance of the optical axis from the frame center, in pixels "
+        ro("offset", "Axis off center", "Distance of the optical axis from the frame center, in pixels "
             + "and as a percentage of the frame size. It shows CROPPING: a centered digital zoom "
             + "leaves it near zero, and an UNEVEN crop moves it by what was cut off one side. "
             + "A hard crop can put the axis outside the frame, which is normal for cropped video.\n"

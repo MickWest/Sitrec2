@@ -16,12 +16,12 @@ Because the reflected light takes a different path, a ghost is usually out of fo
 (a disc or blob rather than a point), much fainter than the source, and placed in the
 frame according to the **direction of the bright source relative to the camera**,
 not according to the scene. In a rotationally symmetric optic, a ghost lies on the
-line through the source's image position and the optical centre. A ghost can appear
+line through the source's image position and the optical center. A ghost can appear
 when the source itself is outside the frame.
 
 The **Lens Ghost** tool draws a *simulated* sun (or moon) reflection — a "ghost"
 disc — as an overlay on a video, and can fit that model to a tracked disc in the
-footage. The overlay is labelled **"PREDICTED sun ghost"** so it is not mistaken for
+footage. The overlay is labeled **"PREDICTED sun ghost"** so it is not mistaken for
 anything in the video. On frames outside the track's span, the label adds
 "(extrapolated)". After a fit, the disc position comes from values fitted to the
 track, so the label does not mean an independent prediction.
@@ -80,7 +80,7 @@ In the model:
   secondary-mirror obstruction. It is off by default.
 - The ghost's position on the sensor is set by the **Sun direction relative to the
   camera**, not by the scene. As the camera slews, the ghost follows the Sun's
-  position relative to the boresight (the camera's centre axis), so it can move
+  position relative to the boresight (the camera's center axis), so it can move
   *against* the background.
 
 ---
@@ -88,13 +88,13 @@ In the model:
 ## 2. Coordinate conventions
 
 Everything is computed in **original-video pixels**. The projections in Sections 3
-and 4 use the frame centre.
+and 4 use the frame center.
 
 ```
    (0,0) ┌───────────────────────────┐
          │                           │      x → right   (increasing)
          │            • (cx,cy)      │      y → down    (increasing)
-         │         frame centre      │      cx = origW/2,  cy = origH/2
+         │         frame center      │      cx = origW/2,  cy = origH/2
          │                           │
          └───────────────────────────┘ (origW, origH)
 ```
@@ -178,7 +178,7 @@ and project **r** the same way to get the **reflected source image**:
 ```
 
 - At **θ = 0** (window perpendicular to the boresight) this is simply the **mirror of
-  the Sun image through the frame centre**.
+  the Sun image through the frame center**.
 - A tilted flat mirror obeys the **2θ rule**: tilting the window by θ rotates the
   reflected ray by **2θ**, so increasing the lean shifts the reflected image — and
   hence the ghost — mostly **vertically** (because the lean is in the vertical plane).
@@ -191,7 +191,7 @@ and project **r** the same way to get the **reflected source image**:
 
 The curved telescope mirror(s) give the reflection optical power (a magnification).
 The **principal point** is the point that the magnification scales about. It starts at
-the frame centre, and **Centre Offset X/Y** moves it. Only this step uses it:
+the frame center, and **Center Offset X/Y** moves it. Only this step uses it:
 
 ```
    pX = cx + centerOffsetX        (principal point)
@@ -201,7 +201,7 @@ the frame centre, and **Centre Offset X/Y** moves it. Only this step uses it:
    ghostY = pY − magY · (reflY − pY)
 ```
 
-![Building the ghost in pixel space: the Sun image is mirrored through the frame centre, shifted by the lean, then magnified to the far side of the principal point](docimages/lensghost-construction.png)
+![Building the ghost in pixel space: the Sun image is mirrored through the frame center, shifted by the lean, then magnified to the far side of the principal point](docimages/lensghost-construction.png)
 
 `magX` and `magY` are **anisotropic** — they can differ because a tilting flat window
 introduces direction-dependent (keystone-like) stretching.
@@ -276,11 +276,11 @@ of 0.01 around the best value. Frames where the source is behind the camera, or 
 
 `Window Lean` is a **manual** parameter: the fit uses its current value. If the
 track's Y position hardly changes (a standard deviation of 2 px or less), the Y fit is
-skipped, and Magnification Y and Centre Offset Y stay unchanged. The X axis is always
+skipped, and Magnification Y and Center Offset Y stay unchanged. The X axis is always
 fitted.
 
 The fit writes its results into the controls: **Roll Coupling**, **Magnification X/Y**
-and **Centre Offset X/Y**. It then turns on **Show Ghost** and **Show Geometry**. The
+and **Center Offset X/Y**. It then turns on **Show Ghost** and **Show Geometry**. The
 **Fit quality** row shows the X-axis R² and RMSE (in pixels), the number of frames
 and the frame range, and the Y-axis R² (or "X only"). It also flags:
 
@@ -292,7 +292,7 @@ and the frame range, and the Y-axis R² (or "X only"). It also flags:
 R² is the fraction of the variation in the track that the model reproduces; 1 is a
 perfect match. The frame count includes frames that the track fills by interpolation,
 so it is not a count of independent measurements. The fit sets five numbers: a
-magnification and a centre offset for each axis, and one Roll Coupling shared by both.
+magnification and a center offset for each axis, and one Roll Coupling shared by both.
 A smooth track can give a high R² with a magnification far outside the ±10 slider
 range.
 
@@ -313,30 +313,30 @@ the measured roll span × |Roll Coupling|, is under 0.5°); roll is applied twic
    Roll Coupling    rollScale × imageRot applied to the basis    — FITTED
    Magnification X  horizontal magnification (curved mirror)     — FITTED (starts at 3.5)
    Magnification Y  vertical magnification (anisotropy)          — FITTED (starts at 3.5)
-   Centre Offset X  principal-point offset, px                   — FITTED (n/a near magX=−1)
-   Centre Offset Y  principal-point offset, px                   — FITTED (n/a near magY=−1)
+   Center Offset X  principal-point offset, px                   — FITTED (n/a near magX=−1)
+   Center Offset Y  principal-point offset, px                   — FITTED (n/a near magY=−1)
    Disc Diameter    defocus disc size, px                        — ASSUMED (cosmetic)
    Obstruction      central donut ratio (secondary mirror)       — ASSUMED (cosmetic)
    Edge Softness    disc edge softness                           — cosmetic
-   Opacity, Colour  appearance                                   — cosmetic
+   Opacity, Color   appearance                                   — cosmetic
 ```
 
 The formulas and readouts use short names: `rollScale` is Roll Coupling (`k` in
-Section 7), and `magX`, `magY` and `centerOffsetX/Y` are Magnification X/Y and Centre
+Section 7), and `magX`, `magY` and `centerOffsetX/Y` are Magnification X/Y and Center
 Offset X/Y.
 
 The overlay also shows an on-video **HUD** (Sun az/el + off-axis angle, roll
 provenance, fit R²/RMSE, warnings), a two-segment **reflection line** (source → optical
-centre → ghost), and an off-frame **Sun arrow**. The optical centre is the principal
+center → ghost), and an off-frame **Sun arrow**. The optical center is the principal
 point of Section 5. The two segments lie in line only when Window Lean is 0, the
-magnifications are equal and the centre offset is 0.
+magnifications are equal and the center offset is 0.
 
-![The Lens Ghost overlay on a test clip: a white disc labelled PREDICTED sun ghost, a dashed reflection line, a blue cross, a yellow Sun arrow and the HUD box](docimages/lensghost-overlay.jpg)
+![The Lens Ghost overlay on a test clip: a white disc labeled PREDICTED sun ghost, a dashed reflection line, a blue cross, a yellow Sun arrow and the HUD box](docimages/lensghost-overlay.jpg)
 
 *The overlay before a fit, on a test clip of a fabric texture. The clip has no disc in
 it, and the magnifications were set by hand to put the ghost in the frame. The white
 disc is the ghost, with its **PREDICTED sun ghost** label. The blue cross is the optical
-centre. The thin dashed line is the reflection line: it comes from the Sun, which is
+center. The thin dashed line is the reflection line: it comes from the Sun, which is
 above the frame, to the cross, and then goes to the disc. The yellow arrow,
 **Sun (off-frame)**, points toward the Sun. The box at the top right is the HUD. Its
 last line is the fit result, here "(not fitted)". A warning adds one more line.*
@@ -346,16 +346,16 @@ The display toggles:
 ```
    Show Ghost       the checkbox on the folder title: draw the modelled ghost
                     (off by default; a successful Fit to Disc Track turns it on)
-   Show Geometry    the reflection line, the optical-centre marker, and the source
+   Show Geometry    the reflection line, the optical-center marker, and the source
                     marker or edge arrow (on by default)
    Mark Source      draw the source marker or edge arrow when Show Geometry is off
                     (off by default)
    Show HUD         the on-video readout block (on by default)
 ```
 
-Below **Fit to Disc Track** are four read-only rows: **Sun geometry**, **Roll source**,
+Below **Fit to Disc Track** are four read-only rows: **Source geometry**, **Roll source**,
 **Fit quality** and **⚠ Warning** — the same information as the HUD. The overlay, the
-other toggles, Sun geometry, Roll source and ⚠ Warning do nothing until Show Ghost is on.
+other toggles, Source geometry, Roll source and ⚠ Warning do nothing until Show Ghost is on.
 
 ---
 
@@ -396,7 +396,7 @@ folder title, and **Show → Measurements → Measurements in Main**.*
   explanation of the motion.
 - **magX ≈ −1 degeneracy.** At `magX = −1`, the formula in Section 5 gives
   `ghostX = reflX`, so the principal point has no effect and the fit cannot find it.
-  When Magnification X is within 0.05 of −1, the ⚠ Warning row says so, and the Centre
+  When Magnification X is within 0.05 of −1, the ⚠ Warning row says so, and the Center
   Offset X row is disabled and shows "(n/a: magX≈-1)". Its value then has no meaning.
 - **Disc size is not predicted.** The model predicts position only. It has no housing,
   baffles or ray path, and it does not predict brightness. The disc **diameter** vs

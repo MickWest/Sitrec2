@@ -655,7 +655,7 @@ export class CNodeTerrainUI extends CNode {
 
        // if (v.fullUI) {
 
-            this.latController = this.gui.add(this, "lat", -85, 85, .001).onChange(v => {
+            this.latController = this.gui.add(this, "lat", -85, 85, .001).name(t("terrainUI.lat.label")).onChange(v => {
                 this.flagForRecalculation()
                 this.startLoading = false;
             }).onFinishChange(v => {
@@ -663,7 +663,7 @@ export class CNodeTerrainUI extends CNode {
             }).tooltip(t("terrainUI.lat.tooltip"))
 
 
-            this.lonController = this.gui.add(this, "lon", -180, 180, .001).onChange(v => {
+            this.lonController = this.gui.add(this, "lon", -180, 180, .001).name(t("terrainUI.lon.label")).onChange(v => {
                 this.flagForRecalculation()
                 this.startLoading = false;
             }).onFinishChange(v => {
@@ -677,14 +677,14 @@ export class CNodeTerrainUI extends CNode {
                 this.startLoading = true;
             })
 
-            this.zoomController = this.gui.add(this, "zoom", 2, 15, 1).onChange(v => {
+            this.zoomController = this.gui.add(this, "zoom", 2, 15, 1).name(t("terrainUI.zoom.label")).onChange(v => {
                 this.flagForRecalculation()
                 this.startLoading = false;
             }).onFinishChange(v => {
                 this.startLoading = true
             }).tooltip(t("terrainUI.zoom.tooltip"))
 
-            this.nTilesController = this.gui.add(this, "nTiles", 1, 8, 1).onChange(v => {
+            this.nTilesController = this.gui.add(this, "nTiles", 1, 8, 1).name(t("terrainUI.nTiles.label")).onChange(v => {
                 this.flagForRecalculation()
                 this.startLoading = false;
             }).onFinishChange(v => {
@@ -720,7 +720,7 @@ export class CNodeTerrainUI extends CNode {
             })
         // }
 
-        this.elevationScaleController = this.terrainTweaks.add(this, "elevationScale", 0, 10, 0.1).onFinishChange(v => {
+        this.elevationScaleController = this.terrainTweaks.add(this, "elevationScale", 0, 10, 0.1).name(t("terrainUI.elevationScale.label")).onFinishChange(v => {
             this.flagForRecalculation()
             this.startLoading = true
         }).elastic(10, 100)
@@ -761,10 +761,12 @@ export class CNodeTerrainUI extends CNode {
         if (isLocal) {
 
             this.textureDetailController = this.terrainTweaks.add(this, "textureDetail", 0.1, 3, 0.1)
+                .name(t("terrainUI.textureDetail.label"))
                 .tooltip(t("terrainUI.textureDetail.tooltip"))
                 .onChange(() => this.requestSubdivisionPass())
 
             this.elevationDetailController = this.terrainTweaks.add(this, "elevationDetail", 0.1, 3, 0.1)
+                .name(t("terrainUI.elevationDetail.label"))
                 .tooltip(t("terrainUI.elevationDetail.tooltip"))
                 .onChange(() => this.requestSubdivisionPass())
 

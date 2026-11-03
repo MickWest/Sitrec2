@@ -140,12 +140,12 @@ switch that applies to it is on.
 | **Show Satellites (Global)** | On | Master switch for all satellites. It is also in the header menus of the 3D views, as **Satellites** |
 | **Starlink** | On | SpaceX Starlink satellites (names that start with STARLINK) |
 | **ISS** | On | The International Space Station |
-| **Celestrack's Brightest** | On | The satellites on CelesTrak's list of brightest satellites |
+| **CelesTrak's Brightest** | On | The satellites on CelesTrak's list of brightest satellites |
 | **Other Satellites** | Off | Every satellite that is not in one of the categories above |
 | **List** | (empty) | A comma-separated list of names or catalog (NORAD) numbers. Name matching ignores case and matches the start of the name, so `starlink-30` matches STARLINK-30xx. `SL-` is short for Starlink, so `SL-1234` matches STARLINK-1234 |
 
 **List adds satellites; it does not hide the others.** To see only the satellites on the list,
-turn off **Starlink**, **ISS**, **Celestrack's Brightest** and **Other Satellites**.
+turn off **Starlink**, **ISS**, **CelesTrak's Brightest** and **Other Satellites**.
 
 Satellites below 100 km or above 40,000 km altitude are never drawn.
 
@@ -419,7 +419,7 @@ the Moon, for the current time and look camera location, in the style of a print
 | Control | Default | What it does |
 |---|---|---|
 | **Show Star Chart** (title checkbox) | Off | Shows or hides the chart |
-| **Color Scheme** | White | **Lavendar**, **Black**, **Night Vision** or **White** |
+| **Color Scheme** | White | **Lavender**, **Black**, **Night Vision** or **White** |
 | **Satellite Track** | On | Draws the path of **Satellite to Track** across the chart, with times |
 
 Like a paper star chart, it shows the sky as seen looking up, so east is on the **left**.

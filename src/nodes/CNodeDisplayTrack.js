@@ -248,7 +248,7 @@ export class CNodeDisplayTrack extends CNode3DGroup {
                 })
                     .name(t("displayTrack.colorMode.label", {defaultValue: "Color Mode"}))
                     .tooltip(t("displayTrack.colorMode.tooltip", {
-                        defaultValue: "Colour the track by a gradient over the sonde's measured data, or Flat to use the Line Color."
+                        defaultValue: "Color the track by a gradient over the sonde's measured data, or Flat to use the Line Color."
                     }))
                     .onChange(() => {
                         const apply = (node, color) => {

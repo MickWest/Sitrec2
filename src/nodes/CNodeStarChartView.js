@@ -26,7 +26,7 @@ import * as Astronomy from "astronomy-engine";
 // Named color schemes for the chart. "Heavens-Above" mimics the pale blue
 // surround / white disk / black stars of heavens-above.com finder charts.
 const starChartSchemes = {
-    "Lavendar": {
+    "Lavender": {
         outer: "#D3D9F0", disk: "#FFFFFF", edge: "#000050",
         tick: "#000050", azLabel: "#000050", cardinal: "#8890AC",
         star: "#000000", constLine: "#BBBBBB", constName: "#999999",
@@ -58,6 +58,9 @@ const starChartSchemes = {
 
 const defaultScheme = "White";
 
+// Scheme names that were renamed. Saved sitches keep the old name.
+const renamedSchemes = {"Lavendar": "Lavender"};
+
 // Naked-eye bodies, with dot radii (px at a 400px chart radius) roughly
 // following apparent brightness. Sun/Moon drawn as disks, not magnitudes.
 const chartBodies = ["Mercury", "Venus", "Mars", "Jupiter", "Saturn", "Sun", "Moon"];
@@ -70,7 +73,7 @@ export class CNodeStarChartView extends CNodeTabbedCanvasView {
 
         this.nightSkyNode = v.nightSkyNode;
 
-        this.colorScheme = v.colorScheme ?? defaultScheme;
+        this.colorScheme = renamedSchemes[v.colorScheme] ?? v.colorScheme ?? defaultScheme;
         this.showSatelliteTrack = v.showSatelliteTrack ?? true;
         this.magLimit = v.magLimit ?? 5.5;
         this.addSimpleSerial("colorScheme");
@@ -107,13 +110,18 @@ export class CNodeStarChartView extends CNodeTabbedCanvasView {
         this.guiFolder.add(this, "colorScheme", Object.keys(starChartSchemes)).listen().name("Color Scheme")
             .onChange(() => setRenderOne(true))
             .tooltip("The colors of the star chart.\n"
-                + "Lavendar: pale blue surround, white sky disk, black stars.\n"
+                + "Lavender: pale blue surround, white sky disk, black stars.\n"
                 + "Black: white stars on black.\n"
                 + "Night Vision: red on black.\n"
                 + "White: black stars on white.");
         this.guiFolder.add(this, "showSatelliteTrack").listen().name("Satellite Track")
             .onChange(() => setRenderOne(true))
             .tooltip("Plot the track of the 'Satellite to Track' across the chart, with times");
+    }
+
+    modDeserialize(v) {
+        super.modDeserialize(v);
+        this.colorScheme = renamedSchemes[this.colorScheme] ?? this.colorScheme;
     }
 
     dispose() {
