@@ -361,6 +361,60 @@ describe("phase 0 fixes", () => {
     });
 });
 
+// A partial switch (asFolderToggle({fadeOnlyMarked: true})), as a track's "Show Track Line":
+// off blocks only the rows marked fadeWhenFolderOff, and every other row stays live.
+describe("partial switch", () => {
+    const isBlocked = el => el.hasAttribute("inert") && el.classList.contains("lil-folder-faded");
+
+    function makeTrackFolder(state) {
+        const folder = makeGUI().addFolder("S1 LS7 AF00371");
+        const name = folder.add(state, "name");
+        const toggle = folder.add(state, "visible").asFolderToggle({fadeOnlyMarked: true});
+        const width = folder.add(state, "width", 0, 10, 1).fadeWhenFolderOff();
+        const sub = folder.addFolder("Filter Bad Data");
+        const filter = sub.add(state, "filter");
+        const look = sub.add(state, "look").fadeWhenFolderOff();
+        return {folder, toggle, name, width, sub, filter, look};
+    }
+
+    test("off blocks only the marked rows, also in a sub-folder; on restores them", () => {
+        const state = {visible: true, name: "a", width: 1, filter: false, look: false};
+        const {toggle, name, width, sub, filter, look} = makeTrackFolder(state);
+
+        toggle.setValue(false);
+        expect(isBlocked(width.domElement)).toBe(true);
+        expect(isBlocked(look.domElement)).toBe(true);
+        expect(name.domElement.hasAttribute("inert")).toBe(false);
+        expect(filter.domElement.hasAttribute("inert")).toBe(false);
+        expect(sub.domElement.hasAttribute("inert")).toBe(false);
+
+        toggle.setValue(true);
+        expect(width.domElement.hasAttribute("inert")).toBe(false);
+        expect(look.domElement.classList.contains("lil-folder-faded")).toBe(false);
+    });
+
+    test("a row marked after the folder is off is blocked too", () => {
+        const state = {visible: false, name: "a", width: 1, filter: false, look: false, step: 1};
+        const {folder} = makeTrackFolder(state);
+        const step = folder.add(state, "step", 1, 10, 1);
+        expect(step.domElement.hasAttribute("inert")).toBe(false);
+        step.fadeWhenFolderOff();
+        expect(isBlocked(step.domElement)).toBe(true);
+    });
+
+    test("a whole-folder copy is a partial switch with the same marks", () => {
+        const state = {visible: false, name: "a", width: 1, filter: false, look: false};
+        const {folder} = makeTrackFolder(state);
+        const popup = makeGUI("popup");
+        popup.mirrorFolderFrom(folder);
+        const nameTwin = popup.controllers.find(c => c.property === "name");
+        const widthTwin = popup.controllers.find(c => c.property === "width");
+        expect(boxOf(popup)).not.toBeNull();
+        expect(nameTwin.domElement.hasAttribute("inert")).toBe(false);
+        expect(isBlocked(widthTwin.domElement)).toBe(true);
+    });
+});
+
 // A list checkbox (asListCheckbox) only changes the look: label on the left, box at the right end,
 // in the column of the title checkboxes. It must stay an ordinary boolean row, so a click on the
 // box, drag-to-set (which looks for `.controller.boolean`) and an off title checkbox all work.

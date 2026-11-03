@@ -37,6 +37,12 @@
 // reference-counted, because a nested toggle folder and its parent can mark the same row.
 // Rows added while the folder is off are marked too (a MutationObserver on the rows).
 //
+// PARTIAL SWITCH. `asFolderToggle({fadeOnlyMarked: true})` is for a folder whose switch covers
+// only some of its rows: when off, ONLY the rows marked with `fadeWhenFolderOff()` are faded and
+// made inert, and every other row stays live. A track's folder is one: "Show Track Line" hides
+// the line, but the track's name, data, filter and actions still work on the track the object
+// rides, and its contrail is drawn whether the line is or not.
+//
 // A root menu's title is a tab sized to its text (the menu bar sets its width), so there the
 // checkbox goes just after the end of the TAB, not at the edge of the panel, and follows the
 // tab when the title changes width. A torn-out folder is drawn the same way.
@@ -48,6 +54,7 @@ import {Controller} from "./js/lil-gui.esm";
 
 const STYLE_ID = "lil-folder-toggle-style";
 const OFF_COUNT = "folderOffCount";      // dataset key: how many off folders mark this row
+const FADE_CLASS = "lil-fade-when-off";  // a row that a partial switch fades (fadeWhenFolderOff)
 
 function injectStyles() {
     if (document.getElementById(STYLE_ID)) return;
@@ -114,7 +121,7 @@ function markRows(elements, marked) {
 
 // --- the promotion ----------------------------------------------------------------------------
 
-Controller.prototype.asFolderToggle = function () {
+Controller.prototype.asFolderToggle = function ({fadeOnlyMarked = false} = {}) {
     const folder = this.parent;
     if (!folder || !folder.domElement) return this;
     if (folder._folderToggle === this) return this;
@@ -123,6 +130,8 @@ Controller.prototype.asFolderToggle = function () {
 
     injectStyles();
     this.listen();
+    // Kept so that a whole-folder copy (MenuMirror) promotes its twin the same way.
+    this._folderToggleOptions = {fadeOnlyMarked};
 
     const box = document.createElement("input");
     box.type = "checkbox";
@@ -152,6 +161,12 @@ Controller.prototype.asFolderToggle = function () {
         const detached = folder.folders
             .filter(f => f._detachedContainer && !folder.$children.contains(f.domElement))
             .map(f => f.domElement);
+        if (fadeOnlyMarked) {
+            for (const root of [folder.$children, ...detached]) {
+                for (const el of root.querySelectorAll("." + FADE_CLASS)) mark(el, marked);
+            }
+            return;
+        }
         markRows([...folder.$children.children, ...detached], marked);
     };
 
@@ -265,6 +280,15 @@ Controller.prototype.keepLiveWhenFolderOff = function () {
     this._keepLiveWhenFolderOff = true;
     this.domElement.classList.add("lil-keep-live");
     // Re-mark every toggled folder up the chain, since this row may sit in a nested sub-folder.
+    for (let gui = this.parent; gui; gui = gui.parent) gui._folderToggleResync?.();
+    return this;
+};
+
+// Mark a row that a PARTIAL switch (asFolderToggle({fadeOnlyMarked: true})) fades and blocks
+// while it is off. A title checkbox without that option ignores the mark.
+Controller.prototype.fadeWhenFolderOff = function () {
+    this._fadeWhenFolderOff = true;
+    this.domElement.classList.add(FADE_CLASS);
     for (let gui = this.parent; gui; gui = gui.parent) gui._folderToggleResync?.();
     return this;
 };

@@ -3483,7 +3483,7 @@ const en = {
         },
         visible: {
             label: "Show Track Line",
-            tooltip: "Show or hide this track",
+            tooltip: "Show or hide the line of this track, and its wall. The object on the track and the contrail do not change.\nOff greys the rows that change only the line",
         },
         extendToGround: {
             label: "Extend To Ground",

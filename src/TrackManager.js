@@ -3027,7 +3027,7 @@ class CTrackManager extends CManager {
             .tooltip(t("misc.showInLookView.tooltip")).listen().onChange((value) => {
             displayTrack.setLayerBit(LAYER.LOOK, value);
             setRenderOne(true);
-        });
+        }).fadeWhenFolderOff();
 
         // Write the control points out as a droppable .spline.json. Lives on the
         // unsmoothed spline node (that's where the control points are), but is
@@ -3410,7 +3410,7 @@ class CTrackManager extends CManager {
             .tooltip(t("misc.showInLookView.tooltip")).listen().onChange((value) => {
             displayTrack.setLayerBit(LAYER.LOOK, value);
             setRenderOne(true);
-        });
+        }).fadeWhenFolderOff();
 
         const dummy = {
             deleteTrack: async () => {

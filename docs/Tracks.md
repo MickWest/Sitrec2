@@ -134,7 +134,7 @@ In a sitch that is already set up, these filters read only the data inside the s
 
 Each loaded track gets its own folder in the **Contents** menu. You can:
 
-- **Show/hide** individual tracks with the **Show Track Line** checkbox
+- **Show/hide** individual tracks with the **Show Track Line** title checkbox, at the right end of the folder title. Drag over several title checkboxes to set them all
 - **Recolor** tracks using the Line Color picker (the folder label color updates to match)
 - **Delete** a track with the **Delete Track** button (with confirmation). This removes the track from the sitch; the file you loaded does not change
 - **Highlight** a track by hovering over its folder label (the track line turns white temporarily)
@@ -162,7 +162,7 @@ Every track has its own name. A track you make in Sitrec is named **Track 1**, *
 
 | Control | Description |
 |---------|-------------|
-| **Show Track Line** | Show or hide this track |
+| **Show Track Line** | The title checkbox of the track's folder. Show or hide the track line and its wall. The object on the track and the contrail do not change. When it is off, the rows that change only the line are grey: **Line Color**, **Color Mode**, **Line Width**, **Poly Color**, **Extend To Ground**, **Display Step** and **Show in look view**. The other rows still work |
 | **Line Color** | Color picker for the track line |
 | **Color Mode** | Radiosonde tracks only: color the track by **Temperature**, **Altitude** or **Pressure**, or **Flat (Line Color)** |
 | **Line Width** | Width of the track line in pixels (0.5-10) |

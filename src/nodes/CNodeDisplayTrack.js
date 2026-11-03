@@ -183,7 +183,9 @@ export class CNodeDisplayTrack extends CNode3DGroup {
                 }
             });
 
-            // toggle for visibility with optional linked data track
+            // toggle for visibility with optional linked data track. It is the folder's title
+            // checkbox. A partial switch: off fades only the rows that draw the line (marked
+            // fadeWhenFolderOff), as the track's data and actions still work without its line.
             this.guiFolder.add(this, "visible").name(t("displayTrack.visible.label")).tooltip(t("displayTrack.visible.tooltip")).listen().onChange(() => {
                 // The data track is the same track drawn from the unsmoothed data, so this one
                 // checkbox is its checkbox too.
@@ -192,7 +194,7 @@ export class CNodeDisplayTrack extends CNode3DGroup {
                 }
                 // Not show() — what is DRAWN is this flag and the global gate together.
                 this.applyVisibility()
-            })
+            }).asFolderToggle({fadeOnlyMarked: true})
 
             // // toggle for visibility of the mesh (vertical semi-transparent polygons
             this.guiFolder.add(this, "extendToGround").name(t("displayTrack.extendToGround.label")).tooltip(t("displayTrack.extendToGround.tooltip")).listen().onChange(() => {
@@ -204,12 +206,12 @@ export class CNodeDisplayTrack extends CNode3DGroup {
                 }
                 // any track can have walls.
                 this.recalculate()
-            })
+            }).fadeWhenFolderOff()
 
             this.guiFolder.add(this, "trackDisplayStep", 1, 100, 1).name(t("displayTrack.displayStep.label")).tooltip(t("displayTrack.displayStep.tooltip")).listen().onChange(() => {
                 this.recalculate()
                 setRenderOne(true)
-            })
+            }).fadeWhenFolderOff()
 
             // color picker for the line color, with optional linked data track
             this.guiLineColor = this.guiFolder.addColor(this, "lineColor").name(t("displayTrack.lineColor.label")).tooltip(t("displayTrack.lineColor.tooltip")).onChange(() => {
@@ -344,6 +346,12 @@ export class CNodeDisplayTrack extends CNode3DGroup {
                 // After the data track: limited to In/Out, this track's wall uses its color.
                 this.recalculate()
             })
+
+            // More rows that draw the line or its wall, faded while the line is off. The
+            // contrail is drawn without the line, so its rows stay live.
+            for (const row of [this.guiLineColor, this.guiColorMode, this.guiLineWidth, this.guiPolyColor]) {
+                row?.fadeWhenFolderOff();
+            }
 
 
             const track = this.in.dataTrack;
@@ -489,7 +497,8 @@ export class CNodeDisplayTrack extends CNode3DGroup {
         this.showInLook ??= false;
         this.lookViewController = this.guiFolder.add(this, "showInLook").name(t("misc.showInLookView.label"))
             .tooltip(t("misc.showInLookView.tooltip"))
-            .listen().onChange(() => this.applyLookLayer());
+            .listen().onChange(() => this.applyLookLayer())
+            .fadeWhenFolderOff();
         this.addSimpleSerial("showInLook");
     }
 

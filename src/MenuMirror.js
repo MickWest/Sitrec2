@@ -127,6 +127,7 @@ function buildTwin(source, targetGui, opts = {}) {
     // A row that stays usable while its folder's title checkbox is off (FolderToggle.js) must
     // stay usable in every copy of that folder too.
     if (source._keepLiveWhenFolderOff && typeof twin.keepLiveWhenFolderOff === "function") twin.keepLiveWhenFolderOff();
+    if (source._fadeWhenFolderOff && typeof twin.fadeWhenFolderOff === "function") twin.fadeWhenFolderOff();
     twin.show(!source._hidden);
 
     // Unit metadata is COPIED rather than re-applied through setUnitType(): the name already
@@ -454,7 +455,7 @@ GUI.prototype.mirrorFolderFrom = function (sourceFolder, opts = {}) {
             const twin = child.mirrorTo(this, opts);
             // A folder's title checkbox (FolderToggle.js) is a view of one of its controls, so
             // the copy promotes that control's twin the same way.
-            if (twin && child === sourceFolder._folderToggle) twin.asFolderToggle();
+            if (twin && child === sourceFolder._folderToggle) twin.asFolderToggle(child._folderToggleOptions);
         }
     }
     return this;
