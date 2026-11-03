@@ -37,7 +37,7 @@ on:
 env:
   # GPT-5.6 Sol needs Copilot Pro+ or above; Terra and Luna are available on Copilot Pro.
   COPILOT_MODEL_NAME: gpt-5.6-terra
-  MAX_AI_CREDITS: '30'
+  MAX_AI_CREDITS: '100'
 
 defaults:
   run:
