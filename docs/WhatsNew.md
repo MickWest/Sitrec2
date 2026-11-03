@@ -9,6 +9,13 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.185.1 (2026-11-03)
+
+### Improvements
+- **Track names from a TS file** (Contents): a track from a KLV stream in a .ts file is now named by its stream number, its tag 65 (the "local set" number) and its tail number, for example *S1 LS7 AF00371*, or *S0 LS5 Platform* when the stream has no tail number. A track derived from the stream has its kind in place of the tail number, for example *S1 LS7 Frame Center* or *S1 LS7 Target Location*. The camera and target track lists, the track's object and its 3D label use the same name. Only a new import gets these names: a saved sitch keeps the names it was saved with.
+- **Timing Analysis report** (Time → *Timing Analysis...*): the *Tracks* part is now always shown. It lists the name of each track with its stream, and explains how Sitrec made the name. With *Show Filename and Names* cleared, tail numbers, file names and names that you gave change to *hidden*. In the report, tracks derived from a stream are now called *Frame Center* and *Target Location*, as in their names.
+- **Show Track Line** (Contents, in each track's folder): this is now the title checkbox at the right end of the folder title, so you can drag across the title checkboxes of several tracks to show or hide them together. When it is off, only the rows that change the line are faded and cannot be used: *Line Color*, *Color Mode*, *Line Width*, *Poly Color*, *Extend To Ground*, *Display Step* and *Show in look view*. The other rows, such as *Name*, the contrail rows and *Delete Track*, still work.
+
 ## Version 2.185.0 (2026-11-02)
 
 ### New Features
