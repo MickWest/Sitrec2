@@ -97,6 +97,7 @@ A **traverse** is a 3D path for an object, found by combining the camera's lines
 - [How the Balloon Algorithms Work](docs/BalloonAlgorithms.md) — test whether an object could be a balloon, or another object that drifts with the wind: how to read the result, then the drift models, wind treatments and numerical search behind it, with a worked example.
 - [Traverse Analysis and the Verdict](docs/TraverseAnalysis.md) — what **Traverse → Analyze Traverse Methods...** produces: the verdict, the gallery, the ranking and the report.
 - [LOS Error Analysis](docs/LOSErrorAnalysis.md) — measure a recorded line of sight against a known target, fit a model of the error, and generate new error sequences from it.
+- [Doppler Geolocation](docs/DopplerGeolocation.md) — admin preview for audio spectrograms and aircraft Doppler curve matching; reference validation remains in progress.
 
 Benchmarks (BOT stands for Bearings-Only Traversal). To test the analysis, use BOTBench. These pages describe the tool and how to run a test; they report no results:
 

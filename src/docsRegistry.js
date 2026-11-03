@@ -99,6 +99,12 @@ export const DOC_SECTIONS = [
 
 export const helpDocs = [
 
+    {
+        file: "docs/DopplerGeolocation", labelKey: "menus.help.documentation.dopplerGeolocation",
+        role: "reference",
+        chatDesc: "Admin-only Doppler geolocation preview: local audio spectrograms, tracing aircraft tones, importing flight tracks or daily archives, shared-clock curve fitting, terrain, silence assumptions, saved analyses, and validation limits. The tool is available only to administrators and is still undergoing reference validation.",
+    },
+
     // ── Start here ──────────────────────────────────────────────────────────
     {
         file: "docs/CustomSitchTool", labelKey: "menus.help.gettingStarted",

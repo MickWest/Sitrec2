@@ -578,6 +578,7 @@ export const serializeMethods = {
             "terrestrialRefractionOverrideK",
             "terrestrialRefractionK",
             "raytracedRefraction",
+            "dopplerGeolocation",
         ]
 
         // A key added here must also go in RESTORABLE_GLOBALS, or loading ignores it.

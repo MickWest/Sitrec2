@@ -1,0 +1,16 @@
+.doppler-tool {position:fixed;z-index:1200;left:6vw;top:55px;width:min(1060px,92vw);height:min(850px,90vh);display:flex;flex-direction:column;resize:both;overflow:hidden;min-width:500px;min-height:350px;background:#131d2d;color:#d6dfed;border:1px solid #4e647f;border-radius:10px;box-shadow:0 15px 65px #0009;font:13px/1.45 system-ui,sans-serif;}
+.doppler-tool[hidden],.doppler-tool [hidden] {display:none!important;}
+.doppler-tool header,.doppler-tool footer,.doppler-tool nav,.dp-toolbar {display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:10px 14px;}
+.doppler-tool header {border-bottom:1px solid #35435a;touch-action:none;cursor:move;}
+.doppler-tool h2 {font-size:18px;margin:0;}.doppler-tool header button {margin-left:auto;}
+.dp-badge {font-size:11px;color:#ecc68b;background:#463727;padding:2px 8px;border-radius:10px;}
+.doppler-tool button,.doppler-tool input,.doppler-tool select,.doppler-tool textarea {font:inherit;color:inherit;background:#1d2b40;border:1px solid #485c76;border-radius:4px;padding:5px 9px;box-sizing:border-box;}
+.doppler-tool button {cursor:pointer;}.doppler-tool button:hover,.doppler-tool button[aria-pressed=true] {background:#324e70;}.doppler-tool button:disabled {opacity:.45;cursor:default;}
+.doppler-tool button:focus-visible,.doppler-tool input:focus-visible,.doppler-tool select:focus-visible,.doppler-tool tr:focus-visible {outline:2px solid #5cf4eb;}
+.doppler-tool nav {padding-top:0;border-bottom:1px solid #35435a;}.dp-body {flex:1;overflow:auto;padding:0 16px 16px;min-height:0;}
+.dp-fields {display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px 24px;margin:15px 0;}.dp-field {display:flex;justify-content:space-between;align-items:center;gap:12px;margin:5px 0;}.dp-field input,.dp-field select {width:180px;min-width:90px;}.dp-field input[type=text] {width:235px;}
+.dp-hint {color:#a9bbd1;max-width:100ch;}.doppler-tool details {border-top:1px solid #35435a;padding:10px 0;}.doppler-tool summary {cursor:pointer;}.doppler-tool textarea {width:100%;}
+.dp-flight-info {white-space:pre-line;overflow-wrap:anywhere;border-left:3px solid #ff6363;padding:8px 12px;background:#1d2b40;line-height:1.7;}
+.doppler-tool footer {border-top:1px solid #35435a;}.dp-status {flex:1;min-width:200px;}.dp-spectrum,.dp-map {display:block;width:100%;height:auto;max-height:360px;border:1px solid #35435a;}.dp-spectrum {touch-action:none;cursor:crosshair;}
+.dp-results {overflow:auto;max-height:300px;margin-top:12px;}.dp-results table {width:100%;border-collapse:collapse;font:12px ui-monospace,monospace;white-space:nowrap;}.dp-results td,.dp-results th {padding:8px;text-align:left;border-bottom:1px solid #35435a;}.dp-results tbody tr {cursor:pointer;}.dp-results tr.selected,.dp-results tbody tr:hover {background:#324e70;}
+@media(max-width:750px) {.dp-fields {grid-template-columns:1fr;}.doppler-tool {left:2vw;min-width:320px;}}

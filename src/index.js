@@ -10,6 +10,7 @@
 import {ColorManagement, Group, REVISION, Scene, WebGLRenderer,} from "three";
 import {disposeVideoFormatLayer, setupVideoFormatEffectsMenu} from "./videoFilters/VideoFormatLayer";
 import {disposeRefractionTool, setupRefractionToolMenu} from "./refraction/RefractionLoader";
+import {addDopplerGeolocationMenu, disposeDopplerGeolocation} from "./doppler/DopplerLoader";
 import "./js/uPlot/uPlot.css"
 import {makeDraggable} from "./DragResizeUtils";
 import {
@@ -2362,6 +2363,7 @@ async function initializeOnce() {
         .tooltip(t("menus.main.extraTools.tooltip"))
         .close()
         .perm();
+    addDopplerGeolocationMenu(extraToolsFolder);
     for (const tool of EXTRA_TOOLS) {
         const base = tool.perBuild ? SITREC_APP : SITREC_SHARE_APP;
         extraToolsFolder.addExternalLink(t(`menus.main.extraTools.tools.${tool.key}.label`), base + "tools/" + tool.path).perm()
@@ -3466,6 +3468,7 @@ function disposeEverything() {
     Globals.disposing = true;
     disposeVideoFormatLayer();
     disposeRefractionTool();
+    disposeDopplerGeolocation();
 
     // cancel any requested animation frames
     clearScheduledAnimation();
