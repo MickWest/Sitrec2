@@ -63,6 +63,7 @@ import {
 import {CustomManager, FileManager, GlobalDateTimeNode, Globals, guiMenus, markShadowCastersDirty, markSitchDirty, NodeMan, setRenderOne, Sit, TrackManager} from "../Globals";
 import {isUserMadeObjectId} from "../UserObjects";
 import {addNameControl, notifyDisplayNameChanged} from "../DisplayName";
+import {EventManager} from "../CEventManager";
 import {assert} from "../assert";
 import {
     DebugArrowAB,
@@ -472,6 +473,11 @@ export class CNode3DObject extends CNode3DGroup {
         // CNode super sets this.visible from v.visible but never propagates
         // it to this.group.visible.
         this.show(this.visible);
+
+        // Lists of objects outside the Objects menu (Physics > Wind > Show
+        // Wind at) rebuild on this. dispose() sends it too; a rename sends
+        // displayNameChanged instead.
+        EventManager.dispatchEvent("objectsChanged", {id: this.id});
     }
 
 
@@ -2683,6 +2689,7 @@ ${trackPlacemark}    </Document>
         this.gui.destroy();
         this.destroyObject();
         super.dispose();
+        EventManager.dispatchEvent("objectsChanged", {id: this.id});
     }
 
     installModelAsset(modelAsset, label, applyFilename = true) {

@@ -13,6 +13,9 @@ Output JSON format (earth.nullschool.net compatible):
     { "source": "GFS", "refTime": "...", "nx": 360, "ny": 181,
       "lon0": 0, "lat0": 90, "dlon": 1, "dlat": -1,
       "level": "10m", "u": [...], "v": [...] }
+A pressure level also has "hgt": [...], the level's geopotential height in metres
+at each grid point (GFS HGT). Sitrec puts the level at that height, not at its
+standard-atmosphere height. Files written before 2026-11-03 have no "hgt".
 """
 
 import argparse
@@ -58,10 +61,12 @@ def build_nomads_url(date, hour, level, resolution="1p00"):
     else:
         lev_param = f"lev_{level}_mb=on"
 
+    # A pressure level also gets its geopotential height (HGT).
+    hgt_param = "" if level == "surface" else "&var_HGT=on"
     params = (
         f"file=gfs.t{hour:02d}z.pgrb2.{resolution}.f000"
         f"&{lev_param}"
-        f"&var_UGRD=on&var_VGRD=on"
+        f"&var_UGRD=on&var_VGRD=on{hgt_param}"
         f"&dir=%2Fgfs.{date}%2F{hour:02d}%2Fatmos"
     )
     return f"{base}?{params}"
@@ -114,7 +119,9 @@ def download_from_aws_idx(date, hour, level, resolution="1p00"):
         print(f"Failed to fetch index: {e}")
         return None
 
-    # Parse index to find byte ranges for UGRD and VGRD at our level
+    # Parse index to find byte ranges for UGRD and VGRD at our level, and HGT
+    # for a pressure level
+    wanted = ("UGRD", "VGRD") if level == "surface" else ("UGRD", "VGRD", "HGT")
     lines = idx_text.strip().split("\n")
     ranges = []  # (start, end, var_name)
 
@@ -125,7 +132,7 @@ def download_from_aws_idx(date, hour, level, resolution="1p00"):
         var_name = parts[3]
         var_level = parts[4]
 
-        if var_name in ("UGRD", "VGRD") and var_level == level_pattern:
+        if var_name in wanted and var_level == level_pattern:
             start_byte = int(parts[1])
             # End byte is the start of the next record minus 1
             if i + 1 < len(lines):
@@ -166,11 +173,13 @@ def download_from_aws_idx(date, hour, level, resolution="1p00"):
 
 
 def parse_grib2(filepath, target_level="surface"):
-    """Parse GRIB2 file and extract U/V wind grids using eccodes."""
+    """Parse GRIB2 file and extract U/V wind grids (and the geopotential height
+    of a pressure level, if the file has it) using eccodes."""
     import eccodes
 
     u_data = None
     v_data = None
+    hgt_data = None
     grid_info = {}
 
     with open(filepath, "rb") as f:
@@ -218,11 +227,14 @@ def parse_grib2(filepath, target_level="surface"):
                 elif short_name == "10v" or short_name == "v":
                     v_data = values
                     print(f"Got V wind: {nx}x{ny}, level={level} {level_type}, range [{values.min():.1f}, {values.max():.1f}] m/s")
+                elif short_name == "gh":
+                    hgt_data = values
+                    print(f"Got height: {nx}x{ny}, level={level} {level_type}, range [{values.min():.0f}, {values.max():.0f}] m")
 
             finally:
                 eccodes.codes_release(msgid)
 
-    return u_data, v_data, grid_info
+    return u_data, v_data, hgt_data, grid_info
 
 
 def fetch_pressure_level_grib(date, hour, level_hpa, output_dir="/tmp"):
@@ -284,7 +296,7 @@ def main():
         sys.exit(1)
 
     # Parse GRIB2
-    u_data, v_data, grid_info = parse_grib2(grib_path, args.level)
+    u_data, v_data, hgt_data, grid_info = parse_grib2(grib_path, args.level)
 
     if u_data is None or v_data is None:
         print("Failed to extract U/V wind components")
@@ -302,6 +314,10 @@ def main():
         "u": [round(float(x), 2) for x in u_data],
         "v": [round(float(x), 2) for x in v_data],
     }
+    # The level's height at each point, to the metre (a pressure level only;
+    # without it Sitrec uses the standard-atmosphere height).
+    if hgt_data is not None and len(hgt_data) == len(u_data):
+        result["hgt"] = [int(round(float(x))) for x in hgt_data]
 
     out_file = os.path.join(args.output, f"wind_{args.date}_{cycle_hour:02d}z_{level_str}.json")
     with open(out_file, "w") as f:

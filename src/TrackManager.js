@@ -690,6 +690,9 @@ class CTrackManager extends CManager {
             // the pipeline skips the MSL->HAE geoid add. Default false keeps MSL sources as-is.
             altitudeIsHAE: (trackFile instanceof CTrackFile) && trackFile.isAltitudeHAE(trackIndex),
             fireballObservedInterval: !!trackFile.fireball,
+            // A sounding's path is a reconstructed ascent: before launch and
+            // after the top level there is no balloon to extrapolate to.
+            holdDataEnds: !!trackFile.isSondeTrack?.(),
         });
 
         return true;
@@ -1225,6 +1228,18 @@ class CTrackManager extends CManager {
                     if (isSondeTrack && loadedTrackFileForKind.getSondeData(0)?.source === "xml") {
                         importedCustomWindProfileTrack = trackDataNode.id;
                     }
+                    // A sounding with no position at each level (an XML profile,
+                    // a sounding without GPS winds) is drawn on a path that Sitrec
+                    // makes: a 5 m/s ascent from the launch, moved by the file's own
+                    // winds (SondeTrajectory.reconstructTrajectory). The track's
+                    // folder says so (decision D3: keep the path, with a label).
+                    const sondeForPath = isSondeTrack ? loadedTrackFileForKind.getSondeData(trackIndex) : null;
+                    if (sondeForPath && !sondeForPath.hasGPS) {
+                        trackOb.guiFolder.add({path: t("trackManager.reconstructedAscent.label")}, "path")
+                            .name(t("trackManager.reconstructedAscent.name"))
+                            .tooltip(t("trackManager.reconstructedAscent.tooltip"))
+                            .disable();
+                    }
 
                     // The track's DECLARED role, if its source file states one
                     // (STANAG, MISB and BOT do; a plain KML or CSV does not).
@@ -1634,6 +1649,9 @@ class CTrackManager extends CManager {
                 // Every sounding: its Track entry in the Wind Source menu reads
                 // the profile at the target's altitude, not the row for the time.
                 windByAltitude: true,
+                // A profile file with no time took the sitch start; the profile
+                // then keeps to the sitch start (CNodeAtmosphericProfile.update).
+                timeFromFile: sonde0?.timeFromFile !== false,
             });
         }
     }

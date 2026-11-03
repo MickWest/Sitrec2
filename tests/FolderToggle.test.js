@@ -360,3 +360,35 @@ describe("phase 0 fixes", () => {
         expect(isBlocked(xTwin.domElement)).toBe(true);
     });
 });
+
+// A list checkbox (asListCheckbox) only changes the look: label on the left, box at the right end,
+// in the column of the title checkboxes. It must stay an ordinary boolean row, so a click on the
+// box, drag-to-set (which looks for `.controller.boolean`) and an off title checkbox all work.
+describe("list checkbox", () => {
+    const isBlocked = el => el.hasAttribute("inert") && el.classList.contains("lil-folder-faded");
+
+    test("adds the class and its CSS, and keeps a working boolean row", () => {
+        const state = {on: false};
+        const folder = makeGUI().addFolder("Show Wind at");
+        const row = folder.add(state, "on").name("Camera").asListCheckbox();
+        expect(row.domElement.classList.contains("lil-list-checkbox")).toBe(true);
+        expect(row.domElement.classList.contains("boolean")).toBe(true);
+        expect(document.getElementById("lil-folder-toggle-style").textContent)
+            .toContain(".lil-list-checkbox > .widget");
+        const box = row.domElement.querySelector('input[type="checkbox"]');
+        box.checked = true;
+        box.dispatchEvent(new Event("change", {bubbles: true}));
+        expect(state.on).toBe(true);
+    });
+
+    test("is greyed and blocked when its folder's title checkbox is off", () => {
+        const state = {master: true, camera: true};
+        const folder = makeGUI().addFolder("Show Wind at");
+        folder.add(state, "master").asFolderToggle();
+        const row = folder.add(state, "camera").name("Camera").asListCheckbox();
+        expect(isBlocked(row.domElement)).toBe(false);
+        boxOf(folder).checked = false;
+        boxOf(folder).dispatchEvent(new Event("change"));
+        expect(isBlocked(row.domElement)).toBe(true);
+    });
+});

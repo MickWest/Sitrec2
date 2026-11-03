@@ -5,6 +5,7 @@ import {explainTraverseTerms, TRAVERSE_TERM_CSS} from "./TraverseTerminology";
 import {AIR_MOTION_BASIS, airMotionRows, candidateAirMetrics, candidateWindDataset,
     horizontalAirText, verticalAirText} from "./TraverseAirMotion";
 import {formatWind} from "./TraverseWind";
+import {windSeriesSummary} from "./nodes/WindHelpers";
 import {showAngularSizeDialog} from "./AngularSizeDialog";
 import {assessExecutiveVerdict} from "./TraverseRanking";
 import {angularSizeSummary, angularSizeFitSummary, angularSizeInventory} from "./AngularSize";
@@ -1859,6 +1860,36 @@ function captureLiveInputFiltering(losNode, range) {
     return captureInputFiltering(roots, {fps: Sit.fps / (Sit.simSpeed ?? 1), ...range});
 }
 
+// The wind an analysis used, one {from, knots} per frame, from the dataset's
+// per-frame wind displacement W (ENU metres per frame; x east, y north).
+export function datasetWindSeries(dataset) {
+    const series = [];
+    const W = dataset?.W;
+    if (!W || !(dataset.fps > 0)) return series;
+    for (let f = 0; f < dataset.n; f++) {
+        const east = W[f * 3], north = W[f * 3 + 1];
+        const speedMS = Math.hypot(east, north) * dataset.fps;
+        // The wind blows TO (east, north); it is named by where it comes FROM.
+        const from = ((Math.atan2(-east, -north) * 180 / Math.PI) % 360 + 360) % 360;
+        series.push({from, knots: speedMS / KNOTS_TO_MS});
+    }
+    return series;
+}
+
+// A phrase for the wind series an analysis used, from {from, knots} per frame:
+// "12–15–19 kt per frame (min, median, max of 900 frames), mean direction
+// from 265°", or "15 kt from 265° on every frame", or "none".
+export function describeWindSeries(series) {
+    const summary = windSeriesSummary(series);
+    if (!summary) return "none";
+    const kt = (x) => x.toFixed(0);
+    if (summary.maxKnots - summary.minKnots < 0.5) {
+        return `${kt(summary.medianKnots)} kt from ${summary.meanFrom.toFixed(0)}° on every frame`;
+    }
+    return `${kt(summary.minKnots)}–${kt(summary.medianKnots)}–${kt(summary.maxKnots)} kt per frame `
+        + `(min, median, max of ${summary.count} frames), mean direction from ${summary.meanFrom.toFixed(0)}°`;
+}
+
 function computeAnalysisFingerprint(losNode, capturedProvenance = null) {
     const analysisFrames = analysisFrameRange(losNode);
     const windNode = NodeMan.get("targetWind", false) || null;
@@ -1880,12 +1911,19 @@ function computeAnalysisFingerprint(losNode, capturedProvenance = null) {
     const windSeries = [];
     if (analysisWindNode) {
         windSeries.push(analysisWindNode.trackSource ?? "");
-        if (typeof analysisWindNode.trackWindAt === "function" && analysisWindNode.trackSource) {
+        if (typeof analysisWindNode.trackWindAt === "function" && analysisWindNode.trackSource
+            && !analysisWindNode.override) {
             for (let f = analysisFrames.frame0; f <= analysisFrames.frame1; f++) {
                 const sample = analysisWindNode.trackWindAt(f);
                 windSeries.push(sample ? sample.from : analysisWindNode.from,
                     sample ? sample.knots : analysisWindNode.knots);
             }
+        } else if (typeof analysisWindNode.windCacheKey === "function") {
+            // A node that reads the wind field: the source and its data
+            // version (the per-frame wind is a function of those and the
+            // sightlines). Its From and Knots follow the playhead, so they
+            // are not in the key. Manual and Override: the values.
+            windSeries.push(analysisWindNode.windCacheKey());
         } else {
             windSeries.push(analysisWindNode.from, analysisWindNode.knots);
         }
@@ -2417,9 +2455,14 @@ async function runTraverseAnalysisWithCurrentAngles() {
         } catch (e) {
             dataset.groundLevelM = 0;
         }
+        // The wind the fits used is the per-frame series in the dataset (W),
+        // read where the anchor point is on each frame. Report that series,
+        // not the slider's one value.
         dataset.windSource = analyzeTweaks.windMode === "Zero wind" ? "Calm wind assumed for supplied fits."
-            : `Supplied wind: ${analysisWindNode?.knots ?? 0} kt from ${analysisWindNode?.from ?? 0}°. `
-                + (analysisWindNode?.trackSource ? "Captured wind series from the loaded track." : "User-supplied wind; uncertainty is an input assumption.");
+            : `Supplied wind: ${describeWindSeries(datasetWindSeries(dataset))}. `
+                + (typeof analysisWindNode?.describeSource === "function"
+                    ? analysisWindNode.describeSource()
+                    : "User-supplied wind; uncertainty is an input assumption.");
         const inputFiltering = captureLiveInputFiltering(losNode, analysisFrames);
         const outputFiltering = captureInputFiltering([
             {node: NodeMan.get("traverseSmoothedTrack", false), role: "Live traverse output", shallow: true},
@@ -2643,26 +2686,9 @@ async function runTraverseAnalysisWithCurrentAngles() {
             dataset, sweep, resolvedRanges, hypotheses, slowProfile, slowOpts});
 
         let windText = "zero / ignored";
-        if (analysisWindNode && isFinite(analysisWindNode.knots)) {
-            if (analysisWindNode.trackSource && typeof analysisWindNode.trackWindAt === "function") {
-                const speeds = [];
-                for (let f = analysisFrames.frame0; f <= analysisFrames.frame1; f++) {
-                    const sample = analysisWindNode.trackWindAt(f);
-                    if (sample && Number.isFinite(sample.knots)) speeds.push(sample.knots);
-                }
-                speeds.sort((a, b) => a - b);
-                if (speeds.length) {
-                    const median = speeds[Math.floor(speeds.length / 2)];
-                    windText = `time-varying track wind (${analysisWindNode.trackSource}): ` +
-                        `${speeds[0].toFixed(0)}–${median.toFixed(0)}–${speeds[speeds.length - 1].toFixed(0)} kt ` +
-                        `(min/median/max; direction sampled by timestamp)`;
-                } else {
-                    windText = `track wind (${analysisWindNode.trackSource}); no valid historical samples`;
-                }
-            } else {
-                windText = `${Number(analysisWindNode.knots).toFixed(0)} kt from ` +
-                    `${Number(analysisWindNode.from).toFixed(0)}°`;
-            }
+        if (analysisWindNode) {
+            // The series the fits used (see dataset.windSource above).
+            windText = describeWindSeries(datasetWindSeries(dataset));
         }
 
         // LAZY report: the full HTML report (dozens of 2x PNG chart encodes,

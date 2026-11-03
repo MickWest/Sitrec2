@@ -50,6 +50,7 @@ import {UpdateHUD} from "./JetStuff";
 import {degrees, getDateTimeFilename} from "./utils";
 import {ViewMan} from "./CViewManager";
 import {EventManager} from "./CEventManager";
+import {DISPLAY_NAME_CHANGED} from "./DisplayName";
 import {isAdmin, isSecureBuild, isServerless, SITREC_APP, SITREC_SHARE_APP, SITREC_SERVER} from "./configUtils";
 import {CNodeDisplayTrack} from "./nodes/CNodeDisplayTrack";
 import {DebugArrowAB, elevationAtLL} from "./threeExt";
@@ -104,8 +105,11 @@ import {
     trackSourceKey,
     windSourceByKey,
     windSourceLabelsToKeysWithTracks,
+    windSourceShortLabel,
 } from "./nodes/WindSources";
 import {estimateWindFromConstantAirspeed} from "./WindFromConstantAirspeed";
+import {dataTimeText, greatCircleDistanceDeg, heightText, windSpeedText} from "./nodes/WindHelpers";
+import {showViewMessage} from "./ViewMessage";
 import {getCurrentLanguage, setLanguage, SUPPORTED_LANGUAGE_OPTIONS, t} from "./i18n";
 import {CNodeSAPage} from "./nodes/CNodeSAPage";
 import {sharedMenuKey, viewMenuKey} from "./ViewUIBarMenus";
@@ -240,6 +244,7 @@ export const setupMethods = {
                 set(pos.guiLon?.guiEntry, manual);
                 set(pos.guiAlt?.guiEntry, manual);
                 set(pos.aglController, manual);
+                set(pos.smallAltitudesController, manual);
                 set(pos.lookupController, manual);
                 set(pos.geolocateController, manual);
                 set(pos.goToController, true);
@@ -698,6 +703,77 @@ export const setupMethods = {
             // setValue fires onTargetSourceChange, which mirrors to local in
             // shared mode and runs the load pipeline.
             this._windSourceCtrl.setValue(sourceKey);
+            this._reportProfileImport(sourceKey);
+        };
+
+        // Say what an XML profile import did, in the main view (plan phase 3
+        // item 5). Until 2026-11-03 the import changed Wind Source, Target Wind
+        // and Local Wind with no message. A profile far from the target, or far
+        // from the sitch time, is a warning: its wind may not be the wind there.
+        const PROFILE_FAR_KM = 200;
+        const PROFILE_FAR_HOURS = 3;
+        this._reportProfileImport = async (sourceKey) => {
+            const profile = altitudeProfileForSourceKey(sourceKey);
+            const wn = this._windNode;
+            if (!profile || !wn) return;
+            // The load that setValue started: Target and Local Wind read it.
+            try {
+                await (this._windLoadInFlight ?? Promise.resolve());
+            } catch {
+                // the Status row has the reason
+            }
+            const name = windSourceShortLabel(sourceKey);
+            const fileName = name.replace(/^Track: /, "");
+            const unit = wn.windSpeedUnit();
+            const heightUnit = wn.windHeightUnit();
+            // "3.2 h", or "12 days" for two days or more.
+            const timeGap = (hours) => hours < 48 ? `${hours.toFixed(1)} h`
+                : `${Math.round(hours / 24).toLocaleString()} days`;
+            const sentences = [];
+            const warnings = [];
+            const levels = profile.windLevels?.length ?? 0;
+            const bottom = profile.bottomWindAlt();
+            const top = profile.topWindAlt;
+            sentences.push(`Wind profile ${fileName}: ${levels} wind levels`
+                + (bottom != null && top != null
+                    ? `, ${heightText(bottom, heightUnit)} to ${heightText(top, heightUnit)}.` : "."));
+            const target = wn._anchorLatLon("target");
+            if (target && profile.stationLat != null && profile.stationLon != null) {
+                const km = greatCircleDistanceDeg(target.lat, target.lon,
+                    profile.stationLat, profile.stationLon) * 111.195;
+                sentences.push(`It is ${Math.round(km).toLocaleString()} km from the target.`);
+                if (km > PROFILE_FAR_KM) warnings.push(`${Math.round(km).toLocaleString()} km from the target`);
+            }
+            const launch = profile.launchTimeMs();
+            if (profile.timeFromFile === false) {
+                sentences.push("The file has no time, so it uses the sitch start.");
+            } else if (launch != null) {
+                const now = GlobalDateTimeNode?.dateNow?.valueOf();
+                const hours = Number.isFinite(now) ? Math.abs(now - launch) / 3600000 : null;
+                sentences.push(`Data time ${dataTimeText(launch)}`
+                    + (hours != null ? `, ${timeGap(hours)} from the sitch time.` : "."));
+                if (hours != null && hours > PROFILE_FAR_HOURS) warnings.push(`${timeGap(hours)} from the sitch time`);
+            }
+            sentences.push(`Wind Source is now ${name}.`);
+            // The import was the first change to the wind: Show Wind at came on
+            // (D2). This message replaces that one, so it says it too.
+            if (Date.now() - (wn.showAtAutoOnAt ?? 0) < 10000) {
+                sentences.push("Show Wind at is now on: the readouts give the wind at the camera and the target.");
+            }
+            for (const [id, word] of [["targetWind", "Target Wind"], ["localWind", "Local Wind"]]) {
+                const node = NodeMan.get(id, false);
+                if (typeof node?.windStateAt !== "function") continue;
+                const pos = node._anchorPosition?.(par.frame) ?? node.position;
+                const state = node.windStateAt(par.frame, pos);
+                if (Number.isFinite(state.from) && Number.isFinite(state.knots)) {
+                    sentences.push(`${word}: from ${Math.round(state.from)}° at ${windSpeedText(state.knots, unit)}.`);
+                }
+            }
+            const text = (warnings.length > 0 ? `Warning: the profile is ${warnings.join(" and ")}. ` : "")
+                + sentences.join(" ");
+            console.log(text);
+            const mainView = ViewMan.get("mainView", false);
+            if (mainView) showViewMessage(mainView, text, {hold: warnings.length > 0 ? 15000 : 9000, wrap: true});
         };
 
         // Make the loaded soundings the wind source.
@@ -731,7 +807,7 @@ export const setupMethods = {
         this._windSourceOptions = windSourceLabelsToKeysWithTracks();
 
         // par now holds only state that doesn't belong to the wind node:
-        //   windStatus  — short status string for the disabled GUI display
+        //   windStatus  — a VIEW of the node's statusText (defined below)
         //   balloonCount — sounding-loader knob (consumed by
         //                  getNearbyWeatherBalloons, not the wind node)
         // Everything wind-related (source, sourceLocal, sourceSeparate,
@@ -740,7 +816,6 @@ export const setupMethods = {
         // now lives on this._windNode and the GUI binds straight to those
         // fields. The dropdowns use lil-gui's options-object form so the
         // node stores the internal key while the GUI shows labels.
-        par.windStatus = "Not loaded";
 
         // Track which sources we've already auto-shown wind for, so the
         // "first switch to GFS/sounding turns on Show Wind" rule fires once
@@ -778,8 +853,21 @@ export const setupMethods = {
         // par.windShow drives the Wind folder's "Show Wind Lines" checkbox
         // and binds the streamline-mesh visibility only — NOT the whole
         // group. Hiding the lines must leave the screen-grid arrow overlay
-        // and Inspect Wind readouts intact. The Show/Hide menu's master
+        // and Show Wind at readouts intact. The Show/Hide menu's master
         // "Wind Field" entry binds to wn.visible, which is independent.
+        // The Status row shows the wind node's own status. It was a separate
+        // par string that only some handlers copied into, so a load that ended
+        // later (a saved sitch's reload, a GFS cycle change, a Lock Altitude
+        // step) left the row on an old message such as "Reloading 0/1 wind
+        // levels…". A write here (e.g. a fit result) goes to the node.
+        Object.defineProperty(par, "windStatus", {
+            configurable: true,
+            enumerable: true,
+            get: () => this._windNode?.statusText || "Not loaded",
+            // A message replaces the provenance line until the next load.
+            set: (v) => { this._windNode?.setStatusMessage(v); },
+        });
+
         Object.defineProperty(par, "windShow", {
             configurable: true,
             enumerable: true,
@@ -906,6 +994,117 @@ export const setupMethods = {
             return this._windLoadInFlight;
         };
 
+        // ── Show Wind at ──────────────────────────────────────────────
+        // A wind readout (an arrow, plus speed and FROM direction) at each
+        // place switched on here. The title checkbox is the master switch
+        // (wn.inspect, which was the Inspect Wind toggle); the rows pick the
+        // places: Camera, Target, Mouse Cursor, then each 3D object. The rows
+        // are list checkboxes (asListCheckbox), lined up with the title
+        // checkbox, like the entries of the Objects and Effects menus.
+        const showAtFolder = windFolder.addFolder("Show Wind at").close();
+        showAtFolder.tooltip(t("custom.wind.showAt.tooltip"));
+        showAtFolder.add(wn, "inspect").name("Show Wind at")
+            .tooltip(t("custom.wind.showAt.tooltip"))
+            .onChange(async (v) => {
+                if (v && !wn.windU) {
+                    await this._loadWindForCurrentSource();
+                }
+                wn.setInspect(!!v);
+                setRenderOne(true);
+            })
+            .asFolderToggle();
+        showAtFolder.add(wn, "inspectCamera").name("Camera")
+            .tooltip(t("custom.wind.showAtCamera.tooltip")).listen().asListCheckbox()
+            .onChange(() => setRenderOne(true));
+        showAtFolder.add(wn, "inspectTarget").name("Target")
+            .tooltip(t("custom.wind.showAtTarget.tooltip")).listen().asListCheckbox()
+            .onChange(() => setRenderOne(true));
+        showAtFolder.add(wn, "inspectCursor").name("Mouse Cursor")
+            .tooltip(t("custom.wind.showAtCursor.tooltip")).listen().asListCheckbox()
+            .onChange(v => wn.setInspectCursor(v));
+
+        // One row for each 3D object, in Objects menu order. A target or
+        // camera object is left out when the Target or Camera row already
+        // shows that place. traverseObject and cameraObject are the custom
+        // sitch's; targetObject is the target object of the older sitches
+        // (SituationSetup has a case). The Model Inspector's targetObject is
+        // at a fixed position with no target track, so the Target row shows
+        // nothing there and the object keeps its own row.
+        // The rows are rebuilt when an object is made, deleted or renamed.
+        // An object's choice is kept by its id, which a rename does not change.
+        const SHOW_AT_TARGET_OBJECTS = new Set(["traverseObject", "targetObject"]);
+        const SHOW_AT_CAMERA_OBJECTS = new Set(["cameraObject"]);
+        const coveredByAnchorRow = id =>
+            (SHOW_AT_TARGET_OBJECTS.has(id) && wn.hasAnchorTrack("target"))
+            || (SHOW_AT_CAMERA_OBJECTS.has(id) && wn.hasAnchorTrack("camera"));
+        let showAtObjectRows = [];      // [{id, name, ctrl}]
+        const showAtObjectList = () => guiMenus.objects.folders
+            .map(folder => NodeMan.get(folder._lookupId, false))
+            .filter(node => node?.group?.userData?.is3DObject
+                && !coveredByAnchorRow(node.id))
+            .map(node => ({id: node.id, name: node.menuName ?? node.id}));
+        const rebuildShowAtObjects = () => {
+            // A sitch change destroys the folder before the next setup
+            // replaces this listener; a destroyed folder leaves its parent.
+            if (!windFolder.folders.includes(showAtFolder)) return;
+            const wanted = showAtObjectList();
+            const same = wanted.length === showAtObjectRows.length
+                && wanted.every((entry, i) => entry.id === showAtObjectRows[i].id);
+            if (same) {
+                // Only names can differ: rename the rows in place.
+                wanted.forEach((entry, i) => {
+                    if (showAtObjectRows[i].name !== entry.name) {
+                        showAtObjectRows[i].name = entry.name;
+                        showAtObjectRows[i].ctrl.name(entry.name);
+                    }
+                });
+                return;
+            }
+            for (const row of showAtObjectRows) row.ctrl.destroy();
+            showAtObjectRows = wanted.map(({id, name}) => {
+                const choice = {};
+                Object.defineProperty(choice, "on", {
+                    get: () => !!wn.inspectObjects[id],
+                    set: (v) => {
+                        if (v) wn.inspectObjects[id] = true;
+                        else delete wn.inspectObjects[id];
+                    },
+                });
+                const ctrl = showAtFolder.add(choice, "on").name(name)
+                    .tooltip(t("custom.wind.showAtObject.tooltip")).listen().asListCheckbox()
+                    .onChange(() => setRenderOne(true));
+                return {id, name, ctrl};
+            });
+        };
+        // Objects can be made several at a time (a sitch load), so one
+        // rebuild runs after the current task, not one per event.
+        let showAtRebuildQueued = false;
+        const queueShowAtRebuild = () => {
+            if (showAtRebuildQueued) return;
+            showAtRebuildQueued = true;
+            queueMicrotask(() => {
+                showAtRebuildQueued = false;
+                rebuildShowAtObjects();
+            });
+        };
+        rebuildShowAtObjects();
+        // Setup runs once per sitch load; remove the previous bindings first.
+        if (this._showAtObjectsListener) {
+            EventManager.removeEventListener?.("objectsChanged", this._showAtObjectsListener);
+            EventManager.removeEventListener?.(DISPLAY_NAME_CHANGED, this._showAtObjectsListener);
+        }
+        this._showAtObjectsListener = queueShowAtRebuild;
+        EventManager.addEventListener("objectsChanged", queueShowAtRebuild);
+        EventManager.addEventListener(DISPLAY_NAME_CHANGED, queueShowAtRebuild);
+
+        // Decision D2: the first change to the wind turns Show Wind at on, if it
+        // was never on in this sitch (wn.noteWindChanged). Say so where the user
+        // is looking; the title checkbox follows by itself (it listens).
+        wn.onShowAtAutoOn = () => {
+            const mainView = ViewMan.get("mainView", false);
+            if (mainView) showViewMessage(mainView, t("custom.wind.showAtAutoOn.message"), {hold: 6000, wrap: true});
+        };
+
         // ── Source selectors ──────────────────────────────────────────
         //
         // Default mode (this._windNode.sourceSeparate === false): a single
@@ -955,6 +1154,7 @@ export const setupMethods = {
         // toggled-Separate mid-fetch can't expose a stale local value.
         const onTargetSourceChange = async () => {
             const sourceKey = wn.source;
+            wn.noteWindChanged();
             const targetWind = NodeMan.exists("targetWind")
                 ? NodeMan.get("targetWind") : null;
 
@@ -996,15 +1196,17 @@ export const setupMethods = {
         // shared mode the local source mirrors the target by way of
         // onTargetSourceChange and the local dropdown is hidden anyway.
         //
-        // Limitation in separate mode: when target=A and local=B are
-        // *different atmospheric* sources, only A fetches via
-        // _loadWindForCurrentSource. Local ends up sampling that grid
-        // at the local position — fine if A and B happen to be the same
-        // source, off otherwise. A truly independent local fetch would
-        // need a second windField pipeline; not implemented yet.
-        const onLocalSourceChange = () => {
+        // The displayed lines show the target's source only. Local Wind reads
+        // its own source through the wind field's windAt (which loads GFS
+        // levels and Open-Meteo columns when it needs them); soundings are
+        // loaded here, as for the target source.
+        const onLocalSourceChange = async () => {
             if (!wn.sourceSeparate) return;
+            wn.noteWindChanged();
             applyLocalSource(wn.sourceLocal);
+            const ok = await this._ensureSoundingsForWind(wn.sourceLocal);
+            if (ok && this._windNode) await this._windNode.propagateToWindNodes();
+            if (this._windNode) par.windStatus = this._windNode.statusText;
         };
 
         // Toggle Separate Wind Sources: change the target dropdown's
@@ -1012,12 +1214,75 @@ export const setupMethods = {
         // shared→separate→shared cycles snap the local source back to
         // the target so the two pipelines don't drift out of sync
         // silently.
+        // Source dropdown tooltip: an intro line, then one line for each
+        // source the dropdown lists NOW. Built from the live options, so a
+        // build without open-meteo, or with an installation's own source,
+        // describes its own menu, and Track entries appear only when a
+        // loaded track carries wind.
+        const windSourceTooltip = (introKey) => {
+            const lines = [t(introKey)];
+            let hasTrack = false;
+            for (const [label, key] of Object.entries(this._windSourceOptions)) {
+                if (isTrackSourceKey(key)) {
+                    hasTrack = true;
+                    continue;
+                }
+                lines.push(`${label}: ${t("custom.wind.sources." + key)}`);
+            }
+            if (hasTrack) lines.push(t("custom.wind.sources.track"));
+            return lines.join("\n");
+        };
+        // The source menu: the built-in sources, then the Track entries in two
+        // groups, Profiles (read by height) and Telemetry tracks (read by time).
+        // The tracks arrive in load order; here the profiles come first, so each
+        // group is one run of options.
+        const orderedSourceOptions = (options) => {
+            const builtIn = {}, profiles = {}, telemetry = {};
+            for (const [label, key] of Object.entries(options)) {
+                if (!isTrackSourceKey(key)) builtIn[label] = key;
+                else if (altitudeProfileForSourceKey(key)) profiles[label] = key;
+                else telemetry[label] = key;
+            }
+            return {...builtIn, ...profiles, ...telemetry};
+        };
+        // Put each run of Track options in an <optgroup> with its heading. The
+        // options keep their order, so lil-gui's selectedIndex still matches
+        // its list of values.
+        const groupSourceOptions = (ctrl) => {
+            const select = ctrl?.$select;
+            if (!select || select.options.length !== ctrl._values.length) return ctrl;
+            let group = null, groupKind = null;
+            [...select.options].forEach((option, i) => {
+                const key = ctrl._values[i];
+                const kind = !isTrackSourceKey(key) ? null
+                    : altitudeProfileForSourceKey(key) ? "profiles" : "telemetry";
+                if (!kind) {
+                    groupKind = null;
+                    return;
+                }
+                if (kind !== groupKind) {
+                    group = document.createElement("optgroup");
+                    group.label = t(`custom.wind.sourceGroups.${kind}`);
+                    select.insertBefore(group, option);
+                    groupKind = kind;
+                }
+                group.appendChild(option);
+            });
+            return ctrl;
+        };
+
+        // The target dropdown is "Wind Source" in shared mode and "Target
+        // Wind Source" in separate mode; its tooltip follows the label.
+        const targetSourceTooltip = () => windSourceTooltip(wn.sourceSeparate
+            ? "custom.wind.targetSource.tooltip" : "custom.wind.source.tooltip");
+        const localSourceTooltip = () => windSourceTooltip("custom.wind.localSource.tooltip");
+
         const onSeparateChange = () => {
             if (wn.sourceSeparate) {
-                if (this._windSourceCtrl) this._windSourceCtrl.name("Target Wind Source");
+                if (this._windSourceCtrl) this._windSourceCtrl.name("Target Wind Source").tooltip(targetSourceTooltip());
                 if (this._windSourceLocalCtrl) this._windSourceLocalCtrl.show();
             } else {
-                if (this._windSourceCtrl) this._windSourceCtrl.name("Wind Source");
+                if (this._windSourceCtrl) this._windSourceCtrl.name("Wind Source").tooltip(targetSourceTooltip());
                 if (this._windSourceLocalCtrl) this._windSourceLocalCtrl.hide();
                 wn.sourceLocal = wn.source;
                 applyLocalSource(wn.source);
@@ -1033,6 +1298,7 @@ export const setupMethods = {
         // restored from save.
         this._windSourceCtrl = windFolder.add(wn, "source", this._windSourceOptions)
             .name(wn.sourceSeparate ? "Target Wind Source" : "Wind Source")
+            .tooltip(targetSourceTooltip())
             .listen()
             .onChange(onTargetSourceChange);
 
@@ -1040,14 +1306,47 @@ export const setupMethods = {
         // its scope is visually obvious.
         windFolder.add(wn, "sourceSeparate")
             .name("Separate Wind Sources")
+            .tooltip(t("custom.wind.sourceSeparate.tooltip"))
             .listen()
             .onChange(onSeparateChange);
 
         this._windSourceLocalCtrl = windFolder.add(wn, "sourceLocal", this._windSourceOptions)
             .name("Local Wind Source")
+            .tooltip(localSourceTooltip())
             .listen()
             .onChange(onLocalSourceChange);
         if (!wn.sourceSeparate) this._windSourceLocalCtrl.hide();
+
+        // Status: where the wind comes from (the source, the data time, the
+        // distance to the data, the heights it covers; provenanceText), or a
+        // load message. Beside the source rows, and on as many lines as it
+        // needs: a text field cut the line off. The text can be selected.
+        this._windStatusCtrl = windFolder.add(par, "windStatus").name("Status")
+            .tooltip(t("custom.wind.status.tooltip")).listen();
+        {
+            const ctrl = this._windStatusCtrl;
+            const text = document.createElement("div");
+            text.className = "wind-status-text";
+            text.style.cssText = "white-space:normal;line-height:1.3;font-size:11px;"
+                + "padding:3px 0;user-select:text;-webkit-user-select:text;cursor:text;";
+            ctrl.$input.style.display = "none";
+            ctrl.$widget.appendChild(text);
+            ctrl.updateDisplay = function () {
+                const value = String(this.getValue() ?? "");
+                if (value !== this._shownText) {
+                    this._shownText = value;
+                    text.textContent = value;
+                }
+                return this;
+            };
+            ctrl.updateDisplay();
+        }
+
+        // Wind in Knots: every wind speed on this panel in knots, not in the
+        // speed unit of Units (decision D4, 2026-11-02).
+        windFolder.add(wn, "windInKnots").name("Wind in Knots")
+            .tooltip(t("custom.wind.windInKnots.tooltip")).listen()
+            .onChange(() => wn.refreshWindSpeedRows());
 
         // tracksChanged listener — rebuilds both dropdowns in place
         // when the imported-track set changes. lil-gui's controller.options
@@ -1056,16 +1355,19 @@ export const setupMethods = {
         const refreshSourceCtrls = () => {
             const tracks = (TrackManager && typeof TrackManager.tracksWithWind === "function")
                 ? TrackManager.tracksWithWind() : [];
-            this._windSourceOptions = windSourceLabelsToKeysWithTracks(tracks);
+            this._windSourceOptions = orderedSourceOptions(windSourceLabelsToKeysWithTracks(tracks));
             const validKeys = Object.values(this._windSourceOptions);
-            const reattach = (ctrlField, prop, label, handler) => {
+            const reattach = (ctrlField, prop, label, handler, tooltip) => {
                 const old = this[ctrlField];
                 if (!old) return;
                 // If the previously-selected key is no longer valid (e.g.
                 // its track was removed), fall back to the manual key.
                 if (!validKeys.includes(wn[prop])) wn[prop] = "manual";
-                this[ctrlField] = old.options(this._windSourceOptions)
+                // The tooltip lists the sources, so set it again from the
+                // new options: a Track entry can come or go.
+                this[ctrlField] = groupSourceOptions(old.options(this._windSourceOptions))
                     .name(label)
+                    .tooltip(tooltip)
                     .listen()
                     .onChange(handler);
                 // setValueQuietly: don't fire onChange. This refresh fires
@@ -1082,10 +1384,10 @@ export const setupMethods = {
             };
             reattach("_windSourceCtrl", "source",
                 wn.sourceSeparate ? "Target Wind Source" : "Wind Source",
-                onTargetSourceChange);
+                onTargetSourceChange, targetSourceTooltip());
             reattach("_windSourceLocalCtrl", "sourceLocal",
                 "Local Wind Source",
-                onLocalSourceChange);
+                onLocalSourceChange, localSourceTooltip());
             if (!wn.sourceSeparate && this._windSourceLocalCtrl) {
                 this._windSourceLocalCtrl.hide();
             }
@@ -1136,10 +1438,32 @@ export const setupMethods = {
         //    when the user commits the value.
         // (wn alias for this._windNode is declared above, after node creation.)
 
-        // Display altitude in feet. GUI binds directly to wn.windAltFt;
-        // .listen() picks up modDeserialize-restored values without a
-        // post-deserialize sync step.
-        windFolder.add(wn, "windAltFt", 0, 60000, 10).name("Altitude (ft)").listen()
+        // Display altitude. The node keeps feet (wn.windAltFt, which saves and
+        // the GFS level table use); the row shows the height unit of Units:
+        // "Altitude (ft)", or "Altitude (m)" for Metric (until 2026-11-03 it
+        // was always feet). The range is 0 to 60,000 ft, in steps of 10 ft or
+        // 5 m. .listen() picks up modDeserialize-restored values and the Lock
+        // Altitude steps without a sync step.
+        const ALTITUDE_MAX_FT = 60000;
+        const altitudeRow = {};
+        Object.defineProperty(altitudeRow, "value", {
+            get: () => wn.windAltFt * 0.3048 / wn.windHeightUnit().toM,
+            set: (v) => { wn.windAltFt = v * wn.windHeightUnit().toM / 0.3048; },
+        });
+        const altitudeCtrl = windFolder.add(altitudeRow, "value", 0, ALTITUDE_MAX_FT, 10)
+            .tooltip(t("custom.wind.altitude.tooltip")).listen().decimals(0);
+        wn.onWindHeightUnitChanged = () => {
+            if (!altitudeCtrl.domElement) return;   // destroyed with the sitch
+            const unit = wn.windHeightUnit();
+            const inFeet = unit.abbrev === "ft";
+            altitudeCtrl.name(`Altitude (${unit.abbrev})`)
+                .min(0)
+                .max(Math.round(ALTITUDE_MAX_FT * 0.3048 / unit.toM))
+                .step(inFeet ? 10 : 5)
+                .updateDisplay();
+        };
+        wn.onWindHeightUnitChanged();
+        altitudeCtrl
             .onChange(() => {
                 // Lock-altitude wins: the wind node's update() will
                 // overwrite windAltFt next frame from the locked track.
@@ -1169,16 +1493,17 @@ export const setupMethods = {
         // capitalized while the node holds the lowercase internal value.
         windFolder.add(wn, "lockAltitudeTo",
             { None: "none", Camera: "camera", Target: "target" })
-            .name("Lock Altitude to").listen();
+            .name("Lock Altitude to").tooltip(t("custom.wind.lockAltitude.tooltip")).listen();
 
         // Nearby Wind Only: clip streamline seeding to a radius around
         // the sitch origin. With this on, altitude scrubbing is near-
         // instant.
-        windFolder.add(wn, "nearbyOnly").name("Nearby Wind Only").listen()
+        windFolder.add(wn, "nearbyOnly").name("Nearby Wind Only")
+            .tooltip(t("custom.wind.nearbyOnly.tooltip")).listen()
             .onChange(() => { wn.rebuildStreamlines(); setRenderOne(true); });
 
         windFolder.add(wn, "nearbyRadiusKm", 5, 500, 5)
-            .name("Nearby Radius (km)").listen()
+            .name("Nearby Radius (km)").tooltip(t("custom.wind.nearbyRadius.tooltip")).listen()
             .onChange(() => {
                 if (wn.nearbyOnly) {
                     wn.rebuildStreamlines();
@@ -1195,7 +1520,8 @@ export const setupMethods = {
         // last rebuildStreamlines produced empty geometry (e.g. it ran on
         // 0-knot stale wind values), so linesMesh is null — the setter
         // would otherwise no-op forever.
-        windFolder.add(par, "windShow").name("Show Wind Lines").listen().onChange(async (v) => {
+        windFolder.add(par, "windShow").name("Show Wind Lines")
+            .tooltip(t("custom.wind.showLines.tooltip")).listen().onChange(async (v) => {
             if (v && (!wn.windU || !wn.linesMesh)) {
                 await this._loadWindForCurrentSource();
                 setRenderOne(true);
@@ -1206,7 +1532,8 @@ export const setupMethods = {
         // in the main view, ray-cast onto the ellipsoid at the current wind
         // altitude. Independent of the streamline mesh — either or both can
         // be on.
-        windFolder.add(wn, "showArrows").name("Show Wind Arrows").listen()
+        windFolder.add(wn, "showArrows").name("Show Wind Arrows")
+            .tooltip(t("custom.wind.showArrows.tooltip")).listen()
             .onChange(async (v) => {
                 if (v && !wn.windU) {
                     await this._loadWindForCurrentSource();
@@ -1214,35 +1541,47 @@ export const setupMethods = {
                 setRenderOne(true);
             });
 
-        // Inspect Wind: cursor-driven readout. Single arrow at the cursor's
-        // ellipsoid intersection plus a floating panel with speed (display
-        // units) and FROM heading (compass + degrees).
-        windFolder.add(wn, "inspect").name("Inspect Wind").listen()
-            .onChange(async (v) => {
-                if (v && !wn.windU) {
-                    await this._loadWindForCurrentSource();
-                }
-                wn.setInspect(!!v);
-                setRenderOne(true);
-            });
-
-        // Status display
-        this._windStatusCtrl = windFolder.add(par, "windStatus").name("Status").listen().disable();
-
-        windFolder.add(wn, "lineOpacity", 0, 1, 0.01).name("Opacity")
+        // The look of the wind lines, in a sub-folder: rows that are set once
+        // and then left alone.
+        const lineStyleFolder = windFolder.addFolder("Wind Line Style").close();
+        lineStyleFolder.tooltip(t("custom.wind.lineStyle.tooltip"));
+        lineStyleFolder.add(wn, "lineOpacity", 0, 1, 0.01).name("Opacity")
+            .tooltip(t("custom.wind.opacity.tooltip"))
             .onChange(() => {
                 wn.material.uniforms.uOpacity.value = wn.lineOpacity;
                 setRenderOne(true);
             });
 
-        windFolder.add(wn, "seedSpacing", 1.5, 10, 0.5).name("Spacing (\u00b0)")
+        lineStyleFolder.add(wn, "seedSpacing", 1.5, 10, 0.5).name("Spacing (\u00b0)")
+            .tooltip(t("custom.wind.spacing.tooltip"))
             .onChange(() => { wn.rebuildStreamlines(); setRenderOne(true); });
 
-        windFolder.add(wn, "maxWindSpeed", 5, 80, 1).name("Max Speed (m/s)")
+        // Max Speed: the node keeps m/s (a shader uniform); the row shows the
+        // Wind panel's speed unit, as every other wind speed here (it was m/s
+        // until 2026-11-03).
+        const MPS_PER_KNOT = 1852 / 3600;
+        const MAX_SPEED_RANGE_MPS = [5, 80];
+        const maxSpeedRow = {};
+        Object.defineProperty(maxSpeedRow, "value", {
+            get: () => wn.maxWindSpeed / MPS_PER_KNOT * wn.windSpeedUnit().fromKnots,
+            set: (v) => { wn.maxWindSpeed = v / wn.windSpeedUnit().fromKnots * MPS_PER_KNOT; },
+        });
+        const maxSpeedCtrl = lineStyleFolder.add(maxSpeedRow, "value", 1, 200, 1)
+            .tooltip(t("custom.wind.maxSpeed.tooltip"))
             .onChange(() => {
                 wn.material.uniforms.uMaxSpeed.value = wn.maxWindSpeed;
                 setRenderOne(true);
             });
+        wn.onWindSpeedUnitChanged = () => {
+            if (!maxSpeedCtrl.domElement) return;   // destroyed with the sitch
+            const unit = wn.windSpeedUnit();
+            const toUnit = unit.fromKnots / MPS_PER_KNOT;
+            maxSpeedCtrl.name(`Max Speed (${unit.abbrev})`)
+                .min(Math.round(MAX_SPEED_RANGE_MPS[0] * toUnit))
+                .max(Math.round(MAX_SPEED_RANGE_MPS[1] * toUnit))
+                .updateDisplay();
+        };
+        wn.onWindSpeedUnitChanged();
 
         // For sounding sources (uwyo/igra2): if the camera has moved
         // since soundings were originally loaded, the once-nearest stations
@@ -1363,24 +1702,25 @@ export const setupMethods = {
             // Drop every per-source cache the wind node owns so the next
             // fetch actually hits the network (or the IDW pipeline) again.
             //   GFS:        FileManager entries + _levelCache (via _evictAllWindGrids)
-            //   open-meteo: _omCache
+            //   open-meteo: the loaded columns
             //   uwyo/igra2: relocate to current N nearest if drifted; the
             //               IDW rebuild inside fetchWindForAltitude does the rest.
             this._windNode._evictAllWindGrids();
-            if (this._windNode._omCache) this._windNode._omCache.clear();
+            this._windNode._clearOpenMeteoColumns();
             par.windStatus = "Loading...";
             await this._maybeRelocateSoundings(this._windNode.source);
             await this._windNode.fetchWindForAltitude(this._windNode.windAltFt);
             par.windStatus = this._windNode.statusText;
         };
-        windFolder.add({refresh}, "refresh").name("Refresh Wind Data");
+        windFolder.add({refresh}, "refresh").name("Refresh Wind Data")
+            .tooltip(t("custom.wind.refresh.tooltip"));
 
         // Fit local wind from a constant-airspeed camera assumption. Solves
         // for the single horizontal wind vector that minimizes airspeed
         // standard deviation across the track, then writes it into
-        // localWind.from/knots. Switches the local source to "manual" so the
-        // fit actually takes effect — track/atmospheric sources would
-        // otherwise overwrite from/knots each frame.
+        // localWind.from/knots with Override on, so the fit is the Local Wind
+        // and the Wind Source (and Target Wind) stay as they are. (Until
+        // 2026-11-03 this switched the source to Manual.)
         const fitLocalFromConstantCamera = () => {
             const localWind = NodeMan.exists("localWind") ? NodeMan.get("localWind") : null;
             if (!localWind) {
@@ -1414,24 +1754,10 @@ export const setupMethods = {
                 return;
             }
 
-            // Flip the local source to manual so the new from/knots stick.
-            // In shared mode (sourceSeparate=false) the source field drives
-            // both pipelines, so we change wn.source; in separate mode we
-            // only touch wn.sourceLocal.
-            if (wn.sourceSeparate) {
-                wn.sourceLocal = "manual";
-                localWind.trackSource = null;
-                if (this._windSourceLocalCtrl) this._windSourceLocalCtrl.updateDisplay();
-            } else {
-                wn.source = "manual";
-                wn.sourceLocal = "manual";
-                localWind.trackSource = null;
-                if (NodeMan.exists("targetWind")) {
-                    NodeMan.get("targetWind").trackSource = null;
-                }
-                if (this._windSourceCtrl) this._windSourceCtrl.updateDisplay();
-                if (this._windSourceLocalCtrl) this._windSourceLocalCtrl.updateDisplay();
-            }
+            // The fit is a value the user chose to apply: Override keeps it
+            // under any source. Under Manual the sliders are the wind anyway.
+            localWind.override = true;
+            if (localWind.guiOverride) localWind.guiOverride.updateDisplay();
 
             localWind.from = Math.round(result.from);
             localWind.knots = Math.round(result.knots);
@@ -1448,10 +1774,14 @@ export const setupMethods = {
                 }
             }
 
-            par.windStatus = `Local wind: ${localWind.from}° / ${localWind.knots} kt (σ=${result.finalCostKnots.toFixed(1)} kt, ${trackId})`;
+            const unit = this._windNode?.windSpeedUnit?.() ?? {abbrev: "kt", fromKnots: 1};
+            par.windStatus = `Local wind: ${localWind.from}° / ${windSpeedText(localWind.knots, unit)}`
+                + ` (σ=${(result.finalCostKnots * unit.fromKnots).toFixed(1)} ${unit.abbrev}, ${trackId})`;
+            this._windNode?.noteWindChanged?.();
         };
         windFolder.add({fitLocalFromConstantCamera}, "fitLocalFromConstantCamera")
-            .name("Local from Constant Camera");
+            .name("Local from Constant Camera")
+            .tooltip(t("custom.wind.localFromConstantCamera.tooltip"));
 
         // ── Sounding-loader controls (used by UWYO/IGRA2 sources) ──
         // `balloonCount` drives how many nearby soundings auto-load. Manual
@@ -1460,6 +1790,13 @@ export const setupMethods = {
             .tooltip(t("custom.balloons.count.tooltip"));
         windFolder.add(this, "_importSounding").name(t("custom.balloons.importSounding.label"))
             .tooltip(t("custom.balloons.importSounding.tooltip"));
+
+        // "Lock Target Wind to Local" is the lockWind GUIFlag from the sitch
+        // data, made by SituationSetup before this runs. A saved sitch keeps
+        // its own copy of that definition (GUIFlag is not merged by
+        // updateNewCustomFields), so a tooltip added in SitCustom.js would
+        // not reach older saves. Set it on the live control instead.
+        NodeMan.get("lockWind", false)?.guiEntry?.tooltip(t("custom.wind.lockWind.tooltip"));
         // ── end Wind ────────────────────────────────────────────────
 
         // ── SA Page — checkbox under Show/Hide > Views ─────────

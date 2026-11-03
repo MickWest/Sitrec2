@@ -1287,6 +1287,12 @@ const en = {
         curveType: "Curve Type",
         exportSpline: "Export Spline",
         deleteTrack: "Delete Track",
+        // A sounding or profile track with no position at each level.
+        reconstructedAscent: {
+            name: "Path",
+            label: "Reconstructed ascent",
+            tooltip: "The file gives no position for each level, so Sitrec makes this path:\na 5 m/s ascent from the launch point and time, moved by the winds in the file.\nThe real balloon (if any) did not necessarily fly this path. The wind data itself is not changed.",
+        },
         deleteTrackConfirm: "Delete track \"{{name}}\"?",
         deleteTrackAndObject: "Delete Track and \"{{object}}\"",
         deleteTrackOnly: "Delete Track Only",
@@ -1964,10 +1970,60 @@ const en = {
             startupBuildings: { label: "3D Buildings", tooltip: "Turn 3D buildings on when a new sitch starts. Uses your 3D tile quota as soon as the sitch loads." },
         },
         balloons: {
-            count: { label: "Count", tooltip: "Number of nearby stations to import" },
+            count: { label: "Count", tooltip: "How many of the nearest weather balloon soundings UWYO Soundings and IGRA2 Soundings load.\nA larger count covers a wider area.\nA new count applies at the next load: click Refresh Wind Data." },
             source: { label: "Source", tooltip: "uwyo = University of Wyoming (needs PHP proxy)\nigra2 = NOAA NCEI archive (direct download)" },
-            getNearby: { label: "Get Nearby Weather Balloons", tooltip: "Import the N closest weather balloon soundings to the current camera position.\nUses the most recent launch before the sitch start time + 1 hour." },
-            importSounding: { label: "Import Sounding...", tooltip: "Manual station picker: choose station, date, source, and import a specific sounding." },
+            getNearby: { label: "Get Nearby Weather Balloons", tooltip: "Import the N closest weather balloon soundings to the current camera position.\nUses the 00Z or 12Z launch nearest to the sitch start time, before or after it." },
+            importSounding: { label: "Import Sounding...", tooltip: "Pick a station, a source, a date and a launch, and import that one sounding.\nWind Source then changes to Manual Soundings, which blends all the loaded soundings." },
+        },
+        // Tooltips for the Physics > Wind folder (CustomManagerSetup.js, CNodeWind.js).
+        wind: {
+            targetFrom: { tooltip: "Direction that the wind at the target comes FROM, in degrees true (0 = north, 90 = east).\nTraverse methods that use air speed, and Manual + Wind targets, use this wind.\nWith the Manual source, you set it, and it also sets the wind lines and arrows.\nWith another Wind Source, it shows the wind at the target on this frame, and you cannot change it.\nThe traverse reads that source on each frame, at the target's position, height and time.\nTo set your own value, turn on Override Target Wind." },
+            targetKnots: { tooltip: "Speed of the wind at the target, in the speed unit of Units (in knots when Wind in Knots is on).\nWith a Wind Source other than Manual, it shows the wind at the target on this frame.\nTo set your own value, turn on Override Target Wind." },
+            targetOverride: { tooltip: "Use your own Target Wind, not the Wind Source.\nWhen on, you can set Target Wind From and Speed, and the same wind is used at every place, height and time.\nWhen off, Target Wind follows the Wind Source on each frame." },
+            localFrom: { tooltip: "Direction that the wind at the camera platform comes FROM, in degrees true (0 = north, 90 = east).\nThe Flight Sim camera moves with this wind.\nWith the Manual source, you set it.\nWith another Wind Source, it shows the wind at the camera on this frame, and you cannot change it.\nTo set your own value, turn on Override Local Wind." },
+            localKnots: { tooltip: "Speed of the wind at the camera platform, in the speed unit of Units (in knots when Wind in Knots is on).\nWith a Wind Source other than Manual, it shows the wind at the camera on this frame.\nTo set your own value, turn on Override Local Wind." },
+            localOverride: { tooltip: "Use your own Local Wind, not the Wind Source.\nWhen on, you can set Local Wind From and Speed, and the same wind is used at every place, height and time.\nWhen off, Local Wind follows the Wind Source on each frame.\nLocal from Constant Camera turns this on." },
+            lockWind: { tooltip: "Make Target Wind the same as Local Wind.\nThe target then uses the Local Wind source (or the Local Wind values, with Manual or Override), read at the target.\nThe Target Wind sliders are hidden while this is on." },
+            source: { tooltip: "Where the wind data comes from, for Target Wind, Local Wind, and the wind lines and arrows:" },
+            targetSource: { tooltip: "Where the wind data comes from, for Target Wind and the wind lines and arrows:" },
+            localSource: { tooltip: "Where the wind data for Local Wind (the camera platform) comes from.\nOnly a telemetry Track entry gives Local Wind data of its own. See Separate Wind Sources.\nThe sources:" },
+            sources: {
+                gfs: "weather model on a 1° grid, for dates from 22 March 2021 to today",
+                uwyo: "weather balloon soundings from the University of Wyoming, from the nearest stations",
+                igra2: "weather balloon soundings from the NOAA IGRA2 archive, from the nearest stations",
+                "manual-soundings": "a blend of all the soundings that are loaded",
+                openmeteo: "wind from the Open-Meteo public weather service",
+                manual: "one wind everywhere, from Target Wind From and Target Wind Speed",
+                custom: "a wind source that this installation supplies",
+                track: "Track: <name>: wind from a loaded track. A telemetry track gives the wind at the current frame. A sounding track gives the wind at the altitude of the target or camera.\nIn the menu, the sounding and profile tracks are under Profiles, and the other tracks are under Telemetry tracks",
+            },
+            // Headings of the Track entries in the Wind Source menus.
+            sourceGroups: {
+                profiles: "Profiles (read by height)",
+                telemetry: "Telemetry tracks (read by time)",
+            },
+            sourceSeparate: { tooltip: "Use a different source for Local Wind (the camera platform) than for Target Wind.\nLimit: only one atmospheric data set loads at a time, and Target Wind Source selects it.\nEach load also sets Local Wind. Only a telemetry Track entry gives Local Wind data of its own." },
+            altitude: { tooltip: "Altitude above mean sea level of the wind lines, the wind arrows, and the Mouse Cursor readout in Show Wind at.\nTarget Wind and Local Wind do not use it: they use the altitude of each track.\nThe unit is the height unit of Units (Physics > Units): feet, or metres for Metric." },
+            lockAltitude: { tooltip: "Make Altitude follow a track while the sitch plays.\nNone: use the altitude that you set.\nCamera: follow the altitude of the camera.\nTarget: follow the altitude of the target." },
+            nearbyOnly: { tooltip: "Draw wind lines only within Nearby Radius of the camera. This is faster, and easier to read when you zoom in.\nTurn it off to draw lines everywhere that the source has data.\nIt does not change the wind arrows." },
+            nearbyRadius: { tooltip: "Distance from the camera, in km, to which Nearby Wind Only draws wind lines." },
+            showLines: { tooltip: "Show moving wind lines (streamlines) at Altitude in the main view.\nThe color of a line shows the wind speed. See Max Speed in Wind Line Style.\nThe first time, this loads the wind data." },
+            showArrows: { tooltip: "Show a grid of wind arrows at Altitude in the main view.\nEach arrow points in the direction that the wind blows TO.\nYou can show the arrows and the wind lines together." },
+            showAt: { tooltip: "Show the wind speed and direction at the places switched on below, as a readout and an arrow in the main view.\nThe arrow points in the direction that the wind blows TO. The readout gives the direction that the wind comes FROM." },
+            showAtCamera: { tooltip: "Show the wind at the camera, at the altitude of the camera.\nThis is the Local Wind that the camera gets there on this frame." },
+            showAtTarget: { tooltip: "Show the wind at the target, at the altitude of the target.\nThis is the Target Wind that the target gets there on this frame." },
+            showAtCursor: { tooltip: "Show the wind at the mouse cursor in the main view, at Altitude.\nShift-click to add a point that stays. Alt-click to remove the nearest point.\nThe added points show only while this is on." },
+            showAtObject: { tooltip: "Show the wind at this object, at the altitude of the object." },
+            showAtAutoOn: { message: "Show Wind at is on: the wind at the camera and the target shows in this view. Turn it off in Physics > Wind > Show Wind at." },
+            status: { tooltip: "Where the wind comes from: the source, the time of the data, the distance from the target to the nearest data, and the heights that the data covers.\nWhile data loads, or after an error, it shows a message. You cannot edit it." },
+            compass: { tooltip: "Compass. The arrow points north.\nYellow triangle: the direction that Target Wind comes FROM.\nGreen triangle: the direction that Local Wind (at the camera) comes FROM.\nWind: the Wind Source (with Separate Wind Sources: target / local)." },
+            windInKnots: { tooltip: "Show every wind speed on this panel, and in the Show Wind at readouts, in knots.\nWhen off, wind speeds use the speed unit of Units (Physics > Units).\nHeights always use the height unit of Units." },
+            lineStyle: { tooltip: "How the wind lines look: opacity, spacing, and the speed at the top of the color scale." },
+            opacity: { tooltip: "Opacity of the wind lines, from 0 (invisible) to 1 (solid)." },
+            spacing: { tooltip: "Distance between the wind lines, in degrees of latitude and longitude.\nA larger value gives fewer lines." },
+            maxSpeed: { tooltip: "Wind speed at the top of the wind-line color scale, in the speed unit of this panel.\nThe color goes from blue (slow) through cyan, green and yellow to red (this speed or faster)." },
+            refresh: { tooltip: "Clear the stored wind data and load it again for the current source.\nUse it after you move the camera a long distance, or after a GFS load fails.\nFor UWYO and IGRA2, it changes to the nearest soundings if the camera moved far or Sounding Count changed." },
+            localFromConstantCamera: { tooltip: "Calculate Local Wind from the camera track. It assumes that the camera platform flew at a constant airspeed,\nand finds the one wind that makes the airspeed most nearly constant.\nIt sets Local Wind From and Local Wind Speed, and turns on Override Local Wind.\nThe Wind Source and Target Wind do not change." },
         },
         showHide: {
             keyboardShortcuts: { label: "[K]eyboard Shortcuts", tooltip: "Show or hide the keyboard shortcuts overlay" },
@@ -4013,6 +4069,14 @@ const en = {
             label: "Above Ground Level",
             tooltip: "Altitude is relative to ground level, not sea level. Switching it keeps " +
                 "the position and converts the altitude.",
+        },
+        allowSmallAltitudes: {
+            label: "Allow Small Altitudes",
+            tooltip: "Let the Alt slider zoom in to very small heights.\n" +
+                "When you drag past the left end of the slider, its range gets smaller.\n" +
+                "Off: the range stops at 100 ft, and the slider moves in steps of 1 ft.\n" +
+                "On: the range can go down to 1 ft, with very small steps.\n" +
+                "A value that you type is not rounded.",
         },
         lookup: {
             label: "Lookup",

@@ -106,7 +106,11 @@ describe("CNodeWind.trackWindAt", () => {
         expect(wind.trackWindAt(0).knots).toBeCloseTo(19.438462, 5);
     });
 
-    test("update() cascades on row changes only, not on every interpolated frame", () => {
+    // Until 2026-11-03 update() also recalculated the users at each new track row,
+    // for users that read From/Knots when they baked. Every user now reads the node
+    // at its own frame (v(f) included), so the users recalculate only when what the
+    // node reads changes (windSignature): here, once.
+    test("update() shows the track's wind on every frame, and recalculates the users once", () => {
         const wind = makeWind([
             windRow(250, 12), windRow(260, 14), windRow(270, 16), windRow(280, 18),
         ]);
@@ -122,9 +126,11 @@ describe("CNodeWind.trackWindAt", () => {
 
         // The interpolated value changes nearly every frame...
         expect(valueChanges).toBeGreaterThan(50);
-        // ...but the graph-wide rebake fires once per underlying track ROW
-        // (4 rows), not once per rendered frame.
-        expect(wind.recalculateCascade).toHaveBeenCalledTimes(4);
+        // ...but the graph-wide rebake fires once, when the node first reads the
+        // track, not at each row or each rendered frame.
+        expect(wind.recalculateCascade).toHaveBeenCalledTimes(1);
+        // A user that reads frame 10 after the playhead moved on gets frame 10's wind.
+        expect(wind.windStateAt(10, wind.position).from).toBeCloseTo(wind.trackWindAt(10).from, 9);
         expect(wind.from).toBeCloseTo(280, 6);
         expect(wind.knots).toBeCloseTo(18, 6);
     });

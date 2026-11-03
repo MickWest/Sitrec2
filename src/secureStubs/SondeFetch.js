@@ -45,6 +45,11 @@ export async function getNearbyWeatherBalloons() {
     return [];
 }
 
+// The launch times that the original fetches. Nothing is fetched in this build, so none.
+export function nearestLaunches() {
+    return [];
+}
+
 export const getNearbySoundings = getNearbyWeatherBalloons;
 
 export async function importSoundingDialog() {

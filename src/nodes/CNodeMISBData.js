@@ -42,6 +42,9 @@ export class CNodeMISBDataTrack extends CNodeEmptyArray {
         // For tracks with relative timestamps (e.g., seconds from 0), store metadata
         // to enable user override of start time via GUI
         this.fireballObservedInterval = v.fireballObservedInterval ?? false;
+        // Hold the first and last positions outside the data's time span, and
+        // do not extrapolate (CNodeTrackFromMISB). Set for sounding tracks.
+        this.holdDataEnds = v.holdDataEnds ?? false;
         if (v.trackFile && v.trackFile.isRelativeTime) {
             this.isRelativeTime = true;
             this.parsingBaseTime = v.trackFile.parsingBaseTime;

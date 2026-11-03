@@ -1308,6 +1308,7 @@ export function activateFootball() {
         set(bc.guiLon?.guiEntry, manual);
         set(bc.guiAlt?.guiEntry, manual);
         set(bc.aglController, manual);
+        set(bc.smallAltitudesController, manual);
     };
     if (setupFootball._broadcastGreyoutHandler) {
         EventManager.removeEventListener("Switch.choiceChanged.footballBroadcastCamSwitch",

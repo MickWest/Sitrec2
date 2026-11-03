@@ -1,4 +1,6 @@
-// A folder's own on/off checkbox, drawn at the right end of its title row.
+// A folder's own on/off checkbox, drawn at the right end of its title row: the TITLE CHECKBOX.
+// (A plain row drawn the same way, with its box in that right-hand column, is a LIST CHECKBOX:
+// asListCheckbox() at the end of this file.)
 //
 // Many folders hold one boolean that switches the whole thing on or off — "Visible", "Show",
 // "Enable ..." — as an ordinary row inside the folder. `controller.asFolderToggle()` promotes
@@ -64,6 +66,8 @@ function injectStyles() {
     pointer-events: auto;
 }
 .lil-gui .controller.lil-folder-toggle-source { display: none; }
+.lil-gui .controller.boolean.lil-list-checkbox > .name { flex: 1 1 auto; min-width: 0; }
+.lil-gui .controller.boolean.lil-list-checkbox > .widget { flex: 0 0 auto; width: auto; }
 .lil-folder-faded { opacity: 0.4; }
 .lil-folder-faded, .lil-folder-faded * { pointer-events: none !important; }
 `;
@@ -262,5 +266,17 @@ Controller.prototype.keepLiveWhenFolderOff = function () {
     this.domElement.classList.add("lil-keep-live");
     // Re-mark every toggled folder up the chain, since this row may sit in a nested sub-folder.
     for (let gui = this.parent; gui; gui = gui.parent) gui._folderToggleResync?.();
+    return this;
+};
+
+// A LIST CHECKBOX: a checkbox row drawn like a title checkbox. The label takes the free width and
+// the box sits at the right end of the row, in the same column as the title checkboxes of the
+// folders around it. For a folder that is a list of things to switch on and off ("Show Wind at"),
+// so its rows look like the Objects and Effects menus, whose entries are folder titles. Only the
+// look changes: it is still an ordinary boolean row, so drag-to-set over several rows sets them
+// all (CheckboxDragPaint) and a title checkbox that is off still greys it.
+Controller.prototype.asListCheckbox = function () {
+    injectStyles();
+    this.domElement.classList.add("lil-list-checkbox");
     return this;
 };

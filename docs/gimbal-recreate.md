@@ -127,8 +127,9 @@ drop the video into it.
 
 On a Gimbal sitch, the Create buttons are replaced by **Apply Parameter Changes**.
 
-To change wind, use Cloud Wind From, Cloud Wind Knots, Target Wind From, Target Wind Knots,
-Local Wind From and Local Wind Knots at the top level of the **Physics** menu. These change
+To change wind, use Cloud Wind From, Cloud Wind Knots, Target Wind From, Target Wind Speed,
+Local Wind From and Local Wind Speed at the top level of the **Physics** menu (the speed rows
+give their unit, which follows **Units**). These change
 the scene at once. Tgt Start Dist, Target Speed and LOS Traverse Method are in the
 **Traverse** menu.
 

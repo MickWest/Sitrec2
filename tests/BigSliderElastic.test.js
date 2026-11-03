@@ -272,3 +272,46 @@ describe('the big slider bar', () => {
         expect(high.classList.contains('active')).toBe(false);
     });
 });
+
+// The position Alt sliders (Cam [C] Alt, Target [X] Alt): elastic 0..1000 ft that
+// can shrink. "Allow Small Altitudes" off sets a floor of a 100 ft range and a
+// 1 ft step (elasticFloor); on, the floor is 1 ft with no smallest step, as before.
+describe('elasticFloor (Allow Small Altitudes)', () => {
+    function makeAltController() {
+        const controller = new GUI().add({alt: 50}, 'alt', 0, 1000, 1)
+            .elastic(1, 100000000, false, true);
+        stubRect(controller.$slider, MENU_SLIDER);
+        return controller;
+    }
+    const dragLeftFar = (controller) => {
+        controller._dragStart(MENU_SLIDER.left + 5);
+        for (let i = 0; i < 30; i++) controller._dragMove(MENU_SLIDER.left - 20 - i);
+    };
+
+    it('off: the range stops at 100 ft and the step stays 1 ft', () => {
+        const controller = makeAltController().elasticFloor(100, 1);
+        dragLeftFar(controller);
+        expect(controller._max).toBeGreaterThanOrEqual(100);
+        expect(controller._step).toBe(1);
+        while (controller._elasticStepRange(false)) { /* halve to the floor */ }
+        expect(controller._max).toBe(100);
+        expect(controller._step).toBe(1);
+    });
+
+    it('on: the range goes down to 1 ft with steps of 0.002 ft, as before', () => {
+        const controller = makeAltController().elasticFloor(1, 0);
+        while (controller._elasticStepRange(false)) { /* halve to the floor */ }
+        expect(controller._max).toBe(1);
+        expect(controller._step).toBeCloseTo(0.002, 9);
+    });
+
+    it('turning it off raises a range that is below the floor', () => {
+        const controller = makeAltController().elasticFloor(1, 0);
+        while (controller._elasticStepRange(false)) { /* to 1 ft */ }
+        controller.elasticFloor(100, 1);
+        expect(controller._max).toBe(100);
+        expect(controller._step).toBe(1);
+        // The value is not changed by the floor.
+        expect(controller.getValue()).toBe(50);
+    });
+});

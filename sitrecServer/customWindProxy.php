@@ -53,11 +53,18 @@ if (!$urlTemplate) {
     exit;
 }
 
-// Snap hour to a 6-hour cycle so cache keys line up with the GFS proxy.
-// If a custom source publishes on a different cadence (hourly, 3-hourly), the
-// remote endpoint can interpret the {HH} placeholder however it likes — we
-// just normalise the cache filename here.
-$cycleHour = intdiv($hour, 6) * 6;
+// Snap the hour to the source's cadence: SITREC_CUSTOM_WIND_CADENCE_HOURS, the
+// hours between its grids (a divisor of 24; default 6, as GFS). The browser
+// reads the same setting, asks for the grid times on both sides of a frame's
+// time and blends them, so it already sends a grid hour; this snap only guards
+// a request from elsewhere. That hour goes into {HH} and the cache key. Before
+// 2026-11-03 the hour was always snapped to 6 hours, so an hourly source was
+// read at 00, 06, 12 and 18 only.
+$cadence = intval(getenv('SITREC_CUSTOM_WIND_CADENCE_HOURS') ?: 6);
+if ($cadence < 1 || $cadence > 24 || 24 % $cadence !== 0) {
+    $cadence = 6;
+}
+$cycleHour = intdiv($hour, $cadence) * $cadence;
 $cycleHourStr = sprintf('%02d', $cycleHour);
 $levelStr = ($level === 'surface') ? '10m' : "{$level}hPa";
 

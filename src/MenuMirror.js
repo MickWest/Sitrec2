@@ -217,6 +217,8 @@ function addTwin(source, gui) {
             if (source._decimals !== undefined) twin.decimals(source._decimals);
             if (source._elastic) {
                 twin.elastic(source._elasticMin, source._elasticMax, source._elasticInteger, source._elasticShrink);
+                // The smallest step of an elastic range (elasticFloor: Allow Small Altitudes).
+                if (source._elasticMinStep > 0) twin.elasticFloor(source._elasticMin, source._elasticMinStep);
             }
             // Typed input has to expand a twin's range the same way it expands the
             // source's, or the same keystrokes give two different answers depending
@@ -333,11 +335,23 @@ function forceUpdateDisplay(controller) {
 // stale range, so the two sliders disagree about where the same value sits.
 function syncRange(source, twin) {
     if (typeof twin._onUpdateMinMax !== "function") return;
-    if (twin._min === source._min && twin._max === source._max) return;
-    twin._min = source._min;
-    twin._max = source._max;
-    twin._maxMax = source._maxMax;
-    twin._onUpdateMinMax();
+    // The floor of an elastic range can change with no change of range (elasticFloor).
+    const floorChanged = source._elastic && twin._elastic
+        && (twin._elasticMin !== source._elasticMin || twin._elasticMinStep !== source._elasticMinStep);
+    if (floorChanged) {
+        twin._elasticMin = source._elasticMin;
+        twin._elasticMinStep = source._elasticMinStep;
+    }
+    if (twin._min !== source._min || twin._max !== source._max) {
+        twin._min = source._min;
+        twin._max = source._max;
+        twin._maxMax = source._maxMax;
+        twin._onUpdateMinMax();
+    } else if (!floorChanged) {
+        return;
+    }
+    // The step of an elastic range follows its range and its floor.
+    if (twin._elastic) twin.updateElasticStep?.();
 }
 
 // --- request / twin bookkeeping --------------------------------------------------------------

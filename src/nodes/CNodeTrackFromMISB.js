@@ -365,15 +365,27 @@ export class CNodeTrackFromMISB extends CNodeTrack {
             (n) => {return !isNaN(n) && n > 0 && n < 180;}
         )
 
-        let validWindDirection = this.patchColumn(misb, MISB.WindDirection,
-            (n) => {return !isNaN(n) && n >= 0 && n < 360}
-        )
-
-        let validWindSpeed = this.patchColumn(misb, MISB.WindSpeed,
-            // Tag 36 is metres per second (ST 0601), so 400 is a very loose
-            // sanity filter for junk cells, not a physical wind limit.
-            (n) => {return !isNaN(n) && n >= 0 && n < 400}
-        )
+        // 360 is a valid wind direction (a north wind, as soundings report it).
+        // It was rejected before, so patchColumn gave it the previous row's
+        // direction.
+        const validWindDir = (n) => !isNaN(n) && n >= 0 && n <= 360;
+        // Tag 36 is metres per second (ST 0601), so 400 is a very loose
+        // sanity filter for junk cells, not a physical wind limit.
+        const validWindSpd = (n) => !isNaN(n) && n >= 0 && n < 400;
+        if (misb.holdDataEnds) {
+            // A sounding: its rows are levels, and CNodeAtmosphericProfile
+            // builds the profile from these same rows. Filling a gap with the
+            // level below would show that level's wind as data at the gap, so
+            // clear a bad value and leave the gap: the profile interpolates
+            // across it from the levels that have wind.
+            for (const row of misb.misb) {
+                if (row[MISB.WindDirection] != null && !validWindDir(Number(row[MISB.WindDirection]))) row[MISB.WindDirection] = null;
+                if (row[MISB.WindSpeed] != null && !validWindSpd(Number(row[MISB.WindSpeed]))) row[MISB.WindSpeed] = null;
+            }
+        } else {
+            this.patchColumn(misb, MISB.WindDirection, validWindDir);
+            this.patchColumn(misb, MISB.WindSpeed, validWindSpd);
+        }
 
 
         const rSitLat = Sit.lat * Math.PI / 180
@@ -593,9 +605,12 @@ export class CNodeTrackFromMISB extends CNodeTrack {
                 assert(0, "Time data is not increasing slot =" + slot + " time=" + lookupTimes[slot] + " next time=" + lookupTimes[slot+1]);
 
            // assert(slot < points, "not enough data, or a bug in your code - Time wrong? id=" + this.id)
-            // A recorded fireball has no evidence outside its observed interval.
-            // Hold its endpoints rather than extrapolate an atmospheric path.
-            if (misb.fireballObservedInterval) msNow = Math.max(lookupTimes[0], Math.min(lookupTimes[points - 1], msNow));
+            // A recorded fireball has no evidence outside its observed interval,
+            // and a sounding's reconstructed ascent has no balloon before launch
+            // or above its top level. Hold the endpoints rather than extrapolate:
+            // a straight-line extension sent a sounding track tens of km up, or
+            // under the ground, when the sitch time moved outside the ascent.
+            if (misb.fireballObservedInterval || misb.holdDataEnds) msNow = Math.max(lookupTimes[0], Math.min(lookupTimes[points - 1], msNow));
             const fraction = (msNow - lookupTimes[slot]) / (lookupTimes[slot + 1] - lookupTimes[slot])
 
      //       assert(fraction >= 0 && fraction <= 1, "CNodeTrackFromMISB:recalculate(): fraction out of range: " + fraction + " slot = " + slot + " msNow = " + msNow + " timeArray[slot] = " + this.timeArray[slot] + " timeArray[slot+1] = " + this.timeArray[slot+1] + " id=" + this.id)

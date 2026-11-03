@@ -50,6 +50,19 @@ function substringList(setting) {
     return setting.split(",").map(item => item.trim()).filter(item => item !== "");
 }
 
+// Values that cannot be real, after unit conversion. A value outside its range is
+// taken as missing: a file can mark a missing value with a code such as 999 or
+// -9999, and before 2026-11-02 such a code became a real level (999 degrees was
+// read as 279). _MISSING_VALUES names a file's codes exactly; these limits also
+// catch a code that the layout does not name.
+export const SOUNDING_VALUE_LIMITS = {
+    windDir: [0, 360],          // degrees, before a "to" direction is turned
+    windSpeed: [0, 200],        // m/s; the strongest jet streams are near 110 m/s
+    height: [-500, 50000],      // m MSL
+    pressure: [0.1, 1100],      // hPa
+    temp: [-120, 60],           // Celsius
+};
+
 /**
  * Read every SITREC_CUSTOM_SOUNDING_<NAME>_* layout out of an env object
  * (Globals.env). A layout exists when its _LEVEL_TAG is set. One that also lacks
@@ -116,12 +129,18 @@ export function soundingXMLLayoutsFromEnv(env, report = message => console.warn(
             pressureToHPa: unit("PRESSURE_UNITS", PRESSURE_TO_HPA, "hPa"),
             tempToC: unit("TEMP_UNITS", TEMP_TO_C, "C"),
             altAboveGround: choice("ALT_REFERENCE", ["msl", "agl"], "msl") === "agl",
+            // Numbers the file uses for "no value" (e.g. "-9999, 999"), compared
+            // with the number as written in the file, before unit conversion.
+            missingValues: substringList(setting("MISSING_VALUES")).map(Number),
             windDirIsTo: choice("WIND_DIR_CONVENTION", ["from", "to"], "from") === "to",
             // A weather file can be a forecast or model product, so its profile counts as
             // a model in the traverse wind evidence unless the layout says it is measured.
             measured: choice("DATA_KIND", ["model", "measured"], "model") === "measured",
         };
 
+        if (layout.missingValues.some(value => !Number.isFinite(value))) {
+            problems.push(`${prefix}MISSING_VALUES="${setting("MISSING_VALUES")}" is not a comma-separated list of numbers`);
+        }
         if (layout.windDirTag.length === 0) problems.push(`${prefix}WIND_DIR_TAG is not set`);
         if (layout.windSpeedTag.length === 0) problems.push(`${prefix}WIND_SPEED_TAG is not set`);
         if (layout.altTag.length === 0 && layout.pressureTag.length === 0) {
@@ -201,7 +220,9 @@ function readNumber(parent, path, layout) {
     const hit = findAll(parent, path)[0];
     if (!hit) return null;
     const number = parseFloat(valueText(hit.element, layout));
-    return Number.isFinite(number) ? number : null;
+    if (!Number.isFinite(number)) return null;
+    if (layout.missingValues?.includes(number)) return null;
+    return number;
 }
 
 // A hemisphere given apart from the number, in whatever attribute or child the
@@ -292,16 +313,17 @@ function findPosition(levelHit, layout, parseCoordinate) {
     return null;
 }
 
+// {date, fromFile}: the file's time, or defaultDate with fromFile false.
 function readTime(xml, layout, defaultDate) {
     const hit = findAll(xml, layout.timeTag)[0];
-    if (!hit) return defaultDate;
+    if (!hit) return {date: defaultDate, fromFile: false};
     let text = valueText(hit.element, layout);
     // A date-time with no zone is UTC, not the browser's local time.
     if (/^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}/.test(text) && !/(Z|[+-]\d{2}:?\d{2})$/i.test(text)) {
         text = text.replace(" ", "T") + "Z";
     }
     const date = new Date(text);
-    return Number.isNaN(date.getTime()) ? defaultDate : date;
+    return Number.isNaN(date.getTime()) ? {date: defaultDate, fromFile: false} : {date, fromFile: true};
 }
 
 /**
@@ -328,37 +350,57 @@ export function parseSoundingXML(xml, layout, defaultDate = new Date(), parseCoo
     if (!position) return null;
 
     const levels = [];
+    let outOfRange = 0;
+    // A converted value outside SOUNDING_VALUE_LIMITS is taken as missing.
+    const inRange = (value, field) => {
+        if (value === null) return null;
+        const [low, high] = SOUNDING_VALUE_LIMITS[field];
+        if (value >= low && value <= high) return value;
+        outOfRange++;
+        return null;
+    };
     for (const hit of profileHits) {
         const altitude = readNumber(hit.element, layout.altTag, layout);
-        const pressure = readNumber(hit.element, layout.pressureTag, layout);
-        if (altitude === null && pressure === null) continue;
+        const pressureRaw = readNumber(hit.element, layout.pressureTag, layout);
+        const height = inRange(altitude === null ? null
+            : altitude * layout.altToM + (layout.altAboveGround ? position.elev : 0), "height");
+        const pressure = inRange(pressureRaw === null ? null : pressureRaw * layout.pressureToHPa, "pressure");
+        if (height === null && pressure === null) continue;
 
-        const windDir = readNumber(hit.element, layout.windDirTag, layout);
-        const windSpeed = readNumber(hit.element, layout.windSpeedTag, layout);
-        const temp = readNumber(hit.element, layout.tempTag, layout);
+        const windDir = inRange(readNumber(hit.element, layout.windDirTag, layout), "windDir");
+        const windSpeedRaw = readNumber(hit.element, layout.windSpeedTag, layout);
+        const windSpeed = inRange(windSpeedRaw === null ? null : windSpeedRaw * layout.windSpeedToMps, "windSpeed");
+        const tempRaw = readNumber(hit.element, layout.tempTag, layout);
+        const temp = inRange(tempRaw === null ? null : layout.tempToC(tempRaw), "temp");
 
         levels.push({
             time_s: null,
-            pressure: pressure === null ? null : pressure * layout.pressureToHPa,
-            height: altitude === null ? null
-                : altitude * layout.altToM + (layout.altAboveGround ? position.elev : 0),
-            temp: temp === null ? null : layout.tempToC(temp),
+            pressure,
+            height,
+            temp,
             rh: null,
             dewpoint: null,
-            windDir: windDir === null ? null
+            // A wind needs both parts: a direction without a speed is no wind.
+            windDir: windDir === null || windSpeed === null ? null
                 : (((layout.windDirIsTo ? windDir + 180 : windDir) % 360) + 360) % 360,
-            windSpeed: windSpeed === null ? null : windSpeed * layout.windSpeedToMps,
+            windSpeed: windDir === null || windSpeed === null ? null : windSpeed,
             lat: null,
             lon: null,
         });
+    }
+    if (outOfRange > 0) {
+        console.warn(`Sounding XML (${layout.name}): ${outOfRange} value(s) outside the possible range were taken as missing`);
     }
 
     if (levels.length < 2) return null;
     if (!levels.some(level => level.windDir !== null && level.windSpeed !== null)) return null;
 
+    const time = readTime(xml, layout, defaultDate);
     return {
         station: {lat: position.lat, lon: position.lon, elev: position.elev, id: layout.name, name: layout.label},
-        datetime: readTime(xml, layout, defaultDate),
+        datetime: time.date,
+        // False when the file has no time and datetime is defaultDate.
+        timeFromFile: time.fromFile,
         levels,
         source: "xml",
         measured: layout.measured,

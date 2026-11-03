@@ -82,7 +82,7 @@ export class CNodeBalloonTrack extends CNodeTrack {
         const wf = NodeMan.get("windField", false);
         if (wf && typeof wf.sampleWindAtAltitude === "function") {
             try {
-                const s = wf.sampleWindAtAltitude(lat, lon, altMSL);
+                const s = wf.sampleWindAtAltitude(lat, lon, altMSL, f);
                 if (s && Number.isFinite(s.u) && Number.isFinite(s.v)) {
                     return s;
                 }
@@ -92,7 +92,7 @@ export class CNodeBalloonTrack extends CNodeTrack {
         }
         const tw = NodeMan.get("targetWind", false);
         if (tw) {
-            const hist = (typeof tw.trackWindAt === "function") ? tw.trackWindAt(f) : null;
+            const hist = (typeof tw.trackWindAt === "function" && !tw.override) ? tw.trackWindAt(f) : null;
             const from = hist ? hist.from : tw.from;
             const knots = hist ? hist.knots : tw.knots;
             if (Number.isFinite(from) && Number.isFinite(knots)) {
@@ -115,9 +115,12 @@ export class CNodeBalloonTrack extends CNodeTrack {
     _currentWindFingerprint() {
         const wf = NodeMan.get("windField", false);
         const tw = NodeMan.get("targetWind", false);
-        const twPart = tw
-            ? (tw.trackSource ? `track:${tw.trackSource}` : `${tw.from}|${tw.knots}`)
-            : "";
+        // A Target Wind that reads a source shows the playhead's value in
+        // From and Knots, so those must not be in the fingerprint (every
+        // frame would rebake); windCacheKey names the source and its data.
+        const twPart = !tw ? ""
+            : typeof tw.windCacheKey === "function" ? tw.windCacheKey()
+            : (tw.trackSource ? `track:${tw.trackSource}` : `${tw.from}|${tw.knots}`);
         // _windDataVersion/_lastDateCycle capture ASYNC wind-grid arrival
         // (GFS levels re-fetch after a sitch reload) — without them, a
         // reloaded balloon would stay baked against the constant-wind

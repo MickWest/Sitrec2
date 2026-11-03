@@ -64,6 +64,6 @@
     <text x="0" y="18" font-weight="700">Coverage:</text>
     <text x="60" y="18">cov = exp(-d_min / L),   L = 5° (≈ 550 km) — drives shader opacity falloff</text>
     <text x="0" y="36" font-weight="700">Grid:</text>
-    <text x="60" y="36">72 × 37 (5°), only K = 3 nearest samples per cell — keeps result locally representative</text>
+    <text x="60" y="36">360 × 181 (1°), only K = 3 nearest samples per cell — keeps result locally representative</text>
   </g>
 </svg>

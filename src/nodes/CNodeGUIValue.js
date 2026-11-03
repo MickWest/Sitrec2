@@ -211,6 +211,9 @@ export class CNodeGUIValue extends CNodeGUIConstant {
         if (this.guiEntry._elastic) {
             this.guiEntry._elasticMin = roundIfClose(this.guiEntry._elasticMin * scale);
             this.guiEntry._elasticMax = roundIfClose(this.guiEntry._elasticMax * scale);
+            if (this.guiEntry._elasticMinStep > 0) {
+                this.guiEntry._elasticMinStep = roundIfClose(this.guiEntry._elasticMinStep * scale);
+            }
             this.guiEntry.updateElasticStep();
         }
         // this.guiEntry.step *= scale;
