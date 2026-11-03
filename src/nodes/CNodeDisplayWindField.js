@@ -328,6 +328,9 @@ export class CNodeDisplayWindField extends CNode3DGroup {
         //     dropped points that Shift-click adds and Alt-click removes
         //   - inspectCamera / inspectTarget: anchored to the camera / target
         //     track positions, sampled at each track's own altitude
+        //   - inspectTraverse: anchored to the traverse path (where the
+        //     traverse object is), at its own altitude. In the custom sitch
+        //     this is not the target track (Target > Target Track).
         //   - inspectObjects: {objectId: true} for each 3D object to show,
         //     sampled at the object's own altitude
         // The pointer listeners are installed only while the master AND the
@@ -342,6 +345,7 @@ export class CNodeDisplayWindField extends CNode3DGroup {
         this.windInKnots = v.windInKnots ?? false;
         this.inspectCamera = true;
         this.inspectTarget = true;
+        this.inspectTraverse = false;
         this.inspectCursor = false;
         this.inspectObjects = {};
         this._inspectClient = null;     // {x, y} clientX/Y of the cursor point
@@ -356,7 +360,7 @@ export class CNodeDisplayWindField extends CNode3DGroup {
         // Lock the wind altitude to the camera or target track's altitude
         // each frame, instead of taking it from the manual slider. Persisted
         // alongside the wind node so save/restore preserves the lock.
-        // Values: "none" (default) | "camera" | "target".
+        // Values: "none" (default) | "camera" | "target" | "traverse".
         this.lockAltitudeTo = "none";
 
         // ---------- shader material ----------
@@ -1197,9 +1201,9 @@ export class CNodeDisplayWindField extends CNode3DGroup {
         return d;
     }
 
-    // True when the Camera ("camera") or Target ("target") row of Show Wind
-    // at has a track to show. The menu uses it to leave out an object that
-    // only repeats that row.
+    // True when the Camera ("camera"), Target ("target") or Traverse
+    // ("traverse") row of Show Wind at has a track to show. The menu uses it
+    // to leave out an object that only repeats that row.
     hasAnchorTrack(anchor) {
         return !!this._trackForAnchor(anchor);
     }
@@ -1219,10 +1223,16 @@ export class CNodeDisplayWindField extends CNode3DGroup {
         // (smoothed outputs of the switch nodes); legacy fixed sitches use
         // cameraTrack / targetTrack; gimbal-style sitches use jetTrack /
         // LOSTraverseSelect. Try them in that order.
+        //
+        // Traverse = the final traverse output, the track that the traverse
+        // line and the traverse object show. The order is that of
+        // getTraverseTrack in ExportCameraKML.js.
         const candidates = anchor === "camera"
             ? ["cameraTrackSwitchSmooth", "cameraTrack", "jetTrack", "lookCamera"]
             : anchor === "target"
             ? ["targetTrackSwitchSmooth", "targetTrack", "LOSTraverseSelect"]
+            : anchor === "traverse"
+            ? ["traverseSmoothedTrack", "LOSTraverseSelectSmoothed", "LOSTraverseSelectTrack", "LOSTraverseSelect"]
             : [];
         for (const id of candidates) {
             if (!NodeMan.exists(id)) continue;
@@ -1289,14 +1299,17 @@ export class CNodeDisplayWindField extends CNode3DGroup {
             }
         }
 
-        // Camera + Target anchors, at the track's own position and height.
-        // They read Local Wind and Target Wind themselves (windStateAt), so a
-        // readout always shows what that wind node gives its users there,
-        // Override, Manual and Lock included.
+        // Camera, Target and Traverse anchors, at the track's own position and
+        // height. They read Local Wind and Target Wind themselves
+        // (windStateAt), so a readout always shows what that wind node gives
+        // its users there, Override, Manual and Lock included. The traverse
+        // is a place where the target can be, so it reads Target Wind.
         const frame = playheadFrame();
-        for (const [anchor, color, windId] of [
-            ["camera", "#00cc66", "localWind"], ["target", "#ff3366", "targetWind"]]) {
-            if (!(anchor === "camera" ? this.inspectCamera : this.inspectTarget)) continue;
+        for (const [anchor, color, windId, on] of [
+            ["camera", "#00cc66", "localWind", this.inspectCamera],
+            ["target", "#ff3366", "targetWind", this.inspectTarget],
+            ["traverse", "#bb77ff", "targetWind", this.inspectTraverse]]) {
+            if (!on) continue;
             const track = this._trackForAnchor(anchor);
             if (!track) continue;
             const pos = track.p(frame);
@@ -2987,6 +3000,7 @@ export class CNodeDisplayWindField extends CNode3DGroup {
             // that still exist, so a deleted object does not stay in saves.
             inspectCamera: this.inspectCamera,
             inspectTarget: this.inspectTarget,
+            inspectTraverse: this.inspectTraverse,
             inspectCursor: this.inspectCursor,
             inspectObjectIds: Object.keys(this.inspectObjects)
                 .filter(id => this.inspectObjects[id] && NodeMan.exists(id)),
@@ -3026,6 +3040,8 @@ export class CNodeDisplayWindField extends CNode3DGroup {
             this.inspectTarget = true;
             this.inspectCursor = true;
         }
+        // Added after Camera and Target: off in every older save.
+        this.inspectTraverse = v.inspectTraverse === true;
         if (Array.isArray(v.inspectObjectIds)) {
             this.inspectObjects = {};
             for (const id of v.inspectObjectIds) {
@@ -3354,11 +3370,11 @@ export class CNodeDisplayWindField extends CNode3DGroup {
             }
         }
 
-        // Altitude-lock: drive windAltFt from the camera or target track
-        // altitude. Snap to the slider's 50 ft step so smooth altitude
+        // Altitude-lock: drive windAltFt from the camera, target or traverse
+        // track altitude. Snap to the slider's 50 ft step so smooth altitude
         // changes don't fire fetchWindForAltitude every frame — only when
         // the snapped value crosses a step boundary.
-        if (this.lockAltitudeTo === "camera" || this.lockAltitudeTo === "target") {
+        if (["camera", "target", "traverse"].includes(this.lockAltitudeTo)) {
             const track = this._trackForAnchor(this.lockAltitudeTo);
             if (track) {
                 const pos = track.p(frame);

@@ -1000,7 +1000,7 @@ export const setupMethods = {
         // A wind readout (an arrow, plus speed and FROM direction) at each
         // place switched on here. The title checkbox is the master switch
         // (wn.inspect, which was the Inspect Wind toggle); the rows pick the
-        // places: Camera, Target, Mouse Cursor, then each 3D object. The rows
+        // places: Camera, Target, Traverse, Mouse Cursor, then each 3D object. The rows
         // are list checkboxes (asListCheckbox), lined up with the title
         // checkbox, like the entries of the Objects and Effects menus.
         const showAtFolder = windFolder.addFolder("Show Wind at").close();
@@ -1021,23 +1021,30 @@ export const setupMethods = {
         showAtFolder.add(wn, "inspectTarget").name("Target")
             .tooltip(t("custom.wind.showAtTarget.tooltip")).listen().asListCheckbox()
             .onChange(() => setRenderOne(true));
+        showAtFolder.add(wn, "inspectTraverse").name("Traverse")
+            .tooltip(t("custom.wind.showAtTraverse.tooltip")).listen().asListCheckbox()
+            .onChange(() => setRenderOne(true));
         showAtFolder.add(wn, "inspectCursor").name("Mouse Cursor")
             .tooltip(t("custom.wind.showAtCursor.tooltip")).listen().asListCheckbox()
             .onChange(v => wn.setInspectCursor(v));
 
-        // One row for each 3D object, in Objects menu order. A target or
-        // camera object is left out when the Target or Camera row already
-        // shows that place. traverseObject and cameraObject are the custom
-        // sitch's; targetObject is the target object of the older sitches
-        // (SituationSetup has a case). The Model Inspector's targetObject is
-        // at a fixed position with no target track, so the Target row shows
-        // nothing there and the object keeps its own row.
+        // One row for each 3D object, in Objects menu order. A camera, target
+        // or traverse object is left out when the Camera, Target or Traverse
+        // row already shows that place. traverseObject and cameraObject are
+        // the custom sitch's: traverseObject rides the traverse path, which
+        // is not the target track there. targetObject is the target object
+        // of the older sitches (SituationSetup has a case). The Model
+        // Inspector's targetObject is at a fixed position with no target
+        // track, so the Target row shows nothing there and the object keeps
+        // its own row.
         // The rows are rebuilt when an object is made, deleted or renamed.
         // An object's choice is kept by its id, which a rename does not change.
-        const SHOW_AT_TARGET_OBJECTS = new Set(["traverseObject", "targetObject"]);
+        const SHOW_AT_TARGET_OBJECTS = new Set(["targetObject"]);
+        const SHOW_AT_TRAVERSE_OBJECTS = new Set(["traverseObject"]);
         const SHOW_AT_CAMERA_OBJECTS = new Set(["cameraObject"]);
         const coveredByAnchorRow = id =>
             (SHOW_AT_TARGET_OBJECTS.has(id) && wn.hasAnchorTrack("target"))
+            || (SHOW_AT_TRAVERSE_OBJECTS.has(id) && wn.hasAnchorTrack("traverse"))
             || (SHOW_AT_CAMERA_OBJECTS.has(id) && wn.hasAnchorTrack("camera"));
         let showAtObjectRows = [];      // [{id, name, ctrl}]
         const showAtObjectList = () => guiMenus.objects.folders
@@ -1490,11 +1497,11 @@ export const setupMethods = {
                 par.windStatus = wn.statusText;
             });
 
-        // Lock Altitude: drive windAltFt from the camera or target track
-        // every frame. The options-as-object form keeps the GUI labels
+        // Lock Altitude: drive windAltFt from the camera, target or traverse
+        // track every frame. The options-as-object form keeps the GUI labels
         // capitalized while the node holds the lowercase internal value.
         windFolder.add(wn, "lockAltitudeTo",
-            { None: "none", Camera: "camera", Target: "target" })
+            { None: "none", Camera: "camera", Target: "target", Traverse: "traverse" })
             .name("Lock Altitude to").tooltip(t("custom.wind.lockAltitude.tooltip")).listen();
 
         // Nearby Wind Only: clip streamline seeding to a radius around

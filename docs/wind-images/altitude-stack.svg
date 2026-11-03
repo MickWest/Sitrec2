@@ -48,5 +48,5 @@
 
   <!-- caption -->
   <text x="380" y="50" text-anchor="middle" fill="#444">GFS publishes wind on pressure levels (six are shown here). Sitrec fetches the two levels on each side of your altitude.</text>
-  <text x="380" y="307" text-anchor="middle" fill="#888" font-size="11">"Lock Altitude to" makes the slider follow the altitude of the camera or target.</text>
+  <text x="380" y="307" text-anchor="middle" fill="#888" font-size="11">"Lock Altitude to" makes the slider follow the altitude of the camera, the target or the traverse.</text>
 </svg>

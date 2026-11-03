@@ -100,12 +100,13 @@ The checkbox at the right of the folder title turns all the readouts on or off. 
 |---|---|---|
 | **Camera** | The camera, at the altitude of the camera track. | On |
 | **Target** | The target, at the altitude of the target track. | On |
+| **Traverse** | The traverse path, where the traverse object is on the current frame, at its altitude. The traverse path is not the target track (**Target → Target Track**): it comes from the lines of sight and the traverse method that you selected. | Off |
 | **Mouse Cursor** | The point under the mouse cursor in the main view, at **Altitude**. **Shift-click** adds a point that stays, with a labelled vertical stalk to the surface. **Alt-click** removes the nearest one. The added points show only while Mouse Cursor is on, and they are saved with the sitch. | Off |
-| *Each object* | A 3D object, at the altitude of the object. There is one row for each object in the **Objects** menu. The target and camera objects have no row when the **Target** and **Camera** rows already show the wind there. The row follows a rename, and goes when the object is deleted. | Off |
+| *Each object* | A 3D object, at the altitude of the object. There is one row for each object in the **Objects** menu. The camera, target and traverse objects have no row when the **Camera**, **Target** and **Traverse** rows already show the wind there. The row follows a rename, and goes when the object is deleted. | Off |
 
 To set several rows at once, press one checkbox and drag over the others.
 
-The **Camera** readout shows Local Wind there and the **Target** readout shows Target Wind there, so they always agree with the sliders, with **Override** and with **Lock Target Wind to Local**. The other readouts show the **Wind Source**. Each readout gives, from the top:
+The **Camera** readout shows Local Wind there, and the **Target** and **Traverse** readouts show Target Wind there, so they always agree with the sliders, with **Override** and with **Lock Target Wind to Local**. The other readouts show the **Wind Source**. Each readout gives, from the top:
 
 - the speed, in the unit of the Wind folder (see [Wind in Knots](#wind-in-knots));
 - **FROM** and the direction that the wind blows from;
@@ -214,8 +215,9 @@ For the wind at one point (Target Wind, Local Wind, a **Show Wind at** readout),
 | **None** | Altitude is whatever you typed in the slider. |
 | **Camera** | Slider tracks the camera's current altitude every frame. |
 | **Target** | Slider tracks the target's current altitude every frame. |
+| **Traverse** | Slider tracks the altitude of the traverse path every frame: the altitude of the traverse object on the current frame. |
 
-Lock-to-Camera/Target is useful when you want the streamlines to always be at the altitude of the camera or target as the scene plays. Setting it back to None freezes the slider at whatever value it last had.
+Lock-to-Camera/Target/Traverse is useful when you want the streamlines to always be at the altitude of the camera, the target or the traverse object as the scene plays. **Traverse** follows the traverse method that you selected, after **Traverse Smooth Window**, so the lines stay at the height that the traverse gives even when the target track is something else. Setting it back to None freezes the slider at whatever value it last had.
 
 ### Nearby Wind Only / Nearby Radius (km)
 
