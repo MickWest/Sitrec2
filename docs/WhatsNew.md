@@ -9,6 +9,38 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.185.0 (2026-11-02)
+
+### New Features
+- **Live Target Wind and Local Wind** (Physics → Wind): with any Wind Source except *Manual*, Target Wind and Local Wind now read the source on every frame, at the place, height and time where the wind is used. Before, they kept one value from the last load. The sliders show the wind at the target or the camera on the current frame. To set your own value, turn on the new *Override Target Wind* or *Override Local Wind*. *Local from Constant Camera* now turns on *Override Local Wind* and no longer changes the Wind Source.
+- **Show Wind at** (Physics → Wind): replaces *Inspect Wind*. It shows the wind at the camera, the target, the mouse cursor and each 3D object, with the source and the time of its data. It also says when a value is held above or below the data, is under the ground or is still loading. The first change that you make to the wind in a sitch turns it on, if it was never on there.
+- **Wind Status** (Physics → Wind → *Status*): says where the wind comes from: the source, the time of the data, the distance from the target to the data and the heights that it covers.
+- **Wind units and Wind in Knots** (Physics → Wind): wind speeds and heights in the Wind menu and in the readouts now use the units of Physics → *Units*, for example *Target Wind Speed (mph)*. *Wind in Knots* shows the speeds in knots. *Opacity*, *Spacing* and *Max Speed* move to a new *Wind Line Style* folder.
+- **XML wind profile message**: after you import an XML wind profile, the main view says what it gives. It warns when the profile is more than 200 km from the target or more than 3 hours from the sitch time.
+- **Allow Small Altitudes** (Camera → Location, and the Target menu): when it is off (the default), a drag past the left end of the Alt slider stops at a range of 100 ft, in steps of 1 ft. Turn it on to go down to 1 ft, as before.
+
+### Improvements
+- **GFS wind** (Physics → Wind, *GFS*): Sitrec now blends the two 6-hour cycles around the time of each frame, not only the cycle before it. For Target Wind, Local Wind and the readouts, it also uses the ground: the 10 m wind is 10 m above the terrain, levels under the ground are not used, and each pressure level is at its real height in the model when the data gives it.
+- **Sounding wind** (Physics → Wind, *UWYO Soundings*, *IGRA2 Soundings*): the automatic load now takes the 00Z or 12Z launch nearest to the sitch start, before or after it. Wind between two levels is interpolated as a vector, so two opposite winds give a calm between them. The readouts and Target Wind now use the same blend of the soundings, and the wind lines use a finer grid, so all three agree closely.
+- **Separate Wind Sources** (Physics → Wind): Local Wind now reads its own *Local Wind Source*. Before, each load also set Local Wind from the Target Wind Source.
+- **Wind Source menu** (Physics → Wind): the *Track* entries are in two groups, *Profiles (read by height)* and *Telemetry tracks (read by time)*. The compass names the source as the menu does.
+- **Traverse analysis report** (Traverse → *Analyze Traverse Methods...*): gives the range of the wind that the fits used over the clip, not one value.
+- **Sounding and profile tracks**: a sounding with no position at each level shows *Path: Reconstructed ascent* in its folder, because Sitrec makes that path. An XML profile with no time in its file now moves with the sitch start.
+- **Menu tooltips**: about 790 menu items that had no tooltip now have one, and about 620 tooltips are rewritten, many to correct a wrong default or a wrong description.
+- **Menu labels**: the labels now use American spelling and correct names, for example *Color*, *CelesTrak's Brightest* (Satellites) and *Geolocate from IP Address* (Camera → Location, and the Target menu). The Terrain menu shows names such as *Latitude* and *Tiles per Side*. Lens Ghost names the selected source, Sun or Moon. The star chart scheme *Lavendar* is now *Lavender*, and a saved sitch keeps it. *Antialiasing (MSAA)* (Sitrec → Settings → Performance Tweaks) marks *2x* as the default, which it is. The *AO* tooltips in Traverse → *Traversal Analysis Tweaks* say that AO means astronomical object.
+
+### Bug Fixes
+- Fixed the Flight Sim camera and the *Constant Ground Speed* and *Windblown Object (on first LOS)* traverses using the first frame's wind from a telemetry track on every frame.
+- Fixed the *fixedTarget + Wind* target track (Target → *Target Track*) drifting the wrong distance when *Simulation Speed* (Time) is not 1. It now also drifts with the wind where it is on each frame.
+- Fixed a sounding or XML wind profile track going far up or under the ground when the sitch time is before its launch or after the top of its ascent.
+- Fixed a wind direction of 360° in a track or a sounding being replaced by the direction of the row before it.
+- Fixed an XML wind profile reading a missing-value code, such as 999, as a real wind. A value that cannot be real is now ignored.
+- Fixed GFS wind for a past date sometimes coming from the 6-hour cycle before the one asked for.
+- Fixed the wind readouts covering each other and the menus.
+- Fixed the wind *Status* row (Physics → Wind) keeping an old message after a load finished.
+- Fixed tooltips not showing on gray (disabled) menu rows.
+- Fixed a saved custom sitch showing the tooltip text of the Sitrec version that saved it.
+
 ## Version 2.184.0 (2026-11-02)
 
 ### New Features
