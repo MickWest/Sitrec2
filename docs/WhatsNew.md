@@ -9,6 +9,16 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.186.0 (2026-11-03)
+
+### New Features
+- **Set Time Zone from Camera Location** (Time): sets *Time Zone* to the zone at the look camera position, with the daylight saving rule of the sitch start date. The main view then shows the new zone, for example *Time Zone Set to JST UTC+9 (Asia/Tokyo)*. The time does not change, only the zone that shows it. A zone that is not in the list is named by its offset, for example *UTC+8.00*, and the list now has *AEDT UTC+11* (#13674 "Some sitrec questions, and suggestions?"; #14311 "Sitrec 2.1 New Features").
+- **Show Time Zones** (Time): draws the time zone borders over the globe in the main view as yellow lines, as on an ordinary time zone map. A line marks a change of standard time, so the lines do not move with daylight saving time. A row of labels at the latitude of the center of the view names each zone for the sitch date, for example *PDT* over *UTC-7*. The borders are those of late 2026, and they load the first time you turn this on. The setting is saved with the sitch (#13674 "Some sitrec questions, and suggestions?"; #14311 "Sitrec 2.1 New Features").
+
+### Improvements
+- **Time zone from a photo or a video**: a photo with a GPS position now sets *Time Zone* to the zone at that position. If the photo's capture time has no time zone offset, Sitrec now reads it as local time at that position, not in your computer's zone. A video with a location that starts a new sitch now sets the zone at its location when its date is plain UTC or missing. Before, a plain UTC date gave *GMT UTC+0*. A saved sitch keeps its own zone (#13674 "Some sitrec questions, and suggestions?"; #14311 "Sitrec 2.1 New Features").
+- **Traverse wind** (Physics → Wind): *Lock Altitude to* has a new choice, *Traverse*, which makes *Altitude* follow the height of the traverse object on each frame. *Show Wind at* has a new *Traverse* row, off by default, which shows in purple the Target Wind where the traverse object is. Before, in a custom sitch the traverse object had no row there, so the wind at the traverse could not be shown.
+
 ## Version 2.185.1 (2026-11-03)
 
 ### Improvements
