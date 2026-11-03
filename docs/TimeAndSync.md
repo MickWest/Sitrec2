@@ -407,8 +407,7 @@ because the encoder sends the data in two ways.
 The report starts with the name and size of the loaded file, and then has three parts:
 
 - **Streams**: what each KLV stream is and holds.
-- **Tracks**: which stream each track uses. It is shown if there is more than one KLV stream, or if a
-  track does not use PES timestamps (see below).
+- **Tracks**: which stream each track uses, and how Sitrec made the name of each track.
 - **Analysis**: the timing of one stream in detail. The heading names the stream, and **Analyzed below**
   in the Streams table gives the reason. Sitrec analyzes the stream that the platform track uses. The
   platform track is the track that the camera is on: the **Position** setting in the **Camera** menu. If the camera is
@@ -416,8 +415,8 @@ The report starts with the name and size of the loaded file, and then has three 
   choice says nothing about which stream is better. A stream that is not analyzed can have a different
   rate and gap pattern, so use the Streams table to compare them.
 
-The report does not include track or node names, but the file line and the Streams table can include
-a tail number, a mission ID, a call sign or a start time. Clear **Show Filename and Names** in the
+The report does not include node names. The file line, the Streams table and the track names can
+include a tail number, a mission ID, a call sign or a start time. Clear **Show Filename and Names** in the
 dialog to remove these from the text, from **Copy Analysis** and from **Download Analysis**. The file
 line goes, and each text value in the table changes to `hidden`, even if the text is all digits. The
 first time and the sun height change to `hidden` too. Numbers from 0 to 65535 stay, and so does a raw
@@ -460,8 +459,9 @@ and measurements have no mark, because they nearly always differ, so read those 
 
 Text values are what the file says. Sitrec does not check them, and `Default` and `N/A` can be
 fields that nobody set. Derived tracks are not listed, because their records hold only time and
-position. A line under the table gives their number. They are Center (the frame center), Target (the
-target location) and Truth (a track that the file labels as truth, which Sitrec does not verify).
+position. A line under the table gives their number. They are Frame Center, Target Location and
+Truth (a track that the file labels as truth, which Sitrec does not verify). The Tracks part says
+what each one is.
 
 The rows are in these groups:
 
@@ -555,6 +555,32 @@ audio and private data. Sitrec does not read private data, so this is the only s
 Each line gives a stream, the number of tracks that use it, and how those tracks pair with the video:
 by PES PTS, or by UnixTimeStamp at the nominal rate, which is the video's frame rate. A further line
 says whether the video frame times are real or synthetic, and whether frame patching is on.
+
+**Track names** then lists the name of each track, as in the Contents menu, with its stream. Below
+the list, the report tells how Sitrec made the names. A track from a KLV stream in a TS file is named
+`S<n> LS<v>`, then the tail number of the platform track, or the kind of a derived track. For
+example, `S1 LS7 AF00371`, `S1 LS7 Frame Center` and `S0 LS5 Platform`:
+
+- `S1` is the stream's number in the TS, the same number as `#0:1` in the stream name.
+- `LS7` is tag 65, the UAS Datalink LS Version Number, from the first record that has one.
+- `AF00371` is tag 4, the Platform Tail Number. If the stream has none, the platform track has
+  `Platform` there.
+- A derived track has its kind in place of the tail number:
+  - `Frame Center`: tags 23 and 24. It is where the line of sight through the center of the image
+    meets the ground. The platform computes this point with its own terrain model. Sitrec reads it
+    from the KLV and does not compute it. A record has no frame center when the camera looks above
+    the horizon.
+  - `Target Location`: tags 40 to 42. It is where the platform says the target is. It is an
+    estimate by the platform, not ground truth, and it can be in the air.
+  - `Truth`: the truth columns.
+
+The track called `Target Location` is not the same as the **Target Track** setting in the Target
+menu. **Target Track** can be any track. Look at that menu to see which track it is.
+
+A track that is not from a TS stream has its tail number, or the name of its file. If a track's name
+is not the name that Sitrec made, for example because you renamed it, the report gives Sitrec's name
+after it. With **Show Filename and Names** cleared, a tail number and a name that you gave change to
+`hidden`.
 
 ### Analysis
 

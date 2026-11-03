@@ -654,24 +654,22 @@ export class CNodeDateTime extends CNode {
             return lines.length > 0 ? lines.join("\n") + "\n\n" : "";
         };
         const fileText = fileLines.length > 0 ? fileLines.join("\n") + "\n\n" : "";
-        const fileHeader = fileText + streamsText(false);
-        const plainHeader = streamsText(true);
 
         // ── Tracks ───────────────────────────────────────────────────
         // For each derived MISB track (CNodeTrackFromMISB and subclasses), the
         // stream it uses and how it pairs to the video. This answers "is the
         // displayed track on this KLV stream or that one?" for multi-PID files.
-        // Structural only: stream names from container ids + track counts, no
-        // node ids and no tag values. Detected by the .pairingInfo stamp that
-        // CNodeTrackFromMISB.recalculate() leaves behind (so subclasses like
-        // CNodeLazyMISBFlightTrack are included without an instanceof import).
-        let prelude = "";
+        // Detected by the .pairingInfo stamp that CNodeTrackFromMISB.recalculate()
+        // leaves behind (so subclasses like CNodeLazyMISBFlightTrack are included
+        // without an instanceof import). Then the name of each track and how
+        // Sitrec made it. A name can hold a tail number or the user's own text,
+        // so this section is in the header and obeys the checkbox.
         const misbTracks = [];
         NodeMan.iterate((k, n) => {
             if (n.pairingInfo && n.pairingInfo.misbNode) misbTracks.push(n);
         });
-        const anyUTS = misbTracks.some(n => n.pairingInfo.mode === "uts");
-        if (misbTracks.length > 0 && (realStreams.length > 1 || anyUTS)) {
+        let tracksText = () => "";
+        if (misbTracks.length > 0) {
             const groups = new Map();
             for (const n of misbTracks) {
                 const info = n.pairingInfo;
@@ -685,11 +683,24 @@ export class CNodeDateTime extends CNode {
             }
             const ordered = [...groups.values()].sort((a, b) => (a.si - b.si) || a.mode.localeCompare(b.mode));
             const {hasRealVideoPTS, wrapped} = misbTracks[0].pairingInfo;
-            prelude += renderTracks(ordered, {realPTS: hasRealVideoPTS, wrapped}).join("\n") + "\n\n";
+            // One entry per MISB data node that a track uses, in stream order.
+            const names = [];
+            misbNodes.forEach((n, si) => {
+                let trackOb = null;
+                TrackManager.iterate((id, ob) => { if (!trackOb && ob.trackDataNode === n) trackOb = ob; });
+                if (trackOb) {
+                    names.push({label: streamLabels[si], name: trackOb.displayName ?? trackOb.menuText,
+                        parts: trackOb.streamNameParts ?? null});
+                }
+            });
+            tracksText = (hideNames) => renderTracks(ordered, {realPTS: hasRealVideoPTS, wrapped},
+                {names, hideNames}).join("\n") + "\n\n";
         }
+        const fileHeader = fileText + streamsText(false) + tracksText(false);
+        const plainHeader = streamsText(true) + tracksText(true);
 
         // ── Analysis ─────────────────────────────────────────────────
-        prelude += `ANALYSIS OF ${streamLabels[misbNodes.indexOf(misbNode)]} (${analyzedReason})\n\n`;
+        const prelude = `ANALYSIS OF ${streamLabels[misbNodes.indexOf(misbNode)]} (${analyzedReason})\n\n`;
 
         const report = prelude + misbNode.generateTimingAnalysis();
         // Generic download filename — never include sitch name (may

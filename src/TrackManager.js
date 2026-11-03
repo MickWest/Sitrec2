@@ -1138,7 +1138,14 @@ class CTrackManager extends CManager {
 
                     // track folder in Contents menu
                     trackOb.guiFolder = guiFolder;
-                    TrackManager.initTrackDisplayName(trackOb);
+                    // A track from a TS stream is shown as "S1 LS7 AF00371" (MISBStreamTrackName.js).
+                    // Only on a new import: a saved sitch restores the names it was saved with
+                    // (trackDisplayNames, and each object's own name), so an old save keeps its
+                    // old names. The parts are kept for the Timing Analysis report.
+                    const fileForName = FileManager.get(trackFileName);
+                    trackOb.streamNameParts = fileForName?.getStreamNameParts?.(trackIndex) ?? null;
+                    TrackManager.initTrackDisplayName(trackOb,
+                        Globals.deserializing ? null : fileForName?.getDefaultDisplayName?.(trackIndex));
                     const fireball = FileManager.get(trackFileName)?.fireball;
                     if (fireball) addFireballTrackControls(trackOb.guiFolder, fireball);
 
@@ -1299,6 +1306,8 @@ class CTrackManager extends CManager {
                         hasAngles = this.updateDropTargets(trackNumber, shortName, trackID, trackDataID, trackNode, hasFOV, trackOb,
                             !declinedPairing.has(trackFileName));
                     }
+                    // The options were added under the short name; show the display name.
+                    if (trackOb.displayName !== shortName) this.relabelTrackOptions(trackOb);
 
                     this.makeMotionTrack(trackOb, shortName, trackColor, dropColor, trackID);
 
@@ -1502,6 +1511,9 @@ class CTrackManager extends CManager {
 
 
         const sphereId = trackOb.menuText ?? shortName;
+        // The marker shares the track's name ("S1 LS7 AF00371" for a TS stream), so the track,
+        // the object and its 3D label agree. The id stays the short name.
+        const objectName = trackOb.displayName ?? shortName;
 
         // GROUND TRUTH FIRST, ahead of the supplementary branch below.
         //
@@ -1528,7 +1540,8 @@ class CTrackManager extends CManager {
                 radius: DEFAULT_TRACK_SPHERE_RADIUS_M,
                 material: "phong",
                 color: trackColor,
-                label: shortName,
+                displayName: objectName,
+                label: objectName,
             });
         } else if (isSonde) {
             trackOb.displayTargetSphere = new CNodeDisplayBalloonSphere({
@@ -1565,7 +1578,8 @@ class CTrackManager extends CManager {
                 // must be as easy to see at night as the platform it came with.
                 material: "basic",
                 color: trackColor,
-                label: shortName,
+                displayName: objectName,
+                label: objectName,
                 visible: isObject,
             });
         } else if (getEnv("DEFAULT_PLATFORM_MODEL", process.env.DEFAULT_PLATFORM_MODEL) && trackOb.trackFileName.endsWith(".klv")) {
@@ -1576,7 +1590,8 @@ class CTrackManager extends CManager {
                     id: sphereId + "_ob",
                     model: getEnv("DEFAULT_PLATFORM_MODEL", process.env.DEFAULT_PLATFORM_MODEL),
 
-                    label: shortName,
+                    displayName: objectName,
+                    label: objectName,
                 })
             }
         }
@@ -1601,7 +1616,8 @@ class CTrackManager extends CManager {
                 // for the same reason.
                 material: this.isCandidateTrack(sphereId) ? "phong" : "basic",
                 color: trackColor,
-                label: shortName,
+                displayName: objectName,
+                label: objectName,
 
             });
         }

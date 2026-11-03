@@ -1,6 +1,7 @@
 import {CTrackFile} from "./CTrackFile";
 import {MISB, MISBFields} from "../MISBFields";
 import {MISB_TRUTH_MISSION} from "../MISBEncoder";
+import {streamTrackName, streamTrackNameParts} from "../MISBStreamTrackName";
 
 export class CTrackFileMISB extends CTrackFile {
     constructor(data) {
@@ -416,6 +417,21 @@ export class CTrackFileMISB extends CTrackFile {
             return type + "_" + baseName;
         }
         return baseName;
+    }
+
+    // The parts of the display name of a track from a TS stream ("S1 LS7 AF00371", see
+    // MISBStreamTrackName.js), or null. null also for a stream split by TrackID: each of its
+    // tracks is a different aircraft, which keeps its short name.
+    getStreamNameParts(trackIndex = 0) {
+        if (this._getUniqueTrackIDs()) return null;
+        return streamTrackNameParts(this.data, this._derivedTrackTypes()[trackIndex - 1] ?? null);
+    }
+
+    // The name a new import shows for this track, or null to show the short name. Only a
+    // display name: getShortName, which is a key, does not change.
+    getDefaultDisplayName(trackIndex = 0) {
+        const parts = this.getStreamNameParts(trackIndex);
+        return parts ? streamTrackName(parts) : null;
     }
 
     hasMoreTracks(trackIndex = 0) {
