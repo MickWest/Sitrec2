@@ -94,19 +94,23 @@ test('emergency frontend builds retain the reviewed static server without the or
 
 test('static packaging includes decoders and loose workers but never backend or private configuration', () => {
     const source = path.join(directory, 'dist'); const target = path.join(directory, 'frontend');
+    // The first 14 are copied. The two .gz files are data the app fetches from the build's own
+    // tree; a pool without them gave 404 in production (2.184.0 to 2.186.1).
     const names = ['index.html','app-entry.json','build-info.json','index.abc.bundle.js',
         'libs/openjpeg/decoder.wasm','src/workers/Decode.js','data/model.glb',
+        'data/timezones/timezone-borders.bin.gz','data/nightsky/gcat-sizes.csv.gz',
         'tools/shf/index.html','tools/shf/flareWorker.js','tools/shf/lib/satellite.es.js',
         'tools/shf/manifest.webmanifest','tools/src/DeviceOrientationCompass.js',
         'sitrecServer/config.php','private/note.md','config.json','shared.env.js','.env',
         'tools/shf/config.php','tools/shf/tools/probe.mjs','tools/shf/package.json',
-        'tools/other/app.js','tools/src/unreviewed.js','tools/root.js'];
+        'tools/other/app.js','tools/src/unreviewed.js','tools/root.js',
+        'sitrecServer/backup.sql.gz','private/notes.gz'];
     for (const name of names) {
         const file=path.join(source,name);fs.mkdirSync(path.dirname(file),{recursive:true});fs.writeFileSync(file,'fixture');
     }
     const result=call(`console.log(JSON.stringify(copyFrontend(${JSON.stringify(source)},${JSON.stringify(target)})));`);
     expect(result.status).toBe(0);
-    expect(JSON.parse(result.stdout).sort()).toEqual(names.slice(0,12).sort());
+    expect(JSON.parse(result.stdout).sort()).toEqual(names.slice(0,14).sort());
 });
 
 test('a frozen source captures explicit new files without private files or configuration values', () => {

@@ -110,10 +110,14 @@ export function checkEmergencyBoundary(baseline, candidate) {
     }
 }
 
+// A channel build fetches its data from its own /sitrec/builds/<id>/ tree (SITREC_APP is the
+// asset base), so a data file whose type is not listed here is a 404 in production. '.gz' is
+// for data/timezones/timezone-borders.bin.gz and data/nightsky/gcat-sizes.csv.gz, which the
+// app fetches and gunzips itself; until 2.186.2 both were left out of every pool.
 const staticExtensions = new Set(['.js', '.mjs', '.css', '.json', '.html', '.md', '.txt', '.png', '.jpg', '.jpeg',
     '.gif', '.svg', '.ico', '.webmanifest', '.webp', '.avif', '.woff', '.woff2', '.ttf', '.otf',
     '.wasm', '.bin', '.glb', '.gltf', '.obj', '.mtl', '.csv', '.kml', '.kmz', '.tle', '.mp4', '.webm',
-    '.zip', '.srt', '.vtt', '.gpx', '.tif', '.tiff', '.xml', '.stl', '.ppm']);
+    '.zip', '.srt', '.vtt', '.gpx', '.tif', '.tiff', '.xml', '.stl', '.ppm', '.gz']);
 export function copyFrontend(source, destination) {
     const copied = [];
     function walk(directory, prefix = '') {

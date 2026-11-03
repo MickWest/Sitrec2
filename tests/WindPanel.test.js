@@ -234,7 +234,8 @@ describe("the lines agree with the readouts", () => {
         expect(Math.abs(grid.from - exact.from)).toBeLessThan(2);
         expect(Math.abs(grid.knots - exact.knots)).toBeLessThan(0.5);
         expect([wf.gridNx, wf.gridNy, wf.gridDLon]).toEqual([360, 181, 1]);
-        // A build is a few tens of ms at most (it runs on every Altitude step).
-        expect(ms).toBeLessThan(300);
+        // A build is a few tens of ms at most (it runs on every Altitude step). The limit is
+        // loose because GitHub's shared CI runners took 365 to 557 ms (2.185.0 to 2.186.0).
+        expect(ms).toBeLessThan(1000);
     });
 });

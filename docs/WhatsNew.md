@@ -9,6 +9,13 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.186.2 (2026-11-03)
+
+The features listed under 2.186.0 reach the Metabunk site with this release. Versions 2.186.0 and 2.186.1 were not installed there.
+
+### Bug Fixes
+- Fixed the satellite size catalog not loading on Metabunk since 2.184.0. Without it, satellites other than Starlink, Kuiper and the ISS got their brightness from a rough radar size class, or from 1 square meter, so large ones such as rocket bodies were much too faint in the look view and in long exposures. *Per satellite (GCAT catalog)* (Satellites → *Starlink Design*) treated every Starlink as an unknown design, and the right-click menu of a satellite had no *Size (GCAT)* or *Starlink Design (GCAT)* row. Only the Metabunk site was affected, not the desktop app or other installs.
+
 ## Version 2.186.0 (2026-11-03)
 
 ### New Features
