@@ -151,6 +151,9 @@ If the file has no altitude, or an altitude of exactly 0, the camera goes 2 m ab
 level (AGL), with **Above Ground Level** on. Otherwise the camera goes to the file's altitude
 above MSL.
 
+If the file's date has no UTC offset and the file has a location, Sitrec sets **Time Zone**
+to the zone at that location. See [Time zones](TimeAndSync.md#time-zones).
+
 To check the result, look at the Start Time in the **Time** menu, and at **Cam [C] Lat** and
 **Cam [C] Lon** in **Camera → Location**. If the file has no location, enter the camera position
 there. See [Camera → Location](CameraAndTarget.md#camera--location).

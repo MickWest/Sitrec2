@@ -1536,6 +1536,16 @@ const en = {
             label: "Time Zone",
             tooltip: "Time zone for the date and time that the views show, such as the time display in the look view.\nThe date and time sliders also use it when Use Time Zone in UI is on.",
         },
+        setTimeZoneFromCameraLocation: {
+            label: "Set Time Zone from Camera Location",
+            tooltip: "Set the Time Zone to the zone at the look camera position, with the daylight saving rule of the sitch start date.\nThe time does not change. Only the zone that shows it changes.\nTime zone borders: © OpenStreetMap contributors, timezone-boundary-builder (ODbL).",
+            message: "Time Zone Set to {{zone}}",
+        },
+        showTimeZones: {
+            label: "Show Time Zones",
+            tooltip: "Draw the time zone borders over the globe in the main view, as on an ordinary time zone map: a line marks a change of standard time (the UTC offset without daylight saving time), on land and at sea.\nA row of labels across the middle of the view names each zone for the sitch date, for example PDT UTC-7.\nThe zones are those of late 2026.\nTime zone borders: © OpenStreetMap contributors, timezone-boundary-builder (ODbL).",
+            loadFailed: "The time zone borders did not load",
+        },
         simSpeed: {
             label: "Simulation Speed",
             tooltip: "The speed of the simulation, 1 is real time, 2 is twice as fast, etc\nThis does not change the video replay speed, just the time calculations for the simulation.",

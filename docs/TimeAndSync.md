@@ -66,17 +66,73 @@ The list has fixed offsets, for example `PST UTC-8` and `PDT UTC-7`. Sitrec does
 change between standard time and daylight time for you, so select the zone that was in
 effect on the date. For example, Chile is `CLT UTC-4` in its winter and `CLST UTC-3` in
 its summer. China is `BJT UTC+8` (Beijing Time), because `CST UTC-6` is US Central
-Standard Time. When Sitrec selects the zone itself, the name can be another zone with the
-same offset, for example `MDT UTC-6` for US Central Standard Time. Only the offset is used.
+Standard Time. When Sitrec selects the zone from an offset, the name can be another zone with
+the same offset, for example `MDT UTC-6` for US Central Standard Time. Only the offset is used.
 
 Sitrec selects the zone when the sitch loads. If the sitch names a zone, Sitrec uses it. If
 not, it uses your computer's zone **on the date of the sitch**, so a sitch with an old date
 gets the daylight-saving rules of that time. A new custom sitch starts with a built-in date.
-A saved sitch keeps its own zone.
+A saved sitch keeps its own zone. Sitrec does not use the sitch location when it loads,
+because a new custom sitch has a default location until you set one.
 
-When a video file sets the Start Time, it also sets the zone, from the UTC offset in the
-file's date. If that date is plain UTC, the zone becomes `GMT UTC+0`. A date from a track or
-a photo, or one that you set yourself, does not change the zone.
+**Set Time Zone from Camera Location** sets the zone at the position of the look camera. Sitrec
+finds the zone (for example `Europe/Berlin`), then uses the offset of that zone on the date
+of the Start Time, so the daylight saving rule of that date applies. The name is the entry
+in the list with the same abbreviation and offset, for example `JST UTC+9` for Tokyo and
+`AEDT UTC+11` for Sydney in January. If the list has no such entry, the name is the offset
+alone, for example `UTC+8.00` for Hong Kong. The time does not change. Only the zone that
+shows it changes. A message at the top of the main view gives the new zone, for example
+*Time Zone Set to JST UTC+9 (Asia/Tokyo)*. Time zone borders: © OpenStreetMap contributors, from
+[timezone-boundary-builder](https://github.com/evansiroky/timezone-boundary-builder) (ODbL).
+
+A video or photo file can also set the zone:
+
+- A video file's date can have a UTC offset (iPhone, Samsung). Then the zone comes from that
+  offset.
+- If a video file's date is plain UTC, or the file has no date, and the file has a location,
+  the zone is the zone at that location. If the date is plain UTC and there is no location,
+  the zone becomes `GMT UTC+0`. Sitrec reads the time and location of a video only while the
+  sitch is new.
+- A photo with a GPS position sets the zone at that position. See
+  [Set the date from a photo](#set-the-date-from-a-photo).
+
+A date from a track, or one that you set yourself, does not change the zone. When a saved
+sitch loads, it keeps its saved zone, also when it holds a photo or a video.
+
+### Time zone borders
+
+**Show Time Zones** in the Time menu draws the time zone borders over the globe as yellow
+lines, 1.5 pixels wide, in the main view only. Like the Lat/Lon grid, the lines show over the
+terrain, but not on the far side of the Earth. The setting is saved with the sitch.
+
+A row of labels runs across the view at the latitude of the centre of the screen. Each zone
+on that row has one label, in the middle of the part of the zone that you can see. The label
+gives the name and the UTC offset of the zone on the sitch date, on two lines, for example
+**PDT** over **UTC-7** in summer and **PST** over **UTC-8** in winter, named as in the
+**Time Zone** list. At sea, and where the name is not known, the label gives the offset
+alone, for example **UTC-10**. Labels are smaller toward the edge of the globe, and a zone
+with too little room on the screen has no label. The labels move with the view.
+
+![The main view looking down on North America with Show Time Zones on, on a September date. Yellow lines mark the borders of standard time: between Pacific and Mountain time, between Mountain and Central time down through the plains, between Central and Eastern time through Lake Michigan, Indiana, Kentucky, Tennessee and the Florida panhandle, along parts of the border between the United States and Canada, around Manitoba, and between the time zones of Mexico. There is no line around Arizona. At sea, a line follows the coast of Florida, and straight lines cross the Gulf of Mexico and the Pacific. A row of yellow labels across the middle of the view reads MDT UTC-6, CDT UTC-5 and EDT UTC-4, each in the middle of its zone; the strip of Pacific time at the left edge is too narrow for a label](docimages/time-and-sync-show-time-zones.jpg)
+
+The lines are those of an ordinary time zone map. A line marks a change of **standard time**:
+the UTC offset without daylight saving time. So there is no line between Arizona and New
+Mexico, which are both UTC-7 standard, although New Mexico uses daylight saving time and
+Arizona does not. There is also no line between France and Germany. At sea, the zones are
+the 15-degree bands of nautical time, so lines run across the oceans, and a country whose
+time differs from the band around it is outlined along its coast (the limit of its
+territorial sea).
+
+The lines come from the 2026f release of
+[timezone-boundary-builder](https://github.com/evansiroky/timezone-boundary-builder), and
+show the zones of late 2026. For an old date, a border can be missing or in the wrong place.
+The lines are simplified to about 1 km. They are newer than the time zone rules of some
+browsers. In that release, British Columbia, Alberta and Manitoba no longer change their
+clocks, so lines run along parts of their borders with the United States and between some
+provinces, and Morocco is on UTC+0, so a line runs along its border with Algeria. **Set Time Zone from Camera Location** uses the rules of your
+browser, which can be older. Time zone borders: © OpenStreetMap contributors (ODbL).
+
+The border data loads the first time you turn **Show Time Zones** on.
 
 ### How tracks line up
 
@@ -156,6 +212,8 @@ Analysis...** has [its own section](#timing-analysis).
 | **Note** | Hidden | Shows only for a date that needs care: *Before 1957 - no artificial satellites existed*, or *Outside 1700-2200 - Sun, Moon and planet positions degrade*. See [Historic Skies](HistoricSkies.md) |
 | **Use Time Zone in UI** | On (off for older saved sitches) | Shows the date and time sliders in the selected time zone, not UTC |
 | **Time Zone** | The sitch's zone, or your computer's zone | The zone for the readouts. See [Time zones](#time-zones) |
+| **Set Time Zone from Camera Location** | | Sets **Time Zone** to the zone at the look camera position, with the daylight saving rule of the Start Time date. The time does not change. See [Time zones](#time-zones) |
+| **Show Time Zones** | Off | Draws the borders between time zones in the main view. See [Time zone borders](#time-zone-borders) |
 | **Simulation Speed** | 1 | How many seconds of simulated time pass in one second of frames. Use it for a time-lapse video: if the video is 30× faster than real time, set 30. It does not change how fast the video plays. When you change it, the current frame keeps its Now Time and the Start Time moves. Range 0.01 to 1200 |
 
 The Year slider starts at 1947. To go earlier, type the year in the box, or press **G** and
@@ -358,8 +416,16 @@ EXIF capture times do not always include a time zone:
 
 - If the photo has an EXIF time zone offset (most modern phones write one), Sitrec uses it,
   and the time is correct.
-- If there is no offset, Sitrec reads the time as if the photo was taken in your computer's
-  time zone. If the photo was taken in a different zone, set the time yourself.
+- If there is no offset and the photo has a GPS position, Sitrec reads the time as local time
+  at that position, with the daylight saving rule of that date. This assumes that the camera
+  clock was set to local time. If it was not (for example, a camera that was not changed after
+  travel), set the time yourself.
+- If there is no offset and no GPS position, Sitrec reads the time as if the photo was taken
+  in your computer's time zone. If the photo was taken in a different zone, set the time
+  yourself.
+
+A photo with a GPS position also sets **Time Zone** to the zone at that position, so the
+readouts show the local time of the photo. The zone is found a moment after the photo loads.
 
 A video file's date also sets the Start Time, but only while the sitch is new. Its time zone
 rules are different: see

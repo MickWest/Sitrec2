@@ -1,4 +1,5 @@
-// The Time Zone list gained Chile, Argentina, Brazil, China, Japan and Korea. Several
+// The Time Zone list gained Chile, Argentina, Brazil, China, Japan and Korea, and
+// later Australian Eastern Daylight Time (for the zone from a location). Several
 // share an offset with a zone already in the list, so this checks that nothing an
 // existing sitch or an existing lookup resolves to has moved: the Sit.timeZone prefix
 // lookup, the browser-offset lookup, and a saved timeZoneName round trip.
@@ -6,6 +7,8 @@ jest.mock("../src/nodes/CNodeViewUI", () => ({forceUpdateUIText: () => {}}));
 jest.mock("../src/JetGUI", () => ({updateGUIFrames: () => {}}));
 jest.mock("../src/nodes/CNodeFrameSlider", () => ({updateFrameSlider: () => {}}));
 jest.mock("../src/showTimingAnalysis", () => ({showTimingAnalysis: () => {}}));
+// CNodeDateTime -> TimeZoneBorders -> the overlay that draws its labels, which extends the mocked CNodeViewUI.
+jest.mock("../src/nodes/CNodeDisplaySkyOverlay", () => ({registerLabel3D: () => {}, unregisterLabel3D: () => {}}));
 
 import {CNodeDateTime, timeZoneKeyFromSitTimeZone, timeZoneOffsets} from "../src/nodes/CNodeDateTime";
 import {setSit} from "../src/Globals";
@@ -30,6 +33,7 @@ const OLD_ZONES = [
 const NEW_ZONES = [
     ["CLT UTC-4", -4], ["CLST UTC-3", -3], ["ART UTC-3", -3], ["BRT UTC-3", -3],
     ["BJT UTC+8", 8], ["JST UTC+9", 9], ["KST UTC+9", 9],
+    ["AEDT UTC+11", 11],
 ];
 
 // The two lookups, applied to the OLD list, give what an existing sitch got before.

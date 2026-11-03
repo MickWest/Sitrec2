@@ -84,7 +84,7 @@ Like any sitch, you need the DTLDs:  the Date, Time, Location, and Direction. Of
 
 Open the Time menu and set the Year, Month, Day, Hour, Minute and Second. Drag a slider, or type a value in its box. Any change turns off Live Mode.
 
-Time in Sitrec is UTC (also called Zulu time). But it can also be displayed in a local time zone. If you have "Use Time Zone in UI" checked, the sliders use the zone in the "Time Zone" control. This starts as the time zone of your browser, not of the sighting, so set it to match the sighting before you set the time. Ensure you understand what the actual time is, and in what time zone (including daylight saving time).
+Time in Sitrec is UTC (also called Zulu time). But it can also be displayed in a local time zone. If you have "Use Time Zone in UI" checked, the sliders use the zone in the "Time Zone" control. This starts as the time zone of your browser, not of the sighting, so set it to match the sighting before you set the time. When the camera is at the sighting location, **Set Time Zone from Camera Location** in the Time menu does this. Ensure you understand what the actual time is, and in what time zone (including daylight saving time).
 
 ### Step 2 - Load the satellites
 

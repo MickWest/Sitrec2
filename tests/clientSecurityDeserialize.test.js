@@ -29,6 +29,7 @@ function harness() {
         setSitchEstablished: jest.fn(),
         setRenderOne: jest.fn(),
         updateDocumentTitle() {}, refreshLabelsAfterLoading() {}, refreshLatLonGridVisibility() {},
+        refreshTimeZoneBordersVisibility() {},
         restoreRefractionTool: async () => {},
         deserializeMotionAnalysis: jest.fn(async () => {}),
         deserializeLongExposure() {}, deserializeVideoFormatEffects() {},

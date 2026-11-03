@@ -32,6 +32,7 @@ import {par} from "./par";
 import {GlobalScene} from "./LocalFrame";
 import {refreshLabelsAfterLoading} from "./nodes/CNodeLabels3D";
 import {refreshLatLonGridVisibility} from "./LatLonGrid";
+import {refreshTimeZoneBordersVisibility} from "./TimeZoneBorders";
 import {assert} from "./assert";
 import {getShortURL} from "./urlUtils";
 import {REMOVED_NODE_IDS} from "./RemovedNodes";
@@ -125,6 +126,7 @@ const RESTORABLE_GLOBALS = {
     showFeaturesLook: "boolean",
     showLatLonGridMain: "boolean",
     showLatLonGridLook: "boolean",
+    showTimeZones: "boolean",
     objectScale: "number",
     objectScaleMain: "number",
     showAllTracksInLook: "boolean",
@@ -590,6 +592,7 @@ export const serializeMethods = {
             "showFeaturesLook",
             "showLatLonGridMain",
             "showLatLonGridLook",
+            "showTimeZones",            // Time > Show Time Zones (TimeZoneBorders.js)
             "objectScale",
             "objectScaleMain",
             "showAllTracksInLook",
@@ -1930,6 +1933,7 @@ export const serializeMethods = {
 
         refreshLabelsAfterLoading();
         refreshLatLonGridVisibility();
+        refreshTimeZoneBordersVisibility();
         this.refreshLookViewTracks();
         // In/Out is restored with Sit, after the globals, so the limited tracks are built here.
         if (Globals.limitTracksInOut) this.applyTrackLimit();

@@ -895,7 +895,8 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
         if (importMeta && !importMeta.applied) {
             importMeta.applied = applyImportedImageMetadata(
                 importMeta,
-                this.fileName ?? videoData?.filename ?? ""
+                this.fileName ?? videoData?.filename ?? "",
+                {restoring: vd?._restoreIndex !== undefined || !!this.pendingVideoRestore || Globals.deserializing}
             );
         }
 

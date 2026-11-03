@@ -1,5 +1,6 @@
 import {setupThermalMenu} from "./rendering/ThermalLoader";
 import {showInteractionHelp} from "./InteractionHelp";
+import {getOffsetFromDateTimeString} from "./DateTimeUtils";
 /**
  * CCustomManager.setup() — main sitch setup pipeline.
  *
@@ -2522,6 +2523,19 @@ export const setupMethods = {
                     GlobalDateTimeNode.establishDateTimeDefaults();
                     // and set sitchEstablished to true
                     setSitchEstablished(true);
+                }
+
+                // A video with a position was recorded in the time zone of that position.
+                // A date with its own offset (QuickTime creationdate, Samsung) set the zone
+                // above. A date from mvhd is UTC ("...Z"): the instant is right, but the
+                // zone came out as GMT, so show times in the zone of the position instead.
+                const dateHasLocalOffset = typeof meta.creationDate === "string"
+                    && !meta.creationDate.endsWith("Z")
+                    && getOffsetFromDateTimeString(meta.creationDate) !== null;
+                if (meta.latitude !== null && meta.longitude !== null && !dateHasLocalOffset) {
+                    GlobalDateTimeNode.setTimeZoneFromLocation(meta.latitude, meta.longitude)
+                        .then(zone => console.log(`Video time zone from its position: ${zone} (${GlobalDateTimeNode.timeZoneName})`))
+                        .catch(error => console.warn("Video time zone lookup failed:", error));
                 }
 
                 // regardless, we clear the live mode on GlobalDateTimeNode, as loading a video should always put us in control of the time

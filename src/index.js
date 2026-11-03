@@ -111,6 +111,7 @@ import {VideoLoadingManager} from "./CVideoLoadingManager";
 import {disposeDebugArrows, disposeDebugSpheres, disposeScene} from "./threeExt";
 import {removeMeasurementUI, setupMeasurementUI} from "./nodes/CNodeLabels3D";
 import {removeLatLonGrid, setupLatLonGrid} from "./LatLonGrid";
+import {removeTimeZoneBorders} from "./TimeZoneBorders";
 import {imageQueueManager} from "./js/get-pixels-mick";
 import {disposeGimbalChart} from "./JetChart";
 import {CNode} from "./nodes/CNode";
@@ -3506,6 +3507,7 @@ function disposeEverything() {
     // so we need to make sure it knows it's been destroyed
     removeMeasurementUI();
     removeLatLonGrid();
+    removeTimeZoneBorders();
 
 
     // dispose the track manager managed nodes

@@ -2,12 +2,13 @@ import {Vector3} from "three";
 import {ViewMan} from "./CViewManager";
 import {ECEFToLLAVD_radii, LLAToECEF} from "./LLA-ECEF-ENU";
 import {meanSeaLevelOffset, ensureGeoidLoaded} from "./EGM96Geoid";
-import {GlobalDateTimeNode, guiMenus, NodeMan, setRenderOne} from "./Globals";
+import {GlobalDateTimeNode, Globals, guiMenus, NodeMan, setRenderOne} from "./Globals";
 import {forceUpdateUIText} from "./nodes/CNodeViewUI";
 import {intersectSurface} from "./threeExt";
 import {getLocalNorthVector, getLocalUpVector} from "./SphericalMath";
 import {atan, degrees, m2f, radians, tan} from "./utils";
-import {applyExifUtcOffset, pickExifUtcOffset} from "./exifCaptureTime";
+import {applyExifTimeZone, applyExifUtcOffset, pickExifUtcOffset} from "./exifCaptureTime";
+import {lookupTimeZone} from "./TimeZoneLookup";
 import {showChoice} from "./showError";
 import {EventManager} from "./CEventManager";
 
@@ -704,8 +705,10 @@ function applyImportedImageCaptureDateTime(metadata, filename = "", options = {}
 
     // Whether the instant is known or inferred is worth saying: with no
     // OffsetTime tag the time is only as good as the assumption that the
-    // photograph was taken in this computer's timezone.
-    if (logResult && metadata?.capture?.utcOffset === undefined) {
+    // photograph was taken in this computer's timezone. A photo with a GPS
+    // position is read again in the zone of that position when the zone arrives
+    // (applyImportedImageTimeZone).
+    if (logResult && metadata?.capture?.utcOffset === undefined && !metadata?.placement?.hasLocation) {
         console.log(`[EXIF] ${filename}: no OffsetTime tag — capture time assumed to be in `
             + `this computer's timezone (${Intl.DateTimeFormat().resolvedOptions().timeZone}). `
             + `If the photo was taken elsewhere, set the time by hand.`);
@@ -720,6 +723,50 @@ function applyImportedImageCaptureDateTime(metadata, filename = "", options = {}
         console.log(`[EXIF] Applied capture datetime for ${filename}: ${applied.dateTime}`);
     }
     return applied;
+}
+
+// A photo with a GPS position was taken in the time zone of that position, so show
+// times in that zone. When the camera recorded no OffsetTime, also read the capture
+// time in that zone instead of in this computer's zone. The zone lookup is async (its
+// table loads on first use), so the time is first set as before and corrected when the
+// zone arrives. Nothing changes if the sitch, the time or the zone changed in between
+// (a zone picked by hand, or another photo dropped, wins).
+function applyImportedImageTimeZone(metadata, filename = "") {
+    const placement = metadata?.placement ?? {};
+    if (!placement.hasLocation || !GlobalDateTimeNode?.setTimeZoneFromZone) {
+        return;
+    }
+    const capture = metadata.capture ?? {};
+    const readTimeInZone = capture.date instanceof Date && capture.utcOffset === undefined;
+    const timeSetSerial = GlobalDateTimeNode.timeSetSerial;
+    const generation = Globals.loadGeneration;
+    const ticket = GlobalDateTimeNode.startTimeZoneLookup();
+
+    lookupTimeZone(placement.latitude, placement.longitude).then(zone => {
+        if (!zone || generation !== Globals.loadGeneration) return;
+        if (!GlobalDateTimeNode.isTimeZoneLookupCurrent(ticket)) {
+            console.log(`[EXIF] ${filename}: the time zone changed before the lookup finished; time zone not applied`);
+            return;
+        }
+        if (readTimeInZone) {
+            // A zone without the corrected time would show the wrong local time.
+            if (GlobalDateTimeNode.timeSetSerial !== timeSetSerial) {
+                console.log(`[EXIF] ${filename}: the time changed before the time zone loaded; time zone not applied`);
+                return;
+            }
+            const instant = applyExifTimeZone(capture.date, zone);
+            if (!instant) {
+                console.log(`[EXIF] ${filename}: this browser has no rules for ${zone}; capture time stays in this computer's zone`);
+                return;
+            }
+            GlobalDateTimeNode.setStartDateTime(instant);
+            GlobalDateTimeNode.establishDateTimeDefaults();
+            console.log(`[EXIF] ${filename}: no OffsetTime tag, so the capture time is read in the zone `
+                + `of the GPS position (${zone}): ${instant.toISOString()}`);
+        }
+        const name = GlobalDateTimeNode.setTimeZoneFromZone(zone);
+        console.log(`[EXIF] ${filename}: time zone from the GPS position: ${zone} (${name})`);
+    }).catch(error => console.warn(`[EXIF] ${filename}: time zone lookup failed`, error));
 }
 
 function applyImportedImageMainViewOverview(metadata, filename = "", options = {}) {
@@ -1090,7 +1137,9 @@ export async function extractJPEGImportMetadata(arrayBuffer, filename = "") {
     };
 }
 
-export function applyImportedImageMetadata(metadata, filename = "") {
+// restoring: a saved sitch is being rebuilt. Its saved time zone wins, so the zone of
+// the photo's position is not applied.
+export function applyImportedImageMetadata(metadata, filename = "", {restoring = false} = {}) {
     if (!metadata) return null;
 
     console.log("[EXIF] applyImportedImageMetadata input", {
@@ -1122,6 +1171,9 @@ export function applyImportedImageMetadata(metadata, filename = "") {
         logResult: false,
         render: false,
     }) ?? {});
+    if (!restoring) {
+        applyImportedImageTimeZone(metadata, filename);
+    }
     Object.assign(applied, applyImportedImageMainViewOverview(metadata, filename, {
         logResult: false,
         render: false,

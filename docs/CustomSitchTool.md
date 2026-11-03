@@ -231,7 +231,7 @@ Both are shown in **UTC**, the world reference time.
 
 The Year / Month / Day / Hour / Minute / Second sliders in the Time menu edit the **nowTime**; the timeline at the bottom of the screen (and the arrow keys) move you through the frames. A common workflow is to scrub (drag) to a frame with something distinctive on screen, then adjust the time until the simulation matches — Sitrec works out the start time for you. You'll do exactly this when syncing video, next.
 
-**Use Time Zone in UI** is on by default, so these sliders show the selected **Time Zone**, not UTC. Select the zone that was in effect at your location on that date, then enter your local time. See [Time zones](TimeAndSync.md#time-zones).
+**Use Time Zone in UI** is on by default, so these sliders show the selected **Time Zone**, not UTC. Select the zone that was in effect at your location on that date, then enter your local time. When the camera is at the right place, **Set Time Zone from Camera Location** selects that zone for you. See [Time zones](TimeAndSync.md#time-zones).
 
 ## Adding and Syncing Video
 
