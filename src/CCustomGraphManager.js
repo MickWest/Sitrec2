@@ -87,7 +87,9 @@ export class CCustomGraph {
             this._gs[axis] = token;
             const axisLabel = t("graphControls." + (axis === "x" ? "xAxis" : axis + "Axis"));
             const entityControl = folder.add(this._entities, axis, entities).name(axisLabel.replace(/ (\(.+\))$/, " entity $1") + (axis === "x" ? " entity" : ""))
-                .tooltip("Choose the object, track or analysis to measure")
+                .tooltip(axis === "x"
+                    ? "Choose the data source for the X axis: Timeline (the frame number), or an object, track or analysis"
+                    : "Choose the object, track or analysis to measure")
                 .onChange(value => {
                     const previous = GraphDataManager.get(this[storedProperty]);
                     const options = GraphDataManager.measurements(value, axis !== "x");
@@ -100,7 +102,9 @@ export class CCustomGraph {
                     this.updateGraph(true);
                 });
             const measurementControl = folder.add(this._gs, axis, measurements).name(axis.toUpperCase() + " measure")
-                .tooltip("Choose a measurement for this axis; None hides this series")
+                .tooltip(axis === "x"
+                    ? "Choose the value to plot along the X axis.\nFor Timeline, Frame plots the whole clip, and Frame A→B plots only the In/Out (A-B) range"
+                    : "Choose a measurement for this axis; None hides this series")
                 .onChange(value => {
                     // Changing one axis must never clear an unavailable selection
                     // on a different axis.
@@ -112,7 +116,8 @@ export class CCustomGraph {
             this["_" + axis + "Ctrl"] = measurementControl;
         }
         this._removeCtrl = folder.add({remove: () => CustomGraphManager.removeGraph(this.id)}, "remove")
-            .name(t("graphControls.remove"));
+            .name(t("graphControls.remove"))
+            .tooltip("Delete this graph: close its window and remove this folder");
         this.mirrorControlsToTabMenu();
     }
 
@@ -421,7 +426,8 @@ export class CCustomGraphManager {
         graph.lastSeconds = config.lastSeconds ?? 0;
         view.title = graph.title;
 
-        const folder = guiMenus.showhidegraphs.addFolder(graph.folderTitle());
+        const folder = guiMenus.showhidegraphs.addFolder(graph.folderTitle())
+            .tooltip("Controls for this custom graph: its title, its window, and the data it plots on each axis");
         graph.folder = folder;
         folder.onOpenClose(() => {
             this.refreshSources();
@@ -429,18 +435,25 @@ export class CCustomGraphManager {
             graph.updateGraph();
         });
 
-        folder.add(graph, 'title').name(t("graphControls.title")).onChange(() => {
-            folder.title(graph.folderTitle());
-            view.title = graph.title;
-            setRenderOne();
-        });
+        folder.add(graph, 'title').name(t("graphControls.title"))
+            .tooltip("Text shown at the top of the graph and as the name of this folder")
+            .onChange(() => {
+                folder.title(graph.folderTitle());
+                view.title = graph.title;
+                setRenderOne();
+            });
         const showProxy = { get show() { return view.visible; }, set show(v) { view.show(v); } };
-        folder.add(showProxy, 'show').name(t("graphControls.show")).listen();
+        folder.add(showProxy, 'show').name(t("graphControls.show"))
+            .tooltip("Show or hide this graph's window").listen();
         // listen(): the view header's Dark / Light button changes the same flag.
         // setDark(): a change here is a choice for this graph, so it is saved.
-        folder.add(view, 'dark').name(t("graphControls.dark")).onChange((value) => view.setDark(value)).listen();
+        folder.add(view, 'dark').name(t("graphControls.dark"))
+            .tooltip("Draw this graph on a dark background. Off = light background.\n"
+                + "The Dark / Light button in the graph's header changes the same setting")
+            .onChange((value) => view.setDark(value)).listen();
         folder.add({ legend: () => { view.showLegend = !view.showLegend; setRenderOne(); } }, 'legend')
-            .name(t("graphControls.toggleLegend"));
+            .name(t("graphControls.toggleLegend"))
+            .tooltip("Show or hide the names of the plotted series above the graph, in the color of each axis");
         folder.add(graph, 'lastSeconds', 0, 30, 0.5).name("Show Last (secs)")
             .tooltip("0 = plot the whole clip. Otherwise plot only the last N seconds up to the "
                 + "current frame, so the trace scrolls off to the left during playback")

@@ -754,13 +754,13 @@ export class CUIBar {
 
     addPinIcon(onToggle) {
         this.onPinToggle = onToggle;
-        this._pin = this.addIcon('\u{1F4CC}', () => this.onPinToggle && this.onPinToggle(), 'Pin this header (keep it shown)', 'pin');
+        this._pin = this.addIcon('\u{1F4CC}', () => this.onPinToggle && this.onPinToggle(), 'Keep this header bar shown. Click again to unpin it: then it shows only while the pointer rests on it.', 'pin');
         return this._pin;
     }
 
     addCloseIcon(onClose) {
         this.onClose = onClose;
-        this._close = this.addIcon('✕', () => this.onClose && this.onClose(), 'Close this view', 'close');
+        this._close = this.addIcon('✕', () => this.onClose && this.onClose(), 'Close (hide) this view. Undo (Ctrl+Z or Cmd+Z) shows it again.\nA full-screen view that is part of the tiled layout only leaves full-screen.', 'close');
         return this._close;
     }
 

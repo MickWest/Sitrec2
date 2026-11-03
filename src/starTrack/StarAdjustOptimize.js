@@ -1037,29 +1037,28 @@ export function addStarOptimizeControls(folder, name = "Optimize For Star Tracki
     };
 
     const optimizeBtn = folder.add(controls, "optimize").name(name)
-        .tooltip("Tune this frame for the Star Tracker, in two stages.\n\n"
-            + "First a genetic search over Brightness, Contrast, Shadows, Highlights, Dehaze and "
-            + "Blur. Each candidate is judged against a fixed measurement of the UNTOUCHED frame, "
-            + "so it is scored on how much real evidence it brings out - not on how many blobs it "
-            + "produces. It counts the best 25 detections (the catalog matcher's own budget), what "
-            + "share of them the evidence supports, and how much tone it destroyed.\n\n"
-            + "Then everything is re-judged on how many stars the CATALOG identifies: the best few "
-            + "candidates are re-scored, the Star Tracker Tweaks (Detect threshold and Min blob "
-            + "area) are swept for the winner, and if none of it beats the settings you already "
-            + "had, they all go back. More detections is NOT better past the catalog's depth - the "
-            + "extras are clutter that makes identification harder, and only this score sees it.\n\n"
-            + "Your current settings are tried first, so it can answer \"already optimal\". "
-            + "Enough stops searching but still checks the result; Abort puts everything back.");
+        .tooltip("Search the Video Adjustments for the settings that let the Star Tracker identify the "
+            + "most stars on the current frame. Your current settings are tried first.\n"
+            + "Stage 1 tries mixes of Brightness, Contrast, Shadows, Highlights, Dehaze and Blur Amount. "
+            + "It scores each one against the unadjusted frame, so extra noise blobs do not raise the score.\n"
+            + "Stage 2 checks the best 3 against the star catalog, then tries values of Min blob area and, "
+            + "unless Auto detect threshold is on, Detect threshold.\n"
+            + "If nothing identifies more stars than your settings, all settings go back. "
+            + "If new settings are kept, a one-frame analysis is left on screen: run Full Analysis again for the whole clip.\n"
+            + "Needs Enable Video Effects and Star Tracker > Apply adjustments on. Slow.");
 
     const enoughBtn = folder.add(controls, "enough").name("Enough (Accept)")
-        .tooltip("Stop searching and keep the best settings found so far");
+        .tooltip("Stop the search now. The best settings found so far are still checked against the star "
+            + "catalog, and are kept only if they identify more stars than your settings.");
     enoughBtn.show(false);
 
     const abortBtn = folder.add(controls, "abort").name("Abort (Reset)")
         .tooltip("Stop searching and restore the settings you started with");
     abortBtn.show(false);
 
-    const statusCtrl = folder.add(statusText, "value").name("Star Tracking").listen().disable();
+    const statusCtrl = folder.add(statusText, "value").name("Star Tracking").listen().disable()
+        .tooltip("Shows the progress and the result of the search for star-tracking settings. "
+            + "The full report goes to the browser console.");
     statusCtrl.show(false);
 
     controlSets.push({folder, optimize: optimizeBtn, enough: enoughBtn,

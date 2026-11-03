@@ -195,13 +195,28 @@ export class CNodeLOSFitWindTracer extends CNodeTrack {
     /** Build the read-only result folder once, whatever the outcome. */
     _ensureGUI() {
         if (this.guiFolder || !guiMenus.traverse) return;
-        this.guiFolder = guiMenus.traverse.addFolder("Wind Tracer Result").close();
+        this.guiFolder = guiMenus.traverse.addFolder("Wind Tracer Result").close()
+            .tooltip("Read-only results of the last Global Fit: Wind Tracer run. They update when the fit runs again.");
         this.guiDisplay = {
             wind: "", drift: "", vertical: "", buoyancy: "",
             range: "", residual: "", pointing: "", caveat: "",
         };
+        const tips = {
+            wind: "Solved wind speed, in knots, and the direction it comes from, in degrees true.",
+            drift: "Ground speed of the object at the start and at the end of the fit, in m/s.",
+            vertical: "Total height the object descends over the fit, and its descent rate at the end.",
+            buoyancy: "Solved buoyancy: beta is the ratio of lift to weight while the flame burns, vTerm is the cold terminal fall speed. "
+                + "Also shows the flame-out time, or \"lit throughout\".",
+            range: "Distance from the camera at the start and at the end of the fit, in km.",
+            residual: "Mean angle between the fitted path and the LOS after the operator-motion correction. "
+                + "The value in brackets is the angle to the uncorrected boresight.",
+            pointing: "The largest operator pointing error that the fit modeled, and the frequency band it used, in cycles per clip. "
+                + "Sweep is the azimuth-sweep frequency of the bearing to the object, in cycles per clip.",
+            caveat: "The most important limit of this result: an incomplete search, a range that rests on the priors, "
+                + "or the slow pointing drift that no fit can remove.",
+        };
         for (const key of Object.keys(this.guiDisplay)) {
-            this.guiFolder.add(this.guiDisplay, key).listen().disable();
+            this.guiFolder.add(this.guiDisplay, key).listen().disable().tooltip(tips[key]);
         }
     }
 

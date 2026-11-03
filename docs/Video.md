@@ -119,9 +119,9 @@ edge) and luma/chroma crosstalk come from that process, so they change with the 
 | Format | What it is |
 |---|---|
 | **Pure digital (no filter)** | No filter. The rendered frames, untouched. This is the default |
-| **NTSC (525/60 colour)** | US broadcast composite. Dot crawl and cross-color rainbowing |
+| **NTSC (525/60 color)** | US broadcast composite. Dot crawl and cross-color rainbowing |
 | **EIA RS-170 (525/60 monochrome)** | The pre-color US studio standard. Luminance only, no subcarrier |
-| **PAL (625/50 colour)** | European composite. Phase-alternating V axis, softer vertical color |
+| **PAL (625/50 color)** | European composite. Phase-alternating V axis, softer vertical color |
 | **VHS (SP)** | Color-under tape. Smeared color, head-switching tear at the bottom, tape noise |
 | **VHS (worn, 3rd generation)** | A copy of a copy on a played-out tape. Dropouts, tracking error, grain |
 

@@ -165,21 +165,25 @@ class COSDDataSeries {
     }
 
     setupGUI(parentFolder) {
-        this.guiFolder = parentFolder.addFolder(this.name).close();
-        
+        this.guiFolder = parentFolder.addFolder(this.name).close()
+            .tooltip(t("osdController.seriesFolder.tooltip"));
+
         this.guiFolder.add(this, "name").name(t("osdController.seriesName.label")).listen()
             .onChange(() => {
                 this.guiFolder.title(this.name);
                 this.controller.rebuildGraphDropdowns();
-            });
+            })
+            .tooltip(t("osdController.seriesName.tooltip"));
 
-        this.guiFolder.add(this, "type", OSD_DATA_SERIES_TYPES).name(t("osdController.seriesType.label")).listen();
+        this.guiFolder.add(this, "type", OSD_DATA_SERIES_TYPES).name(t("osdController.seriesType.label")).listen()
+            .tooltip(t("osdController.seriesType.tooltip"));
 
         this.guiFolder.add(this, "show").name(t("osdController.seriesShow.label")).listen()
             .onChange(() => {
                 this.controller.updateVideoInfoVisibility();
                 setRenderOne();
-            });
+            })
+            .tooltip(t("osdController.seriesShow.tooltip"));
 
         this.guiFolder.add(this, "lock").name(t("osdController.seriesLock.label")).listen()
             .onChange(() => {
@@ -187,9 +191,11 @@ class COSDDataSeries {
                     this.controller.stopEditing();
                 }
                 setRenderOne();
-            });
+            })
+            .tooltip(t("osdController.seriesLock.tooltip"));
 
-        this.guiFolder.add(this, "remove").name(t("osdController.removeTrack.label"));
+        this.guiFolder.add(this, "remove").name(t("osdController.removeTrack.label"))
+            .tooltip(t("osdController.removeTrack.tooltip"));
     }
 
     remove() {
@@ -263,7 +269,8 @@ export class CNodeOSDDataSeriesController extends CNode {
 
         this.graphView = null;
         this.graphSettings = { show: false, xAxis: "None", y1Axis: "None", y2Axis: "None" };
-        this.graphFolder = this.guiFolder.addFolder("Graph").close();
+        this.graphFolder = this.guiFolder.addFolder("Graph").close()
+            .tooltip(t("osdController.graphFolder.tooltip"));
         this.graphFolder.add(this.graphSettings, "show").name(t("osdController.graphShow.label")).listen()
             .tooltip(t("osdController.graphShow.tooltip"))
             .onChange(() => {

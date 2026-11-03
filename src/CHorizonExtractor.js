@@ -673,10 +673,11 @@ export function setupHorizonExtractorMenu() {
         .tooltip("Toggle the horizon-cross overlay on the video view");
 
     horizonFolder.add(actions, "deleteCurrent").name("Delete Keyframe at Current Frame")
-        .tooltip("Remove the keyframe at the current playback frame, if any (Shift+click on the cross centre does the same)");
+        .tooltip("Remove the keyframe at the current playback frame, if any (Shift+click on the cross center does the same)");
 
     horizonFolder.add(actions, "clearAll").name("Clear All Keyframes")
-        .tooltip("Remove all horizon keyframes (also wipes localStorage for this video)");
+        .tooltip("Delete every horizon keyframe, including the copy kept in this browser's storage for this video. "
+            + "You cannot undo it.");
 
     horizonFolder.add(actions, "showHintAgain").name("Show Hint")
         .tooltip("Re-display the on-screen interaction hint");

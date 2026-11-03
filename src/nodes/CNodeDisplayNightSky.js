@@ -191,7 +191,7 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
         if (envFlag(Globals.env?.SITREC_USE_CUSTOM_TLE)) {
 
             const menuName = Globals.env.SITREC_CUSTOM_TLE_MENU_NAME || "Custom Satellites";
-            const tooltipText = Globals.env.SITREC_CUSTOM_TLE_TOOLTIP || "Load custom TLE data for satellites from the custom source.";
+            const tooltipText = Globals.env.SITREC_CUSTOM_TLE_TOOLTIP || "Download satellite orbits (TLE data) for the sitch start date from this deployment's own source.\nIf satellites are already loaded, Sitrec asks whether to merge or replace them.";
 
 
             satGUI.add(this.satellites,"updateCustomSats").name(menuName)
@@ -867,7 +867,7 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
                 
                 this.celestialGUI.add(this.ephemerisView, "show").name(t("nightSky.satelliteEphemeris.label")).onChange(() => {
                     this.celestialGUI.close();
-                });
+                }).tooltip(t("nightSky.satelliteEphemeris.tooltip"));
             }
             
             if (!this.skyPlotView) {
@@ -881,7 +881,7 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
                 
                 this.celestialGUI.add(this.skyPlotView, "show").name(t("nightSky.skyPlot.label")).onChange(() => {
                     this.celestialGUI.close();
-                });
+                }).tooltip(t("nightSky.skyPlot.tooltip"));
             }
         });
 

@@ -148,6 +148,7 @@ constructor(v) {
 
     this.guiMenu = v.gui ?? guiMenus.effects;
     this.gui = this.guiMenu.addFolder("Flow Orbs");
+    this.gui.tooltip(t("spriteGroup.folder.tooltip"));
 
     this.group.visible = this.visible;
 

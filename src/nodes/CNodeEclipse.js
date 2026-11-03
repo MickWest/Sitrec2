@@ -147,6 +147,7 @@ export class CNodeEclipse extends CNode {
         // GUI — submenu under Lighting, next to the Atmospheric Optics.
         this.gui = guiMenus.lighting ? guiMenus.lighting.addFolder("Solar Eclipse") : undefined;
         if (this.gui) {
+            this.gui.tooltip("Visual effects of a solar eclipse: the corona, prominences, Baily's beads and the dimming of the light.\nThey show only while the Moon covers part of the Sun.");
             const addBool = (property, name) => this.gui.add(this, property).name(name).listen()
                 .onChange(() => this.recalculate());
             addBool("enabled", "Eclipse Effects")
@@ -166,7 +167,7 @@ export class CNodeEclipse extends CNode {
                     setEclipseLightingEnabled(this.affectLighting);
                     this.recalculate();
                 })
-                .tooltip("Dim the scene lighting and sky with the eclipse: gradual attenuation through the partial phases, deep-twilight darkness and a 360° horizon glow at totality.")
+                .tooltip("Dim the scene lighting and sky with the eclipse: gradual attenuation through the partial phases, deep-twilight darkness and a 360° horizon glow at totality.\nIt works even when Eclipse Effects is off.")
                 // a separate flag (CEclipseCalc), in force whether or not Eclipse Effects is on
                 .keepLiveWhenFolderOff();
         }

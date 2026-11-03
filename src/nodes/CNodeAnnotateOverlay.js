@@ -156,7 +156,9 @@ export class CNodeAnnotateOverlay extends CNodeActiveOverlay {
         // Place under the Video menu since this is a video-overlay feature.
         const parentMenu = guiMenus.video ?? guiMenus.view ?? guiMenus.main;
         if (!parentMenu) return;
-        this.gui = parentMenu.addFolder("Annotate").close();
+        this.gui = parentMenu.addFolder("Annotate").close()
+            .tooltip("Draw notes over the video: freehand lines, arrows, shapes, text and images.\n"
+                + "The annotations are saved with the sitch.");
         this.gui.add(this, "show").name("Show Annotations").listen().onChange(() => {
             // Show is the master switch. Turning it off forces Edit Mode off too:
             // the toolbar hides, mouse stops being captured, and the canvas is
@@ -173,18 +175,23 @@ export class CNodeAnnotateOverlay extends CNodeActiveOverlay {
             if (this.editing) this.show = true;
             this._updateToolbarVisibility();
             setRenderOne(true);
-        }).tooltip("Show the drawing toolbar and capture mouse for drawing. Requires Show Annotations to be on.");
+        }).tooltip("Show the drawing toolbar on the video, and use the mouse to draw. Turning it on also turns on Show Annotations.");
 
         this.gui.add(this, "fadeFrames", 0, 600, 1).name("Fade Frames").listen().onChange(() => {
             setRenderOne(true);
-        }).tooltip("How many frames before a stroke fully fades out. 0 = strokes are persistent.");
+        }).tooltip("Number of frames over which each stroke fades out, starting at the frame it was drawn on. "
+            + "A stroke then shows only from that frame onward.\n0 = strokes do not fade, and show on every frame.");
 
         this.gui.add(this, "opacity", 0, 1, 0.01).name("Opacity").listen().onChange(() => {
             setRenderOne(true);
-        });
+        }).tooltip("Opacity of all annotations, from 0 (invisible) to 1 (solid).\n"
+            + "Each new stroke also keeps the value it was drawn with, and the two values multiply.");
 
-        this.gui.add(this, "strokeWidth", 0.5, 60, 0.5).name("Line Width").listen();
-        this.gui.addColor(this, "color").name("Color").listen();
+        this.gui.add(this, "strokeWidth", 0.5, 60, 0.5).name("Line Width").listen()
+            .tooltip("Width of new strokes, in pixels of the original video, so they keep their size when the view changes size. "
+                + "Text is drawn at 6 times this width.");
+        this.gui.addColor(this, "color").name("Color").listen()
+            .tooltip("Color of new strokes and text.");
 
         this.gui.add(this, "clearAll").name("Clear All").tooltip("Delete every annotation stroke (undoable).");
     }

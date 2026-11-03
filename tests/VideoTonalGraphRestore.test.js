@@ -133,6 +133,7 @@ test('frequency menu controls retain boolean types when a GUI sends numeric chec
         addFolder() { return folder; },
         close() { return folder; },
         perm() { return folder; },
+        tooltip() { return folder; },
     };
     addPointTrackFrequencyMenu(folder);
     const proxy = calls.find(call => call.key === 'percent').object;
@@ -155,6 +156,7 @@ test('frequency aperture minimum is the smallest radius that can be measured', (
         addFolder() { return folder; },
         close() { return folder; },
         perm() { return folder; },
+        tooltip() { return folder; },
     };
     addPointTrackFrequencyMenu(folder);
     const radius = calls.find(call => call.key === 'radius');

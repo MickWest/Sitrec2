@@ -140,7 +140,10 @@ class CLongExposureManager {
 
     setupMenu() {
         if (!guiMenus || !guiMenus.video) return;
-        const folder = guiMenus.video.addFolder("Long Exposure/Stacking").close().perm();
+        const folder = guiMenus.video.addFolder("Long Exposure/Stacking").close().perm()
+            .tooltip("Render a simulated long-exposure photo, or a stack of exposures, of the look view: "
+                + "star trails, satellite and aircraft light streaks.\n"
+                + "Also holds a live trail preview and a camera nudge.");
         this.folder = folder;
         const dirty = () => { markSitchDirty(); setRenderOne(true); };
 
@@ -200,18 +203,21 @@ class CLongExposureManager {
                 "planets stay white, lights keep their own colors.");
         folder.add(this.params, "satMag", -6, 6, 0.1).name("Saturation Magnitude").perm().listen().onChange(dirty)
             .tooltip("Calibration: the star magnitude whose light just saturates one pixel in a\n" +
-                "single frame. Lower = brighter stars overall. Venus (-4.4) with the default +1\n" +
-                "is ~144x saturation.");
+                "single frame. Higher = brighter stars, planets, satellites and lights overall.\n" +
+                "Venus (-4.4) with the default 4.0 is ~2300x saturation.");
         folder.add(this.params, "lightGain", 0, 20, 0.1).name("Light Brightness").perm().listen().onChange(dirty)
             .tooltip("Brightness multiplier on model lights in the exposure. 1 = realistic:\n" +
                 "model intensities are mapped to real effective candela (~100cd nav,\n" +
                 "~200cd beacon), with inverse-square falloff and slant-path extinction.");
         folder.add(this.params, "moonGain", 0, 10, 0.05).name("Moon Gain").perm().listen().onChange(dirty)
-            .tooltip("Multiplier on the magnitude-calibrated HDR moon disk (1 = physical).");
+            .tooltip("Brightness multiplier on the Moon's disk, which is scaled to match the Moon's\n" +
+                "catalog magnitude (1 = physical). Used only when HDR Point Sources is on.");
         folder.add(this.params, "psfSigma", 0.3, 2, 0.05).name("Point Spread (px)").perm().listen().onChange(dirty)
-            .tooltip("Gaussian point-spread sigma in pixels for splatted sources.");
+            .tooltip("Blur size (Gaussian sigma), in pixels, of each star, planet, satellite and light\n" +
+                "that HDR Point Sources draws. Larger = softer, wider points.");
         folder.add(this.params, "settle").name("Wait For Loading").perm().listen()
-            .tooltip("Settle terrain/3D-tiles each frame before capture (slower, stable).");
+            .tooltip("Before each sample, wait (up to 8 seconds) for terrain and 3D tiles to finish\n" +
+                "loading. Slower, but the render does not catch tiles half-loaded.");
         folder.add(this.params, "step", 1, 600, 1).name("Frame Step").perm().listen().onChange(dirty)
             .tooltip("Sample every Nth frame of the exposure (default 30 = ~30x faster).\n" +
                 "Positions and linear flux are interpolated and weighted by elapsed time.\n" +
@@ -221,7 +227,8 @@ class CLongExposureManager {
             .tooltip("Hide splatted sources (stars/planets/satellites/lights) behind terrain\n" +
                 "and other opaque foreground, using a mask rendered from the scene.\n" +
                 "Exact under camera rotation (panning, the nudge); recalculated\n" +
-                "automatically whenever the camera position moves.");
+                "automatically whenever the camera position moves.\n" +
+                "Used only when HDR Point Sources is on.");
         // mirrors View menu > Atmospheric Refraction. Sit is replaced per sitch
         // and this menu is built once, so bind through a live proxy.
         const refrProxy = {
@@ -236,7 +243,10 @@ class CLongExposureManager {
 
         setupTimelapsePreviewMenu(folder, this);
 
-        const nf = folder.addFolder("Camera Nudge").close().perm();
+        const nf = folder.addFolder("Camera Nudge").close().perm()
+            .tooltip("Give the look camera a damped jolt and a slow roll at set times, live and in the\n" +
+                "long-exposure render. While this folder is open and Nudge Enabled is on,\n" +
+                "the look view shows the path of the jolt.");
         this.nudgeFolder = nf;
         // opening/closing the folder shows/hides the trajectory preview, which
         // only redraws on a render — poke one (render-on-demand)
@@ -247,16 +257,19 @@ class CLongExposureManager {
         nf.add(this.nudge, "enabled").name("Nudge Enabled").perm().listen().onChange(nudgeChanged)
             .tooltip("Jolt the look camera at the given time: it bounces around and settles\n" +
                 "(damped spring impulse). Works live and in the long-exposure render,\n" +
-                "where it draws light trails.")
+                "where it draws light trails. Also turns on the Rotate settings below.")
             .asFolderToggle();
-        nf.add(this.nudge, "time", 0, 120, 0.1).name("Nudge Time (s)").perm().listen().onChange(nudgeChanged);
+        nf.add(this.nudge, "time", 0, 120, 0.1).name("Nudge Time (s)").perm().listen().onChange(nudgeChanged)
+            .tooltip("Time of the jolt, in seconds from the first frame of the sitch.");
         nf.add(this.nudge, "magnitude", 0, 10, 0.05).name("Magnitude (°)").perm().listen().onChange(nudgeChanged)
             .tooltip("Peak deflection of the first swing, degrees.");
         nf.add(this.nudge, "frequency", 0.2, 10, 0.1).name("Frequency (Hz)").perm().listen().onChange(nudgeChanged)
             .tooltip("Elasticity — natural frequency of the bounce.");
         nf.add(this.nudge, "damping", 0.02, 0.8, 0.01).name("Damping").perm().listen().onChange(nudgeChanged)
             .tooltip("Damping ratio: low = rings for a long time, high = settles quickly.");
-        nf.add(this.nudge, "direction", -180, 180, 1).name("Direction (°)").perm().listen().onChange(nudgeChanged);
+        nf.add(this.nudge, "direction", -180, 180, 1).name("Direction (°)").perm().listen().onChange(nudgeChanged)
+            .tooltip("Direction of the first swing in the image, in degrees. 0 = side to side,\n" +
+                "90 = up and down. A smaller second swing makes the bounce wander.");
 
         // Smooth roll about the view axis — a separate transform from the jolt
         // above. Curves otherwise-straight star/satellite trails into arcs.

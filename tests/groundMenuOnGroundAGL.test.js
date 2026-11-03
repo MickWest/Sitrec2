@@ -31,7 +31,7 @@ const GROUND_HAE = GROUND_MSL + GEOID;
 let nodeMan, menu, menuData, camera, target;
 
 function makeMenu() {
-    const controller = {name: () => controller, disable: () => controller};
+    const controller = {name: () => controller, tooltip: () => controller, disable: () => controller};
     return {
         open: jest.fn(), destroy: jest.fn(), addHTML: jest.fn(), addHeading: jest.fn(),
         add: (obj, key) => { menuData = obj; return controller; },

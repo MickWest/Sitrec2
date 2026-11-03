@@ -269,10 +269,26 @@ Controller.prototype.setLabelColor = function (color) {
     return this; // Return the controller to allow method chaining
 };
 
+// lil-gui gives a disabled row `pointer-events: none !important`, on the row AND on every child,
+// so the browser never shows that row's title tooltip - and most read-only status rows are
+// disabled. Give the row its pointer events back, but leave them off the children: the input
+// stays inert, the pointer falls through it to the row, and the row shows its tooltip.
+// "body" outranks lil-gui's own rule, whose <style> lil-gui inserts before all other styles.
+let disabledRowTooltipStyleAdded = false;
+function allowTooltipsOnDisabledRows() {
+    if (disabledRowTooltipStyleAdded || typeof document === "undefined") return;
+    disabledRowTooltipStyleAdded = true;
+    const style = document.createElement("style");
+    style.textContent = "body .lil-gui .controller.disabled { pointer-events: auto !important; }";
+    document.head.appendChild(style);
+}
+
 // adding a tooltip to a controller.
 // A plain `title` attribute, drawn by the browser. (src/Tooltips.js draws its own faster
 // tip only for the view header-bar buttons, not for menu items.)
 Controller.prototype.tooltip = function (tooltip) {
+    allowTooltipsOnDisabledRows();
+
     // Keep the text as readable state as well as a DOM attribute: the two mirroring paths
     // (MenuMirror, CustomManagerMirror) copy a control's tooltip onto its twin, and both read
     // it from here. Without this they saw undefined and quietly produced tooltip-less mirrors.

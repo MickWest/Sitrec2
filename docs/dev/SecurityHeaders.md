@@ -108,7 +108,7 @@ uses device orientation. The [spoken assistant](../AIAssistant.md)
 AR mode then gets no orientation data and shows no error. The assistant asks the user to
 allow the microphone, which the user cannot do. The predictor asks the user to enter a place.
 
-**Geolocate from browser** in the main application does not use the Geolocation API. It asks
+**Geolocate from IP Address** in the main application does not use the Geolocation API. It asks
 ipapi.co for an approximate position, so `connect-src` controls it, not this header.
 
 If you set one, allow what the app uses:

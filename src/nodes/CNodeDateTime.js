@@ -460,7 +460,8 @@ export class CNodeDateTime extends CNode {
         // looks one up at click time so the button appears regardless and
         // shows a helpful message if no MISB is present.
         this._runTimingAnalysis = () => this._timingAnalysisAction();
-        this.dateTimeFolder.add(this, "_runTimingAnalysis").name("Timing Analysis...");
+        this.dateTimeFolder.add(this, "_runTimingAnalysis").name("Timing Analysis...")
+            .tooltip(t("dateTime.timingAnalysis.tooltip"));
 
         this.update(0);
 

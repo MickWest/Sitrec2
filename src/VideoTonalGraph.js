@@ -33,7 +33,8 @@ export function addVideoTonalGraphMenu(folder) {
         refresh() { currentView()?.refreshAnalysis(); },
         exportCSV() { currentView()?.exportCSV(); },
     };
-    const controls = folder.addFolder(t('videoTonal.menu')).close().perm();
+    const controls = folder.addFolder(t('videoTonal.menu')).close().perm()
+        .tooltip(t('videoTonal.tooltip'));
     controls.add(proxy, 'show').name(t('videoTonal.menu')).tooltip(t('videoTonal.tooltip')).listen().perm().asFolderToggle();
     for (const key of Object.keys(TONAL_DEFAULTS)) {
         Object.defineProperty(proxy, key, {
@@ -53,14 +54,14 @@ export function addVideoTonalGraphMenu(folder) {
     controls.add(proxy, 'mode', {
         [t('videoTonal.percentiles')]: 'percentiles', [t('videoTonal.histogram')]: 'histogram',
         [t('videoTonal.contrast')]: 'contrast', [t('videoTonal.relativeContrast')]: 'relativeContrast',
-    }).name(t('videoTonal.display')).listen().perm();
+    }).name(t('videoTonal.display')).tooltip(t('videoTonal.displayTooltip')).listen().perm();
     for (const key of ['showMean', 'showExtremes', 'targetAnalysis']) {
-        controls.add(proxy, key).name(t(`videoTonal.${key}`)).listen().perm();
+        controls.add(proxy, key).name(t(`videoTonal.${key}`)).tooltip(t(`videoTonal.${key}Tooltip`)).listen().perm();
     }
     controls.add(proxy, 'targetRadius', 1, 100, 1).name(t('videoTonal.targetRadius'))
         .tooltip(t('videoTonal.targetTooltip')).listen().perm();
-    controls.add(proxy, 'refresh').name(t('videoTonal.refresh')).perm();
-    controls.add(proxy, 'exportCSV').name(t('videoTonal.exportCSV')).perm();
+    controls.add(proxy, 'refresh').name(t('videoTonal.refresh')).tooltip(t('videoTonal.refreshTooltip')).perm();
+    controls.add(proxy, 'exportCSV').name(t('videoTonal.exportCSV')).tooltip(t('videoTonal.exportTooltip')).perm();
 }
 
 export function serializeVideoTonalGraph() {

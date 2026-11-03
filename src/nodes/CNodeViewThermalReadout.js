@@ -11,6 +11,8 @@ export class CNodeViewThermalReadout extends CNodeViewText {
         v.hideOnFileDrop = false;
         v.manualScroll = true;
         super(v);
+        // Its entry in Show/Hide > Views says what the view holds (the same text as Effects > Physical thermal > Show readout).
+        this.showHideController?.tooltip(t("thermal.readoutView.showTooltip"));
         this.text = "";
         this.setText(null);
 

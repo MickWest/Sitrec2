@@ -2,6 +2,8 @@ const en = {
     thermal: {
         "title": "Physical thermal",
         "mode": "Render mode",
+        "titleTooltip": "A physical simulation of a mid-wave infrared (MWIR) thermal sensor for the Look View. Render mode turns it on.\nThe groups below set the environment, optics, detector, signal processing and display. The tooltip of each value ends with its status (Estimated, Published, Calculated or Measured) and source.\nOpening this folder loads the sensor code.",
+        "modeTooltip": "Visible: the normal Look View render.\nPhysical MWIR thermal: the Look View shows a simulated infrared sensor image, calculated from surface temperatures, emissivity and the atmosphere. The Look View's rendering effects do not apply to it.\nA frame that per-frame camera data marks as visible light (EO) shows the visible render.\nNot available for a fisheye, panorama or orthographic camera, in a VR headset, or with flat earth.",
         "visible": "Visible",
         "physicalThermal": "Physical MWIR thermal",
         "loading": "Loading thermal sensor…",
@@ -34,7 +36,7 @@ const en = {
             "diffraction": "Enable Diffraction to use this control.",
             "wavelengthBlur": "Used only with Diffraction or nonzero turbulence blur.",
             "whiteHot": "Used only with White hot polarity.",
-            "turbulence": "Calculated along the camera-to-target path. Select Manual turbulence to edit.",
+            "turbulence": "Calculated along the camera-to-target path. Set Turbulence path to Manual to edit.",
             "sounding": "The loaded sounding supplies temperature and water vapor. This fallback applies without a sounding."
         },
         "readout": "Native {{width}} × {{height}} · {{vertical}}° V × {{horizontal}}° H · digital zoom {{zoom}}× · r0 {{r0}} m · ground/sea estimated",
@@ -70,7 +72,7 @@ const en = {
             "title": "Lens source",
             "view": "Follow camera field (estimated)",
             "sensor": "Selected thermal lens",
-            "tooltip": "Without recorded infrared camera data, choose the closest preset lens step from the camera field before display zoom. This estimates an optical step; it does not measure one. Select the thermal lens manually to keep its optics fixed. Recorded infrared camera data takes priority.",
+            "tooltip": "Follow camera field (estimated): without recorded infrared camera data, the sensor uses the preset lens step closest to the camera's field of view before display zoom. This estimates the step; it does not measure it. Presets without lens steps keep their optics.\nSelected thermal lens: the optics stay as set in Optics.\nRecorded infrared camera data takes priority over both.",
             "readOnly": "Estimated from the camera field. Select Lens source = Selected thermal lens to edit the optics.",
             "estimate": "Lens: {{focal}} mm estimated from the {{field}}° camera field before display zoom; no recorded lens data.",
             "invalid": "The estimated {{focal}} mm step does not work with the selected pupil policy ({{message}}); the selected thermal lens is kept."
@@ -153,6 +155,13 @@ const en = {
             "processing": "Processing",
             "display": "Display"
         },
+        "groupTooltips": {
+            "scene": "The scene as the sensor sees it: atmosphere, sky, ground, sea, clouds, sunlight, and the fallback temperature of untagged object surfaces.",
+            "optics": "The lens and the light path to the detector: spectral band, aperture, lens step, focal length and field of view, diffraction, scatter, turbulence, blur and optical sampling.",
+            "detector": "The sensor preset and the detector: size, pixel pitch, exposure, well capacity, noise, edge shading and fixed pattern.",
+            "processing": "How detector counts become display brightness: gain mode and window, temporal noise filter, local enhancement and fixed radiometric endpoints.",
+            "display": "The output picture: polarity, response gamma and display curve, white-hot output gain and offset, digital zoom, enlargement sampling and diagnostic views."
+        },
         "status": {
             "estimated": "Estimated",
             "published": "Published",
@@ -161,6 +170,27 @@ const en = {
         },
         "object": {
             "title": "Thermal surface",
+            "titleTooltip": "The temperature and emissivity of this object's surfaces in the physical thermal image (Effects > Physical thermal > Render mode = Physical MWIR thermal).\nFor a vehicle model (Browse vehicles…), opening this folder adds Vehicle thermal state and Zone overrides.",
+            "modeTooltip": "Inherit vehicle zones / ambient: each surface keeps the thermal data of the model, such as the heat zones of a vehicle model with any Zone overrides. Surfaces without thermal data use Ambient fallback temperature (Effects > Physical thermal > Environment).\nUniform surface: every surface of this object uses Temperature and Emissivity below.",
+            "uniformTemperatureKTooltip": "Temperature of every surface of this object, in K (kelvin; °C + 273.15). Used only with Render mode = Uniform surface.",
+            "uniformEmissivityTooltip": "MWIR emissivity of every surface of this object, 0 to 1. 1 is a perfect emitter; a surface below 1 also reflects its surroundings, by the fraction 1 − emissivity. Used only with Render mode = Uniform surface.",
+            "vehicleStateTooltip": "The air temperature, Mach number and engine power that set the heat zones of this vehicle model. A sky lantern also has Canopy heating.\nEach value comes from the scene, or from an override for this object only.",
+            "stateTooltips": {
+                "airTemperatureK": "Air temperature at this object, in K. The skin temperature and the engine zone temperatures start from it.",
+                "mach": "Flight Mach number of this object (airspeed ÷ speed of sound). It adds ram heating to the skin and engine zone temperatures.",
+                "power": "Engine load of this vehicle, 0 to 1. The engine and exhaust zones get hotter as it increases. For a sky lantern it is the burn fraction.",
+                "canopyPower": "Heating of a sky lantern's canopy, as a burn fraction from 0 to 1. By default it follows Power."
+            },
+            "sourceTooltip": "From scene: Sitrec calculates the value each frame, and the value control shows it.\nOverride: set the value for this object only.",
+            "canopySourceTooltip": "Follows burn power: the canopy heating equals Power.\nOverride: set the canopy heating for this object only.",
+            "zonesTooltip": "The heat zones of this vehicle model, such as engine parts, exhaust and skin. Each zone starts at the values that Vehicle thermal state gives it. An edit overrides the zone for this object only.\nUsed only with Render mode = Inherit vehicle zones / ambient.",
+            "zoneTooltip": "Override the surface values of this heat zone for this object. Inherit zone removes the override.",
+            "zoneTooltips": {
+                "temperatureK": "Temperature of this zone's surfaces, in K. An edit overrides the calculated value.",
+                "emissivity": "MWIR emissivity of this zone, 0 to 1. For a gas volume, such as a flame, it sets the radiant intensity, and the transmittance is 1 − emissivity.",
+                "transmittance": "Fraction of the radiation from behind that passes through this thin layer, such as a lantern canopy, 0 to 1. It cannot exceed 1 − emissivity; the control shows the effective value."
+            },
+            "resetTooltip": "Remove the overrides of this zone. The zone uses the calculated values again.",
             "inherit": "Inherit vehicle zones / ambient",
             "uniform": "Uniform surface",
             "temperatureK": "Temperature · K",
@@ -221,7 +251,7 @@ const en = {
             },
             "focalStep": {
                 "label": "Focal step",
-                "tooltip": "Preset optical lens step, pupil policy and displayed detector window. Free uses fieldMode; presets without steps always use Free.",
+                "tooltip": "Preset optical lens step, pupil policy and displayed detector window. Free uses Optical field control; presets without steps always use Free. An edit of Focal length, Vertical field of view, Aperture diameter or Optical field control selects Free.",
                 "options": {
                     "27": "27 mm",
                     "135": "135 mm",
@@ -232,7 +262,7 @@ const en = {
             },
             "sensorPreset": {
                 "label": "Sensor preset",
-                "tooltip": "Conditional sensor model; inspect the status and source of each value.",
+                "tooltip": "Conditional sensor model. Selecting a preset replaces the optics, detector, processing and display settings with the preset's values. Each value shows its status and source.",
                 "options": {
                     "MX15": "MX-15 class (stepped optics)",
                     "ATFLIR": "ATFLIR (conditional narrow)",
@@ -277,7 +307,7 @@ const en = {
             },
             "groundMapData": {
                 "label": "Mapped roads and buildings",
-                "tooltip": "Loads open map road and building data around the target over the network, as City lights does. Road surfaces are asphalt, footpaths concrete and building footprints roofs; roads under tree canopy stay trees. Walls of 3D buildings are concrete. Elsewhere the imagery colors decide. Road widths are typical for each road class, not mapped."
+                "tooltip": "Loads open map road and building data around the target over the network, as Lighting > City Lights does. Road surfaces are asphalt, footpaths concrete and building footprints roofs; roads under tree canopy stay trees. Walls of 3D buildings are concrete. Elsewhere the imagery colors decide. Road widths are typical for each road class, not mapped."
             },
             "groundWindMps": {
                 "label": "Surface wind",
@@ -442,7 +472,7 @@ const en = {
             },
             "turbulenceMode": {
                 "label": "Turbulence path",
-                "tooltip": "A geometry-aware host integrates the estimated turbulence profile along the physical camera-to-target path. Manual uses the specified coherence diameter.",
+                "tooltip": "Camera to target: integrates the estimated turbulence profile along the physical path from the camera to the target track. Only a host with scene geometry, such as the Look View, does this.\nManual: uses Turbulence coherence diameter.",
                 "options": {
                     "manual": "Manual",
                     "geometry": "Camera to target"
@@ -694,15 +724,15 @@ const en = {
     menus: {
         main: {
             title: "Sitrec",
-            tooltip: "Selecting legacy sitches and tools\nSome legacy sitches have controls here by default",
-            noTooltip: "No tooltip defined for this sitch",
+            tooltip: "Start a sitch, load a legacy sitch or tool, open the extra tools, and change your settings.\nSome legacy sitches also put their controls in this menu.",
+            noTooltip: "Load this sitch in place of the current sitch.",
             legacySitches: {
                 label: "Legacy Sitches",
-                tooltip: "The Legacy Sitches are older built-in (hard-coded) sitches are predefined situations that often have unique code and assets. Select one to load it.",
+                tooltip: "Older built-in sitches. Each one is a predefined situation, often with its own code and assets.\nSelect one to load it in place of the current sitch.",
             },
             legacyTools: {
                 label: "Legacy Tools",
-                tooltip: "Tools are special sitches that are used for custom setups like Starlink or with user tracks, and for testing, debugging, or other special purposes. Select one to load it.",
+                tooltip: "Special-purpose sitches: older tools, and sitches for testing and debugging.\nThe Test entries load many sitches, one after another, as a smoke test.\nSelect one to load it in place of the current sitch.",
             },
             extraTools: {
                 label: "Extra Tools",
@@ -750,11 +780,11 @@ const en = {
         },
         file: {
             title: "File",
-            tooltip: "File operations like saving,loading, and exporting",
+            tooltip: "Save and open sitches, import files, and export data, images and video.",
         },
         view: {
             title: "View",
-            tooltip: "Miscellaneous view controls\nLike all menus, this menu can be dragged off the menu bar to make it a floating menu",
+            tooltip: "Controls for the views: layout, HUD color, video zoom and overlay, star and planet brightness, and atmospheric refraction.\nLike all menus, you can drag this menu off the menu bar to make it a floating menu.",
         },
         video: {
             title: "Video",
@@ -762,11 +792,11 @@ const en = {
         },
         time: {
             title: "Time",
-            tooltip: "Time and frame controls\nDragging one time slider past the end will affect the above slider\nNote that the time sliders are UTC",
+            tooltip: "Date, time and frame controls for the sitch.\nThe date and time sliders show UTC, unless Use Time Zone in UI is on.\nDrag a time slider past its end to change the slider above it (for example, minutes past 59 add an hour).",
         },
         objects: {
             title: "Objects",
-            tooltip: "3D Objects and their properties\nEach folder is one object. The traverseObject is the object that traverses the lines of sight - i.e. the UAP we are interested in",
+            tooltip: "3D objects and their settings. Each folder is one object.\ntraverseObject is the object that moves along the lines of sight (LOS). The Traverse menu sets its path.",
             addObject: {
                 label: "Add Object",
                 tooltip: "Create a new object at specified coordinates",
@@ -776,31 +806,31 @@ const en = {
         },
         satellites: {
             title: "Satellites",
-            tooltip: "Loading and controlling satellites\nThe satellites.\nStarlink, ISS, etc. Controlls for Horizon flares and other satellite effects",
+            tooltip: "Load satellites, such as Starlink and the ISS, and control how they show.\nAlso holds the controls for horizon flares and other satellite effects.",
         },
         terrain: {
             title: "Terrain",
-            tooltip: "Terrain controls\nThe terrain is the 3D model of the ground. The 'Map' is the 2D image of the ground. The 'Elevation' is the height of the ground above sea level",
+            tooltip: "The 3D model of the ground.\nMap Type sets the image drawn on the ground. Elevation Type sets the source of the ground heights.\nAlso 3D buildings, removing geometry, painting on the ground, and Street View panoramas.",
         },
         physics: {
             title: "Physics",
-            tooltip: "Physics controls\nThe physics of the situation, like wind speed and the physics of the traverse object",
+            tooltip: "Physics and motion settings, such as the units, the wind, the simple flight sim, track smoothing and object tilt.\nScenarios holds ready-made simulations.",
         },
         camera: {
             title: "Camera",
-            tooltip: "Camera controls for the look view camera\nThe look view defaults to the lower right window, and is intended to match the video.",
+            tooltip: "The look camera: the camera that draws the look view, which is meant to match the video.\nLocation, Heading and FOV (Zoom) set where it is, where it points and how much it sees.",
         },
         target: {
             title: "Target",
-            tooltip: "Target controls\nPosition and properties of the optional target object",
+            tooltip: "The target: a track that the look camera can point at.\nTarget Track chooses the track. The fixed target position is also set here: hold X with the pointer over a 3D view to move it.",
         },
         traverse: {
             title: "Traverse",
-            tooltip: "Traverse controls\nThe traverse object is the object that traverses the lines of sight - i.e. the UAP we are interested in\nThis menu defined how the traverse object moves and behaves",
+            tooltip: "Traverse controls.\nThe traverse object moves along the lines of sight (LOS) from the camera.\nThis menu sets how the traverse object moves and behaves.",
         },
         showHide: {
             title: "Show",
-            tooltip: "Showing or hiding views, object and other elements",
+            tooltip: "Show or hide views, objects and other elements.",
             views: {
                 title: "Views",
                 tooltip: "Show or hide views (windows) like the look view, the video, the main view, as well as overlays like the MQ9UI",
@@ -811,14 +841,14 @@ const en = {
             },
             frustum: {
                 title: "Camera View Frustum",
-                tooltip: "The camera view frustum, and video projected into the frustum or onto the ground",
+                tooltip: "The camera view frustum: the pyramid from the camera that shows the edges of its view.\nAlso projects the video into the frustum or onto the ground",
             },
             graphs: {
                 title: "Graphs",
-                tooltip: "Show or hide various graphs",
+                tooltip: "Show or hide the graph views, and add your own graphs.",
                 addCustom: {
                     label: "Add Custom Graph",
-                    tooltip: "Create a new graph window. Choose X, Y1, Y2 and Y3 data series from any registered per-frame data source.",
+                    tooltip: "Make a new graph window, with its own folder of controls in this menu.\nChoose its X, Y1, Y2 and Y3 data from the tracks, objects, analyses and other per-frame data in the sitch.",
                 },
             },
             measurements: {
@@ -828,26 +858,36 @@ const en = {
         },
         effects: {
             title: "Effects",
-            tooltip: "Special effects like blur, pixelation, and color adjustments that are applied to the final image in the look view",
+            tooltip: "Effects on the rendered image, such as blur, pixelation, color adjustments, sensor simulations and video format effects.\nAlso ray-traced refraction, water reflection and other scene effects.",
         },
         lighting: {
             title: "Lighting",
-            tooltip: "The lighting of the scene, like the sun and the ambient light",
+            tooltip: "Light in the scene: the Sun, ambient light and shadows.\nAlso the look view atmosphere and exposure, halos, city lights, and solar and lunar eclipses.",
         },
         contents: {
             title: "Contents",
-            tooltip: "The contents of the scene, mostly used for tracks",
+            tooltip: "The tracks and other loaded data in the scene. Each track has a folder of display settings.\nAlso holds the live data feeds and the switches for all tracks.",
         },
         help: {
             title: "Help",
-            tooltip: "Links to the documentation and other help resources",
+            tooltip: "Help for Sitrec: the documentation, the AI Assistant, the mouse and keyboard controls, and the debug log.",
             whatsNew: "What's New",
             gettingStarted: "Getting Started",
+            docLinkTooltip: "Open the {{name}} page in a new tab.",
+            githubDocLinkTooltip: "Open the {{name}} page on GitHub in a new tab.",
+            docSectionTips: {
+                start: "The basics: getting started, the user interface, time and frames, the AI Assistant, keyboard shortcuts and a glossary.",
+                data: "Getting data into Sitrec and saving it: tracks, sources of flight data, recorded fireballs, saved sitches and chapters, 3D models and objects.",
+                world: "How Sitrec models the world: the camera and target, geodesy and altitude, terrain, refraction, wind, historic skies, lighting, eclipses and haze.",
+                video: "Working with video: loading, rendering and exporting it, and the video analysis tools.",
+                analysis: "Analysis methods: traverse analysis, ground tracks, error analysis, BOTBench, special camera types, and satellites.",
+                advanced: "Advanced topics: URL parameters, API keys, control from an AI assistant, local custom sitches, scripted camera moves, diffraction glare and the detailed release notes.",
+            },
             documentation: {
                 title: "Documentation",
-                localTooltip: "Links to the documentation (local)",
-                githubTooltip: "Links to the documentation on Github",
-                githubLinkLabel: "{{name}} (Github)",
+                localTooltip: "The Sitrec documentation, grouped by subject. Each link opens a page in a new tab.",
+                githubTooltip: "The Sitrec documentation on GitHub, grouped by subject. Each link opens a page in a new tab.",
+                githubLinkLabel: "{{name}} (GitHub)",
                 about: "About Sitrec",
                 whatsNewDetails: "What's New (Details)",
                 uiBasics: "User Interface Basics",
@@ -919,19 +959,20 @@ const en = {
                     advanced: "Advanced",
                 },
                 menuHelpTitle: "Help",
-                menuHelpTooltip: "Documentation for this menu",
+                menuHelpTooltip: "Documentation pages about this menu. Each link opens a page in a new tab.",
                 thirdPartyNotices: "Third-Party Notices",
                 thirdPartyNoticesTooltip: "Open-source license attributions for bundled third-party software",
                 downloadBridge: "Download MCP Bridge",
-                downloadBridgeTooltip: "Download the SitrecBridge MCP server, Chrome extension, and Local Compute worker",
+                downloadBridgeTooltip: "Download a zip of SitrecBridge: an MCP (Model Context Protocol) server, a Chrome extension and the Local Compute worker.\nWith it, an AI assistant can control Sitrec.",
             },
             externalLinks: {
                 title: "External Links",
-                tooltip: "External help links",
+                tooltip: "Links to other help sites that this installation lists. Each link opens in a new tab.",
+                linkTooltip: "Open {{name}} in a new tab.",
             },
             exportDebugLog: {
                 label: "Export Debug Log",
-                tooltip: "Download all console output (log, warn, error) as a text file for debugging",
+                tooltip: "Download the console messages (log, warning and error) of this session as a text file, to send with a bug report.\nKeeps the last 10,000 messages. A development build does not record them.",
             },
         },
         debug: {
@@ -945,6 +986,7 @@ const en = {
             tooltip: "Create a new sitch (will reload this page, resetting everything)",
         },
         savingDisabled: "Saving Disabled (click to log in)",
+        savingDisabledTooltip: "Log in to save sitches to the server. The login page opens in a new tab. When you come back to this tab, the save buttons appear.",
         // Shown over the main view when a step late in restoring a saved sitch fails, and the
         // app carries on with what did load (CustomManagerSerialize.deserialize).
         sitchNotFullyLoaded: "This sitch did not fully load. Saving it now may lose parts of it.",
@@ -976,6 +1018,7 @@ const en = {
             tooltip: "Browse a folder of multi-track files (such as BOT interchange CSVs) as thumbnails of their track shapes, preview one at full size, and import it",
         },
         server: {
+            folderTooltip: "Save sitches to the Sitrec server, and open saved sitches from it.\nThe number after the server name is your user ID.",
             open: "Open",
             save: {
                 label: "Save",
@@ -994,6 +1037,7 @@ const en = {
         },
         local: {
             title: "Local",
+            folderTooltip: "Save sitches as files on this computer, and open saved sitch files.\nWhen you last saved or opened a sitch on the server, this folder is closed and grayed out.",
             titleWithFolder: "Local: {{name}}",
             titleReconnect: "Local: {{name}} (reconnect)",
             status: "Status",
@@ -1044,7 +1088,11 @@ const en = {
             recalculateAll: "debug recalculate all",
             dumpNodes: "debug dump nodes",
             dumpNodesBackwards: "debug dump nodes backwards",
-            dumpRoots: "debug dump Root notes",
+            dumpRoots: "debug dump Root nodes",
+            recalculateAllTooltip: "Recalculate every node in the node graph, in order of depth: nodes with no inputs first.",
+            dumpNodesTooltip: "Print the node graph to the browser console: each root node (a node with no inputs), with the nodes that use it below it.",
+            dumpNodesBackwardsTooltip: "Print the node graph to the browser console, from each end node (a node with no outputs) back through its inputs.",
+            dumpRootsTooltip: "Print each root node (a node with no inputs) to the browser console. A green mark shows a visible node, a red mark a hidden one.",
         },
     },
     videoExport: {
@@ -1059,35 +1107,35 @@ const en = {
         },
         renderSingleVideo: {
             label: "Render Single View Video",
-            tooltip: "Export the selected view as a video file with all frames",
+            tooltip: "Render the view chosen in Render Video View to a video file, from the In frame to the Out frame.\nA dialog opens first, where you can add effects and see a preview.",
         },
         videoFormat: {
             label: "Video Format",
-            tooltip: "Select the output video format",
+            tooltip: "File format and codec of the exported video. The list shows only the formats that this browser can encode.",
         },
         loops: {
             label: "Loops",
-            tooltip: "Repeat the rendered A-B sequence this many times",
+            tooltip: "Number of times the exported video repeats the frames from the In frame to the Out frame.",
         },
         renderSource: {
             label: "Render Source Video",
-            tooltip: "Render the source video from A to B at the original resolution and framerate, with Video Adjustments applied",
+            tooltip: "Render the source video from the In frame to the Out frame, at its original resolution and frame rate, with the Video Adjustments applied.",
         },
         renderViewport: {
             label: "Render Viewport Video",
-            tooltip: "Export the entire viewport as a video file with all frames",
+            tooltip: "Render the whole viewport (all the visible views, as on screen) to a video file, from the In frame to the Out frame.",
         },
         renderFullscreen: {
             label: "Render Fullscreen Video",
-            tooltip: "Export the entire viewport in fullscreen mode as a video file with all frames",
+            tooltip: "Hide the menus, go to full screen, and render the whole viewport to a video file, from the In frame to the Out frame.",
         },
         recordWindow: {
             label: "Record Browser Window",
-            tooltip: "Record the entire browser window (including menus and UI) as a video with locked framerate",
+            tooltip: "Record the browser tab, with the menus and the rest of the UI, as a video from the In frame to the Out frame, at a fixed frame rate.\nThe browser first asks you to share the tab.",
         },
         retinaExport: {
             label: "Use HD/Retina Export",
-            tooltip: "Export at retina/HiDPI resolution (2x on most displays)",
+            tooltip: "Multiply the size of a viewport export by the pixel ratio of the display (often 2 on a Retina or other HiDPI display).\nOff: export at the size of the views on screen.",
         },
         includeAudio: {
             label: "Include Audio",
@@ -1095,7 +1143,7 @@ const en = {
         },
         uniqueFramesOnly: {
             label: "Unique frames only",
-            tooltip: "Scan the A-B range before export and skip source video frames that duplicate the previous frame. Output keeps the selected/original frame rate, so the video becomes shorter.",
+            tooltip: "Scan the frames from the In frame to the Out frame before the export, and skip source video frames that repeat the frame before them.\nThe output keeps the selected or original frame rate, so the video becomes shorter.",
         },
         uniqueFrameThreshold: {
             label: "Unique threshold",
@@ -1160,7 +1208,7 @@ const en = {
         enable: {
             label: "Enable Point Track",
             disableLabel: "Disable Point Track",
-            tooltip: "Toggle display of the point track cursor on video",
+            tooltip: "Show the point-track cursor on the video and turn on Point Track. Drag the cursor onto the object, then press Start Point Track.\nWhile it is on, hold ' to track one frame at a time, or hold ; to step back and delete points.\nPress again to hide the cursor. The track is kept.",
         },
         start: {
             label: "Start Point Track",
@@ -1169,11 +1217,11 @@ const en = {
         },
         useMask: {
             label: "Use Mask",
-            tooltip: "Ignore masked pixels in Motion (Background) and the centring methods.\nMotion tracking also excludes them from camera registration and the background model, helping prevent false returns on readouts and reticles.\nPaint a mask under Video > Masking. Has no effect if there is no mask.",
+            tooltip: "Ignore masked pixels in Motion (Background) and in Center on Bright, Dark and Color.\nMotion tracking also excludes them from camera registration and the background model, helping prevent false returns on readouts and reticles.\nPaint a mask under Video > Masking. Has no effect if there is no mask.",
         },
         clearFromHere: {
             label: "Clear from Here",
-            tooltip: "Clear all tracked positions from current frame to end",
+            tooltip: "Delete all tracked points, including the points you placed by hand, from the current frame to the end of the A-B range. Points before the current frame stay.",
         },
         clearTrack: {
             label: "Clear Track",
@@ -1185,16 +1233,16 @@ const en = {
         },
         stabilize: {
             label: "Stabilize",
-            tooltip: "Apply point-track positions to stabilize the video",
+            tooltip: "Shift each video frame so the tracked point stays still, and turn stabilization on. The point is held at the center of the video, or where it was in the first tracked frame when Stabilize Centers is off.\nNeeds a point track.",
         },
         stabilizeToggle: {
             enableLabel: "Enable Stabilization",
             disableLabel: "Disable Stabilization",
-            tooltip: "Toggle video stabilization on/off",
+            tooltip: "Turn the stabilized display on or off. The stabilization data is kept.\nPress Stabilize first to make the data.",
         },
         stabilizeCenters: {
             label: "Stabilize Centers",
-            tooltip: "When checked, the stabilized point is fixed at the center of the view. When unchecked, it stays at its initial position.",
+            tooltip: "On: Stabilize holds the tracked point at the center of the video frame. Off: it holds the point where it was in the first tracked frame.",
         },
         renderStabilized: {
             label: "Render Stabilized Video",
@@ -1210,15 +1258,15 @@ const en = {
         },
         trackRadius: {
             label: "Track Radius",
-            tooltip: "Inner solid circle: the object/feature size. Template Match uses it as the template size; Center on Bright/Dark/Color measure the connected matching object within it, excluding separate neighbours",
+            tooltip: "Radius of the inner solid circle, in original video pixels: the size of the object.\nTemplate Match: the size of the template. Optical Flow: the area it picks points to follow from. Center on Bright/Dark/Color: the area that holds the connected object, without separate neighbors. Motion (Background): the object size.",
         },
         searchRadius: {
             label: "Search Radius",
-            tooltip: "Outer dashed circle: how far from the previous position to look for the feature each frame. Increase for fast motion. Used by Template, Optical Flow, Peak and all Center on Bright/Dark/Color modes",
+            tooltip: "Radius of the outer dashed circle, in original video pixels. In each frame, the tracker looks for the object within this distance of where it expects it. Motion (Background) adds the distance that a fast or missing object can move.\nIncrease it for fast motion. Decrease it if the track jumps to a nearby object.",
         },
         trackingMethod: {
             label: "Tracking Method",
-            tooltip: "How the object is found. Motion (Background), the default, finds what moves differently from the background and suits small objects over terrain, sea or sky; press Analyse Object after choosing it. Template Match suits objects with visible structure; High Peak and Center on Bright suit lights at night",
+            tooltip: "How the tracker finds the object in each frame:\nMotion (Background): what moves differently from the background. Suits small objects over terrain, sea or sky. Press Analyse Object after you choose it.\nTemplate Match: the image patch inside Track Radius. Suits objects with visible structure.\nOptical Flow: follows corner points inside Track Radius.\nCenter on Bright / Dark / Color: the center of the pixels that pass Brightness Threshold, or that are near Tracking Color.\nHigh Peak / Low Peak: the brightest or darkest spot of about Feature Size. Suit lights at night.\nA change while Start Point Track runs clears the whole track.",
         },
         clearUserPoints: {
             label: "Clear User Points",
@@ -1230,11 +1278,11 @@ const en = {
         },
         analyseObject: {
             label: "Analyse Object",
-            tooltip: "Put the cursor on the object, then press this. It measures the object and sets Motion Polarity, Feature Size and Parallax Slack to suit it. A small dot on a smooth background and a soft blob on rough terrain need very different settings, and this finds them rather than leaving you to guess. It also recommends a method: if another method suits this object better (High Peak for a light on a dark sky, Template Match for a large object), the button says so",
+            tooltip: "Put the cursor on the object, then press this. It tests the object in the current frame and sets Motion Polarity, Feature Size and Motion Parallax Slack to suit it. It can also set Motion Frame Gap to 1.\nIf the object is not clear enough, nothing changes.\nThe button shows the result for a few seconds. If another Tracking Method suits the object better (for example High Peak for a light on a dark sky), the button names it.",
         },
         showMotionField: {
             label: "Show Motion Field",
-            tooltip: "Motion (Background) mode: draw what the tracker actually works from — this frame with the background's own motion subtracted away. Mid-grey means \"explained by the background\", bright means \"brighter than the background predicts\", black means masked out. Use it to see whether the object stands out at all, and what else does",
+            tooltip: "Motion (Background) mode only: draw what the tracker works from in place of the video. This is the frame with the background's own motion subtracted.\nMid-gray: as the background predicts. Brighter or darker: brighter or darker than the background predicts. Black: masked out.\nUse it to see whether the object stands out, and what else does.",
         },
         motionPolarity: {
             label: "Motion Polarity",
@@ -1250,7 +1298,7 @@ const en = {
         },
         motionThreshold: {
             label: "Motion Threshold",
-            tooltip: "Motion (Background) mode: how far above the noise a detection must be before it is believed. Lower to hold a faint object, raise if the tracker jumps to clutter. Also set Feature Size to match the object — too large and a small object is smoothed away before it can be found",
+            tooltip: "Motion (Background) mode: how far above the noise a detection must be before it is believed, in multiples of the noise level (sigma). Lower to hold a faint object, raise if the tracker jumps to clutter. Also set Feature Size to match the object — too large and a small object is smoothed away before it can be found",
         },
         centerOnBright: {
             label: "Center on Bright",
@@ -1262,7 +1310,7 @@ const en = {
         },
         brightnessThreshold: {
             label: "Brightness Threshold",
-            tooltip: "Brightness threshold (0-255). Used in Center on Bright/Dark modes",
+            tooltip: "Brightness level, 0–255, for Center on Bright and Center on Dark. Center on Bright uses only pixels brighter than this, and Center on Dark only pixels darker. Pixels farther past the level count more.\nIn those modes, while you drag the slider, the video shows the pixels that pass in white.",
         },
         trackingColor: {
             label: "Tracking Color",
@@ -1305,6 +1353,21 @@ const en = {
             chordal: "Smooth (chordal)",
             centripetal: "Smooth (centripetal)",
             catmull: "Smooth (Catmull-Rom)",
+        },
+        tips: {
+            folder: "Settings for this track: how it is drawn, and the controls that change its path or data.\nHover over the title to highlight the track line in white",
+            pathFolder: "How the track runs through its control points: speed, curve shape, extrapolation and altitude",
+            smoothingFolder: "How the track's positions are smoothed. Choose the Smoothing Method first: it decides which of the other controls apply",
+            displayFolder: "How the track is drawn: its line, color and width, a wall down to the ground, and a contrail",
+            balloonFolder: "Settings for this simulated balloon: its launch, its rise rate and its drift in the wind.\nHover over the title to highlight the track line in white",
+            editTrack: "Show this track's control points in the main view, so that you can move, add and delete them.\nOnly one track can be edited at a time. Press Esc to stop",
+            constantSpeed: "Move along the path at one steady speed, from the first point at the start of the sitch to the last point at the end.\nOff: the track reaches each point at that point's own frame",
+            extrapolateTrack: "Before the first point and after the last, continue the track in a straight line from the two end points.\nOff: the track stays at the first or last point",
+            exportSpline: "Save this track's control points as a .spline.json file. Drop that file onto Sitrec to load it as an editable track.\nFile > Export has the same, and the track as CSV and KML",
+            deleteSynthetic: "Delete this track, after you confirm. If an object moves along it, you choose whether to delete the object too",
+            deleteImported: "Delete this track from the sitch, after you confirm. The file it came from is not changed: drop the file again to get the track back",
+            deleteBalloon: "Delete this balloon and its sphere, after you confirm",
+            createSpline: "Make a new editable track from 10 points spread evenly along this track. Its name ends in _sp, and it opens in edit mode",
         },
         curveTypeTooltip: "How the track goes through its points.\n"
             + "Straight lines: straight from point to point.\n"
@@ -1352,15 +1415,33 @@ const en = {
         peak: "Peak Memory",
         average: "Average Memory",
         reset: "Reset History",
+        tips: {
+            folder: "Estimated GPU memory use of the 3D views, terrain tile counts, and tools to free GPU memory.",
+            enabled: "Update the readouts in this folder about once a second while the folder is open. Off: the readouts stop updating.",
+            total: "Estimated GPU memory of all geometries and textures in the scene, from a scan of the scene.",
+            geometries: "Estimated GPU memory of the vertex data of all geometries.",
+            textures: "Estimated GPU memory of all textures.",
+            peak: "Highest Total Memory in the recent samples (up to 60).",
+            average: "Average Total Memory over the recent samples (up to 60).",
+            tiles: "Terrain tiles in use now, and in parentheses all the terrain tiles in the cache.",
+            matCache: "Number of materials in the terrain tile material cache.",
+            viewGL: "Textures, geometries and shader programs that this view's renderer holds in GPU memory, as Three.js counts them.",
+            prune: "Free every terrain tile that is not in use now, in all terrain maps and the elevation map. The console shows how many.",
+            forceRender: "Render the main and look views once, so that Three.js frees the textures and geometries that wait to be disposed. The console shows the counts before and after.",
+            reset: "Clear the samples that Peak Memory and Average Memory use.",
+        },
     },
     situationSetup: {
         mainFov: {
             label: "Main FOV",
-            tooltip: "Field of View of the main view's camera (VERTICAL)",
+            tooltip: "Vertical field of view of the main view's camera, in degrees.",
         },
         lookCameraFov: "Look Camera FOV",
+        lookCameraFovTooltip: "Vertical field of view of the look camera, in degrees.",
         azimuth: "azimuth",
+        azimuthTooltip: "Camera azimuth, in degrees, from the sitch's azimuth data.\nMoving it jumps to the first frame that reaches this azimuth.",
         jetPitch: "Jet Pitch",
+        jetPitchTooltip: "Pitch angle of the jet, in degrees, used in the pod and glare geometry.",
     },
     featureManager: {
         labelText: "Label Text",
@@ -1374,6 +1455,16 @@ const en = {
         textColor: "Text Color",
         deleteFeature: "Delete Pin",
         done: "Done",
+        labelTextTooltip: "Text of the pin's label. The menu title follows it.",
+        latitudeTooltip: "Latitude of the pin, in degrees. While this menu is open, drag the pin to move it.",
+        longitudeTooltip: "Longitude of the pin, in degrees. While this menu is open, drag the pin to move it.",
+        altitudeMSLTooltip: "Height of the pin above mean sea level (MSL), in meters.",
+        altitudeHAETooltip: "Height of the pin above the WGS84 ellipsoid (HAE, height above ellipsoid), in meters.\nThe number in parentheses is the geoid offset: HAE minus MSL.",
+        arrowLengthTooltip: "Length on screen of the arrow between the pin point and its label. 0 puts the label on the point.",
+        arrowColorTooltip: "Color of the arrow between the label and the pin point.",
+        textColorTooltip: "Color of the label text.",
+        deleteFeatureTooltip: "Delete this pin. Sitrec asks you to confirm first.",
+        doneTooltip: "Close this menu and stop editing the pin. Escape does the same.",
     },
     timelineMarkers: {
         menuTitle: "Timeline: Frame {{frame}}",
@@ -1395,23 +1486,34 @@ const en = {
         undoDelete: "Delete timeline marker",
         undoDeleteAll: "Delete all timeline markers",
         undoSet: "Set timeline markers",
+        tips: {
+            label: "Name of this marker. Leave it empty to show the frame number instead.",
+            goToMarker: "Go to the frame of this marker, and pause.",
+            deleteMarker: "Delete this marker. You can undo it.",
+            addAtCurrent: "Add a timeline marker at the current frame. Not available when that frame has a marker.",
+            addHere: "Add a timeline marker at the frame under the pointer. Not available when that frame has a marker.",
+            goToFolder: "All the timeline markers. Click one to go to its frame, and pause.",
+            goToEntry: "Go to the frame of this marker, and pause.",
+            deleteAll: "Delete every timeline marker, after you confirm. You can undo it.",
+            resetInOut: "Set the In frame to the first frame and the Out frame to the last frame. You can undo it.",
+        },
     },
     panoramaExport: {
         exportLookPanorama: {
             label: "Export Look Panorama",
-            tooltip: "Create a panorama image from lookView across all frames based on background position",
+            tooltip: "Render the look view at each frame from the In frame to the Out frame, and join the frames into one panorama PNG image.\nThe background (the terrain, or a point 50 km away) sets where each frame goes.",
         },
     },
     dateTime: {
         liveMode: {
             label: "Live Mode",
-            tooltip: "If Live Mode is on, then the playback will always be synced to the current time.\nPausing or scrubbing the time will disable live mode",
+            tooltip: "Show the sitch at the real current time. The frame stays at the middle of the timeline, and the time follows the computer clock.\nMoving the frame, or changing the date or time, turns Live Mode off.",
         },
         startTime: {
-            tooltip: "The START time of first frame of the video, in UTC format",
+            tooltip: "Date and time of the first frame of the sitch, in UTC.",
         },
         currentTime: {
-            tooltip: "The CURRENT time of the video. This is what the below date and time refer to",
+            tooltip: "Date and time of the current frame, in UTC. The date and time sliders below show this time.",
         },
         year: { label: "Year", tooltip: "Year of the current frame.\nThe slider starts at 1947, but you can type an earlier year, or use the Go To box (G), to reach a historic date - the slider range then extends back to 1700." },
         month: { label: "Month", tooltip: "Month (1-12)" },
@@ -1428,11 +1530,11 @@ const en = {
         },
         useTimeZone: {
             label: "Use Time Zone in UI",
-            tooltip: "Use the time zone in the UI above\nThis will change the date and time to be in the selected time zone, rather than UTC.\nThis is useful for displaying the date and time in a specific time zone, such as the local time zone of the video or the location.",
+            tooltip: "Show the date and time sliders above in the selected Time Zone instead of UTC. Their labels turn pink.\nUse it to work in the local time of the video or the location.",
         },
         timeZone: {
             label: "Time Zone",
-            tooltip: "The time zone to display the date and time in in the look view\nAlso in the UI if the 'Use Time Zone in UI' is checked",
+            tooltip: "Time zone for the date and time that the views show, such as the time display in the look view.\nThe date and time sliders also use it when Use Time Zone in UI is on.",
         },
         simSpeed: {
             label: "Simulation Speed",
@@ -1460,15 +1562,18 @@ const en = {
         },
         videoFps: {
             label: "Video FPS",
-            tooltip: "The frames per second of the video. This will change the playback speed of the video (e.g. 30 fps, 25 fps, etc). It will also change the duration of the sitch (in secods) as it changes how long an individual frame is\n This is derived from the video were possible, but you can change it if you want to speed up or slow down the video",
+            tooltip: "Frames per second of the video. It sets how long each frame lasts, so it changes the playback speed and the duration of the sitch in seconds.\nSitrec reads it from the video when it can. Change it to speed up or slow down the video. A value that you set stays after a reload, and when a new video loads.",
         },
         syncTimeTo: {
             label: "Sync Time to",
-            tooltip: "Sync the video start time to the original start time, the current time, or the start time of a track track (if loaded)",
+            tooltip: "Change the sitch time:\nStart Time: go back to the start time that the sitch loaded with.\nNow Time: set the current frame to the real current time.\nA track name: set the sitch start time to the start of that track, and go to frame 0.",
         },
         syncDurationTo: {
             label: "Sync Duration to",
             tooltip: "Set the sitch duration (number of frames) to match the duration of a loaded track",
+        },
+        timingAnalysis: {
+            tooltip: "Show a report on the timing of the MISB metadata (camera data in KLV format) in the sitch: its streams, the video frame times, the KLV intervals, gaps and drift, and whether the GPS positions agree with the speeds.\nNeeds a loaded .ts, .klv or MISB CSV file. You can copy or download the report.",
         },
     },
     jet: {
@@ -1513,34 +1618,58 @@ const en = {
             showCueData: "[C]ue Data",
             showGlareGraph: "Sh[o]w Glare Graph",
             showAzGraph: "Show A[Z] Graph",
-            declutter: "[D]eclutter]",
+            declutter: "[D]eclutter",
             jetOffset: "Jet Y offset",
             tas: "TAS True Airspeed",
             integrate: "Integration Steps",
+        },
+        controlTips: {
+            podPitchPhysical: "Pitch of the pod ball, in degrees. A change pauses playback and turns the ball.\nSitrec sets it again from the target direction when the frame changes.",
+            podRollPhysical: "Roll of the pod head, in degrees. A change pauses playback and turns the head.\nSitrec sets it again when the frame changes.",
+            deroFromGlare: "Set the pod head roll (the derotation) from the measured glare angle, instead of from the ideal roll that points the pod at the target.",
+            jetPitch: "Pitch of the jet, in degrees. When Scale Jet Pitch with Roll is on, it is divided by the cosine of the bank angle.",
+            lookFov: "Vertical field of view of the look camera, in degrees.",
+            glareStartAngle: "Angle, in degrees, added to the measured glare angle on every frame.",
+            initialGlareRotation: "Rotation, in degrees, taken off the glare angle at frame 0. The amount falls in a straight line to zero at frame 697.",
+            scaleJetPitch: "Divide Jet Pitch by the cosine of the bank angle, so that the pitch increases as the jet banks.",
+            horizonMethod: "How Sitrec calculates the horizon angle:\nHuman Horizon: from the jet pitch, roll, azimuth and elevation.\nHorizon Angle: from a simpler formula of the jet pitch, roll and azimuth.",
+            podWireframe: "Draw the back of the pod as a wireframe.",
+            showVideo: "Show the video view (toggle: V).",
+            showGraph: "Show the chart view (toggle: G).",
+            showKeyboardShortcuts: "Show the list of keyboard shortcuts on the screen (toggle: K).",
+            showPodHead: "Show the view of the pod head roll (toggle: P).",
+            showPodsEye: "Show the views from the pod, with derotation (toggle: E).",
+            showLookCam: "Show the narrow (NAR) look view and its pod display overlay (toggle: N).",
+            showCueData: "Show the cue and azimuth arrows, and their lines in the graph (toggle: C).",
+            showGlareGraph: "Show the glare angle in the graph (toggle: X).",
+            showAzGraph: "Show the azimuth editor graph (toggle: Z).",
+            declutter: "Show or hide the graph views: the azimuth editor, speed, cloud speed, tail angle, fleet speed, altitude and size graphs (toggle: D).",
+            jetOffset: "Vertical offset of the jet model from its position, in meters.",
         },
     },
     motionAnalysis: {
         menu: {
             title: "Motion Analysis",
+            tooltip: "Measure how the background moves across the video, frame by frame.\nThe results drive the track, CSV, stabilization and panorama tools in this folder.",
             analyzeMotion: {
                 label: "Analyze Motion",
-                tooltip: "Toggle real-time motion analysis overlay on video",
+                tooltip: "Start or stop live motion analysis. While it is on, arrows and a Motion Angle graph show over the video. Playback waits for each frame to be analyzed.\nTracking Parameters and Speed Overlay appear only while it is on. Stop Analysis also stops a running full-range analysis.",
             },
             createTrack: {
                 label: "Create Track from Motion",
-                tooltip: "Analyze all frames and create a ground track from motion vectors",
+                tooltip: "Build a green track on the ground that moves with the image motion, converted to meters. It starts from the traverse, target or camera track, the first that exists.\nIt analyzes the In to Out range first if needed. Each click makes a new track.",
             },
             exportMotion: {
                 label: "Export Motion",
-                tooltip: "Export per-frame motion as CSV (frame, angle, magnitude, time, UTC)",
+                tooltip: "Download a CSV file with the background motion of each frame from In to Out.\nColumns: frame, angle (degrees, 0 = right, clockwise), magnitude (pixels per frame), time and UTC.\nIt analyzes the range first if needed.",
             },
             alignWithFlow: {
                 label: "Align with Flow",
-                tooltip: "Rotate image so motion direction is horizontal",
+                tooltip: "Rotate the video on screen so the background motion points to the right. Works only while Analyze Motion is on.\nIt also rotates the motion panorama when Projection is Similarity (2D) and Rotate Frames (SfM) is off.",
             },
             defence: {
                 label: "Start De-Fence",
-                tooltip: "Remove a foreground fence and reconstruct the distant scene seen through the moving gaps (needs camera pan)",
+                tooltip: "Remove a near fence from a panning video, and rebuild the distant scene seen through its gaps.\nIt uses the frames from In to Out, and downloads the result as a PNG image.",
             },
             defenceVideo: {
                 label: "Export De-Fence Video",
@@ -1548,20 +1677,21 @@ const en = {
             },
             defenceOptions: {
                 title: "De-Fence",
+                tooltip: "Remove a near fence from a video that pans past it, and rebuild the distant scene behind it.\nIt does not need Motion Analysis, and it does not use the mask.",
                 technique: {
                     label: "Technique",
-                    tooltip: "How to tell fence from background. Colour + Motion (default): lit-gap colour AND motion. Colour only: gap brightness/green — best when the fence is a distinct colour. Motion only: pixels that move with the background, not the fence (fence-aligned variance) — colour-independent, best on low-texture fences.",
-                    colourVariance: "Colour + Motion",
-                    colour: "Colour only",
+                    tooltip: "How fence pixels are told from background pixels.\nColor + Motion: uses both the gap color and the motion (default).\nColor only: uses gap brightness and green. Best when the fence is a distinct color.\nMotion only: uses only the motion. Best on fences with little texture.",
+                    colourVariance: "Color + Motion",
+                    colour: "Color only",
                     variance: "Motion only",
                 },
                 varThresh: {
                     label: "Variance Threshold",
-                    tooltip: "How much a pixel must change (once the fence is aligned) to count as background. Lower = fills holes but lets more fence through; higher = cleaner but more gaps.",
+                    tooltip: "How much a pixel must change (once the fence is aligned) to count as background. Lower = fills holes but lets more fence through; higher = cleaner but more gaps.\nNot used with Technique: Color only.",
                 },
                 gapThresh: {
                     label: "Gap Brightness",
-                    tooltip: "Minimum lit-gap/green colour to count as background. Lower to keep darker background (e.g. shadowed lower fence); raise to reject more boards.",
+                    tooltip: "Smallest gap brightness or green (0–1) for a pixel to count as background. Lower keeps darker background, such as a shadowed lower fence. Higher rejects more boards.\nNot used with Technique: Motion only.",
                 },
                 bgBaseline: {
                     label: "Background Baseline",
@@ -1570,9 +1700,10 @@ const en = {
             },
             panorama: {
                 title: "Panorama",
+                tooltip: "Stitch the frames from In to Out into one large image or video.\nMotion Pano places frames with the Motion Analysis results. Feature Pano matches features between frames itself.",
                 exportImage: {
                     label: "Export Motion Pano Image",
-                    tooltip: "Create a panorama image from video frames using motion tracking offsets",
+                    tooltip: "Build a panorama PNG from the frames In to Out, placed by the Motion Analysis results, and download it.\nIt analyzes the range first if needed.",
                 },
                 exportVideo: {
                     label: "Export Motion Pano Video",
@@ -1580,16 +1711,17 @@ const en = {
                 },
                 motionOptions: {
                     title: "Motion Pano Options",
+                    tooltip: "Settings for Export Motion Pano Image and Export Motion Pano Video.",
                 },
                 projection: {
                     label: "Projection",
-                    tooltip: "Similarity (2D): stamp frames with translate/rotate/scale only (fast, but a pan/tilt/zoom camera's perspective error accumulates across the panorama). Perspective (Homography): fit a full per-frame homography to the motion vectors and warp frames to match — registers pan/tilt/zoom footage correctly edge to edge",
+                    tooltip: "How each frame is placed on the panorama.\nSimilarity (2D): a move, plus a turn with Rotate Frames (SfM) and a scale with Allow Frame Scaling. Fast, but with a pan, tilt or zoom camera the error builds up.\nPerspective (Homography): fits a full perspective warp to each frame, which aligns pan/tilt/zoom footage from edge to edge. If the fit fails, Similarity is used.",
                     similarity: "Similarity (2D)",
                     perspective: "Perspective (Homography)",
                 },
                 rotateFrames: {
                     label: "Rotate Frames (SfM)",
-                    tooltip: "Stamp each frame with its full recovered rotation+translation (handles camera roll/rotation, like the feature pano) instead of translation only",
+                    tooltip: "Turn each frame by its measured rotation as well as moving it, so camera roll is followed. When off, frames are only moved.\nUsed only when Projection is Similarity (2D).",
                 },
                 allowFrameScale: {
                     label: "Allow Frame Scaling",
@@ -1597,7 +1729,7 @@ const en = {
                 },
                 exportFeature: {
                     label: "Export Feature Pano Image",
-                    tooltip: "Create a panorama by feature-matching and warping video frames (handles rotation and perspective distortion, unlike the Motion Panorama)",
+                    tooltip: "Build a panorama PNG from the frames In to Out. Features are matched between frames, and each frame is warped to fit.\nIt does its own alignment, so it needs Motion Analysis only when Feature Source is Motion Tracklets.",
                 },
                 exportFeatureVideo: {
                     label: "Export Feature Pano Video",
@@ -1605,6 +1737,7 @@ const en = {
                 },
                 featureOptions: {
                     title: "Feature Pano Options",
+                    tooltip: "Settings for Export Feature Pano Image and Export Feature Pano Video.",
                 },
                 featureSource: {
                     label: "Feature Source",
@@ -1613,23 +1746,23 @@ const en = {
                 stabilize: {
                     label: "Stabilize Video",
                     disableLabel: "Disable Stabilization",
-                    tooltip: "Stabilize video using global motion analysis (removes camera shake)",
+                    tooltip: "Shift each frame to cancel the background motion that Motion Analysis measures. It moves the frame only; it does not turn or scale it.\nIt analyzes the In to Out range first if needed. Click Disable Stabilization to see the original video.",
                 },
                 panoFrameStep: {
                     label: "Pano Frame Step",
-                    tooltip: "How many frames to step between each panorama frame (1 = every frame)",
+                    tooltip: "Use every Nth frame in Export Motion Pano Image (1 = every frame).\nExport Motion Pano Video always uses every frame.",
                 },
                 crop: {
                     label: "Panorama Crop",
-                    tooltip: "Pixels to crop from each edge of video frames",
+                    tooltip: "Width, in pixels, of a border at each frame edge that is made transparent. Neighboring frames fill it in. 0 = use the whole frame.",
                 },
                 useMask: {
                     label: "Use Mask in Pano",
-                    tooltip: "Apply motion tracking mask as transparency when rendering panorama",
+                    tooltip: "Make masked pixels (Video > Masking) transparent, so they are not stitched into the panorama.\nUsed only when Enable Mask is on.",
                 },
                 analyzeWithEffects: {
                     label: "Analyze With Effects",
-                    tooltip: "Apply video adjustments (contrast, etc.) to frames used for motion analysis",
+                    tooltip: "Measure motion on frames with the video adjustments and filters applied (contrast and so on). This changes all Motion Analysis, not only panoramas.\nSet it before you analyze: a change does not clear the stored results.",
                 },
                 exportWithEffects: {
                     label: "Export With Effects",
@@ -1649,34 +1782,35 @@ const en = {
                 },
                 featureUseMask: {
                     label: "Use Mask",
-                    tooltip: "Exclude redaction-masked regions from feature detection and blending",
+                    tooltip: "Leave masked pixels (Video > Masking) out of feature detection and blending.\nUsed only when Enable Mask is on.",
                 },
                 featureProjection: {
                     label: "Projection",
-                    tooltip: "Auto picks a planar (perspective) mosaic for translating cameras, or a rigid flat unrolling for rotating cameras. Force one if needed.",
+                    tooltip: "How frames are warped onto the panorama.\nAuto: Planar, or Rigid when the Planar result fails, stretches too far, or is over 4 times larger than Rigid.\nPlanar: a perspective mosaic.\nRigid: rotation and translation only, a flat unrolling for a turning camera.",
                 },
                 featureScale: {
                     label: "Feature Scale",
-                    tooltip: "Detect features at 1/N resolution. 1 = fine, sharp detail (default). Higher values track larger, blurrier, low-frequency structures (e.g. soft clouds) and ignore pixel noise.",
+                    tooltip: "Detect features at 1/N resolution. 1 = fine, sharp detail (default). Higher values track larger, blurrier, low-frequency structures (e.g. soft clouds) and ignore pixel noise.\nUsed only when Feature Source is ORB Features.",
                 },
                 featureContrast: {
                     label: "Feature Contrast",
-                    tooltip: "Minimum corner contrast for a feature to register (ORB FAST threshold). Lower picks up faint, low-contrast features (clouds); higher keeps only strong, distinct corners. Default 20.",
+                    tooltip: "Minimum corner contrast for a feature to register (ORB FAST threshold). Lower picks up faint, low-contrast features (clouds); higher keeps only strong, distinct corners. Default 20.\nUsed only when Feature Source is ORB Features.",
                 },
                 featureCount: {
                     label: "Feature Count",
-                    tooltip: "Maximum number of features to detect per frame. More features can give more matches (slower); fewer is faster. Default 2000.",
+                    tooltip: "Maximum number of features to detect per frame. More features can give more matches (slower); fewer is faster. Default 2000.\nUsed only when Feature Source is ORB Features.",
                 },
                 optimizeFeature: {
                     label: "Optimize Feature Tracking",
-                    tooltip: "Auto-tune Feature Scale / Contrast for the content around the current frame, by trying combinations and keeping the one that yields the most stable multi-frame feature tracks.",
+                    tooltip: "Find the Feature Scale and Feature Contrast that give the most stable feature tracks on up to 5 frames around the current frame.\nIt tries Feature Scale 1, 2, 4 and 8 with Feature Contrast 20, 10, 5 and 2. It keeps the best pair and sets Feature Count to 3000.\nThese settings apply only when Feature Source is ORB Features.",
                 },
             },
             trackingParameters: {
                 title: "Tracking Parameters",
+                tooltip: "Settings for how Motion Analysis finds and follows features. Shown only while Analyze Motion is on.\nA change clears the results, so the frames are analyzed again.",
                 technique: {
                     label: "Technique",
-                    tooltip: "Motion estimation algorithm",
+                    tooltip: "Method used to measure the motion between frames. Linear Tracklet is the default.\nA change clears the results and shows the settings for the new method.",
                 },
                 frameSkip: {
                     label: "Frame Skip",
@@ -1684,7 +1818,7 @@ const en = {
                 },
                 trackletLength: {
                     label: "Tracklet Length",
-                    tooltip: "Number of frames in tracklet (longer = stricter coherence)",
+                    tooltip: "Number of frame-to-frame steps that each feature is followed for (3 = 4 frames). Longer is stricter about straight, steady motion.",
                 },
                 skipDuplicateFrames: {
                     label: "Skip Duplicates",
@@ -1692,19 +1826,19 @@ const en = {
                 },
                 blurSize: {
                     label: "Blur Size",
-                    tooltip: "Gaussian blur for macro features (odd numbers)",
+                    tooltip: "Size, in pixels, of the Gaussian blur applied to each frame before features are found (odd numbers). Larger values track bigger shapes and ignore fine noise.",
                 },
                 minMotion: {
                     label: "Min Motion",
-                    tooltip: "Minimum motion magnitude (pixels/frame)",
+                    tooltip: "Motion below this, in pixels per frame, is not rejected, but its quality is multiplied by 0.7. It is then used only if its quality stays above Min Quality.",
                 },
                 maxMotion: {
                     label: "Max Motion",
-                    tooltip: "Maximum motion magnitude",
+                    tooltip: "Largest motion to use, in pixels per frame. Faster features are left out.",
                 },
                 smoothing: {
                     label: "Smoothing",
-                    tooltip: "Direction smoothing (higher = more smoothing)",
+                    tooltip: "How strongly the measured motion is smoothed from frame to frame (0.5–0.99). Higher is smoother but slower to react.",
                 },
                 minVectorCount: {
                     label: "Min Vector Count",
@@ -1716,27 +1850,27 @@ const en = {
                 },
                 maxFeatures: {
                     label: "Max Features",
-                    tooltip: "Maximum tracked features",
+                    tooltip: "Most corner features to find and follow in each frame.",
                 },
                 minDistance: {
                     label: "Min Distance",
-                    tooltip: "Minimum distance between features",
+                    tooltip: "Smallest spacing, in pixels, between two features.",
                 },
                 qualityLevel: {
                     label: "Quality Level",
-                    tooltip: "Feature detection quality threshold",
+                    tooltip: "How strong a corner must be to count as a feature, as a fraction of the strongest corner in the frame. Lower finds more, weaker corners.",
                 },
                 maxTrackError: {
                     label: "Max Track Error",
-                    tooltip: "Maximum tracking error threshold",
+                    tooltip: "Largest optical-flow tracking error for a feature to be kept. A feature with more error also gets a lower quality.",
                 },
                 minQuality: {
                     label: "Min Quality",
-                    tooltip: "Minimum quality to display arrow",
+                    tooltip: "Smallest quality (0–1) for a feature to be used. A feature below it is left out of the measurement and has no arrow.\nQuality falls with tracking error and with slow motion.",
                 },
                 staticThreshold: {
                     label: "Static Threshold",
-                    tooltip: "Motion below this is considered static (HUD)",
+                    tooltip: "Motion, in pixels per frame, below which an area counts as static, like burned-in text. Static areas are left out.\nThe features of a very slow pan can also count as static.",
                 },
             },
         },
@@ -1789,10 +1923,11 @@ const en = {
     textExtraction: {
         menu: {
             title: "[BETA] Text Extraction",
+            tooltip: "Read text that is burned into the video, frame by frame, with OCR (optical character recognition).\nThe text shows next to each region on the video. There is no export.",
             enable: {
                 label: "Enable Text Extraction",
                 disableLabel: "Disable Text Extraction",
-                tooltip: "Toggle text extraction mode on video",
+                tooltip: "Show or hide the text regions and their text on the video. Turn it on before you use the other items here.\nDrag inside a region to move it, or drag a corner to resize it.",
             },
             addRegion: {
                 label: "Add Region",
@@ -1801,29 +1936,29 @@ const en = {
             },
             removeRegion: {
                 label: "Remove Selected Region",
-                tooltip: "Remove the currently selected region",
+                tooltip: "Remove the selected region (outlined in yellow).",
             },
             clearRegions: {
                 label: "Clear All Regions",
                 tooltip: "Remove all text extraction regions",
             },
             startExtract: {
-                label: "Start Extract",
+                label: "Start Extraction",
                 stopLabel: "Stop Extraction",
-                tooltip: "Run OCR on all regions from current frame to end",
+                tooltip: "Read every region with OCR (optical character recognition) on each frame, from the current frame to the Out frame.\nClick again (Stop Extraction) to stop.",
             },
             fixedWidthFont: {
                 label: "Fixed Width Font",
-                tooltip: "Enable character-by-character detection for fixed-width fonts (better for FLIR/sensor overlays)",
+                tooltip: "Split each region into Num Characters equal cells, and read each cell on its own. Use it for fixed-width text, such as sensor overlays.\nNot used when Use Templates is on and templates are learned.",
             },
             numChars: {
                 label: "Num Characters",
-                tooltip: "Number of characters in the selected region (divides region evenly)",
+                tooltip: "Number of equal character cells in the selected region. Used by Fixed Width Font and by templates.",
             },
             learnTemplates: {
                 label: "Learn Templates",
                 activeLabel: "Click characters to learn...",
-                tooltip: "Click character cells to teach their values (for template matching)",
+                tooltip: "Start or stop learning. While on, click a character cell in the selected region and type the character it shows.\nThe cell's image in this frame becomes the template for that character.",
             },
             clearTemplates: {
                 label: "Clear Templates",
@@ -1831,7 +1966,7 @@ const en = {
             },
             useTemplates: {
                 label: "Use Templates",
-                tooltip: "Use learned templates for matching (faster & more accurate when trained)",
+                tooltip: "Read each character cell by matching it against the learned templates, instead of with OCR. A cell with no close match shows ?.\nUsed only after you learn at least one template.",
             },
         },
         prompts: {
@@ -1845,22 +1980,22 @@ const en = {
     custom: {
         settings: {
             title: "Settings",
-            tooltipLoggedIn: "Per-user settings saved to server (with cookie backup)",
-            tooltipAnonymous: "Per-user settings saved in browser cookies",
+            tooltipLoggedIn: "Your Sitrec preferences, such as language, theme, performance and how a new sitch starts.\nSaved to the server for your account, with a copy in a browser cookie.",
+            tooltipAnonymous: "Your Sitrec preferences, such as language, theme, performance and how a new sitch starts.\nSaved in this browser.",
             language: { label: "Language", tooltip: "Select interface language. Changing this reloads the page. You will lose any unsaved work, so save first!" },
             theme: {
                 label: "Theme",
                 tooltip: "Dark or light colors for the menus and for every view that has a Dark / Light button (graphs, curve editors, notes, chat, audio spectrum). A change here sets all views to the new mode. After that, the button in the header of a view changes that view only, and Shift + click on it changes all views. Classic is the look before themes: dark menus, and each view in its own original colors",
                 options: { classic: "Classic", dark: "Dark", light: "Light" },
             },
-            maxDetails: { label: "Max Details", tooltip: "Maximum level of detail for terrain subdivision (5-30)" },
+            maxDetails: { label: "Max Details", tooltip: "Highest zoom level that terrain tiles subdivide to, from 5 to 30. Lower values use fewer, coarser tiles.\nThe maximum zoom of the terrain map still applies." },
             fpsLimit: { label: "Frame Rate Limit", tooltip: "Set maximum frame rate (60, 30, 20, or 15 fps)" },
             tileSegments: { label: "Tile Segments", tooltip: "Mesh resolution for terrain tiles. Higher values = more detail but slower" },
-            maxResolution: { label: "Max Resolution", tooltip: "Maximum video frame resolution (longer side). Reduces GPU memory usage. Applies to newly loaded frames." },
+            maxResolution: { label: "Max Resolution", tooltip: "Largest size of decoded video frames, on the longer side.\n1080P = 1920, 720P = 1280, 480P = 854, 360P = 640 pixels. None = full size.\nSmaller frames use less memory." },
             renderScale: { label: "Render Scale", tooltip: "Scales the offscreen render resolution. 50% renders 1/4 of the pixels - the single biggest perf knob on hi-DPI laptops. Lower = faster but blurrier." },
             msaaSamples: { label: "Antialiasing (MSAA)", tooltip: "Multisample antialiasing on the 3D viewport. Off = fastest, removes the multisample resolve pass. Higher = smoother edges but slower." },
-            performancePreset: { label: "Performance Preset", tooltip: "One-click performance presets. Quality = native res + 4x MSAA. Fast/Potato cut render scale, MSAA, terrain detail and fps cap for low-spec laptops. Switches to Custom when you tweak any sub-setting." },
-            aiModel: { label: "AI Model", tooltip: "Select the AI model for the chat assistant" },
+            performancePreset: { label: "Performance Preset", tooltip: "Sets all the Performance Tweaks at once. Balanced is the default.\nQuality: full render resolution, 4x MSAA, 60 fps, most terrain detail, video up to 1080P.\nBalanced: 85% render scale, 2x MSAA, 30 fps, video up to 720P.\nFast, Potato: lower render scale and terrain detail, no MSAA, 30 or 20 fps, video up to 480P or 360P.\nCustom: your own values. A change to a tweak selects Custom." },
+            aiModel: { label: "AI Model", tooltip: "The AI model that the chat assistant uses.\nThe list holds the models of this server and, when you save a key in API Keys…, the models your own key can use." },
             byokSitrecFocused: {
                 label: "Sitrec Focused",
                 tooltip: "For models using your own API key or custom endpoint, including voice. "
@@ -1960,13 +2095,13 @@ const en = {
             showFilename: { label: "Show Filename", tooltip: "Show the current video filename centered at the bottom of the viewport and exported videos" },
             startup: {
                 title: "New Sitch Startup",
-                tooltip: "How a NEW sitch begins. These do not change the sitch you are looking at, and a saved sitch always restores its own units and camera.",
+                tooltip: "How a new, empty Custom sitch begins. These do not change the sitch you are looking at.\nBuilt-in sitches and saved sitches keep their own units, camera and terrain.",
             },
-            startupUnits: { label: "Units", tooltip: "Unit system a new sitch starts in, for speed, distance and altitude. A sitch that specifies its own units keeps them." },
+            startupUnits: { label: "Units", tooltip: "Unit system a new Custom sitch starts in, for speed, distance and altitude. Built-in and saved sitches keep their own units." },
             startupLocation: { label: "Use Start Location", tooltip: "Start a new sitch at the latitude/longitude/altitude below instead of the sitch's own start position. Loading a track still moves you to the track." },
-            startupLat: { label: "Start Latitude", tooltip: "Latitude a new sitch starts at. Accepts decimal degrees, D M S, hemisphere letters or MGRS — you can also paste a whole \"lat, lon\" pair here." },
+            startupLat: { label: "Start Latitude", tooltip: "Latitude a new sitch starts at. Accepts decimal degrees, D M S, hemisphere letters or MGRS (Military Grid Reference System) — you can also paste a whole \"lat, lon\" pair here." },
             startupLon: { label: "Start Longitude", tooltip: "Longitude a new sitch starts at." },
-            startupAlt: { label: "Start Altitude (m)", tooltip: "Camera height in METRES above the ground at the start location. 0 = standing on the ground." },
+            startupAlt: { label: "Start Altitude (m)", tooltip: "Camera height, in meters above the ground, at the start location. 0 = standing on the ground." },
             startupBuildings: { label: "3D Buildings", tooltip: "Turn 3D buildings on when a new sitch starts. Uses your 3D tile quota as soon as the sitch loads." },
         },
         balloons: {
@@ -2034,38 +2169,42 @@ const en = {
             syncTracksInLook: { label: "Match Look View to Show Tracks", tooltip: "Show or hide the tracks in the look view to match Show Tracks in Look.\nOnly tracks that are showing are changed.\nAlso what Show Tracks does on the look view's header bar" },
             allTracksExtendToGround: { label: "Extend Tracks to Ground", tooltip: "Extend every track down to the ground.\nTurning it back off restores whichever tracks were extended before" },
             clearAllExtendToGround: { label: "Clear Extend to Ground", tooltip: "Turn 'Extend to Ground' off for every track, and forget what it was" },
-            showAllTracksInLook: { label: "All Tracks in Look", tooltip: "Display all aircraft tracks in the look/camera view" },
+            showAllTracksInLook: { label: "All Tracks in Look", tooltip: "Draw every track in the look view, whatever its own Show in look view setting is.\nTurn it off to go back to the setting of each track" },
             limitTracksInOut: { label: "Limit Tracks In/Out", tooltip: "Draw each track only between the In and Out points.\nThe full data tracks are not drawn" },
             showCompassElevation: { label: "Show Compass Elevation", tooltip: "Show compass elevation (angle above the local ground plane) in addition to bearing (azimuth)" },
-            filterTracks: { label: "Filter Tracks", tooltip: "Show/hide tracks based on altitude, direction, or frustum intersection" },
-            removeAllTracks: { label: "Remove All Tracks", tooltip: "Remove all tracks from the scene\nThis will not remove the objects, just the tracks\nYou can add them back later by dragging and dropping the files again" },
+            filterTracks: { label: "Filter Tracks", tooltip: "Open a dialog that hides the loaded data tracks that fail the filters you set:\nan altitude range, crossing the look camera's view frustum, or moving away from the camera" },
+            removeAllTracks: { label: "Remove All Tracks", tooltip: "Remove every track from the sitch.\nObjects that you added with Add Object or the right-click menu are removed too. The camera and traverse objects stay.\nTo get an imported track back, drop its file again" },
             addTrackFromCameraLOS: { label: "Track from Camera LOS", tooltip: "Create a two-point synthetic track along the current camera's line of sight.\nFirst point is at the camera, second point is where the LOS hits the ground,\nor 300 miles along the LOS if it does not hit the ground." },
             importADSBTrace: { label: "Import ADS-B Track...", tooltip: "Fetch an aircraft's last ~24 hours of ADS-B positions from adsb.lol\nby its ICAO 24-bit hex address (e.g. a1b2c3), and add it as a track.\nData: adsb.lol (ODbL)" },
             liveTraffic: {
                 label: "Live ADS-B Traffic",
-                tooltip: "Show every aircraft adsb.lol currently sees around this location,\n"
-                    + "colored by altitude, with a short trail behind each one.\n"
+                tooltip: "Show every aircraft that adsb.lol now sees within Traffic Radius of the main view camera.\n"
+                    + "Each is colored by altitude, with a short trail. The data updates every 5 seconds.\n"
+                    + "Click an aircraft to import its full track.\n"
                     + "Turning this on sets the clock to the current time and pauses playback,\n"
                     + "so the sky and the traffic agree.\n"
                     + "Needs the Sitrec server. Data: adsb.lol (ODbL)",
             },
             liveTrafficRadius: {
                 label: "Traffic Radius (nm)",
-                tooltip: "How far around this location to look for aircraft, in nautical miles.\nTakes effect on the next update.",
+                tooltip: "How far from the main view camera to look for aircraft, in nautical miles.\nTakes effect on the next update.",
             },
             liveTrafficStatus: {
                 label: "Traffic",
-                tooltip: "How many aircraft the live feed is currently reporting.\n\"stale\" means adsb.lol could not be reached and older positions are being shown.",
+                tooltip: "What the live ADS-B feed reports now: the number of aircraft, or an error.\n\"stale\" means adsb.lol could not be reached, so older positions are shown.",
+            },
+            liveFeedStatus: {
+                tooltip: "What the {{name}} feed reports now: the number of markers, \"none\", or a message such as \"needs a key\" or an error.\n"
+                    + "When you click one of its markers that has no web page, this row shows that marker's details for 10 seconds.",
             },
             liveFeeds: {
                 label: "Live Feeds",
-                tooltip: "Other live data overlaid on the world: military aircraft, ships,\n"
+                tooltip: "Live data drawn on the world: civil and military aircraft, ships,\n"
                     + "webcams, road traffic, weather balloons, rocket launches and earthquakes.\n"
-                    + "Each shows a count while it is on, so an empty result can be told\n"
-                    + "apart from a feed that is not working.\n"
-                    + "Ships, webcams and road traffic need your own free API key —\n"
-                    + "there is no keyless source with worldwide coverage. Add one under\n"
-                    + "Settings, API Keys. The others need the Sitrec server.",
+                    + "Each feed has a status row under it that shows a count or an error, so an\n"
+                    + "empty result can be told apart from a feed that is not working.\n"
+                    + "Ships, webcams and road traffic need your own free API key.\n"
+                    + "Add one in Sitrec > Settings > API Keys. The others need the Sitrec server.",
             },
         },
         objects: {
@@ -2074,13 +2213,14 @@ const en = {
             removeAllBuildings: { label: "Remove all Buildings", tooltip: "Delete every synthetic building from the scene.\nClouds and ground overlays are not affected." },
         },
         admin: {
+            folder: { tooltip: "Tools for site administrators. Only admin users see this folder" },
             dashboard: { label: "Admin Dashboard", tooltip: "Open the admin dashboard" },
-            validateAllSitches: { label: "Validate All Sitches", tooltip: "Load all saved sitches with local terrain to check for errors" },
+            validateAllSitches: { label: "Validate All Sitches", tooltip: "Load each saved sitch of the current user (or of the Test User ID) with local terrain, and report the errors" },
             testUserID: { label: "Test User ID", tooltip: "Operate as this user ID (0 = disabled, must be > 1)" },
             addMissingScreenshots: { label: "Add Missing Screenshots", tooltip: "Load each sitch that has no screenshot, render it, and upload a screenshot" },
             feature: { label: "Feature", tooltip: "Toggle Featured status for the currently loaded sitch" },
         },
-        viewPreset: { label: "View Preset", tooltip: "Switch between different view presets\nSide-by-side, Top and Bottom, etc." },
+        viewPreset: { label: "View Preset", tooltip: "Arrange the main view, look view and video with a preset layout: side by side, top and bottom, etc.\nThe number keys 1 to 8 also select a preset, in the order of this list" },
         chapters: {
             folder: {
                 label: "Sitch Chapters",
@@ -2088,11 +2228,13 @@ const en = {
             },
             addChapter: { label: "Add chapter", tooltip: "Create a chapter from the current views, cameras, time and timeline markers" },
             renameChapter: { label: "Rename chapter", tooltip: "Rename the current chapter" },
-            deleteChapter: { label: "Delete chapter", tooltip: "Delete the current chapter and switch to the next one" },
+            deleteChapter: { label: "Delete chapter", tooltip: "Delete the current chapter, after you confirm, and switch to the next chapter (or to the one before, when it is the last).\nA sitch must keep at least one chapter." },
             revert: { label: "Revert sitch to last save / load", tooltip: "Discard all edits made since the sitch was last saved or loaded" },
             restoreFromServer: { label: "Restore chapter from server version…", tooltip: "Load one chapter from a saved server version into the current chapter" },
             restoreFromFile: { label: "Restore chapter from saved file…", tooltip: "Load one chapter from a saved sitch file into the current chapter" },
             list: { label: "Chapters", tooltip: "Click a chapter to switch to it. ● marks the current chapter" },
+            switchTo: "Switch to this chapter. The current chapter keeps the changes you made in it.",
+            currentChapter: "The current chapter.",
             satelliteMarkers: {
                 label: "Add satellite rise / set markers",
                 tooltip: "Add a timeline marker at each time a satellite shown in the sky rises or sets during the sitch, as seen from the look camera's current position",
@@ -2163,34 +2305,64 @@ const en = {
             showObjectMenu: "Show Object Menu",
             exitEditMode: "Exit Edit Mode",
             editingBadge: "Editing: {{name}} — Esc to exit",
+            tooltips: {
+                setCameraAbove: "Move the manual camera position to above this point, at its current altitude.\nThe look camera uses it when Camera > Location > Position is Manual.",
+                setCameraOnGround: "Move the manual camera position to this point, 2 m above the ground (eye level).\nThe look camera uses it when Camera > Location > Position is Manual.",
+                setTargetAbove: "Move the fixed target position (Target menu) to above this point, at its current altitude.",
+                setTargetOnGround: "Move the fixed target position (Target menu) to this point, on the ground.",
+                editClouds: "Turn edit mode on or off for the cloud layer at this point.",
+                editOverlay: "Turn edit mode on or off for the ground overlay or grid at this point.",
+                dropPin: "Add a pin (a labeled marker) at this point, and open its menu so you can type the label.",
+                addFixedObject: "Add a 3D object that stays at this point: a gray sphere, 5 m in radius. Its menu opens so you can change it.",
+                createTrackWithObject: "Add a new track that starts at this point on the current frame, with a 3D object on it.\nThe track opens in edit mode, so you can add more points.",
+                createInOutObjectTrack: "Add a straight track with a 3D object on it, at constant speed. It runs from this point at the In frame to a point 200 screen pixels to the right at the Out frame (the whole sitch when In and Out are not set).\nIts altitude is locked, so raising one point raises the whole track.",
+                createTrackNoObject: "Add a new track with no object, which starts at this point on the current frame.\nThe track opens in edit mode, so you can add more points.",
+                addBalloon: "Add a simulated balloon launched from the ground at this point. It rises and drifts with the wind.\nYou can then choose it as the camera or target track.",
+                addBuilding: "Add a simple 3D building at this point, in edit mode so you can shape it.",
+                addClouds: "Add a cloud layer at this point, in edit mode so you can shape it.",
+                addGroundOverlay: "Add a ground overlay (an image laid on the terrain) at this point, in edit mode. Set its image in its menu.",
+                addGroundGrid: "Add a measurement grid on the ground at this point, in edit mode.",
+                centerTerrain: "Move the terrain square so that its center is at this point, and load the terrain there.",
+                googleMapsHere: "Open Google Maps at this point in a new browser tab.",
+                googleEarthHere: "Download a KML file with a pin at this point. Open the file in Google Earth.",
+                addPointHere: "Add a control point to the track at the current frame, at the ground under the pointer.\nNot available when the pointer is on the sky.",
+                addPointOnTrack: "Add a control point at the current frame, where the track is now on that frame.",
+                movePointHere: "Move the control point of the current frame to the ground under the pointer.\nNot available when the pointer is on the sky.",
+                showTrackMenu: "Open the menu of the track being edited. Edit mode stays on.",
+                showObjectMenu: "Open the menu of the object on this track. Edit mode stays on.",
+                exitEditMode: "Stop editing the track. Esc does the same.",
+            },
         },
     },
     view3d: {
-        northUp: { label: "Look View North Up", tooltip: "Set the look view to be north up, instead of world up.\nfor Satellite views and similar, looking straight down.\nDoes not apply in PTZ mode" },
+        northUp: { label: "Look View North Up", tooltip: "Make north the up direction in the look view, instead of the local vertical. Use it for satellite views and other views that look straight down.\nIt has no effect in PTZ (pan-tilt-zoom) mode." },
         atmosphere: { label: "Atmosphere", tooltip: "Render a sky gradient and distance haze in the look view. Configure them separately in Atmosphere Tweaks." },
         atmoHaze: { label: "Distance haze", tooltip: "Fade distant surfaces into the atmosphere; disable to keep only the sky gradient." },
         atmoVisibility: { label: "Atmo Visibility (km)", tooltip: "Range where a dark target retains 2% contrast in uniform sea-level air (smaller = thicker haze)" },
         toneMapping: {label: "Highlight Rolloff", tooltip: "Use filmic tone mapping in the visible look view, independently of sky and haze"},
         viewExposure: {label: "Look Exposure", tooltip: "Look-view brightness multiplier, combined once with Scene Exposure; works with or without highlight rolloff"},
         opticsBeforeSensor: {label: "Optics Before Sensor Effects", tooltip: "Apply focus and diffraction glare before highlight rolloff, noise, levels, and other sensor effects. Turn off to preserve the older effect order."},
+        skyGradient: { label: "Sky Gradient", tooltip: "Draw the look view sky as a gradient from blue at the zenith to haze at the horizon. Off: one flat sky color.\nUsed only when Lighting > Atmosphere is on." },
+        atmosphereTweaks: { tooltip: "Settings for the look view atmosphere: distance haze, visibility and the sky gradient.\nUsed only when Lighting > Atmosphere is on." },
+        lookViewOutput: { tooltip: "How the look view image is finished: highlight rolloff, exposure, and the order of the optical and sensor effects." },
         atmoHDR: { label: "Atmo HDR", tooltip: "Tone-map HDR highlights and apply exposure to the look view" },
         atmoExposure: { label: "Atmo Exposure", tooltip: "HDR atmosphere tone-mapping exposure multiplier for highlight rolloff" },
         shadowsEnabled: {
             label: "Shadows",
             mainLabel: "Shadows in Main View",
             lookLabel: "Shadows in Look View",
-            tooltip: "Per-view shadow rendering. Off by default; enabling triggers per-view depth-pass shadow rendering on this view's renderer.",
+            tooltip: "Draw cast shadows in this view. On by default, but used only when Lighting > Shadows is on.",
         },
         allowMobileShadows: {
             label: "Allow on mobile",
             mainLabel: "Allow Main View shadows on mobile",
             lookLabel: "Allow Look View shadows on mobile",
-            tooltip: "Override mobile auto-disable. Shadows are expensive; expect reduced frame rate.",
+            tooltip: "Let this view draw shadows on a phone or tablet. Sitrec turns shadows off on mobile devices unless this is on.\nShadows can lower the frame rate a lot.",
         },
         startXR: { label: "Start VR/XR", tooltip: "Start WebXR session for testing (works with Immersive Web Emulator)" },
-        effects: { label: "Rendering Effects", tooltip: "Enable/Disable Rendering Effects" },
-        focusTrack: { label: "Focus Track", tooltip: "Select a track to make the camera look at it and rotate around it" },
-        lockTrack: { label: "Lock Track", tooltip: "Select a track to lock the camera to it, so it moves with the track" },
+        effects: { label: "Rendering Effects", tooltip: "Turn all the rendering effects of this view on or off. Off: the view shows the plain render." },
+        focusTrack: { label: "Focus Track", tooltip: "Choose a track for the main view camera to look at and orbit around. With no track, the camera orbits the ground." },
+        lockTrack: { label: "Lock Track", tooltip: "Choose a track for the main view camera to follow. The camera moves with the track's position and turns with its heading." },
         debug: {
             clearBackground: "Clear Background", renderSky: "Render Sky", renderDaySky: "Render Day Sky",
             renderMainScene: "Render Main Scene", renderEffects: "Render Effects", copyToScreen: "Copy To Screen",
@@ -2198,6 +2370,25 @@ const en = {
             sRGBOutputEncoding: "sRGB Output Encoding", tileLoadDelay: "Tile Load Delay (s)",
             updateStarScales: "Update Star Scales", updateSatelliteScales: "Update Satellite Scales",
             renderNightSky: "Render Night Sky", renderFullscreenQuad: "Render Fullscreen Quad", renderSunSky: "Render Sun Sky",
+        },
+        debugTips: {
+            folder: "Turn single steps of the 3D render on or off, in every view, to find rendering faults.",
+            clearBackground: "Clear the color, depth and stencil buffers at the start of each view's render. Off: the new frame draws over the old one.",
+            renderSky: "Draw the sky behind the scene: the night sky, the day sky color, and the Sun and Moon. Sky Steps has the separate parts.",
+            renderDaySky: "Draw the day sky scene, in sitches that have one.",
+            renderMainScene: "Draw the 3D scene: terrain, buildings, objects, tracks and satellites.",
+            renderEffects: "Apply the rendering effects of each view.",
+            copyToScreen: "Copy the finished image to the screen. Off: the view does not update.",
+            updateCameraMatrices: "Update the camera matrices after the day sky is drawn, when the camera moves back from the Earth's center.",
+            mainUseLookLayers: "In the main view, show only the terrain and 3D building tiles that the look view draws. Other items in the main view do not change.",
+            sRGBOutputEncoding: "Convert the finished image to sRGB as it is copied to the screen. Off: the linear values go to the screen, which looks darker.",
+            tileLoadDelay: "Extra wait, in seconds, before each map tile loads, to test how the views behave while tiles load slowly. 0 = no delay.",
+            skySteps: "Turn single steps of the sky render on or off.",
+            updateStarScales: "Update the star point sizes for each view before the sky is drawn.",
+            updateSatelliteScales: "Update the satellite dot size for the look view before the sky is drawn (Satellites > Sat Brightness).",
+            renderNightSky: "Draw the night sky: stars, planets, constellation lines and the grid. It is skipped when the day sky hides it.",
+            renderFullscreenQuad: "Draw the day sky color or gradient over the night sky.",
+            renderSunSky: "Draw the Sun and the Moon.",
         },
         celestial: {
             raHours: "RA (hours)", decDegrees: "Dec (degrees)", magnitude: "Magnitude",
@@ -2218,15 +2409,33 @@ const en = {
             standardMagnitude: "Standard Magnitude",
             standardMagnitudeValue: "{{mag}} (estimate: fully lit, 1000 km, 90° phase, no flare)",
             satTrack1: "Sat Track 1", satTrack2: "Sat Track 2",
+            tips: {
+                raHours: "Right ascension (RA): the east-west sky coordinate, in hours (0 to 24).",
+                decDegrees: "Declination (Dec): the north-south sky coordinate, in degrees from the celestial equator (+90 = north celestial pole).",
+                magnitude: "Apparent brightness on the astronomical magnitude scale. Smaller numbers are brighter.",
+                noradNumber: "The satellite's catalog number. Sat Track 1 and Sat Track 2 below use this number.",
+                name: "The satellite's name in the loaded satellite data.",
+                objectId: "The international designator: launch year, launch number in that year, and piece (for example 1998-067A).",
+                objectType: "The object type from the satellite catalog: payload, rocket body, debris or unknown.",
+                rcsSize: "Radar cross-section size class from the satellite catalog: Small (under 0.1 m²), Medium (0.1–1 m²) or Large (over 1 m²).",
+                launchDate: "The launch date (UTC), from the satellite catalog.",
+                size: "Length × diameter, and overall span, in meters, from a satellite size catalog.",
+                starlinkDesign: "The Starlink satellite version, from a satellite size catalog.",
+                standardMagnitude: "Estimated brightness under standard conditions, so satellites can be compared: fully lit, 1000 km away, 90° phase angle, no flare. Smaller numbers are brighter.",
+                elementAge: "How far the epoch of the orbital element set in use is from the current time. Positions from older sets are less accurate.",
+                positionError: "A rough estimate of the position error: about 1 km, plus 1 to 3 km for each day of element set age. It is a rule of thumb, not a measurement.\nThe angle is that error as seen from the look camera.",
+                satTrack1: "Set Satellites > Satellite to Track to this satellite. The camera or target can then follow its track.",
+                satTrack2: "Set Satellites > Satellite to Track 2 to this satellite. The camera or target can then follow its track.",
+            },
         },
     },
     nightSky: {
-        loadLEO: { label: "Load LEO Satellites For Date", tooltip: "Get the latest LEO Satellite TLE data for the set simulator date/time. This will download the data from the internet, so it may take a few seconds.\nWill also enable the satellites to be displayed in the night sky." },
-        loadStarlink: { label: "Load CURRENT Starlink", tooltip: "Get the CURRENT (not historical, now, real time) Starlink satellite positions. This will download the data from the internet, so it may take a few seconds.\n" },
+        loadLEO: { label: "Load LEO Satellites For Date", tooltip: "Download the orbits (TLE data) of satellites in low Earth orbit (LEO) for the sitch start date. Payloads only: no rocket bodies or debris.\nFor a date in the last 5 days, it uses the date 5 days ago.\nIf satellites are already loaded, Sitrec asks whether to merge or replace them." },
+        loadStarlink: { label: "Load CURRENT Starlink", tooltip: "Download the Starlink orbits as they are now, not for the sitch date.\nUse it for the present, or for an event in the last day or two.\nIf satellites are already loaded, Sitrec asks whether to merge or replace them." },
         loadOperatorSupGP: { label: "Add CURRENT OneWeb, Kuiper, AST, Iridium", tooltip: "Add the CURRENT (now, not historical) orbits that the operators of OneWeb, Kuiper, AST SpaceMobile and Iridium supply, from CelesTrak's supplemental data. For these satellites they are usually more accurate than the general catalog, and new launches appear within hours.\nThey are merged into the satellites already loaded." },
-        loadActive: { label: "Load ACTIVE Satellites", tooltip: "Get the CURRENT (not historical, now, real time) ACTIVE satellite positions. This will download the data from the internet, so it may take a few seconds.\n" },
-        loadSlow: { label: "(Experimental) Load SLOW Satellites", tooltip: "Get the latest SLOW Satellite TLE data for the set simulator date/time. This will download the data from the internet, so it may take a few seconds.\nWill also enable the satellites to be displayed in the night sky. Might time-out for recent dates" },
-        loadAll: { label: "(Experimental) Load ALL Satellites", tooltip: "Get the latest Satellite TLE data for ALL the satellites for the set simulator date/time. This will download the data from the internet, so it may take a few seconds.\nWill also enable the satellites to be displayed in the night sky. Might time-out for recent dates" },
+        loadActive: { label: "Load ACTIVE Satellites", tooltip: "Download the orbits of all active satellites as they are now, not for the sitch date.\nIf satellites are already loaded, Sitrec asks whether to merge or replace them." },
+        loadSlow: { label: "(Experimental) Load SLOW Satellites", tooltip: "Download the orbits of objects in higher, slower orbits (fewer than about 11.25 orbits per day) for the sitch start date. Rocket bodies and debris are included.\nThe download is large and can time out for recent dates.\nIf satellites are already loaded, Sitrec asks whether to merge or replace them." },
+        loadAll: { label: "(Experimental) Load ALL Satellites", tooltip: "Download the orbits of every object in the catalog for the sitch start date.\nThe download is very large and can time out for recent dates.\nIf satellites are already loaded, Sitrec asks whether to merge or replace them." },
         tleRange: {
             fromLabel: "TLEs From",
             fromTooltip: "Date and time (UTC) of the oldest elements in the loaded TLE data. This is the date in the data, not the date you asked for.",
@@ -2234,49 +2443,49 @@ const en = {
             toTooltip: "Date and time (UTC) of the newest elements in the loaded TLE data. This is the date in the data, not the date you asked for.",
             none: "None loaded",
         },
-        flareAngle: { label: "Flare Angle Spread", tooltip: "Off-specular angle used for flare arrows and the legacy cone model.\nPhotometric estimates use a continuous measured brightness curve, including light outside this angle." },
-        brightnessModel: { label: "Satellite Brightness Model", tooltip: "Photometric estimate: continuous Starlink flare curves, an estimated flare curve for Kuiper satellites, estimated diffuse light, range and phase.\nUsed by both the live view and HDR long exposures. Individual spacecraft attitude and brightness remain uncertain.\nLegacy cone restores the earlier display approximation." },
+        flareAngle: { label: "Flare Angle Spread", tooltip: "Angle, in degrees, by which the mirror reflection of the Sun off a satellite can miss the camera, for the satellite to count as flaring.\nIt sets Sun Angle Arrows, Flare Lines, Label Flares Only and the Legacy cone brightness.\nThe Photometric estimate does not use it for brightness." },
+        brightnessModel: { label: "Satellite Brightness Model", tooltip: "How Sitrec sets the brightness of each satellite in the look view and in long exposures.\nPhotometric estimate: from range, phase angle, sunlight and a flare curve. Starlink uses published flare curves, and Kuiper an estimated one. Other satellites get a diffuse brightness from their size.\nLegacy cone: a set base brightness, plus Flare Brightness inside Flare Angle Spread.\nThe main view always uses the Legacy cone brightness." },
         starlinkProfile: {
             label: "Starlink Design",
-            tooltip: "Choose a known design when supported by independent information.\nUnknown uses an estimated equal-weight flux mixture; it does not infer design from catalog numbers or orbit inclination.\nPer satellite takes each satellite's design from the GCAT catalog (J. McDowell); a satellite it does not list is unknown.",
+            tooltip: "The Starlink version that the Photometric estimate uses for brightness.\nUnknown design: the average of V1.0, VisorSat, V1.5 and V2 Mini. Sitrec does not guess the version from the catalog number or the orbit.\nPer satellite: each satellite's version from the GCAT catalog (J. McDowell). A satellite that GCAT does not list uses Unknown design.\nChoose one version only when another source tells you which one it is.",
             perSatellite: "Per satellite (GCAT catalog)",
         },
-        illuminationModel: { label: "Satellite Sunlight", tooltip: "Finite Sun + atmosphere integrates the solar disk through a clear standard atmosphere at Earth's limb.\nFinite Sun omits atmospheric transmission. Legacy fade uses the adjustable shadow depth.\nAtmospheric weather and individual spacecraft attitude are not measured by orbital elements." },
-        flareModel: { label: "Flare Model", tooltip: "How the satellite 'down' direction is calculated for the reflecting surface normal.\nGeocentric Nadir: vector from Earth center to satellite (standard LVLH convention used in attitude control)\nGeodetic Nadir: perpendicular to WGS84 ellipsoid (used by Earth-observation satellites for precision pointing)\nMax difference ~0.18° at 45° latitude" },
-        penumbraDepth: { label: "Earth's Penumbra Depth", tooltip: "Vertical depth in meters over which a satellite fades out as it enters the Earth's shadow" },
-        sunAngleArrows: { label: "Sun Angle Arrows", tooltip: "When glare is detected, show arrows from camera to satellite, and then satellite to sun" },
-        celestialFolder: { tooltip: "night sky related things" },
+        illuminationModel: { label: "Satellite Sunlight", tooltip: "How much sunlight reaches a satellite near the edge of the Earth's shadow.\nFinite Sun + atmosphere: the Sun is a disk, and its light passes through a clear standard atmosphere at the Earth's limb.\nFinite Sun: the Sun is a disk, with no atmosphere.\nLegacy fade: a straight fade over Earth's Penumbra Depth." },
+        flareModel: { label: "Flare Model", tooltip: "The flare model treats each satellite as a flat mirror, level with the Earth below it. This sets which way the mirror faces.\nGeocentric Nadir: along the line from the Earth's center to the satellite.\nGeodetic Nadir: along the WGS84 ellipsoid normal at the satellite.\nThe two differ by at most about 0.2°." },
+        penumbraDepth: { label: "Earth's Penumbra Depth", tooltip: "Depth, in meters, over which a satellite fades from lit to dark as it goes into the Earth's shadow. The depth is how far below the Earth's surface the line to the Sun passes.\nUsed only when Satellite Sunlight is Legacy fade." },
+        sunAngleArrows: { label: "Sun Angle Arrows", tooltip: "For each flaring satellite, draw an arrow from the camera to the satellite, and one from the satellite toward the Sun. Main view only.\nA satellite flares when it is inside Flare Angle Spread." },
+        celestialFolder: { tooltip: "Night sky display: stars, constellations, the equatorial grid, star and planet labels, direction vectors to the Sun, Moon and planets, and the shadows of the Earth and the Moon." },
         labelList: { label: "Label List", tooltip: "Show only the labels whose name matches this comma-separated list, e.g. \"Moon, Polaris\".\nApplies to star, planet, Sun/Moon and satellite labels. Leave it empty to label everything.\nMatching is case-insensitive and by prefix. Satellites match on either name: the catalog name (STARLINK-1234) or the abbreviated name on the label (SL-1234)." },
         vectorsOnTraverse: { label: "Vectors On Traverse", tooltip: "If checked, the vectors are shown relative to the traverse object. Otherwise they are shown relative to the look camera." },
         vectorsInLookView: { label: "Celestial Vectors in Look", tooltip: "Show the celestial direction vectors in the look/camera view as well as the main view" },
         showSatellitesGlobal: { label: "Show Satellites (Global)", tooltip: "Master toggle: show or hide all satellites" },
         showStarlink: { label: "Starlink", tooltip: "Show SpaceX Starlink satellites" },
         showISS: { label: "ISS", tooltip: "Show the International Space Station" },
-        celestrackBrightest: { label: "Celestrack's Brightest", tooltip: "Show Celestrack's list of brightest satellites" },
+        celestrackBrightest: { label: "CelesTrak's Brightest", tooltip: "Show the satellites on CelesTrak's list of the brightest satellites. Sitrec has a built-in copy of the list." },
         otherSatellites: { label: "Other Satellites", tooltip: "Show satellites not in the above categories" },
-        list: { label: "List", tooltip: "Show only satellites matching this comma-separated list of names or NORAD numbers.\nName matching is case-insensitive and by prefix (e.g. \"starlink-30\" matches STARLINK-30xx).\n\"SL-\" is shorthand for Starlink, so \"SL-1234\" matches STARLINK-1234." },
-        satelliteArrows: { label: "Satellite Arrows", tooltip: "Show arrows indicating satellite trajectories" },
-        flareLines: { label: "Flare Lines", tooltip: "Show lines connecting flaring satellites to the camera and the Sun" },
+        list: { label: "List", tooltip: "Also show the satellites in this comma-separated list of names or NORAD catalog numbers, even when their category is off. To show only these, turn the category switches off.\nName matching is case-insensitive and by prefix (e.g. \"starlink-30\" matches STARLINK-30xx).\n\"SL-\" is shorthand for Starlink, so \"SL-1234\" matches STARLINK-1234." },
+        satelliteArrows: { label: "Satellite Arrows", tooltip: "Draw a yellow arrow, 500 km long, on each shown satellite, along its direction of travel.\nOnly within Display Range. Label Flares Only, Label Lit Only and Label Look Visible Only also limit the arrows." },
+        flareLines: { label: "Flare Lines", tooltip: "Draw a yellow arrow, 100 km long, on each flaring satellite, along its direction of travel.\nFor lines to the camera and the Sun, use Sun Angle Arrows." },
         satelliteGroundArrows: { label: "Satellite Ground Arrows", tooltip: "Show arrows to the ground below each satellite" },
         satelliteLabelsLook: { label: "Satellite Labels (Look View)", tooltip: "Show satellite name labels in the look/camera view" },
         satelliteLabelsMain: { label: "Satellite Labels (Main View)", tooltip: "Show satellite name labels in the main 3D view" },
-        labelFlaresOnly: { label: "Label Flares Only", tooltip: "Only label satellites that are currently flaring" },
-        labelLitOnly: { label: "Label Lit Only", tooltip: "Only label satellites that are sunlit (not in Earth's shadow)" },
-        labelLookVisibleOnly: { label: "Label Look Visible Only", tooltip: "Only label satellites visible in the look view camera frustum" },
+        labelFlaresOnly: { label: "Label Flares Only", tooltip: "Label only the satellites that are flaring now (see Flare Angle Spread).\nIt also limits Satellite Arrows and Satellite Ground Arrows to those satellites." },
+        labelLitOnly: { label: "Label Lit Only", tooltip: "Label only the satellites in sunlight, not in the Earth's shadow.\nIt also limits Satellite Arrows and Satellite Ground Arrows to those satellites." },
+        labelLookVisibleOnly: { label: "Label Look Visible Only", tooltip: "In the main view, label only the satellites inside the look camera's view. Satellite Labels (Look View) must also be on.\nIt also limits Satellite Arrows and Satellite Ground Arrows to those satellites." },
         flareRegion: { label: "Flare Region", tooltip: "Show the sky region where satellite flares are visible from the look camera.\nIt assumes Starlink geometry: a flat surface that faces the Earth, at one altitude of 550 km. It does not check the Flare Band and marks the best match even when no reflection is close, so it is valid only when the camera is inside the Flare Band." },
-        flareBand: { label: "Flare Band", tooltip: "Show the band on the ground where flares from a satellite track sweep" },
-        filterTLEs: { label: "Filter TLEs", tooltip: "Filter visible satellites by altitude, position, orbital parameters, or name" },
+        flareBand: { label: "Flare Band", tooltip: "Show two fixed circles on the globe, between which horizon flares can be seen: green about 38° and yellow about 62° from the point opposite the Sun.\nThey do not depend on the loaded satellites." },
+        filterTLEs: { label: "Filter TLEs", tooltip: "Open a window that narrows the shown satellites by position, name or orbit. A satellite must pass this filter and the category switches.\nLoad satellite data first." },
         clearTLEFilter: { label: "Clear TLE Filter", tooltip: "Remove all TLE spatial/orbital filters, restoring category-based visibility" },
-        maxLabelsDisplayed: { label: "Max Labels Displayed", tooltip: "Maximum number of satellite labels to render at once" },
+        maxLabelsDisplayed: { label: "Max Labels Displayed", tooltip: "The largest number of satellite labels drawn in each view at one time. The nearest satellites get labels first." },
         starBrightness: { label: "Star Brightness", tooltip: "Scale factor for the brightness of the stars. 1 is normal, 0 is invisible, 2 is twice as bright, etc." },
-        physicalPointSources: { label: "Physical Point Sources", tooltip: "Draw stars at a fixed few pixels and planets at their TRUE angular diameter, carrying brightness as intensity instead of as disc size. That is what these objects actually are, and it is the correct mode to pair with a camera Diffraction Glare PSF, which then produces the apparent size and the spikes. Normally Sitrec sizes both by magnitude so they stay visible at any zoom - with no PSF active this mode looks worse, because nothing turns the intensity back into visible size." },
-        starLimit: { label: "Star Limit", tooltip: "Brightness limit for stars to be displayed" },
+        physicalPointSources: { label: "Physical Point Sources", tooltip: "Draw stars as points a few pixels wide, and planets at their true angular size. Brightness then sets intensity, not dot size.\nUse it with Camera > Camera Tweaks > Diffraction Glare, whose PSF (point spread function) makes the apparent size and the spikes.\nOff: Sitrec sizes stars and planets by magnitude, so they stay visible at any zoom. Without a PSF, this mode makes them hard to see." },
+        starLimit: { label: "Star Limit", tooltip: "Faintest star to draw, as a magnitude. Stars with a higher magnitude (fainter) are hidden, and so are their name labels." },
         planetBrightness: { label: "Planet Brightness", tooltip: "Scale factor for the brightness of the planets (except Sun and Moon). 1 is normal, 0 is invisible, 2 is twice as bright, etc." },
         lockStarPlanetBrightness: { label: "Lock Star Planet Brightness", tooltip: "When checked, the Star Brightness and Planet Brightness sliders are locked together" },
-        satBrightness: { label: "Sat Brightness", tooltip: "Scale factor for the brightness of the satellites. 1 is normal, 0 is invisible, 2 is twice as bright, etc." },
-        flareBrightness: { label: "Flare Brightness", tooltip: "Scale factor for the additional brightness of flaring satellites. 0 is nothing" },
-        satCutOff: { label: "Sat Cut-Off", tooltip: "Satellites dimmed to this level or less will not be displayed" },
-        displayRange: { label: "Display Range (km)", tooltip: "Satellites beyond this distance will not have their names or arrows displayed" },
+        satBrightness: { label: "Sat Brightness", tooltip: "Scale factor for the size of the satellite dots in the look view, which is how Sitrec shows brightness. The default is 2; 0 hides them.\nIt does not change the main view." },
+        flareBrightness: { label: "Flare Brightness", tooltip: "Extra brightness of a flaring satellite in the Legacy cone model. 0 adds none.\nShown only when Satellite Brightness Model is Legacy cone." },
+        satCutOff: { label: "Sat Cut-Off", tooltip: "Satellites dimmer than this level are not drawn, in either view. Higher values hide more faint satellites; 0 turns the cut-off off." },
+        displayRange: { label: "Display Range (km)", tooltip: "Satellites farther than this, in km, get no name labels or arrows. A label uses the distance from the camera of its view, and an arrow the distance from the look camera.\nSatellites shown by ISS, CelesTrak's Brightest or List still get labels." },
         equatorialGridMain: { label: "Equatorial Grid in Main", tooltip: "Show the celestial equatorial coordinate grid in the main 3D view" },
         constellationLines: { label: "Constellation Lines", tooltip: "Show lines connecting stars in constellations, and label each one with its name" },
         constellationStyle: {
@@ -2287,53 +2496,56 @@ const en = {
         },
         renderStars: { label: "Render Stars", tooltip: "Show stars in the night sky" },
         equatorialGridLook: { label: "Equatorial Grid in Look", tooltip: "Show the celestial equatorial coordinate grid in the look/camera view" },
-        flareRegionLook: { label: "Flare Region in Look View", tooltip: "Show the flare region cone in the look camera view" },
-        satelliteEphemeris: { label: "Satellite Ephemeris" },
-        skyPlot: { label: "Sky Plot" },
+        flareRegionLook: { label: "Flare Region in Look View", tooltip: "Also draw the Flare Region arrows and sphere in the look view. Used only when Flare Region is on." },
+        satelliteEphemeris: { label: "Satellite Ephemeris", tooltip: "Show a table of the shown satellites above the look camera's horizon, highest first: direction, range, altitude, sunlit state and time until it sets.\nIt appears after satellite data is loaded." },
+        skyPlot: { label: "Sky Plot", tooltip: "Show the satellites from the Satellite Ephemeris table on a round map of the sky. The center is straight up and the edge is the horizon, with north at the top.\nIt uses the table's Only VIS setting." },
         celestialVector: { label: "{{name}} Vector", tooltip: "Show a direction vector pointing toward {{name}}" },
     },
     synthClouds: {
+        folder: { tooltip: "A synthetic cloud layer: a round patch of flat cloud images at one altitude. Each image always faces the camera.\nTo make a layer, right-click the ground and select Add Clouds." },
         name: { label: "Name" },
-        visible: { label: "Visible" },
-        editMode: { label: "Edit Mode" },
-        altitude: { label: "Altitude" },
-        radius: { label: "Radius" },
-        cloudSize: { label: "Cloud Size" },
-        density: { label: "Density" },
-        opacity: { label: "Opacity" },
-        brightness: { label: "Brightness" },
-        sunReflection: { label: "Sun Reflection" },
-        depth: { label: "Depth" },
-        edgeWiggle: { label: "Edge Wiggle" },
-        edgeFrequency: { label: "Edge Frequency" },
-        seed: { label: "Seed" },
-        feather: { label: "Feather" },
-        windMode: { label: "Wind Mode" },
-        windFrom: { label: "Wind From (\u00b0)" },
-        windKnots: { label: "Wind (knots)" },
-        deleteClouds: { label: "Delete Clouds" },
+        visible: { label: "Visible", tooltip: "Show or hide this cloud layer." },
+        editMode: { label: "Edit Mode", tooltip: "Show handles to edit the layer with the mouse, and open a floating edit menu.\nYellow (center): drag up or down to change Altitude.\nCyan (edge): drag to change Radius.\nOrange: drag to move the layer." },
+        properties: { tooltip: "Settings for the size, shape and look of the clouds in this layer." },
+        altitude: { label: "Altitude", tooltip: "Altitude of the middle of the cloud layer, above the WGS84 ellipsoid (HAE)." },
+        radius: { label: "Radius", tooltip: "Radius of the round cloud layer. The number of clouds grows with its area (see Density)." },
+        cloudSize: { label: "Cloud Size", tooltip: "Width of each cloud image. Its height is half the width." },
+        density: { label: "Density", tooltip: "Number of clouds per area. 1 = about 32 clouds per square kilometer." },
+        opacity: { label: "Opacity", tooltip: "How opaque each cloud is. Lower values let more of the background show through." },
+        brightness: { label: "Brightness", tooltip: "Brightness of the clouds. 1 = normal sunlit color, less than 1 = darker.\nMore than 1 also adds light that does not depend on the sun, so the clouds glow even at night." },
+        sunReflection: { label: "Sun Reflection", tooltip: "Radius, in meters, of a bright patch around the point where the view's camera sees the sun reflected in the layer. Clouds at its center are up to twice as bright.\n0 = off. Used only when the sun is above the horizon." },
+        depth: { label: "Depth", tooltip: "Vertical thickness of the layer. Each cloud gets a random height in this range around Altitude.\n0 = all clouds at about the same height." },
+        edgeWiggle: { label: "Edge Wiggle", tooltip: "Make the edge of the layer irregular instead of round. Larger values make larger bumps, in proportion to Radius.\n0 = round edge." },
+        edgeFrequency: { label: "Edge Frequency", tooltip: "Number of waves that shape the edge. Higher values add smaller, finer bumps.\nUsed only when Edge Wiggle is more than 0." },
+        seed: { label: "Seed", tooltip: "Random number seed for the cloud positions and the edge shape. Change it to get a different pattern with the same settings." },
+        feather: { label: "Feather", tooltip: "Width of the zone inside the edge where the clouds thin out. 0 = hard edge." },
+        wind: { tooltip: "How the cloud layer drifts. The layer is at its set position at frame 0 and moves with the wind after that." },
+        windMode: { label: "Wind Mode", tooltip: "Which wind moves the layer.\nNo Wind: the layer does not move.\nUse Local: the Local wind (at the camera) from Physics > Wind.\nUse Target: the Target wind (at the target) from Physics > Wind.\nCustom: Wind From and Wind (knots) below." },
+        windFrom: { label: "Wind From (\u00b0)", tooltip: "Direction the wind comes FROM, in degrees true (0 = north, 90 = east). Used only when Wind Mode is Custom." },
+        windKnots: { label: "Wind (knots)", tooltip: "Wind speed, in knots. Used only when Wind Mode is Custom." },
+        deleteClouds: { label: "Delete Clouds", tooltip: "Delete this cloud layer, after you confirm. You can undo the delete." },
     },
     cloudField: {
-        folder: { label: "Cloud Field: {{name}}" },
-        visible: { label: "Visible" },
+        folder: { label: "Cloud Field: {{name}}", tooltip: "A cloud field loaded from a cloud field file (.json). Its clouds are soft glowing spheres that drift together with one wind." },
+        visible: { label: "Visible", tooltip: "Show or hide this cloud field." },
         gain: { label: "Brightness", tooltip: "Multiplies the emission of every sphere" },
         minEmission: { label: "Minimum Emission", tooltip: "Hide spheres fainter than this. Removes weak fitted spheres; it does not rescale the others" },
         refraction: { label: "Refraction", tooltip: "Bend the clouds with terrestrial refraction. Turn off for a field fitted to video, whose positions already include it" },
-        color: { label: "Color" },
+        color: { label: "Color", tooltip: "Color of the clouds. The emission of every sphere is multiplied by this color." },
         blendMode: { label: "Blend", tooltip: "Add brightens the scene (white-hot); Subtract darkens it (black-hot)" },
-        windFrom: { label: "Wind From (°)", tooltip: "True direction the wind comes from. The whole field drifts with it" },
+        windFrom: { label: "Wind From (°)", tooltip: "Direction the wind comes FROM, in degrees true (0 = north, 90 = east). The whole field drifts with this wind." },
         windKnots: { label: "Wind (knots)", tooltip: "Drift speed of the whole field" },
     },
     photoBackdrop: {
-        folder: { label: "Photo Backdrop: {{name}}" },
-        visible: { label: "Visible" },
+        folder: { label: "Photo Backdrop: {{name}}", tooltip: "A picture of the view around a camera that only turns, loaded from a photo backdrop file (.json). The look view draws each pixel in the direction where it was photographed." },
+        visible: { label: "Visible", tooltip: "Show or hide this photo backdrop in all views." },
         showSky: { label: "Show Photo", tooltip: "Draw the picture behind everything in the look view" },
         occlude: { label: "Ground Hides Objects", tooltip: "The ground in the picture hides objects farther away than Range" },
-        range: { label: "Range (m)", tooltip: "How far away the ground in the picture is taken to be. Only decides which objects it hides; the picture itself does not move" },
+        range: { label: "Range (m)", tooltip: "Distance, in meters, at which the ground in the picture is taken to be. It sets which objects that ground hides, and where Show in Main View draws the picture.\nThe picture does not move in the look view." },
         fill: { label: "Fill", tooltip: "Fill the rest of the look view with one color" },
-        fillColor: { label: "Fill Color" },
+        fillColor: { label: "Fill Color", tooltip: "Color for Fill. Used only when Fill is on." },
         showInMain: { label: "Show in Main View", tooltip: "Draw the photographed part of the picture in the main view, Range meters from the camera, where the ground in it is assumed to be" },
-        mainOpacity: { label: "Main View Opacity" },
+        mainOpacity: { label: "Main View Opacity", tooltip: "Opacity of the picture in the main view. 0 = invisible, 1 = solid. Used only when Show in Main View is on." },
         hideTerrain: { label: "Hide Terrain in Look View", tooltip: "The picture already shows the real ground, so hide the terrain model while the look view draws" },
         followCamera: { label: "Center on Look Camera", tooltip: "Keep the picture centered on the look camera, so its angles stay exact if the camera is a few meters from where the photos were taken" },
         importError: "Can't import photo backdrop \"{{filename}}\": {{message}}",
@@ -2341,76 +2553,82 @@ const en = {
     mradReticle: {
         menuName: "Milliradian Reticle",
         folder: "Reticle OSD",
+        folderTooltip: "Settings for the milliradian (mrad) ranging reticle drawn over the look view.\nThis folder shows only while Show > Views > Milliradian Reticle is on.",
         showClock: { label: "Show Clock", tooltip: "Show the date and time in the lower left of the video image" },
         clockStart: { label: "Clock at Start", tooltip: "What the camera clock read at the start of the sitch, as MM/DD/YY HH:MM:SS. Leave it empty to show the sitch's local time." },
     },
     synthBuilding: {
         name: { label: "Name" },
-        visible: { label: "Visible" },
-        editMode: { label: "Edit Mode" },
-        roofEdgeHeight: { label: "Roof Edge Height" },
-        ridgelineHeight: { label: "Ridgeline Height" },
-        ridgelineInset: { label: "Ridgeline Inset" },
-        roofEaves: { label: "Roof Eaves" },
-        type: { label: "Type" },
-        wallColor: { label: "Wall Color" },
-        roofColor: { label: "Roof Color" },
-        opacity: { label: "Opacity" },
-        transparent: { label: "Transparent" },
-        wireframe: { label: "Wireframe" },
-        depthTest: { label: "Depth Test" },
-        deleteBuilding: { label: "Delete Building" },
+        visible: { label: "Visible", tooltip: "Show or hide this building." },
+        editMode: { label: "Edit Mode", tooltip: "Show handles to change the building in the 3D views: its corners, roof height, ridge and rotation. Only one building can be in Edit Mode at a time." },
+        roofEdgeHeight: { label: "Roof Edge Height", tooltip: "Height of the top of the walls (the roof edge) above the highest ground corner, in the current units." },
+        ridgelineHeight: { label: "Ridgeline Height", tooltip: "Height of the roof ridge above the highest ground corner, in the current units. Set it equal to Roof Edge Height for a flat roof." },
+        ridgelineInset: { label: "Ridgeline Inset", tooltip: "Distance that each end of the ridge moves in from the roof edge, in the current units. 0 gives a gable roof; a larger value gives a hipped roof." },
+        roofEaves: { label: "Roof Eaves", tooltip: "Distance that the roof extends out past the walls, in the current units." },
+        type: { label: "Type", tooltip: "Material type for the walls and roof.\nbasic: flat color, not lit.\nlambert: lit, matte.\nphong: lit, with shiny highlights.\nphysical: physically based lighting." },
+        wallColor: { label: "Wall Color", tooltip: "Color of the walls." },
+        roofColor: { label: "Roof Color", tooltip: "Color of the roof." },
+        opacity: { label: "Opacity", tooltip: "Opacity of the building, from 0 (transparent) to 1 (opaque). Used only when Transparent is on." },
+        transparent: { label: "Transparent", tooltip: "Let the Opacity value take effect. Off: the building is drawn fully opaque." },
+        wireframe: { label: "Wireframe", tooltip: "Draw only the edges of the building's triangles." },
+        depthTest: { label: "Depth Test", tooltip: "Hide the parts of the building that are behind other objects. Off: the building shows through objects in front of it." },
+        deleteBuilding: { label: "Delete Building", tooltip: "Delete this building after you confirm. You can undo it." },
+        folder: { tooltip: "A simple 3D building model. Turn on Edit Mode to change its shape in the 3D views." },
+        heightFolder: { tooltip: "Holds the heights and the roof shape of the building." },
+        materialFolder: { tooltip: "Holds the surface settings of the building." },
     },
 
     groundOverlay: {
         name: { label: "Name" },
-        visible: { label: "Visible" },
-        editMode: { label: "Edit Mode" },
-        lockShape: { label: "Lock Shape" },
-        freeTransform: { label: "Free Transform" },
-        showBorder: { label: "Show Border" },
-        properties: { label: "Properties" },
-        imageURL: { label: "Image URL" },
-        rehostLocalImage: { label: "Rehost Local Image" },
-        north: { label: "North" },
-        south: { label: "South" },
-        east: { label: "East" },
-        west: { label: "West" },
-        rotation: { label: "Rotation" },
-        altitude: { label: "Altitude (ft)" },
-        wireframe: { label: "Wireframe" },
-        opacity: { label: "Opacity" },
-        cloudExtraction: { label: "Cloud Extraction" },
-        extractClouds: { label: "Extract Clouds" },
-        cloudColor: { label: "Cloud Color" },
-        fuzziness: { label: "Fuzziness" },
-        feather: { label: "Feather" },
-        gotoOverlay: { label: "Go to Overlay" },
-        deleteOverlay: { label: "Delete Overlay" },
+        visible: { label: "Visible", tooltip: "Show or hide this overlay." },
+        editMode: { label: "Edit Mode", tooltip: "Show handles to change the overlay in the 3D views. Drag a yellow corner to resize it, the cyan handle to rotate it, or the image to move it.\nRight-click the image to add a lock point (up to 3). Drag a lock point to pull that part of the image to a new place. Alt+right-click a lock point to remove it." },
+        lockShape: { label: "Lock Shape", tooltip: "Hide the corner and rotation handles in Edit Mode, so a drag can only move the overlay." },
+        freeTransform: { label: "Free Transform", tooltip: "On: each corner moves on its own, so the image can take any four-sided shape. North, South, East, West and Rotation then do not change the shape.\nOff: the image is a rectangle set by its bounds and Rotation. Turning it off discards the free corner positions." },
+        showBorder: { label: "Show Border", tooltip: "Always draw a highlight border around the overlay. When off, the border shows only while the pointer is over this folder." },
+        properties: { label: "Properties", tooltip: "Holds the image, the bounds, rotation, altitude and display settings." },
+        imageURL: { label: "Image URL", tooltip: "Web address (URL) of the image. A change loads the new image." },
+        rehostLocalImage: { label: "Rehost Local Image", tooltip: "Pick an image file on your computer, upload it to the Sitrec server, and use its URL for this overlay. You must be logged in." },
+        north: { label: "North", tooltip: "Latitude of the north edge of the overlay, in degrees. It does not change the shape while Free Transform is on." },
+        south: { label: "South", tooltip: "Latitude of the south edge of the overlay, in degrees. It does not change the shape while Free Transform is on." },
+        east: { label: "East", tooltip: "Longitude of the east edge of the overlay, in degrees. It does not change the shape while Free Transform is on." },
+        west: { label: "West", tooltip: "Longitude of the west edge of the overlay, in degrees. It does not change the shape while Free Transform is on." },
+        rotation: { label: "Rotation", tooltip: "Rotation of the overlay about its center, in degrees. Positive turns it counterclockwise as seen from above. Not used while Free Transform is on." },
+        altitude: { label: "Altitude (ft)", tooltip: "Height of the overlay, in feet. 0 drapes the image on the terrain. Above 0, the image is drawn at this height above the ellipsoid (HAE), not on the ground." },
+        wireframe: { label: "Wireframe", tooltip: "Draw only the edges of the overlay's triangles." },
+        opacity: { label: "Opacity", tooltip: "Opacity of the overlay image, from 0 (transparent) to 1 (opaque)." },
+        cloudExtraction: { label: "Cloud Extraction", tooltip: "Make the image transparent except for pixels near the Cloud Color, so that only the clouds show." },
+        extractClouds: { label: "Extract Clouds", tooltip: "Keep only the pixels near the Cloud Color and make the rest of the image transparent." },
+        cloudColor: { label: "Cloud Color", tooltip: "Color to keep when Extract Clouds is on. Pixels near this color stay visible." },
+        fuzziness: { label: "Fuzziness", tooltip: "How far a pixel's color can be from the Cloud Color and stay fully visible, in percent of the largest color difference. A larger value keeps more pixels." },
+        feather: { label: "Feather", tooltip: "Width of the soft edge beyond Fuzziness, in percent of the largest color difference. Pixels in this band fade to transparent. 0 gives a hard edge." },
+        gotoOverlay: { label: "Go to Overlay", tooltip: "Move the main camera to look down on the overlay, from a height of about 5 times its longest side." },
+        deleteOverlay: { label: "Delete Overlay", tooltip: "Delete this overlay after you confirm. You can undo it." },
+        folder: { tooltip: "An image placed on the ground. While the pointer is over this folder, the border of the overlay is highlighted." },
     },
 
     groundGrid: {
-        name: { label: "Name" },
-        visible: { label: "Visible" },
-        editMode: { label: "Edit Mode" },
-        width: { label: "Width" },
-        height: { label: "Height" },
-        majorStep: { label: "Major Step" },
-        minorStep: { label: "Minor Step" },
-        majorLineWidth: { label: "Major Line Width" },
-        minorLineWidth: { label: "Minor Line Width" },
-        minorBrightness: { label: "Minor Brightness" },
-        latLonGrid: { label: "Lat/Lon Grid" },
-        minPixelSpacing: { label: "Min Pixel Spacing" },
-        maxPixelSpacing: { label: "Max Pixel Spacing" },
-        rotation: { label: "Rotation" },
-        color: { label: "Major Color" },
-        minorColor: { label: "Minor Color" },
-        lockColors: { label: "Lock Colors" },
-        opacity: { label: "Opacity" },
-        altitude: { label: "Altitude" },
-        gotoGrid: { label: "Go to Grid" },
-        deleteGrid: { label: "Delete Grid" },
+        folder: { tooltip: "A measurement grid on the ground, with major lines, minor lines and an outline. Point at this folder to outline the grid in red.\nTo make a grid, right-click the ground and select Add Ground Grid." },
+        name: { label: "Name", tooltip: "The name of this grid. Changing it does not change the grid." },
+        visible: { label: "Visible", tooltip: "Show or hide this grid." },
+        editMode: { label: "Edit Mode", tooltip: "Show handles to edit the grid with the mouse, and open a floating edit menu.\nDrag the grid to move it.\nYellow corners: drag to resize.\nCyan handle: drag to rotate." },
+        width: { label: "Width", tooltip: "Size of the grid from west to east, before Rotation." },
+        height: { label: "Height", tooltip: "Size of the grid from south to north, before Rotation." },
+        majorStep: { label: "Major Step", tooltip: "Distance between major lines. 0 = no major lines.\nNot used when Lat/Lon Grid is on." },
+        minorStep: { label: "Minor Step", tooltip: "Distance between minor lines. 0 = no minor lines.\nNot used when Lat/Lon Grid is on." },
+        majorLineWidth: { label: "Major Line Width", tooltip: "Width of the major lines and the outline, in screen pixels." },
+        minorLineWidth: { label: "Minor Line Width", tooltip: "Width of the minor lines, in screen pixels." },
+        minorBrightness: { label: "Minor Brightness", tooltip: "Opacity of the minor lines compared to the major lines. 0 = minor lines hidden, 1 = full strength." },
+        latLonGrid: { label: "Lat/Lon Grid", tooltip: "Draw latitude and longitude lines instead of the Major Step and Minor Step lines. Rotation is set to 0.\nEach view picks a spacing that is a power of 10 degrees, from Min and Max Pixel Spacing. Major lines are 10 times the minor spacing.\nA note at the bottom of each view shows the spacing." },
+        minPixelSpacing: { label: "Min Pixel Spacing", tooltip: "Smallest gap on the screen, in pixels, between minor latitude and longitude lines.\nUsed only when Lat/Lon Grid is on." },
+        maxPixelSpacing: { label: "Max Pixel Spacing", tooltip: "Largest gap on the screen, in pixels, between minor latitude and longitude lines. If it conflicts with Min Pixel Spacing, this value wins.\nUsed only when Lat/Lon Grid is on." },
+        rotation: { label: "Rotation", tooltip: "Rotation of the grid around its center, in degrees.\nNot used when Lat/Lon Grid is on." },
+        color: { label: "Major Color", tooltip: "Color of the major lines and the outline. When Lock Colors is on, the minor lines use it too." },
+        minorColor: { label: "Minor Color", tooltip: "Color of the minor lines. Used only when Lock Colors is off." },
+        lockColors: { label: "Lock Colors", tooltip: "Make the minor lines use the Major Color." },
+        opacity: { label: "Opacity", tooltip: "Opacity of the whole grid. 0 = invisible, 1 = full strength." },
+        altitude: { label: "Altitude", tooltip: "0 = drape the grid over the terrain.\nMore than 0 = draw it as a smooth sheet at this altitude above the WGS84 ellipsoid (HAE), not on the terrain." },
+        gotoGrid: { label: "Go to Grid", tooltip: "Move the main view camera to a point above this grid, looking down at it." },
+        deleteGrid: { label: "Delete Grid", tooltip: "Delete this grid, after you confirm. You can undo the delete." },
     },
 
     videoView: {
@@ -2422,34 +2640,51 @@ const en = {
             noiseAnalysis: "Noise Analysis",
             grid: "Grid",
         },
-        currentVideo: { label: "Current Video" },
+        folderTooltips: {
+            videoAdjustments: "Change how the video looks: brightness, contrast, levels, curves, tone, color and convolution filters.\nThe title checkbox (Enable Video Effects) turns them all on or off. Right-click the video to open this menu beside it.",
+            videoProcessing: "Combine video frames into one image. Echo shows the darkest or lightest value of each pixel over recent frames. The Full A-B modes combine the whole A-B range, and Make Video saves that as a video.",
+            forensics: "Tools that examine the video's compression, noise and brightness: error level analysis, noise analysis, the QP graph, the tonal range graph and noise pattern detection.",
+            errorLevelAnalysis: "Error level analysis (ELA): compress the frame again as a JPEG and show how much each pixel changes, amplified by Error Scale.\nThe title checkbox turns the overlay on.",
+            noiseAnalysis: "Show the fine noise of the frame as an overlay. A high-pass filter on the brightness keeps only the pixel-to-pixel detail and noise.\nThe title checkbox turns the overlay on.",
+            grid: "A square grid drawn over the video, spaced in video pixels.\nThe title checkbox turns it on.",
+        },
+        currentVideo: {
+            label: "Current Video",
+            tooltip: "Choose which of the videos loaded into this view it shows. This item appears when the view has more than one video.",
+        },
         removeVideo: {
             label: "Remove Video",
             tooltip: "Remove the video from this view and put it back the way it was before one "
                 + "was loaded - the file is unloaded, the view is hidden again, and the sitch's "
                 + "own duration comes back. Anything measured from the footage is not kept.",
         },
-        videoRotation: { label: "Video Rotation" },
-        setCameraToExifGps: { label: "Set Camera To EXIF GPS" },
+        videoRotation: {
+            label: "Video Rotation",
+            tooltip: "Rotate the video picture: 0°, 90° clockwise (CW), 180° or 90° counterclockwise (CCW). This adds to any rotation stored in the video file.\nA change turns off Point Track stabilization.",
+        },
+        setCameraToExifGps: {
+            label: "Set Camera To EXIF GPS",
+            tooltip: "Move the camera to the GPS position in the file's EXIF data. When the file has them, it also sets the start date and time and the camera heading, pitch, roll and vertical field of view.\nThe main view also moves to show the area.",
+        },
         expandOutput: {
             label: "Expand Output",
-            tooltip: "Method to expand the ELA output dynamic range",
+            tooltip: "How to stretch the ELA result so that small differences show:\nNone: no change.\nHistogram Equalization: spread the brightness levels evenly.\nAuto Contrast: stretch the brightness range to full, after ignoring Clip % of the extreme values.\nAuto Contrast Channels: the same, for red, green and blue separately.",
         },
         displayMode: {
             label: "Display Mode",
-            tooltip: "How to visualize the noise analysis results",
+            tooltip: "How to show the noise:\nNoise Heatmap: color each block by its noise level compared to the median block of the frame. Blue is less, green about the same, yellow and red more. Uses Block Size.\nNoise Residual: show the filtered noise itself, with mid-gray for none. Uses Noise Scale.",
         },
         convolutionFilter: {
             label: "Convolution Filter",
-            tooltip: "Spatial convolution filter type to apply",
+            tooltip: "A 3×3 filter applied to each frame:\nnone: off.\nsharpen: sharpen the edges. Set the strength with Sharpen Amount.\nedgeDetect: show only the edges, in white. Edge Threshold hides the weak ones.\nemboss: a relief effect. Set the strength with Emboss Depth.",
         },
         resetVideoAdjustments: {
             label: "Reset Video Adjustments",
-            tooltip: "Reset all video adjustments to their default values",
+            tooltip: "Reset every Video Adjustments setting to its default, and turn Enable Video Effects back on.\nIt also resets the Echo and Full A-B settings in Video Processing, and the Error Level Analysis and Noise Analysis settings.",
         },
         makeVideo: {
             label: "Make Video",
-            tooltip: "Export the processed video with all current effects applied",
+            tooltip: "Save a video file of the Full A-B Echo, Blend or Exposure as it builds up from frame A to frame B.\nNeeds one of those three on. Video Adjustments are not applied.",
         },
         gridShow: {
             label: "Show",
@@ -2457,7 +2692,7 @@ const en = {
         },
         gridSize: {
             label: "Size",
-            tooltip: "Grid cell size in pixels",
+            tooltip: "Grid cell size in video pixels",
         },
         gridSubdivisions: {
             label: "Subdivisions",
@@ -2465,11 +2700,11 @@ const en = {
         },
         gridXOffset: {
             label: "X Offset",
-            tooltip: "Horizontal offset of the grid in pixels",
+            tooltip: "Horizontal offset of the grid in video pixels",
         },
         gridYOffset: {
             label: "Y Offset",
-            tooltip: "Vertical offset of the grid in pixels",
+            tooltip: "Vertical offset of the grid in video pixels",
         },
         gridColor: {
             label: "Color",
@@ -2480,55 +2715,58 @@ const en = {
     floodSim: {
         flood: {
             label: "Flood",
-            tooltip: "Enable or disable the flood particle simulation",
+            tooltip: "Add water at the target on each frame (the fixed target or the target track).\nWater already on the ground keeps flowing when this is off. The simulation runs even while playback is paused.",
         },
         floodRate: {
             label: "Flood Rate",
-            tooltip: "Number of particles spawned per frame",
+            tooltip: "How fast water is added.\nFast and PBF: number of particles added per frame.\nHeightMap with Rain: water depth added to each cell in the Drop Radius, at Flood Rate x 0.2 mm per second.\nNot used by HeightMap with DamBurst.",
         },
         sphereSize: {
             label: "Sphere Size",
-            tooltip: "Visual radius of each water particle",
+            tooltip: "Diameter of each water particle, in meters. It also sets the particle spacing in the Fast and PBF physics. Not used by HeightMap.",
         },
         dropRadius: {
             label: "Drop Radius",
-            tooltip: "Radius around the drop point where particles spawn",
+            tooltip: "Radius, in meters, of the circle around the target where water is added.",
         },
         maxParticles: {
             label: "Max Particles",
-            tooltip: "Maximum number of active water particles",
+            tooltip: "Maximum number of water particles for the Fast and PBF methods. At the limit, no new particles are added. Not used by HeightMap.",
         },
         method: {
             label: "Method",
-            tooltip: "Simulation method: HeightMap (grid), Fast (particles), or PBF (position-based fluids)",
+            tooltip: "How the water is simulated.\nHeightMap: water depth on a 10 m grid inside the yellow boundary. Drag its corners to change the area.\nFast: particles with a simple pressure model.\nPBF: particles with position-based fluid physics.",
         },
         waterSource: {
             label: "Water Source",
-            tooltip: "Rain: add water over time. DamBurst: maintain water level at target altitude within drop radius",
+            tooltip: "Where the water comes from. Used only by HeightMap.\nRain: add water inside the Drop Radius over time, at the Flood Rate.\nDamBurst: fill the ground inside the Drop Radius up to the altitude of the target, on each frame.",
         },
         speed: {
             label: "Speed",
-            tooltip: "Simulation steps per frame (1-20x)",
+            tooltip: "Number of HeightMap simulation steps on each frame, 1 to 20. More steps make the water move faster but use more processing. Used only by HeightMap.",
         },
         manningN: {
             label: "Manning's N",
-            tooltip: "Bed roughness: 0.01=smooth, 0.03=natural channel, 0.05=rough floodplain, 0.1=dense vegetation",
+            tooltip: "Roughness of the ground (Manning's n). A larger value slows the flow. Used only by HeightMap.\n0.01: smooth\n0.03: natural channel\n0.05: rough floodplain\n0.1: dense vegetation",
         },
         edge: {
             label: "Edge",
-            tooltip: "Blocking: water reflects at grid edges. Draining: water flows out and is removed",
+            tooltip: "What happens at the edges of the HeightMap grid. Used only by HeightMap.\nBlocking: water stops at the edges, as at a wall.\nDraining: water flows out across the edges and is removed.",
         },
         waterColor: {
             label: "Water Color",
-            tooltip: "Color of the water",
+            tooltip: "Color of the water particles and of the HeightMap water surface.",
         },
         reset: {
             label: "Reset",
-            tooltip: "Remove all particles and restart the simulation",
+            tooltip: "Remove all the water. While Flood is on, the simulation starts again at the current target position.",
         },
     },
 
     flowOrbs: {
+        folder: {
+            tooltip: "Small markers in front of the look camera that drift with the wind at the target. They show how the wind moves things across the view at different distances or altitudes.\nThe checkbox in the title shows or hides them.",
+        },
         number: {
             label: "Number",
             tooltip: "Number of flow orbs to display. More orbs may impact performance.",
@@ -2539,11 +2777,11 @@ const en = {
         },
         near: {
             label: "Near (m)",
-            tooltip: "Nearest distance from camera for orb placement",
+            tooltip: "Nearest distance from the camera, in meters, at which orbs are placed.\nWith Spread Method = Altitude, this slider is Low (m): the lowest altitude for the orbs.",
         },
         far: {
             label: "Far (m)",
-            tooltip: "Farthest distance from camera for orb placement",
+            tooltip: "Farthest distance from the camera, in meters, at which orbs are placed.\nWith Spread Method = Altitude, this slider is High (m): the highest altitude for the orbs.",
         },
         high: { label: "High (m)" },
         low: { label: "Low (m)" },
@@ -2557,7 +2795,7 @@ const en = {
         },
         hueRange: {
             label: "Hue Range",
-            tooltip: "Range over which you get a full spectrum of colors for the 'Hue From Altitude/Range' color method.",
+            tooltip: "The altitude or distance span, in meters, over which the orb color goes once through the full spectrum. The colors then repeat.\nUsed only when Color Method is Hue From Altitude or Hue From Distance.",
         },
         windWhilePaused: {
             label: "Wind While Paused",
@@ -2579,13 +2817,18 @@ const en = {
     },
     pointFrequency: {
         menu: "Frequency Analysis",
-        tooltip: "Spectrum of the tracked object's recorded brightness in the In/Out region. Measures signed aperture flux minus local background, removes a linear trend, and applies a Hann window. Uses source video timing.",
+        tooltip: "Show a window with the frequency spectrum of the tracked object's recorded brightness in the In/Out region. Needs a Point Track over that region.\nMeasures signed aperture flux minus local background, removes a linear trend, and applies a Hann window. Uses source video timing.",
         title: "Point Track Frequency Analysis",
         settings: "Frequency Analysis Settings",
+        settingsTooltip: "Settings for Frequency Analysis: the measuring aperture, the units and peak label of the graph, and CSV export.",
         radius: "Object radius (px)",
         radiusTooltip: "Aperture radius in original video pixels. Include the whole object; keep other objects outside. The background ring is 1.75–2.5 times this radius. Uses Point Track Output Smoothing for positions only.",
         percent: "Amplitude as percent",
+        percentTooltip: "Show the semi-amplitude as a percent of the object's mean flux (its brightness above the background, summed over the aperture). Off: show it in DN·pixels (DN = digital number, the recorded pixel value).\nIf the mean flux is zero, the graph uses DN·pixels.",
         showBackground: "Show local background",
+        showBackgroundTooltip: "Also draw the spectrum of the local background ring around the object, scaled to the aperture area. Use it to compare the object's peaks with the background's.",
+        refreshTooltip: "Measure the object in the video frames again and redraw the spectrum. The graph also updates by itself when the track, the In/Out region or the mask changes.",
+        exportTooltip: "Save the spectrum, the analysis settings and the measurement of each frame to PointTrackFrequency.csv. Does nothing until a spectrum shows.",
         minPeakHz: "Peak search floor (Hz)",
         minPeakHzTooltip: "Label the largest peak only at or above this frequency. The value is in Hz, also when Flashes per minute is on. Slow brightness drift that the linear detrend and Hann window do not remove can otherwise win the label. The spectrum does not change. The default, 0.5 Hz (30 a minute), is below the slowest aircraft beacon. Above a flash rate, the floor labels one of its harmonics. Set 0 to turn the floor off: the search then starts about one bin above 0 Hz.",
         noTrack: "Use Point Track to measure the object through the In/Out region first",
@@ -2639,17 +2882,23 @@ const en = {
         title: "Video Tonal Range",
         settings: "Tonal Range Settings",
         display: "Display",
+        displayTooltip: "What the graph shows for each frame:\nPercentile bands: the median, with bands for the middle 50% and 90% of pixel values.\nHistogram over time: how common each brightness level is.\nObject − local background: the tracked object's mean minus the median of the ring around it.\nContrast / local IQR: that difference divided by the ring's spread from the 25th to the 75th percentile.\nThe last two need a Point Track.",
         percentiles: "Percentile bands",
         histogram: "Histogram over time",
         contrast: "Object − local background",
         relativeContrast: "Contrast / local IQR",
         showMean: "Show mean",
+        showMeanTooltip: "Also draw the mean pixel value of each frame. Not used in the two object displays.",
         showExtremes: "Show min/max",
+        showExtremesTooltip: "Also draw the darkest and brightest pixel value (min and max) of each frame. Not used in the two object displays.",
         targetAnalysis: "Tracked object",
+        targetAnalysisTooltip: "Also draw the tracked object's mean and the median of the ring around it, from the Point Track positions. Object radius (px) sets the size. Not used in the two object displays, which always measure the object.",
         targetRadius: "Object radius (px)",
-        targetTooltip: "Uses existing Point Track positions, in original video pixels. The object aperture has this radius; the local background ring spans 2–4 times the radius. Masked pixels are excluded from both. Recalculate after editing a track.",
+        targetTooltip: "Uses existing Point Track positions, in original video pixels. The object aperture has this radius; the local background ring spans 2–4 times the radius. Masked pixels are excluded from both. The graph updates by itself when the track changes.",
         refresh: "Recalculate",
+        refreshTooltip: "Measure every frame of the video again and redraw the graph. The graph also updates by itself when the video, the mask or the track changes.",
         exportCSV: "Export CSV",
+        exportTooltip: "Save the values of every frame to VideoTonalRange.csv. Does nothing until the graph has a result.",
         frame: "Frame",
         luma: "Recorded luma (0–255)",
         scaledLuma: "Recorded luma ({{bits}}-bit scaled to 0–255)",
@@ -2766,6 +3015,7 @@ const en = {
             run: "Run",
             runTooltip: "Run the analysis again with these settings. Features of the frames are kept, so a change of Longest lag, Vertical search or Search on does not decode the video again",
             stop: "Stop",
+            stopTooltip: "Stop the analysis that is running. Press Run to start it again.",
             exportCSV: "Export CSV",
             exportTooltip: "Save the lag curves, the result of every frame and the refined pairs as a CSV file",
             benchmark: "Benchmark CPU and GPU",
@@ -2965,32 +3215,40 @@ const en = {
         },
     },
     osdController: {
+        seriesFolder: {
+            tooltip: "One OSD data series. Click its text box on the video to type its values.",
+        },
         seriesName: {
             label: "Name",
+            tooltip: "Name of this series. It is the folder title, the name in the Graph axis lists, and the column and file name in Export All Data.",
         },
         seriesType: {
             label: "Type",
+            tooltip: "What the values are.\nMake Track uses MGRS Zone, East and North, or Latitude and Longitude. It also uses Altitude (m) or Altitude (ft), read as height above mean sea level. With no altitude series, the track is put on the ground.\nSlant Range is only stored, graphed and exported.",
         },
         seriesShow: {
             label: "Show",
+            tooltip: "Show this series' text box on the video. A hidden series cannot be edited.\nMake Track skips a hidden series when another series has the same Type.",
         },
         seriesLock: {
             label: "Lock",
+            tooltip: "Stop edits to this series: a click on its text box does nothing, and Tab skips it. Its text shows in gray.\nMake Track skips a locked series when another series has the same Type.",
         },
         removeTrack: {
             label: "Remove Track",
+            tooltip: "Delete this series and all its values. You cannot undo this.",
         },
         folderTitle: {
             label: "OSD Tracker",
-            tooltip: "On-Screen Display text tracker for user-defined per-frame text",
+            tooltip: "Type in the values that the video's OSD (on-screen display) text shows, frame by frame. Then graph them, export them, or make a position track from them.",
         },
         addNewTrack: {
             label: "Add New OSD Data Series",
-            tooltip: "Create a new OSD data series for per-frame text overlay",
+            tooltip: "Add a data series: a text box over the video that holds one value per frame.\nClick the box to type the value for the current frame. A value stays until the next frame that has one.\n[ and ] step one frame. Page Up and Page Down jump between keyframes. Tab goes to the next series. Enter or Esc stops editing.",
         },
         makeTrack: {
             label: "Make Track",
-            tooltip: "Create a position track from visible/unlocked OSD data series (MGRS or Lat/Lon)",
+            tooltip: "Make a 3D position track from the series: MGRS Zone, East and North, or Latitude and Longitude, plus an altitude series if there is one. When a Type has more than one series, the shown, unlocked one is used.\nThe track gets a sphere marker and is added to the track menus as OSD_0, OSD_1, ...",
         },
         showAll: {
             label: "Show All",
@@ -2998,15 +3256,18 @@ const en = {
         },
         exportAllData: {
             label: "Export All Data",
-            tooltip: "Export all OSD data series as CSVs in a ZIP file",
+            tooltip: "Download OSDData.zip for the In to Out frames. It holds one CSV of the typed values for each series, and combined CSVs at every keyframe, every second and every frame.\nIn the combined files, numbers are interpolated between keyframes and text carries forward.",
+        },
+        graphFolder: {
+            tooltip: "Plot OSD data series against the frame number or against each other, in the OSD Graph window.",
         },
         graphShow: {
             label: "Show",
-            tooltip: "Show or hide the OSD data graph view",
+            tooltip: "Show the OSD Graph window. It needs a series in Y1 Axis or Y2 Axis.",
         },
         xAxis: {
             label: "X Axis",
-            tooltip: "Data series for the horizontal axis",
+            tooltip: "What goes on the horizontal axis.\nNone or Frame: the frame number, all frames.\nFrame A→B: the frame number, In to Out frames only.\nA series: that series' values, In to Out frames only.",
         },
         y1Axis: {
             label: "Y1 Axis",
@@ -3045,43 +3306,43 @@ const en = {
         },
         offsetValue: {
             label: "Offset Value",
-            tooltip: "Offset value added to the current frame number",
+            tooltip: "Number added to the current frame number for the Offset Frame item",
         },
         timecode: {
             label: "Timecode",
-            tooltip: "Show timecode in HH:MM:SS:FF format",
+            tooltip: "Show the time from frame 0 as MM:SS:FF (minutes, seconds, frames). Hours are added (HH:MM:SS:FF) when the sitch is one hour or longer",
         },
         timestamp: {
             label: "Timestamp",
-            tooltip: "Show timestamp in HH:MM:SS.SS format",
+            tooltip: "Show the time from frame 0 as MM:SS.SS (seconds to two decimal places). Hours are added when the sitch is one hour or longer",
         },
         dateLocal: {
             label: "Date (Local)",
-            tooltip: "Show current date in selected timezone",
+            tooltip: "Show the date of the current frame in the time zone set in Time > Time Zone",
         },
         timeLocal: {
             label: "Time (Local)",
-            tooltip: "Show current time in selected timezone",
+            tooltip: "Show the time of the current frame in the time zone set in Time > Time Zone",
         },
         dateTimeLocal: {
             label: "DateTime (Local)",
-            tooltip: "Show full date and time in selected timezone",
+            tooltip: "Show the date and time of the current frame, with the zone name, in the time zone set in Time > Time Zone",
         },
         dateUTC: {
             label: "Date (UTC)",
-            tooltip: "Show current date in UTC",
+            tooltip: "Show the date of the current frame in UTC",
         },
         timeUTC: {
             label: "Time (UTC)",
-            tooltip: "Show current time in UTC",
+            tooltip: "Show the time of the current frame in UTC",
         },
         dateTimeUTC: {
             label: "DateTime (UTC)",
-            tooltip: "Show full date and time in UTC",
+            tooltip: "Show the date and time of the current frame in UTC",
         },
         fontSize: {
             label: "Font Size",
-            tooltip: "Adjust the font size of the info text",
+            tooltip: "Text size of the readout items. The value is in pixels for a picture 1080 pixels high, and the text scales with the picture",
         },
     },
 
@@ -3104,7 +3365,7 @@ const en = {
         },
         traverseAirSpeed: {
             label: "Traverse Air Speed",
-            tooltip: "Show the traverse object's horizontal air speed (wind subtracted); needs a wind track",
+            tooltip: "Show the traverse object's horizontal air speed: its motion with the target wind subtracted. Shown only when the sitch has a target wind",
         },
         traverseGForce: {
             label: "Traverse g-force",
@@ -3123,44 +3384,51 @@ const en = {
     terrainUI: {
         mapType: {
             label: "Map Type",
-            tooltip: "Map type for terrain textures (separate from elevation data)",
+            tooltip: "Source of the map images drawn on the terrain. Elevation Type sets the ground heights separately.\nNo map images load while 3D Buildings shows Google Photorealistic tiles, because those tiles replace the terrain.",
         },
         elevationType: {
             label: "Elevation Type",
-            tooltip: "Elevation data source for terrain height data",
+            tooltip: "Source of the ground heights. The data gives heights above mean sea level (MSL). Sitrec adds the EGM96 geoid height to get the height above the ellipsoid (HAE).\nGround below sea level is drawn at sea level.\nFlat: no height data.",
         },
         lat: {
+            label: "Latitude",
             tooltip: "Latitude of the center of the terrain",
         },
         lon: {
+            label: "Longitude",
             tooltip: "Longitude of the center of the terrain",
         },
         zoom: {
-            tooltip: "Zoom level of the terrain. 2 is the whole world, 15 is few city blocks",
+            label: "Zoom Level",
+            tooltip: "Zoom level of the terrain tiles. Each step up doubles the detail and halves the width of a tile. 2 is the whole world; 15 is a few city blocks.",
         },
         nTiles: {
-            tooltip: "Number of tiles in the terrain. More tiles means more detail, but slower loading. (NxN)",
+            label: "Tiles per Side",
+            tooltip: "Number of tiles along each side of the square terrain area (N x N tiles at the zoom level). More tiles cover a larger area at the same detail, but take longer to load.",
         },
         refresh: {
             label: "Refresh",
-            tooltip: "Refresh the terrain with the current settings. Use for network glitches that might have caused a failed load",
+            tooltip: "Load the terrain again with the current settings. Tiles that failed to load are tried again.\nUse it after a network error leaves tiles missing.",
         },
         debugGrids: {
             label: "Debug Grids",
-            tooltip: "Show a grid of ground textures (Green) and elevation data (Blue)",
+            tooltip: "Draw an outline of each terrain tile, high above the ground.\nGreen: map image tiles.\nBlue: elevation tiles.\nGray: inactive tiles.",
         },
         elevationScale: {
+            label: "Elevation Scale",
             tooltip: "Scale factor for the elevation data. 1 is normal, 0.5 is half height, 2 is double height",
         },
         terrainOpacity: {
             label: "Terrain Opacity",
-            tooltip: "Opacity of the terrain. 0 is fully transparent, 1 is fully opaque",
+            tooltip: "Opacity of the terrain, from 0 (fully transparent) to 1 (fully opaque). It also fades the 3D building tiles.",
         },
         textureDetail: {
-            tooltip: "Detail level for texture subdivision. Higher values = more detail. 1 is normal, 0.5 is less detail, 2 is more detail",
+            label: "Texture Detail",
+            tooltip: "Multiplier for the detail of the map images. 1 is normal. 2 loads finer tiles, which means more downloads; 0.5 loads coarser tiles.\nUsed only when Dynamic Subdivision is on.",
         },
         elevationDetail: {
-            tooltip: "Detail level for elevation subdivision. Higher values = more detail. 1 is normal, 0.5 is less detail, 2 is more detail",
+            label: "Elevation Detail",
+            tooltip: "Multiplier for the detail of the elevation data. 1 is normal. 2 loads finer tiles, which means more downloads; 0.5 loads coarser tiles.\nUsed only when Dynamic Subdivision is on.",
         },
         disableDynamicSubdivision: {
             label: "Disable Dynamic Subdivision",
@@ -3168,27 +3436,27 @@ const en = {
         },
         dynamicSubdivision: {
             label: "Dynamic Subdivision",
-            tooltip: "Use camera-adaptive tile subdivision for globe-scale viewing",
+            tooltip: "On: load terrain tiles at the detail that each view needs, from the whole globe down to street level.\nOff: load a fixed square of tiles set by Latitude, Longitude, Zoom Level and Tiles per Side.\nIt stays on while 3D Buildings is on.",
         },
         showBuildings: {
             label: "3D Buildings",
-            tooltip: "Show 3D building tiles from Cesium Ion or Google",
+            tooltip: "Show 3D building tiles from Google Photorealistic or Cesium OSM Buildings. The tiles load from the provider and use your 3D tile quota.\nGoogle Photorealistic tiles replace the terrain. Cesium OSM buildings are drawn on top of it.\nTurning it on also turns on Dynamic Subdivision and Use Ellipsoid Earth Model.",
         },
         buildingEdges: {
             label: "Building Edges",
-            tooltip: "Show wireframe edges on 3D building tiles",
+            tooltip: "Draw the edges of the 3D building tiles as lines. Used only with Cesium OSM Buildings.",
         },
         oceanSurface: {
             label: "Ocean Surface (Beta)",
-            tooltip: "Experimental: render sea-level water surface (fixed EGM96 MSL) while Google Photorealistic tiles are active",
+            tooltip: "Draw a translucent blue water surface at mean sea level (the EGM96 geoid) where the elevation data is no more than 2 m above sea level.\nShown only while 3D Buildings shows Google Photorealistic tiles. Experimental.",
         },
         buildingsSource: {
             label: "Buildings Source",
-            tooltip: "Data source for 3D building tiles",
+            tooltip: "Provider of the 3D building tiles.\nGoogle Photorealistic: photographic 3D tiles of the ground and buildings. They replace the terrain.\nCesium OSM Buildings: plain building shapes from OpenStreetMap, drawn on top of the terrain.",
         },
         buildingMaterial: {
             label: "Building Material",
-            tooltip: "Applies to newly loaded tiles. Toggle Buildings off/on to force re-apply on already-loaded tiles.",
+            tooltip: "Surface style of the 3D building tiles.\nPhoto: the original photo texture.\nFlat: one plain color (Building Flat Color).\nHalf-photo: the photo texture at 60% brightness.\nIt applies only to tiles that load after the change. Turn 3D Buildings off and on to restyle all tiles.",
             modes: {
                 photo: "Photo",
                 flat: "Flat",
@@ -3196,27 +3464,30 @@ const en = {
             },
         },
         buildingFlatColor: {
-            label: "Building Flat Colour",
-            tooltip: "Base colour used when Material = Flat. Default per source: warm concrete for photogrammetric, neutral for OSM.",
+            label: "Building Flat Color",
+            tooltip: "Color of the 3D building tiles when Building Material is Flat. The default depends on the source: warm concrete for Google Photorealistic, neutral gray for Cesium OSM.\nIt applies only to tiles that load after the change.",
         },
         useEllipsoid: {
             label: "Use Ellipsoid Earth Model",
-            tooltip: "Sphere: fast legacy model. Ellipsoid: accurate WGS84 shape (higher latitudes benefit most).",
+            tooltip: "On: the Earth is the WGS84 ellipsoid, which is accurate. Off: the Earth is a sphere, the legacy model.\nIt stays on while 3D Buildings is on, because the building tiles need it.",
         },
         layer: {
             label: "Layer",
-            tooltip: "Layer for the current map type's terrain textures",
+            tooltip: "Image layer to use from the current Map Type. Most map types have only one layer. A change loads the map images again.",
         },
     },
 
     displayTrack: {
+        folder: {
+            tooltip: "How this track is drawn: its line, color and width, a wall down to the ground, and a contrail.\nHover over the title to highlight the track line in white",
+        },
         visible: {
             label: "Show Track Line",
             tooltip: "Show or hide this track",
         },
         extendToGround: {
             label: "Extend To Ground",
-            tooltip: "Draw vertical lines from track to ground",
+            tooltip: "Draw a see-through wall, with vertical lines, from the track down to the ground. Poly Color sets its color",
         },
         displayStep: {
             label: "Display Step",
@@ -3225,6 +3496,7 @@ const en = {
         contrail: {
             label: "Contrail",
             tooltip: "Show a contrail ribbon behind this track, adjusted for wind",
+            folderTooltip: "A contrail ribbon behind this track that drifts and spreads with the wind.\nThe check box in the title turns it on",
         },
         contrailSecs: {
             label: "Contrail Secs",
@@ -3256,18 +3528,18 @@ const en = {
         },
         polyColor: {
             label: "Poly Color",
-            tooltip: "Color of the vertical ground extension polygons",
+            tooltip: "Color of the wall that Extend To Ground draws below the track",
         },
         gotoTrack: {
             label: "Go to Track",
-            tooltip: "Center the main camera on this track's location",
+            tooltip: "Move the main view camera to 200 m above this track's position at the current frame, looking down at it",
         },
     },
 
     ptzUI: {
         panAz: {
             label: "Pan (Az)",
-            tooltip: "Camera azimuth / pan angle in degrees",
+            tooltip: "Direction the camera points, in degrees clockwise from true north (0 = north, 90 = east).\nWith Relative Heading on, it is measured from the heading of the camera's track instead.",
         },
         pan360: {
             label: "Use 0-360 for Pan",
@@ -3279,7 +3551,7 @@ const en = {
         },
         tiltEl: {
             label: "Tilt (El)",
-            tooltip: "Camera elevation / tilt angle in degrees",
+            tooltip: "Angle of the camera above the local horizon, in degrees.\n0 = level, 89 = almost straight up, -89 = almost straight down.",
         },
         zoomFov: {
             label: "VFOV (deg)",
@@ -3331,15 +3603,15 @@ const en = {
         },
         roll: {
             label: "Roll",
-            tooltip: "Camera roll angle in degrees",
+            tooltip: "Rotation of the camera around its line of sight, in degrees. 0 keeps the horizon level.\nUsed when Camera Heading is Manual or To Target.",
         },
         xOffset: {
             label: "xOffset",
-            tooltip: "Horizontal offset of the camera from center, useful for aligning the camera with a tracked target that is not centered in the video frame",
+            tooltip: "Turn the rendered look view left or right by this angle, in degrees. Positive turns it right.\nUse it to line up a target that is not at the center of the video frame.\nOnly the picture moves: the camera's line of sight does not change.",
         },
         yOffset: {
             label: "yOffset",
-            tooltip: "Vertical offset of the camera from center, useful for aligning the camera with a tracked target that is not centered in the video frame",
+            tooltip: "Turn the rendered look view up or down by this angle, in degrees. Positive turns it down.\nUse it to line up a target that is not at the center of the video frame.\nOnly the picture moves: the camera's line of sight does not change.",
         },
         nearPlane: {
             label: "Near Plane (m)",
@@ -3351,19 +3623,28 @@ const en = {
         },
         relative: {
             label: "Relative Heading",
-            tooltip: "The camera heading is relative to the camera path (e.g. a plane's ADSB track) instead of absolute.\nSo you can set the camera to always point forward along the path, or to the left/right of the path, etc.",
+            tooltip: "Measure Pan (Az) from the heading of the camera's track, instead of from true north.\nPan 0 then looks forward along the track, and Pan 90 looks to the right. Tilt is still measured from the horizon.",
         },
         satellite: {
             label: "Satellite Mode",
-            tooltip: "Satellite mode: more intutive screen-space caemra movement when looking more directly up or down.\nAutomatically sets Pan/Tilt/Roll from screen-space mouse draggin and the 'Rotation' value. Useful for satellite tracking and other high-elevation camera angles.",
+            tooltip: "Steer the camera in screen space, with no gimbal lock when it looks nearly straight up or down.\nDragging in the look view turns the view around the screen axes. Pan, Tilt and Roll are hidden, and Rotation is shown.\nUse it for satellite tracking and other steep camera angles.",
         },
         rotation: {
             label: "Rotation",
-            tooltip: "Screen-space rotation around the camera look axis in Satellite Mode. This will update the PTZ 'Roll' value to match the screen-space rotation.",
+            tooltip: "Turn the view around the camera's line of sight, in degrees. Shown only in Satellite Mode.\nWhen you turn Satellite Mode off, this rotation becomes part of Roll.",
         },
     },
 
     nodes3dObject: {
+        folder: {
+            tooltip: "Settings for this 3D object: its model or geometry, size, material and visibility.\nThe check box in the title shows or hides the object",
+        },
+        material: {
+            tooltip: "Surface settings of this object: shading type, color, opacity and more.\nFor a 3D model, this folder shows only when Apply Material is on",
+        },
+        lights: {
+            tooltip: "The lights that come with this 3D model. Each folder holds the settings of one light",
+        },
         // Labels for the geometry and material parameter keys that a plain split of the key
         // would get wrong or leave unclear. Other keys are split at their capitals.
         paramLabels: {
@@ -3442,6 +3723,7 @@ const en = {
             tooltip: "Draw this object as a flock of birds that follows its track in formation, "
                 + "in place of the one object. Each bird is this object's model or geometry.",
             folder: "Flock Parameters",
+            folderTooltip: "Settings of the flock: the species, the number of birds, the formation and how the birds move.\nShown only when Flock is on",
             species: {
                 label: "Species",
                 tooltip: "Set the flock up as one kind of bird flies, from field measurements where there are any. "
@@ -3533,7 +3815,7 @@ const en = {
                 label: "Change of Place (s)",
                 tooltip: "How often each bird changes place, in seconds. A bird trades places with the bird next to "
                     + "it: in a formation with a leader, with the bird ahead of it, which is how the lead changes "
-                    + "hands. Ibises in a V were measured at once in 45 seconds. 0 means the birds never change places.",
+                    + "hands. Ibises in a V were measured to change places about once every 45 seconds. 0 means the birds never change places.",
             },
             wheeling: {
                 label: "Wheeling (m)",
@@ -3570,9 +3852,10 @@ const en = {
     },
 
     trackingOverlay: {
+        folderTooltip: "Track an object by hand. Ctrl-click (Cmd-click on Mac) the video to place a keyframe at the current frame. Drag a keyframe to move it, or Alt-click (Option-click on Mac) it to delete it. A curve joins the keyframes.\nTraverse > LOS Source > Camera + Object Track uses this curve as the line of sight.",
         showTracking: {
             label: "Show Tracking",
-            tooltip: "Show or hide the tracking points and curve overlay",
+            tooltip: "Show or hide the manual tracking keyframes and curve on the video. While they are hidden, you cannot add or edit keyframes.",
         },
         reset: {
             label: "Reset",
@@ -3584,15 +3867,15 @@ const en = {
         },
         curveType: {
             label: "Curve Type",
-            tooltip: "Spline uses natural cubic spline. Spline2 uses not-a-knot spline for smoother end behavior. Linear uses straight line segments. Perspective requires exactly 3 keyframes and models linear motion with perspective projection.",
+            tooltip: "How the curve runs between keyframes:\nSpline: natural cubic spline.\nSpline2: centripetal Catmull-Rom spline.\nLinear: straight lines.\nPerspective: uses the first 3 keyframes, for an object that moves in a straight line at constant speed, seen in perspective. Choosing it also sets Traverse > LOS Traverse Method to Perspective and runs Minimize Ground Speed.\nWith 2 keyframes, every type is a straight line.",
         },
         minimizeGroundSpeed: {
             label: "Minimize Ground Speed",
-            tooltip: "Find the Tgt Start Dist that minimizes the ground distance traveled by the traverse path",
+            tooltip: "Set Tgt Start Dist to the value that makes the Perspective traverse move the shortest straight-line distance between the first and last keyframes. That is the lowest average speed.\nNeeds 3 or more keyframes. Use it with Curve Type Perspective and Traverse > LOS Source Camera + Object Track.",
         },
         minimizeAirSpeed: {
             label: "Minimize Air Speed",
-            tooltip: "Find the Tgt Start Dist that minimizes the air distance traveled (accounting for target wind)",
+            tooltip: "Like Minimize Ground Speed, but it first subtracts how far the target wind carries the object between the first and last keyframes. That gives the lowest average air speed.",
         },
         usePointB: {
             label: "Use Size Point",
@@ -3622,15 +3905,15 @@ const en = {
         },
         videoInFrustum: {
             label: "Video in Frustum",
-            tooltip: "Project the video onto the camera frustum far plane",
+            tooltip: "Show the current video frame as a flat picture inside the frustum, at Video Distance from the camera.\nNeeds a loaded video",
         },
         videoOnGround: {
             label: "Video on Ground",
-            tooltip: "Project the video onto the ground",
+            tooltip: "Project the current video frame onto the ground, where the corners of the camera view meet the terrain or the globe.\nIt is hidden when a corner of the view misses the ground. Needs a loaded video",
         },
         groundVideoInLookView: {
             label: "Ground Video in Look",
-            tooltip: "Show the ground-projected video in the look view",
+            tooltip: "Also show the ground-projected video in the look view. Off = main view only.\nUsed only when Video on Ground is on",
         },
         matchVideoAspect: {
             label: "Match Video Aspect",
@@ -3638,7 +3921,10 @@ const en = {
         },
         videoOpacity: {
             label: "Video Opacity",
-            tooltip: "Opacity of the projected video overlay",
+            tooltip: "Opacity of the projected video: 0 = invisible, 1 = opaque.\nApplies to Video in Frustum and Video on Ground",
+        },
+        videoDistance: {
+            tooltip: "Distance from the camera to the picture that Video in Frustum draws.\nUsed only when Video in Frustum is on",
         },
         frustumDistance: {
             label: "Frustum Distance",
@@ -3662,7 +3948,7 @@ const en = {
         },
         frustumSidesPercent: {
             label: "Frustum Sides %",
-            tooltip: "Opacity of the shaded frustum sides, as a percentage of the frustum edge color",
+            tooltip: "Opacity of the shaded frustum sides, in percent: 0 = invisible, 100 = opaque.\nUsed only when Show Frustum Sides is on",
         },
     },
 
@@ -3730,11 +4016,11 @@ const en = {
     labels3d: {
         measurements: {
             label: "Measurements in Main",
-            tooltip: "Show distance and angle measurement labels and arrows in the main 3D view",
+            tooltip: "Show measurement arrows and their labels, such as distances and altitudes, in the main 3D view.",
         },
         measurementsInLook: {
             label: "Measurements in Look",
-            tooltip: "Show distance and angle measurement labels and arrows in the look/camera view",
+            tooltip: "Show measurement arrows and their labels, such as distances and altitudes, in the look/camera view.",
         },
         labelsInMain: {
             label: "Labels in Main",
@@ -3758,11 +4044,11 @@ const en = {
     latLonGrid: {
         inMain: {
             label: "Lat/Lon Grid in Main",
-            tooltip: "Show a latitude/longitude grid over the globe in the main 3D view. It is drawn over the terrain, but not on the far side of the Earth",
+            tooltip: "Show a latitude/longitude grid over the globe in the main 3D view. Lines are 10° apart; the equator and prime meridian are brighter.\nIt is drawn over the terrain, but not on the far side of the Earth.",
         },
         inLook: {
             label: "Lat/Lon Grid in Look",
-            tooltip: "Show a latitude/longitude grid over the globe in the look/camera view. It is drawn over the terrain, but not on the far side of the Earth",
+            tooltip: "Show a latitude/longitude grid over the globe in the look/camera view. Lines are 10° apart; the equator and prime meridian are brighter.\nIt is drawn over the terrain, but not on the far side of the Earth.",
         },
     },
 
@@ -3845,15 +4131,18 @@ const en = {
 
     fireballs: {
         menuItem: "Recorded fireballs…",
+        menuTooltip: "Open the Recorded fireballs dialog. Import a GMN (Global Meteor Network) trajectory summary, find the fireballs near a time and place, and load the observed path of one into the sitch.",
         close: "Close",
         limits: "Only imported records are searched. GMN coverage varies with station location, night, weather and successful multi-station detection. No match does not rule out a meteor. Magnitudes are absolute at 100 km, not brightness at your camera. Saturation can affect bright events.",
         track: {
             jumpToStart: "Jump to observed start",
+            jumpToStartTooltip: "Go to the time of the first observed sample of the fireball, and pause. If that time is outside the timeline, the sitch start time moves to it.",
             jumpToEstimatedPeak: "Jump to estimated peak",
             jumpToMeasuredPeak: "Jump to measured peak",
             peakUnavailable: "Peak time unavailable",
-            peakTooltip: "{{label}}. Outside the timeline this shifts its start; inside it jumps to the nearest frame.",
+            peakTooltip: "{{label}}.\nGo to the peak time, and pause. If that time is outside the timeline, the sitch start time moves to it.",
             sourceAndLimits: "Fireball source & limits",
+            sourceAndLimitsTooltip: "Show where this fireball record comes from, how its path and peak time were found, and the limits of the data.",
         },
         details: {
             title: "Fireball {{id}}",
@@ -3917,7 +4206,7 @@ const en = {
     losErrorAnalysis: {
         button: {
             label: "Analyze LOS Error…",
-            tooltip: "Compare pointing against a truth track at the original, 10 Hz and 1 Hz rates; fit and export a statistical noise model.",
+            tooltip: "Open a panel that compares the pointing LOS (line of sight) with the bearings to a loaded truth track in the A-B range.\nIt shows the error at the original rate, 10 Hz and 1 Hz, and fits a statistical noise model that you can export.",
         },
         title: "LOS error analysis",
         close: "Close",
@@ -4021,46 +4310,59 @@ const en = {
 
     losFitPhysics: {
         folder: "Physics Fit Results",
+        folderTooltip: "Read-only results of the last Global Fit: Physics run. They update when a new fit finishes.",
         model: {
             label: "Model",
+            tooltip: "Physics model that the fit used (Traverse > Physics Model).",
         },
         avgError: {
             label: "Avg Error",
+            tooltip: "Mean angle, in degrees, between the fitted path and the LOS in the A-B range. Lower is a closer fit.",
         },
         windSpeed: {
             label: "Wind Speed (kt)",
+            tooltip: "Wind speed, in knots, that the fit solved for.",
         },
         windFrom: {
             label: "Wind From (\u00B0)",
+            tooltip: "Direction that the solved wind comes FROM, in degrees true (0 = north, 90 = east).",
         },
     },
 
     losFitPlausible: {
         folder: "Minimum Acceleration Fit Results",
+        folderTooltip: "Read-only results of the last Global Fit: Minimum Acceleration run.",
         range: {
             label: "Found Range",
+            tooltip: "Start range, in nautical miles, that the fit found along the first LOS in the A-B range.",
         },
         speed: {
             label: "Speed Target",
+            tooltip: "Target Speed that the fit used as a soft tiebreaker. \"not needed (geometry)\" means the geometry alone picked the range.",
         },
         score: {
             label: "Plausibility (lower=better)",
+            tooltip: "Score of the path: a weighted sum of its g-load, turn-rate changes and climb, plus size and wind penalties. Lower is a smoother, more level path. Compare it only between runs on the same clip.",
         },
     },
 
     misbData: {
         startTime: {
             label: "Start Time",
-            tooltip: "Override start time (e.g., '10:30', 'Jan 15', '2024-01-15T10:30:00Z'). Leave blank for global start time.",
+            tooltip: "Start time for this track, whose file has only relative times. Partial input works, for example '10:30', 'Jan 15' or '2024-01-15T10:30:00Z'.\nLeave it blank to start the track at the sitch start time.",
         },
+        filterTooltip: "Fix or remove track points that would need an acceleration above Max G. These points are treated as bad data.",
         enableFilter: {
             label: "Enable Filter",
+            tooltip: "Turn on the filter. Each point's acceleration is measured against neighbors at least 0.5 s away, and points above Max G are removed from the track.",
         },
         tryAltitudeFirst: {
             label: "Try Altitude First",
+            tooltip: "Before removing a bad point, try replacing only its altitude with a value interpolated from its neighbors.\nThe point stays if that brings it under Max G.",
         },
         maxG: {
             label: "Max G",
+            tooltip: "Largest acceleration allowed, in g (1 g = 9.81 m/s²). Points that need more are fixed or removed.",
         },
     },
 
@@ -4080,15 +4382,15 @@ const en = {
         },
         lookup: {
             label: "Lookup",
-            tooltip: "Enter coordinates in any format (decimal, degrees/minutes/seconds, N/S/E/W, MGRS, lat/lon/altitude, or ECEF x,y,z in metres) or a place name to move to",
+            tooltip: "Enter coordinates in any format (decimal, degrees/minutes/seconds, N/S/E/W, MGRS, lat/lon/altitude, or ECEF x,y,z in meters) or a place name to move to",
         },
         geolocate: {
-            label: "Geolocate from browser",
-            tooltip: "Use the browser's geolocation API to set your current position",
+            label: "Geolocate from IP Address",
+            tooltip: "Set this position to your approximate location, 3 m above the ground.\nThe location comes from your internet (IP) address, through an online lookup service",
         },
         goTo: {
             label: "Go To the above position",
-            tooltip: "Move terrain and camera to the entered latitude/longitude/altitude",
+            tooltip: "Move the main view camera to 100 km above this position, looking down at it",
         },
     },
 
@@ -4099,18 +4401,21 @@ const en = {
         },
         horizonMethod: {
             label: "Horizon Method",
+            tooltip: "How the tilt of the horizon in the look view is worked out from the jet's attitude.\nHuman Horizon: the tilt that a person in the jet sees, from the jet's pitch and roll and the camera azimuth and elevation.\nHorizon Angle: a formula that uses only the jet's pitch and roll and the camera azimuth",
         },
         lookFOV: {
             label: "Look FOV",
+            tooltip: "Vertical field of view of the look camera, in degrees",
         },
         celestialObject: {
             label: "Celestial Object",
-            tooltip: "Name of the celestial body the camera tracks (e.g. Moon, Venus, Jupiter)",
+            tooltip: "Name of the body or star that the camera points at, for example Moon, Venus, Jupiter or Sirius.\nUsed only when Camera Heading is Celestial Lock",
         },
     },
 
     trackingWobble: {
         folder: "Tracking Wobble",
+        folderTooltip: "Add a simulated hand-tracking error to the look camera, on top of any Camera Heading source.\nThe aim drifts off the target, and the operator brings it back late and not exactly.\nTurn it on with the checkbox in the folder title.",
         enabled: {
             label: "Tracking Wobble",
             tooltip: "Simulate manual tracking: the camera drifts off the target and is imperfectly re-centered",
@@ -4121,7 +4426,7 @@ const en = {
         },
         driftSpeed: {
             label: "Drift Speed (deg/s)",
-            tooltip: "Random drift rate away from the target",
+            tooltip: "Typical speed, in degrees per second, at which the aim wanders off the target.\nThe drift direction changes at random about once a second.",
         },
         reactionTime: {
             label: "Reaction Time (s)",
@@ -4143,6 +4448,7 @@ const en = {
 
     cameraState: {
         folder: "Camera Data",
+        folderTooltip: "Per-frame camera state from a dropped camera data file (CSV): sensor mode, focal length, digital zoom and polarity.\nShown only when such a file is loaded.",
         source: {
             label: "Source",
             tooltip: "The camera data file these rows came from. The sitch saves the rows, so a file that has only camera data is not uploaded.",
@@ -4169,6 +4475,9 @@ const en = {
     },
 
     spriteGroup: {
+        folder: {
+            tooltip: "Small colored balls spread in front of the look camera. They drift with the wind, so they show how the air moves in the camera view.",
+        },
         visible: {
             label: "Visible",
             tooltip: "Show or hide the flow orbs",
@@ -4186,9 +4495,11 @@ const en = {
     imageAnalysis: {
         bestAngleFull: {
             label: "Best Angle, full 180, refined",
+            tooltip: "Rotate the region to the angle where one column of the gray profile stands out most from the others. It searches the full 180° in 1° steps, then refines within 2° of the best angle.",
         },
         bestAngle5: {
             label: "Best angle within 5\u00B0 of current",
+            tooltip: "Rotate the region to the angle, within 5° of the current angle, where one column of the gray profile stands out most from the others.",
         },
     },
 
@@ -4204,11 +4515,12 @@ const en = {
             label: "Free Look Camera",
             tooltip: "Fly the look camera by hand, exactly like the main view camera.\n" +
                 "Left-drag moves the world, middle-drag orbits the point under the cursor,\n" +
-                "right-drag looks around, the wheel zooms in and out, and WASD walks.\n" +
+                "right-drag looks around, the wheel moves in and out, and WASD walks.\n" +
                 "While this is on, the Location and Heading sources are suspended, but not\n" +
                 "the field of view - so you can still frame what you have flown to.\n" +
                 "Where you fly to is written into the camera's Location as you go, so\n" +
-                "turning this off locks the camera in at the new position and heading.\n" +
+                "turning this off keeps the camera at the new position. It keeps the new\n" +
+                "heading only when Camera Heading is Manual.\n" +
                 "An 'above ground level' camera keeps its AGL height and only moves horizontally.",
         },
         // Shown over the look view when a hand edit to Camera > Location or Heading takes the
@@ -4235,15 +4547,15 @@ const en = {
         },
         showMoonShadow: {
             label: "Show Moon's Shadow",
-            tooltip: "Toggle the display of Moon's shadow cone for eclipse visualization.",
+            tooltip: "Show the Moon's shadow in the main view, for solar eclipses: the gold umbra cone, and the outlines of the umbra and penumbra on the ground.",
         },
         shadowSegments: {
             label: "Shadow Segments",
-            tooltip: "Number of segments in the shadow cone (more = smoother but slower)",
+            tooltip: "Number of segments along the length of the Moon's shadow cones. More is smoother but slower.",
         },
         showEarthShadow: {
             label: "Show Earth's Shadow",
-            tooltip: "Toggle the display of Earth's shadow cone in the night sky.",
+            tooltip: "Show the Earth's shadow: the umbra (light blue) and penumbra (dark blue) cones and circles, out to Earth's Shadow Altitude on the side away from the Sun.",
         },
         earthShadowAltitude: {
             label: "Earth's Shadow Altitude",
@@ -4251,24 +4563,27 @@ const en = {
         },
         exportTLE: {
             label: "Export TLE",
+            tooltip: "Save the loaded satellite orbit data to a file: satellites.csv for CSV catalog data, otherwise satellites.tle.\nMerged data is saved together in one file.",
         },
         backgroundFlowIndicator: {
             label: "Background Flow Indicator",
-            tooltip: "Display an arrow indicating how much the background will move in the next frame.\nUseful for syncing the sim with video (use View/Vid Overlay)",
+            tooltip: "In the look view, draw an arrow where the camera's line of sight meets the ground. It shows how far that point moves by the next frame. A gray arrow 20 times longer shows the direction.\nUse it to sync the sim with the video, with View > Vid Overlay Trans % above 0.",
         },
         defaultSnap: {
             label: "Default Snap",
-            tooltip: "When enabled, points will snap to horizontal alignment by default while dragging.\nHold Shift (while dragging) to do the opposite",
+            tooltip: "On: a dragged point moves only horizontally or only vertically, set by your first movement.\nOff: a dragged point moves freely, and snaps to the height of other points and to the current frame.\nHold Shift while you drag to use the other mode",
         },
         recalcNodeGraph: {
             label: "Recalc Node Graph",
+            tooltip: "Lay out the node graph view again from the current nodes, for example after a track is loaded.",
         },
         downloadVideo: {
             label: "Download Video",
+            tooltip: "Download the file of the current video, with its original file name. This is the source file, not a render.",
         },
         banking: {
             label: "Banking",
-            tooltip: "How the object banks/tilts during turns",
+            tooltip: "How the object turns to match its motion along its track. The one in the Physics menu orients the look camera along the camera track.\nNo Banking: points along the track, with no roll.\nPhysical Banking: points along the track and rolls by the bank angle of a coordinated turn at the speed and turn rate of the track.\nFixed Heading: points at Fixed Heading° and ignores the direction of travel.\nfrontPointing points along the track. bottomPointing points its bottom along the track. axialPush and axialPull tilt the vertical axis toward the acceleration, with gravity (the ZeroG variants leave out gravity).",
         },
         fixedHeading: {
             label: "Fixed Heading°",
@@ -4292,13 +4607,15 @@ const en = {
         },
         angularTraverse: {
             label: "Angular Traverse",
+            tooltip: "Angle, in degrees, that Zaine Triangulation turns the A-frame and B-frame lines of sight about the local vertical.",
         },
         smoothingMethod: {
             label: "Smoothing Method",
-            tooltip: "Interpolation or filtering applied to this track. None disables this stage only; camera, angle, and traverse filters are separate. Active processing is listed in the traverse analysis filtering summary.",
+            tooltip: "How this track's positions are smoothed. None turns off this stage only; camera, angle and traverse filters are separate.\nmoving, movingPolyEdge: moving average, with polynomial fits at the ends (movingPolyEdge has settings for them).\nsliding: smooths the velocity, then rebuilds the positions from it.\nsavgol: Savitzky–Golay filter, a moving polynomial fit.\nspline: smooth curve through the recorded data points, or through smoothed points at regular intervals.\nThe traverse analysis filtering summary lists the active processing.",
         },
         showInLookView: {
             label: "Show in look view",
+            tooltip: "Draw this track in the look view, not only in the main view.\nShow > All Tracks in Look draws every track there, whatever this setting is",
         },
         windFrom: {
             tooltip: "True heading the wind blows FROM (0=North, 90=East)",
@@ -4311,10 +4628,11 @@ const en = {
         },
         debugConsole: {
             label: "Debug Console",
-            tooltip: "Debug Console",
+            tooltip: "Show or hide the Debug Console view, a text window of debug messages.",
         },
         aiAssistant: {
             label: "AI Assistant",
+            tooltip: "Show or hide the AI Assistant chat window. Ask it in plain language to change the sitch, for example \"go to London at 12pm yesterday\".\nThe Tab key also shows and hides it.",
         },
         voice: {
             start: "Talk to the assistant (needs your own OpenAI key — Settings, API Keys)",
@@ -4341,7 +4659,7 @@ const en = {
     showHiders: {
         linesOfSight: {
             label: "Lines of Sight",
-            tooltip: "Show lines of sight from camera to target (toggle: O)",
+            tooltip: "Show the lines of sight (LOS) from the camera in the direction it looks, at regular frame intervals.\nLines outside the In/Out (A-B) range are dark gray. (toggle: O)",
         },
         hideSomeLOS: {
             label: "Hide Some LOS",
@@ -4349,40 +4667,52 @@ const en = {
         },
         currentLOS: {
             label: "Current LOS",
-            tooltip: "Show only the current frame's line of sight",
+            tooltip: "Draw the line of sight for the current frame as a white line.\nIt shows even when the other lines of sight are hidden",
         },
         physicalPointer: {
             label: "Physical Pointer",
+            tooltip: "Show the pointer rod on the ATFLIR pod model. It sticks straight out of the front of the pod, along the pod's long axis.",
         },
         jet: {
             label: "[J]et",
+            tooltip: "Show the F/A-18 jet model that carries the ATFLIR pod (toggle: J)",
         },
         horizonGrid: {
             label: "[H]orizon Grid",
+            tooltip: "Show a flat yellow grid in the local horizontal plane at the jet (toggle: H)",
         },
         wingPlaneGrid: {
             label: "[W]ing Plane Grid",
+            tooltip: "Show a flat cyan grid in the plane of the jet's wings. It tilts with the jet's pitch and bank (toggle: W)",
         },
         sphericalBoresightGrid: {
             label: "[S]pherical Boresight Grid",
+            tooltip: "Show the pod's pitch and roll grid on a sphere around the jet. Blue lines are every 10° of roll, red circles every 10° of pitch.\nThe grid turns, pitches and banks with the jet (toggle: S)",
         },
         azimuthElevationGrid: {
             label: "[A]zimuth/Elevation Grid",
+            tooltip: "Show an azimuth and elevation grid on a sphere around the jet, level with the horizon and turned to the jet's heading.\nLines are every 10°, out to 90° on each side of the nose (toggle: A)",
         },
         frustumOfCamera: {
             label: "F[R]ustum of camera",
+            tooltip: "Show the ATFLIR camera's field of view as a cyan pyramid from the pod. It turns with the pod's ball (toggle: R)",
         },
         trackLine: {
             label: "[T]rack line",
+            tooltip: "Show a white circle around the jet at the current elevation angle, through all azimuths (toggle: T)",
         },
         globe: {
             label: "[G]lobe",
+            tooltip: "Show the globe: a smooth ellipsoid model of the Earth's surface (toggle: G).",
+            tooltip: "Show the textured globe of the whole Earth. Sitrec draws it only when Terrain > Terrain Tweaks > Dynamic Subdivision is off. (toggle: G)",
         },
         showErrorCircle: {
             label: "showErrorCircle",
+            tooltip: "Show a green circle, 5° in radius, around the direction that the pod physically points. It also shows in the pod's-eye view (toggle: O)",
         },
         glareSprite: {
             label: "Glare Spr[I]te",
+            tooltip: "Show a glare image over the target in the pod's-eye and look views. While it shows, it replaces the target sphere in the pod's-eye view (toggle: I)",
         },
         cameraViewFrustum: {
             label: "Camera View Frustum",
@@ -4390,37 +4720,38 @@ const en = {
         },
         zaineTriangulation: {
             label: "Zaine Triangulation",
+            tooltip: "Show a triangulation from the LOS (lines of sight) at the A frame (blue) and the B frame (orange).\nMagenta and red show the same two LOS turned by Angular Traverse in opposite directions about the local vertical.\nThe white line joins the points where the crossed pairs pass closest.",
         },
     },
 
     lighting: {
         ambientIntensity: {
             label: "Ambient Intensity",
-            tooltip: "Ambient light intensity. 0 is no ambient light, 1 is normal ambient light, 2 is double ambient light",
+            tooltip: "Strength of the ambient light, which lights all surfaces equally, day and night. 0 is none and 1 is full brightness.\nSun Scattering adds more ambient light while the Sun is up.",
         },
         irAmbientIntensity: {
             label: "IR Ambient Intensity",
-            tooltip: "IR Ambient light intensity (used for IR viewports)",
+            tooltip: "Ambient light strength used in place of Ambient Intensity when a view renders in IR (infrared) mode with its effects on.",
         },
         sunIntensity: {
             label: "Sun Intensity",
-            tooltip: "Sunlight intensity. 0 is no sunlight, 1 is normal full sunlight, 2 is double sunlight",
+            tooltip: "Strength of direct sunlight. 0 is none and 1 is full brightness. It fades as the Sun goes down to the horizon and below it.",
         },
         sunScattering: {
             label: "Sun Scattering",
-            tooltip: "Sunlight scattering amount",
+            tooltip: "Extra ambient light from sunlight scattered by the sky, as a fraction of Sun Intensity. It fades out around sunset.",
         },
         sunBoost: {
             label: "Sun Boost (HDR)",
-            tooltip: "Multiplier for sun DirectionalLight intensity (HDR). Increases specular highlight brightness for realistic sun reflections through fog.",
+            tooltip: "Multiplier, from 1 to 100, for direct sunlight only. It makes HDR (high dynamic range) highlights, such as Sun reflections, brighter.\nLower Scene Exposure to compensate.",
         },
         sceneExposure: {
             label: "Scene Exposure",
-            tooltip: "Visible look-view exposure multiplier, independent of atmosphere and highlight rolloff. Lower to compensate for higher sun boost.",
+            tooltip: "Brightness multiplier for the look view image. It is multiplied by Lighting > Look View Output > Look Exposure, and it works with or without Atmosphere and Highlight Rolloff.\nLower it when you raise Sun Boost.",
         },
         ambientOnly: {
             label: "Ambient Only",
-            tooltip: "If true, then only ambient light is used, no sunlight",
+            tooltip: "Turn off direct sunlight and sun scattering, so only Ambient Intensity lights the scene.",
         },
         daylightSky: {
             label: "Daylight Sky",
@@ -4428,19 +4759,19 @@ const en = {
         },
         noMainLighting: {
             label: "No Lighting in Main View",
-            tooltip: "If true, then no lighting is used in the main view.\nThis is useful for debugging, but not recommended for normal use",
+            tooltip: "Light the main view evenly, with full ambient light and no sunlight, so the night side is as bright as the day side. The look view does not change.",
         },
         noCityLights: {
             label: "No City Lights on Globe",
-            tooltip: "If true, then don't render the city lights on the globe.",
+            tooltip: "Hide the city lights image on the night side of the globe sphere.\nLighting > City Lights is a separate control, for lights on the 3D building tiles.",
         },
         shadowsEnabled: {
             label: "Shadows",
-            tooltip: "Master shadow toggle. Off by default; enabling activates per-view depth-pass shadow rendering for whichever views also have their own shadow flag on (see Shadow tweaks).",
+            tooltip: "Master switch for shadows cast by the Sun. Off by default.\nEach view also has its own switch in Shadow tweaks, and a view draws shadows only when both are on. Shadows slow down rendering.",
         },
         shadowTweaks: {
             label: "Shadow tweaks",
-            tooltip: "Per-view shadow tunables and view/terrain toggles. Most users won't need to touch the sliders.",
+            tooltip: "Shadow settings: the switch for each view, terrain shadows, and the shadow map size, bias and update rate.\nMost users do not need to change the sliders.",
         },
         shadowMapSize: {
             label: "Shadow map size",
@@ -4448,15 +4779,15 @@ const en = {
         },
         shadowRadius: {
             label: "Shadow min radius (m)",
-            tooltip: "Minimum half-width of the shadow frustum. The frustum auto-fits to the visible footprint (FOV × distance-to-look-at-ground), so this only kicks in when a tight view would otherwise produce an extent below this value. Acts as a floor for close-up scenes so they still get a usable shadow patch.",
+            tooltip: "Smallest half-width, in meters, of the area that gets shadows. The area fits itself to what the view can see. This sets a minimum for close-up views, so they still get a useful patch of shadow.",
         },
         shadowBias: {
             label: "Shadow bias",
-            tooltip: "Depth offset (NDC). Negative values push shadow surface toward the light. Avoids shadow acne; too negative causes Peter-Pan (detached shadows).",
+            tooltip: "Small depth offset for the shadow test, in normalized depth units. A negative value stops shadow acne (stripes of false shadow on lit surfaces). Too negative makes shadows separate from the objects that cast them.",
         },
         shadowNormalBias: {
             label: "Shadow normal bias",
-            tooltip: "Surface-normal offset (world units). Typically ~1 texel at the shadow camera scale.",
+            tooltip: "Offset of the shadow test along the surface normal, in meters. It also stops shadow acne. About one shadow-map pixel is typical.",
         },
         shadowUpdateInterval: {
             label: "Shadow update interval (ms)",
@@ -4468,21 +4799,27 @@ const en = {
         },
         terrainReceivesShadow: {
             label: "Terrain receives shadows",
-            tooltip: "Allow terrain meshes to be darkened by cast shadows. Off by default; flipping on adds a shadow sample per terrain pixel.",
+            tooltip: "Let cast shadows darken the terrain. On by default.\nTurn it off to make the terrain draw faster.",
         },
     },
     helpFunctions: {
         adsbReplay: {
             label: "ADSB Replay for this time and location",
-            tooltip: "Generate a link to ADSB Exchange Replay",
+            tooltip: "Open ADS-B Exchange Replay in a new tab, at the look camera's position and the time of the current frame.\nNot available for times in the last 30 minutes",
         },
         googleMapsLink: {
             label: "Google Maps for this location",
-            tooltip: "Create a Google Maps link to the current location",
+            tooltip: "Open Google Maps in a new tab, at the look camera's position",
         },
         inTheSkyLink: {
             label: "In-The-Sky for this time and location",
-            tooltip: "Create an In The Sky link to the current location",
+            tooltip: "Open the In-The-Sky.org satellite map in a new tab, for the look camera's position and the time of the current frame",
+        },
+        fr24Replay: {
+            tooltip: "Open Flightradar24 playback in a new tab, at the look camera's position and the time of the current frame",
+        },
+        earthNullSchoolLink: {
+            tooltip: "Open the earth.nullschool.net wind map in a new tab, at the look camera's position and the time of the current frame.\nIt shows the wind at the 250 hPa pressure level",
         },
     },
     nodeLabels: {

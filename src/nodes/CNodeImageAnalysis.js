@@ -96,29 +96,40 @@ export class CNodeImageAnalysis extends CNodeImageView {
 
         this.useFilter = true;
         gui.add(this,"useFilter").onChange(v => {this.recalculate()}).listen()
+            .tooltip("Subtract a rolling average from each profile, to remove slow changes in brightness across the region.\nThe Filter value sets the width of the average, in columns.")
         this.square=true;
         gui.add(this,"square").onChange(v => {this.recalculate()}).listen()
+            .tooltip("Square each normalized value, to make the peaks stand out more.\nUsed only when normalize is on.")
         this.red = false;
         gui.add(this,"red").onChange(v => {this.recalculate()}).listen()
+            .tooltip("Plot the red-channel profile across the region (dark red line).")
         this.green = false;
         gui.add(this,"green").onChange(v => {this.recalculate()}).listen()
+            .tooltip("Plot the green-channel profile across the region (green line).")
         this.blue = false;
         gui.add(this,"blue").onChange(v => {this.recalculate()}).listen()
+            .tooltip("Plot the blue-channel profile across the region (dark blue line).")
         this.grey = true;
         gui.add(this,"grey").onChange(v => {this.recalculate()}).listen()
+            .tooltip("Plot the gray profile across the region: the mean of red, green and blue (black line).")
 
         this.normalize = true;
         gui.add(this,"normalize").onChange(v => {this.recalculate()}).listen()
+            .tooltip("Scale each profile so that its lowest value is 0 and its highest value is 100.")
 
         this.relative = false;
         gui.add(this,"relative").onChange(v => {this.recalculate()}).listen()
+            .tooltip("Divide each profile by its value at the first column, so it shows brightness relative to that edge of the region.")
 
         this.centerLine = false;
         gui.add(this,"centerLine").onChange(v => {this.recalculate()}).listen()
+            .tooltip("Use only the pixel at the middle of each column, not the average of the whole column.\nThe region shows its center line.")
 
 
         gui.add(this,'findBestAngleSuccessive').name(t("imageAnalysis.bestAngleFull.label"))
+            .tooltip(t("imageAnalysis.bestAngleFull.tooltip"))
         gui.add(this,'findBestAngle5').name(t("imageAnalysis.bestAngle5.label"))
+            .tooltip(t("imageAnalysis.bestAngle5.tooltip"))
 
 
         this.pixelData = getPixelData(this.image)
@@ -147,6 +158,7 @@ export class CNodeImageAnalysis extends CNodeImageView {
         this.region.useSkew = false;
         this.region.centerLine = true;
         gui.add(this.region,"useSkew")
+            .tooltip("Let each corner of the region move on its own, so the region can be any four-sided shape.\nOff: the region stays a rectangle, and a drag outside it rotates it.")
 
 
         this.resolution = 100

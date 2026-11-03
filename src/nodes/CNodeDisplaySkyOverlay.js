@@ -84,14 +84,14 @@ export class CNodeDisplaySkyOverlay extends CNodeViewUI {
         const starNames = gui.add(this, "showStarNames").onChange(() => {
             setRenderOne(true);
         }).name(viewControlLabel(this.overlayView.id, "Star Names"))
-            .tooltip("Show star name labels in this view").listen();
+            .tooltip("Show name labels in this view for the named stars, and for the Sun, Moon and planets.\nStars fainter than View > Star Limit get no label.").listen();
         this.addSimpleSerial("showStarNames");
         starNames.shareAs(viewMenuKey(this.overlayView.id, "starNames"));
 
         const onlyPlanets = gui.add(this, "onlyLabelPlanets").onChange(() => {
             setRenderOne(true);
         }).name(viewControlLabel(this.overlayView.id, "Only Label Planets"))
-            .tooltip("When checked, suppress star labels but always show planet names").listen();
+            .tooltip("Label only the Sun, Moon and planets in this view, not the stars. Used only when Star Names is on.").listen();
         this.addSimpleSerial("onlyLabelPlanets");
         onlyPlanets.shareAs(viewMenuKey(this.overlayView.id, "onlyPlanets"));
 

@@ -27,6 +27,26 @@ export function getPhysicsModelNames() {
     return Object.keys(physicsModels);
 }
 
+// Tooltips for the read-only rows of the "Physics Fit Results" folder.
+const START_RANGE_TIP = "Solved distance from the camera along the first LOS in the A-B range.";
+const HEADING_TIP = "Solved start heading, in degrees (0 = north, 90 = east), in the local east-north-up frame " +
+    "at the camera's first position.";
+const CLIMB_TIP = "Solved vertical speed. The model holds it constant. Positive = climbing.";
+const SKY_LANTERN_PARAM_TIPS = {
+    initialRange: "Solved distance, in meters, from the camera along the first LOS in the A-B range.",
+    windE: "Solved east component of the wind at the start altitude, in m/s.",
+    windN: "Solved north component of the wind at the start altitude, in m/s.",
+    shearPerM: "Solved fractional change of wind speed per meter of altitude change.",
+    vRise: "Solved climb rate while the flame burns, in m/s.",
+    vSink: "Solved final sink rate after the lantern cools, in m/s (positive = down).",
+    tBurn: "Solved flame-out time, in seconds from the start of the fit. Negative = the flame went out before the fit starts.",
+    tauCool: "Solved time constant, in seconds, of the change from climbing to sinking after flame-out.",
+    windDriftE: "Solved linear change of the east wind over the whole fit, in m/s.",
+    windDriftN: "Solved linear change of the north wind over the whole fit, in m/s.",
+    windCurveE: "Solved quadratic change of the east wind over the whole fit, in m/s.",
+    windCurveN: "Solved quadratic change of the north wind over the whole fit, in m/s.",
+};
+
 const KTS_TO_MS = 0.514444;
 const MS_TO_FPM = 60 / 0.3048; // m/s -> ft/min
 
@@ -251,30 +271,38 @@ export class CNodeLOSFitPhysics extends CNodeTrack {
             this.guiFolder = null;
         }
 
-        this.guiFolder = guiMenus.traverse.addFolder(t("losFitPhysics.folder")).close();
+        this.guiFolder = guiMenus.traverse.addFolder(t("losFitPhysics.folder")).close()
+            .tooltip(t("losFitPhysics.folderTooltip"));
         this.guiDisplay = {};
 
         // Use strings for all display values to avoid lil-gui NumberController step requirement
         this.guiDisplay._model = fitParams.model;
-        this.guiFolder.add(this.guiDisplay, "_model").name(t("losFitPhysics.model.label")).disable();
+        this.guiFolder.add(this.guiDisplay, "_model").name(t("losFitPhysics.model.label")).disable()
+            .tooltip(t("losFitPhysics.model.tooltip"));
 
         // Fit quality: mean angular error in degrees (full resolution),
         // separate from the composite cost (which includes plausibility terms)
         if (fitParams.errDeg !== undefined && !isNaN(fitParams.errDeg)) {
             this.guiDisplay._errDeg = fitParams.errDeg.toFixed(4) + "°";
-            this.guiFolder.add(this.guiDisplay, "_errDeg").name(t("losFitPhysics.avgError.label")).disable();
+            this.guiFolder.add(this.guiDisplay, "_errDeg").name(t("losFitPhysics.avgError.label")).disable()
+                .tooltip(t("losFitPhysics.avgError.tooltip"));
         }
         this.guiDisplay._cost = fitParams.cost.toFixed(4);
-        this.guiFolder.add(this.guiDisplay, "_cost").name("Fit Cost").disable();
+        this.guiFolder.add(this.guiDisplay, "_cost").name("Fit Cost").disable()
+            .tooltip("Optimizer cost: the mean LOS error in units of 0.02 degrees, plus the model's plausibility penalties. " +
+                "Lower is better. Compare it only between fits of the same model.");
 
         // Which make/model constrained the fit (specific dropdown choice), or —
         // when AUTO — the nearest real airframe/drone the solution resembles.
         if (this._selectedVehicle && !this._autoModel) {
             this.guiDisplay._vehicle = this._selectedVehicle.name;
-            this.guiFolder.add(this.guiDisplay, "_vehicle").name("Selected envelope prior").disable();
+            this.guiFolder.add(this.guiDisplay, "_vehicle").name("Selected envelope prior").disable()
+                .tooltip("The make or model chosen in Fixed-Wing Model or Quadcopter Model. Its performance limits bound the fit.");
         } else if (this._classified) {
             this.guiDisplay._vehicle = "≈ " + this._classified.name;
-            this.guiFolder.add(this.guiDisplay, "_vehicle").name("Closest compatible envelope").disable();
+            this.guiFolder.add(this.guiDisplay, "_vehicle").name("Closest compatible envelope").disable()
+                .tooltip("With AUTO, the listed make or model whose performance limits best match the solved path. " +
+                    "It does not identify the object.");
         }
 
         // Wind speed and direction derived from E/N components
@@ -285,8 +313,10 @@ export class CNodeLOSFitPhysics extends CNodeTrack {
             const windFromDeg = (Math.atan2(-solved.windE, -solved.windN) * 180 / Math.PI + 360) % 360;
             this.guiDisplay._windSpeed = windSpeedKt.toFixed(1);
             this.guiDisplay._windFrom = windFromDeg.toFixed(1);
-            this.guiFolder.add(this.guiDisplay, "_windSpeed").name(t("losFitPhysics.windSpeed.label")).disable();
-            this.guiFolder.add(this.guiDisplay, "_windFrom").name(t("losFitPhysics.windFrom.label")).disable();
+            this.guiFolder.add(this.guiDisplay, "_windSpeed").name(t("losFitPhysics.windSpeed.label")).disable()
+                .tooltip(t("losFitPhysics.windSpeed.tooltip"));
+            this.guiFolder.add(this.guiDisplay, "_windFrom").name(t("losFitPhysics.windFrom.label")).disable()
+                .tooltip(t("losFitPhysics.windFrom.tooltip"));
         }
 
         if (model instanceof FixedWingModel) {
@@ -299,12 +329,15 @@ export class CNodeLOSFitPhysics extends CNodeTrack {
             this.guiDisplay._turnAccel = solved.turnAccel.toFixed(4) + " °/s²";
             this.guiDisplay._climb = solved.climb.toFixed(1) + " m/s ("
                 + (solved.climb * MS_TO_FPM).toFixed(0) + " ft/min)";
-            this.guiFolder.add(this.guiDisplay, "_range").name("Start Range").disable();
-            this.guiFolder.add(this.guiDisplay, "_heading").name("Heading (origin ENU)").disable();
-            this.guiFolder.add(this.guiDisplay, "_tas").name("Horizontal airspeed").disable();
-            this.guiFolder.add(this.guiDisplay, "_turnRate").name("Turn Rate").disable();
-            this.guiFolder.add(this.guiDisplay, "_turnAccel").name("Turn Accel").disable();
-            this.guiFolder.add(this.guiDisplay, "_climb").name("Climb").disable();
+            this.guiFolder.add(this.guiDisplay, "_range").name("Start Range").disable().tooltip(START_RANGE_TIP);
+            this.guiFolder.add(this.guiDisplay, "_heading").name("Heading (origin ENU)").disable().tooltip(HEADING_TIP);
+            this.guiFolder.add(this.guiDisplay, "_tas").name("Horizontal airspeed").disable()
+                .tooltip("Solved horizontal speed through the air. The model holds it constant.");
+            this.guiFolder.add(this.guiDisplay, "_turnRate").name("Turn Rate").disable()
+                .tooltip("Solved turn rate at the start of the fit. Positive = clockwise (a right turn) seen from above.");
+            this.guiFolder.add(this.guiDisplay, "_turnAccel").name("Turn Accel").disable()
+                .tooltip("Solved change of the turn rate per second. The model changes the turn rate linearly.");
+            this.guiFolder.add(this.guiDisplay, "_climb").name("Climb").disable().tooltip(CLIMB_TIP);
         } else if (model instanceof QuadcopterModel) {
             // Friendly readout for the multirotor solution. A quad's speed can
             // change over the clip (it can spin up from hover), so show both the
@@ -321,11 +354,13 @@ export class CNodeLOSFitPhysics extends CNodeTrack {
             this.guiDisplay._peak = peak.toFixed(1) + " m/s (peak)";
             this.guiDisplay._climb = solved.climb.toFixed(1) + " m/s ("
                 + (solved.climb * MS_TO_FPM).toFixed(0) + " ft/min)";
-            this.guiFolder.add(this.guiDisplay, "_range").name("Start Range").disable();
-            this.guiFolder.add(this.guiDisplay, "_heading").name("Heading (origin ENU)").disable();
-            this.guiFolder.add(this.guiDisplay, "_speed").name("Start Speed").disable();
-            this.guiFolder.add(this.guiDisplay, "_peak").name("Peak Speed").disable();
-            this.guiFolder.add(this.guiDisplay, "_climb").name("Climb").disable();
+            this.guiFolder.add(this.guiDisplay, "_range").name("Start Range").disable().tooltip(START_RANGE_TIP);
+            this.guiFolder.add(this.guiDisplay, "_heading").name("Heading (origin ENU)").disable().tooltip(HEADING_TIP);
+            this.guiFolder.add(this.guiDisplay, "_speed").name("Start Speed").disable()
+                .tooltip("Solved speed at the start of the fit.");
+            this.guiFolder.add(this.guiDisplay, "_peak").name("Peak Speed").disable()
+                .tooltip("The higher of the speeds at the start and at the end of the fit. The model changes the speed linearly.");
+            this.guiFolder.add(this.guiDisplay, "_climb").name("Climb").disable().tooltip(CLIMB_TIP);
         } else {
             // Generic dump of all solved parameters as strings
             const paramDefs = model.getParameterDefs();
@@ -334,7 +369,8 @@ export class CNodeLOSFitPhysics extends CNodeTrack {
                 if (val !== undefined) {
                     const key = def.name;
                     this.guiDisplay[key] = val.toFixed(4);
-                    this.guiFolder.add(this.guiDisplay, key).name(key).disable();
+                    this.guiFolder.add(this.guiDisplay, key).name(key).disable()
+                        .tooltip(SKY_LANTERN_PARAM_TIPS[key] ?? "Solved value of this model parameter.");
                 }
             }
         }

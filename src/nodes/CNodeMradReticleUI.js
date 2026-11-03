@@ -48,7 +48,8 @@ export class CNodeMradReticleUI extends CNodeViewUI {
 
     setupMenu() {
         if (!guiMenus.view) return;
-        const menu = this.menu = guiMenus.view.addFolder(t("mradReticle.folder")).close();
+        const menu = this.menu = guiMenus.view.addFolder(t("mradReticle.folder")).close()
+            .tooltip(t("mradReticle.folderTooltip"));
         menu.add(this, "showClock").name(t("mradReticle.showClock.label")).listen().onChange(() => setRenderOne(true))
             .tooltip(t("mradReticle.showClock.tooltip"));
         menu.add(this, "clockStart").name(t("mradReticle.clockStart.label")).listen().onFinishChange(() => setRenderOne(true))

@@ -24,7 +24,12 @@ export class   CNodeATFLIRUI extends CNodeViewUI {
     constructor(v) {
         super({...v, defaultFont: MQ9_FONT, defaultAlign: "left", defaultFontSize: v.defaultFontSize ?? 3.5});
         this.fontReady = ensureMQ9FontLoaded();
-        this.showHideController?.tooltip("ATFLIR display. CAS (knots) and Mach use the camera track minus Local Wind. Static pressure and temperature use metadata when present, otherwise a standard atmosphere at the camera's MSL height. Altitude uses pressure altitude from metadata/profile pressure in 10-foot steps, otherwise MSL height. BLK is a placeholder.");
+        this.showHideController?.tooltip("Show ATFLIR-style symbology over the view.\n"
+            + "CAS (calibrated airspeed, knots) and Mach use the camera track's speed minus Local Wind.\n"
+            + "Pressure and temperature come from the track metadata when present, else from a standard atmosphere at the camera's MSL (mean sea level) height.\n"
+            + "Altitude shows pressure altitude in 10 ft steps when the metadata has pressure, else MSL height.\n"
+            + "The overlays of a sitch with the ATFLIR pod use the jet's TAS (true airspeed) and the jet altitude instead.\n"
+            + "BLK is a fixed placeholder.");
 
         this.optionalInputs(["camera", "cameraTrack", "target", "jetAltitude", "jetTAS", "atmosphere"]);
         this.trackDriven = !!this.in.camera;

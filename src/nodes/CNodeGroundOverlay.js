@@ -1457,21 +1457,22 @@ export class CNodeGroundOverlay extends CNode3DGroup {
     
     
     createGUIFolder() {
-        this.guiFolder = guiMenus.objects.addFolder(`Overlay: ${this.name}`);
+        this.guiFolder = guiMenus.objects.addFolder(`Overlay: ${this.name}`)
+            .tooltip(t("groundOverlay.folder.tooltip"));
         
         addNameControl(this.guiFolder, this, {prefix: "Overlay"}).keepLiveWhenFolderOff();
 
-        this.guiFolder.add(this, 'visible').name(t("groundOverlay.visible.label")).onChange((value) => {
+        this.guiFolder.add(this, 'visible').name(t("groundOverlay.visible.label")).tooltip(t("groundOverlay.visible.tooltip")).onChange((value) => {
             this.show(value);
             setRenderOne(true);
         }).onFinishChange(() => { CustomManager.saveGlobalSettings(true); }).asFolderToggle();
 
         const editModeData = {editMode: this.editMode};
-        this.editModeController = this.guiFolder.add(editModeData, 'editMode').name(t("groundOverlay.editMode.label")).onChange((value) => {
+        this.editModeController = this.guiFolder.add(editModeData, 'editMode').name(t("groundOverlay.editMode.label")).tooltip(t("groundOverlay.editMode.tooltip")).onChange((value) => {
             this.setEditMode(value);
         });
 
-        this.guiFolder.add(this, 'lockShape').name(t("groundOverlay.lockShape.label")).onChange(() => {
+        this.guiFolder.add(this, 'lockShape').name(t("groundOverlay.lockShape.label")).tooltip(t("groundOverlay.lockShape.tooltip")).onChange(() => {
             if (this.editMode) {
                 if (this.lockShape) {
                     this.removeControlPoints();
@@ -1482,7 +1483,7 @@ export class CNodeGroundOverlay extends CNode3DGroup {
             }
         });
 
-        this.guiFolder.add(this, 'freeTransform').name(t("groundOverlay.freeTransform.label")).onChange(() => {
+        this.guiFolder.add(this, 'freeTransform').name(t("groundOverlay.freeTransform.label")).tooltip(t("groundOverlay.freeTransform.tooltip")).onChange(() => {
             if (this.freeTransform) {
                 this.corners = this.getCornerLLAs();
                 this.rotation = 0;
@@ -1492,7 +1493,7 @@ export class CNodeGroundOverlay extends CNode3DGroup {
             this.updateMesh();
         });
 
-        this.guiFolder.add(this, 'showBorder').name(t("groundOverlay.showBorder.label")).onChange(() => {
+        this.guiFolder.add(this, 'showBorder').name(t("groundOverlay.showBorder.label")).tooltip(t("groundOverlay.showBorder.tooltip")).onChange(() => {
             if (this.showBorder) {
                 this.showHighlightBorder();
             } else {
@@ -1500,39 +1501,40 @@ export class CNodeGroundOverlay extends CNode3DGroup {
             }
         });
 
-        const propsFolder = this.guiFolder.addFolder(t("groundOverlay.properties.label")).close();
+        const propsFolder = this.guiFolder.addFolder(t("groundOverlay.properties.label")).close()
+            .tooltip(t("groundOverlay.properties.tooltip"));
 
-        propsFolder.add(this, 'imageURL').name(t("groundOverlay.imageURL.label")).onChange(() => {
+        propsFolder.add(this, 'imageURL').name(t("groundOverlay.imageURL.label")).tooltip(t("groundOverlay.imageURL.tooltip")).onChange(() => {
             this.loadTexture();
         });
 
-        propsFolder.add({rehost: () => this.showRehostDialog()}, 'rehost').name(t("groundOverlay.rehostLocalImage.label"));
+        propsFolder.add({rehost: () => this.showRehostDialog()}, 'rehost').name(t("groundOverlay.rehostLocalImage.label")).tooltip(t("groundOverlay.rehostLocalImage.tooltip"));
 
-        propsFolder.add(this, 'north', -90, 90, 0.0001).name(t("groundOverlay.north.label")).onChange(() => {
+        propsFolder.add(this, 'north', -90, 90, 0.0001).name(t("groundOverlay.north.label")).tooltip(t("groundOverlay.north.tooltip")).onChange(() => {
             this.updateMesh();
         });
 
-        propsFolder.add(this, 'south', -90, 90, 0.0001).name(t("groundOverlay.south.label")).onChange(() => {
+        propsFolder.add(this, 'south', -90, 90, 0.0001).name(t("groundOverlay.south.label")).tooltip(t("groundOverlay.south.tooltip")).onChange(() => {
             this.updateMesh();
         });
 
-        propsFolder.add(this, 'east', -180, 180, 0.0001).name(t("groundOverlay.east.label")).onChange(() => {
+        propsFolder.add(this, 'east', -180, 180, 0.0001).name(t("groundOverlay.east.label")).tooltip(t("groundOverlay.east.tooltip")).onChange(() => {
             this.updateMesh();
         });
 
-        propsFolder.add(this, 'west', -180, 180, 0.0001).name(t("groundOverlay.west.label")).onChange(() => {
+        propsFolder.add(this, 'west', -180, 180, 0.0001).name(t("groundOverlay.west.label")).tooltip(t("groundOverlay.west.tooltip")).onChange(() => {
             this.updateMesh();
         });
 
-        propsFolder.add(this, 'rotation', -180, 180, 0.1).name(t("groundOverlay.rotation.label")).onChange(() => {
+        propsFolder.add(this, 'rotation', -180, 180, 0.1).name(t("groundOverlay.rotation.label")).tooltip(t("groundOverlay.rotation.tooltip")).onChange(() => {
             this.updateMesh();
         });
 
-        propsFolder.add(this, 'altitude', 0, 50000, 100).name(t("groundOverlay.altitude.label")).onChange(() => {
+        propsFolder.add(this, 'altitude', 0, 50000, 100).name(t("groundOverlay.altitude.label")).tooltip(t("groundOverlay.altitude.tooltip")).onChange(() => {
             this.updateMesh();
         });
 
-        propsFolder.add(this, 'wireframe').name(t("groundOverlay.wireframe.label")).onChange(() => {
+        propsFolder.add(this, 'wireframe').name(t("groundOverlay.wireframe.label")).tooltip(t("groundOverlay.wireframe.tooltip")).onChange(() => {
             if (this.overlayMaterial) {
                 this.overlayMaterial.wireframe = this.wireframe;
                 this.overlayMaterial.needsUpdate = true;
@@ -1540,35 +1542,36 @@ export class CNodeGroundOverlay extends CNode3DGroup {
             setRenderOne(true);
         });
 
-        propsFolder.add(this, 'opacity', 0, 1, 0.01).name(t("groundOverlay.opacity.label")).onChange(() => {
+        propsFolder.add(this, 'opacity', 0, 1, 0.01).name(t("groundOverlay.opacity.label")).tooltip(t("groundOverlay.opacity.tooltip")).onChange(() => {
             if (this.overlayMaterial) {
                 this.overlayMaterial.uniforms.opacity.value = this.opacity;
             }
             setRenderOne(true);
         });
 
-        const cloudFolder = this.guiFolder.addFolder(t("groundOverlay.cloudExtraction.label")).close();
+        const cloudFolder = this.guiFolder.addFolder(t("groundOverlay.cloudExtraction.label")).close()
+            .tooltip(t("groundOverlay.cloudExtraction.tooltip"));
 
-        cloudFolder.add(this, 'extractClouds').name(t("groundOverlay.extractClouds.label")).onChange(() => {
+        cloudFolder.add(this, 'extractClouds').name(t("groundOverlay.extractClouds.label")).tooltip(t("groundOverlay.extractClouds.tooltip")).onChange(() => {
             this.applyCloudExtraction();
         });
 
-        cloudFolder.addColor(this, 'cloudColor').name(t("groundOverlay.cloudColor.label")).onChange(() => {
+        cloudFolder.addColor(this, 'cloudColor').name(t("groundOverlay.cloudColor.label")).tooltip(t("groundOverlay.cloudColor.tooltip")).onChange(() => {
             if (this.extractClouds) this.applyCloudExtraction();
         });
 
-        cloudFolder.add(this, 'cloudFuzziness', 0, 100, 1).name(t("groundOverlay.fuzziness.label")).onChange(() => {
+        cloudFolder.add(this, 'cloudFuzziness', 0, 100, 1).name(t("groundOverlay.fuzziness.label")).tooltip(t("groundOverlay.fuzziness.tooltip")).onChange(() => {
             if (this.extractClouds) this.applyCloudExtraction();
         });
 
-        cloudFolder.add(this, 'cloudFeather', 0, 100, 1).name(t("groundOverlay.feather.label")).onChange(() => {
+        cloudFolder.add(this, 'cloudFeather', 0, 100, 1).name(t("groundOverlay.feather.label")).tooltip(t("groundOverlay.feather.tooltip")).onChange(() => {
             if (this.extractClouds) this.applyCloudExtraction();
         });
 
         // Going to or deleting a hidden overlay still works, so these stay usable.
-        this.guiFolder.add({goto: () => this.gotoOverlay()}, 'goto').name(t("groundOverlay.gotoOverlay.label")).keepLiveWhenFolderOff();
+        this.guiFolder.add({goto: () => this.gotoOverlay()}, 'goto').name(t("groundOverlay.gotoOverlay.label")).tooltip(t("groundOverlay.gotoOverlay.tooltip")).keepLiveWhenFolderOff();
 
-        this.guiFolder.add({remove: () => this.deleteOverlay()}, 'remove').name(t("groundOverlay.deleteOverlay.label")).keepLiveWhenFolderOff();
+        this.guiFolder.add({remove: () => this.deleteOverlay()}, 'remove').name(t("groundOverlay.deleteOverlay.label")).tooltip(t("groundOverlay.deleteOverlay.tooltip")).keepLiveWhenFolderOff();
         
         this.guiFolder.domElement.addEventListener('mouseenter', () => {
             this.showHighlightBorder();

@@ -224,7 +224,8 @@ export function createThermalControls(mount, getSettings, set, {translate = null
     if (mount.addFolder) {
         const fields = [], state = {}, folders = [];
         for (const [group, parameters] of thermalControlGroups()) {
-            const folder = mount.addFolder(translate(`thermal.groups.${group}`)).close();
+            const folder = mount.addFolder(translate(`thermal.groups.${group}`)).close()
+                .tooltip(translate(`thermal.groupTooltips.${group}`));
             folders.push(folder);
             for (const parameter of parameters) {
                 if (hidden(parameter)) continue;

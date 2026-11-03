@@ -152,7 +152,8 @@ export class ObjectFlock {
     // ---- the parameter folder ------------------------------------------------
 
     buildGUI(parentGui, afterName) {
-        this.folder = parentGui.addFolder(t("nodes3dObject.flock.folder")).close();
+        this.folder = parentGui.addFolder(t("nodes3dObject.flock.folder")).close()
+            .tooltip(t("nodes3dObject.flock.folderTooltip"));
         this.folder.moveAfter(afterName);
         this.controllers = {};
 

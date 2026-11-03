@@ -118,7 +118,11 @@ export class CUnits {
         this.changeUnits(this.units);
         if(guiPhysics)
             guiPhysics.add(this, "unitsName", this.selectableUnits).name("Units")
-                .tooltip("Unit system for speed, distance, and altitude displays")
+                .tooltip("Units for distance, altitude and speed in the menus and displays. Values already set are converted.\n"
+                    + "Nautical: nautical miles, feet, knots\n"
+                    + "Imperial/US: miles, feet, mph\n"
+                    + "Metric: kilometers, meters, km/h\n"
+                    + "Feet only: feet, feet, feet per hour")
                 .listen()
                 .perm()
                 .onChange(x => this.changeUnits(x,false));

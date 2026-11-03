@@ -77,12 +77,13 @@ export function showTimelineMenu(event, cursorFrame, marker) {
     if (!menu) return null;
     if (marker) menu.title(t("timelineMarkers.markerTitle", {name: markerDisplayName(marker)}));
 
-    const item = (parent, label, action, enabled = true) => {
+    const item = (parent, label, action, enabled = true, tip = undefined) => {
         const controller = parent.add({run: () => {
             menu.destroy();
             if (enabled) action();
             setRenderOne(true);
         }}, "run").name(label);
+        if (tip) controller.tooltip(tip);
         if (!enabled) controller.disable();
         return controller;
     };
@@ -93,7 +94,7 @@ export function showTimelineMenu(event, cursorFrame, marker) {
         // onFinishChange would lose the edit; instead the whole edit becomes
         // one undo step when the menu closes, however it closes.
         const state = {label: marker.label};
-        menu.add(state, "label").name(t("timelineMarkers.label")).onChange(value => {
+        menu.add(state, "label").name(t("timelineMarkers.label")).tooltip(t("timelineMarkers.tips.label")).onChange(value => {
             TimelineMarkers.rename(marker.frame, value);
             menu.title(t("timelineMarkers.markerTitle", {name: markerDisplayName({...marker, label: value})}));
             changed();
@@ -112,40 +113,44 @@ export function showTimelineMenu(event, cursorFrame, marker) {
             }
             return destroy(...args);
         };
-        item(menu, t("timelineMarkers.goToMarker"), () => goToTimelineFrame(marker.frame), !par.playbackLocked);
+        item(menu, t("timelineMarkers.goToMarker"), () => goToTimelineFrame(marker.frame), !par.playbackLocked,
+            t("timelineMarkers.tips.goToMarker"));
         item(menu, t("timelineMarkers.deleteMarker"),
-            () => editTimelineMarkers(t("timelineMarkers.undoDelete"), () => TimelineMarkers.remove(marker.frame)));
+            () => editTimelineMarkers(t("timelineMarkers.undoDelete"), () => TimelineMarkers.remove(marker.frame)),
+            true, t("timelineMarkers.tips.deleteMarker"));
     }
 
     item(menu, t("timelineMarkers.addAtCurrent", {frame: currentFrame}),
         () => editTimelineMarkers(t("timelineMarkers.undoAdd"), () => TimelineMarkers.add(currentFrame)),
-        !TimelineMarkers.get(currentFrame));
+        !TimelineMarkers.get(currentFrame), t("timelineMarkers.tips.addAtCurrent"));
     if (cursorFrame !== currentFrame && !marker) {
         item(menu, t("timelineMarkers.addHere", {frame: cursorFrame}),
             () => editTimelineMarkers(t("timelineMarkers.undoAdd"), () => TimelineMarkers.add(cursorFrame)),
-            !TimelineMarkers.get(cursorFrame));
+            !TimelineMarkers.get(cursorFrame), t("timelineMarkers.tips.addHere"));
     }
     // The same command as File > Sitch Chapters; it reports when no satellites are loaded.
     if (CustomManager?.addSatelliteMarkers) {
-        item(menu, t("custom.chapters.satelliteMarkers.label"), () => CustomManager.addSatelliteMarkers());
+        item(menu, t("custom.chapters.satelliteMarkers.label"), () => CustomManager.addSatelliteMarkers(),
+            true, t("custom.chapters.satelliteMarkers.tooltip"));
     }
 
     const markers = TimelineMarkers.list();
     if (markers.length) {
-        const folder = menu.addFolder(t("timelineMarkers.goToFolder", {count: markers.length}));
+        const folder = menu.addFolder(t("timelineMarkers.goToFolder", {count: markers.length}))
+            .tooltip(t("timelineMarkers.tips.goToFolder"));
         for (const entry of markers) {
             item(folder, t("timelineMarkers.goToEntry", {name: markerDisplayName(entry), frame: entry.frame}),
-                () => goToTimelineFrame(entry.frame), !par.playbackLocked);
+                () => goToTimelineFrame(entry.frame), !par.playbackLocked, t("timelineMarkers.tips.goToEntry"));
         }
         if (markers.length > 8) folder.close();
         item(menu, t("timelineMarkers.deleteAll"), async () => {
             const ok = await showConfirm(t("timelineMarkers.deleteAllConfirm", {count: markers.length}),
                 {title: t("timelineMarkers.deleteAllTitle")});
             if (ok) editTimelineMarkers(t("timelineMarkers.undoDeleteAll"), () => TimelineMarkers.clear());
-        });
+        }, true, t("timelineMarkers.tips.deleteAll"));
     }
 
-    item(menu, t("timelineMarkers.resetInOut"), resetInOut, !inOutIsReset());
+    item(menu, t("timelineMarkers.resetInOut"), resetInOut, !inOutIsReset(), t("timelineMarkers.tips.resetInOut"));
 
     menu.open();
     // createStandaloneMenu sized the empty menu; the slider is at the bottom

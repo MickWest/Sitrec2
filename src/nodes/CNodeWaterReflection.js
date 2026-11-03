@@ -293,6 +293,8 @@ export class CNodeWaterReflection extends CNode {
         // headless contexts where the menu bar does not exist.
         this.gui = guiMenus.effects ? guiMenus.effects.addFolder("Water Reflection") : undefined;
         if (this.gui) {
+            this.gui.tooltip("Reflections in water in the look view: the sky, and with some methods the scenery and a wind-driven sea.\n"
+                + "The checkbox in the title turns it on.");
             const changed = () => {
                 this._captureKey = null; // force a fresh capture
                 this._occlusionKey = null;
@@ -308,9 +310,9 @@ export class CNodeWaterReflection extends CNode {
                 if (this.vectorWaterMask || this.combineWithOSM) reloadTerrain();
                 changed();
             })
-                .tooltip("Reflect the night sky in water. Water is detected by the color of the map texture, "
-                    + "so it needs a map source with a flat water fill (OSM) — or Combine Terrain with OSM "
-                    + "below. Look view only.")
+                .tooltip("Reflect the sky in water, and with Method = Planar Mirror or Ocean the scenery too. Look view only.\n"
+                    + "Water is found by the color of the map texture, so the map source needs a flat water fill (OSM). "
+                    + "Vector Water Mask or Combine Terrain with OSM lets it work on other sources.")
                 .asFolderToggle();
             this.gui.add(this, "mode", {
                 "Sky Cube": "cube",
@@ -319,11 +321,13 @@ export class CNodeWaterReflection extends CNode {
             }).name("Method").listen().onChange(() => {
                 this.applyMode();
                 changed();
-            }).tooltip("Sky Cube reflects only the celestial sphere — stars, Moon and Sun — captured into a "
-                + "cube map. Planar Mirror finds the flat surface of the water and re-renders the whole world "
-                + "from a camera mirrored through it, so hills, buildings and objects appear in the water too. "
-                + "The mirror costs a second full render of the scene, and treats the lake as flat, which it "
-                + "is not over more than a few kilometres.");
+            }).tooltip("How the reflection is made.\n"
+                + "Sky Cube: reflects only the sky (stars, Moon and Sun) from a cube map. The cheapest.\n"
+                + "Planar Mirror: finds the flat water surface and renders the whole scene again from a camera "
+                + "mirrored through it, so hills, buildings and objects show in the water. It costs a second full "
+                + "render and treats the water as flat.\n"
+                + "Ocean (spectral): shades the water as a wind-driven sea, with sun glitter and whitecaps. It uses "
+                + "the mirror render too. Its settings are in the Ocean folder.");
             // Same reload path as the OSM combine below: every tile's material
             // is keyed on whether it carries a mask, so the terrain has to be
             // rebuilt for the toggle to reach tiles already in the cache.
@@ -370,13 +374,13 @@ export class CNodeWaterReflection extends CNode {
                 this.gui.add(this, "tileWaterBand", 0.5, 30, 0.5).name("3D Tile Water Band (m)").listen()
                     .onChange(changed)
                     .tooltip("How far ABOVE the sea surface a 3D tile fragment may sit and still count as "
-                        + "water. Google's sea is photogrammetry and wanders by metres, so this cannot be "
+                        + "water. Google's sea is photogrammetry and wanders by meters, so this cannot be "
                         + "zero; lower it if a pier deck or a moored boat starts reflecting, raise it if "
                         + "patches of sea stay unshaded. The band reaches four times as far downwards, "
                         + "where a dipping mesh is the only thing it can meet."),
                 this.gui.add(this, "tileWaterSpan", 2000, 40000, 500).name("3D Tile Mask Span (m)").listen()
                     .onChange(changed)
-                    .tooltip("Width of ground the water mask covers, centred on the water being looked at. "
+                    .tooltip("Width of ground the water mask covers, centered on the water being looked at. "
                         + "Wider reaches further out to sea; the mask is a fixed 2048 texels either way, so "
                         + "it also coarsens the shoreline — 12 km gives 5.9 m per texel."),
             ];
@@ -393,7 +397,7 @@ export class CNodeWaterReflection extends CNode {
 
             this.combineController = this.gui.add(this, "combineWithOSM")
                 .name("Combine Terrain with OSM").listen()
-                .tooltip("Also load the matching Open Streetmap tile for each terrain tile and copy its water "
+                .tooltip("Also load the matching OpenStreetMap (OSM) tile for each terrain tile and copy its water "
                     + "areas into the current imagery, so water can be detected on satellite sources. Costs one "
                     + "extra tile fetch per tile and reloads the terrain when changed. Only available for "
                     + "sources that share OSM's tile layout. Only applies while Water Reflection is on.")
@@ -424,11 +428,14 @@ export class CNodeWaterReflection extends CNode {
                     + "At their true size most stars are sub-pixel in the cube and disappear from the reflection. "
                     + "Brightness rises with roughly the square of this, so small changes go a long way."));
             this.cubeOnly.push(addValue("moonBoost", 1, 3, 0.01, "Moon Boost")
-                .tooltip("Same idea for the Moon, so the moonglade stays brighter than the reflected stars."));
+                .tooltip("How much bigger the Moon is drawn into the reflection cube map than it appears on screen. "
+                    + "It keeps the moonglade brighter than the reflected stars. Sky Cube method only."));
             addValue("waveStrength", 0, 0.2, 0.001, "Wave Strength")
-                .tooltip("How much ripples tilt the water surface. 0 gives a perfect mirror.");
+                .tooltip("How much ripples tilt the water surface. 0 gives a perfect mirror.\n"
+                    + "Not used by Method = Ocean (spectral), which makes its own waves from Wind Speed.");
             addValue("waveLength", 1, 200, 0.5, "Wave Length (m)")
-                .tooltip("Distance between wave crests.");
+                .tooltip("Distance between ripple crests, in meters.\n"
+                    + "Not used by Method = Ocean (spectral), which makes its own waves from Wind Speed.");
             addValue("waveSpeed", 0, 5, 0.01, "Wave Speed")
                 .tooltip("How fast ripples move. 0 freezes them (and stops forcing re-renders while paused).");
             // A dropdown rather than a slider: cube sizes want to be powers of
@@ -457,14 +464,14 @@ export class CNodeWaterReflection extends CNode {
             // Ocean settings, in their own folder. Every one of these is a
             // physical quantity that feeds a published model, so the panel reads
             // like a sea state rather than like a shader.
-            this.oceanGui = this.gui.addFolder("Ocean");
+            this.oceanGui = this.gui.addFolder("Ocean")
+                .tooltip("Sea-state settings for Method = Ocean (spectral). Shown only with that method.");
             this.oceanGui.add(this, "windSpeed", 0.5, 20, 0.1).name("Wind Speed (m/s)")
                 .listen().onChange(changed)
-                .tooltip("Wind at 10 m, which sets the whole sea state. It drives the Elfouhaily wave "
-                    + "spectrum, and the slope variance that comes out of it reproduces the sun-glitter "
-                    + "measurements Cox and Munk made in 1954 — so this is a physical input, not a "
-                    + "roughness slider. 2 is glassy, 5 a light breeze, 10 a fresh wind with the first "
-                    + "whitecaps, 15 a near gale.");
+                .tooltip("Wind speed 10 m above the water, in m/s. It sets the whole sea state through the "
+                    + "Elfouhaily wave spectrum, whose slope variance matches the sun-glitter measurements "
+                    + "of Cox and Munk (1954). It is a physical input, not a roughness slider.\n"
+                    + "2 = glassy, 5 = light breeze, 10 = fresh wind with the first whitecaps, 15 = near gale.");
             this.oceanGui.add(this, "windDirection", 0, 360, 1).name("Wind From (deg)")
                 .listen().onChange(changed)
                 .tooltip("Compass direction the wind blows FROM. A real sea is measurably steeper along "
@@ -481,7 +488,7 @@ export class CNodeWaterReflection extends CNode {
             }).name("Water Type").listen().onChange(changed)
                 .tooltip("What the water body itself does to light that enters it. The color of the sea "
                     + "is not a surface property — it is light that went in and came back out, so without "
-                    + "this the water is grey glass however good the reflection is.");
+                    + "this the water is gray glass however good the reflection is.");
             this.oceanGui.add(this, "waveDetail", 4, 16, 1).name("Wave Detail")
                 .listen().onChange(changed)
                 .tooltip("How many wavenumber bands of the spectrum are drawn as actual travelling "
@@ -490,11 +497,9 @@ export class CNodeWaterReflection extends CNode {
                     + "statistics rather than removing anything — the sea state stays the same.");
             this.oceanGui.add(this, "gustiness", 0, 1, 0.01).name("Gustiness")
                 .listen().onChange(changed)
-                .tooltip("How patchy the wind is. Gusts and Langmuir circulation break a real sea "
-                    + "into streaks of rougher and smoother water hundreds of metres across, running "
-                    + "along the wind. It is the most conspicuous large-scale structure on a real sea "
-                    + "seen from altitude. The average roughness is unchanged, so this redistributes "
-                    + "the sea state rather than adding to it.");
+                .tooltip("How patchy the wind is. Gusts break the sea into streaks of rougher and smoother "
+                    + "water, hundreds of meters across, running along the wind. The average roughness is "
+                    + "unchanged, so this redistributes the sea state rather than adding to it.");
             this.oceanGui.add(this, "whitecaps").name("Whitecaps").listen().onChange(changed)
                 .tooltip("Breaking-wave foam. Coverage follows wind speed steeply, so there is essentially "
                     + "none below 7 m/s and a few percent by 15.");
@@ -505,9 +510,12 @@ export class CNodeWaterReflection extends CNode {
                 "Unresolved roughness": "roughness",
                 "Reflection source": "blend",
             }).name("Debug View").listen().onChange(changed)
-                .tooltip("False-color one of the intermediate quantities into the water. A surface "
-                    + "whose job is to look smooth is very hard to debug by eye — more than one real "
-                    + "defect here stayed invisible until the quantity behind it was put on screen.");
+                .tooltip("Replace the water color with one internal value, for debugging.\n"
+                    + "Off: normal shading.\n"
+                    + "Gustiness: the pattern of wind gusts.\n"
+                    + "Resolved waves: how far the drawn waves tilt the surface.\n"
+                    + "Unresolved roughness: wave slope too small to draw (red = along the wind, green = across it).\n"
+                    + "Reflection source: red = from the mirror render, green = from the modeled sky.");
             this.oceanGui.add(this, "glitterExposure", -14, 4, 0.25).name("Glitter Exposure")
                 .listen().onChange(changed)
                 .tooltip("Exposure of the glitter path, in stops. The specular image of the Sun is "
@@ -519,7 +527,9 @@ export class CNodeWaterReflection extends CNode {
             // Planar-mirror-only settings, in their own folder so the main
             // panel does not grow a row of controls that do nothing in the
             // default mode.
-            this.mirrorGui = this.gui.addFolder("Planar Mirror");
+            this.mirrorGui = this.gui.addFolder("Planar Mirror")
+                .tooltip("Settings for the mirror render of the scenery. Used by Method = Planar Mirror and "
+                    + "Ocean (spectral); hidden for Sky Cube.");
             const addMirror = (property, start, end, step, name) =>
                 this.mirrorGui.add(this, property, start, end, step).name(name).listen().onChange(changed);
 
@@ -550,18 +560,18 @@ export class CNodeWaterReflection extends CNode {
             this.mirrorGui.add(this, "mirrorHideSkirts").name("Hide Waterline Skirts").listen().onChange(changed)
                 .tooltip("Hide the downward skirts terrain tiles carry to cover the cracks between detail "
                     + "levels, for tiles at or near the waterline. A skirt is a tenth of its tile wide, so a "
-                    + "distant tile hangs a wall over a kilometre deep — invisible looking down, but at eye "
+                    + "distant tile hangs a wall over a kilometer deep — invisible looking down, but at eye "
                     + "level over water they stand across the view and block the surface being reflected. "
                     + "Terrain well above the water keeps its skirts, so hillsides keep their crack covers. "
                     + "Turn off to see them.");
             addMirror("mirrorMaxTile", 0, 20000, 100, "Max Tile Size (m)")
                 .tooltip("Fade the reflection out where the terrain tile is wider than this. Water is found by "
                     + "the color of the map texture, and distant water is drawn by huge low-detail tiles that "
-                    + "still carry only a 512-pixel texture — one texel covers kilometres, the flat water fill "
+                    + "still carry only a 512-pixel texture — one texel covers kilometers, the flat water fill "
                     + "gets averaged with the coastline, and the reflection breaks into blotches. This makes it "
                     + "stop cleanly instead. 0 turns the fade off, to see what it was hiding.");
             addMirror("mirrorLevel", 0, 9000, 0.1, "Water Level (m HAE)")
-                .tooltip("Manual water surface height, in metres above the WGS84 ellipsoid — NOT sea level. "
+                .tooltip("Manual water surface height, in meters above the WGS84 ellipsoid — NOT sea level. "
                     + "Ignored while Auto Water Level is on, which reports the height it found here.");
 
             this.applyMode();

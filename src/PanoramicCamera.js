@@ -61,9 +61,11 @@ export function setupPanoramicCamera() {
     const parent = guiMenus.cameraFOV;
     if (!parent) return;
     parent.folders.find(f => f._title === "Panoramic Camera")?.destroy();
-    const folder = parent.addFolder("Panoramic Camera").close();
+    const folder = parent.addFolder("Panoramic Camera").close()
+        .tooltip("Render the look view as a panorama with the same degrees per pixel across and down, up to 360° wide.\n" +
+            "Turn it on with the checkbox in the folder title. Turning it on turns off Fisheye.");
     folder.add(panoramic, "enabled").listen().name("Panoramic Camera").onChange(applyPanoramicState)
-        .tooltip("Render a swept panorama with equal horizontal and vertical angular scale. VFOV follows the view's shape, with letterboxing at 180°. The look-view scroll wheel adjusts HFOV.")
+        .tooltip("Render a swept panorama with equal horizontal and vertical angular scale. VFOV follows the view's shape, with letterboxing at 180°. The look-view scroll wheel adjusts HFOV. Turning this on turns off Fisheye Lens.")
         .asFolderToggle();
     folder.add(panoramic, "hfov", 1, 360, 0.1).listen().name("Panorama HFOV °").onChange(applyPanoramicState)
         .tooltip("Horizontal angular span of the panorama. 360° wraps all the way around the camera.");

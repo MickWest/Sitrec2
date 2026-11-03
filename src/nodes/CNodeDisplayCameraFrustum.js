@@ -272,6 +272,7 @@ export class CNodeDisplayCameraFrustum extends CNode3DGroup {
             end: _end,
             step: _step,
             desc: "Video Distance",
+            tooltip: t("cameraFrustum.videoDistance.tooltip"),
             unitType: "big",
         }, gui);
 

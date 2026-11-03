@@ -77,6 +77,15 @@ export const VIEW_UIBAR_FOLDERS = {
     masking: "Masking",
 };
 
+// Tooltips for those sub-folders. Each row inside keeps the tooltip of the control it mirrors.
+const VIEW_UIBAR_FOLDER_TIPS = {
+    nightSky: "Night sky controls for this view: satellites, star and planet labels, and sky grids.",
+    videoOverlay: "The video drawn over this view: its opacity, the color key that lets chosen colors show through it, "
+        + "and the video projected on the ground.",
+    adjustments: "Brightness and contrast for this video, and the switch that turns all the video adjustments on or off.",
+    masking: "Mask out parts of this video: turn the mask on, show it, and edit it.",
+};
+
 /**
  * The registry: for each view, the ordered contents of its header menu.
  *
@@ -584,6 +593,7 @@ function folderFor(menu, folders, id, index) {
     let folder = folders.get(id);
     if (!folder) {
         folder = menu.addFolder(t(`viewMenus.folders.${id}`, {defaultValue: VIEW_UIBAR_FOLDERS[id] ?? id}));
+        if (VIEW_UIBAR_FOLDER_TIPS[id]) folder.tooltip(VIEW_UIBAR_FOLDER_TIPS[id]);
         folder.hide();
         placeInOrder(folder.domElement, index);
         folders.set(id, folder);

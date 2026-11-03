@@ -80,7 +80,7 @@ export class CNodeDisplayATFLIR extends CNode3DGroup {
             PodFrame.rotateX(radians(jetPitchFromFrame()))
 
             setPointer(gltf.scene.getObjectByName('Pointer'))
-            showHider(Pointer, "Physical Pointer", false).name(t("showHiders.physicalPointer.label"))
+            showHider(Pointer, "Physical Pointer", false).name(t("showHiders.physicalPointer.label")).tooltip(t("showHiders.physicalPointer.tooltip"))
 
             // make the pod back materials unique, so we can wireframe them later
             PODBack.traverse(child => {
@@ -111,7 +111,7 @@ export class CNodeDisplayATFLIR extends CNode3DGroup {
 
             PodFrame.add(gltf2.scene)
     //        FA18.visible = false
-            showHider(FA18, "[J]et", false, 'j').name(t("showHiders.jet.label"))
+            showHider(FA18, "[J]et", false, 'j').name(t("showHiders.jet.label")).tooltip(t("showHiders.jet.tooltip"))
             propagateLayerMaskObject(PodFrame)
 
         })
@@ -125,22 +125,22 @@ export class CNodeDisplayATFLIR extends CNode3DGroup {
         const divisions = 30;
         const gridHelper = new GridHelper(size, divisions, 0xc0c000, 0xc0c000);
         LocalFrame.add(gridHelper);
-        showHider(gridHelper, "[H]orizon Grid", false, 'h').name(t("showHiders.horizonGrid.label"))
+        showHider(gridHelper, "[H]orizon Grid", false, 'h').name(t("showHiders.horizonGrid.label")).tooltip(t("showHiders.horizonGrid.tooltip"))
 
         const gridHelper2 = new GridHelper(size, divisions, 0x00ffff, 0x00ffff);
         PodFrame.add(gridHelper2);
-        showHider(gridHelper2, "[W]ing Plane Grid", false, 'w').name(t("showHiders.wingPlaneGrid.label"))
+        showHider(gridHelper2, "[W]ing Plane Grid", false, 'w').name(t("showHiders.wingPlaneGrid.label")).tooltip(t("showHiders.wingPlaneGrid.tooltip"))
 
 
         this.SphericalGrid = new SphericalGridHelper(vizRadius)
         // Spherical coordinates grid, in frame or refence of the pod
         PodFrame.add(this.SphericalGrid)
-        showHider(this.SphericalGrid, "[S]pherical Boresight Grid", true, 's').name(t("showHiders.sphericalBoresightGrid.label"))
+        showHider(this.SphericalGrid, "[S]pherical Boresight Grid", true, 's').name(t("showHiders.sphericalBoresightGrid.label")).tooltip(t("showHiders.sphericalBoresightGrid.tooltip"))
 
         this.AzElGrid = new AzElHelper(vizRadius)
         // Az/El grid is in the local coordinate system (i.e. ENU, with origin at the jet/ATFLIR
         LocalFrame.add(this.AzElGrid)
-        showHider(this.AzElGrid, "[A]zimuth/Elevation Grid", false, 'a').name(t("showHiders.azimuthElevationGrid.label"))
+        showHider(this.AzElGrid, "[A]zimuth/Elevation Grid", false, 'a').name(t("showHiders.azimuthElevationGrid.label")).tooltip(t("showHiders.azimuthElevationGrid.tooltip"))
         // helper object camera frustum
 
         if (Sit.showATFLIR || Sit.name.startsWith("gimbal")) {
@@ -151,7 +151,7 @@ export class CNodeDisplayATFLIR extends CNode3DGroup {
                 fov: ViewMan.list.podsEyeView.data.camera.fov / 2,
                 color: "cyan",
             })
-            showHider(this.cameraFrustum.group, "F[R]ustum of camera", true, 'r').name(t("showHiders.frustumOfCamera.label"))
+            showHider(this.cameraFrustum.group, "F[R]ustum of camera", true, 'r').name(t("showHiders.frustumOfCamera.label")).tooltip(t("showHiders.frustumOfCamera.tooltip"))
         }
 
         this.propagateLayerMask();
@@ -181,7 +181,7 @@ export class CNodeDisplayATFLIR extends CNode3DGroup {
         this.TRACK_line.scale.set(1, 1, 1);
         this.TRACK_line.layers.mask = LAYER.MASK_HELPERS;
         LocalFrame.add(this.TRACK_line);
-        showHider(this.TRACK_line, "[T]rack line", true, 't').name(t("showHiders.trackLine.label"));
+        showHider(this.TRACK_line, "[T]rack line", true, 't').name(t("showHiders.trackLine.label")).tooltip(t("showHiders.trackLine.tooltip"));
 
     }
 

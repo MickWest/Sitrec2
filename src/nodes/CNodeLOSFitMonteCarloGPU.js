@@ -30,11 +30,14 @@ export class CNodeLOSFitMonteCarloGPU extends CNodeTrack {
         this.guiDisplay.status = text;
         if (!this.visible || !guiMenus.traverse) return;
         if (!this.guiFolder) {
-            this.guiFolder = guiMenus.traverse.addFolder(monteCarloName(this.preset)).open();
+            this.guiFolder = guiMenus.traverse.addFolder(monteCarloName(this.preset)).open()
+                .tooltip("Status of this GPU Monte Carlo fit. It needs WebGPU and runs in the background.");
             this.guiControllers = [
                 this.guiFolder.add(this.guiDisplay, "status").name("Status").disable(),
-                this.guiFolder.add(this.guiDisplay, "error").name("Mean error (deg)").disable(),
-                this.guiFolder.add(this.guiDisplay, "duration").name("Fit time (ms)").disable(),
+                this.guiFolder.add(this.guiDisplay, "error").name("Mean error (deg)").disable()
+                    .tooltip("Mean angle, in degrees, between the best fitted path and the LOS in the A-B range."),
+                this.guiFolder.add(this.guiDisplay, "duration").name("Fit time (ms)").disable()
+                    .tooltip("Time that the last fit took, in milliseconds."),
             ];
         }
         for (const control of this.guiControllers) control.updateDisplay();

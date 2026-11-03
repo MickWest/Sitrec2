@@ -802,7 +802,9 @@ export function setupCameraMotionMenu() {
     if (folder) return;            // idempotent
     if (!NodeMan.exists("video")) return;
 
-    folder = guiMenus.video.addFolder("Camera Motion (Background)").close();
+    folder = guiMenus.video.addFolder("Camera Motion (Background)").close()
+        .tooltip("Work out how the camera moved from the motion of the background in the video, and build a flight path from it.\n"
+            + "Made for a camera that looks down at the ground or at clouds.");
     addVideoAnalysisResolutionMenu(folder, () => getVideo()?.videoData);
 
     const params = {
@@ -833,7 +835,10 @@ export function setupCameraMotionMenu() {
         } else {
             FlowViz.show(false);
         }
-    });
+    }).tooltip("Draw the measured motion arrows over the video. Green: features that move with the background. "
+        + "Red: features that do not, for example a moving object.\n"
+        + "The arrows are drawn longer than the real motion so that you can see them. "
+        + "If there is no analysis yet, this runs Analyze & Build Path first.");
 
     // Horizontal scale. Auto: derive m/px from FOV + camera altitude + the background altitude
     // below. Off: use the manual m/px slider. Either way changes only need a rebuild, not re-analyze.
@@ -842,9 +847,16 @@ export function setupCameraMotionMenu() {
         if (data) buildPathNodes(data, { ...DEFAULTS, ...params });
         setRenderOne(true);
     };
-    folder.add(params, "autoScale").name("Auto scale (FOV/alt)").listen().onChange(rebuildIfData);
-    folder.add(params, "backgroundAlt", 0, 12000, 50).name("Background alt (m)").listen().onChange(rebuildIfData);
-    folder.add(params, "metersPerPixel", 1, 100, 0.5).name("Manual m / pixel").listen().onChange(() => { if (!params.autoScale) rebuildIfData(); });
+    folder.add(params, "autoScale").name("Auto scale (FOV/alt)").listen().onChange(rebuildIfData)
+        .tooltip("Work out the meters per video pixel from the look camera's vertical FOV (field of view), "
+            + "the camera altitude, Background alt and the camera's look-down angle.\n"
+            + "Off, or when the camera is not above the background and looking down: use Manual m / pixel.");
+    folder.add(params, "backgroundAlt", 0, 12000, 50).name("Background alt (m)").listen().onChange(rebuildIfData)
+        .tooltip("Altitude, in meters above the ellipsoid, of the surface that moves in the video: the ground, or the cloud tops. "
+            + "The video alone cannot give this distance.\nUsed only when Auto scale is on.");
+    folder.add(params, "metersPerPixel", 1, 100, 0.5).name("Manual m / pixel").listen().onChange(() => { if (!params.autoScale) rebuildIfData(); })
+        .tooltip("Ground distance, in meters, that one video pixel covers. It sets the size of the path.\n"
+            + "Used only when Auto scale is off, or when Auto scale cannot work out a value.");
     // Step 1 so EVEN windows are selectable (they fully cancel a 2-frame source
     // cadence; odd windows only attenuate it). Re-smooths the ORIGINAL (raw)
     // per-frame motion at the new width and flags the camera-motion track to
@@ -859,11 +871,22 @@ export function setupCameraMotionMenu() {
             track.setMotion(Globals.cameraMotionData);   // re-smoothed data -> rebuild array (imageRot)
             track.recalculateCascade();                  // flag downstream consumers + render
         }
-    });
-    folder.add(params, "signE", { "East +": 1, "East -": -1 }).name("dx -> East sign");
-    folder.add(params, "signN", { "North +": 1, "North -": -1 }).name("dy -> North sign");
-    folder.add(params, "swapEN").name("Swap dx/dy");
-    folder.add(params, "climbGain", 0, 3, 0.1).name("Altitude from zoom");
+    }).tooltip("Width, in frames, of the moving average applied to the per-frame motion. "
+        + "An even width fully cancels a 2-frame pattern, such as from interlaced video.\n"
+        + "It applies at once after an analysis in this session. After a page reload, run Analyze & Build Path again to change it.");
+    folder.add(params, "signE", { "East +": 1, "East -": -1 }).name("dx -> East sign")
+        .tooltip("Sign that turns the background's left-right image motion (dx) into East-West camera motion. "
+            + "Change it if the path goes the wrong way East-West.\nPress Rebuild Path to apply it.");
+    folder.add(params, "signN", { "North +": 1, "North -": -1 }).name("dy -> North sign")
+        .tooltip("Sign that turns the background's up-down image motion (dy) into North-South camera motion. "
+            + "Change it if the path goes the wrong way North-South.\nPress Rebuild Path to apply it.");
+    folder.add(params, "swapEN").name("Swap dx/dy")
+        .tooltip("Swap the two image axes: left-right motion then drives North-South, and up-down motion drives East-West.\n"
+            + "Press Rebuild Path to apply it.");
+    folder.add(params, "climbGain", 0, 3, 0.1).name("Altitude from zoom")
+        .tooltip("How much a change in the background's size changes the camera altitude. "
+            + "0 = constant altitude. Above 0, a background that shrinks in the frame makes the camera climb.\n"
+            + "Press Rebuild Path to apply it.");
 
     // Toggle: make the look camera fly the recovered path (vs the normal camera source).
     folder.add(params, "driveLookCamera").name("Drive look camera").listen().onChange((v) => {
@@ -880,7 +903,8 @@ export function setupCameraMotionMenu() {
             sw.selectOption(sw.inputs[prev] !== undefined ? prev : HOOK_FALLBACK);
         }
         setRenderOne(true);
-    });
+    }).tooltip("Make the look camera fly the recovered path: selects Camera Motion Path in Camera > Location > Position. "
+        + "Off: puts back the Position choice you had before.\nNeeds a path from Analyze & Build Path.");
 
     // Drive the look camera's ORIENTATION from the recovered rotation.
     //   Recovered roll: keep the real aim + add measured roll.
@@ -890,17 +914,22 @@ export function setupCameraMotionMenu() {
             const oc = NodeMan.get("cameraMotionOrientationController", false);
             if (oc) { oc.mode = v; oc.enabled = v !== "off"; }
             setRenderOne(true);
-        });
+        })
+        .tooltip("How the recovered motion turns the look camera. It acts after the camera's other heading settings.\n"
+            + "Off: no change.\n"
+            + "Recovered roll: keep the camera's aim, and add the roll measured from the background's rotation.\n"
+            + "Fixed depression: keep the heading, look down at Depression° (fixed), and add the measured roll.");
     folder.add(params, "depression", 0, 90, 0.5).name("Depression° (fixed)").listen().onChange((v) => {
         const oc = NodeMan.get("cameraMotionOrientationController", false);
         if (oc) oc.depression = v;
         setRenderOne(true);
-    });
+    }).tooltip("Look-down angle below the horizon, in degrees, for Look orientation = Fixed depression. 90 = straight down.\n"
+        + "It starts at the look-down angle of the camera's Manual heading, or at 25 if there is none.");
     folder.add(params, "rollSign", { "Roll: normal": 1, "Roll: flipped": -1 }).name("Roll direction").listen().onChange((v) => {
         const oc = NodeMan.get("cameraMotionOrientationController", false);
         if (oc) oc.rollSign = v;
         setRenderOne(true);
-    });
+    }).tooltip("Direction of the roll that Look orientation adds. Choose Roll: flipped if the camera rolls the wrong way.");
 
     const actions = {
         analyze: async () => {
@@ -920,7 +949,11 @@ export function setupCameraMotionMenu() {
             }
         },
     };
-    analyzeItem = folder.add(actions, "analyze").name("Analyze & Build Path");
+    analyzeItem = folder.add(actions, "analyze").name("Analyze & Build Path")
+        .tooltip("Track background features through every frame of the video, fit the camera motion from them, "
+            + "and draw the recovered path in orange from the camera's start position. Slow.\n"
+            + "Areas that stay dark (for example redaction blocks) and a box at the frame center (the reticle) are ignored.\n"
+            + "Adds Camera Motion Path as a choice in Camera > Location > Position. The motion is saved in this browser for this video.");
 
     // Motion data is per-frame; reject data whose length doesn't match the current video so a
     // path from a previous sitch / a re-encoded video can't be anchored to the wrong frames.
@@ -943,8 +976,12 @@ export function setupCameraMotionMenu() {
             setRenderOne(true);
         },
     };
-    folder.add(rebuild, "rebuild").name("Rebuild Path (no re-analyze)");
-    folder.add(rebuild, "clear").name("Clear Path");
+    folder.add(rebuild, "rebuild").name("Rebuild Path (no re-analyze)")
+        .tooltip("Build the path again from the stored motion, with the current scale, sign, swap and altitude settings. "
+            + "It does not read the video again.\nDoes nothing when there is no stored motion for this video.");
+    folder.add(rebuild, "clear").name("Clear Path")
+        .tooltip("Remove the recovered path and its Camera Motion Path choice. "
+            + "The stored motion stays, so Rebuild Path can bring the path back.");
 
     // This menu is created once per session (guarded by the module-level `folder`,
     // which is never reset). Its parent guiMenus.video is a permanent shell, but

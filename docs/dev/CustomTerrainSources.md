@@ -281,14 +281,14 @@ Elevation tiles must hold height [above mean sea level (MSL)](../GIS.md#three-ki
 Sitrec adds the [geoid](../Glossary.md) offset to every tile, in all three formats, to give height
 above the WGS84 ellipsoid (HAE). Tiles that already hold ellipsoidal heights are corrected twice.
 
-Keep **Terrain → Terrain Tweaks → elevationScale** at `1` for measurements. Raising it is a
+Keep **Terrain → Terrain Tweaks → Elevation Scale** at `1` for measurements. Raising it is a
 debugging aid: every ground query also uses the scaled value, and after you set it back to
 `1`, press **Terrain → Refresh**. It exaggerates the terrain and currently scales the geoid
 correction too, so geometry is no longer geodetically accurate.
 
-![The same mountains twice, with the Terrain Tweaks folder open: elevationScale 1 above, and elevationScale 10 below, where the peaks are drawn ten times too tall](../docimages/terrain/elevationScale-demo.jpg)
+![The same mountains twice, with the Terrain Tweaks folder open: Elevation Scale 1 above, and Elevation Scale 10 below, where the peaks are drawn ten times too tall](../docimages/terrain/elevationScale-demo.jpg)
 
-*The same view with **elevationScale** at `1` (top) and `10` (bottom). At `10`, the terrain is
+*The same view with **Elevation Scale** at `1` (top) and `10` (bottom). At `10`, the terrain is
 ten times too tall. [Imagery powered by Esri](https://www.esri.com/en-us/legal/terms/data-attributions).*
 
 ## Local terrain mirror
@@ -388,7 +388,7 @@ the width of ground that the polygon mask covers.
    Refresh does not clear the browser's HTTP cache. GeoTIFF elevation tiles also stay in
    browser storage for 7 days. After a change on the server, clear the site data before you
    test again.
-5. For elevation, keep **Terrain → Terrain Tweaks → elevationScale** at `1` while comparing
+5. For elevation, keep **Terrain → Terrain Tweaks → Elevation Scale** at `1` while comparing
    known heights and tile seams.
 6. For water, test the color mask, vector mask, and 3D-tile path separately. A missing
    vector source should disable **Vector Water Mask** and **Water on 3D Tiles** rather than

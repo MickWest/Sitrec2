@@ -663,7 +663,8 @@ class GPUMemoryMonitor {
         }
         
         this.guiDebugMenu = guiMenus.debug;
-        this.guiFolder = guiMenus.debug.addFolder('GPU Memory Monitor').perm();
+        this.guiFolder = guiMenus.debug.addFolder('GPU Memory Monitor').perm()
+            .tooltip(t("gpuMonitor.tips.folder"));
 
         // Add display object for stats
         this.displayControls = {
@@ -690,20 +691,33 @@ class GPUMemoryMonitor {
         };
 
         this.guiFolder.add(this.displayControls, 'enabled').name(t("gpuMonitor.enabled"))
+            .tooltip(t("gpuMonitor.tips.enabled"))
             .onChange(() => this.updateGUI(true)).perm().asFolderToggle();
-        this.guiFolder.add(this.displayControls, 'total').name(t("gpuMonitor.total")).listen().disable().perm();
-        this.guiFolder.add(this.displayControls, 'geometries').name(t("gpuMonitor.geometries")).listen().disable().perm();
-        this.guiFolder.add(this.displayControls, 'textures').name(t("gpuMonitor.textures")).listen().disable().perm();
-        this.guiFolder.add(this.displayControls, 'peak').name(t("gpuMonitor.peak")).listen().disable().perm();
-        this.guiFolder.add(this.displayControls, 'average').name(t("gpuMonitor.average")).listen().disable().perm();
-        this.guiFolder.add(this.displayControls, 'tiles').name('Active tiles').listen().disable().perm();
-        this.guiFolder.add(this.displayControls, 'matCache').name('Material cache').listen().disable().perm();
-        this.guiFolder.add(this.displayControls, 'mvGL').name('mainView (tex/geo/prog)').listen().disable().perm();
-        this.guiFolder.add(this.displayControls, 'lvGL').name('lookView (tex/geo/prog)').listen().disable().perm();
+        this.guiFolder.add(this.displayControls, 'total').name(t("gpuMonitor.total")).listen().disable().perm()
+            .tooltip(t("gpuMonitor.tips.total"));
+        this.guiFolder.add(this.displayControls, 'geometries').name(t("gpuMonitor.geometries")).listen().disable().perm()
+            .tooltip(t("gpuMonitor.tips.geometries"));
+        this.guiFolder.add(this.displayControls, 'textures').name(t("gpuMonitor.textures")).listen().disable().perm()
+            .tooltip(t("gpuMonitor.tips.textures"));
+        this.guiFolder.add(this.displayControls, 'peak').name(t("gpuMonitor.peak")).listen().disable().perm()
+            .tooltip(t("gpuMonitor.tips.peak"));
+        this.guiFolder.add(this.displayControls, 'average').name(t("gpuMonitor.average")).listen().disable().perm()
+            .tooltip(t("gpuMonitor.tips.average"));
+        this.guiFolder.add(this.displayControls, 'tiles').name('Active tiles').listen().disable().perm()
+            .tooltip(t("gpuMonitor.tips.tiles"));
+        this.guiFolder.add(this.displayControls, 'matCache').name('Material cache').listen().disable().perm()
+            .tooltip(t("gpuMonitor.tips.matCache"));
+        this.guiFolder.add(this.displayControls, 'mvGL').name('mainView (tex/geo/prog)').listen().disable().perm()
+            .tooltip(t("gpuMonitor.tips.viewGL"));
+        this.guiFolder.add(this.displayControls, 'lvGL').name('lookView (tex/geo/prog)').listen().disable().perm()
+            .tooltip(t("gpuMonitor.tips.viewGL"));
         // The three actions work whether or not the monitor is on.
-        this.guiFolder.add(this.displayControls, 'pruneInactive').name('Prune Inactive Tiles').perm().keepLiveWhenFolderOff();
-        this.guiFolder.add(this.displayControls, 'forceRender').name('Force Render (drain dispose queue)').perm().keepLiveWhenFolderOff();
-        this.guiFolder.add(this.displayControls, 'reset').name(t("gpuMonitor.reset")).perm().keepLiveWhenFolderOff();
+        this.guiFolder.add(this.displayControls, 'pruneInactive').name('Prune Inactive Tiles').perm().keepLiveWhenFolderOff()
+            .tooltip(t("gpuMonitor.tips.prune"));
+        this.guiFolder.add(this.displayControls, 'forceRender').name('Force Render (drain dispose queue)').perm().keepLiveWhenFolderOff()
+            .tooltip(t("gpuMonitor.tips.forceRender"));
+        this.guiFolder.add(this.displayControls, 'reset').name(t("gpuMonitor.reset")).perm().keepLiveWhenFolderOff()
+            .tooltip(t("gpuMonitor.tips.reset"));
         
         this.enabled = true;
         // Refresh immediately when Debug or this folder opens, including while

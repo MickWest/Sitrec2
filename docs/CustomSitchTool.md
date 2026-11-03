@@ -191,7 +191,7 @@ With Camera Heading set to To Target, Pan and Tilt are greyed out, because the t
 You don't have to know coordinates. The **Camera** menu's **Location** folder (and, for the target, the **Target** menu) has three handy controls for positioning a fixed camera or target:
 
 - **Lookup** — type a **place name** (e.g. "Phoenix, AZ"), `lat,lon` coordinates in any form (decimal degrees, degrees minutes seconds, hemisphere letters — see [Coordinate formats](GIS.md#coordinate-formats)), an MGRS grid reference, a `lat,lon,altitude` triple, or an ECEF `x,y,z` triple in metres, and Sitrec jumps there. The last two also set the altitude; everything else drops to ground level.
-- **Geolocate from browser** — sets the position to an approximate location found from your IP address, 3 m above the ground. It does not use the browser's location permission.
+- **Geolocate from IP Address** — sets the position to an approximate location found from your IP address, 3 m above the ground. It does not use the browser's location permission.
 - **Go To the above position** — moves the view to it.
 
 ### Placing things with a right-click
@@ -295,7 +295,7 @@ In this instance we see the road is correct, but a bit low resolution. Zoom in, 
 
 ![The Terrain menu, with the Terrain Tweaks folder open](docimages/terrain-menu.jpg)
 
-**textureDetail**, **elevationDetail**, **Disable Dynamic Subdivision** and **Building Detail (SSE)** appear only on a local build or for an admin. You will not see them on the public site.
+**Texture Detail**, **Elevation Detail**, **Disable Dynamic Subdivision** and **Building Detail (SSE)** appear only on a local build or for an admin. You will not see them on the public site.
 
 By default, terrain uses **dynamic subdivision** (the **Dynamic Subdivision** checkbox in **Terrain → Terrain Tweaks**): as you move and zoom the camera, Sitrec automatically loads higher-resolution tiles where you're looking, so you don't normally need to set a center point or zoom level by hand. The main control you'll use is **Map Type**, which selects the imagery source (satellite, street map, etc.).
 

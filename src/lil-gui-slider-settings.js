@@ -113,6 +113,7 @@ function openSliderSettingsMenu(controller, event) {
     
     const minController = menu.add(settings, 'min', LOG_ZERO_THRESHOLD, sliderRangeMax, 0.0001)
         .name('Min')
+        .tooltip('Lowest value the slider can reach.')
         .isLog(true)
         .displayZeroThreshold(LOG_ZERO_THRESHOLD)
         .onChange(v => {
@@ -123,6 +124,7 @@ function openSliderSettingsMenu(controller, event) {
 
     const maxController = menu.add(settings, 'max', LOG_ZERO_THRESHOLD, sliderRangeMax, 0.0001)
         .name('Max')
+        .tooltip("Highest value the slider can reach. You can type a number larger than this field's own slider allows.")
         .isLog(true)
         .displayZeroThreshold(LOG_ZERO_THRESHOLD)
         .allowInputExpandMax(true)
@@ -140,13 +142,16 @@ function openSliderSettingsMenu(controller, event) {
 
     const stepController = menu.add(settings, 'stepExp', -5, 2, 1)
         .name('Step')
+        .tooltip('Size of one slider step, from 0.00001 to 100 in powers of ten.')
         .isLog()
         .onChange(v => {
         controller.step(v);
     });
 
-    menu.add(settings, 'reset').name('Reset');
-    menu.add(settings, 'done').name('Done').setDoubleClickAction();
+    menu.add(settings, 'reset').name('Reset')
+        .tooltip('Put Min and Max back to the original range of the slider, and Step back to its value when this menu opened.');
+    menu.add(settings, 'done').name('Done').setDoubleClickAction()
+        .tooltip('Close this menu. Double-clicking the menu title does the same.');
 }
 
 NumberController.prototype.isLog = function(convertRange = false) {

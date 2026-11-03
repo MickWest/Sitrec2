@@ -49,7 +49,7 @@ export class CNodePositionLLA extends CNodeTrack {
                this.guiLat = new CNodeGUIValue({
                    id: id + " Lat",
                    desc: name + " Lat",
-                   tooltip: this.tipName + " latitude in degrees. Paste a full 'lat, lon' (any format, or ECEF x,y,z in metres) to set both.",
+                   tooltip: this.tipName + " latitude in degrees. Paste a full 'lat, lon' (any format, or ECEF x,y,z in meters) to set both.",
                    value: this._LLA[0],
                    start: -90, end: 90, step: 0.01,
                    stepExplicit: false, // prevent snapping
@@ -64,7 +64,7 @@ export class CNodePositionLLA extends CNodeTrack {
                this.guiLon = new CNodeGUIValue({
                    id: id + " Lon",
                    desc: name + " Lon",
-                   tooltip: this.tipName + " longitude in degrees.",
+                   tooltip: this.tipName + " longitude in degrees. Paste a full 'lat, lon' here to set both.",
                    value: this._LLA[1],
                    start: -180, end: 180, step: 0.01,
                    stepExplicit: false, // prevent snapping
@@ -95,7 +95,7 @@ export class CNodePositionLLA extends CNodeTrack {
                this.guiAlt = new CNodeGUIValue({
                    id: id + " Alt (ft)",  // including the (ft) for historical reasons, so we have the same id as older saves
                    desc: name + " Alt",
-                   tooltip: this.tipName + " altitude.",
+                   tooltip: this.tipName + " altitude: above mean sea level, or above the ground when Above Ground Level is on.",
                    value: 0, // don't set the altitude, as we want to set it with units
                    unitType: "small",
                    start: 0, end: 1000, step: 1,

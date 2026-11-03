@@ -97,10 +97,12 @@ export class CNodeSplineEditor extends CNodeTrack {
         // This allows TrackManager to manage synthetic tracks without duplicate GUIs
         if (!v.skipGUI) {
             this.gui = guiMenus.physics.addFolder("Spline " + this.id).close()
+                .tooltip("Controls for a spline track that this sitch defines")
             this.gui.add(this,"enable").onChange( v =>{
                this.splineEditor.setEnable(v)
-            })
+            }).tooltip("Edit this spline in the main view.\nOn: shows its control points and curve, so that you can move them")
             this.gui.add(this,"exportSplineJSON").name("Export Spline")
+                .tooltip("Save the control points of this spline as a .spline.json file.\nDrop that file onto Sitrec to load it as an editable track")
         }
 
         EventManager.addEventListener("elevationChanged", () => {

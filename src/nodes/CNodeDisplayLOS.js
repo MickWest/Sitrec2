@@ -146,7 +146,8 @@ export class CNodeDisplayLOS extends CNode3DGroup {
         // lines of sight are hidden: it keeps working when the folder is off.
         const currentLOS = gui.add(this, "showCurrentLOS")
             .name(t("showHiders.currentLOS.label", {defaultValue: "Current LOS"}))
-            .tooltip(t("showHiders.currentLOS.tooltip", {defaultValue: "Show only the current frame's line of sight"}))
+            .tooltip(t("showHiders.currentLOS.tooltip", {defaultValue:
+                "Draw the line of sight for the current frame as a white line.\nIt shows even when the other lines of sight are hidden"}))
             .listen()
             .onChange((v) => {
                 this.currentLOSGroup.visible = v;

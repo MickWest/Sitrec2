@@ -337,6 +337,8 @@ function refreshControllers() {
 export function setupVideoFormatEffectsMenu() {
     const folder = guiMenus.videoFormat;
     if (!folder) return;
+    folder.tooltip("Simulate an analog video signal, and a phone filming the screen, live over the look view and its on-screen display.\n"
+        + "The checkbox in the title turns it on. The settings are kept in this browser and saved with the sitch.");
 
     settings = loadSettings();
     controllers = [];
@@ -369,7 +371,7 @@ export function setupVideoFormatEffectsMenu() {
 
     const sig = settings.signal;
     add(sig, "noiseLevel", 0, 1, 0.01).name("Tape noise")
-        .tooltip("Tape grain and colour noise. The character comes from the format's own channel bandwidths; this is how much of it.")
+        .tooltip("Tape grain and color noise. The character comes from the format's own channel bandwidths; this is how much of it.")
         .onChange(() => changed());
     add(sig, "jitter", 0, 1.5, 0.01).name("Time-base error")
         .tooltip("Line-to-line horizontal instability, worst just below the top of the frame.")
@@ -384,9 +386,11 @@ export function setupVideoFormatEffectsMenu() {
         .tooltip("Comb-toothed edges on anything moving, from alternate lines being a field older.")
         .onChange(() => changed());
     add(sig, "scanlines", 0, 1, 0.01).name("Scan lines")
+        .tooltip("Darkens the gaps between the format's scan lines, as on a TV screen. 0 = off; 1 makes the gaps 50% darker.\n"
+            + "Used only when Format is not Pure digital.")
         .onChange(() => changed());
-    add(sig, "chromaVBlur", 0, 1, 0.01).name("Colour smear")
-        .tooltip("Vertical colour softness, from the delay line on PAL and from colour-under on tape.")
+    add(sig, "chromaVBlur", 0, 1, 0.01).name("Color smear")
+        .tooltip("Vertical color softness, from the delay line on PAL and from color-under on tape.")
         .onChange(() => changed());
 
     add(settings.screen, "enabled")
@@ -400,6 +404,11 @@ export function setupVideoFormatEffectsMenu() {
     }
     add(settings.screen, "preset", screenPresetNames)
         .name("Camera")
+        .tooltip("A preset for the phone that films the screen. Choosing one sets every value in Camera Tweaks.\n"
+            + "Phone, handheld: moderate shake.\n"
+            + "Phone, handheld (unsteady): more shake, stronger exposure and lens faults.\n"
+            + "Phone, on a tripod: almost no shake.\n"
+            + "Used only when Recorded off a screen is on.")
         .onChange((value) => {
             applyScreenPreset(settings, value);
             refreshControllers();
@@ -408,7 +417,9 @@ export function setupVideoFormatEffectsMenu() {
 
     // Everything about the camera and the screen it is pointed at, in one place.
     const scr = settings.screen;
-    const tweaks = folder.addFolder("Camera Tweaks").close().perm();
+    const tweaks = folder.addFolder("Camera Tweaks").close().perm()
+        .tooltip("Detailed settings for the phone camera and the screen it films. The Camera preset sets all of them.\n"
+            + "Used only when Recorded off a screen is on.");
     const tweak = (...args) => register(tweaks.add(...args).perm());
 
     // The physical setup. These four decide how much of the frame the screen fills -
@@ -431,53 +442,80 @@ export function setupVideoFormatEffectsMenu() {
         .onChange(() => changed());
 
     tweak(scr, "handheld", 0, 2, 0.01).name("Wobble")
+        .tooltip("Amount of handheld camera shake: quick random movement of the frame. 0 = no shake.\n"
+            + "Rotation scales with it too.")
         .onChange(() => changed());
     tweak(scr, "handheldSpeed", 0.1, 3, 0.05).name("Wobble speed")
+        .tooltip("How fast the handheld shake moves. 1 = normal; 2 = twice as fast.")
         .onChange(() => changed());
     tweak(scr, "handheldVariation", 0, 1, 0.01).name("Wobble variation")
         .tooltip("How much the wobble amount itself drifts, so the shot has steady stretches and unsteady ones.")
         .onChange(() => changed());
     tweak(scr, "handheldDrift", 0, 2, 0.01).name("Slow drift")
+        .tooltip("Amount of slow wandering of the aim point, separate from the quick shake. 0 = off.")
         .onChange(() => changed());
     tweak(scr, "handheldRotation", 0, 2, 0.01).name("Rotation")
+        .tooltip("Amount of camera roll that goes with the shake. 0 = no roll.\n"
+            + "It has no effect when Wobble is 0.")
         .onChange(() => changed());
 
     tweak(scr, "autoExposure").name("Auto exposure")
+        .tooltip("On: the camera meters the brightness of the picture and moves its exposure toward a target, with a lag and a small hunt, as a phone does.\n"
+            + "Off: the exposure is fixed at 1 + Exposure bias.")
         .onChange(() => changed());
     tweak(scr, "exposureBias", -0.5, 1.5, 0.01).name("Exposure bias")
+        .tooltip("Makes the image brighter (positive) or darker (negative).\n"
+            + "With Auto exposure on, it moves the brightness target. With it off, the exposure is 1 + this value.")
         .onChange(() => changed());
     tweak(scr, "exposureSpeed", 0, 1, 0.01).name("Adaptation speed")
+        .tooltip("How fast auto exposure moves toward its target. Higher values also make it hunt more around the target.\n"
+            + "Used only when Auto exposure is on.")
         .onChange(() => changed());
     tweak(scr, "knee", 0.1, 1, 0.01).name("Highlight knee")
+        .tooltip("Brightness above which highlights start to compress smoothly toward white. Lower values compress more of the range. 1 = no compression.")
         .onChange(() => changed());
     tweak(scr, "clip", 0, 1, 0.01).name("Highlight clipping")
+        .tooltip("Changes the highlight roll-off into a hard clip. 0 = smooth roll-off above Highlight knee; 1 = everything above white clips flat.")
         .onChange(() => changed());
     tweak(scr, "blackCrush", 0, 0.4, 0.005).name("Black crush")
+        .tooltip("Turns dark tones black: levels below this value (0-1 scale) become black, and the rest stretches to fill the range.")
         .onChange(() => changed());
     tweak(scr, "blackLift", 0, 0.15, 0.002).name("Black lift")
+        .tooltip("Raises the black level of the filmed screen to this value (0-1 scale), so its darkest parts look washed out.")
         .onChange(() => changed());
     tweak(scr, "bloom", 0, 2, 0.01).name("Bloom")
+        .tooltip("Amount of glow added around the bright parts of the screen picture. 0 = off.")
         .onChange(() => changed());
 
     tweak(scr, "keystone", -0.4, 0.4, 0.005).name("Keystone")
-        .tooltip("The camera is never quite square-on to the screen.")
+        .tooltip("Makes the screen a trapezoid, as when the camera is not square-on to it. 0 = square-on; negative values tilt the other way.")
         .onChange(() => changed());
     tweak(scr, "barrel", 0, 0.3, 0.005).name("Barrel distortion")
+        .tooltip("Amount of radial lens distortion, which stretches the picture more toward the edges of the frame. 0 = none.")
         .onChange(() => changed());
     tweak(scr, "aberration", 0, 0.01, 0.0002).name("Chromatic aberration")
+        .tooltip("Red and blue color fringes that grow toward the edges of the frame. The value is the scale difference between the color channels (0.01 = 1%). 0 = none.")
         .onChange(() => changed());
     tweak(scr, "edgeSoftness", 0, 4, 0.05).name("Edge softness")
+        .tooltip("Lens softness that grows toward the edges of the frame. It shifts the red and blue channels apart, by this many pixels at the middle of each edge. 0 = none.")
         .onChange(() => changed());
     tweak(scr, "gridDepth", 0, 0.6, 0.005).name("Screen grid / moire")
         .tooltip("The screen's own pixel structure. The moire is the real beat between that and the output raster.")
         .onChange(() => changed());
     tweak(scr, "gridPitch", 0.15, 0.7, 0.005).name("Grid pitch")
+        .tooltip("Fineness of the screen's pixel grid, in grid cycles per output pixel. It sets the size and shape of the moire pattern.\n"
+            + "Used only when Screen grid / moire is above 0.")
         .onChange(() => changed());
     tweak(scr, "beat", 0, 0.4, 0.005).name("Refresh beat")
+        .tooltip("Strength of the bright and dark bands that roll through the screen because the camera and the screen refresh are not in step. 0 = off.")
         .onChange(() => changed());
     tweak(scr, "beatBars", 0.5, 5, 0.1).name("Beat bars")
+        .tooltip("Number of refresh-beat bands over the height of the screen.\n"
+            + "Used only when Refresh beat is above 0.")
         .onChange(() => changed());
     tweak(scr, "beatSpeed", 0, 0.5, 0.005).name("Beat speed")
+        .tooltip("How fast the refresh-beat bands move, in bands per displayed frame. 0 = still.\n"
+            + "Used only when Refresh beat is above 0.")
         .onChange(() => changed());
     tweak(scr, "glare", 0, 0.5, 0.005).name("Glass reflection")
         .tooltip("A reflection on the screen's glass. Confined to the screen, as a reflection in it would be.")
@@ -486,11 +524,13 @@ export function setupVideoFormatEffectsMenu() {
         .tooltip("The monitor's frame around the screen, as a fraction of the screen's width.")
         .onChange(() => changed());
     tweak(scr, "bezelLevel", 0, 0.5, 0.005).name("Bezel brightness")
-        .tooltip("How light the bezel is. 0.1 is a 90% black grey; 0 is a bezel that vanishes into the dark room.")
+        .tooltip("How light the bezel is. 0.1 is a 90% black gray; 0 is a bezel that vanishes into the dark room.")
         .onChange(() => changed());
     tweak(scr, "vignette", 0, 1, 0.01).name("Vignette")
+        .tooltip("Darkens the frame toward its corners. 0 = off; 1 = black corners in a landscape frame.")
         .onChange(() => changed());
     tweak(scr, "noise", 0, 0.15, 0.002).name("Sensor noise")
+        .tooltip("Amount of random grain from the phone camera's sensor, stronger in dark areas. 0 = off.")
         .onChange(() => changed());
 
     // Enabled from a previous session: pull the chunk in now rather than on the first

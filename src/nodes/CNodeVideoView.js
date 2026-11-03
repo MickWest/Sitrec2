@@ -78,6 +78,9 @@ import {CNodeVideoLevelsView} from "./CNodeVideoLevelsView";
 import {CNodeAudioSpectrumView} from "./CNodeAudioSpectrumView";
 import {viewMenuKey} from "../ViewUIBarMenus";
 
+// Video > Video Adjustments > Smooth sets ctx.imageSmoothingEnabled when the video is drawn.
+const SMOOTH_TOOLTIP = "Smooth the video picture when it is scaled. Off shows each video pixel as a sharp square when you zoom in.";
+
 // Re-export for external consumers (e.g. CMotionAnalysis).
 export {addFiltersToVideoNode, applyConvolution} from "./CNodeVideoViewFilters";
 
@@ -1698,6 +1701,7 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
         console.log(`[VideoSelector] Creating selector with ${Object.keys(options).length} options`);
         this.videoSelectorController = guiMenus.video.add(this, "currentVideoSelection", options)
             .name(t("videoView.currentVideo.label") + this.viewMenuSuffix())
+            .tooltip(t("videoView.currentVideo.tooltip"))
             .onChange((value) => {
                 this.selectVideo(value);
             });
@@ -1744,6 +1748,7 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
 
         this.rotationController = guiMenus.video.add(this, "currentRotation", rotationOptions)
             .name(t("videoView.videoRotation.label") + this.viewMenuSuffix())
+            .tooltip(t("videoView.videoRotation.tooltip"))
             .onChange((value) => {
                 if (this.videoData) {
                     this.videoData.setUserRotation(value);
@@ -1874,7 +1879,8 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
         }
 
         this.exifInfoButtonController = guiMenus.video.add(this, "toggleEXIFInfoPanel")
-            .name(label);
+            .name(label)
+            .tooltip("Show or hide a panel with the file's metadata: picture size, frame rate, codec, and any EXIF data such as the camera, capture date and GPS position.");
         this.exifInfoButtonController.shareAs(viewMenuKey(this.id, "exifPanel"));
     }
 
@@ -1898,7 +1904,8 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
         if (!metadata?.placement?.hasLocation) return;
 
         this.exifPositionController = guiMenus.video.add(this, "applyCurrentEXIFCameraPosition")
-            .name(t("videoView.setCameraToExifGps.label"));
+            .name(t("videoView.setCameraToExifGps.label"))
+            .tooltip(t("videoView.setCameraToExifGps.tooltip"));
     }
 
     // Ask the user what to do when media is dropped/imported while a video or
@@ -2282,7 +2289,7 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
         ctx.clearRect(0, 0, canvas.width, canvas.height);
         ctx.fillStyle = "#000000";
         ctx.fillRect(0, 0, canvas.width, canvas.height);
-        ctx.imageSmoothingEnabled = quickToggle("Smooth", false, guiVideoEffectsFolder);
+        ctx.imageSmoothingEnabled = quickToggle("Smooth", false, guiVideoEffectsFolder, SMOOTH_TOOLTIP);
         ctx.filter = filter || "none";
         ctx.drawImage(sourceImage, srcX, srcY, srcWidth, srcHeight, 0, 0, outputWidth, outputHeight);
         if (fullABOverlay) {
@@ -2761,7 +2768,7 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
             }
             // positions are a PERCENTAGE OF THE WIDTH
 
-            ctx.imageSmoothingEnabled = quickToggle("Smooth", false, guiVideoEffectsFolder);
+            ctx.imageSmoothingEnabled = quickToggle("Smooth", false, guiVideoEffectsFolder, SMOOTH_TOOLTIP);
 
             const elaOverlay = this.getELAOverlayState(frame, image);
             if (elaOverlay.enabled) {

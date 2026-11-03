@@ -439,6 +439,8 @@ GUI.prototype.mirrorFolderFrom = function (sourceFolder, opts = {}) {
     for (const child of childrenInDOMOrder(sourceFolder)) {
         if (child.controllers !== undefined) {
             const folder = this.addFolder(child._title);
+            // A folder's tooltip lives only on its title element (GUI.prototype.tooltip).
+            if (child.$title?.title && typeof folder.tooltip === "function") folder.tooltip(child.$title.title);
             folder.mirrorFolderFrom(child, opts);
             // Open or closed as the source folder is, so a group that is closed in the menu (a
             // track's Smoothing, an object's Material) is closed in its panel too. A toggle in

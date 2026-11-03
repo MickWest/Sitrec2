@@ -1456,17 +1456,25 @@ class CScriptedVideoManager {
         // ensureEditor() — nothing to build here.
         this.timeline.attachKeyZoom(window);
 
-        const folder = guiMenus.video.addFolder("Scripting").close().perm();
+        const folder = guiMenus.video.addFolder("Scripting").close().perm()
+            .tooltip("Write a script of camera moves: zoom, orbit and track objects, change the FOV, cut between views and add captions.\n"
+                + "Preview it in Sitrec, then render it as a video.");
         folder.add({ open: () => this.toggleWindow() }, "open").name("Scripting Window…").perm()
-            .tooltip("Open/close the Scripting editor — write JS/DSL camera scripts on multiple tabs (use its ⧉ header icon to pop it out into a separate window).");
-        folder.add({ render: () => this.renderVideo() }, "render").name("Render Video (1080P60)").perm();
+            .tooltip("Open or close the Scripting editor. Write camera scripts in JavaScript or as one-line shortcut commands, on several tabs.\n"
+                + "The ⧉ icon in its header moves it to a separate window.");
+        folder.add({ render: () => this.renderVideo() }, "render").name("Render Video (1080P60)").perm()
+            .tooltip("Render the script frame by frame to a 1920 x 1080 video at 60 frames per second, and download it. "
+                + "The file is MP4, or WebM when the browser cannot encode MP4.\n"
+                + "Uses the Render Quality settings. Slow.");
 
         // --- quality knobs ---
-        const q = folder.addFolder("Render Quality").close().perm();
+        const q = folder.addFolder("Render Quality").close().perm()
+            .tooltip("Speed and quality settings for Render Video (1080P60), and how terrain loads during the live preview.");
         q.add(this, "waitForLoading").name("Wait For Terrain").perm()
             .tooltip("ON (default) = settle each frame so terrain is stable & correct (no pop or edge-tile toggling), slower. OFF = fast/rough render, terrain may pop.");
         q.add(this, "terrainDetail", 0.25, 1, 0.05).name("Terrain Detail").perm()
-            .tooltip("Terrain LOD detail. Lower loads far fewer tiles → much faster render, slightly coarser terrain. 1 = full detail.");
+            .tooltip("Terrain level of detail during Render Video, as a multiple of the normal detail. 1 = full detail.\n"
+                + "Lower values load far fewer tiles: a much faster render, with slightly coarser terrain.");
         q.add(this, "freezeTerrainPreview").name("Freeze Terrain (Preview)").perm()
             .tooltip("OFF (default) = terrain tiles keep loading during the live preview as the camera moves. "
                 + "ON = freeze the tile set at preview start — no LOD flicker, but any area the camera "

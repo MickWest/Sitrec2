@@ -48,18 +48,18 @@ export class CNodeEffect extends CNode {
     }
 
     effectTips = {
-        "FLIRShader": "Simulates a FLIR camera, with a color palette adjustment",
+        "FLIRShader": "A simple FLIR (forward-looking infrared) look: a grayscale image made from the colors, with green areas dark.\nThermal is the more detailed simulation.",
         "hBlur": "Horizontal Blur component",
         "vBlur": "Vertical Blur component",
-        "pixelZoom": "Simulates a pixelated zoom effect when zooming in using View/VideoZoom",
+        "pixelZoom": "Enlarges the look view pixels to match View > Video Zoom %. Above the zoom where the video and look view pixels match, it enlarges pixels instead of narrowing the camera's field of view.",
         "digitalZoom": "Digital Zoom (scaling up sensor pixels)",
-        "Pixelate2x2": "Pixelate 2x2",
-        "PixelateNxN": "Pixelate NxN",
+        "Pixelate2x2": "Makes the image blocky: each 2x2 block of pixels shows one averaged color.",
+        "PixelateNxN": "Makes the image blocky: each NxN block of pixels shows one averaged color. The block size input sets N.",
         "StaticNoise": "Static Noise (like an old TV)",
         "Invert": "Invert (Negative)",
-        "Compress": "Compress",
-        "Levels": "Levels (TV In/Out Balck, White, Gamma)",
-        "Greyscale": "Greyscale (black and white)",
+        "Compress": "Squeezes the brightness range: black becomes the lower level and white the upper level (0.1 and 0.9 by default).",
+        "Levels": "Levels: sets the black level, white level and gamma of the image (the TV In, TV Gamma and TV Out sliders).",
+        "Greyscale": "Grayscale (black and white)",
         "JPEGArtifacts": "Simulated JPEG Artifacts",
         "Copy": "Copy",
         "Thermal": "Advanced FLIR simulation (white/black hot, Ironbow palette, bloom, sensor noise)",
@@ -73,7 +73,8 @@ export class CNodeEffect extends CNode {
         Globals.defaultGui = guiMenus.renderingEffects ?? guiTweaks;
 
         if (guiOnOffFolder === null) {
-            guiOnOffFolder = Globals.defaultGui.addFolder("Effects On/Off").close().perm();
+            guiOnOffFolder = Globals.defaultGui.addFolder("Effects On/Off").close().perm()
+                .tooltip("A switch for each rendering effect, to turn it on or off. The effect sliders are in Rendering Effects.");
         }
 
         // the call to super will handle setting up the inputs
@@ -101,7 +102,7 @@ export class CNodeEffect extends CNode {
             this.tvOnly = v.tvOnly ?? false;
             this.addSimpleSerial("tvOnly");
             this.tvOnlyController = flagFolder.add(this, "tvOnly").name(`${this.id} TV Only`).listen()
-                .tooltip("Apply greyscale only to visible-channel camera-data or manual TV frames.");
+                .tooltip("Apply grayscale only to visible-channel (TV) frames: frames that the camera data or Camera > IR/TV Mode Switches mark as TV.");
         }
 
 

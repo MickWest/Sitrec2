@@ -102,7 +102,7 @@ export class CNodeDisplayMoonShadow extends CNode3DGroup {
             this.rebuild();
             setRenderOne(true);
         }).listen()
-            .tooltip("Mark where the centre of the Moon's shadow meets the ground: one line along"
+            .tooltip("Mark where the center of the Moon's shadow meets the ground: one line along"
                 + " the shadow's long axis from edge to edge, one across it. Follows the terrain,"
                 + " like the shadow outline. Needs Show Moon's Shadow on.");
         this.addSimpleSerial("showShadowCenter");
@@ -130,7 +130,7 @@ export class CNodeDisplayMoonShadow extends CNode3DGroup {
             setRenderOne(true);
         }).listen()
             .tooltip("If a solar eclipse falls within 24 hours of the current time, draw its track:"
-                + " the northern and southern limits of totality in gold, and the centreline in"
+                + " the northern and southern limits of totality in gold, and the centerline in"
                 + " white. The penumbra's limits are not drawn — it is thousands of km across, so"
                 + " its edges sweep most of the globe. Needs Show Moon's Shadow on.");
         this.addSimpleSerial("showEclipsePath");

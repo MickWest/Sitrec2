@@ -31,6 +31,7 @@ function fakeMenu() {
         const controller = {
             object, property,
             name(text) { this.label = text; return this; },
+            tooltip(text) { this.tip = text; return this; },
             onChange(fn) { this.changed = fn; return this; },
             disable() { this.disabled = true; return this; },
         };
@@ -39,7 +40,7 @@ function fakeMenu() {
     };
     return {
         controllers, add,
-        addFolder: () => ({add, close() {}}),
+        addFolder: () => ({add, close() {}, tooltip() { return this; }}),
         title: jest.fn(),
         destroy: jest.fn(),
         open: jest.fn(),

@@ -321,6 +321,7 @@ export class CNodeAtmosphericOptics extends CNode {
         // not exist (the optics still serialize via the properties above).
         this.gui = guiMenus.lighting ? guiMenus.lighting.addFolder("Atmospheric Optics (Halos)") : undefined;
         if (this.gui) {
+            this.gui.tooltip("Optics of ice crystals in the sky: halos, arcs and sun dogs around the Sun, and a halo and moon dogs around the Moon.\nAlso Sun Glare and the Brocken Spectre.");
             const addBool = (property, name) => this.gui.add(this, property).name(name).listen().onChange(() => this.recalculate());
             const addValue = (property, start, end, step, name) => this.gui.add(this, property, start, end, step).name(name).listen().onChange(() => this.recalculate());
             addBool("enabled", "Show Halos")
@@ -356,7 +357,8 @@ export class CNodeAtmosphericOptics extends CNode {
 
             // Brocken spectre gets its own subfolder — it has a few extra
             // controls and is a world-space object rather than a sky optic.
-            const bf = this.gui.addFolder("Brocken Spectre").close();
+            const bf = this.gui.addFolder("Brocken Spectre").close()
+                .tooltip("The observer's shadow and its colored glory rings on a fog bank, on the side away from the Sun.\nUsed only when Show Halos is on.");
             const bBool = (property, name) => bf.add(this, property).name(name).listen().onChange(() => this.recalculate());
             const bVal = (property, start, end, step, name) => bf.add(this, property, start, end, step).name(name).listen().onChange(() => this.recalculate());
             bBool("brocken", "Show Brocken Spectre")

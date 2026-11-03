@@ -1975,7 +1975,7 @@ async function initializeOnce() {
     // got messy. Views are free rectangles; shared edges become draggable seams automatically
     // (see CLayoutManager), so there is no separate "tiled" mode to toggle.
     guiMenus.view.add({reset: () => LayoutMan.resetLayout()}, "reset").name("Reset Layout")
-        .tooltip("Snap all open views back into a clean default grid");
+        .tooltip("Put the open views back in a default grid. The main view fills the left half, and the other views share the right half, one above another.\nHas no effect when fewer than two views are open.");
 
 
 
@@ -2039,18 +2039,25 @@ async function initializeOnce() {
     // rebuilt by CCustomManager.setup() on every sitch load; the folder shells
     // live here so we don't end up with duplicate husks after destroy(false).
     addGUIFolder("wind", "Wind", "physics");
-    addGUIFolder("simpleFlightSim", "Simple Flight Sim", "physics");
+    addGUIFolder("simpleFlightSim", "Simple Flight Sim", "physics")
+        .tooltip("A simple flight simulator. It makes a jet track from a true airspeed, a start heading and a turn rate, with an optional racetrack pattern and climb rate.\nThe look camera follows this track when Camera > Location > Position is Flight Sim.");
 
     // Scenarios: self-contained simulation packages (see CScenarioManager).
     // Permanent shells only — contents are populated lazily when the
     // Scenarios menu is first opened, and a scenario's nodes exist only
     // after it is explicitly activated (an untouched scenario is a no-op).
-    addGUIFolder("scenarios", "Scenarios", "physics");
-    addGUIFolder("gimbalAnalysis", "Gimbal Analysis", "scenarios");
-    addGUIFolder("football", "Football", "scenarios");
-    addGUIFolder("nimitz", "Nimitz", "scenarios");
-    addGUIFolder("floodSim", "Flood Sim", "scenarios");
-    addGUIFolder("flatEarth", "Flat Earth", "scenarios");
+    addGUIFolder("scenarios", "Scenarios", "physics")
+        .tooltip("Ready-made simulations. A scenario adds its objects and controls to the sitch only when you enable or load it.\nA scenario that you do not enable changes nothing.");
+    addGUIFolder("gimbalAnalysis", "Gimbal Analysis", "scenarios")
+        .tooltip("Build a recreation of the Gimbal video as a new custom sitch. Set the cloud wind and the display options, then create the sitch in one step, or build it step by step.");
+    addGUIFolder("football", "Football", "scenarios")
+        .tooltip("Simulate a kicked soccer ball with spin and air drag, a cable cam on its wires, and a broadcast camera.\nClick Enable Football Simulation, or the Load button, to show its controls.");
+    addGUIFolder("nimitz", "Nimitz", "scenarios")
+        .tooltip("Recreate the November 2004 Nimitz (Tic Tac) encounter: the jets, the Tic Tac, the ships and the disturbance in the water.\nClick Enable Nimitz Simulation, or a Load button, to show its controls.");
+    addGUIFolder("floodSim", "Flood Sim", "scenarios")
+        .tooltip("Simulate water that flows over the terrain, from rain or a dam burst.\nClick Enable Flood Sim to make the simulator and show its controls.");
+    addGUIFolder("flatEarth", "Flat Earth", "scenarios")
+        .tooltip("Experimental: draw the world as a flat disc, to compare with the globe.\nDisplay only. Physics, tracks and measurements stay on the globe.");
 
     // addGUIMenu("missile", "Missile").tooltip("Homing missile parameters\nControls for the missile simulation including mass, thrust, air resistance, and burn time");
 
@@ -2063,15 +2070,19 @@ async function initializeOnce() {
     // manual controls — which grey out when a computed source drives that aspect.
     // Created as permanent shells so they survive menuBar.destroy(false); their
     // contents are routed in per sitch by the camera nodes/switches (gui: "cameraX").
-    addGUIFolder("cameraLocation", "Location", "camera").open();
-    addGUIFolder("cameraHeading", "Heading", "camera").open();
-    addGUIFolder("cameraFOV", "FOV (Zoom)", "camera").open();
+    addGUIFolder("cameraLocation", "Location", "camera").open()
+        .tooltip("The position of the look camera. Position selects what sets it.\nThe manual controls (latitude, longitude, altitude and others) are grayed out unless Position is Manual.");
+    addGUIFolder("cameraHeading", "Heading", "camera").open()
+        .tooltip("The direction in which the look camera points. Camera Heading selects what sets it.\nThe manual pan, tilt and similar controls are grayed out unless Camera Heading is Manual.");
+    addGUIFolder("cameraFOV", "FOV (Zoom)", "camera").open()
+        .tooltip("The field of view (FOV) of the look camera. Camera FOV selects what sets it.\nThe manual zoom controls are grayed out unless Camera FOV is Manual.");
     // The LENS - what maps a field angle to a pixel radius, which FOV alone cannot say. Sitrec
     // assumes a pinhole everywhere until something measures otherwise, and the only thing that
     // does is Star Track's calibration, so this folder stays empty (and hidden) until a lens has
     // actually been fitted. It is a permanent shell for the same reason its neighbours are:
     // menuBar.destroy(false) keeps the folder and takes its contents.
-    addGUIFolder("cameraLens", "Lens", "camera");
+    addGUIFolder("cameraLens", "Lens", "camera")
+        .tooltip("The lens model that a Video > Star Tracker calibration fitted to the video: its type, focal length, optical center and distortion.\nShown only after a calibration fits a lens.");
 
     // Lift whatever is currently driving the camera FOV into a .fov.json of
     // keyframes, for loading into the FOV Editor (of this or another sitch).
@@ -2091,7 +2102,8 @@ async function initializeOnce() {
     // the ground-track switch). Created here as a permanent shell so it survives
     // menuBar.destroy(false); its contents are (re)populated per sitch by the
     // PTZ controller, the lookView, CCustomManager.setup(), and the camera node.
-    addGUIFolder("cameraTweaks", "Camera Tweaks", "camera");
+    addGUIFolder("cameraTweaks", "Camera Tweaks", "camera")
+        .tooltip("Less-used controls for the look camera, such as the lens X/Y offset, the near plane, the orbit camera, free look and Diffraction Glare.");
 
     // Ship the whole camera solution — position, heading, tilt, roll, field of view —
     // out to Google Earth as a PhotoOverlay with the current video frame in it, so the
@@ -2119,17 +2131,21 @@ async function initializeOnce() {
         .tooltip(t("menus.showHide.measurements.tooltip"));
     const _guiTweaks = addTranslatedGUIMenu("effects", "menus.effects.title", {closeFolders: true})
         .tooltip(t("menus.effects.tooltip"));
-    addGUIFolder("renderingEffects", "Rendering Effects", "effects");
+    addGUIFolder("renderingEffects", "Rendering Effects", "effects")
+        .tooltip("Image effects on the rendered views, such as blur, levels and simulated JPEG artifacts, with their settings.\nThe Rendering Effects checkbox turns them all on or off. Effects On/Off and Thermal/NV turn single effects on or off.");
     // Permanent sub-folder that groups the sensor-look simulations: the
     // FLIRShader/Thermal/NightVision enable flags plus their parameter
     // sliders (routed in per sitch via gui: "thermalNV" / enabledGUI).
     // Hidden when a sitch leaves it empty — see showFolderIfPopulated.
-    addGUIFolder("thermalNV", "Thermal/NV", "renderingEffects");
+    addGUIFolder("thermalNV", "Thermal/NV", "renderingEffects")
+        .tooltip("Sensor simulations for the look view: FLIR (forward-looking infrared) shading, thermal, night vision and diffraction glare. Each has an on/off checkbox and sliders.\nThey work only when the Rendering Effects checkbox is on.");
     // Live analog / off-a-screen video format simulation. Permanent, like the folder
     // above, and populated once at init rather than per sitch - it is not a node.
-    addGUIFolder("videoFormat", "Video Format Effects", "effects");
+    addGUIFolder("videoFormat", "Video Format Effects", "effects")
+        .tooltip("Settings to simulate an analog video format, and optionally a phone filming a screen, over the look view.\nThe checkbox on this title turns the simulation on and off.");
     setupVideoFormatEffectsMenu();
-    addGUIFolder("raytracedRefraction", "Ray-traced Refraction", "effects");
+    addGUIFolder("raytracedRefraction", "Ray-traced Refraction", "effects")
+        .tooltip("Trace light through an atmosphere that you define, and show the mirages and horizon shifts it makes in one 3D view.\nProfiles, Rays & Lasers… opens the editor. The settings save with the sitch.");
     setupRefractionToolMenu();
     addTranslatedGUIMenu("lighting", "menus.lighting.title", {closeFolders: true})
         .tooltip(t("menus.lighting.tooltip"));
@@ -2146,12 +2162,14 @@ async function initializeOnce() {
     function addDocLink(parent, nameKey, file) {
         const translatedName = t(nameKey);
         if (localDocsEnabled) {
-            return parent.addExternalLink(translatedName, "./"+file+".html").perm().tooltip(translatedName);
+            return parent.addExternalLink(translatedName, "./"+file+".html").perm()
+                .tooltip(t("menus.help.docLinkTooltip", {name: translatedName}));
         } else {
             return parent.addExternalLink(
                 t("menus.help.documentation.githubLinkLabel", {name: translatedName}),
                 "https://github.com/MickWest/Sitrec2/blob/main/"+file+".md"
-            ).perm();
+            ).perm()
+                .tooltip(t("menus.help.githubDocLinkTooltip", {name: translatedName}));
         }
     }
 
@@ -2179,7 +2197,8 @@ async function initializeOnce() {
     for (const s of DOC_SECTIONS) {
         const inSection = helpDocs.filter(d => d.section === s.id);
         if (inSection.length === 0) continue;
-        const folder = addTranslatedGUIFolder("docsSection_" + s.id, s.labelKey, "doumentation").perm();
+        const folder = addTranslatedGUIFolder("docsSection_" + s.id, s.labelKey, "doumentation").perm()
+            .tooltip(t("menus.help.docSectionTips." + s.id));
         for (const d of inSection) addDocLink(folder, d.labelKey, d.file);
     }
 
@@ -2204,7 +2223,8 @@ async function initializeOnce() {
                 name: t("menus.help.documentation.thirdPartyNotices"),
             }),
             "https://github.com/MickWest/Sitrec2/blob/main/ThirdPartyNotices.txt"
-        ).perm();
+        ).perm()
+            .tooltip(t("menus.help.documentation.thirdPartyNoticesTooltip"));
     }
 
     // Only in a build that packaged the Bridge zip (BRIDGE_ZIP_PACKAGED, webpack.common.js).
@@ -2223,13 +2243,13 @@ async function initializeOnce() {
         for (const [key, value] of Object.entries(configParams.extraHelpLinks)) {
             if (typeof value === "string") {
                 const e = external.addExternalLink(key, value).perm();
-                e.tooltip(key);
+                e.tooltip(t("menus.help.externalLinks.linkTooltip", {name: key}));
             } else {
                 const e = external.addExternalLink(key, value.url).perm();
                 if (value.tooltip !== undefined) {
                     e.tooltip(value.tooltip);
                 } else {
-                    e.tooltip(key);
+                    e.tooltip(t("menus.help.externalLinks.linkTooltip", {name: key}));
                 }
             }
         }
@@ -2471,7 +2491,8 @@ function legacySetup() {
     assert(Sit !== undefined, "legacySetup called before Sit is defined");
     let _guiJetTweaks;
     if (Sit.jetStuff) {
-        _guiJetTweaks = guiTweaks.addFolder('Jet Tweaks').close();
+        _guiJetTweaks = guiTweaks.addFolder('Jet Tweaks').close()
+            .tooltip("Settings for the jet and its targeting pod in a Gimbal recreation, such as the pod pitch and roll, the derotation and the jet pitch.");
     }
     setupGUIjetTweaks(_guiJetTweaks)
     // guiTweaks.add(par,"effects")
@@ -2721,6 +2742,7 @@ async function setupFunctions() {
         // otherwise use 1.0, so we get a perfect match with collisions.
         par.globe = addAlignedGlobe(Sit.globeScale ?? (Sit.terrain !== undefined ? 0.9999 : 1.0))
         showHider(par.globe,"[G]lobe", true, "g").name(t("showHiders.globe.label"))
+            .tooltip(t("showHiders.globe.tooltip"))
     }
 
 // Finally move the camera and reset the start time, if defined in the URL parameters

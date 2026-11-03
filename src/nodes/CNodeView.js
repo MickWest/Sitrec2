@@ -444,7 +444,7 @@ class CNodeView extends CNode {
         const bar = new CUIBar(this.div, {title});
         // Standard chrome, left→right: fullscreen, pin, close.
         if (this.doubleClickFullScreen || this.doubleClickResizes) {
-            bar.addIcon('⛶', () => this.doubleClick(), 'Toggle fullscreen', 'fullscreen');
+            bar.addIcon('⛶', () => this.doubleClick(), 'Make this view fill the window, or put it back to its normal size. Double-clicking the view does the same.', 'fullscreen');
         }
         if (this.poppable) {
             this._popIcon = bar.addIcon('⧉', () => this.togglePopout(), 'Pop out into a window', 'popout');

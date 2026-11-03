@@ -734,7 +734,8 @@ export class CSatellite {
                     saveAs(new Blob([tleText]), this.satelliteExportFilename());
                 }
             };
-            this.exportTLEButton = guiMenus.file.add(obj, 'exportTLE').name(t("misc.exportTLE.label"));
+            this.exportTLEButton = guiMenus.file.add(obj, 'exportTLE').name(t("misc.exportTLE.label"))
+                .tooltip(t("misc.exportTLE.tooltip"));
         }
 
         return this.TLEData;
@@ -790,7 +791,8 @@ export class CSatellite {
                 saveAs(new Blob([rawText]), this.satelliteExportFilename());
             }
         };
-        this.exportTLEButton = guiMenus.file.add(obj, 'exportTLE').name(t("misc.exportTLE.label"));
+        this.exportTLEButton = guiMenus.file.add(obj, 'exportTLE').name(t("misc.exportTLE.label"))
+            .tooltip(t("misc.exportTLE.tooltip"));
         return newData;
     }
 

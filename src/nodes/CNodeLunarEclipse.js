@@ -180,6 +180,7 @@ export class CNodeLunarEclipse extends CNode {
         this.gui = guiMenus.lighting ? guiMenus.lighting.addFolder("Lunar Eclipse") : undefined;
         if (!this.gui) return;
         const g = this.gui;
+        g.tooltip("The Earth's shadow on the Moon during a lunar eclipse: the shading, the red color of totality, the exposure, and outlines of the shadow.\nThe shading shows only while the Moon is in the Earth's shadow.");
 
         g.add(this, "enabled").name("Eclipse Shading").listen()
             .onChange(() => this.recalculate())
@@ -190,8 +191,8 @@ export class CNodeLunarEclipse extends CNode {
 
         g.add(this, "bloodMoon").name("Blood Moon Color").listen()
             .onChange(() => this.recalculate())
-            .tooltip("Colour the umbra with the sunlight refracted through the Earth's atmosphere —"
-                + " deep red at the centre, with the ozone-blue fringe near the edge. Off renders the"
+            .tooltip("Color the umbra with the sunlight refracted through the Earth's atmosphere —"
+                + " deep red at the center, with the ozone-blue fringe near the edge. Off renders the"
                 + " same brightness in grey.");
 
         g.add(this, "clarity", 0, 1, 0.01).name("Atmospheric Clarity").listen()
@@ -219,7 +220,7 @@ export class CNodeLunarEclipse extends CNode {
             .tooltip("Ring the Earth's umbra (gold) and penumbra (orange) out at the Moon's distance,"
                 + " so you can see the whole shadow the Moon is crossing. Drawn from the same"
                 + " geometry that shades the Moon, so the gold ring passes exactly along the shadow's"
-                + " edge on the Moon's face. The same colour convention as Show Moon's Shadow, which"
+                + " edge on the Moon's face. The same color convention as Show Moon's Shadow, which"
                 + " draws the Moon's shadow on the Earth.")
             // drawn whether or not Eclipse Shading is on
             .keepLiveWhenFolderOff();

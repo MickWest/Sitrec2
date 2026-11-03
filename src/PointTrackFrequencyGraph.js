@@ -56,7 +56,8 @@ export function addPointTrackFrequencyMenu(folder) {
         exportCSV() { currentView()?.exportCSV(); },
     };
     folder.add(proxy, 'show').name(t('pointFrequency.menu')).tooltip(t('pointFrequency.tooltip')).listen().perm();
-    const controls = folder.addFolder(t('pointFrequency.settings')).close().perm();
+    const controls = folder.addFolder(t('pointFrequency.settings')).close().perm()
+        .tooltip(t('pointFrequency.settingsTooltip'));
     for (const key of Object.keys(FREQUENCY_DEFAULTS)) Object.defineProperty(proxy, key, {
         get() { return (currentView()?.options ?? settings)[key]; },
         set(value) {
@@ -72,11 +73,11 @@ export function addPointTrackFrequencyMenu(folder) {
         },
     });
     controls.add(proxy, 'radius', MIN_APERTURE_RADIUS, 100, 1).name(t('pointFrequency.radius')).tooltip(t('pointFrequency.radiusTooltip')).listen().perm();
-    controls.add(proxy, 'percent').name(t('pointFrequency.percent')).listen().perm();
-    controls.add(proxy, 'showBackground').name(t('pointFrequency.showBackground')).listen().perm();
+    controls.add(proxy, 'percent').name(t('pointFrequency.percent')).tooltip(t('pointFrequency.percentTooltip')).listen().perm();
+    controls.add(proxy, 'showBackground').name(t('pointFrequency.showBackground')).tooltip(t('pointFrequency.showBackgroundTooltip')).listen().perm();
     controls.add(proxy, 'minPeakHz', 0, MAX_PEAK_FLOOR_HZ, .1).name(t('pointFrequency.minPeakHz')).tooltip(t('pointFrequency.minPeakHzTooltip')).listen().perm();
-    controls.add(proxy, 'refresh').name(t('videoTonal.refresh')).perm();
-    controls.add(proxy, 'exportCSV').name(t('videoTonal.exportCSV')).perm();
+    controls.add(proxy, 'refresh').name(t('videoTonal.refresh')).tooltip(t('pointFrequency.refreshTooltip')).perm();
+    controls.add(proxy, 'exportCSV').name(t('videoTonal.exportCSV')).tooltip(t('pointFrequency.exportTooltip')).perm();
     controls.add(proxy, 'perMinute').name(t('pointFrequency.perMinute')).tooltip(t('pointFrequency.perMinuteTooltip')).listen().perm();
 }
 

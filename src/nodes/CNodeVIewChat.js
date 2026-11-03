@@ -173,7 +173,8 @@ class CNodeViewChat extends CNodeViewText {
         // Add to Help menu
         guiMenus.help.add(this, "show").name(t("misc.aiAssistant.label")).moveToFirst().onChange(() => {
             guiMenus.help.close()
-        });
+        })
+            .tooltip(t("misc.aiAssistant.tooltip"));
 
         // Add welcome message
         this.addSystemMessage("Hi! Welcome to Sitrec!\nYou can ask me to do things like adjust the position and time, e.g. 'go to London at 12pm yesterday'." +

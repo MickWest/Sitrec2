@@ -1483,19 +1483,20 @@ export class CNodeMISBDataTrack extends CNodeEmptyArray {
 
     // Add GUI controls for the g-force filter
     setupFilterGUI(guiFolder) {
-        const folder = guiFolder.addFolder("Filter Bad Data").close();
+        const folder = guiFolder.addFolder("Filter Bad Data").close()
+            .tooltip(t("misbData.filterTooltip"));
         folder.add(this, "filterEnabled").name(t("misbData.enableFilter.label")).listen().onChange(() => {
             this.runGForceFilter();
             this.recalculateCascade();
-        });
+        }).tooltip(t("misbData.enableFilter.tooltip"));
         folder.add(this, "tryAltitudeFirst").name(t("misbData.tryAltitudeFirst.label")).listen().onChange(() => {
             this.runGForceFilter();
             this.recalculateCascade();
-        });
+        }).tooltip(t("misbData.tryAltitudeFirst.tooltip"));
         folder.add(this, "filterMaxG", 0.1, 10, 0.1).name(t("misbData.maxG.label")).listen().onChange(() => {
             this.runGForceFilter();
             this.recalculateCascade();
-        });
+        }).tooltip(t("misbData.maxG.tooltip"));
 
         this.addSimpleSerial("filterEnabled");
         this.addSimpleSerial("tryAltitudeFirst");

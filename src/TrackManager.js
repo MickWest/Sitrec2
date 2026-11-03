@@ -745,6 +745,7 @@ class CTrackManager extends CManager {
             end: 200,
             step: 1,
             desc: "Smoothing window",
+            tooltip: "Number of frames averaged at each point, for the moving, movingPolyEdge, sliding and savgol methods. 0 = no smoothing.\nIt is limited to the number of frames minus 3.",
         }, guiFolder);
 
         new CNodeGUIValue({
@@ -754,6 +755,7 @@ class CTrackManager extends CManager {
             end: 1,
             step: 0.01,
             desc: "Catmull Tension",
+            tooltip: "Tension of the legacy catmull curve. It has no visible effect: that curve is built as a chordal curve, which does not use tension.",
         }, guiFolder);
 
         new CNodeGUIValue({
@@ -763,6 +765,7 @@ class CTrackManager extends CManager {
             end: 100,
             step: 1,
             desc: "Catmull Intervals",
+            tooltip: "Number of spline segments along the track. More segments follow the data more closely.",
         }, guiFolder);
 
         new CNodeGUIValue({
@@ -772,6 +775,7 @@ class CTrackManager extends CManager {
             end: 5,
             step: 1,
             desc: "SavGol Poly Order",
+            tooltip: "Order of the polynomial that the savgol (Savitzky-Golay) method fits in each window. Higher orders keep sharper turns but smooth less.",
         }, guiFolder);
 
         new CNodeGUIValue({
@@ -781,6 +785,7 @@ class CTrackManager extends CManager {
             end: 5,
             step: 1,
             desc: "Edge Fit Order",
+            tooltip: "Order of the polynomial that extends the data past each end of the track before smoothing, so the ends do not bend.",
         }, guiFolder);
 
         new CNodeGUIValue({
@@ -790,6 +795,7 @@ class CTrackManager extends CManager {
             end: 400,
             step: 1,
             desc: "Edge Fit Window",
+            tooltip: "Number of frames at each end of the track that the Edge Fit Order polynomial is fitted to.",
         }, guiFolder);
 
         // Center / supplementary tracks (trackIndex !== 0) are target reference
@@ -869,7 +875,7 @@ class CTrackManager extends CManager {
                 step: 0.01,
                 desc: "Global Radius Resize",
                 tip: "Resize every object in the Objects menu whose only dimension is a radius "
-                    + "— spheres, icosahedrons, circles and the like — to this radius, in metres. "
+                    + "(spheres, icosahedrons, circles and the like) to this radius, in meters.\n"
                     + "Shapes with a second length (capsule, cone, torus) and models are left alone.",
                 onChange: (v) => resizeAllObjectSpheres(v),
             }, guiMenus.objects)
@@ -1043,7 +1049,8 @@ class CTrackManager extends CManager {
                 // Contents menu, not the internal node id ("Track_elevated_track…").
                 // getFolder() still resolves the folder by its node id via _lookupId, so
                 // the CNodeDisplayTrack lookup (menu.getFolder(track.id)) keeps working.
-                const guiFolder = guiMenus.contents.addFolder(shortName);
+                const guiFolder = guiMenus.contents.addFolder(shortName)
+                    .tooltip(t("trackManager.tips.folder"));
                 guiFolder._lookupId = trackID;
                 // just use the default MISB Columns, so no columns are specified
                 //const success = this.makeTrackFromDataFile(trackFileName, trackDataID, trackID, undefined, trackIndex, guiFolder);
@@ -1171,14 +1178,16 @@ class CTrackManager extends CManager {
                         }
                     }
 
-                    trackOb.guiFolder.add(dummy, "removeTrack").name(t("trackManager.deleteTrack"));
+                    trackOb.guiFolder.add(dummy, "removeTrack").name(t("trackManager.deleteTrack"))
+                        .tooltip(t("trackManager.tips.deleteImported"));
 
                     if (trackNode.frames >= 2) {
                         const splineName = shortName + "_sp";
                         let splineExists = false;
                         TrackManager.iterate((k, t) => { if (t.menuText === splineName) splineExists = true; });
                         if (!splineExists) {
-                            trackOb.guiFolder.add(dummy, "createSpline").name(t("trackManager.createSpline"));
+                            trackOb.guiFolder.add(dummy, "createSpline").name(t("trackManager.createSpline"))
+                                .tooltip(t("trackManager.tips.createSpline"));
                         }
                     }
 
@@ -2659,13 +2668,17 @@ class CTrackManager extends CManager {
         // So we create the folder with trackID, which is what the display track will reference
         // IMPORTANT: Don't change the folder title yet! getFolder() looks up by innerText,
         // so we need to keep it as trackID until after CNodeDisplayTrack finds it
-        const guiFolder = guiMenus.contents.addFolder(trackID);
+        const guiFolder = guiMenus.contents.addFolder(trackID)
+            .tooltip(t("trackManager.tips.folder"));
 
         // The folder's groups. Name, Edit Track, the camera buttons and the actions stay at the
         // top level (the order is set at the end of this method); the rest is grouped here.
-        const pathFolder = guiFolder.addFolder(t("trackManager.pathFolder"));
-        const smoothingFolder = guiFolder.addFolder(t("trackManager.smoothingFolder")).close();
-        const displayFolder = guiFolder.addFolder(t("trackManager.displayFolder")).close();
+        const pathFolder = guiFolder.addFolder(t("trackManager.pathFolder"))
+            .tooltip(t("trackManager.tips.pathFolder"));
+        const smoothingFolder = guiFolder.addFolder(t("trackManager.smoothingFolder")).close()
+            .tooltip(t("trackManager.tips.smoothingFolder"));
+        const displayFolder = guiFolder.addFolder(t("trackManager.displayFolder")).close()
+            .tooltip(t("trackManager.tips.displayFolder"));
         
         // Create unsmoothed spline editor node (the raw data track)
         // Pass skipGUI: true to prevent it from creating its own GUI in physics menu
@@ -2701,6 +2714,7 @@ class CTrackManager extends CManager {
             end: 200,
             step: 1,
             desc: "Smoothing window",
+            tooltip: "Number of frames averaged at each point, for the moving, movingPolyEdge, sliding and savgol methods. 0 = no smoothing.\nIt is limited to the number of frames minus 3.",
         }, smoothingFolder);
 
         new CNodeGUIValue({
@@ -2710,6 +2724,7 @@ class CTrackManager extends CManager {
             end: 1,
             step: 0.01,
             desc: "Catmull Tension",
+            tooltip: "Tension of the legacy catmull curve. It has no visible effect: that curve is built as a chordal curve, which does not use tension.",
         }, smoothingFolder);
 
         new CNodeGUIValue({
@@ -2719,6 +2734,7 @@ class CTrackManager extends CManager {
             end: 100,
             step: 1,
             desc: "Catmull Intervals",
+            tooltip: "Number of spline segments along the track. More segments follow the data more closely.",
         }, smoothingFolder);
 
         new CNodeGUIValue({
@@ -2728,6 +2744,7 @@ class CTrackManager extends CManager {
             end: 5,
             step: 1,
             desc: "SavGol Poly Order",
+            tooltip: "Order of the polynomial that the savgol (Savitzky-Golay) method fits in each window. Higher orders keep sharper turns but smooth less.",
         }, smoothingFolder);
 
         new CNodeGUIValue({
@@ -2737,6 +2754,7 @@ class CTrackManager extends CManager {
             end: 5,
             step: 1,
             desc: "Edge Fit Order",
+            tooltip: "Order of the polynomial that extends the data past each end of the track before smoothing, so the ends do not bend.",
         }, smoothingFolder);
 
         new CNodeGUIValue({
@@ -2746,6 +2764,7 @@ class CTrackManager extends CManager {
             end: 400,
             step: 1,
             desc: "Edge Fit Window",
+            tooltip: "Number of frames at each end of the track that the Edge Fit Order polynomial is fitted to.",
         }, smoothingFolder);
         
         // Create smoothed track node that wraps the unsmoothed spline editor
@@ -2864,7 +2883,8 @@ class CTrackManager extends CManager {
         // Exits from outside the checkbox (the edit menus, Esc) go through setEditMode, so the
         // checkbox, the editor and Globals.editingTrack cannot disagree. listen() keeps the
         // checkbox current when another track's edit mode switches this one off.
-        const editModeController = guiFolder.add(trackOb, 'editMode').name(t("trackManager.editTrack")).listen()
+        const editModeController = guiFolder.add(trackOb, 'editMode').name(t("trackManager.editTrack"))
+            .tooltip(t("trackManager.tips.editTrack")).listen()
             .onChange((value) => applyEditMode(value));
         trackOb.setEditMode = (value) => {
             trackOb.editMode = value;
@@ -2888,7 +2908,8 @@ class CTrackManager extends CManager {
         
         // Add constant speed checkbox to the GUI folder
         // This checkbox controls whether the track uses constant speed interpolation
-        pathFolder.add(trackOb, 'constantSpeed').name(t("trackManager.constantSpeed")).onChange((value) => {
+        pathFolder.add(trackOb, 'constantSpeed').name(t("trackManager.constantSpeed"))
+            .tooltip(t("trackManager.tips.constantSpeed")).onChange((value) => {
             splineEditorNode.constantSpeed = value;
             splineEditorNode.recalculateCascade();
             console.log(`Constant speed ${value ? 'enabled' : 'disabled'} for track: ${shortName}`);
@@ -2896,7 +2917,8 @@ class CTrackManager extends CManager {
         
         // Add extrapolate track checkbox to the GUI folder
         // This checkbox controls whether the track extrapolates beyond first/last control points
-        pathFolder.add(trackOb, 'extrapolateTrack').name(t("trackManager.extrapolateTrack")).onChange((value) => {
+        pathFolder.add(trackOb, 'extrapolateTrack').name(t("trackManager.extrapolateTrack"))
+            .tooltip(t("trackManager.tips.extrapolateTrack")).onChange((value) => {
             splineEditorNode.extrapolateTrack = value;
             splineEditorNode.recalculateCascade();
             console.log(`Extrapolate track ${value ? 'enabled' : 'disabled'} for track: ${shortName}`);
@@ -2928,6 +2950,7 @@ class CTrackManager extends CManager {
             step: 1,
             desc: "Alt offset",
             unitType: "small",
+            tooltip: "Raise (positive) or lower (negative) the whole track by this height.\nNo effect while Lock Altitude is on.",
             onChange: (v) => {
                 trackOb.altitudeOffset = v;
                 splineEditorNode.setAltitudeOffset(v);
@@ -2951,6 +2974,7 @@ class CTrackManager extends CManager {
             step: 1,
             desc: "Lock Height",
             unitType: "small",
+            tooltip: "Height at which Lock Altitude holds the whole track, measured as Height From says.\nShown only while Lock Altitude is on.",
             onChange: (v) => {
                 trackOb.altitudeLock = v;
                 splineEditorNode.setAltitudeLock(v);
@@ -2999,7 +3023,8 @@ class CTrackManager extends CManager {
         if (showInLook) {
             displayTrack.setLayerBit(LAYER.LOOK, true);
         }
-        displayFolder.add(trackOb, "showInLook").name(t("misc.showInLookView.label")).listen().onChange((value) => {
+        displayFolder.add(trackOb, "showInLook").name(t("misc.showInLookView.label"))
+            .tooltip(t("misc.showInLookView.tooltip")).listen().onChange((value) => {
             displayTrack.setLayerBit(LAYER.LOOK, value);
             setRenderOne(true);
         });
@@ -3009,7 +3034,8 @@ class CTrackManager extends CManager {
         // surfaced here so it sits with the rest of the track's controls.
         guiFolder.add({
             exportSpline: () => splineEditorNode.exportSplineJSON()
-        }, "exportSpline").name(t("trackManager.exportSpline"));
+        }, "exportSpline").name(t("trackManager.exportSpline"))
+            .tooltip(t("trackManager.tips.exportSpline"));
 
         // ...and the full set under File > Export, alongside every other track:
         // the same control points, plus the per-frame track this spline
@@ -3021,7 +3047,8 @@ class CTrackManager extends CManager {
         const dummy = {
             deleteTrack: () => this.confirmDeleteSyntheticTrack(trackID, trackOb.displayName ?? shortName),
         };
-        const deleteController = guiFolder.add(dummy, "deleteTrack").name(t("trackManager.deleteTrack"));
+        const deleteController = guiFolder.add(dummy, "deleteTrack").name(t("trackManager.deleteTrack"))
+            .tooltip(t("trackManager.tips.deleteSynthetic"));
         
         // Add to drop targets if configured
         if (Sit.dropTargets !== undefined && Sit.dropTargets["track"] !== undefined) {
@@ -3262,7 +3289,8 @@ class CTrackManager extends CManager {
         // GUI folder in Contents. Titled with the trackID first —
         // CNodeDisplayTrack locates it by the track node's id — then renamed
         // to the short name below.
-        const guiFolder = guiMenus.contents.addFolder(trackID);
+        const guiFolder = guiMenus.contents.addFolder(trackID)
+            .tooltip(t("trackManager.tips.balloonFolder"));
 
         // Launch parameters (persisted via the mods pass; ids are stable)
         new CNodeGUIValue({
@@ -3378,7 +3406,8 @@ class CTrackManager extends CManager {
         if (trackOb.showInLook) {
             displayTrack.setLayerBit(LAYER.LOOK, true);
         }
-        guiFolder.add(trackOb, "showInLook").name(t("misc.showInLookView.label")).listen().onChange((value) => {
+        guiFolder.add(trackOb, "showInLook").name(t("misc.showInLookView.label"))
+            .tooltip(t("misc.showInLookView.tooltip")).listen().onChange((value) => {
             displayTrack.setLayerBit(LAYER.LOOK, value);
             setRenderOne(true);
         });
@@ -3390,7 +3419,8 @@ class CTrackManager extends CManager {
                 }
             }
         };
-        guiFolder.add(dummy, "deleteTrack").name(t("trackManager.deleteTrack"));
+        guiFolder.add(dummy, "deleteTrack").name(t("trackManager.deleteTrack"))
+            .tooltip(t("trackManager.tips.deleteBalloon"));
 
         // Register in the track drop-target switches (Camera/Target Track...)
         // so the camera can track the balloon — which also makes it the truth

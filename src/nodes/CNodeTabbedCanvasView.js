@@ -22,7 +22,8 @@ class CNodeTabbedCanvasView extends CNodeViewCanvas2D {
         // A "Close" item that hides the view. (The header ✕ icon does the same; the menu item
         // is kept because the per-view menu is the primary control surface for these editors —
         // e.g. the custom graph — and also keeps the title menu non-empty so it opens.)
-        this.tabMenu.add({ close: () => this.show(false) }, 'close').name('Close');
+        this.tabMenu.add({ close: () => this.show(false) }, 'close').name('Close')
+            .tooltip('Hide this view. The ✕ button on the header does the same, but that one can be undone.');
 
         // isMenuInteraction() (in subclasses) walks up to this.menuContainer to let canvas
         // handlers ignore clicks on the menu; the header bar is that region now.

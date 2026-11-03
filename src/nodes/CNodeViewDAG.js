@@ -44,7 +44,8 @@ export class CNodeViewDAG extends CNodeViewCanvas2D {
 
         this.setupMouseHandlers();
 
-        guiMenus.help.add(this, "recalculateLayout").name(t("misc.recalcNodeGraph.label"));
+        guiMenus.help.add(this, "recalculateLayout").name(t("misc.recalcNodeGraph.label"))
+            .tooltip(t("misc.recalcNodeGraph.tooltip"));
     }
 
     setupMouseHandlers() {

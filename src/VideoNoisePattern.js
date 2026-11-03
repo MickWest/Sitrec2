@@ -93,7 +93,8 @@ export function addVideoNoisePatternMenu(folder) {
             return showNoisePatternFolderScan(() => ({...(currentView()?.options ?? settings)}));
         },
     };
-    const controls = folder.addFolder(t("videoNoisePattern.menu.label")).close().perm();
+    const controls = folder.addFolder(t("videoNoisePattern.menu.label")).close().perm()
+        .tooltip(t("videoNoisePattern.menu.tooltip"));
     controls.add(proxy, "show")
         .name(t("videoNoisePattern.menu.label"))
         .tooltip(t("videoNoisePattern.menu.tooltip"))
@@ -128,7 +129,7 @@ export function addVideoNoisePatternMenu(folder) {
     controls.add(proxy, "searchOn", {[s("searchFastest")]: "fastest", [s("searchGPU")]: "gpu", [s("searchCPU")]: "cpu"})
         .name(s("searchOn")).tooltip(s("searchOnTooltip")).listen().perm();
     controls.add(proxy, "run").name(s("run")).tooltip(s("runTooltip")).perm();
-    controls.add(proxy, "stop").name(s("stop")).perm();
+    controls.add(proxy, "stop").name(s("stop")).tooltip(s("stopTooltip")).perm();
     controls.add(proxy, "exportCSV").name(s("exportCSV")).tooltip(s("exportTooltip")).perm();
     controls.add(proxy, "benchmark").name(s("benchmark")).tooltip(s("benchmarkTooltip")).perm();
     controls.add(proxy, "folderScan").name(t("videoNoisePattern.folderScan.title"))
