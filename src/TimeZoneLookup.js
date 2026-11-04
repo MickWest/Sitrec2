@@ -1,10 +1,15 @@
 // Time zone from a position on the Earth.
 //
-// lookupTimeZone(lat, lon) gives the IANA zone ("Europe/Berlin") that covers a point.
-// The table is @photostructure/tz-lookup (73 KB, 28 KB gzipped), loaded on first use,
-// so it costs nothing at startup. Its borders come from timezone-boundary-builder,
-// which builds them from OpenStreetMap, so the data is under the ODbL: credit
-// "© OpenStreetMap contributors" (see DATA_FILES in scripts/generateThirdPartyNotices.js).
+// lookupTimeZone(lat, lon) gives the IANA zone ("Europe/Berlin") that covers a point. It uses
+// the time zone map of Show Time Zones (TimeZoneMapData.js: the zones of timezone-boundary-
+// builder's "1970" set, about 250 KB, loaded on first use), which has every small zone with its
+// own clock: the Hopi reservation inside the Navajo Nation, Atikokan, Blanc-Sablon. Where two
+// zones overlap (Xinjiang, the West Bank), and when the map does not load, the table of
+// @photostructure/tz-lookup (28 KB gzipped, loaded on first use) chooses. tz-lookup alone is
+// coarse near borders (its README says so): it puts the Hopi reservation in MDT in summer.
+// Both come from timezone-boundary-builder, which builds them from OpenStreetMap, so the data is
+// under the ODbL: credit "© OpenStreetMap contributors" (see DATA_FILES in
+// scripts/generateThirdPartyNotices.js). Nothing loads at startup.
 //
 // A zone is not an offset. The offset is read for a given instant from the browser's
 // own IANA rules (Intl), so daylight saving time and historic changes come out right:
@@ -16,16 +21,14 @@
 // Everything except lookupTimeZone() is synchronous and does not touch the app graph,
 // so Jest can test it directly.
 
+import {loadTimeZoneMap, zonesAtPoint} from "./TimeZoneMapData";
+
 let tzLookupPromise = null;
-let tzLookupLoaded = null;      // the lookup function, once the table has loaded
 
 function loadTzLookup() {
     if (!tzLookupPromise) {
         tzLookupPromise = import(/* webpackChunkName: "tz-lookup" */ "@photostructure/tz-lookup")
-            .then(module => {
-                tzLookupLoaded = typeof module === "function" ? module : module.default;
-                return tzLookupLoaded;
-            })
+            .then(module => (typeof module === "function" ? module : module.default))
             .catch(error => {
                 tzLookupPromise = null; // let a failed chunk load try again next time
                 throw error;
@@ -34,29 +37,24 @@ function loadTzLookup() {
     return tzLookupPromise;
 }
 
-// The IANA zone at a latitude and longitude in degrees, or null for an invalid position.
+// The IANA zone at a latitude and longitude in degrees, or null for an invalid position. The
+// map's zone; where the map has two (an overlap), the one tz-lookup gives, if it is one of them;
+// tz-lookup's zone when the map has none or does not load.
 export async function lookupTimeZone(latDeg, lonDeg) {
     if (!Number.isFinite(latDeg) || !Number.isFinite(lonDeg) || Math.abs(latDeg) > 90) {
         return null;
     }
-    const tzlookup = await loadTzLookup();
     const lon = ((lonDeg + 540) % 360) - 180; // tz-lookup refuses longitudes outside -180..180
-    return tzlookup(latDeg, lon);
-}
-
-// Start loading the table, for code that must look zones up synchronously later (the labels
-// of Time > Show Time Zones, which are placed while a frame draws).
-export function preloadTimeZoneLookup() {
-    return loadTzLookup();
-}
-
-// The IANA zone at a position, or null when the table has not loaded yet (see
-// preloadTimeZoneLookup) or the position is invalid.
-export function lookupTimeZoneIfLoaded(latDeg, lonDeg) {
-    if (!tzLookupLoaded || !Number.isFinite(latDeg) || !Number.isFinite(lonDeg) || Math.abs(latDeg) > 90) {
-        return null;
+    let zones = [];
+    try {
+        zones = zonesAtPoint(await loadTimeZoneMap(), latDeg, lon);
+    } catch (error) {
+        console.warn("Time zone map did not load, so the time zone comes from tz-lookup:", error);
     }
-    return tzLookupLoaded(latDeg, ((lonDeg + 540) % 360) - 180);
+    if (zones.length === 1) return zones[0];
+    const tzlookup = await loadTzLookup();
+    const zone = tzlookup(latDeg, lon);
+    return zones.length === 0 || zones.includes(zone) ? zone : zones[0];
 }
 
 // "UTC+8", "UTC-9.5", "UTC+5.75": an offset in hours, in the style of the Time Zone menu.
@@ -72,16 +70,29 @@ export function standardOffsetHoursInZone(zone, year) {
     return january === null || july === null ? null : Math.min(january, july);
 }
 
+// One formatter per zone (null for a zone the browser does not know): making an
+// Intl.DateTimeFormat costs far more than using one, and Show Time Zones asks for every zone
+// each time the sitch time crosses a quarter hour.
+const offsetFormatters = new Map();
+
 // The UTC offset of a zone at an instant, in hours (east positive), or null when the
 // browser does not know the zone. tz-lookup can be newer than the browser's zone list.
 export function utcOffsetHoursInZone(zone, date) {
+    let formatter = offsetFormatters.get(zone);
+    if (formatter === undefined) {
+        try {
+            formatter = new Intl.DateTimeFormat("en-US", {timeZone: zone, timeZoneName: "longOffset"});
+        } catch {
+            formatter = null;
+        }
+        offsetFormatters.set(zone, formatter);
+    }
+    if (!formatter) return null;
     let text;
     try {
-        text = new Intl.DateTimeFormat("en-US", {timeZone: zone, timeZoneName: "longOffset"})
-            .formatToParts(date)
-            .find(part => part.type === "timeZoneName")?.value;
+        text = formatter.formatToParts(date).find(part => part.type === "timeZoneName")?.value;
     } catch {
-        return null;
+        return null;        // an invalid date
     }
     // "GMT" (no offset), "GMT-07:00", or "GMT-07:52:58" for local mean time.
     const match = /^GMT(?:([+-])(\d{1,2}):(\d{2})(?::(\d{2}))?)?$/.exec(text ?? "");

@@ -496,8 +496,9 @@ from the sizes, and derives a Starlink design from the bus and payload names.`,
         copyright: "© OpenStreetMap contributors; timezone-boundary-builder by Evan Siroky",
         repository: "https://github.com/evansiroky/timezone-boundary-builder",
         notes: "The time zone lookup table inside the @photostructure/tz-lookup package (its code is " +
-            "CC0-1.0 and is listed with the npm packages). Sitrec uses it unchanged, to find the IANA " +
-            "time zone at a position (src/TimeZoneLookup.js).",
+            "CC0-1.0 and is listed with the npm packages). Sitrec uses it unchanged, to choose the IANA " +
+            "time zone at a position where two zones of the time zone map overlap, and when the map " +
+            "does not load (src/TimeZoneLookup.js).",
         licenseTextOverride: `Time zone boundary data © OpenStreetMap contributors.
 Built by timezone-boundary-builder (Evan Siroky),
 https://github.com/evansiroky/timezone-boundary-builder, and packed into a
@@ -508,21 +509,23 @@ OpenStreetMap copyright and licence: https://www.openstreetmap.org/copyright`,
     },
     {
         name: "Time zone borders (derived from timezone-boundary-builder)",
-        version: "timezone-boundary-builder release 2026f, \"now\" set with oceans",
+        version: "timezone-boundary-builder release 2026f, \"1970\" set with oceans",
         license: "ODbL-1.0",
         copyright: "© OpenStreetMap contributors; timezone-boundary-builder by Evan Siroky",
         repository: "https://github.com/evansiroky/timezone-boundary-builder",
-        notes: "data/timezones/timezone-borders.bin.gz, the lines drawn by Time > Show Time Zones. " +
-            "Built by scripts/buildTimeZoneBorders.js: only the borders where the standard UTC offset " +
-            "changes are kept, joined into lines and simplified to about 1.1 km. This derived database is itself " +
-            "made available under the ODbL (see data/timezones/README.md). The ODbL applies to " +
-            "this data file only, not to the Sitrec source code.",
+        notes: "data/timezones/timezone-borders.bin.gz, the lines and the colored zones drawn by " +
+            "Time > Show Time Zones, also used to find the time zone at a position " +
+            "(src/TimeZoneMapData.js). Built by scripts/buildTimeZoneBorders.js: the borders between the " +
+            "zones are joined into lines and simplified to about 1.1 km, and each area between the lines " +
+            "is kept with the names of the zones that cover it. This " +
+            "derived database is itself made available under the ODbL (see data/timezones/README.md). " +
+            "The ODbL applies to this data file only, not to the Sitrec source code.",
         licenseTextOverride: `Time zone border data © OpenStreetMap contributors.
-From timezone-boundary-builder (Evan Siroky), release 2026f, "now" set with
+From timezone-boundary-builder (Evan Siroky), release 2026f, "1970" set with
 oceans, https://github.com/evansiroky/timezone-boundary-builder
-Changes: Sitrec keeps only the borders where the standard UTC offset changes,
-joins them into lines and simplifies them to about 1.1 km
-(scripts/buildTimeZoneBorders.js).
+Changes: Sitrec joins the borders between the zones into lines, simplifies
+them to about 1.1 km, and keeps each area between the lines with the names of
+the zones that cover it (scripts/buildTimeZoneBorders.js).
 This derived database, data/timezones/timezone-borders.bin.gz, is made
 available under the Open Data Commons Open Database License (ODbL) 1.0,
 https://opendatacommons.org/licenses/odbl/1-0/

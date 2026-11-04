@@ -9,6 +9,20 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.187.0 (2026-11-03)
+
+### New Features
+- **Colored time zones** (Time → *Show Time Zones*): each zone now has a light color for its UTC offset. The colors repeat every 6 hours: UTC orange, UTC+1 yellow, UTC+2 green, UTC+3 blue, UTC+4 purple and UTC+5 red. A zone on a half or quarter hour, such as India (UTC+5:30) or Nepal (UTC+5:45), has diagonal stripes of the colors of the two hours next to it. Where two zones cover the same land, as in Xinjiang, the area has stripes of both colors (#13674 "Some sitrec questions, and suggestions?"; #14311 "Sitrec 2.1 New Features").
+- **Time Display in Main** (Show): shows the date and time, in UTC and in the selected time zone, at the bottom right of the main view, as in the look view. The clock button on the header bar of the main view also turns it on and off. It is off by default, and the setting is saved with the sitch.
+
+### Improvements
+- **Show Time Zones with daylight saving time** (Time): the map now shows the time zones at the Now Time. A line marks where the clocks on its two sides show different times, and the lines and colors change when the Now Time crosses a change of daylight saving time. For example, in July a line goes around Arizona, and in January there is no line. Before, a line marked only a change of standard time. The labels now agree with the colors (#13674 "Some sitrec questions, and suggestions?"; #14311 "Sitrec 2.1 New Features").
+- **Time zones of past dates** (Time → *Show Time Zones*): each zone of the map is now an area where the clocks have been the same since 1970, so the map also shows the zones of past dates. For example, British Columbia is on UTC-8 in January 2025. The map data is now about 250 KB, and it loads the first time that you use it (#13674 "Some sitrec questions, and suggestions?"; #14311 "Sitrec 2.1 New Features").
+- **Time zone from a location** (Time → *Set Time Zone from Camera Location*, and a photo or a video with a position): Sitrec now finds the zone on the *Show Time Zones* map, which has the small areas with their own clock. Before, it put the Hopi reservation in Arizona on daylight saving time in summer, and it gave the wrong zone at Atikokan, Blanc-Sablon and Danmarkshavn. The zone name in the message can now be a different zone with the same clocks since 1970, for example *Europe/Berlin* for Oslo (#13674 "Some sitrec questions, and suggestions?"; #14311 "Sitrec 2.1 New Features").
+
+### Bug Fixes
+- Fixed gaps in the lines of *Show Time Zones* (Time) where the borders of two zones next to each other did not meet exactly, for example along 68° S in Antarctica and around Iceland (#13674 "Some sitrec questions, and suggestions?"; #14311 "Sitrec 2.1 New Features").
+
 ## Version 2.186.2 (2026-11-03)
 
 The features listed under 2.186.0 reach the Metabunk site with this release. Versions 2.186.0 and 2.186.1 were not installed there.

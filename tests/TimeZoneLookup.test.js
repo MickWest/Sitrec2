@@ -1,14 +1,29 @@
-// Time zone from a position: the IANA zone at a lat/lon (tz-lookup), its offset on a
-// date (Intl), the Time Zone menu entry that names it, and the EXIF capture time read
-// in that zone.
+// Time zone from a position: the IANA zone at a lat/lon (the time zone map, with tz-lookup
+// for overlaps and as the fallback), its offset on a date (Intl), the Time Zone menu entry
+// that names it, and the EXIF capture time read in that zone.
 jest.mock("../src/nodes/CNodeViewUI", () => ({forceUpdateUIText: () => {}}));
 jest.mock("../src/JetGUI", () => ({updateGUIFrames: () => {}}));
 jest.mock("../src/nodes/CNodeFrameSlider", () => ({updateFrameSlider: () => {}}));
 jest.mock("../src/showTimingAnalysis", () => ({showTimingAnalysis: () => {}}));
 // CNodeDateTime -> TimeZoneBorders -> the overlay that draws its labels, which extends the mocked CNodeViewUI.
 jest.mock("../src/nodes/CNodeDisplaySkyOverlay", () => ({registerLabel3D: () => {}, unregisterLabel3D: () => {}}));
+// The map file is fetched in the browser; here it is read from the repository.
+jest.mock("../src/TimeZoneMapData", () => {
+    const actual = jest.requireActual("../src/TimeZoneMapData");
+    const fs = require("fs"), path = require("path"), zlib = require("zlib");
+    let decoded = null;
+    return {
+        ...actual,
+        loadTimeZoneMap: jest.fn(async () => {
+            decoded ??= actual.decodeTimeZoneBorders(new Uint8Array(zlib.gunzipSync(
+                fs.readFileSync(path.resolve(__dirname, "../data/timezones/timezone-borders.bin.gz")))));
+            return decoded;
+        }),
+    };
+});
 
 import {lookupTimeZone, utcOffsetHoursInZone, zoneAbbreviations, zoneWallClockToInstant} from "../src/TimeZoneLookup";
+import {loadTimeZoneMap} from "../src/TimeZoneMapData";
 import {applyExifTimeZone} from "../src/exifCaptureTime";
 import {
     CNodeDateTime, genericTimeZoneName, offsetFromTimeZoneName, timeZoneKeyForZone,
@@ -34,6 +49,31 @@ test("lookupTimeZone gives the IANA zone at a position", async () => {
     // A longitude outside -180..180 is wrapped, not refused.
     expect(await lookupTimeZone(52.52, 13.40 + 360)).toBe("Europe/Berlin");
     expect(await lookupTimeZone(52.52, 13.40 - 360)).toBe("Europe/Berlin");
+});
+
+test("lookupTimeZone gets small areas with their own clock right (tz-lookup alone did not)", async () => {
+    const places = [
+        [35.875, -110.620, "America/Phoenix"],      // Hopi, inside the Navajo Nation: no DST
+        [36.135, -111.240, "America/Denver"],       // Navajo Nation: DST
+        [48.757, -91.621, "America/Panama"],        // Atikokan: EST all year
+        [51.427, -57.131, "America/Puerto_Rico"],   // Blanc-Sablon: AST all year
+        [76.767, -18.667, "America/Danmarkshavn"],  // UTC all year
+    ];
+    for (const [lat, lon, zone] of places) {
+        expect([lat, lon, await lookupTimeZone(lat, lon)]).toEqual([lat, lon, zone]);
+    }
+});
+
+test("where two zones overlap, tz-lookup chooses between them", async () => {
+    expect(await lookupTimeZone(43.825, 87.617)).toBe("Asia/Urumqi");     // Shanghai and Urumqi overlap
+});
+
+test("when the map does not load, the zone comes from tz-lookup", async () => {
+    const warn = jest.spyOn(console, "warn").mockImplementation(() => {});
+    loadTimeZoneMap.mockRejectedValueOnce(new Error("offline"));
+    expect(await lookupTimeZone(52.52, 13.40)).toBe("Europe/Berlin");
+    expect(warn).toHaveBeenCalled();
+    warn.mockRestore();
 });
 
 test("lookupTimeZone gives null for an invalid position", async () => {

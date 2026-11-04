@@ -1,11 +1,26 @@
-// Time > Show Time Zones: the borders between time zones, drawn over the globe in the MAIN
-// view only, as on an ordinary time zone map: a line marks a change of STANDARD UTC offset
-// (the offset without daylight saving time), on land and at sea, where the zones are the
-// 15-degree nautical bands. Arizona and New Mexico are both UTC-7 standard, so no line runs
-// between them. See data/timezones/README.md and scripts/buildTimeZoneBorders.js.
+// Time > Show Time Zones: the time zones at the sitch time, drawn over the globe in the MAIN
+// view only, as on an ordinary time zone map. Each zone has a color for its UTC offset at the
+// Now Time, with daylight saving time, and a line runs where the offsets on its two sides
+// differ. So in July a line runs around Arizona (UTC-7) inside Mountain time (UTC-6), and in
+// January it does not. France and Germany have had the same clocks since 1980, so there is no
+// line between them after that (from 1976 to 1979 France had summer time and Germany did not,
+// and the map shows a line then). On land and at sea,
+// where the zones are the 15-degree nautical bands. See data/timezones/README.md and
+// scripts/buildTimeZoneBorders.js.
 //
-// The data (data/timezones/timezone-borders.bin.gz, about 120 KB) is fetched the first time
-// the checkbox is turned on, never at startup, and kept for the rest of the session.
+// The data (data/timezones/timezone-borders.bin.gz, about 250 KB, loaded by TimeZoneMapData.js)
+// is fetched the first time it is needed, never at startup, and kept for the rest of the
+// session. It has the map's zones by name (the "1970" set of timezone-boundary-builder: each
+// zone has one history of offsets since 1970), and the browser gives each zone's offset at the
+// Now Time (Intl), so the map is right for any date since 1970. syncMapToDate works out the
+// colors, the lines and the label sides again when an offset changes, checked once per quarter
+// hour of sitch time.
+//
+// FILL. Under the lines, each zone is colored at FILL_OPACITY; a zone between two whole hours
+// (India, UTC+5:30) has diagonal stripes of the two colors. The geometry and the colors are in
+// TimeZoneFill.js; the stripes are fixed on the screen, STRIPE_PERIOD_PX apart, so they keep
+// their width at any zoom. The fill is drawn just before the lines, with no depth test and the
+// same far-side cull.
 //
 // The lines are 1.5 display pixels wide. A plain WebGL line is always 1 px in Chrome (it
 // ignores linewidth), so they are Sitrec's screen-space fat lines (SceneLineSegments with
@@ -19,31 +34,31 @@
 // in the middle of the part of it that is on screen, so the zone that faces the camera has its
 // label in its middle, close to the screen centre. A label's size is the cosine of the angle
 // between the surface normal and the direction to the camera, times LABEL_SIZE_PX, so labels
-// shrink toward the edge of the globe. The zone between two crossings comes from the standard
-// offsets stored on each side of each border line; its name comes from tz-lookup at the label
-// point, for the date of the sitch, when that zone has the same standard offset (on land).
-// Otherwise (at sea, or where the browser's rules are older than the lines) the label is the
-// standard offset alone ("UTC-10"). The labels are drawn by the 2D overlay of the main view
+// shrink toward the edge of the globe. The offset of the zone between two crossings comes from
+// the faces on each side of each border line; its name comes from the map's zone at the label
+// point (zonesAtPoint), as the Time Zone menu names it at the Now Time. A zone with no menu
+// name (at sea: Etc/GMT+10) has the offset alone ("UTC-10"). The labels are drawn by the 2D
+// overlay of the main view
 // (registerLabel3D in CNodeDisplaySkyOverlay.js), which asks each label shouldRender() before
 // it draws; the first ask in a frame works out the row for the main camera.
 //
 // Time zone borders: © OpenStreetMap contributors, timezone-boundary-builder (ODbL).
 
-import {BufferGeometry, Float32BufferAttribute, Vector3} from "three";
+import {BufferAttribute, BufferGeometry, Color, DoubleSide, Float32BufferAttribute, Mesh, ShaderMaterial, Vector3} from "three";
 import * as LAYER from "./LayerMasks";
 import {GlobalDateTimeNode, Globals, markSitchDirty, NodeMan, setRenderOne} from "./Globals";
 import {GlobalScene} from "./LocalFrame";
 import {ECEFToLLAVD_radii, LLAToECEFInto} from "./LLA-ECEF-ENU";
 import {SceneLineSegments} from "./SceneLines";
-import {SceneLineMaterial} from "./SceneLineMaterial";
-import {SITREC_APP} from "./configUtils";
+import {displayPixelScale, SceneLineMaterial} from "./SceneLineMaterial";
+import {buildTimeZoneFill, densifySegment, fillStyles, ZONE_PALETTE, zoneMapAt} from "./TimeZoneFill";
 import {ViewMan} from "./CViewManager";
 import {showViewMessage} from "./ViewMessage";
 import {registerLabel3D, unregisterLabel3D} from "./nodes/CNodeDisplaySkyOverlay";
-import {formatUtcOffset, lookupTimeZoneIfLoaded, preloadTimeZoneLookup, standardOffsetHoursInZone} from "./TimeZoneLookup";
+import {formatUtcOffset, utcOffsetHoursInZone} from "./TimeZoneLookup";
+import {loadTimeZoneMap, zonesAtPoint} from "./TimeZoneMapData";
 import {t} from "./i18n";
 
-const BORDERS_FILE = "data/timezones/timezone-borders.bin.gz";
 const BORDER_COLOR = 0xffff00;      // yellow
 const LABEL_COLOR = "#FFFF00";
 const LABEL_SIZE_PX = 18;           // font size of a label that faces the camera
@@ -51,121 +66,40 @@ const LABEL_MIN_SIZE_PX = 8;        // smaller labels are not drawn
 const LABEL_MIN_FACING = 0.25;      // cos of the angle from the surface normal to the camera
 const LABEL_ROW_SAMPLES = 48;       // points tested along each zone's stretch of the row
 const BORDER_WIDTH_PX = 1.5;        // display pixels, whatever the device pixel ratio
-// A border can run straight for a long way (the Western Australia border is a meridian for
-// 1,500 km). A straight ECEF line between two far points cuts under the curve of the Earth,
-// so long segments are split into pieces of at most this many degrees.
-const MAX_SEGMENT_DEG = 0.5;
-const UNITS_PER_DEG = 1e4;      // must match scripts/buildTimeZoneBorders.js
-const UNKNOWN_SIDE = 127;       // quarter hours: that side has no single offset (as there)
+const FILL_OPACITY = 0.15;
+const STRIPE_PERIOD_PX = 16;        // display pixels: one stripe of each color
+const MAP_STEP_MS = 15 * 60 * 1000; // offsets are checked again each quarter hour of sitch time
 
-let bordersPromise = null;      // the decoded file, loaded once per session
 let borderLines = null;         // the SceneLineSegments in the scene, made once per sitch
+let zoneFill = null;            // the Mesh of colored zones, made with the lines
+let fillLonLat = null;          // the triangulated fill in longitude/latitude, made once per session
 let loadingGeneration = null;   // the sitch a load is running for
+let mapState = null;            // zoneMapAt for the Now Time: colors, lines and label sides
+let mapStep = null;             // the quarter hour of sitch time mapState was checked for
 
-// The "TZB3" format of scripts/buildTimeZoneBorders.js (read its header), as
-// {counts: Uint32Array (points in each line), lonLat: Float64Array (lon, lat in degrees),
-//  left, right: Float64Array (standard offset in hours on each side, facing along the line;
-//  NaN where unknown)}.
-export function decodeTimeZoneBorders(buffer) {
-    const bytes = buffer instanceof ArrayBuffer ? new Uint8Array(buffer) : buffer;
-    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-    const name = String.fromCharCode(bytes[0], bytes[1], bytes[2], bytes[3]);
-    if (name !== "TZB3") throw new Error(`not a time zone border file (starts "${name}")`);
-    const lineCount = view.getUint32(4, true);
-    const pointCount = view.getUint32(8, true);
-
-    let offset = 12;
-    const readVarint = () => {
-        let value = 0, shift = 0, byte;
-        do {
-            if (offset >= bytes.byteLength) throw new Error("time zone border file is too short");
-            byte = bytes[offset++];
-            value += (byte & 0x7f) * 2 ** shift;      // not <<, which overflows past 31 bits
-            shift += 7;
-        } while (byte & 0x80);
-        return value;
-    };
-    const readSigned = () => {
-        const value = readVarint();
-        return value % 2 === 0 ? value / 2 : -(value + 1) / 2;    // undo the zigzag
-    };
-    const sideHours = quarters => (quarters === UNKNOWN_SIDE ? NaN : quarters / 4);
-
-    const counts = new Uint32Array(lineCount);
-    const left = new Float64Array(lineCount);
-    const right = new Float64Array(lineCount);
-    const lonLat = new Float64Array(2 * pointCount);
-    let k = 0;
-    for (let i = 0; i < lineCount; i++) {
-        const count = readVarint();
-        counts[i] = count;
-        left[i] = sideHours(readSigned());
-        right[i] = sideHours(readSigned());
-        if (k + 2 * count > lonLat.length) throw new Error("time zone border file has too many points");
-        let lon = 0, lat = 0;
-        for (let j = 0; j < count; j++) {
-            lon += readSigned();        // the first point is absolute (lon starts at 0), then differences
-            lat += readSigned();
-            lonLat[k++] = lon / UNITS_PER_DEG;
-            lonLat[k++] = lat / UNITS_PER_DEG;
-        }
-    }
-    if (k !== lonLat.length || offset !== bytes.byteLength) {
-        throw new Error("time zone border file has the wrong length");
-    }
-    return {counts, lonLat, left, right};
-}
-
-async function gunzip(arrayBuffer) {
-    const bytes = new Uint8Array(arrayBuffer);
-    // A server can send the file already decoded (Content-Encoding: gzip); only a gzip
-    // stream starts with 1f 8b.
-    if (bytes[0] !== 0x1f || bytes[1] !== 0x8b) return arrayBuffer;
-    const stream = new Response(bytes).body.pipeThrough(new DecompressionStream("gzip"));
-    return new Response(stream).arrayBuffer();
-}
-
-function loadBorders() {
-    if (!bordersPromise) {
-        bordersPromise = fetch(SITREC_APP + BORDERS_FILE)
-            .then(response => {
-                if (!response.ok) throw new Error(`HTTP ${response.status} for ${BORDERS_FILE}`);
-                return response.arrayBuffer();
-            })
-            .then(gunzip)
-            .then(decodeTimeZoneBorders)
-            .catch(error => {
-                bordersPromise = null;      // let a later try fetch again
-                throw error;
-            });
-    }
-    return bordersPromise;
-}
-
-// Every border as line segments (pairs of ECEF points), the source for SceneLineSegments.
-function buildBorderGeometry({counts, lonLat}) {
+// Every border arc as line segments (pairs of ECEF points), the source for SceneLineSegments.
+// border (from zoneMapAt) says which arcs are borders at the Now Time; the others (along a
+// pole, or with the same offsets on both sides then) only close the faces of the fill. Long segments are split (densifySegment), and the
+// fill uses the same points, so a fill ends exactly on its line.
+function buildBorderGeometry({counts, lonLat}, border) {
     const positions = [];
     const p = new Vector3();
-    const pushPoint = (lat, lon) => {
+    let previousLon = 0, previousLat = 0;
+    const pushPiece = (lon, lat) => {
+        LLAToECEFInto(previousLat, previousLon, 0, p);
+        positions.push(p.x, p.y, p.z);
         LLAToECEFInto(lat, lon, 0, p);
         positions.push(p.x, p.y, p.z);
+        previousLon = lon;
+        previousLat = lat;
     };
     let k = 0;
-    for (const count of counts) {
-        for (let j = 0; j < count; j++, k += 2) {
-            if (j === 0) continue;
-            const lon0 = lonLat[k - 2], lat0 = lonLat[k - 1], lat1 = lonLat[k + 1];
-            // Across the 180-degree meridian (179.9 to -179.9), go the short way.
-            let lon1 = lonLat[k];
-            if (lon1 - lon0 > 180) lon1 -= 360;
-            else if (lon1 - lon0 < -180) lon1 += 360;
-            const span = Math.max(Math.abs(lon1 - lon0), Math.abs(lat1 - lat0));
-            const steps = Math.max(1, Math.ceil(span / MAX_SEGMENT_DEG));
-            for (let s = 0; s < steps; s++) {
-                const f0 = s / steps, f1 = (s + 1) / steps;
-                pushPoint(lat0 + (lat1 - lat0) * f0, lon0 + (lon1 - lon0) * f0);
-                pushPoint(lat0 + (lat1 - lat0) * f1, lon0 + (lon1 - lon0) * f1);
-            }
+    for (let line = 0; line < counts.length; line++) {
+        for (let j = 0; j < counts[line]; j++, k += 2) {
+            if (j === 0 || !border[line]) continue;
+            previousLon = lonLat[k - 2];
+            previousLat = lonLat[k - 1];
+            densifySegment(previousLon, previousLat, lonLat[k], lonLat[k + 1], pushPiece);
         }
     }
     const geometry = new BufferGeometry();
@@ -207,33 +141,174 @@ function makeBorderMaterial() {
 }
 
 function makeBorderLines(borders) {
-    const lines = new SceneLineSegments(buildBorderGeometry(borders), makeBorderMaterial());
+    const lines = new SceneLineSegments(buildBorderGeometry(borders, mapState.border), makeBorderMaterial());
     lines.userData.radii = [Globals.equatorRadius, Globals.polarRadius];
-    // The Earth model can change after setup (Terrain > Use Ellipsoid), which moves every
-    // vertex and the culling normal. LineSegments2 has its own onBeforeRender (it sets the
-    // viewport), so it is wrapped, not replaced.
-    const lineSegmentsOnBeforeRender = lines.onBeforeRender;
-    lines.onBeforeRender = function (...args) {
-        const [a, b] = this.userData.radii;
-        if (a !== Globals.equatorRadius || b !== Globals.polarRadius) {
-            this.sourceGeometry.dispose();
-            this.sourceGeometry = buildBorderGeometry(borders);
-            this.syncGeometry();
-            ellipsoidNormalScale(this.material.uniforms.normalScale.value);
-            this.userData.radii = [Globals.equatorRadius, Globals.polarRadius];
-        }
-        return lineSegmentsOnBeforeRender.apply(this, args);
-    };
+    lines.userData.borderKey = mapState.borderKey;
     lines.name = "TimeZoneBorders";
     lines.frustumCulled = false;
     lines.renderOrder = 1000;           // no depth test, so draw after the scene it sits over
     return lines;
 }
 
+// Make the lines again when the Now Time crosses a change of offset that adds or removes a
+// border, and when the Earth model changes (Terrain > Use Ellipsoid), which moves every vertex
+// and the culling normal. Called from the scene hook (installSceneHook), never while an object
+// draws: more borders than the buffer holds give the lines new buffers (syncGeometry).
+function updateBorderLines() {
+    const lines = borderLines;
+    const [a, b] = lines.userData.radii;
+    const radiiChanged = a !== Globals.equatorRadius || b !== Globals.polarRadius;
+    if (!radiiChanged && lines.userData.borderKey === mapState.borderKey) return;
+    lines.sourceGeometry.dispose();
+    lines.sourceGeometry = buildBorderGeometry(borderData, mapState.border);
+    lines.syncGeometry();
+    ellipsoidNormalScale(lines.material.uniforms.normalScale.value);
+    lines.userData.radii = [Globals.equatorRadius, Globals.polarRadius];
+    lines.userData.borderKey = mapState.borderKey;
+}
+
+// Three calls scene.onBeforeRender BEFORE it collects the objects to draw and sends their
+// changed buffers to the GPU; it calls an object's own onBeforeRender AFTER that. So the map is
+// brought to the Now Time here. A change made in an object's onBeforeRender shows one frame
+// late, and a NEW buffer made there is worse: that frame draws without it, and Three keeps the
+// incomplete vertex state, so the lines stayed invisible after a move of the Month slider
+// added borders. Installed once on each scene the lines go into (GlobalScene, made once per
+// page load); a WeakSet does not keep a scene alive.
+const hookedScenes = new WeakSet();
+
+function installSceneHook(scene) {
+    if (hookedScenes.has(scene)) return;
+    hookedScenes.add(scene);
+    const previous = scene.onBeforeRender;
+    scene.onBeforeRender = function (...args) {
+        if (typeof previous === "function") previous.apply(this, args);
+        if (!borderLines?.visible || borderLines.parent !== this) return;
+        syncMapToDate();
+        updateBorderLines();
+        if (zoneFill) updateZoneFill();
+    };
+}
+
+// ----------------------------------------------------------------- the map at the Now Time
+
+// Make mapState (zoneMapAt) right for the Now Time. The offsets are checked at the start of each
+// quarter hour of sitch time, so a change shows at most 15 minutes of sitch time late (most
+// changes are on a whole hour, and show at once), and the state is replaced
+// only when an offset changed, so the lines, the colors and the labels are made again only then.
+function syncMapToDate() {
+    if (!borderData) return;
+    const time = GlobalDateTimeNode?.dateNow?.getTime?.() ?? Date.now();
+    const step = Math.floor(time / MAP_STEP_MS);
+    if (mapState && (step === mapStep || !Number.isFinite(step))) return;
+    mapStep = step;
+    const state = zoneMapAt(borderData, new Date(Number.isFinite(step) ? step * MAP_STEP_MS : Date.now()));
+    if (mapState && state.key === mapState.key) return;
+    state.borderKey = state.border.join("");
+    mapState = state;
+    labelStateKey = null;
+}
+
+// --------------------------------------------------------------------------------- fill
+
+// The fill mesh in ECEF, from the triangles in longitude/latitude (TimeZoneFill.js), with the
+// colors of the Now Time.
+function buildFillGeometry(fill) {
+    const {lonLat, index} = fill;
+    const positions = new Float32Array(lonLat.length / 2 * 3);
+    const p = new Vector3();
+    for (let i = 0, k = 0; i < lonLat.length; i += 2, k += 3) {
+        LLAToECEFInto(lonLat[i + 1], lonLat[i], 0, p);
+        positions[k] = p.x;
+        positions[k + 1] = p.y;
+        positions[k + 2] = p.z;
+    }
+    const geometry = new BufferGeometry();
+    geometry.setAttribute("position", new BufferAttribute(positions, 3));
+    geometry.setAttribute("fillStyle", new BufferAttribute(fillStyles(fill, mapState.faceOffsets), 3));
+    geometry.setIndex(new BufferAttribute(index, 1));
+    return geometry;
+}
+
+// fillStyle is (a, b, fraction): palette indices, and the part of each stripe period in color b;
+// a is -1 for a face with no known offset. The stripes run up to the right, fixed on the screen.
+function makeFillMaterial() {
+    return new ShaderMaterial({
+        uniforms: {
+            normalScale: {value: ellipsoidNormalScale(new Vector3())},
+            palette: {value: ZONE_PALETTE.map(hex => new Color(hex))},
+            opacity: {value: FILL_OPACITY},
+            stripePeriod: {value: STRIPE_PERIOD_PX},
+        },
+        vertexShader: `
+            attribute vec3 fillStyle;
+            varying vec3 vFillStyle;
+            varying vec3 vSurfacePoint;
+            void main() {
+                vFillStyle = fillStyle;
+                vec4 world = modelMatrix * vec4(position, 1.0);
+                vSurfacePoint = world.xyz;
+                gl_Position = projectionMatrix * viewMatrix * world;
+            }`,
+        fragmentShader: `
+            uniform vec3 normalScale;
+            uniform vec3 palette[${ZONE_PALETTE.length}];
+            uniform float opacity;
+            uniform float stripePeriod;
+            varying vec3 vFillStyle;
+            varying vec3 vSurfacePoint;
+            void main() {
+                // On the far side of the Earth: the camera is behind the tangent plane here.
+                if (dot(vSurfacePoint * normalScale, cameraPosition - vSurfacePoint) < 0.0) discard;
+                if (vFillStyle.x < -0.5) discard;
+                float stripe = fract((gl_FragCoord.x - gl_FragCoord.y) / stripePeriod);
+                float index = stripe < vFillStyle.z ? vFillStyle.y : vFillStyle.x;
+                gl_FragColor = vec4(palette[int(index + 0.5)], opacity);
+                #include <colorspace_fragment>
+            }`,
+        transparent: true,
+        depthTest: false,
+        depthWrite: false,
+        side: DoubleSide,
+    });
+}
+
+function makeZoneFill(borders) {
+    if (!fillLonLat) fillLonLat = buildTimeZoneFill(borders);
+    const mesh = new Mesh(buildFillGeometry(fillLonLat), makeFillMaterial());
+    mesh.userData.radii = [Globals.equatorRadius, Globals.polarRadius];
+    mesh.userData.mapKey = mapState.key;
+    // Keep the stripes the same number of display pixels wide in any render target (an
+    // exported video, a sensor view). A uniform can change while the object draws.
+    mesh.onBeforeRender = function (renderer) {
+        this.material.uniforms.stripePeriod.value = STRIPE_PERIOD_PX * displayPixelScale(renderer);
+    };
+    mesh.name = "TimeZoneFill";
+    mesh.frustumCulled = false;
+    mesh.renderOrder = 999;             // just before the lines
+    return mesh;
+}
+
+// As for the lines (updateBorderLines, from the same scene hook): take the colors of the Now
+// Time, and follow a change of the Earth model.
+function updateZoneFill() {
+    const mesh = zoneFill;
+    const [a, b] = mesh.userData.radii;
+    if (a !== Globals.equatorRadius || b !== Globals.polarRadius) {
+        mesh.geometry.dispose();
+        mesh.geometry = buildFillGeometry(fillLonLat);
+        ellipsoidNormalScale(mesh.material.uniforms.normalScale.value);
+        mesh.userData.radii = [Globals.equatorRadius, Globals.polarRadius];
+    } else if (mesh.userData.mapKey !== mapState.key) {
+        const style = mesh.geometry.getAttribute("fillStyle");
+        fillStyles(fillLonLat, mapState.faceOffsets, style.array);
+        style.needsUpdate = true;
+    }
+    mesh.userData.mapKey = mapState.key;
+}
+
 // ------------------------------------------------------------------------------- labels
 
 let borderData = null;          // the decoded file, for the crossings of the label row
-let lookupReady = false;        // tz-lookup has loaded, so labels can name their zones
 const labelPool = [];           // label objects registered with the main view's 2D overlay
 let labelStateKey = null;       // the camera, date and data the labels were placed for
 const labelTextCache = new Map();
@@ -304,14 +379,16 @@ function screenCentreLatLon(camera) {
 }
 
 // Where the borders cross the parallel at latC: [{d, west, east}], d the longitude east of
-// lonC in -180..180, west and east the standard offsets on each side. Sorted by d.
+// lonC in -180..180, west and east the standard offsets on each side. Sorted by d. An arc that
+// is not a border (the same zones on both sides) does not split a zone.
 function rowCrossings(latC, lonC) {
-    const {counts, lonLat, left, right} = borderData;
+    const {counts, lonLat} = borderData;
+    const {left, right, border} = mapState;
     const crossings = [];
     let k = 0;
     for (let line = 0; line < counts.length; line++) {
         for (let j = 0; j < counts[line]; j++, k += 2) {
-            if (j === 0) continue;
+            if (j === 0 || !border[line]) continue;
             const lat0 = lonLat[k - 1], lat1 = lonLat[k + 1];
             const north = lat1 > lat0;
             // Half-open, so a crossing exactly at a shared point counts once.
@@ -332,20 +409,19 @@ function rowCrossings(latC, lonC) {
     return crossings.sort((p, q) => p.d - q.d);
 }
 
-// "PDT\nUTC-7" for the zone at a point and date, when tz-lookup's zone there has the
-// standard offset of the border data; otherwise the standard offset alone.
+// "PDT\nUTC-7" for the zone at a point and instant: the map's zone there that has the offset of
+// the label then (where zones overlap, offset is NaN and the first zone names it). The offset
+// alone when the zone has no name in the Time Zone menu, or the browser does not know it.
 function labelText(lat, lon, offset, date) {
-    const zone = lookupReady ? lookupTimeZoneIfLoaded(lat, lon) : null;
-    const cacheKey = `${zone}|${offset}|${Math.floor(date.getTime() / 3600000)}`;
+    const zones = zonesAtPoint(borderData, lat, lon);
+    const zone = zones.find(name => {
+        const now = utcOffsetHoursInZone(name, date);
+        return now !== null && (!Number.isFinite(offset) || Math.abs(now - offset) < 1e-6);
+    }) ?? null;
+    const cacheKey = `${zone}|${offset}|${Math.floor(date.getTime() / MAP_STEP_MS)}`;
     let text = labelTextCache.get(cacheKey);
     if (text === undefined) {
-        text = null;
-        if (zone) {
-            const standard = standardOffsetHoursInZone(zone, date.getUTCFullYear());
-            if (standard !== null && (!Number.isFinite(offset) || Math.abs(standard - offset) < 1e-6)) {
-                text = GlobalDateTimeNode?.timeZoneLabelText?.(zone, date) ?? null;
-            }
-        }
+        text = zone ? GlobalDateTimeNode?.timeZoneLabelText?.(zone, date) ?? null : null;
         if (text === null && Number.isFinite(offset)) text = formatUtcOffset(offset);
         if (labelTextCache.size > 1000) labelTextCache.clear();
         labelTextCache.set(cacheKey, text);
@@ -414,8 +490,9 @@ function labelRow(camera, date, widthPx, heightPx) {
     return row;
 }
 
-// Place the labels for the main camera, once for each change of camera, view size, date
-// (to the hour) or data. Called from the labels' shouldRender, so only while they show.
+// Place the labels for the main camera, once for each change of camera, view size, Now Time
+// (to the quarter hour), map state or data. Called from the labels' shouldRender, so only while
+// they show.
 function placeLabels() {
     if (!borderLines || !borderData) return;
     const camera = NodeMan.get("mainCamera", false)?.camera;
@@ -426,9 +503,11 @@ function placeLabels() {
         return;
     }
     const widthPx = view.widthPx || 1000, heightPx = view.heightPx || 800;
+    syncMapToDate();
     camera.updateMatrixWorld();
     const stateKey = [camera.matrixWorld.elements.join(","), camera.projectionMatrix.elements.join(","),
-        widthPx, heightPx, Math.floor(date.getTime() / 3600000), lookupReady, Globals.equatorRadius].join("|");
+        widthPx, heightPx, Math.floor(date.getTime() / MAP_STEP_MS), mapState.key,
+        Globals.equatorRadius].join("|");
     if (stateKey === labelStateKey) return;
     labelStateKey = stateKey;
 
@@ -444,12 +523,16 @@ function placeLabels() {
     for (let i = row.length; i < labelPool.length; i++) labelPool[i].active = false;
 }
 
-// Show or hide the lines to match Globals.showTimeZones, loading the data the first time.
+// Show or hide the lines and the fill to match Globals.showTimeZones, loading the data the
+// first time.
 export function refreshTimeZoneBordersVisibility() {
     if (borderLines) {
         const mask = LAYER.perViewLayerMask(Globals.showTimeZones === true, false);
-        borderLines.layers.mask = mask;
-        borderLines.visible = mask !== 0;
+        for (const object of [borderLines, zoneFill]) {
+            if (!object) continue;
+            object.layers.mask = mask;
+            object.visible = mask !== 0;
+        }
         return;
     }
     if (!Globals.showTimeZones) return;
@@ -457,24 +540,25 @@ export function refreshTimeZoneBordersVisibility() {
     const generation = Globals.loadGeneration;
     if (loadingGeneration === generation) return;
     loadingGeneration = generation;
-    loadBorders()
+    loadTimeZoneMap()
         .then(borders => {
             // A different sitch loaded meanwhile: its own checkbox loads them again (cached).
             if (generation !== Globals.loadGeneration || borderLines) return;
             borderData = borders;
+            mapState = null;
+            syncMapToDate();
             borderLines = makeBorderLines(borders);
             GlobalScene.add(borderLines);
+            installSceneHook(GlobalScene);
+            // The fill is extra: if it fails, the lines and labels still show.
+            try {
+                zoneFill = makeZoneFill(borders);
+                GlobalScene.add(zoneFill);
+            } catch (error) {
+                console.warn("Time zone fill not made:", error);
+            }
             // The overlay only asks labels that exist, so one is made now; the row adds more.
             makeLabel();
-            if (!lookupReady) {
-                preloadTimeZoneLookup()
-                    .then(() => {
-                        lookupReady = true;     // the labels can now name their zones
-                        labelStateKey = null;
-                        setRenderOne(true);
-                    })
-                    .catch(error => console.warn("Time zone labels: tz-lookup did not load:", error));
-            }
             refreshTimeZoneBordersVisibility();
             setRenderOne(true);
         })
@@ -506,6 +590,12 @@ export function addShowTimeZonesControl(folder) {
 
 export function removeTimeZoneBorders() {
     removeLabels();
+    if (zoneFill) {
+        zoneFill.parent?.remove(zoneFill);
+        zoneFill.geometry.dispose();
+        zoneFill.material.dispose();
+        zoneFill = null;
+    }
     if (!borderLines) return;
     borderLines.parent?.remove(borderLines);
     borderLines.sourceGeometry.dispose();

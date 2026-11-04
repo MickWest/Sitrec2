@@ -2739,6 +2739,8 @@ export const setupMethods = {
 
         this.setupSimInfoMenu();
 
+        this.setupMainTimeDisplay();
+
         this.setupWescamMXUI();
 
         this.setupCameraState();

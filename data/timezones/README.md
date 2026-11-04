@@ -1,15 +1,20 @@
 # Time zone borders
 
-`timezone-borders.bin.gz` holds the lines that Sitrec draws for **Time → Show Time Zones**.
-They come from the "now" set with oceans of
+`timezone-borders.bin.gz` holds the time zone map that Sitrec draws for
+**Time → Show Time Zones**: the borders between the zones, and the zones between them. Sitrec
+also uses it to find the time zone at a position (**Set Time Zone from Camera Location**, and a
+photo with a GPS position). It comes from the "1970" set with oceans of
 [timezone-boundary-builder](https://github.com/evansiroky/timezone-boundary-builder)
 (release 2026f), which covers the whole globe: at sea the zones are the 15-degree nautical
-bands. The lines are those of an ordinary time zone map: a border is kept only where the
-standard UTC offset (the offset without daylight saving time) changes, so Arizona and New
-Mexico, both UTC-7 standard, have no line between them.
+bands. Each of its 304 zones is an area where the clocks have been the same since 1970, named
+after an IANA zone (for example `America/Vancouver`), so Sitrec gets each zone's UTC offset
+at the sitch time from the browser, with daylight saving time, for any date since 1970.
+Sitrec draws a line only where the offsets on the two sides differ then, and colors each zone
+by its offset. Where two zones cover the same land (Xinjiang has UTC+8 and UTC+6), the area
+keeps both.
 
 The lines are simplified to about 1.1 km and stored at 1e-4 degree (about 11 m), about
-120 KB. `scripts/buildTimeZoneBorders.js` makes the file and describes its format.
+250 KB. `scripts/buildTimeZoneBorders.js` makes the file and describes its format.
 
 ## Licence
 

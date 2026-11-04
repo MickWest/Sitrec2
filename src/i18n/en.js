@@ -1543,7 +1543,7 @@ const en = {
         },
         showTimeZones: {
             label: "Show Time Zones",
-            tooltip: "Draw the time zone borders over the globe in the main view, as on an ordinary time zone map: a line marks a change of standard time (the UTC offset without daylight saving time), on land and at sea.\nA row of labels across the middle of the view names each zone for the sitch date, for example PDT UTC-7.\nThe zones are those of late 2026.\nTime zone borders: © OpenStreetMap contributors, timezone-boundary-builder (ODbL).",
+            tooltip: "Draw the time zones at the Now Time over the globe in the main view, with daylight saving time: a line marks where the clocks on its two sides differ, on land and at sea.\nEach zone has a light color for its UTC offset. A zone on a half or quarter hour (India, UTC+5:30) has stripes of the colors of the two hours next to it.\nA row of labels across the middle of the view names each zone for the sitch date, for example PDT UTC-7.\nThe zones and their offsets are correct for any date since 1970.\nTime zone borders: © OpenStreetMap contributors, timezone-boundary-builder (ODbL).",
             loadFailed: "The time zone borders did not load",
         },
         simSpeed: {

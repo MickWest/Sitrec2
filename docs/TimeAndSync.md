@@ -52,7 +52,9 @@ something distinctive happens in the video, then set the date and time of that m
 Start Time follows.
 
 The look view shows the Now Time in UTC and in the selected time zone. To hide this
-readout, turn off **Show → Time Display in Look**.
+readout, turn off **Show → Time Display in Look**. The main view can show the same readout
+at its bottom right: turn on **Show → Time Display in Main**, or the clock button on the
+main view's header bar. It is off by default, and the setting is saved with the sitch.
 
 ### Time zones
 
@@ -76,8 +78,11 @@ A saved sitch keeps its own zone. Sitrec does not use the sitch location when it
 because a new custom sitch has a default location until you set one.
 
 **Set Time Zone from Camera Location** sets the zone at the position of the look camera. Sitrec
-finds the zone (for example `Europe/Berlin`), then uses the offset of that zone on the date
-of the Start Time, so the daylight saving rule of that date applies. The name is the entry
+finds the zone (for example `Europe/Berlin`) on the same time zone map as **Show Time Zones**
+(see [Time zone borders](#time-zone-borders)), which also has the small areas with their own
+clock: the Hopi reservation in Arizona stays on UTC-7 in summer, but the Navajo Nation around
+it uses daylight saving time. Then Sitrec uses the offset of that zone on the date of the Start
+Time, so the daylight saving rule of that date applies. The name is the entry
 in the list with the same abbreviation and offset, for example `JST UTC+9` for Tokyo and
 `AEDT UTC+11` for Sydney in January. If the list has no such entry, the name is the offset
 alone, for example `UTC+8.00` for Hong Kong. The time does not change. Only the zone that
@@ -101,9 +106,10 @@ sitch loads, it keeps its saved zone, also when it holds a photo or a video.
 
 ### Time zone borders
 
-**Show Time Zones** in the Time menu draws the time zone borders over the globe as yellow
-lines, 1.5 pixels wide, in the main view only. Like the Lat/Lon grid, the lines show over the
-terrain, but not on the far side of the Earth. The setting is saved with the sitch.
+**Show Time Zones** in the Time menu draws the time zones over the globe, in the main view
+only: the borders as yellow lines, 1.5 pixels wide, and each zone in a light color. Like the
+Lat/Lon grid, the lines and the colors show over the terrain, but not on the far side of the
+Earth. The setting is saved with the sitch.
 
 A row of labels runs across the view at the latitude of the centre of the screen. Each zone
 on that row has one label, in the middle of the part of the zone that you can see. The label
@@ -113,26 +119,82 @@ gives the name and the UTC offset of the zone on the sitch date, on two lines, f
 alone, for example **UTC-10**. Labels are smaller toward the edge of the globe, and a zone
 with too little room on the screen has no label. The labels move with the view.
 
-![The main view looking down on North America with Show Time Zones on, on a September date. Yellow lines mark the borders of standard time: between Pacific and Mountain time, between Mountain and Central time down through the plains, between Central and Eastern time through Lake Michigan, Indiana, Kentucky, Tennessee and the Florida panhandle, along parts of the border between the United States and Canada, around Manitoba, and between the time zones of Mexico. There is no line around Arizona. At sea, a line follows the coast of Florida, and straight lines cross the Gulf of Mexico and the Pacific. A row of yellow labels across the middle of the view reads MDT UTC-6, CDT UTC-5 and EDT UTC-4, each in the middle of its zone; the strip of Pacific time at the left edge is too narrow for a label](docimages/time-and-sync-show-time-zones.jpg)
+![The main view looking down on the United States with Show Time Zones on, on a September date. Each zone has a light color: Pacific time and Arizona (UTC-7) pink, Mountain daylight time (UTC-6) orange-brown, Central daylight time (UTC-5) yellow and Eastern daylight time (UTC-4) green. Yellow lines mark where the clocks on the two sides differ. A line runs around Arizona, which stays on UTC-7, but the Navajo Nation in its north-east corner has the Mountain daylight time color, with a small loop inside it around the Hopi reservation, which also stays on UTC-7. A line follows most of the Rio Grande, because most of Mexico does not use daylight saving time. In Canada, Alberta and Saskatchewan have the same color and no line between them. A row of yellow labels across the middle of the view reads MDT UTC-6, CDT UTC-5 and EDT UTC-4, each in the middle of its zone](docimages/time-and-sync-show-time-zones.jpg)
 
-The lines are those of an ordinary time zone map. A line marks a change of **standard time**:
-the UTC offset without daylight saving time. So there is no line between Arizona and New
-Mexico, which are both UTC-7 standard, although New Mexico uses daylight saving time and
-Arizona does not. There is also no line between France and Germany. At sea, the zones are
-the 15-degree bands of nautical time, so lines run across the oceans, and a country whose
-time differs from the band around it is outlined along its coast (the limit of its
-territorial sea).
+The map shows the time zones at the **Now Time**, with daylight saving time. A line marks a
+place where the clocks on the two sides show different times at that moment, and each zone
+has the color of its UTC offset then, so the colors agree with the labels. For example, in
+July a line runs around Arizona, which stays on UTC-7, inside Mountain daylight time
+(UTC-6). In January, Arizona and New Mexico are both on UTC-7, so they have the same color
+and no line. France and Germany have had the same clocks since 1980, so after 1980 there is no
+line between them; in the summers of 1976 to 1979, when France had summer time and Germany did
+not, there is. When the Now Time crosses a
+change of daylight saving time, for example when you play the sitch across one, the lines
+and the colors change with it. At sea, the zones are the 15-degree bands of nautical time,
+so lines run across the oceans, and a country whose time differs from the band around it is
+outlined along its coast (the limit of its territorial sea).
 
-The lines come from the 2026f release of
-[timezone-boundary-builder](https://github.com/evansiroky/timezone-boundary-builder), and
-show the zones of late 2026. For an old date, a border can be missing or in the wrong place.
-The lines are simplified to about 1 km. They are newer than the time zone rules of some
-browsers. In that release, British Columbia, Alberta and Manitoba no longer change their
-clocks, so lines run along parts of their borders with the United States and between some
-provinces, and Morocco is on UTC+0, so a line runs along its border with Algeria. **Set Time Zone from Camera Location** uses the rules of your
-browser, which can be older. Time zone borders: © OpenStreetMap contributors (ODbL).
+Each zone has a color for its UTC offset, at 15% opacity, so the terrain shows through.
+The colors repeat every 6 hours: UTC is orange, UTC+1 yellow, UTC+2 green, UTC+3 blue, UTC+4
+purple and UTC+5 red, and UTC+6 is orange again. So two zones that are next to each other do
+not have the same color, and UTC+13 has the color of UTC-11, which has the same clock time a
+day earlier. A zone on a half or quarter hour has diagonal stripes of the colors of the two
+hours next to it. India (UTC+5:30) has red and orange stripes of the same width, and Nepal
+(UTC+5:45) has orange stripes three times as wide as its red ones. Where two zones cover the
+same land, the area has stripes of the two colors. An example is Xinjiang, which has the
+UTC+8 of China and also its own UTC+6. The stripes keep the same width on the screen when you
+zoom.
 
-The border data loads the first time you turn **Show Time Zones** on.
+The time zone data (about 250 KB) loads the first time you turn **Show Time Zones** on, or
+the first time Sitrec finds a zone from a location.
+
+#### Data source and method
+
+**Source.** The map comes from the "1970" set with oceans of the 2026f release of
+[timezone-boundary-builder](https://github.com/evansiroky/timezone-boundary-builder), which
+makes the borders of the IANA time zones from OpenStreetMap. That set has 304 zones. Each zone
+is an area where the clocks have been the same since 1970, named after an IANA zone, for
+example `America/Vancouver`. Zones whose clocks differed at any time since 1970 stay apart,
+also when they are the same today. At sea, the zones are the 15-degree bands of nautical time,
+and a country's territorial sea has the zone of the country. Time zone borders:
+© OpenStreetMap contributors (ODbL).
+
+**The data file.** `scripts/buildTimeZoneBorders.js` makes `data/timezones/timezone-borders.bin.gz`
+from the source:
+
+1. It repairs the shared borders. Points less than about 1 m apart become one point, and
+   where one zone has a long straight edge and its neighbour has points along that edge, the
+   edge is split at those points. Then the two sides of each border share the same edges.
+2. It keeps the edges that have different zones on their two sides and joins them into
+   lines. It drops a closed line that encloses less than about 800 m²: there, the source
+   shapes of two zones cross by a few metres.
+3. It finds the areas between the lines, and gives each area the zones that cover it: the
+   zones of the lines around it, and the zones that a point test well inside it finds. The
+   point test is necessary where a zone lies wholly inside another one. The areas of the West
+   Bank under the Palestinian clock (Hebron, Nablus, Ramallah) are an example.
+4. It simplifies the lines to about 1.1 km and stores the points to 0.0001 degree (about
+   11 m).
+
+The file is a database derived from OpenStreetMap data, so it is under the ODbL too (see
+`data/timezones/README.md`).
+
+**In Sitrec.** The browser's own time zone rules give the UTC offset of each zone at the Now
+Time, with daylight saving time. Sitrec checks the offsets again at the start of each quarter
+hour of sitch time. A line shows where the
+offsets on its two sides differ, and each area has the color of its offset. The colored areas
+are made of triangles, at most 3 degrees long, so that they follow the curve of the Earth.
+**Set Time Zone from Camera Location**, a photo with a GPS position, and the labels use the
+zone of the area that holds the point. Where two zones cover the same area (Xinjiang, the West
+Bank), a smaller table from the same source, from
+[@photostructure/tz-lookup](https://github.com/photostructure/tz-lookup), chooses between
+them. If the map file does not load, that table gives the zone.
+
+**Limits.** The map is correct for any date since 1970: British Columbia is on UTC-8 in
+January 2025, and Mexico City uses daylight saving time in July 2015. Before 1970, an offset
+can be wrong, because zones that differed only before 1970 are one zone. A browser with older
+time zone rules can show an old offset for a zone whose rules changed recently. Within about
+1 km of a border, because of the simplified lines, a position can get the zone on the other
+side.
 
 ### How tracks line up
 
@@ -213,7 +275,7 @@ Analysis...** has [its own section](#timing-analysis).
 | **Use Time Zone in UI** | On (off for older saved sitches) | Shows the date and time sliders in the selected time zone, not UTC |
 | **Time Zone** | The sitch's zone, or your computer's zone | The zone for the readouts. See [Time zones](#time-zones) |
 | **Set Time Zone from Camera Location** | | Sets **Time Zone** to the zone at the look camera position, with the daylight saving rule of the Start Time date. The time does not change. See [Time zones](#time-zones) |
-| **Show Time Zones** | Off | Draws the borders between time zones in the main view. See [Time zone borders](#time-zone-borders) |
+| **Show Time Zones** | Off | Draws the time zones at the Now Time in the main view: the borders as lines, and each zone in a color for its UTC offset. See [Time zone borders](#time-zone-borders) |
 | **Simulation Speed** | 1 | How many seconds of simulated time pass in one second of frames. Use it for a time-lapse video: if the video is 30× faster than real time, set 30. It does not change how fast the video plays. When you change it, the current frame keeps its Now Time and the Start Time moves. Range 0.01 to 1200 |
 
 The Year slider starts at 1947. To go earlier, type the year in the box, or press **G** and

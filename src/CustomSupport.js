@@ -69,7 +69,8 @@ import {DebugArrowAB, elevationAtLL, intersectSurface} from "./threeExt";
 import {FeatureManager} from "./CFeatureManager";
 import {CNodeTrackGUI} from "./nodes/CNodeControllerTrackGUI";
 import * as LAYER from "./LayerMasks";
-import {forceUpdateUIText} from "./nodes/CNodeViewUI";
+import {CNodeViewUI, forceUpdateUIText} from "./nodes/CNodeViewUI";
+import {AddTimeDisplayToUI} from "./UIHelpers";
 import {configParams} from "./runtimeConfig";
 import {showError, showConfirm, showChoice, showTextEditor} from "./showError";
 import {applyEnvOverride, envOverrideAvailable} from "./EnvOverride";
@@ -1315,6 +1316,20 @@ export class CCustomManager {
         if (!simInfo) return;
 
         simInfo.setupMenu(guiMenus.showhide);
+    }
+
+    // Show > Time Display in Main: the look view's date/time readout (UTC, then the selected time
+    // zone), also on the main view, at the same place (bottom right). Off by default; a saved
+    // sitch keeps its own value (showTimeDisplayMain in CustomManagerSerialize.js). Its own 2D
+    // overlay, so hiding it hides nothing else, and the main view's header menu gets the
+    // "timeDisplay" slot (a clock button) only now that the view has one.
+    setupMainTimeDisplay() {
+        if (NodeMan.exists("mainTimeDisplay")) return;
+        const mainView = NodeMan.get("mainView", false);
+        if (!mainView) return;
+        const overlay = new CNodeViewUI({id: "mainTimeDisplay", overlayView: mainView});
+        AddTimeDisplayToUI(overlay, 99.5, 93, -16, "hud", "right", {flag: "showTimeDisplayMain", defaultOn: false});
+        overlay.setVisible(true);
     }
 
     // Wescam MX gimbal OSD overlay on the look view. Created here rather than

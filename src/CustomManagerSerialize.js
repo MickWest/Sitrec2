@@ -134,6 +134,7 @@ const RESTORABLE_GLOBALS = {
     showTracksLook: "boolean",
     limitTracksInOut: "boolean",
     showTimeDisplay: "boolean",
+    showTimeDisplayMain: "boolean",
 };
 
 export const serializeMethods = {
@@ -600,6 +601,7 @@ export const serializeMethods = {
             "showTracksLook",           // Show Tracks in Look (CCustomManager.showTracksLook)
             "limitTracksInOut",         // draw tracks over In..Out only, without the raw data tracks
             "showTimeDisplay",          // the UTC/local clock overlaid on the look view
+            "showTimeDisplayMain",      // the same clock on the main view (CustomSupport.setupMainTimeDisplay)
         ]
 
         let pars = {}
