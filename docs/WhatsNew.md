@@ -9,6 +9,17 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.187.2 (2026-11-04)
+
+### New Features
+- **True heading and a circle on the V/B measurement** (hold *V* or *B* over the ground to place its two ends): the label now shows the true heading from the V end to the B end under the distance, clockwise from north, for example *38.9° true*. A circle centered on the V end passes through the B end, so you can see the same distance in every direction. When the two ends are at the same place, or one is straight above the other, the label shows *—° true* and there is no circle. *Measurements in Main* and *Measurements in Look* (Show → Measurements) show and hide the circle with the arrows.
+
+### Improvements
+- **V/B measurement over terrain**: the two arrows of the V/B measurement and its circle are now drawn over terrain and buildings, so a measurement across a hill or an island stays visible. They are not drawn on the far side of the Earth.
+
+### Bug Fixes
+- Fixed the other end of the V/B measurement jumping to an old position when you held *V* or *B* after opening a saved sitch, or a chapter of a sitch, that has a measurement.
+
 ## Version 2.187.1 (2026-11-04)
 
 ### Improvements
