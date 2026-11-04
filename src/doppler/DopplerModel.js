@@ -6,6 +6,22 @@ const addScaled = (a, b, s) => a.map((v, i) => v + b[i]*s);
 export const length = a => Math.hypot(...a);
 const segmentBounds=new WeakMap();
 
+// Missing course does not make a reported horizontal speed unavailable. Use
+// the local direction of the observed segment and keep this inference visible.
+function velocityAtFix(fix, segmentVelocity) {
+    if(fix.velocity) return {velocity:fix.velocity,source:"reported_navigation",
+        verticalSource:Number.isFinite(fix.verticalSpeedMS) ? "reported" : "assumed_zero"};
+    if(!Number.isFinite(fix.groundSpeedMS) || fix.groundSpeedMS<0) {
+        return {velocity:null,source:"position_derived",verticalSource:"position_derived"};
+    }
+    const up=fix.up,derivedVertical=dot(segmentVelocity,up);
+    const horizontal=segmentVelocity.map((v,i)=>v-derivedVertical*up[i]),horizontalSpeed=length(horizontal);
+    if(horizontalSpeed<1e-6) return {velocity:null,source:"position_derived",verticalSource:"position_derived",degenerateHorizontal:true};
+    const reportedVertical=Number.isFinite(fix.verticalSpeedMS),vertical=reportedVertical ? fix.verticalSpeedMS : derivedVertical;
+    return {velocity:horizontal.map((v,i)=>v/horizontalSpeed*fix.groundSpeedMS+up[i]*vertical),
+        source:"reported_speed_derived_direction",verticalSource:reportedVertical ? "reported" : "position_derived"};
+}
+
 // Bounds enclose complete finite segments, including turns and gaps. They only
 // prune distance calculations; the surviving closest approach stays exact.
 function boundsFor(segments,start=0,end=segments.length) {
@@ -56,7 +72,10 @@ export function prepareTrack(track, soundSpeed = 343, maxGap = 30) {
         }
         const velocity=Number.isFinite(p.groundSpeedMS) && Number.isFinite(p.headingDegrees) ?
             navigationVelocity(p.lat,p.lon,p.groundSpeedMS,p.headingDegrees,Number.isFinite(p.verticalSpeedMS) ? p.verticalSpeedMS : 0) : null;
-        return {time:p.time, position:toECEF(p.lat, p.lon, p.altitudeM),velocity};
+        const lat=p.lat*Math.PI/180,lon=p.lon*Math.PI/180;
+        return {time:p.time, position:toECEF(p.lat, p.lon, p.altitudeM),velocity,
+            up:[Math.cos(lat)*Math.cos(lon),Math.cos(lat)*Math.sin(lon),Math.sin(lat)],
+            groundSpeedMS:p.groundSpeedMS,verticalSpeedMS:p.verticalSpeedMS};
     }).sort((a,b) => a.time-b.time);
     const segments = [];
     for (let i=1; i<fixes.length; i++) {
@@ -67,8 +86,16 @@ export function prepareTrack(track, soundSpeed = 343, maxGap = 30) {
         const velocity = sub(b.position, a.position).map(v => v/dt);
         const speed = length(velocity);
         if (speed >= soundSpeed*0.98) throw new Error(`${track.id} has a near-sonic segment or a position jump. This model requires subsonic flights.`);
-        if(a.velocity && length(a.velocity)>=soundSpeed*0.98 || b.velocity && length(b.velocity)>=soundSpeed*0.98) throw new Error(`${track.id} reports a near-sonic velocity. This model requires subsonic flights.`);
-        segments.push({t0:a.time, t1:b.time, p0:a.position, p1:b.position, velocity, speed,v0:a.velocity,v1:b.velocity});
+        const first=velocityAtFix(a,velocity),last=velocityAtFix(b,velocity),v0=first.velocity,v1=last.velocity;
+        if(v0 && length(v0)>=soundSpeed*0.98 || v1 && length(v1)>=soundSpeed*0.98) throw new Error(`${track.id} reports a near-sonic velocity. This model requires subsonic flights.`);
+        // A missing endpoint keeps the existing segment-derivative fallback.
+        const usesNavigation=Boolean(v0 && v1),velocitySource=usesNavigation ?
+            first.source==="reported_navigation" && last.source==="reported_navigation" ? "reported_navigation" : "reported_speed_derived_direction" : "position_derived";
+        const exact=velocitySource==="reported_navigation" && first.verticalSource==="reported" && last.verticalSource==="reported";
+        const navigation={exact,approximate:!exact,endpointSources:[first.source,last.source],
+            verticalSources:usesNavigation ? [first.verticalSource,last.verticalSource] : ["position_derived","position_derived"],
+            degenerateHorizontal:Boolean(first.degenerateHorizontal || last.degenerateHorizontal)};
+        segments.push({t0:a.time, t1:b.time, p0:a.position, p1:b.position, velocity, speed,v0,v1,velocitySource,navigation});
     }
     if (!segments.length) throw new Error(`No usable segments in ${track.id}; check the maximum fix gap.`);
     return {id:String(track.id), segments};

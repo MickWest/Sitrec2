@@ -1,11 +1,13 @@
 // Only this small entry point is part of Sitrec startup. The UI, acoustic model,
 // FFT and search worker are fetched when the user opens the addon.
 import {isAdmin} from "../configUtils";
+import {par} from "../par";
 
 let instance=null, pending=null, generation=0;
 
 export async function openDopplerGeolocation() {
     if(!isAdmin()) return null;
+    par.paused=true;
     if(instance) {instance.show();return instance;}
     if(!pending) {
         const token=generation;

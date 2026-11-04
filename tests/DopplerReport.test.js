@@ -29,6 +29,26 @@ test("report accepts one to four event panels and rejects missing audio or retai
     input.state.tracks=[];expect(()=>buildDopplerReportData(input)).toThrow(/flight data for event 1/);
 });
 
+test("brightness-mode events without traced points still export one prediction curve",()=>{
+    const input=fixture();input.state.settings.mode="brightness";
+    for(const event of input.state.events) event.trace=[];
+    const report=buildDopplerReportData(input);
+    expect(report.events[0].families).toEqual([0]);
+    expect(report.events[0].predictions).toHaveLength(1);
+    expect(report.events[0].prediction[250].frequency).toBeCloseTo(130*report.events[0].predictions[0].points[250].frequency/130,10);
+    expect(Number.isFinite(report.events[0].low)).toBe(true);
+});
+
 test("elapsed axis labels carry minutes and hours without wrapping the recording clock",()=>{
     expect(reportElapsed(2140)).toBe("35:40");expect(reportElapsed(3671)).toBe("1:01:11");
+});
+
+test("report shows every measured harmonic using one fitted fundamental",()=>{
+    const input=fixture(),event=input.state.events[0];
+    event.trace=event.trace.flatMap(p=>[{...p,harmonic:1},{...p,harmonic:2,frequency:p.frequency*2}]);
+    const report=buildDopplerReportData(input).events[0];
+    expect(report.harmonics).toEqual([1,2]);
+    expect(report.predictions).toHaveLength(2);
+    expect(report.predictions[1].points[250].frequency).toBeCloseTo(2*report.predictions[0].points[250].frequency,10);
+    expect(report.high).toBeGreaterThan(report.predictions[1].points[250].frequency);
 });

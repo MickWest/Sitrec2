@@ -1,10 +1,11 @@
 import {atArrival, closestApproaches, observerTrack, prepareTrack, toECEF} from "./DopplerModel";
+import {hasTaggedTrace,traceFamily,traceHarmonic,validTraceFamily,validTraceHarmonic} from "./DopplerTrace";
 
 export const SEARCH_DEFAULTS={lat:37,lon:-122,radiusM:3000,spacingM:200,altitudeM:0,soundSpeed:343,
     maxGap:30,timeTolerance:3,timeStep:0.5,cpaTolerance:8,frequencySteps:9,traceSigma:1,
     recordingStart:"",elevation:"fixed",source:"tracks",mode:"trace",silenceRadiusM:0,silence:[]};
 export const newEvent=(cpa=60)=>({cpa,start:cpa-30,end:cpa+30,frequency:130,frequencyTolerance:3,
-    harmonic:1,speedMin:0,speedMax:180,rangeMin:0,rangeMax:10000,trace:[]});
+    harmonic:1,family:0,speedMin:0,speedMax:300,rangeMin:0,rangeMax:20000,trace:[]});
 
 export function makeGrid(settings) {
     const {lat,lon,radiusM,spacingM,altitudeM}=settings;
@@ -42,8 +43,14 @@ export function validateSearch({settings:s,events,tracks,spectrogram}) {
             e.start<0 || e.start>=e.end || e.cpa<e.start || e.cpa>e.end || e.frequency<=0 || e.frequencyTolerance<0 ||
             e.frequencyTolerance>=e.frequency || !Number.isInteger(e.harmonic) || e.harmonic<1 || e.harmonic>16 ||
             e.speedMin<0 || e.speedMin>e.speedMax || e.rangeMin<0 || e.rangeMin>e.rangeMax) throw new Error(`Check event ${i+1}'s time, frequency, speed and slant range bounds.`);
-        if (s.mode==="trace" && (!Array.isArray(e.trace) || e.trace.length<4 || e.trace.some(p=>!Number.isFinite(p.time) || !Number.isFinite(p.frequency) || p.time<e.start || p.time>e.end || p.frequency<=0))) throw new Error(`Trace at least four points inside event ${i+1}'s window.`);
-        if(s.mode==="brightness" && (e.start<spectrogram.start || e.end>spectrogram.start+(spectrogram.columns-1)*spectrogram.hop)) throw new Error(`Event ${i+1} extends outside the spectrogram's time coverage.`);
+        const usesTrace=s.mode==="trace" || hasTaggedTrace(e);
+        if(e.family!==undefined && !validTraceFamily(e.family)) throw new Error(`Check event ${i+1}'s tone family (0 to 7).`);
+        if(usesTrace && (!Array.isArray(e.trace) || e.trace.some(p=>!p || !Number.isFinite(p.time) || !Number.isFinite(p.frequency) || p.time<e.start || p.time>e.end || p.frequency<=0 || !validTraceHarmonic(traceHarmonic(e,p)) || !validTraceFamily(traceFamily(p))))) throw new Error(`Check event ${i+1}'s narrow-ridge points, harmonic numbers and tone families.`);
+        if(usesTrace && e.trace.length<4) throw new Error(`Trace at least four points inside event ${i+1}'s window.`);
+        if(s.mode==="brightness") {
+            const first=spectrogram.start,last=first+(spectrogram.columns-1)*spectrogram.hop;
+            if(usesTrace ? e.trace.some(p=>p.time<first||p.time>last) : e.start<first||e.end>last) throw new Error(`Event ${i+1} extends outside the spectrogram's time coverage.`);
+        }
     }
 }
 
@@ -60,7 +67,7 @@ function scoreBrightness(samples,factors,e,s,spec,lower,upper) {
     const rows=[];
     let maxScale=0;
     for(let i=0;i<samples.length;i++) {
-        const x=(samples[i].time-spec.start)/spec.hop,scale=factors[i]*e.harmonic/spec.binHz;
+        const x=(samples[i].time-spec.start)/spec.hop,scale=factors[i]*traceHarmonic(e,samples[i])/spec.binHz;
         if(x<0 || x>spec.columns-1 || scale<=0) return null;
         const x0=Math.floor(x);
         rows.push({a:x0*spec.bins,b:Math.min(x0+1,spec.columns-1)*spec.bins,mix:x-x0,scale});
@@ -91,18 +98,40 @@ function scoreBrightness(samples,factors,e,s,spec,lower,upper) {
 
 function scoreEvent(track,e,recordingStart,s,spec) {
     const countSamples=spec ? Math.min(200,Math.max(8,Math.ceil((e.end-e.start)/spec.hop))) : 0;
-    const samples=s.mode==="trace" ? e.trace : Array.from({length:countSamples},(_,i)=>({time:e.start+(e.end-e.start)*i/(countSamples-1)}));
+    // Explicitly tagged narrow traces also restrict brightness scoring to the
+    // marked times/harmonics. Missing segments are not invented or interpolated.
+    // Untagged saved analyses retain their original whole-window brightness score.
+    const samples=s.mode==="trace" || hasTaggedTrace(e) ? e.trace : Array.from({length:countSamples},(_,i)=>({time:e.start+(e.end-e.start)*i/(countSamples-1)}));
+    if(!samples.length) return null;
     const factors=samples.map(p=>atArrival(track,recordingStart+p.time,s.soundSpeed,true));
     if(factors.some(v=>!Number.isFinite(v))) return null;
     const lower=e.frequency-e.frequencyTolerance, upper=e.frequency+e.frequencyTolerance;
+    // Each tone family fits its own emitted fundamental analytically. Geometry,
+    // clock and harmonic numbers stay shared, so a family cannot drift on its own.
+    const groups=new Map();
+    samples.forEach((p,i)=>{const family=traceFamily(p);if(!groups.has(family)) groups.set(family,[]);groups.get(family).push(i);});
+    const ordered=[...groups.keys()].sort((a,b)=>a-b);
     if(s.mode==="trace") {
-        let numerator=0, denominator=0;
-        for(let i=0;i<samples.length;i++) {const k=factors[i]*e.harmonic; numerator+=k*samples[i].frequency;denominator+=k*k;}
-        const frequency=Math.max(lower,Math.min(upper,numerator/denominator));
-        const mse=samples.reduce((sum,p,i)=>sum+((p.frequency-frequency*factors[i]*e.harmonic)/s.traceSigma)**2,0)/samples.length;
-        return {frequency,score:-mse,rmsHz:Math.sqrt(mse)*s.traceSigma};
+        const frequencies=new Map();
+        for(const family of ordered) {
+            let numerator=0, denominator=0;
+            for(const i of groups.get(family)) {const k=factors[i]*traceHarmonic(e,samples[i]); numerator+=k*samples[i].frequency;denominator+=k*k;}
+            frequencies.set(family,Math.max(lower,Math.min(upper,numerator/denominator)));
+        }
+        const mse=samples.reduce((sum,p,i)=>sum+((p.frequency-frequencies.get(traceFamily(p))*factors[i]*traceHarmonic(e,p))/s.traceSigma)**2,0)/samples.length;
+        const result={frequency:frequencies.get(ordered[0]),score:-mse,rmsHz:Math.sqrt(mse)*s.traceSigma};
+        if(ordered.length>1) result.families=ordered.map(family=>({family,frequency:frequencies.get(family)}));
+        return result;
     }
-    return scoreBrightness(samples,factors,e,s,spec,lower,upper);
+    if(ordered.length===1) return scoreBrightness(samples,factors,e,s,spec,lower,upper);
+    let total=0;
+    const families=[];
+    for(const family of ordered) {
+        const indices=groups.get(family),best=scoreBrightness(indices.map(i=>samples[i]),indices.map(i=>factors[i]),e,s,spec,lower,upper);
+        if(!best) return null;
+        total+=best.score*indices.length;families.push({family,frequency:best.frequency});
+    }
+    return {frequency:families[0].frequency,score:total/samples.length,families};
 }
 
 // All events share recordingStart. Only the emitted fundamental is fitted

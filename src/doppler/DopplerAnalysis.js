@@ -1,5 +1,6 @@
 import {SEARCH_DEFAULTS} from "./DopplerSearch";
 import {ARCHIVE_DEFAULTS} from "./DopplerArchiveOptions";
+import {traceFamily,traceHarmonic,validTraceFamily,validTraceHarmonic} from "./DopplerTrace";
 
 const clone=value=>JSON.parse(JSON.stringify(value));
 const object=value=>value!==null && typeof value==="object" && !Array.isArray(value);
@@ -35,7 +36,9 @@ export function validateAnalysis(value) {
         if(!finiteFields(event,eventNumbers) || event.start<0 || event.end<=event.start || event.cpa<event.start || event.cpa>event.end ||
             event.frequency<=0 || event.frequencyTolerance<0 || event.frequencyTolerance>=event.frequency || !Number.isInteger(event.harmonic) ||
             event.harmonic<1 || event.harmonic>16 || event.speedMin<0 || event.speedMax<event.speedMin || event.rangeMin<0 || event.rangeMax<event.rangeMin ||
-            !Array.isArray(event.trace) || event.trace.some(p=>!finiteFields(p,["time","frequency"]) || p.time<event.start || p.time>event.end || p.frequency<=0)) fail(`check event ${index+1}'s fields and trace points.`);
+            (event.family!==undefined && !validTraceFamily(event.family)) ||
+            !Array.isArray(event.trace) || event.trace.some(p=>!finiteFields(p,["time","frequency"]) || p.time<event.start || p.time>event.end || p.frequency<=0 ||
+                !validTraceHarmonic(traceHarmonic(event,p)) || !validTraceFamily(traceFamily(p)))) fail(`check event ${index+1}'s fields and trace points.`);
     }
     const ids=new Set();
     for(const track of value.tracks) {
@@ -71,7 +74,8 @@ export function validateAnalysis(value) {
             if(!finiteFields(result,["lat","lon","altitudeM","score","recordingStart"]) || Math.abs(result.lat)>90 || Math.abs(result.lon)>180 ||
                 !Number.isFinite(new Date(result.recordingStart*1000).getTime()) || !Array.isArray(result.events) || result.events.length!==state.events.length ||
                 result.events.some(e=>!finiteFields(e,["frequency","score"]) || typeof e.flight!=="string" || !ids.has(e.flight) ||
-                    ["rmsHz","cpaArrival","rangeM","speedMS"].some(key=>e[key]!==undefined && !Number.isFinite(e[key])))) fail("check saved candidate locations and flights.");
+                    ["rmsHz","cpaArrival","rangeM","speedMS"].some(key=>e[key]!==undefined && !Number.isFinite(e[key])) ||
+                    (e.families!==undefined && (!Array.isArray(e.families) || e.families.some(f=>!finiteFields(f,["family","frequency"]) || !validTraceFamily(f.family)))))) fail("check saved candidate locations and flights.");
         }
         if(!Number.isInteger(saved.selectedIndex) || saved.selectedIndex<0 || saved.selectedIndex>=Math.max(1,saved.results.length) ||
             (saved.completedAtUTC!==undefined && !utc(saved.completedAtUTC)) ||

@@ -4,6 +4,7 @@ import {makeGrid,scoreCombination,searchLocations} from "./DopplerSearch";
 import {DopplerElevation} from "./DopplerElevation";
 import {refineDopplerLocation} from "./DopplerOptimizer";
 import {ARCHIVE_DEFAULTS} from "./DopplerArchiveOptions";
+import {thinTrace,traceHarmonic,validTraceHarmonic} from "./DopplerTrace";
 
 const pause=()=>new Promise(resolve=>setTimeout(resolve,0));
 let indexedArchive=null,indexedKey=null;
@@ -134,7 +135,7 @@ export async function selectAudibleCandidates(candidates,limit,passes) {
 
 export function archiveCoarseSettings(events,s,options) {
     const measured=events.length>0 && events.every(e=>Array.isArray(e.trace) && e.trace.length>=4 && e.trace.every(p=>
-        p && Number.isFinite(p.time) && Number.isFinite(p.frequency) && p.frequency>0 && p.time>=e.start && p.time<=e.end));
+        p && Number.isFinite(p.time) && Number.isFinite(p.frequency) && p.frequency>0 && p.time>=e.start && p.time<=e.end && validTraceHarmonic(traceHarmonic(e,p))));
     // Traces propose seeds cheaply. Every surviving region still uses the
     // requested objective during continuous refinement and global ranking.
     return {...s,mode:s.mode==="brightness" && measured ? "trace" : s.mode,
@@ -200,7 +201,7 @@ export async function searchFlightArchive({files,settings:s,events,spectrogram,a
     const coarseSettings=archiveCoarseSettings(events,s,options);
     const traceSeeds=s.mode==="brightness" && coarseSettings.mode==="trace";
     const coarseEvents=events.map(e=>({...e,rangeMin:Math.max(0,e.rangeMin-options.coarseStep),rangeMax:e.rangeMax+options.coarseStep,
-        trace:Array.isArray(e.trace) ? traceSeeds && e.trace.length<8 ? e.trace : e.trace.filter((_,i)=>i%2===0) : []}));
+        trace:Array.isArray(e.trace) && traceSeeds && e.trace.length<8 ? e.trace : thinTrace(e)}));
     const coarseSpectrogram=coarseSettings.mode==="brightness" ? spectrogram : null;
     for(let pi=0;pi<pairs.length;pi++) {
         const indices=pairs[pi],loaded=await Promise.all(indices.map(load));

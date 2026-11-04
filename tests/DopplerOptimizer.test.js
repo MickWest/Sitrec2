@@ -22,6 +22,20 @@ test("continuous physical refinement recovers a listener between coarse grid poi
     expect(error).toBeLessThan(5);expect(refined.score).toBeGreaterThan(-0.001);
 });
 
+test("refinement re-centres its box when the best fit sits on the edge",async()=>{
+    const demo=makeDemo(),clock=Date.UTC(2026,0,1)/1000;
+    // Seed 1.8 km east of the true listener with a 1 km box: the optimum is outside.
+    const candidate={lat:37,lon:-122+1800/(111320*Math.cos(37*Math.PI/180)),altitudeM:100,recordingStart:clock};
+    const common={candidate,tracks:demo.tracks,events:demo.events,settings:{...demo.settings,recordingStart:clock,timeTolerance:0,cpaTolerance:30},
+        elevationAt:async()=>100,maxOffsetM:1000,stepM:200,maxIterations:150};
+    const error=r=>Math.hypot((r.lat-37)*111320,(r.lon+122)*111320*Math.cos(37*Math.PI/180));
+    const stuck=await refineDopplerLocation({...common,recenter:0});
+    expect(stuck).not.toBeNull();expect(error(stuck)).toBeGreaterThan(700);expect(stuck.optimization.recentered).toBe(0);
+    const freed=await refineDopplerLocation(common);
+    expect(freed).not.toBeNull();expect(error(freed)).toBeLessThan(5);expect(freed.optimization.recentered).toBeGreaterThan(0);
+    expect(freed.score).toBeGreaterThan(stuck.score);
+});
+
 test("refinement retains a feasible trial when its penalized optimum violates a range bound",async()=>{
     const demo=makeDemo(),clock=Date.UTC(2026,0,1)/1000;
     const view=observerTrack(prepareTrack(demo.tracks[0]),toECEF(37,-122,100),343);

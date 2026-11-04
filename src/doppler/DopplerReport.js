@@ -1,4 +1,5 @@
 import {atArrival,observerTrack,prepareTrack,toECEF} from "./DopplerModel";
+import {familyFrequency,tracedFamilies,tracedHarmonics} from "./DopplerTrace";
 
 const C={background:"#0b1424",panel:"#142137",border:"#30435f",text:"#eef3fb",muted:"#afbed2",prediction:"#ff865e",trace:"#64d7ff"};
 const finite=Number.isFinite;
@@ -20,17 +21,19 @@ export function buildDopplerReportData({state,result,selectedResult,spectrogram,
         const fitted=candidate.events[index],track=state.tracks.find(t=>t.id===fitted?.flight);
         if(!track) throw new Error(`Reload the flight data for event ${index+1} before exporting.`);
         const view=observerTrack(prepareTrack(track,c,state.settings.maxGap),toECEF(candidate.lat,candidate.lon,candidate.altitudeM),c);
-        const prediction=Array.from({length:501},(_,i)=>{
+        const harmonics=tracedHarmonics(event),families=tracedFamilies(event);
+        const predictions=families.flatMap(family=>tracedHarmonics(event,family).map(harmonic=>({family,harmonic,points:Array.from({length:501},(_,i)=>{
             const time=event.start+(event.end-event.start)*i/500;
-            return {time,frequency:atArrival(view,candidate.recordingStart+time,c)?.factor*fitted.frequency*event.harmonic};
-        });
-        const frequencies=[...prediction,...event.trace].map(p=>p.frequency).filter(finite);
+            return {time,frequency:atArrival(view,candidate.recordingStart+time,c)?.factor*familyFrequency(fitted,family)*harmonic};
+        })})));
+        const prediction=(predictions.find(p=>p.family===0 && p.harmonic===event.harmonic) ?? predictions[0]).points;
+        const frequencies=[...predictions.flatMap(p=>p.points),...event.trace].map(p=>p.frequency).filter(finite);
         if(!frequencies.length) throw new Error(`Event ${index+1} has no usable prediction in its selected time window.`);
         const min=Math.min(...frequencies),max=Math.max(...frequencies),pad=Math.max(5,(max-min)*0.18);
         const low=Math.max(0,min-pad),high=max+pad,maximumHz=(spectrogram.bins-1)*spectrogram.binHz;
         if(low>=maximumHz) throw new Error(`Event ${index+1} is above the loaded spectrogram. Reload audio with a higher maximum frequency.`);
         const id=clean(track.id),callsign=clean(track.callsign),registration=clean(track.registration),type=clean(track.aircraftType);
-        return {event,fitted,track,prediction,low,high,title:callsign || registration || id,
+        return {event,fitted,track,prediction,predictions,harmonics,families,low,high,title:callsign || registration || id,
             identity:`Type: ${type || "unavailable"}   ·   Registration: ${registration || "unavailable"}   ·   ${/^[a-f0-9]{6}$/i.test(id) ? "ICAO" : "Flight ID"}: ${id.toUpperCase()}${callsign ? `   ·   Callsign: ${callsign}` : ""}`};
     });
     return {candidate,events,spectrogram,rank:Math.max(0,result.results.indexOf(candidate))+1,total:result.results.length,
@@ -88,7 +91,9 @@ function spectrum(ctx,data,top) {
     ctx.strokeStyle="#f0f4ff26";ctx.lineWidth=1;
     for(let i=0;i<=5;i++) {ctx.beginPath();ctx.moveTo(left+i*width/5,top);ctx.lineTo(left+i*width/5,top+height);ctx.stroke();ctx.beginPath();ctx.moveTo(left,top+i*height/5);ctx.lineTo(left+width,top+i*height/5);ctx.stroke();}
     ctx.setLineDash([6,7]);ctx.strokeStyle="#c8d6e6";ctx.beginPath();ctx.moveTo(x(event.cpa),top);ctx.lineTo(x(event.cpa),top+height);ctx.stroke();ctx.setLineDash([]);
-    curve(ctx,prediction,x,y,"#07101fcc",7);curve(ctx,prediction,x,y,C.prediction,3.5);
+    for(const item of data.predictions ?? [{points:prediction}]) {
+        curve(ctx,item.points,x,y,"#07101fcc",7);curve(ctx,item.points,x,y,C.prediction,3.5);
+    }
     for(const p of event.trace) {ctx.beginPath();ctx.arc(x(p.time),y(p.frequency),4.5,0,Math.PI*2);ctx.fillStyle=C.trace;ctx.fill();ctx.strokeStyle="#07101f";ctx.lineWidth=1.7;ctx.stroke();}
     ctx.restore();
     ctx.strokeStyle=C.border;ctx.strokeRect(left,top,width,height);ctx.textAlign="center";
@@ -129,7 +134,8 @@ export function renderDopplerReport(input) {
         fittedText(ctx,entry.identity,85,top+73,1600,20,C.muted);
         const fit=finite(fitted.rmsHz) ? `Trace RMS ${number(fitted.rmsHz,3)} Hz` : `Brightness score ${number(fitted.score,3)}`;
         const speed=finite(fitted.speedMS) ? `${number(fitted.speedMS,1)} m/s (${number(fitted.speedMS*1.943844,0)} kt)` : "unavailable";
-        text(ctx,`Fitted fundamental ${number(fitted.frequency,3)} Hz   ·   Harmonic ×${event.harmonic}   ·   ${fit}   ·   CPA slant ${number(fitted.rangeM,0)} m`,85,top+108,21,C.text);
+        const fundamentals=entry.families.length>1 ? `Fitted fundamentals ${entry.families.map(family=>number(familyFrequency(fitted,family),3)).join(" / ")} Hz (${entry.families.length} tone families)` : `Fitted fundamental ${number(fitted.frequency,3)} Hz`;
+        fittedText(ctx,`${fundamentals}   ·   Traced harmonics ${entry.harmonics.map(h=>`×${h}`).join(", ")}   ·   ${fit}   ·   CPA slant ${number(fitted.rangeM,0)} m`,85,top+108,1600,21,C.text);
         text(ctx,`CPA sound arrival ${utc(fitted.cpaArrival)}   ·   Speed at CPA ${speed}`,85,top+142,21,C.muted);
         spectrum(ctx,{...entry,spectrogram:data.spectrogram},top+178);
         ctx.strokeStyle=C.prediction;ctx.lineWidth=4;ctx.beginPath();ctx.moveTo(150,top+560);ctx.lineTo(192,top+560);ctx.stroke();text(ctx,"Flight prediction",205,top+567,20,C.text);
