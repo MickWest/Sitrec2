@@ -16,6 +16,7 @@ import {GlobalScene} from "./LocalFrame";
 import {LLAToECEFInto} from "./LLA-ECEF-ENU";
 import {viewMenuKey} from "./ViewUIBarMenus";
 import {t} from "./i18n";
+import {setAlwaysVisibleOverlay} from "./AlwaysVisibleOverlay";
 
 const GRID_STEP_DEG = 10;       // spacing of both parallels and meridians
 const SAMPLE_STEP_DEG = 1;      // segment length along each line, so it follows the curve
@@ -63,20 +64,15 @@ function buildGridGeometry() {
 }
 
 function makeGridMaterial() {
-    const a = Globals.equatorRadius, b = Globals.polarRadius;
     return new ShaderMaterial({
         uniforms: {
             color: {value: new Vector3(...GRID_COLOR)},
-            // 1/a² and 1/b², pre-scaled by a² so the normal stays O(1) in float32.
-            normalScale: {value: new Vector3(1, 1, (a * a) / (b * b))},
         },
         vertexShader: /* glsl */`
             attribute float alpha;
             varying float vAlpha;
-            varying vec3 vWorld;
             void main() {
                 vAlpha = alpha;
-                vWorld = (modelMatrix * vec4(position, 1.0)).xyz;
                 // Through modelViewMatrix (built in double precision on the CPU), NOT
                 // projectionMatrix * viewMatrix * world: GLSL would multiply the two matrices
                 // first, and clip z and w would then each round separately against ~6e6 m
@@ -86,18 +82,10 @@ function makeGridMaterial() {
             }`,
         fragmentShader: /* glsl */`
             uniform vec3 color;
-            uniform vec3 normalScale;
             varying float vAlpha;
-            varying vec3 vWorld;
             void main() {
-                // Ellipsoid normal at this point; drop it if the camera is behind that tangent plane.
-                vec3 n = vWorld * normalScale;
-                if (dot(n, cameraPosition - vWorld) < 0.0) discard;
                 gl_FragColor = vec4(color, vAlpha);
             }`,
-        transparent: true,
-        depthTest: false,
-        depthWrite: false,
     });
 }
 
@@ -118,7 +106,7 @@ export function setupLatLonGrid() {
     Globals.showLatLonGridMain = false;
     Globals.showLatLonGridLook = false;
 
-    gridLines = new LineSegments(buildGridGeometry(), makeGridMaterial());
+    gridLines = setAlwaysVisibleOverlay(new LineSegments(buildGridGeometry(), makeGridMaterial()));
     gridLines.userData.radii = [Globals.equatorRadius, Globals.polarRadius];
     // The Earth model can change after setup (a sitch's own setting, or Terrain > Use
     // Ellipsoid), which moves every vertex and the culling normal. Checked on each draw,
@@ -130,11 +118,10 @@ export function setupLatLonGrid() {
         this.geometry = buildGridGeometry();
         this.material.dispose();
         this.material = makeGridMaterial();
+        setAlwaysVisibleOverlay(this);
         this.userData.radii = [Globals.equatorRadius, Globals.polarRadius];
     };
     gridLines.name = "LatLonGrid";
-    gridLines.frustumCulled = false;
-    gridLines.renderOrder = 1000;       // no depth test, so draw after the scene it sits over
     GlobalScene.add(gridLines);
     refreshLatLonGridVisibility();
 

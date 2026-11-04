@@ -26,6 +26,11 @@ import {EventManager} from "../CEventManager";
 import {registerLabel3D, unregisterLabel3D} from "./CNodeDisplaySkyOverlay";
 import {viewMenuKey} from "../ViewUIBarMenus";
 import {t} from "../i18n";
+import {BufferGeometry, Float32BufferAttribute, Vector3} from "three";
+import {SceneLineLoop} from "../SceneLines";
+import {SceneLineMaterial} from "../SceneLineMaterial";
+import {setAlwaysVisibleOverlay} from "../AlwaysVisibleOverlay";
+import {measurementCircleOffsets, measurementHeading} from "../MeasurementGeometry";
 
 
 const HIGH_ALTITUDE_LABEL_THRESHOLD_M = 100000 * 0.3048;
@@ -375,6 +380,9 @@ export class CNodeMeasureAB extends CNodeLabel3D {
         super(v);
         this.input("A");
         this.input("B");
+        this.showHeading = v.showHeading ?? false;
+        this.showCircle = v.showCircle ?? false;
+        this.alwaysVisible = v.alwaysVisible ?? false;
         this.update(0)
     }
 
@@ -404,8 +412,13 @@ export class CNodeMeasureAB extends CNodeLabel3D {
         // add an arrow from A to C and B to D
         // Use this.group instead of this.groupNode.group so arrows are children of this measurement
         // and will be hidden/shown along with the text label
-        DebugArrowAB(this.id + "start", this.C, this.A, color, true, this.group, 20, this.layerMask);
-        DebugArrowAB(this.id + "end", this.D, this.B, color, true, this.group, 20, this.layerMask);
+        const startArrow = DebugArrowAB(this.id + "start", this.C, this.A, color, true, this.group, 20, this.layerMask);
+        const endArrow = DebugArrowAB(this.id + "end", this.D, this.B, color, true, this.group, 20, this.layerMask);
+        if (this.alwaysVisible) {
+            setAlwaysVisibleOverlay(startArrow);
+            setAlwaysVisibleOverlay(endArrow);
+        }
+        if (this.showCircle) this.updateCircle(color);
 
         let length
 
@@ -440,12 +453,54 @@ export class CNodeMeasureAB extends CNodeLabel3D {
             //text += "\n "+Units.withUnits(alt, this.decimals, this.unitType)+ " msl";
         } else {
             text = Units.withUnits(length, this.decimals, this.unitType);
+            if (this.showHeading) {
+                const heading = measurementHeading(this.A, this.B);
+                // Round before wrapping, so a bearing near north reads 0.0°, never 360.0°.
+                text += heading === null ? "\n—° true" : `\n${((Math.round(heading * 10) / 10) % 360).toFixed(1)}° true`;
+            }
         }
         this.changeText(text);
 
     }
 
+    updateCircle(color) {
+        if (!this.circle) {
+            this.circle = setAlwaysVisibleOverlay(new SceneLineLoop(new BufferGeometry(),
+                new SceneLineMaterial({color, linewidth: 1.5, toneMapped: false})));
+            this.circle.name = this.id + "Circle";
+            this.group.add(this.circle);
+            this.circleA = new Vector3(NaN, NaN, NaN);
+            this.circleB = new Vector3(NaN, NaN, NaN);
+        }
+        this.circle.layers.mask = this.layerMask;
+        this.circle.material.color.set(color);
+        if (this.circleA.equals(this.A) && this.circleB.equals(this.B)
+            && this.circleEquatorRadius === Globals.equatorRadius && this.circlePolarRadius === Globals.polarRadius) return;
+        this.circleA.copy(this.A);
+        this.circleB.copy(this.B);
+        this.circleEquatorRadius = Globals.equatorRadius;
+        this.circlePolarRadius = Globals.polarRadius;
+        const points = measurementCircleOffsets(this.A, this.B);
+        this.circle.visible = points.length > 0;
+        this.circle.position.copy(this.A);
+        const geometry = this.circle.sourceGeometry;
+        let position = geometry.getAttribute("position");
+        if (!position || position.count < points.length) {
+            position = new Float32BufferAttribute(new Float32Array(points.length * 3), 3);
+            geometry.setAttribute("position", position);
+        }
+        points.forEach((point, i) => position.setXYZ(i, point.x, point.y, point.z));
+        geometry.setDrawRange(0, points.length);
+        this.circle.syncGeometry();
+    }
+
     dispose() {
+        if (this.circle) {
+            this.circle.removeFromParent();
+            this.circle.sourceGeometry.dispose();
+            this.circle.geometry.dispose();
+            this.circle.material.dispose();
+        }
         removeDebugArrow(this.id+"start");
         removeDebugArrow(this.id+"end");
         super.dispose();

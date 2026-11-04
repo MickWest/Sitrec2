@@ -58,6 +58,7 @@ import {registerLabel3D, unregisterLabel3D} from "./nodes/CNodeDisplaySkyOverlay
 import {formatUtcOffset, utcOffsetHoursInZone} from "./TimeZoneLookup";
 import {loadTimeZoneMap, zonesAtPoint} from "./TimeZoneMapData";
 import {t} from "./i18n";
+import {setAlwaysVisibleOverlay} from "./AlwaysVisibleOverlay";
 
 const BORDER_COLOR = 0xffff00;      // yellow
 const LABEL_COLOR = "#FFFF00";
@@ -107,46 +108,12 @@ function buildBorderGeometry({counts, lonLat}, border) {
     return geometry;
 }
 
-// 1/a² and 1/b² for the ellipsoid normal, pre-scaled by a² so it stays O(1) in float32.
-function ellipsoidNormalScale(target) {
-    const a = Globals.equatorRadius, b = Globals.polarRadius;
-    return target.set(1, 1, (a * a) / (b * b));
-}
-
-function replaceOnce(text, anchor, replacement) {
-    if (!text.includes(anchor)) throw new Error(`Time zone border shader: anchor "${anchor}" not found`);
-    return text.replace(anchor, replacement);
-}
-
-// SceneLineMaterial, plus the far-side cull. "// scene line attributes" is the hook that
-// SceneLineMaterial leaves for custom line shaders (CNodeDisplayWindField uses it too);
-// lineVertexFraction there is this vertex's place along the original segment.
-function makeBorderMaterial() {
-    const material = new SceneLineMaterial({
-        color: BORDER_COLOR, linewidth: BORDER_WIDTH_PX, depthTest: false, toneMapped: false,
-    });
-    material.uniforms.normalScale = {value: ellipsoidNormalScale(new Vector3())};
-    material.vertexShader = replaceOnce(material.vertexShader,
-        "void main() {", "varying vec3 vSurfacePoint;\nvoid main() {");
-    material.vertexShader = replaceOnce(material.vertexShader, "// scene line attributes", `
-        vSurfacePoint = (modelMatrix * vec4(mix(instanceStart, instanceEnd, lineVertexFraction), 1.0)).xyz;
-        // scene line attributes`);
-    material.fragmentShader = replaceOnce(material.fragmentShader, "void main() {", `
-        uniform vec3 normalScale;
-        varying vec3 vSurfacePoint;
-        void main() {
-            // On the far side of the Earth: the camera is behind the tangent plane here.
-            if (dot(vSurfacePoint * normalScale, cameraPosition - vSurfacePoint) < 0.0) discard;`);
-    return material;
-}
-
 function makeBorderLines(borders) {
-    const lines = new SceneLineSegments(buildBorderGeometry(borders, mapState.border), makeBorderMaterial());
+    const lines = setAlwaysVisibleOverlay(new SceneLineSegments(buildBorderGeometry(borders, mapState.border),
+        new SceneLineMaterial({color: BORDER_COLOR, linewidth: BORDER_WIDTH_PX, toneMapped: false})));
     lines.userData.radii = [Globals.equatorRadius, Globals.polarRadius];
     lines.userData.borderKey = mapState.borderKey;
     lines.name = "TimeZoneBorders";
-    lines.frustumCulled = false;
-    lines.renderOrder = 1000;           // no depth test, so draw after the scene it sits over
     return lines;
 }
 
@@ -162,7 +129,6 @@ function updateBorderLines() {
     lines.sourceGeometry.dispose();
     lines.sourceGeometry = buildBorderGeometry(borderData, mapState.border);
     lines.syncGeometry();
-    ellipsoidNormalScale(lines.material.uniforms.normalScale.value);
     lines.userData.radii = [Globals.equatorRadius, Globals.polarRadius];
     lines.userData.borderKey = mapState.borderKey;
 }
@@ -234,7 +200,6 @@ function buildFillGeometry(fill) {
 function makeFillMaterial() {
     return new ShaderMaterial({
         uniforms: {
-            normalScale: {value: ellipsoidNormalScale(new Vector3())},
             palette: {value: ZONE_PALETTE.map(hex => new Color(hex))},
             opacity: {value: FILL_OPACITY},
             stripePeriod: {value: STRIPE_PERIOD_PX},
@@ -242,39 +207,29 @@ function makeFillMaterial() {
         vertexShader: `
             attribute vec3 fillStyle;
             varying vec3 vFillStyle;
-            varying vec3 vSurfacePoint;
             void main() {
                 vFillStyle = fillStyle;
-                vec4 world = modelMatrix * vec4(position, 1.0);
-                vSurfacePoint = world.xyz;
-                gl_Position = projectionMatrix * viewMatrix * world;
+                gl_Position = projectionMatrix * (modelViewMatrix * vec4(position, 1.0));
             }`,
         fragmentShader: `
-            uniform vec3 normalScale;
             uniform vec3 palette[${ZONE_PALETTE.length}];
             uniform float opacity;
             uniform float stripePeriod;
             varying vec3 vFillStyle;
-            varying vec3 vSurfacePoint;
             void main() {
-                // On the far side of the Earth: the camera is behind the tangent plane here.
-                if (dot(vSurfacePoint * normalScale, cameraPosition - vSurfacePoint) < 0.0) discard;
                 if (vFillStyle.x < -0.5) discard;
                 float stripe = fract((gl_FragCoord.x - gl_FragCoord.y) / stripePeriod);
                 float index = stripe < vFillStyle.z ? vFillStyle.y : vFillStyle.x;
                 gl_FragColor = vec4(palette[int(index + 0.5)], opacity);
                 #include <colorspace_fragment>
             }`,
-        transparent: true,
-        depthTest: false,
-        depthWrite: false,
         side: DoubleSide,
     });
 }
 
 function makeZoneFill(borders) {
     if (!fillLonLat) fillLonLat = buildTimeZoneFill(borders);
-    const mesh = new Mesh(buildFillGeometry(fillLonLat), makeFillMaterial());
+    const mesh = setAlwaysVisibleOverlay(new Mesh(buildFillGeometry(fillLonLat), makeFillMaterial()), 999);
     mesh.userData.radii = [Globals.equatorRadius, Globals.polarRadius];
     mesh.userData.mapKey = mapState.key;
     // Keep the stripes the same number of display pixels wide in any render target (an
@@ -283,8 +238,6 @@ function makeZoneFill(borders) {
         this.material.uniforms.stripePeriod.value = STRIPE_PERIOD_PX * displayPixelScale(renderer);
     };
     mesh.name = "TimeZoneFill";
-    mesh.frustumCulled = false;
-    mesh.renderOrder = 999;             // just before the lines
     return mesh;
 }
 
@@ -296,7 +249,6 @@ function updateZoneFill() {
     if (a !== Globals.equatorRadius || b !== Globals.polarRadius) {
         mesh.geometry.dispose();
         mesh.geometry = buildFillGeometry(fillLonLat);
-        ellipsoidNormalScale(mesh.material.uniforms.normalScale.value);
         mesh.userData.radii = [Globals.equatorRadius, Globals.polarRadius];
     } else if (mesh.userData.mapKey !== mapState.key) {
         const style = mesh.geometry.getAttribute("fillStyle");

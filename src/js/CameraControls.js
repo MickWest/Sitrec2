@@ -49,6 +49,8 @@ const globalMeasureState = {
 	measureStart: null,
 	measureEnd: null,
 	measureArrow: null,
+	displayStart: null,
+	displayEnd: null,
 };
 
 const STATE = {
@@ -192,6 +194,10 @@ class CameraMapControls {
 			globalMeasureState.measureEnd = NodeMan.get("globalMeasureB");
 			globalMeasureState.measureArrow = NodeMan.get("globalMeasureArrow");
 		} else {
+			globalMeasureState.startPoint.set(0, 0, 0);
+			globalMeasureState.endPoint.set(0, 0, 0);
+			globalMeasureState.displayStart = null;
+			globalMeasureState.displayEnd = null;
 			globalMeasureState.measureStart = new CNodePositionXYZ({ id: "globalMeasureA", x: 0, y: 0, z: 0 });
 			globalMeasureState.measureEnd = new CNodePositionXYZ({ id: "globalMeasureB", x: 0, y: 0, z: 0 });
 			globalMeasureState.measureArrow = new CNodeMeasureAB(
@@ -201,6 +207,9 @@ class CameraMapControls {
 					B: "globalMeasureB",
 					color: "#ffFFFF",
 					text: "AB",
+					showHeading: true,
+					showCircle: true,
+					alwaysVisible: true,
 					unitType: "flexible"
 				}
 			);
@@ -1251,6 +1260,8 @@ class CameraMapControls {
 
 		g.measureStart.setXYZ(A2.x, A2.y, A2.z)
 		g.measureEnd.setXYZ(B2.x, B2.y, B2.z)
+		g.displayStart = A2.clone();
+		g.displayEnd = B2.clone();
 
 		DebugArrowAB("globalMeasureDownA", A2, A, 0x00FF00, true, GlobalScene)
 		DebugArrowAB("globalMeasureDownB", B2, B, 0xFF0000, true, GlobalScene)
@@ -1265,6 +1276,18 @@ class CameraMapControls {
 		}
 
 		const g = globalMeasureState;
+		// Saved sitches and chapters restore the position nodes directly. Pick up those
+		// endpoints before moving either one, so the other end does not jump to stale state.
+		const savedStart = g.measureStart.p(par.frame);
+		const savedEnd = g.measureEnd.p(par.frame);
+		if (!g.displayStart?.equals(savedStart)) {
+			g.startPoint.copy(savedStart);
+			g.displayStart = savedStart.clone();
+		}
+		if (!g.displayEnd?.equals(savedEnd)) {
+			g.endPoint.copy(savedEnd);
+			g.displayEnd = savedEnd.clone();
+		}
 		const cursorPos = getCursorPositionFromTopView();
 		const vHeld = isKeyHeld('v');
 		const bHeld = isKeyHeld('b');

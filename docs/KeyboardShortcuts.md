@@ -95,6 +95,11 @@ smaller view over the main view, or over the look view when the main view is hid
 For `C`, `X`, `V` and `B`, hold the key and move the mouse over the ground in the main view or
 the look view. You do not need to click.
 
+The V/B measurement shows the distance and true heading from V toward B, measured clockwise
+from north (0° north, 90° east). A circle centered on V passes through B. Both the circle and the
+measurement arrow stay visible over terrain. The measurement visibility controls in
+**Show → Measurements** also control the circle.
+
 ## Moving the camera
 
 For the complete gesture reference, open **Help → Mouse, touch and pen controls**. With the **K** overlay open, hover over a tool to see its controls.
