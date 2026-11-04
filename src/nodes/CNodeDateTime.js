@@ -343,7 +343,8 @@ export class CNodeDateTime extends CNode {
         // was. The zone of the place (setTimeZoneFromLocation) is NOT applied here: a new
         // custom sitch sits at a default origin until a real location is set, so a
         // lookup now would give every user that origin's zone. It is applied on a real
-        // location event instead: a dropped photo or video with a GPS position, or the
+        // location event instead: a dropped photo or video with a GPS position, a track that
+        // sets the time of a new sitch (TrackManager setTimeZoneFromTrackStart), or the
         // "Set Time Zone from Camera Location" menu item. Historic sitches should name their
         // zone with Sit.timeZone.
         if (!sitTimeZoneApplied) {

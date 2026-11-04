@@ -242,6 +242,24 @@ function disposeDirectTrackDependentControllers(trackNode) {
 
 
 
+// A track that sets the time of a new sitch is also where the sitch is: it is the first track
+// of a new sitch, which the view usually centers on. So, as for a dropped photo or video with a
+// position, show times in the time zone of the place where the track starts: its first
+// row with a valid position. The lookup is async; a zone set some other way in the meantime
+// (by hand, or by a later drop) wins (CNodeDateTime.startTimeZoneLookup).
+function setTimeZoneFromTrackStart(trackDataID) {
+    const data = NodeMan.get(trackDataID, false);
+    if (!data?.misb || !data.isValid || !data.getLat || !data.getLon) return;
+    let row = 0;
+    while (row < data.misb.length && !data.isValid(row)) row++;
+    if (row >= data.misb.length) return;
+    const lat = data.getLat(row), lon = data.getLon(row);
+    GlobalDateTimeNode.setTimeZoneFromLocation(lat, lon)
+        .then(zone => console.log(`Track time zone from its start position (${lat}, ${lon}): `
+            + `${zone ?? "not set"} (${GlobalDateTimeNode.timeZoneName})`))
+        .catch(error => console.warn("Track time zone lookup failed:", error));
+}
+
 // The x on screen of the menu button just clicked: a lil-gui button keeps focus after a click.
 // A panel opened from a button in a folder goes beside it. The middle of the window otherwise.
 function clickedButtonX() {
@@ -840,6 +858,11 @@ class CTrackManager extends CManager {
         const establishedByUserBeforeImport = isSitchEstablishedByUser();
         const showDialog = options.showDialog !== false && !Globals.deserializing;
         const syncTime = options.syncTime !== false;
+        // A track that sets the time of a new sitch also sets its time zone (see
+        // setTimeZoneFromTrackStart). Not for the tracks of a sitch definition, which can
+        // name its own zone (Sit.timeZone), and not while a saved sitch loads: it restores
+        // its saved zone.
+        const setTimeZone = options.setTimeZone !== false && !Globals.deserializing;
 
         // Tracks that centerOnTrack decided the view is allowed to move for. Collected
         // here rather than acted on there because framing a camera+target pair needs
@@ -1118,6 +1141,9 @@ class CTrackManager extends CManager {
                         }
                         GlobalDateTimeNode.syncStartTimeTrack();
                         syncedFromThisFile = true;
+                        // The time and the place now come from this track: show times in
+                        // the time zone of where it starts.
+                        if (setTimeZone) setTimeZoneFromTrackStart(trackDataID);
                     }
 
                     this.makeTrackFromMISBData(trackFileName, trackDataID, trackID, undefined, guiFolder, trackIndex);

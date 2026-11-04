@@ -9,6 +9,11 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.187.1 (2026-11-04)
+
+### Improvements
+- **Time zone from a track** (Time → *Time Zone*): a track file that sets the start time of a new sitch, which is the first track that you drop into it, now also sets the zone at the place where the track starts, with the daylight saving rule of the track's date. Before, a track did not change the zone. A track that you add after the sitch has its time does not change the zone, and a saved sitch keeps its own zone (#13674 "Some sitrec questions, and suggestions?"; #14311 "Sitrec 2.1 New Features").
+
 ## Version 2.187.0 (2026-11-03)
 
 ### New Features

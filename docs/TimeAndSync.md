@@ -90,7 +90,7 @@ shows it changes. A message at the top of the main view gives the new zone, for 
 *Time Zone Set to JST UTC+9 (Asia/Tokyo)*. Time zone borders: © OpenStreetMap contributors, from
 [timezone-boundary-builder](https://github.com/evansiroky/timezone-boundary-builder) (ODbL).
 
-A video or photo file can also set the zone:
+A video, photo or track file can also set the zone:
 
 - A video file's date can have a UTC offset (iPhone, Samsung). Then the zone comes from that
   offset.
@@ -100,9 +100,13 @@ A video or photo file can also set the zone:
   sitch is new.
 - A photo with a GPS position sets the zone at that position. See
   [Set the date from a photo](#set-the-date-from-a-photo).
+- A track (KML, ADS-B, CSV, MISB or another track file) that sets the Start Time of a new
+  sitch also sets the zone at the place where the track starts. This is the first track
+  that you drop into a new sitch.
 
-A date from a track, or one that you set yourself, does not change the zone. When a saved
-sitch loads, it keeps its saved zone, also when it holds a photo or a video.
+A date that you set yourself does not change the zone, and neither does a track that you add
+after the sitch has its time. When a saved sitch loads, it keeps its saved zone, also when it
+holds a photo, a video or a track.
 
 ### Time zone borders
 

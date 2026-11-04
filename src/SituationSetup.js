@@ -1141,6 +1141,9 @@ export async function SetupFromKeyAndData(key, _data, depth=0) {
             await TrackManager.addTracks(data.tracks, removeDuplicates, sphereMask, {
                 showDialog: false,
                 syncTime: Sit.startTime === undefined || Sit.startTime === "current",
+                // A sitch definition names its own zone (Sit.timeZone); only a dropped
+                // track sets the zone from where it starts.
+                setTimeZone: false,
             });
             break;
 
