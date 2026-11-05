@@ -5,7 +5,9 @@
 // Each visible 3D view gets its own TilesRenderer instance with independent
 // LOD so that views with very different cameras (e.g. close-up mainView vs
 // distant lookView) each load tiles at the appropriate resolution without
-// competing for budget.
+// competing for budget. Each also gets its own tile cache (tileCacheBudgetForView):
+// the library hands every TilesRenderer one shared module-level cache by default,
+// and a view that fills it starves the others.
 
 import {CNode} from "./CNode";
 import {buildAssetURL} from '../release/assetURL';
@@ -13,7 +15,7 @@ import {Globals, markShadowCastersDirty, NodeMan, setRenderOne, Sit} from "../Gl
 import {GlobalScene} from "../LocalFrame";
 import {DoubleSide, Group, Matrix4, Raycaster, Sphere, Vector2, Vector3} from "three";
 import * as LAYER from "../LayerMasks";
-import {TilesRenderer} from "3d-tiles-renderer";
+import {DEFAULT_LRU_CACHE, LRUCache, TilesRenderer} from "3d-tiles-renderer";
 import {GLTFExtensionsPlugin, TilesFadePlugin} from "3d-tiles-renderer/plugins";
 import {DRACOLoader} from "three/addons/loaders/DRACOLoader.js";
 import {TilesDayNightPlugin} from "../TilesDayNightPlugin";
@@ -56,6 +58,32 @@ function createDracoLoader() {
     const dracoLoader = new DRACOLoader();
     dracoLoader.setDecoderPath(buildAssetURL("./libs/draco/"));
     return dracoLoader;
+}
+
+// Tile cache byte budget per view. The library default (maxBytesSize 0.4 GB) is sized
+// for aerial/oblique views; a ground-level Google Photorealistic camera in a dense city
+// legitimately needs a far larger working set (~0.8 GB / ~1500 tiles observed). Once a
+// cache is byte-full, TilesRendererBase.update() stops requesting ANY new tiles for the
+// renderers that use it (the request loop is gated on `!lruCache.isFull()`), so the
+// near-field tiles never download and the terrain "drops out" / stays low-LOD. A higher
+// ceiling is cheap — it is a cap, not an allocation: a cache only ever holds what its
+// view's working set demands.
+//
+// The budgets are PER VIEW because each PerViewTiles owns its LRUCache. With the
+// library's shared DEFAULT_LRU_CACHE, a look view at 0.64° FOV over 443 km of dense
+// photorealistic ground held 1.61 GB on its own, the one cache reported full, and the
+// main view's 31 coarse globe tiles were refused (21 refused, 0 visible): the main view
+// showed stars and no Earth, since photorealistic mode hides the basemap terrain. The
+// look view keeps the larger budget, as the view routinely put at ground level; the main
+// view's covers a close-up city orbit while bounding the total.
+const GIGABYTE = 1024 * 1024 * 1024;
+const TILE_CACHE_BUDGETS = {
+    lookView: {minBytes: 1.0 * GIGABYTE, maxBytes: 1.5 * GIGABYTE},
+    default: {minBytes: 0.6 * GIGABYTE, maxBytes: 1.0 * GIGABYTE},
+};
+
+export function tileCacheBudgetForView(viewId) {
+    return TILE_CACHE_BUDGETS[viewId] ?? TILE_CACHE_BUDGETS.default;
 }
 
 // Apply a global opacity to a tile mesh's material(s). depthWrite is deliberately LEFT ON
@@ -497,10 +525,12 @@ class PerViewTiles {
      * @param {string} materialMode
      * @param {number|null} flatColor
      * @param {number} errorTarget  screen-space-error target (px) for tile LOD; lower = sharper
+     * @param {{minBytes: number, maxBytes: number}} cacheBudget  byte budget of this view's own
+     *        tile cache (tileCacheBudgetForView)
      */
     constructor(parentGroup, layerMask, source, cesiumIonToken, googleApiKey, googleSharedState,
                 materialMode = "photo", flatColor = null, treeFlattenParams = null, opacity = 1,
-                errorTarget = 20) {
+                errorTarget = 20, cacheBudget = tileCacheBudgetForView()) {
         // Global building transparency (shared "Terrain Opacity" control). Applied to each tile
         // mesh as it streams in (see the load-model handler) so newly-loaded tiles match the
         // already-loaded ones. The fade plugin fades via shader dither, not material.opacity, so
@@ -508,21 +538,23 @@ class PerViewTiles {
         this.opacity = opacity;
         this.renderer = new FlatAwareTilesRenderer();
 
-        // Raise the tile cache's BYTE budget. The library default (maxBytesSize
-        // 0.4GB) is sized for aerial/oblique views; a ground-level Google
-        // Photorealistic camera in a dense city legitimately needs a far larger
-        // working set (~0.8GB / ~1500 tiles observed). Once the LRU cache is byte-
-        // full, TilesRendererBase.update() stops requesting ANY new tiles (the
-        // request loop is gated on `!lruCache.isFull()`), so the near-field tiles
-        // for the current view never download and the terrain "drops out" / stays
-        // low-LOD. This is order-dependent: scrubbing the timeline fills the cache
-        // with tiles from the camera's other positions, locking out the tiles the
-        // current frame actually needs. A higher ceiling is cheap — it is a cap,
-        // not an allocation: the cache only ever holds what the visible working set
-        // demands, so views that don't need the headroom pay nothing for it.
-        const GIGABYTE = 1024 * 1024 * 1024;
-        this.renderer.lruCache.minBytesSize = 1.0 * GIGABYTE;
-        this.renderer.lruCache.maxBytesSize = 1.5 * GIGABYTE;
+        // This view's OWN tile cache. The library gives every TilesRenderer the same
+        // module-level DEFAULT_LRU_CACHE, so the per-renderer budgets set below used to
+        // land on one shared cache: once any view filled it, isFull() refused the other
+        // views' requests too (see TILE_CACHE_BUDGETS). The library allows the swap only
+        // before the first update(), which is why it happens here. The download and
+        // parse queues stay shared; they bound concurrency, not memory. The default
+        // cache's unload-priority callback is copied because the library also uses it
+        // to ORDER the request queue (queuedTiles.sort), and a cache without one would
+        // make that sort throw.
+        this.renderer.lruCache = new LRUCache();
+        this.renderer.lruCache.unloadPriorityCallback = DEFAULT_LRU_CACHE.unloadPriorityCallback;
+        // Byte budget: TILE_CACHE_BUDGETS has the sizing and the history. Scrubbing the
+        // timeline is still order-dependent within ONE view: tiles from the camera's other
+        // positions can fill its cache and lock out the tiles the current frame needs,
+        // which the ceiling is sized to absorb.
+        this.renderer.lruCache.minBytesSize = cacheBudget.minBytes;
+        this.renderer.lruCache.maxBytesSize = cacheBudget.maxBytes;
         // Also raise the ITEM-count cap. isFull() trips on EITHER cachedBytes>=maxBytesSize OR
         // itemSet.size>=maxSize; at a low errorTarget the near field is many small tiles, so the
         // default maxSize (8000) can hit the item cap (and re-jam the admission gate) while bytes
@@ -949,7 +981,8 @@ export class CNodeBuildings3DTiles extends CNode {
                 this.group, mask, activeSource,
                 this.cesiumIonToken, this.googleApiKey, googleSharedState,
                 this.materialMode, this.flatColor, this.treeFlattenParams, this._effectiveOpacity(id),
-                this.errorTarget   // global tile-LOD target (slider-driven)
+                this.errorTarget,  // global tile-LOD target (slider-driven)
+                tileCacheBudgetForView(id)
             );
         }
 
