@@ -30,6 +30,13 @@ if (manifest.permissions.includes("desktopCapture")) {
 
 let elapsedTimer = null;
 
+// The active tab of the window this popup opened in. Its row in the tab list
+// gets a "*", because tab IDs alone do not show which Sitrec tab the user is
+// looking at when several are open. Resolved once: switching tab or window
+// closes the popup, so the value cannot go stale while it is shown.
+let frontTabId = null;
+let lastState = null;
+
 function formatDuration(ms) {
     if (ms < 1000) return `${ms}ms`;
     return `${(ms / 1000).toFixed(1)}s`;
@@ -140,11 +147,15 @@ function renderTabs(tabs, conns) {
             ? `<span style="color:#6366f1">→ :${port}</span>`
             : `<span style="color:#888">→ fallback</span>`;
         const origin = t.origin ? escHtml(t.origin) : "?";
-        return `<div>${origin}/${escHtml(path)} #${t.id} ${pairLabel}</div>`;
+        const isFront = t.id === frontTabId;
+        const mark = isFront ? "* " : "";
+        const attrs = isFront ? ' class="front-tab" title="The tab at the front of this window"' : "";
+        return `<div${attrs}>${mark}${origin}/${escHtml(path)} #${t.id} ${pairLabel}</div>`;
     }).join("");
 }
 
 function update(state) {
+    lastState = state;
     renderConnections(state.connections);
     renderTabs(state.knownTabs, state.connections);
 
@@ -194,6 +205,12 @@ function update(state) {
 chrome.runtime.sendMessage({ type: "getState" }, (response) => {
     if (response) update(response);
 });
+
+chrome.tabs.query({ active: true, currentWindow: true }).then(([tab]) => {
+    frontTabId = tab?.id ?? null;
+    // The state may have arrived first; re-render the list with the mark.
+    if (lastState) renderTabs(lastState.knownTabs, lastState.connections);
+}).catch(() => {});
 
 chrome.runtime.onMessage.addListener((msg) => {
     if (msg.type === "stateUpdate") update(msg);

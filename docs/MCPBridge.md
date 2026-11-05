@@ -206,7 +206,11 @@ path is wrong, Claude will not be able to start the Bridge.
    - a green **MCP Servers** indicator
    - a green **Sitrec Tabs** indicator
    - the current Sitrec tab, for example
-     `https://www.metabunk.org/sitrec #123 → fallback`
+     `* https://www.metabunk.org/sitrec #123 → fallback`
+
+The `*` marks the tab at the front of the window where you opened the popup.
+When more than one Sitrec tab is open, it shows which row is the tab that you
+see. The **Close Other Sitrec Tabs** button keeps that tab.
 
 The word `fallback` is normal here. It means that the tab uses your Bridge, which
 the **MCP Servers** list shows on a port such as `:9799`.
