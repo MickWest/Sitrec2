@@ -2545,6 +2545,12 @@ async function setupFunctions() {
 
     Globals.showMeasurements = true;
     Globals.showMeasurementsLook = false;
+    // The V/B measurement's own per-view toggles too, so a sitch saved before they existed does
+    // not inherit the previous sitch's. A saved sitch that has them sets them again on load.
+    Globals.showVBMeasureMain = true;
+    Globals.showVBMeasureLook = false;
+    Globals.showVBCircleMain = false;
+    Globals.showVBCircleLook = false;
 
 
     // Setup the watch nodes that allow access via Math expressions

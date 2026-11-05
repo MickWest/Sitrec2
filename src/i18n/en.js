@@ -4033,6 +4033,22 @@ const en = {
             label: "Measurements in Look",
             tooltip: "Show measurement arrows and their labels, such as distances and altitudes, in the look/camera view.",
         },
+        vbMeasure: {
+            label: "V/B Measure in Main",
+            tooltip: "Show the V/B measurement (the V and B keys) in the main 3D view. Separate from Measurements in Main.",
+        },
+        vbMeasureLook: {
+            label: "V/B Measure in Look",
+            tooltip: "Show the V/B measurement (the V and B keys) in the look/camera view. Separate from Measurements in Look.",
+        },
+        vbCircle: {
+            label: "V/B Circle in Main",
+            tooltip: "Draw the circle of the V/B measurement in the main 3D view: centered on the V end, through the B end.",
+        },
+        vbCircleLook: {
+            label: "V/B Circle in Look",
+            tooltip: "Draw the circle of the V/B measurement in the look/camera view: centered on the V end, through the B end.",
+        },
         labelsInMain: {
             label: "Labels in Main",
             tooltip: "Show track/object labels in the main 3D view",
@@ -4081,6 +4097,8 @@ const en = {
     viewMenus: {
         freeLook: "Free Look",
         measurements: "Measurements",
+        vbMeasure: "V/B Measure",
+        vbCircle: "V/B Circle",
         labels: "Labels",
         features: "Pins",
         los: "Lines of Sight",
@@ -4131,6 +4149,7 @@ const en = {
     // Tooltips for the view header ICONS, keyed by slot. Only for an icon that does something
     // its control's own label does not describe — a toggle icon borrows the control's wording.
     viewIcons: {
+        vbMeasure: "V/B measure — off, the ruler, or the ruler with its circle; each click moves to the next",
         declutter: "Declutter — hide every overlay in this view; press again to bring back exactly the ones that were showing",
         zoom: "Video zoom 100% — press again to go back to the previous zoom",
         overlayTransparency: "Video overlay — click to switch it off and back on; hover for its transparency",

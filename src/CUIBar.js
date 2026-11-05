@@ -359,6 +359,62 @@ export class CUIBar {
         return btn;
     }
 
+    // A toggle with a second stage, over TWO mirrored controls: `onKey` is the boolean the icon
+    // lights for, and `stageKey` a second boolean that only means anything while the first is
+    // on. Clicks go off → on → on with the stage → off. The button draws `html`, or `stageHtml`
+    // while the stage is on. The V/B measurement is the case: off, the ruler, the ruler with
+    // its circle. Both controls keep their own menu rows, so either can be set there too, and
+    // the button follows, because it is painted from the twins like every other icon here.
+    addStagedIcon(onKey, stageKey, {html, stageHtml, action, label, tooltip, left = true} = {}) {
+        let onTwin = null;
+        let stageTwin = null;
+        const click = () => {
+            if (!onTwin) return;
+            const on = !!onTwin.getValue();
+            const staged = !!stageTwin?.getValue();
+            if (!on) {
+                stageTwin?.setValue(false);
+                onTwin.setValue(true);
+            } else if (stageTwin && !staged) {
+                stageTwin.setValue(true);
+            } else {
+                stageTwin?.setValue(false);
+                onTwin.setValue(false);
+            }
+        };
+        const btn = this.addIcon(html, click, null, action, left);
+        btn.style.display = 'none';
+        btn.style.alignItems = 'center';
+        btn.style.justifyContent = 'center';
+        btn.style.height = '18px';
+        btn.style.padding = '0 3px';
+        const paint = () => {
+            if (!onTwin) return;
+            const on = !!onTwin.getValue();
+            const want = on && stageTwin?.getValue() ? stageHtml : html;
+            if (btn._uibarStageHtml !== want) {
+                btn.innerHTML = want;
+                btn._uibarStageHtml = want;
+            }
+            paintIcon(btn, on);
+            this._syncPeeks(true);
+        };
+        this._toggleHost().addMirror(onKey, {
+            onMirror: (t) => {
+                onTwin = t;
+                bindControlIcon(btn, t, {label, tooltip, onPaint: paint});
+            },
+        });
+        this._toggleHost().addMirror(stageKey, {
+            onMirror: (t) => {
+                stageTwin = t;
+                andThen(t, 'updateDisplay', paint);
+                paint();
+            },
+        });
+        return btn;
+    }
+
     // An icon bound to a NUMBER control - the look view's video overlay transparency - that is
     // both a switch and a way to the control's slider.
     //

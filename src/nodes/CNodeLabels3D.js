@@ -2,14 +2,15 @@
 // Uses the 2D canvas overlay system (CNodeDisplaySkyOverlay) for rendering
 
 import * as LAYER from "../LayerMasks";
-import {
-    DebugArrowAB,
+import {DebugArrowAB,
     DebugArrows,
     getTilesPointBelow,
     isVisible,
     propagateLayerMaskObject,
     removeDebugArrow,
     setLayerMaskRecursive,
+    ARROW_HEAD_CONE,
+    ARROW_HEAD_DOT,
 } from "../threeExt";
 import {pointOnSphereBelow} from "../SphericalMath";
 import {CNodeMunge} from "./CNodeMunge";
@@ -72,6 +73,39 @@ export function measurementLayerMask() {
 }
 
 /**
+ * Which views draw the V/B measurement. It has its own toggles, apart from the measurements
+ * above: the ruler icon on each 3D view's header bar, or V/B Measure in Main / in Look under
+ * Show > Measurements.
+ */
+export function vbMeasureLayerMask() {
+    let mask = 0;
+    if (Globals.showVBMeasureMain ?? true) mask |= LAYER.MASK_HELPERS;
+    if (Globals.showVBMeasureLook) mask |= LAYER.MASK_LOOK;
+    return mask;
+}
+
+/** Which views draw the V/B measurement's circle: its views, narrowed by the circle flags. */
+export function vbCircleLayerMask() {
+    let mask = 0;
+    if (Globals.showVBCircleMain) mask |= LAYER.MASK_HELPERS;
+    if (Globals.showVBCircleLook) mask |= LAYER.MASK_LOOK;
+    return mask & vbMeasureLayerMask();
+}
+
+/**
+ * Point the V/B measurement at the views its toggles name. Its node.visible is "placed"
+ * (CameraControls.setMeasureArrowShown), so an unplaced measurement stays hidden.
+ */
+export function refreshVBMeasureVisibility() {
+    if (!NodeMan.exists("globalMeasureArrow")) return;
+    const node = NodeMan.get("globalMeasureArrow");
+    const mask = vbMeasureLayerMask();
+    node.group.visible = mask !== 0 && node.visible !== false;
+    node.layerMask = mask;
+    setLayerMaskRecursive(node.group, mask);
+}
+
+/**
  * Point every existing measurement at the views the toggles now name.
  *
  * The group flag stays the master switch as well as the mask, because CNodeMeasureAB.update()
@@ -113,6 +147,13 @@ export function setupMeasurementUI() {
     // recreation, and measurement arrows drawn across it are exactly what "not in the recreation"
     // was protecting. This is also what makes the new toggle a no-op for every existing sitch.
     Globals.showMeasurementsLook ??= false;
+    // The V/B measurement's own per-view toggles, apart from the measurements. The ruler icon's
+    // first state is the line and its second adds the circle. Main starts at the line; the look
+    // view starts off, like measurements.
+    Globals.showVBMeasureMain ??= true;
+    Globals.showVBMeasureLook ??= false;
+    Globals.showVBCircleMain ??= false;
+    Globals.showVBCircleLook ??= false;
 
     // We create a group node to hold all the measurement arrows
     measureArrowGroupNode = new CNode3DGroup({
@@ -156,6 +197,25 @@ export function setupMeasurementUI() {
         setRenderOne(true);
     })
     measurementUIVars.controllerLook.shareAs(viewMenuKey("lookView", "measurements"));
+
+    const vbChanged = () => {
+        refreshVBMeasureVisibility();
+        setRenderOne(true);
+    };
+    measurementUIVars.vbController = measurementFolder.add(Globals, "showVBMeasureMain").name(t("labels3d.vbMeasure.label")).tooltip(t("labels3d.vbMeasure.tooltip")).listen().onChange(vbChanged);
+    measurementUIVars.vbController.shareAs(viewMenuKey("mainView", "vbMeasure"));
+    measurementUIVars.vbControllerLook = measurementFolder.add(Globals, "showVBMeasureLook").name(t("labels3d.vbMeasureLook.label")).tooltip(t("labels3d.vbMeasureLook.tooltip")).listen().onChange(vbChanged);
+    measurementUIVars.vbControllerLook.shareAs(viewMenuKey("lookView", "vbMeasure"));
+
+    // The circle is read per frame by CNodeMeasureAB.updateCircle, so a change only needs a frame.
+    measurementUIVars.vbCircleController = measurementFolder.add(Globals, "showVBCircleMain").name(t("labels3d.vbCircle.label")).tooltip(t("labels3d.vbCircle.tooltip")).listen().onChange(() => {
+        setRenderOne(true);
+    });
+    measurementUIVars.vbCircleController.shareAs(viewMenuKey("mainView", "vbCircle"));
+    measurementUIVars.vbCircleControllerLook = measurementFolder.add(Globals, "showVBCircleLook").name(t("labels3d.vbCircleLook.label")).tooltip(t("labels3d.vbCircleLook.tooltip")).listen().onChange(() => {
+        setRenderOne(true);
+    });
+    measurementUIVars.vbCircleControllerLook.shareAs(viewMenuKey("lookView", "vbCircle"));
 
     Globals.showLabelsMain = true;
     Globals.showLabelsLook = false;
@@ -201,6 +261,7 @@ export function setupMeasurementUI() {
 
 export function refreshLabelsAfterLoading() {
     measurementUIVars.controller._callOnChange(); // PATCH: call the onChange function to update the UI for the visibility of the measurements
+    refreshVBMeasureVisibility();
 
     labelsControllerMain._callOnChange();
     labelsControllerLook._callOnChange();
@@ -373,6 +434,9 @@ export class CNodeLLALabel extends CNodeLabel3D {
 
 }
 
+// Screen size of an end mark when the measurement does not say: a 20 px arrowhead, an 8 px dot.
+const defaultHeadSize = (head) => head === ARROW_HEAD_DOT ? 8 : 20;
+
 export class CNodeMeasureAB extends CNodeLabel3D {
     constructor(v) {
         v.position = v.A;
@@ -383,6 +447,19 @@ export class CNodeMeasureAB extends CNodeLabel3D {
         this.showHeading = v.showHeading ?? false;
         this.showCircle = v.showCircle ?? false;
         this.alwaysVisible = v.alwaysVisible ?? false;
+        // What marks each end: a cone (an arrowhead) or a dot (threeExt's ARROW_HEAD_* names),
+        // and its size on screen in pixels: an arrowhead's length, or a dot's diameter.
+        this.startHead = v.startHead ?? ARROW_HEAD_CONE;
+        this.endHead = v.endHead ?? ARROW_HEAD_CONE;
+        this.startHeadSize = v.startHeadSize ?? defaultHeadSize(this.startHead);
+        this.endHeadSize = v.endHeadSize ?? defaultHeadSize(this.endHead);
+        // The V/B measurement has its own per-view toggles (vbMeasureLayerMask), apart from the
+        // measurements', whose refreshMeasurementVisibility therefore skips it.
+        this.isVBMeasure = v.isVBMeasure ?? false;
+        if (this.isVBMeasure) {
+            this.isMeasurement = false;
+            this.layerMask = vbMeasureLayerMask();
+        }
         this.update(0)
     }
 
@@ -412,8 +489,8 @@ export class CNodeMeasureAB extends CNodeLabel3D {
         // add an arrow from A to C and B to D
         // Use this.group instead of this.groupNode.group so arrows are children of this measurement
         // and will be hidden/shown along with the text label
-        const startArrow = DebugArrowAB(this.id + "start", this.C, this.A, color, true, this.group, 20, this.layerMask);
-        const endArrow = DebugArrowAB(this.id + "end", this.D, this.B, color, true, this.group, 20, this.layerMask);
+        const startArrow = DebugArrowAB(this.id + "start", this.C, this.A, color, true, this.group, this.startHeadSize, this.layerMask, this.startHead);
+        const endArrow = DebugArrowAB(this.id + "end", this.D, this.B, color, true, this.group, this.endHeadSize, this.layerMask, this.endHead);
         if (this.alwaysVisible) {
             setAlwaysVisibleOverlay(startArrow);
             setAlwaysVisibleOverlay(endArrow);
@@ -472,7 +549,7 @@ export class CNodeMeasureAB extends CNodeLabel3D {
             this.circleA = new Vector3(NaN, NaN, NaN);
             this.circleB = new Vector3(NaN, NaN, NaN);
         }
-        this.circle.layers.mask = this.layerMask;
+        this.circle.layers.mask = this.isVBMeasure ? vbCircleLayerMask() : this.layerMask;
         this.circle.material.color.set(color);
         if (this.circleA.equals(this.A) && this.circleB.equals(this.B)
             && this.circleEquatorRadius === Globals.equatorRadius && this.circlePolarRadius === Globals.polarRadius) return;

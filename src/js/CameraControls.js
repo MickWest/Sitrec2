@@ -3,7 +3,8 @@ import {commandModifier, wheelSteps} from "../GestureActions";
 
 import {Matrix4, Plane, Raycaster, Sphere, Vector2, Vector3} from "three";
 import {degrees, f2m, radians, vdump} from "../utils";
-import {clampAboveGround, DebugArrowAB, DebugSphere, getTilesPointBelow, intersectSurface, pointAbove} from "../threeExt";
+import {ARROW_HEAD_DOT, clampAboveGround, DebugArrowAB, DebugSphere, getTilesPointBelow, intersectSurface, pointAbove, removeDebugArrow} from "../threeExt";
+import {isUnplacedMeasurePoint, measureEndsTouching, separatedMeasurePoint} from "../MeasurementGeometry";
 import {par} from "../par";
 import {ECEFToLLAVD_radii} from "../LLA-ECEF-ENU";
 import {meanSeaLevelOffset} from "../EGM96Geoid";
@@ -27,7 +28,7 @@ import {isLocal} from "../configUtils"
 import {getInteractionRouter, INTERACTION} from "../InteractionRouter";
 import {isViewDisplayed, mouseToNDC, mouseToView, mouseInRenderedView, setRaycasterFromCamera, setRaycasterFromView, viewToNDC, withDisplayedCamera} from "../ViewUtils";
 import {raycastLocalGround} from "../raycastGround";
-import {CNodeMeasureAB} from "../nodes/CNodeLabels3D";
+import {CNodeMeasureAB, refreshVBMeasureVisibility} from "../nodes/CNodeLabels3D";
 import {CNodePositionXYZ} from "../nodes/CNodePositionLLA";
 import {GlobalScene} from "../LocalFrame";
 import * as LAYER from "../LayerMasks";
@@ -44,14 +45,25 @@ const globalMeasureState = {
 	endPoint: null,
 	vKeyWasHeld: false,
 	bKeyWasHeld: false,
-	undoStartPoint: null,
-	undoEndPoint: null,
+	undoStart: null,
+	undoEnd: null,
 	measureStart: null,
 	measureEnd: null,
 	measureArrow: null,
 	displayStart: null,
 	displayEnd: null,
 };
+
+// Undo snapshots hold BOTH ends: the press that places a measurement moves both, so its
+// undo has to take both away again.
+function measurePointsSnapshot(g) {
+	return {start: g.startPoint.clone(), end: g.endPoint.clone()};
+}
+
+function restoreMeasurePoints(g, snapshot) {
+	g.startPoint.copy(snapshot.start);
+	g.endPoint.copy(snapshot.end);
+}
 
 const STATE = {
 	NONE: -1,
@@ -210,9 +222,15 @@ class CameraMapControls {
 					showHeading: true,
 					showCircle: true,
 					alwaysVisible: true,
-					unitType: "flexible"
+					unitType: "flexible",
+					isVBMeasure: true,
+					startHead: ARROW_HEAD_DOT,   // a dot at V, an arrowhead at B
+					startHeadSize: 4,            // the dot's diameter on screen, in pixels
 				}
 			);
+			// Not placed yet: nothing is drawn until an end is placed (setMeasureArrowShown).
+			globalMeasureState.measureArrow.visible = false;
+			globalMeasureState.measureArrow.group.visible = false;
 		}
 
 
@@ -1244,12 +1262,50 @@ class CameraMapControls {
 	}
 
 
+	// The V/B measurement is drawn only while it is placed, and only in the views its own
+	// toggles name (the ruler icon). node.visible carries "placed".
+	setMeasureArrowShown(shown) {
+		const arrow = globalMeasureState.measureArrow;
+		if (!arrow || arrow.visible === shown) return;
+		arrow.visible = shown;
+		refreshVBMeasureVisibility();
+		setRenderOne(true);
+	}
+
+	// An end dropped onto the other is held a foot from it; releasing the key there removes
+	// the measurement. Returns true when it did.
+	removeMeasureIfTouching() {
+		const g = globalMeasureState;
+		if (isUnplacedMeasurePoint(g.startPoint) || isUnplacedMeasurePoint(g.endPoint)) return false;
+		if (!measureEndsTouching(g.startPoint, g.endPoint)) return false;
+		g.startPoint.set(0, 0, 0);
+		g.endPoint.set(0, 0, 0);
+		return true;
+	}
+
 	refreshMeasureArrowVisuals() {
 		const g = globalMeasureState;
 		if (!NodeMan.exists("globalMeasureA")) return;
 
 		const A = g.startPoint;
 		const B = g.endPoint;
+
+		// Not placed, or undone back to that: park both ends at the origin, as in a new sitch,
+		// and draw no drop lines. The origin must not reach altitudeHAE (it returns NaN there),
+		// and one NaN end makes alt_max NaN, which makes BOTH projected ends NaN.
+		if (isUnplacedMeasurePoint(A) || isUnplacedMeasurePoint(B)) {
+			A.set(0, 0, 0);
+			B.set(0, 0, 0);
+			g.measureStart.setXYZ(0, 0, 0);
+			g.measureEnd.setXYZ(0, 0, 0);
+			g.displayStart = V3(0, 0, 0);
+			g.displayEnd = V3(0, 0, 0);
+			removeDebugArrow("globalMeasureDownA");
+			removeDebugArrow("globalMeasureDownB");
+			this.setMeasureArrowShown(false);
+			return;
+		}
+		this.setMeasureArrowShown(true);
 
 		const alt_A = altitudeHAE(A);
 		const alt_B = altitudeHAE(B);
@@ -1265,19 +1321,21 @@ class CameraMapControls {
 
 		DebugArrowAB("globalMeasureDownA", A2, A, 0x00FF00, true, GlobalScene)
 		DebugArrowAB("globalMeasureDownB", B2, B, 0xFF0000, true, GlobalScene)
+
+		// The measurement node read the position nodes in this frame's node update, before
+		// this ran, so its label, arrows and circle are one frame behind. Ask for the next
+		// frame: it also processes a key release at once, so the undo entry is in place
+		// before the user can press Cmd+Z, instead of in whatever frame comes next.
+		setRenderOne(true);
 	}
 
 	updateMeasureArrow() {
 		if (!NodeMan.exists("globalMeasureA")) return;
-		
-		const topView = getTopViewWithCursor();
-		if (topView !== this.view) {
-			return;
-		}
-
 		const g = globalMeasureState;
+
 		// Saved sitches and chapters restore the position nodes directly. Pick up those
 		// endpoints before moving either one, so the other end does not jump to stale state.
+		// Ahead of the cursor test, so a loaded measurement shows before the mouse enters a view.
 		const savedStart = g.measureStart.p(par.frame);
 		const savedEnd = g.measureEnd.p(par.frame);
 		if (!g.displayStart?.equals(savedStart)) {
@@ -1288,50 +1346,91 @@ class CameraMapControls {
 			g.endPoint.copy(savedEnd);
 			g.displayEnd = savedEnd.clone();
 		}
+		// A restored end that is NaN or null (a sitch saved while an end was NaN) parks the
+		// measurement once, instead of showing "NaN" until a key is pressed.
+		const startUnplaced = isUnplacedMeasurePoint(g.startPoint);
+		const endUnplaced = isUnplacedMeasurePoint(g.endPoint);
+		if ((startUnplaced || endUnplaced) && !(g.startPoint.lengthSq() === 0 && g.endPoint.lengthSq() === 0)) {
+			this.refreshMeasureArrowVisuals();
+		}
+		this.setMeasureArrowShown(!startUnplaced && !endUnplaced);
+
+		const topView = getTopViewWithCursor();
+		if (topView !== this.view) {
+			return;
+		}
+
 		const cursorPos = getCursorPositionFromTopView();
 		const vHeld = isKeyHeld('v');
 		const bHeld = isKeyHeld('b');
 
 		let update = false;
 
-		if (vHeld && cursorPos) {
-			if (!g.vKeyWasHeld) {
-				g.undoStartPoint = g.startPoint.clone();
+		// Undo snapshots are taken on the first frame of a press, before anything moves.
+		const placing = startUnplaced || endUnplaced;
+		if (vHeld && !g.vKeyWasHeld) {
+			g.undoStart = measurePointsSnapshot(g);
+			g.undoStart.placing = placing;
+			g.undoStart.description = placing ? "Place measurement" : "Move measure start point";
+		}
+		if (bHeld && !g.bKeyWasHeld) {
+			g.undoEnd = measurePointsSnapshot(g);
+			g.undoEnd.placing = placing;
+			g.undoEnd.description = placing ? "Place measurement" : "Move measure end point";
+		}
+
+		if (cursorPos && (vHeld || bHeld)) {
+			if (placing) {
+				// With no measurement yet, the first press puts the held key's end under the
+				// mouse and the other end a foot east of it, so a measurement with a length, a
+				// heading and a circle appears at once. The held key then drags its own end.
+				const other = separatedMeasurePoint(cursorPos, cursorPos);
+				if (vHeld) {
+					g.startPoint.copy(cursorPos);
+					g.endPoint.copy(other);
+				} else {
+					g.endPoint.copy(cursorPos);
+					g.startPoint.copy(other);
+				}
 			}
-			g.startPoint.set(cursorPos.x, cursorPos.y, cursorPos.z);
+			// V moves the start and B the end. The ends never meet: a dragged end stops a
+			// foot short of the other, horizontally, so the heading and the circle stay
+			// defined after both ends are drawn at the higher end's altitude.
+			if (vHeld) g.startPoint.copy(separatedMeasurePoint(cursorPos, g.endPoint));
+			if (bHeld) g.endPoint.copy(separatedMeasurePoint(cursorPos, g.startPoint));
 			update = true;
 		}
-		if (!vHeld && g.vKeyWasHeld && g.undoStartPoint && UndoManager) {
-			const oldPos = g.undoStartPoint.clone();
-			const newPos = g.startPoint.clone();
-			const self = this;
+
+		const self = this;
+		const addUndo = (before) => {
+			const after = measurePointsSnapshot(g);
+			if (after.start.equals(before.start) && after.end.equals(before.end)) return;
 			UndoManager.add({
-				description: "Move measure start point",
-				undo: () => { g.startPoint.copy(oldPos); self.refreshMeasureArrowVisuals(); },
-				redo: () => { g.startPoint.copy(newPos); self.refreshMeasureArrowVisuals(); }
+				description: before.description,
+				undo: () => { restoreMeasurePoints(g, before); self.refreshMeasureArrowVisuals(); },
+				redo: () => { restoreMeasurePoints(g, after); self.refreshMeasureArrowVisuals(); }
 			});
-			g.undoStartPoint = null;
+		};
+		// Dropping an end of an EXISTING measurement onto the other end removes it. The press
+		// that placed the measurement is exempt: a tap of V leaves a one-foot measurement at the
+		// cursor, so a tap of B somewhere else then completes it.
+		const release = (snapshot) => {
+			if (!snapshot) return;
+			if (!snapshot.placing && this.removeMeasureIfTouching()) {
+				snapshot.description = "Remove measurement";
+				update = true;
+			}
+			if (UndoManager) addUndo(snapshot);
+		};
+		if (!vHeld && g.vKeyWasHeld) {
+			release(g.undoStart);
+			g.undoStart = null;
+		}
+		if (!bHeld && g.bKeyWasHeld) {
+			release(g.undoEnd);
+			g.undoEnd = null;
 		}
 		g.vKeyWasHeld = vHeld;
-
-		if (bHeld && cursorPos) {
-			if (!g.bKeyWasHeld) {
-				g.undoEndPoint = g.endPoint.clone();
-			}
-			g.endPoint.set(cursorPos.x, cursorPos.y, cursorPos.z);
-			update = true;
-		}
-		if (!bHeld && g.bKeyWasHeld && g.undoEndPoint && UndoManager) {
-			const oldPos = g.undoEndPoint.clone();
-			const newPos = g.endPoint.clone();
-			const self = this;
-			UndoManager.add({
-				description: "Move measure end point",
-				undo: () => { g.endPoint.copy(oldPos); self.refreshMeasureArrowVisuals(); },
-				redo: () => { g.endPoint.copy(newPos); self.refreshMeasureArrowVisuals(); }
-			});
-			g.undoEndPoint = null;
-		}
 		g.bKeyWasHeld = bHeld;
 
 		if (update) {

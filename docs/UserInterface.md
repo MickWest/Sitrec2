@@ -173,6 +173,7 @@ Next to the name, the busiest of those are repeated as one-click icons.
 | **L** | Labels |
 | map pin | Pins |
 | green dimension line | Measurements |
+| green ruler | V/B Measure: off, the line, or the line with its circle (the icon becomes a ring); each click moves to the next |
 | a track | Show Tracks |
 | a track with a curtain under it | Extend Tracks to Ground |
 | a satellite | Satellites |
@@ -191,7 +192,7 @@ An icon whose control is off is drained of color and dimmed, so a glance along t
 
 ### Declutter
 
-**Declutter** is the first icon of that run, and it hides most of what is drawn over that view in one press: labels, pins, measurements, tracks, star names, the lat/lon grid, lines of sight, the frustum, the compass, the clock and the readout. It does not change Satellites, Current LOS, the equatorial grid, celestial vectors or the video overlay. It lights up to say the view is clear. Press it again and exactly the ones that were showing come back. If you switch something back on by hand in between, Declutter re-arms, and the next press clears the view again from wherever it now stands.
+**Declutter** is the first icon of that run, and it hides most of what is drawn over that view in one press: labels, pins, measurements, the V/B measure, tracks, star names, the lat/lon grid, lines of sight, the frustum, the compass, the clock and the readout. It does not change Satellites, Current LOS, the equatorial grid, celestial vectors or the video overlay. It lights up to say the view is clear. Press it again and exactly the ones that were showing come back. If you switch something back on by hand in between, Declutter re-arms, and the next press clears the view again from wherever it now stands.
 
 ### Free Look
 
@@ -223,7 +224,7 @@ Anything that can be shown in one view but not another is a **pair** of controls
 
 ## Measurements
 
-**Show → Measurements** holds the measurements drawn in the 3D views. A measurement is either the **altitude** of one thing (its height above ground level (AGL) and above [mean sea level (MSL)](GIS.md#three-kinds-of-height)) or the **distance** between two things. **Measurements in Main** and **Measurements in Look** turn all of them on or off in each view.
+**Show → Measurements** holds the measurements drawn in the 3D views. A measurement is either the **altitude** of one thing (its height above ground level (AGL) and above [mean sea level (MSL)](GIS.md#three-kinds-of-height)) or the **distance** between two things. **Measurements in Main** and **Measurements in Look** turn all of them on or off in each view. The [V/B measurement](KeyboardShortcuts.md#placing-things-in-the-world) is separate: **V/B Measure in Main** / **in Look** show it, **V/B Circle in Main** / **in Look** add its circle, and the ruler icon on each view's header bar cycles through off, the line, and the line with its circle.
 
 In a custom sitch, **Add Measurement** opens a dialog. Select the measurement type, then select the thing to measure: first its kind (Camera, Traverse, Track, Satellite, 3D Object, Pin or Building), then the item in the list. A distance has a **From** and a **To**. You can also set a label (text shown above the value), the color, the line width, and units that are different from the sitch units. For a building, the measurement uses the middle of the roof. A list with many items has a filter box above it: type part of a name or a number to make the list shorter.
 

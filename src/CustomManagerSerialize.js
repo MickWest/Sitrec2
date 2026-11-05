@@ -120,6 +120,10 @@ import {restoreRefractionTool} from "./refraction/RefractionLoader";
 const RESTORABLE_GLOBALS = {
     showMeasurements: "boolean",
     showMeasurementsLook: "boolean",
+    showVBMeasureMain: "boolean",
+    showVBMeasureLook: "boolean",
+    showVBCircleMain: "boolean",
+    showVBCircleLook: "boolean",
     showLabelsMain: "boolean",
     showLabelsLook: "boolean",
     showFeaturesMain: "boolean",
@@ -587,6 +591,10 @@ export const serializeMethods = {
         const globalsNeeded = [
             "showMeasurements",         // "Measurements in Main" — name kept for older saves
             "showMeasurementsLook",
+            "showVBMeasureMain",        // the V/B measurement, per view, apart from the measurements
+            "showVBMeasureLook",
+            "showVBCircleMain",         // ...and its circle
+            "showVBCircleLook",
             "showLabelsMain",
             "showLabelsLook",
             "showFeaturesMain",

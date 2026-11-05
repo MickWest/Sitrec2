@@ -306,11 +306,13 @@ describe("the icon registry", () => {
         // A button whose control's own label does not describe what pressing it does has to say
         // so itself: a SNAP ("Video Zoom %" is not what 100% does), a GROUP (which has no one
         // control to borrow from) and a SLIDER button ("Transparency %" is not an on/off switch). An ordinary toggle must NOT restate its control's wording.
-        if (item.value !== undefined || item.targets !== undefined || item.slider) {
+        // A STAGED button cycles two rows, which neither row's label describes either.
+        if (item.value !== undefined || item.targets !== undefined || item.slider || item.stage) {
             expect(typeof item.tip).toBe("string");
         } else {
             expect(item.tip).toBeUndefined();
         }
+        if (item.stage) expect(item.stageIcon).toMatch(/^<(svg|span)[\s\S]*<\/(svg|span)>$/);
     });
 
     test("every icon tooltip has a matching en.js string", () => {
@@ -440,6 +442,42 @@ describe("populateViewUIBarIcons", () => {
         // which is not always what the control calls itself (the compass overlay's own switch
         // is named "compassMain").
         expect(iconOf(view, "los").title).toBe("Lines of Sight — Show lines of sight");
+    });
+
+    test("a staged icon cycles off, on, on with its stage, off, and both rows drive it", () => {
+        const state = {vbMeasure: false, vbCircle: false};
+        source(state, "vbMeasure").name("V/B Measure in Main").shareAs(viewMenuKey("mainView", "vbMeasure"));
+        source(state, "vbCircle").name("V/B Circle in Main").shareAs(viewMenuKey("mainView", "vbCircle"));
+
+        const view = fakeBar("mainView");
+        populateViewUIBarMenu(view);
+        populateViewUIBarIcons(view);
+        const icon = iconOf(view, "vbMeasure");
+        const ruler = icon.innerHTML;
+
+        icon.click();
+        expect(state).toEqual({vbMeasure: true, vbCircle: false});
+        expect(icon.getAttribute("aria-pressed")).toBe("true");
+        expect(icon.innerHTML).toBe(ruler);
+
+        icon.click();
+        expect(state).toEqual({vbMeasure: true, vbCircle: true});
+        expect(icon.getAttribute("aria-pressed")).toBe("true");
+        expect(icon.innerHTML).not.toBe(ruler);
+
+        icon.click();
+        expect(state).toEqual({vbMeasure: false, vbCircle: false});
+        expect(icon.getAttribute("aria-pressed")).toBe("false");
+        expect(icon.innerHTML).toBe(ruler);
+
+        // The rows drive the same button. The circle row alone does not light it, since the
+        // circle means nothing while measurements are off; the measurements row then does.
+        const rows = view.uiBar.titleMenu.controllers;
+        rows.find(c => c._name === "V/B Circle").setValue(true);
+        expect(icon.getAttribute("aria-pressed")).toBe("false");
+        rows.find(c => c._name === "V/B Measure").setValue(true);
+        expect(icon.getAttribute("aria-pressed")).toBe("true");
+        expect(icon.innerHTML).not.toBe(ruler);
     });
 
     test("the icons sit on the LEFT, beside the view menu, not with the window chrome", () => {
