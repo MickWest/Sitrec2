@@ -96,38 +96,74 @@ function scoreBrightness(samples,factors,e,s,spec,lower,upper) {
     return best;
 }
 
-function scoreEvent(track,e,recordingStart,s,spec) {
+// Per-event constants for trace scoring. A clock sweep scores the same event
+// at many clocks, so these are built once per flight combination and reused;
+// each evaluation then allocates nothing. Sums run in trace order, as before.
+function traceTables(e) {
+    const n=e.trace.length,families=[...new Set(e.trace.map(traceFamily))].sort((a,b)=>a-b);
+    return {n,families,main:families.indexOf(0),lower:e.frequency-e.frequencyTolerance,upper:e.frequency+e.frequencyTolerance,
+        time:Float64Array.from(e.trace,p=>p.time),observed:Float64Array.from(e.trace,p=>p.frequency),
+        harmonic:Float64Array.from(e.trace,p=>traceHarmonic(e,p)),group:Int32Array.from(e.trace,p=>families.indexOf(traceFamily(p))),
+        factor:new Float64Array(n),numerator:new Float64Array(families.length),denominator:new Float64Array(families.length),
+        fundamental:new Float64Array(families.length)};
+}
+
+// Each tone family fits its own emitted fundamental analytically. Geometry,
+// clock and harmonic numbers stay shared, so a family cannot drift on its own.
+// Only the main family (0) is held to the event's fundamental sweep; a further
+// family has no sweep of its own, so it is fitted freely. Fills t.factor and
+// t.fundamental and returns the mean squared residual in sigma units, or null
+// when the track does not cover a traced time.
+function traceMSE(t,track,recordingStart,s) {
+    const {n,time,observed,harmonic,group,factor,numerator,denominator,fundamental}=t;
+    for(let i=0;i<n;i++) {
+        const value=atArrival(track,recordingStart+time[i],s.soundSpeed,true);
+        if(!Number.isFinite(value)) return null;
+        factor[i]=value;
+    }
+    numerator.fill(0);denominator.fill(0);
+    for(let i=0;i<n;i++) {const k=factor[i]*harmonic[i];numerator[group[i]]+=k*observed[i];denominator[group[i]]+=k*k;}
+    for(let g=0;g<fundamental.length;g++) {
+        const fitted=numerator[g]/denominator[g];
+        fundamental[g]=g===t.main ? Math.max(t.lower,Math.min(t.upper,fitted)) : fitted;
+    }
+    let sum=0;
+    for(let i=0;i<n;i++) sum+=((observed[i]-fundamental[group[i]]*factor[i]*harmonic[i])/s.traceSigma)**2;
+    return sum/n;
+}
+
+function traceResult(t,mse,s) {
+    const result={frequency:t.fundamental[0],score:-mse,rmsHz:Math.sqrt(mse)*s.traceSigma};
+    if(t.families.length>1) result.families=t.families.map((family,g)=>({family,frequency:t.fundamental[g]}));
+    return result;
+}
+
+function scoreBrightnessEvent(track,e,recordingStart,s,spec) {
     const countSamples=spec ? Math.min(200,Math.max(8,Math.ceil((e.end-e.start)/spec.hop))) : 0;
     // Explicitly tagged narrow traces also restrict brightness scoring to the
     // marked times/harmonics. Missing segments are not invented or interpolated.
     // Untagged saved analyses retain their original whole-window brightness score.
-    const samples=s.mode==="trace" || hasTaggedTrace(e) ? e.trace : Array.from({length:countSamples},(_,i)=>({time:e.start+(e.end-e.start)*i/(countSamples-1)}));
+    const samples=hasTaggedTrace(e) ? e.trace : Array.from({length:countSamples},(_,i)=>({time:e.start+(e.end-e.start)*i/(countSamples-1)}));
     if(!samples.length) return null;
     const factors=samples.map(p=>atArrival(track,recordingStart+p.time,s.soundSpeed,true));
     if(factors.some(v=>!Number.isFinite(v))) return null;
-    const lower=e.frequency-e.frequencyTolerance, upper=e.frequency+e.frequencyTolerance;
-    // Each tone family fits its own emitted fundamental analytically. Geometry,
-    // clock and harmonic numbers stay shared, so a family cannot drift on its own.
     const groups=new Map();
     samples.forEach((p,i)=>{const family=traceFamily(p);if(!groups.has(family)) groups.set(family,[]);groups.get(family).push(i);});
     const ordered=[...groups.keys()].sort((a,b)=>a-b);
-    if(s.mode==="trace") {
-        const frequencies=new Map();
-        for(const family of ordered) {
-            let numerator=0, denominator=0;
-            for(const i of groups.get(family)) {const k=factors[i]*traceHarmonic(e,samples[i]); numerator+=k*samples[i].frequency;denominator+=k*k;}
-            frequencies.set(family,Math.max(lower,Math.min(upper,numerator/denominator)));
-        }
-        const mse=samples.reduce((sum,p,i)=>sum+((p.frequency-frequencies.get(traceFamily(p))*factors[i]*traceHarmonic(e,p))/s.traceSigma)**2,0)/samples.length;
-        const result={frequency:frequencies.get(ordered[0]),score:-mse,rmsHz:Math.sqrt(mse)*s.traceSigma};
-        if(ordered.length>1) result.families=ordered.map(family=>({family,frequency:frequencies.get(family)}));
-        return result;
-    }
-    if(ordered.length===1) return scoreBrightness(samples,factors,e,s,spec,lower,upper);
+    // The main family sweeps the event's band. A further family sweeps the same
+    // fraction of the fundamental its own traced points imply at this geometry.
+    const sweep=family=>{
+        if(family===0) return [e.frequency-e.frequencyTolerance,e.frequency+e.frequencyTolerance];
+        let numerator=0,denominator=0;
+        for(const i of groups.get(family)) {const k=factors[i]*traceHarmonic(e,samples[i]);numerator+=k*samples[i].frequency;denominator+=k*k;}
+        const traced=numerator/denominator,half=traced*e.frequencyTolerance/e.frequency;
+        return [traced-half,traced+half];
+    };
+    if(ordered.length===1) return scoreBrightness(samples,factors,e,s,spec,...sweep(ordered[0]));
     let total=0;
     const families=[];
     for(const family of ordered) {
-        const indices=groups.get(family),best=scoreBrightness(indices.map(i=>samples[i]),indices.map(i=>factors[i]),e,s,spec,lower,upper);
+        const indices=groups.get(family),best=scoreBrightness(indices.map(i=>samples[i]),indices.map(i=>factors[i]),e,s,spec,...sweep(family));
         if(!best) return null;
         total+=best.score*indices.length;families.push({family,frequency:best.frequency});
     }
@@ -136,10 +172,12 @@ function scoreEvent(track,e,recordingStart,s,spec) {
 
 // All events share recordingStart. Only the emitted fundamental is fitted
 // separately, so a mismatched inter-flight delay cannot be hidden by alignment.
+// With s.clockRefine, a parabola through the best clock and its two grid
+// neighbours proposes one extra clock between grid steps; it replaces the grid
+// best only when it scores higher. The archive's coarse stage uses this.
 export function scoreCombination(pair,events,s,spec,approaches=[]) {
     const base=s.recordingStart ?? pair[0].cpa.arrival-events[0].cpa;
     const silenceRadius=s.silenceRadiusM || Math.max(...pair.map(p=>p.cpa.range));
-    let best=null;
     const count=Math.ceil(2*s.timeTolerance/s.timeStep);
     const shiftAt=i=>count ? -s.timeTolerance+2*s.timeTolerance*i/count : 0;
     let first=0,last=count;
@@ -159,18 +197,46 @@ export function scoreCombination(pair,events,s,spec,approaches=[]) {
             last=lo-1;
         }
     }
+    // Trace scoring keeps only the score at each clock and rebuilds the full
+    // result once, at the winning clock. Brightness keeps its per-clock results.
+    const tables=s.mode==="trace" ? events.map(e=>e.trace?.length ? traceTables(e) : null) : null;
+    if(tables?.some(t=>!t)) return null;
+    const evaluate=recordingStart=>{
+        if(pair.some((p,j)=>Math.abs(p.cpa.arrival-recordingStart-events[j].cpa)>s.cpaTolerance)) return null;
+        if(s.silence.some(([a,b])=>approaches.some(p=>p.cpa.range<silenceRadius && p.cpa.arrival>recordingStart+a && p.cpa.arrival<recordingStart+b))) return null;
+        if(tables) {
+            let total=0;
+            for(let j=0;j<pair.length;j++) {
+                const mse=traceMSE(tables[j],pair[j].track,recordingStart,s);
+                if(mse===null) return null;
+                total+=-mse;
+            }
+            return {score:total/pair.length,recordingStart};
+        }
+        const scored=pair.map((p,j)=>scoreBrightnessEvent(p.track,events[j],recordingStart,s,spec));
+        if(scored.some(v=>!v)) return null;
+        return {score:scored.reduce((a,b)=>a+b.score,0)/scored.length,recordingStart,scored};
+    };
+    const scores=s.clockRefine ? new Float64Array(last-first+1).fill(NaN) : null;
+    let best=null,bestIndex=-1;
     for(let i=first;i<=last;i++) {
-        const shift=shiftAt(i);
-        const recordingStart=base+shift;
-        if(pair.some((p,j)=>Math.abs(p.cpa.arrival-recordingStart-events[j].cpa)>s.cpaTolerance)) continue;
-        if(s.silence.some(([a,b])=>approaches.some(p=>p.cpa.range<silenceRadius && p.cpa.arrival>recordingStart+a && p.cpa.arrival<recordingStart+b))) continue;
-        const scored=pair.map((p,j)=>scoreEvent(p.track,events[j],recordingStart,s,spec));
-        if(scored.some(v=>!v)) continue;
-        const score=scored.reduce((a,b)=>a+b.score,0)/scored.length;
-        if(!best || score>best.score) best={score,recordingStart,events:scored.map((v,j)=>({...v,
-            flight:pair[j].track.id,cpaArrival:pair[j].cpa.arrival,rangeM:pair[j].cpa.range,speedMS:pair[j].cpa.speed}))};
+        const fit=evaluate(base+shiftAt(i));
+        if(!fit) continue;
+        if(scores) scores[i-first]=fit.score;
+        if(!best || fit.score>best.score) {best=fit;bestIndex=i;}
     }
-    return best;
+    if(!best) return null;
+    if(scores && bestIndex>first && bestIndex<last) {
+        // An invalid neighbour is NaN, which fails the curvature test.
+        const before=scores[bestIndex-1-first],after=scores[bestIndex+1-first],curvature=before-2*best.score+after;
+        if(curvature<0) {
+            const fit=evaluate(best.recordingStart+0.5*(before-after)/curvature*(2*s.timeTolerance/count));
+            if(fit && fit.score>best.score) best=fit;
+        }
+    }
+    const scored=best.scored ?? tables.map((t,j)=>traceResult(t,traceMSE(t,pair[j].track,best.recordingStart,s),s));
+    return {score:best.score,recordingStart:best.recordingStart,events:scored.map((v,j)=>({...v,
+        flight:pair[j].track.id,cpaArrival:pair[j].cpa.arrival,rangeM:pair[j].cpa.range,speedMS:pair[j].cpa.speed}))};
 }
 
 export async function searchLocations(input,{progress=()=>{},cancelled=()=>false}={}) {

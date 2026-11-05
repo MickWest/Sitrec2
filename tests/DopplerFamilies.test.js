@@ -31,6 +31,37 @@ test("each tone family fits its own emitted fundamental on shared geometry",()=>
     expect(scoreCombination(pair,[untagged],settings).events[0].families).toBeUndefined();
 });
 
+test("the event's fundamental sweep holds only the main family; a further family fits freely",()=>{
+    const {pair,event,settings}=fixture();
+    // A narrow sweep around the main family used to force the 88 Hz family to 109 Hz.
+    const narrow={...event,frequency:112,frequencyTolerance:3};
+    const fit=scoreCombination(pair,[narrow],settings).events[0];
+    expect(fit.families).toEqual([{family:0,frequency:expect.closeTo(112,9)},{family:1,frequency:expect.closeTo(88,9)}]);
+    expect(fit.rmsHz).toBeLessThan(1e-9);
+    // The main family still honors its own sweep.
+    const offset=scoreCombination(pair,[{...narrow,frequency:120}],settings).events[0];
+    expect(offset.frequency).toBe(117);
+    expect(familyFrequency(offset,1)).toBeCloseTo(88,9);
+});
+
+test("spectrogram scoring sweeps each further family around its own traced fundamental",()=>{
+    const {track,pair,event}=fixture();
+    // Ridges for both families at every traced harmonic.
+    const spec={columns:61,bins:2000,hop:1,binHz:0.25,start:0,values:new Float32Array(61*2000)};
+    for(let column=0;column<spec.columns;column++) for(const [hz,harmonics] of [[112,[1,2]],[88,[1,3]]]) for(const harmonic of harmonics) {
+        const observed=hz*harmonic*atArrival(track,spec.start+column).factor;
+        for(let bin=Math.floor(observed/spec.binHz)-1;bin<=Math.ceil(observed/spec.binHz)+1;bin++) {
+            spec.values[column*spec.bins+bin]=Math.max(spec.values[column*spec.bins+bin],1-Math.abs(bin*spec.binHz-observed)/spec.binHz);
+        }
+    }
+    const settings={...SEARCH_DEFAULTS,mode:"brightness",recordingStart:0,timeTolerance:0,cpaTolerance:1e9};
+    const fit=scoreCombination(pair,[{...event,frequency:112,frequencyTolerance:3}],settings,spec).events[0];
+    expect(fit.families.map(f=>f.family)).toEqual([0,1]);
+    expect(fit.families[0].frequency).toBeCloseTo(112,1);
+    // The main family's 112 ± 3 Hz band could not reach the 88 Hz family.
+    expect(fit.families[1].frequency).toBeCloseTo(88,1);
+});
+
 test("a family cannot move the geometry: a shifted clock still misfits both families",()=>{
     const {pair,event,settings}=fixture();
     const good=scoreCombination(pair,[event],settings).events[0].rmsHz;
@@ -86,4 +117,9 @@ test("reference diagnostics fit one frequency per family at a fixed location",()
     expect(row.frequency).toBeCloseTo(110,9);
     expect(row.families).toEqual([{family:0,frequency:expect.closeTo(110,9)},{family:1,frequency:expect.closeTo(77,9)}]);
     expect(row.rmsHz).toBeLessThan(1e-9);
+    // A narrow sweep around the main family leaves the second family free.
+    const narrow=diagnoseDopplerReference({settings,events:[{...event,frequency:110,frequencyTolerance:2}],tracks:[track]}).events[0].rows[0];
+    expect(narrow.families).toEqual([{family:0,frequency:expect.closeTo(110,9)},{family:1,frequency:expect.closeTo(77,9)}]);
+    expect(narrow.frequencyBounded).toBe(false);
+    expect(narrow.rmsHz).toBeLessThan(1e-9);
 });

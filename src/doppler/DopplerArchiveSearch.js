@@ -138,9 +138,13 @@ export function archiveCoarseSettings(events,s,options) {
         p && Number.isFinite(p.time) && Number.isFinite(p.frequency) && p.frequency>0 && p.time>=e.start && p.time<=e.end && validTraceHarmonic(traceHarmonic(e,p))));
     // Traces propose seeds cheaply. Every surviving region still uses the
     // requested objective during continuous refinement and global ranking.
-    return {...s,mode:s.mode==="brightness" && measured ? "trace" : s.mode,
-        timeTolerance:s.timeTolerance+options.coarseStep/Math.max(20,events[0].speedMin),
-        timeStep:Math.max(2,s.timeStep),cpaTolerance:s.cpaTolerance+2*options.coarseStep/Math.max(20,events[0].speedMin),silence:[]};
+    // A trace fit is smooth in the clock, so a 4 s grid plus one parabola step
+    // at the best clock fits better than a plain 2 s grid at half the cost.
+    // The brightness objective is not smooth and keeps the 2 s grid.
+    const mode=s.mode==="brightness" && measured ? "trace" : s.mode,trace=mode==="trace";
+    return {...s,mode,timeTolerance:s.timeTolerance+options.coarseStep/Math.max(20,events[0].speedMin),
+        timeStep:Math.max(trace ? 4 : 2,s.timeStep),clockRefine:trace,
+        cpaTolerance:s.cpaTolerance+2*options.coarseStep/Math.max(20,events[0].speedMin),silence:[]};
 }
 
 export function archiveTrackLoader(dataset,s) {

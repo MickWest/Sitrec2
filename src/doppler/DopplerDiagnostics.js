@@ -94,13 +94,14 @@ function diagnoseEvent(item,e,s,tolerance) {
         for(const p of available) if(p.family===family) {const k=p.factor*p.harmonic;numerator+=k*p.observedHz;denominator+=k*k;}
         const unconstrained=numerator/denominator;
         if(!Number.isFinite(unconstrained) || unconstrained<=0) return {...result,status:"nonfinite_frequency_fit"};
-        fitted.push({family,frequency:Math.max(lower,Math.min(upper,unconstrained)),frequencyUnconstrained:unconstrained});
+        // As in the search, only the main family is held to the event's sweep.
+        fitted.push({family,frequency:family===0 ? Math.max(lower,Math.min(upper,unconstrained)) : unconstrained,frequencyUnconstrained:unconstrained});
     }
     for(const p of available) {const fit=fitted.find(f=>f.family===p.family);p.predictedHz=fit.frequency*p.factor*p.harmonic;p.residualHz=p.observedHz-p.predictedHz;}
     const rms=Math.sqrt(available.reduce((sum,p)=>sum+p.residualHz**2,0)/available.length);
     const complete=result.missingCoverage===0 && Number.isFinite(rms);
     return {...result,complete,frequency:fitted[0].frequency,frequencyUnconstrained:fitted[0].frequencyUnconstrained,frequencyBounds:[lower,upper],
-        frequencyBounded:fitted.some(f=>f.frequencyUnconstrained<lower || f.frequencyUnconstrained>upper),
+        frequencyBounded:fitted.some(f=>f.frequency!==f.frequencyUnconstrained),
         ...(fitted.length>1 ? {families:fitted.map(({family,frequency})=>({family,frequency}))} : {}),
         rmsHz:complete ? rms : null,partialRmsHz:complete ? null : rms};
 }

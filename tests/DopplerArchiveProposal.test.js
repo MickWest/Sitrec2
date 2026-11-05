@@ -35,6 +35,16 @@ test("trace seeds require valid measurements for every brightness event and leav
     expect(archiveCoarseSettings(events,{...settings,mode:"trace"},ARCHIVE_DEFAULTS).mode).toBe("trace");
 });
 
+test("coarse trace fits use a 4 s clock grid with a parabola step; brightness keeps the 2 s grid",()=>{
+    const events=[measured(),measured()],settings={...SEARCH_DEFAULTS,mode:"brightness",timeStep:0.5};
+    expect(archiveCoarseSettings(events,settings,ARCHIVE_DEFAULTS)).toMatchObject({mode:"trace",timeStep:4,clockRefine:true});
+    expect(archiveCoarseSettings(events,{...settings,mode:"trace"},ARCHIVE_DEFAULTS)).toMatchObject({timeStep:4,clockRefine:true});
+    expect(archiveCoarseSettings([events[0],{...events[1],trace:[]}],settings,ARCHIVE_DEFAULTS))
+        .toMatchObject({mode:"brightness",timeStep:2,clockRefine:false});
+    // A coarser requested step is kept.
+    expect(archiveCoarseSettings(events,{...settings,mode:"trace",timeStep:6},ARCHIVE_DEFAULTS).timeStep).toBe(6);
+});
+
 test.each([true,false])("all flight regions and sides reach brightness refinement before ranking (manual traces: %s)",async hasTrace=>{
     jest.clearAllMocks();
     const dataset={flights:[{id:"First",base:10000},{id:"Second",base:10000}],stats:{flights:2},samples:{
