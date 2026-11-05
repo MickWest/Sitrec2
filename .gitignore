@@ -9,6 +9,8 @@ config/shared.env.mick
 # Settings for other deployments, built with SITREC_SHARED_ENV=config/shared.env.<target>
 config/shared.env.*
 !config/shared.env.example
+# API keys kept beside the config, one file each
+config/*.key
 sitrec-videos
 sitrec-cache
 sitrec-upload
