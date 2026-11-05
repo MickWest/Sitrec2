@@ -9,6 +9,19 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.187.3 (2026-11-04)
+
+### New Features
+- **Ruler icon for the V/B measurement** (the header bar of the main view and of the look view; Show → Measurements): the V/B measurement now has its own controls in each view, separate from *Measurements in Main* and *in Look*, which no longer affect it. Each click on the ruler icon moves to the next state: off, the line, or the line with its circle. The same settings are *V/B Measure in Main* / *in Look* and *V/B Circle in Main* / *in Look* under Show → Measurements, and in each view's header menu. The main view starts with the line and no circle, and the look view starts off, so the circle that 2.187.2 always drew is now a second click. *Declutter* also hides it. The settings are saved with the sitch.
+
+### Improvements
+- **Placing and removing the V/B measurement** (hold *V* or *B* over the ground): in a sitch with no measurement, the first press of *V* or *B* puts that end under the mouse and the other end one foot to the east, so a measurement with its length and heading appears at once, and its circle where the circle is on. A new sitch shows no measurement until you place one. The two ends always stay at least one foot apart, so the heading and the circle are always defined. To remove a measurement, drag one end onto the other and release the key. A dot now marks the V end; the B end keeps its arrowhead. Undo takes back a placement, a move or a removal in one step.
+- **SitrecBridge (1.0.68)** (Help → Documentation → *Download MCP Bridge*): the list of Sitrec tabs in the extension's popup now marks the tab at the front of the window with an asterisk and bold text, so when several Sitrec tabs are open you can see which row is the tab you are looking at. That is the tab that *Close Other Sitrec Tabs* keeps.
+
+### Bug Fixes
+- Fixed the V/B measurement not appearing when you pressed *V* and then *B* in a new sitch (since 2.187.2). A sitch saved in that state opens with no measurement instead of a label that reads NaN.
+- Fixed the main view showing stars and no Earth, while the look view showed the ground, with Google Photorealistic 3D tiles (Terrain → *3D Buildings*) when the look view had a narrow field of view over a built-up area. Each view now has its own store of tiles, so a view that fills its own no longer blocks the others.
+
 ## Version 2.187.2 (2026-11-04)
 
 ### New Features
