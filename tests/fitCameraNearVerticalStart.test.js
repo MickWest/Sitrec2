@@ -100,6 +100,17 @@ function fitHost(startState) {
 const wrapped = (a, b) => Math.abs(((a - b + 540) % 360) - 180);
 
 describe("Fit Now from a look camera near vertical", () => {
+    test("ray geometry cannot silently fit with a different optical model", () => {
+        const fit = fitHost({position: CAM_POS, ...TRUTH});
+        fit.lookCameraNode = () => ({camera: {_rayGeometryPass: {tool: {settings: {
+            enabled: true, projectionMode: "geometry",
+        }}}}});
+        expect(fit.runFit(true)).toBe(false);
+        expect(fit.currentResidualPx()).toBeNull();
+        expect(fit.status).toMatch(/Camera fitting is not supported/);
+        expect(fit.applyResult).not.toHaveBeenCalled();
+    });
+
     test.each([-89, -86, 88])("a start at el %d solves to the real camera", (startEl) => {
         const fit = fitHost({position: CAM_POS, azDeg: 300, elDeg: startEl, rollDeg: 0, vfovDeg: 26});
 

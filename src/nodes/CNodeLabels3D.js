@@ -32,6 +32,7 @@ import {SceneLineLoop} from "../SceneLines";
 import {SceneLineMaterial} from "../SceneLineMaterial";
 import {setAlwaysVisibleOverlay} from "../AlwaysVisibleOverlay";
 import {measurementCircleOffsets, measurementHeading} from "../MeasurementGeometry";
+import {liftWorldPoint, unliftWorldPoint} from "../atmosphere/terrestrialRefraction";
 
 
 const HIGH_ALTITUDE_LABEL_THRESHOLD_M = 100000 * 0.3048;
@@ -994,6 +995,11 @@ export class CNodeFeatureMarker extends CNodeLabel3D {
     
     labelPosition(view) {
         const offset = labelPixelOffset(this);
+        const ctx = view.camera?._rayGeometryPass?.geometryContext();
+        if (ctx) {
+            const apparent = liftWorldPoint(ctx, this.featurePosition);
+            return unliftWorldPoint(ctx, view.offsetScreenPixels(apparent, offset.x, offset.y));
+        }
         return view.offsetScreenPixels(this.featurePosition, offset.x, offset.y);
     }
 

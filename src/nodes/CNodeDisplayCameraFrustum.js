@@ -608,7 +608,7 @@ export class CNodeDisplayCameraFrustum extends CNode3DGroup {
         // Terrestrial refraction for THIS camera, with the zenith turned into the camera's
         // frame, because the frustum is built in that frame. Null when refraction is off,
         // and then everything below is the plain straight frustum.
-        let liftContext = currentTerrestrialLiftContext(this.camera.position);
+        let liftContext = currentTerrestrialLiftContext(this.camera.position, this.camera);
         if (liftContext) {
             const toCameraFrame = this.camera.quaternion.clone().invert();
             liftContext = {...liftContext, zenith: liftContext.zenith.clone().applyQuaternion(toCameraFrame)};
@@ -617,7 +617,8 @@ export class CNodeDisplayCameraFrustum extends CNode3DGroup {
         const shape = [fov, effectiveAspect, this.radius, this.step, this.units, this.showFrustum, this.shadedFrustum, this.showFrustumEdges,
             // The bent frustum also changes with the camera's height and attitude.
             liftContext?.k ?? 0, liftContext?.obsAlt ?? 0, liftContext?.R ?? 0,
-            liftContext?.zenith.x ?? 0, liftContext?.zenith.y ?? 0, liftContext?.zenith.z ?? 0];
+            liftContext?.zenith.x ?? 0, liftContext?.zenith.y ?? 0, liftContext?.zenith.z ?? 0,
+            liftContext?.rayTable];
         if (!this.showQuad && !this.showVideoOnGround && this._lastFrustumShape
             && shape.every((value, i) => value === this._lastFrustumShape[i])) {
             if (this.line) this.line.material = this.matLine;

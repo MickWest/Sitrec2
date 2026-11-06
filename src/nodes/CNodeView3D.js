@@ -2175,7 +2175,7 @@ export class CNodeView3D extends CNodeViewCanvas {
         this.panoramicRenderer?.dispose();
         this.panoramicRenderer = null;
         const refraction = this.raytracedRefraction;
-        if (!refraction) return this.renderTargetAndEffectsInternal();
+        if (!refraction?.isActive()) return this.renderTargetAndEffectsInternal();
         const restore = refraction.begin();
         try {
             return this.renderTargetAndEffectsInternal(refraction);
@@ -2231,7 +2231,7 @@ export class CNodeView3D extends CNodeViewCanvas {
                 error: this._thermalError?.message};
         }
         if (isPanoramicCamera(this.camera)) return null;
-        if (!this.raytracedRefraction || (viewIds && !viewIds.includes(this.id))) return null;
+        if (!this.raytracedRefraction?.isActive() || (viewIds && !viewIds.includes(this.id))) return null;
         const pass = this.raytracedRefraction;
         const pending = !!(pass.busy || pass.queued || pass.previewBusy || pass.previewQueued);
         return {hasPending: pending, perView: {[this.id]: {refraction: pending}}};

@@ -67,6 +67,8 @@
 
 import {Frustum, Material, Matrix4, Sphere, Vector3} from "three";
 import {zenithECEFFromPosition} from "./refraction";
+import {projectRayRelative, unprojectRayRelative, rayGeometryLiftBounds,
+    RAY_GEOMETRY_GLSL, rayGeometryUniforms, patchRayGeometryFragmentShader} from "../refraction/RayGeometryProjection";
 
 export const TERRESTRIAL_REFRACTION_DEFAULTS = {
     enabled: false,
@@ -366,6 +368,7 @@ export function terrestrialLiftContext(observerECEF, opts = {}) {
 export function liftCameraRelative(ctx, relECEF, target = new Vector3()) {
     target.copy(relECEF);
     if (!ctx) return target;
+    if (ctx.rayTable) return projectRayRelative(ctx, relECEF, target);
     const upComponent = target.dot(ctx.zenith);
     _liftHoriz.copy(target).addScaledVector(ctx.zenith, -upComponent);
     const d = _liftHoriz.length();
@@ -416,6 +419,7 @@ const UNLIFT_PASSES = 10;
 export function unliftCameraRelative(ctx, apparentRelECEF, target = new Vector3()) {
     target.copy(apparentRelECEF);
     if (!ctx) return target;
+    if (ctx.rayTable) return unprojectRayRelative(ctx, apparentRelECEF, target);
     const apparentUp = target.dot(ctx.zenith);
     _liftHoriz.copy(target).addScaledVector(ctx.zenith, -apparentUp);
     const d = _liftHoriz.length();
@@ -468,6 +472,7 @@ const CHUNK_MARKER = "SITREC_TERRESTRIAL_REFRACTION_CHUNK";
 // scope and failing every affected program to compile.
 export const TERRESTRIAL_REFRACTION_VERTEX_GLSL = /* glsl */`
 // ${CHUNK_MARKER}
+${RAY_GEOMETRY_GLSL}
 uniform float uTerrK;
 uniform vec3 uTerrZenithView;
 uniform float uTerrInvR;
@@ -489,6 +494,7 @@ float sitrecPathDensity(float hObs, float hTgt) {
 }
 
 vec3 applyTerrestrialRefraction_chunk(vec3 viewPos) {
+    if (uRayGeometry > 0.5) return applyRayGeometry(viewPos);
     if (uTerrK == 0.0) return viewPos;
     float upComponent = dot(viewPos, uTerrZenithView);
     vec3 horizontal = viewPos - upComponent * uTerrZenithView;
@@ -548,12 +554,14 @@ export function installTerrestrialRefractionOnShaderMaterial(material) {
     if (!material.uniforms) material.uniforms = {};
     addTerrestrialRefractionUniforms({uniforms: material.uniforms});
     material.vertexShader = injectTerrestrialRefractionChunk(material.vertexShader);
+    material.fragmentShader = patchRayGeometryFragmentShader(material.fragmentShader);
     _installed.add(material);
     material.needsUpdate = true;
 }
 
 // Point a shader's uniform slots at the shared objects.
 export function addTerrestrialRefractionUniforms(shader) {
+    Object.assign(shader.uniforms, rayGeometryUniforms);
     shader.uniforms.uTerrK = terrestrialRefractionUniforms.uTerrK;
     shader.uniforms.uTerrZenithView = terrestrialRefractionUniforms.uTerrZenithView;
     shader.uniforms.uTerrInvR = terrestrialRefractionUniforms.uTerrInvR;
@@ -633,7 +641,8 @@ export function patchTerrestrialRefractionVertexShader(vertexShader) {
             + "\n\t\t\tstart.xyz = applyTerrestrialRefraction_chunk(start.xyz);"
             + "\n\t\t\tend.xyz = applyTerrestrialRefraction_chunk(end.xyz);");
         out = out.replace(FATLINE_APPROX_MV,
-            "vec4 mvPosition = ( position.y < 0.5 ) ? sitrecPhysicalStart : sitrecPhysicalEnd;");
+            "vec4 mvPosition = ( position.y < 0.5 ) ? sitrecPhysicalStart : sitrecPhysicalEnd;"
+            + "\n\tvRayGeometryPhysical = mvPosition.xyz;");
         matched = true;
     }
 
@@ -677,6 +686,7 @@ export function installTerrestrialRefractionOnMaterial(material) {
         const result = patchTerrestrialRefractionVertexShader(shader.vertexShader);
         if (result.matched) {
             shader.vertexShader = result.vertexShader;
+            shader.fragmentShader = patchRayGeometryFragmentShader(shader.fragmentShader);
         } else if (!_warnedUnmatched.has(this)) {
             _warnedUnmatched.add(this);
             console.warn("Terrestrial refraction: no supported clip-position pattern in "
@@ -817,6 +827,23 @@ export function restoreLoftedCulling(objects) {
     }
 }
 
+// Enclose physical and apparent bounds. Taking the full possible lift range
+// avoids assuming that a tile centre and its sharp summit refract identically.
+export function expandSphereForRefraction(sphere, ctx) {
+    if (!ctx) return {min: 0, max: 0};
+    const relative = sphere.center.clone().sub(ctx.observer);
+    const range = ctx.rayTable
+        ? Math.sqrt(Math.max(0, relative.lengthSq() - relative.dot(ctx.zenith) ** 2))
+        : relative.length();
+    const near = Math.max(0, range - sphere.radius), far = range + sphere.radius;
+    const bounds = ctx.rayTable ? rayGeometryLiftBounds(ctx.rayTable, near, far)
+        : {min: 0, max: saturateLift(terrestrialLift(far, ctx.k, ctx.R, ctx.maxBendRad), ctx.maxLiftM)};
+    if (!bounds) return null;
+    sphere.center.addScaledVector(ctx.zenith, (bounds.min + bounds.max) / 2);
+    sphere.radius += (bounds.max - bounds.min) / 2;
+    return bounds;
+}
+
 /**
  * Exempt from Three's frustum test every object whose LOFTED bounding sphere is
  * in this camera's view. Call immediately before the render with that camera.
@@ -846,13 +873,16 @@ export function cullLoftedObjects(objects, camera, ctx) {
         if (!own) continue;                 // the object asked never to be culled
         if (!worldBoundingSphere(object, _cullSphere)) continue;
 
-        const center = _cullSphere.center;
-        const range = center.distanceTo(ctx.observer);
-        liftWorldPoint(ctx, center, _cullLifted);
-        const lift = _cullLifted.distanceTo(center);
-        // The far side of the object is lofted more than its centre: the lift goes
-        // as the square of the range, so across a radius r it changes by 2*r/range.
-        const radius = _cullSphere.radius * (1 + Math.min(1, 2 * lift / Math.max(range, 1)));
+        if (ctx.rayTable) {
+            if (!expandSphereForRefraction(_cullSphere, ctx)) continue;
+            _cullLifted.copy(_cullSphere.center);
+        } else {
+            const center = _cullSphere.center, range = center.distanceTo(ctx.observer);
+            liftWorldPoint(ctx, center, _cullLifted);
+            const lift = _cullLifted.distanceTo(center);
+            _cullSphere.radius *= 1 + Math.min(1, 2 * lift / Math.max(range, 1));
+        }
+        const radius = _cullSphere.radius;
 
         let drawnInView = true;
         for (let side = 0; side < 4; side++) {

@@ -843,7 +843,7 @@ class PerViewTiles {
         // calculateTileViewError; warping the position again here would
         // double-warp it.
         _tilesCamWorldPos.setFromMatrixPosition(cam.matrixWorld);
-        this.renderer._terrLiftCtx = currentTerrestrialLiftContext(_tilesCamWorldPos);
+        this.renderer._terrLiftCtx = currentTerrestrialLiftContext(_tilesCamWorldPos, cam);
         this.renderer._terrLiftCtxFlat = Globals.flatEarthWarpSphere ? this.renderer._terrLiftCtx : null;
 
         this.renderer.setCamera(cam);

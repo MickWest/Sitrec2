@@ -16,6 +16,7 @@ import {isPanoramicCamera, panoramic, panoramicProjectVector} from "../Panoramic
 import {labelPixelOffset} from "../LabelOffsets";
 import {drawHorizonCompassRibbon, horizonCompassFrame} from "../HorizonCompassRibbon";
 import {perViewLayerMask} from "../LayerMasks";
+import {liftWorldPoint} from "../atmosphere/terrestrialRefraction";
 
 // World-space Vector3 → NDC through whatever projection the view is actually
 // rendering: the fisheye twin when the fisheye applies to this camera,
@@ -601,7 +602,17 @@ export class CNodeDisplaySkyOverlay extends CNodeViewUI {
                 label.preRender(this.overlayView);
             }
 
-            const screenPos = projectForCamera(label.textPosition.clone(), camera);
+            // The overlay's projection camera is a copy. Use the host camera
+            // for its ray table, so finite labels follow the same pre-depth
+            // projection as their anchors and arrows.
+            const rayContext = this.overlayView.camera?._rayGeometryPass?.geometryContext();
+            if (rayContext) {
+                const rel = label.textPosition.clone().sub(rayContext.observer);
+                const up = rel.dot(rayContext.zenith);
+                const distances = rayContext.rayTable.distances;
+                if (rel.lengthSq() - up * up > distances[distances.length - 1] ** 2) continue;
+            }
+            const screenPos = projectForCamera(liftWorldPoint(rayContext, label.textPosition), camera);
             if (screenPos.z < -1 || screenPos.z > 1) continue;
             if (screenPos.x < -1.5 || screenPos.x > 1.5
                 || screenPos.y < -1.5 || screenPos.y > 1.5) continue;

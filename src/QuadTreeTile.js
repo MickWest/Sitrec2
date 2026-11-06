@@ -1,4 +1,5 @@
 import {SceneLineSegments} from "./SceneLines";
+import {terrainMeshHeightError} from "./TerrainGeometryError";
 import {SceneLineMaterial} from "./SceneLineMaterial";
 import {assert} from "./assert";
 import {
@@ -784,6 +785,10 @@ export class QuadTreeTile {
             se: meanSeaLevelOffset(latS, lonE),
         };
 
+        this.geometryErrorM = terrainMeshHeightError(elevationTile.elevation, elevationSize, nPosition - 1,
+            tileOffsetX * tileFractionX, tileOffsetY * tileFractionY, tileFractionX,
+            this.map.elevationMap.options.zScale ?? 1, Math.min(...Object.values(geoidCorners)));
+
         // Apply elevation data directly to vertices
         for (let i = 0; i < geometry.attributes.position.count; i++) {
             // Check if this operation was aborted (tile switched or cancelled)
@@ -1395,6 +1400,12 @@ export class QuadTreeTile {
 
         const nPosition = Math.sqrt(geometry.attributes.position.count);
         const elevationSize = Math.sqrt(elevationTile.elevation.length);
+        const bounds = elevationTile.altitudeBounds;
+        // Source/mesh residual is independent of the view. Compute it once per
+        // geometry rebuild, not in the per-camera tile traversal.
+        this.geometryErrorM = terrainMeshHeightError(elevationTile.elevation, elevationSize, nPosition - 1,
+            tileOffsetX * tileFractionX, tileOffsetY * tileFractionY, tileFractionX,
+            this.map.elevationMap.options.zScale ?? 1, bounds?.min ?? 0);
 
         // V5 Phase 1.2: begin measurement now that we know we'll complete
         // the vertex loop.
@@ -2271,19 +2282,43 @@ export class QuadTreeTile {
         const geoidCorners = geoidCorrectionForTile(this.map.options.mapProjection, this.z, this.x, this.y);
         const xScale = width > 1 ? 1 / (width - 1) : 0;
         const yScale = height > 1 ? 1 / (height - 1) : 0;
+        let missing = 0, minimum = Infinity, maximum = -Infinity;
+        let ancestorData;
         for (let y = 0; y < height; y++) {
             for (let x = 0; x < width; x++) {
                 const ij = x + width * y;       // row-major, x fastest
                 const rgba = ij * 4;
-                elevation[ij] =
+                const raw =
                     pixels.data[rgba] * 256.0 +
                     pixels.data[rgba + 1] +
                     pixels.data[rgba + 2] / 256.0 -
-                    32768.0 +
-                    interpolateGeoidOffset(geoidCorners, x * xScale, y * yScale);
+                    32768.0;
+                const geoid = interpolateGeoidOffset(geoidCorners, x * xScale, y * yScale);
+                let value = raw + geoid;
+                if (raw === -32768 || pixels.data[rgba + 3] === 0) {
+                    // Terrarium's empty pixels are not 32 km deep terrain. Use
+                    // valid ancestor data at the same location, retaining a
+                    // count so diagnostics can distinguish fallback from data.
+                    if (ancestorData === undefined) {
+                        let ancestor = this.parent;
+                        while (ancestor && (!ancestor.elevation || ancestor.elevationLoadFailed)) ancestor = ancestor.parent;
+                        ancestorData = ancestor && width === height
+                            ? this.buildElevationFromAncestor(ancestor, width)?.elevation : null;
+                    }
+                    value = ancestorData?.[ij] ?? geoid;
+                    missing++;
+                }
+                elevation[ij] = value;
+                const rendered = Math.max(geoid, value * (this.map.options.zScale ?? 1));
+                minimum = Math.min(minimum, rendered); maximum = Math.max(maximum, rendered);
             }
         }
         this.elevation = elevation;
+        this.elevationNoDataCount = missing;
+        this.highestAltitude = Math.max(0, maximum);
+        this.altitudeBounds = {min: minimum, max: maximum, measured: true, source: "elevationData",
+            generation: (this.altitudeBounds?.generation ?? 0) + 1};
+        if (this.cullingState) { this.cullingState.generation = -1; this.cullingState.visibilityCache = null; }
     }
 
     // Mapbox is height = -10000 + ((R * 256 * 256 + G * 256 + B) * 0.1)

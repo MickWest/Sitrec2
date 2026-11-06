@@ -1,12 +1,14 @@
 import {Color, DataTexture, DepthTexture, FloatType, LinearFilter, Matrix4, NearestFilter,
     RGBAFormat, ShaderMaterial, UnsignedIntType, Vector2, Vector3, WebGLRenderTarget} from "three";
-import {Globals, setRenderOne, Sit} from "../Globals";
+import {Globals, NodeMan, setRenderOne, Sit} from "../Globals";
 import {zenithECEFFromPosition} from "../atmosphere/refraction";
 import {gaussianRadius} from "../atmosphere/terrestrialRefraction";
 import {ECEFToLLAVD_radii} from "../LLA-ECEF-ENU";
 import {meanSeaLevelOffset} from "../EGM96Geoid";
 import {isFisheyeCamera} from "../FisheyeProjection";
 import {clamp} from "./RefractionPhysics";
+import {rayGeometryUniforms} from "./RayGeometryProjection";
+import {sharedUniforms} from "../js/map33/material/SharedUniforms";
 
 const vertexShader = /* glsl */`
 varying vec2 vUv;
@@ -23,6 +25,7 @@ uniform vec2 angles, tableSize, resolution;
 uniform float maxDistance, cameraFar, cameraNear, logDepth, observerHeight, earthRadius;
 uniform float visibility, night, eyeLevel, horizon;
 uniform float rayLinearFiltering;
+uniform float geometryMode, refractSky;
 
 vec3 directionAt(vec2 uv) {
     // Use the middle of the clip interval. With Sitrec's astronomical far
@@ -74,12 +77,13 @@ void main() {
     // Solve finite geometry using endpoint displacement only. The outgoing
     // direction is for the sky, not a position along the ray: alternating the
     // two at a depth discontinuity duplicates the skyline.
-    bool hit = false;
+    bool hit = geometryMode > 0.5 && sceneDistance < 1.e19;
     bool sawSky = false;
     bool sawOutside = false, missingSurface = false;
     vec2 closestSource = source;
     float closestError = 1.e20, closestDistance = distance;
     for (int i = 0; i < 8; i++) {
+        if (geometryMode > 0.5) break;
         vec4 ray = rayAt(angle, distance);
         source = sourceAt(base, up, ray.r);
         if (!inside(source)) {
@@ -133,7 +137,7 @@ void main() {
     } else {
         distance = min(stopDistance, maxDistance);
         vec4 ray = rayAt(angle, distance);
-        source = sourceAt(base, up, stopDistance >= maxDistance ? ray.g : ray.r);
+        source = refractSky > 0.5 ? sourceAt(base, up, stopDistance >= maxDistance ? ray.g : ray.r) : vUv;
         // This direction can be hidden behind terrain in the straight view.
         // Sample the sky saved before geometry was drawn, never that terrain.
         color = texture2D(tSky, inside(source) ? source : vUv);
@@ -154,6 +158,8 @@ void main() {
 export class RefractionPass {
     constructor(tool) {
         this.tool = tool;
+        this.camera = tool.view?.camera;
+        if (this.camera) this.camera._rayGeometryPass = this;
         this.worker = this.createWorker();
         this.sequence = 0;
         this.jobs = 0;
@@ -173,6 +179,8 @@ export class RefractionPass {
                 fogColor: {value: new Color("#9aafbb")}, visibility: {value: 0}, night: {value: 0},
                 eyeLevel: {value: 0}, horizon: {value: 0},
                 rayLinearFiltering: {value: 1},
+                geometryMode: {value: 0},
+                refractSky: {value: 1},
             }});
     }
 
@@ -184,13 +192,45 @@ export class RefractionPass {
         return worker;
     }
 
+    isActive() {
+        // Read the master/checkboxes, not the derived flags that begin() holds
+        // off temporarily to prevent applying the analytic bend a second time.
+        return Sit.refraction !== false && (Sit.refractionSky !== false || Sit.refractionTerrain !== false);
+    }
+
     begin() {
         const camera = this.tool.view?.camera;
-        if (!camera?.isPerspectiveCamera || isFisheyeCamera(camera)) return () => {};
+        if (!this.isActive() || !camera?.isPerspectiveCamera || isFisheyeCamera(camera)) return () => {};
         const sky = Sit.refractionEnabled, terrain = Sit.terrestrialRefraction;
+        const far = camera.far;
+        const terrainFar = sharedUniforms.farPlane.value;
+        if (this.tool.settings.projectionMode === "geometry" && Sit.refractionTerrain !== false) {
+            camera.far = Math.min(far, this.tool.settings.maxDistance);
+            camera.updateProjectionMatrix();
+            sharedUniforms.farPlane.value = camera.far;
+        }
         Sit.refractionEnabled = false;
         Sit.terrestrialRefraction = false;
-        return () => { Sit.refractionEnabled = sky; Sit.terrestrialRefraction = terrain; };
+        return () => {
+            Sit.refractionEnabled = sky; Sit.terrestrialRefraction = terrain;
+            rayGeometryUniforms.uRayGeometry.value = 0;
+            sharedUniforms.farPlane.value = terrainFar;
+            if (camera.far !== far) { camera.far = far; camera.updateProjectionMatrix(); }
+        };
+    }
+
+    geometryContext({forAim = false} = {}) {
+        if (!this.isActive() || Sit.refractionTerrain === false) return null;
+        const result = this.result, camera = this.tool.view?.camera;
+        // Aiming changes the angular coverage of the view. Keep the last ray
+        // solution at this observer while that coverage is rebuilt; otherwise
+        // To Target alternates between geometric and apparent pointing forever.
+        const ready = this.usable || (forAim && this.validCamera && this.texture
+            && this.tableGeometryKey === this.geometryKey);
+        if (this.tool.settings.projectionMode !== "geometry" || !ready || !result
+            || result.diagnostics?.foldedPairs > 0 || !camera
+            || camera.position.distanceToSquared(this.position) > 0.0004) return null;
+        return {observer: this.position, zenith: this.zenith, rayTable: result, texture: this.texture};
     }
 
     attachDepth(target) {
@@ -215,6 +255,7 @@ export class RefractionPass {
     }
 
     capture(view) {
+        if (!this.isActive()) return;
         const camera = view.camera, s = this.tool.settings;
         if (!camera.isPerspectiveCamera || isFisheyeCamera(camera)) {
             this.usable = false;
@@ -238,6 +279,11 @@ export class RefractionPass {
         const lla = ECEFToLLAVD_radii(this.position);
         const height = lla.z - meanSeaLevelOffset(lla.x, lla.y);
         const radius = gaussianRadius(this.zenith.z, a, b);
+        const coverageKey = JSON.stringify([this.tool.opticalRevision, Math.round(height * 100), Math.round(radius), s.flat]);
+        if (coverageKey !== this.geometryCoverageKey) {
+            this.geometryCoverageKey = coverageKey;
+            this.geometryUpperAngle = 0;
+        }
         const u = this.material.uniforms;
         u.zenith.value.copy(this.zenith).transformDirection(this.inverseWorld);
         u.projection.value.copy(camera.projectionMatrix);
@@ -261,6 +307,12 @@ export class RefractionPass {
         const quantum = 2 ** Math.floor(Math.log2(span / 8));
         min = Math.max(-1.45, Math.floor(min / quantum) * quantum - quantum);
         max = Math.min(1.45, Math.ceil(max / quantum) * quantum + quantum);
+        if (s.projectionMode === "geometry") {
+            // A cold narrow view may point at the geometric target while its
+            // apparent image is above the frame. Include eye level so aiming
+            // can acquire the refracted solution without first zooming out.
+            max = Math.max(max, this.geometryUpperAngle);
+        }
         if (max <= min || height < 0 || height > 120000) {
             this.usable = false;
             this.tool.status("Camera must be above the surface, below 120 km, and face the horizon.");
@@ -297,7 +349,7 @@ export class RefractionPass {
     }
 
     captureBackground(view, input) {
-        if (!this.usable) return;
+        if (!this.isActive() || !this.usable) return;
         // Only the enabled, ready pass pays for this copy. Keep the same scene
         // colour format; exposure and tone mapping still happen after refraction.
         if (!this.skyTarget || this.skyTarget.texture.type !== input.texture.type) {
@@ -369,19 +421,44 @@ export class RefractionPass {
             u.tableSize.value.set(result.width, result.rows);
             u.maxDistance.value = result.distances[result.width - 1];
             this.appliedSequence = id;
+            this.result = result;
             this.tableKey = job.key;
             this.tableGeometryKey = job.geometryKey;
             this.usable = this.canUseTable();
             this.tool.setResult(result);
+            if (this.tool.settings.projectionMode === "geometry") {
+                NodeMan?.get("terrainUI", false)?.requestSubdivisionPass();
+            }
             this.tool.status(`${preview ? "Live preview" : "Cached"} · ${result.rows} rays × ${result.width} distances · ${Math.round(result.milliseconds)} ms`);
+            if (this.tool.settings.projectionMode === "geometry"
+                && !(result.diagnostics?.foldedPairs > 0)
+                && result.data[4 * (result.rows - 1) * result.width + 2] < result.distances[result.width - 1]) {
+                // Eye level can also hit the ground in a strong custom
+                // profile. Widen upward until the range is covered, rather
+                // than treating an all-terminated fan as a valid far aim.
+                if (result.maxAngle < 1.45) {
+                    this.geometryUpperAngle = Math.min(1.45, Math.max(result.maxAngle + 0.01, result.maxAngle * 2));
+                    this.cameraSignature = null;
+                    this.tool.status("Expanding ray coverage above the view…");
+                } else this.tool.status("Ray coverage cannot reach the selected range; distant aiming is unavailable.");
+            }
+            if (this.tool.settings.projectionMode === "geometry" && result.diagnostics?.foldedPairs > 0) {
+                this.tool.status("Geometry projection is unavailable for folded rays. Select Screen-space mirages for this profile.");
+            }
             setRenderOne(true);
         }
         this.sendNext(preview);
     }
 
     render(view, input) {
-        if (!this.usable || !this.texture) return input;
+        if (!this.isActive() || !this.usable || !this.texture) return input;
         const s = this.tool.settings, u = this.material.uniforms;
+        const geometry = this.geometryContext();
+        if (s.projectionMode === "geometry" && Sit.refractionTerrain !== false && !geometry) return input;
+        // With terrain unchecked, finite-depth pixels pass through unchanged;
+        // only the sky is refracted, in either projection mode.
+        u.geometryMode.value = geometry || Sit.refractionTerrain === false ? 1 : 0;
+        u.refractSky.value = Sit.refractionSky !== false ? 1 : 0;
         u.tDiffuse.value = input.texture;
         u.tDepth.value = this.depth;
         u.visibility.value = s.visibilityEnabled ? s.visibility : 0;
@@ -403,6 +480,7 @@ export class RefractionPass {
 
     dispose() {
         this.disposed = true;
+        if (this.camera?._rayGeometryPass === this) delete this.camera._rayGeometryPass;
         this.worker.terminate();
         this.previewWorker?.terminate();
         this.queued = this.busy = null;

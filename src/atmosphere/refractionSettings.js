@@ -16,7 +16,8 @@
 // consumer reads. They are now DERIVED from the master and their checkbox, so
 // nothing downstream had to change.
 
-import {Globals, guiMenus, setRenderOne, Sit} from "../Globals";
+import {Globals, guiMenus, NodeMan, setRenderOne, Sit} from "../Globals";
+import {setRayGeometryUniforms} from "../refraction/RayGeometryProjection";
 import {GlobalScene} from "../LocalFrame";
 import {REFRACTION_DEFAULTS} from "./refraction";
 import {Vector3} from "three";
@@ -96,13 +97,15 @@ export function installTerrestrialRefractionSceneHook(scene) {
         }
         const opts = terrestrialOptsFrom(Sit, Globals);
         updateTerrestrialRefractionUniforms(camera, opts);
+        const rayContext = camera?._rayGeometryPass?.geometryContext();
+        setRayGeometryUniforms(camera, rayContext);
 
         // Fisheye and Flat Earth are not pinhole projections. Each switches frustum
         // culling off for every object while it is on, and puts it back itself, so
         // while either is on this hook leaves frustum culling alone.
         const projectionOwnsCulling = !!(Globals.fisheye?.enabled || Globals.flatEarthRendering);
 
-        if (!opts.enabled) {
+        if (!opts.enabled && !rayContext) {
             // This render draws nothing lofted (refraction is off, or the ray-traced
             // pass has taken this view over), so Three's own frustum test is right.
             if (!projectionOwnsCulling) {
@@ -125,7 +128,7 @@ export function installTerrestrialRefractionSceneHook(scene) {
         // Decide it from the lofted position, for this camera.
         if (camera && !projectionOwnsCulling) {
             _cameraPosition.setFromMatrixPosition(camera.matrixWorld);
-            cullLoftedObjects(_loftedObjects, camera, terrestrialLiftContext(_cameraPosition, opts));
+            cullLoftedObjects(_loftedObjects, camera, rayContext ?? terrestrialLiftContext(_cameraPosition, opts));
         }
     };
     _sceneHookInstalled = scene;
@@ -177,7 +180,14 @@ export function currentRefractionOpts() {
 //
 // Returns null when refraction is off, so every caller's fast path is "no
 // context, no work" rather than an identity transform.
-export function currentTerrestrialLiftContext(observerECEF) {
+export function currentTerrestrialLiftContext(observerECEF, camera, options) {
+    if (Sit.refraction === false || Sit.refractionTerrain === false) return null;
+    const rayView = Sit.raytracedRefraction?.enabled
+        ? NodeMan?.get(Sit.raytracedRefraction.view, false) : null;
+    if (camera && rayView?.camera === camera) {
+        if (camera.position.distanceToSquared(observerECEF) >= 0.0004) return null;
+        return rayView.raytracedRefraction?.geometryContext(options) ?? null;
+    }
     return terrestrialLiftContext(observerECEF, terrestrialOptsFrom(Sit, Globals));
 }
 
@@ -209,12 +219,19 @@ export function setupRefractionGUI() {
     // of the two owning nodes is created first does the work.
     if (folder.controllers && folder.controllers.length > 0) return;
 
-    const changed = () => { applyRefractionMaster(); setRenderOne(true); };
+    const changed = () => {
+        applyRefractionMaster();
+        if (Sit.raytracedRefraction?.view) {
+            NodeMan?.get(Sit.raytracedRefraction.view, false)?.raytracedRefraction?.tool.sync();
+        }
+        NodeMan?.get("terrainUI", false)?.requestSubdivisionPass();
+        setRenderOne(true);
+    };
 
     folder.add(Sit, "refraction").listen()
         .name("Enable Refraction")
         .onChange(changed)
-        .tooltip("Master switch for atmospheric refraction. Off means light travels in straight lines — geometrically simple, but not what a camera sees near the horizon.")
+        .tooltip("Master switch for atmospheric refraction in all views, including Effects > Ray-traced Refraction. Off means light travels in straight lines. The ray-traced profile is preserved while off.")
         .asFolderToggle();
 
     folder.add(Sit, "refractionTerrain").listen()

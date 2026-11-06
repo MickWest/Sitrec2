@@ -25,6 +25,7 @@ function pointer(target, type, x = 50, extra = {}) {
 }
 
 beforeEach(() => {
+    Object.assign(Sit, {refraction: true, refractionSky: true, refractionTerrain: true});
     delete Sit.raytracedRefraction;
     NodeMan.get.mockImplementation(() => null);
     NodeMan.list = {};
@@ -43,6 +44,32 @@ beforeEach(() => {
     header.getBoundingClientRect = () => ({...rect, height: 70});
 });
 afterEach(() => { tool.dispose(); router.dispose(); jest.restoreAllMocks(); delete global.ResizeObserver; });
+
+test("terrain accuracy limits persist across ray completion and clear independently", () => {
+    tool.setTerrainDetailLimited("elevation", true);
+    tool.setTerrainDetailLimited("texture", true);
+    tool.status("Cached ray table");
+    expect(tool.statusText).toContain("tile budget");
+    tool.setTerrainDetailLimited("texture", false);
+    expect(tool.statusText).toContain("tile budget");
+    tool.setTerrainDetailLimited("elevation", false);
+    expect(tool.statusText).toBe("Cached ray table");
+});
+
+test("master pause is visible without destroying the pass or saved profile", () => {
+    const look = {renderTargetAndEffects() {}};
+    NodeMan.get.mockImplementation(() => look);
+    tool.settings.enabled = true; tool.sync();
+    const pass = tool.pass, settings = tool.settings;
+    tool.status("Cached ray table");
+    Sit.refraction = false; tool.sync();
+    expect(tool.statusText).toContain("Paused by View > Atmospheric Refraction");
+    expect(pass.dispose).not.toHaveBeenCalled();
+    expect(tool.settings).toBe(settings);
+    Sit.refraction = true; tool.sync();
+    expect(tool.pass).toBe(pass);
+    expect(tool.statusText).toBe("Cached ray table");
+});
 
 test("header release outside the dialog finishes dragging without moving the scene", () => {
     pointer(header, "pointerdown");

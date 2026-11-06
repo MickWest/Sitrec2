@@ -26,6 +26,7 @@ export function normalizeProfile(points, fallback, min, max) {
 export function normalizeSettings(input = {}) {
     const s = {
         enabled: !!input.enabled, view: typeof input.view === "string" ? input.view : "lookView",
+        projectionMode: input.projectionMode === "geometry" ? "geometry" : "screen",
         useStandard: input.useStandard ?? true, bend: input.bend ?? true, flat: !!input.flat,
         temperature: finite(input.temperature, 15, -40, 60), lapseRate: finite(input.lapseRate, -6.5, -100, 100),
         pressure: finite(input.pressure, 1013.25, 0, 1200), humidity: finite(input.humidity, 50, 0, 100),
@@ -33,7 +34,7 @@ export function normalizeSettings(input = {}) {
         humidityProfile: !!input.humidityProfile,
         temperaturePoints: normalizeProfile(input.temperaturePoints, PROFILE_PRESETS.Standard, -40, 100),
         humidityPoints: normalizeProfile(input.humidityPoints, [[0, 66], [3, 58], [10, 50], [100, 50]], 0, 100),
-        maxDistance: finite(input.maxDistance, 50000, 100, 300000),
+        maxDistance: finite(input.maxDistance, 50000, 100, 1000000),
         step: finite(input.step, 40, 2, 1000), distanceSamples: Math.round(finite(input.distanceSamples, 512, 64, 2048)),
         resolution: finite(input.resolution, 1, 0.25, 2),
         visibilityEnabled: !!input.visibilityEnabled, visibility: finite(input.visibility, 50, 0.1, 500),

@@ -1,7 +1,8 @@
 import {ECEFToLLAVD_radii, LLAToECEF, wgs84} from "./LLA-ECEF-ENU";
 import {Frustum, Matrix4, Sphere, Vector3} from "three";
 import {par} from "./par";
-import {computeActiveTileHash, debugLog, Globals, tileBoundsModeForView} from "./Globals";
+import {computeActiveTileHash, debugLog, Globals, NodeMan, Sit, tileBoundsModeForView, setRenderOne} from "./Globals";
+import {expandSphereForRefraction, terrestrialLiftContext, terrestrialOptsFrom} from "./atmosphere/terrestrialRefraction";
 import {buildDilatedProjectionMatrix, buildFrustumShape, createFrustumShape} from "./QuadTreeCullingBounds";
 import {isLocal} from "./configUtils";
 import {altitudeAboveSphere, distanceToHorizon, hiddenByGlobe} from "./SphericalMath";
@@ -542,6 +543,10 @@ export class QuadTreeMap {
         // which was creating a column of high-LOD tiles directly under the
         // camera regardless of look direction.
         camera.updateMatrixWorld();
+        camera._terrainRefraction = view.raytracedRefraction
+            ? view.raytracedRefraction.geometryContext()
+            : Sit?.terrestrialRefraction
+                ? terrestrialLiftContext(camera.position, terrestrialOptsFrom(Sit, Globals)) : null;
         const viewProjection = new Matrix4().multiplyMatrices(
             camera.projectionMatrix, camera.matrixWorldInverse
         );
@@ -833,11 +838,26 @@ export class QuadTreeMap {
 
         // Apply collected subdivisions AFTER iteration to prevent cascade.
         // Children created here will be processed on the NEXT frame, not this one.
-        for (const tile of tilesToSubdivide) {
+        let subdivisions = tilesToSubdivide;
+        if (camera._terrainRefraction?.rayTable) {
+            // A refracted horizon can admit a very large area at once. Keep
+            // loaded parents covering it while refinement is spread over
+            // frames, and explicitly report when the resource ceiling limits
+            // detail. Never trade a GPU context loss for an unstated accuracy.
+            const available = Math.max(0, Math.floor((6000 - this.allTiles.size) / 4));
+            this.rayGeometryDetailLimited = tilesToSubdivide.length > available;
+            subdivisions = tilesToSubdivide.slice(0, Math.min(16, available));
+            if (subdivisions.length < tilesToSubdivide.length && available > 0) {
+                NodeMan?.get("terrainUI", false)?.requestSubdivisionPass();
+                setRenderOne(true);
+            }
+        } else this.rayGeometryDetailLimited = false;
+        view.raytracedRefraction?.tool.setTerrainDetailLimited(this.constructor.name, this.rayGeometryDetailLimited);
+        for (const tile of subdivisions) {
             this.subdivideTile(tile, tileLayers, isTextureMap);
         }
         if (diag) {
-            diag.subdivided = tilesToSubdivide.length;
+            diag.subdivided = subdivisions.length;
             this.logSubdivisionDiag(diag, view.id);
         }
 
@@ -1452,6 +1472,7 @@ export class QuadTreeMap {
      * (geometricError * screenHeight / (distance * 2 * tan(fov/2))).
      */
     calculateTileVisibility(tile, camera, options = null, diag = null) {
+        const refraction = camera._terrainRefraction;
         // V5 Phase 0.1.c: options carries per-pass view/mode/layer context.
         // Currently legacy-only — options.mode is ignored. Future phases
         // (2/3) will branch on it. Lenient null-default avoids breaking any
@@ -1528,7 +1549,7 @@ export class QuadTreeMap {
         // parent (3 of 4 children rendering, coverage check fails because
         // 1 child was leaf-deactivated, parent stays active → ocean mosaic
         // z-fight). Stick with legacy sphere until the tile itself measures.
-        const _v5UseMeasured = (_v5Mode === "sphere" || _v5Mode === "obb")
+        const _v5UseMeasured = (_v5Mode === "sphere" || _v5Mode === "obb" || refraction)
             && options?.coverageMode !== "coverageSphereOnly"
             && tile.altitudeBounds?.measured === true;
         if (_v5UseMeasured) {
@@ -1557,6 +1578,12 @@ export class QuadTreeMap {
         }
         _cullingSphere.center.set(cx, cy, cz);
         _cullingSphere.radius = radius;
+        const refractionBounds = expandSphereForRefraction(_cullingSphere, refraction);
+        if (!refractionBounds) return {visible: false, actuallyVisible: false, frustumIntersects: false, screenSpaceError: 0};
+        if (refraction) {
+            cx = _cullingSphere.center.x; cy = _cullingSphere.center.y; cz = _cullingSphere.center.z;
+            radius = _cullingSphere.radius;
+        }
 
         // Flat Earth rendering (Physics → Scenarios → Flat Earth): cull and
         // LOD against the tile's RENDERED position on the AEP disc, not its
@@ -1601,6 +1628,7 @@ export class QuadTreeMap {
         // Inherited bounds produce a fat OBB that false-rejects off-axis
         // children (see _v5UseMeasured rationale above).
         if (_v5Mode === "obb"
+            && !refraction
             && (!_flatWarp || _flatRigid)
             && options?.coverageMode !== "coverageSphereOnly"
             && tile.altitudeBounds?.measured === true) {
@@ -1628,7 +1656,15 @@ export class QuadTreeMap {
             // sphere camera doesn't produce a divide-by-zero.
             const cosLat = Math.cos(tile._centerLatRad || 0);
             const tileSpanMeters = (EARTH_CIRCUMFERENCE_M * cosLat) / Math.pow(2, tile.z);
-            const metersPerTexel = tileSpanMeters / 256;
+            // A mesh can miss sharp relief even when imagery texels are small.
+            // Refine for measured height loss, not vertex spacing alone: the
+            // latter over-refines flat sea and exhausts the GPU at long range.
+            let metersPerTexel = tileSpanMeters / 256;
+            if (refraction?.rayTable && this.constructor.name === "QuadTreeMapTexture") {
+                const spacing = tileSpanMeters / (Globals.settings?.tileSegments ?? 64);
+                const curvatureError = spacing * spacing / (4 * 6350000);
+                metersPerTexel = Math.max(metersPerTexel, (tile.geometryErrorM ?? 0) * 1.25 + curvatureError);
+            }
             const fovRad = camera.getEffectiveFOV() * Math.PI / 180;
             const viewportHeightPx = camera._viewportHeightPx || 1080;
             // V5 Phase 3: in obb mode, SSE distance comes from
@@ -1637,6 +1673,7 @@ export class QuadTreeMap {
             // Fallback to sphere-center distance when OBB is null (z<3).
             let _lodDistance;
             if (_v5Mode === "obb"
+                && !refraction
                 && (!_flatWarp || _flatRigid)
                 && tile.cullingState?.obb
                 && options?.coverageMode !== "coverageSphereOnly"
@@ -1701,7 +1738,7 @@ export class QuadTreeMap {
                     const horizon = distanceToHorizon(cameraAltitude);
 
                     if (horizon > closestDistance ||
-                        hiddenByGlobe(cameraAltitude, closestDistance) <= tile.highestAltitude) {
+                        hiddenByGlobe(cameraAltitude, closestDistance) <= terrainAlt + refractionBounds.max) {
                         visible = true;
                         if (diag) {
                             if (inStrict) diag.inStrictFrustum++;
@@ -1924,6 +1961,8 @@ export class QuadTreeMap {
                 }
                 _childCullSphere.center.set(ccx, ccy, ccz);
                 _childCullSphere.radius = radius;
+                const refractionBounds = expandSphereForRefraction(_childCullSphere, camera._terrainRefraction);
+                if (!refractionBounds) continue;
 
                 // Broad phase: must be in the preload-margin frustum at all.
                 if (!dilated.intersectsSphere(_childCullSphere)) continue;
@@ -1933,7 +1972,7 @@ export class QuadTreeMap {
                 const ddy = camera.position.y - ccy;
                 const ddz = camera.position.z - ccz;
                 const distance = Math.sqrt(ddx * ddx + ddy * ddy + ddz * ddz);
-                const closestDistance = Math.max(0, distance - radius);
+                const closestDistance = Math.max(0, distance - _childCullSphere.radius);
                 if (closestDistance < radius * 0.1) {
                     return true; // camera essentially inside the sphere
                 }
@@ -1942,9 +1981,9 @@ export class QuadTreeMap {
                     return true;
                 }
                 const horizon = distanceToHorizon(cameraAltitude);
-                // A freshly-created child has highestAltitude 0 (the same value
-                // PASS 3 uses for it), so the globe-peek term compares against 0.
-                if (horizon > closestDistance || hiddenByGlobe(cameraAltitude, closestDistance) <= 0) {
+                // A not-yet-loaded child inherits its parent's terrain estimate;
+                // testing sea level here permanently strands distant mountains.
+                if (horizon > closestDistance || hiddenByGlobe(cameraAltitude, closestDistance) <= terrainAlt + refractionBounds.max) {
                     return true;
                 }
             }

@@ -67,7 +67,7 @@ test("the real view routes physical mode ahead of panorama and raytraced visible
     });
     const view = Object.assign(new View(), {id: "lookView", camera: cameraFor(native()), renderMode: "physicalThermal",
         renderTargetAndEffectsInternal: jest.fn(), clearThermalOutput: jest.fn(), isXRPresenting: () => false,
-        raytracedRefraction: {begin: jest.fn()}});
+        raytracedRefraction: {isActive: () => true, begin: jest.fn()}});
     view.renderTargetAndEffects();
     expect(view.renderTargetAndEffectsInternal).toHaveBeenCalledWith();
     expect(view.raytracedRefraction.begin).not.toHaveBeenCalled();

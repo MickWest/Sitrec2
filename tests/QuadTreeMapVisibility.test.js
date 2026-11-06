@@ -7,6 +7,7 @@ import {Frustum, Matrix4, PerspectiveCamera, Sphere, Vector3} from "three";
 import {LLAToECEF} from "../src/LLA-ECEF-ENU";
 import {QuadTreeMapTexture} from "../src/QuadTreeMapTexture";
 import {CTileMappingGoogleMapsCompatible} from "../src/WMSUtils";
+import {terrestrialLiftContext, liftWorldPoint} from "../src/atmosphere/terrestrialRefraction";
 
 function installCameraFrustums(camera) {
     camera.updateProjectionMatrix();
@@ -22,6 +23,36 @@ function installCameraFrustums(camera) {
 }
 
 describe("QuadTreeMap tile visibility", () => {
+    test("a distant mountain's prospective children inherit elevation instead of sea level", () => {
+        const projection = new CTileMappingGoogleMapsCompatible();
+        const lat = 0, lon = 2;
+        const parent = {z: 10, x: Math.floor(projection.lon2Tile(lon, 10)),
+            y: Math.floor(projection.lat2Tile(lat, 10)), highestAltitude: 4000, parent: null};
+        const camera = new PerspectiveCamera(3, 1, 1, 1e6);
+        camera.position.copy(LLAToECEF(0, 0, 100));
+        camera.up.set(1, 0, 0); camera.lookAt(LLAToECEF(lat, lon, 4000));
+        installCameraFrustums(camera);
+        const map = Object.create(QuadTreeMapTexture.prototype);
+        map.options = {mapProjection: projection};
+        expect(map.anyProspectiveChildVisible(parent, camera)).toBe(true);
+    });
+
+    test("refraction admits a mountain whose physical bounds miss a narrow apparent view", () => {
+        const camera = new PerspectiveCamera(.05, 1, 1, 1e6);
+        camera.position.copy(LLAToECEF(0, 0, 2828));
+        camera.up.set(1, 0, 0);
+        const point = LLAToECEF(0, 4, 3883);
+        const ctx = terrestrialLiftContext(camera.position, {enabled: true, k: .17});
+        camera.lookAt(liftWorldPoint(ctx, point)); installCameraFrustums(camera);
+        const tile = {z: 16, _centerLatRad: 0, highestAltitude: 3883, parent: null,
+            getWorldSphere: () => new Sphere(LLAToECEF(0, 4, 0), 10)};
+        const map = Object.create(QuadTreeMapTexture.prototype);
+        expect(map.calculateTileVisibility(tile, camera).visible).toBe(false);
+        camera._terrainRefraction = ctx;
+        expect(map.calculateTileVisibility(tile, camera).visible).toBe(true);
+        camera._terrainRefraction = null;
+        expect(map.calculateTileVisibility(tile, camera).visible).toBe(false);
+    });
     test("does not horizon-cull frustum tiles when camera altitude is below the ellipsoid", () => {
         const earthRadiusM = 6378137;
         const camera = new PerspectiveCamera(60, 1, 1, 1000);

@@ -97,7 +97,7 @@ test("an infrared frame takes the thermal route and a visible-light frame the vi
     const restore = jest.fn();
     const view = Object.assign(new View(), {id: "lookView", renderMode: "physicalThermal", camera: {},
         renderTargetAndEffectsInternal: jest.fn(), clearThermalOutput: jest.fn(), isXRPresenting: () => false,
-        raytracedRefraction: {begin: jest.fn(() => restore)}, thermalStatus: "readout"});
+        raytracedRefraction: {isActive: jest.fn(() => true), begin: jest.fn(() => restore)}, thermalStatus: "readout"});
     view.renderTargetAndEffects();
     expect(unavailable).toHaveBeenCalledTimes(1); expect(view.renderTargetAndEffectsInternal).toHaveBeenLastCalledWith();
     expect(view.raytracedRefraction.begin).not.toHaveBeenCalled(); expect(clearThermalStatus).not.toHaveBeenCalled();
@@ -114,6 +114,11 @@ test("an infrared frame takes the thermal route and a visible-light frame the vi
     view.renderMode = "physicalThermal"; view._thermalError = new Error("failed"); view.renderTargetAndEffects();
     view._thermalError = null; cameraUnavailable = true; view.renderTargetAndEffects();
     expect(ensureThermalView).toHaveBeenCalledTimes(1);
+    view.raytracedRefraction.isActive.mockReturnValue(false);
+    view.raytracedRefraction.begin.mockClear();
+    view.renderTargetAndEffects();
+    expect(view.renderTargetAndEffectsInternal).toHaveBeenLastCalledWith();
+    expect(view.raytracedRefraction.begin).not.toHaveBeenCalled();
 });
 
 test("a visible-light frame skips only the FLIR and thermal look passes; other effects stay as set", () => {

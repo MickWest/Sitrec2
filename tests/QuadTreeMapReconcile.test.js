@@ -163,6 +163,39 @@ function isRendering(map, tile) {
 }
 
 describe("QuadTreeMap texture cut reconciliation", () => {
+    test("ray geometry paces refinement and preserves parents at its tile ceiling", () => {
+        const parents = Array.from({length: 30}, (_, x) => makeTile(`10/${x}/0`, {z: 10, x}));
+        const map = makeMap(parents);
+        map.canSubdivide = () => true;
+        map.shouldSubdivideTile = () => true;
+        map.anyProspectiveChildVisible = () => true;
+        map.deactivateParentsWithLoadedChildren = jest.fn();
+        map.reconcileRenderedTileCut = jest.fn();
+        map.triggerLazyLoadIfNeeded = jest.fn();
+        map.subdivideTile = jest.fn();
+        const camera = new PerspectiveCamera(2, 1, 1, 1e6);
+        const setTerrainDetailLimited = jest.fn();
+        const view = {id: "lookView", cameraNode: {camera}, tileLayers: LAYER, heightPx: 500,
+            raytracedRefraction: {geometryContext: () => ({rayTable: {}}), tool: {setTerrainDetailLimited}}};
+        map.subdivideTilesViewSpecific(view);
+        expect(map.subdivideTile).toHaveBeenCalledTimes(16);
+        expect(map.rayGeometryDetailLimited).toBe(false);
+        while (map.allTiles.size < 5996) map.allTiles.add({tileLayers: 0, children: null, _updateOBBDebug() {}});
+        map.subdivideTile.mockClear();
+        map.subdivideTilesViewSpecific(view);
+        expect(map.subdivideTile).toHaveBeenCalledTimes(1);
+        expect(map.rayGeometryDetailLimited).toBe(true);
+        while (map.allTiles.size < 6000) map.allTiles.add({tileLayers: 0, children: null, _updateOBBDebug() {}});
+        map.subdivideTile.mockClear();
+        map.subdivideTilesViewSpecific(view);
+        expect(map.subdivideTile).not.toHaveBeenCalled();
+        expect(setTerrainDetailLimited).toHaveBeenCalledWith("QuadTreeMapTexture", true);
+        expect(parents.every(tile => isRendering(map, tile))).toBe(true);
+        delete view.raytracedRefraction;
+        map.subdivideTilesViewSpecific(view);
+        expect(map.subdivideTile).toHaveBeenCalledTimes(30);
+    });
+
     test("ready ignores render suppression but rendering does not", () => {
         const tile = makeTile("0/0/0", {suppressed: true});
         const map = makeMap([tile]);

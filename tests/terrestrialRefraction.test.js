@@ -956,6 +956,9 @@ void main() {
             .toBeLessThan(out.indexOf("vec4 clipStart = projectionMatrix * start;"));
         // and the approximate mvPosition handed to clipping/fog stays physical
         expect(out).toContain("? sitrecPhysicalStart : sitrecPhysicalEnd;");
+        expect(out).toContain("vRayGeometryPhysical = mvPosition.xyz;");
+        expect(out.lastIndexOf("vRayGeometryPhysical = mvPosition.xyz;"))
+            .toBeGreaterThan(out.indexOf("? sitrecPhysicalStart : sitrecPhysicalEnd;"));
     });
 
     test("an unsupported custom shader warns instead of failing silently", () => {
@@ -975,6 +978,28 @@ void main() {
 // narrow field of view and a camera aimed at the lofted target, the physical position is outside
 // the frustum, and the parts of an aircraft with small bounding spheres were not drawn.
 describe("frustum culling uses the lofted position", () => {
+
+    test("ray geometry keeps a small surface whose physical sphere misses a narrow view", () => {
+        const root = new Group(), surface = new Mesh(new SphereGeometry(5), new MeshBasicMaterial());
+        surface.position.set(443000, -14350, 0); root.add(surface); root.updateMatrixWorld(true);
+        const table = {width: 2, rows: 2, minAngle: -0.04, maxAngle: 0, height: 2828,
+            distances: new Float64Array([0, 500000]),
+            data: new Float32Array([0, 0, 500000, 0, -0.005, 0, 500000, 0,
+                0, 0, 500000, 0, -0.005, 0, 500000, 0])};
+        const ctx = {observer: new Vector3(), zenith: new Vector3(0, 1, 0), rayTable: table};
+        const camera = new PerspectiveCamera(0.29678, 1.5, 0.1, 1e6);
+        camera.up.set(0, 1, 0); camera.lookAt(liftWorldPoint(ctx, surface.position));
+        camera.updateMatrixWorld(true);
+        const frustum = new Frustum().setFromProjectionMatrix(new Matrix4().multiplyMatrices(
+            camera.projectionMatrix, camera.matrixWorldInverse));
+        expect(frustum.intersectsObject(surface)).toBe(false);
+        const lofted = [];
+        sweepTerrestrialRefraction(root, -1, lofted);
+        cullLoftedObjects(lofted, camera, ctx);
+        expect(surface.frustumCulled).toBe(false);
+        restoreLoftedCulling(lofted);
+        expect(surface.frustumCulled).toBe(true);
+    });
 
     const OPTS = {enabled: true, k: 0.176, equatorRadius: WGS84_A, polarRadius: WGS84_B};
     // On the equator at 3.5 km, with an airliner 125 km away: the test sitch.

@@ -31,7 +31,7 @@ import {CNodeActiveOverlay} from "./CNodeTrackingOverlay";
 import {CNodeVideoView} from "./CNodeVideoView";
 import {Matrix4, Vector3} from "three";
 import {assert} from "../assert";
-import {Globals, guiMenus, NodeMan, setRenderOne, UndoManager} from "../Globals";
+import {Globals, guiMenus, NodeMan, setRenderOne, Sit, UndoManager} from "../Globals";
 import {par} from "../par";
 import {mouseToCanvas} from "../ViewUtils";
 import {showPointContextMenu} from "../PointContextMenu";
@@ -795,6 +795,7 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
      * @returns {number|null} null when there is nothing to score.
      */
     currentResidualPx() {
+        if (this.rayGeometryActive()) return null;
         const size = this.videoSize;
         const state = this.currentCameraState();
         // Real observations only, matching the solve: a seeded marker sits wherever some camera
@@ -1736,9 +1737,21 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
         if (this.autoFit) this.runFit(false);
     }
 
+    rayGeometryActive() {
+        const settings = this.lookCameraNode()?.camera?._rayGeometryPass?.tool.settings;
+        return !!(Sit.refraction !== false && Sit.refractionTerrain !== false
+            && settings?.enabled && settings.projectionMode === "geometry");
+    }
+
     /** @returns {boolean} whether a solve actually ran — false on every refusal gate */
     runFit(explicit) {
         if (!this.enabled) return false;
+        // Trial observers require new ray integrations. An analytic fit here
+        // would report a residual for a different model than the rendered view.
+        if (this.rayGeometryActive()) {
+            this.updateStatus("Camera fitting is not supported with ray-traced geometry; camera unchanged.");
+            return false;
+        }
 
         // Re-entrancy guard. Applying a fit selects switches and writes nodes, each of which
         // cascades; anything downstream that pokes this node back must not start a second solve

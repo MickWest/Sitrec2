@@ -4,6 +4,7 @@ import {waterShadeGLSL, waterUniformsGLSL} from "../../../water/WaterShading.gls
 import {Globals} from "../../../Globals";
 import {
     addTerrestrialRefractionUniforms,
+    installTerrestrialRefractionOnShaderMaterial,
     TERRESTRIAL_REFRACTION_VERTEX_GLSL,
 } from "../../../atmosphere/terrestrialRefraction";
 
@@ -353,6 +354,7 @@ export function createTerrainDayNightMaterial(texture, terrainShadingStrength = 
 
     // Tag so consumers can identify a TerrainDayNight material for per-view cloning.
     material.userData.isTerrainDayNight = true;
+    installTerrestrialRefractionOnShaderMaterial(material);
     // Flat Earth rendering: patch at creation, not via the 500 ms scene
     // sweep — a tile activated on an LOD change must land on the disc on
     // its FIRST frame, or the swap briefly shows a hole where the new tile

@@ -27,6 +27,7 @@ export class RefractionTool {
         this.opticalRevision = 0;
         this.controls = [];
         this.editors = [];
+        this.terrainDetailLimits = new Set();
         this.laserGroup = new Group();
         this.laserGroup.name = "Refraction laser paths";
         this.laserGroup.layers.enableAll();
@@ -53,7 +54,8 @@ export class RefractionTool {
             }
         }
         if (this.settings.enabled && !view) this.status("Choose an available 3D view.");
-        this.laserGroup.visible = !!(this.settings.enabled && this.settings.lasersEnabled && this.result);
+        this.laserGroup.visible = !!(this.settings.enabled && Sit.refraction !== false && this.settings.lasersEnabled && this.result);
+        this.refreshStatus();
         for (const refresh of this.controls) refresh();
         setRenderOne(true);
     }
@@ -62,6 +64,8 @@ export class RefractionTool {
         if (this.view && this.view.raytracedRefraction === this.pass) delete this.view.raytracedRefraction;
         this.pass?.dispose();
         this.pass = null;
+        this.terrainDetailLimits.clear();
+        this.refreshStatus();
     }
 
     changed(optical = true) {
@@ -80,8 +84,26 @@ export class RefractionTool {
     }
 
     status(text) {
-        this.statusText = text;
-        if (this.statusElement) this.statusElement.textContent = text;
+        this.rayStatusText = text;
+        this.refreshStatus();
+    }
+
+    setTerrainDetailLimited(kind, limited) {
+        if (limited) this.terrainDetailLimits.add(kind);
+        else this.terrainDetailLimits.delete(kind);
+        this.refreshStatus();
+    }
+
+    refreshStatus() {
+        if (this.settings.enabled && (Sit.refraction === false || (Sit.refractionSky === false && Sit.refractionTerrain === false))) {
+            this.statusText = "Paused by View > Atmospheric Refraction. Ray profile preserved.";
+            if (this.statusElement) this.statusElement.textContent = this.statusText;
+            return;
+        }
+        const warning = this.terrainDetailLimits.size
+            ? "Terrain detail limited by tile budget; visibility needs a resolution check." : "";
+        this.statusText = [this.rayStatusText, warning].filter(Boolean).join(" · ");
+        if (this.statusElement) this.statusElement.textContent = this.statusText;
     }
 
     show() {
@@ -145,7 +167,7 @@ export class RefractionTool {
         const views = {};
         for (const {data: view} of Object.values(NodeMan.list)) if (view.renderTargetAndEffects) views[view.id] = view.id;
         this.select(top, this.settings, "view", "Ray-traced view", views, false);
-        element("p", "rf-hint rf-view-scope", "Only this view uses the edited atmosphere. Other views keep their existing atmospheric refraction settings.", panel);
+        element("p", "rf-hint rf-view-scope", "Only this view uses the edited atmosphere. View > Atmospheric Refraction controls refraction in every view; other views use its approximate model and air settings.", panel);
         const tabs = element("nav", "rf-tabs", null, panel);
         tabs.setAttribute("aria-label", "Refraction panels");
         this.pages = {};
@@ -335,7 +357,10 @@ export class RefractionTool {
         this.updateDiagnostics();
         this.sideCanvas = element("canvas", "rf-side", null, page);
         const s = this.settings, grid = element("div", "rf-grid", null, page);
-        this.number(grid, s, "maxDistance", "Trace distance · m", 100, 300000, 100);
+        this.select(grid, s, "projectionMode", "Rendering", {
+            "Screen-space mirages": "screen", "Terrain geometry (single image)": "geometry",
+        });
+        this.number(grid, s, "maxDistance", "Trace distance · m", 100, 1000000, 100);
         this.number(grid, s, "step", "Maximum integration step · m", 2, 1000, 1);
         this.number(grid, s, "distanceSamples", "Distance samples", 64, 2048, 1);
         this.number(grid, s, "resolution", "Rays per screen line", 0.25, 2, 0.25);
@@ -350,7 +375,7 @@ export class RefractionTool {
         this.check(grid, s, "visibilityEnabled", "Visibility attenuation", false);
         this.number(grid, s, "visibility", "Visibility · km", 0.1, 500, 0.1, false);
         element("p", "rf-hint", "The cross-section is compressed horizontally. Ray tables rebuild only when the atmosphere or camera sampling changes. Colours update live through the GPU.", page);
-        element("p", "rf-hint", "This is a depth-based screen-space effect: it can reproduce folds and mirage images of visible surfaces, but cannot recover hidden or offscreen geometry. Scene measurements and overlays remain geometric. Use a perspective camera near the horizon.", page);
+        element("p", "rf-hint", "Terrain geometry projects surfaces through the traced rays before testing visibility. It can reveal distant terrain beyond the geometric horizon, up to Trace distance, and requires a single-valued ray fan. Screen-space mirages can show folds of already visible surfaces but cannot recover hidden or offscreen geometry. Use a perspective camera near the horizon; terrain resolution still limits accuracy.", page);
     }
 
     buildLasers(page) {
