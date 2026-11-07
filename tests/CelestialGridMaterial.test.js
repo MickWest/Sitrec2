@@ -3,7 +3,7 @@ import {CelestialGridMaterial} from "../src/CelestialGridMaterial";
 import {setLineViewHeight} from "../src/SceneLineMaterial";
 
 test.each([[30, 1], [100, 1], [100, 2], [120, 0.75]])(
-    "pole fade stays 10–100 display pixels at FOV=%s and render scale=%s", (fov, scale) => {
+    "pole fade stays 10–50 display pixels at FOV=%s and render scale=%s", (fov, scale) => {
         const camera = new PerspectiveCamera(fov, 2, 0.1, 1000);
         camera.lookAt(0, 0, 1);
         camera.updateMatrixWorld(true);
@@ -13,7 +13,7 @@ test.each([[30, 1], [100, 1], [100, 2], [120, 0.75]])(
         const material = new CelestialGridMaterial();
         const object = {matrixWorld: new Matrix4()};
         material.onBeforeRender(renderer, null, camera, null, object);
-        expect(material.uniforms.gridPoleFadeRange.value.toArray()).toEqual([10 * scale, 100 * scale]);
+        expect(material.uniforms.gridPoleFadeRange.value.toArray()).toEqual([10 * scale, 50 * scale]);
         expect(material.uniforms.gridPoleNorth.value.toArray()).toEqual([17 + 400 * scale, 23 + 200 * scale, 1]);
         expect(material.uniforms.gridPoleSouth.value.z).toBe(0);
         // Reorienting a shared grid for another observer moves the fade with it.

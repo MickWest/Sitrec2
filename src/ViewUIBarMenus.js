@@ -123,6 +123,7 @@ export const VIEW_UIBAR_MENUS = {
         {slot: "constellationLines", name: "Constellation Lines", folder: "nightSky"},
         {slot: "constellationNames", name: "Constellation Names", folder: "nightSky"},
         {slot: "horizonCompass", name: "Horizon Compass", folder: "nightSky"},
+        {slot: "ridgeline", name: "Ridgeline", folder: "nightSky"},
         {slot: "celestialVectors", name: "Celestial Vectors", folder: "nightSky"},
     ],
 
@@ -150,6 +151,7 @@ export const VIEW_UIBAR_MENUS = {
         {slot: "constellationLines", name: "Constellation Lines", folder: "nightSky"},
         {slot: "constellationNames", name: "Constellation Names", folder: "nightSky"},
         {slot: "horizonCompass", name: "Horizon Compass", folder: "nightSky"},
+        {slot: "ridgeline", name: "Ridgeline", folder: "nightSky"},
         {slot: "celestialVectors", name: "Celestial Vectors", folder: "nightSky"},
         {slot: "overlayTransparency", name: "Transparency %", folder: "videoOverlay"},
         {slot: "overlayKeyColor", name: "Key Color", folder: "videoOverlay"},

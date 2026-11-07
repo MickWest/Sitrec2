@@ -808,6 +808,10 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
         }
         this.addSimpleSerials(["showAzimuthalGridMain", "showAzimuthalGridLook"]);
 
+        this.addCelestialViewPair(this.linesGUI, "showRidgeline", "Ridgeline", "ridgeline",
+            "Trace the visible terrain skyline with a 0.5-pixel line. Disabled views do no ridgeline rendering.",
+            () => setRenderOne(true));
+
         this.linesGUI.add(this, "celestialGridSpacing", 5, 45, 5).name("Grid Spacing").listen()
             .tooltip("Angular spacing in degrees for both the equatorial and azimuthal grids.")
             .onChange(() => this.rebuildCelestialGrids());
@@ -1047,6 +1051,7 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
         const legacyNames = v.showConstellationNames ?? v.showConstellations;
         pair("showConstellationNames", legacyNames, legacyNames, this.showConstellationsMain, this.showConstellationsLook);
         pair("showHorizonCompassRibbon", v.showHorizonCompassRibbon, v.showHorizonCompassRibbon, false);
+        pair("showRidgeline", undefined, undefined, false);
         pair("showCelestialVectors", undefined, undefined, true);
         for (const name of this.planets?.planets ?? []) {
             const key = `show${name}Arrow`;
