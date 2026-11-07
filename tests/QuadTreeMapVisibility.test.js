@@ -8,6 +8,7 @@ import {LLAToECEF} from "../src/LLA-ECEF-ENU";
 import {QuadTreeMapTexture} from "../src/QuadTreeMapTexture";
 import {CTileMappingGoogleMapsCompatible} from "../src/WMSUtils";
 import {terrestrialLiftContext, liftWorldPoint} from "../src/atmosphere/terrestrialRefraction";
+import {buildFrustumShape, createFrustumShape, OBB} from "../src/QuadTreeCullingBounds";
 
 function installCameraFrustums(camera) {
     camera.updateProjectionMatrix();
@@ -57,6 +58,47 @@ describe("QuadTreeMap tile visibility", () => {
         camera._terrainLift = ctx;
         expect(map.calculateTileVisibility(tileAt(point), camera).visible).toBe(true);
         expect(map.calculateTileVisibility(tileAt(beside), camera).visible).toBe(false);
+    });
+
+    // The default bounds mode is "obb": a tile's oriented box is the tight test, since a
+    // distant tile's sphere is tens of km thick where its terrain is a few. Under
+    // Standard refraction the box is swept up by the lift. Skipping it left only the
+    // sphere, which doubled the tiles kept in a view looking down at Cheyenne.
+    test("Standard refraction sweeps the OBB narrow phase up, it does not skip it", () => {
+        const camera = new PerspectiveCamera(.05, 1, 1, 1e6);
+        camera.position.copy(LLAToECEF(0, 0, 2828));
+        camera.up.set(1, 0, 0);
+        const summit = LLAToECEF(0, 4, 3883);
+        const ctx = terrestrialLiftContext(camera.position, {enabled: true, k: .17});
+        camera.lookAt(liftWorldPoint(ctx, summit)); installCameraFrustums(camera);
+        camera._viewFrustumShape = buildFrustumShape(createFrustumShape(), camera, camera.projectionMatrix);
+        camera._dilatedFrustumShape = buildFrustumShape(createFrustumShape(), camera, camera.projectionMatrix);
+        // On the equator the local up is radial and north is +Z.
+        const up = summit.clone().normalize(), east = new Vector3(-up.y, up.x, 0), north = new Vector3(0, 0, 1);
+        const right = new Vector3().setFromMatrixColumn(camera.matrixWorld, 0);
+        // A measured tile: a box `half` m wide from sea level up to `top`, and a sphere of `radius`.
+        const tileAt = (top, half, radius) => {
+            const obb = new OBB();
+            obb.box.min.set(-half, -half, -3883 / 2);
+            obb.box.max.set(half, half, 3883 / 2);
+            obb.transform.makeBasis(east, north, up).setPosition(top.clone().addScaledVector(up, -3883 / 2));
+            obb.update();
+            const state = {sphere: new Sphere(top.clone(), radius), obb};
+            return {z: 16, _centerLatRad: 0, highestAltitude: 3883, parent: null, cullingState: state,
+                altitudeBounds: {measured: true, source: "renderedGeometry"}, ensureCullingState: () => state,
+                getWorldSphere: () => new Sphere(top.clone().multiplyScalar((top.length() - 3883) / top.length()), radius)};
+        };
+        const map = Object.create(QuadTreeMapTexture.prototype);
+        const obbMode = {mode: "obb", coverageMode: "main"};
+        camera._terrainLift = ctx;
+        // The summit's box reaches the frame only once it is swept up by the lift.
+        expect(map.calculateTileVisibility(tileAt(summit, 100, 10), camera, obbMode).visible).toBe(true);
+        // A box 600 m beside the summit stays out, though its 1 km sphere reaches the frame.
+        const beside = tileAt(summit.clone().addScaledVector(right, 600), 100, 1000);
+        expect(map.calculateTileVisibility(beside, camera, {mode: "sphere", coverageMode: "main"}).visible).toBe(true);
+        expect(map.calculateTileVisibility(beside, camera, obbMode).visible).toBe(false);
+        // The physical box is not changed by the sweep.
+        expect(beside.cullingState.obb.box.max.z).toBe(3883 / 2);
     });
 
     // Refraction raises the sea horizon as well as the terrain behind it: with a

@@ -219,15 +219,23 @@ export class RefractionPass {
         };
     }
 
+    // The model, not its readiness: terrain is drawn by Terrain Geometry. The
+    // context below is also null while the table is solved or the camera has
+    // moved; terrain selection needs to know the model through those gaps.
+    drawsTerrainGeometry() {
+        return this.isActive() && Sit.refractionTerrain !== false
+            && this.tool.settings.projectionMode === "geometry";
+    }
+
     geometryContext({forAim = false} = {}) {
-        if (!this.isActive() || Sit.refractionTerrain === false) return null;
+        if (!this.drawsTerrainGeometry()) return null;
         const result = this.result, camera = this.tool.view?.camera;
         // Aiming changes the angular coverage of the view. Keep the last ray
         // solution at this observer while that coverage is rebuilt; otherwise
         // To Target alternates between geometric and apparent pointing forever.
         const ready = this.usable || (forAim && this.validCamera && this.texture
             && this.tableGeometryKey === this.geometryKey);
-        if (this.tool.settings.projectionMode !== "geometry" || !ready || !result
+        if (!ready || !result
             || result.diagnostics?.foldedPairs > 0 || !camera
             || camera.position.distanceToSquared(this.position) > 0.0004) return null;
         return {observer: this.position, zenith: this.zenith, rayTable: result, texture: this.texture};

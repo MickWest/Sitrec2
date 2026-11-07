@@ -785,7 +785,7 @@ export class QuadTreeTile {
             se: meanSeaLevelOffset(latS, lonE),
         };
 
-        this.geometryErrorM = terrainMeshHeightError(elevationTile.elevation, elevationSize, nPosition - 1,
+        this.deferGeometryError(elevationTile.elevation, elevationSize, nPosition - 1,
             tileOffsetX * tileFractionX, tileOffsetY * tileFractionY, tileFractionX,
             this.map.elevationMap.options.zScale ?? 1, Math.min(...Object.values(geoidCorners)));
 
@@ -940,6 +940,24 @@ export class QuadTreeTile {
         this._disposeOBBDebug();
     }
 
+    // The largest height the mesh misses against its source elevation data
+    // (terrainMeshHeightError). Only the ray-traced Terrain Geometry LOD error
+    // reads it (QuadTreeMap.calculateTileVisibility), so a mesh build stores the
+    // inputs and the first read measures them. Measuring at every build cost
+    // 0.1-0.9 ms a tile in Standard, where nothing reads it.
+    deferGeometryError(...inputs) {
+        this._geometryErrorInputs = inputs;
+        this._geometryError = undefined;
+    }
+
+    get geometryErrorM() {
+        if (this._geometryErrorInputs) {
+            this._geometryError = terrainMeshHeightError(...this._geometryErrorInputs);
+            this._geometryErrorInputs = null;
+        }
+        return this._geometryError;
+    }
+
     // Dispose of this tile's resources, including its materialCache entry.
     // Symmetric with the prune path in QuadTreeMap.subdivideTilesGeneral —
     // both paths must drop the cache entry alongside disposing the material,
@@ -948,6 +966,7 @@ export class QuadTreeTile {
     dispose() {
         // Remove debug geometry first
         this.removeDebugGeometry();
+        this._geometryErrorInputs = null;
 
         // Remove mesh from scene if it exists
         if (this.mesh) {
@@ -1401,9 +1420,9 @@ export class QuadTreeTile {
         const nPosition = Math.sqrt(geometry.attributes.position.count);
         const elevationSize = Math.sqrt(elevationTile.elevation.length);
         const bounds = elevationTile.altitudeBounds;
-        // Source/mesh residual is independent of the view. Compute it once per
+        // Source/mesh residual is independent of the view. Measure it once per
         // geometry rebuild, not in the per-camera tile traversal.
-        this.geometryErrorM = terrainMeshHeightError(elevationTile.elevation, elevationSize, nPosition - 1,
+        this.deferGeometryError(elevationTile.elevation, elevationSize, nPosition - 1,
             tileOffsetX * tileFractionX, tileOffsetY * tileFractionY, tileFractionX,
             this.map.elevationMap.options.zScale ?? 1, elevationTile.elevationDataBounds?.min ?? bounds?.min ?? 0);
 

@@ -3,7 +3,7 @@ import {Frustum, Matrix4, Sphere, Vector3} from "three";
 import {par} from "./par";
 import {computeActiveTileHash, debugLog, Globals, NodeMan, Sit, tileBoundsModeForView, setRenderOne} from "./Globals";
 import {expandSphereForRefraction, terrestrialLiftContext, terrestrialOptsFrom} from "./atmosphere/terrestrialRefraction";
-import {buildDilatedProjectionMatrix, buildFrustumShape, createFrustumShape} from "./QuadTreeCullingBounds";
+import {buildDilatedProjectionMatrix, buildFrustumShape, createFrustumShape, OBB} from "./QuadTreeCullingBounds";
 import {isLocal} from "./configUtils";
 import {altitudeAboveSphere, distanceToHorizon, hiddenByGlobe} from "./SphericalMath";
 import * as LAYER from "./LayerMasks";
@@ -25,6 +25,8 @@ const _flatGlobeCenter = new Vector3();
 const _childCullSphere = new Sphere();
 // _cullingSphere raised by Standard refraction, for the visibility tests only.
 const _liftedSphere = new Sphere();
+// A tile's OBB swept by the same rise (sweptOBB).
+const _liftedOBB = new OBB();
 
 // Tile subdivision treats a slightly-wider frustum than the render frustum as
 // "eligible for high LOD" — this is the preload margin for camera pan/track.
@@ -81,6 +83,26 @@ function sweptSphereInFrustum(frustum, sphere, up, lift, grown) {
         if (Math.max(start, end) < -sphere.radius) return false;
     }
     return true;
+}
+
+// The OBB narrow phase under Standard refraction, for the reason above: the box
+// swept up the observer's vertical by `lift`. The box keeps its own axes and grows
+// along each by the rise's component on that axis, which contains every position
+// of the box between unlifted and fully lifted. Skipping the narrow phase instead
+// left only the bounding sphere, which for a distant tile is tens of km thick
+// where the terrain is a few: it admitted tiles above the frame or behind the
+// horizon and roughly doubled the tiles kept in a view looking down.
+function sweptOBB(obb, up, lift, out) {
+    out.box.copy(obb.box);
+    out.transform.copy(obb.transform);
+    const basis = out.transform.elements;   // column-major: the box axes are columns 0-2
+    for (let axis = 0; axis < 3; axis++) {
+        const rise = lift * (basis[axis * 4] * up.x + basis[axis * 4 + 1] * up.y + basis[axis * 4 + 2] * up.z);
+        out.box.min.setComponent(axis, obb.box.min.getComponent(axis) + Math.min(0, rise));
+        out.box.max.setComponent(axis, obb.box.max.getComponent(axis) + Math.max(0, rise));
+    }
+    out.update();
+    return out;
 }
 
 // The Earth radius for the horizon test. Standard refraction bends every ray of
@@ -600,6 +622,18 @@ export class QuadTreeMap {
         // A view with a ray-traced pass draws its terrain unlifted until the
         // pass supplies Terrain Geometry, so it gets neither then.
         camera._terrainRefraction = view.raytracedRefraction?.geometryContext() ?? null;
+        // Leaving Terrain Geometry: its LOD error refines distant terrain past
+        // Standard's, and those tiles sit in Standard's merge dead band (see
+        // MERGE_HYSTERESIS_FACTOR), so they stayed drawn for good: 137 extra in
+        // the Pic Gaspard save. The dead band keeps a moving camera's tiles
+        // stable; a change of model is a single jump, so the passes after it
+        // that may merge merge at the target instead. A merge needs an active
+        // child, so a deep refinement collapses one level a pass; this goes on
+        // until a pass merges nothing.
+        this._rayGeometryViews ??= new Set();
+        this._releaseRayGeometryDetail ??= new Set();
+        if (view.raytracedRefraction?.drawsTerrainGeometry()) this._rayGeometryViews.add(view.id);
+        else if (this._rayGeometryViews.delete(view.id)) this._releaseRayGeometryDetail.add(view.id);
         camera._terrainLift = !view.raytracedRefraction && Sit?.terrestrialRefraction
             ? terrestrialLiftContext(camera.position, terrestrialOptsFrom(Sit, Globals)) : null;
         const viewProjection = new Matrix4().multiplyMatrices(
@@ -692,6 +726,10 @@ export class QuadTreeMap {
         const mergeStableFrames = this.updateMergeCameraStability(view, camera);
         const allowVisibleTextureMerge = !isTextureMap
             || mergeStableFrames >= MERGE_CAMERA_STABLE_FRAMES;
+        const releaseRayGeometryDetail = allowVisibleTextureMerge
+            && this._releaseRayGeometryDetail.delete(view.id);
+        const mergeFactor = releaseRayGeometryDetail ? 1 : MERGE_HYSTERESIS_FACTOR;
+        let releasedMerges = 0;
         const reconcileVisibilityMemo = isTextureMap ? new WeakMap() : null;
         const rememberReconcileVisibility = (tile, visibility) => {
             if (reconcileVisibilityMemo) {
@@ -771,7 +809,15 @@ export class QuadTreeMap {
             // normal subdivision pass repopulates from coarser ancestors
             // (which remain in the tile cache; deactivation only clears
             // the per-view bit, not the underlying data).
-            if (!visibility.visible && !hasChildren) {
+            //
+            // The same holds for an invisible tile whose children are all inactive
+            // in this view: it is the only thing drawn there. Kept active only for
+            // having children, it stayed drawn until timed pruning removed them,
+            // one level per inactiveTileTimeout (100 s by default). Leaving
+            // ray-traced Terrain Geometry left 155 such tiles in the Pic Gaspard
+            // save, most of them beyond the horizon.
+            if (!visibility.visible
+                && (!hasChildren || !this.hasAnyActiveDescendantForView(tile, tileLayers))) {
                 if (isActiveInView) {
                     this.deactivateTile(tile, tileLayers, true);
                 }
@@ -845,7 +891,7 @@ export class QuadTreeMap {
             // keeps the tree stable while a tracked camera oscillates.
             // An invisible tile (sse=0) always satisfies the merge condition.
             const shouldMerge = !shouldSubdivide
-                && visibility.screenSpaceError < errorTargetPixels * MERGE_HYSTERESIS_FACTOR;
+                && visibility.screenSpaceError < errorTargetPixels * mergeFactor;
 
             if (shouldSubdivide && isActiveInView && tile.z < this.maxZoom && !hasChildren) {
                 // Frustum-edge guard: a coarse tile's fat bounding sphere can
@@ -886,9 +932,20 @@ export class QuadTreeMap {
             }
 
             // Check for merging children back to parent (gated by hysteresis)
-            if (shouldMerge && hasChildren && allowVisibleTextureMerge) {
-                if (this.mergeChildrenIfPossible(tile, tileLayers) && diag) diag.merged++;
+            if (shouldMerge && hasChildren && allowVisibleTextureMerge
+                && this.mergeChildrenIfPossible(tile, tileLayers)) {
+                if (diag) diag.merged++;
+                releasedMerges++;
+                // An invisible tile merges only to drop its branch; it has nothing
+                // to draw itself, so it must not stay active in the children's place.
+                if (!visibility.visible) this.deactivateTile(tile, tileLayers, true);
             }
+        }
+
+        if (releaseRayGeometryDetail && releasedMerges > 0) {
+            this._releaseRayGeometryDetail.add(view.id);
+            NodeMan?.get("terrainUI", false)?.requestSubdivisionPass();
+            setRenderOne(true);
         }
 
         // Apply collected subdivisions AFTER iteration to prevent cascade.
@@ -1707,14 +1764,16 @@ export class QuadTreeMap {
         // OBB narrow phase only runs on tiles with their OWN measured bounds.
         // Inherited bounds produce a fat OBB that false-rejects off-axis
         // children (see _v5UseMeasured rationale above).
-        // Skipped under either refraction: the OBB is physical, so it would
-        // reject a tile that the lift has raised into view.
+        // Skipped under ray-traced geometry, whose bounds are the refracted
+        // sphere. Under Standard refraction the box is swept by the lift (sweptOBB).
         if (_v5Mode === "obb"
-            && !refraction && !standardLift
+            && !refraction
             && (!_flatWarp || _flatRigid)
             && options?.coverageMode !== "coverageSphereOnly"
             && tile.altitudeBounds?.measured === true) {
-            const _obb = tile.cullingState?.obb;
+            const physicalOBB = tile.cullingState?.obb;
+            const _obb = physicalOBB && standardLift
+                ? sweptOBB(physicalOBB, standardLift.zenith, liftBounds.max, _liftedOBB) : physicalOBB;
             if (_obb) {
                 if (inDilated && (camera._panoramaFrusta
                     ? !camera._panoramaDilatedFrusta.some(f => _obb.intersectsFrustum(f))

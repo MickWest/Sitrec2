@@ -28,7 +28,7 @@ Related controls keep their own menus:
 - **Camera** sets position, heading, celestial tracking, zoom and lens projection.
 - **Satellites** loads orbital data and controls satellite categories, magnitude limit, brightness, names and flare analysis.
 - **Lighting** sets illumination, daylight atmosphere, haze, exposure and terrain/object shadows.
-- **View → Atmospheric Refraction** shares atmosphere settings between sky and terrain.
+- **Effects → Atmospheric Refraction** shares atmosphere settings between sky and terrain.
 - **Video → Star Tracker** analyzes stars in imported footage. Its markers are analysis overlays.
 
 See [Satellites](Satellites.md) for the extra views, [Lighting](Lighting.md) for atmospheric optics and solar eclipses, and [Lunar Eclipses](LunarEclipse.md) for lunar shading.
