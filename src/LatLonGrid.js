@@ -131,10 +131,12 @@ export function setupLatLonGrid() {
     };
     guiShowHide.add(Globals, "showLatLonGridMain").name(t("latLonGrid.inMain.label"))
         .tooltip(t("latLonGrid.inMain.tooltip")).listen().onChange(onChange)
-        .shareAs(viewMenuKey("mainView", "latLonGrid"));
+        .shareAs(viewMenuKey("mainView", "latLonGrid"))
+        .asViewCheckbox("mainView", t("viewMenus.latLonGrid"));
     guiShowHide.add(Globals, "showLatLonGridLook").name(t("latLonGrid.inLook.label"))
         .tooltip(t("latLonGrid.inLook.tooltip")).listen().onChange(onChange)
-        .shareAs(viewMenuKey("lookView", "latLonGrid"));
+        .shareAs(viewMenuKey("lookView", "latLonGrid"))
+        .asViewCheckbox("lookView", t("viewMenus.latLonGrid"));
 }
 
 export function removeLatLonGrid() {

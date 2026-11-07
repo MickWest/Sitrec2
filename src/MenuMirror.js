@@ -437,6 +437,7 @@ GUI.prototype.mirrorFolderFrom = function (sourceFolder, opts = {}) {
     // A whole-folder mirror is a live editing panel for something being manipulated elsewhere
     // (3D handles, code), so both ends poll by default — see the opts.listen note in buildTwin.
     opts = {listen: true, ...opts};
+    let folderToggleTwin;
     for (const child of childrenInDOMOrder(sourceFolder)) {
         if (child.controllers !== undefined) {
             const folder = this.addFolder(child._title);
@@ -455,9 +456,15 @@ GUI.prototype.mirrorFolderFrom = function (sourceFolder, opts = {}) {
             const twin = child.mirrorTo(this, opts);
             // A folder's title checkbox (FolderToggle.js) is a view of one of its controls, so
             // the copy promotes that control's twin the same way.
-            if (twin && child === sourceFolder._folderToggle) twin.asFolderToggle(child._folderToggleOptions);
+            if (twin && child === sourceFolder._folderToggle) folderToggleTwin = twin;
+            if (twin && child._viewCheckbox) {
+                const {viewId, name, key} = child._viewCheckbox;
+                twin.asViewCheckbox(viewId, name, key);
+            }
         }
     }
+    // Both sides of a paired title toggle must exist before promoting the row.
+    folderToggleTwin?.asFolderToggle(sourceFolder._folderToggle._folderToggleOptions);
     return this;
 };
 
@@ -471,6 +478,14 @@ function childrenInDOMOrder(gui) {
     for (const el of gui.$children.children) {
         const child = byElement.get(el);
         if (child) ordered.push(child);
+        // A paired Main/Look row contains two real controllers. Keep them at
+        // their visual position when cloning a complete folder.
+        else if (el.classList.contains("lil-checkbox-pair")) {
+            for (const option of el.children) {
+                const controller = byElement.get(option);
+                if (controller) ordered.push(controller);
+            }
+        }
     }
     // Anything the DOM walk missed (a controller whose element was re-parented) still gets
     // mirrored, just at the end, rather than silently vanishing from the copy.

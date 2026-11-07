@@ -72,7 +72,7 @@ export class CNodeDisplayMoonShadow extends CNode3DGroup {
             side: 2
         });
 
-        this.gui.add(this, "visible").name(t("misc.showMoonShadow.label")).onChange(() => {
+        this.gui.add(this, "visible").asListCheckbox().name(t("misc.showMoonShadow.label")).onChange(() => {
             this.show(this.visible);
             this.rebuild();
             setRenderOne(true);
@@ -86,7 +86,7 @@ export class CNodeDisplayMoonShadow extends CNode3DGroup {
         // is always drawn with the shadow, since that is the part you actually
         // read a partial-eclipse footprint off.
         this.showPenumbraCone = false;
-        this.gui.add(this, "showPenumbraCone").name("Show Moon Penumbra").onChange(() => {
+        this.gui.add(this, "showPenumbraCone").asListCheckbox().name("Show Moon Penumbra").onChange(() => {
             this.rebuild();
             setRenderOne(true);
         }).listen()
@@ -98,7 +98,7 @@ export class CNodeDisplayMoonShadow extends CNode3DGroup {
         // as a screen marker — two lines through the centre spanning the umbra's
         // own extent, so the cross is the size and orientation of the shadow.
         this.showShadowCenter = false;
-        this.gui.add(this, "showShadowCenter").name("Moon Shadow Center").onChange(() => {
+        this.gui.add(this, "showShadowCenter").asListCheckbox().name("Moon Shadow Center").onChange(() => {
             this.rebuild();
             setRenderOne(true);
         }).listen()
@@ -125,7 +125,7 @@ export class CNodeDisplayMoonShadow extends CNode3DGroup {
         this._vUp = new Vector3();
         this._onElevationChanged = () => { this._pathGeomKey = null; };
         EventManager.addEventListener("elevationChanged", this._onElevationChanged);
-        this.gui.add(this, "showEclipsePath").name("Eclipse Path").onChange(() => {
+        this.gui.add(this, "showEclipsePath").asListCheckbox().name("Eclipse Path").onChange(() => {
             this.rebuild();
             setRenderOne(true);
         }).listen()

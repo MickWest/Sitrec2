@@ -17,7 +17,7 @@ name labels follow. Terrain has a limit: see [Limitations](#limitations).
 
 ![The whole sky as a disc on a black background, with constellation lines and names, Polaris above the centre and Pegasus on the left. The Fisheye folder floats at the left, set to Equisolid-angle fisheye, Fisheye FOV 180 and Circle Size 100](docimages/fisheye-allsky-view.jpg)
 
-The look view after **Point Straight Up (Allsky)**, with the **Fisheye** folder dragged out of its menu. The tick beside the **Fisheye** title is **Fisheye Lens**. The disc is the image circle, and **Show Image Circle** masks everything outside it to black. With **Fisheye FOV °** at 180, the rim of the disc is the horizon. North is at the top: Polaris is above the centre. East is on the left, on the Pegasus side. The sky is at dusk, so that the disc shows against the black, and **Star Brightness** in the **View** menu is raised. **Constellation Lines** draws the lines and the large names. The small names come from **Star Names in Look**, limited to a few stars with **Show → Celestial → Label List**. Each name is drawn at its own point in the sky. Sitrec does not move names apart or cut them at the rim, so close neighbours can overlap, such as Andromeda and Cassiopeia, and a name near the rim can cross onto the black, such as Aquarius.
+The look view after **Point Straight Up (Allsky)**, with the **Fisheye** folder dragged out of its menu. The tick beside the **Fisheye** title is **Fisheye Lens**. The disc is the image circle, and **Show Image Circle** masks everything outside it to black. With **Fisheye FOV °** at 180, the rim of the disc is the horizon. North is at the top: Polaris is above the centre. East is on the left, on the Pegasus side. The sky is at dusk, so that the disc shows against the black, and **Star Brightness** in **Show → Celestial → Stars and Planets** is raised. **Show → Celestial → Lines → Constellation Lines** draws the lines. **Show → Celestial → Labels → Constellation Names** independently controls the large names. The small names come from **Star/Planet Names in Look**, limited to a few stars with **Show → Celestial → Labels → Name Filter**. Each name is drawn at its own point in the sky. Sitrec does not move names apart or cut them at the rim, so close neighbours can overlap, such as Andromeda and Cassiopeia, and a name near the rim can cross onto the black, such as Aquarius.
 
 The Fisheye menu is available in custom sitches only, and the Starlink sitch is
 one of them. To start a custom sitch, use **File → New Sitch** or open
@@ -97,7 +97,7 @@ together: enabling one turns the other off.
    matches the video's image circle (155 for a circle whose diameter is 1.55×
    the frame height), and the Center offsets if the video's circle is
    off-centre.
-4. Turn on **Show → Celestial → Star Names in Look** and **Constellation Lines**
+4. Turn on **Show → Celestial → Labels → Star/Planet Names in Look** and **Show → Celestial → Lines → Constellation Lines**
    to find the star pattern, and adjust **Roll °** until the cardinal directions
    line up.
 5. Fine-tune **Fisheye FOV** and the **Projection** type until stars match

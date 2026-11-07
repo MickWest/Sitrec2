@@ -1912,14 +1912,15 @@ export const setupMethods = {
         // button offers Show Every Track on a double click, and the look view's also syncs
         // "Show in look view" — see ICON_OVERRIDES in src/ViewUIBarMenus.js.
         //
-        // Created Look first because each row moves to the top, so Main ends up above Look.
+        // Created Look first; the second controller joins it in the shared M/L row.
         if (Globals.showTracksLook === undefined) Globals.showTracksLook = true;
         guiMenus.contents.add(this, "showTracksLook")
             .name(t("custom.showHide.showTracksLook.label"))
             .moveToFirst()
             .tooltip(t("custom.showHide.showTracksLook.tooltip"))
             .listen()
-            .shareAs(viewMenuKey("lookView", "showTracks"));
+            .shareAs(viewMenuKey("lookView", "showTracks"))
+            .asViewCheckbox("lookView", t("viewMenus.showTracks"));
 
         // The i18n key keeps its old name (the property was showAllTracks) so the nine
         // translations of the label stay attached to it.
@@ -1929,7 +1930,8 @@ export const setupMethods = {
             .moveToFirst()
             .tooltip(t("custom.showHide.showAllTracks.tooltip"))
             .listen()
-            .shareAs(viewMenuKey("mainView", "showTracks"));
+            .shareAs(viewMenuKey("mainView", "showTracks"))
+            .asViewCheckbox("mainView", t("viewMenus.showTracks"));
 
         // The two blunter things the header-bar buttons reach for. Real rows with real labels,
         // because a gesture that exists only on a button is one nobody can find.

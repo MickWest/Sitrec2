@@ -177,7 +177,8 @@ export class CNodeLunarEclipse extends CNode {
     }
 
     _buildGUI() {
-        this.gui = guiMenus.lighting ? guiMenus.lighting.addFolder("Lunar Eclipse") : undefined;
+        const menu = NodeMan.get("NightSkyNode", false)?.eclipsesGUI ?? guiMenus.lighting;
+        this.gui = menu?.addFolder("Lunar Eclipse").close();
         if (!this.gui) return;
         const g = this.gui;
         g.tooltip("The Earth's shadow on the Moon during a lunar eclipse: the shading, the red color of totality, the exposure, and outlines of the shadow.\nThe shading shows only while the Moon is in the Earth's shadow.");
@@ -189,7 +190,7 @@ export class CNodeLunarEclipse extends CNode {
                 + " Has no effect unless a lunar eclipse is actually in progress.")
             .asFolderToggle();
 
-        g.add(this, "bloodMoon").name("Blood Moon Color").listen()
+        g.add(this, "bloodMoon").asListCheckbox().name("Blood Moon Color").listen()
             .onChange(() => this.recalculate())
             .tooltip("Color the umbra with the sunlight refracted through the Earth's atmosphere —"
                 + " deep red at the center, with the ozone-blue fringe near the edge. Off renders the"
@@ -202,7 +203,7 @@ export class CNodeLunarEclipse extends CNode {
                 + " aerosol and cloud — an almost invisible Moon, as after Pinatubo. High is an"
                 + " exceptionally clear, bright coppery eclipse. 0.5 is typical.");
 
-        g.add(this, "autoExposure").name("Auto Exposure").listen()
+        g.add(this, "autoExposure").asListCheckbox().name("Auto Exposure").listen()
             .onChange(() => this.recalculate())
             .tooltip("A total eclipse is ~10 magnitudes below a full Moon, so at true brightness it"
                 + " renders black. Auto picks one exposure from the deepest phase of THIS eclipse and"
@@ -215,7 +216,7 @@ export class CNodeLunarEclipse extends CNode {
                 + " Changing this turns Auto Exposure off. The sunlit part is unaffected: the"
                 + " shader rolls illumination off smoothly above 0.8 rather than clipping it.");
 
-        g.add(this, "showOutlines").name("Shadow Outlines").listen()
+        g.add(this, "showOutlines").asListCheckbox().name("Shadow Outlines").listen()
             .onChange(() => this.recalculate())
             .tooltip("Ring the Earth's umbra (gold) and penumbra (orange) out at the Moon's distance,"
                 + " so you can see the whole shadow the Moon is crossing. Drawn from the same"

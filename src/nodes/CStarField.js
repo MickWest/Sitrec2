@@ -237,7 +237,7 @@ export class CStarField {
         this.createStarCloud(scene);
     }
 
-    updateStarVisibility(newLimit, scene) {
+    updateStarVisibility(newLimit, scene = this.scene) {
         Sit.starLimit = newLimit;
         this.createStarCloud(scene);
     }

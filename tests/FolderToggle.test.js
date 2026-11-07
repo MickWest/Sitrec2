@@ -40,6 +40,56 @@ function makeToggledFolder(state, sideEffect = () => {}) {
     return {folder, toggle};
 }
 
+test("paired folder title toggles keep settings live while either view is enabled", () => {
+    const folder = makeGUI().addFolder("Horizon Compass");
+    const state = {main: false, look: true, opacity: 1};
+    const pair = folder.addCheckboxPair(state, "main", "look", "Horizon Compass");
+    const opacity = folder.add(state, "opacity", 0, 1);
+    pair.main.asFolderToggle({paired: true});
+    expect(pair.domElement.parentNode).toBe(folder.domElement);
+    expect(pair.domElement.querySelectorAll("input")).toHaveLength(2);
+    expect(isOff(folder)).toBe(false);
+    pair.look.setValue(false);
+    expect(isOff(folder)).toBe(true);
+    expect(opacity.domElement.hasAttribute("inert")).toBe(true);
+    expect(pair.domElement.closest("[inert]")).toBeNull();
+    pair.main.$input.click();
+    expect(state).toMatchObject({main: true, look: false});
+    expect(isOff(folder)).toBe(false);
+    expect(opacity.domElement.hasAttribute("inert")).toBe(false);
+});
+
+test("a whole-folder mirror retains the paired title and its independent callbacks", () => {
+    const folder = makeGUI().addFolder("Vectors"), target = makeGUI("Copy");
+    const state = {main: true, look: false, selected: true};
+    const changed = jest.fn();
+    const pair = folder.addCheckboxPair(state, "main", "look", "Vectors");
+    pair.main.onChange(changed).asFolderToggle({paired: true});
+    pair.look.onChange(changed);
+    folder.add(state, "selected");
+    target.mirrorFolderFrom(folder);
+    const title = target.domElement.querySelector(":scope > .lil-folder-toggle-pair");
+    expect(title.querySelectorAll("input")).toHaveLength(2);
+    const look = target.controllers.find(c => c.property === "look");
+    look.$input.click();
+    expect(state).toMatchObject({main: true, look: true});
+    expect(changed).toHaveBeenCalledTimes(1);
+    target.destroy();
+    expect(pair.domElement.parentNode).toBe(folder.domElement);
+});
+
+test("destroying one side of a paired title restores the surviving ordinary control", () => {
+    const folder = makeGUI().addFolder("Compass");
+    const pair = folder.addCheckboxPair({main: false, look: false}, "main", "look", "Compass");
+    const row = folder.add({value: 1}, "value");
+    pair.main.asFolderToggle({paired: true});
+    pair.look.destroy();
+    expect(folder.domElement.querySelector(".lil-folder-toggle-pair")).toBeNull();
+    expect(pair.main.domElement.parentNode).toBe(folder.$children);
+    expect(row.domElement.hasAttribute("inert")).toBe(false);
+    folder.destroy();
+});
+
 beforeEach(() => {
     containers = [];
     clearMenuMirrors();

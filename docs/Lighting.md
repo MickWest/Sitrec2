@@ -4,8 +4,8 @@
 
 The Lighting menu controls how the 3D scene is lit and how the look view turns that light into
 a picture. It holds the sun and ambient light, shadows, the sky and distance haze, the look
-view's exposure, and a set of optional sky and ground effects: halos, the Brocken spectre, city
-lights and eclipses.
+view's exposure, and city lights. Celestial effects now live in **Show → Celestial**: halos,
+the Brocken spectre and eclipses. Their controls are also described below.
 
 The Sun's position is not set here. Sitrec calculates it from the sitch's date, time and camera
 location, so the lighting follows the **Time** menu. The controls in this menu set how *strong*
@@ -147,7 +147,7 @@ kept.
 
 ## Atmospheric Optics (Halos)
 
-**Lighting → Atmospheric Optics (Halos)**
+**Show → Celestial → Atmospheric Optics (Halos)**
 
 Ice-crystal halos and arcs, drawn on the sky around the Sun by day and around the Moon at night.
 **Show Halos**, the checkbox on the folder title, is off by default. Each optic is drawn only when the Sun (or Moon) is at an
@@ -176,7 +176,7 @@ The look view, facing the Sun with a wide field of view. **Show Halos** is on, a
 
 ### Brocken Spectre
 
-**Lighting → Atmospheric Optics (Halos) → Brocken Spectre**
+**Show → Celestial → Atmospheric Optics (Halos) → Brocken Spectre**
 
 A Brocken spectre is the observer's own shadow cast on fog or cloud below, surrounded by colored
 rings (the *glory*). It appears opposite the Sun. Sitrec draws it in the look view only, at a
@@ -283,7 +283,7 @@ How the data becomes lights:
 
 ## Eclipses
 
-**Lighting → Solar Eclipse** and **Lighting → Lunar Eclipse**
+**Show → Celestial → Eclipses → Solar Eclipse** and **Show → Celestial → Eclipses → Lunar Eclipse**
 
 Both folders do nothing unless an eclipse is actually in progress at the sitch time and place.
 

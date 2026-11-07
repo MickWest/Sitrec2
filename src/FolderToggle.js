@@ -62,8 +62,8 @@ function injectStyles() {
     style.id = STYLE_ID;
     style.textContent = `
 .lil-gui.lil-has-folder-toggle:not(.root) { position: relative; }
-.lil-gui.lil-has-folder-toggle:not(.root) > .title { padding-right: calc(var(--checkbox-size) + 2 * var(--padding)); }
-.lil-gui > input.lil-folder-toggle {
+.lil-gui.lil-has-folder-toggle:not(.root) > .title { padding-right: calc(var(--folder-toggle-width, var(--checkbox-size)) + 2 * var(--padding)); }
+.lil-gui > .lil-folder-toggle {
     position: absolute;
     top: calc((var(--title-height) - var(--checkbox-size)) / 2);
     right: var(--padding);
@@ -72,6 +72,13 @@ function injectStyles() {
     /* a root menu's element is pointer-events:none, with only its title and rows turned back on */
     pointer-events: auto;
 }
+.lil-gui.lil-has-folder-toggle-pair { --folder-toggle-width: calc(2 * var(--checkbox-size) + var(--spacing)); }
+.lil-gui > .controller.lil-folder-toggle-pair {
+    top: calc((var(--title-height) - var(--widget-height)) / 2);
+    margin: 0;
+    padding: 0;
+}
+.lil-gui > .lil-folder-toggle-pair > .lil-checkbox-pair-name { display: none; }
 .lil-gui .controller.lil-folder-toggle-source { display: none; }
 .lil-gui .controller.boolean.lil-list-checkbox > .name { flex: 1 1 auto; min-width: 0; }
 .lil-gui .controller.boolean.lil-list-checkbox > .widget { flex: 0 0 auto; width: auto; }
@@ -109,7 +116,7 @@ function markRows(elements, marked) {
     for (const el of elements) {
         if (el.classList.contains("lil-keep-live")) continue;
         if (el.classList.contains("lil-gui") && el.querySelector(".lil-keep-live")) {
-            const box = el.querySelector(":scope > input.lil-folder-toggle");
+            const box = el.querySelector(":scope > .lil-folder-toggle");
             if (box) mark(box, marked);
             const sub = el.querySelector(":scope > .children");
             if (sub) markRows(sub.children, marked);
@@ -121,7 +128,7 @@ function markRows(elements, marked) {
 
 // --- the promotion ----------------------------------------------------------------------------
 
-Controller.prototype.asFolderToggle = function ({fadeOnlyMarked = false} = {}) {
+Controller.prototype.asFolderToggle = function ({fadeOnlyMarked = false, paired = false} = {}) {
     const folder = this.parent;
     if (!folder || !folder.domElement) return this;
     if (folder._folderToggle === this) return this;
@@ -129,22 +136,33 @@ Controller.prototype.asFolderToggle = function ({fadeOnlyMarked = false} = {}) {
     folder._folderToggle?._removeFolderToggle?.();
 
     injectStyles();
-    this.listen();
+    const pair = paired ? this._checkboxPair : null;
+    if (paired && !pair) throw new Error("A paired folder toggle needs a Main/Look checkbox pair");
+    const controllers = pair ? [pair.main, pair.look] : [this];
+    for (const controller of controllers) controller.listen();
     // Kept so that a whole-folder copy (MenuMirror) promotes its twin the same way.
-    this._folderToggleOptions = {fadeOnlyMarked};
+    this._folderToggleOptions = {fadeOnlyMarked, paired};
 
-    const box = document.createElement("input");
-    box.type = "checkbox";
-    box.className = "lil-folder-toggle";
-    box.setAttribute("aria-label", this._name ?? this.property);
-    box.addEventListener("change", () => {
-        this.setValue(box.checked);
-        this._callOnFinishChange?.();
-    });
+    // A pair uses its real controls on the title, including their M/L letters,
+    // keyboard behavior and drag painting. Single toggles keep their proxy box.
+    const box = pair ? pair.domElement : document.createElement("input");
+    const originalNextSibling = box.nextSibling;
+    if (pair) {
+        box.classList.add("lil-folder-toggle", "lil-folder-toggle-pair");
+        folder.domElement.classList.add("lil-has-folder-toggle-pair");
+    } else {
+        box.type = "checkbox";
+        box.className = "lil-folder-toggle";
+        box.setAttribute("aria-label", this._name ?? this.property);
+        box.addEventListener("change", () => {
+            this.setValue(box.checked);
+            this._callOnFinishChange?.();
+        });
+    }
 
     folder.domElement.insertBefore(box, folder.$children);
     folder.domElement.classList.add("lil-has-folder-toggle");
-    this.domElement.classList.add("lil-folder-toggle-source");
+    if (!pair) this.domElement.classList.add("lil-folder-toggle-source");
     folder._folderToggle = this;
     this._folderToggleBox = box;
 
@@ -173,11 +191,13 @@ Controller.prototype.asFolderToggle = function ({fadeOnlyMarked = false} = {}) {
     let lastOff = null;
     const sync = () => {
         if (!active) return;
-        const on = !!this.getValue();
-        box.checked = on;
-        box.disabled = !!this._disabled;
-        box.style.display = this._hidden ? "none" : "";
-        box.title = this._tooltip ?? this._name ?? "";
+        const on = controllers.some(controller => !!controller.getValue());
+        if (!pair) {
+            box.checked = on;
+            box.disabled = !!this._disabled;
+            box.title = this._tooltip ?? this._name ?? "";
+        }
+        box.style.display = controllers.every(controller => controller._hidden) ? "none" : "";
         folder.domElement.classList.toggle("lil-folder-off", !on);
         if (lastOff !== !on) {
             lastOff = !on;
@@ -218,31 +238,16 @@ Controller.prototype.asFolderToggle = function ({fadeOnlyMarked = false} = {}) {
     // Per-instance wrappers. They are never unwrapped: restoring a saved method would throw away
     // anything wrapped on top later (MenuMirror's show() patch when .shareAs() comes after this).
     // After removal they only pass through, because sync() checks `active`.
-    const inheritedUpdateDisplay = this.updateDisplay;
-    this.updateDisplay = function (...args) {
-        const result = inheritedUpdateDisplay.apply(this, args);
-        sync();
-        return result;
-    };
-    const inheritedDisable = this.disable;
-    this.disable = function (...args) {
-        const result = inheritedDisable.apply(this, args);
-        sync();
-        return result;
-    };
-    const inheritedShow = this.show;
-    this.show = function (...args) {
-        const result = inheritedShow.apply(this, args);
-        sync();
-        return result;
-    };
-    const inheritedTooltip = this.tooltip;
-    if (typeof inheritedTooltip === "function") {
-        this.tooltip = function (...args) {
-            const result = inheritedTooltip.apply(this, args);
-            sync();
-            return result;
-        };
+    for (const controller of controllers) {
+        for (const method of ["updateDisplay", "disable", "show", "tooltip"]) {
+            const inherited = controller[method];
+            if (typeof inherited !== "function") continue;
+            controller[method] = function (...args) {
+                const result = inherited.apply(this, args);
+                sync();
+                return result;
+            };
+        }
     }
 
     this._removeFolderToggle = () => {
@@ -251,8 +256,13 @@ Controller.prototype.asFolderToggle = function ({fadeOnlyMarked = false} = {}) {
         classObserver.disconnect();
         rowObserver.disconnect();
         clearMarks();
-        box.remove();
-        folder.domElement.classList.remove("lil-has-folder-toggle", "lil-folder-off");
+        if (pair) {
+            box.classList.remove("lil-folder-toggle", "lil-folder-toggle-pair");
+            box.style.left = "";
+            box.style.right = "";
+            folder.$children.insertBefore(box, originalNextSibling?.parentNode === folder.$children ? originalNextSibling : null);
+        } else box.remove();
+        folder.domElement.classList.remove("lil-has-folder-toggle", "lil-has-folder-toggle-pair", "lil-folder-off");
         this.domElement.classList.remove("lil-folder-toggle-source");
         if (folder._folderToggle === this) {
             folder._folderToggle = null;
@@ -264,11 +274,14 @@ Controller.prototype.asFolderToggle = function ({fadeOnlyMarked = false} = {}) {
 
     // lil-gui's destroy(all) keeps a .perm() controller unless `all` — a sitch change calls
     // destroy(false) on every menu — so the promotion must survive exactly when the row does.
-    const inheritedDestroy = this.destroy;
-    this.destroy = function (all = false, ...rest) {
-        if (all || !this.permanent) this._removeFolderToggle?.();
-        return inheritedDestroy.call(this, all, ...rest);
-    };
+    const owner = this;
+    for (const controller of controllers) {
+        const inheritedDestroy = controller.destroy;
+        controller.destroy = function (all = false, ...rest) {
+            if (all || !this.permanent) owner._removeFolderToggle?.();
+            return inheritedDestroy.call(this, all, ...rest);
+        };
+    }
 
     sync();
     return this;

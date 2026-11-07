@@ -181,7 +181,7 @@ export class CNodeView3D extends CNodeViewCanvas {
                     const lighting = NodeMan.get("lighting", false);
                     if (lighting) lighting.applyShadowConfig({reason: "viewToggle"});
                     else this.applyShadowRendererConfig({transitioned: true});
-                });
+                }).asViewCheckbox(this.id, t("view3d.shadowsEnabled.pairLabel"));
             if (Globals.isMobile) {
                 const mobileLabel = this.id === "mainView"
                     ? t("view3d.allowMobileShadows.mainLabel")
@@ -193,7 +193,7 @@ export class CNodeView3D extends CNodeViewCanvas {
                     .onChange(() => {
                         const lighting = NodeMan.get("lighting", false);
                         if (lighting) lighting.applyShadowConfig({reason: "mobileToggle"});
-                    });
+                    }).asViewCheckbox(this.id, t("view3d.allowMobileShadows.pairLabel"));
             }
         }
 
@@ -987,6 +987,7 @@ export class CNodeView3D extends CNodeViewCanvas {
             // Update star and satellite scales for this view
             const nightSkyNode = NodeMan.get("NightSkyNode");
             if (nightSkyNode) {
+                nightSkyNode.syncAzimuthalGridToObserver(lookCamera.position);
                 // The sky scenes are shared across views, so resync the Sun/Moon
                 // meshes to the camera that is actually being rendered right now.
                 // Without this, the main view can inherit the look-camera observer.
@@ -3072,6 +3073,7 @@ export class CNodeView3D extends CNodeViewCanvas {
 
             // // scale the sprites one for each viewport
             const nightSkyNode = NodeMan.get("NightSkyNode")
+            nightSkyNode?.syncAzimuthalGridToObserver(this.camera.position);
             if (nightSkyNode?.syncPlanetSpritesToObserver) {
                 // Same shared-scene issue as above: render the Sun/Moon from this
                 // view's observer, but keep global arrow/debug ephemeris state

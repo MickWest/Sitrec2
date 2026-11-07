@@ -144,11 +144,11 @@ export class CNodeEclipse extends CNode {
         this.glowMesh.frustumCulled = false;
         this.group.add(this.glowMesh);
 
-        // GUI — submenu under Lighting, next to the Atmospheric Optics.
-        this.gui = guiMenus.lighting ? guiMenus.lighting.addFolder("Solar Eclipse") : undefined;
+        const menu = NodeMan.get("NightSkyNode", false)?.eclipsesGUI ?? guiMenus.lighting;
+        this.gui = menu?.addFolder("Solar Eclipse").close();
         if (this.gui) {
             this.gui.tooltip("Visual effects of a solar eclipse: the corona, prominences, Baily's beads and the dimming of the light.\nThey show only while the Moon covers part of the Sun.");
-            const addBool = (property, name) => this.gui.add(this, property).name(name).listen()
+            const addBool = (property, name) => this.gui.add(this, property).asListCheckbox().name(name).listen()
                 .onChange(() => this.recalculate());
             addBool("enabled", "Eclipse Effects")
                 .tooltip("Master toggle for solar-eclipse visuals: the Moon's silhouette, Baily's beads, the diamond ring, and the totality corona with prominences. Has no effect unless the Moon actually overlaps the Sun.")
@@ -162,7 +162,7 @@ export class CNodeEclipse extends CNode {
                 .tooltip("Pink-red chromospheric loops on the solar limb, peeking past the Moon's edge during totality.");
             addBool("beads", "Baily's Beads / Diamond Ring")
                 .tooltip("The last sunlight shining through lunar valleys at second and third contact, and the diamond-ring flare.");
-            this.gui.add(this, "affectLighting").name("Affect Lighting").listen()
+            this.gui.add(this, "affectLighting").asListCheckbox().name("Affect Lighting").listen()
                 .onChange(() => {
                     setEclipseLightingEnabled(this.affectLighting);
                     this.recalculate();

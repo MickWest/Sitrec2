@@ -22,7 +22,7 @@ footage.
 4. In a custom sitch: **Camera → Camera Tweaks → Diffraction Glare → Import PSF…**
 5. Tick **Rendering Effects** in **Effects → Rendering Effects**, then tick
    **Custom_DiffractionGlare** in **Effects → Rendering Effects → Thermal/NV**.
-6. If the source is a star or a planet, turn on **View → Physical Point Sources**.
+6. If the source is a star or a planet, turn on **Show → Celestial → Stars and Planets → Physical Point Sources**.
 7. Aim the look camera at a bright source, such as a bright star at night, and narrow the field
    of view, for example to 0.5°. At a wide field the pattern covers only a pixel or two. The
    source then shows its pattern of spikes.
@@ -223,7 +223,7 @@ higher value costs less, but it separates close sources less finely.
 
 ## Physical point sources
 
-**View → Physical Point Sources.** Off by default. Turn it on when the bright source is a star
+**Show → Celestial → Stars and Planets → Physical Point Sources.** Off by default. Turn it on when the bright source is a star
 or a planet. It does not change the Sun, the Moon, satellites or 3D objects.
 
 Sitrec normally draws a star as a **disc whose radius grows with brightness**, with its color

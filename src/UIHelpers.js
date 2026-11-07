@@ -60,7 +60,8 @@ function addTimeDisplayMenu(viewUI, flag) {
         .tooltip(t("timeDisplay.tooltip"))
         .listen()
         .onChange(() => setRenderOne(true))
-        .shareAs(viewMenuKey(viewId, "timeDisplay"));
+        .shareAs(viewMenuKey(viewId, "timeDisplay"))
+        .asViewCheckbox(viewId, t("timeDisplay.thing"), "timeDisplay");
 }
 
 

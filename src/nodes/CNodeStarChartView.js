@@ -78,6 +78,7 @@ export class CNodeStarChartView extends CNodeTabbedCanvasView {
         this.magLimit = v.magLimit ?? 5.5;
         this.addSimpleSerial("colorScheme");
         this.addSimpleSerial("showSatelliteTrack");
+        this.addSimpleSerial("magLimit");
 
         // signature of the last drawn chart, so a render pass that changes
         // nothing the chart depends on doesn't redraw ~3000 star dots
@@ -96,7 +97,7 @@ export class CNodeStarChartView extends CNodeTabbedCanvasView {
             setRenderOne(true);
         }).catch(() => {});
 
-        this.guiFolder = guiShowHide.addFolder("Star Chart").close()
+        this.guiFolder = (this.nightSkyNode?.extraViewsGUI ?? guiShowHide).addFolder("Star Chart").close()
             .tooltip("A whole-sky star chart for the current frame's time and the look camera's location.\n"
                 + "The zenith is at the center and the horizon at the edge, with north up and east on the left, as on a printed sky chart.");
         this.guiFolder.add(this, "visible").listen().name("Show Star Chart")
@@ -114,7 +115,10 @@ export class CNodeStarChartView extends CNodeTabbedCanvasView {
                 + "Black: white stars on black.\n"
                 + "Night Vision: red on black.\n"
                 + "White: black stars on white.");
-        this.guiFolder.add(this, "showSatelliteTrack").listen().name("Satellite Track")
+        this.guiFolder.add(this, "magLimit", -2, 10, 0.1).listen().name("Star Magnitude Limit")
+            .onChange(() => setRenderOne(true))
+            .tooltip("Faintest star to include in this chart. Higher magnitudes include fainter stars. Independent of the 3D view's star limit.");
+        this.guiFolder.add(this, "showSatelliteTrack").asListCheckbox().listen().name("Satellite Track")
             .onChange(() => setRenderOne(true))
             .tooltip("Plot the track of the 'Satellite to Track' across the chart, with times");
     }

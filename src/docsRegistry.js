@@ -227,12 +227,17 @@ export const helpDocs = [
     {
         file: "docs/Lighting", labelKey: "menus.help.documentation.lighting",
         section: "world", menuId: "lighting", role: "reference",
-        chatDesc: "Reference for every control in the Lighting menu: sun, ambient and scattered light, exposure, shadows, atmosphere and haze, the look-view tone mapping, halos and the Brocken spectre, city lights, and eclipses. Read for 'why is my night scene so bright/dark', 'how do I turn on shadows', 'how do I match the video's exposure', or 'are the city lights real'.",
+        chatDesc: "Reference for the Lighting menu: sun, ambient and scattered light, exposure, shadows, atmosphere and haze, the look-view tone mapping and city lights. Also describes the halos, Brocken spectre and eclipse controls now under Show > Celestial. Read for 'why is my night scene so bright/dark', 'how do I turn on shadows', 'how do I match the video's exposure', or 'are the city lights real'.",
+    },
+    {
+        file: "docs/Celestial", labelKey: "menus.help.documentation.celestial",
+        section: "world", menuId: "showhide", role: "reference",
+        chatDesc: "Show > Celestial: stars and planets, constellation lines and names, equatorial grids, horizon compass, direction vectors, Earth and Moon shadows, eclipse visuals, halos, Star Chart, Satellite Ephemeris and Sky Plot. Explains the master visibility checkbox, star magnitude versus brightness, per-view labels and name filtering, and which related controls remain in Time, Camera, Lighting and Satellites.",
     },
     {
         file: "docs/LunarEclipse", labelKey: "menus.help.documentation.lunarEclipse",
-        section: "world", menuId: "lighting", role: "reference",
-        chatDesc: "Lunar eclipses (Lighting → Lunar Eclipse): the Earth's shadow on the Moon. What the penumbra and umbra are and why the umbral edge is soft, why a totally eclipsed Moon turns red (sunlight refracted through the Earth's atmosphere, with the blue scattered out) and why there is a turquoise fringe at the umbral edge (ozone). The controls: Atmospheric Clarity and how it moves along the Danjon L0-L4 scale of how dark an eclipse looks, why exposure has to be raised at all when totality is ten magnitudes below a full Moon, and Shadow Outlines, which rings the whole umbra and penumbra at the Moon's distance. Also the 88 km shadow enlargement and the Chauvenet/Danjon dispute behind it. Includes dates of recent and forthcoming eclipses, and what is and is not modelled. Read this for 'why is the Moon red', 'blood moon', 'how do I show a lunar eclipse', 'what is the umbra', 'what is the Danjon scale', or any question about eclipses of the Moon. NOT for solar eclipses or for the Moon's shadow on the Earth.",
+        section: "world", menuId: "showhide", role: "reference",
+        chatDesc: "Lunar eclipses (Show → Celestial → Eclipses → Lunar Eclipse): the Earth's shadow on the Moon. What the penumbra and umbra are and why the umbral edge is soft, why a totally eclipsed Moon turns red (sunlight refracted through the Earth's atmosphere, with the blue scattered out) and why there is a turquoise fringe at the umbral edge (ozone). The controls: Atmospheric Clarity and how it moves along the Danjon L0-L4 scale of how dark an eclipse looks, why exposure has to be raised at all when totality is ten magnitudes below a full Moon, and Shadow Outlines, which rings the whole umbra and penumbra at the Moon's distance. Also the 88 km shadow enlargement and the Chauvenet/Danjon dispute behind it. Includes dates of recent and forthcoming eclipses, and what is and is not modelled. Read this for 'why is the Moon red', 'blood moon', 'how do I show a lunar eclipse', 'what is the umbra', 'what is the Danjon scale', or any question about eclipses of the Moon. NOT for solar eclipses or for the Moon's shadow on the Earth.",
     },
     {
         file: "docs/AtmosphericAerialPerspective", labelKey: "menus.help.documentation.aerialPerspective",

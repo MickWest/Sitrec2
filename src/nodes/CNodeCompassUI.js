@@ -11,7 +11,7 @@ import {arModeManager} from "../ARMode";
 import {windSourceShortLabel} from "./WindSources";
 import {t} from "../i18n";
 import {getHUDColor} from "../HUDColor";
-import {viewMenuKey} from "../ViewUIBarMenus";
+import {viewControlLabel, viewMenuKey} from "../ViewUIBarMenus";
 
 export class   CNodeCompassUI extends CNodeViewUI {
 
@@ -52,7 +52,9 @@ export class   CNodeCompassUI extends CNodeViewUI {
         // so publishing under the host id is enough — see src/ViewUIBarMenus.js.
         const hostView = this.in.relativeTo;
         if (hostView && this.showHideController) {
-            this.showHideController.shareAs(viewMenuKey(hostView.id, "compass"));
+            this.showHideController.name(viewControlLabel(hostView.id, t("viewMenus.compass")))
+                .shareAs(viewMenuKey(hostView.id, "compass"))
+                .asViewCheckbox(hostView.id, t("viewMenus.compass"));
         }
         
         this.installInteraction();

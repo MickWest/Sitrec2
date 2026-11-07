@@ -360,7 +360,10 @@ Because orbital predictions drift over time, always load the data for the date y
 
 With the time, location and direction set, the look view shows what the camera would see. To test a candidate, check that it is at the same place in the look view as the object in the video, on the same frame, and that it moves the same way when you scrub.
 
-- **Planets and stars.** In **Show → Celestial**, tick **Star Names in Look** to name the stars and planets in the look view. Also tick **Only Label Planets in Look** to name only the planets.
+- **Stars and planets.** Open **Show → Celestial → Stars and Planets** for star and planet brightness, the star magnitude limit, and Physical Point Sources. The folder checkbox, **Render Stars and Planets**, hides or shows both, including the Sun and Moon and their name labels. Constellation lines and grids keep their separate switches.
+- **Horizon compass.** Tick the **Show → Celestial → Horizon Compass** folder title to show compass directions and degree ticks along the sea-level horizon in the 3D views. Open the folder to adjust **Opacity** and **Text Size**. The ribbon follows camera direction, roll and zoom, and dips below the local horizontal at altitude. Hills can rise above it. Numbers stay upright and ticks stay vertical on screen. Degree labels normally appear every 10°, including beneath the cardinal directions.
+- **Celestial lines.** Use **Show → Celestial → Lines** for constellation lines, the equatorial grids and their shared **Line Width** slider. The default width is 0.25 display pixels, adjustable in steps of 0.01.
+- **Planets and stars.** In **Show → Celestial → Labels**, tick **Star/Planet Names in Look** to name the stars and planets in the look view. **Constellation Names** independently shows or hides constellation labels. Also tick **Planets Only in Look** to name only the planets.
 - **Satellites.** Load them as in [Adding satellites](#adding-satellites), then tick **Satellite Labels (Look View)** in the **Satellites** menu.
 - **Aircraft.** **Help → ADSB Replay for this time and location** and **Help → FlightRadar24 Replay Here** open a flight-tracking replay at the camera's position and the time of the current frame. Find the flights near you, then get a track for each one: see [KML Data Sources](KMLDataSources.md). Drag it in to see where that aircraft was.
 

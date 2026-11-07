@@ -76,7 +76,7 @@ export class CNodeDisplayEarthShadow extends CNode3DGroup {
         });
 
 
-        this.gui.add(this, "visible").name(t("misc.showEarthShadow.label")).onChange(() => {
+        this.gui.add(this, "visible").asListCheckbox().name(t("misc.showEarthShadow.label")).onChange(() => {
             this.show(this.visible);
             this.rebuild();
             setRenderOne(true);
@@ -91,7 +91,7 @@ export class CNodeDisplayEarthShadow extends CNode3DGroup {
             .name(t("misc.earthShadowAltitude.label"))
             .tooltip(t("misc.earthShadowAltitude.tooltip"));
 
-        this.gui.add(this, "showThroughTerrain").name("Shadow Through Terrain").listen()
+        this.gui.add(this, "showThroughTerrain").asListCheckbox().name("Shadow Through Terrain").listen()
             .tooltip("Draw the Earth's shadow cones and circles even where the Earth or terrain is in front of them. Off: the Earth and terrain hide those parts.")
             .onChange(() => { this.applyDepthPolicy(); setRenderOne(true); });
         this.addSimpleSerial("altitude");

@@ -111,6 +111,14 @@ function collectRegistrations() {
                 const literalView = m[1].startsWith('"') ? m[1].slice(1, -1) : null;
                 calls.push({file, view: literalView, slot: m[2], shared: false});
             }
+            // The celestial pair helper publishes its fourth argument to both
+            // views. Its runtime registration is also covered by the visibility tests.
+            const pairs = /\.addCelestialViewPair\(\s*[^,]+,\s*"[^"]+",\s*(?:"[^"]+"|t\("[^"]+"\)),\s*"(\w+)"/g;
+            while ((m = pairs.exec(text)) !== null) {
+                for (const view of ["mainView", "lookView"]) {
+                    calls.push({file: path.relative(SRC_DIR, full), view, slot: m[1], shared: false});
+                }
+            }
         }
     };
     walk(SRC_DIR);
@@ -255,7 +263,7 @@ describe("populateViewUIBarMenu", () => {
         const menu = look.uiBar.titleMenu;
 
         const byTitle = Object.fromEntries(menu.folders.map(f => [f._title, f]));
-        expect(rowNames(byTitle["Night Sky"])).toEqual(["Star Names"]);
+        expect(rowNames(byTitle["Night Sky"])).toEqual(["Star/Planet Names"]);
         expect(rowNames(byTitle["Video Overlay"])).toEqual(["Transparency %"]);
         expect(byTitle["Night Sky"]._hidden).toBe(false);
         expect(byTitle["Video Overlay"]._hidden).toBe(false);

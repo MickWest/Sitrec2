@@ -1,6 +1,6 @@
 # Lunar Eclipses
 
-**Lighting → Lunar Eclipse**
+**Show → Celestial → Eclipses → Lunar Eclipse**
 
 When the Moon passes into the Earth's shadow, Sitrec shades it: the long soft gradient of
 the penumbra (the outer, partial shadow), the feathered edge of the umbra (the inner, full
@@ -12,7 +12,7 @@ distance during an eclipse, so you can see how big it is and watch the Moon cros
 
 ![The look view with a red, orange and yellow Moon in a black sky, darker at the upper right and brighter at the lower left. The Lunar Eclipse folder floats at the lower left with Auto Exposure ticked and Atmospheric Clarity at 0.5, and its Eclipse row reads Total, umbral mag 1.16. The clock at the lower right reads 2026-03-03 11:33:40.000 UTC](docimages/lunar-eclipse-total.jpg)
 
-*The total eclipse of 2026-03-03 at greatest eclipse, with the default Lunar Eclipse settings. The clock at the lower right reads 11:33:40 UTC. The Moon is dark red on the side toward the centre of the umbra, and shades through orange to a brighter yellow toward the rim of the umbra. The Lunar Eclipse folder is dragged out of the Lighting menu. Its Eclipse row is cut off after `mV`: the full text at this moment is `Total, umbral mag 1.16, mV -2.3, Danjon L3.6`.*
+*The total eclipse of 2026-03-03 at greatest eclipse, with the default Lunar Eclipse settings. The clock at the lower right reads 11:33:40 UTC. The Moon is dark red on the side toward the centre of the umbra, and shades through orange to a brighter yellow toward the rim of the umbra. The Lunar Eclipse folder is shown detached; it now opens from Show → Celestial → Eclipses. Its Eclipse row is cut off after `mV`: the full text at this moment is `Total, umbral mag 1.16, mV -2.3, Danjon L3.6`.*
 
 ---
 

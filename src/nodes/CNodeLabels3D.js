@@ -190,32 +190,38 @@ export function setupMeasurementUI() {
         refreshMeasurementVisibility();
         setRenderOne(true);
     })
-    measurementUIVars.controller.shareAs(viewMenuKey("mainView", "measurements"));
+    measurementUIVars.controller.shareAs(viewMenuKey("mainView", "measurements"))
+        .asViewCheckbox("mainView", t("viewMenus.measurements"));
 
     measurementUIVars.controllerLook = measurementFolder.add(Globals, "showMeasurementsLook").name(t("labels3d.measurementsInLook.label")).tooltip(t("labels3d.measurementsInLook.tooltip")).listen().onChange( (value) => {
         refreshMeasurementVisibility();
         setRenderOne(true);
     })
-    measurementUIVars.controllerLook.shareAs(viewMenuKey("lookView", "measurements"));
+    measurementUIVars.controllerLook.shareAs(viewMenuKey("lookView", "measurements"))
+        .asViewCheckbox("lookView", t("viewMenus.measurements"));
 
     const vbChanged = () => {
         refreshVBMeasureVisibility();
         setRenderOne(true);
     };
     measurementUIVars.vbController = measurementFolder.add(Globals, "showVBMeasureMain").name(t("labels3d.vbMeasure.label")).tooltip(t("labels3d.vbMeasure.tooltip")).listen().onChange(vbChanged);
-    measurementUIVars.vbController.shareAs(viewMenuKey("mainView", "vbMeasure"));
+    measurementUIVars.vbController.shareAs(viewMenuKey("mainView", "vbMeasure"))
+        .asViewCheckbox("mainView", t("viewMenus.vbMeasure"));
     measurementUIVars.vbControllerLook = measurementFolder.add(Globals, "showVBMeasureLook").name(t("labels3d.vbMeasureLook.label")).tooltip(t("labels3d.vbMeasureLook.tooltip")).listen().onChange(vbChanged);
-    measurementUIVars.vbControllerLook.shareAs(viewMenuKey("lookView", "vbMeasure"));
+    measurementUIVars.vbControllerLook.shareAs(viewMenuKey("lookView", "vbMeasure"))
+        .asViewCheckbox("lookView", t("viewMenus.vbMeasure"));
 
     // The circle is read per frame by CNodeMeasureAB.updateCircle, so a change only needs a frame.
     measurementUIVars.vbCircleController = measurementFolder.add(Globals, "showVBCircleMain").name(t("labels3d.vbCircle.label")).tooltip(t("labels3d.vbCircle.tooltip")).listen().onChange(() => {
         setRenderOne(true);
     });
-    measurementUIVars.vbCircleController.shareAs(viewMenuKey("mainView", "vbCircle"));
+    measurementUIVars.vbCircleController.shareAs(viewMenuKey("mainView", "vbCircle"))
+        .asViewCheckbox("mainView", t("viewMenus.vbCircle"));
     measurementUIVars.vbCircleControllerLook = measurementFolder.add(Globals, "showVBCircleLook").name(t("labels3d.vbCircleLook.label")).tooltip(t("labels3d.vbCircleLook.tooltip")).listen().onChange(() => {
         setRenderOne(true);
     });
-    measurementUIVars.vbCircleControllerLook.shareAs(viewMenuKey("lookView", "vbCircle"));
+    measurementUIVars.vbCircleControllerLook.shareAs(viewMenuKey("lookView", "vbCircle"))
+        .asViewCheckbox("lookView", t("viewMenus.vbCircle"));
 
     Globals.showLabelsMain = true;
     Globals.showLabelsLook = false;
@@ -234,8 +240,10 @@ export function setupMeasurementUI() {
         setRenderOne(true);
     })
 
-    labelsControllerMain.shareAs(viewMenuKey("mainView", "labels"));
-    labelsControllerLook.shareAs(viewMenuKey("lookView", "labels"));
+    labelsControllerMain.shareAs(viewMenuKey("mainView", "labels"))
+        .asViewCheckbox("mainView", t("viewMenus.labels"));
+    labelsControllerLook.shareAs(viewMenuKey("lookView", "labels"))
+        .asViewCheckbox("lookView", t("viewMenus.labels"));
 
     refreshLabelVisibility();
 
@@ -252,8 +260,10 @@ export function setupMeasurementUI() {
         setRenderOne(true);
     })
 
-    featuresControllerMain.shareAs(viewMenuKey("mainView", "features"));
-    featuresControllerLook.shareAs(viewMenuKey("lookView", "features"));
+    featuresControllerMain.shareAs(viewMenuKey("mainView", "features"))
+        .asViewCheckbox("mainView", t("viewMenus.features"));
+    featuresControllerLook.shareAs(viewMenuKey("lookView", "features"))
+        .asViewCheckbox("lookView", t("viewMenus.features"));
 
     refreshFeatureVisibility();
 

@@ -56,6 +56,7 @@ In the app, **Help → Documentation** has the same pages, **Help → AI Assista
 - [Atmospheric Refraction](docs/Refraction.md) — why distant things appear higher than straight-line geometry says, and what that does to the horizon.
 - [Wind in Sitrec](docs/Wind.md) — wind at the camera platform and at the target, real atmospheric data, streamlines and arrows.
 - [The Lighting Menu](docs/Lighting.md) — sun and ambient light, shadows, sky and distance haze, exposure, halos, city lights and eclipses.
+- [Celestial Display](docs/Celestial.md) — stars and planets, constellation lines and labels, horizon compass, vectors, shadows, eclipses, halos and extra sky views.
 - [Atmospheric Aerial Perspective](docs/AtmosphericAerialPerspective.md) — distance haze in the look view, how it is computed, and what the model leaves out.
 - [Lunar Eclipses](docs/LunarEclipse.md) — the Earth's shadow on the Moon, and the controls that shape it.
 - [Historic Skies](docs/HistoricSkies.md) — the sky for dates back to 1700, how to reach a date, and what stays accurate there.

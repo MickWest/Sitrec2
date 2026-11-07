@@ -1595,6 +1595,11 @@ export class CSatellite {
     }
 
     processTLEData(id, buffer, tleSource = null, tleAction = undefined) {
+        // Each download starts a new import batch. A previous load's merge-all
+        // choice must not skip this download's question, and its replacement
+        // flag must not turn an explicit replacement into another merge.
+        FileManager._tleMergeAll = false;
+        FileManager._tleReplacedInBatch = false;
         // Use FileManager.parseResult to handle unzipping, parsing, and routing
         // The proxyStarlink returns zipped TLE data
         FileManager.remove(id);

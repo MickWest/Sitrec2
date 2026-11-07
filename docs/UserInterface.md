@@ -32,6 +32,8 @@ Some folders have a checkbox at the right end of their title line. It switches t
 
 ## Checkboxes
 
+Options that apply separately to the Main and Look views share one row with two checkboxes. The left box is **M** (Main), and the right box is **L** (Look). Faint letters appear inside unchecked boxes; checkmarks replace them when enabled. Each box changes only its own view. This applies to grids, labels, pins, measurements, tracks, compasses, time displays and per-view shadows. Hover a box for its description. The matching view-header controls use the same settings.
+
 To set several checkboxes at once, press one and drag over the others without releasing the mouse button. Each checkbox you pass over is set the same way as the first one: on if you pressed an unticked box, off if you pressed a ticked one. This works for the checkboxes in menu rows and for the checkboxes on folder titles, so with the object folders closed you can drag down the Objects menu to hide or show several objects. Every checkbox under the pointer is set, including the rows of an open folder that the drag passes through. Greyed-out checkboxes are skipped.
 
 ## Sliders
@@ -177,7 +179,7 @@ Next to the name, the busiest of those are repeated as one-click icons.
 | a track | Show Tracks |
 | a track with a curtain under it | Extend Tracks to Ground |
 | a satellite | Satellites |
-| a star and an **S** | Star Names |
+| a star and an **S** | Star/Planet Names |
 | a globe with latitude and longitude lines | Lat/Lon Grid |
 | compass rose | Compass |
 | clock face | Time Display |
