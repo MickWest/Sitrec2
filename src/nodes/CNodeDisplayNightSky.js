@@ -657,7 +657,7 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
                 setRenderOne(true);
             });
 
-        // View > Atmospheric Refraction — master switch plus both halves. Built
+        // Effects > Atmospheric Refraction — master switch and both models. Built
         // in one place because either owning node can be absent; see
         // atmosphere/refractionSettings.js.
         setupRefractionGUI();

@@ -63,7 +63,7 @@ test("master pause is visible without destroying the pass or saved profile", () 
     const pass = tool.pass, settings = tool.settings;
     tool.status("Cached ray table");
     Sit.refraction = false; tool.sync();
-    expect(tool.statusText).toContain("Paused by View > Atmospheric Refraction");
+    expect(tool.statusText).toContain("Paused by Effects > Atmospheric Refraction");
     expect(pass.dispose).not.toHaveBeenCalled();
     expect(tool.settings).toBe(settings);
     Sit.refraction = true; tool.sync();

@@ -1,4 +1,4 @@
-import {createAtmosphere, createThermalRayGeometry, createStatisticalSea, RangeTableCache, SeaSkyBackgroundCache} from "./atmosphere.js";
+import {createAtmosphere, createThermalRayGeometry, createStatisticalSea, RangeTableCache, SeaSkyBackgroundCache, sightLineDensity} from "./atmosphere.js";
 import {atmosphereFromSounding} from "./sounding.js";
 
 // Scalar form of the host's terrestrial lift in its horizontal/up plane. The
@@ -9,8 +9,7 @@ export function workerRayGeometry(spec) {
     const atAltitude = sensorAltitudeM => {
         const {earthRadiusM: R, k, scaleHeightM: H, maxBendRad, maxLiftM, domainKey} = spec;
         const lift = (d, z) => {
-            const h1 = Math.max(0, sensorAltitudeM + z + .5 * d * d / R), h2 = Math.max(0, sensorAltitudeM), dh = h2 - h1;
-            const density = Math.abs(dh) < 1e-6 ? Math.exp(-h1 / H) : H * (Math.exp(-h1 / H) - Math.exp(-h2 / H)) / dh;
+            const density = sightLineDensity(sensorAltitudeM, sensorAltitudeM + z + .5 * d * d / R, d, R, k, H);
             const linear = k * density * d / (2 * R);
             const bend = maxBendRad ? linear / Math.sqrt(1 + (linear / maxBendRad) ** 2) : linear;
             const value = d * bend;

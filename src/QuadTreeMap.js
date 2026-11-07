@@ -23,6 +23,8 @@ const _cullingSphere = new Sphere();
 const _flatGlobeCenter = new Vector3();
 // Scratch sphere for the prospective-child visibility guard (anyProspectiveChildVisible).
 const _childCullSphere = new Sphere();
+// _cullingSphere raised by Standard refraction, for the visibility tests only.
+const _liftedSphere = new Sphere();
 
 // Tile subdivision treats a slightly-wider frustum than the render frustum as
 // "eligible for high LOD" — this is the preload margin for camera pan/track.
@@ -53,6 +55,50 @@ const GROUND_COLUMN_SPAN_FACTOR = 2;
 // replaced by a coarser parent. Do that only after the camera has stopped
 // moving long enough for the view to settle, not during a pan/zoom frame.
 const MERGE_CAMERA_STABLE_FRAMES = 12;
+
+// The height a tile is selected with. Ray-traced geometry can draw terrain
+// beyond the geometric horizon, so there a tile without a mesh yet is judged by
+// the height range its elevation data was decoded with (elevationDataBounds).
+// Standard selection uses only highestAltitude, which arrives with the mesh;
+// the visual baselines record that selection.
+//
+// This only READS. Writing the decoded range into highestAltitude/altitudeBounds
+// would leave it there after a switch back to Standard, and while one view is
+// ray-traced another view selects the same tiles with Standard in the same frame.
+// Standard refraction raises terrain straight up the observer's vertical, by at
+// most `lift` at that range, and never sideways. So test the volume the sphere
+// sweeps as its centre rises from 0 to `lift`, not one sphere grown by the lift
+// in every direction: in a narrow view that admitted tiles beside the frame,
+// which doubled the terrain drawn without changing a pixel. Plane by plane, like
+// Frustum.intersectsSphere: the distance to a plane is linear along the rise, so
+// the swept sphere is wholly outside a plane only when both of its ends are. A
+// panorama's frustum has no planes; there the grown sphere is the fallback.
+function sweptSphereInFrustum(frustum, sphere, up, lift, grown) {
+    if (!frustum.planes) return frustum.intersectsSphere(grown);
+    for (const plane of frustum.planes) {
+        const start = plane.distanceToPoint(sphere.center);
+        const end = start + lift * plane.normal.dot(up);
+        if (Math.max(start, end) < -sphere.radius) return false;
+    }
+    return true;
+}
+
+// The Earth radius for the horizon test. Standard refraction bends every ray of
+// the view as if the radius were R/(1-k), which raises the horizon AND the terrain
+// behind it. Adding only the target's lift to the geometric horizon test admitted
+// tiles hidden by about a kilometre more than that at 400 km: most of the terrain
+// pic loaded beyond the horizon and never drew. The surface k is the most the bend
+// can be (the sight-line density only lowers it, as the 34' cap does), so this
+// radius is still generous. k is capped below 1 so a duct setting cannot make the
+// radius infinite or negative. Ray-traced and unrefracted selection use R.
+function horizonRadiusFor(standardLift) {
+    return standardLift ? Globals.equatorRadius / (1 - Math.min(standardLift.k, 0.95)) : Globals.equatorRadius;
+}
+
+function selectionHeight(tile, rayTraced) {
+    if (tile.highestAltitude > 0 || !rayTraced) return tile.highestAltitude || 0;
+    return Math.max(0, tile.elevationDataBounds?.max ?? 0);
+}
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // QuadTreeMap is the base class of a QuadTreeMapTexture and a QuadTreeMapElevation
@@ -543,10 +589,19 @@ export class QuadTreeMap {
         // which was creating a column of high-LOD tiles directly under the
         // camera regardless of look direction.
         camera.updateMatrixWorld();
-        camera._terrainRefraction = view.raytracedRefraction
-            ? view.raytracedRefraction.geometryContext()
-            : Sit?.terrestrialRefraction
-                ? terrestrialLiftContext(camera.position, terrestrialOptsFrom(Sit, Globals)) : null;
+        // Two contexts, because the two models change different things.
+        // _terrainRefraction: ray-traced Terrain Geometry. Selection is judged
+        // on the refracted bounds throughout, LOD error included.
+        // _terrainLift: Standard refraction, which raises terrain by k*d^2/2R.
+        // It is used ONLY to decide whether a tile can be seen (a narrow view
+        // can show a lifted summit whose physical bounds are outside it). The
+        // LOD error stays on the physical bounds: that is the tile detail the
+        // visual baselines record, and the lift is far too small to change it.
+        // A view with a ray-traced pass draws its terrain unlifted until the
+        // pass supplies Terrain Geometry, so it gets neither then.
+        camera._terrainRefraction = view.raytracedRefraction?.geometryContext() ?? null;
+        camera._terrainLift = !view.raytracedRefraction && Sit?.terrestrialRefraction
+            ? terrestrialLiftContext(camera.position, terrestrialOptsFrom(Sit, Globals)) : null;
         const viewProjection = new Matrix4().multiplyMatrices(
             camera.projectionMatrix, camera.matrixWorldInverse
         );
@@ -1496,12 +1551,13 @@ export class QuadTreeMap {
         // their sphere reaches the camera ray even when centred at sea
         // level — they load their elevation first, then their descendants
         // inherit the estimate via this walk. No global default needed.
-        let terrainAlt = tile.highestAltitude || 0;
+        let terrainAlt = selectionHeight(tile, !!refraction);
         if (terrainAlt === 0) {
             let p = tile.parent;
             while (p) {
-                if (p.highestAltitude > 0) {
-                    terrainAlt = p.highestAltitude;
+                const height = selectionHeight(p, !!refraction);
+                if (height > 0) {
+                    terrainAlt = height;
                     break;
                 }
                 p = p.parent;
@@ -1549,21 +1605,26 @@ export class QuadTreeMap {
         // parent (3 of 4 children rendering, coverage check fails because
         // 1 child was leaf-deactivated, parent stays active → ocean mosaic
         // z-fight). Stick with legacy sphere until the tile itself measures.
+        // Ray-traced selection only: a tile whose mesh has not measured it yet
+        // is bounded by its decoded elevation range (see selectionHeight).
+        const notCoverage = options?.coverageMode !== "coverageSphereOnly";
+        const decodedSphere = refraction && notCoverage && tile.altitudeBounds?.measured !== true
+            ? tile.decodedCullingSphere?.() ?? null : null;
         const _v5UseMeasured = (_v5Mode === "sphere" || _v5Mode === "obb" || refraction)
-            && options?.coverageMode !== "coverageSphereOnly"
-            && tile.altitudeBounds?.measured === true;
+            && notCoverage
+            && (tile.altitudeBounds?.measured === true || decodedSphere !== null);
         if (_v5UseMeasured) {
-            const state = tile.ensureCullingState();
-            const s = state.sphere;
+            const state = decodedSphere ? null : tile.ensureCullingState();
+            const s = decodedSphere ?? state.sphere;
             cx = s.center.x; cy = s.center.y; cz = s.center.z;
             radius = s.radius;
             if (diag) {
-                const src = tile.altitudeBounds?.source;
+                const src = decodedSphere ? "elevationData" : tile.altitudeBounds?.source;
                 if (src === "renderedGeometry") diag.renderedBoundsUsed++;
                 else if (src === "inherited") diag.inheritedBoundsUsed++;
                 else if (src === "elevationData") diag.elevationDataBoundsUsed++;
                 else diag.unmeasuredBoundsUsed++;
-                if (state.localFrame?.polarFallbackUsed) diag.polarFallbackUsed++;
+                if (state?.localFrame?.polarFallbackUsed) diag.polarFallbackUsed++;
             }
         } else {
             cx = worldSphere.center.x;
@@ -1615,8 +1676,27 @@ export class QuadTreeMap {
         const distance = Math.sqrt(dx * dx + dy * dy + dz * dz);
         const closestDistance = Math.max(0, distance - radius);
 
-        let inDilated = camera.dilatedFrustum.intersectsSphere(_cullingSphere);
-        let inStrict  = camera.viewFrustum.intersectsSphere(_cullingSphere);
+        // Standard refraction: test whether the tile can be seen against its
+        // lifted bounds, but leave cx..radius, the distances above and the LOD
+        // error below on the physical bounds (see _terrainLift). Ray-traced
+        // geometry has already moved the whole sphere. A Flat Earth disc has no
+        // horizon for the lift to raise terrain over.
+        const standardLift = !refraction && !_flatWarp ? camera._terrainLift : null;
+        let liftBounds = refractionBounds;
+        let inDilated, inStrict;
+        if (standardLift) {
+            // The grown copy gives the lift's height for the horizon test below,
+            // and is the frame test only for a panorama (sweptSphereInFrustum).
+            _liftedSphere.copy(_cullingSphere);
+            liftBounds = expandSphereForRefraction(_liftedSphere, standardLift);
+            inDilated = sweptSphereInFrustum(camera.dilatedFrustum, _cullingSphere,
+                standardLift.zenith, liftBounds.max, _liftedSphere);
+            inStrict = sweptSphereInFrustum(camera.viewFrustum, _cullingSphere,
+                standardLift.zenith, liftBounds.max, _liftedSphere);
+        } else {
+            inDilated = camera.dilatedFrustum.intersectsSphere(_cullingSphere);
+            inStrict = camera.viewFrustum.intersectsSphere(_cullingSphere);
+        }
 
         // V5 Phase 3: OBB narrow phase. Only runs when (a) options.mode is
         // "obb", (b) we have an OBB (null for z<3), and (c) we are NOT inside
@@ -1627,8 +1707,10 @@ export class QuadTreeMap {
         // OBB narrow phase only runs on tiles with their OWN measured bounds.
         // Inherited bounds produce a fat OBB that false-rejects off-axis
         // children (see _v5UseMeasured rationale above).
+        // Skipped under either refraction: the OBB is physical, so it would
+        // reject a tile that the lift has raised into view.
         if (_v5Mode === "obb"
-            && !refraction
+            && !refraction && !standardLift
             && (!_flatWarp || _flatRigid)
             && options?.coverageMode !== "coverageSphereOnly"
             && tile.altitudeBounds?.measured === true) {
@@ -1735,10 +1817,13 @@ export class QuadTreeMap {
                         else diag.inDilatedMargin++;
                     }
                 } else {
-                    const horizon = distanceToHorizon(cameraAltitude);
+                    const horizonRadius = horizonRadiusFor(standardLift);
+                    const horizon = distanceToHorizon(cameraAltitude, horizonRadius);
 
+                    // Standard: the effective radius already contains the lift.
                     if (horizon > closestDistance ||
-                        hiddenByGlobe(cameraAltitude, closestDistance) <= terrainAlt + refractionBounds.max) {
+                        hiddenByGlobe(cameraAltitude, closestDistance, horizonRadius)
+                            <= terrainAlt + (standardLift ? 0 : liftBounds.max)) {
                         visible = true;
                         if (diag) {
                             if (inStrict) diag.inStrictFrustum++;
@@ -1918,8 +2003,10 @@ export class QuadTreeMap {
         // estimate is the same for all four children: this tile's own value,
         // else the nearest ancestor with a measured highest altitude.
         let terrainAlt = 0;
+        const rayTraced = !!camera._terrainRefraction;
         for (let p = tile; p; p = p.parent) {
-            if (p.highestAltitude > 0) { terrainAlt = p.highestAltitude; break; }
+            const height = selectionHeight(p, rayTraced);
+            if (height > 0) { terrainAlt = height; break; }
         }
 
         const proj = this.options.mapProjection;
@@ -1961,11 +2048,23 @@ export class QuadTreeMap {
                 }
                 _childCullSphere.center.set(ccx, ccy, ccz);
                 _childCullSphere.radius = radius;
-                const refractionBounds = expandSphereForRefraction(_childCullSphere, camera._terrainRefraction);
-                if (!refractionBounds) continue;
-
-                // Broad phase: must be in the preload-margin frustum at all.
-                if (!dilated.intersectsSphere(_childCullSphere)) continue;
+                // Visibility only, so the Standard lift applies too (see _terrainLift),
+                // as a swept sphere for the same reason as in calculateTileVisibility.
+                // Ray-traced geometry moves the whole sphere.
+                const standardLift = camera._terrainRefraction ? null : camera._terrainLift;
+                let refractionBounds;
+                if (standardLift) {
+                    _liftedSphere.copy(_childCullSphere);
+                    refractionBounds = expandSphereForRefraction(_liftedSphere, standardLift);
+                    // Broad phase: must be in the preload-margin frustum at all.
+                    if (!sweptSphereInFrustum(dilated, _childCullSphere, standardLift.zenith,
+                        refractionBounds.max, _liftedSphere)) continue;
+                } else {
+                    refractionBounds = expandSphereForRefraction(_childCullSphere, camera._terrainRefraction);
+                    if (!refractionBounds) continue;
+                    // Broad phase: must be in the preload-margin frustum at all.
+                    if (!dilated.intersectsSphere(_childCullSphere)) continue;
+                }
 
                 // Horizon / globe-occlusion gate, mirroring calculateTileVisibility.
                 const ddx = camera.position.x - ccx;
@@ -1980,10 +2079,12 @@ export class QuadTreeMap {
                 if (cameraAltitude <= 0) {
                     return true;
                 }
-                const horizon = distanceToHorizon(cameraAltitude);
+                const horizonRadius = horizonRadiusFor(standardLift);
+                const horizon = distanceToHorizon(cameraAltitude, horizonRadius);
                 // A not-yet-loaded child inherits its parent's terrain estimate;
                 // testing sea level here permanently strands distant mountains.
-                if (horizon > closestDistance || hiddenByGlobe(cameraAltitude, closestDistance) <= terrainAlt + refractionBounds.max) {
+                if (horizon > closestDistance || hiddenByGlobe(cameraAltitude, closestDistance, horizonRadius)
+                    <= terrainAlt + (standardLift ? 0 : refractionBounds.max)) {
                     return true;
                 }
             }

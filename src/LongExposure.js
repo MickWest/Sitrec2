@@ -229,7 +229,7 @@ class CLongExposureManager {
                 "Exact under camera rotation (panning, the nudge); recalculated\n" +
                 "automatically whenever the camera position moves.\n" +
                 "Used only when HDR Point Sources is on.");
-        // mirrors View menu > Atmospheric Refraction. Sit is replaced per sitch
+        // mirrors Effects menu > Atmospheric Refraction. Sit is replaced per sitch
         // and this menu is built once, so bind through a live proxy.
         const refrProxy = {
             get refraction() { return !!Sit?.refractionEnabled; },   // Sit doesn't exist yet at startup
@@ -237,7 +237,7 @@ class CLongExposureManager {
         };
         folder.add(refrProxy, "refraction").name("Refraction").perm().listen()
             .onChange(() => setRenderOne(true))
-            .tooltip("Atmospheric refraction (same setting as View > Atmospheric Refraction).\n" +
+            .tooltip("Atmospheric refraction (same setting as Effects > Atmospheric Refraction).\n" +
                 "When on, splatted stars/planets/satellites use refracted apparent positions,\n" +
                 "and the horizon culling and extinction altitude follow the refracted direction.");
 

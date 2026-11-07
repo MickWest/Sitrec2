@@ -80,8 +80,9 @@ a larger area. Water reflections and sky labels follow the panorama as well.
 
 ## What does not apply
 
-- **Effects → Ray-traced Refraction** has no effect on the panorama. The panorama uses the
-  settings in **View → Atmospheric Refraction**. See [Atmospheric Refraction](Refraction.md).
+- The **Ray-traced** refraction model has no effect on the panorama. The panorama uses the
+  **Standard** model and its settings in **Effects → Atmospheric Refraction**. See
+  [Atmospheric Refraction](Refraction.md).
 - **Look Y-comp** and **Match Video Aspect** do not apply to the panorama.
 - In a headset, the look view uses its normal projection and not the panorama.
 

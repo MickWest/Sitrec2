@@ -6,6 +6,7 @@ import {registerSurfaceInteraction} from "../SurfaceInteraction";
 import {getInteractionRouter} from "../InteractionRouter";
 import {blockViewEvents} from "../DragResizeUtils";
 import {RefractionPass} from "./RefractionPass";
+import {updateRefractionGUIState} from "../atmosphere/refractionSettings";
 import {applyProfilePreset, atmosphere, clamp, defaultLaser, groundY, normalizeCurve, normalizeSettings,
     PROFILE_PRESETS, PROFILE_PRESET_DETAILS} from "./RefractionPhysics";
 import "./refraction.css";
@@ -57,6 +58,9 @@ export class RefractionTool {
         this.laserGroup.visible = !!(this.settings.enabled && Sit.refraction !== false && this.settings.lasersEnabled && this.result);
         this.refreshStatus();
         for (const refresh of this.controls) refresh();
+        // The panel's Enable checkbox is the menu's Model choice. Show the
+        // rows for the model now in force.
+        updateRefractionGUIState();
         setRenderOne(true);
     }
 
@@ -96,7 +100,7 @@ export class RefractionTool {
 
     refreshStatus() {
         if (this.settings.enabled && (Sit.refraction === false || (Sit.refractionSky === false && Sit.refractionTerrain === false))) {
-            this.statusText = "Paused by View > Atmospheric Refraction. Ray profile preserved.";
+            this.statusText = "Paused by Effects > Atmospheric Refraction. Ray profile preserved.";
             if (this.statusElement) this.statusElement.textContent = this.statusText;
             return;
         }
@@ -167,7 +171,7 @@ export class RefractionTool {
         const views = {};
         for (const {data: view} of Object.values(NodeMan.list)) if (view.renderTargetAndEffects) views[view.id] = view.id;
         this.select(top, this.settings, "view", "Ray-traced view", views, false);
-        element("p", "rf-hint rf-view-scope", "Only this view uses the edited atmosphere. View > Atmospheric Refraction controls refraction in every view; other views use its approximate model and air settings.", panel);
+        element("p", "rf-hint rf-view-scope", "Only this view uses the edited atmosphere. The other views use the Standard model and its air settings. Effects > Atmospheric Refraction turns refraction on and off in every view.", panel);
         const tabs = element("nav", "rf-tabs", null, panel);
         tabs.setAttribute("aria-label", "Refraction panels");
         this.pages = {};

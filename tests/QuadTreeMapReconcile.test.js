@@ -5,6 +5,7 @@ jest.mock("../src/QuadTreeTile", () => ({QuadTreeTile: jest.fn()}));
 
 import {QuadTreeMapTexture} from "../src/QuadTreeMapTexture";
 import {PerspectiveCamera} from "three";
+import {setSit} from "../src/Globals";
 
 const LAYER = 1 << 3;
 
@@ -194,6 +195,47 @@ describe("QuadTreeMap texture cut reconciliation", () => {
         delete view.raytracedRefraction;
         map.subdivideTilesViewSpecific(view);
         expect(map.subdivideTile).toHaveBeenCalledTimes(30);
+    });
+
+    test("standard refraction lifts visibility only; ray-traced geometry owns selection", () => {
+        // Standard refraction is on by default. Its lift may only decide whether
+        // a tile can be seen (_terrainLift); the LOD error stays physical, which
+        // is the selection the visual baselines record. Only a ray-traced
+        // Terrain Geometry context reaches the LOD error (_terrainRefraction).
+        setSit({refraction: true, refractionTerrain: true, terrestrialRefraction: true});
+        try {
+            const map = makeMap([makeTile("10/0/0", {z: 10})]);
+            map.deactivateParentsWithLoadedChildren = jest.fn();
+            map.reconcileRenderedTileCut = jest.fn();
+            map.triggerLazyLoadIfNeeded = jest.fn();
+            map.mergeChildrenIfPossible = jest.fn();
+            const camera = new PerspectiveCamera(30, 1, 1, 1000);
+            const view = {id: "lookView", cameraNode: {camera}, tileLayers: LAYER, heightPx: 500};
+            map.subdivideTilesViewSpecific(view, 1.5);
+            expect(camera._terrainRefraction).toBeNull();
+            expect(camera._terrainLift).toMatchObject({k: expect.any(Number)});
+            expect(camera._terrainLift.rayTable).toBeUndefined();
+            // A ray-traced pass on this view draws its terrain unlifted until it
+            // supplies Terrain Geometry (Screen-space Mirages, or not ready yet).
+            const setTerrainDetailLimited = jest.fn();
+            view.raytracedRefraction = {geometryContext: () => null, tool: {setTerrainDetailLimited}};
+            map.subdivideTilesViewSpecific(view, 1.5);
+            expect(camera._terrainRefraction).toBeNull();
+            expect(camera._terrainLift).toBeNull();
+            const context = {rayTable: {}};
+            view.raytracedRefraction.geometryContext = () => context;
+            map.subdivideTilesViewSpecific(view, 1.5);
+            expect(camera._terrainRefraction).toBe(context);
+            expect(camera._terrainLift).toBeNull();
+            // Refraction off: no context at all.
+            setSit({refraction: false, refractionTerrain: true, terrestrialRefraction: false});
+            delete view.raytracedRefraction;
+            map.subdivideTilesViewSpecific(view, 1.5);
+            expect(camera._terrainRefraction).toBeNull();
+            expect(camera._terrainLift).toBeNull();
+        } finally {
+            setSit(undefined);
+        }
     });
 
     test("ready ignores render suppression but rendering does not", () => {

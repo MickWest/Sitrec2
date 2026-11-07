@@ -7,7 +7,7 @@ jest.mock("../src/EGM96Geoid", () => ({geoidCorrectionForTile: () => ({}),
     interpolateGeoidOffset: () => 50, meanSeaLevelOffset: () => 50}));
 import {QuadTreeTile} from "../src/QuadTreeTile";
 
-test("Terrarium no-data uses an ancestor instead of a deep hole and records elevation bounds", () => {
+test("Terrarium no-data uses an ancestor instead of a deep hole and records decoded bounds apart", () => {
     const tile = Object.create(QuadTreeTile.prototype);
     Object.assign(tile, {z: 4, x: 2, y: 3, map: {options: {zScale: 1}},
         parent: {elevation: new Float32Array(4)},
@@ -20,12 +20,15 @@ test("Terrarium no-data uses an ancestor instead of a deep hole and records elev
     tile.computeElevationFromRGBA(pixels);
     expect(Array.from(tile.elevation)).toEqual([150, 910, 920, 40]);
     expect(tile.elevationNoDataCount).toBe(2);
-    expect(tile.highestAltitude).toBe(920);
-    expect(tile.altitudeBounds).toMatchObject({min: 50, max: 920, measured: true});
+    expect(tile.elevationDataBounds).toEqual({min: 50, max: 920});
+    // Standard rendering takes heights from the built mesh, as before. Only
+    // ray-traced geometry adopts the decoded bounds (QuadTreeMap).
+    expect(tile.highestAltitude).toBeUndefined();
+    expect(tile.altitudeBounds).toBeUndefined();
     tile.parent = null;
     tile.computeElevationFromRGBA(pixels);
     expect(Array.from(tile.elevation)).toEqual([150, 50, 50, 40]);
     tile.map.options.zScale = 2;
     tile.computeElevationFromRGBA(pixels);
-    expect(tile.altitudeBounds).toMatchObject({min: 80, max: 300});
+    expect(tile.elevationDataBounds).toEqual({min: 80, max: 300});
 });

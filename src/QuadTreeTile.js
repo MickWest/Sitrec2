@@ -1405,7 +1405,7 @@ export class QuadTreeTile {
         // geometry rebuild, not in the per-camera tile traversal.
         this.geometryErrorM = terrainMeshHeightError(elevationTile.elevation, elevationSize, nPosition - 1,
             tileOffsetX * tileFractionX, tileOffsetY * tileFractionY, tileFractionX,
-            this.map.elevationMap.options.zScale ?? 1, bounds?.min ?? 0);
+            this.map.elevationMap.options.zScale ?? 1, elevationTile.elevationDataBounds?.min ?? bounds?.min ?? 0);
 
         // V5 Phase 1.2: begin measurement now that we know we'll complete
         // the vertex loop.
@@ -2315,10 +2315,35 @@ export class QuadTreeTile {
         }
         this.elevation = elevation;
         this.elevationNoDataCount = missing;
-        this.highestAltitude = Math.max(0, maximum);
-        this.altitudeBounds = {min: minimum, max: maximum, measured: true, source: "elevationData",
-            generation: (this.altitudeBounds?.generation ?? 0) + 1};
-        if (this.cullingState) { this.cullingState.generation = -1; this.cullingState.visibilityCache = null; }
+        // Kept apart from altitudeBounds/highestAltitude, which standard
+        // rendering sets when the mesh is built: tile selection, water and
+        // child bounds all read those, and their timing is part of what the
+        // visual baselines record. Only ray-traced tile selection reads these
+        // (QuadTreeMap selectionHeight, decodedCullingSphere below), because
+        // it can draw terrain beyond the geometric horizon before that terrain
+        // has a mesh. Nothing copies them into the fields above.
+        this.elevationDataBounds = {min: minimum, max: maximum};
+    }
+
+    // A culling sphere from the decoded elevation range, for ray-traced tile
+    // selection before the mesh has measured this tile. Cached per decode, and
+    // kept out of cullingState, which belongs to Standard selection.
+    decodedCullingSphere() {
+        const bounds = this.elevationDataBounds;
+        if (!bounds) return null;
+        if (this._decodedCulling?.bounds === bounds) return this._decodedCulling.sphere;
+        const {buildCullingSphere, buildFallbackPointSet, maxPointsFor} = require("./QuadTreeCullingBounds");
+        const pointPoolSize = Math.max(1, maxPointsFor(this.z));
+        if (!QuadTreeTile._scratchPoints || QuadTreeTile._scratchPoints.length < pointPoolSize) {
+            QuadTreeTile._scratchPoints = [];
+            for (let i = 0; i < pointPoolSize; i++) QuadTreeTile._scratchPoints.push(new Vector3());
+        }
+        const points = QuadTreeTile._scratchPoints;
+        const count = buildFallbackPointSet({z: this.z, x: this.x, y: this.y,
+            mapProjection: this.map.options.mapProjection}, bounds, {points});
+        const sphere = count > 0 ? buildCullingSphere(points, count) : null;
+        this._decodedCulling = {bounds, sphere};
+        return sphere;
     }
 
     // Mapbox is height = -10000 + ((R * 256 * 256 + G * 256 + B) * 0.1)

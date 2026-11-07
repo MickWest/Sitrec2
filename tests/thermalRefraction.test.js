@@ -71,7 +71,9 @@ test("projected surface limb and inverse first hit use the vertex lift, includin
     const tangentAngle = Math.acos(R / (R + h));
     const point = new Vector3(0, R * Math.cos(tangentAngle), -R * Math.sin(tangentAngle));
     const projected = liftWorldPoint(context, point).sub(camera.position), e = apparentElevation(projected);
-    expect(e).toBeCloseTo(-.002400898, 9);
+    // Pinned with the sight-line density (sagging, observer-weighted); the end-height
+    // average it replaced gave -0.002400898.
+    expect(e).toBeCloseTo(-.0024009661, 9);
     expect(geometry.sea(e)).not.toBeNull();
     expect(geometry.horizonRad).toBeGreaterThan(e);
     let maximum = -Infinity;

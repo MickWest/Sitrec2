@@ -918,4 +918,4 @@ ground, so the terrain model is not drawn in the look view. The main view still 
 **Center on Look Camera** is on, the picture stays centered on the look camera, so its
 angles stay exact when the camera track is a few meters from `origin`. The picture
 already shows where things appeared, so terrestrial refraction does not bend it. Turn off
-**View → Atmospheric Refraction → Enable Refraction** if the objects were also placed where they appeared in the photos.
+the title checkbox of **Effects → Atmospheric Refraction** if the objects were also placed where they appeared in the photos.

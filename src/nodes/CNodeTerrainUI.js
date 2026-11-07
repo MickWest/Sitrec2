@@ -966,7 +966,7 @@ export class CNodeTerrainUI extends CNode {
                 this.applyUseEllipsoid(v);
             });
 
-        // View > Atmospheric Refraction — master switch plus both halves. Built
+        // Effects > Atmospheric Refraction — master switch and both models. Built
         // in one place because either owning node can be absent; see
         // atmosphere/refractionSettings.js. Deliberately outside the
         // 3D-buildings block above: refraction lofts plain terrain and the sea

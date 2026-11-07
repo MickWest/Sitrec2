@@ -9,7 +9,7 @@ import {apparentTemperature, inBandRadiance, PHOTON_SCALE} from "./radiometry.js
 import {displayFragment, enlargeFragment} from "./shaders.js";
 import {POLARITY_PROFILES, SCATTER_PRESETS} from "./sensorPresets.js";
 import {defaultSettings, normalizeSettings} from "./thermalSchema.js";
-import {createThermalRayGeometry} from "./atmosphere.js";
+import {createThermalRayGeometry, sightLineDensity} from "./atmosphere.js";
 import {backgroundAtElevation, brightnessErrorBound, blackbodyBands, evaluatePhotonPath, clearSky, createAtmosphere, createSkyElevationLUT, sampleSkyElevationLUT, seaBackground,
     skyRayElevation, skyViewGeometry} from "./atmosphere.js";
 import {applyFarScatter, applyOptics, displayCodes, displayCurve, displayCurveLUT, enlargeImage, temporalFilter, detectorCounts, electronsPerRadiance, integrationTime,
@@ -22,8 +22,7 @@ export function thermalRefractionHorizonFixture(enabled = true) {
     const R = 6371000, h = 21, H = 8500, maxBend = 34 / 60 * Math.PI / 180, maxLift = 3 * H;
     const lift = (d, z) => {
         if (!enabled) return 0;
-        const ht = Math.max(0, h + z + d * d / (2 * R)), dh = h - ht;
-        const density = Math.abs(dh) < 1e-6 ? Math.exp(-ht / H) : H * (Math.exp(-ht / H) - Math.exp(-h / H)) / dh;
+        const density = sightLineDensity(h, h + z + d * d / (2 * R), d, R, .13, H);
         const angle = .13 * density * d / (2 * R);
         const raw = d * angle / Math.hypot(1, angle / maxBend);
         return raw / Math.hypot(1, raw / maxLift);

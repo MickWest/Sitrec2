@@ -1481,6 +1481,47 @@ export class SeaSkyBackgroundCache {
 // Calculated inverse projection of the mean spherical surface. Distances are m,
 // elevations rad. The host supplies its actual vertex lift, including density
 // and saturation; no effective-radius or constant-angle substitute is used.
+// The host's straightLineDensityFactor and sightLineDensityFactor
+// (src/atmosphere/terrestrialRefraction.js), step for step: air density along
+// the sagging sight line, weighted towards the observer. The thermal tools
+// cannot import from src, and their rays must reproject exactly through the
+// host's lift, so keep the two in step. Used by atmosphereWorker.js and the
+// horizon fixture in selfTest.js.
+const SIGHT_LINE_SEGMENTS = 8, SIGHT_LINE_SAG_FREE = 0.005;
+function straightLineDensity(hObs, hTarget, H) {
+    const a = Math.max(0, hObs) / H;
+    const b = Math.max(0, hTarget) / H - a;
+    if (Math.abs(b) < 0.1) return 2 * Math.exp(-a) * (0.5 + b * (-1 / 6 + b * (1 / 24 + b * (-1 / 120 + b / 720))));
+    return 2 * (Math.exp(-a) * (b - 1) + Math.exp(-a - b)) / (b * b);
+}
+export function sightLineDensity(hObs, hTarget, d, R, k, H) {
+    if (hObs <= 0 && hTarget <= 0) return 1;
+    const straight = straightLineDensity(hObs, hTarget, H);
+    if (d * d / (8 * R) < SIGHT_LINE_SAG_FREE * H) return straight;
+    const sag = d * d * (1 - k * straight) / (2 * R);
+    const heightAt = t => Math.max(0, (1 - t) * hObs + t * hTarget - sag * t * (1 - t));
+    const dt = 1 / SIGHT_LINE_SEGMENTS, halfStep = dt / 2;
+    let hPrev = heightAt(0), ePrev = Math.exp(-hPrev / H), total = 0;
+    for (let i = 1; i <= SIGHT_LINE_SEGMENTS; i++) {
+        const t = i * dt;
+        const h = heightAt(t), e = Math.exp(-h / H);
+        const x = (h - hPrev) / (2 * H);
+        let mean, slope;
+        if (Math.abs(x) < 1e-2) {
+            const eMid = Math.exp(-(h + hPrev) / (2 * H));
+            mean = eMid * (1 + x * x / 6);
+            slope = eMid * x / 3;
+        } else {
+            mean = (ePrev - e) / (2 * x);
+            slope = ((ePrev + e) / 2 - mean) / x;
+        }
+        total += dt * ((1 - (t - halfStep)) * mean + halfStep * slope);
+        hPrev = h;
+        ePrev = e;
+    }
+    return 2 * total;
+}
+
 export function createThermalRayGeometry({sensorAltitudeM, earthRadiusM, lift, key}) {
     const h = sensorAltitudeM, R = earthRadiusM;
     const project = ([d, z]) => [d, z + lift(d, z)];

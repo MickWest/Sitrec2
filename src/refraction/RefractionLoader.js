@@ -1,6 +1,6 @@
 // The only eager part of the simulator. No worker, editor, shader or GPU resource
 // exists until the user opens the tool or restores an enabled saved experiment.
-import {guiMenus, Sit, setRenderOne} from "../Globals";
+import {Sit} from "../Globals";
 
 let instance = null;
 let pending = null;
@@ -31,28 +31,11 @@ export async function openRefractionTool(show = true) {
     return tool;
 }
 
-export function setupRefractionToolMenu() {
-    const state = {
-        get enabled() { return !!Sit?.raytracedRefraction?.enabled; },
-        set enabled(value) {
-            if (!Sit.raytracedRefraction) Sit.raytracedRefraction = {};
-            Sit.raytracedRefraction.enabled = value;
-        },
-        open: () => openRefractionTool().catch(() => {}),
-    };
-    const folder = guiMenus.raytracedRefraction;
-    folder.tooltip("Trace light rays through an atmosphere that you define by temperature and humidity profiles, for one 3D view.\n"
-        + "Other views keep the normal atmospheric refraction (View > Atmospheric Refraction).");
-    folder.add(state, "enabled").name("Enable Ray-traced Refraction").listen().perm()
-        .tooltip("Draw the selected 3D view (the look view by default) through the ray-traced atmosphere.\n"
-            + "Choose the view and edit the atmosphere in Profiles, Rays & Lasers. The setting is saved with the sitch.")
-        .onChange(value => {
-            if (value) openRefractionTool(false).catch(() => {});
-            else instance?.sync();
-            setRenderOne(true);
-        });
-    folder.add(state, "open").name("Profiles, Rays & Lasers…").perm()
-        .tooltip("Open the Ray-traced Refraction panel. In it you choose the view, edit the temperature and humidity profiles, see the ray paths, add lasers, and export or import a profile.");
+// The loaded tool, or null while the ray-traced model has never been chosen in
+// this sitch. The Effects > Atmospheric Refraction menu forwards its ray-traced
+// rows through it, so the menu never has to load the tool's chunk itself.
+export function getRefractionTool() {
+    return instance;
 }
 
 export function restoreRefractionTool() {

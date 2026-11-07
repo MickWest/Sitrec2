@@ -9,7 +9,7 @@
  */
 import {ColorManagement, Group, REVISION, Scene, WebGLRenderer,} from "three";
 import {disposeVideoFormatLayer, setupVideoFormatEffectsMenu} from "./videoFilters/VideoFormatLayer";
-import {disposeRefractionTool, setupRefractionToolMenu} from "./refraction/RefractionLoader";
+import {disposeRefractionTool} from "./refraction/RefractionLoader";
 import "./js/uPlot/uPlot.css"
 import {makeDraggable} from "./DragResizeUtils";
 import {
@@ -1963,14 +1963,6 @@ async function initializeOnce() {
         .tooltip(t("menus.view.tooltip"));
     setupHUDColor(guiMenus.view);
 
-    // Both refraction models live together here: the celestial one (whole
-    // atmosphere, Saemundsson, for Sun/Moon/planets/stars) added by
-    // CNodeDisplayNightSky, and the terrestrial one (range-dependent, for
-    // terrain/buildings/sea) added by CNodeTerrainUI. Permanent shell created
-    // once at init — the contents are non-permanent and get rebuilt per sitch.
-    addGUIFolder("refraction", "Atmospheric Refraction", "view")
-        .tooltip("How much the atmosphere bends light on its way to the camera — separately for celestial objects and for the solid scene.");
-
     // Reset Layout: snap the open views back into a clean default grid (Main on the left, the
     // rest stacked on the right), ignoring their current positions — recovery for a layout that
     // got messy. Views are free rectangles; shared edges become draggable seams automatically
@@ -2145,9 +2137,14 @@ async function initializeOnce() {
     addGUIFolder("videoFormat", "Video Format Effects", "effects")
         .tooltip("Settings to simulate an analog video format, and optionally a phone filming a screen, over the look view.\nThe checkbox on this title turns the simulation on and off.");
     setupVideoFormatEffectsMenu();
-    addGUIFolder("raytracedRefraction", "Ray-traced Refraction", "effects")
-        .tooltip("Trace light through an atmosphere that you define, and show the mirages and horizon shifts it makes in one 3D view.\nProfiles, Rays & Lasers… opens the editor. The settings save with the sitch.");
-    setupRefractionToolMenu();
+    // Atmospheric refraction, both models in one folder: Standard (the analytic
+    // celestial and terrestrial bends, in every view) or Ray-traced (one view
+    // drawn through an atmosphere defined by profiles). Permanent shell created
+    // once at init; setupRefractionGUI() (atmosphere/refractionSettings.js)
+    // rebuilds the contents per sitch, from CNodeDisplayNightSky or
+    // CNodeTerrainUI, whichever is created first.
+    addGUIFolder("refraction", "Atmospheric Refraction", "effects")
+        .tooltip("How the atmosphere bends light on its way to the camera.\nThe checkbox on this title turns refraction on and off in every view. Model chooses Standard refraction or Ray-traced refraction, and shows the settings for that model.");
     addTranslatedGUIMenu("lighting", "menus.lighting.title", {closeFolders: true})
         .tooltip(t("menus.lighting.tooltip"));
     addTranslatedGUIMenu("contents", "menus.contents.title")
