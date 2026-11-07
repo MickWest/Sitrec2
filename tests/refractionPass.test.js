@@ -33,6 +33,23 @@ const reply = (job = pass.busy) => {
 
 const previewReply = () => reply(pass.previewBusy);
 
+test.each([false, true])("coverage uses its own output and restores normal rendering after failure=%s", fail => {
+    pass.capture(view); pass.receive(reply());
+    const input = new WebGLRenderTarget(100, 100), output = new WebGLRenderTarget(100, 100);
+    view.fullscreenQuad = {};
+    view.fullscreenQuadCamera = {};
+    view.renderer.setRenderTarget = jest.fn();
+    view.renderer.render = jest.fn(() => {
+        expect(pass.material.uniforms.coverageMask.value).toBe(true);
+        if (fail) throw new Error("draw failed");
+    });
+    if (fail) expect(() => pass.renderMask(view, input, output)).toThrow("draw failed");
+    else expect(pass.renderMask(view, input, output)).toBe(output);
+    expect(view.renderer.setRenderTarget).toHaveBeenCalledWith(output);
+    expect(pass.material.uniforms.coverageMask.value).toBe(false);
+    input.dispose(); output.dispose();
+});
+
 test("continuous profile edits retain refraction and display advancing previews", () => {
     pass.capture(view); pass.receive(reply());
     expect(pass.previewWorker).toBeUndefined();

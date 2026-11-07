@@ -26,6 +26,7 @@ uniform float maxDistance, cameraFar, cameraNear, logDepth, observerHeight, eart
 uniform float visibility, night, eyeLevel, horizon;
 uniform float rayLinearFiltering;
 uniform float geometryMode, refractSky;
+uniform bool coverageMask;
 
 vec3 directionAt(vec2 uv) {
     // Use the middle of the clip interval. With Sitrec's astronomical far
@@ -128,6 +129,14 @@ void main() {
         source = closestSource;
         distance = closestDistance;
     }
+    if (coverageMask) {
+        // Warp landscape coverage with the same finite-depth mapping as the
+        // scene. Sky stays empty; visibility, night and diagnostic colours
+        // must not introduce edges into a silhouette mask.
+        gl_FragColor = hit ? texture2D(tDiffuse, source)
+            : missingSurface ? texture2D(tDiffuse, vUv) : vec4(0., 0., 0., 1.);
+        return;
+    }
     vec4 color;
     if (hit) {
         color = texture2D(tDiffuse, source);
@@ -181,6 +190,7 @@ export class RefractionPass {
                 rayLinearFiltering: {value: 1},
                 geometryMode: {value: 0},
                 refractSky: {value: 1},
+                coverageMask: {value: false},
             }});
     }
 
@@ -458,7 +468,13 @@ export class RefractionPass {
         this.sendNext(preview);
     }
 
-    render(view, input) {
+    renderMask(view, input, output) {
+        this.material.uniforms.coverageMask.value = true;
+        try { return this.render(view, input, output); }
+        finally { this.material.uniforms.coverageMask.value = false; }
+    }
+
+    render(view, input, outputOverride = null) {
         if (!this.isActive() || !this.usable || !this.texture) return input;
         const s = this.tool.settings, u = this.material.uniforms;
         const geometry = this.geometryContext();
@@ -473,7 +489,7 @@ export class RefractionPass {
         u.night.value = s.night ? 1 : 0;
         u.eyeLevel.value = s.showEyeLevel ? 1 : 0;
         u.horizon.value = s.showHorizon ? 1 : 0;
-        const output = input === view.renderTargetA ? view.renderTargetB : view.renderTargetA;
+        const output = outputOverride ?? (input === view.renderTargetA ? view.renderTargetB : view.renderTargetA);
         view.renderer.setRenderTarget(output);
         view.fullscreenQuad.material = this.material;
         view.renderer.render(view.fullscreenQuad, view.fullscreenQuadCamera);

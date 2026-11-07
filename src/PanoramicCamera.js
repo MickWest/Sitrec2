@@ -1,9 +1,10 @@
-import {HalfFloatType, LinearFilter, LinearSRGBColorSpace, ShaderMaterial, Vector2, Vector4, WebGLRenderTarget} from "three";
+import {Color, HalfFloatType, LinearFilter, LinearSRGBColorSpace, ShaderMaterial, Vector2, Vector4, WebGLRenderTarget} from "three";
 import {Globals, guiMenus, NodeMan, setRenderOne} from "./Globals";
 import {CNode} from "./nodes/CNode";
 import {applyFisheyeState, fisheye} from "./FisheyeProjection";
 import {panoramaFaces, panoramaFaceCamera, panoramaFrame, panoramaProject} from "./rendering/PanoramaMath";
 import {updateCameraFOVControls} from "./CameraFOVControls";
+import {ridgelineEnabled} from "./rendering/RidgelinePass";
 
 const defaults = {enabled: false, hfov: 180};
 export const panoramic = {...defaults, get vfov() { return getPanoramaFrame().vfov; }};
@@ -122,6 +123,18 @@ export class PanoramicRenderer {
         const {vfov} = getPanoramaFrame(view);
         this.target.texture.type = view.renderTargetA.texture.type;
         this.target.setSize(width, height);
+        const ridge = ridgelineEnabled(view);
+        if (ridge) {
+            this.ridgelineTarget ??= new WebGLRenderTarget(1, 1, {
+                minFilter: LinearFilter, magFilter: LinearFilter, depthBuffer: false,
+            });
+            this.ridgelineTarget.setSize(width, height);
+            const color = renderer.getClearColor(new Color()), alpha = renderer.getClearAlpha();
+            renderer.setRenderTarget(this.ridgelineTarget);
+            renderer.setClearColor(0x000000, 1);
+            renderer.clear(true, false, false);
+            renderer.setClearColor(color, alpha);
+        }
         renderer.setRenderTarget(this.target);
         renderer.clear(true, true, true);
         const camera = view.camera;
@@ -154,7 +167,7 @@ export class PanoramicRenderer {
                 const w = Math.max(2, Math.min(limit, Math.ceil((right - left) * density)));
                 const h = Math.max(2, Math.min(limit, Math.ceil((top - bottom) * density)));
                 view._panoramaCamera = this.camera;
-                view._panoramaFace = {width: w, height: h};
+                view._panoramaFace = {width: w, height: h, index: i};
                 const source = view.renderTargetAndEffectsInternal(null, view._panoramaFace);
                 const u = this.material.uniforms;
                 u.tDiffuse.value = source.texture;
@@ -164,6 +177,13 @@ export class PanoramicRenderer {
                 renderer.setRenderTarget(this.target);
                 view.fullscreenQuad.material = this.material;
                 renderer.render(view.fullscreenQuad, view.fullscreenQuadCamera);
+                // Reproject coverage, then trace it in the finished panorama.
+                // Tracing individual faces would vary line width and expose seams.
+                if (ridge && view.ridgelinePass?.ready) {
+                    u.tDiffuse.value = view.ridgelinePass.target.texture;
+                    renderer.setRenderTarget(this.ridgelineTarget);
+                    renderer.render(view.fullscreenQuad, view.fullscreenQuadCamera);
+                }
             }
         } finally {
             view._panoramaCamera = null;
@@ -175,11 +195,12 @@ export class PanoramicRenderer {
         }
         // Release faces which disappear when the angular window narrows.
         for (const targets of this.captures.splice(faces.length)) targets.forEach(target => target.dispose());
-        view.renderEffectsAndOutput(this.target, view.getColorPolicy());
+        view.renderEffectsAndOutput(this.target, view.getColorPolicy(), ridge ? this.ridgelineTarget : null);
     }
 
     dispose() {
         this.target.dispose(); this.material.dispose();
+        this.ridgelineTarget?.dispose();
         this.captures.forEach(targets => targets.forEach(target => target.dispose()));
     }
 }

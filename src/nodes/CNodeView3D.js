@@ -2,6 +2,7 @@ import {clearThermalStatus, disposeThermalView, ensureThermalView, releaseTherma
 import {migrateViewColorSettings, splitViewEffects, viewColorPolicy} from "../rendering/ViewColorPipeline";
 import {effectiveRenderMode, frameEffectPasses, frameRenderModeFor} from "../rendering/ViewRenderMode";
 import {SoftDepthPass} from "../rendering/SoftDepth";
+import {captureRidgeline, refractRidgeline, renderRidgeline} from "../rendering/RidgelinePass";
 import {setLineViewHeight} from "../SceneLineMaterial";
 import {par} from "../par";
 import {requestCameraFocusSync} from "../CameraFocusUI";
@@ -2787,6 +2788,7 @@ export class CNodeView3D extends CNodeViewCanvas {
                         refraction?.capture(this);
                         refraction?.captureBackground(this, currentRenderTarget);
                         this.renderAtmosphereScene(GlobalScene, this.camera);
+                        captureRidgeline(this);
                     }
                 } finally {
                     // Reverse order of acquisition.
@@ -2832,7 +2834,10 @@ export class CNodeView3D extends CNodeViewCanvas {
 
                 // Refraction warps scene radiance before optical integration,
                 // exposure and sensor effects in the unified colour pipeline.
-                if (refraction) currentRenderTarget = refraction.render(this, currentRenderTarget);
+                if (refraction) {
+                    currentRenderTarget = refraction.render(this, currentRenderTarget);
+                    refractRidgeline(this, refraction);
+                }
 
                 if (panoramaPass) return currentRenderTarget;
 
@@ -2841,7 +2846,7 @@ export class CNodeView3D extends CNodeViewCanvas {
         }
     }
 
-    renderEffectsAndOutput(currentRenderTarget, colorPolicy) {
+    renderEffectsAndOutput(currentRenderTarget, colorPolicy, ridgelineMask = this.ridgelinePass?.target) {
         if (globalProfiler) globalProfiler.push('#bebada', 'effectsPasses');
         const effects = this.effectsEnabled && Globals.renderDebugFlags.dbg_renderEffects
             ? splitViewEffects(frameEffectPasses(this), colorPolicy.opticsBeforeSensor)
@@ -2893,6 +2898,7 @@ export class CNodeView3D extends CNodeViewCanvas {
         // image circle, like the unexposed border of a real allsky frame.
         // Drawn onto the finished canvas so it also covers the effects chain.
         if (Globals.renderDebugFlags.dbg_copyToScreen) {
+            renderRidgeline(this, ridgelineMask);
             renderFisheyeMask(this);
         }
         if (globalProfiler) globalProfiler.pop();
@@ -3556,6 +3562,8 @@ export class CNodeView3D extends CNodeViewCanvas {
         this.panoramicRenderer = null;
         this.softDepthPass?.dispose();
         this.softDepthPass = null;
+        this.ridgelinePass?.dispose();
+        this.ridgelinePass = null;
         if (this.renderTargetAntiAliased) this.renderTargetAntiAliased.dispose();
         if (this.renderTargetA) this.renderTargetA.dispose();
         if (this.renderTargetB) this.renderTargetB.dispose();

@@ -5,7 +5,7 @@ import {applyRefractionECI, installRefractionOnMaterial, refractionOptsFromUnifo
     refractionUniforms} from "./atmosphere/refraction";
 
 // Fade the converging grid strokes by their displayed distance from either
-// pole. Fragment-space distance keeps the 10–100 px fade independent of line
+// pole. Fragment-space distance keeps the 10–50 px fade independent of line
 // segmentation, field of view, pixel density and the observer's orientation.
 export class CelestialGridMaterial extends SceneLineMaterial {
     constructor({sphereRadius = 100, refracted = false, ...parameters} = {}) {
@@ -14,7 +14,7 @@ export class CelestialGridMaterial extends SceneLineMaterial {
         this.refracted = refracted;
         this.uniforms.gridPoleNorth = {value: new Vector3()};
         this.uniforms.gridPoleSouth = {value: new Vector3()};
-        this.uniforms.gridPoleFadeRange = {value: new Vector2(10, 100)};
+        this.uniforms.gridPoleFadeRange = {value: new Vector2(10, 50)};
         this._pole = new Vector3();
         this._poleView = new Vector3();
         this.fragmentShader = this.fragmentShader.replace("void main() {", `
@@ -35,7 +35,7 @@ export class CelestialGridMaterial extends SceneLineMaterial {
 
     onBeforeRender(renderer, scene, camera, geometry, object) {
         super.onBeforeRender(renderer);
-        this.uniforms.gridPoleFadeRange.value.set(10, 100).multiplyScalar(displayPixelScale(renderer));
+        this.uniforms.gridPoleFadeRange.value.set(10, 50).multiplyScalar(displayPixelScale(renderer));
         const origin = this.uniforms.lineViewportOrigin.value;
         const refraction = this.refracted ? refractionOptsFromUniforms() : null;
         for (const [sign, uniform] of [[1, this.uniforms.gridPoleNorth], [-1, this.uniforms.gridPoleSouth]]) {

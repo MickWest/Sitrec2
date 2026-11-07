@@ -4127,6 +4127,7 @@ const en = {
         constellationLines: "Constellation Lines",
         constellationNames: "Constellation Names",
         horizonCompass: "Horizon Compass",
+        ridgeline: "Ridgeline",
         latLonGrid: "Lat/Lon Grid",
         celestialVectors: "Celestial Vectors",
         overlayTransparency: "Transparency %",

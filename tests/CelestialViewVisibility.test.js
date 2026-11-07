@@ -88,3 +88,13 @@ test("explicit per-view fields take priority over legacy shared flags", () => {
         showConstellationNamesMain: true, showConstellationNamesLook: false,
         showHorizonCompassRibbonMain: false, showHorizonCompassRibbonLook: false});
 });
+
+test("ridgeline defaults off and saves independent view choices", () => {
+    const n = sky();
+    n.simpleSerials.push("showRidgelineMain", "showRidgelineLook");
+    n.modDeserialize({});
+    expect(n.showRidgelineMain).toBe(false);
+    expect(n.showRidgelineLook).toBe(false);
+    n.modDeserialize({showRidgelineMain: false, showRidgelineLook: true});
+    expect(n.modSerialize()).toMatchObject({showRidgelineMain: false, showRidgelineLook: true});
+});
