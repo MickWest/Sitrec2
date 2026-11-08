@@ -138,7 +138,13 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
             setupSunSkyScene(new Scene())
         }
 
-        const satGUI = guiMenus.satellites
+        const satGUI = guiMenus.satellites;
+        const selectionGUI = satGUI.addFolder("Selection & Filters").close();
+        const satelliteLabelsGUI = satGUI.addFolder("Labels").close();
+        const tracksGUI = satGUI.getFolder("Tracks & Guides") ?? satGUI.addFolder("Tracks & Guides").close();
+        const orbitDataGUI = satGUI.addFolder("Orbit Data").close();
+        const modelsGUI = satGUI.addFolder("Lighting & Flare Models").close();
+        const closeSatelliteMenu = () => satGUI.close();
 
         // globe used for collision
         // and specifying the center of the Earth
@@ -201,7 +207,7 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
 
 
             satGUI.add(this.satellites,"updateCustomSats").name(menuName)
-                .onChange(function (x) {this.parent.close()})
+                .onChange(closeSatelliteMenu)
                 .tooltip(tooltipText)
 
         }
@@ -212,17 +218,13 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
         if (defaultTLESources) {
 
             satGUI.add(this.satellites, "updateLEOSats").name(t("nightSky.loadLEO.label"))
-                .onChange(function (x) {
-                    this.parent.close()
-                })
+                .onChange(closeSatelliteMenu)
                 .tooltip(t("nightSky.loadLEO.tooltip"))
         }
 
         if (getEnv("CURRENT_STARLINK", process.env.CURRENT_STARLINK)) {
             satGUI.add(this.satellites, "updateStarlink").name(t("nightSky.loadStarlink.label"))
-                .onChange(function (x) {
-                    this.parent.close()
-                })
+                .onChange(closeSatelliteMenu)
                 .tooltip(t("nightSky.loadStarlink.tooltip"))
         }
 
@@ -236,45 +238,47 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
             getEnv("CURRENT_IRIDIUM", process.env.CURRENT_IRIDIUM),
         ].some(Boolean);
         if (defaultTLESources || operatorSupGPConfigured) {
-            satGUI.add(this.satellites, "updateOperatorSupGP").name(t("nightSky.loadOperatorSupGP.label"))
-                .onChange(function (x) {
-                    this.parent.close()
-                })
+            orbitDataGUI.add(this.satellites, "updateOperatorSupGP").name(t("nightSky.loadOperatorSupGP.label"))
+                .onChange(closeSatelliteMenu)
                 .tooltip(t("nightSky.loadOperatorSupGP.tooltip"))
         }
 
         if (getEnv("CURRENT_ACTIVE", process.env.CURRENT_ACTIVE)) {
-            satGUI.add(this.satellites, "updateActive").name(t("nightSky.loadActive.label"))
-                .onChange(function (x) {
-                    this.parent.close()
-                })
+            orbitDataGUI.add(this.satellites, "updateActive").name(t("nightSky.loadActive.label"))
+                .onChange(closeSatelliteMenu)
                 .tooltip(t("nightSky.loadActive.tooltip"))
         }
 
         if (defaultTLESources) {
 
-            satGUI.add(this.satellites, "updateSLOWSats").name(t("nightSky.loadSlow.label"))
-                .onChange(function (x) {
-                    this.parent.close()
-                })
+            orbitDataGUI.add(this.satellites, "updateSLOWSats").name(t("nightSky.loadSlow.label"))
+                .onChange(closeSatelliteMenu)
                 .tooltip(t("nightSky.loadSlow.tooltip"))
 
-            satGUI.add(this.satellites, "updateALLSats").name(t("nightSky.loadAll.label"))
-                .onChange(function (x) {
-                    this.parent.close()
-                })
+            orbitDataGUI.add(this.satellites, "updateALLSats").name(t("nightSky.loadAll.label"))
+                .onChange(closeSatelliteMenu)
                 .tooltip(t("nightSky.loadAll.tooltip"))
         }
 
-        this.addTLERangeMenu(satGUI);
+        this.addTLERangeMenu(orbitDataGUI);
 
-        satGUI.add(this.satellites, 'flareAngle', 0, 20, 0.1).listen().name(t("nightSky.flareAngle.label")).tooltip(t("nightSky.flareAngle.tooltip"))
+        modelsGUI.add(this.satellites, 'flareAngle', 0, 20, 0.1).listen().name(t("nightSky.flareAngle.label")).tooltip(t("nightSky.flareAngle.tooltip"))
         this.addSimpleSerial("flareAngle")
 
-        satGUI.add(this.satellites, 'flareModel', ["Geocentric Nadir", "Geodetic Nadir"]).listen()
+        modelsGUI.add(this.satellites, 'flareModel', ["Geocentric Nadir", "Geodetic Nadir"]).listen()
             .name(t("nightSky.flareModel.label")).tooltip(t("nightSky.flareModel.tooltip"))
             .onChange(() => setRenderOne(true))
         this.addSimpleSerial("flareModel")
+
+        satGUI.add(this.satellites, "nameFilter").name("Search Loaded Satellites").listen()
+            .tooltip("Narrow the enabled categories by name or exact NORAD number. Separate searches with commas. Clear to show all matches in those categories.")
+            .onChange(() => {
+                this.satellites.filterSatellites();
+                this.fullBrightnessUpdate = true;
+                markSitchDirty();
+                setRenderOne(true);
+            });
+        this.addSimpleSerial("nameFilter");
 
         const changedPhotometry = () => {
             this.fullBrightnessUpdate = true;
@@ -286,7 +290,7 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
         this.satelliteMagnitudeLimit = 7.5;
         this.addSimpleSerial("satelliteMagnitudeLimitEnabled");
         this.addSimpleSerial("satelliteMagnitudeLimit");
-        satGUI.add(this.satellites, "brightnessModel", ["Photometric estimate", "Legacy cone"]).listen()
+        modelsGUI.add(this.satellites, "brightnessModel", ["Photometric estimate", "Legacy cone"]).listen()
             .name(t("nightSky.brightnessModel.label")).tooltip(t("nightSky.brightnessModel.tooltip"))
             .onChange(changedPhotometry);
         this.magnitudeLimitEnabledController = satGUI.add(this, "satelliteMagnitudeLimitEnabled").listen()
@@ -301,13 +305,13 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
         const {[unknownLabel]: unknownKey, ...designs} = profiles;
         const profileChoices = {[unknownLabel]: unknownKey,
             [t("nightSky.starlinkProfile.perSatellite")]: STARLINK_PER_SATELLITE, ...designs};
-        this.starlinkProfileController = satGUI.add(this.satellites, "starlinkProfile", profileChoices).listen()
+        this.starlinkProfileController = modelsGUI.add(this.satellites, "starlinkProfile", profileChoices).listen()
             .name(t("nightSky.starlinkProfile.label")).tooltip(t("nightSky.starlinkProfile.tooltip"))
             .onChange(changedPhotometry);
-        satGUI.add(this.satellites, "illuminationModel", ["Finite Sun + atmosphere", "Finite Sun", "Legacy fade"]).listen()
+        modelsGUI.add(this.satellites, "illuminationModel", ["Finite Sun + atmosphere", "Finite Sun", "Legacy fade"]).listen()
             .name(t("nightSky.illuminationModel.label")).tooltip(t("nightSky.illuminationModel.tooltip"))
             .onChange(changedPhotometry);
-        this.penumbraController = satGUI.add(this.satellites, 'penumbraDepth', 0, 100000, 1).listen().name(t("nightSky.penumbraDepth.label"))
+        this.penumbraController = modelsGUI.add(this.satellites, 'penumbraDepth', 0, 100000, 1).listen().name(t("nightSky.penumbraDepth.label"))
             .tooltip(t("nightSky.penumbraDepth.tooltip"))
             .onChange(changedPhotometry);
         this.addSimpleSerial("penumbraDepth")
@@ -316,7 +320,7 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
         this.sunArrowGroup = new Group();
         this.sunArrowGroup.visible = this.showSunArrows;
         GlobalScene.add(this.sunArrowGroup)
-        satGUI.add(this, "showSunArrows").listen().onChange(() => {
+        tracksGUI.add(this, "showSunArrows").asListCheckbox().listen().onChange(() => {
             setRenderOne(true);
             this.sunArrowGroup.visible = this.showSunArrows;
         }).name(t("nightSky.sunAngleArrows.label"))
@@ -434,7 +438,7 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
             visible: Sit.showMoonShadow,
         });
 
-        this.showFlareRegion = Sit.showFlareRegion;
+        this.showFlareRegionMain = Sit.showFlareRegion ?? false;
         this.showFlareBand = Sit.showFlareBand;
 
         this.maxLabelsDisplayed = 1000;
@@ -532,11 +536,11 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
                 action: () => setRenderOne(true)
             },
             {
-                key: "showFlareRegion",
+                key: "showFlareRegionMain",
                 name: t("nightSky.flareRegion.label"),
                 tip: t("nightSky.flareRegion.tooltip"),
                 object: this,
-                action: () => this.flareRegionGroup.visible = this.showFlareRegion
+                action: () => { this.applyFlareRegionLookMask(); setRenderOne(true); }
             },
             {
                 key: "showFlareBand",
@@ -548,8 +552,13 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
         ];
 
         let showSatellitesController = null;
+        let satelliteLabelsMainController = null;
         satelliteOptions.forEach(option => {
-            const ctrl = satGUI.add(option.object, option.key).listen().onChange(() => {
+            const folder = option.key === "showSatellites" ? satGUI
+                : ["showStarlink", "showISS", "showBrightest", "showOtherSatellites", "showSatelliteList"].includes(option.key) ? selectionGUI
+                    : ["showSatelliteNames", "showSatelliteNamesMain", "labelFlares", "labelLit", "labelLookVisible"].includes(option.key) ? satelliteLabelsGUI
+                        : tracksGUI;
+            const ctrl = folder.add(option.object, option.key).listen().onChange(() => {
                 setRenderOne(true);
                 option.action();
             }).name(option.name);
@@ -557,12 +566,21 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
             if (option.key === "showSatelliteNames" || option.key === "showSatelliteNamesMain") {
                 ctrl.asViewCheckbox(option.key === "showSatelliteNamesMain" ? "mainView" : "lookView",
                     t("nightSky.satelliteLabels"));
+                if (option.key === "showSatelliteNamesMain") satelliteLabelsMainController = ctrl;
+            } else if (option.key === "showFlareRegionMain") {
+                ctrl.name("Flare Region in Main View")
+                    .asViewCheckbox("mainView", t("nightSky.flareRegion.label"));
+            } else if (ctrl.$input?.type === "checkbox") {
+                ctrl.asListCheckbox();
             }
             if (option.key === "showSatellites") showSatellitesController = ctrl;
             // All satellite properties now have getters/setters on NightSkyNode
             // so they should be serialized directly (not with satellites. prefix)
             this.addSimpleSerial(option.key);
         });
+        // The restrictions also filter diagnostic arrows, so they stay usable
+        // when labels are off. Only the label-count control depends on the pair.
+        satelliteLabelsMainController.asFolderToggle({paired: true, fadeOnlyMarked: true});
 
         // The satellites are ONE group in the world scene, drawn in whichever views can see it,
         // so the master switch is a SHARED control rather than one per view: both 3D header
@@ -573,11 +591,11 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
 
         // ── TLE Filter buttons ──
         this._tleFilterDialog = null; // reference to open dialog element
-        satGUI.add({filterTLEs: () => this.openTLEFilterDialog()}, 'filterTLEs')
+        selectionGUI.add({filterTLEs: () => this.openTLEFilterDialog()}, 'filterTLEs')
             .name(t("nightSky.filterTLEs.label"))
             .tooltip(t("nightSky.filterTLEs.tooltip"));
 
-        satGUI.add({clearTLEFilter: () => {
+        selectionGUI.add({clearTLEFilter: () => {
             this.satellites.tleFilterResults = null;
             this.satellites.tleFilterFrameData = null;
             this.satellites.filterSatellites();
@@ -586,8 +604,9 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
             .name(t("nightSky.clearTLEFilter.label"))
             .tooltip(t("nightSky.clearTLEFilter.tooltip"));
 
-        satGUI.add(this, "maxLabelsDisplayed", 100, 10000, 100).listen().name(t("nightSky.maxLabelsDisplayed.label"))
+        satelliteLabelsGUI.add(this, "maxLabelsDisplayed", 100, 10000, 100).listen().name(t("nightSky.maxLabelsDisplayed.label"))
             .tooltip(t("nightSky.maxLabelsDisplayed.tooltip"))
+            .fadeWhenFolderOff()
             .onChange(() => setRenderOne(true));
         this.addSimpleSerial("maxLabelsDisplayed");
 
@@ -665,16 +684,16 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
         satGUI.add(Sit, "satScale", 0, 50, 0.01).name(t("nightSky.satBrightness.label")).listen()
             .tooltip(t("nightSky.satBrightness.tooltip"))
 
-        this.flareScaleController = satGUI.add(Sit, "flareScale", 0, 1, 0.001).name(t("nightSky.flareBrightness.label")).listen()
+        this.flareScaleController = modelsGUI.add(Sit, "flareScale", 0, 1, 0.001).name(t("nightSky.flareBrightness.label")).listen()
             .tooltip(t("nightSky.flareBrightness.tooltip"))
 
 
-        satGUI.add(Sit, "satCutOff", 0, 0.5, 0.001).name(t("nightSky.satCutOff.label")).listen()
+        modelsGUI.add(Sit, "satCutOff", 0, 0.5, 0.001).name(t("nightSky.satCutOff.label")).listen()
             .tooltip(t("nightSky.satCutOff.tooltip"))
             .onChange(changedPhotometry);
 
 
-        satGUI.add(this.satellites, "arrowRange", 10, 100000, 1).name(t("nightSky.displayRange.label")).listen()
+        tracksGUI.add(this.satellites, "arrowRange", 10, 100000, 1).name(t("nightSky.displayRange.label")).listen()
             .tooltip(t("nightSky.displayRange.tooltip"))
             .onChange(() => {
                 this.satellites.filterSatellites();
@@ -877,10 +896,22 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
 
         // same for the flare region
         this.showFlareRegionLook = false;
-        satGUI.add(this, "showFlareRegionLook").listen().onChange(() => {
+        tracksGUI.add(this, "showFlareRegionLook").listen().onChange(() => {
             this.applyFlareRegionLookMask();
-        }).name(t("nightSky.flareRegionLook.label")).tooltip(t("nightSky.flareRegionLook.tooltip"));
+            setRenderOne(true);
+        }).name(t("nightSky.flareRegionLook.label")).tooltip(t("nightSky.flareRegionLook.tooltip"))
+            .asViewCheckbox("lookView", t("nightSky.flareRegion.label"));
         this.addSimpleSerial("showFlareRegionLook");
+
+        // Keep daily viewing tasks above the collapsed specialist folders.
+        const primaryControls = ["showSatellites", "nameFilter", "satScale",
+            "satelliteMagnitudeLimitEnabled", "satelliteMagnitudeLimit",
+            "updateStarlink", "updateLEOSats", "updateCustomSats"];
+        for (const property of primaryControls.reverse()) {
+            satGUI.controllers.find(controller => controller.property === property)?.moveToFirst();
+        }
+        modelsGUI.controllers.find(controller => controller.property === "brightnessModel")?.moveToFirst();
+        satGUI.getFolder("Help")?.moveToEnd();
 
         // Show > Celestial > Labels > Label List. Empty (the default) is a no-op and everything
         // is labelled as before. Otherwise ONLY labels whose name matches one of the
@@ -1163,7 +1194,7 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
 
         this.sunArrowGroup.visible = this.showSunArrows;
         this.updateCelestialVectorVisibility();
-        this.flareRegionGroup.visible = this.showFlareRegion;
+        this.applyFlareRegionLookMask();
         this.flareBandGroup.visible = this.showFlareBand;
         this.satelliteGroup.visible = this.satellites.showSatellites;
         this.satelliteTrackGroup.visible = this.satellites.showSatelliteTracks;
@@ -1215,20 +1246,26 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
         }
     }
 
-    // Set the flare region's layer mask from showFlareRegionLook, and copy it to the children
+    // Set the flare region's independent Main/Look mask and copy it to the children
     // (layer masks are not inherited). The menu, modDeserialize and updateFlareRegion all call
     // this, as a loaded flag never fires onChange, and updateFlareRegion creates its arrows and
     // sphere lazily with MASK_HELPERS.
     applyFlareRegionLookMask() {
         if (!this.flareRegionGroup) return;
-        this.flareRegionGroup.layers.mask = this.showFlareRegionLook ? LAYER.MASK_LOOKRENDER : LAYER.MASK_HELPERS;
+        const mask = LAYER.perViewLayerMask(this.showFlareRegionMain, this.showFlareRegionLook);
+        this.flareRegionGroup.visible = mask !== 0;
+        this.flareRegionGroup.layers.mask = mask;
         propagateLayerMaskObject(this.flareRegionGroup);
     }
+
+    // Keep the old scripting property as the Main-view alias.
+    get showFlareRegion() { return this.showFlareRegionMain; }
+    set showFlareRegion(value) { this.showFlareRegionMain = value; }
 
     // Properties that live on this.satellites but are serialized via addSimpleSerial on this node.
     // modSerialize/modDeserialize bridge the gap so values round-trip correctly.
     getSatelliteSerials() {
-        return ["flareAngle", "flareModel", "penumbraDepth", "arrowRange", "brightnessModel", "illuminationModel", "starlinkProfile"];
+        return ["flareAngle", "flareModel", "penumbraDepth", "arrowRange", "brightnessModel", "illuminationModel", "starlinkProfile", "nameFilter"];
     }
 
     updatePhotometryControls() {
@@ -1252,6 +1289,12 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
 
     modDeserialize(v) {
         super.modDeserialize(v);
+        // Older saves used a master switch plus an optional Look overlay.
+        // A master-off save must stay hidden in both views.
+        if (v.showFlareRegionMain === undefined && v.showFlareRegion !== undefined) {
+            this.showFlareRegionMain = v.showFlareRegion;
+            if (!v.showFlareRegion) this.showFlareRegionLook = false;
+        }
         this.restoreCelestialViewVisibility(v);
         this.celestialElements.setLineWidth(this.celestialLineWidth);
         if (v.celestialGridSpacing !== undefined) this.rebuildCelestialGrids();
@@ -2004,7 +2047,7 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
     updateFlareRegion(ra, dec, date) {
 
 
-        if (this.showFlareRegion) {
+        if (this.showFlareRegionMain || this.showFlareRegionLook) {
 
             const camera = NodeMan.get("lookCamera").camera;
 

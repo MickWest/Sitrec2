@@ -35,12 +35,19 @@ export const SitStarlink = {
     nightSky: {
         starLink: "starLink",
         showConstellations: true,
-        showEquatorialGrid: true,
-        showEquatorialGridLook: true,
+        showEquatorialGrid: false,
+        showEquatorialGridLook: false,
+        showHorizonCompassRibbonLook: true,
     },
 
+    // The panel sets the initial layout while retaining the custom view effects
+    // and any saved view positions.
+    starlinkViewing: {kind: "StarlinkUI", defer: true, visible: false, startSkyLayout: true, force: true},
+    fovUI: {kind: "GUIValue", value: 50, start: 0, end: 180, step: 0.001,
+        desc: "vFOV", gui: "cameraFOV", hidden: true,
+        tooltip: "Stored vertical field of view, in degrees, for the Manual Camera FOV source. Set it with VFOV (deg)."},
     // this is the same as in SitCustom.js, but with el set to 10
-    ptzAngles: {kind: "PTZUI", az: 0, el: 10, roll: 0, fov: 30, showGUI: true, gui: "camera"},
+    ptzAngles: {kind: "PTZUI", az: 0, el: 10, roll: 0, fov: 50, showGUI: true, gui: "cameraHeading"},
 
 
 }

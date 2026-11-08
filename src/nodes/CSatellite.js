@@ -22,6 +22,7 @@ import {
 } from "../atmosphere/refraction";
 import {satelliteAppearance, satelliteECEF, satelliteSunlitFraction} from "../SatelliteBrightness";
 import {applySatelliteSizes, ensureSatelliteSizesLoaded} from "../SatelliteSizes";
+import {satelliteMatchesSearch} from "../StarlinkViewing";
 
 // The Earth's rotation rate, rad/s, about the ECEF z axis.
 const EARTH_ROTATION_RATE = 7.292115e-5;
@@ -47,6 +48,7 @@ export class CSatellite {
         this.labelLit = false;
         this.labelLookVisible = false;
         this.showSatelliteList = "";
+        this.nameFilter = "";
 
         // TLE Data
         this.TLEData = undefined;
@@ -999,6 +1001,13 @@ export class CSatellite {
             if (!filterHit && this.showOtherSatellites) {
                 satData.visible = true;
                 continue;
+            }
+        }
+
+        // Search narrows the current categories, unlike the additive satellite list.
+        if (this.nameFilter?.trim()) {
+            for (const sat of this.TLEData.satData) {
+                sat.visible = sat.visible && satelliteMatchesSearch(sat, this.nameFilter);
             }
         }
 

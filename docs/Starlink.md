@@ -43,8 +43,22 @@ This does the following for you:
 
 - Enables "Live Mode" **(Time Menu)**, which locks the time to your computer clock until you change it. This will show you flares as they are happening, and can be used on a mobile device in AR mode. 
 - Loads the current satellites from CelesTrak's supplemental Starlink feed. **(Satellites Menu)**
-- Turns on constellation lines and the equatorial grid display to aid with orienting where you are looking in the sky **(Show → Celestial)**
+- Turns on constellation lines and the horizon compass to aid with orienting where you are looking in the sky. The equatorial grid is available under **Sky guides** or **Show → Celestial**.
 - Enables "Sun Angle Arrows" and "Flare Band", two vital tools for recreating flare situations. **(Satellites Menu)**
+
+### Starlink Viewing Controls
+
+The Starlink scene opens with a large sky view and a small globe overview. The viewing controls are available in every custom sitch, including older saves, and start invisible. Enable **View → Starlink Viewing Controls** to show them. Turning that checkbox off hides the panel, its launcher, and its sky readouts.
+
+The panel's open/closed state is separate: **‹** collapses it to **Starlink controls**, and that button expands it again. The View checkbox remembers this state when hiding and showing the controls; both settings are saved with the sitch. On narrow screens the panel initially opens collapsed. Ordinary custom scenes keep their view layout until you select **Sky + overview** or **Split views**.
+
+- **Observer location:** search for a place or paste coordinates, or edit latitude, longitude, and height directly. Panel heights are in meters; select above ground or above sea level explicitly.
+- **Time & playback:** **Live now** follows the current clock. **Pause** freezes it. Enter a viewing date and press **Set**, step backward or forward by one minute, or choose a playback speed. **UTC** uses UTC; **Local** uses the zone selected in the Time menu, with its name shown above the date field.
+- **Satellites:** search by name or exact NORAD catalog number. The search narrows the checked categories; clearing it restores them. **Other loaded** shows other satellites already in the loaded catalog, and does not download another catalog. Enable **Magnitude limit** to show only satellites whose estimated magnitude is at or brighter than the threshold. Lower numbers mean brighter objects.
+- **Look direction:** edit azimuth, elevation, and vertical field of view, or drag the sky and scroll to zoom. **Look toward flare band** makes a one-time turn toward the Sun's azimuth, 10 degrees above the horizon. It does not establish that flares are visible at that place and time.
+- **Sky guides** exposes constellation lines, star names, the grid, the horizon compass, and flare guides. **Orbit data** shows the loaded epoch range and provides current Starlink and dated LEO downloads. When investigating an old sighting, load orbit data near its date.
+
+The sky readout counts modeled satellite points inside the view after filtering and Earth-horizon checks. Terrain, daylight, and observing conditions can still make these points invisible to an observer. The normal menus remain available, and their settings stay synchronized with the panel.
 
 ### Flare Band and Sun Angle Arrows
 

@@ -12,4 +12,14 @@ test("data/custom/SitCustom.js parses as a text sitch", () => {
     const obj = parseJavascriptObject(text);
     expect(obj).toBeTruthy();
     expect(obj.name).toBe("custom");
+    expect(obj.starlinkViewing).toEqual({kind: "StarlinkUI", defer: true, visible: false, force: true});
+});
+
+test("Starlink viewer remains a data-only sitch with deferred controls", () => {
+    const text = fs.readFileSync(path.resolve(__dirname, "../data/starlink/SitStarlink.js"), "utf8");
+    const obj = parseJavascriptObject(text);
+    expect(obj.name).toBe("starlink");
+    expect(obj.starlinkViewing).toEqual({kind: "StarlinkUI", defer: true, visible: false, startSkyLayout: true, force: true});
+    // Included definitions are replaced as a whole, so an override must keep its kind.
+    expect(obj.fovUI.kind).toBe("GUIValue");
 });

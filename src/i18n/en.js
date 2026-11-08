@@ -2514,7 +2514,7 @@ const en = {
         },
         renderStars: { label: "Render Stars and Planets", tooltip: "Show stars and planets, including the Sun and Moon, and their enabled name labels.\nConstellation lines, grids, compass and scene lighting keep their own settings." },
         equatorialGridLook: { label: "Equatorial Grid in Look", tooltip: "Show the celestial equatorial coordinate grid in the look/camera view" },
-        flareRegionLook: { label: "Flare Region in Look View", tooltip: "Also draw the Flare Region arrows and sphere in the look view. Used only when Flare Region is on." },
+        flareRegionLook: { label: "Flare Region in Look View", tooltip: "Draw the Flare Region arrows and sphere in the look view, independently of the Main view." },
         satelliteEphemeris: { label: "Satellite Ephemeris", tooltip: "Show a table of the shown satellites above the look camera's horizon, highest first: direction, range, altitude, sunlit state and time until it sets.\nIt appears after satellite data is loaded." },
         skyPlot: { label: "Sky Plot", tooltip: "Show the satellites from the Satellite Ephemeris table on a round map of the sky. The center is straight up and the edge is the horizon, with north at the top.\nIt uses the table's Only VIS setting." },
         celestialVector: { label: "{{name}} Vector", tooltip: "Show a direction vector pointing toward {{name}}" },

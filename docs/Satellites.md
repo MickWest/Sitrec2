@@ -17,6 +17,21 @@ from that date.
 This page is a reference for every control. For a step-by-step guide to recreating a
 Starlink flare sighting, see [Investigating Starlink Flares With Sitrec](Starlink.md).
 
+The top of the menu keeps the master visibility switch, name/NORAD search, look-view brightness,
+magnitude limit, and the current Starlink and dated LEO downloads. Other controls are grouped:
+
+| Submenu | Controls |
+|---|---|
+| **Selection & Filters** | Satellite categories, the additive List, and TLE filtering |
+| **Labels** | Independent **M** (Main) and **L** (Look) switches on the folder header, plus label restrictions and maximum count |
+| **Tracks & Guides** | Satellites to track, arrows, display range, flare band, and independent M/L flare-region switches |
+| **Orbit Data** | Other catalogs, experimental downloads, and the loaded element-date range |
+| **Lighting & Flare Models** | Brightness model, Starlink design, sunlight model, flare geometry, and legacy appearance settings |
+
+The master **Show Satellites (Global)** switch applies to both views. M/L switches control only
+their own view. The separate [Starlink viewing panel](Starlink.md#starlink-viewing-controls)
+remains available through **View → Starlink Viewing Controls**.
+
 - [Loading satellite data](#loading-satellite-data)
 - [Which satellites are shown](#which-satellites-are-shown)
 - [Filter TLEs](#filter-tles)
@@ -37,7 +52,7 @@ lines of a TLE into the Sitrec window.
 
 ### From the server
 
-**Satellites → Load …**
+**Satellites → Load CURRENT Starlink / Load LEO Satellites For Date**. Other downloads are in **Satellites → Orbit Data**.
 
 | Button | What it loads |
 |---|---|
@@ -92,7 +107,7 @@ It does not turn on **Starlink** or **ISS** for you.
 When TLE data is loaded, the top right of the main view shows the date range the data covers,
 and **In Range**, the percentage of the shown satellites that Sitrec can place at the sitch
 time. The date range is the oldest and newest element dates in the data (UTC), not the date
-you asked for. **Satellites → TLEs From** and **TLEs To**, below the load buttons, show the
+you asked for. **Satellites → Orbit Data → TLEs From** and **TLEs To** show the
 same two dates, or *None loaded*.
 
 A satellite whose elements are more than 90 days from the sitch time is not drawn. A satellite
@@ -130,7 +145,7 @@ the missing satellites. See
 
 ## Which satellites are shown
 
-**Satellites → (category switches)**
+**Satellites → Selection & Filters**. The master switch and search stay at the top level.
 
 Each satellite belongs to a category by its name or catalog number. A satellite is shown if any
 switch that applies to it is on.
@@ -147,6 +162,9 @@ switch that applies to it is on.
 **List adds satellites; it does not hide the others.** To see only the satellites on the list,
 turn off **Starlink**, **ISS**, **CelesTrak's Brightest** and **Other Satellites**.
 
+**Search Loaded Satellites** narrows the enabled categories by a name substring or exact NORAD
+number. Separate alternatives with commas; clear the search to restore the category matches.
+
 Satellites below 100 km or above 40,000 km altitude are never drawn.
 
 Starlink satellites are drawn pale yellow, or orange for those with a five-digit Starlink
@@ -156,7 +174,7 @@ number. Other satellites are white.
 
 ## Filter TLEs
 
-**Satellites → Filter TLEs** and **Satellites → Clear TLE Filter**
+**Satellites → Selection & Filters → Filter TLEs / Clear TLE Filter**
 
 **Filter TLEs** opens a window for narrowing down a large catalog by position, name or orbit.
 It works on top of the category switches: a satellite must pass both to be shown. You need TLE
@@ -216,7 +234,7 @@ detail fails a checked filter.
 
 ## Brightness and flares
 
-**Satellites → (brightness and flare controls)**
+**Satellites → Lighting & Flare Models**. **Sat Brightness** and the magnitude limit stay at the top level.
 
 A flare is sunlight reflected from a flat surface on the satellite, as from a mirror. The flare
 calculation assumes that this surface faces straight down. The **off-specular angle** is how many
@@ -326,7 +344,7 @@ peak magnitude of each flare with this model, for an unknown design.
 
 ## Arrows, lines and labels
 
-**Satellites → (display switches)**
+**Satellites → Tracks & Guides** for arrows and guides; **Satellites → Labels** for labels.
 
 | Control | Default | What it does |
 |---|---|---|
@@ -334,11 +352,9 @@ peak magnitude of each flare with this model, for an unknown design.
 | **Satellite Arrows** | Off | Arrows showing the direction each satellite is moving |
 | **Flare Lines** | Off | A yellow arrow, 100 km long, on each flaring satellite, along its direction of travel. For lines to the camera and the Sun, use **Sun Angle Arrows** |
 | **Satellite Ground Arrows** | Off | Arrows from each satellite down to the ground below it |
-| **Flare Region** | Off | The region of the sky where satellite flares are visible from the look camera. It assumes Starlink geometry: a flat surface that faces the Earth, at one altitude of 550 km. It does not check the Flare Band and marks the best match even when no reflection is close, so it is valid only when the camera is inside the Flare Band |
-| **Flare Region in Look View** | Off | Also draws the flare region in the look view |
+| **Flare Region** | Off | Independent M/L switches show the region in Main and Look. The region is where satellite flares are visible from the look camera. It assumes Starlink geometry: a flat surface that faces the Earth, at one altitude of 550 km. It does not check the Flare Band and marks the best match even when no reflection is close, so it is valid only when the camera is inside the Flare Band |
 | **Flare Band** | Off | A fixed guide: two circles about 38° (green) and 62° (yellow) from the point opposite the Sun, between which horizon flares can be seen. It is not computed from the loaded satellites. See [Flare Band and Sun Angle Arrows](Starlink.md#flare-band-and-sun-angle-arrows) |
-| **Satellite Labels (Look View)** | Off | Name labels in the look view |
-| **Satellite Labels (Main View)** | Off | Name labels in the main view |
+| **Labels — M / L** | Off | Name labels in Main and Look, independently. The switches sit on the Labels folder header |
 | **Label Flares Only** | Off | Label only satellites that are flaring |
 | **Label Lit Only** | Off | Label only satellites that are in sunlight |
 | **Label Look Visible Only** | Off | In the main view, label only satellites inside the look camera's field of view. **Satellite Labels (Look View)** must also be on, or no main view label appears |
@@ -362,7 +378,7 @@ to that satellite.
 
 ## Satellite to Track
 
-**Satellites → Satellite to Track** and **Satellites → Satellite to Track 2**
+**Satellites → Tracks & Guides → Satellite to Track / Satellite to Track 2**
 
 In a custom sitch, these two text fields each turn one satellite's orbit into a track for the
 whole sitch, named **Satellite** and **Satellite 2**. Type a name or a catalog number. The start

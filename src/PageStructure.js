@@ -39,6 +39,18 @@ let centerDividerFraction = 0.5; // fraction of Content width where divider is
 let centerSidebarSuspended = false;
 let suspendedDividerFraction = 0.5;
 
+// A situation-specific control panel can reserve space without taking over the
+// dockable menu sidebars. Clearing it restores the normal content geometry.
+let toolPanel = null;
+let toolPanelWidth = 0;
+
+export function setToolPanel(panel, width = 0) {
+    if (toolPanel === panel && toolPanelWidth === width) return;
+    toolPanel = panel;
+    toolPanelWidth = width;
+    updateContentWidth();
+}
+
 export function setupPageStructure() {
     if (setupDone) return;
     setupDone = true;
@@ -263,6 +275,9 @@ function updateContentWidth() {
     if (rightSidebarVisible && rightSidebar) {
         rightOffset = SIDEBAR_WIDTH;
     }
+
+    if (toolPanel) toolPanel.style.left = leftOffset + 'px';
+    leftOffset += toolPanelWidth;
     
     content.style.left = leftOffset + 'px';
     content.style.right = rightOffset + 'px';

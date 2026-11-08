@@ -16,7 +16,7 @@ function makeNightSky(showFlareRegionLook = false) {
     node.flareRegionGroup = new Group();
     node.showFlareRegionLook = showFlareRegionLook;
     node.showFlareRegion = true;
-    node.simpleSerials = ["showFlareRegion", "showFlareRegionLook"];
+    node.simpleSerials = ["showFlareRegionMain", "showFlareRegionLook"];
     node.satellites = {
         filterSatellites: jest.fn(),
         getSatelliteNormal: (X, O) => X.clone().sub(O).normalize(),
@@ -46,13 +46,48 @@ test("loading a save with the look flag set applies the look mask to the flare r
     node.modDeserialize({showFlareRegion: true, showFlareRegionLook: true});
 
     expect(node.showFlareRegionLook).toBe(true);
-    expect(allMasks(node.flareRegionGroup).every(mask => mask === LAYER.MASK_LOOKRENDER)).toBe(true);
+    expect(allMasks(node.flareRegionGroup).every(mask => mask === LAYER.perViewLayerMask(true, true))).toBe(true);
 });
 
 test("loading a save without the look flag keeps the flare region in the main view only", () => {
     const node = makeNightSky(false);
     node.modDeserialize({showFlareRegion: true});
     expect(node.flareRegionGroup.layers.mask).toBe(LAYER.MASK_HELPERS);
+});
+
+test.each([[false, false], [true, false], [false, true], [true, true]])(
+    "flare region Main=%s and Look=%s control their own view", (main, look) => {
+        const node = makeNightSky();
+        node.flareRegionGroup.add(new Object3D());
+        node.modDeserialize({showFlareRegionMain: main, showFlareRegionLook: look});
+        expect(node.flareRegionGroup.visible).toBe(main || look);
+        for (const mask of allMasks(node.flareRegionGroup)) {
+            expect(Boolean(mask & LAYER.MASK_MAINRENDER)).toBe(main);
+            expect(Boolean(mask & LAYER.MASK_LOOKRENDER)).toBe(look);
+        }
+        expect(node.modSerialize()).toMatchObject({showFlareRegionMain: main, showFlareRegionLook: look});
+    });
+
+test("a legacy master-off save stays hidden even if its Look flag was on", () => {
+    const node = makeNightSky(true);
+    node.modDeserialize({showFlareRegion: false, showFlareRegionLook: true});
+    expect(node.showFlareRegionMain).toBe(false);
+    expect(node.showFlareRegionLook).toBe(false);
+    expect(node.flareRegionGroup.visible).toBe(false);
+});
+
+test("Look-only flare regions still build their geometry", () => {
+    const node = makeNightSky(true);
+    node.showFlareRegionMain = false;
+    node.applyFlareRegionLookMask();
+    const cameraPos = new Vector3(wgs84.RADIUS + 1000, 0, 0);
+    node.camera = {position: cameraPos};
+    node.globe = new Sphere(new Vector3(0, 0, 0), wgs84.RADIUS);
+    setNodeMan({get: () => ({camera: {position: cameraPos}})});
+    Globals.toSun = new Vector3(0, 1, 0);
+    node.updateFlareRegion(0, 0, new Date("2026-06-21T03:00:00Z"));
+    expect(node.flareRegionGroup.children.length).toBeGreaterThan(0);
+    expect(allMasks(node.flareRegionGroup).every(mask => mask === LAYER.MASK_LOOK)).toBe(true);
 });
 
 test("flare region parts created after load follow the look flag", () => {
@@ -67,7 +102,7 @@ test("flare region parts created after load follow the look flag", () => {
     expect(node.flareRegionGroup.children.length).toBe(0);
     node.updateFlareRegion(0, 0, new Date("2026-06-21T03:00:00Z"));
     expect(node.flareRegionGroup.children.length).toBeGreaterThan(0);
-    expect(allMasks(node.flareRegionGroup).every(mask => mask === LAYER.MASK_LOOKRENDER)).toBe(true);
+    expect(allMasks(node.flareRegionGroup).every(mask => mask === LAYER.perViewLayerMask(true, true))).toBe(true);
 
     // Unticking still takes the whole region out of the look view
     node.showFlareRegionLook = false;
@@ -91,5 +126,5 @@ test("a later update does not change the flare region masks or request a render"
     par.renderOne = false;
     node.updateFlareRegion(0, 0, date);
     expect(par.renderOne).toBe(false);
-    expect(allMasks(node.flareRegionGroup).every(mask => mask === LAYER.MASK_LOOKRENDER)).toBe(true);
+    expect(allMasks(node.flareRegionGroup).every(mask => mask === LAYER.perViewLayerMask(true, true))).toBe(true);
 });
