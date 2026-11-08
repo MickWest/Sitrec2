@@ -238,9 +238,10 @@ const BODY = '<script>document.title = "ran"</script>';
         });
     }
 
-    // 24 php-cgi requests run one after another in the next test: about 1.8 s alone, but
-    // more than Jest's default 5 s under full-suite load. The limit is a load allowance,
-    // not a performance check.
+    // Two tests below run php-cgi requests one after another: 24 in the first (about 1.8 s
+    // alone, but more than Jest's default 5 s under full-suite load on 2.188.0) and 8 in the
+    // second (about 1 s under full-suite load). The limit is a load allowance, not a
+    // performance check.
     const MANY_REQUESTS_TIMEOUT_MS = 30000;
 
     describe.each(["sdk", "curl"])("%s fetch path", (fetchPath) => {
@@ -275,7 +276,7 @@ const BODY = '<script>document.title = "ran"</script>';
                     .toEqual({key, status: 200, type, disposition, nosniff: "nosniff"});
                 expect(res.body).toBe(BODY);
             }
-        });
+        }, MANY_REQUESTS_TIMEOUT_MS);
 
         test("range requests keep their status, range headers and caching", async () => {
             const res = await get("42/v.mp4", {fetchPath, storedType: "text/html", range: "bytes=0-7"});
