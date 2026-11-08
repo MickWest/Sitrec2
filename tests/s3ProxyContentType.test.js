@@ -238,6 +238,11 @@ const BODY = '<script>document.title = "ran"</script>';
         });
     }
 
+    // 24 php-cgi requests run one after another in the next test: about 1.8 s alone, but
+    // more than Jest's default 5 s under full-suite load. The limit is a load allowance,
+    // not a performance check.
+    const MANY_REQUESTS_TIMEOUT_MS = 30000;
+
     describe.each(["sdk", "curl"])("%s fetch path", (fetchPath) => {
         test("a stored active type is never sent, whatever the key", async () => {
             for (const storedType of STORED_TYPES) {
@@ -250,7 +255,7 @@ const BODY = '<script>document.title = "ran"</script>';
                     expect(res.body).toBe(BODY);
                 }
             }
-        });
+        }, MANY_REQUESTS_TIMEOUT_MS);
 
         test("media and data keys get their own type even when the stored type is text/html", async () => {
             const cases = {

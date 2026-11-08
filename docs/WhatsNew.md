@@ -9,6 +9,32 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.188.0 (2026-11-07)
+
+### New Features
+- **Horizon compass** (Show → Celestial → Horizon Compass): a ribbon along the sea-level horizon with compass directions and degree ticks, in the main view, the look view or both. It dips below level when the camera is high, and its labels stay upright. *Cardinal Directions* and *Headings (Degrees)* turn the two sets of labels on and off, and *Opacity* and *Text Size* set its look. It is off by default.
+- **Azimuthal grid** (Show → Celestial → Lines → Azimuthal Grid): lines of azimuth and elevation around each camera's local north and level horizon, in the main view, the look view or both. *Grid Spacing* (5° to 45°, default 10°) sets the spacing of this grid and of the equatorial grid. It is off by default.
+- **Ridgeline** (Show → Celestial → Lines → Ridgeline): a thin line along the outline of the terrain and 3D buildings against the sky, in the main view, the look view or both. It follows fisheye, panorama and refraction. It is off by default.
+- **Terrain Geometry for ray-traced refraction** (Effects → Atmospheric Refraction, *Model* Ray-traced, *Rendering* Terrain Geometry): the ray-traced view moves the terrain along the traced rays before it finds what is in front, so distant terrain below the straight-line horizon can appear, out to *Trace Distance*. *Screen-space Mirages* stays the default, and you need it when the rays fold. *Trace Distance* now goes up to 1000 km. Camera fitting is not available with Terrain Geometry.
+- **Limit by Magnitude** (Satellites): with the *Photometric estimate* brightness model, the look view can hide satellites that are fainter than *Satellite Magnitude Limit* (an estimated apparent magnitude, default 7.5), instead of using *Sat Cut-Off*.
+
+### Improvements
+- **Show → Celestial in folders** (Show → Celestial): the sky controls are now in the folders *Stars and Planets*, *Lines*, *Labels*, *Horizon Compass*, *Vectors*, *Shadows*, *Eclipses* and *Extra Celestial Views*. Star and planet brightness, the star magnitude limit and *Physical Point Sources* move here from the View menu. *Atmospheric Optics (Halos)* moves here from the Lighting menu, and *Solar Eclipse* and *Lunar Eclipse* move to the *Eclipses* folder. *Star Chart* moves to *Extra Celestial Views*. Some rows have new names: *Star/Planet Names*, *Planets Only*, *Name Filter* (was Label List), *Star Magnitude Limit* and *Link Brightness*. *Planets Only* is available after you turn on *Star/Planet Names*. *Celestial Help*, at the bottom of the folder, opens the new Celestial Display page.
+- **One row for Main and Look**: a setting that has a main view version and a look view version now has one row with two boxes, M and L. For example, *Show Tracks in Main* and *Show Tracks in Look* (Contents) are now one *Show Tracks* row. This applies to tracks, grids, labels, pins, measurements, the compass, the time display, per-view shadows, satellite labels and the celestial rows. Each box changes only its own view, and you can drag across boxes to set several of them.
+- **Constellation names on their own switch** (Show → Celestial → Labels → Constellation Names): the names no longer follow *Constellation Lines*. A saved sitch keeps the names it showed.
+- **Celestial vectors for every planet, in each view** (Show → Celestial → Vectors): arrows to Mercury, Uranus, Neptune and Pluto join the arrows to the Sun, Moon, Venus, Mars, Jupiter and Saturn. Each arrow has its own Main and Look box. The two boxes on the *Vectors* title hide the arrows in a view and keep your choices. *Vectors On Traverse* is now saved with the sitch.
+- **Thinner celestial lines** (Show → Celestial → Lines → Line Width): constellation lines and both grids are now 0.25 pixels wide by default (they were 1 pixel), and a slider changes the width. The grids fade out near their poles, so their lines no longer crowd into a bright spot. The equatorial grid no longer draws one meridian and one circle in magenta.
+- **Star Chart magnitude limit** (Show → Celestial → Extra Celestial Views → Star Chart): the chart has its own *Star Magnitude Limit* (default 5.5), saved with the sitch. *Satellite Ephemeris* and *Sky Plot* are now checkboxes that show and hide their windows.
+- **One Atmospheric Refraction menu** (Effects → Atmospheric Refraction): the View → Atmospheric Refraction folder and the Effects → Ray-traced Refraction folder are now one folder. Its title checkbox turns refraction on and off in every view, now also the ray-traced view, which keeps its atmosphere while refraction is off. *Model* selects *Standard* or *Ray-traced* and shows the settings of that model. The ray-traced view now also follows *Sky* and *Terrain and Buildings*. A saved sitch opens with the model it used.
+- **Standard refraction follows the air along the sight line** (Effects → Atmospheric Refraction, *Model* Standard): a long sight line between two high points sags into denser air, so a distant summit is raised more than before. A camera high above the ground sees the ground raised less. Sight lines with both ends near the ground change little.
+- **Distant terrain near the horizon**: with standard refraction on (the default), terrain loading now allows for the refraction, so distant ridges that refraction raises above the horizon are loaded and drawn. Distant mountains beyond the sea horizon can also load finer tiles, with refraction on or off.
+
+### Bug Fixes
+- Fixed *Render Stars* having no effect on the stars in the sky. It is now *Render Stars and Planets* (Show → Celestial → Stars and Planets), and it hides the stars, the planets, the Sun and the Moon, with their name labels.
+- Fixed a satellite download from the Satellites menu adding to the satellites already loaded, without asking whether to replace them, after an earlier satellite load.
+- Fixed the surface of distant terrain going missing in a zoomed-in view when refraction raised it into the view.
+- Fixed terrain falling to sea level where the elevation data has no value. It now takes its height from a coarser tile at the same place.
+
 ## Version 2.187.3 (2026-11-04)
 
 ### New Features
