@@ -1851,11 +1851,12 @@ export const serializeMethods = {
             // been deserialized — see CNodeDisplayWindField.modDeserialize.
             // Manual / sounding sources read live values from targetWind,
             // localWind, atmospheric profiles, etc., and would otherwise
-            // race the deserialize loop's awaits.
+            // race the deserialize loop's awaits. A grid source restored from
+            // its saved files fills here too, to blend the grid times.
             if (windNode._needsPostDeserializeFetch) {
                 windNode._needsPostDeserializeFetch = false;
                 windNode.fetchWindForAltitude(windNode.windAltFt).catch(err => {
-                    console.warn("Non-GFS wind reload failed:", err);
+                    console.warn("Wind reload failed:", err);
                 });
             } else if (Array.isArray(windNode._needsPostDeserializeReloadGFS)) {
                 const savedLevels = windNode._needsPostDeserializeReloadGFS;

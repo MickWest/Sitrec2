@@ -1776,6 +1776,9 @@ async function initializeOnce() {
                     return true;
                 }
             }
+            // The motion analysis of the frame shown, when it is on. Its overlay is drawn
+            // only when its result is ready, which can be after the frame is decoded.
+            if (getMotionAnalyzerForTesting()?.isResultPending(par.frame ?? 0)) return true;
             return false;
         };
         window.NodeMan = NodeMan;

@@ -170,6 +170,8 @@ The comment on each commit has a heading, then one line:
 
 The scan and review are in the comment under collapsible sections, cut if they are very long. The workflow run keeps their full text, the diff the review read and the model's transcript for 90 days; the comment does not expire.
 
+When a push changes the rules that the review applies (`scripts/egress-accepted-patterns.md`, `scripts/egress-review-prompt.md` or `scripts/egress-allowlist.json`), the comment lists each of these files with its lines added and removed, and shows their diff in a collapsible section. These files are outside the scan, so this is how a newly accepted pattern appears on the record of the push that adds it.
+
 ## When the check is red
 
 **An accepted pattern.** [`scripts/egress-accepted-patterns.md`](https://github.com/MickWest/Sitrec2/blob/main/scripts/egress-accepted-patterns.md) lists findings that the maintainer has already accepted after a review, each with its limits, and findings that were refused. The review reports a change that matches an accepted entry, within its limits, as `Accepted pattern: <id>` and not as a finding. When a finding is accepted, the release that ships it adds an entry there.

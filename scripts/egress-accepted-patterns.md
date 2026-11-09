@@ -41,12 +41,20 @@ entry here: an id, what the code does, where the data goes, the release, and its
 - **Limits:** the providers whose `trigger` in the allow-list names this probe. Positions finer
   than a tile, or other providers, are findings.
 
-### `timing-report-export` — accepted 2.183.11
-- **Code:** `src/nodes/CNodeDateTime.js`, `src/showTimingAnalysis.js`. The Timing Analysis report
-  shows the video file name (a "Show Filename and Names" checkbox, on by default) and up to five
-  raw values from KLV metadata.
-- **Data:** text the user copies or downloads. No network request.
-- **Limits:** that report only. New fields in other logs or exports are findings.
+### `timing-report-export` — accepted 2.183.11; its 2.184.0 extension accepted 2026-11-08
+- **Code:** `src/nodes/CNodeDateTime.js`, `src/analysis/MisbTimingStats.js`,
+  `src/showTimingAnalysis.js`. The Timing Analysis report. With its "Show Filename and Names"
+  checkbox on (the default), it shows the loaded file names and track names, and for each KLV
+  stream: up to five different values of each identity tag (mission ID, platform tail number,
+  call sign or track ID, platform designation, image source sensor) and of each local set; up to
+  five raw values of each tag that Sitrec does not decode; the stream and descriptor names in the
+  TS file; the first time stamp of the stream; and the sun height at that time. With the checkbox
+  off, each value that can hold a name or an identifier shows as "hidden".
+- **Data:** text that the user copies or downloads from the report dialog. No network request.
+- **Limits:** that report, and only when the user selects Copy or Download. These values in
+  another log, export, save or shared link are findings (see "Refused": descriptor names in a
+  shared copy of a save). The report shows no position, only the median distance between two
+  streams and the sun height; a position in it is a finding.
 
 ### `debug-log-file-names` — accepted 2.183.12
 - **Code:** `src/CFileManagerParse.js` and other loaders write console lines that name the file

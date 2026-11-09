@@ -2054,12 +2054,22 @@ export class CNodeDisplayWindField extends CNode3DGroup {
             const ctrl = new AbortController();
             const to = setTimeout(() => ctrl.abort(), 60000);
             try {
+                // When all its fetch slots are busy (several levels, or several
+                // visitors, on a cold cache) the proxy answers 503 with Retry-After:
+                // try again, not a failure. Without the retry, a busy proxy silently
+                // dropped the later grid time from the blend. A 503 without
+                // Retry-After (Python missing) fails at once.
                 let resp;
-                try {
-                    resp = await fetch(url, {signal: ctrl.signal});
-                } catch (e) {
-                    if (e.name === "AbortError") throw new Error(`Timeout fetching ${level} (60s)`);
-                    throw e;
+                for (let attempt = 1; ; attempt++) {
+                    try {
+                        resp = await fetch(url, {signal: ctrl.signal});
+                    } catch (e) {
+                        if (e.name === "AbortError") throw new Error(`Timeout fetching ${level} (60s)`);
+                        throw e;
+                    }
+                    const retryAfter = Number(resp.headers?.get?.("Retry-After"));
+                    if (resp.status !== 503 || !(retryAfter > 0) || attempt >= 4) break;
+                    await new Promise(r => setTimeout(r, Math.min(retryAfter, 10) * 1000));
                 }
                 if (!resp.ok) throw new Error(`HTTP ${resp.status} for level ${level}`);
                 const json = await resp.json();
@@ -3204,6 +3214,15 @@ export class CNodeDisplayWindField extends CNode3DGroup {
         this._lastRefTime = jsons[0].refTime ?? null;
         this._showProvenance();
         console.log("Wind data restored from saved files");
+
+        // The lines above are one grid time only. The displayed lines follow the
+        // sitch time, which can need the grids on both sides of it (decision D5),
+        // so fill once the sitch is restored, as the path with no saved files does.
+        // Without this, the lines depended on load order: when the saved files
+        // arrived after this node, the reload below drew the blend of both times;
+        // when they arrived first, these lines of one time stayed (the
+        // "wind arrow test" regression flake, 63% of the pixels, 2026-11-08).
+        if (this.visible) this._needsPostDeserializeFetch = true;
     }
 
     // Pre-warm every level the saved sitch had loaded, then render the

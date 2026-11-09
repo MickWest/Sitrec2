@@ -2,8 +2,10 @@
 // User data egress check — composes the public record.
 //
 // Reads the working directory the workflow fills in (.egress/): scan.json and scan.md from
-// scripts/security-scan-egress.mjs, and review.md / review.exit / review.stderr from the
-// LLM review. Decides the overall verdict and writes:
+// scripts/security-scan-egress.mjs, review.md / review.exit / review.stderr from the
+// LLM review, and rules.diff, the change to the review's own rules (the accepted patterns,
+// the prompt and the allow-list), which are outside the scan. Decides the overall verdict
+// and writes:
 //   comment.md   the record posted as a comment on the commit (permanent and public)
 //   verdict.txt  CLEAR, ATTENTION or INCOMPLETE — the workflow's exit status follows it
 //
@@ -32,7 +34,28 @@ const scanMd = readIf('scan.md') || '';
 const reviewMd = (readIf('review.md') || '').trim();
 const reviewExit = (readIf('review.exit') || '').trim();
 const reviewErr = (readIf('review.stderr') || '').trim();
+const rulesDiff = (readIf('rules.diff') || '').trim();
 const range = arg('--range', scan?.range || '');
+
+// ─── The review's own rules ───────────────────────────────────────────────────────────
+// A change to them changes what later pushes are judged by, and the scan and the review
+// do not see it. So it is on the record of the push that makes it: each file, with the
+// lines added and removed, and the diff itself below.
+const rulesChanged = [];
+let inHunk = false;
+for (const line of rulesDiff.split('\n')) {
+    const file = line.match(/^diff --git a\/(\S+) b\//);
+    if (file) {
+        rulesChanged.push({file: file[1], added: 0, removed: 0});
+        inHunk = false;
+    } else if (line.startsWith('@@')) {
+        inHunk = rulesChanged.length > 0;
+    } else if (inHunk && line.startsWith('+')) {
+        rulesChanged.at(-1).added++;
+    } else if (inHunk && line.startsWith('-')) {
+        rulesChanged.at(-1).removed++;
+    }
+}
 
 // ─── The review's own verdict ─────────────────────────────────────────────────────────
 let review;
@@ -120,6 +143,12 @@ if (review.status !== 'done') {
     lines.push(`Review: ${review.note}.`);
     lines.push('');
 }
+if (rulesChanged.length) {
+    lines.push('**Review rules changed in this push:** ' +
+        rulesChanged.map(({file, added, removed}) => `\`${file}\` (+${added} −${removed})`).join(', ') +
+        '. Later pushes are judged by these rules. They are outside the scan and the review, so the change is shown below.');
+    lines.push('');
+}
 
 lines.push('<details><summary>Review</summary>');
 lines.push('');
@@ -138,6 +167,19 @@ lines.push(scanMd ? cap(scanMd, 30000) : '_no scan output_');
 lines.push('');
 lines.push('</details>');
 lines.push('');
+if (rulesChanged.length) {
+    // A fence longer than any run of backticks in the diff, so that the diff cannot close it.
+    const longestRun = Math.max(0, ...(rulesDiff.match(/`+/g) || []).map(run => run.length));
+    const fence = '`'.repeat(Math.max(3, longestRun + 1));
+    lines.push('<details><summary>Review rules diff</summary>');
+    lines.push('');
+    lines.push(fence + 'diff');
+    lines.push(cap(rulesDiff, 20000));
+    lines.push(fence);
+    lines.push('');
+    lines.push('</details>');
+    lines.push('');
+}
 
 const docLink = repoUrl ? `${repoUrl}/blob/main/docs/UserDataEgressCheck.md` : 'docs/UserDataEgressCheck.md';
 lines.push(`<sub>User Data Egress Check${maxCredits ? `, review capped at ${maxCredits} AI credits` : ''}. ` +

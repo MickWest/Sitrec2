@@ -299,6 +299,15 @@ export class MotionAnalyzer {
         if (cached) return cached;
 
         const videoData = this.videoView?.videoData;
+        // getImage gives the closest decoded frame when the one asked for is not
+        // decoded yet, and that is often this frame itself. Compared with itself, a
+        // frame is an exact duplicate, and its zero motion would be cached as final.
+        // So until the previous frame is decoded there is no answer yet: "pending",
+        // with nothing cached. The caller tries again on a later render.
+        if (videoData?.isFrameLoaded && !videoData.isFrameLoaded(frame - 1)) {
+            videoData.getImage(frame - 1);   // asks the decoder for it
+            return {isDuplicate: false, pending: true, identicalRatio: 0, meanAbsDiff: Infinity};
+        }
         const prevImage = videoData?.getImage(frame - 1);
         if (!prevImage || !prevImage.width || !prevImage.height) {
             const result = {isDuplicate: false, identicalRatio: 0, meanAbsDiff: Infinity};
@@ -311,6 +320,16 @@ export class MotionAnalyzer {
         prevGray.delete();
         this.duplicateFrameCache.set(frame, result);
         return result;
+    }
+
+    // True while the analysis of this frame has not finished: no result yet, or one
+    // that waits for a frame to decode. The regression settle gate
+    // (areVideoFramesPendingForFixedFrame in index.js) waits for it, so that a
+    // screenshot never shows the analysis before its result is drawn.
+    isResultPending(frame) {
+        if (!this.active || this.suspendAnalysis || !this.videoView?.videoData) return false;
+        const cached = this.resultCache.get(Math.floor(frame));
+        return !cv || !cached || !!cached.incomplete;
     }
 
     async buildDuplicateFrameMap(startFrame, endFrame, progressCallback = null, beforeFrameCallback = null, shouldCancel = null) {
@@ -740,6 +759,10 @@ export class MotionAnalyzer {
         const {gray, width, height} = imageToGrayscale(image, this.params.blurSize);
 
         const duplicateInfo = this.detectDuplicateFrame(targetFrame, gray);
+        if (duplicateInfo.pending) {
+            gray.delete();
+            return;
+        }
         if (duplicateInfo.isDuplicate) {
             gray.delete();
             this.cacheZeroMotionFrame(targetFrame, width, height, duplicateInfo);
@@ -1309,6 +1332,19 @@ export class MotionAnalyzer {
         }
 
         const duplicateInfo = this.detectDuplicateFrame(frame, gray);
+        if (duplicateInfo.pending) {
+            gray.delete();
+            this.resultCache.set(frame, {
+                flowData: null,
+                smoothedDirection: {...this.smoothedDirection},
+                angleHistory: [...this.angleHistory],
+                imgWidth,
+                imgHeight,
+                incomplete: true,
+            });
+            setTimeout(() => setRenderOne(true), 100);
+            return;
+        }
         if (duplicateInfo.isDuplicate) {
             gray.delete();
             this.cacheZeroMotionFrame(frame, imgWidth, imgHeight, duplicateInfo);
