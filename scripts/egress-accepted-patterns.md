@@ -83,6 +83,17 @@ entry here: an id, what the code does, where the data goes, the release, and its
 - **Limits:** only when the user has chosen Open-Meteo (Manual is the default). A finer position,
   or fetching without that choice, is a finding.
 
+### `wind-grid-reload-on-sitch-load` — accepted 2.189.0 (contract widened)
+- **Code:** `src/nodes/CNodeDisplayWindField.js` (`modDeserialize`), `src/CustomManagerSerialize.js`
+  (`finishDeserialization`). When a saved sitch opens with its grid wind field visible, the
+  application requests the wind grids for the sitch time again. It does this when the sitch holds
+  no wind files, and also after it restores saved wind files, to blend the two grid times.
+- **Data:** a date, an hour and a pressure level (time), to the application's own `windProxy.php`
+  or `customWindProxy.php`. No position.
+- **Limits:** only a grid wind field that the saved sitch shows as visible. A request when that
+  wind field is hidden, a position or any other field in the request, or another destination is a
+  finding.
+
 ### `local-debug-frame-writer` — accepted 2.158.0
 - **Code:** `src/analysis/BotBenchImageCapture.js`. A debug hook POSTs rendered frames to a
   `writerUrl` the caller supplies (default loopback).

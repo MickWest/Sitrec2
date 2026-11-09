@@ -9,6 +9,20 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.189.0 (2026-11-09)
+
+### New Features
+- **Search Documentation** (Help → Documentation → *Search Documentation*): search the titles and the text of the documentation pages. Type a few words, for example *wing flapping* or *frame rate*. Each result shows the page, the section and a short excerpt with the matched words highlighted, and a click opens that section in a new tab. All the words must be in the same section. A word of three or more letters also finds longer words that start with it, and letter case does not matter. The search field stays in place while the list of results changes.
+
+### Improvements
+- **Frequency Analysis guide** (Help → Documentation → Video Tools → *Frequency Analysis*, or Video → Help): a new guide to Frequency Analysis (Video → Point Track), with diagrams. It explains the limits from frame rate, duration and object size, each setting, the peak search floor, and the calculation step by step. It also explains how tracking errors, a changing background, neighboring objects and video compression can hide a repetition or make a false peak. The AI Assistant can read it.
+- **Frequency graph scale** (Video → Point Track → *Frequency Analysis*): the vertical scale now fits the frequencies that the peak label can use, at or above *Peak search floor (Hz)* in Frequency Analysis Settings. Slow brightness drift below the floor no longer makes the labeled peak too small to see. A curve that is taller below the floor is cut off at the top of the graph. The spectrum and the peak label do not change.
+
+### Bug Fixes
+- Fixed Motion Analysis (Video → Motion Analysis, with *Skip Duplicates* on) sometimes showing no motion for a frame of a moving video, when the frame before it was not decoded yet.
+- Fixed a saved sitch with GFS wind (Physics → Wind) sometimes opening with wind lines from only one of the two 6-hour cycles around the sitch time.
+- Fixed GFS wind (Physics → Wind) using only the earlier 6-hour cycle, or failing to load a level, when the wind server was busy. Sitrec now waits and asks again.
+
 ## Version 2.188.0 (2026-11-07)
 
 ### New Features
