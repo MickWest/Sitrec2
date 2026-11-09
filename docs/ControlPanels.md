@@ -62,6 +62,8 @@ commands so dragging is optional. Extracted widgets leave a return control at th
 View → Control Panels can reopen them. Restore control arrangement resets presentation,
 not scene state. Master visibility hides all owned widgets while preserving placement;
 collapsing the composition keeps detached widgets and information widgets available.
+The master visibility control is the Satellite Controls checkbox. It is the first row of
+the Satellites menu, and the View menu has a copy as its last row.
 Opening an individual widget from the recovery menu does not force open the composition.
 
 ## Binding controls
@@ -79,7 +81,34 @@ group.destroy();
 The adapter forwards actual source callbacks and completion hooks. Labels, choices, ranges,
 units, disabled states and externally changed values refresh from the source. Numeric
 formatting does not round the underlying value. Hidden groups stop polling. Native controls
-isolate their keys from scene shortcuts and share checkbox drag painting with OUI.
+share checkbox drag painting with OUI.
+
+## Keys and scene shortcuts
+
+`NativeKeyRouting.js` decides who gets a key press when the focus is in a native surface.
+The rule is the same as in OUI menus:
+
+- A text or number field keeps its keys.
+- After a click on any other control (a checkbox, button, selector, slider or widget title),
+  the next key press is a scene shortcut. The control loses focus, its own key action is
+  cancelled, and the event continues to the document handler. Space plays, and comma and
+  period step a frame, as they do after a click in an OUI menu.
+- After Tab moved the focus to a control, that control keeps its keys. A panel can then be
+  operated with the keyboard only. A pointer press ends this state.
+
+A new native surface calls `routeNativeKeys(rootElement)`. A key handler on a control that
+is not a text field calls `releaseKeyToScene(event)` first and returns when the result is
+true. OUI forms that carry `data-interaction-native` use the same rule through
+`panelKeepsKey(event)`.
+
+## Shared rails
+
+Menus, native widgets and docked views (Notes, text views and other dockable views) use
+the same left and right rails. A menu or a widget registers with the rail. A docked view
+does not: `CNodeView` appends its element to the rail. A hidden widget keeps its position
+and gives up its space, so a rail closes when hidden widgets are all that it shows. A rail
+stays open while a menu, a visible widget or a visible docked view is in it. Code that adds,
+removes, shows or hides a rail occupant calls `refreshSidebarVisibility()`.
 
 The first native slice covers the controls used by Satellite Controls. Color controls,
 BigSlider and other compound editors remain on OUI until their contracts and parity checks

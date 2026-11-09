@@ -2,6 +2,7 @@ import GUI from "./js/lil-gui.esm";
 import "./MenuMirror";
 import {registerGUIRoot, unregisterGUIRoot} from "./GUIRootRegistry";
 import {modernControlStyle} from "./ModernControlStyle";
+import {panelKeepsKey, watchFocusSource} from "./NativeKeyRouting";
 
 // Presentation only: keep the real controllers, including their keyboard editing,
 // units, numeric drag/wrap/elastic behavior, callbacks and accessibility labels.
@@ -15,6 +16,7 @@ export function applyModernControls(gui, {embedded = false} = {}) {
     }
     gui.domElement.classList.add("sitrec-modern");
     gui.domElement.dataset.interactionNative = "true";
+    watchFocusSource(doc);
     if (embedded) gui.domElement.classList.add("modern-embedded");
     return gui;
 }
@@ -26,6 +28,8 @@ export function createControlGroup(container, {beforeEdit, onChange} = {}) {
     if (beforeEdit) {
         gui.domElement.addEventListener("pointerdown", beforeEdit, true);
         gui.domElement.addEventListener("keydown", event => {
+            // After a click on a control that is not a text field, the key is a scene shortcut.
+            if (!panelKeepsKey(event)) return;
             if (!["Tab", "Escape", "Shift", "Control", "Alt", "Meta"].includes(event.key)) beforeEdit();
         }, true);
     }

@@ -178,12 +178,14 @@ test("Main/Look pairs keep independent labels, values and disabled states", () =
     expect(main.$input.getAttribute("aria-label")).toBe("Flare region in Main");
 });
 
-test("active groups stop polling when hidden or destroyed and keep native keyboard behavior", () => {
+test("active groups stop polling when hidden or destroyed and keep native keyboard behavior after Tab", () => {
     const count = guiRootCount();
     const state = {text: "old"}; const row = mirrorControl(source.add(state, "text"), native);
     const beforeEdit = jest.fn();
     const second = createNativeControlGroup(host, {beforeEdit});
     const checkbox = mirrorControl(source.add({enabled: false}, "enabled"), second);
+    // Tab shows keyboard use. The click case is in NativeKeyRouting.test.js.
+    document.body.dispatchEvent(new KeyboardEvent("keydown", {key: "Tab", bubbles: true}));
     const sceneKey = jest.fn(); document.addEventListener("keydown", sceneKey);
     const event = new KeyboardEvent("keydown", {key: " ", bubbles: true, cancelable: true});
     checkbox.$input.dispatchEvent(event);

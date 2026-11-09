@@ -34,10 +34,12 @@ test("embedded groups poll shared state and unregister on disposal", () => {
     expect(guiRootCount()).toBe(count);
 });
 
-test("native form keys keep focus and default behavior without reaching scene shortcuts", () => {
+test("after Tab, native form keys keep focus and default behavior without reaching scene shortcuts", () => {
     const beforeEdit = jest.fn();
     group = createControlGroup(host, {beforeEdit});
     const twin = source.add({flag: false}, "flag").mirrorTo(group);
+    // Tab shows keyboard use. The click case is in NativeKeyRouting.test.js.
+    document.body.dispatchEvent(new KeyboardEvent("keydown", {key: "Tab", bubbles: true}));
     const sceneKey = jest.fn();
     document.addEventListener("keydown", sceneKey);
     twin.$input.focus();

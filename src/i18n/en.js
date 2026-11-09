@@ -792,7 +792,7 @@ const en = {
         },
         time: {
             title: "Time",
-            tooltip: "Date, time and frame controls for the sitch.\nDrag the hour, minute or second digits to scrub time while holding the current video frame fixed. Click to type.\nChoose Current frame or Start · frame 0, and check the time zone above the clock. Original sliders and timeline controls are in the expandable sections.",
+            tooltip: "Date, time and frame controls for the sitch.\nDrag the hour, minute or second digits to scrub time while holding the current video frame fixed. Click to type.\nChoose Edit Playhead or Edit Start, and check the time zone above the clock. Original sliders and timeline controls are in the expandable sections.",
         },
         objects: {
             title: "Objects",

@@ -1,6 +1,7 @@
 import {modernControlStyle} from "./ModernControlStyle";
 import {timeEditorStyle} from "./TimeEditorStyle";
 import {parseTimeEntry, replaceTimePart, shiftTimePart, wallTimeISO} from "./TimeEditing";
+import {panelKeepsKey, releaseKeyToScene, watchFocusSource} from "./NativeKeyRouting";
 
 const digit = part => `<input class="te-digit" type="text" inputmode="numeric" autocomplete="off" spellcheck="false" data-part="${part}" aria-label="${part[0].toUpperCase() + part.slice(1)}" title="${part[0].toUpperCase() + part.slice(1)}: click left/right to subtract/add; drag to scrub. Tab/Shift+Tab selects digits to type. ↑/↓ steps; Shift ×10. Enter applies; Escape cancels and leaves.">`;
 
@@ -24,8 +25,8 @@ export class TimeEditor {
         this.root.setAttribute("aria-label", "Date and time editor");
         this.root.innerHTML = `
             <div class="te-row te-target" aria-label="Time to edit">
-                <button type="button" data-target="now">Current frame</button>
-                <button type="button" data-target="start">Start · frame 0</button>
+                <button type="button" data-target="now">Edit Playhead</button>
+                <button type="button" data-target="start">Edit Start</button>
             </div>
             <div class="te-row">
                 <select class="te-grow" data-id="zone" aria-label="Edit in time zone" title="Changes how time is displayed and entered. The instant stays the same."></select>
@@ -67,7 +68,10 @@ export class TimeEditor {
             const state = this.adapter.read();
             this.apply(replaceTimePart(this.date(state), "date", this.el("calendar").value, state.offset));
         };
+        watchFocusSource(doc);
         this.root.addEventListener("keydown", event => {
+            // After a click on a button or a selector, the key is a scene shortcut.
+            if (releaseKeyToScene(event)) return;
             event.stopPropagation();
             if (event.key !== "Tab") return;
             event.preventDefault();
@@ -76,7 +80,7 @@ export class TimeEditor {
                 : (index + (event.shiftKey ? -1 : 1) + this.inputs.length) % this.inputs.length;
             this.inputs[next].focus();
         });
-        this.root.addEventListener("keyup", event => event.stopPropagation());
+        this.root.addEventListener("keyup", event => { if (panelKeepsKey(event)) event.stopPropagation(); });
         this.root.addEventListener("click", event => this.click(event));
         for (const input of this.inputs) {
             input.addEventListener("focus", () => { adapter.pause(); input.select(); });

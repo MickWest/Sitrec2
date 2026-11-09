@@ -45,7 +45,7 @@ stays the same and the duration changes.
 
 At frame 0 the two are the same. Both are stored in UTC.
 
-The Time menu's editor opens in **Current frame** mode, showing **Now Time**. The
+The Time menu's editor opens in **Edit Playhead** mode, showing **Now Time**. The
 Year, Month, Day, Hour, Minute, Second and ms sliders also show Now Time.
 When you change it, Sitrec keeps the current frame where it is and moves
 the Start Time by the same amount. This is the easy way to sync: go to a frame where
@@ -266,12 +266,12 @@ below. The Start Time is the date and time of the first video frame.
 ## The Time menu
 
 The Time menu opens with the date and time editor. The same editor is at the top of
-**View → Satellite Controls**. Both use the same scene time and time zone.
+**Satellites → Satellite Controls**. Both use the same scene time and time zone.
 
 ### Scrubbing and setting the clock
 
-Choose **Current frame** to date the video frame you are looking at, or **Start · frame 0**
-to date the beginning of the recording. Each button's tooltip shows its exact timestamp.
+Choose **Edit Playhead** to date the video frame you are looking at, or **Edit Start**
+to date frame 0, the beginning of the recording. Each button's tooltip shows its exact timestamp.
 Editing pauses playback and leaves the current frame fixed; the scene's Start Time and
 Now Time move together. Use the playback bar to scrub through video frames instead.
 
@@ -310,7 +310,7 @@ The controls are described below. **Timing Analysis...** has [its own section](#
 | Control | Default | What it does |
 |---|---|---|
 | **Live Mode** | Off | Keeps the simulation at the real current time. Playback pauses, and the current frame stays at the middle of the timeline while the Now Time follows the clock. It turns off when you scrub or set the time. It is not saved with a sitch. Some sitches start in Live Mode |
-| **startTime** | | The Start Time (the time of frame 0), in UTC, read-only. Choose **Start · frame 0** in the editor to change it |
+| **startTime** | | The Start Time (the time of frame 0), in UTC, read-only. Choose **Edit Start** in the editor to change it |
 | **nowTime** | | The Now Time (the time of the current frame), in UTC, for reference |
 | **Year**, **Month**, **Day**, **Hour**, **Minute**, **Second**, **ms** | The sitch's date | The Now Time. When you drag one slider past its end, the slider above it changes too (for example, Minute past 59 adds an hour). They are UTC, or the selected time zone if **Use Time Zone in UI** is on. Double-click a label to return that field to the date the sitch was loaded, saved, or set from a file |
 | **Note** | Hidden | Shows only for a date that needs care: *Before 1957 - no artificial satellites existed*, or *Outside 1700-2200 - Sun, Moon and planet positions degrade*. See [Historic Skies](HistoricSkies.md) |

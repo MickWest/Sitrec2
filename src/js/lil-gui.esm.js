@@ -14,6 +14,7 @@ import {assert} from "../assert";
 import {setRenderOne} from "../Globals";
 import {showError} from "../showError";
 import {cleanFloat} from "../utils";
+import {panelKeepsKey} from "../NativeKeyRouting";
 
 /**
  * Base class for all controllers.
@@ -98,9 +99,11 @@ class Controller {
         // Mick: For non-text controls (checkboxes, selects), blur and preventDefault
         // Mick: so the key event propagates to the document-level handler instead.
         this.domElement.addEventListener( 'keydown', e => {
-            if (this.domElement.closest('[data-interaction-native="true"]')) {
+            // Embedded forms keep native Tab, Space, Enter and select-arrow keys only for
+            // text entry and for focus that Tab moved there. After a click, the rule below applies.
+            if (this.domElement.closest('[data-interaction-native="true"]') && panelKeepsKey(e)) {
                 e.stopPropagation();
-                return; // Embedded forms retain native Tab, Space, Enter and select-arrow behavior.
+                return;
             }
             const el = document.activeElement;
             if (el) {
@@ -115,7 +118,7 @@ class Controller {
             e.preventDefault();
         } );
         this.domElement.addEventListener( 'keyup', e => {
-            if (this.domElement.closest('[data-interaction-native="true"]')) {
+            if (this.domElement.closest('[data-interaction-native="true"]') && panelKeepsKey(e)) {
                 e.stopPropagation();
                 return;
             }

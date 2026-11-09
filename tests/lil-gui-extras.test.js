@@ -637,6 +637,27 @@ describe('CGuiMenuBar Z-Index Management', () => {
         expect(b.domElement.parentElement.style.left).toBe(bLeft + 'px');
     });
 
+    test('a rail closes when its last menu returns to the bar, unless a docked view is still in it', () => {
+        const a = menuBar.addFolder('A');
+        a.add({ value: true }, 'value');
+        const rail = getRightSidebar();
+
+        addMenuToRightSidebar(a);
+        a.mode = 'SIDEBAR_RIGHT';
+        expect(rail.style.display).toBe('block');
+        menuBar.restoreToBar(a);
+        expect(rail.style.display).toBe('none');
+
+        // A docked view is a child of the rail that is not in the rail's menu list.
+        addMenuToRightSidebar(a);
+        a.mode = 'SIDEBAR_RIGHT';
+        const viewDiv = document.createElement('div');
+        rail.appendChild(viewDiv);
+        menuBar.restoreToBar(a);
+        expect(rail.style.display).toBe('block');
+        viewDiv.remove();
+    });
+
     test('should treat a menu with only hidden controllers as empty', () => {
         const gui = menuBar.addFolder('Only Hidden Controls');
         const state = { value: true };

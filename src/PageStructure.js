@@ -41,7 +41,8 @@ let centerWidgetsVisible = true;
 let suspendedDividerFraction = 0.5;
 
 // Hidden widgets retain their rail position without reserving empty canvas
-// space. The same rails serve menu folders and composed control panels.
+// space. The same rails serve menu folders, composed control panels and docked
+// views. Call this when an occupant of a rail is added, removed, shown or hidden.
 export function refreshSidebarVisibility() {
     updateContentWidth();
 }
@@ -256,17 +257,28 @@ export function ensureSidebarsCreated() {
     }
 }
 
+// A side rail has three kinds of occupant. Menus and native widgets register in the
+// lists above. A docked view does not: CNodeView appends its div to the rail directly.
+// Only a hidden widget gives up its space, so a rail closes when hidden widgets are
+// all that it shows. With no hidden widget in the rail, the visible flag decides.
+function railShown(sidebar, flagVisible, menus) {
+    if (!sidebar || !flagVisible) return false;
+    const hiddenSlots = menus.filter(gui => gui._widgetHidden).map(gui => gui.domElement.parentElement);
+    if (hiddenSlots.length === 0) return true;
+    return Array.from(sidebar.children).some(child => !hiddenSlots.includes(child) && child.style.display !== 'none');
+}
+
 function updateContentWidth() {
     const content = document.getElementById("Content");
     const controls = document.getElementById("ControlsBottom");
     if (!content) return;
-    
+
     let leftOffset = 0;
     let rightOffset = 0;
-    
+
     const hasVisible = menus => menus.some(gui => !gui._widgetHidden);
-    const leftVisible = leftSidebarVisible && hasVisible(leftSidebarMenus);
-    const rightVisible = rightSidebarVisible && hasVisible(rightSidebarMenus);
+    const leftVisible = railShown(leftSidebar, leftSidebarVisible, leftSidebarMenus);
+    const rightVisible = railShown(rightSidebar, rightSidebarVisible, rightSidebarMenus);
     const centerVisible = hasVisible(centerSidebarMenus);
     const centerChanged = centerWidgetsVisible !== centerVisible;
     centerWidgetsVisible = centerVisible;
@@ -380,12 +392,19 @@ export function addMenuToRightSidebar(menuGui) {
     updateContentWidth();
 }
 
+// When the last menu leaves a rail, the rail can still hold a docked view, which is not
+// in the menu list. The slot of the menu that leaves can still be in the rail at this time.
+function railHoldsDockedView(sidebar, leavingMenu) {
+    const leavingSlot = leavingMenu?.domElement?.parentElement;
+    return !!sidebar && Array.from(sidebar.children).some(child => child !== leavingSlot && child.style.display !== 'none');
+}
+
 export function removeMenuFromLeftSidebar(menuGui) {
     const index = leftSidebarMenus.indexOf(menuGui);
     if (index !== -1) {
         leftSidebarMenus.splice(index, 1);
     }
-    if (leftSidebarMenus.length === 0) {
+    if (leftSidebarMenus.length === 0 && !railHoldsDockedView(leftSidebar, menuGui)) {
         hideLeftSidebar();
     } else updateContentWidth();
 }
@@ -395,7 +414,7 @@ export function removeMenuFromRightSidebar(menuGui) {
     if (index !== -1) {
         rightSidebarMenus.splice(index, 1);
     }
-    if (rightSidebarMenus.length === 0) {
+    if (rightSidebarMenus.length === 0 && !railHoldsDockedView(rightSidebar, menuGui)) {
         hideRightSidebar();
     } else updateContentWidth();
 }

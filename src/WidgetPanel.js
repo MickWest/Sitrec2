@@ -2,6 +2,7 @@ import {WidgetDocking} from "./WidgetDocking";
 import {refreshSidebarVisibility} from "./PageStructure";
 import {widgetPanelStyle} from "./WidgetPanelStyle";
 import {modernControlStyle} from "./ModernControlStyle";
+import {routeNativeKeys} from "./NativeKeyRouting";
 
 // A composition is an ordered tree of widget type IDs, not another store of
 // control values. Native hosts own placement and saved layout; factories
@@ -74,7 +75,7 @@ export class WidgetPanel {
         host.element.dataset.widgetId = id;
         host.element.setAttribute("aria-label", title);
         host.titleElement.title = "Drag the title to move; use the placement menu to dock, return or hide.";
-        for (const key of ["keydown", "keyup"]) host.element.addEventListener(key, event => event.stopPropagation());
+        routeNativeKeys(host.element);
         host.onPlacementChange = () => {
             if (this.disposed) return;
             const floating = host.floating;

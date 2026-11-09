@@ -1,6 +1,12 @@
 /** @jest-environment jsdom */
 import {TimeEditor} from "../src/TimeEditor";
 
+// The menu style sheet is in the page before the editor adds its own. It gives each
+// menu button the full row width and left text.
+const menuStyle = document.createElement("style");
+menuStyle.textContent = ".lil-gui button { width: 100%; text-align: left; }";
+document.head.append(menuStyle);
+
 let editor, host, state, edits, adapter;
 beforeEach(() => {
     jest.useFakeTimers();
@@ -153,6 +159,35 @@ test("UTC/local selector only changes presentation through the source adapter", 
     editor.el("zone").dispatchEvent(new Event("change"));
     expect(adapter.zone).toHaveBeenCalledWith("NPT UTC+5.75");
     expect(adapter.edit).not.toHaveBeenCalled(); expect(adapter.pause).not.toHaveBeenCalled();
+});
+
+test("buttons keep their own width inside a menu that stretches its buttons", () => {
+    const menu = document.createElement("div"); menu.className = "lil-gui"; document.body.append(menu);
+    const inMenu = new TimeEditor(menu, adapter);
+    try {
+        // A button with te-grow fills the rest of its row with flex; the others have their text width.
+        const buttons = [...inMenu.root.querySelectorAll("button:not(.te-grow)")];
+        expect(buttons.length).toBeGreaterThan(3);
+        for (const button of buttons) {
+            expect(getComputedStyle(button).width).toBe("auto");
+            expect(getComputedStyle(button).textAlign).toBe("center");
+        }
+    } finally { inMenu.dispose(); menu.remove(); }
+});
+
+test("after a click on a button, a key goes to the scene; a digit field keeps its keys", () => {
+    const sceneKey = jest.fn(); document.addEventListener("keydown", sceneKey);
+    const live = editor.root.querySelector('[data-action="live"]');
+    pointer(live, "pointerdown"); live.focus(); pointer(live, "pointerup");
+    const space = new KeyboardEvent("keydown", {key: " ", code: "Space", bubbles: true, cancelable: true});
+    live.dispatchEvent(space);
+    expect(sceneKey).toHaveBeenCalledTimes(1);
+    expect(space.defaultPrevented).toBe(true);
+    expect(document.activeElement).not.toBe(live);
+    input("minute").focus();
+    input("minute").dispatchEvent(new KeyboardEvent("keydown", {key: "ArrowUp", bubbles: true, cancelable: true}));
+    expect(sceneKey).toHaveBeenCalledTimes(1);
+    document.removeEventListener("keydown", sceneKey);
 });
 
 test("disposal stops a pending scrub and removes the editor", () => {

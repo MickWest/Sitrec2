@@ -14,6 +14,13 @@ export const timeEditorStyle = `
     padding: 4px 7px; max-width: 100%; margin: 0;
 }
 .sitrec-time-editor button { cursor: pointer; }
+/* The editor is also used in a menu. The menu styles give each button the full row width
+   and left text, with a selector of the same weight as the rules here, so the order of the
+   style sheets would decide. The repeated class makes the editor's own layout win in each host. */
+.sitrec-time-editor.sitrec-time-editor button { width: auto; text-align: center; }
+/* Compact action row. It must fit in a 250px side rail in each host. */
+.sitrec-time-editor button[data-action] { padding: 4px 5px; font-size: 11px; white-space: nowrap; }
+.sitrec-time-editor [data-id=speed] { width: 50px; flex: none; }
 .sitrec-time-editor button:hover { background: var(--panel-hover); border-color: var(--panel-accent); }
 .sitrec-time-editor :focus-visible { outline: 2px solid var(--panel-accent); outline-offset: 1px; }
 .sitrec-time-editor button[aria-pressed=true] { background: var(--panel-selected); border-color: var(--panel-accent); }

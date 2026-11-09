@@ -29,6 +29,7 @@ import {
     hideLeftSidebar,
     hideRightSidebar,
     isCenterSidebarSuspended,
+    refreshSidebarVisibility,
     resumeCenterSidebar,
     showLeftSidebar,
     showRightSidebar,
@@ -1508,6 +1509,8 @@ class CNodeView extends CNode {
             } else {
                 showRightSidebar();
             }
+            // The rail can be closed with a hidden widget in it. This view opens it again.
+            refreshSidebarVisibility();
             this.updateDockedWH();
         } else {
             this.hideSidebarIfEmpty(this.getDockSidebar(this.dockedSidebar));
@@ -1618,6 +1621,8 @@ class CNodeView extends CNode {
 
         const sidebar = this.getDockSidebar(side);
         sidebar.appendChild(this.div);
+        // A docked view is not in the rail's menu list, so the rail must count it now.
+        refreshSidebarVisibility();
         this.setResizeHandlesVisible(false);
         this.updateDockedWH();
     }
@@ -1722,7 +1727,11 @@ class CNodeView extends CNode {
         const hasVisibleChild = Array.from(sidebar.children).some(child => {
             return child !== this.div && child.style.display !== "none";
         });
-        if (hasVisibleChild) return;
+        if (hasVisibleChild) {
+            // The other occupants can all be hidden widgets. Then the rail closes.
+            refreshSidebarVisibility();
+            return;
+        }
 
         if (sidebar.id === "LeftSidebar") {
             hideLeftSidebar();

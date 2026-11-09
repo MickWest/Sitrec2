@@ -1,5 +1,6 @@
 import {ControlAdapter} from "./ControlAdapter";
 import {registerGUIRoot, unregisterGUIRoot} from "./GUIRootRegistry";
+import {releaseKeyToScene, routeNativeKeys} from "./NativeKeyRouting";
 import "./CheckboxDragPaint";
 
 const groups = new Set();
@@ -74,10 +75,12 @@ export function createNativeControlGroup(container, {beforeEdit, onChange} = {})
         },
     };
     if (beforeEdit) domElement.addEventListener("pointerdown", beforeEdit, true);
+    // Decide first, in the capture phase, if this key is an edit or a scene shortcut.
     domElement.addEventListener("keydown", event => {
+        if (releaseKeyToScene(event)) return;
         if (!["Tab", "Escape", "Shift", "Control", "Alt", "Meta"].includes(event.key)) beforeEdit?.();
     }, true);
-    for (const type of ["keydown", "keyup"]) domElement.addEventListener(type, event => event.stopPropagation());
+    routeNativeKeys(domElement);
     setNativeControlGroupActive(group, true);
     return group;
 }
@@ -259,6 +262,8 @@ export function bindControl(adapter, group, options = {}) {
 
 function bindNumberKeys(input, adapter, changed, finish) {
     input.addEventListener("keydown", event => {
+        // A slider that got its focus from a click does not use the arrow keys.
+        if (releaseKeyToScene(event)) return;
         if (event.key === "Enter") { event.preventDefault(); finish(); input.blur(); }
         const direction = ["ArrowUp", "ArrowRight"].includes(event.key) ? 1 : ["ArrowDown", "ArrowLeft"].includes(event.key) ? -1 : 0;
         if (!direction || input.type !== "range" && ["ArrowLeft", "ArrowRight"].includes(event.key)) return;

@@ -56,8 +56,6 @@ export const widgetPanelStyle = `
 .widget-body .sl-grid > * { min-width: 0; }
 .widget-body label:not(.native-controls *, .sitrec-time-editor *) { color: var(--panel-muted); font-size: 11px; display: block; }
 .widget-body .sitrec-time-editor { padding: 0; }
-.widget-body .sitrec-time-editor [data-id=speed] { width: 50px; flex: none; }
-.widget-body .sitrec-time-editor button[data-action] { padding: 4px 5px; font-size: 11px; white-space: nowrap; }
 .widget-body [data-id=altitudeControls] .native-control { flex-wrap: wrap; gap: 2px; }
 .widget-body [data-id=altitudeControls] .native-control-label { flex-basis: 100%; font-size: 11px; }
 .widget-body [data-id=altitudeControls] .native-control-fields { flex-basis: 100%; }
