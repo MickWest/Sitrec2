@@ -31,8 +31,8 @@ visibility follow. Other controls are grouped:
 | **Brightness** | Look-view brightness and magnitude limit; **Lighting & Flare Models** inside it holds the brightness model, Starlink design, sunlight model, flare geometry, and legacy appearance settings |
 
 The master **Show Satellites (Global)** switch applies to both views. M/L switches control only
-their own view. The separate [Starlink viewing panel](Starlink.md#starlink-viewing-controls)
-is available from **Starlink Viewing Controls** at the top of this menu and in **View**.
+their own view. The separate [satellite viewing panel](Starlink.md#satellite-controls)
+is available from **Satellite Controls** at the top of this menu and in **View**.
 It starts enabled in the Starlink Horizon Flares (LIVE) preset.
 
 Custom sitches automatically use **light-blue simulated Starlink satellites** when no orbit

@@ -266,7 +266,7 @@ below. The Start Time is the date and time of the first video frame.
 ## The Time menu
 
 The Time menu opens with the date and time editor. The same editor is at the top of
-**View → Starlink Viewing Controls**. Both use the same scene time and time zone.
+**View → Satellite Controls**. Both use the same scene time and time zone.
 
 ### Scrubbing and setting the clock
 

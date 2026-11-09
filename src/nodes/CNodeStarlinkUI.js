@@ -15,6 +15,8 @@ import {createControlGroup, setControlGroupActive} from "../ModernControls";
 import {disableFreeLook} from "../FreeLookGuard";
 import {starlinkPanelStyle} from "../StarlinkPanelStyle";
 
+const PANEL_NAME = "Satellite Controls";
+
 // Shared custom-scene viewing controls. The Starlink preset opts into the initial
 // sky layout and visible controls; other scenes retain their layout and start hidden.
 // All scientific state stays in the existing nodes.
@@ -34,10 +36,10 @@ export class CNodeStarlinkUI extends CNode {
         this.panel.className = "starlink-panel sitrec-modern";
         this.panel.id = "starlink-viewing-panel";
         this.panel.dataset.interactionNative = "true";
-        this.panel.setAttribute("aria-label", "Starlink viewing controls");
+        this.panel.setAttribute("aria-label", PANEL_NAME);
         this.panel.innerHTML = `
-            <header><h1 title="Satellite observer controls">Starlink</h1>
-                <button class="sl-close" data-action="collapse" aria-label="Collapse Starlink controls" title="Collapse controls">‹</button></header>
+            <header><h1 title="Satellite observer controls">${PANEL_NAME}</h1>
+                <button class="sl-close" data-action="collapse" aria-label="Collapse ${PANEL_NAME}" title="Collapse controls">‹</button></header>
             <section data-id="timeControls"><h2>Time & playback</h2><div data-id="timeEditor"></div></section>
             <section data-id="locationControls"><h2>Observer location</h2>
                 <form data-id="locationForm" class="sl-row"><input data-id="search" type="search" aria-label="Search observer location" placeholder="Place or coordinates…" title="Enter a place name or latitude, longitude."><button type="submit" data-id="go">Go</button></form>
@@ -78,7 +80,7 @@ export class CNodeStarlinkUI extends CNode {
         this.timeEditor = this.dateTime.createTimeEditor(this.el("timeEditor"));
         this.launcher = document.createElement("button");
         this.launcher.className = "starlink-launcher sitrec-modern";
-        this.launcher.textContent = "☰ Starlink controls";
+        this.launcher.textContent = `☰ ${PANEL_NAME}`;
         this.launcher.setAttribute("aria-controls", this.panel.id);
         this.launcher.onclick = () => this.setExpanded(true);
         document.body.append(this.launcher);
@@ -145,7 +147,7 @@ export class CNodeStarlinkUI extends CNode {
         this.onResize = () => this.layoutPanel();
         window.addEventListener("resize", this.onResize);
         this.gui = guiMenus.view;
-        const visibility = this.gui.add(this, "visible").name("Starlink Viewing Controls").listen().onChange(v => {
+        const visibility = this.gui.add(this, "visible").name(PANEL_NAME).listen().onChange(v => {
             this.show(v);
             if (this.gui.mode === "DOCKED") this.gui.close();
             markSitchDirty();

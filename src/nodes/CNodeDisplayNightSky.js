@@ -920,17 +920,13 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
         // Data and filtering first, then the two geographic/lighting guides and sky aim.
         const primaryControls = ["updateActive", "updateStarlink", "updateLEOSats", "updateCustomSats",
             "nameFilter", "filterTLEs", "showSunArrows", "showFlareBand",
-            "lookTowardsFlareRegion", "showFlareRegionMain", "showFlareRegionLook", "showSatellites"];
+            "lookTowardsFlareRegion", "showFlareRegionMain", "showSatellites"];
         for (const property of primaryControls.reverse()) {
             satGUI.controllers.find(controller => controller.property === property)?.moveToFirst();
         }
         // Keep the category switches beside the filter entry rather than below the guides.
         const filterRow = satGUI.controllers.find(controller => controller.property === "filterTLEs");
         filterRow.domElement.after(selectionGUI.domElement);
-        // A paired checkbox owns a shared row; move that row rather than either input.
-        const regionRow = satGUI.controllers.find(controller => controller.property === "showFlareRegionMain")
-            .domElement.closest(".lil-checkbox-pair");
-        if (regionRow) showSatellitesController.domElement.before(regionRow);
         for (const folder of [satelliteLabelsGUI, brightnessGUI, tracksGUI, orbitDataGUI]) folder.moveToEnd();
         for (const property of ["satScale", "satelliteMagnitudeLimitEnabled", "satelliteMagnitudeLimit"].reverse()) {
             brightnessGUI.controllers.find(controller => controller.property === property)?.moveToFirst();
