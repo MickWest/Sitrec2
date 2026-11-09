@@ -37,17 +37,12 @@ let centerSidebarMenus = [];
 let centerSidebar = null;
 let centerDividerFraction = 0.5; // fraction of Content width where divider is
 let centerSidebarSuspended = false;
+let centerWidgetsVisible = true;
 let suspendedDividerFraction = 0.5;
 
-// A situation-specific control panel can reserve space without taking over the
-// dockable menu sidebars. Clearing it restores the normal content geometry.
-let toolPanel = null;
-let toolPanelWidth = 0;
-
-export function setToolPanel(panel, width = 0) {
-    if (toolPanel === panel && toolPanelWidth === width) return;
-    toolPanel = panel;
-    toolPanelWidth = width;
+// Hidden widgets retain their rail position without reserving empty canvas
+// space. The same rails serve menu folders and composed control panels.
+export function refreshSidebarVisibility() {
     updateContentWidth();
 }
 
@@ -269,15 +264,21 @@ function updateContentWidth() {
     let leftOffset = 0;
     let rightOffset = 0;
     
-    if (leftSidebarVisible && leftSidebar) {
-        leftOffset = SIDEBAR_WIDTH;
+    const hasVisible = menus => menus.some(gui => !gui._widgetHidden);
+    const leftVisible = leftSidebarVisible && hasVisible(leftSidebarMenus);
+    const rightVisible = rightSidebarVisible && hasVisible(rightSidebarMenus);
+    const centerVisible = hasVisible(centerSidebarMenus);
+    const centerChanged = centerWidgetsVisible !== centerVisible;
+    centerWidgetsVisible = centerVisible;
+    if (leftSidebar) leftSidebar.style.display = leftVisible ? 'block' : 'none';
+    if (rightSidebar) rightSidebar.style.display = rightVisible ? 'block' : 'none';
+    if (centerSidebar) centerSidebar.style.display = centerSidebarVisible && centerVisible ? 'block' : 'none';
+    // On small screens rails overlay the sky; they cannot consume its width.
+    if (window.innerWidth > 760) {
+        if (leftVisible) leftOffset = SIDEBAR_WIDTH;
+        if (rightVisible) rightOffset = SIDEBAR_WIDTH;
     }
-    if (rightSidebarVisible && rightSidebar) {
-        rightOffset = SIDEBAR_WIDTH;
-    }
-
-    if (toolPanel) toolPanel.style.left = leftOffset + 'px';
-    leftOffset += toolPanelWidth;
+    const changed = content.style.left !== leftOffset + 'px' || content.style.right !== rightOffset + 'px';
     
     content.style.left = leftOffset + 'px';
     content.style.right = rightOffset + 'px';
@@ -292,7 +293,7 @@ function updateContentWidth() {
     // Reposition center sidebar if visible
     updateCenterSidebarPosition();
 
-    window.dispatchEvent(new Event('resize'));
+    if (changed || centerChanged) window.dispatchEvent(new Event('resize'));
 }
 
 export function showLeftSidebar() {
@@ -352,6 +353,7 @@ export function addMenuToLeftSidebar(menuGui) {
     
     menuGui.domElement.style.position = 'relative';
     menuGui.domElement.style.width = '100%';
+    updateContentWidth();
 }
 
 export function addMenuToRightSidebar(menuGui) {
@@ -375,6 +377,7 @@ export function addMenuToRightSidebar(menuGui) {
     
     menuGui.domElement.style.position = 'relative';
     menuGui.domElement.style.width = '100%';
+    updateContentWidth();
 }
 
 export function removeMenuFromLeftSidebar(menuGui) {
@@ -384,7 +387,7 @@ export function removeMenuFromLeftSidebar(menuGui) {
     }
     if (leftSidebarMenus.length === 0) {
         hideLeftSidebar();
-    }
+    } else updateContentWidth();
 }
 
 export function removeMenuFromRightSidebar(menuGui) {
@@ -394,7 +397,7 @@ export function removeMenuFromRightSidebar(menuGui) {
     }
     if (rightSidebarMenus.length === 0) {
         hideRightSidebar();
-    }
+    } else updateContentWidth();
 }
 
 export function isInLeftSidebar(menuGui) {
@@ -513,7 +516,7 @@ export function getCenterSidebarMenuIndex(menuGui) {
 
 export function getCenterSidebarAdjustment() {
     return {
-        visible: centerSidebarVisible,
+        visible: centerSidebarVisible && centerSidebarMenus.some(gui => !gui._widgetHidden) && window.innerWidth > 760,
         dividerFraction: centerDividerFraction,
         sidebarWidthPx: SIDEBAR_WIDTH,
     };

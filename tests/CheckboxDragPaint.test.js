@@ -11,6 +11,7 @@ global.ResizeObserver = global.ResizeObserver || class { observe() {} disconnect
 
 import GUI from "../src/js/lil-gui.esm";
 import "../src/lil-gui-extras";      // installs FolderToggle and CheckboxDragPaint
+import {createNativeControlGroup, mirrorControl} from "../src/NativeControls";
 
 let container, gui, under;
 
@@ -50,6 +51,17 @@ test("dragging over the row labels works as well as over the boxes", () => {
     const [a, b] = ["a", "b"].map(k => gui.add(state, k));
     drag([a.domElement, b.domElement]);
     expect(state).toEqual({a: true, b: true});
+});
+
+test("one paint gesture crosses native and legacy presentations through their bindings", () => {
+    const state = {a: false, b: false, c: false}, changed = jest.fn();
+    const sources = ["a", "b", "c"].map(key => gui.add(state, key).onChange(changed));
+    const native = createNativeControlGroup(container);
+    const a = mirrorControl(sources[0], native), b = mirrorControl(sources[1], native);
+    drag([a.$input, b.$name, sources[2].$input]);
+    expect(state).toEqual({a: true, b: true, c: true});
+    expect(changed).toHaveBeenCalledTimes(3);
+    native.destroy();
 });
 
 test("folder title checkboxes take part", () => {

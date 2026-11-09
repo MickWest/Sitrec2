@@ -4,18 +4,18 @@ import {CNode} from "./CNode";
 import {guiMenus, markSitchDirty, NodeMan, setRenderOne, Sit} from "../Globals";
 import {par} from "../par";
 import {ViewMan} from "../CViewManager";
-import {setToolPanel} from "../PageStructure";
 import {resolveLocationString} from "../CoordinateInput";
 import {rayIntersectsEllipsoid} from "../threeExt";
 import {withDisplayedCamera} from "../ViewUtils";
 import {fisheyeProjectVector} from "../FisheyeProjection";
 import {panoramicProjectVector} from "../PanoramicCamera";
 import {compassHeading, viewingDateInput} from "../StarlinkViewing";
-import {createControlGroup, setControlGroupActive} from "../ModernControls";
+import {createNativeControlGroup, mirrorControl, setNativeControlGroupActive} from "../NativeControls";
 import {disableFreeLook} from "../FreeLookGuard";
 import {starlinkPanelStyle} from "../StarlinkPanelStyle";
+import {WidgetPanel} from "../WidgetPanel";
+import {SATELLITE_PANEL_NAME as PANEL_NAME, satellitePanelDefinition, satelliteWidgets} from "../SatelliteWidgets";
 
-const PANEL_NAME = "Satellite Controls";
 
 // Shared custom-scene viewing controls. The Starlink preset opts into the initial
 // sky layout and visible controls; other scenes retain their layout and start hidden.
@@ -27,123 +27,60 @@ export class CNodeStarlinkUI extends CNode {
         this.expanded = v.expanded ?? window.innerWidth > 760;
         this.addSimpleSerial("expanded");
         this.controlGroups = new Map();
-        this.sourceControls = [...new Set(Object.values(guiMenus).flatMap(gui => gui.controllersRecursive?.() ?? []))];
+        this.elements = new Map();
         this.disposed = false;
         this.style = document.createElement("style");
         this.style.textContent = starlinkPanelStyle;
         document.head.append(this.style);
-        this.panel = document.createElement("aside");
-        this.panel.className = "starlink-panel sitrec-modern";
+        this.look = NodeMan.get("lookView");
+        this.main = NodeMan.get("mainView");
+        if (v.startSkyLayout && !Sit.mods?.mainView && !Sit.mods?.lookView) this.setViewLayout(false);
+        this.hud = document.createElement("div");
+        this.hud.className = "starlink-hud sitrec-modern";
+        const homes = {};
+        for (const side of ["left", "right"]) {
+            homes[side] = document.createElement("div");
+            homes[side].className = `widget-info-stack widget-info-${side}`;
+            this.hud.append(homes[side]);
+        }
+        this.look.div.append(this.hud);
+        this.controlsMenu = guiMenus.view.addFolder("Control Panels").close();
+        this.controlsMenu._folderId = "control-panels";
+        this.widgetHome = document.createElement("div");
+        this.widgetHome.hidden = true;
+        document.body.append(this.widgetHome);
+        this.widgets = new WidgetPanel({
+            parent: this.widgetHome,
+            definition: satellitePanelDefinition, registry: satelliteWidgets,
+            context: this, homes,
+            onChange: () => { markSitchDirty(); setRenderOne(true); },
+            onCollapse: () => { this.setExpanded(false); this.launcher?.focus({preventScroll: true}); },
+        });
+        this.panel = this.widgets.host.element;
         this.panel.id = "starlink-viewing-panel";
-        this.panel.dataset.interactionNative = "true";
-        this.panel.setAttribute("aria-label", PANEL_NAME);
-        this.panel.innerHTML = `
-            <header><h1 title="Satellite observer controls">${PANEL_NAME}</h1>
-                <button class="sl-close" data-action="collapse" aria-label="Collapse ${PANEL_NAME}" title="Collapse controls">‹</button></header>
-            <section data-id="timeControls"><h2>Time & playback</h2><div data-id="timeEditor"></div></section>
-            <section data-id="locationControls"><h2>Observer location</h2>
-                <form data-id="locationForm" class="sl-row"><input data-id="search" type="search" aria-label="Search observer location" placeholder="Place or coordinates…" title="Enter a place name or latitude, longitude."><button type="submit" data-id="go">Go</button></form>
-                <div class="sl-grid">
-                    <label>Latitude<input data-id="lat" type="number" min="-90" max="90" step="any" title="Latitude in degrees, from −90 to 90."></label>
-                    <label>Longitude<input data-id="lon" type="number" min="-180" max="180" step="any" title="Longitude in degrees, from −180 to 180."></label>
-                    <div data-id="altitudeControls"></div>
-                    <label>Altitude reference<select data-id="heightRef" title="Measure altitude above the terrain or mean sea level."><option value="agl">Above ground</option><option value="msl">Above sea level</option></select></label>
-                </div>
-                <p data-id="observerNote" class="sl-muted"></p>
-                <p data-id="locationMessage" class="sl-muted sl-message" role="status"></p>
-            </section>
-            <section data-id="viewControls"><h2>View adjustments</h2>
-                <div data-id="aimControl"></div>
-                <details data-id="cameraControls"><summary>Camera direction & zoom</summary>
-                    <div data-id="angles"></div><div data-id="zoom"></div>
-                </details>
-                <div class="sl-row sl-segments" aria-label="View layout">
-                    <button data-action="sky">Sky + overview</button><button data-action="split">Split views</button>
-                </div>
-            </section>
-            <section data-id="orbitControls"><h2>Satellite data</h2>
-                <div data-id="loaders"></div>
-                <p data-id="dataStatus" class="sl-muted sl-data"></p>
-            </section>
-            <section data-id="satelliteControls"><h2>Satellites</h2>
-                <div data-id="filterControls"></div>
-                <p data-id="filterStatus" class="sl-muted sl-message" role="status"></p>
-                <div data-id="categories"></div>
-                <div data-id="magnitudeControls"></div>
-                <div data-id="satelliteToggles"></div>
-            </section>
-            <section data-id="flareControls" title="Flare Band marks observing locations on Earth. Flare Region marks where to look in the sky."><h2>Flares</h2>
-                <div data-id="flareGuides"></div>
-            </section>
-            <details><summary>Sky guides</summary><div data-id="guides"></div></details>`;
-        document.body.append(this.panel);
-        this.timeEditor = this.dateTime.createTimeEditor(this.el("timeEditor"));
         this.launcher = document.createElement("button");
         this.launcher.className = "starlink-launcher sitrec-modern";
         this.launcher.textContent = `☰ ${PANEL_NAME}`;
         this.launcher.setAttribute("aria-controls", this.panel.id);
         this.launcher.onclick = () => this.setExpanded(true);
         document.body.append(this.launcher);
-        this.hud = document.createElement("div");
-        this.hud.className = "starlink-hud sitrec-modern";
-        this.hud.innerHTML = `<div class="sl-hud-block"><strong data-id="count">Loading satellites…</strong><small data-id="heading"></small></div><div class="sl-hud-block sl-hud-time"><strong data-id="clock"></strong><small data-id="clockState"></small></div>`;
-        this.look = NodeMan.get("lookView");
-        this.main = NodeMan.get("mainView");
-        if (v.startSkyLayout && !Sit.mods?.mainView && !Sit.mods?.lookView) this.setViewLayout(false);
-        this.look.div.append(this.hud);
-
-        const sky = this.sky;
-        const sats = sky.satellites;
-        this.observer.guiAlt.guiEntry.mirrorTo(this.group("altitudeControls"), {
-            name: "Altitude", unitLabel: true, listen: true,
-        }).noSlider();
-        this.control("filterControls", sats, "nameFilter");
-        for (const property of ["filterTLEs", "clearTLEFilter"]) {
-            this.sourceControls.find(controller => controller.property === property)?.mirrorTo(this.group("filterControls"));
+        // Named recovery works even when every widget has been hidden or moved.
+        const actions = {open: () => { this.show(true); this.setExpanded(true); },
+            reset: () => { this.show(true); this.setExpanded(true); this.widgets.reset(); }};
+        this.controlsMenu.add(actions, "open").name(PANEL_NAME).moveToFirst();
+        for (const instance of this.widgets.instances.values()) {
+            const recover = {open: () => {
+                if (!this.visible) this.expanded = false;
+                this.show(true);
+                instance.hidden = false;
+                this.widgets.place(instance.id, "float");
+                instance.host.open();
+                instance.host.titleElement.focus({preventScroll: true});
+                this.controlsMenu.close();
+            }};
+            this.controlsMenu.add(recover, "open").name(instance.host.title);
         }
-        this.control("magnitudeControls", sky, "satelliteMagnitudeLimitEnabled");
-        this.control("magnitudeControls", sky, "satelliteMagnitudeLimit");
-        for (const property of ["showStarlink", "showOtherSatellites", "showISS", "showBrightest"]) {
-            this.control("categories", sats, property);
-        }
-        this.group("categories").domElement.classList.add("modern-grid");
-        this.control("satelliteToggles", sats, "showSatellites");
-        this.control("satelliteToggles", sats, "showSatelliteNames");
-        this.control("guides", sky, "showConstellationsLook");
-        this.control("guides", NodeMan.get("lookView_NightSkyOverlay"), "showStarNames");
-        this.control("guides", sky, "showEquatorialGridLook");
-        this.control("guides", sky, "showHorizonCompassRibbonLook");
-        this.control("flareGuides", sky, "showSunArrows");
-        this.control("flareGuides", sky, "showFlareBand");
-        for (const [property, view] of [["showFlareRegionMain", "mainView"], ["showFlareRegionLook", "lookView"]]) {
-            this.control("flareGuides", sky, property)?.asViewCheckbox(view, "Flare Region");
-        }
-        this.control("aimControl", sky, "lookTowardsFlareRegion");
-        // Only show loaders configured on this installation.
-        const current = this.source(sats, "updateActive") ?? this.source(sats, "updateStarlink");
-        const dated = this.source(sats, "updateCustomSats") ?? this.source(sats, "updateLEOSats");
-        for (const loader of [current, dated]) loader?.mirrorTo(this.group("loaders"));
-        this.control("angles", NodeMan.get("CameraLOSController"), "choice");
-        // These are the actual camera controls: Pan follows its signed/360 convention,
-        // and FOV keeps its own source/metadata lock rather than the heading's lock.
-        for (const controller of [this.ptz.azController, this.ptz.elController]) {
-            controller?.mirrorTo(this.group("angles"), {listen: true});
-        }
-        this.ptz.fovController?.mirrorTo(this.group("zoom"), {listen: true});
-
-        this.panel.addEventListener("click", event => {
-            if (event.target.closest(".sitrec-time-editor")) return;
-            const button = event.target.closest("button");
-            if (button?.dataset.action) this.action(button.dataset.action);
-        });
-        // Native date inputs and buttons must not also trigger scene shortcuts.
-        for (const type of ["keydown", "keyup"]) this.panel.addEventListener(type, e => e.stopPropagation());
-        this.el("locationForm").onsubmit = e => { e.preventDefault(); this.findLocation(); };
-        for (const id of ["lat", "lon"]) this.el(id).onchange = () => this.setLocation(id);
-        this.el("heightRef").onchange = () => {
-            this.setControl(this.observer, "agl", this.el("heightRef").value === "agl");
-            this.sync();
-        };
+        this.controlsMenu.add(actions, "reset").name("Restore control arrangement");
         this.onResize = () => this.layoutPanel();
         window.addEventListener("resize", this.onResize);
         this.gui = guiMenus.view;
@@ -163,16 +100,33 @@ export class CNodeStarlinkUI extends CNode {
     get observer() { return NodeMan.get("fixedCameraPosition"); }
     get ptz() { return NodeMan.get("ptzAngles"); }
     get skyOverviewLayout() { return this.look.width > 0.9 && this.main.height < 0.5; }
-    el(id) { return this.panel.querySelector(`[data-id="${id}"]`); }
-    hudEl(id) { return this.hud.querySelector(`[data-id="${id}"]`); }
+    el(id) { return this.elements?.get(id) ?? this.panel.querySelector(`[data-id="${id}"]`); }
+    hudEl(id) { return this.elements?.get(id) ?? this.hud.querySelector(`[data-id="${id}"]`); }
+
+    registerElements(body) {
+        for (const element of body.querySelectorAll("[data-id]")) this.elements.set(element.dataset.id, element);
+    }
+
+    groupLifecycle(ids) {
+        return {setActive: active => {
+            for (const id of ids) { const gui = this.controlGroups.get(id); if (gui) setNativeControlGroupActive(gui, active); }
+        }};
+    }
+
+    findSource(property, object) {
+        for (const menu of Object.values(guiMenus)) {
+            const source = menu.controllersRecursive?.().find(c => c.property === property && (!object || c.object === object));
+            if (source) return source;
+        }
+    }
 
     source(object, property) {
-        return this.sourceControls.find(c => c.object === object && c.property === property);
+        return this.findSource(property, object);
     }
 
     group(id) {
         if (!this.controlGroups.has(id)) {
-            this.controlGroups.set(id, createControlGroup(this.el(id), {
+            this.controlGroups.set(id, createNativeControlGroup(this.el(id), {
                 beforeEdit: id === "angles" ? disableFreeLook : undefined,
                 onChange: () => {
                     if (id === "altitudeControls") this.locationTicket = (this.locationTicket ?? 0) + 1;
@@ -183,11 +137,15 @@ export class CNodeStarlinkUI extends CNode {
         return this.controlGroups.get(id);
     }
 
-    control(container, object, property) {
+    control(container, object, property, options = {}) {
         const source = this.source(object, property);
-        const twin = source?.mirrorTo(this.group(container), {listen: true});
+        const twin = source ? mirrorControl(source, this.group(container), options) : undefined;
         if (twin?.$input?.type === "checkbox") twin.asListCheckbox();
         return twin;
+    }
+
+    mirror(source, group, options) {
+        return source ? mirrorControl(source, this.group(group), options) : undefined;
     }
 
     setControl(object, property, value) {
@@ -277,26 +235,26 @@ export class CNodeStarlinkUI extends CNode {
         this.expanded = expanded;
         this.updateVisibility();
         if (this.visible && transferFocus) {
-            const target = expanded ? this.panel.querySelector('[data-action="collapse"]') : this.launcher;
+            const target = expanded ? (this.widgets?.host.titleElement ?? this.panel.querySelector('[data-action="collapse"]')) : this.launcher;
             target.focus({preventScroll: true});
         }
         markSitchDirty();
     }
 
     updateVisibility() {
-        this.panel.hidden = !this.visible || !this.expanded;
+        if (this.widgets) this.widgets.setVisible(this.visible, this.expanded);
+        else this.panel.hidden = !this.visible || !this.expanded;
         this.launcher.hidden = !this.visible || this.expanded;
         this.hud.hidden = !this.visible;
         this.launcher.setAttribute("aria-expanded", String(this.expanded));
-        for (const gui of this.controlGroups.values()) setControlGroupActive(gui, this.visible && this.expanded);
+        if (!this.widgets) for (const gui of this.controlGroups.values()) setNativeControlGroupActive(gui, this.visible && this.expanded);
         this.layoutPanel();
     }
 
     layoutPanel() {
         const top = ViewMan.container.getBoundingClientRect().top + ViewMan.topPx;
-        this.panel.style.top = top + "px";
         this.launcher.style.top = (top + 12) + "px";
-        setToolPanel(this.panel, this.visible && this.expanded && window.innerWidth > 760 ? 300 : 0);
+        this.widgets?.updateVisibility();
         setRenderOne(true);
     }
 
@@ -310,13 +268,14 @@ export class CNodeStarlinkUI extends CNode {
         // even when the sidebar itself is hidden or collapsed.
         NodeMan.get("labelMainViewPVS", false)?.setOverlayView(this.skyOverviewLayout ? this.look : this.main);
         if (!this.visible) return;
+        this.widgets?.setVisible(this.visible, this.expanded);
         const dt = this.dateTime, sky = this.sky, sats = sky.satellites;
         const live = dt.liveMode;
         const status = live ? "LIVE" : par.paused ? "PAUSED" : "PLAYING";
         const speed = (Sit.simSpeed ?? 1) * (par.playbackSpeed ?? 1);
         for (const action of ["sky", "split"]) {
             const pressed = action === "sky" ? this.skyOverviewLayout : this.look.width === 0.5 && this.main.width === 0.5;
-            this.panel.querySelector(`[data-action="${action}"]`).setAttribute("aria-pressed", String(pressed));
+            (this.widgets?.instances.get("viewLayout").body.querySelector(`[data-action="${action}"]`) ?? this.panel.querySelector(`[data-action="${action}"]`)).setAttribute("aria-pressed", String(pressed));
         }
         const fixed = NodeMan.get("cameraTrackSwitch").choice === "fixedCamera";
         ["lat", "lon"].forEach((id, i) => {
@@ -329,8 +288,8 @@ export class CNodeStarlinkUI extends CNode {
         for (const id of ["heightRef", "search"]) this.el(id).disabled = !fixed;
         this.el("go").disabled = !fixed || !!this.pendingLocation;
         this.el("observerNote").textContent = fixed ? "" : "Track-controlled observer";
-        this.el("locationControls").title = fixed ? "" : "Use Camera → Location to switch to a fixed observer.";
-        if (this.expanded) for (const gui of this.controlGroups.values()) gui.updateListeners();
+        this.el("locationControls").title = fixed ? "" : "Use Camera → Location → Manual to edit the observer position.";
+        this.widgets?.updateVisibility();
         const photometric = sats.brightnessModel === "Photometric estimate";
         this.el("magnitudeControls").title = photometric ? "Lower magnitudes show brighter satellites only. Visibility is estimated." : "Magnitude requires the Photometric estimate model in Satellites.";
         const manual = NodeMan.get("CameraLOSController").choice === "Manual";
@@ -338,6 +297,7 @@ export class CNodeStarlinkUI extends CNode {
         this.hudEl("heading").textContent = `${compassHeading(this.ptz.az)} · El ${this.ptz.el.toFixed(1)}° · VFOV ${this.ptz.fov.toFixed(1)}°`;
         this.hudEl("clock").textContent = viewingDateInput(dt.dateNow).replace("T", " ") + " UTC";
         this.hudEl("clockState").textContent = status + (live ? "" : ` · ${speed}×`);
+        this.el("loadDate").textContent = "Viewing date: " + viewingDateInput(dt.dateNow).slice(0, 10) + " UTC";
         if (!this.lastStats || performance.now() - this.lastStats > 1000) {
             this.lastStats = performance.now();
             this.syncSatellites();
@@ -398,20 +358,26 @@ export class CNodeStarlinkUI extends CNode {
         this.el("dataStatus").title = haveDates ? `Orbit epochs: ${viewingDateInput(start).replace("T", " ")} to ${viewingDateInput(end).replace("T", " ")} UTC.${outside ? " Viewing time is outside these epochs; positions are extrapolated." : ""}` : "";
     }
 
+    modSerialize() {
+        return {...super.modSerialize(), widgetState: this.widgets.getState()};
+    }
+
     modDeserialize(v) {
         super.modDeserialize(v);
+        this.widgets.setState(v.widgetState);
         this.show(this.visible);
     }
 
     dispose() {
         this.disposed = true;
         clearInterval(this.timer);
-        this.timeEditor.dispose();
+        this.widgets.dispose();
+        this.controlsMenu.destroy();
+        this.widgetHome.remove();
         for (const gui of this.controlGroups.values()) gui.destroy();
         this.controlGroups.clear();
-        this.sourceControls.length = 0;
+        this.elements.clear();
         window.removeEventListener("resize", this.onResize);
-        setToolPanel(null);
         this.panel.remove();
         this.launcher.remove();
         this.hud.remove();

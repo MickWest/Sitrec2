@@ -1,72 +1,116 @@
-# Shared controls and modern panels
+# Shared controls and native widget panels
 
-Sitrec's menus, custom edit windows, view-header widgets and satellite sidebar can present
-the same control. Define its state, label, tooltip, range, units and callbacks once, on the
-source lil-gui controller. Presentations should reuse that controller through `MenuMirror`.
+New UI (NUI) panels use native HTML. Existing UI (OUI) menus continue to use lil-gui.
+They share control state and edit behavior through an adapter; changing presentation must
+not change a scene's values, callbacks, units, saved data, or investigation workflow.
 
-## Embedding controls in an HTML panel
+## Separate hosting, binding and rendering
 
-`src/ModernControls.js` supplies a styled control group that fits inside an HTML container:
+- `WidgetPanel.js` composes widgets from an ordered definition, manages visibility,
+  recovery and lifecycle, and supplies placement menus.
+- `WidgetDocking.js` provides native panel hosts: title, content, collapse, drag, float,
+  left/right dock, bounds, serialization and disposal. It creates no lil-gui objects.
+  A small surface adapter shares the existing `PageStructure` docking rails with OUI.
+- `ControlAdapter.js` is the compatibility boundary around an existing OUI controller.
+  It exposes values, labels, units, choices, availability and edit operations. Source
+  callbacks and numeric behavior remain authoritative during this migration.
+- `NativeControls.js` renders native checkboxes, M/L pairs, buttons, text, choices and
+  numeric fields/sliders. `bindControl(adapter, group)` consumes the common binding
+  contract; `mirrorControl(source, group)` wraps an existing OUI source as a convenience.
+
+Host selection and control rendering are separate decisions. Replacing a slider renderer
+must not require replacing a panel host or changing saved scene data. New NUI code must
+not construct lil-gui folders or manipulate its DOM; legacy knowledge belongs in adapters.
+
+## Declarative compositions
+
+`SatelliteWidgets.js` defines the Satellite Controls composition and its satellite-specific
+widgets. `ViewingWidgets.js` defines time, observer, camera, layout and information widgets.
+A definition names a widget type, with an optional stable instance ID, initial collapse
+state, children, and an information-overlay home:
 
 ```js
-import {createControlGroup, setControlGroupActive} from "./ModernControls";
+const definition = {
+    id: "satellite-controls",
+    title: "Satellite Controls",
+    widgets: ["time", "observer", "camera", "satelliteData", "satelliteFilters"],
+};
+const registry = {
+    time: {
+        title: "Time & playback",
+        mount: ({body, context}) => {
+            const editor = context.dateTime.createTimeEditor(body);
+            return {dispose: () => editor.dispose()};
+        },
+    },
+    // Other content factories use the same mount contract.
+};
+```
 
-const group = createControlGroup(container, {onChange: markSitchDirty});
-sourceController.mirrorTo(group, {listen: true});
+Content factories receive a body and scene context, and can return `setActive` and
+`dispose` hooks. They do not own docking or copy scientific state. Widget IDs are saved
+independently of titles. The initial Satellite context supplies one instance of each
+control widget; repeating a widget within that context needs scoped bindings first.
 
-// A hidden panel need not participate in the application's listener walk.
-setControlGroupActive(group, false);
-setControlGroupActive(group, true);
+`CNodeStarlinkUI` remains the saved-scene compatibility owner. Its `visible` and `expanded`
+fields retain their meaning. Its `widgetState` stores presentation only. The existing node
+ID remains unchanged. Older scenes without widget layout use the familiar left panel.
+Opening a composition does not load a catalog, enable Live, or move a camera.
 
-// Destroy the group when its owning panel closes permanently.
+Every widget and the complete composition can float or dock. Placement menus offer named
+commands so dragging is optional. Extracted widgets leave a return control at their home;
+View → Control Panels can reopen them. Restore control arrangement resets presentation,
+not scene state. Master visibility hides all owned widgets while preserving placement;
+collapsing the composition keeps detached widgets and information widgets available.
+Opening an individual widget from the recovery menu does not force open the composition.
+
+## Binding controls
+
+```js
+import {createNativeControlGroup, mirrorControl,
+        setNativeControlGroupActive} from "./NativeControls";
+const group = createNativeControlGroup(container, {onChange: markSitchDirty});
+mirrorControl(sourceController, group, {name: "Altitude", unitLabel: true}).noSlider();
+setNativeControlGroupActive(group, false);
+// On permanent removal:
 group.destroy();
 ```
 
-The mirrored control is a real lil-gui controller. Numeric entry, drag, wrapping, elastic
-ranges, unit conversion, dropdowns and keyboard input use the existing implementation.
-Native form keys in embedded groups stay in the form rather than becoming scene shortcuts.
-Use `beforeEdit` for a context-specific action, such as leaving Free Look before a heading
-edit. Zoom edits can remain available during Free Look.
+The adapter forwards actual source callbacks and completion hooks. Labels, choices, ranges,
+units, disabled states and externally changed values refresh from the source. Numeric
+formatting does not round the underlying value. Hidden groups stop polling. Native controls
+isolate their keys from scene shortcuts and share checkbox drag painting with OUI.
 
-Use `source.shareAs(key)` and `group.addMirror(key)` when the source and presentation are
-created independently. Keyed consumers reconnect if the source is rebuilt. Use `mirrorTo`
-when the source already exists and shares the panel's lifetime. An optional `name` or
-`tooltip` override is for deliberate contextual wording; defaults follow the source.
-For a shorter label that retains live units, use
-`source.mirrorTo(group, {name: "Altitude", unitLabel: true})`. This uses the source's unit
-type and configured abbreviation; the shared source still owns all value conversion.
+The first native slice covers the controls used by Satellite Controls. Color controls,
+BigSlider and other compound editors remain on OUI until their contracts and parity checks
+are implemented. Source discovery still uses the existing controller lifetime; automatic
+reconnection after source replacement is a separate migration step.
 
-## Shared behavior
+## Density and compatibility
 
-`src/MenuMirror.js` connects both forms of mirror. A change runs the source controller's
-current callback and source-folder hooks. Finish callbacks are forwarded too, so text parsing
-and edit completion have the same behavior from every presentation. Later changes to labels,
-help, visibility, disabled state, choices, steps and ranges propagate to the mirrors. Direct
-state changes from scripts or saved scenes are reflected through `.listen()`.
+Use the existing menu footprint for equivalent controls: current rails are 250px wide,
+ordinary native rows are 22px, and widget headers are 24px. Do not impose a universal large
+form layout. Floaters scroll within the viewport, and small-screen rails overlay the view.
+Compact information widgets reuse existing readouts; satellite counting has one producer.
 
-Closing a mirror removes its connection. Destroying a source removes its mirrors. M/L pairs
-and folder-header checkboxes retain their existing implementations and serialization.
+`ModernControlStyle.js` supplies shared dark/light tokens. `WidgetPanelStyle.js` supplies
+native shells and specialized forms. `StarlinkPanelStyle.js` only places the launcher and
+sky readouts. Existing custom object/track windows still use `ModernControls.js` and
+`MenuMirror.js`; these are the legacy presentation path, not the basis for new NUI widgets.
+Their keyed `shareAs`/`addMirror` connections and ordinary controller APIs remain intact.
 
-## Shared appearance
+`CNodeDateTime.createTimeEditor(container)` remains the shared native date/time editor for
+OUI and NUI. It uses the existing date setters, pause/edit/undo methods and zone/speed
+controls. A scrub is one undo step. Tab/Shift+Tab still cycles through date/time digits.
+The editor has no separate serialized clock or zone state; dispose it with its host.
 
-`src/ModernControlStyle.js` contains the scoped panel colors and control styles, with dark
-and light themes. `applyModernControls(gui)` applies them to an existing GUI without changing
-its layout, callbacks or menu identity. Custom object and track edit windows use this path.
-Ordinary menu-bar controls retain their compact layout.
+## Incremental migration
 
-`CNodeStarlinkUI` supplies the satellite panel's arrangement, visibility, collapse state,
-observer/time editors and readouts. Its altitude, satellite, guide and camera controls are mirrors.
-`StarlinkPanelStyle.js` contains only that panel's layout and specialized HTML styling,
-using the shared colors. Domain calculations and catalog loading remain in their existing
-nodes. The clock/readouts keep a timer because paused scenes can stop rendering.
+Inventory direct controller construction, prototype patches, DOM access, private fields,
+callback interception and serialization before replacing an OUI feature. Introduce a
+stable interface at each boundary, then switch individual control types or instances.
+Preserve public controller paths and scene formats while legacy callers remain.
 
-When adding another panel, prefer a mirror before creating a custom input. Keep specialized
-workflows, such as a combined date/time editor, separate from shared property controls.
-
-`CNodeDateTime.createTimeEditor(container)` mounts the reusable `TimeEditor` used by the
-Time menu and satellite panel. Its adapter reads the node and uses its date setters,
-pause/edit/undo methods and existing zone/speed controllers. `TimeEditing.js` handles only
-wall-clock parsing and component arithmetic with explicit offsets. Call `dispose()` when
-the host is removed. The editor coalesces pointer movement to one time update per animation
-frame, treats a scrub as one undo step, and refreshes only while visible. It has no separate
-serialized clock or time-zone state.
+For each replacement, compare OUI/NUI value changes, callback counts, finish/undo behavior,
+disabled state, units, keyboard/pointer gestures, saved restoration, disposal and occupied
+space. A successful new appearance alone is not sufficient evidence of compatibility.
