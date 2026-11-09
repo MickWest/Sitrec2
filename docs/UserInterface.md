@@ -24,6 +24,23 @@ Drop a menu past the left or right edge of the screen and it docks in a sidebar 
 
 To re-dock a menu in the menu bar, either drag it to the top of the screen, or double-click on the title. 
 
+## Search Documentation
+
+Open **Help → Documentation → Search Documentation** to search guide titles and page text.
+Enter a few words, such as `wing flapping`, `frame rate`, or `background`. Results show the
+page title, matching section and a short excerpt, with matching search terms highlighted.
+Click a result to open that section in a
+new tab. Press **Escape** or **Close** to return to Sitrec.
+
+The search ignores letter case and matches word beginnings for words of at least three
+letters: `wing flap` also finds `wings flapping`. All meaningful search words must match in
+the same section or its title. Try fewer words if there are no results. Typing a phrase gives
+nearby words a higher rank; quotation marks are not required.
+
+The **Search menus…** field at the top of Help finds controls in the current menus.
+**Search Documentation** finds explanations in the guides, including features that are not
+currently visible as controls.
+
 ## Folders
 
 Some menus have folders - essentially a sub menu - that you can expand. For example, the Object menu has one folder per object, and each object folder has its own Material folder. 

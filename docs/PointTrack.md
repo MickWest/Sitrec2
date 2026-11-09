@@ -557,83 +557,15 @@ an earlier point directly.
 
 ### Frequency analysis of brightness
 
-This graph shows the frequency spectrum of an object's brightness: how strong the change in
-brightness is at each frequency. A brightness that repeats at a steady rate, such as a flashing
-light, can give a peak at that rate.
+Frequency Analysis looks for repeating brightness changes in a tracked object, such as wings
+flapping or a flashing light. Track the object through the interval, set **In/Out**, then turn
+on **Video → Point Track → Frequency Analysis**. The green circle shows the measuring aperture;
+its radius is independent of the tracking and search circles.
 
-Track the object through the interval, set the **In** and **Out** markers, then turn on
-**Video → Point Track → Frequency Analysis**. A graph shows the brightness spectrum of that
-object over the selected range. Moving either marker or editing the track recalculates it.
-
-![The Point Track Frequency Analysis graph. A green curve has a tall peak at 1.49 Hz and a row of smaller peaks to its right. A pink curve stays low except at the left end. A dashed vertical line stands at 0.5 Hz.](docimages/pointtrack-frequency-graph.jpg)
-
-The graph on a generated test clip, not real footage, with an object that flashes at a steady rate.
-The green curve (**Object − background**) has its largest peak above the floor at 1.49 Hz. The
-smaller green peaks to its right are harmonics: multiples of that frequency. The pink curve
-(**Local background × aperture area**) shows the same measurement for the ring around the object.
-The dashed vertical line is the peak search floor, at 0.50 Hz. Both curves also rise below the
-floor, and the peak label does not use that part of the graph.
-
-In **Frequency Analysis Settings**, set **Object radius (px)** to include the whole object
-without including its neighbours. This radius is in original video pixels and is independent
-of the tracking/search circles. The smallest radius is 2 pixels; at 1 pixel the background ring
-has too few pixels to measure. Sitrec sums the pixels in a circular aperture, with fractional
-weights at its edge. A green circle matching the object curve shows this aperture on the video
-while the frequency graph is open; it follows the track and scales with video zoom. Sitrec
-subtracts the median background from a ring at 1.75–2.5 times the
-radius. Dark objects keep their negative contrast. **Output Smoothing** applies to aperture
-positions; the brightness samples themselves are not smoothed.
-
-The graph removes a linear trend, applies a Hann window (a taper that fades the ends of the range
-to zero) and plots Fourier **semi-amplitude** (half the peak-to-peak modulation of a sinusoid).
-**Amplitude as percent** divides by the
-absolute mean background-subtracted object flux. Switch it off for recorded intensity × pixel
-area (DN·pixels, where DN, digital number, is the pixel value); that scale is also used when the
-mean flux is zero. The background comparison
-uses the same aperture area and scale. Values are
-recorded brightness, not temperature. **Export CSV** includes the spectrum, measurements and
-analysis settings.
-
-**Peak search floor (Hz)** sets the lowest frequency that the largest-peak label uses. The
-default is 0.5 Hz (30 a minute). Removing a linear trend does not remove slow, curved brightness
-drift, and in the lowest frequency bins (a bin is the smallest step between frequencies that the
-range can separate) that drift can be larger than a real flicker. The spectrum is
-plotted in full: below the floor, only the label is not given. A dashed vertical line shows the
-floor, and the peak line reads "Largest peak above …". The value is always in Hz, also when
-Flashes per minute is on; the graph prints it in the chosen unit. Set 0 to search from about one
-frequency bin above 0 Hz. If the floor is at or above the Nyquist limit (half the frame rate,
-the highest frequency the video can show), no peak is labeled and the graph says why. The
-exported CSV records the floor in its `peak_floor_hz` column.
-
-Keep the floor below the rate you are looking for. A short flash, such as an aircraft
-anti-collision beacon (40–100 a minute), puts much of its power in harmonics at 2, 3, 4… times
-its rate. With the floor above the flash rate, the label goes to one of those harmonics, not to
-the flash rate. Slow drift has no peak of its own: when the label sits just above the dashed
-line, it is probably drift. Move the floor and see if the label follows it.
-
-**Flashes per minute**, the last item in the settings, shows the frequencies as flashes per
-minute (Hz × 60) instead of Hz. The axis covers the same range; only its units change. The
-exported CSV stays in Hz.
-
-The header shows the sample count, duration and independent frequency bin spacing (`fps/N`).
-The curve is interpolated with zero padding (added zeros that make the curve smoother); that
-does not improve the resolution. The right edge is the source video's Nyquist limit. Held
-playback frames are counted once, so playback speed does not change the frequency scale. If a
-point in the range is missing or estimated, or an aperture overlaps a mask or the image edge, the
-graph shows a message and no spectrum. Change the track, the radius, the mask or the In and Out
-markers.
-
-Some videos, often from phones, have a variable frame rate: the time between frames changes.
-Sitrec then calculates the spectrum with each frame at its real time, and the frequency scale
-uses the mean frame rate. Sitrec does not resample the video to an even rate, because
-interpolating between frames weakens fast signals. A warning on the graph shows the range of
-frame rates. Peaks above half the lowest frame rate can be aliases of higher frequencies. The
-exported CSV records the timing in its `irregular_timing`, `min_fps` and `max_fps` columns.
-
-A largest peak is a candidate periodicity, not a statistical detection or an identification
-of the object. Short intervals, motion across pixels, background structure, camera processing
-and compression can all produce peaks. Compare different intervals, aperture radii and the local
-background curve before interpreting one.
+See the dedicated [Frequency Analysis guide](FrequencyAnalysis.md) for the controls, frame-rate
+and pixel limits, diagrams explaining the DFT/FFT calculation, CSV export, and ways that small
+objects and noisy backgrounds can produce misleading peaks. **Export CSV** in **Frequency
+Analysis Settings** includes the measured positions used for each source frame.
 
 ---
 

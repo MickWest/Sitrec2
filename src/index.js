@@ -53,6 +53,7 @@ import {
 import {disableScroll, f2m, stripComments, updateDocumentTitle} from './utils'
 import {CSituation} from "./CSituation";
 import {helpDocs, DOC_SECTIONS, getDocsForMenu, docMenuIds} from "./docsRegistry";
+import {showDocumentationSearch} from "./documentation/DocumentationSearchDialog";
 import {EXTRA_TOOLS} from "./extraTools";
 import {parseFromAppParams, buildFromAppSitch, finishFromApp} from "./fromApp.js";
 import {par, resetPar} from "./par";
@@ -2187,6 +2188,11 @@ async function initializeOnce() {
             ? t("menus.help.documentation.localTooltip")
             : t("menus.help.documentation.githubTooltip")
         ).perm();
+
+    docs.add({searchDocumentation: () => showDocumentationSearch(
+        new URL('docs/search-index.json', SITREC_APP).href
+    )}, 'searchDocumentation').name(t('documentationSearch.title'))
+        .tooltip(t('documentationSearch.tooltip')).perm();
 
     // Grouped by section rather than one flat list — with ~30 docs a single list is
     // unreadable, and the grouping is the only signposting a new user gets. Sections

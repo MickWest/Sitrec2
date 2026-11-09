@@ -30,46 +30,8 @@ require('./scripts/sharedEnvVersion').checkOrExit({ envPath: sharedEnvFile });
 // .md -> .html for links between our own doc pages; absolute links are left alone.
 const { rewriteMdLinks } = require('./scripts/docLinks');
 
-// Applied until it stops changing the string. A single pass over "<<b>b>" leaves a
-// "<b>" the pass itself created, so one replace() is not a reliable way to remove
-// markup (CodeQL js/incomplete-multi-character-sanitization). Real markdown-it output
-// has no such shape and reaches the fixpoint on the second pass.
-function stripTags(s) {
-    let prev;
-    do {
-        prev = s;
-        s = s.replace(/<[^>]*>/g, '');
-    } while (s !== prev);
-    return s;
-}
-
-// markdown-it emits bare <h1>..<h6> with no id, so a link like Foo.md#some-heading rewrites
-// to a valid page but a fragment with nothing to jump to. Add GitHub-style slug ids after
-// rendering, so intra- and inter-document anchors actually land on their section.
-function addHeadingIds(html) {
-    const used = new Map();
-    return html.replace(/<h([1-6])>([\s\S]*?)<\/h\1>/g, (match, level, inner) => {
-        const text = stripTags(inner)
-            // Decode the entities markdown-it emits, so "What's New" slugs to
-            // "whats-new" (what an author would write) and not "what39s-new".
-            .replace(/&#39;|&apos;/g, "'")
-            .replace(/&quot;/g, '"')
-            .replace(/&lt;/g, '<').replace(/&gt;/g, '>')
-            .replace(/&amp;/g, '&');
-        let slug = text.toLowerCase().trim()
-            .replace(/[^\w\s-]/g, '')                          // drop punctuation
-            // One hyphen PER space, as GitHub does. "Stage 2 — Undo" loses the dash and
-            // keeps both spaces, so GitHub's slug is "stage-2--undo"; collapsing the run
-            // to one hyphen broke every such link in the built site.
-            .replace(/\s/g, '-');
-        if (!slug) return match;
-        // GitHub disambiguates repeats with -1, -2, ...
-        const n = used.get(slug) || 0;
-        used.set(slug, n + 1);
-        if (n > 0) slug = `${slug}-${n}`;
-        return `<h${level} id="${slug}">${inner}</h${level}>`;
-    });
-}
+const {addHeadingIds} = require('./scripts/docHeadings');
+const {DocumentationIndexPlugin} = require('./scripts/buildDocumentationIndex');
 
 // A checkout with no tags -- a shallow CI clone, a `git archive` tarball, a fresh
 // clone fetched without tags -- has nothing for `git describe` to name. Unguarded,
@@ -240,6 +202,8 @@ module.exports = (env = {}) => ({
         },
     },
     plugins: [
+        // Regenerated from this checkout on every build, including ship's production build.
+        new DocumentationIndexPlugin(),
 
     //    new webpack.debug.ProfilingPlugin(),
 
