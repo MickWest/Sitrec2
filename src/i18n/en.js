@@ -792,7 +792,7 @@ const en = {
         },
         time: {
             title: "Time",
-            tooltip: "Date, time and frame controls for the sitch.\nThe date and time sliders show UTC, unless Use Time Zone in UI is on.\nDrag a time slider past its end to change the slider above it (for example, minutes past 59 add an hour).",
+            tooltip: "Date, time and frame controls for the sitch.\nDrag the hour, minute or second digits to scrub time while holding the current video frame fixed. Click to type.\nChoose Current frame or Start · frame 0, and check the time zone above the clock. Original sliders and timeline controls are in the expandable sections.",
         },
         objects: {
             title: "Objects",
@@ -2448,7 +2448,7 @@ const en = {
         loadLEO: { label: "Load LEO Satellites For Date", tooltip: "Download the orbits (TLE data) of satellites in low Earth orbit (LEO) for the sitch start date. Payloads only: no rocket bodies or debris.\nFor a date in the last 5 days, it uses the date 5 days ago.\nIf satellites are already loaded, Sitrec asks whether to merge or replace them." },
         loadStarlink: { label: "Load CURRENT Starlink", tooltip: "Download the Starlink orbits as they are now, not for the sitch date.\nUse it for the present, or for an event in the last day or two.\nIf satellites are already loaded, Sitrec asks whether to merge or replace them." },
         loadOperatorSupGP: { label: "Add CURRENT OneWeb, Kuiper, AST, Iridium", tooltip: "Add the CURRENT (now, not historical) orbits that the operators of OneWeb, Kuiper, AST SpaceMobile and Iridium supply, from CelesTrak's supplemental data. For these satellites they are usually more accurate than the general catalog, and new launches appear within hours.\nThey are merged into the satellites already loaded." },
-        loadActive: { label: "Load ACTIVE Satellites", tooltip: "Download the orbits of all active satellites as they are now, not for the sitch date.\nIf satellites are already loaded, Sitrec asks whether to merge or replace them." },
+        loadActive: { label: "Load CURRENT Active Satellites", tooltip: "Download the current catalog of all active satellites, including Starlink. It does not include every debris or inactive object, and is not for a past sitch date.\nIf satellites are already loaded, Sitrec asks whether to merge or replace them." },
         loadSlow: { label: "(Experimental) Load SLOW Satellites", tooltip: "Download the orbits of objects in higher, slower orbits (fewer than about 11.25 orbits per day) for the sitch start date. Rocket bodies and debris are included.\nThe download is large and can time out for recent dates.\nIf satellites are already loaded, Sitrec asks whether to merge or replace them." },
         loadAll: { label: "(Experimental) Load ALL Satellites", tooltip: "Download the orbits of every object in the catalog for the sitch start date.\nThe download is very large and can time out for recent dates.\nIf satellites are already loaded, Sitrec asks whether to merge or replace them." },
         tleRange: {

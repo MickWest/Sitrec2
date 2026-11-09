@@ -1,3 +1,4 @@
+import {SIMULATED_SATELLITE_COLOR, SIMULATED_SATELLITE_DESCRIPTION} from "../SatelliteSimulation";
 import {Vector3} from "three";
 import {CNode} from "./CNode";
 import {guiMenus, markSitchDirty, NodeMan, setRenderOne, Sit} from "../Globals";
@@ -6,92 +7,83 @@ import {ViewMan} from "../CViewManager";
 import {setToolPanel} from "../PageStructure";
 import {resolveLocationString} from "../CoordinateInput";
 import {rayIntersectsEllipsoid} from "../threeExt";
-import {getAzElFromPositionAndForward} from "../SphericalMath";
 import {withDisplayedCamera} from "../ViewUtils";
 import {fisheyeProjectVector} from "../FisheyeProjection";
 import {panoramicProjectVector} from "../PanoramicCamera";
-import {compassHeading, parseViewingDate, viewingDateInput} from "../StarlinkViewing";
+import {compassHeading, viewingDateInput} from "../StarlinkViewing";
+import {createControlGroup, setControlGroupActive} from "../ModernControls";
+import {disableFreeLook} from "../FreeLookGuard";
 import {starlinkPanelStyle} from "../StarlinkPanelStyle";
 
 // Shared custom-scene viewing controls. The Starlink preset opts into the initial
-// sky layout; other scenes retain their layout. Controls start invisible.
+// sky layout and visible controls; other scenes retain their layout and start hidden.
 // All scientific state stays in the existing nodes.
 export class CNodeStarlinkUI extends CNode {
     constructor(v) {
         super(v);
-        this.utc = true;
         this.visible = v.visible ?? false;
         this.expanded = v.expanded ?? window.innerWidth > 760;
-        this.addSimpleSerial("utc");
         this.addSimpleSerial("expanded");
-        this.bindings = [];
+        this.controlGroups = new Map();
+        this.sourceControls = [...new Set(Object.values(guiMenus).flatMap(gui => gui.controllersRecursive?.() ?? []))];
         this.disposed = false;
         this.style = document.createElement("style");
         this.style.textContent = starlinkPanelStyle;
         document.head.append(this.style);
         this.panel = document.createElement("aside");
-        this.panel.className = "starlink-panel";
+        this.panel.className = "starlink-panel sitrec-modern";
         this.panel.id = "starlink-viewing-panel";
         this.panel.dataset.interactionNative = "true";
         this.panel.setAttribute("aria-label", "Starlink viewing controls");
         this.panel.innerHTML = `
-            <header><div><h1>Starlink</h1><div class="sl-subtitle">Satellite observer</div></div>
+            <header><h1 title="Satellite observer controls">Starlink</h1>
                 <button class="sl-close" data-action="collapse" aria-label="Collapse Starlink controls" title="Collapse controls">‹</button></header>
-            <div class="sl-row sl-segments" aria-label="View layout">
-                <button data-action="sky">Sky + overview</button><button data-action="split">Split views</button>
-            </div>
-            <section><h2>Observer location</h2>
-                <form data-id="locationForm" class="sl-row"><input data-id="search" type="search" aria-label="Search observer location" placeholder="Place or coordinates…"><button type="submit" data-id="go">Go</button></form>
+            <section data-id="timeControls"><h2>Time & playback</h2><div data-id="timeEditor"></div></section>
+            <section data-id="locationControls"><h2>Observer location</h2>
+                <form data-id="locationForm" class="sl-row"><input data-id="search" type="search" aria-label="Search observer location" placeholder="Place or coordinates…" title="Enter a place name or latitude, longitude."><button type="submit" data-id="go">Go</button></form>
                 <div class="sl-grid">
-                    <label>Latitude<input data-id="lat" type="number" min="-90" max="90" step="any"></label>
-                    <label>Longitude<input data-id="lon" type="number" min="-180" max="180" step="any"></label>
-                    <label>Height (meters)<input data-id="alt" type="number" step="any"></label>
-                    <label>Height reference<select data-id="heightRef"><option value="agl">Above ground</option><option value="msl">Above sea level</option></select></label>
+                    <label>Latitude<input data-id="lat" type="number" min="-90" max="90" step="any" title="Latitude in degrees, from −90 to 90."></label>
+                    <label>Longitude<input data-id="lon" type="number" min="-180" max="180" step="any" title="Longitude in degrees, from −180 to 180."></label>
+                    <div data-id="altitudeControls"></div>
+                    <label>Altitude reference<select data-id="heightRef" title="Measure altitude above the terrain or mean sea level."><option value="agl">Above ground</option><option value="msl">Above sea level</option></select></label>
                 </div>
                 <p data-id="observerNote" class="sl-muted"></p>
                 <p data-id="locationMessage" class="sl-muted sl-message" role="status"></p>
             </section>
-            <section><h2>Time & playback</h2>
-                <div data-id="playState" class="sl-status"></div>
-                <div class="sl-row sl-segments"><button data-action="live" title="Follow the current clock">● Live now</button><button data-action="utc">UTC</button><button data-action="local" title="Use the time zone selected in the Time menu">Local</button></div>
-                <div data-id="dateEditor"><label data-id="zoneLabel" for="starlink-viewing-date">Viewing time · UTC</label>
-                    <div class="sl-row"><input id="starlink-viewing-date" data-id="date" type="datetime-local" step="1" class="sl-date" aria-label="Viewing date and time"><button data-action="applyTime">Set</button></div>
+            <section data-id="viewControls"><h2>View adjustments</h2>
+                <div data-id="aimControl"></div>
+                <details data-id="cameraControls"><summary>Camera direction & zoom</summary>
+                    <div data-id="angles"></div><div data-id="zoom"></div>
+                </details>
+                <div class="sl-row sl-segments" aria-label="View layout">
+                    <button data-action="sky">Sky + overview</button><button data-action="split">Split views</button>
                 </div>
-                <p data-id="timeMessage" class="sl-muted sl-message" role="status"></p>
-                <div class="sl-row sl-segments"><button data-action="back" title="Back one minute">−1 min</button><button data-action="play" class="sl-primary" title="Play or pause" data-id="play">▶ Play</button><button data-action="forward" title="Forward one minute">+1 min</button></div>
-                <div class="sl-row sl-segments" aria-label="Playback speed"><button data-speed="1">1×</button><button data-speed="5">5×</button><button data-speed="10">10×</button><button data-speed="60">60×</button></div>
-                <p data-id="speedNote" class="sl-muted"></p>
             </section>
-            <section><h2>Satellites</h2>
-                <input data-id="filter" type="search" aria-label="Filter loaded satellites" placeholder="Filter name or NORAD number…" style="width:100%">
-                <p data-id="filterStatus" class="sl-muted sl-message" role="status"></p>
-                <div class="sl-checks" data-id="categories"></div>
-                <div class="sl-range-label"><label class="sl-check"><input data-id="limit" type="checkbox">Magnitude limit</label><output data-id="magnitudeValue"></output></div>
-                <input data-id="magnitude" type="range" min="-5" max="20" step="0.1" aria-label="Satellite magnitude limit">
-                <p data-id="magnitudeNote" class="sl-muted">Lower = brighter only · estimated visibility</p>
-                <div class="sl-checks" data-id="satelliteToggles"></div>
-            </section>
-            <section><h2>Look direction</h2>
-                <button data-action="aim" title="Look toward the Sun's azimuth, 10 degrees above the horizon">Look toward flare band</button>
-                <div data-id="angles"></div>
-                <p data-id="aimNote" class="sl-muted">Drag sky · scroll to zoom</p>
-            </section>
-            <details><summary>Sky guides</summary><div class="sl-checks" data-id="guides"></div></details>
-            <details><summary>Orbit data</summary>
+            <section data-id="orbitControls"><h2>Satellite data</h2>
+                <div data-id="loaders"></div>
                 <p data-id="dataStatus" class="sl-muted sl-data"></p>
-                <div class="sl-row"><button data-action="refresh">Load current Starlink</button></div>
-                <div class="sl-row"><button data-action="dated">Load LEO for this date</button></div>
-                <p class="sl-muted">Historical times need orbit data near the viewing date. More catalogs and saved sessions are in Satellites and File.</p>
-            </details>`;
+            </section>
+            <section data-id="satelliteControls"><h2>Satellites</h2>
+                <div data-id="filterControls"></div>
+                <p data-id="filterStatus" class="sl-muted sl-message" role="status"></p>
+                <div data-id="categories"></div>
+                <div data-id="magnitudeControls"></div>
+                <div data-id="satelliteToggles"></div>
+            </section>
+            <section data-id="flareControls" title="Flare Band marks observing locations on Earth. Flare Region marks where to look in the sky."><h2>Flares</h2>
+                <div data-id="flareGuides"></div>
+            </section>
+            <details><summary>Sky guides</summary><div data-id="guides"></div></details>`;
         document.body.append(this.panel);
+        this.timeEditor = this.dateTime.createTimeEditor(this.el("timeEditor"));
         this.launcher = document.createElement("button");
-        this.launcher.className = "starlink-launcher";
+        this.launcher.className = "starlink-launcher sitrec-modern";
         this.launcher.textContent = "☰ Starlink controls";
         this.launcher.setAttribute("aria-controls", this.panel.id);
         this.launcher.onclick = () => this.setExpanded(true);
         document.body.append(this.launcher);
         this.hud = document.createElement("div");
-        this.hud.className = "starlink-hud";
+        this.hud.className = "starlink-hud sitrec-modern";
         this.hud.innerHTML = `<div class="sl-hud-block"><strong data-id="count">Loading satellites…</strong><small data-id="heading"></small></div><div class="sl-hud-block sl-hud-time"><strong data-id="clock"></strong><small data-id="clockState"></small></div>`;
         this.look = NodeMan.get("lookView");
         this.main = NodeMan.get("mainView");
@@ -100,50 +92,65 @@ export class CNodeStarlinkUI extends CNode {
 
         const sky = this.sky;
         const sats = sky.satellites;
-        this.toggle("categories", "Starlink", sats, "showStarlink");
-        this.toggle("categories", "Other loaded", sats, "showOtherSatellites");
-        this.toggle("categories", "ISS", sats, "showISS");
-        this.toggle("categories", "Brightest", sats, "showBrightest");
-        this.toggle("satelliteToggles", "Show satellites", sats, "showSatellites");
-        this.toggle("satelliteToggles", "Names", sats, "showSatelliteNames");
-        this.toggle("guides", "Constellations", sky, "showConstellationsLook");
-        this.toggle("guides", "Star names", NodeMan.get("lookView_NightSkyOverlay"), "showStarNames");
-        this.toggle("guides", "Celestial grid", sky, "showEquatorialGridLook");
-        this.toggle("guides", "Horizon compass", sky, "showHorizonCompassRibbonLook");
-        this.toggle("guides", "Flare band", sky, "showFlareBand");
-        this.toggle("guides", "Sun arrows", sky, "showSunArrows");
-        this.angle("az", "Azimuth · true", 0, 360);
-        this.angle("el", "Elevation", -89, 89);
-        this.angle("fov", "Vertical field of view", 0.01, 170);
+        this.observer.guiAlt.guiEntry.mirrorTo(this.group("altitudeControls"), {
+            name: "Altitude", unitLabel: true, listen: true,
+        }).noSlider();
+        this.control("filterControls", sats, "nameFilter");
+        for (const property of ["filterTLEs", "clearTLEFilter"]) {
+            this.sourceControls.find(controller => controller.property === property)?.mirrorTo(this.group("filterControls"));
+        }
+        this.control("magnitudeControls", sky, "satelliteMagnitudeLimitEnabled");
+        this.control("magnitudeControls", sky, "satelliteMagnitudeLimit");
+        for (const property of ["showStarlink", "showOtherSatellites", "showISS", "showBrightest"]) {
+            this.control("categories", sats, property);
+        }
+        this.group("categories").domElement.classList.add("modern-grid");
+        this.control("satelliteToggles", sats, "showSatellites");
+        this.control("satelliteToggles", sats, "showSatelliteNames");
+        this.control("guides", sky, "showConstellationsLook");
+        this.control("guides", NodeMan.get("lookView_NightSkyOverlay"), "showStarNames");
+        this.control("guides", sky, "showEquatorialGridLook");
+        this.control("guides", sky, "showHorizonCompassRibbonLook");
+        this.control("flareGuides", sky, "showSunArrows");
+        this.control("flareGuides", sky, "showFlareBand");
+        for (const [property, view] of [["showFlareRegionMain", "mainView"], ["showFlareRegionLook", "lookView"]]) {
+            this.control("flareGuides", sky, property)?.asViewCheckbox(view, "Flare Region");
+        }
+        this.control("aimControl", sky, "lookTowardsFlareRegion");
+        // Only show loaders configured on this installation.
+        const current = this.source(sats, "updateActive") ?? this.source(sats, "updateStarlink");
+        const dated = this.source(sats, "updateCustomSats") ?? this.source(sats, "updateLEOSats");
+        for (const loader of [current, dated]) loader?.mirrorTo(this.group("loaders"));
+        this.control("angles", NodeMan.get("CameraLOSController"), "choice");
+        // These are the actual camera controls: Pan follows its signed/360 convention,
+        // and FOV keeps its own source/metadata lock rather than the heading's lock.
+        for (const controller of [this.ptz.azController, this.ptz.elController]) {
+            controller?.mirrorTo(this.group("angles"), {listen: true});
+        }
+        this.ptz.fovController?.mirrorTo(this.group("zoom"), {listen: true});
 
         this.panel.addEventListener("click", event => {
+            if (event.target.closest(".sitrec-time-editor")) return;
             const button = event.target.closest("button");
             if (button?.dataset.action) this.action(button.dataset.action);
-            if (button?.dataset.speed) {
-                this.setControl(Sit, "simSpeed", Number(button.dataset.speed));
-                par.speed = 1;
-                this.sync();
-            }
         });
         // Native date inputs and buttons must not also trigger scene shortcuts.
         for (const type of ["keydown", "keyup"]) this.panel.addEventListener(type, e => e.stopPropagation());
         this.el("locationForm").onsubmit = e => { e.preventDefault(); this.findLocation(); };
-        for (const id of ["lat", "lon", "alt"]) this.el(id).onchange = () => this.setLocation();
+        for (const id of ["lat", "lon"]) this.el(id).onchange = () => this.setLocation(id);
         this.el("heightRef").onchange = () => {
             this.setControl(this.observer, "agl", this.el("heightRef").value === "agl");
             this.sync();
         };
-        this.el("filter").oninput = () => this.setControl(sats, "nameFilter", this.el("filter").value);
-        this.el("limit").onchange = () => this.setControl(sky, "satelliteMagnitudeLimitEnabled", this.el("limit").checked);
-        this.el("magnitude").oninput = () => this.setControl(sky, "satelliteMagnitudeLimit", this.el("magnitude").valueAsNumber);
         this.onResize = () => this.layoutPanel();
         window.addEventListener("resize", this.onResize);
         this.gui = guiMenus.view;
-        this.gui.add(this, "visible").name("Starlink Viewing Controls").listen().onChange(v => {
+        const visibility = this.gui.add(this, "visible").name("Starlink Viewing Controls").listen().onChange(v => {
             this.show(v);
             if (this.gui.mode === "DOCKED") this.gui.close();
             markSitchDirty();
         });
+        visibility.mirrorTo(guiMenus.satellites, {listen: true}).moveToFirst();
         this.show(this.visible);
         // Paused scenes sleep their render loop. UI still needs to follow menu edits.
         this.timer = setInterval(() => this.sync(), 250);
@@ -153,54 +160,41 @@ export class CNodeStarlinkUI extends CNode {
     get dateTime() { return NodeMan.get("dateTimeStart"); }
     get observer() { return NodeMan.get("fixedCameraPosition"); }
     get ptz() { return NodeMan.get("ptzAngles"); }
+    get skyOverviewLayout() { return this.look.width > 0.9 && this.main.height < 0.5; }
     el(id) { return this.panel.querySelector(`[data-id="${id}"]`); }
     hudEl(id) { return this.hud.querySelector(`[data-id="${id}"]`); }
 
-    setControl(object, property, value) {
-        // Reuse callbacks for filtering, units, graph invalidation and serialization.
-        for (const gui of Object.values(guiMenus)) {
-            const controller = gui.controllersRecursive?.().find(c => c.object === object && c.property === property);
-            if (controller) {
-                controller.setValue(value);
-                markSitchDirty();
-                setRenderOne(true);
-                return;
-            }
+    source(object, property) {
+        return this.sourceControls.find(c => c.object === object && c.property === property);
+    }
+
+    group(id) {
+        if (!this.controlGroups.has(id)) {
+            this.controlGroups.set(id, createControlGroup(this.el(id), {
+                beforeEdit: id === "angles" ? disableFreeLook : undefined,
+                onChange: () => {
+                    if (id === "altitudeControls") this.locationTicket = (this.locationTicket ?? 0) + 1;
+                    markSitchDirty(); setRenderOne(true);
+                },
+            }));
         }
+        return this.controlGroups.get(id);
     }
 
-    toggle(container, text, object, property) {
-        const label = document.createElement("label");
-        const input = document.createElement("input");
-        input.type = "checkbox";
-        input.dataset.setting = property;
-        label.append(input, document.createTextNode(text));
-        this.el(container).append(label);
-        input.onchange = () => this.setControl(object, property, input.checked);
-        this.bindings.push({input, object, property});
+    control(container, object, property) {
+        const source = this.source(object, property);
+        const twin = source?.mirrorTo(this.group(container), {listen: true});
+        if (twin?.$input?.type === "checkbox") twin.asListCheckbox();
+        return twin;
     }
 
-    angle(property, labelText, min, max) {
-        const row = document.createElement("div");
-        row.innerHTML = `<label class="sl-range-label">${labelText}<input type="number" min="${min}" max="${max}" step="any" aria-label="${labelText} in degrees"></label><input type="range" min="${min}" max="${max}" step="0.01" aria-label="${labelText}">`;
-        this.el("angles").append(row);
-        const [number, range] = row.querySelectorAll("input");
-        const change = input => {
-            if (input.value === "" || !input.checkValidity()) return;
-            this.ptz[property] = input.valueAsNumber;
-            this.ptz.refresh();
-            markSitchDirty();
-            setRenderOne(true);
-            this.sync();
-        };
-        number.onchange = () => change(number);
-        range.oninput = () => change(range);
-        this.bindings.push({input: number, object: this.ptz, property, angle: true});
-        this.bindings.push({input: range, object: this.ptz, property, angle: true});
+    setControl(object, property, value) {
+        this.source(object, property)?.setValue(value);
+        markSitchDirty();
+        setRenderOne(true);
     }
 
     action(action) {
-        const dt = this.dateTime;
         if (action === "collapse") this.setExpanded(false);
         if (action === "sky" || action === "split") {
             if (ViewMan.fullscreenView) ViewMan.fullscreenView.doubleClick();
@@ -210,47 +204,9 @@ export class CNodeStarlinkUI extends CNode {
             this.main.setVisible(true);
             markSitchDirty();
         }
-        if (action === "utc" || action === "local") {
-            this.utc = action === "utc";
-            this.el("date").value = viewingDateInput(dt.dateNow, this.utc ? 0 : dt.getTimeZoneOffset());
-            markSitchDirty();
-        }
-        if (action === "applyTime") {
-            const date = parseViewingDate(this.el("date").value, this.utc ? 0 : dt.getTimeZoneOffset());
-            if (!date) this.el("timeMessage").textContent = "Enter a complete, valid date and time.";
-            else { this.setTime(date); this.el("timeMessage").textContent = ""; }
-        }
-        if (action === "back" || action === "forward") this.setTime(new Date(dt.dateNow.getTime() + (action === "back" ? -60000 : 60000)));
-        if (action === "live") {
-            dt.liveMode = true;
-            par.paused = true;
-            dt.setNowDateTime(new Date(), true);
-            dt.recalculateCascade();
-        }
-        if (action === "play") {
-            if (dt.liveMode) { dt.liveMode = false; par.paused = true; }
-            else { par.paused = !par.paused; par.direction = 1; }
-        }
-        if (action === "aim") {
-            const [az] = getAzElFromPositionAndForward(this.look.camera.position, this.sky.satellites.toSun);
-            this.setControl(NodeMan.get("CameraLOSController"), "choice", "Manual");
-            this.ptz.az = az;
-            this.ptz.el = 10;
-            this.ptz.refresh();
-            markSitchDirty();
-        }
-        if (action === "refresh") this.sky.satellites.updateStarlink();
-        if (action === "dated") this.sky.satellites.updateLEOSats();
+        if (action === "aim") this.sky.lookTowardsFlareRegion();
         setRenderOne(true);
         this.sync();
-    }
-
-    setTime(date) {
-        par.paused = true;
-        this.dateTime.setNowDateTime(date);
-        this.dateTime.recalculateCascade();
-        markSitchDirty();
-        setRenderOne(true);
     }
 
     setViewLayout(split) {
@@ -258,15 +214,22 @@ export class CNodeStarlinkUI extends CNode {
         Object.assign(this.main, {left: split ? 0 : 0.74, top: split ? 0 : 0.72, width: split ? 0.5 : 0.26, height: split ? 1 : 0.28});
     }
 
-    setLocation() {
+    setLocation(id) {
         if (NodeMan.get("cameraTrackSwitch").choice !== "fixedCamera") return;
-        const inputs = ["lat", "lon", "alt"].map(id => this.el(id));
-        if (inputs.some(input => input.value === "" || !input.checkValidity())) {
-            this.el("locationMessage").textContent = "Enter a latitude (−90 to 90), longitude (−180 to 180), and height.";
+        const input = this.el(id);
+        if (input.value === "" || !input.checkValidity()) {
+            this.el("locationMessage").textContent = "Invalid latitude or longitude";
             return;
         }
         this.locationTicket = (this.locationTicket ?? 0) + 1;
-        this.observer.gotoLLA(...inputs.map(input => input.valueAsNumber), this.observer.agl);
+        // Display precision must not change the untouched coordinates.
+        const lla = this.observer._LLA.slice();
+        const index = ["lat", "lon"].indexOf(id);
+        const value = input.valueAsNumber;
+        if (lla[index] !== value) {
+            lla[index] = value;
+            this.observer.gotoLLA(...lla, this.observer.agl);
+        }
         this.el("locationMessage").textContent = "";
         this.sync();
     }
@@ -283,14 +246,14 @@ export class CNodeStarlinkUI extends CNode {
             const result = await resolveLocationString(query);
             if (this.disposed || ticket !== this.locationTicket || NodeMan.get("cameraTrackSwitch").choice !== "fixedCamera") return;
             if (!result) {
-                this.el("locationMessage").textContent = "No location found. Try a place name or latitude, longitude.";
+                this.el("locationMessage").textContent = "Location not found";
                 return;
             }
             this.observer.gotoLLA(result.lat, result.lon, result.alt ?? 2, result.alt === undefined);
             this.el("locationMessage").textContent = "Observer moved to " + query;
             this.sync();
         } catch (error) {
-            if (!this.disposed && ticket === this.locationTicket) this.el("locationMessage").textContent = "Location lookup failed. Coordinates can also be entered directly.";
+            if (!this.disposed && ticket === this.locationTicket) this.el("locationMessage").textContent = "Location lookup failed";
         } finally {
             if (!this.disposed && this.pendingLocation === ticket) {
                 this.pendingLocation = null;
@@ -306,8 +269,15 @@ export class CNodeStarlinkUI extends CNode {
     }
 
     setExpanded(expanded) {
+        if (this.expanded === expanded) return;
+        const active = this.panel.ownerDocument.activeElement;
+        const transferFocus = this.panel.contains(active) || this.launcher === active;
         this.expanded = expanded;
         this.updateVisibility();
+        if (this.visible && transferFocus) {
+            const target = expanded ? this.panel.querySelector('[data-action="collapse"]') : this.launcher;
+            target.focus({preventScroll: true});
+        }
         markSitchDirty();
     }
 
@@ -316,6 +286,7 @@ export class CNodeStarlinkUI extends CNode {
         this.launcher.hidden = !this.visible || this.expanded;
         this.hud.hidden = !this.visible;
         this.launcher.setAttribute("aria-expanded", String(this.expanded));
+        for (const gui of this.controlGroups.values()) setControlGroupActive(gui, this.visible && this.expanded);
         this.layoutPanel();
     }
 
@@ -332,49 +303,36 @@ export class CNodeStarlinkUI extends CNode {
     }
 
     sync() {
-        if (this.disposed || !this.visible) return;
+        if (this.disposed) return;
+        // The TLE epoch/range stats belong to the large sky view in this layout,
+        // even when the sidebar itself is hidden or collapsed.
+        NodeMan.get("labelMainViewPVS", false)?.setOverlayView(this.skyOverviewLayout ? this.look : this.main);
+        if (!this.visible) return;
         const dt = this.dateTime, sky = this.sky, sats = sky.satellites;
         const live = dt.liveMode;
-        const status = live ? "LIVE · following current time" : par.paused ? "PAUSED" : "PLAYING";
-        this.el("playState").textContent = status;
-        this.el("play").textContent = live || !par.paused ? "Ⅱ Pause" : "▶ Play";
-        this.el("play").setAttribute("aria-label", live || !par.paused ? "Pause" : "Play");
-        this.el("zoneLabel").textContent = "Viewing time · " + (this.utc ? "UTC" : dt.getTimeZoneName());
-        if (!this.el("dateEditor").contains(document.activeElement)) this.syncValue(this.el("date"), viewingDateInput(dt.dateNow, this.utc ? 0 : dt.getTimeZoneOffset()));
-        const speed = (Sit.simSpeed ?? 1) * (par.speed ?? 1);
-        this.el("speedNote").textContent = !live && ![1, 5, 10, 60].includes(speed) ? `${speed}× playback` : "";
-        for (const button of this.panel.querySelectorAll("[data-speed]")) button.setAttribute("aria-pressed", String(!live && Number(button.dataset.speed) === speed));
-        for (const action of ["utc", "local", "live", "sky", "split"]) {
-            const pressed = action === "utc" ? this.utc : action === "local" ? !this.utc : action === "live" ? live : action === "sky" ? this.look.width > 0.9 && this.main.height < 0.5 : this.look.width === 0.5 && this.main.width === 0.5;
+        const status = live ? "LIVE" : par.paused ? "PAUSED" : "PLAYING";
+        const speed = (Sit.simSpeed ?? 1) * (par.playbackSpeed ?? 1);
+        for (const action of ["sky", "split"]) {
+            const pressed = action === "sky" ? this.skyOverviewLayout : this.look.width === 0.5 && this.main.width === 0.5;
             this.panel.querySelector(`[data-action="${action}"]`).setAttribute("aria-pressed", String(pressed));
         }
         const fixed = NodeMan.get("cameraTrackSwitch").choice === "fixedCamera";
-        ["lat", "lon", "alt"].forEach((id, i) => {
-            this.syncValue(this.el(id), Number(this.observer._LLA[i].toFixed(i === 2 ? 2 : 5)));
+        ["lat", "lon"].forEach((id, i) => {
+            this.syncValue(this.el(id), Number(this.observer._LLA[i].toFixed(5)));
             this.el(id).disabled = !fixed;
         });
+        this.el("altitudeControls").inert = !fixed;
+        this.el("altitudeControls").setAttribute("aria-disabled", String(!fixed));
         this.el("heightRef").value = this.observer.agl ? "agl" : "msl";
         for (const id of ["heightRef", "search"]) this.el(id).disabled = !fixed;
         this.el("go").disabled = !fixed || !!this.pendingLocation;
-        this.el("observerNote").textContent = fixed ? "" : "Observer follows a track. Use Camera → Location to switch to fixed.";
-        this.syncValue(this.el("filter"), sats.nameFilter);
-        this.el("limit").checked = sky.satelliteMagnitudeLimitEnabled;
+        this.el("observerNote").textContent = fixed ? "" : "Track-controlled observer";
+        this.el("locationControls").title = fixed ? "" : "Use Camera → Location to switch to a fixed observer.";
+        if (this.expanded) for (const gui of this.controlGroups.values()) gui.updateListeners();
         const photometric = sats.brightnessModel === "Photometric estimate";
-        this.el("limit").disabled = !photometric;
-        this.el("magnitude").disabled = !photometric || !sky.satelliteMagnitudeLimitEnabled;
-        this.syncValue(this.el("magnitude"), sky.satelliteMagnitudeLimit);
-        this.el("magnitudeValue").textContent = sky.satelliteMagnitudeLimitEnabled ? sky.satelliteMagnitudeLimit.toFixed(1) + " mag" : "No limit";
-        this.el("magnitudeNote").textContent = photometric ? "Lower = brighter only · estimated visibility" : "Magnitude requires the Photometric estimate model in Satellites.";
+        this.el("magnitudeControls").title = photometric ? "Lower magnitudes show brighter satellites only. Visibility is estimated." : "Magnitude requires the Photometric estimate model in Satellites.";
         const manual = NodeMan.get("CameraLOSController").choice === "Manual";
-        for (const {input, object, property, angle} of this.bindings) {
-            if (input.type === "checkbox") input.checked = object[property];
-            else {
-                const value = property === "az" ? ((object[property] % 360) + 360) % 360 : object[property];
-                this.syncValue(input, Number(value.toFixed(property === "fov" && value < 1 ? 4 : 1)));
-                if (angle) input.disabled = !manual;
-            }
-        }
-        this.el("aimNote").textContent = manual ? "Drag sky · scroll to zoom" : "Direction follows the selected Camera heading source.";
+        this.el("cameraControls").title = manual ? "Drag the sky to aim; scroll to zoom." : "Direction follows the selected Camera heading source.";
         this.hudEl("heading").textContent = `${compassHeading(this.ptz.az)} · El ${this.ptz.el.toFixed(1)}° · VFOV ${this.ptz.fov.toFixed(1)}°`;
         this.hudEl("clock").textContent = viewingDateInput(dt.dateNow).replace("T", " ") + " UTC";
         this.hudEl("clockState").textContent = status + (live ? "" : ` · ${speed}×`);
@@ -385,10 +343,16 @@ export class CNodeStarlinkUI extends CNode {
     }
 
     syncSatellites() {
-        const sky = this.sky, sats = sky.satellites, data = sats.TLEData;
+        const sky = this.sky, sats = sky.satellites, data = sats.renderTLEData;
+        this.el("dataStatus").style.color = data?.simulated ? SIMULATED_SATELLITE_COLOR : "";
         if (!data) {
             this.hudEl("count").textContent = "No orbit data loaded";
-            this.el("dataStatus").textContent = "Load current Starlink or orbit data for the selected date.";
+            this.hudEl("count").title = "";
+            this.el("filterStatus").textContent = "";
+            this.el("filterStatus").title = "";
+            this.el("dataStatus").classList.remove("sl-warning");
+            this.el("dataStatus").textContent = "No orbit data loaded";
+            this.el("dataStatus").title = "Use current data for live viewing, or load data for a historical date.";
             return;
         }
         const projected = new Vector3(), direction = new Vector3();
@@ -408,16 +372,28 @@ export class CNodeStarlinkUI extends CNode {
                 inView++;
             }
         });
-        const filterStatus = sats.nameFilter.trim() ? `${matching.toLocaleString()} match the enabled categories · clear search to reset` : "";
+        const searchActive = !!sats.nameFilter.trim();
+        const tleActive = !!sats.tleFilterResults && !data.simulated;
+        const filterStatus = searchActive || tleActive
+            ? `${matching.toLocaleString()} match${tleActive ? " · TLE filter active" : ""}` : "";
         if (this.el("filterStatus").textContent !== filterStatus) this.el("filterStatus").textContent = filterStatus;
-        this.hudEl("count").textContent = `${inView.toLocaleString()} satellite points in view`;
+        this.el("filterStatus").title = [searchActive ? "Clear search to remove the name/NORAD filter." : "", tleActive ? "Use Clear TLE Filter to remove the orbit filter." : ""].filter(Boolean).join(" ");
+        this.hudEl("count").textContent = `${inView.toLocaleString()} ${data.simulated ? "simulated satellites" : "satellite points"} in view`;
         this.hudEl("count").title = "Modeled points inside the camera view after category, search, brightness, and Earth-horizon filtering. Terrain and daylight can obscure them.";
+        if (data.simulated) {
+            this.el("dataStatus").classList.remove("sl-warning");
+            this.el("dataStatus").textContent = `${data.satData.length.toLocaleString()} simulated Starlink · ${matching.toLocaleString()} match`;
+            this.el("dataStatus").title = SIMULATED_SATELLITE_DESCRIPTION + (sats.TLEData?.satData.length
+                ? " Loaded orbit data is out of range; it returns automatically when in range."
+                : " No orbit data is loaded.") + (sats.tleFilterResults ? " The saved TLE filter applies only to loaded orbit data." : "");
+            return;
+        }
         const start = data.startDate, end = data.endDate;
         const haveDates = start instanceof Date && end instanceof Date && Number.isFinite(start.getTime()) && Number.isFinite(end.getTime());
         const outside = haveDates && (this.dateTime.dateNow < start || this.dateTime.dateNow > end);
         this.el("dataStatus").classList.toggle("sl-warning", outside);
-        this.el("dataStatus").textContent = `${data.satData.length.toLocaleString()} loaded · ${matching.toLocaleString()} match filters. ` + (haveDates ? `Orbit epochs: ${viewingDateInput(start).replace("T", " ")} to ${viewingDateInput(end).replace("T", " ")} UTC.${outside ? " Viewing time is outside these epochs; positions are extrapolated." : ""}` : "");
-        this.el("playState").classList.toggle("sl-warning", outside && !this.dateTime.liveMode);
+        this.el("dataStatus").textContent = `${data.satData.length.toLocaleString()} loaded · ${matching.toLocaleString()} match${outside ? " · Extrapolated" : ""}`;
+        this.el("dataStatus").title = haveDates ? `Orbit epochs: ${viewingDateInput(start).replace("T", " ")} to ${viewingDateInput(end).replace("T", " ")} UTC.${outside ? " Viewing time is outside these epochs; positions are extrapolated." : ""}` : "";
     }
 
     modDeserialize(v) {
@@ -428,6 +404,10 @@ export class CNodeStarlinkUI extends CNode {
     dispose() {
         this.disposed = true;
         clearInterval(this.timer);
+        this.timeEditor.dispose();
+        for (const gui of this.controlGroups.values()) gui.destroy();
+        this.controlGroups.clear();
+        this.sourceControls.length = 0;
         window.removeEventListener("resize", this.onResize);
         setToolPanel(null);
         this.panel.remove();

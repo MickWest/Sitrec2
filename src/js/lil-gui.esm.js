@@ -98,6 +98,10 @@ class Controller {
         // Mick: For non-text controls (checkboxes, selects), blur and preventDefault
         // Mick: so the key event propagates to the document-level handler instead.
         this.domElement.addEventListener( 'keydown', e => {
+            if (this.domElement.closest('[data-interaction-native="true"]')) {
+                e.stopPropagation();
+                return; // Embedded forms retain native Tab, Space, Enter and select-arrow behavior.
+            }
             const el = document.activeElement;
             if (el) {
                 const tag = el.tagName.toLowerCase();
@@ -111,6 +115,10 @@ class Controller {
             e.preventDefault();
         } );
         this.domElement.addEventListener( 'keyup', e => {
+            if (this.domElement.closest('[data-interaction-native="true"]')) {
+                e.stopPropagation();
+                return;
+            }
             const el = e.target;
             const tag = el.tagName.toLowerCase();
             const type = (el.type || '').toLowerCase();

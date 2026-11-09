@@ -25,7 +25,7 @@ function makeSky() {
         showSatellites: true,
         brightnessModel: "Photometric estimate",
         toSun: new Vector3(0, 1, 0), flareAngle: 5,
-        TLEData: {satData},
+        renderTLEData: {satData},
         lightCloud: {material: {}, brightnessArray: new Float32Array(4), mainBrightnessArray: new Float32Array(4),
             markBrightnessNeedUpdate: jest.fn()},
         getSatelliteIllumination: p => satData.find(s => s.ecef === p).appearance.illumination ?? 1,

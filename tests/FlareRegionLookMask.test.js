@@ -5,7 +5,9 @@
 // the real prototype methods on a minimal instance.
 import {Group, Object3D, Sphere, Vector3} from "three";
 import {CNodeDisplayNightSky} from "../src/nodes/CNodeDisplayNightSky";
-import {Globals, setNodeMan} from "../src/Globals";
+import {Globals, setGlobalDateTimeNode, setNodeMan, setSit} from "../src/Globals";
+import {getGeocentricBodyPositionECEF} from "../src/CelestialMath";
+import {getAzElFromPositionAndForward} from "../src/SphericalMath";
 import {disposeDebugArrows, disposeDebugSpheres} from "../src/threeExt";
 import * as LAYER from "../src/LayerMasks";
 import {wgs84} from "../src/LLA-ECEF-ENU";
@@ -35,6 +37,36 @@ function allMasks(group) {
 afterEach(() => {
     disposeDebugArrows();
     disposeDebugSpheres();
+});
+
+test("aim uses the calculated sky region while both region markers are hidden", () => {
+    setSit({lat: 0, lon: 0});
+    const node = makeNightSky();
+    node.showFlareRegionMain = false;
+    node.showFlareRegionLook = false;
+    node.camera = {position: new Vector3(wgs84.RADIUS + 100, 0, 0)};
+    node.globe = new Sphere(new Vector3(), wgs84.POLAR_RADIUS);
+    const date = new Date("2026-03-20T22:00:00Z");
+    const sun = getGeocentricBodyPositionECEF("Sun", date, true).normalize();
+    const target = node.getFlareRegionPosition(sun);
+    const [az, el] = getAzElFromPositionAndForward(node.camera.position, target.clone().sub(node.camera.position).normalize());
+    const ptz = {relativeController: {setValue: jest.fn()}, satelliteController: {setValue: jest.fn()}, refresh: jest.fn()};
+    const heading = {selectOption: jest.fn()};
+    setGlobalDateTimeNode({dateNow: date});
+    setNodeMan({get: id => id === "ptzAngles" ? ptz : heading});
+    // Deliberately stale global Sun: a click must use the current viewing date.
+    Globals.toSun = new Vector3(0, 0, 1);
+    node.lookTowardsFlareRegion();
+    expect(heading.selectOption).toHaveBeenCalledWith("Manual");
+    expect(ptz.relativeController.setValue).toHaveBeenCalledWith(false);
+    expect(ptz.satelliteController.setValue).toHaveBeenCalledWith(false);
+    expect(ptz.az).toBeCloseTo(az, 6);
+    expect(ptz.el).toBeCloseTo(el, 6);
+    expect(Math.abs(ptz.el - 10)).toBeGreaterThan(1);
+    expect(ptz.refresh).toHaveBeenCalled();
+    expect(node.showFlareRegionMain).toBe(false);
+    expect(node.showFlareRegionLook).toBe(false);
+    expect(node.flareRegionGroup.children).toHaveLength(0);
 });
 
 test("loading a save with the look flag set applies the look mask to the flare region", () => {

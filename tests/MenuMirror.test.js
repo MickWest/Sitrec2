@@ -362,3 +362,68 @@ describe("clearMenuMirrors", () => {
         expect(state.permanent).toBe(true);
     });
 });
+
+describe("shared custom presentations", () => {
+    test("keyed and embedded copies follow later callbacks and run source-folder hooks once", () => {
+        const state = {value: 1};
+        const folder = makeGUI();
+        const change = jest.fn(), finish = jest.fn();
+        folder.onChange(change).onFinishChange(finish);
+        const source = folder.add(state, "value", 0, 10, 1);
+        source.shareAs("shared");
+        const keyed = makeGUI().addMirror("shared");
+        const embedded = source.mirrorTo(makeGUI());
+        const old = jest.fn(), current = jest.fn(), completed = jest.fn();
+        source.onChange(old).onChange(current).onFinishChange(completed);
+        embedded.setValue(3);
+        embedded._callOnFinishChange();
+        expect(old).not.toHaveBeenCalled();
+        expect(current).toHaveBeenCalledTimes(1);
+        expect(change).toHaveBeenCalledTimes(1);
+        expect(finish).toHaveBeenCalledTimes(1);
+        expect(completed).toHaveBeenCalledTimes(1);
+        expect(keyed.$input.value).toBe("3");
+    });
+
+    test("embedded copies follow live metadata and availability", () => {
+        const source = makeGUI().add({n: 1}, "n", 0, 10, 1).disable();
+        const twin = source.mirrorTo(makeGUI());
+        expect(twin._disabled).toBe(true);
+        source.enable().name("New units").tooltip("New help").min(-20).max(20).step(0.5);
+        expect(twin._disabled).toBe(false);
+        expect(twin._name).toBe("New units");
+        expect(twin._tooltip).toBe("New help");
+        expect([twin._min, twin._max, twin._step]).toEqual([-20, 20, 0.5]);
+        source.hide();
+        expect(twin._hidden).toBe(true);
+        source.show();
+        expect(twin._hidden).toBe(false);
+    });
+
+    test("embedded dropdowns follow changed choices and late finish handlers", () => {
+        const source = makeGUI().add({choice: 1}, "choice", {First: 1});
+        const twin = source.mirrorTo(makeGUI());
+        const finish = jest.fn();
+        source.onFinishChange(finish).options({First: 1, Second: 2});
+        expect(twin._names).toEqual(["First", "Second"]);
+        twin.setValue(2);
+        twin._callOnFinishChange();
+        expect(finish).toHaveBeenCalledWith(2);
+    });
+
+    test("closing and rebuilding copies leaves no stale callbacks", () => {
+        const source = makeGUI().add({on: false}, "on");
+        const host = makeGUI();
+        const dead = source.mirrorTo(host);
+        dead.destroy();
+        const paint = jest.spyOn(dead, "updateDisplay");
+        const callback = jest.fn();
+        source.onChange(callback);
+        const live = source.mirrorTo(host);
+        live.setValue(true);
+        expect(callback).toHaveBeenCalledTimes(1);
+        expect(paint).not.toHaveBeenCalled();
+        source.destroy();
+        expect(host.controllers).toHaveLength(0);
+    });
+});

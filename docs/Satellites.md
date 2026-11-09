@@ -17,20 +17,37 @@ from that date.
 This page is a reference for every control. For a step-by-step guide to recreating a
 Starlink flare sighting, see [Investigating Starlink Flares With Sitrec](Starlink.md).
 
-The top of the menu keeps the master visibility switch, name/NORAD search, look-view brightness,
-magnitude limit, and the current Starlink and dated LEO downloads. Other controls are grouped:
+The top of the menu starts with current active-satellite and dated LEO downloads, then
+name/NORAD search, **Filter TLEs**, and the category folder. **Sun Angle Arrows**, **Flare Band**,
+**Look towards flare region**, the independent M/L **Flare Region** switches, and master
+visibility follow. Other controls are grouped:
 
 | Submenu | Controls |
 |---|---|
-| **Selection & Filters** | Satellite categories, the additive List, and TLE filtering |
+| **Selection & Filters** | Satellite categories, the additive List, and Clear TLE Filter |
 | **Labels** | Independent **M** (Main) and **L** (Look) switches on the folder header, plus label restrictions and maximum count |
-| **Tracks & Guides** | Satellites to track, arrows, display range, flare band, and independent M/L flare-region switches |
+| **Tracks & Guides** | Satellites to track, satellite and ground arrows, flare lines, and display range |
 | **Orbit Data** | Other catalogs, experimental downloads, and the loaded element-date range |
-| **Lighting & Flare Models** | Brightness model, Starlink design, sunlight model, flare geometry, and legacy appearance settings |
+| **Brightness** | Look-view brightness and magnitude limit; **Lighting & Flare Models** inside it holds the brightness model, Starlink design, sunlight model, flare geometry, and legacy appearance settings |
 
 The master **Show Satellites (Global)** switch applies to both views. M/L switches control only
 their own view. The separate [Starlink viewing panel](Starlink.md#starlink-viewing-controls)
-remains available through **View → Starlink Viewing Controls**.
+is available from **Starlink Viewing Controls** at the top of this menu and in **View**.
+It starts enabled in the Starlink Horizon Flares (LIVE) preset.
+
+Custom sitches automatically use **light-blue simulated Starlink satellites** when no orbit
+data is loaded, or no loaded element set is within seven days of the viewing time. The stats
+and viewing panel say **Simulated Starlink**. Loaded catalogs remain intact and return
+automatically when the time is in range. **Orbit Data → Simulate unavailable satellites**
+can disable this fallback and is saved with the sitch.
+
+The fallback shares the SHF app's deterministic constellation generator. Its population
+follows monthly estimates from [Jonathan McDowell's Starlink history](https://www.planet4589.org/space/con/star/starindex.html),
+with the latest SHF shell measurement as the final anchor. There are no simulated Starlinks
+before May 24, 2019; future dates hold the latest measured count. Positions and historical
+shell proportions are approximate. Category, search, brightness, flare, and label controls
+still apply. Loaded-data TLE filters, exports, and satellite tracking retain their real catalog
+and do not treat simulation IDs as NORAD numbers.
 
 - [Loading satellite data](#loading-satellite-data)
 - [Which satellites are shown](#which-satellites-are-shown)
@@ -52,14 +69,19 @@ lines of a TLE into the Sitrec window.
 
 ### From the server
 
-**Satellites → Load CURRENT Starlink / Load LEO Satellites For Date**. Other downloads are in **Satellites → Orbit Data**.
+**Satellites → Load CURRENT Active Satellites / Load LEO Satellites For Date**. Other downloads, including the current Starlink-only feed, are in **Satellites → Orbit Data**.
+
+The live Starlink preset loads the current active catalog by default, including Starlink and
+other active satellites. This excludes inactive objects and debris; the dated ALL download
+below has a different purpose. If the installation has no active-catalog source configured,
+the preset uses its existing Starlink source. Saved sitches retain their saved orbital data.
 
 | Button | What it loads |
 |---|---|
 | **Load LEO Satellites For Date** | Low Earth orbit payloads (satellites, not rocket bodies or debris) for the sitch date. This is the normal choice |
 | **Load CURRENT Starlink** | The Starlink satellites as they are **now**, in real time. Not for a past date, except an event in the last day or two, where it is the closest set available (see [Investigating Starlink Flares With Sitrec](Starlink.md#wait-a-few-days-before-analysing-a-very-recent-event)) |
 | **Add CURRENT OneWeb, Kuiper, AST, Iridium** | The orbits that the operators of these four constellations supply, as they are **now**, from CelesTrak's supplemental data. For these satellites they are usually more accurate than the general catalog, and a new launch appears within hours. They are always added to the satellites already loaded, never in place of them. Not for a past date |
-| **Load ACTIVE Satellites** | All active satellites as they are **now**, in real time. Not for a past date |
+| **Load CURRENT Active Satellites** | All active satellites, including Starlink, as they are **now**, in real time. Not for a past date |
 | **(Experimental) Load SLOW Satellites** | Objects in higher, slower orbits (fewer than about 11.25 orbits per day) for the sitch date. Can time out for recent dates |
 | **(Experimental) Load ALL Satellites** | Every object in the catalog for the sitch date. Can time out for recent dates |
 
@@ -156,7 +178,7 @@ switch that applies to it is on.
 | **Starlink** | On | SpaceX Starlink satellites (names that start with STARLINK) |
 | **ISS** | On | The International Space Station |
 | **CelesTrak's Brightest** | On | The satellites on CelesTrak's list of brightest satellites |
-| **Other Satellites** | Off | Every satellite that is not in one of the categories above |
+| **Other Satellites** | On in new custom scenes | Every satellite that is not in one of the categories above. Saved scenes retain their choice |
 | **List** | (empty) | A comma-separated list of names or catalog (NORAD) numbers. Name matching ignores case and matches the start of the name, so `starlink-30` matches STARLINK-30xx. `SL-` is short for Starlink, so `SL-1234` matches STARLINK-1234 |
 
 **List adds satellites; it does not hide the others.** To see only the satellites on the list,
@@ -174,7 +196,7 @@ number. Other satellites are white.
 
 ## Filter TLEs
 
-**Satellites → Selection & Filters → Filter TLEs / Clear TLE Filter**
+**Satellites → Filter TLEs**; **Clear TLE Filter** is in **Selection & Filters**.
 
 **Filter TLEs** opens a window for narrowing down a large catalog by position, name or orbit.
 It works on top of the category switches: a satellite must pass both to be shown. You need TLE
@@ -234,7 +256,7 @@ detail fails a checked filter.
 
 ## Brightness and flares
 
-**Satellites → Lighting & Flare Models**. **Sat Brightness** and the magnitude limit stay at the top level.
+**Satellites → Brightness** for **Sat Brightness** and the magnitude limit. Its **Lighting & Flare Models** submenu holds the model settings.
 
 A flare is sunlight reflected from a flat surface on the satellite, as from a mirror. The flare
 calculation assumes that this surface faces straight down. The **off-specular angle** is how many
@@ -344,7 +366,14 @@ peak magnitude of each flare with this model, for an unknown design.
 
 ## Arrows, lines and labels
 
-**Satellites → Tracks & Guides** for arrows and guides; **Satellites → Labels** for labels.
+**Sun Angle Arrows**, **Flare Band**, and **Flare Region** are at the top level.
+Other arrows and lines are in **Satellites → Tracks & Guides**; labels are in **Satellites → Labels**.
+
+In custom sitches, **Look towards flare region** aims the look camera once at the calculated
+550 km reflection region, even if the region marker is hidden. It selects Manual heading and
+absolute azimuth/elevation. The **Flare Band** is a guide to observing locations on Earth;
+the **Flare Region** is a target in the sky. Aiming at it does not establish that flares are
+visible: the region calculation has the limits stated below.
 
 | Control | Default | What it does |
 |---|---|---|

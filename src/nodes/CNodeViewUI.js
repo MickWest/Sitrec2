@@ -70,6 +70,17 @@ export class CNodeViewUI extends CNodeViewCanvas2D {
 
     }
 
+    // Move the existing overlay canvas, keeping its text, updates and export path.
+    setOverlayView(view) {
+        if (this.overlayView === view) return;
+        this.overlayView = view;
+        this.div = view.div;
+        this.div.append(this.canvas);
+        this.visible = view.visible;
+        this.updateWH();
+        setRenderOne(true);
+    }
+
     // (cx,cy) = x and y of the center point (percentages)
 
     // sx, sy = scale a pixel length

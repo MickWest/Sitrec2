@@ -17,6 +17,7 @@ import {ViewMan} from "../CViewManager";
 import {showViewMessage} from "../ViewMessage";
 import {addShowTimeZonesControl} from "../TimeZoneBorders";
 import {showTimingAnalysis} from "../showTimingAnalysis";
+import {TimeEditor} from "../TimeEditor";
 import {
     chooseAnalyzedStream, klvStreamLabels, renderSourceFiles, renderStreams, renderTracks, streamOfDataNode, streamsOnSitchClock,
     streamTiming,
@@ -250,9 +251,9 @@ export class CNodeDateTime extends CNode {
         }
 
 
-        this.dateTimeFolder.add(Sit, "startTime").listen()
+        this.dateTimeFolder.add(Sit, "startTime").listen().disable()
             .tooltip(t("dateTime.startTime.tooltip"))
-        this.dateTimeFolder.add(Sit, "nowTime").listen()
+        this.dateTimeFolder.add(Sit, "nowTime").listen().disable()
             .tooltip(t("dateTime.currentTime.tooltip"))
 
         let fiveYearsFromNow = new Date();
@@ -356,7 +357,7 @@ export class CNodeDateTime extends CNode {
         // add the time zon flag
         this.dateTimeFolder.add( this, "useTimeZone").name(t("dateTime.useTimeZone.label")).listen().onChange(v=>{
             this.adjustGUIForTimezone();
-            this.populate();
+            this.populate(true);
             forceUpdateUIText();
             setRenderOne(true);
         })
@@ -367,7 +368,7 @@ export class CNodeDateTime extends CNode {
             v => {
                 console.log("Timezone "+v)
                 this._bumpTimeZoneSerial(); // a zone picked by hand wins over a lookup still loading
-                this.populate();
+                this.populate(true);
                 forceUpdateUIText();
                 setRenderOne(true);
             }
@@ -506,8 +507,124 @@ export class CNodeDateTime extends CNode {
 
         this.lastFrames = Sit.frames;
 
+        this.buildTimeEditor();
     }
 
+    buildTimeEditor() {
+        this.dateTimeFolder.domElement.classList.add("sitrec-time-menu");
+        const host = document.createElement("div");
+        host.className = "time-menu-editor";
+        this.dateTimeFolder.$children.prepend(host);
+        this.timeEditorHost = host;
+        this.timeEditor = this.createTimeEditor(host);
+        // Only move the DOM. Preserve controller parents and API/menu paths,
+        // listener updates, reset defaults and existing saved menu bindings.
+        this.timeEditorDetails = ["Date & time sliders", "Timeline & synchronization"].map(title => {
+            const details = document.createElement("details");
+            details.className = "time-menu-details";
+            const summary = document.createElement("summary");
+            summary.textContent = title;
+            details.append(summary);
+            this.dateTimeFolder.$children.append(details);
+            return details;
+        });
+        this.groupTimeEditorControls();
+        // Keep historic-date advisories immediately below the editor.
+        host.after(this.guiDateRangeNote.domElement);
+    }
+
+    groupTimeEditorControls() {
+        if (!this.timeEditorDetails) return;
+        const classic = new Set(["startTime", "nowTime", "year", "month", "day", "hour", "minute", "second", "millisecond", "useTimeZone", "timeZoneName"]);
+        for (const controller of this.dateTimeFolder.controllers) {
+            if (controller === this.guiDateRangeNote) continue;
+            this.timeEditorDetails[classic.has(controller.property) ? 0 : 1].append(controller.domElement);
+        }
+    }
+
+    pauseTimeEditing() {
+        this.liveMode = false;
+        par.paused = true;
+        setRenderOne(true);
+    }
+
+    editTime(date, target = "now", begin = true) {
+        if (!Number.isFinite(date?.getTime()) || !["now", "start"].includes(target)) return false;
+        const current = target === "start" ? this.dateStart : this.frameToDate(par.frame);
+        if (current.getTime() === date.getTime()) return true;
+        if (begin) {
+            if (this.timeEditExpected !== this.dateStart.getTime()) this.timeEditHistory = [];
+            (this.timeEditHistory ??= []).push(this.dateStart.getTime());
+            if (this.timeEditHistory.length > 30) this.timeEditHistory.shift();
+        }
+        this.pauseTimeEditing();
+        if (target === "start") this.setStartDateTime(date);
+        else this.setNowDateTime(date);
+        this.timeEditExpected = this.dateStart.getTime();
+        this.recalculateCascade();
+        setSitchEstablished(true);
+        markSitchDirty();
+        setRenderOne(true);
+        return true;
+    }
+
+    canUndoTimeEdit() {
+        return !!this.timeEditHistory?.length && this.timeEditExpected === this.dateStart.getTime();
+    }
+
+    undoTimeEdit() {
+        if (!this.canUndoTimeEdit()) return;
+        this.editTime(new Date(this.timeEditHistory.pop()), "start", false);
+    }
+
+    createTimeEditor(container) {
+        const control = (object, property) => this.dateTimeFolder.controllers.find(c => c.object === object && c.property === property);
+        return new TimeEditor(container, {
+            zones: timeZoneKeys,
+            read: () => ({
+                now: this.frameToDate(par.frame), start: this.dateStart, frame: par.frame,
+                useZone: this.useTimeZone, zone: this.timeZoneName,
+                offset: this.useTimeZone ? this.getTimeZoneOffset() : 0,
+                live: this.liveMode, paused: par.paused, speed: Sit.simSpeed ?? 1,
+                playbackSpeed: par.playbackSpeed ?? 1, canUndo: this.canUndoTimeEdit(),
+            }),
+            pause: () => this.pauseTimeEditing(),
+            edit: (date, target, begin) => this.editTime(date, target, begin),
+            undo: () => this.undoTimeEdit(),
+            zone: value => {
+                if (value !== "__utc__") control(this, "timeZoneName").setValue(value);
+                control(this, "useTimeZone").setValue(value !== "__utc__");
+                markSitchDirty();
+            },
+            cameraZone: () => {
+                control(this, "useTimeZone").setValue(true);
+                this.setTimeZoneFromCameraLocation();
+                markSitchDirty();
+            },
+            speed: value => { control(Sit, "simSpeed").setValue(value); par.playbackSpeed = 1; markSitchDirty(); },
+            play: () => {
+                if (this.liveMode) this.pauseTimeEditing();
+                else { par.paused = !par.paused; par.direction = 1; setRenderOne(true); }
+            },
+            live: () => {
+                if (this.liveMode) this.pauseTimeEditing();
+                else {
+                    control(this, "liveMode").setValue(true);
+                    this.setNowDateTime(new Date(), true);
+                    this.recalculateCascade();
+                    setRenderOne(true);
+                }
+            },
+        });
+    }
+
+    dispose() {
+        this.timeEditor?.dispose();
+        this.timeEditorHost?.remove();
+        this.dateTimeFolder?.domElement.classList.remove("sitrec-time-menu");
+        for (const details of this.timeEditorDetails ?? []) details.remove();
+        super.dispose();
+    }
 
     adjustGUIForTimezone() {
         // change the color year, month, day, hour, minute, second and millisecond
@@ -865,7 +982,7 @@ export class CNodeDateTime extends CNode {
         this._bumpTimeZoneSerial();
         this.timeZoneOffset = offset;
         this.timeZoneName = timeZoneKeyForZone(zone, this.dateStart, offset) ?? genericTimeZoneName(offset);
-        this.populate();
+        this.populate(true);
         forceUpdateUIText();
         setRenderOne(true);
         return this.timeZoneName;

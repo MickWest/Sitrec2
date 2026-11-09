@@ -262,6 +262,7 @@ sitch = {
     globeScale: 1.0,        // it was defaulting to this before, but now it's explicit (in case the default changes)
 
     nightSky: {
+        showOtherSatellites: true,
         showEquatorialGrid: false,
         showConstellations: false,
         useDayNight: true,
