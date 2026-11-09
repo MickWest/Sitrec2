@@ -58,6 +58,10 @@ seconds gives 0.0625 Hz. Actual separation of peaks also depends on noise, their
 the window used in the calculation. If the repetition rate changes during the interval, a
 longer selection can spread it into a broad peak. Compare shorter intervals as well.
 
+A longer interval also makes a steady repetition stand higher above the general level of the
+spectrum. A peak that cannot be told from the bumps around it in 3 seconds can be clear in
+12 seconds. This needs a good track and a steady repetition rate for the whole interval.
+
 ### The object must produce a measurable change in source pixels
 
 An object only one or two pixels across may still work if it has strong contrast and a quiet
@@ -78,12 +82,15 @@ for examples and checks.
 ### Start an analysis
 
 1. Load a video and use [Point Track](PointTrack.md) to measure the object's position through
-   the interval of interest. Inspect the track for jumps or estimated positions.
+   the interval of interest. Inspect the track for jumps or estimated positions. Step through
+   the interval and make sure that the point stays on the object: where it does not, the
+   spectrum describes the background at the point.
 2. Set the **In** and **Out** markers around that interval.
 3. Turn on **Video → Point Track → Frequency Analysis**.
 4. Open **Frequency Analysis Settings** in the same Point Track folder. Set **Object radius
    (px)** so the green measuring circle contains the whole object, with room for small tracking
-   errors, while keeping neighboring objects out.
+   errors, while keeping [neighboring objects](#neighboring-objects) out of the circle and out
+   of the background ring around it.
 5. Wait for the analysis to finish. Compare the green object curve with the pink background
    curve, then try another interval and a slightly different radius.
 
@@ -108,7 +115,9 @@ the main frequency.
 - **Horizontal axis:** frequency in Hz, or flashes per minute, ending at half the source frame
   rate. This is a frequency axis, not a video timeline.
 - **Vertical axis:** brightness **semi-amplitude**, half the peak-to-peak change of a sinusoid.
-  For example, a smooth variation from 80 to 120 has a semi-amplitude of 20.
+  For example, a smooth variation from 80 to 120 has a semi-amplitude of 20. The scale fits the
+  largest value in the frequency range that the peak search covers. A curve that is taller at
+  lower frequencies is cut off at the top of the plot.
 - **Green — Object − background:** the spectrum of the object's brightness after local
   background subtraction.
 - **Pink — Local background × aperture area:** the spectrum of the surrounding background,
@@ -125,7 +134,7 @@ the main frequency.
 | **Object radius (px)** | Measuring-circle radius in original video pixels. Default **4**, range **2–100**. The 2-pixel minimum is an aperture limit, not a minimum object diameter. |
 | **Amplitude as percent** | On by default. Divides semi-amplitude by the absolute mean object-minus-background flux and multiplies by 100. Off uses **DN·pixels**, recorded pixel value times pixel area. Effectively zero mean flux also uses DN·pixels. |
 | **Show local background** | On by default. Shows the pink comparison curve, using the same scale as the object. |
-| **Peak search floor (Hz)** | Default **0.5 Hz**, range **0–30 Hz**. Limits which frequency gets the largest-peak label. It does not remove any part of the spectrum. |
+| **Peak search floor (Hz)** | Default **0.5 Hz**, range **0–30 Hz**. Limits which frequency gets the largest-peak label, and which frequencies set the vertical scale. It does not remove any part of the spectrum. |
 | **Recalculate** | Measures the video frames again. Most input changes already trigger this automatically. |
 | **Export CSV** | Saves the spectrum, analysis settings and individual frame measurements to `PointTrackFrequency.csv`. Available results are exported only once a spectrum exists. |
 | **Flashes per minute** | Displays frequencies as **Hz × 60**. It changes the units only. Despite the label, these are brightness cycles per minute, whatever causes them. CSV frequencies stay in Hz. |
@@ -140,9 +149,22 @@ The default floor, 0.5 Hz, keeps very slow brightness drift from taking the larg
 in many ordinary cases. The whole spectrum still appears below the dashed line. The setting
 always uses Hz, including when the axis shows flashes per minute.
 
+The floor also sets the vertical scale. The scale fits the largest value at the frequencies
+that the peak search covers, in the object curve and, when it is shown, the background curve.
+A curve that is taller below the floor is cut off at the top of the plot, so the labeled peak
+is not made small by slow drift.
+
+![Frequency Analysis of a small bright object in real infrared footage. Left of the dashed 1 Hz floor both curves go off the top of the plot. The labeled 7.11 Hz peak fills the plot height.](docimages/pointtrack-frequency-floor-scale.jpg)
+
+This screenshot is from real footage of a small bright object that moves across a background
+of changing brightness. Below 0.5 Hz the green curve reaches about 33 % and the pink curve
+about 56 %, against 5.45 % for the labeled peak, so both are cut off at the top. See
+[a changing background](#a-changing-background-can-look-like-a-slow-brightness-change) for the
+cause of such peaks.
+
 Keep the floor below the repetition rate you want to investigate. Set **0** to search from
 about one independent frequency bin above zero. A floor at or above the Nyquist limit leaves
-no eligible peak, and the graph explains why.
+no eligible peak, and the graph explains why. The scale then fits the whole spectrum.
 
 A flash or a complex brightness cycle can produce peaks at 2, 3, 4 and more times its basic
 rate. These are **harmonics**, and one may be stronger than the basic rate. Raising the floor
@@ -161,6 +183,9 @@ does not decide which peak represents a wingbeat or a flash cycle.
 | Black/white code-limit warning | Some aperture pixels reach the recorded limits. Clipping can weaken or distort the measured variation and its harmonics. |
 | Irregular frame timing | Sitrec uses the real timestamps. The warning shows the local frame-rate range; peaks above half the lowest frame rate may be aliases. |
 | Peak moves when the radius changes | Inspect tracking, neighboring objects and background texture. The measurement may be dominated by what crosses the aperture. |
+| Tall curves at the left that go off the top of the plot | Slow change below the peak search floor. If the green and pink curves both have it, see [a changing background](#a-changing-background-can-look-like-a-slow-brightness-change). |
+| The label is just above the floor | It can be the edge of slow drift, which is wider in a short interval. Raise the floor and check whether the label follows it. |
+| No peak where the video shows a repetition | Check that the point stays on the object, that no [neighboring object](#neighboring-objects) enters the circle or the ring, and that the object is not at the [recorded limit](#bright-objects-and-bright-backgrounds). Then try a longer interval. |
 | Very large percent amplitude | Check whether mean contrast is near zero. Switch off **Amplitude as percent** to inspect DN·pixels. This changes the scale, not the quality of the measurement. |
 
 The object aperture must stay clear of an enabled [mask](Masking.md). Masked pixels in the
@@ -344,7 +369,8 @@ by the mean aperture area. It receives the same detrending, window, frequency ca
 display scale as the object.
 
 Finally, Sitrec labels the largest amplitude on the frequency grid above both the chosen
-floor and about one independent bin from zero. It does not estimate a false-alarm probability,
+floor and about one independent bin from zero. The vertical scale of the graph fits the
+largest amplitude in that same range. It does not estimate a false-alarm probability,
 test whether the object is a bird, or determine which peak is the fundamental physical cycle.
 
 ## Why small objects and noisy backgrounds cause problems
@@ -387,6 +413,61 @@ Random noise often raises the general spectrum level and produces peaks that cha
 intervals. Repeating errors, such as regular camera or tracking wobble across texture, can
 produce a narrow peak. A matching peak in the pink curve suggests a shared influence. Its
 absence does not prove the object peak is real: the ring samples different pixels.
+
+### A changing background can look like a slow brightness change
+
+The object flux is the object's pixels minus the local background level. The pixels of an
+opaque object, and pixels at the recorded limit, do not get brighter when the background
+behind them gets brighter. The flux then follows the background with the opposite sign: a
+brighter background gives a smaller flux, although the object did not change.
+
+This happens when the object moves across a background that is brighter in one part of the
+picture than in another, for example a picture with a bright center. The green curve gets a
+tall peak at a low frequency, and the pink curve has a peak at the same frequency. In the
+[screenshot above](#choose-the-peak-search-floor) the object passed the bright center of the
+picture two times in 12.8 seconds, which gave both curves a peak at 0.22 Hz.
+
+To check for it:
+
+1. Compare the green and pink curves at the low end of the graph.
+2. Export the CSV and plot signed object flux against local background. Points near a
+   straight line that falls to the right show that the flux follows the background.
+3. Raise the peak search floor above the slow change. The label and the vertical scale then
+   go to the faster repetition.
+
+Percent amplitude divides by the mean flux of the whole interval. When the flux follows the
+background, that mean is an average of different conditions. Compare intervals that have a
+similar background level.
+
+### Bright objects and bright backgrounds
+
+Pixels at the recorded limit stay at the limit when the object gets brighter. Only the edge
+and the area of such an object can show a change. A brighter background leaves less room
+between the background level and the limit, so the same change of the object gives a smaller
+change of flux. A repetition that is clear where the object is in front of a dark background
+can be several times smaller, or absent from the spectrum, where the same object is in front
+of a bright background. The black/white code-limit warning tells you that some aperture pixels
+are at a limit; it does not tell you how much of the change is lost.
+
+### Neighboring objects
+
+The measuring circle has radius **r**, and the background ring reaches **2.5 r**. A second
+object changes the measurement when it comes into either one:
+
+- Inside the circle, its light is added to the object flux.
+- In the ring (from 1.75 r to 2.5 r), it raises the background level when it covers enough of
+  the ring to move the median.
+- Between them, its edge can reach the circle or the ring.
+
+Objects in a group move a little against each other, so these contributions change from frame
+to frame. The spectrum can then show the neighbor's repetition, or a peak that belongs to
+neither object. Keep the nearest other object farther away than 2.5 r plus its own radius for
+the whole interval: with the default 4-pixel radius, that is more than about 10 pixels plus
+the size of the neighbor. If that is not possible, use a smaller radius that still holds the
+object, or choose an interval in which the object is alone. Objects that are closer together
+than about their own width cannot be measured one at a time.
+
+### Before you interpret a peak
 
 For a suspected steady repetition, look for a similar frequency across independent intervals
 and sensible aperture sizes, while checking the actual footage and track. Consider harmonics,
@@ -446,6 +527,12 @@ For example, **if** a compression error repeats every 60 frames in a 30 fps vide
 every two seconds and can produce a **0.5 Hz** peak, possibly with harmonics. This is a possible
 mechanism, not a rule that every keyframe causes flicker.
 
+A short pattern puts its rate inside the range of the graph. A video with one large frame
+followed by three small frames repeats every 4 frames: at 30 fps that is **7.5 Hz**. To tell a
+brightness repetition from such a pattern rate, the two must be several independent bins
+apart. A difference of 0.4 Hz needs an interval of about 10 seconds or more; in 3 seconds the
+two fall into one broad peak.
+
 Removing fine spatial detail does **not** impose a simple temporal cutoff in Hz. A blurred
 object can still retain a strong, slow brightness variation. An aperture that contains its
 whole image may still collect nearly the same total brightness even when fine detail is lost.
@@ -461,7 +548,9 @@ Compression does not automatically make every measurement unusable.
 3. **Inspect the exported brightness samples.** Look for repeated jumps or changes that
    coincide with visible block changes, tracking errors or changes in image quality.
 4. **Use the [Video QP Graph](VideoQPGraph.md).** For supported H.264 files, open
-   **Video → Forensics → QP Graph** to inspect compression strength and frame types. A pattern
+   **Video → Forensics → QP Graph** to inspect compression strength and frame types. Count the
+   frames in one repeat of the frame-type pattern and divide the frame rate by that number: the
+   result is the pattern rate in Hz. A pattern
    that matches a suspicious brightness cycle is a clue, not proof of its cause. The graph
    gives whole-frame minimum, mean and maximum QP, not the QP at the tracked object. It also
    shows only the last encode; damage from earlier encodes can remain even when the current

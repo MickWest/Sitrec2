@@ -8,7 +8,7 @@ import {abFrameRange} from '../TraverseAnalysisData';
 import {displayIndexForFrame, sourceVideoOf} from '../videoQP/VideoQPAnalysis';
 import {startTonalAnalysis} from '../videoTonal/VideoTonalAnalysis';
 import {clampApertureRadius, clampPeakFloor, FREQUENCY_DEFAULTS, pointFrequencyTargetColor} from '../PointTrackFrequencyGraph';
-import {amplitudeSpectrum, captureFrequencyTargets, frequencySampling} from './PointFrequencyStatistics';
+import {amplitudeSpectrum, captureFrequencyTargets, frequencySampling, searchedMaximum} from './PointFrequencyStatistics';
 
 const MARGIN = 60;
 const DARK = {bg: '#000', text: '#ddd', grid: '#333', target: pointFrequencyTargetColor(true), background: '#ff86d2', warning: '#ffb84d'};
@@ -138,8 +138,10 @@ export class CNodePointTrackFrequencyGraphView extends CNodeCustomGraphView {
     autoScale() {
         this.minX = 0; this.maxX = this.spectrum?.nyquist || 15;
         this.minY = 0; this.maxY = 0;
+        // Only the frequencies that the peak search considers set the scale. A
+        // curve below the floor can go off the top of the plot, where it is clipped.
         for (const spectrum of [this.spectrum, this.options.showBackground ? this.backgroundSpectrum : null]) {
-            if (spectrum) for (const value of spectrum.amplitude) this.maxY = Math.max(this.maxY, value * this.scale * 1.1);
+            if (spectrum) this.maxY = Math.max(this.maxY, searchedMaximum(spectrum) * this.scale * 1.1);
         }
         if (this.maxY < 1e-9) this.maxY = 1;
         this.hasY2 = false; this.hasY3 = false;

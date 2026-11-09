@@ -157,10 +157,25 @@ export function amplitudeSpectrum(values, fps, times = null, {minPeakHz = 0} = {
     // The search starts about one independent bin above 0 Hz, or at the floor.
     let peak = Math.ceil(size / count);
     while (peak < frequencies.length && frequencies[peak] < peakFloor) peak++;
+    const peakSearchStart = peak;
     for (let i = peak + 1; i < amplitude.length; i++) if (amplitude[i] > amplitude[peak]) peak = i;
     return {frequencies, amplitude, mean, count, fps, duration: count / fps,
-        binSpacing: fps / count, nyquist, peakFloor, peakFloorAboveNyquist,
+        binSpacing: fps / count, nyquist, peakFloor, peakFloorAboveNyquist, peakSearchStart,
         peak: !peakFloorAboveNyquist && amplitude[peak] > 1e-9 ? {frequency: frequencies[peak], amplitude: amplitude[peak]} : null};
+}
+
+// The largest amplitude among the frequencies that the peak search considers
+// (from peakSearchStart up). The graph sets its vertical scale from this, so
+// slow drift below the search floor cannot flatten the labeled peak: that
+// drift can be ten times the peak and would leave it a few pixels high. With
+// nothing to search (a floor at or above Nyquist) it covers every frequency,
+// so the curve stays in view.
+export function searchedMaximum(spectrum) {
+    let maximum = 0;
+    for (let i = spectrum.peakFloorAboveNyquist ? 0 : spectrum.peakSearchStart; i < spectrum.amplitude.length; i++) {
+        if (spectrum.amplitude[i] > maximum) maximum = spectrum.amplitude[i];
+    }
+    return maximum;
 }
 
 // Presentation timestamps, rather than scene playback speed, set the frequency

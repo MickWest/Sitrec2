@@ -111,6 +111,27 @@ test('saved states are sanitized; saves without a floor get the default', () => 
     expect(view.modSerialize().frequencyOptions.minPeakHz).toBe(0.5);
 });
 
+test('the vertical scale covers only the frequencies that the peak search considers', () => {
+    // DN·px, so the scale is the amplitude itself. The fixture background is constant.
+    const view = analyzedView({minPeakHz: 1.5, percent: false});
+    const scaled = () => { view.updateSpectrum(); view.autoScale(); return view.maxY; };
+    // The labeled 10 Hz flicker fills the plot. The drift below the floor is still
+    // in the spectrum, and taller than the plot.
+    expect(scaled()).toBeCloseTo(view.spectrum.peak.amplitude * 1.1, 9);
+    expect(view.spectrum.peak.amplitude).toBeCloseTo(2, 1);
+    expect(Math.max(...view.spectrum.amplitude)).toBeGreaterThan(5 * view.maxY);
+
+    // With no floor the drift is searched, so it sets the scale as it did before.
+    view.options.minPeakHz = 0;
+    expect(scaled()).toBeCloseTo(view.spectrum.peak.amplitude * 1.1, 9);
+    expect(view.maxY).toBeGreaterThan(10);
+
+    // Nothing to search: the whole spectrum sets the scale, so the curve stays in view.
+    view.options.minPeakHz = 30;
+    expect(scaled()).toBeCloseTo(Math.max(...view.spectrum.amplitude) * 1.1, 9);
+    expect(view.spectrum.peak).toBeNull();
+});
+
 test('the view searches above its floor and exports the floor with the settings', async () => {
     const view = analyzedView();
     view.updateSpectrum();

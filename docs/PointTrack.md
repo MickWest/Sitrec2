@@ -108,8 +108,14 @@ suit the light: about 1 for a 3 px point.
 
 For several nearby dots, **Center on Bright/Dark/Color** centres on one connected group of
 matching pixels. Separate objects inside the tracking circle are excluded. Set the threshold
-so background pixels do not join the objects together. Both tracking radii can be reduced to
-1 pixel when needed; a smaller Search Radius helps preserve the identity of close neighbours.
+so background pixels do not join the objects together. For **Center on Bright**, the
+**Brightness Threshold** must be above the background level around the object. The default,
+128, is below a bright background: every pixel in the tracking circle then matches, the point
+follows the background and not the object, and no frame is marked as missing. Both tracking
+radii can be reduced to 1 pixel when needed; a smaller Search Radius helps preserve the
+identity of close neighbours. With **High Peak**, neighbours of the same brightness inside
+the Search Radius make each frame ambiguous, and the frames are marked as missing: reduce
+**Search Radius** until it holds only the one object.
 
 ### Large objects with structure
 

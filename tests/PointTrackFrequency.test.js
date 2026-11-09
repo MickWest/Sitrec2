@@ -1,5 +1,6 @@
 import {
     amplitudeSpectrum, captureFrequencyTargets, frequencyDecodeRange, frequencySampling, irregularTransform, measurePointFlux,
+    searchedMaximum,
 } from '../src/pointFrequency/PointFrequencyStatistics';
 import {rotatedUV} from '../src/videoTonal/TonalStatistics';
 
@@ -106,6 +107,26 @@ test('the default 0.5 Hz floor keeps a slow beacon and still skips the drift', (
     // The curved drift of driftAndFlicker is below 0.5 Hz too.
     const drift = amplitudeSpectrum(driftAndFlicker, 30, null, {minPeakHz: .5});
     expect(Math.abs(drift.peak.frequency - 10)).toBeLessThan(drift.binSpacing);
+});
+
+test('searchedMaximum is the largest amplitude from the first searched bin up', () => {
+    const floored = amplitudeSpectrum(driftAndFlicker, 30, null, {minPeakHz: 1.5});
+    expect(floored.frequencies[floored.peakSearchStart]).toBeGreaterThanOrEqual(1.5);
+    expect(floored.frequencies[floored.peakSearchStart - 1]).toBeLessThan(1.5);
+    // The labeled peak is the largest searched value, so it sets the graph scale.
+    expect(searchedMaximum(floored)).toBe(floored.peak.amplitude);
+    expect(Math.max(...floored.amplitude)).toBeGreaterThan(5 * searchedMaximum(floored));
+    // A floor exactly on a bin includes that bin.
+    const onBin = amplitudeSpectrum(driftAndFlicker, 30, null, {minPeakHz: floored.peak.frequency});
+    expect(onBin.frequencies[onBin.peakSearchStart]).toBe(floored.peak.frequency);
+    expect(searchedMaximum(onBin)).toBe(floored.peak.amplitude);
+    // No floor: the search, and the scale, start about one independent bin above 0 Hz.
+    const unfloored = amplitudeSpectrum(driftAndFlicker, 30);
+    expect(unfloored.frequencies[unfloored.peakSearchStart]).toBeCloseTo(unfloored.binSpacing, 1);
+    expect(searchedMaximum(unfloored)).toBe(unfloored.peak.amplitude);
+    // Nothing to search: every frequency counts.
+    const none = amplitudeSpectrum(driftAndFlicker, 30, null, {minPeakHz: 15});
+    expect(searchedMaximum(none)).toBe(Math.max(...none.amplitude));
 });
 
 test('a peak search floor at or above Nyquist labels no peak and says why', () => {
