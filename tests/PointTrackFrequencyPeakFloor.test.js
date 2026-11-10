@@ -180,7 +180,8 @@ test('the view searches above its floor and exports the floor with the settings'
     const rows = (await saveAs.mock.calls.at(-1)[0].text()).split('\n');
     const header = rows.findIndex(row => row.startsWith('scene_in,'));
     const columns = rows[header].split(','), values = rows[header + 1].split(',');
-    expect(columns.at(-1)).toBe('peak_floor_hz');
+    const floor = columns.indexOf('peak_floor_hz');
+    expect(floor).toBeGreaterThan(-1);
     expect(values.length).toBe(columns.length);
-    expect(Number(values.at(-1))).toBe(2);
+    expect(Number(values[floor])).toBe(2);
 });

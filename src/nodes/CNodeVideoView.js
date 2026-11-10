@@ -3233,10 +3233,12 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
         const frameSlider = NodeMan.get("FrameSlider", false);
         if (!frameSlider) return;
 
+        // The cache line is cacheOverlay, not statusOverlay: that one belongs to
+        // Point Track and the other analyses, and must stay when Show Cache is off.
         const showingCache = this.in.showCache?.value ?? false;
         if (!showingCache) {
-            if (frameSlider.statusOverlay || frameSlider.groupOverlay) {
-                frameSlider.statusOverlay = null;
+            if (frameSlider.cacheOverlay || frameSlider.groupOverlay) {
+                frameSlider.cacheOverlay = null;
                 frameSlider.groupOverlay = null;
                 frameSlider.needsCanvasRedraw = true;
             }
@@ -3248,15 +3250,15 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
         if (!cache) return;
 
         const totalFrames = Sit.frames;
-        if (!frameSlider.statusOverlay || frameSlider.statusOverlay.length !== totalFrames) {
-            frameSlider.statusOverlay = new Uint8Array(totalFrames);
+        if (!frameSlider.cacheOverlay || frameSlider.cacheOverlay.length !== totalFrames) {
+            frameSlider.cacheOverlay = new Uint8Array(totalFrames);
         }
 
         let changed = false;
         for (let i = 0; i < totalFrames; i++) {
             const loaded = (cache[i] && cache[i].width > 0) ? 1 : 0;
-            if (frameSlider.statusOverlay[i] !== loaded) {
-                frameSlider.statusOverlay[i] = loaded;
+            if (frameSlider.cacheOverlay[i] !== loaded) {
+                frameSlider.cacheOverlay[i] = loaded;
                 changed = true;
             }
         }

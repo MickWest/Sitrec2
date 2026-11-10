@@ -82,7 +82,8 @@ for examples and checks.
 ### Start an analysis
 
 1. Load a video and use [Point Track](PointTrack.md) to measure the object's position through
-   the interval of interest. Inspect the track for jumps or estimated positions. Step through
+   the interval of interest. Inspect the track for jumps, for estimated positions and for
+   [frames with no tracked point](#frames-with-no-tracked-point). Step through
    the interval and make sure that the point stays on the object: where it does not, the
    spectrum describes the background at the point.
 2. Set the **In** and **Out** markers around that interval.
@@ -125,6 +126,50 @@ the main frequency.
 - **Header:** In/Out frames, sample count, duration, source frame rate, independent bin spacing
   and the largest eligible peak. The printed peak is not a significance test.
 - **Dashed vertical line:** the lowest frequency allowed by the peak search floor.
+- **Warnings:** lines at the top of the plot. The red box is about
+  [frames with no tracked point](#frames-with-no-tracked-point). The amber lines are about
+  irregular frame timing and about pixels at the recorded limit; see
+  [Messages and checks](#messages-and-checks). The vertical scale leaves room for them above
+  the curves.
+
+### Frames with no tracked point
+
+A **tracked point** is a point that the tracker detected or that you placed. A frame of the
+track can be without one:
+
+- **Interpolated:** the frame has no point, and it is between two points. This occurs after
+  you delete points, or when a run starts again at a later frame. The position of such a frame
+  is on the straight line between the points on each side. These frames are red on the
+  timeline and on the trail.
+- **Estimated:** the tracker made the point without a detection. These frames are amber.
+
+The analysis measures these frames too. It puts the measuring circle at that position and
+measures the brightness there. On such a frame the circle on the video is dashed. The graph
+then shows a red warning box:
+
+![The Frequency Analysis graph on a generated test clip. A red box at the top of the plot, with an × in its top right corner, says WARNING: no tracked point on 11 of 229 frames (gaps: 2, longest: 8 frames), that those frames are measured on the interpolated track line, and that a straight line across as many tracked frames is off the track by up to 0.6 px (aperture radius 6 px). Below the box the green curve has its peak at 1.49 Hz.](docimages/pointtrack-frequency-untracked-warning.jpg)
+
+This screenshot uses the generated test clip, with the points of two short stretches deleted.
+Press the **×** of the box to close it. The box then stays closed until you change In or Out.
+The warning gives:
+
+- The number of frames with no tracked point, and the number of frames from In to Out.
+- **gaps:** the number of groups of such frames, and the length of the longest group.
+- **Trial beside the gaps:** a test of the interpolation. Beside each gap, Sitrec takes as
+  many tracked frames as the gap has, puts a straight line across them, and measures how far
+  the tracked points are from that line. The warning gives the largest distance, with the
+  aperture radius. An object that moves at a constant speed gives a distance near zero, however
+  fast it moves. If no gap has enough tracked frames beside it, the warning gives the distance
+  that the track moves across a gap.
+
+If the object is not inside the circle on those frames, their samples do not show the object.
+To remove the warning, track the frames: **Go to Next Untracked** in the Point Track folder
+goes to each gap in turn (see
+[Frames with no point](PointTrack.md#frames-with-no-point)). Or move In/Out away from the gaps.
+
+A frame with no position stops the analysis: a frame before the first point of the track or
+after the last one, or a frame where the tracker did not find the object. The interval
+between two points that has such a frame is not interpolated.
 
 ### Settings
 
@@ -179,11 +224,12 @@ does not decide which peak represents a wingbeat or a flash cycle.
 
 | Message or symptom | What to check |
 |---|---|
-| No measured Point Track positions | Track the whole interval or narrow In/Out. Estimated or missing positions cannot supply a complete spectrum. |
+| No Point Track position on some frames | Some frames from In to Out are before or after the track, or the tracker did not find the object there. Track them or narrow In/Out. |
+| Red box: no tracked point on some frames | Those frames are measured at an interpolated or estimated position. See [Frames with no tracked point](#frames-with-no-tracked-point). |
 | Fewer than 16 source frames | Widen the interval. Repeated playback frames do not count as additional measurements. |
 | Skipped frames, missing timestamps or frames out of order | Use a continuous interval of the source video. The calculation needs a valid time for every sample. |
 | Aperture overlaps mask or video edge, or too little background | Reduce or move the aperture, change the mask, or narrow In/Out. The background ring needs at least 16 unmasked pixels. |
-| Black/white code-limit warning | Some aperture pixels reach the recorded limits. Clipping can weaken or distort the measured variation and its harmonics. |
+| Aperture pixels at the black or white limit | Some pixels in the measuring circle have the lowest or the highest value that the video can record. The line gives the number of frames where this occurs and the largest part of the circle that is at a limit. Clipping can weaken or distort the measured variation and its harmonics; see [Bright objects and bright backgrounds](#bright-objects-and-bright-backgrounds). |
 | Irregular frame timing | Sitrec uses the real timestamps. The warning shows the local frame-rate range; peaks above half the lowest frame rate may be aliases. |
 | Peak moves when the radius changes | Inspect tracking, neighboring objects and background texture. The measurement may be dominated by what crosses the aperture. |
 | Tall curves at the left that go off the top of the plot | Slow change below the peak search floor. If the green and pink curves both have it, see [a changing background](#a-changing-background-can-look-like-a-slow-brightness-change). |
@@ -203,10 +249,12 @@ The CSV contains three tables separated by blank lines:
    object semi-amplitude as a percentage when the mean permits it.
 2. **Settings and timing:** In/Out, sample count, frame rate, duration, bin spacing, Nyquist
    limit, radius, position smoothing, mean signed flux, pixel representation, source bit depth,
-   mask state, irregular timing, minimum/maximum frame rates and `peak_floor_hz`.
+   mask state, irregular timing, minimum/maximum frame rates, `peak_floor_hz` and
+   `interpolated_frames`, the number of frames with no tracked point.
 3. **Frame measurements:** source frame, time in seconds from the first selected sample,
-   original-pixel X/Y position, signed object flux, local background, aperture area and clipped
-   fraction.
+   original-pixel X/Y position, signed object flux, local background, aperture area, clipped
+   fraction and `position`. `position` is `tracked`, or `interpolated` for a
+   [frame with no tracked point](#frames-with-no-tracked-point).
 
 This allows you to inspect the brightness measurements separately from the spectrum. The
 export is a set of three tables, not one rectangular table of identical rows.
@@ -496,8 +544,9 @@ and the area of such an object can show a change. A brighter background leaves l
 between the background level and the limit, so the same change of the object gives a smaller
 change of flux. A repetition that is clear where the object is in front of a dark background
 can be several times smaller, or absent from the spectrum, where the same object is in front
-of a bright background. The black/white code-limit warning tells you that some aperture pixels
-are at a limit; it does not tell you how much of the change is lost.
+of a bright background. The amber line about pixels at the black or white limit tells you in
+how many frames some aperture pixels are at a limit, and how much of the aperture at most. It
+does not tell you how much of the change is lost.
 
 ### Neighboring objects
 

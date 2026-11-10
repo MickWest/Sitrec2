@@ -9,6 +9,20 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.190.1 (2026-11-10)
+
+### New Features
+- **Go to Next Untracked** (Video → Point Track → *Go to Next Untracked*): moves the playhead to the start of the next gap in the track, from the In frame to the Out frame, and pauses playback. A gap is a group of frames with no tracked point: interpolated frames, estimated frames, and frames with no position. A tracked point is one that the tracker detected or that you placed. A message on the video gives the frames of the gap. Press the button again for the next gap. After the last gap it goes back to the first. It does nothing while a track runs.
+
+### Improvements
+- **Point Track shows frames with no point in red** (Video → Point Track): a frame that has no point and is between two points gets its position from the straight line between them. These interpolated frames are now red on the timeline, the trail is red across them, and on such a frame the cursor is red, with *interpolated* after the position. Before, nothing marked them. The parts of the trail to or from an estimated point are now amber. Where the tracker did not find the object, the frames stay without a color and the trail keeps its break.
+- **Frequency Analysis measures frames with no tracked point** (Video → Point Track → *Frequency Analysis*): when some frames from In to Out have an interpolated or estimated position, the graph now measures them at that position and shows a red warning box. Before, it showed a message and no spectrum. The box gives the number of those frames, the number of gaps and the length of the longest gap. It also gives a trial of the interpolation: how far a straight line is from the track across as many tracked frames beside the gaps, with the aperture radius. If no gap has enough tracked frames beside it, the box gives how far the track moves across a gap. Press the × of the box to close it. It stays closed until you change In or Out. On those frames the measuring circle on the video is dashed. *Export CSV* (Frequency Analysis Settings) now gives the number of those frames, and a new column says whether each frame is tracked or interpolated. A frame with no position, before or after the track or where the object was not found, still stops the analysis, with a new message that gives these two causes.
+- **Frequency Analysis warnings at the top of the plot** (Video → Point Track → *Frequency Analysis*): the line about aperture pixels at the black or white limit now gives the number of frames and the largest part of the aperture that is at a limit. It is an amber line at the top of the plot, and it no longer replaces the method line at the bottom. The vertical scale leaves room for the warnings above the curves.
+
+### Bug Fixes
+- Fixed the Point Track colors on the timeline (green, amber and magenta) going away, so that they showed only while a track ran. They now stay while Point Track is on, and they show when you enable Point Track and when you open a saved sitch that has Point Track on. The timeline marks of Motion Analysis and of the OSD Tracker (Video menu) went away in the same way, and they now stay too. While *Show Cache* (Video → Video Processing) is on, the timeline shows the cache line in place of these colors.
+- Fixed a KML track whose altitudes are heights above the ground being read as heights above sea level. A track made 5 ft above a road was drawn far under the ground. Such a track is now read as height above the terrain, and a track that the file puts on the ground is put on the terrain. A track with no altitude mode, or with parts in different modes, is read as before. A sitch saved by version 2.190.0 or earlier keeps its tracks where they were. The *Select Tracks* list and the *Altitude Range (ft)* filter now put such a track on the loaded terrain to get its altitude, and the Track Browser shows its height above the ground (#15182 "KML doesn't work as a track").
+
 ## Version 2.190.0 (2026-11-10)
 
 ### New Features

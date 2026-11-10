@@ -436,7 +436,7 @@ In/Out range.
 | **Full A-B Blend** | off | The average of all frames in the In/Out range |
 | **Full A-B Exposure** | off | A simulated long exposure over the In/Out range |
 | **A-B Echo Opacity %** | 100 | Opacity of the **Full A-B** result over the video |
-| **Show Cache** | off | Show which video frames are decoded and held in memory |
+| **Show Cache** | off | Show on the timeline which video frames are decoded and held in memory. While it is on, the timeline shows this in place of the [Point Track](PointTrack.md) colors |
 | **Make Video** | | Export the running **Full A-B** mode as a video from In to Out, built up frame by frame. Turn on one of the three modes first. Video Adjustments are not applied |
 
 Only one of the three **Full A-B** modes can be on at a time. Changing the In or Out frame

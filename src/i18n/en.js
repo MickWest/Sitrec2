@@ -1217,6 +1217,13 @@ const en = {
             stopLabel: "Stop Point Track",
             tooltip: "Automatically advance through the video and track the object inside the cursor. Normal playback controls are disabled while tracking. Press Stop Point Track or Space to stop at the last tracked frame.",
         },
+        goToNextUntracked: {
+            label: "Go to Next Untracked",
+            tooltip: "Go to the next frame, from the In frame to the Out frame, that has no tracked point. A tracked point is one that the tracker detected or that you placed. A frame without one is interpolated (red on the timeline and on the trail), estimated (amber) or missing.\nPress again for the next gap. After the last gap it goes back to the first.\nTo track the frames, put the cursor on the object and press Start Point Track, or place points by hand. Frequency Analysis measures a frame with no tracked point on the interpolated track line, and shows a warning.",
+            none: "Every frame from In to Out has a tracked point",
+            run: "Frames {{first}} to {{last}} have no tracked point ({{count}} frames)",
+            one: "Frame {{frame}} has no tracked point",
+        },
         useMask: {
             label: "Use Mask",
             tooltip: "Ignore masked pixels in Motion (Background) and in Center on Bright, Dark and Color.\nMotion tracking also excludes them from camera registration and the background model, helping prevent false returns on readouts and reticles.\nPaint a mask under Video > Masking. Has no effect if there is no mask.",
@@ -2877,6 +2884,10 @@ const en = {
         perMinuteUnit: "flashes/min",
         perMinute: "Flashes per minute",
         perMinuteTooltip: "Show frequencies as flashes per minute (Hz × 60) instead of Hz. The axis covers the same range.",
+        unpositioned: "No Point Track position on {{count}} of {{total}} frames from In to Out: they are before or after the track, or the object was not found there. Track them or narrow In/Out",
+        interpolated: "WARNING: no tracked point on {{count}} of {{total}} frames (gaps: {{runs}}, longest: {{longest}} frames). Those frames are measured on the interpolated track line, so their samples can be wrong.",
+        interpolatedTrial: "Trial beside the gaps: a straight line across as many tracked frames is off the track by up to {{error}} px (aperture radius {{radius}} px). Go to Next Untracked finds the frames.",
+        interpolatedMove: "The track moves up to {{move}} px across a gap (aperture radius {{radius}} px). Go to Next Untracked finds the frames.",
         widening: {
             in1: "Widening In 1",
             in1Tooltip: "For Render Widening Video: the In frame at the start of the video.\nUntil you set a value, In 1 and Out 1 show the middle quarter of the In/Out region.",
@@ -2899,7 +2910,7 @@ const en = {
         targetLegend: "Object − background",
         backgroundLegend: "Local background × aperture area",
         method: "Linear detrend · Hann window · radius {{radius}} px · position smoothing {{smoothing}} frames",
-        clipped: "Aperture reaches black/white code limits; amplitudes may be distorted",
+        clipped: "Aperture pixels at the black or white limit in {{frames}} of {{total}} frames (up to {{max}}% of the aperture): amplitudes may be distorted",
         irregularTiming: "Irregular frame timing ({{min}}–{{max}} fps): each frame is placed at its real time. Peaks above {{limit}} {{frequencyUnit}} may be aliases",
     },
     vfr: {

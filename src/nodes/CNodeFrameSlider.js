@@ -61,6 +61,11 @@ export class CNodeFrameSlider extends CNode {
         this.statusOverlay = null;
         this.statusOverlayOffset = 2;
         this.lastStatusOverlay = null;
+        // The video view's Show Cache line. It has its own field: when it shared
+        // statusOverlay, the video view cleared the status of Point Track, Motion
+        // Analysis and the OSD tracker at each video render. While Show Cache is
+        // on, this line shows in place of the status line.
+        this.cacheOverlay = null;
         this.groupOverlay = null;
 
         // Keyframe-marker state. Yellow diamonds are drawn at frames
@@ -978,18 +983,24 @@ export class CNodeFrameSlider extends CNode {
 
         // Draw status overlay if set. Values are drawn in their own colour, so a
         // caller can distinguish kinds of frame — Point Track uses this to show
-        // the points a person placed apart from the ones it worked out itself.
-        if (this.statusOverlay && this.statusOverlay.length > 0) {
-            const colours = {1: '#00ff00', 2: '#ff00ff', 3: '#ffb347'};
+        // the points a person placed apart from the ones it worked out itself,
+        // and the frames with no point, where the track is interpolated (4, red;
+        // see TRACK_FRAME in PointTrackCoverage). Red is last, thicker, and at
+        // least 2 pixels long, so that a gap of one frame, narrower than a pixel
+        // on a long video, still shows between its neighbours.
+        const statusOverlay = this.cacheOverlay ?? this.statusOverlay;
+        if (statusOverlay && statusOverlay.length > 0) {
+            const colours = {1: '#00ff00', 2: '#ff00ff', 3: '#ffb347', 4: '#ff4040'};
             for (const value of Object.keys(colours).map(Number)) {
+            const minLength = value === 4 ? 2 : 1;
             ctx.strokeStyle = colours[value];
-            ctx.lineWidth = 2;
+            ctx.lineWidth = value === 4 ? 4 : 2;
             ctx.beginPath();
             let inSegment = false;
             let segmentStartX = 0;
-            for (let i = 0; i < this.statusOverlay.length; i++) {
+            for (let i = 0; i < statusOverlay.length; i++) {
                 const x = padding + (drawableWidth * i / Sit.frames);
-                if (this.statusOverlay[i] === value) {
+                if (statusOverlay[i] === value) {
                     if (!inSegment) {
                         ctx.moveTo(x, this.statusOverlayOffset);
                         segmentStartX = x;
@@ -999,7 +1010,7 @@ export class CNodeFrameSlider extends CNode {
                     }
                 } else {
                     if (inSegment) {
-                        ctx.lineTo(Math.max(x, segmentStartX + 1), this.statusOverlayOffset);
+                        ctx.lineTo(Math.max(x, segmentStartX + minLength), this.statusOverlayOffset);
                         ctx.stroke();
                         ctx.beginPath();
                         inSegment = false;
@@ -1008,7 +1019,7 @@ export class CNodeFrameSlider extends CNode {
             }
             if (inSegment) {
                 const lastX = padding + drawableWidth;
-                ctx.lineTo(Math.max(lastX, segmentStartX + 1), this.statusOverlayOffset);
+                ctx.lineTo(Math.max(lastX, segmentStartX + minLength), this.statusOverlayOffset);
                 ctx.stroke();
             }
             }

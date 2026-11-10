@@ -9,10 +9,14 @@ import {displayIndexForFrame, sourceVideoOf} from '../videoQP/VideoQPAnalysis';
 import {startTonalAnalysis} from '../videoTonal/VideoTonalAnalysis';
 import {clampApertureRadius, clampPeakFloor, FREQUENCY_DEFAULTS, pointFrequencyTargetColor} from '../PointTrackFrequencyGraph';
 import {amplitudeSpectrum, captureFrequencyTargets, frequencySampling, searchedMaximum} from './PointFrequencyStatistics';
+import {maxOf} from '../SafeArrays';
 
 const MARGIN = 60;
-const DARK = {bg: '#000', text: '#ddd', grid: '#333', target: pointFrequencyTargetColor(true), background: '#ff86d2', warning: '#ffb84d'};
-const LIGHT = {bg: '#fff', text: '#222', grid: '#ddd', target: pointFrequencyTargetColor(false), background: '#ad246e', warning: '#a45a00'};
+// The side of the square that holds the × of the warning box, and takes its press.
+const CLOSE_SIZE = 18;
+// alert: the warning about frames with no tracked point, in the red of those frames on the timeline.
+const DARK = {bg: '#000', text: '#ddd', grid: '#333', target: pointFrequencyTargetColor(true), background: '#ff86d2', warning: '#ffb84d', alert: '#ff5c5c'};
+const LIGHT = {bg: '#fff', text: '#222', grid: '#ddd', target: pointFrequencyTargetColor(false), background: '#ad246e', warning: '#a45a00', alert: '#c2181f'};
 const sameTarget = (one, other) => !!one && !!other && one.u === other.u && one.v === other.v && one.rx === other.rx && one.ry === other.ry;
 
 export class CNodePointTrackFrequencyGraphView extends CNodeCustomGraphView {
@@ -42,6 +46,47 @@ export class CNodePointTrackFrequencyGraphView extends CNodeCustomGraphView {
         this.spectrum = null; this.backgroundSpectrum = null;
         this._plotKey = '';
         setRenderOne();
+    }
+    // The red box about frames with no tracked point shows until the user
+    // closes it with its ×. After that it stays away for as long as In and Out
+    // are where they were, also when the track or the radius changes. A change
+    // of In or Out is a new selection of frames, so the box shows again.
+    untrackedWarningShows(range) {
+        const closed = this.warningClosed;
+        if (closed && (closed.frame0 !== range.frame0 || closed.frame1 !== range.frame1)) this.warningClosed = null;
+        return !this.warningClosed;
+    }
+    closeUntrackedWarning() {
+        const range = this._inputs?.range;
+        if (range) this.warningClosed = {frame0: range.frame0, frame1: range.frame1};
+        this._plotKey = '';
+        setRenderOne();
+    }
+    // The × of the warning box, in canvas pixels, while the box shows. A press
+    // there closes the box; any other press is the graph window's own.
+    overWarningClose(e) {
+        const close = this._warningClose;
+        if (!close) return false;
+        const rect = this.canvas.getBoundingClientRect();
+        const x = e.clientX - rect.left, y = e.clientY - rect.top;
+        return x >= close.x && x <= close.x + close.size && y >= close.y && y <= close.y + close.size;
+    }
+    onMouseDown(e) {
+        if (e.button === 0 && this.overWarningClose(e)) {
+            this.closeUntrackedWarning();
+            e.stopPropagation(); e.preventDefault();
+            return;
+        }
+        super.onMouseDown(e);
+    }
+    onMouseMove(e) {
+        // Not during a drag of the window that happens to pass over the ×.
+        const over = !this.isDragging && this.overWarningClose(e);
+        if (over !== !!this._overWarningClose) {
+            this._overWarningClose = over;
+            this.canvas.style.cursor = over ? 'pointer' : 'default';
+        }
+        if (!over) super.onMouseMove(e);
     }
     dispose() {
         clearTimeout(this._pollTimer);
@@ -95,12 +140,13 @@ export class CNodePointTrackFrequencyGraphView extends CNodeCustomGraphView {
             sampling = frequencySampling(source, plan.indices);
         } catch (error) {
             if (this.job) this.refreshAnalysis();
-            if (this.message !== error.message) { this.message = error.message; setRenderOne(); }
+            const message = error.unpositioned ? t('pointFrequency.unpositioned', error.unpositioned) : error.message;
+            if (this.message !== message) { this.message = message; setRenderOne(); }
             return;
         }
         this.message = '';
         const pixels = enabled ? mask?.maskImageData : null, rotation = source.effectiveRotation ?? 0;
-        const trackKey = JSON.stringify([range, plan.targets, sampling.fps, tracker.smoothingFrames]);
+        const trackKey = JSON.stringify([range, plan.targets, sampling.fps, tracker.smoothingFrames, plan.untracked?.indices]);
         const old = this._inputs;
         if (old && old.video === video && old.chunks === source.chunks && old.frames === source.chunks.length
             && old.pixels === pixels && old.rotation === rotation && old.trackKey === trackKey) return;
@@ -222,6 +268,51 @@ export class CNodePointTrackFrequencyGraphView extends CNodeCustomGraphView {
             else peakText = t('pointFrequency.flat');
         }
         ctx.fillText(peakText, width / 2, 49, width - 20);
+        // Warnings about the samples, at the top of the plot. Frames with no
+        // tracked point come first, in a box in the red that those frames have on
+        // the timeline and on the trail: their samples are measured at a position
+        // that is a guess, and nothing else on the graph shows that.
+        const warnings = [];
+        this._warningClose = null;
+        if (!status && s && input.plan.untracked && this.untrackedWarningShows(input.range)) {
+            const untracked = input.plan.untracked, radius = this.options.radius;
+            warnings.push({alert: true, text: t('pointFrequency.interpolated', untracked) + ' '
+                + (untracked.trial !== null ? t('pointFrequency.interpolatedTrial', {error: untracked.trial.toFixed(1), radius})
+                    : t('pointFrequency.interpolatedMove', {move: untracked.move.toFixed(1), radius}))});
+        }
+        if (!status && s && input.sampling.irregular) {
+            const {minFps, maxFps} = input.sampling;
+            warnings.push({text: t('pointFrequency.irregularTiming', {min: minFps.toFixed(2), max: maxFps.toFixed(2),
+                limit: frequencyText(minFps / 2), frequencyUnit})});
+        }
+        if (!status && s) {
+            const fractions = input.plan.indices.map(i => this.job.result.clippedFraction[i]).filter(fraction => fraction > 0);
+            if (fractions.length) warnings.push({text: t('pointFrequency.clipped', {frames: fractions.length, total: input.plan.indices.length,
+                max: (100 * maxOf(fractions)).toFixed(0)})});
+        }
+        const wrap = (text, limit) => {
+            const lines = []; let line = '';
+            for (const word of text.split(/\s+/)) {
+                if (line && ctx.measureText(line + ' ' + word).width > limit) { lines.push(line); line = word; }
+                else line += (line ? ' ' : '') + word;
+            }
+            if (line) lines.push(line);
+            return lines;
+        };
+        let warningsHeight = 0;
+        for (const warning of warnings) {
+            ctx.font = warning.alert ? 'bold 12px sans-serif' : '11px sans-serif';
+            // The box keeps its top right corner free for the ×.
+            warning.lines = wrap(warning.text, w - 36 - (warning.alert ? 2 * CLOSE_SIZE : 0));
+            warning.step = warning.alert ? 16 : 14;
+            warning.height = warning.lines.length * warning.step + (warning.alert ? 10 : 2);
+            warningsHeight += warning.height + 4;
+        }
+        // Room for the warnings above the curves: the largest value that the scale
+        // fits (autoScale leaves it at 1/1.1 of the top) stays below them. In a
+        // small window the warnings get at most half of the plot.
+        if (warningsHeight) this.maxY = Math.max(this.maxY, this.maxY / 1.1 / (1 - Math.min(.5, (warningsHeight + 10) / h)));
+        ctx.font = '11px sans-serif';
         const xs = this.calculateStep(this.maxX * xUnit, w) / xUnit, ys = this.calculateStep(this.maxY, h);
         ctx.save(); ctx.beginPath(); ctx.rect(MARGIN, MARGIN, w, h); ctx.clip(); ctx.strokeStyle = c.grid;
         for (let x = 0; x <= this.maxX; x += xs) { const p = this.point(x, 0); ctx.beginPath(); ctx.moveTo(p.x, MARGIN); ctx.lineTo(p.x, height - MARGIN); ctx.stroke(); }
@@ -242,20 +333,30 @@ export class CNodePointTrackFrequencyGraphView extends CNodeCustomGraphView {
             ctx.stroke();
         }
         ctx.restore(); ctx.strokeStyle = c.grid; ctx.strokeRect(MARGIN, MARGIN, w, h);
-        if (!status && s && input.sampling.irregular) {
-            const {minFps, maxFps} = input.sampling;
-            ctx.font = '11px sans-serif'; ctx.textAlign = 'center'; ctx.fillStyle = c.warning;
-            ctx.fillText(t('pointFrequency.irregularTiming', {min: minFps.toFixed(2), max: maxFps.toFixed(2),
-                limit: frequencyText(minFps / 2), frequencyUnit}), width / 2, MARGIN + 14, w - 10);
-        }
-        if (status) {
-            const lines = []; let line = '';
-            ctx.font = '12px sans-serif'; ctx.textAlign = 'center';
-            for (const word of status.split(/\s+/)) {
-                if (line && ctx.measureText(line + ' ' + word).width > w - 20) { lines.push(line); line = word; }
-                else line += (line ? ' ' : '') + word;
+        let warningY = MARGIN + 6;
+        ctx.textAlign = 'center';
+        for (const {alert, lines, step, height: boxHeight} of warnings) {
+            ctx.font = alert ? 'bold 12px sans-serif' : '11px sans-serif';
+            if (alert) {
+                // The background color first, so that a curve behind the text does not make it hard to read.
+                ctx.globalAlpha = .7; ctx.fillStyle = c.bg; ctx.fillRect(MARGIN + 8, warningY, w - 16, boxHeight);
+                ctx.globalAlpha = .22; ctx.fillStyle = c.alert; ctx.fillRect(MARGIN + 8, warningY, w - 16, boxHeight);
+                ctx.globalAlpha = 1; ctx.strokeStyle = c.alert; ctx.lineWidth = 1.5; ctx.strokeRect(MARGIN + 8, warningY, w - 16, boxHeight);
+                // The ×: two strokes in a square at the top right corner. onMouseDown tests the same square.
+                const close = this._warningClose = {x: MARGIN + w - 8 - CLOSE_SIZE - 3, y: warningY + 3, size: CLOSE_SIZE};
+                ctx.beginPath();
+                ctx.moveTo(close.x + 5, close.y + 5); ctx.lineTo(close.x + close.size - 5, close.y + close.size - 5);
+                ctx.moveTo(close.x + close.size - 5, close.y + 5); ctx.lineTo(close.x + 5, close.y + close.size - 5);
+                ctx.lineWidth = 2; ctx.stroke();
             }
-            if (line) lines.push(line);
+            ctx.fillStyle = alert ? c.alert : c.warning;
+            lines.forEach((line, n) => ctx.fillText(line, width / 2, warningY + (alert ? 5 : 0) + step * (n + 1) - 4));
+            warningY += boxHeight + 4;
+        }
+        ctx.lineWidth = 1;
+        if (status) {
+            ctx.font = '12px sans-serif'; ctx.textAlign = 'center';
+            const lines = wrap(status, w - 20);
             ctx.fillStyle = c.bg; ctx.fillRect(MARGIN + 5, height / 2 - 15, w - 10, lines.length * 18 + 8);
             ctx.fillStyle = c.text;
             lines.forEach((text, i) => ctx.fillText(text, width / 2, height / 2 + i * 18));
@@ -271,8 +372,7 @@ export class CNodePointTrackFrequencyGraphView extends CNodeCustomGraphView {
             ctx.fillStyle = c.target; ctx.fillText(t('pointFrequency.targetLegend') + (this.options.showBackground ? '  ·  ' : ''), width / 2 - (this.options.showBackground ? 65 : 0), height - 37, w);
             if (this.options.showBackground) { ctx.fillStyle = c.background; ctx.fillText(t('pointFrequency.backgroundLegend'), width / 2 + 95, height - 37, w / 2); }
             ctx.fillStyle = c.text;
-            const clipped = input.plan.indices.some(i => this.job.result.clippedFraction[i] > 0);
-            ctx.fillText(t(clipped ? 'pointFrequency.clipped' : 'pointFrequency.method', {radius: this.options.radius, smoothing: input.smoothing}), width / 2, height - 23, width - 12);
+            ctx.fillText(t('pointFrequency.method', {radius: this.options.radius, smoothing: input.smoothing}), width / 2, height - 23, width - 12);
         }
         return canvas;
     }
@@ -283,15 +383,18 @@ export class CNodePointTrackFrequencyGraphView extends CNodeCustomGraphView {
         const rows = ['frequency_hz,object_semi_amplitude_dn_px,background_semi_amplitude_dn_px,object_semi_amplitude_percent'];
         s.frequencies.forEach((f, i) => rows.push([f, s.amplitude[i], this.backgroundSpectrum.amplitude[i],
             Math.abs(s.mean) > 1e-6 ? s.amplitude[i] * 100 / Math.abs(s.mean) : ''].join(',')));
-        rows.push('', 'scene_in,scene_out,samples,fps,duration_s,bin_spacing_hz,nyquist_hz,radius_px,position_smoothing_frames,mean_signed_flux_dn_px,representation,source_bits,mask_enabled,irregular_timing,min_fps,max_fps,peak_floor_hz',
+        // The frames that were measured at a position that was not tracked.
+        const interpolated = new Set(input.plan.untracked?.indices);
+        rows.push('', 'scene_in,scene_out,samples,fps,duration_s,bin_spacing_hz,nyquist_hz,radius_px,position_smoothing_frames,mean_signed_flux_dn_px,representation,source_bits,mask_enabled,irregular_timing,min_fps,max_fps,peak_floor_hz,interpolated_frames',
             [input.range.frame0, input.range.frame1, s.count, s.fps, s.duration, s.binSpacing, s.nyquist, this.options.radius,
                 input.smoothing, s.mean, result.mode, result.bits, result.masked,
-                input.sampling.irregular, input.sampling.minFps, input.sampling.maxFps, s.peakFloor].join(','), '',
-            'source_frame,time_s,x_original_px,y_original_px,signed_flux_dn_px,local_background_dn,aperture_area_px,clipped_fraction');
+                input.sampling.irregular, input.sampling.minFps, input.sampling.maxFps, s.peakFloor, interpolated.size].join(','), '',
+            'source_frame,time_s,x_original_px,y_original_px,signed_flux_dn_px,local_background_dn,aperture_area_px,clipped_fraction,position');
         input.plan.indices.forEach((i, n) => {
             const target = input.plan.targets[i], video = input.video;
             rows.push([i, input.sampling.times[n], target.u * (video.originalVideoWidth || video.videoWidth),
-                target.v * (video.originalVideoHeight || video.videoHeight), result.flux[i], result.background[i], result.area[i], result.clippedFraction[i]].join(','));
+                target.v * (video.originalVideoHeight || video.videoHeight), result.flux[i], result.background[i], result.area[i], result.clippedFraction[i],
+                interpolated.has(i) ? 'interpolated' : 'tracked'].join(','));
         });
         const {saveAs} = await import('file-saver');
         saveAs(new Blob([rows.join('\n')], {type: 'text/csv;charset=utf-8'}), 'PointTrackFrequency.csv');

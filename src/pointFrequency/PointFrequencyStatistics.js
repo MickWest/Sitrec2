@@ -1,4 +1,7 @@
 import {rotatedUV} from '../videoTonal/TonalStatistics';
+import {
+    isTrackedStatus, lineTrialError, positionBetween, sortedTrackFrames, TRACK_FRAME, trackFrameStatus,
+} from '../PointTrackCoverage';
 
 export const FREQUENCY_FIELDS = ['flux', 'background', 'area', 'clippedFraction'];
 
@@ -203,23 +206,89 @@ export function frequencySampling(source, indices) {
         irregular, minFps: 1e6 / maxStep, maxFps: 1e6 / minStep};
 }
 
+// The aperture target of each source frame from frame0 to frame1.
+//
+// A frame with a measured point gets its target there. A frame with no
+// measured point but with a position (the line between the points on each
+// side, or a point that the tracker estimated; see PointTrackCoverage) is
+// untracked: the brightness can be measured there, but the place is a guess.
+// Such a frame gets its target at that position, and the plan describes those
+// frames in `untracked`, so that the graph can warn about them. A frame with
+// no position at all (outside the track, or where the object was not found)
+// stops the analysis; the error then has the number of those frames in
+// `unpositioned`.
 export function captureFrequencyTargets({frame0, frame1, positions, rawPositions = positions, width, height, radius, displayIndex}) {
     if (!(width > 0 && height > 0)) throw new Error('Video dimensions are unavailable');
-    const selected = new Set(), targets = {};
+    const selected = new Set(), targets = {}, guesses = {};
+    const sorted = positions ? sortedTrackFrames(positions) : [];
+    // To the end of the track, not only to frame1: the trial of a gap also uses the frames after it.
+    const status = rawPositions ? trackFrameStatus(rawPositions, null, Math.max(frame1, sorted.at(-1) ?? 0) + 1) : [];
+    const targetAt = point => Number.isFinite(point?.x) && Number.isFinite(point?.y)
+        ? {u: point.x / width, v: point.y / height, rx: radius / width, ry: radius / height} : null;
     for (let frame = frame0; frame <= frame1; frame++) {
         const index = displayIndex(frame);
         selected.add(index);
-        const raw = rawPositions?.get(frame), point = positions?.get(frame);
-        if (!raw || raw.estimated || rawPositions.unmeasuredFrames?.has(frame)
-            || !Number.isFinite(point?.x) || !Number.isFinite(point?.y)) continue;
-        targets[index] ??= {u: point.x / width, v: point.y / height, rx: radius / width, ry: radius / height};
+        if (rawPositions?.unmeasuredFrames?.has(frame)) continue;
+        const kind = status[frame];
+        const measured = isTrackedStatus(kind) ? targetAt(positions?.get(frame)) : null;
+        if (measured) { targets[index] ??= measured; continue; }
+        const guess = targetAt(kind === TRACK_FRAME.estimated ? positions?.get(frame)
+            : kind === TRACK_FRAME.interpolated ? positionBetween(positions, sorted, frame) : null);
+        if (guess) guesses[index] ??= {target: guess, frame, estimated: kind === TRACK_FRAME.estimated};
     }
     // Preserve order so reversed or cut/held timelines cannot masquerade as an
     // evenly sampled signal. Duplicate playback slots contribute only once.
     const indices = Array.from(selected);
-    const missing = indices.filter(index => !targets[index]).length;
-    if (missing) throw new Error(`${missing} source frame(s) lack measured Point Track positions. Track them or narrow In/Out`);
-    return {targets, indices};
+    const unpositioned = indices.filter(index => !targets[index] && !guesses[index]).length;
+    if (unpositioned) {
+        const error = new Error(`${unpositioned} source frame(s) have no Point Track position. Track them or narrow In/Out`);
+        error.unpositioned = {count: unpositioned, total: indices.length};
+        throw error;
+    }
+    const untracked = untrackedStatistics(indices, targets, guesses, width, height, positions, status);
+    if (untracked) for (const index of untracked.indices) targets[index] = guesses[index].target;
+    return {targets, indices, untracked};
+}
+
+// What the user needs to judge an analysis that uses positions that were not
+// measured, in original video pixels: how many source frames, in how many
+// runs, how long the longest run is, how far the track moves across a run
+// (`move`), and how far a straight line is from the track when it replaces as
+// many tracked frames beside a run (`trial`; see lineTrialError; null when no
+// run has enough tracked frames beside it). The trial is the one that shows
+// whether the object is likely to be inside the aperture: a fast object on a
+// straight path has a large move and a trial near zero. Null when every frame
+// has a measured point.
+function untrackedStatistics(indices, targets, guesses, width, height, positions, status) {
+    const place = index => targets[index] ?? guesses[index].target;
+    const runs = [];
+    let run = null;
+    indices.forEach((index, order) => {
+        if (targets[index]) { run = null; return; }
+        if (!run) runs.push(run = {start: order, end: order});
+        run.end = order;
+    });
+    if (!runs.length) return null;
+    const untracked = {count: 0, total: indices.length, runs: runs.length, estimated: 0, longest: 0, move: 0, trial: null, indices: []};
+    for (const {start, end} of runs) {
+        const length = end - start + 1;
+        // The points on each side of the run; at an end of the region, the run's own end.
+        const from = place(indices[Math.max(0, start - 1)]), to = place(indices[Math.min(indices.length - 1, end + 1)]);
+        untracked.move = Math.max(untracked.move, Math.hypot((to.u - from.u) * width, (to.v - from.v) * height));
+        const trial = lineTrialError(positions, status, guesses[indices[start]].frame, guesses[indices[end]].frame);
+        if (trial !== null) untracked.trial = Math.max(untracked.trial ?? 0, trial);
+        untracked.count += length;
+        if (length > untracked.longest) {
+            untracked.longest = length;
+            untracked.longestFirst = guesses[indices[start]].frame;
+            untracked.longestLast = guesses[indices[end]].frame;
+        }
+        for (let order = start; order <= end; order++) {
+            untracked.indices.push(indices[order]);
+            if (guesses[indices[order]].estimated) untracked.estimated++;
+        }
+    }
+    return untracked;
 }
 
 export function frequencyDecodeRange(source, first, last) {

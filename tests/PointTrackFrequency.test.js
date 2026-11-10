@@ -188,16 +188,68 @@ test('clipping in the aperture is recorded for the graph warning', () => {
 test('capture respects inclusive In/Out and does not extrapolate a partial track', () => {
     const p = positions(32);
     expect(capture({frame0: 4, frame1: 20, positions: p}).indices).toEqual(Array.from({length: 17}, (_, i) => i + 4));
-    p.delete(15);
+    // Out is after the last point: that frame has no position, and none is made up for it.
+    p.delete(31);
     expect(() => capture({positions: p})).toThrow(/1 source frame/);
 });
 
-test('estimated and explicitly unmeasured positions cannot supply brightness samples', () => {
+test('an estimated position is reported as untracked; an explicitly unmeasured frame stops the analysis', () => {
     const p = positions(32);
     p.set(10, {x: 20, y: 20, estimated: true});
-    expect(() => capture({positions: p})).toThrow(/1 source frame/);
+    expect(capture({positions: p}).untracked).toMatchObject({count: 1, estimated: 1, indices: [10]});
     p.set(10, {x: 20, y: 20}); p.unmeasuredFrames = new Set([12]);
     expect(() => capture({positions: p})).toThrow(/1 source frame/);
+});
+
+test('frames with no tracked point are measured on the track line and reported with their statistics', () => {
+    // The shape of the user report: a track from 522 to 957 without 927–931 and 948–949.
+    const p = new Map();
+    for (let frame = 522; frame <= 957; frame++) p.set(frame, {x: 20 + (frame - 522) / 100, y: 20});
+    for (const frame of [927, 928, 929, 930, 931, 948, 949]) p.delete(frame);
+    const region = {frame0: 522, frame1: 957, positions: p};
+    const plan = capture(region);
+    expect(plan.indices.length).toBe(436);
+    expect(plan.untracked).toMatchObject({count: 7, total: 436, runs: 2, longest: 5, longestFirst: 927, longestLast: 931, estimated: 0});
+    // Across the longer gap the track goes from frame 926 to 932: 0.06 px.
+    expect(plan.untracked.move).toBeCloseTo(.06, 9);
+    // The track is straight, so a line across the same number of tracked frames is exact.
+    expect(plan.untracked.trial).toBeCloseTo(0, 9);
+    expect(plan.untracked.indices).toEqual([927, 928, 929, 930, 931, 948, 949]);
+    // Each of those frames is on the line between its neighbors.
+    expect(plan.targets[929].u * 40).toBeCloseTo(20 + (929 - 522) / 100, 9);
+    expect(plan.targets[948].u * 40).toBeCloseTo(20 + (948 - 522) / 100, 9);
+    expect(plan.targets[929]).toMatchObject({v: .5, rx: .1, ry: .1});
+    // A complete region has nothing to report.
+    expect(capture({...region, frame1: 926}).untracked).toBeNull();
+});
+
+test('interpolation uses estimated points, and cannot make a position where there is none', () => {
+    const p = positions(32);
+    p.set(10, {x: 24, y: 20, estimated: 'linear'});
+    p.delete(11);
+    const plan = capture({positions: p});
+    expect(plan.untracked).toMatchObject({count: 2, runs: 1, longest: 2, estimated: 1, longestFirst: 10, longestLast: 11});
+    // The estimated point is used as it is; the empty frame is between that point and frame 12.
+    expect(plan.targets[10].u * 40).toBeCloseTo(24, 9);
+    expect(plan.targets[11].u * 40).toBeCloseTo(22, 9);
+
+    // The object was not found on frame 21: nothing can be measured there.
+    p.delete(21); p.unmeasuredFrames = new Set([21]);
+    let error;
+    try { capture({positions: p}); } catch (thrown) { error = thrown; }
+    expect(error.unpositioned).toEqual({count: 1, total: 32});
+    // Nor before the first point or after the last: that would be an extrapolation.
+    expect(() => capture({frame0: 0, frame1: 40, positions: positions(32)})).toThrow(/9 source frame/);
+});
+
+test('a held frame takes the tracked position of its playback slots before an interpolated one', () => {
+    const p = positions(64);
+    p.delete(21);
+    // Frames 20 and 21 show one source frame: frame 20 has a point, so nothing is interpolated.
+    expect(capture({frame1: 63, positions: p, displayIndex: f => Math.floor(f / 2)}).untracked).toBeNull();
+    p.delete(20);
+    const plan = capture({frame1: 63, positions: p, displayIndex: f => Math.floor(f / 2)});
+    expect(plan.untracked).toMatchObject({count: 1, total: 32, indices: [10]});
 });
 
 test('held playback slots are counted once and source timing determines Hz', () => {

@@ -44,7 +44,8 @@ On the three reference clips in [What to expect](#what-to-expect), this procedur
    to the Out frame. A long HD clip takes a few minutes.
 8. Scrub through the result. The cyan trail is the track. On the timeline, green marks frames
    where the object was detected, amber marks estimated frames, and magenta marks points you
-   placed by hand.
+   placed by hand. Red marks frames that have no point and are between two points; see
+   [Frames with no point](#frames-with-no-point).
 
 ![The video view after a Point Track run. A solid yellow circle and a dashed yellow circle sit on a small white object, with the label 240 (792, 239). A thin cyan line crosses the frame and has one break. Two magenta crosses lie on the line.](docimages/pointtrack-cursor-and-trail.jpg)
 
@@ -75,9 +76,10 @@ the recommended method in **Tracking Method**, then press **Start Point Track**.
    is a **user point**: the tracker takes it as fact and restarts from it.
 5. Press **Start Point Track** again. Frames that already have points are kept.
 
-The frames between the last good point and your user point now have no points. They show no
-color on the timeline, but the trail and the line of sight cross them in a straight line. Place
-user points there if the object did not move straight.
+The frames between the last good point and your user point now have no points. They are red on
+the timeline, and the trail and the line of sight cross them in a straight line; see
+[Frames with no point](#frames-with-no-point). Place user points there if the object did not
+move straight.
 
 If a whole section is hard, follow the same steps and press **Analyse Object** after step 4. The
 best settings can change as the object's size and contrast change. New settings apply only to
@@ -149,8 +151,10 @@ The track is saved with the sitch, user points included. Sitrec has no export fo
 alone. With the [Frequency Analysis](#frequency-analysis-of-brightness) graph open, **Export CSV**
 in **Frequency Analysis Settings** lists the pixel position of each source frame in the In/Out
 range, in its `x_original_px` and `y_original_px` columns. When **Output Smoothing** is on, these are the
-smoothed positions. The button does nothing until the graph shows a spectrum: no point in the
-range can be missing or estimated, and the aperture must stay clear of the mask and the image edge.
+smoothed positions. The button does nothing until the graph shows a spectrum: every frame in the
+range needs a position, and the aperture must stay clear of the mask and the image edge. The
+`position` column says `interpolated` for a [frame with no point](#frames-with-no-point) and for
+an estimated point.
 
 ---
 
@@ -284,6 +288,7 @@ without a shift.
 | The track jumps to on-screen text or a reticle | White or grey overlay is not recognized as overlay | Paint a [mask](Masking.md) over it and keep **Use Mask** on |
 | The track drops out while the object hovers | Motion (Background) cannot see an object that is still relative to the ground | Expected. Place user points on the frames you need, or use *Template Match* or a *Center on* method for that section |
 | Many amber (estimated) frames | The object was hard to detect, so those frames were joined by a straight line or by the camera motion | Check them. To measure them again, follow [If the track goes wrong partway through](#if-the-track-goes-wrong-partway-through): **Start Point Track** keeps frames that already have points, amber ones included. Or place user points |
+| Red marks on the timeline, and red parts of the trail | Those frames have no point, so the track is a straight line across them | **Go to Next Untracked** goes to each gap. See [Frames with no point](#frames-with-no-point) |
 | The track sits on the edge of the object, not its centre | A slow or large object stays in the background samples and is partly subtracted | Raise **Motion Frame Gap** |
 | The track is lost during a fast pan or zoom | The older background samples no longer cover this part of the frame | Lower **Motion Frame Gap**. Analyse again after the zoom |
 | Hilly terrain or buildings give false detections | The background cannot be cancelled exactly at an angle | Raise **Motion Parallax Slack** to 2–3 |
@@ -440,6 +445,7 @@ and full black. The black in those outlines is a strong difference, not a mask.
 | **Output Smoothing** | Off | Off, 2–10 frames | Smooths the output track; see below |
 | **Edit Head Only** | off | — | Only the point at the current frame can be dragged; see below |
 | **Show N Keyframes** | 20 | 0–100 | Draws only this many user points (magenta crosses), the ones nearest the current frame |
+| **Go to Next Untracked** | — | — | Go to the next frame, from the In frame to the Out frame, that has no tracked point; see [Frames with no point](#frames-with-no-point) |
 | **Clear from Here** | — | — | Delete all points, user points included, from the current frame to the Out frame |
 | **Clear User Points** / **Clear Auto Points** | — | — | Delete only your points (asks first), or only the tracker's |
 
@@ -491,6 +497,37 @@ frame you need there. A wrong user point is worse than none, because nothing wil
 **Clear User Points** deletes only yours and asks first. **Clear Auto Points** deletes only the
 tracked points, so you can track again from the same guidance. User points are saved with the
 sitch.
+
+### Frames with no point
+
+A frame of the track can have no point. There are two cases:
+
+- **Interpolated.** The frame is between two points, and the tracker has no record of a loss
+  there. This occurs after you delete points: with `;`, with `Delete`, or with **Clear from Here**
+  and a later user point. The cursor, the trail and the line of sight use the straight line
+  between the points on each side. These frames are red on the timeline, the trail is red across
+  them, and on such a frame the cursor is red, with **interpolated** after the position.
+- **Missing.** The tracker did not find the object. The frame has no position: it has no color on
+  the timeline, and the trail has a break. The frames between the points on each side of a
+  missing frame are not interpolated.
+
+![The video view and the timeline on a generated test clip. The cursor is two red circles, with the red label 204 (699, 262) interpolated. The cyan trail is red where it passes the cursor, and has a second short red part further along. The timeline below is green, with two red marks, one of them at the playhead, a magenta mark, and a part with no color.](docimages/pointtrack-untracked-frames.jpg)
+
+The same generated test clip, with the points of two short stretches deleted. The playhead is on
+frame 204, inside the first stretch, so the cursor is red and its label ends with
+**interpolated**. Each stretch is a red part of the trail and a red mark on the timeline. The part
+of the timeline with no color is where the object is hidden: those frames are missing, and the
+trail has its break there.
+
+**Go to Next Untracked** moves the playhead to the next frame, from the In frame to the Out frame,
+that has no tracked point: an interpolated frame, an estimated (amber) frame or a missing frame. A
+tracked point is one that the tracker detected or that you placed. A message on the video gives
+the frames of that gap. Press the button again for the next gap. After the last gap it goes back
+to the first. It does nothing while a track runs.
+
+To track the frames of a gap, put the cursor on the object and press **Start Point Track**, or
+place user points. [Frequency Analysis](FrequencyAnalysis.md#frames-with-no-tracked-point) measures
+interpolated and estimated frames at their positions, and shows a warning.
 
 ### Leaving the frame and coming back
 
