@@ -22,7 +22,7 @@ import {addVideoAnalysisResolutionMenu, beginVideoAnalysis} from './VideoAnalysi
 import {normalizeTrackSmoothing, smoothPointTrack, TrackPositionMap} from './PointTrackSmoothing';
 import {registerFrameRemap, remapFrameEntries} from './VFRTimeline';
 import {addPointTrackFrequencyMenu, getPointTrackFrequencyAperture} from './PointTrackFrequencyGraph';
-import {minOf} from "./SafeArrays";
+import {maxOf, minOf} from "./SafeArrays";
 
 let cv = null;
 
@@ -271,6 +271,12 @@ export class ObjectTracker {
         // point silently moves a neighbour instead. Everything still DRAWS; the
         // parts that can no longer be grabbed just fade back (see renderOverlay).
         this.editHeadOnly = false;
+
+        // {frame0, frame1, font, inColor, outColor} while a render animates
+        // In/Out (Render Widening Video): the overlay then draws only that part
+        // of the track, with the frame number at each end, in place of the
+        // whole trail.
+        this.trackSpan = null;
 
         // Optical flow state (for absolute tracking from initial frame)
         this.initialGrayImage = null;
@@ -2557,6 +2563,20 @@ export class ObjectTracker {
         return canvasRadius;
     }
 
+    // How far stabilization moves the picture at a frame, in original video
+    // pixels. A track point drawn on that frame's picture moves by the same amount.
+    stabilizationShift(frame) {
+        const video = this.videoView.videoData;
+        if (!video?.stabilizationEnabled || !video.stabilizationData || !video.stabilizationReferencePoint) return {x: 0, y: 0};
+        const point = interpolatePosition(video.stabilizationData, Math.floor(frame));
+        if (!point) return {x: 0, y: 0};
+        const width = video.originalVideoWidth || video.videoWidth;
+        const height = video.originalVideoHeight || video.videoHeight;
+        return video.stabilizationDirectOffset
+            ? {x: point.x * width / video.videoWidth, y: point.y * height / video.videoHeight}
+            : pointTrackingShift(video, point, video.stabilizationReferencePoint, width, height);
+    }
+
     drawFrequencyAperture(ctx, frame) {
         const aperture = getPointTrackFrequencyAperture();
         const f = Math.floor(frame);
@@ -2565,20 +2585,8 @@ export class ObjectTracker {
         const position = this.getOutputPositions().get(f);
         if (!position) return;
 
-        let {x, y} = position;
-        const video = this.videoView.videoData;
-        if (video?.stabilizationEnabled && video.stabilizationData && video.stabilizationReferencePoint) {
-            const point = interpolatePosition(video.stabilizationData, f);
-            if (point) {
-                const width = video.originalVideoWidth || video.videoWidth;
-                const height = video.originalVideoHeight || video.videoHeight;
-                const shift = video.stabilizationDirectOffset
-                    ? {x: point.x * width / video.videoWidth, y: point.y * height / video.videoHeight}
-                    : pointTrackingShift(video, point, video.stabilizationReferencePoint, width, height);
-                x += shift.x;
-                y += shift.y;
-            }
-        }
+        const shift = this.stabilizationShift(f);
+        const x = position.x + shift.x, y = position.y + shift.y;
         const [cx, cy] = this.videoView.videoToCanvasCoordsOriginal(x, y);
         const [edgeX, edgeY] = this.videoView.videoToCanvasCoordsOriginal(x + aperture.radius, y);
         ctx.save();
@@ -2588,6 +2596,66 @@ export class ObjectTracker {
         ctx.beginPath();
         ctx.arc(cx, cy, Math.hypot(edgeX - cx, edgeY - cy), 0, Math.PI * 2);
         ctx.stroke();
+        ctx.restore();
+    }
+
+    // The track from trackSpan.frame0 to trackSpan.frame1 on the picture of
+    // `frame`, with the frame number at each end, in the font and the two
+    // colors that trackSpan gives. An end outside the tracked frames gets no
+    // number.
+    drawTrackSpan(ctx, frame) {
+        const {frame0, frame1, font, inColor, outColor} = this.trackSpan;
+        const positions = this.getOutputPositions();
+        const tracked = Array.from(positions.keys()).filter(f => f >= frame0 && f <= frame1).sort((a, b) => a - b);
+        if (!tracked.length) return;
+        const shift = this.stabilizationShift(frame);
+        const toCanvas = point => this.videoView.videoToCanvasCoordsOriginal(point.x + shift.x, point.y + shift.y);
+        // A sparse track has no point exactly at In or Out, so those two come from
+        // interpolation. Past the ends of the track that would be an extrapolation.
+        const firstTracked = minOf(positions.keys()), lastTracked = maxOf(positions.keys());
+        const endPoint = f => {
+            const point = f >= firstTracked && f <= lastTracked ? this.getInterpolatedPosition(f) : null;
+            return point ? toCanvas(point) : null;
+        };
+        const start = endPoint(frame0), end = endPoint(frame1);
+
+        ctx.save();
+        ctx.strokeStyle = '#00ffff';
+        ctx.lineWidth = 2;
+        ctx.lineJoin = 'round';
+        ctx.beginPath();
+        let previousFrame = null;
+        const lineTo = (f, [px, py]) => {
+            // The same break as the whole trail: where the target was not found.
+            if (previousFrame === null || (f > previousFrame + 1 && positions.unmeasuredFrames?.has(previousFrame + 1))) ctx.moveTo(px, py);
+            else ctx.lineTo(px, py);
+            previousFrame = f;
+        };
+        if (start && tracked[0] !== frame0) lineTo(frame0, start);
+        for (const f of tracked) lineTo(f, toCanvas(positions.get(f)));
+        if (end && tracked.at(-1) !== frame1) lineTo(frame1, end);
+        ctx.stroke();
+
+        // Each number goes on the side away from the other end, clear of the line.
+        let dx = start && end ? start[0] - end[0] : -1, dy = start && end ? start[1] - end[1] : 0;
+        const length = Math.hypot(dx, dy);
+        if (length < 1) { dx = -1; dy = 0; } else { dx /= length; dy /= length; }
+        ctx.font = font;
+        ctx.lineWidth = 4;
+        ctx.strokeStyle = 'rgba(0, 0, 0, 0.85)';
+        for (const [point, f, color, sign] of [[start, frame0, inColor, 1], [end, frame1, outColor, -1]]) {
+            if (!point) continue;
+            const ux = dx * sign, uy = dy * sign;
+            ctx.fillStyle = color;
+            ctx.beginPath();
+            ctx.arc(point[0], point[1], 3.5, 0, Math.PI * 2);
+            ctx.fill();
+            const horizontal = Math.abs(ux) >= Math.abs(uy);
+            ctx.textAlign = horizontal ? (ux < 0 ? 'right' : 'left') : 'center';
+            ctx.textBaseline = horizontal ? 'middle' : (uy < 0 ? 'bottom' : 'top');
+            ctx.strokeText(String(f), point[0] + ux * 12, point[1] + uy * 12);
+            ctx.fillText(String(f), point[0] + ux * 12, point[1] + uy * 12);
+        }
         ctx.restore();
     }
 
@@ -2656,6 +2724,7 @@ export class ObjectTracker {
         // Intentionally hide tracking cursor after stabilization is applied,
         // since the overlay would be misaligned with the stabilized video.
         if (stabEnabled) {
+            if (this.trackSpan) this.drawTrackSpan(ctx, frame);
             this.drawFrequencyAperture(ctx, frame);
             return;
         }
@@ -2698,7 +2767,9 @@ export class ObjectTracker {
         
         // Edit Head Only fades back everything a drag can no longer reach, so
         // what stays bright is exactly what is still editable.
-        if (this.trackedPositions.size > 1) {
+        if (this.trackSpan) {
+            this.drawTrackSpan(ctx, frame);
+        } else if (this.trackedPositions.size > 1) {
             ctx.strokeStyle = this.editHeadOnly
                 ? 'rgba(0, 255, 255, 0.25)' : 'rgba(0, 255, 255, 0.5)';
             ctx.lineWidth = 1;
@@ -3900,6 +3971,15 @@ export function addObjectTrackingMenu() {
 
 export function getObjectTracker() {
     return objectTracker;
+}
+
+// The Point Track overlay, while it shows on screen: its canvas and the view
+// it lies over. It is a plain canvas in that view's div, not a view, so a
+// video export must draw it by itself.
+export function getPointTrackOverlay() {
+    const overlay = objectTracker?.enabled ? objectTracker.overlay : null;
+    if (!overlay || overlay.style.display === 'none') return null;
+    return {canvas: overlay, view: objectTracker.videoView};
 }
 
 export function serializeAutoTracking() {

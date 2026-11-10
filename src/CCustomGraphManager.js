@@ -467,6 +467,10 @@ export class CCustomGraphManager {
         this.refreshSources(true);
         graph.rebuildDropdowns();
         view.rebuildCallback = () => graph.refreshIfStale();
+        // A render that changes In/Out for each output frame (Render Widening
+        // Video) calls this before it draws the frame: the 200 ms throttle
+        // would leave a Frame A→B graph behind.
+        view.settleAnalysis = () => { graph._lastRefresh = 0; graph.refreshIfStale(); };
 
         this.list[id] = graph;
 

@@ -13,6 +13,7 @@ import {amplitudeSpectrum, captureFrequencyTargets, frequencySampling, searchedM
 const MARGIN = 60;
 const DARK = {bg: '#000', text: '#ddd', grid: '#333', target: pointFrequencyTargetColor(true), background: '#ff86d2', warning: '#ffb84d'};
 const LIGHT = {bg: '#fff', text: '#222', grid: '#ddd', target: pointFrequencyTargetColor(false), background: '#ad246e', warning: '#a45a00'};
+const sameTarget = (one, other) => !!one && !!other && one.u === other.u && one.v === other.v && one.rx === other.rx && one.ry === other.ry;
 
 export class CNodePointTrackFrequencyGraphView extends CNodeCustomGraphView {
     constructor(v) {
@@ -55,12 +56,25 @@ export class CNodePointTrackFrequencyGraphView extends CNodeCustomGraphView {
         }
     }
 
+    // True when In/Out changed and both ends are frames that the finished job
+    // measured. Such a change needs no video decode, so ensureAnalysis() does
+    // not make it wait for the next poll: the graph follows a drag of the In
+    // or Out marker frame by frame.
+    regionMovedInsideMeasurement() {
+        const input = this._inputs, done = this.job?.result;
+        if (!input || !done?.complete || done.error) return false;
+        const range = abFrameRange(Sit.frames, 1);
+        if (range.frame0 === input.range.frame0 && range.frame1 === input.range.frame1) return false;
+        return !!this.job.targets[displayIndexForFrame(input.video, range.frame0)]
+            && !!this.job.targets[displayIndexForFrame(input.video, range.frame1)];
+    }
+
     ensureAnalysis() {
         if (!this._pollTimer) this._pollTimer = setTimeout(() => {
             this._pollTimer = null;
             if (this.visible) this.ensureAnalysis();
         }, 500);
-        if (performance.now() < this._pollAt) return;
+        if (performance.now() < this._pollAt && !this.regionMovedInsideMeasurement()) return;
         this._pollAt = performance.now() + 250;
         const video = NodeMan.get('video', false)?.videoData, source = sourceVideoOf(video);
         const tracker = getObjectTracker();
@@ -90,9 +104,22 @@ export class CNodePointTrackFrequencyGraphView extends CNodeCustomGraphView {
         const old = this._inputs;
         if (old && old.video === video && old.chunks === source.chunks && old.frames === source.chunks.length
             && old.pixels === pixels && old.rotation === rotation && old.trackKey === trackKey) return;
-        this.refreshAnalysis();
-        this._inputs = {video, chunks: source.chunks, frames: source.chunks.length, pixels, rotation, trackKey, range, plan, sampling,
+        const inputs = {video, chunks: source.chunks, frames: source.chunks.length, pixels, rotation, trackKey, range, plan, sampling,
             smoothing: tracker.smoothingFrames || 0};
+        // The measurement of a frame does not depend on In/Out. If the finished
+        // job holds every frame of the new region, measured at the same place,
+        // only the spectrum changes: no video is decoded again. This keeps a
+        // render that moves In/Out for each output frame (Render Widening Video) fast.
+        const done = this.job?.result;
+        if (old && done?.complete && !done.error && old.video === video && old.chunks === source.chunks
+            && old.frames === source.chunks.length && old.pixels === pixels && old.rotation === rotation
+            && plan.indices.every(i => sameTarget(this.job.targets[i], plan.targets[i]))) {
+            this._inputs = inputs;
+            this.updateSpectrum();
+            return;
+        }
+        this.refreshAnalysis();
+        this._inputs = inputs;
         let snapshot = null;
         if (pixels) {
             const alpha = new Uint8Array(pixels.width * pixels.height);
@@ -106,7 +133,17 @@ export class CNodePointTrackFrequencyGraphView extends CNodeCustomGraphView {
                 if (result.complete) this.updateSpectrum();
                 if (result.complete || performance.now() - lastPaint > 150) { lastPaint = performance.now(); setRenderOne(); }
             });
+            this.job.targets = plan.targets;
         } catch (error) { this.message = t('videoTonal.failed', {reason: error.message}); }
+    }
+
+    // Bring the spectrum up to date with the In/Out region now, and wait for
+    // it. A render that changes In/Out for each output frame awaits this before
+    // it draws the frame; the normal poll would be up to 250 ms late.
+    async settleAnalysis() {
+        this._pollAt = 0;
+        this.ensureAnalysis();
+        await this.job?.promise;
     }
 
     updateSpectrum() {

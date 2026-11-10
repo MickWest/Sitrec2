@@ -9,6 +9,15 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.190.0 (2026-11-10)
+
+### New Features
+- **Render Widening Video** (Video → Point Track → Frequency Analysis Settings → *Render Widening Video*): renders a viewport video that stays on the current frame while the In/Out region changes, so you can see how the Frequency Analysis spectrum changes with the region. *Widening In 1* and *Widening Out 1* set the region at the start of the video, and *Widening In 2* and *Widening Out 2* set the region at the end. With *Widening Ping-Pong* on (it is off by default), the region then goes back to the start. The Frequency Analysis graph and the custom graphs that show are brought up to date for each video frame. The Point Track overlay, while it shows, draws the track from In to Out with the In and Out frame numbers at its ends. The timeline is added below the views, with the same two numbers above its In and Out markers. In and Out get their earlier values back when the render ends. The four frames and the checkbox are not saved with the sitch.
+
+### Improvements
+- **Point Track overlay in viewport renders** (Video → Video Render & Export): *Render Viewport Video*, *Render Fullscreen Video*, a single-view render of the video view, and *Render Fade Video* with *Render Whole Viewport* on now include the Point Track cursor and trail while Point Track is enabled (Video → Point Track → *Enable Point Track*). Before, these renders left the overlay out. *Render Source Video* does not change.
+- **Faster Frequency Analysis when In or Out moves** (Video → Point Track → *Frequency Analysis*): when the new In/Out region is inside the frames that the graph already measured, the graph calculates only the spectrum again and does not read the video again. The graph then follows a drag of the In or Out marker on the timeline. A region that goes outside those frames is measured again.
+
 ## Version 2.189.0 (2026-11-09)
 
 ### New Features

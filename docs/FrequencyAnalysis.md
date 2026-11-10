@@ -138,6 +138,9 @@ the main frequency.
 | **Recalculate** | Measures the video frames again. Most input changes already trigger this automatically. |
 | **Export CSV** | Saves the spectrum, analysis settings and individual frame measurements to `PointTrackFrequency.csv`. Available results are exported only once a spectrum exists. |
 | **Flashes per minute** | Displays frequencies as **Hz × 60**. It changes the units only. Despite the label, these are brightness cycles per minute, whatever causes them. CSV frequencies stay in Hz. |
+| **Widening In 1**, **Widening In 2**, **Widening Out 1**, **Widening Out 2** | The four frame numbers of **Render Widening Video**. See [Render a widening video](#render-a-widening-video). |
+| **Widening Ping-Pong** | Off by default. On makes the widening video go back to its first In/Out region. |
+| **Render Widening Video** | Renders a viewport video that holds the current frame and moves the In/Out region. |
 
 Recorded pixel values are not calibrated light output or temperature. Percent amplitude is a
 fraction of the object's mean **contrast above or below the background**, not a percentage of
@@ -207,6 +210,53 @@ The CSV contains three tables separated by blank lines:
 
 This allows you to inspect the brightness measurements separately from the spectrum. The
 export is a set of three tables, not one rectangular table of identical rows.
+
+### Render a widening video
+
+A widening video shows how the spectrum changes while the In/Out region changes. It is a
+[viewport render](Video.md#the-render-buttons), with one difference: the video stays on the
+current frame, and the In/Out region moves for each video frame.
+
+![One frame of a widening video. The video view shows the track from In to Out, with 559 in green at one end and 835 in red at the other end. The Frequency Analysis graph is for In 559 to Out 835 and labels a 7.10 Hz peak. Below the views is the timeline, with 559 above its green In marker and 835 above its red Out marker.](docimages/pointtrack-frequency-widening-video.jpg)
+
+1. Show the views that you want in the video. Normally that is the video view and the
+   Frequency Analysis graph. Keep **Enable Point Track** on if you want the track in the video.
+2. Go to the frame that the video will show.
+3. In **Frequency Analysis Settings**, set the four frames.
+
+   | Control | Frame |
+   |---|---|
+   | **Widening In 1**, **Widening Out 1** | The In and Out frames at the start of the video |
+   | **Widening In 2**, **Widening Out 2** | The In and Out frames at the end of the video |
+
+4. Press **Render Widening Video**. The same render dialog opens as for the other renders.
+
+In goes from **In 1** to **In 2** while Out goes from **Out 1** to **Out 2**, at a constant
+rate. The one that moves more goes one frame for each video frame. For example, In 618 → 522
+and Out 685 → 928 is 243 steps, which gives 244 video frames.
+
+With **Widening Ping-Pong** on, In and Out then go back to **In 1** and **Out 1**. The video
+is two times as long and ends where it started: 487 video frames in the example.
+
+For each video frame:
+
+- Frequency Analysis is calculated for the new In/Out region. Custom graphs are also updated,
+  so a **Frame A→B** graph follows the region.
+- The Point Track overlay, if it shows, draws the track from In to Out in place of the whole
+  trail. The In frame number is at one end in green and the Out frame number is at the other
+  end in red. An end that has no track point gets no number.
+- The timeline is added below the views, with its In and Out markers and the same two numbers
+  above them.
+
+When the render ends, In and Out get the values that they had before. The video has no audio.
+
+Until you set a value, **Widening In 2** and **Widening Out 2** show the In and Out frames,
+and **Widening In 1** and **Widening Out 1** show the middle quarter of that region. The four
+values are not saved with the sitch.
+
+Each Out frame must be after its In frame. If a region includes frames without a measured
+track point, or fewer than 16 frames, those video frames show the
+[message](#messages-and-checks) of the graph and no spectrum.
 
 ## How the calculation works
 

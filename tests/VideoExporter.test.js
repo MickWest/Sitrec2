@@ -2,6 +2,7 @@ import {
     compareGraySamplesForDuplicate,
     createFadeExportPlan,
     createVideoExportFramePlan,
+    createWideningExportPlan,
     findFadeOverlayView,
     getCanvasDisplayRect,
     VideoExportManager,
@@ -247,5 +248,52 @@ describe("compareGraySamplesForDuplicate", () => {
         const b = new Uint8Array([80, 90, 100, 110]);
 
         expect(compareGraySamplesForDuplicate(a, b).isDuplicate).toBe(false);
+    });
+});
+
+describe("createWideningExportPlan", () => {
+    const frames = {fps: 29.97, frame: 740, in1: 618, in2: 522, out1: 685, out2: 928};
+    const plan = createWideningExportPlan(frames);
+    const pingPong = createWideningExportPlan({...frames, pingPong: true});
+
+    test("the end that moves more goes one frame for each output frame", () => {
+        expect(plan.steps).toBe(243);
+        expect(plan.totalFrames).toBe(244);
+        expect(plan.pingPong).toBe(false);
+        expect(plan.fps).toBe(29.97);
+        expect(plan.rangeAt(0)).toEqual({a: 618, b: 685});
+        expect(plan.rangeAt(1)).toEqual({a: 618, b: 686});
+        expect(plan.rangeAt(243)).toEqual({a: 522, b: 928});
+    });
+
+    test("with ping-pong the region goes back to the start", () => {
+        expect(pingPong.totalFrames).toBe(487);
+        expect(pingPong.pingPong).toBe(true);
+        for (let index = 0; index <= 243; index++) expect(pingPong.rangeAt(index)).toEqual(plan.rangeAt(index));
+        expect(pingPong.rangeAt(244)).toEqual(plan.rangeAt(242));
+        expect(pingPong.rangeAt(486)).toEqual({a: 618, b: 685});
+    });
+
+    test("In and Out move in a straight line, so In stays before Out", () => {
+        for (let index = 0; index < pingPong.totalFrames; index++) {
+            const {a, b} = pingPong.rangeAt(index);
+            expect(a).toBeLessThan(b);
+            expect(a).toBeGreaterThanOrEqual(522);
+            expect(b).toBeLessThanOrEqual(928);
+        }
+        // Half way, each end has gone half of its distance.
+        expect(plan.rangeAt(122)).toEqual({a: 570, b: 807});
+    });
+
+    test("every output frame shows the held frame", () => {
+        expect(plan.frameAt(0)).toBe(740);
+        expect(plan.frameAt(200)).toBe(740);
+        expect(plan.nameSuffix).toBe("widening");
+    });
+
+    test("the same region at both ends gives one frame", () => {
+        const still = createWideningExportPlan({frame: 3, in1: 10, in2: 10, out1: 50, out2: 50, pingPong: true});
+        expect(still.totalFrames).toBe(1);
+        expect(still.rangeAt(0)).toEqual({a: 10, b: 50});
     });
 });
