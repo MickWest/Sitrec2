@@ -32,14 +32,15 @@ visibility follow. Other controls are grouped:
 
 The master **Show Satellites (Global)** switch applies to both views. M/L switches control only
 their own view. The separate [satellite viewing panel](Starlink.md#satellite-controls)
-is available from **Satellite Controls** at the top of this menu and in **View**.
+is available from **Satellite Controls** at the top of this menu.
 It starts enabled in the Starlink Horizon Flares (LIVE) preset.
 
-Custom sitches automatically use **light-blue simulated Starlink satellites** when no orbit
+New custom sitches automatically use **light-blue simulated Starlink satellites** when no orbit
 data is loaded, or no loaded element set is within seven days of the viewing time. The stats
 and viewing panel say **Simulated Starlink**. Loaded catalogs remain intact and return
 automatically when the time is in range. **Orbit Data → Simulate unavailable satellites**
-can disable this fallback and is saved with the sitch.
+turns this fallback on and off and is saved with the sitch. A sitch that was saved before the
+fallback existed loads with it off, so the sitch looks as it did when it was saved.
 
 The fallback shares the SHF app's deterministic constellation generator. Its population
 follows monthly estimates from [Jonathan McDowell's Starlink history](https://www.planet4589.org/space/con/star/starindex.html),

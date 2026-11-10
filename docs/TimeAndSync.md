@@ -270,6 +270,10 @@ The Time menu opens with the date and time editor. The same editor is at the top
 
 ### Scrubbing and setting the clock
 
+From the top, the editor shows the date, the time, a row with the milliseconds, the frame
+number and the playback state, the time zone, the **Edit Playhead** and **Edit Start**
+buttons, the playback buttons, and a field to paste a date and time.
+
 Choose **Edit Playhead** to date the video frame you are looking at, or **Edit Start**
 to date frame 0, the beginning of the recording. Each button's tooltip shows its exact timestamp.
 Editing pauses playback and leaves the current frame fixed; the scene's Start Time and
@@ -296,8 +300,9 @@ Now Time move together. Use the playback bar to scrub through video frames inste
 - **Play/Pause** runs or stops playback. **Live** follows the real clock; click it again or
   edit a date/time field to stop following. The speed selector changes Simulation Speed
   and resets the playback multiplier to 1; changing it keeps Now Time fixed.
-- **Paste a date & time** accepts an ISO timestamp such as `2026-11-08 21:30:00.125Z` or
-  `2026-11-08T13:30:00.125-08:00`. Without a suffix, it uses the zone above. **Now once**
+- The **Paste a date & time** field accepts an ISO timestamp such as
+  `2026-11-08 21:30:00.125Z` or `2026-11-08T13:30:00.125-08:00`. Press **Enter** to set the
+  time. Without a suffix, it uses the selected time zone. **Now once**, beside the field,
   dates the current frame with the real clock once, then stays paused.
 
 **Date & time sliders** retains the original sliders and UTC reference strings.

@@ -1,5 +1,5 @@
 /** @jest-environment jsdom */
-import {SatelliteSimulation, SATELLITE_ORBIT_WINDOW_MS} from "../src/SatelliteSimulation";
+import {SatelliteSimulation, SATELLITE_ORBIT_WINDOW_MS, simulateUnavailableDefault} from "../src/SatelliteSimulation";
 import {starlinkPopulation} from "../src/StarlinkPopulation";
 import {CTLEData} from "../src/TLEUtils";
 import {CSatellite} from "../src/nodes/CSatellite";
@@ -21,6 +21,15 @@ test("population follows historical samples, starts at launch, and caps future e
     expect(between).toBeLessThan(5346);
     expect(starlinkPopulation(date)).toBe(STARLINK_SHELLS.total);
     expect(starlinkPopulation(new Date("2040-01-01Z"))).toBe(STARLINK_SHELLS.total);
+});
+
+test("the simulation starts on in a new custom sitch, and off in a save and in a legacy sitch", () => {
+    expect(simulateUnavailableDefault({isCustom: true})).toBe(true);
+    // A save has mods. A save made before the simulation existed has no value for it,
+    // so this default stays and the sitch looks as it did.
+    expect(simulateUnavailableDefault({isCustom: true, mods: {}})).toBe(false);
+    expect(simulateUnavailableDefault({isCustom: true, mods: {NightSkyNode: {showSunArrows: true}}})).toBe(false);
+    expect(simulateUnavailableDefault({})).toBe(false);
 });
 
 test("usable loaded orbits take precedence, including the window boundary", () => {

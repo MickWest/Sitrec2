@@ -3,50 +3,112 @@ jest.mock("../src/ViewUtils", () => ({withDisplayedCamera: (view, callback) => c
 import {CNodeStarlinkUI} from "../src/nodes/CNodeStarlinkUI";
 import {CNodeViewUI} from "../src/nodes/CNodeViewUI";
 import {Globals, setNodeMan} from "../src/Globals";
+import {satelliteWidgets, showDataStatus, showFilterStatus, showSatelliteCount} from "../src/SatelliteWidgets";
+import {localizeElements} from "../src/NativeText";
+import {WidgetPanel} from "../src/WidgetPanel";
 
-let node, observer, nodes;
+let node, observer, nodes, mounted;
 beforeEach(() => {
     node = Object.create(CNodeStarlinkUI.prototype);
     node.panel = document.createElement("aside");
-    node.panel.innerHTML = `<button data-action="collapse">Collapse</button>
-        <input data-id="lat" type="number" min="-90" max="90" step="any">
-        <input data-id="lon" type="number" min="-180" max="180" step="any">
-        <p data-id="locationMessage"></p><p data-id="filterStatus"></p><p data-id="dataStatus"></p>`;
+    node.panel.innerHTML = `<button data-action="collapse">Collapse</button>`;
     node.launcher = document.createElement("button");
     node.hud = document.createElement("div");
-    node.hud.innerHTML = '<strong data-id="count"></strong>';
     document.body.append(node.panel, node.launcher, node.hud);
-    node.visible = true; node.expanded = true; node.controlGroups = new Map();
+    node.visible = true; node.expanded = true;
     node.layoutPanel = jest.fn(); node.sync = jest.fn(); node.look = {};
     observer = {_LLA: [34.123456789, -119.987654321, 12.3456789], agl: true, gotoLLA: jest.fn()};
     nodes = {fixedCameraPosition: observer, cameraTrackSwitch: {choice: "fixedCamera"},
         NightSkyNode: {satellites: {nameFilter: "", TLEData: null, get renderTLEData() {return this.TLEData;}}}, dateTimeStart: {dateNow: new Date()}};
     setNodeMan({get: id => nodes[id]});
-    ["lat", "lon"].forEach((id, i) => {node.el(id).value = observer._LLA[i].toFixed(5);});
     Globals.deserializing = false; Globals.disposing = false; Globals.sitchDirty = false;
+    mounted = [];
 });
-afterEach(() => { node.panel.remove(); node.launcher.remove(); node.hud.remove(); });
+afterEach(() => {
+    for (const widget of mounted) { widget.lifecycle.dispose?.(); widget.body.remove(); }
+    node.panel.remove(); node.launcher.remove(); node.hud.remove();
+});
+
+// Mount one widget type as the panel does: its template, its text, and its own scope.
+function mount(type) {
+    const body = document.createElement("div");
+    body.innerHTML = satelliteWidgets[type].html;
+    localizeElements(body);
+    document.body.append(body);
+    const scope = node.createScope(body);
+    const widget = {body, scope, lifecycle: satelliteWidgets[type].mount({body, scope, context: node, host: {}})};
+    mounted.push(widget);
+    return widget;
+}
+const edit = (input, value) => { input.value = value; input.dispatchEvent(new Event("change")); };
+const line = () => document.createElement("p");
 
 test("a latitude edit preserves the exact untouched longitude and height", () => {
-    node.el("lat").value = "35";
-    node.setLocation("lat");
+    const {scope} = mount("observer");
+    edit(scope.el("lat"), "35");
     expect(observer.gotoLLA).toHaveBeenCalledWith(35, -119.987654321, 12.3456789, true);
 });
 
 test("a longitude edit preserves exact latitude and altitude", () => {
-    node.el("lon").value = "-120";
-    node.setLocation("lon");
+    const {scope} = mount("observer");
+    edit(scope.el("lon"), "-120");
     expect(observer.gotoLLA).toHaveBeenCalledWith(34.123456789, -120, 12.3456789, true);
 });
 
 test("invalid and track-controlled observer edits leave the position alone", () => {
-    node.el("lat").value = "95";
-    node.setLocation("lat");
-    expect(node.el("locationMessage").textContent).toContain("latitude");
-    node.el("lat").value = "35";
+    const {scope} = mount("observer");
+    edit(scope.el("lat"), "95");
+    expect(scope.el("locationMessage").textContent).toContain("latitude");
     nodes.cameraTrackSwitch.choice = "track";
-    node.setLocation("lat");
+    edit(scope.el("lat"), "35");
     expect(observer.gotoLLA).not.toHaveBeenCalled();
+});
+
+test("each observer widget has its own elements, and all show the same observer", () => {
+    const first = mount("observer"), second = mount("observer");
+    edit(first.scope.el("lat"), "95");
+    // The message of an invalid edit is in the widget that got the edit, not in the other one.
+    expect(first.scope.el("locationMessage").textContent).not.toBe("");
+    expect(second.scope.el("locationMessage").textContent).toBe("");
+    // One source: each instance shows the position of the same observer after a refresh.
+    observer._LLA[0] = 40.5;
+    first.scope.el("lat").value = "";
+    for (const widget of [first, second]) widget.lifecycle.update();
+    expect(first.scope.el("lat").value).toBe("40.5");
+    expect(second.scope.el("lat").value).toBe("40.5");
+    expect(second.scope.el("lon").value).toBe("-119.98765");
+    // A track-controlled observer locks the fields and says why, in each instance.
+    nodes.cameraTrackSwitch.choice = "track";
+    second.lifecycle.update();
+    expect(second.scope.el("lat").disabled).toBe(true);
+    expect(second.scope.el("observerNote").textContent).toBe("Track-controlled observer");
+    expect(first.scope.el("lat").disabled).toBe(false);
+});
+
+test("a composition needs only the widgets that it names", () => {
+    // Two copies of one information widget and no other widget: the refresh must not look
+    // for the elements of widgets that are not there.
+    const home = document.createElement("div");
+    document.body.append(home);
+    const panel = new WidgetPanel({parent: home, context: node, registry: satelliteWidgets,
+        definition: {id: "counts", title: "Counts", widgets: ["satelliteInfo", {type: "satelliteInfo", id: "secondCount"}]}});
+    try {
+        panel.setVisible(true);
+        expect(() => panel.update()).not.toThrow();
+        const texts = [...panel.instances.values()].map(instance => instance.body.textContent);
+        expect(texts).toEqual(["No orbit data loaded", "No orbit data loaded"]);
+    } finally {
+        panel.dispose(); home.remove();
+    }
+});
+
+test("the layout widget shows which layout is active", () => {
+    node.look = {width: 1}; node.main = {height: 0.28, width: 0.26};
+    const {body, lifecycle} = mount("viewLayout");
+    lifecycle.update();
+    expect(body.querySelector('[data-action="sky"]').getAttribute("aria-pressed")).toBe("true");
+    expect(body.querySelector('[data-action="split"]').getAttribute("aria-pressed")).toBe("false");
+    expect(body.querySelector('[data-action="sky"]').textContent).toBe("Sky + overview");
 });
 
 test("collapse and expand preserve keyboard access without stealing unrelated focus", () => {
@@ -65,33 +127,58 @@ test("collapse and expand preserve keyboard access without stealing unrelated fo
 test("an active TLE filter is explained without a name search", () => {
     nodes.NightSkyNode.satellites.TLEData = {satData: []};
     nodes.NightSkyNode.satellites.tleFilterResults = [];
-    node.syncSatellites();
-    expect(node.el("filterStatus").textContent).toContain("TLE filter active");
-    expect(node.el("filterStatus").textContent).not.toContain("Clear search");
+    const status = line();
+    showFilterStatus(status, node.countSatellites());
+    expect(status.textContent).toContain("TLE filter active");
+    expect(status.textContent).not.toContain("Clear search");
+    expect(status.title).toBe("Use Clear TLE Filter to remove the orbit filter.");
 });
 
 test("unloading orbit data clears obsolete filter and epoch messages", () => {
-    node.el("filterStatus").textContent = "TLE filter active";
-    node.el("dataStatus").classList.add("sl-warning");
-    node.hudEl("count").title = "Modeled points";
-    node.syncSatellites();
-    expect(node.el("filterStatus").textContent).toBe("");
-    expect(node.el("dataStatus").classList.contains("sl-warning")).toBe(false);
-    expect(node.hudEl("count").title).toBe("");
+    const filter = line(), data = line(), count = line();
+    filter.textContent = "TLE filter active";
+    data.classList.add("sl-warning");
+    count.title = "Modeled points";
+    const status = node.countSatellites();
+    showFilterStatus(filter, status); showDataStatus(data, status); showSatelliteCount(count, status);
+    expect(filter.textContent).toBe("");
+    expect(data.classList.contains("sl-warning")).toBe(false);
+    expect(data.textContent).toBe("No orbit data loaded");
+    expect(count.title).toBe("");
 });
 
 test("simulation status identifies approximate orbits and does not claim the saved TLE filter applies", () => {
     const sats = nodes.NightSkyNode.satellites;
     sats.TLEData = {satData: [], simulated: true};
     sats.tleFilterResults = [false];
-    node.syncSatellites();
-    expect(node.el("dataStatus").textContent).toContain("simulated Starlink");
-    expect(node.el("dataStatus").title).toContain("Positions and historical shell proportions are simulated");
-    expect(node.el("dataStatus").title).toContain("filter applies only to loaded orbit data");
-    expect(node.el("filterStatus").textContent).toBe("");
+    const filter = line(), data = line();
+    showFilterStatus(filter, node.countSatellites()); showDataStatus(data, node.countSatellites());
+    expect(data.textContent).toContain("simulated Starlink");
+    expect(data.title).toContain("Positions and historical shell proportions are simulated");
+    expect(data.title).toContain("filter applies only to loaded orbit data");
+    expect(data.style.color).not.toBe("");
+    expect(filter.textContent).toBe("");
     sats.TLEData = null;
-    node.syncSatellites();
-    expect(node.el("dataStatus").style.color).toBe("");
+    showDataStatus(data, node.countSatellites());
+    expect(data.style.color).toBe("");
+});
+
+test("loaded orbit data outside its epochs is marked as extrapolated", () => {
+    const sats = nodes.NightSkyNode.satellites;
+    sats.TLEData = {satData: [{visible: true, invalidPosition: true}], startDate: new Date("2020-01-01T00:00:00Z"), endDate: new Date("2020-01-02T00:00:00Z")};
+    const data = line();
+    showDataStatus(data, node.countSatellites());
+    expect(data.textContent).toBe("1 loaded · 1 match · Extrapolated");
+    expect(data.classList.contains("sl-warning")).toBe(true);
+    expect(data.title).toContain("Viewing time is outside these epochs");
+});
+
+test("the count of satellites is made one time each second for all widgets", () => {
+    nodes.NightSkyNode.satellites.TLEData = {satData: []};
+    node.countSatellites = jest.fn(CNodeStarlinkUI.prototype.countSatellites);
+    const first = node.satelliteStatus();
+    expect(node.satelliteStatus()).toBe(first);
+    expect(node.countSatellites).toHaveBeenCalledTimes(1);
 });
 
 test("satellite stats follow the sky layout even with the sidebar hidden", () => {

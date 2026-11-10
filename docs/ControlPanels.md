@@ -32,25 +32,58 @@ state, children, and an information-overlay home:
 ```js
 const definition = {
     id: "satellite-controls",
-    title: "Satellite Controls",
+    titleKey: "panels.satellite.title",
     widgets: ["time", "observer", "camera", "satelliteData", "satelliteFilters"],
 };
 const registry = {
     time: {
-        title: "Time & playback",
+        titleKey: "panels.widgets.time.title",
         mount: ({body, context}) => {
             const editor = context.dateTime.createTimeEditor(body);
             return {dispose: () => editor.dispose()};
         },
     },
+    cameraInfo: {
+        titleKey: "panels.widgets.cameraInfo.title",
+        html: `<small data-id="heading"></small>`,
+        mount: ({context, scope}) => ({update: () => {
+            scope.el("heading").textContent = compassHeading(context.ptz.az);
+        }}),
+    },
     // Other content factories use the same mount contract.
 };
 ```
 
-Content factories receive a body and scene context, and can return `setActive` and
-`dispose` hooks. They do not own docking or copy scientific state. Widget IDs are saved
-independently of titles. The initial Satellite context supplies one instance of each
-control widget; repeating a widget within that context needs scoped bindings first.
+A definition can also merge related widget types into one combined widget. `merge` names
+the types whose content follows the content of `type`, in the same host:
+
+```js
+widgets: ["time", "observer", {type: "camera", merge: ["aim"], collapsed: false}],
+```
+
+The combined widget has the title, the instance ID and the saved layout entry of `type`.
+Each merged type keeps its own content factory and its own hooks, so the same type can
+still be a separate widget in a different composition. Use `merge` when a type has only
+one or two controls that belong with a larger widget.
+
+### Self-contained widgets
+
+A content factory is `mount({host, body, context, scope})`. It does not own docking and it
+does not copy scientific state.
+
+- `context` is the scene side: the nodes, the sources of the existing controls, and shared
+  status such as `satelliteStatus()`. `CNodeStarlinkUI` is the context of Satellite Controls.
+- `scope` belongs to one mounted body. `scope.el(id)` finds an element of this body by its
+  `data-id`. `scope.group(id, options)`, `scope.control(...)` and `scope.mirror(...)` make
+  native control groups and controls in this body. Two instances of one widget type thus
+  do not share elements or groups, and both show the values of the same sources.
+- `mount` returns its hooks. `update()` refreshes the elements of the widget from the scene.
+  `scope.lifecycle({update})` adds `setActive` and `dispose` for the control groups.
+
+The panel calls `update()` only for widgets that are in view, and one time when a widget
+comes into view. The context does not write to the elements of a widget. A composition can
+thus use any subset of the widget types, and can use a type more than one time with
+different instance IDs. Widget IDs are saved independently of titles.
 
 `CNodeStarlinkUI` remains the saved-scene compatibility owner. Its `visible` and `expanded`
 fields retain their meaning. Its `widgetState` stores presentation only. The existing node
@@ -63,8 +96,43 @@ View → Control Panels can reopen them. Restore control arrangement resets pres
 not scene state. Master visibility hides all owned widgets while preserving placement;
 collapsing the composition keeps detached widgets and information widgets available.
 The master visibility control is the Satellite Controls checkbox. It is the first row of
-the Satellites menu, and the View menu has a copy as its last row.
-Opening an individual widget from the recovery menu does not force open the composition.
+the Satellites menu.
+
+`CCustomManager.setup()` makes the `CNodeStarlinkUI` node in each custom sitch, new or
+saved. It is not a node definition in `SitCustom.js`. A sitch definition shows the panel
+at the start with `showSatelliteControls: true`, and asks for the sky layout with
+`startSkyLayout: true`.
+
+A command in View → Control Panels shows one widget where it is: at home, in a rail or in a
+float. It does not force open the composition. A widget that is at home in a collapsed
+composition has no place to show, so the command floats it. Each new float starts a step
+down and to the right of the float before it.
+
+## Text and localization
+
+All text of a native panel is in `src/i18n/en.js`: section `timeEditor` for the date and
+time editor, and section `panels` for the widget hosts, the widgets and Satellite Controls.
+
+- A template has no text. An element names its strings with keys: `data-i18n` (its text),
+  `data-i18n-title` (its tooltip), `data-i18n-placeholder` and `data-i18n-label` (its
+  `aria-label`). `localizeElements(root)` in `NativeText.js` fills them. `WidgetPanel` calls
+  it for the `html` of each widget type.
+- A definition, a widget type or a composition entry gives its title as `titleKey`. Fixed
+  text in `title` is for tests and for names that are not translated.
+- Code that makes text at run time calls `t(key, values)` from `i18n`, with `{{name}}`
+  placeholders in the string for the values.
+- A control that mirrors an OUI source shows the name and tooltip of that source, which are
+  already localized. Give a `name` option only when the panel needs a different name.
+
+## Usage log
+
+`UILogging.js` records which control a user clicks, as a path. A menu control has the path of
+its menu titles and its label. A native control has the path of its panel, its widget and its
+label, for example `Satellite Controls/Time & playback/Edit Start`. `WidgetPanel` writes the
+path of each widget host to `data-widget-path`. The path is that of the home of the widget, so
+it does not change when the widget moves to a rail or to a float. The date and time editor in
+the Time menu has the path of the menu, for example `Time/Edit Start`. A new native surface
+that is not in a widget must be in an element with `data-widget-path` to be recorded.
 
 ## Binding controls
 

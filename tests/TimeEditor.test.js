@@ -108,12 +108,35 @@ test("Tab selects only date/time digits in both directions and wraps", () => {
         tab(true);
         expect(document.activeElement).toBe(input(part));
     }
-    for (const control of editor.root.querySelectorAll("button, select, summary, input:not([data-part])")) expect(control.tabIndex).toBe(-1);
+    for (const control of editor.root.querySelectorAll("button, select, input:not([data-part])")) expect(control.tabIndex).toBe(-1);
     editor.el("zone").focus();
     tab(false);
     expect(document.activeElement).toBe(input("year"));
     input("year").dispatchEvent(new KeyboardEvent("keydown", {key: "Escape", bubbles: true}));
     expect(editor.root.contains(document.activeElement)).toBe(false);
+});
+
+test("rows go from the date down to the paste field, and no row is in a closed section", () => {
+    const rows = ['[data-part="year"]', '[data-part="hour"]', '[data-part="millisecond"]', '[data-id="status"]',
+        '[data-id="zone"]', '[data-target="now"]', '[data-action="play"]', '[data-id="paste"]'].map(selector => editor.root.querySelector(selector));
+    for (let i = 1; i < rows.length; i++) {
+        expect(rows[i - 1].compareDocumentPosition(rows[i]) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    }
+    expect(editor.root.querySelector("details")).toBeNull();
+    expect(editor.el("paste").placeholder).toBe("Paste a date & time");
+});
+
+test("Enter in the paste field sets the time, and Now once is still there", () => {
+    const paste = editor.el("paste");
+    paste.value = "2025-03-04 05:06:07.089Z";
+    paste.dispatchEvent(new KeyboardEvent("keydown", {key: "Enter", bubbles: true, cancelable: true}));
+    expect(state.now.toISOString()).toBe("2025-03-04T05:06:07.089Z");
+    expect(edits.at(-1).target).toBe("now");
+    paste.value = "not a date";
+    paste.dispatchEvent(new KeyboardEvent("keydown", {key: "Enter", bubbles: true, cancelable: true}));
+    expect(editor.el("error").textContent).not.toBe("");
+    expect(state.now.toISOString()).toBe("2025-03-04T05:06:07.089Z");
+    expect(editor.root.querySelector('[data-action="now"]').textContent).toBe("Now once");
 });
 
 test("wheel scrolling over a focused digit does not change time", () => {

@@ -11,6 +11,7 @@ export class WidgetDocking {
         this.hosts = new Set();
         this.changingLayout = false;
         this.front = 4700;
+        this.floatCount = 0;
         this.onResize = () => {
             if (this.changingLayout) return;
             for (const host of this.hosts) host.clamp();
@@ -98,7 +99,13 @@ class WidgetHost {
                 document.body.append(this.placementElement);
                 if (placement === "left") addMenuToLeftSidebar(this.railHandle);
                 else if (placement === "right") addMenuToRightSidebar(this.railHandle);
-                else Object.assign(this.placementElement.style, {position: "fixed", width: `${this.width}px`, height: "auto", left: "100px", top: "70px", zIndex: String(++this.backend.front)});
+                else {
+                    // Each new float starts a step down and right of the one before, so that
+                    // floats do not hide each other. A given position replaces this below.
+                    const step = 24 * (this.backend.floatCount++ % 8);
+                    Object.assign(this.placementElement.style, {position: "fixed", width: `${this.width}px`, height: "auto",
+                        left: `${100 + step}px`, top: `${70 + step}px`, zIndex: String(++this.backend.front)});
+                }
             }
             this.placement = placement;
         }
@@ -149,14 +156,22 @@ class WidgetHost {
             document.removeEventListener("pointercancel", cancel);
             preview.remove(); this.dragCleanup = null;
         };
+        // The click that ends a drag must not open or close the widget. The browser sends
+        // that click in the same task as the release of the pointer. It sends no click when
+        // the drag moved the widget to a new container, so the flag lasts for this task
+        // only: a flag that stays set would cancel the next click of the user.
+        const skipClickOfThisRelease = () => {
+            this.ignoreClick = true;
+            setTimeout(() => { this.ignoreClick = false; }, 0);
+        };
         const end = e => {
             cleanup();
             if (!dragging) return;
-            this.ignoreClick = true;
+            skipClickOfThisRelease();
             if (edge) this.place(edge);
             else if (e.clientY < 20 && this.parent) this.place("home");
         };
-        const cancel = () => { cleanup(); if (dragging) this.restore(initial); this.ignoreClick = true; };
+        const cancel = () => { cleanup(); if (dragging) { this.restore(initial); skipClickOfThisRelease(); } };
         this.dragCleanup?.(); this.dragCleanup = cleanup;
         document.addEventListener("pointermove", move);
         document.addEventListener("pointerup", end);

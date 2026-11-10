@@ -2,8 +2,11 @@ import {modernControlStyle} from "./ModernControlStyle";
 import {timeEditorStyle} from "./TimeEditorStyle";
 import {parseTimeEntry, replaceTimePart, shiftTimePart, wallTimeISO} from "./TimeEditing";
 import {panelKeepsKey, releaseKeyToScene, watchFocusSource} from "./NativeKeyRouting";
+import {t} from "./i18n";
+import {localizeElements} from "./NativeText";
 
-const digit = part => `<input class="te-digit" type="text" inputmode="numeric" autocomplete="off" spellcheck="false" data-part="${part}" aria-label="${part[0].toUpperCase() + part.slice(1)}" title="${part[0].toUpperCase() + part.slice(1)}: click left/right to subtract/add; drag to scrub. Tab/Shift+Tab selects digits to type. ↑/↓ steps; Shift ×10. Enter applies; Escape cancels and leaves.">`;
+// The template has no text. Each string is a key in src/i18n/en.js, section timeEditor.
+const digit = part => `<input class="te-digit" type="text" inputmode="numeric" autocomplete="off" spellcheck="false" data-part="${part}">`;
 
 // One editor for menus and panels. The adapter owns scene time, playback, undo
 // and zones; this class only owns presentation, drafts and pointer gestures.
@@ -22,44 +25,58 @@ export class TimeEditor {
         this.root.className = "sitrec-time-editor sitrec-modern";
         this.root.dataset.interactionNative = "true";
         this.root.setAttribute("role", "group");
-        this.root.setAttribute("aria-label", "Date and time editor");
+        this.root.dataset.i18nLabel = "timeEditor.label";
+        // Top to bottom: the date, the time, the status row, the time zone, the time to
+        // edit, playback, and the paste field. Each row is always in view.
         this.root.innerHTML = `
-            <div class="te-row te-target" aria-label="Time to edit">
-                <button type="button" data-target="now">Edit Playhead</button>
-                <button type="button" data-target="start">Edit Start</button>
-            </div>
-            <div class="te-row">
-                <select class="te-grow" data-id="zone" aria-label="Edit in time zone" title="Changes how time is displayed and entered. The instant stays the same."></select>
-                <button type="button" data-action="cameraZone" title="Use the time zone at the camera location on the scene date">From camera</button>
-            </div>
             <div class="te-date">
                 ${digit("year")}<span aria-hidden="true">−</span>${digit("month")}<span aria-hidden="true">−</span>${digit("day")}
-                <input class="te-calendar" type="date" data-id="calendar" aria-label="Choose date from calendar" title="Choose date from calendar" min="1700-01-01" max="9999-12-31">
+                <input class="te-calendar" type="date" data-id="calendar" data-i18n-label="timeEditor.calendar" data-i18n-title="timeEditor.calendar" min="1700-01-01" max="9999-12-31">
             </div>
             <div class="te-clock">${["hour", "minute", "second"].map(digit).join('<span aria-hidden="true">:</span>')}</div>
             <div class="te-row">
-                <label class="te-ms">ms ${digit("millisecond")}</label>
+                <label class="te-ms"><span data-i18n="timeEditor.ms"></span>${digit("millisecond")}</label>
                 <span class="te-context" data-id="frame"></span>
                 <span class="te-status" data-id="status"></span>
             </div>
             <div class="te-error" role="status" data-id="error"></div>
             <div class="te-row">
-                <button type="button" data-action="play" class="te-grow" title="Play or pause the timeline"></button>
-                <button type="button" data-action="live" title="Follow the real clock continuously">● Live</button>
-                <button type="button" data-action="undo" title="Undo the last time edit">↶ Undo</button>
-                <select data-id="speed" aria-label="Simulation speed" title="Simulation speed; the current time stays fixed when this changes">
+                <select class="te-grow" data-id="zone" data-i18n-label="timeEditor.zone.label" data-i18n-title="timeEditor.zone.tooltip"></select>
+                <button type="button" data-action="cameraZone" data-i18n="timeEditor.cameraZone.label" data-i18n-title="timeEditor.cameraZone.tooltip"></button>
+            </div>
+            <div class="te-row te-target" data-i18n-label="timeEditor.target.label">
+                <button type="button" data-target="now" data-i18n="timeEditor.target.now"></button>
+                <button type="button" data-target="start" data-i18n="timeEditor.target.start"></button>
+            </div>
+            <div class="te-row">
+                <button type="button" data-action="play" class="te-grow" data-i18n-title="timeEditor.play.tooltip"></button>
+                <button type="button" data-action="live" data-i18n="timeEditor.live.label" data-i18n-title="timeEditor.live.tooltip"></button>
+                <button type="button" data-action="undo" data-i18n="timeEditor.undo.label" data-i18n-title="timeEditor.undo.tooltip"></button>
+                <select data-id="speed" data-i18n-label="timeEditor.speed.label" data-i18n-title="timeEditor.speed.tooltip">
                     ${[1, 5, 10, 60, 300].map(speed => `<option value="${speed}">${speed}×</option>`).join("")}
                 </select>
             </div>
-            <details><summary title="Enter an ISO date and time. Include Z for UTC or an offset; otherwise use the selected zone.">Paste a date & time</summary>
-                <input class="te-paste" data-id="paste" type="text" placeholder="2026-11-08 21:30:00.000Z" aria-label="Paste date and time" title="ISO date and time. Include Z for UTC or an offset; otherwise use the selected zone. Enter applies.">
-                <div class="te-row"><button type="button" data-action="paste" class="te-grow">Set time</button><button type="button" data-action="now" title="Set the current frame to the real clock once, and stay paused">Now once</button></div>
-            </details>`;
+            <div class="te-row">
+                <input class="te-paste te-grow" data-id="paste" type="text" data-i18n-placeholder="timeEditor.paste.placeholder" data-i18n-label="timeEditor.paste.label" data-i18n-title="timeEditor.paste.tooltip">
+                <button type="button" data-action="now" data-i18n="timeEditor.nowOnce.label" data-i18n-title="timeEditor.nowOnce.tooltip"></button>
+            </div>`;
+        localizeElements(this.root);
         container.append(this.root);
         this.inputs = [...this.root.querySelectorAll("input[data-part]")];
+        for (const input of this.inputs) {
+            const part = t(`timeEditor.parts.${input.dataset.part}`);
+            input.setAttribute("aria-label", part);
+            input.title = t("timeEditor.digitTip", {part});
+        }
+        // Text that refresh() shows many times each second.
+        this.text = {
+            play: t("timeEditor.play.play"), pause: t("timeEditor.play.pause"),
+            live: t("timeEditor.status.live"), paused: t("timeEditor.status.paused"), playing: t("timeEditor.status.playing"),
+            liveTip: t("timeEditor.status.liveTip"), pausedTip: t("timeEditor.status.pausedTip"),
+        };
         // Tab stays on the date/time digits, in both editor locations. Other
         // controls remain clickable; Escape releases focus back to the scene.
-        for (const control of this.root.querySelectorAll("button, select, summary, input:not([data-part])")) control.tabIndex = -1;
+        for (const control of this.root.querySelectorAll("button, select, input:not([data-part])")) control.tabIndex = -1;
         for (const name of adapter.zones) this.el("zone").add(new Option(name, name));
         this.el("zone").prepend(new Option("UTC", "__utc__"));
         this.el("zone").onchange = () => { adapter.zone(this.el("zone").value); this.clearError(); this.refresh(true); };
@@ -109,7 +126,7 @@ export class TimeEditor {
     }
     apply(date, begin = true) {
         if (!date || !Number.isFinite(date.getTime()) || date.getUTCFullYear() < 1700 || date.getUTCFullYear() > 9999) {
-            this.el("error").textContent = "Enter a valid date (year 1700–9999) and time.";
+            this.el("error").textContent = t("timeEditor.invalid");
             return false;
         }
         this.clearError();
@@ -148,7 +165,6 @@ export class TimeEditor {
             this.clearError(); this.refresh(true);
         }
         const action = button.dataset.action;
-        if (action === "paste") this.paste();
         if (action === "now") { this.target = "now"; this.apply(new Date()); }
         if (action === "play") this.adapter.play();
         if (action === "live") { this.target = "now"; this.adapter.live(); }
@@ -225,19 +241,24 @@ export class TimeEditor {
         for (const button of this.root.querySelectorAll("[data-target]")) {
             const start = button.dataset.target === "start";
             button.setAttribute("aria-pressed", String(button.dataset.target === this.target));
-            button.title = `${start ? "Start" : "Current"}: ${wallTimeISO(start ? state.start : state.now, state.offset).replace("T", " ")} ${state.useZone ? state.zone : "UTC"}. Editing pauses playback and keeps the current frame fixed; start and current times shift together.`;
+            button.title = t(start ? "timeEditor.target.startTip" : "timeEditor.target.nowTip", {
+                time: wallTimeISO(start ? state.start : state.now, state.offset).replace("T", " "),
+                zone: state.useZone ? state.zone : "UTC",
+            });
         }
         const zone = state.useZone ? state.zone : "__utc__";
         if (![...this.el("zone").options].some(o => o.value === zone)) this.el("zone").add(new Option(zone, zone));
         this.el("zone").value = zone;
         const elapsed = (state.now - state.start) / 1000;
-        this.el("frame").textContent = `Frame ${state.frame}`;
-        this.el("frame").title = `${elapsed >= 0 ? "+" : ""}${elapsed.toFixed(3)} s from start. Time edits keep this frame fixed; use the playback bar to move between frames.`;
-        this.root.querySelector('[data-action="play"]').textContent = state.live || !state.paused ? "Ⅱ Pause" : "▶ Play";
+        const text = this.text;
+        this.el("frame").textContent = t("timeEditor.frame", {frame: state.frame});
+        this.el("frame").title = t("timeEditor.frameTip", {elapsed: `${elapsed >= 0 ? "+" : ""}${elapsed.toFixed(3)}`});
+        this.root.querySelector('[data-action="play"]').textContent = state.live || !state.paused ? text.pause : text.play;
         this.root.querySelector('[data-action="live"]').setAttribute("aria-pressed", String(state.live));
         this.root.querySelector('[data-action="undo"]').disabled = !state.canUndo;
-        this.el("status").textContent = state.live ? "LIVE" : state.paused ? "PAUSED" : "PLAYING";
-        this.el("status").title = state.live ? "Following the real clock" : state.paused ? "Playback paused; current frame held" : `Effective playback speed: ${state.speed * state.playbackSpeed}×`;
+        this.el("status").textContent = state.live ? text.live : state.paused ? text.paused : text.playing;
+        this.el("status").title = state.live ? text.liveTip : state.paused ? text.pausedTip
+            : t("timeEditor.status.playingTip", {speed: state.speed * state.playbackSpeed});
         const speed = this.el("speed");
         speed.querySelector('[data-custom]')?.remove();
         if (![...speed.options].some(o => Number(o.value) === state.speed)) {

@@ -15,6 +15,8 @@ export const widgetPanelStyle = `
 .widget-composition > .widget-title { font-size: 13px; font-weight: 650; }
 .widget-body { padding: 3px 7px 5px; font: 12px/1.35 system-ui, -apple-system, sans-serif; color: var(--panel-text); background: var(--panel-bg); touch-action: pan-y; }
 .widget-body:empty { display: none; }
+/* The parts of a combined widget read as one body. */
+.widget-body + .widget-body { padding-top: 0; }
 .widget-body button:not(.native-controls *) { width: auto; }
 .widget-body *, .widget-body *::before { box-sizing: border-box; }
 .widget-dock-preview { position: fixed; top: 25px; bottom: 0; width: min(250px, 90vw); background: #80bcea22; border: 2px solid #80bcea; pointer-events: none; z-index: 14999; }
@@ -69,7 +71,6 @@ export const widgetPanelStyle = `
 .widget-body .sl-muted:empty { display: none; }
 .widget-body .sl-date { width: 100%; font-size: 12px; }
 .widget-body details { margin-top: 5px; border-top: 1px solid var(--panel-divider); padding-top: 4px; }
-.widget-body .sitrec-time-editor details { margin-top: 4px; border: 0; padding: 0; }
 .widget-body summary { cursor: pointer; color: var(--panel-muted); font-size: 12px; }
 .widget-body .sl-data { font-variant-numeric: tabular-nums; }
 `;

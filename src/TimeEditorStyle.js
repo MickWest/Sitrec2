@@ -25,7 +25,8 @@ export const timeEditorStyle = `
 .sitrec-time-editor :focus-visible { outline: 2px solid var(--panel-accent); outline-offset: 1px; }
 .sitrec-time-editor button[aria-pressed=true] { background: var(--panel-selected); border-color: var(--panel-accent); }
 .sitrec-time-editor button:disabled { opacity: .45; cursor: default; }
-.sitrec-time-editor .te-target { margin-top: 0; }
+.sitrec-time-editor > :first-child { margin-top: 0; }
+.sitrec-time-editor > :last-child { margin-bottom: 0; }
 .sitrec-time-editor .te-target button { flex: 1; padding: 5px 2px; font-size: 11px; }
 .sitrec-time-editor .te-date, .sitrec-time-editor .te-clock { display: grid; align-items: center; gap: 4px; margin: 4px 0; }
 .sitrec-time-editor .te-date { grid-template-columns: 1.6fr auto 1fr auto 1fr 28px; }
@@ -45,9 +46,8 @@ export const timeEditorStyle = `
 .sitrec-time-editor .te-error { font-size: 11px; color: var(--panel-warning); margin: 5px 0; }
 .sitrec-time-editor .te-error:empty { display: none; }
 .sitrec-time-editor [aria-invalid=true] { outline: 2px solid var(--panel-warning); }
-.sitrec-time-editor details { border: 0; margin: 4px 0 0; padding: 0; }
-.sitrec-time-editor summary { cursor: pointer; color: var(--panel-muted); font-size: 11px; }
-.sitrec-time-editor .te-paste { width: 100%; font-size: 11px; }
+.sitrec-time-editor .te-paste { font-size: 11px; }
+.sitrec-time-editor .te-paste::placeholder { color: var(--panel-muted); opacity: 1; }
 .sitrec-time-editor .te-scrubbing { background: var(--panel-selected) !important; cursor: ew-resize !important; }
 .time-menu-editor { margin: 4px; }
 .lil-gui.sitrec-time-menu { --width: 310px; }

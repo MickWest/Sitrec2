@@ -519,7 +519,7 @@ export class CNodeDateTime extends CNode {
         this.timeEditor = this.createTimeEditor(host);
         // Only move the DOM. Preserve controller parents and API/menu paths,
         // listener updates, reset defaults and existing saved menu bindings.
-        this.timeEditorDetails = ["Date & time sliders", "Timeline & synchronization"].map(title => {
+        this.timeEditorDetails = [t("timeEditor.sections.sliders"), t("timeEditor.sections.timeline")].map(title => {
             const details = document.createElement("details");
             details.className = "time-menu-details";
             const summary = document.createElement("summary");

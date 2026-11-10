@@ -268,9 +268,6 @@ sitch = {
         useDayNight: true,
     },
 
-    // Available in every custom scene, including saves made before this panel existed.
-    starlinkViewing: {kind: "StarlinkUI", defer: true, visible: false, force: true},
-
 
     // target wind is the wind at the target location, which isn't always known
     targetWind: {

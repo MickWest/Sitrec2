@@ -1,6 +1,7 @@
 import {ControlAdapter} from "./ControlAdapter";
 import {registerGUIRoot, unregisterGUIRoot} from "./GUIRootRegistry";
 import {releaseKeyToScene, routeNativeKeys} from "./NativeKeyRouting";
+import {t} from "./i18n";
 import "./CheckboxDragPaint";
 
 const groups = new Set();
@@ -281,7 +282,7 @@ function pairRows(main, look, name) {
     pair.setAttribute("role", "group"); pair.setAttribute("aria-label", name);
     label.className = "native-control-label"; label.textContent = name;
     main.domElement.before(pair); pair.append(label);
-    for (const [row, letter] of [[main, "M"], [look, "L"]]) {
+    for (const [row, letter] of [[main, t("panels.viewLetters.main")], [look, t("panels.viewLetters.look")]]) {
         row.pair = pair; pair.append(row.domElement);
         const marker = doc.createElement("span"); marker.className = "native-control-letter"; marker.textContent = letter;
         marker.setAttribute("aria-hidden", "true"); row.$widget.append(marker);

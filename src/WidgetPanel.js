@@ -3,10 +3,14 @@ import {refreshSidebarVisibility} from "./PageStructure";
 import {widgetPanelStyle} from "./WidgetPanelStyle";
 import {modernControlStyle} from "./ModernControlStyle";
 import {routeNativeKeys} from "./NativeKeyRouting";
+import {t} from "./i18n";
+import {localizeElements, titleText} from "./NativeText";
 
 // A composition is an ordered tree of widget type IDs, not another store of
 // control values. Native hosts own placement and saved layout; factories
 // own content and return optional activation/disposal hooks.
+// A definition, a type or an entry gives its title as `titleKey` (a key in
+// src/i18n/en.js) or as fixed text in `title`.
 export class WidgetPanel {
     constructor({parent, backend = new WidgetDocking(), definition, registry, context, homes = {}, onChange = () => {}, onCollapse = () => {}}) {
         Object.assign(this, {backend, definition, context, homes, onChange, onCollapse});
@@ -22,7 +26,8 @@ export class WidgetPanel {
             style.textContent = modernControlStyle + widgetPanelStyle;
             doc.head.append(style);
         }
-        this.host = this.createHost(parent, definition.id, definition.title);
+        this.title = titleText(definition);
+        this.host = this.createHost(parent, definition.id, this.title);
         this.host.element.classList.add("widget-composition");
         this.host.onOpenChange = changed => {
             if (this.updating || this.disposed || this.backend.changingLayout) return;
@@ -33,19 +38,39 @@ export class WidgetPanel {
         const build = (items, parentHost) => {
             for (const item of items) {
                 const spec = typeof item === "string" ? {type: item} : item;
-                const type = registry[spec.type];
-                if (!type) throw new Error(`Unknown widget: ${spec.type}`);
+                // A combined widget: `merge` names more widget types. Their content follows
+                // the content of `type` in the same host, so related controls share one
+                // title, one placement and one saved layout entry.
+                const names = [spec.type, ...(spec.merge ?? [])];
+                const parts = names.map(name => {
+                    if (!registry[name]) throw new Error(`Unknown widget: ${name}`);
+                    return registry[name];
+                });
+                const type = parts[0];
                 const id = spec.id ?? spec.type;
                 if (this.instances.has(id)) throw new Error(`Duplicate widget instance: ${id}`);
-                const host = this.createHost(parentHost, id, spec.title ?? type.title);
-                const body = doc.createElement("div");
-                body.className = "widget-body";
-                host.contentElement.append(body);
-                const instance = {id, host, body, hidden: false, spec, type};
+                const host = this.createHost(parentHost, id, titleText(spec) ?? titleText(type));
+                const lifecycles = [];
+                const bodies = parts.map((part, index) => {
+                    const body = doc.createElement("div");
+                    body.className = "widget-body";
+                    body.dataset.widgetPart = names[index];
+                    host.contentElement.append(body);
+                    if (part.html) {
+                        body.innerHTML = part.html;
+                        localizeElements(body);
+                    }
+                    // The scope holds the elements and the control groups of this body only.
+                    lifecycles.push(part.mount?.({host, body, context, scope: context.createScope?.(body)}) ?? {});
+                    return body;
+                });
+                const instance = {id, host, body: bodies[0], bodies, hidden: false, spec, type};
                 this.instances.set(id, instance);
-                if (type.html) body.innerHTML = type.html;
-                context.registerElements?.(body);
-                instance.lifecycle = type.mount?.({host, body, context}) ?? {};
+                instance.lifecycle = lifecycles.length === 1 ? lifecycles[0] : {
+                    update: () => { for (const lifecycle of lifecycles) lifecycle.update?.(); },
+                    setActive: active => { for (const lifecycle of lifecycles) lifecycle.setActive?.(active); },
+                    dispose: () => { for (const lifecycle of lifecycles) lifecycle.dispose?.(); },
+                };
                 if (spec.children) build(spec.children, host);
                 host.open(!(spec.collapsed ?? type.collapsed));
                 if (spec.home && homes[spec.home]) {
@@ -58,7 +83,7 @@ export class WidgetPanel {
                 instance.returnButton = doc.createElement("button");
                 instance.returnButton.className = "widget-return";
                 instance.returnButton.textContent = `↩ ${host.title}`;
-                instance.returnButton.title = `Return ${host.title} to ${definition.title}`;
+                instance.returnButton.title = t("panels.placement.returnTip", {title: host.title, panel: this.title});
                 instance.returnButton.hidden = true;
                 instance.returnButton.onclick = () => this.recover(id);
                 host.element.before(instance.returnButton);
@@ -74,7 +99,11 @@ export class WidgetPanel {
         host.element.classList.add("widget-panel");
         host.element.dataset.widgetId = id;
         host.element.setAttribute("aria-label", title);
-        host.titleElement.title = "Drag the title to move; use the placement menu to dock, return or hide.";
+        // The usage log names a control by this path. It does not change when the widget
+        // moves to a rail or to a float.
+        const parentPath = parent?.element?.dataset.widgetPath;
+        host.element.dataset.widgetPath = parentPath ? `${parentPath}/${title}` : title;
+        host.titleElement.title = t("panels.placement.titleTip");
         routeNativeKeys(host.element);
         host.onPlacementChange = () => {
             if (this.disposed) return;
@@ -94,7 +123,7 @@ export class WidgetPanel {
         const button = document.createElement("button");
         button.className = "widget-placement-button";
         button.textContent = "⋮";
-        button.title = `Arrange ${host.title}`;
+        button.title = t("panels.placement.arrange", {title: host.title});
         button.setAttribute("aria-label", button.title);
         button.setAttribute("aria-haspopup", "menu");
         button.setAttribute("aria-expanded", "false");
@@ -107,7 +136,8 @@ export class WidgetPanel {
         const menu = document.createElement("div");
         menu.className = "widget-placement-menu sitrec-modern";
         menu.setAttribute("role", "menu");
-        menu.setAttribute("aria-label", `Arrange ${host.title}`);
+        menu.setAttribute("aria-label", button.title);
+        menu.dataset.widgetPath = `${host.element.dataset.widgetPath}/⋮`;
         button.setAttribute("aria-expanded", "true");
         const add = (label, action) => {
             const item = document.createElement("button");
@@ -116,15 +146,15 @@ export class WidgetPanel {
             item.onclick = () => { this.closePlacementMenu(); action(); this.onChange(); };
             menu.append(item);
         };
-        for (const [label, placement] of [["Float", "float"], ["Dock left", "left"], ["Dock right", "right"]]) {
-            add(label, () => { this.place(instance?.id, placement); host.titleElement.focus({preventScroll: true}); });
+        for (const [key, placement] of [["float", "float"], ["dockLeft", "left"], ["dockRight", "right"]]) {
+            add(t(`panels.placement.${key}`), () => { this.place(instance?.id, placement); host.titleElement.focus({preventScroll: true}); });
         }
         if (instance) {
-            add(instance.spec.home ? "Return to sky view" : `Return to ${this.definition.title}`, () => this.recover(instance.id));
-            add("Hide widget", () => this.hide(instance.id));
+            add(instance.spec.home ? t("panels.placement.returnToSky") : t("panels.placement.returnTo", {title: this.title}), () => this.recover(instance.id));
+            add(t("panels.placement.hide"), () => this.hide(instance.id));
         } else {
-            add("Collapse controls", () => this.onCollapse());
-            add("Restore default arrangement", () => this.reset());
+            add(t("panels.placement.collapse"), () => this.onCollapse());
+            add(t("panels.placement.restore"), () => this.reset());
         }
         const rect = button.getBoundingClientRect();
         menu.style.left = `${Math.max(4, Math.min(rect.left, window.innerWidth - 230))}px`;
@@ -204,9 +234,32 @@ export class WidgetPanel {
             if (instance.active !== active) {
                 instance.active = active;
                 instance.lifecycle?.setActive?.(active);
+                // A widget that comes into view shows current values at once.
+                if (active) instance.lifecycle?.update?.();
             }
         }
         refreshSidebarVisibility();
+    }
+
+    // The periodic refresh. Each widget in view refreshes its own elements from the scene.
+    update() {
+        if (this.disposed) return;
+        for (const instance of this.instances.values()) {
+            if (instance.active) instance.lifecycle?.update?.();
+        }
+    }
+
+    // Show one widget where it is: at home, in a rail or in a float. A widget at home in
+    // a collapsed composition has no place to show, so it floats.
+    reveal(id) {
+        const instance = this.instances.get(id);
+        instance.hidden = false;
+        if (!instance.host.detached && !instance.spec.home && !this.expanded) this.place(id, "float");
+        instance.host.open();
+        this.updateVisibility();
+        instance.host.element.scrollIntoView?.({block: "nearest"});
+        instance.host.titleElement.focus({preventScroll: true});
+        this.onChange();
     }
 
     reset() {

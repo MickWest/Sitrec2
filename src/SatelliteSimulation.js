@@ -6,7 +6,13 @@ import {starlinkPopulation} from "./StarlinkPopulation";
 
 export const SIMULATED_SATELLITE_COLOR = "#87cefa";
 export const SATELLITE_ORBIT_WINDOW_MS = 7 * 86400000; // SHF's real-orbit window
-export const SIMULATED_SATELLITE_DESCRIPTION = "Approximate Starlink constellation from SHF, with population scaled to the viewing date. Positions and historical shell proportions are simulated. Light blue identifies simulated satellites. Future dates use the latest measured population.";
+
+// The default of "Simulate unavailable satellites". It is on in a new custom sitch.
+// It is off when the sitch is a save, so that a sitch saved before the simulation
+// existed looks as it did. A save that has its own value applies that value later.
+export function simulateUnavailableDefault(sit) {
+    return !!sit.isCustom && !sit.mods;
+}
 
 /** Select a display catalog without replacing, exporting, or filtering the loaded source. */
 export class SatelliteSimulation {

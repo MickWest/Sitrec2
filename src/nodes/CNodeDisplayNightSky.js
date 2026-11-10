@@ -1,4 +1,4 @@
-import {SIMULATED_SATELLITE_COLOR} from "../SatelliteSimulation";
+import {SIMULATED_SATELLITE_COLOR, simulateUnavailableDefault} from "../SatelliteSimulation";
 import {CNode3DGroup} from "./CNode3DGroup";
 import {CNodeAtmosphericOptics} from "./CNodeAtmosphericOptics";
 import {CNodeCityLights} from "./CNodeCityLights";
@@ -185,7 +185,7 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
 
         // Create satellites instance
         this.satellites = new CSatellite({
-            simulateUnavailable: v.simulateUnavailable ?? !!Sit.isCustom,
+            simulateUnavailable: v.simulateUnavailable ?? simulateUnavailableDefault(Sit),
             showOtherSatellites: v.showOtherSatellites ?? false,
             showSatelliteTracks: Sit.showSatelliteTracks ?? false,
             showFlareTracks: Sit.showFlareTracks ?? false,
@@ -265,9 +265,9 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
                 .tooltip(t("nightSky.loadAll.tooltip"))
         }
 
-        orbitDataGUI.add(this.satellites, "simulateUnavailable").name("Simulate unavailable satellites")
+        orbitDataGUI.add(this.satellites, "simulateUnavailable").name(t("nightSky.simulateUnavailable.label"))
             .listen().onChange(() => setRenderOne(true))
-            .tooltip("Use light-blue simulated Starlink satellites when no loaded orbit is within seven days of the viewing time. Population follows the viewing date. Loaded data is kept and returns automatically when in range.");
+            .tooltip(t("nightSky.simulateUnavailable.tooltip"));
         this.addTLERangeMenu(orbitDataGUI);
 
         modelsGUI.add(this.satellites, 'flareAngle', 0, 20, 0.1).listen().name(t("nightSky.flareAngle.label")).tooltip(t("nightSky.flareAngle.tooltip"))
@@ -969,7 +969,7 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
             this.text = "";
 
             if (nightSky.satellites.usingSimulatedSatellites) {
-                this.text = "Simulated Starlink: " + nightSky.satellites.renderTLEData.satData.length.toLocaleString();
+                this.text = t("nightSky.simulatedCount", {count: nightSky.satellites.renderTLEData.satData.length.toLocaleString()});
                 this.color = SIMULATED_SATELLITE_COLOR;
                 return;
             }

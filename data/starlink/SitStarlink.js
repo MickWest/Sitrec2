@@ -41,9 +41,10 @@ export const SitStarlink = {
         showHorizonCompassRibbonLook: true,
     },
 
-    // The panel sets the initial layout while retaining the custom view effects
-    // and any saved view positions.
-    starlinkViewing: {kind: "StarlinkUI", defer: true, visible: true, startSkyLayout: true, force: true},
+    // Satellite Controls start visible, and set the initial sky layout. The custom view
+    // effects and any saved view positions stay. CCustomManager.setup() makes the panel.
+    showSatelliteControls: true,
+    startSkyLayout: true,
     fovUI: {kind: "GUIValue", value: 50, start: 0, end: 180, step: 0.001,
         desc: "vFOV", gui: "cameraFOV", hidden: true,
         tooltip: "Stored vertical field of view, in degrees, for the Manual Camera FOV source. Set it with VFOV (deg)."},
