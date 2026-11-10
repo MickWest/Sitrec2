@@ -330,6 +330,10 @@ export function summarizeTrackFile(probed, filename, {maxPoints = 500} = {}) {
         const xy = [];
         let altMinM = Infinity, altMaxM = -Infinity;
         let altSumM = 0, altCount = 0;
+        // A ground-relative track (a relativeToGround KML, or a CSV with only an AGL column)
+        // has no MSL altitude, and the browser has no terrain to make one, so its height above
+        // ground is kept apart: it is not a sea-level altitude or a flight level.
+        let aglMinM = Infinity, aglMaxM = -Infinity;
         let trackMinX = Infinity, trackMaxX = -Infinity, trackMinY = Infinity, trackMaxY = -Infinity;
         let trackStart = Infinity, trackEnd = -Infinity;
         const role = safeCall(trackFile, "trackRoleHint", trackIndex) ?? null;
@@ -363,6 +367,11 @@ export function summarizeTrackFile(probed, filename, {maxPoints = 500} = {}) {
                 if (alt > altMaxM) altMaxM = alt;
                 altSumM += alt;
                 altCount++;
+            }
+            const agl = row[MISB.AltitudeAGL];
+            if (Number.isFinite(agl)) {
+                if (agl < aglMinM) aglMinM = agl;
+                if (agl > aglMaxM) aglMaxM = agl;
             }
             const t = row[MISB.UnixTimeStamp];
             if (Number.isFinite(t)) {
@@ -399,6 +408,8 @@ export function summarizeTrackFile(probed, filename, {maxPoints = 500} = {}) {
             altMinM: altMinM === Infinity ? null : altMinM,
             altMaxM: altMaxM === -Infinity ? null : altMaxM,
             altMeanM: altCount ? altSumM / altCount : null,
+            aglMinM: !altCount && aglMinM !== Infinity ? aglMinM : null,
+            aglMaxM: !altCount && aglMaxM !== -Infinity ? aglMaxM : null,
             maxG: isTruth ? maxKinematicG(kinematicSamples) : null,
         });
     }

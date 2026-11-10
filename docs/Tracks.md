@@ -130,6 +130,8 @@ During a multi-track import, the filter panel narrows down which tracks to load.
 
 In a sitch that is already set up, these filters read only the data inside the sitch time. On the first import into a new sitch they read the whole track.
 
+The altitudes in the **Select Tracks** list and the **Altitude Range (ft)** filter are above mean sea level. For a track whose altitudes are above ground (a KML `relativeToGround` track, or a CSV with only an AGL column), Sitrec adds the height of the terrain that it has loaded at each point. Where no terrain is loaded, it uses the ellipsoid instead. In the [Track Browser](#browsing-a-folder-of-tracks), such a track shows its height above ground, marked **m AGL**.
+
 ### Managing Loaded Tracks
 
 Each loaded track gets its own folder in the **Contents** menu. You can:
@@ -363,7 +365,7 @@ Track altitudes come in several reference systems. Understanding these is import
 | **HAE** (Height Above Ellipsoid) | WGS84 ellipsoid | Raw GPS, ADS-B `alt_geom`, STANAG 4676, MISB tags 75/78, Generic CSV `TPHAE` |
 | **MSL** (Mean Sea Level) | Geoid (EGM96) | KML `absolute`, MISB Tag 15, most map software |
 | **Pressure Altitude** | Standard atmosphere (1013.25 hPa) | ADS-B `alt_baro`, flight instruments |
-| **AGL** (Above Ground Level) | Local terrain | A CSV column headed `AGL` or `ALT (m/agl)` |
+| **AGL** (Above Ground Level) | Local terrain | A CSV column headed `AGL` or `ALT (m/agl)`, KML `relativeToGround` |
 
 ### How Sitrec Handles Altitude
 
@@ -371,9 +373,9 @@ Track altitudes come in several reference systems. Understanding these is import
 - Terrain tiles are loaded as **MSL** and converted to HAE using the **EGM96** geoid model
 - KML `absolute` altitudes are **MSL** (measured from the EGM96 geoid, per OGC KML 2.2/2.3)
   and are converted to HAE on the way to the 3D scene, on both import and export
-- Sitrec reads every KML track altitude as MSL, whatever the file's `altitudeMode` says. A KML that
-  holds pressure altitude is therefore wrong by the pressure error, and Sitrec cannot detect this.
-  See [Altitude in the file](KMLDataSources.md#altitude-in-the-file)
+- Sitrec reads a KML track altitude as MSL, unless the track's `altitudeMode` makes it relative to
+  the ground. A KML that holds pressure altitude is therefore wrong by the pressure error, and
+  Sitrec cannot detect this. See [Altitude in the file](KMLDataSources.md#altitude-in-the-file)
 - Sources whose altitudes are **already HAE** are flagged so the MSL→HAE conversion is
   skipped: STANAG 4676 (`cs="WGS_84"`), MISB ellipsoid-height tags 75/78 (used
   automatically when the MSL tag 15/25 is absent), the Generic CSV `TPHAE` column, recorded

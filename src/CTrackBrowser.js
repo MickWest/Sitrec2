@@ -1287,6 +1287,10 @@ export class CTrackBrowser {
                 bits.push(track.altMaxM - track.altMinM < 1
                     ? `${Math.round(track.altMinM)} m alt`
                     : `${Math.round(track.altMinM)}–${Math.round(track.altMaxM)} m alt`);
+            } else if (track.aglMinM !== null && track.aglMinM !== undefined) {
+                bits.push(track.aglMaxM - track.aglMinM < 1
+                    ? `${Math.round(track.aglMinM)} m AGL`
+                    : `${Math.round(track.aglMinM)}–${Math.round(track.aglMaxM)} m AGL`);
             }
             tag.textContent = bits.join(" · ");
             row.appendChild(tag);

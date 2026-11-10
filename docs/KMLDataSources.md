@@ -69,9 +69,12 @@ trackers show. See [ADS-B Trace by Aircraft](Tracks.md#ads-b-trace-by-aircraft-a
 
 ### Altitude in the file
 
-Sitrec reads every altitude on a KML track as height above
-[mean sea level (MSL)](GIS.md#three-kinds-of-height). It cannot detect a file that holds something
-else. The track then sits at the wrong height, and so does a camera that rides on it.
+Sitrec reads an altitude on a KML track as height above
+[mean sea level (MSL)](GIS.md#three-kinds-of-height), unless the track's `<altitudeMode>` is
+`relativeToGround` or `clampToGround`. Then the altitude is height above the terrain, or the track
+is on the terrain. See [KML Altitude Modes](GIS.md#kml-altitude-modes-ogc-standard). Sitrec cannot
+detect an MSL altitude that is really something else. The track then sits at the wrong height, and
+so does a camera that rides on it.
 
 - **ADS-B Exchange** offers [three altitude options](GIS.md#adsbexchange-three-kml-export-options).
   *Geometric altitude (EGM96)* gives MSL. The file name often shows the option: `-EGM96` is
@@ -426,17 +429,24 @@ re-imports with identical geometry and opens at the correct height in Google Ear
   the track positions are computed. Exports mirror this: `CNodeArray.exportTrackKML` and `CNodeTrack.exportMISBCompliantCSV`
   convert HAE-referenced frames back to MSL before writing.
 
-> **Known limitation (datum):** every altitude on a KML **track** is treated as **MSL**, and the
-> geoid undulation is added on the way to HAE — regardless of what the file's `<altitudeMode>` says,
-> because the track path does not yet read it per segment. That is the right assumption for a
-> genuinely orthometric export and the wrong one for a **barometric** one: a pressure-altitude KML
-> gets a geoid correction applied to a number that was never sea-level referenced at all, and the
+> **Known limitation (datum):** an `absolute` altitude on a KML **track** is treated as **MSL**, and
+> the geoid undulation is added on the way to HAE. That is the right assumption for a genuinely
+> orthometric export and the wrong one for a **barometric** one: a pressure-altitude KML gets a
+> geoid correction applied to a number that was never sea-level referenced at all, and the
 > pressure error is untouched. See [Altitude in the file](#altitude-in-the-file).
 >
-> An ADS-B Exchange ground segment at `alt=0` (`clampToGround`) is likewise read as a literal
-> zero. Honouring `<altitudeMode>` properly would move existing tracks vertically, so it is
-> **deferred to a version-gated step** that will not change the geometry of an existing save.
-> Shapes differ: a `<LineString>` or `<Polygon>` reads its own `<altitudeMode>`.
+> **Ground-relative tracks:** when every part of a track has a ground-relative `<altitudeMode>`
+> (`relativeToGround`, `clampToGround`, or the `gx:` sea-floor modes), `toMISB()` writes the
+> altitude to the MISB `AltitudeAGL` column and leaves `SensorTrueAltitude` empty. `clampToGround`
+> writes 0. `CNodeMISBDataTrack` then reads the track as height above the terrain. A track with no
+> `<altitudeMode>`, or with parts in different modes, stays MSL, because the track node reads one
+> altitude column for the whole track. So an ADS-B Exchange ground segment at `alt=0`, which has
+> no `<altitudeMode>`, is still read as a literal zero MSL.
+>
+> The mode is not read for a sitch saved by 2.190.0 or earlier (`exportTagNumber` ≤ 2190000), so
+> the geometry of an existing save does not change. The decision is made when the file is read
+> (`CTrackFileKML` constructor), because `toMISB()` can run again after the restore has finished.
+> Shapes read the mode too: a `<LineString>` or `<Polygon>` reads its own `<altitudeMode>`.
 > See [GIS Concepts in Sitrec](GIS.md).
 
 #### Time
