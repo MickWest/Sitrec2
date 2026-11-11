@@ -1,5 +1,6 @@
 import * as THREE from "three";
-import {PRESETS, parameterGroups, isRoad, isMultirotor, isBalloon, normalizeParameters} from "./vehicleParameters.js";
+import {PRESETS, parameterGroups, isRoad, isMultirotor, isBalloon, isKite, normalizeParameters} from "./vehicleParameters.js";
+import {kiteFlightProperties, kiteLiftingArea, kiteMinimumWind} from "./kiteFlight.js";
 import {usesCanopy, usesAirlinerWindscreen} from "./aircraftSchema.js";
 import {disposeVehicle} from "./vehicle.js";
 import {animateVehicleLights} from "./vehicleLights.js";
@@ -20,7 +21,7 @@ const events = {signal: lifecycle.signal};
 const STORAGE_KEY = "sitrec-vehicle-designer-v1";
 let params = {...PRESETS[0].parameters}, activePreset = PRESETS[0].id, designName = PRESETS[0].name;
 let modified = false, model, modelDirty = true, renderDirty = true, saveTimer, currentView = "perspective";
-let lastBuildMs = 0, disposed = false, frameId, propellerTime = 0, thermalFailed = false, sensorFrame = 0;
+let lastBuildMs = 0, disposed = false, frameId, propellerTime = 0, thermalFailed = false, sensorFrame = 0, wasKite = false;
 const fieldControls = new Map();
 let matchingPresets = [];
 
@@ -75,7 +76,7 @@ $("renderMode").addEventListener("change", async () => {
         $("thermalPanel").hidden = mode !== "ir"; $("thermalReadout").hidden = mode !== "ir";
         updatePreviewClasses();
         $("autoRotate").checked = false; controls.autoRotate = false;
-        renderer.domElement.setAttribute("aria-label", mode === "ir" ? "Infrared image. Near view: drag to orbit, scroll to zoom, as in the normal view. Far view: use the range and aspect controls beside the image." : "3D vehicle. Drag to orbit, scroll to zoom, right-drag to pan.");
+        renderer.domElement.setAttribute("aria-label", mode === "ir" ? "Infrared image. Near view: drag to orbit, scroll to zoom, as in the normal view. Far view: use the range and aspect controls beside the image." : "3D object. Drag to orbit, scroll to zoom, right-drag to pan.");
         error(""); status(mode === "ir" ? "IR sensor preview · estimated signature and camera values" : "Live preview");
     } catch (failure) {$("renderMode").value = studio.mode; error(`Could not load IR preview: ${failure.message}`);}
 }, events);
@@ -100,7 +101,7 @@ function updateName() {
 }
 
 function updateCockpitControls() {
-    if(isMultirotor(params)||isBalloon(params))return;
+    if(isMultirotor(params)||isBalloon(params)||isKite(params))return;
     for (const key of ["strobeLights","taxiLights","landingLayout","turnSignal"]) for (const control of fieldControls.get(key) ?? []) {
         const inactive = key === "turnSignal" ? !isRoad(params) : isRoad(params);
         control.disabled = inactive; control.closest(".field").classList.toggle("inactive",inactive);
@@ -195,7 +196,7 @@ function updatePresetList() {
     const matches = PRESETS.filter(createVehicleFilter({query:$("presetSearch").value,region:$("presetRegion").value,kind:$("presetKind").value}));
     matchingPresets = matches;
     const categories = new Map(), select = $("presetSelect"); select.replaceChildren();
-    const prompt = new Option(matches.length ? "Choose a preset…" : "No matching vehicles", ""); prompt.disabled = true; select.append(prompt);
+    const prompt = new Option(matches.length ? "Choose a preset…" : "No matching objects", ""); prompt.disabled = true; select.append(prompt);
     for (const preset of matches) {
         if (!categories.has(preset.category)) {
             const group = document.createElement("optgroup"); group.label = preset.category;
@@ -241,27 +242,30 @@ function setWireframe(root, value) {
 function rebuild() {
     const start = performance.now();
     const replacement = generateVehicle(createVehicleRecipe(params,designName,activePreset || null));
-    propellerTime = 0;
+    if (!isKite(params)) propellerTime = 0;       // the tails of a kite keep moving while a slider is dragged
     if (model) disposeVehicle(model.root);
     model = replacement; studio.setModel(model); scene.add(model.root); thermalFailed = false;
     animateVehicleLights(model,0,false);
     setWireframe(model.root, $("wireframe").checked);
-    const road = isRoad(params), drone=isMultirotor(params),balloon=isBalloon(params), aerial=drone||balloon;
+    const road = isRoad(params), drone=isMultirotor(params),balloon=isBalloon(params),kite=isKite(params), aerial=drone||balloon||kite;
     const gridSize = Math.max(model.stats.size.x, model.stats.size.z,model.stats.size.y*.6) * 2.5;
     grid.scale.setScalar(gridSize); grid.position.y = model.bounds.min.y - (road ? 0.025 : aerial?Math.min(params.width,params.height)*.1:Math.max(params.diameter * 0.15, 0.15));
     controls.maxDistance = Math.max(300, gridSize * 12);
-    $("lengthMetric").textContent = `${(drone?model.stats.size.z:params.length).toFixed(2)} m`;
-    $("lengthLabel").textContent = drone?"OVERALL LENGTH":balloon?"ENVELOPE LENGTH":road ? "BODY LENGTH" : "FUSELAGE";
+    $("lengthMetric").textContent = `${(drone||kite?model.stats.size.z:params.length).toFixed(2)} m`;
+    $("lengthLabel").textContent = drone||kite?"OVERALL LENGTH":balloon?"ENVELOPE LENGTH":road ? "BODY LENGTH" : "FUSELAGE";
     const rotorOnly = !params.wings && params.rotorLayout !== "none";
-    $("spanLabel").textContent = drone?"OVERALL WIDTH":balloon?"ENVELOPE WIDTH":road ? "BODY WIDTH" : rotorOnly ? "ROTOR DIAMETER" : "WINGSPAN";
-    $("spanMetric").textContent = `${(drone?model.stats.size.x:road||balloon ? params.width : rotorOnly ? params.rotorDiameter : model.stats.wingspan).toFixed(2)} m`;
-    $("spanMetric").title = drone?"Current propeller positions; overall sweep varies while spinning":balloon?"Envelope width, excluding fins":road ? "Body width, excluding mirrors" : rotorOnly ? "Diameter of one main rotor" : "Main wings and winglets, including tip thickness";
-    $("areaLabel").textContent = drone?"HEIGHT":balloon?"ENVELOPE HEIGHT":road ? "HEIGHT" : "WING AREA";
-    $("aspectLabel").textContent = drone?"ROTORS":balloon?"TOTAL HEIGHT":road ? "WHEELBASE" : "ASPECT RATIO";
-    $("areaMetric").textContent = aerial?`${(balloon?params.height:model.stats.size.y).toFixed(2)} m`:road ? `${model.stats.height.toFixed(2)} m` : model.stats.area ? `${model.stats.area.toFixed(1)} m²` : "—";
-    $("aspectMetric").textContent = drone?String(model.stats.rotors):balloon?`${model.stats.size.y.toFixed(2)} m`:road ? `${model.stats.wheelbase.toFixed(2)} m` : model.stats.area ? model.stats.aspectRatio.toFixed(2) : "—";
-    $("spinLabel").textContent = road ? "Spin wheels" : "Spin rotors / props";
+    $("spanLabel").textContent = kite?"WIDTH":drone?"OVERALL WIDTH":balloon?"ENVELOPE WIDTH":road ? "BODY WIDTH" : rotorOnly ? "ROTOR DIAMETER" : "WINGSPAN";
+    $("spanMetric").textContent = `${(drone?model.stats.size.x:road||balloon||kite ? params.width : rotorOnly ? params.rotorDiameter : model.stats.wingspan).toFixed(2)} m`;
+    $("spanMetric").title = kite?"Width of the sail or head":drone?"Current propeller positions; overall sweep varies while spinning":balloon?"Envelope width, excluding fins":road ? "Body width, excluding mirrors" : rotorOnly ? "Diameter of one main rotor" : "Main wings and winglets, including tip thickness";
+    $("areaLabel").textContent = kite?"LIFTING AREA":drone?"HEIGHT":balloon?"ENVELOPE HEIGHT":road ? "HEIGHT" : "WING AREA";
+    $("aspectLabel").textContent = kite?"MINIMUM WIND":drone?"ROTORS":balloon?"TOTAL HEIGHT":road ? "WHEELBASE" : "ASPECT RATIO";
+    $("areaMetric").textContent = kite?`${kiteLiftingArea(params).toFixed(2)} m²`:aerial?`${(balloon?params.height:model.stats.size.y).toFixed(2)} m`:road ? `${model.stats.height.toFixed(2)} m` : model.stats.area ? `${model.stats.area.toFixed(1)} m²` : "—";
+    $("aspectMetric").textContent = kite?`${(kiteMinimumWind(kiteFlightProperties(params))/0.514444).toFixed(1)} kt`:drone?String(model.stats.rotors):balloon?`${model.stats.size.y.toFixed(2)} m`:road ? `${model.stats.wheelbase.toFixed(2)} m` : model.stats.area ? model.stats.aspectRatio.toFixed(2) : "—";
+    $("spinLabel").textContent = kite ? "Move tails in a 12-knot wind" : road ? "Spin wheels" : "Spin rotors / props";
     $("animateProps").disabled=balloon;
+    // A kite's tails move as soon as it is chosen; the box turns the motion off.
+    if(kite&&!wasKite)$("animateProps").checked=true;
+    wasKite=kite;
     $("geometryStats").textContent = `${Math.round(model.stats.triangles).toLocaleString()} triangles · metres`;
     lastBuildMs = performance.now() - start;
     status(`Live preview · ${lastBuildMs.toFixed(0)} ms update`);
@@ -348,8 +352,8 @@ function animate(now) {
     if (modelDirty) rebuild();
     if (studio.sharesCamera) controls.update(dt);
     if (studio.mode === "visible" && $("animateLights").checked && model.lamps?.length) {animateVehicleLights(model,now/1000,true);renderDirty=true;}
-    if ($("animateProps").checked && model.propellers.length) {
-        propellerTime += dt; poseVehicleSpinners(model.propellers,propellerTime,true);
+    if ($("animateProps").checked && (model.propellers.length || model.waves?.length)) {
+        propellerTime += dt; poseVehicleSpinners([...model.propellers,...(model.waves ?? [])],propellerTime,true);
         renderDirty = true;
     }
     // The IR picture changes from one sensor frame to the next only through detector noise. Without noise a frame

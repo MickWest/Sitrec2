@@ -1,6 +1,6 @@
 # Vehicle reference review
 
-The catalog contains 292 editable visual presets. All were rendered in groups
+The catalog contains 307 editable visual presets. All were rendered in groups
 to check their generated silhouettes, glazing, attachments and SITREC markings.
 Reference research is strongest for the Boeing/Airbus dimensioned airliners;
 the other named aircraft use family photographs and published specifications.
@@ -17,6 +17,7 @@ has been matched to an engineering drawing or an individual airframe.
 | 15 civil helicopters | Manufacturer family references and rotor dimensions; approximate fuselages, cabins and equipment. Length excludes the turning rotor envelope. |
 | 36 road vehicles | Generic body classes, not named makes or model years. Cab, glazing, wheel openings, axles and cargo geometry are checked for visual consistency. There is no single definitive reference for these generic designs. |
 | 29 multirotor drones | Named manufacturer families plus generic FPV, six-arm and eight-arm examples. Rotor layout, guards, camera lens count and equipment distinguish families. Body contours and motor spacing are editable approximations; status LEDs are generic visual defaults. |
+| 15 kites | Generic kite types: diamond, delta, rokkaku, sled, box, parafoil and octopus. They are not named products. The octopus follows photographs of soft ram-air octopus kites: a wide head with open cells at its front, eyes low on its sides and eight tapering tentacles. Sizes are typical of each type. Mass, lifting area, lift and drag are estimates, not measurements of a kite, and no kite preset has a published reference. |
 | 22 balloons and lanterns | Generic envelope classes and color schemes. Hot-air gores, suspended equipment, inflated foil outlines, blimp fins and open lantern rims are modeled. No particular balloon registration or lantern product is replicated. |
 
 Some public Chinese, Iranian and Russian material supplies photographs without

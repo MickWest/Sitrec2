@@ -43,6 +43,7 @@ You can select and copy this text.
 | **Add Moving Object (In→Out)** | Makes a straight track with an object riding on it, with control points at the In and Out frames. See [In→Out tracks](#in-out-tracks) | Track in **Contents**, object in **Objects**, named as above |
 | **Add Flight Path** | Starts a new hand-drawn track, with no object, at the clicked point, at the current frame, in edit mode | **Contents**, as *Track 1*, *Track 2*, ... |
 | **Add Balloon** | Adds a balloon that launches from the clicked point, rises and drifts with the wind. See [Balloons](#balloons) | **Contents**, as *Balloon*, *Balloon_1*, ...; its sphere in **Objects**, as *Object N* |
+| **Add Kite** | Adds a kite on a line that is held at the clicked point. The kite flies downwind of that point, where the wind puts it. See [Kites](#kites) | **Contents**, as *Kite*, *Kite_1*, ...; the kite in **Objects**, as *Object N* |
 | **Add Building** | Adds a 15 × 15 m building, 4 m high, centered on the clicked point, and opens its editor | **Objects**, as *Building: Building 1* |
 | **Add Clouds** | Adds a round layer of clouds at 10,000 ft, 500 m in radius, centered above the clicked point, and opens its editor | **Objects**, as *Clouds: Clouds 1* |
 | **Add Ground Overlay** | Adds an image overlay draped on the ground, 0.02° square, centered on the clicked point, and opens its editor. It has no image until you give it one | **Objects**, as *Overlay: Overlay 1* |
@@ -71,8 +72,8 @@ The camera and target items move the fixed positions that the camera and target 
 not following a track. If the camera or target follows a track, the move has no visible effect
 until you switch back to the fixed position.
 
-If you right-clicked in the **look view**, a new track (from any of the three track items or from
-**Add Balloon**) is also shown in the look view. A track made from the main view is shown only in
+If you right-clicked in the **look view**, a new track (from any of the three track items, from
+**Add Balloon** or from **Add Kite**) is also shown in the look view. A track made from the main view is shown only in
 the main view. You can change this later with **Show in look view** in the track's folder.
 
 ### In->Out tracks
@@ -129,6 +130,67 @@ Its folder in **Contents** has these launch settings:
 | **Random Seed** | 1 | Change it for a different, but repeatable, flight path |
 
 It also has **Show in look view** and **Delete Track**, which asks before it deletes the balloon.
+
+### Kites
+
+**Add Kite** makes a kite on a flying line. The clicked point is the anchor, where the line is
+held. The kite flies downwind of the anchor, at the height where its lift, its drag, its weight
+and the pull of the line are in balance. Use it to test if a kite can be at the position of an
+object in a video, with the wind of that day.
+
+![Main view of a black octopus kite in the air above a town. The kite has a wide head with pale openings at its front, an eye with an orange rim, and eight long tentacles with orange spots that trail to the right. Thin lines go from the underside of the head to one point below it, and a white line goes from that point down to the lower left. A blue line shows the path of the kite](docimages/scene-objects-kite.jpg)
+
+A kite in the main view. The white line is the flying line, from the anchor on the ground to the tow point of the kite. The thin lines above the tow point are the bridle of the kite. The blue line is the kite's track. This kite is the **Octopus kite · 14 m, black** design.
+
+A new kite is a small diamond kite. To change it, open the kite's folder in **Objects** and
+select **Browse custom objects…**, then the **Kites** type. See
+[Objects and 3D Models](CustomModels.md#procedural-custom-objects). The kite points its nose into the
+wind, and its tails or tentacles move with the wind at the kite: faster in a stronger wind, and
+slower for a larger kite.
+
+**The wind.** The kite uses the same wind as a balloon (see [Wind in Sitrec](Wind.md)). With the
+**Manual** wind source that is **Target Wind**. A wind is named by the direction it comes from,
+so a wind from the west puts the kite east of its anchor. A new custom sitch has a Target Wind
+of zero, so a new kite is on the ground until you set a wind.
+
+**The flight model.** The lift and the drag of a kite go with the square of the wind speed, and
+its weight does not change. So:
+
+- below a minimum wind, the lift is less than the weight and the kite is on the ground
+- above it, the kite rises as the wind becomes stronger
+- in a strong wind, the line comes near a maximum angle, which is set by the ratio of lift to drag
+
+The line has weight and the wind pushes on it, so it sags: it is steepest at the kite and
+flattest at the anchor. A heavy or thick line holds the kite lower.
+
+On each frame the wind gives the kite a balance position. When the wind changes, from the wind
+source or from the gusts of **Wind Variability (%)**, the kite moves toward the new position at
+up to half the wind speed, and at 1 m/s or more. This limit is an estimate. The model does not
+include the momentum of the kite, or a person who pulls the line. A kite in a wind near its
+minimum sinks in each lull and rises again in each gust.
+
+The mass, the lifting area, the lift coefficient and the drag coefficient are part of the kite
+design: **Edit design…** in the kite's object folder, then the **Flight** folder. The values of
+the preset kites are estimates for each type of kite. They are not measurements of a real kite.
+
+The kite's folder in **Contents** has these settings:
+
+| Control | Default | What it does |
+|---|---|---|
+| **Anchor Altitude (m MSL)** | ground at the clicked point | Altitude above mean sea level of the point where the line is held |
+| **Line Length (m)** | 100 | Length of the flying line, from the anchor to the kite |
+| **Line Weight (g/m)** | 0.5 | Weight of one meter of line. About 0.5 for a small kite, and 5 or more for a large show kite |
+| **Line Diameter (mm)** | 1 | Thickness of the line, for the push of the wind on it. About 1 for a small kite, and 3 or more for a large show kite |
+| **Wind Variability (%)** | 20 | Random gustiness, as a percentage of the wind speed. The gusts move the kite |
+| **Random Seed** | 1 | Change it for a different, but repeatable, pattern of gusts |
+| **Kite Position** (read only) | | At the current frame: the height of the kite above the anchor, its distance downwind of the anchor, and the angle of a straight line from the anchor to the kite. *On the ground* when the wind is too light |
+| **Wind and Pull** (read only) | | At the current frame: the wind speed at the kite and the pull of the line. On the ground, the second value is the wind that this kite needs |
+
+It also has the track display controls, **Show in look view** (for the track and the flying
+line) and **Delete Track**, which asks before it deletes the kite and its object. To move the
+anchor, drag the kite with its move widget, or hold **Option** / **Alt** and drag it: the anchor
+moves by the same amount, and the kite flies from the new anchor. The kite is added to the
+camera and target track lists.
 
 ### Pins
 

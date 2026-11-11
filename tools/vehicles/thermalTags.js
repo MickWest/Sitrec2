@@ -21,11 +21,11 @@ export function visibleVehicleBounds(root) {
 export function vehicleThermalDefaults(p) {
     const rotor = p.rotorLayout && p.rotorLayout !== "none";
     const prop = p.engineType === "prop", turbine = p.engineType === "turboprop";
-    const road = ["car", "truck"].includes(p.vehicleType), balloon = p.vehicleType === "balloon";
+    const road = ["car", "truck"].includes(p.vehicleType), balloon = p.vehicleType === "balloon", kite = p.vehicleType === "kite";
     const electric = p.vehicleType === "drone" && p.droneStyle !== "fixedwing";
     const lantern = balloon && ["lantern", "boxlantern", "pagoda"].includes(p.balloonShape);
     const heatedEnvelope = balloon && ["hotair", "solar"].includes(p.balloonShape);
-    const unpowered = balloon && !lantern && !heatedEnvelope || p.engineType === "none" && !rotor && !electric;
+    const unpowered = kite || balloon && !lantern && !heatedEnvelope || p.engineType === "none" && !rotor && !electric;
     const ground = road || balloon || electric;
     return {thermalPower: unpowered ? 0 : lantern ? 1 : road || heatedEnvelope ? .3 : electric ? .5 : rotor || turbine ? .7 : .65,
         thermalMach: ground || unpowered ? 0 : rotor ? .12 : prop ? .16 : turbine ? .35 : .82,

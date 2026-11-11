@@ -39,7 +39,8 @@ describe("Vehicle Designer", () => {
         animateVehicleLights(m,0.5,true);expect(strobe.intensity).toBe(0);expect(left.intensity).toBeGreaterThan(0);
         disposeVehicle(m.root);
     });
-    test.each(PRESETS.map(p=>p.id))("SITREC markings adapt to %s without texture dependencies", id=> {
+    // A kite has no surface for the lettering: tests/Kites.test.js checks that it has none.
+    test.each(PRESETS.filter(p=>p.vehicleType!=="kite").map(p=>p.id))("SITREC markings adapt to %s without texture dependencies", id=> {
         const m=buildVehicle({...PRESETS.find(p=>p.id===id).parameters,brandLivery:"sitrec"});
         const group=m.root.getObjectByName("SITREC livery");expect(group.children.length).toBeGreaterThan(10);
         group.traverse(o=>{if(o.isMesh){expect(Array.from(o.geometry.attributes.position.array).every(Number.isFinite)).toBe(true);expect(o.material.map).toBe(null);}});

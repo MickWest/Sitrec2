@@ -2,7 +2,7 @@
 
 An object in Sitrec can be a simple geometric shape such as a sphere or a box, a built-in model such as an aircraft, a drone or a ship, a preset vehicle such as a balloon or a tethered aerostat, a 3D model that you import, or a flock of birds. This page explains each one, the model file formats that Sitrec accepts, and how to prepare a model in Blender. To add an object to a sitch, see [Adding Objects and Tracks](SceneObjects.md).
 
-- [Built-in Models](#built-in-models) and [Preset Vehicles](#preset-vehicles)
+- [Built-in Models](#built-in-models) and [Procedural Custom Objects](#procedural-custom-objects)
 - [Dimensions](#dimensions)
 - [Supported Model Formats](#supported-model-formats), including [PLY Files](#ply-files)
 - [Custom Models using Blender](#custom-models-using-blender), including [Aircraft navigation lights](#aircraft-navigation-lights)
@@ -41,9 +41,11 @@ There are also some built-in models. To use them, set "Model or Geometry" to "mo
 To replace a model's own materials with the settings in the Material folder, check **Apply Material**. In "model" mode the Material folder stays hidden until you do this. This is a good way of quickly getting a neutral color scheme. The figure shows the F-15 with a physical material.
 ![F-15 with Apply Material checked and a physical material, with the Material folder open](docimages/apply-material-to-f-15.jpg)
 
-### Preset Vehicles
+### Procedural Custom Objects
 
-**Browse vehicles…** in the object's folder opens a library of preset vehicles: aircraft, helicopters, road vehicles, drones, balloons and sky lanterns. Choose one to put it on the object. **Edit design…** then changes that vehicle, and **Freeze as GLB** stores it as a fixed model. **Sitrec → Extra Tools → Vehicle Designer** builds a vehicle in its own tab and exports it as a GLB file.
+**Browse custom objects…** in the object's folder opens the Custom Object Designer: a library of 307 preset objects that Sitrec builds from parameters. They are aircraft, helicopters, road vehicles, drones, balloons, sky lanterns and kites. Choose one to put it on the object. **Edit design…** then changes that object with sliders, and **Freeze as GLB** stores it as a fixed model. **Sitrec → Extra Tools → Custom Object Designer** builds an object in its own tab and exports it as a GLB file. The [Custom Object Designer guide](https://github.com/MickWest/Sitrec2/blob/main/tools/vehicles/README.md) has the details.
+
+With **Animate moving parts** on, propellers, rotors and wheels turn as the sitch time runs, and the tails and tentacles of a kite move in the wind. A kite design also has the mass, lifting area, lift and drag that **Add Kite** uses: see [Kites](SceneObjects.md#kites).
 
 ### Dimensions
 

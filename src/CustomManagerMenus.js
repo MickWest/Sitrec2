@@ -92,6 +92,19 @@ import {Color, Vector3} from "three";
 import {getLocalUpVector} from "./SphericalMath";
 import {abFrameRange} from "./TraverseAnalysisData";
 
+
+// Undo and redo for a balloon or a kite that the ground menu just added. `record` is
+// its generator record, so that a redo makes the same node ids again.
+function addGeneratedTrackUndo(trackOb, kind, record, addTrack) {
+    if (!trackOb || !UndoManager) return;
+    let trackID = trackOb.trackID;
+    UndoManager.add({
+        undo: () => TrackManager.disposeRemove(trackID),
+        redo: () => { trackID = addTrack(record)?.trackID ?? trackID; },
+        description: `Add ${kind} "${trackOb.menuText}"`,
+    });
+}
+
 export const menuMethods = {
     /**
      * Parse flexible object input string for coordinates and name
@@ -417,6 +430,11 @@ export const menuMethods = {
 
         // Store reference to track this menu
         this.groundContextMenu = menu;
+        // Every item closes the menu before or after it acts.
+        const closeMenu = () => {
+            this.groundContextMenu = null;
+            menu.destroy();
+        };
 
         // Format the location text: coordinates, then MSL altitude, then WGS84 HAE
         // (height above ellipsoid) with the HAE−MSL difference (the EGM96 geoid offset N,
@@ -455,8 +473,7 @@ export const menuMethods = {
                     camera.setLLA(lat, lon, currentAlt);
                     console.log(`Camera set to: ${lat}, ${lon}, ${currentAlt}m (altitude maintained)`);
                 }
-                this.groundContextMenu = null;
-                menu.destroy();
+                closeMenu();
             },
             setCameraOnGround: () => {
                 if (NodeMan.exists("fixedCameraPosition")) {
@@ -468,8 +485,7 @@ export const menuMethods = {
                     camera.setLLA(lat, lon, alt);
                     console.log(`Camera set to ground: ${lat}, ${lon}, ${alt}m ${camera.agl ? "AGL" : "MSL"}`);
                 }
-                this.groundContextMenu = null;
-                menu.destroy();
+                closeMenu();
             },
             setTargetAbove: () => {
                 if (NodeMan.exists("fixedTargetPositionWind")) {
@@ -479,8 +495,7 @@ export const menuMethods = {
                     target.setLLA(lat, lon, currentAlt);
                     console.log(`Target set to: ${lat}, ${lon}, ${currentAlt}m (altitude maintained)`);
                 }
-                this.groundContextMenu = null;
-                menu.destroy();
+                closeMenu();
             },
             setTargetOnGround: () => {
                 if (NodeMan.exists("fixedTargetPositionWind")) {
@@ -490,8 +505,7 @@ export const menuMethods = {
                     target.setLLA(lat, lon, alt);
                     console.log(`Target set to ground: ${lat}, ${lon}, ${alt}m ${target.agl ? "AGL" : "MSL"}`);
                 }
-                this.groundContextMenu = null;
-                menu.destroy();
+                closeMenu();
             },
             centerTerrain: () => {
                 if (NodeMan.exists("terrainUI")) {
@@ -501,8 +515,7 @@ export const menuMethods = {
                     terrainUI.flagForRecalculation();
                     console.log(`Centered terrain at: ${lat}, ${lon}`);
                 }
-                this.groundContextMenu = null;
-                menu.destroy();
+                closeMenu();
             },
             createSyntheticTrack: () => {
                 // Create a track at the clicked point using TrackManager
@@ -512,12 +525,10 @@ export const menuMethods = {
                     startFrame: par.frame,
                     showInLook: sourceViewID === "lookView",
                 });
-                this.groundContextMenu = null;
-                menu.destroy();
+                closeMenu();
             },
             addBalloon: () => {
-                this.groundContextMenu = null;
-                menu.destroy();
+                closeMenu();
 
                 // Simulated balloon target launched from the clicked ground
                 // point (start altitude = ground MSL there; ascends on launch
@@ -530,23 +541,33 @@ export const menuMethods = {
                     showInLook: sourceViewID === "lookView",
                 });
 
-                if (trackOb && UndoManager) {
-                    // capture the full generator record so redo recreates the
-                    // same node ids (mirrors the building/clouds undo pattern)
-                    const record = TrackManager.serializeBalloons()
-                        .find(b => b.trackID === trackOb.trackID);
-                    let curTrackID = trackOb.trackID;
-                    UndoManager.add({
-                        undo: () => {
-                            TrackManager.disposeRemove(curTrackID);
-                        },
-                        redo: () => {
-                            const ob = TrackManager.addBalloonTrack(record);
-                            curTrackID = ob?.trackID ?? curTrackID;
-                        },
-                        description: `Add balloon "${trackOb.menuText}"`
-                    });
-                }
+                // capture the full generator record so redo recreates the
+                // same node ids (mirrors the building/clouds undo pattern)
+                addGeneratedTrackUndo(trackOb, "balloon",
+                    TrackManager.serializeBalloons().find(balloon => balloon.trackID === trackOb.trackID),
+                    record => TrackManager.addBalloonTrack(record));
+            },
+            addKite: async () => {
+                closeMenu();
+
+                // A kite held by a line from the clicked ground point. It flies
+                // downwind of that point, where the wind puts it. The designs are
+                // in a lazy chunk, so a new kite waits for its design.
+                const generation = Globals.loadGeneration;
+                const {defaultKiteRecipe} = await import(/* webpackChunkName: "vehicle-kite-default" */ "./procedural/KiteDefault");
+                if (generation !== Globals.loadGeneration) return;
+                const trackOb = TrackManager.addKiteTrack({
+                    anchorLat: lat,
+                    anchorLon: lon,
+                    anchorAltitude: Math.max(0, altMSL),
+                    showInLook: sourceViewID === "lookView",
+                    recipe: defaultKiteRecipe(),
+                });
+
+                // A redo has no mods pass to restore the design, so its record carries the design too.
+                addGeneratedTrackUndo(trackOb, "kite",
+                    {...TrackManager.serializeKites().find(kite => kite.trackID === trackOb.trackID), recipe: defaultKiteRecipe()},
+                    record => TrackManager.addKiteTrack(record));
             },
             // Place something in the world that does not move.
             //
@@ -576,8 +597,7 @@ export const menuMethods = {
                 const objectNode = this.createFixedObject(objectID, positionID, [lat, lon, altMSL], false, displayName);
 
                 console.log(`Created fixed object ${objectID} at ${lat}, ${lon}, ${altMSL}m MSL`);
-                this.groundContextMenu = null;
-                menu.destroy();
+                closeMenu();
 
                 // Go straight into edit mode for the thing just created.
                 //
@@ -626,8 +646,7 @@ export const menuMethods = {
 
 
                 console.log(`Created object ${objectID} with track at ${lat}, ${lon}, ${alt}m`);
-                this.groundContextMenu = null;
-                menu.destroy();
+                closeMenu();
             },
             // A straight track across the In/Out range at a steady speed and height, with an
             // object riding it: two keyframes, constant speed on, and the altitude locked
@@ -665,13 +684,11 @@ export const menuMethods = {
                 });
 
                 console.log(`Created object ${objectID} with In->Out track from ${lat}, ${lon}, frames ${frame0}-${frame1}`);
-                this.groundContextMenu = null;
-                menu.destroy();
+                closeMenu();
             },
             dropPin: () => {
                 // Close the menu first
-                this.groundContextMenu = null;
-                menu.destroy();
+                closeMenu();
 
                 // Create a unique feature ID. CNodeFeatureMarker registers in NodeMan
                 // and FeatureManager mirrors that id, so NodeMan is the registry to check.
@@ -696,8 +713,7 @@ export const menuMethods = {
                 console.log(`Created feature ${featureID} at ${lat}, ${lon}, ${alt}m`);
             },
             addBuilding: () => {
-                this.groundContextMenu = null;
-                menu.destroy();
+                closeMenu();
 
                 const building = Synth3DManager.createBuildingAtPoint(groundPoint);
 
@@ -725,8 +741,7 @@ export const menuMethods = {
                 }
             },
             addClouds: () => {
-                this.groundContextMenu = null;
-                menu.destroy();
+                closeMenu();
 
                 const clouds = Synth3DManager.createCloudsAtPoint(groundPoint);
 
@@ -751,8 +766,7 @@ export const menuMethods = {
                 }
             },
             addOverlay: () => {
-                this.groundContextMenu = null;
-                menu.destroy();
+                closeMenu();
 
                 const overlay = Synth3DManager.createOverlayAtPoint(groundPoint);
 
@@ -777,8 +791,7 @@ export const menuMethods = {
                 }
             },
             addGrid: () => {
-                this.groundContextMenu = null;
-                menu.destroy();
+                closeMenu();
 
                 const grid = Synth3DManager.createGridAtPoint(groundPoint);
 
@@ -803,8 +816,7 @@ export const menuMethods = {
                 }
             },
             googleMapsHere: () => {
-                this.groundContextMenu = null;
-                menu.destroy();
+                closeMenu();
 
                 // Open Google Maps at the clicked location. Not in the secure build: the
                 // address would carry the clicked position to an external site.
@@ -817,8 +829,7 @@ export const menuMethods = {
                 console.log(`Opening Google Maps at: ${lat}, ${lon}`);
             },
             googleEarthHere: () => {
-                this.groundContextMenu = null;
-                menu.destroy();
+                closeMenu();
 
                 const kmlContent = `<?xml version="1.0" encoding="UTF-8"?>
 <kml xmlns="http://www.opengis.net/kml/2.2" xmlns:gx="http://www.google.com/kml/ext/2.2" xmlns:kml="http://www.opengis.net/kml/2.2" xmlns:atom="http://www.w3.org/2005/Atom">
@@ -889,8 +900,7 @@ export const menuMethods = {
         if (overlayAtPoint) {
             const isEditing = overlayAtPoint.editMode;
             menuData.editOverlay = () => {
-                this.groundContextMenu = null;
-                menu.destroy();
+                closeMenu();
                 
                 if (isEditing) {
                     overlayAtPoint.setEditMode(false);
@@ -907,8 +917,7 @@ export const menuMethods = {
         if (cloudsAtPoint) {
             const isEditingClouds = cloudsAtPoint.editMode;
             menuData.editClouds = () => {
-                this.groundContextMenu = null;
-                menu.destroy();
+                closeMenu();
                 
                 if (isEditingClouds) {
                     cloudsAtPoint.setEditMode(false);
@@ -966,6 +975,8 @@ export const menuMethods = {
             .tooltip(t("custom.contextMenu.tooltips.createTrackNoObject"));
         menu.add(menuData, "addBalloon").name(t("custom.contextMenu.addBalloon", {defaultValue: "Add Balloon"}))
             .tooltip(t("custom.contextMenu.tooltips.addBalloon"));
+        menu.add(menuData, "addKite").name(t("custom.contextMenu.addKite"))
+            .tooltip(t("custom.contextMenu.tooltips.addKite"));
         menu.add(menuData, "addBuilding").name(t("custom.contextMenu.addBuilding"))
             .tooltip(t("custom.contextMenu.tooltips.addBuilding"));
         menu.add(menuData, "addClouds").name(t("custom.contextMenu.addClouds"))

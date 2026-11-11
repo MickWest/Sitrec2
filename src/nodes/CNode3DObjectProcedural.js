@@ -23,24 +23,24 @@ export const proceduralObjectMethods = {
         };
         this.vehicleControls = {};
         const tips = {
-            browse: "Open the Vehicle Designer to choose a car, truck, aircraft, drone, balloon or sky lantern.\n"
+            browse: "Open the Custom Object Designer to choose a car, truck, aircraft, drone, balloon, sky lantern or kite.\n"
                 + "The design you apply becomes this object's model.",
-            edit: "Open the Vehicle Designer on this object's current design, to change it.",
+            edit: "Open the Custom Object Designer on this object's current design, to change it.",
             freeze: "Make a GLB model file from this design, and use it in place of the design.\n"
                 + "The file is saved with the sitch. The design is kept, so Edit design… still works.",
-            file: "Stop using the vehicle design, and go back to the model selected in Model.",
-            retry: "Try again to build or load the vehicle model. Shown only after a load fails.",
+            file: "Stop using the custom object design, and go back to the model selected in Model.",
+            retry: "Try again to build or load the custom object model. Shown only after a load fails.",
         };
-        for (const [key, label] of Object.entries({browse:"Browse vehicles…", edit:"Edit design…", freeze:"Freeze as GLB", file:"Use file model", retry:"Retry model load"})) {
+        for (const [key, label] of Object.entries({browse:"Browse custom objects…", edit:"Edit design…", freeze:"Freeze as GLB", file:"Use file model", retry:"Retry model load"})) {
             const control = this.gui.add(actions, key).name(label).tooltip(tips[key]);
             control.isCommon = true; this.vehicleControls[key] = control;
         }
         const animation = this.gui.add(this, "vehicleAnimation").name("Animate moving parts").onChange(() => {
             this.updateVehicleAnimation(0); markSitchDirty(); setRenderOne(true);
-        }).tooltip("Spin the propellers of the vehicle design as the sitch time runs. Off holds them still.");
+        }).tooltip("Move the parts of the design as the sitch time runs: propellers, rotors and wheels turn, and the tails of a kite move in the wind. Off holds them still.");
         animation.isCommon = true; this.vehicleControls.animation = animation;
-        const status = this.gui.add(this, "vehicleStatus").name("Vehicle")
-            .tooltip("The vehicle design this object uses, and its state: procedural, frozen, loading, or the load error.")
+        const status = this.gui.add(this, "vehicleStatus").name("Custom object")
+            .tooltip("The custom object design this object uses, and its state: procedural, frozen, loading, or the load error.")
             .listen().disable();
         status.isCommon = true; this.vehicleControls.status = status;
     },
@@ -69,7 +69,7 @@ export const proceduralObjectMethods = {
             });
             if (this._vehicleDisposed || generation !== Globals.loadGeneration || request !== this._vehicleDialogRequest) dialog.dispose();
             else this._vehicleDialog = dialog;
-        } catch (e) {showError(`Could not open Vehicle Designer: ${e.message}`);}
+        } catch (e) {showError(`Could not open Custom Object Designer: ${e.message}`);}
     },
 
     applyVehicleRecipe(value, {preserveObjectSettings = false} = {}) {
@@ -150,7 +150,9 @@ export const proceduralObjectMethods = {
 
     updateVehicleAnimation(frame) {
         const seconds = frame * (Sit?.simSpeed ?? 1) / (Sit?.fps || 30);
-        poseVehicleSpinners(this._vehicleSpinParts, seconds, this.vehicleAnimation);
+        // On a kite track, the tails of a kite move with the wind at the kite.
+        const flow = this.getSourceTrack?.()?.kiteAirAt?.(frame);
+        poseVehicleSpinners(this._vehicleSpinParts, seconds, this.vehicleAnimation, flow);
     },
 
     async freezeVehicle() {

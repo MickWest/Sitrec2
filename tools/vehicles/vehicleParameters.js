@@ -4,9 +4,10 @@ import {PRESETS as AIRCRAFT_PRESETS} from "./parameters.js";
 import {ROAD_PRESETS} from "./roadPresets.js";
 import {HELICOPTER_PRESETS} from "./helicopterPresets.js";
 import {DRONE_PRESETS, BALLOON_PRESETS} from "./aerialPresets.js";
+import {KITE_PRESETS} from "./kitePresets.js";
 import {droneMotorLayout} from "./aerialParameters.js";
 
-export const PRESETS = [...AIRCRAFT_PRESETS, ...HELICOPTER_PRESETS, ...ROAD_PRESETS,...DRONE_PRESETS,...BALLOON_PRESETS].map(p => {
+export const PRESETS = [...AIRCRAFT_PRESETS, ...HELICOPTER_PRESETS, ...ROAD_PRESETS,...DRONE_PRESETS,...BALLOON_PRESETS,...KITE_PRESETS].map(p => {
     const parameters = normalizeParameters(p.role==="Drone"&&p.parameters.vehicleType!=="drone"?{...p.parameters,vehicleType:"drone",droneStyle:"fixedwing"}:p.parameters);
     let reference=p.reference;
     if(isMultirotor(parameters)) {

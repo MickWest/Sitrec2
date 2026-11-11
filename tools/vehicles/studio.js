@@ -38,7 +38,7 @@ export function createVehicleStudio(mount, {background="#dfe9f0",fov=36,damping=
     renderer.setClearColor(background); renderer.outputColorSpace = THREE.SRGBColorSpace;
     renderer.toneMapping = THREE.ACESFilmicToneMapping; renderer.toneMappingExposure = 1.1;
     mount.append(renderer.domElement); renderer.domElement.tabIndex = 0;
-    renderer.domElement.setAttribute("aria-label","3D vehicle. Drag to orbit, scroll to zoom, right-drag to pan.");
+    renderer.domElement.setAttribute("aria-label","3D object. Drag to orbit, scroll to zoom, right-drag to pan.");
     const scene = new THREE.Scene(), camera = new THREE.PerspectiveCamera(fov,1,.01,3000);
     const ambient = new THREE.HemisphereLight("#ffffff","#718da6",1.6);
     const key = new THREE.DirectionalLight("#fff8ed",2.3); key.position.set(20,35,25);

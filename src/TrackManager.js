@@ -217,6 +217,13 @@ import {hasOtherTrackSourceReference, shouldPreserveAnglesHeading} from "./track
 import {extractTrackPreviewInfo, showMultiTrackLoadDialog, getCameraFilterState} from "./TrackFilterDialog";
 import {t} from "./i18n";
 import {CNodeBalloonTrack} from "./nodes/CNodeBalloonTrack";
+import {CNodeKiteTrack} from "./nodes/CNodeKiteTrack";
+import {CNodeDisplayKiteLine} from "./nodes/CNodeDisplayKiteLine";
+
+// A track colour as 0xRRGGBB, the form the saved sitch holds.
+function trackColorHex(color) {
+    return (Math.round(color.r * 255) << 16) | (Math.round(color.g * 255) << 8) | Math.round(color.b * 255);
+}
 
 function disposeDirectTrackDependentControllers(trackNode) {
     if (!trackNode?.outputs?.length) {
@@ -311,25 +318,7 @@ class CMetaTrack {
         // RESTORE SELECTIONS ON DROP IF A TRACK IS RE-LOADED
         // (currently it restets it to the first selection, fixed target)
 
-        if (Sit.dropTargets !== undefined && Sit.dropTargets["track"] !== undefined) {
-            const dropTargets = Sit.dropTargets["track"]
-            for (let dropTargetSwitch of dropTargets) {
-
-
-                // if it ends with a - and a number, then we delete that part
-                const match = dropTargetSwitch.match(/-(\d+)$/);
-                if (match !== null) {
-                    dropTargetSwitch = dropTargetSwitch.substring(0, dropTargetSwitch.length - match[0].length);
-                }
-
-
-                if (NodeMan.exists(dropTargetSwitch)) {
-//                    console.log("Removing track ", shortName, " from drop target: ", dropTargetSwitch)
-                    const switchNode = NodeMan.get(dropTargetSwitch);
-                    switchNode.removeOption(shortName)
-                }
-            }
-        }
+        TrackManager.setTrackSwitchOption(shortName, null);
 
 
 
@@ -553,7 +542,7 @@ class CTrackManager extends CManager {
     }
 
     // Next auto colour for a track that is created directly by the user rather
-    // than imported — balloons and synthetic (spline) tracks. These aren't part
+    // than imported — balloons, kites and synthetic (spline) tracks. These aren't part
     // of the shortName-ranked reassignment below (their colour lives in a
     // per-track colour node, and they're created one at a time by an explicit
     // click, so there's no async-ordering problem to solve), but they should
@@ -563,7 +552,7 @@ class CTrackManager extends CManager {
     nextPaletteColor() {
         let n = 0;
         this.iterate((id, t) => {
-            if (t.paletteColored || t.isBalloon || t.isSynthetic) n++;
+            if (t.paletteColored || t.isBalloon || t.isKite || t.isSynthetic) n++;
         });
         return TRACK_PALETTE[n % TRACK_PALETTE.length].clone();
     }
@@ -2594,6 +2583,8 @@ class CTrackManager extends CManager {
             this.disposeSyntheticTrack(trackID);
         } else if (trackOb?.isBalloon) {
             this.disposeBalloonTrack(trackID);
+        } else if (trackOb?.isKite) {
+            this.disposeKiteTrack(trackID);
         } else {
             super.disposeRemove(trackID);
         }
@@ -2832,13 +2823,7 @@ class CTrackManager extends CManager {
         // always carries its colour, so only a brand-new one falls through to
         // the auto palette — this used to default to pure yellow, which is the
         // traverse track's colour and is deliberately excluded from the palette.
-        const trackColor = colorHex !== undefined
-            ? new Color(
-                ((colorHex >> 16) & 0xff) / 255,
-                ((colorHex >> 8) & 0xff) / 255,
-                (colorHex & 0xff) / 255
-            )
-            : this.nextPaletteColor();
+        const trackColor = this.userTrackColor(colorHex);
         
         // Create display track for visualization
         // Don't use skipGUI - let it create its controls in the folder we just created
@@ -3061,15 +3046,7 @@ class CTrackManager extends CManager {
         // Show-in-look-view toggle. Synthetic tracks default to MASK_HELPERS
         // (main view only); enabling this adds the LOOK layer bit so the
         // displayTrack renders in the look view too.
-        trackOb.showInLook = showInLook;
-        if (showInLook) {
-            displayTrack.setLayerBit(LAYER.LOOK, true);
-        }
-        displayFolder.add(trackOb, "showInLook").name(t("misc.showInLookView.label"))
-            .tooltip(t("misc.showInLookView.tooltip")).listen().onChange((value) => {
-            displayTrack.setLayerBit(LAYER.LOOK, value);
-            setRenderOne(true);
-        }).fadeWhenFolderOff();
+        this.addShowInLookToggle(trackOb, displayFolder, [displayTrack], showInLook);
 
         // Write the control points out as a droppable .spline.json. Lives on the
         // unsmoothed spline node (that's where the control points are), but is
@@ -3093,22 +3070,7 @@ class CTrackManager extends CManager {
             .tooltip(t("trackManager.tips.deleteSynthetic"));
         
         // Add to drop targets if configured
-        if (Sit.dropTargets !== undefined && Sit.dropTargets["track"] !== undefined) {
-            const dropTargets = Sit.dropTargets["track"];
-            for (let dropTargetSwitch of dropTargets) {
-                // Strip off any -number suffix
-                const match = dropTargetSwitch.match(/-(\d+)$/);
-                if (match !== null) {
-                    dropTargetSwitch = dropTargetSwitch.substring(0, dropTargetSwitch.length - match[0].length);
-                }
-                
-                if (NodeMan.exists(dropTargetSwitch)) {
-                    const switchNode = NodeMan.get(dropTargetSwitch);
-                    switchNode.removeOption(shortName);
-                    switchNode.addOption(shortName, splineEditorNode);
-                }
-            }
-        }
+        this.setTrackSwitchOption(shortName, splineEditorNode);
         // The options were added under the short name; show the display name instead.
         this.relabelTrackOptions(trackOb);
         
@@ -3225,20 +3187,7 @@ class CTrackManager extends CManager {
         
         // Remove from drop targets
         const shortName = trackOb.menuText;
-        if (Sit.dropTargets !== undefined && Sit.dropTargets["track"] !== undefined) {
-            const dropTargets = Sit.dropTargets["track"];
-            for (let dropTargetSwitch of dropTargets) {
-                const match = dropTargetSwitch.match(/-(\d+)$/);
-                if (match !== null) {
-                    dropTargetSwitch = dropTargetSwitch.substring(0, dropTargetSwitch.length - match[0].length);
-                }
-                
-                if (NodeMan.exists(dropTargetSwitch)) {
-                    const switchNode = NodeMan.get(dropTargetSwitch);
-                    switchNode.removeOption(shortName);
-                }
-            }
-        }
+        this.setTrackSwitchOption(shortName, null);
         
         // Remove GUI folder
         if (trackOb.guiFolder) {
@@ -3320,13 +3269,7 @@ class CTrackManager extends CManager {
         const lineWidth = options.lineWidth || 1;
 
         // unique short name: Balloon, Balloon_1, ...
-        let shortName = options.shortName || "Balloon";
-        let counter = 1;
-        while (this.usedShortNames.has(shortName)) {
-            shortName = (options.shortName || "Balloon") + "_" + counter;
-            counter++;
-        }
-        this.usedShortNames.add(shortName);
+        const shortName = this.uniqueShortName(options.shortName || "Balloon");
 
         // GUI folder in Contents. Titled with the trackID first —
         // CNodeDisplayTrack locates it by the track node's id — then renamed
@@ -3389,13 +3332,7 @@ class CTrackManager extends CManager {
         // freshly added one falls through to the auto palette. Previously this
         // defaulted to a fixed orange, so every balloon in a sitch came out the
         // same colour (and reinforced the overall orange bias).
-        const trackColor = options.color !== undefined
-            ? new Color(
-                ((options.color >> 16) & 0xff) / 255,
-                ((options.color >> 8) & 0xff) / 255,
-                (options.color & 0xff) / 255
-            )
-            : this.nextPaletteColor();
+        const trackColor = this.userTrackColor(options.color);
 
         const displayTrack = new CNodeDisplayTrack({
             id: displayTrackID,
@@ -3444,43 +3381,13 @@ class CTrackManager extends CManager {
         this.linkTrackAndObject(trackOb, objectNode);
 
         // Show-in-look-view toggle (same semantics as synthetic tracks)
-        trackOb.showInLook = !!options.showInLook;
-        if (trackOb.showInLook) {
-            displayTrack.setLayerBit(LAYER.LOOK, true);
-        }
-        guiFolder.add(trackOb, "showInLook").name(t("misc.showInLookView.label"))
-            .tooltip(t("misc.showInLookView.tooltip")).listen().onChange((value) => {
-            displayTrack.setLayerBit(LAYER.LOOK, value);
-            setRenderOne(true);
-        }).fadeWhenFolderOff();
-
-        const dummy = {
-            deleteTrack: async () => {
-                if (await showConfirm(`Delete balloon "${shortName}"?`, {title: "Delete Balloon"})) {
-                    this.disposeRemove(trackID);
-                }
-            }
-        };
-        guiFolder.add(dummy, "deleteTrack").name(t("trackManager.deleteTrack"))
-            .tooltip(t("trackManager.tips.deleteBalloon"));
+        this.addShowInLookToggle(trackOb, guiFolder, [displayTrack], !!options.showInLook);
+        this.addGeneratedTrackDeleteButton(trackOb, "balloon", t("trackManager.tips.deleteBalloon"));
 
         // Register in the track drop-target switches (Camera/Target Track...)
         // so the camera can track the balloon — which also makes it the truth
         // source for the MISB CSV export.
-        if (Sit.dropTargets !== undefined && Sit.dropTargets["track"] !== undefined) {
-            const dropTargets = Sit.dropTargets["track"];
-            for (let dropTargetSwitch of dropTargets) {
-                const match = dropTargetSwitch.match(/-(\d+)$/);
-                if (match !== null) {
-                    dropTargetSwitch = dropTargetSwitch.substring(0, dropTargetSwitch.length - match[0].length);
-                }
-                if (NodeMan.exists(dropTargetSwitch)) {
-                    const switchNode = NodeMan.get(dropTargetSwitch);
-                    switchNode.removeOption(shortName);
-                    switchNode.addOption(shortName, balloonNode);
-                }
-            }
-        }
+        this.setTrackSwitchOption(shortName, balloonNode);
         // The options were added under the short name; show the display name instead.
         this.relabelTrackOptions(trackOb);
 
@@ -3506,19 +3413,7 @@ class CTrackManager extends CManager {
         disposeDirectTrackDependentControllers(NodeMan.get(trackID, false));
 
         // remove from the track drop-target switches
-        const shortName = trackOb.menuText;
-        if (Sit.dropTargets !== undefined && Sit.dropTargets["track"] !== undefined) {
-            const dropTargets = Sit.dropTargets["track"];
-            for (let dropTargetSwitch of dropTargets) {
-                const match = dropTargetSwitch.match(/-(\d+)$/);
-                if (match !== null) {
-                    dropTargetSwitch = dropTargetSwitch.substring(0, dropTargetSwitch.length - match[0].length);
-                }
-                if (NodeMan.exists(dropTargetSwitch)) {
-                    NodeMan.get(dropTargetSwitch).removeOption(shortName);
-                }
-            }
-        }
+        this.setTrackSwitchOption(trackOb.menuText, null);
 
         if (trackOb.guiFolder) {
             trackOb.guiFolder.destroy();
@@ -3582,10 +3477,7 @@ class CTrackManager extends CManager {
                 // width lives on the display node's "width" INPUT (edited by
                 // the Line Width slider) — there is no .width property
                 lineWidth: trackOb.displayTrack?.in?.width?.value ?? 1,
-                color: trackOb.trackColor ?
-                    (Math.round(trackOb.trackColor.r * 255) << 16) |
-                    (Math.round(trackOb.trackColor.g * 255) << 8) |
-                    Math.round(trackOb.trackColor.b * 255) : 0xffa040,
+                color: trackOb.trackColor ? trackColorHex(trackOb.trackColor) : 0xffa040,
             });
         });
         return balloons;
@@ -3600,6 +3492,329 @@ class CTrackManager extends CManager {
                 this.addBalloonTrack(b);
             } catch (e) {
                 console.error(`Failed to recreate balloon track ${b.trackID}:`, e);
+            }
+        }
+    }
+
+    // --- shared by the tracks the user adds in the scene -----------------------
+    //
+    // The synthetic (spline), balloon and kite tracks are all made from the ground
+    // context menu, and have the same small parts.
+
+    // Add or remove a track in the track drop-target switches (Camera Track,
+    // Target Track and so on), under its short name. A null node removes it.
+    setTrackSwitchOption(shortName, trackNode) {
+        for (let switchID of Sit.dropTargets?.["track"] ?? []) {
+            // a switch can be listed as "name-N", to select only track N of a file
+            const match = switchID.match(/-(\d+)$/);
+            if (match !== null) switchID = switchID.substring(0, switchID.length - match[0].length);
+            if (!NodeMan.exists(switchID)) continue;
+            const switchNode = NodeMan.get(switchID);
+            switchNode.removeOption(shortName);
+            if (trackNode) switchNode.addOption(shortName, trackNode);
+        }
+    }
+
+    // Take a short name that no track has: Kite, Kite_1, Kite_2, ...
+    uniqueShortName(base) {
+        let shortName = base;
+        for (let counter = 1; this.usedShortNames.has(shortName); counter++) shortName = base + "_" + counter;
+        this.usedShortNames.add(shortName);
+        return shortName;
+    }
+
+    // The colour of a track: the saved one (0xRRGGBB, see trackColorHex), or
+    // the next palette colour for a track that is new.
+    userTrackColor(hex) {
+        return hex !== undefined
+            ? new Color(((hex >> 16) & 0xff) / 255, ((hex >> 8) & 0xff) / 255, (hex & 0xff) / 255)
+            : this.nextPaletteColor();
+    }
+
+    // The "Show in look view" checkbox of a track. Its display nodes are in the
+    // main view only (MASK_HELPERS) until the LOOK layer bit is set.
+    addShowInLookToggle(trackOb, folder, displayNodes, showInLook) {
+        const apply = (value) => displayNodes.forEach(node => node.setLayerBit(LAYER.LOOK, value));
+        trackOb.showInLook = showInLook;
+        if (showInLook) apply(true);
+        folder.add(trackOb, "showInLook").name(t("misc.showInLookView.label"))
+            .tooltip(t("misc.showInLookView.tooltip")).listen().onChange((value) => {
+            apply(value);
+            setRenderOne(true);
+        }).fadeWhenFolderOff();
+    }
+
+    // The Delete Track button of a balloon or a kite. Its object goes with it.
+    addGeneratedTrackDeleteButton(trackOb, kind, tooltip) {
+        const title = kind[0].toUpperCase() + kind.slice(1);
+        const dummy = {
+            deleteTrack: async () => {
+                if (await showConfirm(`Delete ${kind} "${trackOb.menuText}"?`, {title: `Delete ${title}`})) {
+                    this.disposeRemove(trackOb.trackID);
+                }
+            }
+        };
+        trackOb.guiFolder.add(dummy, "deleteTrack").name(t("trackManager.deleteTrack")).tooltip(tooltip);
+    }
+
+    // --- kites ---------------------------------------------------------------
+
+    /**
+     * Add a simulated kite ("Add Kite" in the ground context menu): a track, a
+     * kite object on it, and the flying line from the anchor to the kite.
+     * CNodeKiteTrack computes the per-frame positions from the anchor, the line
+     * and the wind, so, like a balloon, it is not flagged isSynthetic.
+     * serializeKites() saves the parameters, and deserializeKites() makes the
+     * same node ids again before the mods pass.
+     *
+     * @param {Object} options
+     * @param {number} options.anchorLat - anchor latitude (degrees)
+     * @param {number} options.anchorLon - anchor longitude (degrees)
+     * @param {number} options.anchorAltitude - anchor altitude (m MSL)
+     * @param {number} options.lineLength - line length in metres (default 100)
+     * @param {number} options.lineWeight - line weight in g/m (default 0.5)
+     * @param {number} options.lineDiameter - line diameter in mm (default 1)
+     * @param {number} options.windVariability - gust % (default 20)
+     * @param {number} options.seed - PRNG seed (default 1)
+     * @param {Object} options.recipe - the kite design for a new kite. A saved kite
+     *        has none: the mods pass restores the design on its object.
+     * @param {string} options.trackID/objectID/displayTrackID/lineDisplayID - preserved ids on deserialize
+     * @param {number} options.color - track color hex
+     * @param {boolean} options.showInLook - also draw the track and the line in the look view
+     * @returns {Object|null} The created CMetaTrack entry
+     */
+    addKiteTrack(options) {
+        // Generated ids only - a deserialize passes its saved ids and must keep them.
+        const trackID = options.trackID || NodeMan.UniqueName(`kiteTrack_${Date.now()}`);
+        const objectID = options.objectID || NodeMan.UniqueName(`kiteObject_${Date.now()}`);
+        const displayTrackID = options.displayTrackID || NodeMan.UniqueName(`kiteTrackDisplay_${Date.now()}`);
+        const lineDisplayID = options.lineDisplayID || NodeMan.UniqueName(`kiteLineDisplay_${Date.now()}`);
+
+        // unique short name: Kite, Kite_1, ...
+        const shortName = this.uniqueShortName(options.shortName || "Kite");
+
+        // Titled with the trackID first (CNodeDisplayTrack finds the folder by
+        // the track node's id); initTrackDisplayName gives it its name below.
+        const guiFolder = guiMenus.contents.addFolder(trackID)
+            .tooltip(t("trackManager.tips.kiteFolder"));
+
+        // Flight parameters (persisted via the mods pass; ids are stable)
+        new CNodeGUIValue({
+            id: trackID + "_anchorAltitude",
+            value: options.anchorAltitude ?? 0,
+            start: 0, end: 10000, step: 1,
+            desc: "Anchor Altitude (m MSL)",
+            elastic: true, elasticMin: 1000, elasticMax: 40000,
+            tip: "Altitude in meters MSL of the point where the line is held (defaults to the ground at the click point)",
+        }, guiFolder);
+        new CNodeGUIValue({
+            id: trackID + "_lineLength",
+            value: options.lineLength ?? 100,
+            start: 5, end: 500, step: 1,
+            desc: "Line Length (m)",
+            elastic: true, elasticMin: 100, elasticMax: 5000,
+            tip: "Length of the flying line, from the anchor to the kite",
+        }, guiFolder);
+        new CNodeGUIValue({
+            id: trackID + "_lineWeight",
+            value: options.lineWeight ?? 0.5,
+            start: 0, end: 20, step: 0.1,
+            desc: "Line Weight (g/m)",
+            tip: "Weight of one meter of line, in grams. A heavy line sags and holds the kite lower.\n"
+                + "About 0.5 for a small kite, and 5 or more for a large show kite",
+        }, guiFolder);
+        new CNodeGUIValue({
+            id: trackID + "_lineDiameter",
+            value: options.lineDiameter ?? 1,
+            start: 0, end: 10, step: 0.1,
+            desc: "Line Diameter (mm)",
+            tip: "Thickness of the line. The wind pushes on a thick line, which holds the kite lower.\n"
+                + "About 1 for a small kite, and 3 or more for a large show kite",
+        }, guiFolder);
+        new CNodeGUIValue({
+            id: trackID + "_windVariability",
+            value: options.windVariability ?? 20,
+            start: 0, end: 100, step: 1,
+            desc: "Wind Variability (%)",
+            tip: "Random gustiness as a percentage of the wind speed. Gusts move the kite about",
+        }, guiFolder);
+        new CNodeGUIValue({
+            id: trackID + "_seed",
+            value: options.seed ?? 1,
+            start: 1, end: 9999, step: 1,
+            desc: "Random Seed",
+            tip: "Change for a different (but repeatable) pattern of gusts",
+        }, guiFolder);
+
+        const kiteNode = new CNodeKiteTrack({
+            id: trackID,
+            anchorLat: options.anchorLat,
+            anchorLon: options.anchorLon,
+            objectID,
+            anchorAltitude: trackID + "_anchorAltitude",
+            lineLength: trackID + "_lineLength",
+            lineWeight: trackID + "_lineWeight",
+            lineDiameter: trackID + "_lineDiameter",
+            windVariability: trackID + "_windVariability",
+            seed: trackID + "_seed",
+        });
+        kiteNode.menuText = shortName;
+        kiteNode.shortName = shortName;
+
+        // Where the kite is and what the wind does to it, at the current frame.
+        const status = {position: "", wind: ""};
+        kiteNode.onStatus = (position, wind) => { status.position = position; status.wind = wind; };
+        guiFolder.add(status, "position").name("Kite Position").listen().disable()
+            .tooltip("Where the kite is at this frame: its height above the anchor, its distance downwind of the anchor, and the angle of a straight line from the anchor to it.\n"
+                + "\"On the ground\" means that the wind is too light to lift this kite");
+        guiFolder.add(status, "wind").name("Wind and Pull").listen().disable()
+            .tooltip("The wind speed at the kite at this frame, and the pull of the line at the kite.\n"
+                + "On the ground, the second number is the wind that this kite needs to fly");
+
+        // A saved or redone kite carries its colour; a new one takes the next palette colour.
+        const trackColor = this.userTrackColor(options.color);
+
+        const displayTrack = new CNodeDisplayTrack({
+            id: displayTrackID,
+            track: trackID,
+            color: new CNodeConstant({
+                id: "colorKite_" + trackID,
+                value: trackColor,
+                pruneIfUnused: true
+            }),
+            width: options.lineWidth || 1,
+            // generated for the whole sitch, like a balloon: never greyed outside In/Out
+            ignoreAB: true,
+        });
+
+        const lineDisplay = new CNodeDisplayKiteLine({id: lineDisplayID, track: trackID});
+
+        // The kite itself. A new kite gets its design here. A saved kite gets a
+        // plain sphere, and the mods pass then restores the design it was saved with.
+        const objectNode = new CNode3DObject({
+            id: objectID,
+            displayName: CustomManager.getNextObjectName(),
+            ...(options.recipe
+                ? {proceduralModel: {mode: "procedural", recipe: options.recipe}}
+                : {geometry: "sphere", radius: 0.5, color: 0xf0f0f0, material: "phong"}),
+        });
+        objectNode.addController("TrackPosition", {sourceTrack: trackID});
+        // after TrackPosition: it turns the kite about the position that one sets
+        objectNode.addController("KiteHeading", {track: trackID});
+
+        const trackOb = this.add(trackID, new CMetaTrack(null, kiteNode, kiteNode));
+        trackOb.trackID = trackID;
+        trackOb.menuText = shortName;
+        trackOb.isKite = true;
+        trackOb.displayTrack = displayTrack;
+        trackOb.displayTrackID = displayTrackID;
+        trackOb.lineDisplayID = lineDisplayID;
+        trackOb.guiFolder = guiFolder;
+        trackOb.trackColor = trackColor;
+        trackOb.objectID = objectID;
+        this.initTrackDisplayName(trackOb, options.displayName);
+        this.linkTrackAndObject(trackOb, objectNode);
+
+        // Show-in-look-view toggle, for the track line and the flying line.
+        this.addShowInLookToggle(trackOb, guiFolder, [displayTrack, lineDisplay], !!options.showInLook);
+        this.addGeneratedTrackDeleteButton(trackOb, "kite", t("trackManager.tips.deleteKite"));
+
+        // In the Camera/Target Track switches, so the camera can follow the kite.
+        this.setTrackSwitchOption(shortName, kiteNode);
+        // The options were added under the short name; show the display name instead.
+        this.relabelTrackOptions(trackOb);
+
+        console.log(`Created kite track: ${trackID} (${shortName}) at ${options.anchorLat}, ${options.anchorLon}`);
+
+        NodeMan.recalculateAllRootFirst();
+        setRenderOne(true);
+        this.notifyTracksChanged();
+
+        return trackOb;
+    }
+
+    disposeKiteTrack(trackID) {
+        const trackOb = this.get(trackID);
+        if (!trackOb || !trackOb.isKite) {
+            console.warn(`Kite track ${trackID} not found`);
+            return;
+        }
+
+        this.usedShortNames.delete(trackOb.menuText);
+
+        // the kite object's controllers (and anything else riding the track)
+        disposeDirectTrackDependentControllers(NodeMan.get(trackID, false));
+        this.setTrackSwitchOption(trackOb.menuText, null);
+
+        if (trackOb.guiFolder) {
+            trackOb.guiFolder.destroy();
+        }
+
+        NodeMan.unlinkDisposeRemove(trackOb.lineDisplayID);
+        NodeMan.unlinkDisposeRemove(trackOb.displayTrackID);
+        NodeMan.unlinkDisposeRemove("colorKite_" + trackID);
+
+        // the kite object belongs to the kite, so it goes with it
+        if (trackOb.objectID) {
+            NodeMan.unlinkDisposeRemove(trackOb.objectID);
+        }
+
+        for (const suffix of ["_anchorAltitude", "_lineLength", "_lineWeight", "_lineDiameter", "_windVariability", "_seed"]) {
+            NodeMan.unlinkDisposeRemove(trackID + suffix);
+        }
+        NodeMan.unlinkDisposeRemove(trackID);
+
+        this.remove(trackID);
+        NodeMan.pruneUnusedFlagged();
+
+        console.log(`Deleted kite track: ${trackID}`);
+
+        if (!Globals.disposing) {
+            NodeMan.recalculateAllRootFirst();
+            setRenderOne(true);
+        }
+    }
+
+    /**
+     * Serialize all kite tracks: compact generator parameters, made again on
+     * load (deserializeKites) BEFORE the mods pass, which then restores the GUI
+     * values and the kite design by node id.
+     */
+    serializeKites() {
+        const kites = [];
+        this.iterate((id, trackOb) => {
+            if (!trackOb.isKite) return;
+            const node = trackOb.trackNode;
+            const paramValue = (suffix) => NodeMan.get(trackOb.trackID + suffix).value;
+            kites.push({
+                trackID: trackOb.trackID,
+                displayTrackID: trackOb.displayTrackID,
+                lineDisplayID: trackOb.lineDisplayID,
+                objectID: trackOb.objectID,
+                shortName: trackOb.menuText,
+                anchorLat: node.anchorLat,
+                anchorLon: node.anchorLon,
+                anchorAltitude: paramValue("_anchorAltitude"),
+                lineLength: paramValue("_lineLength"),
+                lineWeight: paramValue("_lineWeight"),
+                lineDiameter: paramValue("_lineDiameter"),
+                windVariability: paramValue("_windVariability"),
+                seed: paramValue("_seed"),
+                showInLook: !!trackOb.showInLook,
+                // the width is on the display node's "width" input, which the Line Width slider edits
+                lineWidth: trackOb.displayTrack?.in?.width?.value ?? 1,
+                color: trackColorHex(trackOb.trackColor),
+            });
+        });
+        return kites;
+    }
+
+    deserializeKites(kitesData) {
+        for (const kite of kitesData ?? []) {
+            try {
+                this.addKiteTrack(kite);
+            } catch (e) {
+                console.error(`Failed to recreate kite track ${kite.trackID}:`, e);
             }
         }
     }
@@ -3841,10 +4056,7 @@ class CTrackManager extends CManager {
                     showInLook: !!trackOb.showInLook,
                     altitudeLock: trackOb.altitudeLock,
                     altitudeLockAGL: trackOb.altitudeLockAGL,
-                    color: trackOb.trackColor ? 
-                        (Math.round(trackOb.trackColor.r * 255) << 16) |
-                        (Math.round(trackOb.trackColor.g * 255) << 8) |
-                        Math.round(trackOb.trackColor.b * 255) : 0xffff00,
+                    color: trackOb.trackColor ? trackColorHex(trackOb.trackColor) : 0xffff00,
                     lineWidth: trackOb.displayTrack?.width || 1,
                     positions: positions,
                     objectData: objectData,

@@ -1,22 +1,27 @@
-# Vehicle Designer
+# Custom Object Designer
 
-The Vehicle Designer builds 3D models of aircraft, helicopters, drones, cars,
-trucks, balloons and sky lanterns from presets and sliders. Put a model on a
-Sitrec object, or export it as a GLB (binary glTF) 3D model file. The models are
-procedural: code generates them from a set of parameters. They are visual
-models, and they do not simulate flight or lift.
+The Custom Object Designer builds 3D models of aircraft, helicopters, drones,
+cars, trucks, balloons, sky lanterns and kites from presets and sliders. Put a
+model on a Sitrec object, or export it as a GLB (binary glTF) 3D model file. The
+models are procedural: code generates them from a set of parameters. They are
+visual models, and they do not simulate flight or lift. The one exception is a
+kite: its design has flight values that **Add Kite** in Sitrec uses (see
+[Kites](#kites)).
+
+This tool was named Vehicle Designer. Its address, `tools/vehicles/`, its design
+files and its saved designs are not changed.
 
 ## Standalone editor
 
-Open **Sitrec → Extra Tools → Vehicle Designer**, or `tools/vehicles/index.html`
+Open **Sitrec → Extra Tools → Custom Object Designer**, or `tools/vehicles/index.html`
 on a built Sitrec site. It fills the browser window, with collapsible parameter
 folders on the left and a Three.js preview on the right. On narrow screens the
 preview sits above the controls. The fullscreen button hides browser chrome where supported.
 
-Choose one of 292 presets, then drag sliders or type exact values. The model
+Choose one of 307 presets, then drag sliders or type exact values. The model
 updates live, including during a drag. Edits preserve the camera; **Fit** (or **F**) frames the new shape. Drag to orbit,
 scroll to zoom, and right-drag to pan. The presets use approximate proportions
-inspired by common vehicles, not manufacturer engineering geometry. Filter by vehicle
+inspired by common vehicles, not manufacturer engineering geometry. Filter by object
 type or region, or search a name. The previous/next buttons cycle through the filtered
 results, with wrapping. Left/right arrow keys (or [ and ]) also cycle when you are
 not editing a control. Selecting an entry previews it immediately.
@@ -63,15 +68,17 @@ The editor has these file and preview controls:
   **File → Import File** or drop the GLB into Sitrec.
 - **Snapshot** saves the current 3D view as a PNG, excluding the control panel.
 - **Spin rotors / props** (or **Spin wheels**) animates the relevant assemblies; GLB exports retain their static design pose.
+  For a kite the box is **Move tails in a 12-knot wind**, and it is on when you choose a kite.
 
 ## Use a procedural model in Sitrec
 
 Each object in a sitch has a folder in the **Objects** menu (see
 [Objects and 3D Models](https://github.com/MickWest/Sitrec2/blob/main/docs/CustomModels.md)).
-Open the folder and select **Browse vehicles…**. The visual picker has all 292
+Open the folder and select **Browse custom objects…**. The visual picker has all 307
 presets, with search, type/region filters, Favorites, Recently used, and
-**My models**. Select a tile to orbit its preview, then **Use this vehicle**. The
-object in the sitch changes to the chosen model.
+**My models**. Select a tile to orbit its preview, then **Use this object**. The
+object in the sitch changes to the chosen model. The preview of a kite moves its
+tails as in a steady 12-knot wind.
 
 **Customize…** opens the full live designer. **Apply to object** accepts the
 draft, **Back** returns to the picker and keeps the draft, and **Cancel** leaves
@@ -253,6 +260,54 @@ Lanterns have open lower rims, support frames, a flame and adjustable warm glow;
 **Night** shows that glow clearly. Balloon models have no aircraft navigation lights.
 These are visual models; lift, buoyancy and heating are not simulated.
 
+## Kites
+
+**Kites** has 15 examples of seven types: diamond, delta, rokkaku (hexagon), sled,
+box, parafoil and octopus. A kite model has its nose toward +Z, which is the
+direction the wind comes from, and its origin is the tow point, where the flying
+line attaches. **Flying attitude, nose up** tilts the sail or the head.
+
+The octopus is a soft ram-air kite: a wide head with open cells at its front and
+eyes low on its sides, and eight inflated tentacles around its rear rim. The size
+in a preset name is the total length. The head is about a quarter of it.
+
+**Tails & tentacles** sets the number of tails, their type (flat ribbon or
+inflated tube), length, width, taper, fan angle and droop. Each tail is a chain of
+short joints. A wave runs along the chain to the tip, and it grows on the way. The
+phase of the wave comes from the length of air that has passed the kite, so the
+motion is faster in a stronger wind and slower for a longer tail:
+
+- **Wave length · % of tail** is the length of one wave along the tail
+- **Wave speed · % of wind speed** is how fast the wave moves along the tail. The
+  default of 55% is an estimate, not a measurement
+- **Droop in a 12-knot wind** is the angle below the horizontal at which a tail
+  leaves the kite. It sags by as much again along its length. In a lighter wind
+  the tails hang lower, and in a calm they do not move
+
+The preview and the thumbnails use a steady wind of 6 m/s (about 12 knots). On a
+kite from **Add Kite** in Sitrec, the tails use the wind at the kite on each frame.
+The motion is a function of the frame, so scrubbing and frame exports repeat it.
+
+**Flight** has the values that **Add Kite** uses to find where the kite flies:
+
+| Field | What it is |
+| --- | --- |
+| **Mass · kg** | The mass of the kite, without its line |
+| **Lifting area · m²** | The area that the lift and drag coefficients refer to. With 0, it comes from the shape: a fraction of width × length, which for the octopus is the plan area of the head |
+| **Lift coefficient** | Lift = ½ × air density × wind speed² × area × this value |
+| **Drag coefficient** | Drag, in the same way. It includes the tails and the bridle |
+
+The line angle at the kite comes from tan(angle) = (lift − weight) / drag. The
+read-outs under the preview show the **LIFTING AREA** and the **MINIMUM WIND**, at
+which the lift equals the weight. The mass of each preset is an estimate from its
+fabric area and frame. The lift and drag coefficients are estimates for each kite
+type (for example 0.90 and 0.45 for a delta, and 0.55 and 0.60 for an octopus).
+None of these values is a measurement of a real kite. See
+[Kites](https://github.com/MickWest/Sitrec2/blob/main/docs/SceneObjects.md#kites)
+for the flight model and the line.
+
+Kites have no lights and no SITREC livery.
+
 ## Adaptive SITREC livery
 
 In **SITREC livery**, select **SITREC · globe & lettering**. It applies a white and
@@ -398,7 +453,9 @@ Both entry points use the same editor markup, styles, parameter controls and
 model code. Shared modules live in `tools/vehicles/`: `generator.js` prepares
 models and metadata, `exportGLB.js` handles clean exports, `studio.js` handles
 preview rendering and camera fitting, `motion.js` poses moving parts, and
-`catalog.js` / `files.js` handle filtering and recipe files. The Sitrec modules
+`catalog.js` / `files.js` handle filtering and recipe files. `kiteFlight.js` has
+the flight values and the line statics of a kite, with no imports, so Sitrec can
+use it without the model generator. The Sitrec modules
 adapt these to object controls, scene persistence and the model library.
 Keep vehicle behavior in the shared modules; the standalone entry point only
 mounts the editor. GLB export and Freeze as GLB use the same exporter and retain

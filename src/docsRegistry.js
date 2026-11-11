@@ -180,7 +180,7 @@ export const helpDocs = [
     {
         file: "docs/CustomModels", labelKey: "menus.help.documentation.customModels",
         section: "data", menuId: "objects", role: "reference",
-        chatDesc: "Displaying and importing 3D models and the Model Inspector. Sitrec imports two model file formats: GLB (binary glTF) and PLY (mesh, Gaussian splat, or point cloud). Plain .gltf is NOT accepted — export as .glb. Also covers the built-in aircraft and other models, the preset vehicle library, flocks of birds, simple shapes, sizing, and preparing a model in Blender.",
+        chatDesc: "Displaying and importing 3D models and the Model Inspector. Sitrec imports two model file formats: GLB (binary glTF) and PLY (mesh, Gaussian splat, or point cloud). Plain .gltf is NOT accepted — export as .glb. Also covers the built-in aircraft and other models, the Custom Object Designer library of preset vehicles, balloons and kites (Browse custom objects), flocks of birds, simple shapes, sizing, and preparing a model in Blender.",
     },
     {
         file: "docs/ObjectReferences", labelKey: "menus.help.documentation.objectReferences",
@@ -190,7 +190,7 @@ export const helpDocs = [
     {
         file: "docs/SceneObjects", labelKey: "menus.help.documentation.sceneObjects",
         section: "data", menuId: "objects", role: "reference",
-        chatDesc: "How do I add a building, clouds, a ground overlay image or a measurement grid to my sitch, and how do I edit or delete them? What does each item in the right-click ground menu do, such as Drop Pin, Add 3D Object, Add Moving Object or Add Balloon? How do I delete a 3D object? How do I line up a map or satellite image with the ground?",
+        chatDesc: "How do I add a building, clouds, a ground overlay image or a measurement grid to my sitch, and how do I edit or delete them? What does each item in the right-click ground menu do, such as Drop Pin, Add 3D Object, Add Moving Object, Add Balloon or Add Kite? How do I add a kite on a line, set its line length and wind, and choose a kite type such as an octopus kite? How do I delete a 3D object? How do I line up a map or satellite image with the ground?",
     },
 
     // ── The world ───────────────────────────────────────────────────────────
@@ -227,7 +227,7 @@ export const helpDocs = [
     {
         file: "docs/Lighting", labelKey: "menus.help.documentation.lighting",
         section: "world", menuId: "lighting", role: "reference",
-        chatDesc: "Reference for the Lighting menu: sun, ambient and scattered light, exposure, shadows, atmosphere and haze, the look-view tone mapping and city lights. Also describes the halos, Brocken spectre and eclipse controls now under Show > Celestial. Read for 'why is my night scene so bright/dark', 'how do I turn on shadows', 'how do I match the video's exposure', or 'are the city lights real'.",
+        chatDesc: "Reference for the Lighting menu: sun, ambient and scattered light, exposure, shadows, atmosphere and haze, the look-view tone mapping and city lights. Also describes the halos, rainbow, Brocken spectre and eclipse controls now under Show > Celestial, and how a rainbow in a video gives the time. Read for 'why is my night scene so bright/dark', 'how do I turn on shadows', 'how do I match the video's exposure', or 'are the city lights real'.",
     },
     {
         file: "docs/Celestial", labelKey: "menus.help.documentation.celestial",

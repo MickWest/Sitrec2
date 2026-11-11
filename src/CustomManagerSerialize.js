@@ -712,6 +712,10 @@ export const serializeMethods = {
         // deserializeBalloons recreates identical node ids before the mods pass
         out.balloonTracks = TrackManager.serializeBalloons()
 
+        // Kite tracks: the same pattern. The kite design is in the mod of the kite's object.
+        const kiteTracks = TrackManager.serializeKites()
+        out.kiteTracks = kiteTracks.length ? kiteTracks : undefined
+
         // Synthetic fromApp flight: persist ONLY the compact generator params
         // (origin/dest lat-lon, cruise altitude, flight start/duration). The generated
         // MISB file is flagged skipSerialization, so it's never rehosted — on reload
@@ -1352,6 +1356,9 @@ export const serializeMethods = {
             // deterministic node ids, then the mods pass restores their state
             if (sitchData.balloonTracks) {
                 TrackManager.deserializeBalloons(sitchData.balloonTracks)
+            }
+            if (sitchData.kiteTracks) {
+                TrackManager.deserializeKites(sitchData.kiteTracks)
             }
 
             // Recreate walker marker objects (createWalker) from their saved

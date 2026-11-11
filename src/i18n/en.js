@@ -170,7 +170,7 @@ const en = {
         },
         "object": {
             "title": "Thermal surface",
-            "titleTooltip": "The temperature and emissivity of this object's surfaces in the physical thermal image (Effects > Physical thermal > Render mode = Physical MWIR thermal).\nFor a vehicle model (Browse vehicles…), opening this folder adds Vehicle thermal state and Zone overrides.",
+            "titleTooltip": "The temperature and emissivity of this object's surfaces in the physical thermal image (Effects > Physical thermal > Render mode = Physical MWIR thermal).\nFor a vehicle model (Browse custom objects…), opening this folder adds Vehicle thermal state and Zone overrides.",
             "modeTooltip": "Inherit vehicle zones / ambient: each surface keeps the thermal data of the model, such as the heat zones of a vehicle model with any Zone overrides. Surfaces without thermal data use Ambient fallback temperature (Effects > Physical thermal > Environment).\nUniform surface: every surface of this object uses Temperature and Emissivity below.",
             "uniformTemperatureKTooltip": "Temperature of every surface of this object, in K (kelvin; °C + 273.15). Used only with Render mode = Uniform surface.",
             "uniformEmissivityTooltip": "MWIR emissivity of every surface of this object, 0 to 1. 1 is a perfect emitter; a surface below 1 also reflects its surroundings, by the fraction 1 − emissivity. Used only with Render mode = Uniform surface.",
@@ -767,8 +767,8 @@ const en = {
                         tooltip: "Make the diffraction point spread function (PSF) of a camera aperture, and export it for Camera > Camera Tweaks > Diffraction Glare",
                     },
                     aircraftDesigner: {
-                        label: "Vehicle Designer",
-                        tooltip: "Build cars, trucks, aircraft, drones, balloons and sky lanterns with live sliders, searchable presets, and GLB model export",
+                        label: "Custom Object Designer",
+                        tooltip: "Build cars, trucks, aircraft, drones, balloons, sky lanterns and kites with live sliders, searchable presets, and GLB model export",
                     },
                     xmlWindAnalyzer: {
                         label: "XML Wind Profile Analyzer",
@@ -1369,6 +1369,7 @@ const en = {
             smoothingFolder: "How the track's positions are smoothed. Choose the Smoothing Method first: it decides which of the other controls apply",
             displayFolder: "How the track is drawn: its line, color and width, a wall down to the ground, and a contrail",
             balloonFolder: "Settings for this simulated balloon: its launch, its rise rate and its drift in the wind.\nHover over the title to highlight the track line in white",
+            kiteFolder: "Settings for this simulated kite: its anchor, its line and the gusts.\nThe wind and the kite's design set where it flies. Hover over the title to highlight the track line in white",
             editTrack: "Show this track's control points in the main view, so that you can move, add and delete them.\nOnly one track can be edited at a time. Press Esc to stop",
             constantSpeed: "Move along the path at one steady speed, from the first point at the start of the sitch to the last point at the end.\nOff: the track reaches each point at that point's own frame",
             extrapolateTrack: "Before the first point and after the last, continue the track in a straight line from the two end points.\nOff: the track stays at the first or last point",
@@ -1376,6 +1377,7 @@ const en = {
             deleteSynthetic: "Delete this track, after you confirm. If an object moves along it, you choose whether to delete the object too",
             deleteImported: "Delete this track from the sitch, after you confirm. The file it came from is not changed: drop the file again to get the track back",
             deleteBalloon: "Delete this balloon and its sphere, after you confirm",
+            deleteKite: "Delete this kite, its line and its object, after you confirm",
             createSpline: "Make a new editable track from 10 points spread evenly along this track. Its name ends in _sp, and it opens in edit mode",
         },
         curveTypeTooltip: "How the track goes through its points.\n"
@@ -2305,6 +2307,7 @@ const en = {
             createInOutObjectTrack: "Add Moving Object (In→Out)",
             createTrackNoObject: "Add Flight Path",
             addBalloon: "Add Balloon",
+            addKite: "Add Kite",
             addBuilding: "Add Building",
             addClouds: "Add Clouds",
             addGroundOverlay: "Add Ground Overlay",
@@ -2338,6 +2341,7 @@ const en = {
                 createInOutObjectTrack: "Add a straight track with a 3D object on it, at constant speed. It runs from this point at the In frame to a point 200 screen pixels to the right at the Out frame (the whole sitch when In and Out are not set).\nIts altitude is locked, so raising one point raises the whole track.",
                 createTrackNoObject: "Add a new track with no object, which starts at this point on the current frame.\nThe track opens in edit mode, so you can add more points.",
                 addBalloon: "Add a simulated balloon launched from the ground at this point. It rises and drifts with the wind.\nYou can then choose it as the camera or target track.",
+                addKite: "Add a simulated kite. Its line is held at this point, and the kite flies downwind where the wind puts it.\nSet the line length in its track menu, and choose the type of kite with Browse custom objects… in its object menu.",
                 addBuilding: "Add a simple 3D building at this point, in edit mode so you can shape it.",
                 addClouds: "Add a cloud layer at this point, in edit mode so you can shape it.",
                 addGroundOverlay: "Add a ground overlay (an image laid on the terrain) at this point, in edit mode. Set its image in its menu.",
