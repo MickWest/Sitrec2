@@ -94,7 +94,71 @@ export function kitePointECEF(frame, bearing, distance, height) {
 //                windToward once the kite has reached its balance position
 //   lineAngle    radians above the horizontal, of the line at the kite
 //   tension      N, the pull of the line at the kite
+//
+// THE MEAN OF THE GUSTS. The wind of the wind source is the wind during the
+// sitch, so the gusts must move the wind about it. But a gust can last longer
+// than a short sitch: in 30 seconds, one slow gust holds the wind to one side
+// for the whole sitch, and the kite then flies as if the wind came from a
+// different direction. So the gusts are made with a mean of zero over the
+// frames of the sitch: the part of the gusts that is slower than the sitch is
+// removed, and the faster part stays.
+//
+// The bake has three steps. First the kite flies in the wind of the wind source
+// with no gusts. Then the gusts are made for that flight, because how long a
+// gust lasts goes with the height of the kite and with the wind speed. Then the
+// kite flies in those gusts. (To take the gust heights from a flight WITH gusts
+// does not work: a gust that holds the kite up for the whole sitch then sets
+// the length of the gusts for a kite that, with the mean taken out, flies lower.)
+//
+// In the gusts, the kite starts where the wind of the wind source puts it. It
+// does not start in balance with the gust of the first frame. A kite follows a
+// gust with a delay, which can be as long as a short sitch, so it would stay
+// near that first position, to one side, for most of the frames.
 export function integrateKiteStates(params, windAt) {
+    const steady = flyKite(params, windAt, null, null);
+    if (!(params.variabilityPct > 0)) return steady;
+    const {bearing, downwind, height} = steady[0].kite;
+    const start = {e: Math.sin(bearing) * downwind, n: Math.cos(bearing) * downwind, u: height};
+    return flyKite(params, windAt, makeGusts(params, steady), start);
+}
+
+// The along-wind and the crosswind gust for each frame, each as a multiple of
+// its standard deviation, and each with a mean of zero over the frames.
+// `steady` is the flight with no gusts.
+function makeGusts({seed = 1, frames, dt}, steady) {
+    const rand = mulberry32((seed >>> 0) || 1);
+    // A random number with a normal distribution: mean 0, standard deviation 1.
+    const normal = () => Math.sqrt(-2 * Math.log(1 - rand())) * Math.cos(2 * Math.PI * rand());
+    // `raw` is the random process and `smooth` follows it. `sizes` is the gust on each frame.
+    const gusts = [GUST_LENGTH_ALONG, GUST_LENGTH_CROSS].map(length => {
+        const raw = normal();
+        return {length, raw, smooth: raw, sizes: new Float64Array(frames)};
+    });
+    for (let f = 0; f < frames; f++) {
+        const height = Math.max(GUST_LEAST_HEIGHT, Math.min(GUST_MOST_HEIGHT, steady[f].kite.height));
+        for (const gust of gusts) {
+            // How long a gust lasts. Each frame keeps a part of the last
+            // value and adds a new random part, so the size of the gusts
+            // does not change with the frame rate.
+            const lasts = gust.length * height / Math.max(steady[f].kite.windSpeed, LIGHT_AIR);
+            const keep = Math.exp(-dt / lasts);
+            gust.raw = gust.raw * keep + Math.sqrt(1 - keep * keep) * normal();
+            gust.smooth += (gust.raw - gust.smooth) * (1 - Math.exp(-dt / GUST_SMOOTHING));
+            // The smoothing takes a little from the size of the gusts: put it back.
+            gust.sizes[f] = gust.smooth * Math.sqrt(1 + GUST_SMOOTHING / lasts);
+        }
+    }
+    return gusts.map(({sizes}) => {
+        const mean = sizes.reduce((sum, size) => sum + size, 0) / Math.max(1, frames);
+        return sizes.map(size => size - mean);
+    });
+}
+
+// Fly the kite: its state for every frame (see integrateKiteStates). `gusts` is
+// null for no gusts, or the result of makeGusts. `start` is the kite on the
+// first frame, in metres {e, n, u} from the anchor, or null to start it at its
+// balance position in the wind of that frame.
+function flyKite(params, windAt, gusts, start) {
     const {
         anchorLat, anchorLon,
         anchorAltMSL = 0,
@@ -103,56 +167,31 @@ export function integrateKiteStates(params, windAt) {
         lineDiameter = 0,
         properties,
         variabilityPct = 0,
-        seed = 1,
         frames,
         dt,
         geoidOffset = meanSeaLevelOffset,
     } = params;
 
-    const rand = mulberry32((seed >>> 0) || 1);
-    // A random number with a normal distribution: mean 0, standard deviation 1.
-    const normal = () => Math.sqrt(-2 * Math.log(1 - rand())) * Math.cos(2 * Math.PI * rand());
     const frame = kiteAnchorFrame(anchorLat, anchorLon, anchorAltMSL, geoidOffset);
     const out = new Array(frames);
-
-    // The along-wind and the crosswind gust, each as a multiple of its standard
-    // deviation. `raw` is the random process and `smooth` follows it.
-    const gusts = [GUST_LENGTH_ALONG, GUST_LENGTH_CROSS].map(length => {
-        const raw = normal();
-        return {length, raw, smooth: raw, value: 0};
-    });
     let windToward = 0;
     let air = 0;
     // The kite, in metres east, north and up of the anchor.
-    let kite = null;
+    let kite = start ? {...start} : null;
 
     for (let f = 0; f < frames; f++) {
-        // The wind at the kite's own height. On the first frame the kite starts at its balance
-        // position, and its height sets the wind that it meets, so solve that a few times.
+        // The wind at the kite's own height. A kite with no given start is at its balance position
+        // on the first frame, and its height sets the wind that it meets, so solve that a few times.
         let line, windSpeed;
-        for (let pass = 0; pass < (f === 0 ? 8 : 1); pass++) {
+        for (let pass = 0; pass < (f === 0 && !start ? 8 : 1); pass++) {
             const wind = windAt(anchorLat, anchorLon, anchorAltMSL + (kite ? kite.u : lineLength * 0.5), f) || {u: 0, v: 0};
 
             const baseSpeed = Math.hypot(wind.u, wind.v);
-            if (variabilityPct > 0 && pass === 0) {
-                const height = Math.max(GUST_LEAST_HEIGHT, Math.min(GUST_MOST_HEIGHT, kite ? kite.u : lineLength * 0.5));
-                for (const gust of gusts) {
-                    // How long a gust lasts. Each frame keeps a part of the last
-                    // value and adds a new random part, so the size of the gusts
-                    // does not change with the frame rate.
-                    const lasts = gust.length * height / Math.max(baseSpeed, LIGHT_AIR);
-                    const keep = Math.exp(-dt / lasts);
-                    gust.raw = gust.raw * keep + Math.sqrt(1 - keep * keep) * normal();
-                    gust.smooth += (gust.raw - gust.smooth) * (1 - Math.exp(-dt / GUST_SMOOTHING));
-                    // The smoothing takes a little from the size of the gusts: put it back.
-                    gust.value = gust.smooth * Math.sqrt(1 + GUST_SMOOTHING / lasts);
-                }
-            }
             // The gusts are along and across the wind of the wind source.
             let u = wind.u, v = wind.v;
-            if (variabilityPct > 0 && baseSpeed > 1e-6) {
+            if (gusts && baseSpeed > 1e-6) {
                 const sigma = (variabilityPct / 100) * baseSpeed;
-                const along = sigma * gusts[0].value / baseSpeed, across = sigma * CROSSWIND_GUST_RATIO * gusts[1].value / baseSpeed;
+                const along = sigma * gusts[0][f] / baseSpeed, across = sigma * CROSSWIND_GUST_RATIO * gusts[1][f] / baseSpeed;
                 u += wind.u * along - wind.v * across;
                 v += wind.v * along + wind.u * across;
             }
@@ -165,7 +204,7 @@ export function integrateKiteStates(params, windAt) {
 
             const balance = {e: Math.sin(windToward) * line.downwind, n: Math.cos(windToward) * line.downwind, u: line.height};
             if (f === 0) {
-                kite = balance;
+                if (!start) kite = balance;
             } else {
                 const de = balance.e - kite.e, dn = balance.n - kite.n, du = balance.u - kite.u;
                 const distance = Math.hypot(de, dn, du);

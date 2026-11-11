@@ -181,6 +181,13 @@ wind lasts about one minute, and a gust across the wind about 20 seconds. Nearer
 gusts are shorter. The ratio and the lengths are those of the Kaimal turbulence model in the
 wind-turbine standard IEC 61400-1.
 
+Over the frames of the sitch, the gusts have a mean of zero. So the mean wind at the kite is
+the wind of the sitch, and the kite moves about the position that this wind gives. On the first
+frame the kite is at that position, and the gusts then move it. A gust that
+lasts longer than the sitch is not in it. Thus in a short sitch the wind changes less than
+**Wind Variability (%)** gives. The mean is over all the frames of the sitch: if you change the
+number of frames, the gusts change, and the kite moves at every frame.
+
 Typical values of **Wind Variability (%)** at a height of 50 m, from the turbulence formula of
 the wind-load standard EN 1991-1-4. The values are larger nearer the ground: at 20 m, by one
 tenth over the sea and by one third in a town center.
@@ -218,6 +225,95 @@ line) and **Delete Track**, which asks before it deletes the kite and its object
 anchor, drag the kite with its move widget, or hold **Option** / **Alt** and drag it: the anchor
 moves by the same amount, and the kite flies from the new anchor. The kite is added to the
 camera and target track lists.
+
+### Kite Anchor Finder
+
+**Add Kite** starts from the anchor and gives the position of the kite. The **Kite Anchor
+Finder** does the reverse. It starts from an object in the video, and it shows where on the
+ground the line of a kite at that position can be held. You can then see if that place is one
+where a person can fly a kite, such as a park. It is the **Kite Anchor Finder** folder in the
+**Traverse** menu of a custom sitch.
+
+![Main view from above a park at an angle. A white line goes across the picture in the air above a row of houses. Below it, on the grass of the park, one wide yellow line and four orange lines go from the lower left to the upper right. A yellow outline on the grass has the label "2 m kite, 54 m line". A white line goes from the outline up to the white line in the air. A thinner white line goes from a small kite in the air down to the yellow line on the grass](docimages/scene-objects-kite-anchor-finder.jpg)
+
+The Kite Anchor Finder in the main view. The white line in the air is the part of the line of sight where the kite can be. The wide yellow line and the four orange lines on the ground are the band of possible anchors. The yellow outline holds the anchors for a kite that is 2 m across, and a white line goes from that kite to the middle of the outline. The thinner white line is the flying line of a kite from **Add Kite**. Its anchor is in the band.
+
+To use it:
+
+1. Give Sitrec the line of sight to the object. The finder uses **Traverse → LOS Source** at the
+   current frame. Point the camera at the object, with **LOS Source** at **Camera Center**. Or
+   mark the object in the video: hold **Ctrl** (**Cmd** on a Mac) and click it, then set **LOS
+   Source** to **Camera + Object Track**. See
+   [Point Track, Manual Tracking and Ground Track](PointTrack.md#point-track-manual-tracking-and-ground-track).
+2. Set the wind of that time. See [Wind in Sitrec](Wind.md).
+3. In **Traverse → Kite Anchor Finder**, set **Object Size (px)** to the size of the object in
+   the video, in pixels of the video frame. Measure one part of the object, for example the width
+   of its head.
+4. Set **Kite Size Min (m)** and **Kite Size Max (m)** to the range of real sizes of that same
+   part of the kite.
+5. Turn on the checkbox in the title of the folder (**Show Anchor Band**).
+
+The finder does this calculation:
+
+- **Object Size (px)** and the field of view of the camera give the angle that the object makes
+  at the camera. A kite of one real size is then at one distance from the camera: its size
+  divided by that angle in radians. The range of kite sizes gives a part of the line of sight.
+- A kite flies downwind of its anchor. So, for each position of the kite, the anchor is upwind,
+  at the point where a straight line that goes down at the flight angle meets the ground. Over
+  flat ground, the distance to that point is the height of the kite divided by the tangent of
+  the flight angle. For a kite 60 m above the ground, that is 104 m at 30°, 60 m at 45° and 35 m
+  at 60°.
+- The flight angle and the wind direction each have a range. So one kite size gives an area on
+  the ground, and all the kite sizes give a band.
+
+The finder draws these lines in the main view. They are drawn over the terrain and the buildings.
+
+| Line | Meaning |
+|---|---|
+| White line in the air | The part of the line of sight where the kite can be, from the smallest kite size to the largest |
+| Wide yellow line | The anchors for the middle flight angle and the wind direction of the sitch |
+| Four orange lines | The sides of the band: the lowest and the highest flight angle, each with the wind turned to the left and to the right by **Wind Direction Error (±°)** |
+| Yellow outline with a label | All the anchors for one kite size. The label gives that size and the length of a straight line from the anchor to the kite |
+| White line from the air to an outline | The flying line of that kite as a straight line, for the middle flight angle and the wind direction of the sitch |
+
+The folder has these settings. They are saved with the sitch.
+
+| Control | Default | What it does |
+|---|---|---|
+| **Show Anchor Band** (the checkbox in the title) | off | Draws the band. While it is off, the finder does no work |
+| **Object Size (px)** | 10 | The size of the object in the video, in pixels of the video frame |
+| **Kite Size Min (m)** | 1 | The smallest real size of that part of the kite. A smaller kite is nearer to the camera |
+| **Kite Size Max (m)** | 5 | The largest real size of that part of the kite. A larger kite is farther from the camera |
+| **Flight Angle Min (°)** | 30 | The lowest angle above the horizontal of a straight line from the anchor to the kite. A lower angle puts the anchor farther upwind |
+| **Flight Angle Max (°)** | 60 | The highest angle above the horizontal of a straight line from the anchor to the kite |
+| **Wind Direction Error (±°)** | 20 | How far the wind direction at the kite can be from the wind of the sitch, to each side |
+| **Max Line Length (m)** | 300 | The longest flying line. A kite that needs a longer line has no anchor in the band |
+| **Angular Size** (read only) | | The angle that the object makes at the camera, in degrees and in milliradians |
+| **Wind at Kite** (read only) | | The wind of the sitch at the middle of the kite positions: the direction that it comes from, and its speed |
+| **Kite Distance** (read only) | | The distance from the camera to the kite, for the smallest and the largest kite size |
+| **Kite Height** (read only) | | The height of the kite above the ground below it: the lowest and the highest of the kite positions. It ends with *part below the ground* when some kite positions are in the ground |
+| **Line Length** (read only) | | The length of a straight line from the anchor to the kite for the middle flight angle: the shortest and the longest in the band. When only some kite sizes have an anchor, those sizes follow |
+
+**The flight angle.** This is the angle that **Kite Position** shows for a kite from **Add
+Kite**. In a strong wind, the preset kites fly at about 40° (octopus kite) to about 60° (delta
+kite), from the lift and drag estimates of their designs. A kite flies lower in a light wind,
+and on a heavy line. The finder does not use a kite design: the flight angle is a setting.
+
+**The wind.** The finder uses the wind of the sitch at each position of the kite, at the current
+frame. With weather profiles, that is the wind at the height of the kite. A weather report is
+for a different place and height, and hills and buildings turn the wind: **Wind Direction Error
+(±°)** is for that difference.
+
+The finder has these limits:
+
+- The ground is the elevation data of the terrain. It is not the surface of the 3D building
+  tiles, which has the roofs and the trees.
+- The line from the anchor to the kite is straight. A real line sags, so it is longer than the
+  **Line Length**.
+- A kite position that is below the ground has no anchor. This occurs where the line of sight
+  goes into a hill.
+- The result is for the current frame. When the object moves in the video, or the camera moves,
+  the band moves.
 
 ### Pins
 

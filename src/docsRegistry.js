@@ -190,7 +190,7 @@ export const helpDocs = [
     {
         file: "docs/SceneObjects", labelKey: "menus.help.documentation.sceneObjects",
         section: "data", menuId: "objects", role: "reference",
-        chatDesc: "How do I add a building, clouds, a ground overlay image or a measurement grid to my sitch, and how do I edit or delete them? What does each item in the right-click ground menu do, such as Drop Pin, Add 3D Object, Add Moving Object, Add Balloon or Add Kite? How do I add a kite on a line, set its line length and wind, and choose a kite type such as an octopus kite? How do I delete a 3D object? How do I line up a map or satellite image with the ground?",
+        chatDesc: "How do I add a building, clouds, a ground overlay image or a measurement grid to my sitch, and how do I edit or delete them? What does each item in the right-click ground menu do, such as Drop Pin, Add 3D Object, Add Moving Object, Add Balloon or Add Kite? How do I add a kite on a line, set its line length and wind, and choose a kite type such as an octopus kite? If an object in the video is a kite, how do I find where on the ground its line is held (Traverse > Kite Anchor Finder, the band of possible anchors from the object's size in pixels, a range of kite sizes, the flight angle and the wind)? How do I delete a 3D object? How do I line up a map or satellite image with the ground?",
     },
 
     // ── The world ───────────────────────────────────────────────────────────

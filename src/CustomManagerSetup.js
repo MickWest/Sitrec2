@@ -79,6 +79,7 @@ import {CNodeControllerTrackingWobble} from "./nodes/CNodeControllerTrackingWobb
 import {CNodeAutoTrackLOS} from "./nodes/CNodeAutoTrackLOS";
 import {CNodeGroundTrack} from "./nodes/CNodeGroundTrack";
 import {CNodeGroundTrackLOS} from "./nodes/CNodeGroundTrackLOS";
+import {CNodeKiteAnchorFinder} from "./nodes/CNodeKiteAnchorFinder";
 import {CNodeAnnotateOverlay} from "./nodes/CNodeAnnotateOverlay";
 import {CNodeMaskOverlay} from "./nodes/CNodeMaskOverlay";
 import {CNodeFitCameraPoints} from "./nodes/CNodeFitCameraPoints";
@@ -341,6 +342,15 @@ export const setupMethods = {
                 jetLOS.addOption(groundTrackOptionName, NodeMan.get("groundTrackLOS"));
                 jetLOS.controller?.updateDisplay();
             }
+        }
+
+        // The Kite Anchor Finder (Traverse menu): for a kite on the line of sight, it draws
+        // where on the ground the line can be held. Created here for the same reasons as the
+        // ground track above: an older save gets one on reload, and its settings are in the
+        // node's own mod. It does no work until its title checkbox is on.
+        if (Sit.isCustom && NodeMan.exists("JetLOSCameraCenter") && NodeMan.exists("JetLOS")
+            && !NodeMan.exists("kiteAnchorFinder")) {
+            new CNodeKiteAnchorFinder({id: "kiteAnchorFinder"});
         }
 
         // Create the Annotate overlay on the video view. It's hidden / no-op until the

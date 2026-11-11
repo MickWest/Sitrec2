@@ -3928,6 +3928,61 @@ const en = {
         },
     },
 
+    kiteAnchorFinder: {
+        folderTooltip: "For an object that can be a kite: find where on the ground its line is held.\nThe kite is on the line of sight of Traverse > LOS Source at the current frame. The size of the object in the video and a range of real kite sizes give the part of that line where the kite can be. The anchor of each kite is upwind of it, where a straight line that goes down at the flight angle meets the ground.\nThe result is a band on the ground in the main view.",
+        enabled: {
+            label: "Show Anchor Band",
+            tooltip: "Draw the band of possible anchor points on the ground in the main view.\nThe orange lines are the sides of the band. The wide yellow line is for the middle flight angle and the wind as it is set. Each outline holds the anchors for one kite size, with that size and the length of the line. A white line goes from each of those kites, on the line of sight, to its anchor.",
+        },
+        objectPixels: {
+            label: "Object Size (px)",
+            tooltip: "The size of the object in the video, in pixels of the video frame. Measure one part of the object, for example the width of its head.\nThe camera's field of view makes this an angle: see Angular Size.",
+        },
+        sizeMin: {
+            label: "Kite Size Min (m)",
+            tooltip: "The smallest real size of that same part of the kite, in meters. A smaller kite is nearer to the camera.",
+        },
+        sizeMax: {
+            label: "Kite Size Max (m)",
+            tooltip: "The largest real size of that same part of the kite, in meters. A larger kite is farther from the camera.",
+        },
+        flightAngleMin: {
+            label: "Flight Angle Min (°)",
+            tooltip: "The lowest angle above the horizontal of a straight line from the anchor to the kite. A lower angle puts the anchor farther upwind.\nIn a strong wind, the preset kites of the Custom Object Designer fly at about 40° (octopus kite) to about 60° (delta kite). A kite flies lower in a light wind, and on a heavy line. The Kite Position of a kite from Add Kite shows this angle.",
+        },
+        flightAngleMax: {
+            label: "Flight Angle Max (°)",
+            tooltip: "The highest angle above the horizontal of a straight line from the anchor to the kite. A higher angle puts the anchor nearer to the point below the kite.",
+        },
+        windError: {
+            label: "Wind Direction Error (±°)",
+            tooltip: "How far the wind direction at the kite can be from the wind of the sitch, to each side. A weather report is for a different place and height, and hills and buildings turn the wind.\nThe wind of the sitch is in Physics > Wind. With weather profiles, it is the wind at the height of the kite.",
+        },
+        maxLineLength: {
+            label: "Max Line Length (m)",
+            tooltip: "The longest flying line. A kite that needs a longer line than this has no anchor in the band.",
+        },
+        angularText: {
+            label: "Angular Size",
+            tooltip: "The angle that the Object Size makes at the camera, in degrees and in milliradians. A kite that is 1 m across at 1 km is 1 milliradian.",
+        },
+        windText: {
+            label: "Wind at Kite",
+            tooltip: "The wind of the sitch at the middle of the kite positions, at the current frame: the direction that it comes from, and its speed.",
+        },
+        distanceText: {
+            label: "Kite Distance",
+            tooltip: "The distance from the camera to the kite, for the smallest and the largest kite size.",
+        },
+        heightText: {
+            label: "Kite Height",
+            tooltip: "The height of the kite above the ground below it: the lowest and the highest of the kite positions.\nA line of sight that goes into a hill puts some kite positions below the ground. Those have no anchor.",
+        },
+        lineText: {
+            label: "Line Length",
+            tooltip: "The length of a straight line from the anchor to the kite, for the middle flight angle: the shortest and the longest in the band. A real line sags, so it is a little longer.\nWhen only some kite sizes have an anchor, those sizes follow.",
+        },
+    },
     trackingOverlay: {
         folderTooltip: "Track an object by hand. Ctrl-click (Cmd-click on Mac) the video to place a keyframe at the current frame. Drag a keyframe to move it, or Alt-click (Option-click on Mac) it to delete it. A curve joins the keyframes.\nTraverse > LOS Source > Camera + Object Track uses this curve as the line of sight.",
         showTracking: {
