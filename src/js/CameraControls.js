@@ -103,6 +103,10 @@ class CameraMapControls {
 		this.enableZoom = true;
 		this.zoomSpeed = 1;
 		this.rotateSpeed = 0.5;
+		// The pivot for orbit and zoom: the point under the pointer at the last press or
+		// wheel that found the ground, or one set by code (a focus track, an imported photo).
+		// It starts at the ECEF origin, which is the center of the Earth and means "no pivot
+		// yet" - see hasPivot().
 		this.target = new Vector3()
 		this.targetIsTerrain = false;
 
@@ -732,6 +736,12 @@ class CameraMapControls {
 			this.zoomFovBy(delta);
 
 		} else {
+
+			// The dolly moves the camera along the line to the pivot. With no pivot yet
+			// (see hasPivot) that line goes to the center of the Earth, and one wheel step
+			// on the sky moved the camera more than 1,000 km along it. So the zoom does
+			// nothing until there is a pivot.
+			if (!this.hasPivot()) return;
 
 			// Flat Earth rendering note: this.target is the globe-space
 			// (physics) point under the cursor, and dollying toward it in
@@ -1672,13 +1682,33 @@ class CameraMapControls {
 	}
 
 
+	// False until something sets this.target.
+	//
+	// A press or a wheel step refreshes this.target only when its ray finds the ground, so
+	// one on the sky keeps the earlier pivot. Until the first that finds the ground, the
+	// pivot is still the ECEF origin, which is the center of the Earth. That point is never
+	// a pivot that the user chose, so the orbit and the zoom must not use it.
+	hasPivot() {
+		return this.target.lengthSq() !== 0;
+	}
+
+	// The point that rotateLeft and rotateUp turn the camera about.
+	//
+	// An orbit about the center of the Earth moved the camera hundreds of kilometers for a
+	// short vertical drag. The horizontal part of the drag did nothing, because the local
+	// up vector of the origin has no length. With no pivot yet, the camera turns in place.
+	orbitPivot() {
+		return this.hasPivot() ? this.target : this.camera.position.clone();
+	}
+
 	// rotate the camera around the target, so we rotate
 	rotateLeft(angle) {
-		this.camera.position.sub(this.target) // make relative to the target
+		const pivot = this.orbitPivot();
+		this.camera.position.sub(pivot) // make relative to the pivot
 		//const up = new Vector3(0,1,0)
-		const up = getLocalUpVector(this.target)
-		this.camera.position.applyAxisAngle(up, -angle) // rotate around origin (around target)
-		this.camera.position.add(this.target) // back into world space
+		const up = getLocalUpVector(pivot)
+		this.camera.position.applyAxisAngle(up, -angle) // rotate around origin (around pivot)
+		this.camera.position.add(pivot) // back into world space
 		this.camera.rotateOnWorldAxis(up, -angle) // rotate the camere as well, so target stays in same spot
 
 	}
@@ -1704,13 +1734,14 @@ class CameraMapControls {
 //			console.log("rotateUp: angle=" + degrees(angle).toFixed(2) + " downAngleStart=" + downAngleStart.toFixed(2) + " maxTilt=" + this.maxTilt);
 		}
 
-		this.camera.position.sub(this.target) // make relative to the target
+		const pivot = this.orbitPivot();
+		this.camera.position.sub(pivot) // make relative to the pivot
 		// need to get the local right vector
 		var rotationMatrix = new Matrix4().extractRotation(this.camera.matrixWorld);
 		var right = new Vector3(1, 0, 0).applyMatrix4(rotationMatrix).normalize();
 
-		this.camera.position.applyAxisAngle(right, -angle) // rotate around origin (around target)
-		this.camera.position.add(this.target) // back into world space
+		this.camera.position.applyAxisAngle(right, -angle) // rotate around origin (around pivot)
+		this.camera.position.add(pivot) // back into world space
 
 		this.camera.rotateOnWorldAxis(right, -angle) // rotate the camere as well, so target stays in same spot
 
