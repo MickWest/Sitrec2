@@ -35,7 +35,13 @@ not return it and the bootstrap ignores it, so a Beta preference and an explicit
 `?channel=beta` both open Shipped. Equal versions do not retire a Beta.
 
 Beta labels show the version with the suffix `b` and a UTC build time. Each build
-also has a unique internal build ID, which is in its `build-info.json`. Saved files
+also has a unique internal build ID, which is in its `build-info.json`. A build also
+writes `app-chunks.json`: the file name of each of its lazy-loaded chunks, by chunk ID,
+and the name of the global that its chunks register on. A page that still runs an
+older build reads these two files, with no cache, when one of its own chunks is no
+longer on the server (`src/StaleBuildRecovery.js`; for the user's side see
+[When Sitrec is updated while a sitch is open](../SavingAndLoading.md#when-sitrec-is-updated-while-a-sitch-is-open)).
+The page asks for both with `cache: "no-store"`, so they need no cache header. Saved files
 retain the creating build's metadata, including this ID, separately from their
 numeric migration version. A Shipped reader opening a beta save can open the
 available Beta, cancel, or continue in Shipped. Once a reviewed release includes

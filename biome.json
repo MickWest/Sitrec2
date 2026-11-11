@@ -24,7 +24,10 @@
 			"__SITREC_BUILD_DIR__",
 			"__SITREC_BROWSER_PROCESS_ENV__",
 			"INCLUDE_IWER_EMULATOR",
-			"BRIDGE_ZIP_PACKAGED"
+			"BRIDGE_ZIP_PACKAGED",
+			"__webpack_chunk_load__",
+			"__webpack_get_script_filename__",
+			"__webpack_require__"
 		]
 	},
 	"linter": {

@@ -521,6 +521,12 @@ export class CCustomManager {
         const trackOb = TrackManager.trackForObject(id);
         if (trackOb?.objectID === id) TrackManager.detachObject(trackOb);
 
+        // The Location folder of the object (addObjectLocation) listens to its Position.
+        if (node.positionChoiceHandler) {
+            EventManager.removeEventListener(node.positionChoiceEvent, node.positionChoiceHandler);
+            node.positionChoiceHandler = null;
+        }
+
         const positionID = node.fixedObjectPositionID;
         // Sub-nodes first, the object last, so no node is disposed holding a link to a
         // disposed object (the same order as the create-object undo).

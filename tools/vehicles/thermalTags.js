@@ -21,7 +21,7 @@ export function visibleVehicleBounds(root) {
 export function vehicleThermalDefaults(p) {
     const rotor = p.rotorLayout && p.rotorLayout !== "none";
     const prop = p.engineType === "prop", turbine = p.engineType === "turboprop";
-    const road = ["car", "truck"].includes(p.vehicleType), balloon = p.vehicleType === "balloon", kite = p.vehicleType === "kite";
+    const road = ["car", "truck"].includes(p.vehicleType), balloon = p.vehicleType === "balloon", kite = ["kite", "bird"].includes(p.vehicleType);
     const electric = p.vehicleType === "drone" && p.droneStyle !== "fixedwing";
     const lantern = balloon && ["lantern", "boxlantern", "pagoda"].includes(p.balloonShape);
     const heatedEnvelope = balloon && ["hotair", "solar"].includes(p.balloonShape);

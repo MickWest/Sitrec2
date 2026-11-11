@@ -38,7 +38,7 @@ You can select and copy this text.
 | **Set Target Above** | Moves the target's fixed position to the clicked latitude and longitude. The target keeps its current altitude | The target position |
 | **Set Target on Ground** | Moves the target's fixed position to the clicked point, on the ground | The target position |
 | **Drop Pin** | Places a labelled pin (a feature marker) and opens its edit window with the label text selected, ready to type | See [Pins](#pins) |
-| **Add 3D Object** | Places a grey sphere, 5 m in radius (10 m across), that stays in one place. It has no track | **Objects** menu, as *Object 1*, *Object 2*, ... |
+| **Add 3D Object** | Places a grey sphere, 5 m in radius (10 m across), that stays in one place. It has no track, but you can put it on one later: see [3D objects](#3d-objects) | **Objects** menu, as *Object 1*, *Object 2*, ... |
 | **Add Moving Object** | Starts a new hand-drawn track at the clicked point, at the current frame, with a grey sphere, 5 m in radius, riding on it. The track opens in edit mode | Track in **Contents** and object in **Objects**, with the same number: *Track 3* and *Object 3*, one more than the highest track or object number |
 | **Add Moving Object (In→Out)** | Makes a straight track with an object riding on it, with control points at the In and Out frames. See [In→Out tracks](#in-out-tracks) | Track in **Contents**, object in **Objects**, named as above |
 | **Add Flight Path** | Starts a new hand-drawn track, with no object, at the clicked point, at the current frame, in edit mode | **Contents**, as *Track 1*, *Track 2*, ... |
@@ -211,6 +211,32 @@ radius on open ground can be hard to find. While the window is open you can drag
 the move widget that appears when the pointer is near it. The window holds the same controls as the
 object's folder in the **Objects** menu: geometry or model, size, material and so on. See
 [Objects and 3D Models](CustomModels.md).
+
+#### Location: a manual position, or a track
+
+The folder of an object from **Add 3D Object**, **Add Moving Object** or **Add Moving Object
+(In→Out)** has a **Location** group, directly below **Name**. Its **Position** control sets what
+gives the object its position:
+
+- **Manual**: the **Lat**, **Lon** and **Alt** values below it, with **Above Ground Level** and
+  **Allow Small Altitudes**, as in the camera's **Location** group. You can also drag the object
+  with the move widget. An object from **Add 3D Object** starts here.
+- **A track**: every track of the sitch is in the list, by its name: hand-drawn tracks, loaded
+  tracks, balloons and kites. The object moves along the track and points along it, and the manual
+  values are hidden. An object from **Add Moving Object** starts on its own track.
+
+So, to put an object on a path that is already there, select the path in **Position**. Several
+objects can be on one track. When you change **Position** back to **Manual**, the object stays
+where the track put it on the current frame. The same happens when you delete the track. A track
+that you add or load later comes into the list by itself, and no object goes to it by itself.
+
+![The Location group of an object in two states. Left: Position on Manual, with the Lat, Lon and Alt values. Right: Position on Track 1, with those values hidden](docimages/scene-objects-location.jpg)
+
+The **Banking** control of the object sets how it points on the track. With **Position** on
+**Manual** the object does not move, so it keeps the heading that it has: north for a new object.
+Select **Fixed Heading** in **Banking** to turn it.
+
+A balloon's sphere and a kite stay with their own track, and have no **Location** group.
 
 In the folder, the size of a generated shape (for example **Radius (m)**) is just below
 **Geometry**, and its segment counts are in the closed **Mesh Detail** group. Sizes are in

@@ -113,7 +113,7 @@ export function resolveVehicleThermal(recipe, {airTemperatureK, mach, power, can
         if (p.vehicleType === "balloon") profile = ["foil", "star", "heart"].includes(p.balloonShape) ? "foil" :
             ["lantern", "boxlantern", "pagoda"].includes(p.balloonShape) ? "lantern" :
             ["hotair", "solar"].includes(p.balloonShape) ? "hotair" : ["blimp"].includes(p.balloonShape) ? "unpowered" : "latex";
-        else if (p.vehicleType === "kite") profile = "unpowered";
+        else if (["kite", "bird"].includes(p.vehicleType)) profile = "unpowered";
         else if (p.rotorLayout && p.rotorLayout !== "none") profile = "turboshaft";
         else if (p.vehicleType === "drone" && p.droneStyle !== "fixedwing") profile = "electric";
         else if (p.engineType === "none") profile = "unpowered";

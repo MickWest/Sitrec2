@@ -168,6 +168,36 @@ The Local menu has a persistent **Status** row showing:
 If local save fails, Sitrec shows a user-visible error dialog with error type/code/message and recovery guidance.
 For example, `NotFoundError` usually means the selected folder/file was moved, deleted, or is no longer accessible.
 
+## When Sitrec is updated while a sitch is open
+
+Sitrec loads some of its parts only when you first use them, for example the Custom Object
+Designer. When a new version of Sitrec goes on the server, a page that was opened before that
+still runs the old version, and the old version's files for those parts can be gone. The first
+time that you ask for such a part, Sitrec shows the **Sitrec was updated** dialog. It gives the
+version that the page runs and the version on the server, and it says if the sitch has changes
+that are not saved.
+
+![The Sitrec was updated dialog, with its four choices](docimages/saving-stale-build.jpg)
+
+| Choice | What it does |
+|---|---|
+| **Save and reload** | Saves the sitch as **Ctrl/Cmd+S** does (see [Keyboard Shortcuts](#keyboard-shortcuts)), then reloads the page with the new version. After a save to the server, the page opens the saved sitch. |
+| **Reload with a temporary save** | Keeps the sitch in the storage of this browser, reloads the page, and opens the sitch again. Nothing goes to the server, and the page address stays the same. The sitch still has its unsaved changes after the reload, so save it when you are ready. |
+| **Try to continue** | Loads the part from the new version into the page that you have. Use it when you cannot reload now. It can fail, or the part can work incorrectly, if the two versions are too different. Save and reload when you can. |
+| **Cancel** | Does nothing. The part that you asked for stays unavailable, with the error message that it gave before. |
+
+A temporary save holds what a sitch file holds. It cannot hold a file that is only in the memory
+of the page: a video, a track or a model that you dragged in and did not save yet. When the
+sitch has such files, the dialog names them and **Reload with a temporary save** is grayed out.
+Use **Save and reload**, which saves those files.
+
+The temporary save is for one reload of the same browser tab. Sitrec removes it when the page
+opens it, and does not use one that is more than ten minutes old.
+
+A sitch that cannot be saved (one of the built-in sitches that does not allow changes) has a
+plain **Reload** in place of the two save choices. **Try to continue** is offered only when the
+new version replaced the old one in the same place on the server.
+
 ## Caveats
 
 - Server save/load options may be hidden in builds where server saving is disabled.

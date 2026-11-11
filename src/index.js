@@ -65,6 +65,7 @@ import {registerNodes} from "./RegisterNodes";
 import {registerSitches, textSitchToObject} from "./RegisterSitches";
 import {approveSitchChannel} from './release/ChannelUI';
 import {takeChannelHandoff} from './release/channelHandoff';
+import {installStaleBuildRecovery} from "./StaleBuildRecovery";
 import {SetupMouseHandler} from "./mouseMoveView";
 import {initKeyboard, showHider} from "./KeyBoardHandler";
 import {initTooltips} from "./Tooltips";
@@ -271,6 +272,10 @@ document.addEventListener('touchmove', (event) => {
 }, { passive: false });
 
 console.log ("SITREC START " + process.env.BUILD_VERSION_STRING);
+
+// A lazy part of Sitrec that cannot load because the server has a new build gives the user
+// a dialog (save and reload, reload with a temporary save, or try to continue).
+installStaleBuildRecovery();
 
 // Check for stale cached index.html by comparing built-in version with server version
 if (typeof window !== 'undefined') {
@@ -800,6 +805,9 @@ if (channelHandoff) {
         setSit(new CSituation(handedSitch));
         Globals.sitchEstablished = true;
         Sit.initialDropZoneAnimation = false;
+        // The sitch is the state of an open sitch that had changes not yet saved (a reload
+        // with a temporary save, StaleBuildRecovery.js). The end of the load marks it so.
+        if (channelHandoff.context.restoreDirty) Globals.restoreDirtyAfterLoad = true;
         markSitrecReady();
     } else {
         selectInitialSitch();

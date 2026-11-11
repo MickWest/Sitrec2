@@ -1,12 +1,13 @@
 # Custom Object Designer
 
 The Custom Object Designer builds 3D models of aircraft, helicopters, drones,
-cars, trucks, balloons, sky lanterns and kites from presets and sliders. Put a
-model on a Sitrec object, or export it as a GLB (binary glTF) 3D model file. The
-models are procedural: code generates them from a set of parameters. They are
-visual models, and they do not simulate flight or lift. The one exception is a
-kite: its design has flight values that **Add Kite** in Sitrec uses (see
-[Kites](#kites)).
+cars, trucks, balloons, sky lanterns, kites and birds from presets and sliders.
+Put a model on a Sitrec object, or export it as a GLB (binary glTF) 3D model
+file. The models are procedural: code generates them from a set of parameters.
+They are visual models, and they do not simulate flight or lift. The one
+exception is a kite: its design has flight values that **Add Kite** in Sitrec
+uses (see [Kites](#kites)). A bird beats its wings at the rate in its design
+(see [Birds](#birds)).
 
 This tool was named Vehicle Designer. Its address, `tools/vehicles/`, its design
 files and its saved designs are not changed.
@@ -18,7 +19,7 @@ on a built Sitrec site. It fills the browser window, with collapsible parameter
 folders on the left and a Three.js preview on the right. On narrow screens the
 preview sits above the controls. The fullscreen button hides browser chrome where supported.
 
-Choose one of 307 presets, then drag sliders or type exact values. The model
+Choose one of 347 presets, then drag sliders or type exact values. The model
 updates live, including during a drag. Edits preserve the camera; **Fit** (or **F**) frames the new shape. Drag to orbit,
 scroll to zoom, and right-drag to pan. The presets use approximate proportions
 inspired by common vehicles, not manufacturer engineering geometry. Filter by object
@@ -69,16 +70,17 @@ The editor has these file and preview controls:
 - **Snapshot** saves the current 3D view as a PNG, excluding the control panel.
 - **Spin rotors / props** (or **Spin wheels**) animates the relevant assemblies; GLB exports retain their static design pose.
   For a kite the box is **Move tails in a 12-knot wind**, and it is on when you choose a kite.
+  For a bird the box is **Flap wings**, and it is on when you choose a bird.
 
 ## Use a procedural model in Sitrec
 
 Each object in a sitch has a folder in the **Objects** menu (see
 [Objects and 3D Models](https://github.com/MickWest/Sitrec2/blob/main/docs/CustomModels.md)).
-Open the folder and select **Browse custom objects…**. The visual picker has all 307
+Open the folder and select **Browse custom objects…**. The visual picker has all 347
 presets, with search, type/region filters, Favorites, Recently used, and
 **My models**. Select a tile to orbit its preview, then **Use this object**. The
 object in the sitch changes to the chosen model. The preview of a kite moves its
-tails as in a steady 12-knot wind.
+tails as in a steady 12-knot wind, and the preview of a bird beats its wings.
 
 **Customize…** opens the full live designer. **Apply to object** accepts the
 draft, **Back** returns to the picker and keeps the draft, and **Cancel** leaves
@@ -164,7 +166,7 @@ start/end positions and count remain editable.
 
 ## Military aircraft presets
 
-The catalog includes 136 military presets. The other 156 presets appear under the
+The catalog includes 136 military presets. The other 211 presets appear under the
 **Civil & general** region filter. Search by aircraft name or role, then filter by region. Region groups
 refer to design families or the named operator scheme, not exclusive ownership.
 The set covers modern and Cold War families; it is not an inventory of every
@@ -307,6 +309,182 @@ None of these values is a measurement of a real kite. See
 for the flight model and the line.
 
 Kites have no lights and no SITREC livery.
+
+## Birds
+
+**Birds** has 40 examples of common species in flight: gulls, pelicans, cranes, a
+raven and a crow, pigeons and doves, geese, swans and a duck, eagles, a hawk and a
+vulture, a heron, an egret and a stork, seabirds, an owl and small birds. Some species have
+more than one plumage, for example an adult and a young herring gull, and four
+colors of pigeon. A bird model has its bill toward +Z and its left wing toward
++X. Its origin is on the body axis, between the wing roots.
+
+**Bird** sets the body. **Length, bill tip to tail tip** is the length of the
+model in its flight pose. All the other sizes of the body are percentages of it,
+so one value changes the size of the bird. **Neck in flight** is stretched
+forward (a crane, a goose, a swan) or drawn back (a heron, a pelican). A bird
+with its neck drawn back is shorter in flight than the length in a field guide,
+which is for a bird with its neck straight: the length of those presets is an
+estimate. **Legs in flight** are tucked in, or they trail behind the tail, and
+**Feet beyond the tail tip** sets how far. The legs are not part of the length.
+
+**Wings** sets the wingspan, which is for flat wings, and the shape of the wing.
+Each wing has an inner part and an outer part that join at the wrist, which is
+the bend at the front edge of the wing:
+
+- **Wing chord · % of wingspan** is the width of the wing from front to rear
+- **Inner wing · % of wing length** is the share of the wing that is inside the
+  wrist. It is small for a swift and large for an albatross
+- **Outer wing swept back** is the angle of the bend at the wrist. It gives a
+  gull its M shape
+- **Outer wing droop** lowers the outer wing in a glide
+- **Wing tip** is pointed, rounded, or separate feathers that fan out, as on an
+  eagle, a crane or a raven
+
+**Tail** sets the length of the tail, the angle of its fan and its shape:
+rounded, square, wedge (a raven), long and pointed (a mourning dove) or forked (a
+swallow, a frigatebird).
+
+### Wing motion
+
+| Field | What it is |
+| --- | --- |
+| **Flight** | **Flapping**, **Gliding · wings held still**, or **Flap, then glide** |
+| **Wingbeats per second** | The number of complete wingbeats (down and up) in one second |
+| **Flap angle, up and down** | How far the wing goes above and below the middle of its stroke |
+| **Wing fold on the upstroke** | How much the outer wing bends down and folds back while the wing goes up. It is large for a pigeon and small for a goose |
+| **Wing angle in a glide, + is up** | The angle of the held wing above the horizontal. A turkey vulture holds its wings in a V |
+| **Wingbeats before each glide** | For **Flap, then glide**: the number of wingbeats in each burst |
+| **Length of each glide · s** | For **Flap, then glide**: the time that the wings are still after each burst |
+
+Each wing moves at two joints. The shoulder moves the whole wing up and down
+and turns its front edge down on the downstroke. The wrist bends the outer wing
+down and back on the upstroke, a little after the inner wing. The body moves
+down a small distance while the wings go up, and up while they go down. With
+**Flap, then glide** the wings leave the glide position and go back to it in
+half a wingbeat.
+
+The preview beats the wings in real time. The **WINGBEAT** read-out under the
+preview shows the rate. In Sitrec the wings move with the sitch time, so
+scrubbing and frame exports repeat the same wing position, and **Freeze as GLB**
+keeps the motion. With **Animate moving parts** off in Sitrec, the wings are in
+the glide position. At the 30 frames per second of most video, a wingbeat of
+6 per second has only five frames, so a fast wingbeat does not look smooth, as in
+a real video.
+
+### Sizes and wingbeat rates of the presets
+
+The length and the wingspan of a preset are the middle of the range on the
+species page that its **Reference ↗** link opens. The two pelicans, the heron and
+the egret fly with the neck drawn back, so their length is an estimate of the
+length in flight: 85% of that value for the pelicans, and 75% for the heron and
+the egret.
+
+A rate with a source is the mean of the measured values in that source. A rate
+marked **Estimate** is not a measurement: no measured value was found, and the
+rate was set by comparison with measured species of similar size and wing shape.
+For example, the two crows are set from the hooded crow, at 3.84 per second in
+Pennycuick 2001. A gliding preset keeps its rate, which it uses when you change
+its **Flight** to flapping.
+
+| Preset | Length · m | Wingspan · m | Flight | Wingbeats per second | Source of the rate |
+| --- | ---: | ---: | --- | ---: | --- |
+| Herring gull · adult | 0.60 | 1.40 | Flapping | 3.05 | Pennycuick 1990 |
+| Herring gull · first year, brown | 0.60 | 1.40 | Flapping | 3.05 | Pennycuick 1990 |
+| Ring-billed gull | 0.48 | 1.11 | Flapping | 3.2 | Estimate |
+| Laughing gull · black hood | 0.39 | 1.04 | Flapping | 2.74 | Pennycuick 1990 |
+| Black-headed gull · brown hood | 0.37 | 1.05 | Flapping | 3.27 | Pennycuick 2001 |
+| Great black-backed gull | 0.71 | 1.60 | Flapping | 2.9 | Pennycuick 1990 |
+| American white pelican | 1.32 | 2.70 | Flap, then glide | 2.5 | Estimate |
+| Brown pelican | 1.07 | 2.15 | Flap, then glide | 3.01 | Pennycuick 1990 |
+| Sandhill crane | 1.20 | 2.00 | Flapping | 2.8 | Estimate |
+| Whooping crane | 1.32 | 2.15 | Flapping | 2.6 | Estimate |
+| Common crane | 1.15 | 2.10 | Flapping | 2.7 | Estimate |
+| Common raven | 0.63 | 1.35 | Flapping | 3.3 | Estimate |
+| American crow | 0.46 | 0.93 | Flapping | 3.8 | Estimate |
+| Rock pigeon · blue-gray, two bars | 0.33 | 0.65 | Flapping | 5.48 | Taylor et al. 2019 |
+| Rock pigeon · dark checker | 0.33 | 0.65 | Flapping | 5.48 | Taylor et al. 2019 |
+| Rock pigeon · red and white | 0.33 | 0.65 | Flapping | 5.48 | Taylor et al. 2019 |
+| White dove · release dove | 0.33 | 0.65 | Flapping | 5.48 | Taylor et al. 2019 |
+| Mourning dove | 0.31 | 0.41 | Flapping | 7.5 | Estimate |
+| Eurasian collared dove | 0.32 | 0.51 | Flapping | 6.5 | Estimate |
+| Canada goose | 0.93 | 1.56 | Flapping | 4 | Estimate |
+| Snow goose | 0.76 | 1.50 | Flapping | 4.3 | Estimate |
+| Mute swan | 1.50 | 2.20 | Flapping | 3.38 | Pennycuick 2001 |
+| Tundra swan | 1.32 | 1.90 | Flapping | 3.6 | Estimate |
+| Mallard · male | 0.58 | 0.90 | Flapping | 8.4 | Williamson, Dial & Biewener 2001, in slow flight |
+| Bald eagle · adult | 0.86 | 2.05 | Flap, then glide | 2.72 | Pennycuick 1990 |
+| Bald eagle · young, dark | 0.86 | 2.05 | Flap, then glide | 2.72 | Pennycuick 1990 |
+| Golden eagle | 0.84 | 2.07 | Gliding | 2.5 | Laurent et al. 2021, as given by Gupta et al. 2024 |
+| Red-tailed hawk | 0.55 | 1.28 | Gliding | 3.5 | Estimate |
+| Turkey vulture | 0.72 | 1.75 | Gliding | 2.99 | Pennycuick 1990 |
+| Great blue heron | 0.86 | 1.84 | Flapping | 2.55 | Pennycuick 1990 |
+| Great egret | 0.69 | 1.50 | Flapping | 2.79 | Pennycuick 1990 |
+| White stork | 1.08 | 1.85 | Flap, then glide | 2.8 | Estimate |
+| Magnificent frigatebird | 1.02 | 2.30 | Gliding | 2.24 | Pennycuick 1990 |
+| Laysan albatross | 0.81 | 1.99 | Gliding | 3 | Estimate |
+| Northern gannet | 0.94 | 1.75 | Flap, then glide | 3.53 | Pennycuick 1990 |
+| Double-crested cormorant | 0.80 | 1.19 | Flapping | 5.03 | Pennycuick 1990 |
+| Barn owl | 0.34 | 0.88 | Flapping | 4.4 | Krishnan et al. 2022 |
+| European starling | 0.21 | 0.37 | Flapping | 10.6 | Pennycuick 2001 |
+| Common swift | 0.17 | 0.39 | Flap, then glide | 8.6 | Henningsson, Spedding & Hedenström 2008 |
+| Barn swallow | 0.18 | 0.33 | Flap, then glide | 7 | Estimate |
+
+The sources:
+
+- **Pennycuick 1990**: C. J. Pennycuick, "Predicting wingbeat frequency and
+  wavelength of birds", Journal of Experimental Biology 150, 171–185, Table 3.
+  Birds in level cruising flight in Florida.
+- **Pennycuick 2001**: C. J. Pennycuick, "Speeds and wingbeat frequencies of
+  migrating birds compared with calculated benchmarks", Journal of Experimental
+  Biology 204, 3283–3294, Table 2. Migrating birds at Falsterbo, Sweden.
+- **Krishnan et al. 2022**: Journal of the Royal Society Interface 19, 20220168,
+  Table 2. Wild birds with accelerometers.
+- **Taylor et al. 2019**: PLoS Biology 17, e3000299. Homing pigeons in flights
+  alone, with accelerometers.
+- **Henningsson, Spedding & Hedenström 2008**: Journal of Experimental Biology
+  211, 717. One swift in a wind tunnel, from 8.3 to 9.1 per second at air speeds
+  from 9.2 to 8.0 m/s.
+- **Williamson, Dial & Biewener 2001**: Journal of Experimental Biology 204, 495.
+  Only the abstract was read. It gives 8.4 per second in slow level flight and
+  8.9 in ascending flight. No rate for cruising flight was found.
+- **Laurent et al. 2021**: Proceedings of the National Academy of Sciences. The
+  paper was not read: the value of about 2.5 per second is as Gupta et al. 2024
+  (arXiv 2412.00231) give it.
+
+The two Pennycuick papers give the rate while the bird flaps, not an average
+that includes its glides. That is the rate that **Flap, then glide** uses in
+each burst. Two sources do not agree for the northern gannet (3.53 in Pennycuick
+1990, 3.9 in Krishnan et al. 2022) and for the rock pigeon (5.2 to 5.5 in free
+flight, 6.7 in a wind tunnel). The number of wingbeats in each burst and the
+length of each glide are estimates for every preset.
+
+### Plumage
+
+**Plumage** has the colors of the back, the breast and belly, the head, the neck,
+the upper wing, the underwing, the tail, the bill, the legs and the eye. The
+back color changes to the belly color on the sides of the body.
+
+- **Head mark** adds a cap, a cheek patch (a Canada goose), a neck ring (a
+  mallard) or a mark on the back of the neck (a collared dove), in the **Head
+  mark color**
+- **Wing marks** puts the **Wing mark color** on the wing tips (a gull, a snow
+  goose), on the flight feathers at the rear of the wing (a white pelican, a
+  white stork), on the flight feathers of the underside only (a turkey
+  vulture), or on two bars across the inner wing and the tips (a rock pigeon).
+  **Wing mark size** sets how far the mark reaches
+- **Tail tip band** sets the size and the color of a band at the end of the
+  tail (a rock pigeon, a mourning dove)
+
+The plumage is vertex colors on one material, so a bird is five meshes: the body,
+and an inner and an outer part of each wing.
+
+The sizes are typical values for each species. The shapes and the colors are
+estimates from photographs, and they are not measurements of a bird. Birds have
+no lights and no SITREC livery. In the IR preview a bird has the temperature of
+the air: the heat of its body is not modeled. The tail and the legs do not move,
+and the bird does not bank or steer: in Sitrec its path and its speed come from
+the track of its object.
 
 ## Adaptive SITREC livery
 
@@ -455,7 +633,9 @@ models and metadata, `exportGLB.js` handles clean exports, `studio.js` handles
 preview rendering and camera fitting, `motion.js` poses moving parts, and
 `catalog.js` / `files.js` handle filtering and recipe files. `kiteFlight.js` has
 the flight values and the line statics of a kite, with no imports, so Sitrec can
-use it without the model generator. The Sitrec modules
+use it without the model generator. `bird.js` builds a bird, and puts a
+`vehicleFlap` record on each joint that moves; `motion.js` reads only those
+records, so a frozen GLB copy moves in the same way. The Sitrec modules
 adapt these to object controls, scene persistence and the model library.
 Keep vehicle behavior in the shared modules; the standalone entry point only
 mounts the editor. GLB export and Freeze as GLB use the same exporter and retain

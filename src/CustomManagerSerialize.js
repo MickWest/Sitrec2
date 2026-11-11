@@ -2059,6 +2059,12 @@ export const serializeMethods = {
         this.markChapterBaseline();
         Globals.deserializing = false;
         Globals.sitchDirty = false;
+        // A sitch that came back from a temporary save (StaleBuildRecovery.js) had changes
+        // that were not saved, and it still has them: keep the "Leave site?" protection.
+        if (Globals.restoreDirtyAfterLoad) {
+            Globals.restoreDirtyAfterLoad = false;
+            Globals.sitchDirty = true;
+        }
         setRenderOne(3);
 
         // The sitch is fully loaded and interactive before this runs: the check

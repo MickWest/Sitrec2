@@ -4,8 +4,10 @@ import {LIGHT_GROUP} from "./vehicleLights.js";
 import {BRAND_GROUP} from "./vehicleLivery.js";
 import {DRONE_GROUPS, BALLOON_GROUPS, isMultirotor, isBalloon} from "./aerialParameters.js";
 import {KITE_GROUPS, isKite} from "./kiteParameters.js";
+import {BIRD_GROUPS, isBird} from "./birdParameters.js";
 export {isMultirotor, isBalloon} from "./aerialParameters.js";
 export {isKite} from "./kiteParameters.js";
+export {isBird} from "./birdParameters.js";
 
 const number = (key, label, min, max, step, value) => ({key, label, min, max, step, value, type: "number"});
 const choice = (key, label, options, value) => ({key, label, options, value, type: "select"});
@@ -41,10 +43,11 @@ export const ROAD_GROUPS = [
         number("roughness", "Paint roughness", 0.15, 1, 0.01, 0.38)]},
 ];
 export const isRoad = p => p.vehicleType === "car" || p.vehicleType === "truck";
-export const vehicleKind = p => isRoad(p) || p.vehicleType === "drone" || isBalloon(p) || isKite(p) ? p.vehicleType : p.rotorLayout !== "none" && p.rotorLayout ? "helicopter" : "aircraft";
+export const vehicleKind = p => isRoad(p) || p.vehicleType === "drone" || isBalloon(p) || isKite(p) || isBird(p) ? p.vehicleType : p.rotorLayout !== "none" && p.rotorLayout ? "helicopter" : "aircraft";
 export function parameterGroups(p) {
-    // A kite has no lamps, and no surface that fits the SITREC lettering.
+    // A kite or a bird has no lamps, and no surface that fits the SITREC lettering.
     if(isKite(p))return [...KITE_GROUPS,VEHICLE_THERMAL_GROUP];
+    if(isBird(p))return [...BIRD_GROUPS,VEHICLE_THERMAL_GROUP];
     const groups=isMultirotor(p)?DRONE_GROUPS:isBalloon(p)?BALLOON_GROUPS:isRoad(p)?ROAD_GROUPS:AIRCRAFT_GROUPS;
     const lightFields=isBalloon(p)?["lightsEnabled","lightGain"]:isMultirotor(p)?["lightsEnabled","positionLights","landingLights","strobeLights","beaconLights","lightGain","flashPeriod","flashDuration"]:null;
     const lights=lightFields?{...LIGHT_GROUP,note:isBalloon(p)?"Warm light follows the flame. Envelope glow is set in Basket, tether & glow.":"Editable status LEDs and auxiliary lights. Colors are generic visual defaults, not flight-status telemetry.",fields:LIGHT_GROUP.fields.filter(f=>lightFields.includes(f.key)).map(f=>({...f,label:({positionLights:"Motor status LEDs",landingLights:"Downward auxiliary light",strobeLights:"White strobe",beaconLights:"Red beacon"})[f.key]??f.label}))}:LIGHT_GROUP;
@@ -63,11 +66,11 @@ function lightParameters(input) {
 }
 export function normalizeParameters(input = {}) {
     if (!input || typeof input !== "object" || Array.isArray(input)) throw new Error("Vehicle parameters must be an object.");
-    const drone=isMultirotor(input),balloon=isBalloon(input),kite=isKite(input);
-    if (!isRoad(input) && !drone && !balloon && !kite) return {...normalizeAircraft(input), vehicleType: input.vehicleType==="drone"?"drone":"aircraft", ...(input.vehicleType==="drone"?{droneStyle:"fixedwing"}:{}), ...lightParameters(input)};
-    const defaults=balloon||kite?{positionLights:false,landingLights:false,beaconLights:false,strobeLights:false}:drone?{landingLights:false,beaconLights:false,strobeLights:false}:{};
+    const drone=isMultirotor(input),balloon=isBalloon(input),kite=isKite(input),bird=isBird(input);
+    if (!isRoad(input) && !drone && !balloon && !kite && !bird) return {...normalizeAircraft(input), vehicleType: input.vehicleType==="drone"?"drone":"aircraft", ...(input.vehicleType==="drone"?{droneStyle:"fixedwing"}:{}), ...lightParameters(input)};
+    const defaults=balloon||kite||bird?{positionLights:false,landingLights:false,beaconLights:false,strobeLights:false}:drone?{landingLights:false,beaconLights:false,strobeLights:false}:{};
     const p = {vehicleType: input.vehicleType, ...(drone?{droneStyle:"multirotor"}:{}), ...lightParameters({...defaults,...input})};
-    for (const f of (drone?DRONE_GROUPS:balloon?BALLOON_GROUPS:kite?KITE_GROUPS:ROAD_GROUPS).flatMap(g => g.fields)) {
+    for (const f of (drone?DRONE_GROUPS:balloon?BALLOON_GROUPS:kite?KITE_GROUPS:bird?BIRD_GROUPS:ROAD_GROUPS).flatMap(g => g.fields)) {
         const v = input[f.key];
         if (f.type === "number") {const n = Number.isFinite(v) ? v : f.value; p[f.key] = Math.max(f.min, Math.min(f.max, f.step === 1 ? Math.round(n) : n));}
         else if (f.type === "select") p[f.key] = Object.hasOwn(f.options, v) ? (typeof f.value === "number" ? Number(v) : v) : f.value;
@@ -97,7 +100,7 @@ export function readParameterFile(data) {
         const legacy = readAircraftFile(data); return parameterFile(legacy.parameters, legacy.name);
     }
     if (!data || data.format !== "sitrec-procedural-vehicle" || data.version !== 1 || !data.parameters ||
-        typeof data.parameters !== "object" || Array.isArray(data.parameters) || !["car", "truck", "aircraft","drone","balloon","kite"].includes(data.parameters.vehicleType))
+        typeof data.parameters !== "object" || Array.isArray(data.parameters) || !["car", "truck", "aircraft","drone","balloon","kite","bird"].includes(data.parameters.vehicleType))
         throw new Error("Choose a Custom Object Designer or legacy Aircraft Designer parameter file (version 1).");
     return parameterFile(data.parameters, typeof data.name === "string" ? data.name : "Imported vehicle");
 }

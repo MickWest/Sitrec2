@@ -768,7 +768,7 @@ const en = {
                     },
                     aircraftDesigner: {
                         label: "Custom Object Designer",
-                        tooltip: "Build cars, trucks, aircraft, drones, balloons, sky lanterns and kites with live sliders, searchable presets, and GLB model export",
+                        tooltip: "Build cars, trucks, aircraft, drones, balloons, sky lanterns, kites and birds with live sliders, searchable presets, and GLB model export",
                     },
                     xmlWindAnalyzer: {
                         label: "XML Wind Profile Analyzer",
@@ -2336,7 +2336,7 @@ const en = {
                 editClouds: "Turn edit mode on or off for the cloud layer at this point.",
                 editOverlay: "Turn edit mode on or off for the ground overlay or grid at this point.",
                 dropPin: "Add a pin (a labeled marker) at this point, and open its menu so you can type the label.",
-                addFixedObject: "Add a 3D object that stays at this point: a gray sphere, 5 m in radius. Its menu opens so you can change it.",
+                addFixedObject: "Add a 3D object that stays at this point: a gray sphere, 5 m in radius. Its menu opens so you can change it.\nTo put it on a track later, use Location > Position in its menu.",
                 createTrackWithObject: "Add a new track that starts at this point on the current frame, with a 3D object on it.\nThe track opens in edit mode, so you can add more points.",
                 createInOutObjectTrack: "Add a straight track with a 3D object on it, at constant speed. It runs from this point at the In frame to a point 200 screen pixels to the right at the Out frame (the whole sitch when In and Out are not set).\nIts altitude is locked, so raising one point raises the whole track.",
                 createTrackNoObject: "Add a new track with no object, which starts at this point on the current frame.\nThe track opens in edit mode, so you can add more points.",
@@ -3729,6 +3729,19 @@ const en = {
             label: "Show Track Menu",
             tooltip: "Open the menu of the track this object moves along",
         },
+        location: {
+            label: "Location",
+            tooltip: "Where this object is: at a position that you set, or on a track",
+            tipName: "Object",
+            manual: "Manual",
+            position: {
+                label: "Position",
+                tooltip: "What sets the position of this object.\n"
+                    + "Manual: the Lat, Lon and Alt values below. You can also drag the object.\n"
+                    + "A track: the object moves along that track and points along it, and the manual values are hidden.\n"
+                    + "When you go back to Manual, the object stays where the track put it on the current frame",
+            },
+        },
         meshDetail: {
             label: "Mesh Detail",
             tooltip: "How many segments the shape is made of. More segments look smoother and draw more slowly",
@@ -4594,6 +4607,44 @@ const en = {
     // Refreshing the satellite data a saved sitch was made with (src/TLERefresh.js).
     tleRefresh: {
         failedTitle: "Refresh failed",
+    },
+
+    // The dialog of StaleBuildRecovery.js: a part of Sitrec cannot load because the server has a new build.
+    staleBuild: {
+        title: "Sitrec was updated",
+        message: "The server has a new version of Sitrec, and this page still runs the old one.\n"
+            + "The part of Sitrec that you asked for is no longer on the server for the old version.",
+        messageGone: "The version of Sitrec that this page runs is no longer on the server.\n"
+            + "So the part of Sitrec that you asked for cannot load.",
+        running: "This page: {{build}}",
+        onServer: "On the server: {{build}}",
+        unsavedChanges: "This sitch has changes that are not saved.",
+        filesOnlyInMemory: "These files are only in the memory of this page, so a temporary save cannot keep them: {{files}}.\n"
+            + "Use Save and reload, which saves them.",
+        save: {
+            label: "Save and reload",
+            description: "Save the sitch in the normal way, then reload the page with the new version.",
+        },
+        temporary: {
+            label: "Reload with a temporary save",
+            description: "Keep the sitch in this browser, reload the page, and open the sitch again. "
+                + "Nothing goes to the server, and the page address stays the same.",
+        },
+        reload: {
+            label: "Reload",
+            description: "Reload the page with the new version.",
+        },
+        continue: {
+            label: "Try to continue",
+            description: "Load the part from the new version into this page. "
+                + "It can fail, or work incorrectly, if the two versions are too different. Save and reload when you can.",
+        },
+        cancel: {
+            label: "Cancel",
+            description: "Do nothing. The part that you asked for stays unavailable.",
+        },
+        cannotContinue: "This page could not get the list of files of the new version, so it cannot continue with them.\nUse Save and reload.",
+        temporaryFailed: "The sitch could not be kept in this browser. It is still open on this page.",
     },
 
     misc: {
