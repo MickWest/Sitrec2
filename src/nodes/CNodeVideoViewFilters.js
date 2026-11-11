@@ -624,7 +624,10 @@ export function applyConvolution(ctx, width, height, kernelName, params = {}) {
 
 // `store` false means "use these pixels for this pass, but do not remember them".
 // The cache is keyed by frame number alone, so a wrong entry is served forever.
-function getOrCachePixelData(videoView, frameImage, frame, width, height, store = true) {
+// getFrameImage is called only on a miss: for a past frame it draws a full-size
+// stabilized canvas, which playback must not pay for every frame in the window.
+// Returns null when there is no image.
+function getOrCachePixelData(videoView, getFrameImage, frame, width, height, store = true) {
     if (!videoView._echoPixelCache) {
         videoView._echoPixelCache = new Map();
     }
@@ -633,6 +636,9 @@ function getOrCachePixelData(videoView, frameImage, frame, width, height, store 
     if (cached && cached.length === width * height * 4) {
         return cached;
     }
+
+    const frameImage = getFrameImage();
+    if (!frameImage || frameImage.width === 0) return null;
 
     const tmpCtx = videoView._echoTmpCtx;
     tmpCtx.drawImage(frameImage, 0, 0, width, height);
@@ -707,16 +713,17 @@ export function applyEchoEffect(videoView, currentImage, currentFrame, wantMin, 
     let initialized = false;
 
     for (let f = startFrame; f <= currentFrame; f++) {
-        let frameImage;
-        if (f === currentFrame) {
-            frameImage = currentImage;
-        } else {
-            frameImage = videoView.videoData.getCachedImage(f);
-        }
-        if (!frameImage || frameImage.width === 0) continue;
+        const isCurrent = f === currentFrame;
+        // currentImage came from getImage(), so it carries the stabilization
+        // shift. getCachedImage() is the RAW decoded frame: use it only to ask
+        // whether frame f decoded, never for its pixels, or Echo combines one
+        // stabilized frame with unstabilized ones and the trail is the shake.
+        if (!isCurrent && !videoView.videoData.getCachedImage(f)) continue;
 
-        const frameData = getOrCachePixelData(videoView, frameImage, f, width, height,
-            f !== currentFrame || currentDecoded);
+        const frameData = getOrCachePixelData(videoView,
+            () => isCurrent ? currentImage : videoView.videoData.getCachedStabilizedImage(f),
+            f, width, height, !isCurrent || currentDecoded);
+        if (!frameData) continue;
 
         if (!initialized) {
             if (minPixels) minPixels.set(frameData);

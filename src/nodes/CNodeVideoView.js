@@ -468,7 +468,9 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
     getFilterStateKey() {
         const effectsEnabled = this.in.enableVideoEffects ? this.in.enableVideoEffects.v0 : true;
         // Echo runs with the master toggle off too, so it is part of both keys.
-        const echo = `echo:${this.in.echoMin?.value ?? false}:${this.in.echoMax?.value ?? false}:${Math.round(this.in.echoFrames?.v0 ?? 10)}`;
+        // Its pixel cache holds stabilized frames, so the stabilization state is too.
+        const echo = `echo:${this.in.echoMin?.value ?? false}:${this.in.echoMax?.value ?? false}:${Math.round(this.in.echoFrames?.v0 ?? 10)}`
+            + `:stab:${this.videoData?.getStabilizationKey?.() ?? "none"}`;
         if (!effectsEnabled) return `off|${echo}`;
         const levels = this.getLevelsSettings();
         return [

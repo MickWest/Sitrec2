@@ -196,6 +196,15 @@ export class CVideoPatchedData extends CVideoData {
         return this.source.getCachedImage(this.virtualToSource(Math.floor(frame)));
     }
 
+    // getImage() takes its frame, shift included, from the source, so these do too.
+    getCachedStabilizedImage(frame) {
+        return this.source.getCachedStabilizedImage(this.virtualToSource(Math.floor(frame)));
+    }
+
+    getStabilizationKey() {
+        return this.source.getStabilizationKey();
+    }
+
     getImageNoPurge(frame) {
         return this.source.getImageNoPurge(this.virtualToSource(Math.floor(frame)));
     }
