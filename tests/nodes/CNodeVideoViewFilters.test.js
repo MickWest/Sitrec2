@@ -255,11 +255,13 @@ describe("applyEchoEffect", () => {
 
     function makeView(videoData) {
         const final = makeCanvas();
+        const provisional = makeCanvas();
         let drawn = null;
         return {
             in: {echoFrames: {v0: 3}},
             videoData,
             _echoCanvas: final.canvas, _echoCtx: final.ctx,
+            _echoProvisionalCanvas: provisional.canvas, _echoProvisionalCtx: provisional.ctx,
             _echoTmpCtx: {
                 drawImage(img) { drawn = img; },
                 getImageData() {
@@ -281,5 +283,22 @@ describe("applyEchoEffect", () => {
         const view = makeView(videoData);
         const result = applyEchoEffect(view, image(52), 2, false, true);
         expect(result.pixels[0]).toBe(52);
+    });
+
+    test("a provisional result never shares a canvas with the final one", () => {
+        // Stages after Echo cache on input-canvas identity plus frame number,
+        // so the final result must reach them as a different canvas.
+        let currentDecoded = false;
+        const videoData = {
+            getCachedImage: f => (f === 2 && !currentDecoded) ? null : image(50 + f),
+            getCachedStabilizedImage: f => image(50 + f),
+        };
+        const view = makeView(videoData);
+        const provisional = applyEchoEffect(view, image(0), 2, false, true);
+        currentDecoded = true;
+        const final = applyEchoEffect(view, image(52), 2, false, true);
+        expect(provisional).not.toBe(final);
+        expect(final).toBe(view._echoCanvas);
+        expect(final.pixels[0]).toBe(52);
     });
 });

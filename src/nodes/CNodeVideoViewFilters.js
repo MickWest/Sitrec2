@@ -688,6 +688,10 @@ export function applyEchoEffect(videoView, currentImage, currentFrame, wantMin, 
         videoView._echoCanvas.width = width;
         videoView._echoCanvas.height = height;
         videoView._echoCtx = videoView._echoCanvas.getContext('2d', { willReadFrequently: true });
+        videoView._echoProvisionalCanvas = document.createElement('canvas');
+        videoView._echoProvisionalCanvas.width = width;
+        videoView._echoProvisionalCanvas.height = height;
+        videoView._echoProvisionalCtx = videoView._echoProvisionalCanvas.getContext('2d', { willReadFrequently: true });
         videoView._echoTmpCanvas = document.createElement('canvas');
         videoView._echoTmpCanvas.width = width;
         videoView._echoTmpCanvas.height = height;
@@ -703,7 +707,13 @@ export function applyEchoEffect(videoView, currentImage, currentFrame, wantMin, 
         return videoView._lastEchoResult;
     }
 
-    const echoCtx = videoView._echoCtx;
+    // A provisional result (current frame not decoded yet) goes to its own canvas.
+    // The stages after Echo (Levels, Curves, Tonal, Invert) cache on the IDENTITY
+    // of their input canvas plus the frame number. If the final result went into
+    // the same canvas as the provisional one, at the same frame, they kept serving
+    // their copy of the provisional picture: a black video view after every load.
+    const echoCanvas = currentDecoded ? videoView._echoCanvas : videoView._echoProvisionalCanvas;
+    const echoCtx = currentDecoded ? videoView._echoCtx : videoView._echoProvisionalCtx;
 
     const pixelCount = width * height * 4;
     const minPixels = wantMin ? new Uint8ClampedArray(pixelCount) : null;
@@ -777,14 +787,14 @@ export function applyEchoEffect(videoView, currentImage, currentFrame, wantMin, 
         videoView._lastEchoWantMin = wantMin;
         videoView._lastEchoWantMax = wantMax;
         videoView._lastEchoNumFrames = numEchoFrames;
-        videoView._lastEchoResult = videoView._echoCanvas;
+        videoView._lastEchoResult = echoCanvas;
     } else {
         // Provisional: show it, but recompute next render, once the frame is real.
         videoView._lastEchoFrame = undefined;
         videoView._lastEchoResult = undefined;
     }
 
-    return videoView._echoCanvas;
+    return echoCanvas;
 }
 
 export function applyConvolutionToImage(image, kernelName, params, videoView, frame = undefined) {
