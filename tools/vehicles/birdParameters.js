@@ -11,7 +11,7 @@ export const BIRD_WING_PATTERNS = {plain: "None", tips: "Wing tips", flight: "Fl
 
 export const BIRD_GROUPS = [
     {name: "Bird", open: true, note: "The bird is in its flight pose, with the bill toward +Z. The length is from the bill tip to the tail tip.", fields: [
-        number("length", "Length, bill tip to tail tip · m", 0.08, 2, 0.005, 0.6),
+        number("length", "Length, bill tip to tail tip · m", 0.01, 2, 0.005, 0.6),
         number("bodyDepth", "Body depth · % of length", 10, 45, 0.5, 23),
         number("headSize", "Head length · % of length", 4, 25, 0.5, 12),
         number("neckLength", "Neck length · % of length", 0, 40, 0.5, 5),
@@ -23,7 +23,7 @@ export const BIRD_GROUPS = [
         number("legLength", "Feet beyond the tail tip · % of length", 0, 40, 1, 15),
     ]},
     {name: "Wings", open: true, note: "The wingspan is for flat wings. The wrist is the bend at the front edge of the wing.", fields: [
-        number("wingspan", "Wingspan · m", 0.15, 3.6, 0.01, 1.4),
+        number("wingspan", "Wingspan · m", 0.01, 3.6, 0.01, 1.4),
         number("wingChord", "Wing chord · % of wingspan", 5, 30, 0.5, 12),
         number("armFraction", "Inner wing · % of wing length", 20, 65, 1, 45),
         number("wristSweep", "Outer wing swept back · °", 0, 50, 1, 18),

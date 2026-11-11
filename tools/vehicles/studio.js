@@ -20,7 +20,8 @@ export function fitVehicleCamera(camera, controls, bounds, {view="perspective",d
     // Flush damping before changing views, so a drag cannot carry a stale delta.
     const damping = controls.enableDamping; controls.enableDamping = false; controls.update(); controls.enableDamping = damping;
     controls.target.copy(sphere.center); camera.position.copy(sphere.center).addScaledVector(look,distance);
-    camera.near = Math.max(.001,sphere.radius/1000); camera.far = Math.max(3000,distance*30);
+    // The near plane is 1 mm for a small model, but less for a model smaller than 4 cm, which the camera is nearer to than that.
+    camera.near = Math.max(Math.min(.001,sphere.radius/20),sphere.radius/1000); camera.far = Math.max(3000,distance*30);
     camera.updateProjectionMatrix(); controls.update();
 }
 

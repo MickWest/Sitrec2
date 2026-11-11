@@ -164,10 +164,37 @@ The line has weight and the wind pushes on it, so it sags: it is steepest at the
 flattest at the anchor. A heavy or thick line holds the kite lower.
 
 On each frame the wind gives the kite a balance position. When the wind changes, from the wind
-source or from the gusts of **Wind Variability (%)**, the kite moves toward the new position at
-up to half the wind speed, and at 1 m/s or more. This limit is an estimate. The model does not
-include the momentum of the kite, or a person who pulls the line. A kite in a wind near its
-minimum sinks in each lull and rises again in each gust.
+source or from the gusts, the kite follows the new position with a delay. The delay is the time
+that the wind takes to go the horizontal distance from the anchor to the kite: about 15 seconds
+for a kite that is 75 m downwind in a wind of 5 m/s. The kite moves faster when it is farther
+from its balance position, at up to half the wind speed. A kite that the wind cannot hold sinks
+at 1 m/s or more. The delay and the two speed limits are estimates from a simple model. The
+model does not include the momentum of the kite, or a person who pulls the line. A kite in a
+wind near its minimum sinks in each lull and rises again in each gust.
+
+**The gusts.** **Wind Variability (%)** is the turbulence intensity of the wind: the typical
+size (the standard deviation) of the gusts along the wind, as a percentage of the wind speed.
+The gusts across the wind are 0.8 of that size, and they turn the wind from side to side. A
+gust is a body of air that the wind carries past the kite, so it lasts for its length divided
+by the wind speed. For a kite 60 m or more above the ground in a wind of 5 m/s, a gust along the
+wind lasts about one minute, and a gust across the wind about 20 seconds. Nearer the ground the
+gusts are shorter. The ratio and the lengths are those of the Kaimal turbulence model in the
+wind-turbine standard IEC 61400-1.
+
+Typical values of **Wind Variability (%)** at a height of 50 m, from the turbulence formula of
+the wind-load standard EN 1991-1-4. The values are larger nearer the ground: at 20 m, by one
+tenth over the sea and by one third in a town center.
+
+| Ground upwind of the kite | Wind Variability (%) |
+|---|---|
+| Open sea, or a beach with the wind from the sea | 10 |
+| Flat open ground: lakes, grassland | 12 |
+| Open country with some trees and buildings | 15 |
+| Suburbs and woods | 20 |
+| Town centers | 26 |
+
+With the default of 10%, in a wind of 5 m/s, a new kite on a 100 m line is within about 10 m of
+its mean position for most of the time, and it moves at about 0.2 m/s.
 
 The mass, the lifting area, the lift coefficient and the drag coefficient are part of the kite
 design: **Edit design…** in the kite's object folder, then the **Flight** folder. The values of
@@ -181,7 +208,7 @@ The kite's folder in **Contents** has these settings:
 | **Line Length (m)** | 100 | Length of the flying line, from the anchor to the kite |
 | **Line Weight (g/m)** | 0.5 | Weight of one meter of line. About 0.5 for a small kite, and 5 or more for a large show kite |
 | **Line Diameter (mm)** | 1 | Thickness of the line, for the push of the wind on it. About 1 for a small kite, and 3 or more for a large show kite |
-| **Wind Variability (%)** | 20 | Random gustiness, as a percentage of the wind speed. The gusts move the kite |
+| **Wind Variability (%)** | 10 | How gusty the wind is, from 0 to 40: the typical size of a gust as a percentage of the wind speed. The gusts move the kite slowly from side to side, and up and down. See **The gusts** above |
 | **Random Seed** | 1 | Change it for a different, but repeatable, pattern of gusts |
 | **Kite Position** (read only) | | At the current frame: the height of the kite above the anchor, its distance downwind of the anchor, and the angle of a straight line from the anchor to the kite. *On the ground* when the wind is too light |
 | **Wind and Pull** (read only) | | At the current frame: the wind speed at the kite and the pull of the line. On the ground, the second value is the wind that this kite needs |

@@ -29,7 +29,7 @@ export class CNodeKiteTrack extends CNodeTrack {
         this.input("lineLength");       // m
         this.input("lineWeight");       // g/m
         this.input("lineDiameter");     // mm
-        this.input("windVariability");  // % gustiness
+        this.input("windVariability");  // % turbulence intensity
         this.input("seed");
 
         this.anchorLat = v.anchorLat;

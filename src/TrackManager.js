@@ -3589,7 +3589,7 @@ class CTrackManager extends CManager {
      * @param {number} options.lineLength - line length in metres (default 100)
      * @param {number} options.lineWeight - line weight in g/m (default 0.5)
      * @param {number} options.lineDiameter - line diameter in mm (default 1)
-     * @param {number} options.windVariability - gust % (default 20)
+     * @param {number} options.windVariability - turbulence intensity in % (default 10)
      * @param {number} options.seed - PRNG seed (default 1)
      * @param {Object} options.recipe - the kite design for a new kite. A saved kite
      *        has none: the mods pass restores the design on its object.
@@ -3648,10 +3648,12 @@ class CTrackManager extends CManager {
         }, guiFolder);
         new CNodeGUIValue({
             id: trackID + "_windVariability",
-            value: options.windVariability ?? 20,
-            start: 0, end: 100, step: 1,
+            value: options.windVariability ?? 10,
+            start: 0, end: 40, step: 1,
             desc: "Wind Variability (%)",
-            tip: "Random gustiness as a percentage of the wind speed. Gusts move the kite about",
+            tip: "How gusty the wind is: the typical size of a gust as a percentage of the wind speed (the turbulence intensity).\n"
+                + "About 10 over open flat ground or water, 15 in open country, 20 among trees and houses, and 30 in a town.\n"
+                + "The gusts move the kite slowly from side to side, and up and down",
         }, guiFolder);
         new CNodeGUIValue({
             id: trackID + "_seed",

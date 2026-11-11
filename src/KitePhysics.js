@@ -4,9 +4,9 @@
 //
 // On every frame the wind gives the kite a balance position (solveKiteLine in
 // tools/vehicles/kiteFlight.js), where lift, drag, weight and the pull of the
-// line are in balance. The kite moves toward that position at a limited speed.
-// It has no other dynamics. The wind changes with the wind source and with the
-// seeded gusts.
+// line are in balance. The kite follows that position with a delay. It has no
+// other dynamics. The wind changes with the wind source and with the seeded
+// gusts.
 
 import {LLAToECEF} from "./LLA-ECEF-ENU";
 import {getLocalEastVector, getLocalNorthVector, getLocalUpVector} from "./SphericalMath";
@@ -15,10 +15,38 @@ import {mulberry32} from "./DifferentialEvolution";
 import {solveKiteLine} from "../tools/vehicles/kiteFlight.js";
 
 const LIGHT_AIR = 0.5;      // m/s
-// The fastest that a kite moves toward its balance position, as a fraction of
-// the wind speed, and the least value of that speed (a kite also sinks in a
-// calm). Both are estimates: a single-line kite moves across the sky at less
-// than the wind speed.
+
+// THE GUSTS. Wind Variability is the turbulence intensity: the standard
+// deviation of the along-wind gust as a percentage of the wind speed. The
+// values below are those of the Kaimal turbulence model in the wind-turbine
+// standard IEC 61400-1.
+//
+// A gust is a body of faster or slower air that the wind carries past the kite.
+// So a gust lasts for its length divided by the wind speed. The length goes
+// with the height above the ground, up to 60 m.
+const CROSSWIND_GUST_RATIO = 0.8;       // crosswind gusts are this fraction of the along-wind gusts
+const GUST_LENGTH_ALONG = 8.1 * 0.7;    // length of the along-wind gusts, as a multiple of the height
+const GUST_LENGTH_CROSS = 2.7 * 0.7;    // length of the crosswind gusts, as a multiple of the height
+const GUST_LEAST_HEIGHT = 10;           // m: the gusts do not become shorter below this height (a floor, not from the standard)
+const GUST_MOST_HEIGHT = 60;            // m: the gusts do not become longer above this height
+// A kite does not answer to a gust that is much shorter than this (seconds).
+// It is an estimate, and it also keeps the wind free of frame-to-frame jitter.
+const GUST_SMOOTHING = 1;
+
+// THE RESPONSE OF THE KITE. A kite that is away from its balance position
+// flies toward it, and its speed goes with the distance. The reason: a kite
+// that moves across the wind at speed w meets a wind that is turned by the
+// angle w / windSpeed, and the line of a light kite points along the wind that
+// the kite meets. So a kite that is the angle a to one side moves back at
+// a × windSpeed. The distance thus becomes smaller by the same fraction in each
+// second, and the time for that is the horizontal distance from the anchor to
+// the kite, divided by the wind speed: the time that the wind takes to go from
+// the anchor to the kite. The same holds for a kite above or below its balance
+// height. This is a simple model, not a measurement.
+//
+// KITE_SPEED_FRACTION is the fastest that a kite moves across the sky, as a
+// fraction of the wind speed. KITE_LEAST_SPEED is the least speed at which a
+// kite sinks when the wind is too light to hold it. Both are estimates.
 const KITE_SPEED_FRACTION = 0.5;
 const KITE_LEAST_SPEED = 1;     // m/s
 
@@ -45,9 +73,9 @@ export function kitePointECEF(frame, bearing, distance, height) {
 //   lineMassPerMetre       kg/m
 //   lineDiameter           metres
 //   properties             {massKg, areaM2, liftCoefficient, dragCoefficient}
-//   variabilityPct         0..100: gust size as a percentage of the wind speed
-//                          (plus a 0.5 m/s floor); smooth seeded gusts re-target
-//                          every 3-8 s, the same model as the balloon track
+//   variabilityPct         turbulence intensity: the standard deviation of the
+//                          along-wind gust as a percentage of the wind speed.
+//                          About 10 over open flat ground, 20 among trees and houses
 //   seed                   PRNG seed: the same seed gives the same flight
 //   frames, dt             frame count, and sim seconds per frame
 //   geoidOffset            (lat, lon) → geoid undulation in metres
@@ -82,56 +110,74 @@ export function integrateKiteStates(params, windAt) {
     } = params;
 
     const rand = mulberry32((seed >>> 0) || 1);
+    // A random number with a normal distribution: mean 0, standard deviation 1.
+    const normal = () => Math.sqrt(-2 * Math.log(1 - rand())) * Math.cos(2 * Math.PI * rand());
     const frame = kiteAnchorFrame(anchorLat, anchorLon, anchorAltMSL, geoidOffset);
     const out = new Array(frames);
 
-    let gustU = 0, gustV = 0;
-    let targetGustU = 0, targetGustV = 0;
-    let nextGust = 0;
+    // The along-wind and the crosswind gust, each as a multiple of its standard
+    // deviation. `raw` is the random process and `smooth` follows it.
+    const gusts = [GUST_LENGTH_ALONG, GUST_LENGTH_CROSS].map(length => {
+        const raw = normal();
+        return {length, raw, smooth: raw, value: 0};
+    });
     let windToward = 0;
     let air = 0;
     // The kite, in metres east, north and up of the anchor.
     let kite = null;
 
     for (let f = 0; f < frames; f++) {
-        const t = f * dt;
         // The wind at the kite's own height. On the first frame the kite starts at its balance
         // position, and its height sets the wind that it meets, so solve that a few times.
         let line, windSpeed;
         for (let pass = 0; pass < (f === 0 ? 8 : 1); pass++) {
             const wind = windAt(anchorLat, anchorLon, anchorAltMSL + (kite ? kite.u : lineLength * 0.5), f) || {u: 0, v: 0};
 
+            const baseSpeed = Math.hypot(wind.u, wind.v);
             if (variabilityPct > 0 && pass === 0) {
-                if (t >= nextGust) {
-                    const speed = Math.hypot(wind.u, wind.v);
-                    const size = (variabilityPct / 100) * (speed + 0.5) * (0.3 + 0.7 * rand());
-                    const direction = rand() * 2 * Math.PI;
-                    targetGustU = Math.cos(direction) * size;
-                    targetGustV = Math.sin(direction) * size;
-                    nextGust = t + 3 + rand() * 5;
+                const height = Math.max(GUST_LEAST_HEIGHT, Math.min(GUST_MOST_HEIGHT, kite ? kite.u : lineLength * 0.5));
+                for (const gust of gusts) {
+                    // How long a gust lasts. Each frame keeps a part of the last
+                    // value and adds a new random part, so the size of the gusts
+                    // does not change with the frame rate.
+                    const lasts = gust.length * height / Math.max(baseSpeed, LIGHT_AIR);
+                    const keep = Math.exp(-dt / lasts);
+                    gust.raw = gust.raw * keep + Math.sqrt(1 - keep * keep) * normal();
+                    gust.smooth += (gust.raw - gust.smooth) * (1 - Math.exp(-dt / GUST_SMOOTHING));
+                    // The smoothing takes a little from the size of the gusts: put it back.
+                    gust.value = gust.smooth * Math.sqrt(1 + GUST_SMOOTHING / lasts);
                 }
-                const blend = Math.min(1, dt / 2);
-                gustU += (targetGustU - gustU) * blend;
-                gustV += (targetGustV - gustV) * blend;
             }
-
-            const u = wind.u + gustU, v = wind.v + gustV;
+            // The gusts are along and across the wind of the wind source.
+            let u = wind.u, v = wind.v;
+            if (variabilityPct > 0 && baseSpeed > 1e-6) {
+                const sigma = (variabilityPct / 100) * baseSpeed;
+                const along = sigma * gusts[0].value / baseSpeed, across = sigma * CROSSWIND_GUST_RATIO * gusts[1].value / baseSpeed;
+                u += wind.u * along - wind.v * across;
+                v += wind.v * along + wind.u * across;
+            }
             windSpeed = Math.hypot(u, v);
             // Air lighter than this does not turn the kite: it stays where the last wind left it.
             // On the first frame, a light wind still gives the side of the anchor it lies on.
             if (windSpeed > LIGHT_AIR) windToward = Math.atan2(u, v);
-            else if (f === 0 && Math.hypot(wind.u, wind.v) > 1e-6) windToward = Math.atan2(wind.u, wind.v);
+            else if (f === 0 && baseSpeed > 1e-6) windToward = Math.atan2(wind.u, wind.v);
             line = solveKiteLine({windSpeed, lineLength, lineMassPerMetre, lineDiameter, properties, withPoints: false});
 
             const balance = {e: Math.sin(windToward) * line.downwind, n: Math.cos(windToward) * line.downwind, u: line.height};
             if (f === 0) {
                 kite = balance;
             } else {
-                const reach = Math.max(KITE_LEAST_SPEED, KITE_SPEED_FRACTION * windSpeed) * dt;
                 const de = balance.e - kite.e, dn = balance.n - kite.n, du = balance.u - kite.u;
                 const distance = Math.hypot(de, dn, du);
-                const part = distance > reach ? reach / distance : 1;
-                kite = {e: kite.e + de * part, n: kite.n + dn * part, u: kite.u + du * part};
+                if (distance > 0) {
+                    // The time that the wind takes to go from the anchor to the kite.
+                    const delay = Math.max(1, Math.hypot(kite.e, kite.n)) / Math.max(windSpeed, LIGHT_AIR);
+                    let reach = Math.min(distance * (1 - Math.exp(-dt / delay)), KITE_SPEED_FRACTION * windSpeed * dt);
+                    // A kite that the wind cannot hold sinks, in a calm also.
+                    if (!line.flying) reach = Math.max(reach, KITE_LEAST_SPEED * dt);
+                    const part = Math.min(1, reach / distance);
+                    kite = {e: kite.e + de * part, n: kite.n + dn * part, u: kite.u + du * part};
+                }
             }
         }
 

@@ -80,7 +80,12 @@ export function buildAircraft(input) {
         [0.40, 0.745, 0.75, -0.20], [0.58, 0.85, 0.90, -0.10],
         [0.77, 0.957, 0.98, -0.03], [1, 1, 1, 0],
     ];
+    // u is the station along the body: 0 at the nose, 1 at the tail. A part with a fixed size in
+    // metres (a door, lettering) or with an offset (an engine, the gear) can ask for a station
+    // beyond an end of a short body. Such a station is that end: the curves below have no value there.
+    const station = u => THREE.MathUtils.clamp(u, 0, 1);
     function bodySection(u) {
+        u = station(u);
         const nose = p.noseLength / 100, tail = 1 - p.tailLength / 100;
         if (airlinerNose && u < nose) {
             const t = Math.max(0, u / nose);
@@ -111,6 +116,7 @@ export function buildAircraft(input) {
             crownRise(u) * Math.max(0, Math.sin(angle)) ** 3, L * (0.5 - u)];
     }
     function bodyPoint(u, angle, lift = 0) {
+        u = station(u);
         if (!lift) return bodyCurve(u, angle);
         const theta = ((angle / (Math.PI * 2)) % 1 + 1) % 1;
         const point = sampledPoint(bodyRows, bodyColumns, body, u, theta);

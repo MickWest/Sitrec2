@@ -29,9 +29,11 @@ export const KITE_FLIGHT_DEFAULTS = {
 // The properties Sitrec uses when an object on a kite track has no kite design.
 export const GENERIC_KITE_FLIGHT = Object.freeze({massKg: 0.25, areaM2: 1, liftCoefficient: 0.9, dragCoefficient: 0.45});
 
+// The Overall scale of the design multiplies each length, so it multiplies the area by its square.
+// It does not change the mass: that is the number in the Mass field.
 export function kiteLiftingArea(p) {
-    if (p.kiteArea > 0) return p.kiteArea;
-    return (AREA_FRACTION[p.kiteShape] ?? 0.5) * p.width * p.height;
+    const scale = p.overallScale ?? 1;
+    return (p.kiteArea > 0 ? p.kiteArea : (AREA_FRACTION[p.kiteShape] ?? 0.5) * p.width * p.height) * scale * scale;
 }
 
 // The four numbers the flight model needs, from a kite design's parameters.

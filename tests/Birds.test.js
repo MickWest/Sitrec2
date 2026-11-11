@@ -63,7 +63,7 @@ describe("Bird designs", () => {
 
     test("a bird has no light or livery controls, and the SITREC livery does not break it", () => {
         const p = preset("bird-gull-herring");
-        expect(parameterGroups(p).map(group => group.name)).toEqual(["Bird", "Wings", "Tail", "Wing motion", "Plumage", "Thermal"]);
+        expect(parameterGroups(p).map(group => group.name)).toEqual(["Scale", "Bird", "Wings", "Tail", "Wing motion", "Plumage", "Thermal"]);
         const model = buildVehicle({...p, brandLivery: "sitrec"});
         expect(model.root.getObjectByName("SITREC livery")).toBeUndefined();
         expect(model.lamps).toHaveLength(0);

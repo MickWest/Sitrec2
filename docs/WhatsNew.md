@@ -9,6 +9,19 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.192.1 (2026-11-11)
+
+### New Features
+- **Overall scale in the Custom Object Designer** (Sitrec → Extra Tools → *Custom Object Designer*, or Objects → *object* → *Edit design…*; then *Scale* → *Overall scale · ×*): a new control multiplies every dimension of a custom object, from 0.01 to 100. The default is 1, and a value of 0.1 makes a 1:10 scale model. *Scale* is the first folder of every object type. The other controls keep the full-size dimensions, and the read-outs under the preview show the scaled sizes. The slider moves by ratio, with 1 in the middle. The intensity of the lamps and the lifting area of a kite change with the square of the scale. The mass of a kite and the wingbeat rate of a bird do not change. In Sitrec, *Model Length* of the object still sets its length in the scene when it is not zero.
+
+### Improvements
+- **Kite gusts: *Wind Variability (%)* is now the turbulence intensity** (Contents → *kite* → *Wind Variability (%)*): the value is now the typical size of the gusts along the wind (their standard deviation), as a percentage of the wind speed. Gusts across the wind are 0.8 of that size, and they turn the wind from side to side. A gust now lasts for its length divided by the wind speed: about one minute along the wind and about 20 seconds across it, for a kite 60 m or more above the ground in a wind of 5 m/s. These values are those of the Kaimal turbulence model in the wind-turbine standard IEC 61400-1. The kite now follows its balance position with a delay, which is the time that the wind takes to go the horizontal distance from the anchor to the kite: about 15 seconds for a kite that is 75 m downwind in a wind of 5 m/s. So the kite moves slowly from side to side, and up and down. Before, its motion changed in jumps and its path had sharp corners. The default is now 10 (it was 20), and the range is 0 to 40 (it was 0 to 100). The tooltip gives typical values: about 10 over open flat ground or water, 15 in open country, 20 among trees and houses, and 30 in a town. A kite in a saved sitch keeps its value, but its path is different. *Wind Variability (%)* of a balloon did not change.
+- **Custom Object Designer: lengths as small as 0.01 m** (Sitrec → Extra Tools → *Custom Object Designer*, or Objects → *object* → *Edit design…*): each length in meters now has a lower limit of 0.01 m or less. Before, many lengths had a larger lower limit: for example 3 m for *Fuselage length · m*, 2.5 m for *Body length · m* of a road vehicle, 0.2 m for *Width · m* of a kite and 0.08 m for *Length, bill tip to tail tip · m* of a bird. Some details have a fixed size, for example the doors and the lettering of an airliner, and they are out of proportion on a very small design. To make a small object, keep the full-size dimensions and use *Overall scale* (#15184 "Model designer measurements").
+
+### Bug Fixes
+- Fixed the number boxes of the Custom Object Designer changing the text while you type. Each key press applied the limits of the control to the text, so "20" became "30" in a box with a lower limit of 3. A number box now keeps the text that you type. The model still uses a value inside the limits, and the box shows that value when you press Enter or leave the box (#15184 "Model designer measurements").
+- Fixed an empty preview in the Custom Object Designer for an aircraft with a short fuselage, or with engines offset to behind the tail. Examples are the 737-800 preset with *Fuselage length · m* at 3 or at 12, and the A-10C Thunderbolt II preset with *Forward offset · m* at −4 (#15184 "Model designer measurements").
+
 ## Version 2.192.0 (2026-11-11)
 
 ### New Features

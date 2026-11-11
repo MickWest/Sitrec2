@@ -27,6 +27,18 @@ type or region, or search a name. The previous/next buttons cycle through the fi
 results, with wrapping. Left/right arrow keys (or [ and ]) also cycle when you are
 not editing a control. Selecting an entry previews it immediately.
 
+**Scale → Overall scale** multiplies every dimension of the object, from 0.01 to
+100. A value of 0.1 makes a 1:10 scale model. The other controls keep the
+full-size dimensions, and the read-outs under the preview show the scaled sizes.
+The slider moves by ratio, with 1 in the middle. The lamps move with the model.
+Their intensity changes with the square of the scale, so a scale model looks the
+same as the full-size object from a distance that is in proportion. The lifting
+area of a kite also changes with the square of the scale. The scale does not
+change the mass of a kite or the wingbeat rate of a bird.
+
+Each length in metres has a lower limit of 0.01 m or less. A number box keeps the
+text that you type. It applies its limits when you press Enter or leave the box.
+
 Aircraft folders are **Airframe**, **Cockpit glazing**, **Wings**, **Tail & canards**,
 **Engines & propellers**, **Rotors & mission details**, **Livery & details**,
 **SITREC livery**, **Lights** and **Thermal**. Winglets, biplanes, support struts, T-tails,
@@ -610,6 +622,11 @@ The generator permits unusual combinations; it does not check structural
 feasibility, aerodynamics, or component interference. The geometry is intended
 for visual reconstruction and prototyping. Glazing is opaque and there is no
 interior.
+
+Some details have a fixed size in metres: the doors and the lettering of an
+airliner, and the least radius of a wheel. On a design with very small dimensions
+they are out of proportion. To make a small object, use **Overall scale** and
+keep the dimensions of the full-size object.
 
 ## Standalone copy
 

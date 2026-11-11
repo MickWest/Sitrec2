@@ -45,6 +45,8 @@ To replace a model's own materials with the settings in the Material folder, che
 
 **Browse custom objects…** in the object's folder opens the Custom Object Designer: a library of 347 preset objects that Sitrec builds from parameters. They are aircraft, helicopters, road vehicles, drones, balloons, sky lanterns, kites and birds. Choose one to put it on the object. **Edit design…** then changes that object with sliders, and **Freeze as GLB** stores it as a fixed model. **Sitrec → Extra Tools → Custom Object Designer** builds an object in its own tab and exports it as a GLB file. The [Custom Object Designer guide](https://github.com/MickWest/Sitrec2/blob/main/tools/vehicles/README.md) has the details.
 
+In the designer, **Scale → Overall scale** multiplies every dimension of the object, from 0.01 to 100. A value of 0.1 makes a 1:10 scale model of the object. The **Model Length** of the Sitrec object still sets its length in the scene when it is not zero.
+
 With **Animate moving parts** on, propellers, rotors and wheels turn as the sitch time runs, and the tails and tentacles of a kite move in the wind. A kite design also has the mass, lifting area, lift and drag that **Add Kite** uses: see [Kites](SceneObjects.md#kites).
 
 #### Birds

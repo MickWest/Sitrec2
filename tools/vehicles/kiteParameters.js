@@ -9,9 +9,9 @@ export const KITE_SHAPES = {diamond: "Diamond", delta: "Delta", rokkaku: "Rokkak
 export const KITE_GROUPS = [
     {name: "Kite", open: true, note: "The nose points into the wind (+Z). The origin is the tow point, where the line attaches.", fields: [
         choice("kiteShape", "Type", KITE_SHAPES, "diamond"),
-        number("width", "Width · m", 0.2, 30, 0.01, 0.9),
-        number("height", "Length, nose to tail edge · m", 0.2, 30, 0.01, 0.9),
-        number("depth", "Thickness (parafoil, octopus) · m", 0.02, 15, 0.01, 0.3),
+        number("width", "Width · m", 0.01, 30, 0.01, 0.9),
+        number("height", "Length, nose to tail edge · m", 0.01, 30, 0.01, 0.9),
+        number("depth", "Thickness (parafoil, octopus) · m", 0.01, 15, 0.01, 0.3),
         number("bow", "Bow / arc · °", 0, 40, 1, 12),
         number("flyingAngle", "Flying attitude, nose up · °", 0, 60, 1, 30),
         number("cellCount", "Cells (parafoil)", 3, 24, 1, 8),
@@ -21,7 +21,7 @@ export const KITE_GROUPS = [
     {name: "Tails & tentacles", open: true, note: "The preview moves the tails as in a steady 12-knot wind. In Sitrec they move with the wind at the kite.", fields: [
         number("tailCount", "Tails", 0, 12, 1, 1),
         choice("tailStyle", "Tail type", {ribbon: "Ribbon", tube: "Inflated tube"}, "ribbon"),
-        number("tailLength", "Tail length · m", 0.2, 60, 0.01, 3),
+        number("tailLength", "Tail length · m", 0.01, 60, 0.01, 3),
         number("tailWidth", "Tail width / diameter · m", 0.01, 3, 0.005, 0.05),
         number("tailTaper", "Tip size · % of root", 5, 100, 1, 100),
         number("tailSpread", "Fan angle · °", 0, 60, 1, 0),
