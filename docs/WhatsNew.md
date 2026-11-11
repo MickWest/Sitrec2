@@ -9,6 +9,13 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.191.1 (2026-11-10)
+
+The features listed under 2.191.0 reach the Metabunk site with this release. Version 2.191.0 was not installed there.
+
+### Security
+- The message that Sitrec writes to the debug log (Help → *Export Debug Log*) when you add a balloon or a kite no longer has a position. Before, the message for a new balloon (ground right-click menu → *Add Balloon*) had the latitude and longitude of its launch point, since 2.102.0, and the message for a new kite (*Add Kite*) had those of its anchor. Each message now has only the id and the name of the track. The debug log is a file that you make and send yourself, for example with a bug report.
+
 ## Version 2.191.0 (2026-11-10)
 
 ### New Features

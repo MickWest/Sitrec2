@@ -3391,7 +3391,7 @@ class CTrackManager extends CManager {
         // The options were added under the short name; show the display name instead.
         this.relabelTrackOptions(trackOb);
 
-        console.log(`Created balloon track: ${trackID} (${shortName}) at ${options.startLat}, ${options.startLon}`);
+        console.log(`Created balloon track: ${trackID} (${shortName})`);
 
         NodeMan.recalculateAllRootFirst();
         setRenderOne(true);
@@ -3724,7 +3724,7 @@ class CTrackManager extends CManager {
         // The options were added under the short name; show the display name instead.
         this.relabelTrackOptions(trackOb);
 
-        console.log(`Created kite track: ${trackID} (${shortName}) at ${options.anchorLat}, ${options.anchorLon}`);
+        console.log(`Created kite track: ${trackID} (${shortName})`);
 
         NodeMan.recalculateAllRootFirst();
         setRenderOne(true);
