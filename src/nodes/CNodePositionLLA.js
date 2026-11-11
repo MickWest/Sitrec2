@@ -37,18 +37,23 @@ export class CNodePositionLLA extends CNodeTrack {
         this.agl = (v.agl !== undefined) ? v.agl : false; // above ground level, default to false
         this.addSimpleSerial("agl");
 
-        this.tipName = v.tipName || v.gui || "Position";
+        // `gui` is the key of a menu in guiMenus, or a folder (an object's own Location folder).
+        this.tipName = v.tipName || (typeof v.gui === "string" ? v.gui : null) || "Position";
 
         if (v.LLA !== undefined) {
             // copy the array in v.LLA to this._LLA
             this._LLA = v.LLA.slice()
             // if there's a gui specified, the add GUI inputs
             if (v.gui) {
-                 const id = (v.desc ?? "Camera") + (v.key ? " ["+v.key+"]":"");
+                // The ids of the three value nodes come from the description, so two position
+                // nodes with one description would collide. guiIDPrefix gives them their own ids
+                // (one position for each object), and the description can then be empty: the
+                // controls are plain "Lat", "Lon" and "Alt".
+                 const id = v.guiIDPrefix ?? ((v.desc ?? "Camera") + (v.key ? " ["+v.key+"]":""));
                 const name = (v.desc ?? "Cam") + (v.key ? " ["+v.key+"]":"");
                this.guiLat = new CNodeGUIValue({
                    id: id + " Lat",
-                   desc: name + " Lat",
+                   desc: (name + " Lat").trim(),
                    tooltip: this.tipName + " latitude in degrees. Paste a full 'lat, lon' (any format, or ECEF x,y,z in meters) to set both.",
                    value: this._LLA[0],
                    start: -90, end: 90, step: 0.01,
@@ -63,7 +68,7 @@ export class CNodePositionLLA extends CNodeTrack {
 
                this.guiLon = new CNodeGUIValue({
                    id: id + " Lon",
-                   desc: name + " Lon",
+                   desc: (name + " Lon").trim(),
                    tooltip: this.tipName + " longitude in degrees. Paste a full 'lat, lon' here to set both.",
                    value: this._LLA[1],
                    start: -180, end: 180, step: 0.01,
@@ -94,7 +99,7 @@ export class CNodePositionLLA extends CNodeTrack {
                 // but the eleasticShrink will be set to true, so it will shrink to the final range
                this.guiAlt = new CNodeGUIValue({
                    id: id + " Alt (ft)",  // including the (ft) for historical reasons, so we have the same id as older saves
-                   desc: name + " Alt",
+                   desc: (name + " Alt").trim(),
                    tooltip: this.tipName + " altitude: above mean sea level, or above the ground when Above Ground Level is on.",
                    value: 0, // don't set the altitude, as we want to set it with units
                    unitType: "small",
@@ -117,7 +122,7 @@ export class CNodePositionLLA extends CNodeTrack {
                 }, v.gui)
                 this.guiAlt.setValueWithUnits(this._LLA[2], "metric", "small")
 
-                const gui = guiMenus[v.gui];
+                const gui = typeof v.gui === "string" ? guiMenus[v.gui] : v.gui;
 
                 this.aglController = gui.add(this, "agl").name(t("positionLLA.aboveGroundLevel.label")).tooltip(t("positionLLA.aboveGroundLevel.tooltip")).onChange((v) => {
                     this.keepPositionOnAGLToggle(v);

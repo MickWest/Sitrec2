@@ -2143,6 +2143,9 @@ class CTrackManager extends CManager {
                         } else {
                             autoSelect = trackNumber === selectNumber;
                         }
+                        // The Position of an object (CustomManager.addObjectLocation): the
+                        // user selects its track.
+                        if (switchNode.noAutoSelect) autoSelect = false;
 
                         // A role-declaring file nominates BOTH a camera and a target,
                         // so its pair describes ONE scenario and must stay together.
@@ -3070,7 +3073,7 @@ class CTrackManager extends CManager {
             .tooltip(t("trackManager.tips.deleteSynthetic"));
         
         // Add to drop targets if configured
-        this.setTrackSwitchOption(shortName, splineEditorNode);
+        this.setTrackSwitchOption(shortName, splineEditorNode, smoothedTrackNode);
         // The options were added under the short name; show the display name instead.
         this.relabelTrackOptions(trackOb);
         
@@ -3078,19 +3081,15 @@ class CTrackManager extends CManager {
         if (options.objectID) {
             const objectNode = NodeMan.get(options.objectID);
             if (objectNode) {
-                // Add TrackPosition controller to follow the track
-                objectNode.addController("TrackPosition", {
-                    sourceTrack: trackID
-                });
-
-                // Add ObjectTilt controller to orient in direction of motion
+                // The object gets its Location folder, with its Position on this track. Its
+                // TrackPosition and ObjectTilt controllers read that Position selector, so
+                // the user can later take the object off the track or put it on another.
                 // NOTE: ObjectTilt creates internal CNodeSmoothedPositionTrack that must be cleaned up
                 // When disposing this object, use: CustomMan.disposeObjectWithControllers(objectID)
-                objectNode.addController("ObjectTilt", {
-                    track: trackID,
-                    tiltType: "banking",
-                    guiFolder: objectNode.gui,
-                });
+                const first = options.initialPoints?.[0];
+                const start = options.startPoint ? new Vector3(options.startPoint.x, options.startPoint.y, options.startPoint.z)
+                    : first ? new Vector3(first[1], first[2], first[3]) : null;
+                CustomManager.addObjectLocation(objectNode, {ecef: start, track: shortName});
 
                 this.linkTrackAndObject(trackOb, objectNode);
 
@@ -3503,16 +3502,32 @@ class CTrackManager extends CManager {
 
     // Add or remove a track in the track drop-target switches (Camera Track,
     // Target Track and so on), under its short name. A null node removes it.
-    setTrackSwitchOption(shortName, trackNode) {
-        for (let switchID of Sit.dropTargets?.["track"] ?? []) {
+    // `finishedNode` is the track as its own object follows it. The Position of an object
+    // (noAutoSelect, see CustomManager.addObjectLocation) gets that node: a synthetic track
+    // gives the other switches its spline, and gives an object its smoothed track.
+    setTrackSwitchOption(shortName, trackNode, finishedNode = trackNode) {
+        // a copy: a switch that is disposed while this runs leaves the list
+        for (let switchID of [...(Sit.dropTargets?.["track"] ?? [])]) {
             // a switch can be listed as "name-N", to select only track N of a file
             const match = switchID.match(/-(\d+)$/);
             if (match !== null) switchID = switchID.substring(0, switchID.length - match[0].length);
             if (!NodeMan.exists(switchID)) continue;
             const switchNode = NodeMan.get(switchID);
             switchNode.removeOption(shortName);
-            if (trackNode) switchNode.addOption(shortName, trackNode);
+            if (trackNode) switchNode.addOption(shortName, switchNode.noAutoSelect ? finishedNode : trackNode);
         }
+    }
+
+    // Give a switch that was made after the tracks every track there is now, under the
+    // short name and with the display name, as setTrackSwitchOption and relabelTrackOptions
+    // do for a track that is made after the switch.
+    addTracksToSwitch(switchNode) {
+        this.iterate((id, trackOb) => {
+            const key = trackOb.menuText;
+            if (!key || !trackOb.trackNode || switchNode.inputs[key] !== undefined) return;
+            const name = trackOb.displayName;
+            switchNode.addOption(key, trackOb.trackNode, name !== undefined && name !== key ? name : undefined);
+        });
     }
 
     // Take a short name that no track has: Kite, Kite_1, Kite_2, ...

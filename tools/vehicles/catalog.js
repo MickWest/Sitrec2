@@ -1,5 +1,5 @@
 export const VEHICLE_TYPES = Object.freeze({aircraft:"Fixed-wing aircraft",helicopter:"Helicopters & tiltrotors",
-    car:"Cars",truck:"Trucks, vans & buses",drone:"Drones",balloon:"Balloons & sky lanterns",kite:"Kites"});
+    car:"Cars",truck:"Trucks, vans & buses",drone:"Drones",balloon:"Balloons & sky lanterns",kite:"Kites",bird:"Birds"});
 export const VEHICLE_REGIONS = Object.freeze({civil:"Civil & general",US:"US",Europe:"Europe",China:"China",Iran:"Iran",Russia:"Russia"});
 
 export function populateVehicleFilters(typeSelect, regionSelect) {

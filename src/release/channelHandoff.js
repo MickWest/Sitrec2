@@ -24,7 +24,9 @@ export async function saveChannelHandoff(sitch, context = {}) {
     const token = crypto.randomUUID();
     // This is local browser storage, never a URL or a server upload. Structured
     // cloning fails safely if a non-serializable legacy sitch is handed to us.
-    const text = getSitchText(sitch);
+    // `sitch` is a loaded sitch object, or the text of a sitch file: the current state of an
+    // open sitch, as a save would write it (StaleBuildRecovery.js).
+    const text = typeof sitch === 'string' ? sitch : getSitchText(sitch);
     const value = {sitch: text ? null : sitch, text, context, createdAt: Date.now()};
     await transaction('readwrite', store => store.put(value, token));
     try { sessionStorage.setItem(POINTER, token); }

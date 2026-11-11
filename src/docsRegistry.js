@@ -180,7 +180,7 @@ export const helpDocs = [
     {
         file: "docs/CustomModels", labelKey: "menus.help.documentation.customModels",
         section: "data", menuId: "objects", role: "reference",
-        chatDesc: "Displaying and importing 3D models and the Model Inspector. Sitrec imports two model file formats: GLB (binary glTF) and PLY (mesh, Gaussian splat, or point cloud). Plain .gltf is NOT accepted — export as .glb. Also covers the built-in aircraft and other models, the Custom Object Designer library of preset vehicles, balloons and kites (Browse custom objects), flocks of birds, simple shapes, sizing, and preparing a model in Blender.",
+        chatDesc: "Displaying and importing 3D models and the Model Inspector. Sitrec imports two model file formats: GLB (binary glTF) and PLY (mesh, Gaussian splat, or point cloud). Plain .gltf is NOT accepted — export as .glb. Also covers the built-in aircraft and other models, the Custom Object Designer library of preset vehicles, balloons, kites and birds with wings that flap (Browse custom objects), flocks of birds, simple shapes, sizing, and preparing a model in Blender.",
     },
     {
         file: "docs/ObjectReferences", labelKey: "menus.help.documentation.objectReferences",

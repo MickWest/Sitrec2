@@ -105,6 +105,10 @@ function addGeneratedTrackUndo(trackOb, kind, record, addTrack) {
     });
 }
 
+// The key of the manual option in an object's Position selector (addObjectLocation). It is
+// saved with the sitch as the selector's choice, so it does not change with the language.
+export const OBJECT_MANUAL_POSITION = "manualPosition";
+
 export const menuMethods = {
     /**
      * Parse flexible object input string for coordinates and name
@@ -322,9 +326,109 @@ export const menuMethods = {
     },
 
     /**
-     * Build a fixed 3D object: a CNode3DObject that gets its position from a headless
-     * CNodePositionLLA instead of a track. See addFixedObject() below for why it is
-     * built that way.
+     * Give a 3D object that the user made its Location folder: a Position selector (Manual,
+     * or any track) and the manual Lat, Lon and Alt. It is the camera's Location folder
+     * without the Lookup and Geolocate tools.
+     *
+     * The two controllers of the object read the selector, not a track. So the user can put
+     * the object on a track, move it to another track, or take it off, with one control. A
+     * track that is made or loaded later becomes an option by itself, because a
+     * CNodeTrackSwitch is a track drop target.
+     *
+     * Every node made here has an id that starts with the object's id and "_", except a
+     * fixed object's position node. deleteObject() and the create-object undo find the
+     * nodes of an object by that prefix.
+     *
+     * @param {CNode3DObject} objectNode
+     * @param {object} options
+     * @param {string} [options.positionID] - id for the manual position node
+     * @param {number[]} [options.LLA] - the manual position, [lat, lon, alt]
+     * @param {boolean} [options.agl] - the altitude of LLA is above ground level
+     * @param {Vector3} [options.ecef] - the manual position as a point, in place of LLA
+     * @param {string} [options.track] - the short name of the track that the object starts on
+     * @returns {CNodePositionLLA} the manual position node
+     */
+    addObjectLocation(objectNode, {positionID, LLA = [0, 0, 0], agl = false, ecef = null, track = null} = {}) {
+        const id = objectNode.id;
+        // Open, and directly below the name: where an object is comes before how it looks.
+        const folder = objectNode.gui.addFolder(t("nodes3dObject.location.label"));
+        folder.tooltip(t("nodes3dObject.location.tooltip"));
+        folder.moveAfter(t("displayName.label"));
+        objectNode.locationFolder = folder;
+
+        const positionNode = new CNodePositionLLA({
+            id: positionID ?? `${id}_manualPosition`,
+            LLA: LLA.slice(),
+            agl: agl,
+            gui: folder,
+            desc: "",
+            guiIDPrefix: `${id}_position`,
+            tipName: t("nodes3dObject.location.tipName"),
+            locationTools: false,       // no Lookup, no Geolocate, no Go To
+        });
+        if (ecef) positionNode.mirrorECEF(ecef);
+
+        const switchNode = new CNodeTrackSwitch({
+            id: `${id}_positionSwitch`,
+            inputs: {[OBJECT_MANUAL_POSITION]: positionNode},
+            // Display-only; the stored choice key does not change with the language.
+            labels: {[OBJECT_MANUAL_POSITION]: t("nodes3dObject.location.manual")},
+            default: OBJECT_MANUAL_POSITION,
+            desc: t("nodes3dObject.location.position.label"),
+            gui: folder,
+            tooltip: t("nodes3dObject.location.position.tooltip"),
+        });
+        // A track that the user loads must not take the object: the user selects it.
+        switchNode.noAutoSelect = true;
+        switchNode.controller?.moveToFirst?.();
+        TrackManager.addTracksToSwitch(switchNode);
+        if (track && switchNode.inputs[track] !== undefined) switchNode.selectOptionQuietly(track);
+        objectNode.positionSwitchID = switchNode.id;
+
+        objectNode.addController("TrackPosition", {
+            sourceTrack: switchNode.id,
+        });
+        // ObjectTilt points the object along its motion. On the manual position it does not
+        // move, so it keeps the heading it has (north at first), and its Banking menu can
+        // give it a fixed heading. Its internal smoothed track goes with the controller:
+        // dispose the object with disposeObjectWithControllers.
+        objectNode.addController("ObjectTilt", {
+            track: switchNode.id,
+            tiltType: "banking",
+            guiFolder: objectNode.gui,
+        });
+
+        // The manual values show only while Position is Manual. They are hidden, not grayed
+        // out: the object's pop-up menu is a copy of this folder, and the copy follows what
+        // is hidden but not what is disabled. When the user goes back to Manual (or deletes
+        // the track), the object stays where it is.
+        let previousChoice = switchNode.choice;
+        const onChoice = () => {
+            const choice = switchNode.choice, from = previousChoice;
+            previousChoice = choice;
+            const manual = choice === OBJECT_MANUAL_POSITION;
+            // A value node shows its row when the node is visible (CNodeGUIValue.update), so
+            // the three values are shown and hidden through their nodes.
+            for (const value of [positionNode.guiLat, positionNode.guiLon, positionNode.guiAlt]) value?.show(manual);
+            for (const control of [positionNode.aglController, positionNode.smallAltitudesController]) {
+                if (control) manual ? control.show() : control.hide();
+            }
+            if (Globals.deserializing || Globals.disposing || choice === from || !manual) return;
+            const group = objectNode.group ?? objectNode._object;
+            if (group && positionNode.mirrorECEF(group.getWorldPosition(new Vector3()))) setRenderOne(true);
+        };
+        objectNode.positionChoiceEvent = "Switch.choiceChanged." + switchNode.id;
+        objectNode.positionChoiceHandler = onChoice;
+        EventManager.addEventListener(objectNode.positionChoiceEvent, onChoice);
+        onChoice();
+
+        return positionNode;
+    },
+
+    /**
+     * Build a fixed 3D object: a CNode3DObject at a manual position, which the user can
+     * later put on a track with the Position control of its Location folder
+     * (addObjectLocation above). See addFixedObject() below for why it is built that way.
      *
      * Every route that makes one comes through here — the ground menu, its undo/redo,
      * and the sitch deserializer — so a reloaded object is constructed exactly like a
@@ -343,13 +447,6 @@ export const menuMethods = {
      * @returns {CNode3DObject} the created object node
      */
     createFixedObject(objectID, positionID, LLA, agl = false, displayName = undefined) {
-        // No `gui`, so no controls are created for it.
-        const positionNode = new CNodePositionLLA({
-            id: positionID,
-            LLA: LLA,
-            agl: agl,
-        });
-
         const objectNode = new CNode3DObject({
             id: objectID,
             displayName,
@@ -357,18 +454,12 @@ export const menuMethods = {
             radius: 5,
             color: 0x808080,
             material: "phong",
-            // Only the placement until the controller's first update, but ask the
-            // position node for it rather than converting the LLA a second time here —
-            // it is the one that knows whether that altitude means MSL or AGL.
-            position: positionNode.p(0),
         });
 
-        // Position only. No ObjectTilt: that orients a model along its direction of
-        // travel, and this one has none — it would also drag in a smoothed-track
-        // node that would then need disposing.
-        objectNode.addController("TrackPosition", {
-            sourceTrack: positionID,
-        });
+        const positionNode = this.addObjectLocation(objectNode, {positionID, LLA, agl});
+        // Only the placement until the controller's first update. The position node gives
+        // it, because that node knows whether the altitude means MSL or AGL.
+        objectNode.group.position.copy(positionNode.p(0));
 
         objectNode.fixedObjectPositionID = positionID;
         return objectNode;
@@ -617,8 +708,10 @@ export const menuMethods = {
                 if (UndoManager) {
                     UndoManager.add({
                         undo: () => {
-                            NodeMan.disposeRemove(objectID);
-                            NodeMan.disposeRemove(positionID);
+                            // The object has controllers and a Location folder with their own
+                            // nodes: deleteObject removes all of them, and the position node.
+                            const node = NodeMan.get(objectID, false);
+                            if (node) this.deleteObject(node);
                         },
                         redo: () => {
                             this.createFixedObject(objectID, positionID, [lat, lon, altMSL], false, displayName);

@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import {PRESETS, parameterGroups, isRoad, isMultirotor, isBalloon, isKite, normalizeParameters} from "./vehicleParameters.js";
+import {PRESETS, parameterGroups, isRoad, isMultirotor, isBalloon, isKite, isBird, normalizeParameters} from "./vehicleParameters.js";
 import {kiteFlightProperties, kiteLiftingArea, kiteMinimumWind} from "./kiteFlight.js";
 import {usesCanopy, usesAirlinerWindscreen} from "./aircraftSchema.js";
 import {disposeVehicle} from "./vehicle.js";
@@ -21,7 +21,7 @@ const events = {signal: lifecycle.signal};
 const STORAGE_KEY = "sitrec-vehicle-designer-v1";
 let params = {...PRESETS[0].parameters}, activePreset = PRESETS[0].id, designName = PRESETS[0].name;
 let modified = false, model, modelDirty = true, renderDirty = true, saveTimer, currentView = "perspective";
-let lastBuildMs = 0, disposed = false, frameId, propellerTime = 0, thermalFailed = false, sensorFrame = 0, wasKite = false;
+let lastBuildMs = 0, disposed = false, frameId, propellerTime = 0, thermalFailed = false, sensorFrame = 0, wasMoving = false;
 const fieldControls = new Map();
 let matchingPresets = [];
 
@@ -100,7 +100,21 @@ function updateName() {
     }
 }
 
+// A control with no effect on the current bird is shown as inactive.
+function updateBirdControls() {
+    const still = params.flightStyle === "glide", inactive = {
+        wingbeatRate: still, flapAngle: still, wingFold: still,
+        burstBeats: params.flightStyle !== "bursts", glideSeconds: params.flightStyle !== "bursts",
+        legLength: params.legs !== "trailing", headMarkColor: params.headMark === "none",
+        markColor: params.wingPattern === "plain", markExtent: params.wingPattern === "plain", tailBandColor: params.tailBand === 0,
+    };
+    for (const [key, value] of Object.entries(inactive)) for (const control of fieldControls.get(key) ?? []) {
+        control.disabled = value; control.closest(".field").classList.toggle("inactive", value);
+    }
+}
+
 function updateCockpitControls() {
+    if(isBird(params))return updateBirdControls();
     if(isMultirotor(params)||isBalloon(params)||isKite(params))return;
     for (const key of ["strobeLights","taxiLights","landingLayout","turnSignal"]) for (const control of fieldControls.get(key) ?? []) {
         const inactive = key === "turnSignal" ? !isRoad(params) : isRoad(params);
@@ -242,30 +256,32 @@ function setWireframe(root, value) {
 function rebuild() {
     const start = performance.now();
     const replacement = generateVehicle(createVehicleRecipe(params,designName,activePreset || null));
-    if (!isKite(params)) propellerTime = 0;       // the tails of a kite keep moving while a slider is dragged
+    if (!isKite(params) && !isBird(params)) propellerTime = 0;       // kite tails and bird wings keep moving while a slider is dragged
     if (model) disposeVehicle(model.root);
     model = replacement; studio.setModel(model); scene.add(model.root); thermalFailed = false;
     animateVehicleLights(model,0,false);
     setWireframe(model.root, $("wireframe").checked);
-    const road = isRoad(params), drone=isMultirotor(params),balloon=isBalloon(params),kite=isKite(params), aerial=drone||balloon||kite;
+    const road = isRoad(params), drone=isMultirotor(params),balloon=isBalloon(params),kite=isKite(params),bird=isBird(params), aerial=drone||balloon||kite;
     const gridSize = Math.max(model.stats.size.x, model.stats.size.z,model.stats.size.y*.6) * 2.5;
-    grid.scale.setScalar(gridSize); grid.position.y = model.bounds.min.y - (road ? 0.025 : aerial?Math.min(params.width,params.height)*.1:Math.max(params.diameter * 0.15, 0.15));
+    // The grid of a bird is below the lowest place of its wings.
+    grid.scale.setScalar(gridSize); grid.position.y = bird ? model.sweepBounds.min.y - params.length * .1 :
+        model.bounds.min.y - (road ? 0.025 : aerial?Math.min(params.width,params.height)*.1:Math.max(params.diameter * 0.15, 0.15));
     controls.maxDistance = Math.max(300, gridSize * 12);
     $("lengthMetric").textContent = `${(drone||kite?model.stats.size.z:params.length).toFixed(2)} m`;
-    $("lengthLabel").textContent = drone||kite?"OVERALL LENGTH":balloon?"ENVELOPE LENGTH":road ? "BODY LENGTH" : "FUSELAGE";
+    $("lengthLabel").textContent = bird?"LENGTH":drone||kite?"OVERALL LENGTH":balloon?"ENVELOPE LENGTH":road ? "BODY LENGTH" : "FUSELAGE";
     const rotorOnly = !params.wings && params.rotorLayout !== "none";
-    $("spanLabel").textContent = kite?"WIDTH":drone?"OVERALL WIDTH":balloon?"ENVELOPE WIDTH":road ? "BODY WIDTH" : rotorOnly ? "ROTOR DIAMETER" : "WINGSPAN";
-    $("spanMetric").textContent = `${(drone?model.stats.size.x:road||balloon||kite ? params.width : rotorOnly ? params.rotorDiameter : model.stats.wingspan).toFixed(2)} m`;
-    $("spanMetric").title = kite?"Width of the sail or head":drone?"Current propeller positions; overall sweep varies while spinning":balloon?"Envelope width, excluding fins":road ? "Body width, excluding mirrors" : rotorOnly ? "Diameter of one main rotor" : "Main wings and winglets, including tip thickness";
-    $("areaLabel").textContent = kite?"LIFTING AREA":drone?"HEIGHT":balloon?"ENVELOPE HEIGHT":road ? "HEIGHT" : "WING AREA";
-    $("aspectLabel").textContent = kite?"MINIMUM WIND":drone?"ROTORS":balloon?"TOTAL HEIGHT":road ? "WHEELBASE" : "ASPECT RATIO";
-    $("areaMetric").textContent = kite?`${kiteLiftingArea(params).toFixed(2)} m²`:aerial?`${(balloon?params.height:model.stats.size.y).toFixed(2)} m`:road ? `${model.stats.height.toFixed(2)} m` : model.stats.area ? `${model.stats.area.toFixed(1)} m²` : "—";
-    $("aspectMetric").textContent = kite?`${(kiteMinimumWind(kiteFlightProperties(params))/0.514444).toFixed(1)} kt`:drone?String(model.stats.rotors):balloon?`${model.stats.size.y.toFixed(2)} m`:road ? `${model.stats.wheelbase.toFixed(2)} m` : model.stats.area ? model.stats.aspectRatio.toFixed(2) : "—";
-    $("spinLabel").textContent = kite ? "Move tails in a 12-knot wind" : road ? "Spin wheels" : "Spin rotors / props";
+    $("spanLabel").textContent = bird?"WINGSPAN":kite?"WIDTH":drone?"OVERALL WIDTH":balloon?"ENVELOPE WIDTH":road ? "BODY WIDTH" : rotorOnly ? "ROTOR DIAMETER" : "WINGSPAN";
+    $("spanMetric").textContent = `${(bird?params.wingspan:drone?model.stats.size.x:road||balloon||kite ? params.width : rotorOnly ? params.rotorDiameter : model.stats.wingspan).toFixed(2)} m`;
+    $("spanMetric").title = bird?"Wing tip to wing tip, with the wings flat":kite?"Width of the sail or head":drone?"Current propeller positions; overall sweep varies while spinning":balloon?"Envelope width, excluding fins":road ? "Body width, excluding mirrors" : rotorOnly ? "Diameter of one main rotor" : "Main wings and winglets, including tip thickness";
+    $("areaLabel").textContent = bird?"WING AREA":kite?"LIFTING AREA":drone?"HEIGHT":balloon?"ENVELOPE HEIGHT":road ? "HEIGHT" : "WING AREA";
+    $("aspectLabel").textContent = bird?"WINGBEAT":kite?"MINIMUM WIND":drone?"ROTORS":balloon?"TOTAL HEIGHT":road ? "WHEELBASE" : "ASPECT RATIO";
+    $("areaMetric").textContent = bird?`${model.stats.wingArea.toFixed(3)} m²`:kite?`${kiteLiftingArea(params).toFixed(2)} m²`:aerial?`${(balloon?params.height:model.stats.size.y).toFixed(2)} m`:road ? `${model.stats.height.toFixed(2)} m` : model.stats.area ? `${model.stats.area.toFixed(1)} m²` : "—";
+    $("aspectMetric").textContent = bird?(params.flightStyle==="glide"?"Glide":`${Number(params.wingbeatRate.toFixed(2))} / s`):kite?`${(kiteMinimumWind(kiteFlightProperties(params))/0.514444).toFixed(1)} kt`:drone?String(model.stats.rotors):balloon?`${model.stats.size.y.toFixed(2)} m`:road ? `${model.stats.wheelbase.toFixed(2)} m` : model.stats.area ? model.stats.aspectRatio.toFixed(2) : "—";
+    $("spinLabel").textContent = bird ? "Flap wings" : kite ? "Move tails in a 12-knot wind" : road ? "Spin wheels" : "Spin rotors / props";
     $("animateProps").disabled=balloon;
-    // A kite's tails move as soon as it is chosen; the box turns the motion off.
-    if(kite&&!wasKite)$("animateProps").checked=true;
-    wasKite=kite;
+    // The tails of a kite and the wings of a bird move as soon as it is chosen; the box turns the motion off.
+    if((kite||bird)&&!wasMoving)$("animateProps").checked=true;
+    wasMoving=kite||bird;
     $("geometryStats").textContent = `${Math.round(model.stats.triangles).toLocaleString()} triangles · metres`;
     lastBuildMs = performance.now() - start;
     status(`Live preview · ${lastBuildMs.toFixed(0)} ms update`);
@@ -274,7 +290,7 @@ function rebuild() {
 
 function fit() {
     if (!model) return;
-    studio.fit(model.bounds,{view:currentView,paddingX:1.25,paddingY:1.55});
+    studio.fit(model.sweepBounds ?? model.bounds,{view:currentView,paddingX:1.25,paddingY:1.55});
     renderDirty = true;
 }
 

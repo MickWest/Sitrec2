@@ -14,7 +14,16 @@ export class CNodeTrackSwitch extends CNodeSwitch {
         }
     }
 
-    addOption(option, value) {
+    // A switch that is made for one object (its Position) goes away with that object, so it
+    // must not stay in the list of drop targets.
+    dispose() {
+        const targets = Sit.dropTargets?.["track"];
+        const index = targets ? targets.indexOf(this.id) : -1;
+        if (index >= 0) targets.splice(index, 1);
+        super.dispose();
+    }
+
+    addOption(option, value, label = undefined) {
         // Walk outputs recursively to find all downstream nodes
         const downstream = new Set();
         const stack = [...this.outputs];
@@ -32,6 +41,6 @@ export class CNodeTrackSwitch extends CNodeSwitch {
             return;
         }
 
-        super.addOption(option, value);
+        super.addOption(option, value, label);
     }
 }

@@ -246,7 +246,8 @@ function buildModalShell(title, message) {
  * @param {string} message - Body text (newlines preserved)
  * @param {object} opts
  * @param {string} [opts.title="Choose"]
- * @param {Array<{label:string, value:*, description?:string, color?:string, primary?:boolean, cancel?:boolean}>} opts.options
+ * @param {Array<{label:string, value:*, description?:string, color?:string, primary?:boolean, cancel?:boolean, disabled?:boolean}>} opts.options
+ *        An option with `disabled:true` is shown grayed out and cannot be chosen: the message says why.
  * @param {*} [opts.cancelValue=null] - Value resolved on dismissal when no option is flagged cancel
  * @param {string|null} [opts.typeToConfirm=null] - A word the user must type, exactly, before any
  *        option except the cancel one can be chosen (Enter included)
@@ -303,7 +304,7 @@ export function showChoice(message, {title = "Choose", options = [], cancelValue
             resolve(result);
         };
 
-        const primaryOption = options.find(o => o.primary) || options[0];
+        const primaryOption = options.find(o => o.primary && !o.disabled) || options.find(o => !o.disabled);
         const onKey = (e) => {
             if (e.key === 'Escape') { e.preventDefault(); cleanup(dismissValue); }
             else if (e.key === 'Enter' && primaryOption) {
@@ -333,10 +334,16 @@ export function showChoice(message, {title = "Choose", options = [], cancelValue
                 desc.style.cssText = `font-size: 12px; opacity: 0.85; margin-top: 3px; font-weight: normal;`;
                 btn.appendChild(desc);
             }
-            btn.onclick = () => { if (armed || opt.cancel) cleanup(opt.value); };
-            if (typeToConfirm && !opt.cancel) gated.push(btn);
+            if (opt.disabled) {
+                btn.disabled = true;
+                btn.style.opacity = '0.45';
+                btn.style.cursor = 'not-allowed';
+            } else {
+                btn.onclick = () => { if (armed || opt.cancel) cleanup(opt.value); };
+                if (typeToConfirm && !opt.cancel) gated.push(btn);
+            }
             modal.appendChild(btn);
-            if (!firstButton) firstButton = btn;
+            if (!firstButton && !opt.disabled) firstButton = btn;
         }
         if (typeToConfirm) setArmed(false);
 
