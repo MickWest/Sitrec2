@@ -222,7 +222,7 @@ The look view, facing east with the Sun low in the north-west and a field of vie
 | Control | Default | What it does |
 |---|---|---|
 | **Show Rainbow** (title checkbox) | Off | Turns on the rainbow. It does not need **Show Halos** |
-| **Secondary Bow** | On | The fainter second bow, 50.4° to 53.6° from the point opposite the Sun. Its colors are in the opposite order, with red on the inside |
+| **Secondary Bow** | On | The fainter second bow, 50.4° to 53.7° from the point opposite the Sun. Its colors are in the opposite order, with red on the inside |
 | **Brightness** | 1 | Brightness of the rainbow (0 to 3). **Intensity** does not change it |
 | **Rain Distance (m)** | 3000 | The distance from the camera to the near edge of the rain (100 to 30,000 m). It sets which terrain and objects hide the rainbow. It does not change the size of the bow |
 

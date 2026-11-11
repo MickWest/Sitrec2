@@ -9,6 +9,20 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.191.0 (2026-11-10)
+
+### New Features
+- **Add Kite** (ground right-click menu → *Add Kite*, below *Add Balloon*): adds a kite on a flying line that is held at the clicked point. The wind puts the kite downwind of that point, at the height where its lift, its drag, its weight and the pull of the line are in balance. The kite turns its nose into the wind, and its tails move with the wind. Use it to test if a kite can be at the position of an object in a video. The kite's folder in Contents has *Anchor Altitude (m MSL)* (the ground at the clicked point), *Line Length (m)* (default 100), *Line Weight (g/m)* (default 0.5), *Line Diameter (mm)* (default 1), *Wind Variability (%)* (default 20) and *Random Seed* (default 1). Two read-only rows, *Kite Position* and *Wind and Pull*, show the height of the kite, its distance downwind, the wind speed and the pull of the line at the current frame. A new kite is a small diamond kite. To change its type, use *Browse custom objects…* in the kite's folder in Objects. The kite uses the wind of the sitch (Physics → Wind). When the wind is too light, the kite is on the ground, and *Kite Position* shows *On the ground*. You can select the kite as the camera track or the target track, and it is saved with the sitch.
+- **Kites in the Custom Object Designer** (Sitrec → Extra Tools → *Custom Object Designer*, or Objects → *object* → *Browse custom objects…*): a new object type, *Kites*, has 15 presets of seven shapes: diamond, delta, rokkaku, sled, box, parafoil and octopus. An octopus kite has eight tentacles that move with the wind. Each kite design has a *Flight* folder with *Mass · kg*, *Lifting area · m² (0 = from the shape)*, *Lift coefficient* and *Drag coefficient*. *Add Kite* uses these values. They are estimates for each type of kite, not measurements. The library now has 307 presets.
+- **Rainbow** (Show → Celestial → Atmospheric Optics (Halos) → Rainbow): draws a rainbow in the look view, at the correct angle from the point opposite the Sun. Sitrec finds that point from the date, the time and the camera position of the sitch, so a rainbow in a video can give the time of the video. *Show Rainbow* (the title checkbox, off by default) turns it on. It does not need *Show Halos*, and it needs the Sun above the horizon. *Secondary Bow* (on by default) adds the fainter second bow. *Brightness* (default 1) sets how bright the rainbow is. *Rain Distance (m)* (default 3000) sets how far away the rainbow is: nearer terrain and objects hide it. The settings are saved with the sitch.
+
+### Improvements
+- **The Vehicle Designer is now the Custom Object Designer** (Sitrec → Extra Tools → *Custom Object Designer*): the tool has a new name, because it makes more than vehicles. In an object's folder (Objects), the button *Browse vehicles…* is now *Browse custom objects…*, and the row *Vehicle* is now *Custom object*. The address of the tool, your saved designs and the design files did not change.
+
+### Bug Fixes
+- Fixed *Echo Dark* and *Echo Light* (Video → Video Processing) on a stabilized video. Echo combined the stabilized current frame with earlier frames that were not stabilized, so the result showed the camera shake and not the motion of the objects. Echo now uses the stabilized version of each earlier frame. It also calculates again when you turn stabilization on or off, or stabilize again.
+- Fixed the video view staying black after a sitch loaded with *Echo Dark* or *Echo Light* on (Video → Video Processing) and with Levels settings applied (Video → Video Adjustments → *Levels*). The view stayed black until the frame changed.
+
 ## Version 2.190.1 (2026-11-10)
 
 ### New Features
