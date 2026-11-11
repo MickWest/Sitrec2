@@ -42,8 +42,8 @@ Here's an informal video demonstrating many of the concepts described here:
 
 ## Which of these are you?
 
-To build your own, start a blank sitch. **File → New Sitch** starts a fresh custom sitch, and the
-**New Sitch** button in the sitch browser does the same. Or go straight to `?sitch=custom`. Then
+To build your own, start a blank sitch. **File → New Sitch (Empty)** starts a fresh custom sitch, and the
+**New Sitch** button on the start screen and in the sitch browser does the same. Or go straight to `?sitch=custom`. Then
 follow whichever of these describes your situation:
 
 ### A. "I filmed it myself, from the ground"

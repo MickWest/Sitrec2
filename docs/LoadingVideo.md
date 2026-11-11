@@ -8,7 +8,7 @@ your way around the video view, and the adjustment, processing and forensic tool
 
 A **sitch** (short for *situation*) is one Sitrec scene: a place, a span of time, and the camera,
 tracks, objects and video that recreate an event. You can save and share a sitch, but it is a
-sitch before you save it. To start a blank one, use **File → New Sitch**. The
+sitch before you save it. To start a blank one, use **File → New Sitch (Empty)**. The
 [Glossary](Glossary.md#sitrec) explains this and other Sitrec terms, such as the main view and
 the look view.
 

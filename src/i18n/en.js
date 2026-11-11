@@ -984,8 +984,12 @@ const en = {
     },
     file: {
         newSitch: {
-            label: "New Sitch",
-            tooltip: "Create a new sitch (will reload this page, resetting everything)",
+            label: "New Sitch (Empty)",
+            tooltip: "Create a new, empty sitch (will reload this page, resetting everything)",
+        },
+        newSitchFromTemplate: {
+            label: "New Sitch from Template",
+            tooltip: "Show the templates, and start a new sitch from one.\nA template opens Sitrec set up for one task. Your work does not change the template.",
         },
         savingDisabled: "Saving Disabled (click to log in)",
         savingDisabledTooltip: "Log in to save sitches to the server. The login page opens in a new tab. When you come back to this tab, the save buttons appear.",
@@ -1029,6 +1033,10 @@ const en = {
             saveAs: {
                 label: "Save As",
                 tooltip: "Save the current sitch to the server with a new name",
+            },
+            saveAsTemplate: {
+                label: "Save as Template",
+                tooltip: "Save the current sitch to the server as a template, or save a new version of a template.\nA template shows on the start screen. Save and Save As do not write to a template.",
             },
             versions: {
                 label: "Versions",

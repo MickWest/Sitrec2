@@ -516,6 +516,78 @@ describe('CSitrecAPI sitch APIs', () => {
             },
         });
     });
+
+    // Only File > Save as Template writes to a template. The API save has the same
+    // check as the menu Save, and it stops when the check gets no answer.
+    describe('a server save and templates', () => {
+        beforeEach(() => {
+            mockSit.sitchName = 'TestSitch';
+            mockFileManager.hasServerBackedSaves.mockReturnValue(true);
+        });
+        afterEach(() => {
+            delete mockFileManager.ownTemplateLabelsForSave;
+            delete mockGlobalsState.loadGeneration;
+        });
+
+        test('saves a sitch that is not a template', async () => {
+            mockFileManager.ownTemplateLabelsForSave = jest.fn(async () => []);
+
+            const result = await sitrecAPI.call('saveSitch', {target: 'server'});
+
+            expect(mockFileManager.ownTemplateLabelsForSave).toHaveBeenCalledWith('TestSitch');
+            expect(mockFileManager.saveSitchNamed).toHaveBeenCalledWith('TestSitch', false, null, null);
+            expect(result.success).toBe(true);
+        });
+
+        test('does not write to a template', async () => {
+            mockFileManager.ownTemplateLabelsForSave = jest.fn(async () => ['Global Template']);
+
+            const result = await sitrecAPI.call('saveSitch', {target: 'server'});
+
+            expect(mockFileManager.saveSitchNamed).not.toHaveBeenCalled();
+            expect(result.success).toBe(false);
+            expect(result.error).toContain('"TestSitch" is a template');
+        });
+
+        test('does not save when the template check gets no answer', async () => {
+            mockFileManager.ownTemplateLabelsForSave = jest.fn(async () => { throw new Error('metadata.php returned 500'); });
+
+            const result = await sitrecAPI.call('saveSitch', {target: 'server'});
+
+            expect(mockFileManager.saveSitchNamed).not.toHaveBeenCalled();
+            expect(result.success).toBe(false);
+            expect(result.error).toContain('Could not check if "TestSitch" is a template');
+        });
+
+        // The check waits for the server. A sitch that loads in that time is not the one
+        // that the call asked to save, and it must not go to the server under that name.
+        test('does not save when a different sitch loads during the template check', async () => {
+            mockGlobalsState.loadGeneration = 4;
+            mockFileManager.ownTemplateLabelsForSave = jest.fn(async () => {
+                mockGlobalsState.loadGeneration = 5;
+                mockSit.sitchName = 'Other Sitch';
+                return [];
+            });
+
+            const result = await sitrecAPI.call('saveSitch', {name: 'Renamed', target: 'server'});
+
+            expect(mockFileManager.saveSitchNamed).not.toHaveBeenCalled();
+            expect(result.success).toBe(false);
+            expect(result.error).toContain('A different sitch loaded');
+            // The new sitch does not get the name that the call gave.
+            expect(mockSit.sitchName).toBe('Other Sitch');
+        });
+
+        test('does not ask about templates for a local save', async () => {
+            mockFileManager.ownTemplateLabelsForSave = jest.fn(async () => ['Global Template']);
+
+            const result = await sitrecAPI.call('saveSitch', {target: 'local'});
+
+            expect(mockFileManager.ownTemplateLabelsForSave).not.toHaveBeenCalled();
+            expect(mockFileManager.saveSitchNamed).toHaveBeenCalledWith('TestSitch', true, null, null);
+            expect(result.success).toBe(true);
+        });
+    });
 });
 
 describe('CSitrecAPI transient state classification', () => {

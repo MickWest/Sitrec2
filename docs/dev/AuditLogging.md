@@ -83,7 +83,7 @@ discarded. Client IP and correlation headers cannot overwrite server values.
 | `object.php`, `s3-proxy.php` | `object.resolve`, `object.read` |
 | `getsitches.php` | `sitch.list`, `sitch.versions`, denied `authorization.version_list` (the request still lists the caller's own versions) |
 | `settings.php` | `settings.read`, `settings.write` |
-| `metadata.php` | `metadata.read`, `metadata.write`, `metadata.screenshot_versions`, `featured.read`, `featured.write` |
+| `metadata.php` | `metadata.read`, `metadata.write`, `metadata.screenshot_versions`, `featured.read`, `featured.write`, `templates.read`, `templates.write` |
 | `shortener.php` | `share.create` |
 | `admin_info.php` | `administrator.user_read`, failed `administrator.lookup` |
 | `proxy.php`, `customWindProxy.php` | `catalogue.read`, `wind.read` |

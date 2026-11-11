@@ -418,7 +418,7 @@ export const helpDocs = [
     {
         file: "docs/URLParameters", labelKey: "menus.help.documentation.urlParameters",
         section: "advanced", role: "reference",
-        chatDesc: "The query parameters you can add to a Sitrec address: opening a sitch (sitch, custom, mod), loading a file from a URL (drop), setting the location, map and elevation source (latlon, mapType, elevationType), setting the start time or pinning a frame (datetime, frame), and startup actions (action=new, trackbrowser, botbench). Read for 'how do I link to a location or time', 'what does ?custom= accept', 'why does ?latlon= do nothing', or 'what URL do I share'.",
+        chatDesc: "The query parameters you can add to a Sitrec address: opening a sitch (sitch, custom, mod, template), loading a file from a URL (drop), setting the location, map and elevation source (latlon, mapType, elevationType), setting the start time or pinning a frame (datetime, frame), and startup actions (action=new, browse, trackbrowser, botbench). Read for 'how do I link to a location or time', 'what does ?custom= accept', 'why does ?latlon= do nothing', or 'what URL do I share'.",
     },
     {
         file: "docs/APIKeys", labelKey: "menus.help.documentation.apiKeys",

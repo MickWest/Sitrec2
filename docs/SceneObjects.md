@@ -18,7 +18,7 @@ This page has four parts:
 ## A. The ground menu
 
 Right-click the ground (terrain, or the globe) in the main view or the look view. The menu is
-titled **Ground**. It is only available in a Custom sitch. **File → New Sitch** starts a fresh
+titled **Ground**. It is only available in a Custom sitch. **File → New Sitch (Empty)** starts a fresh
 one, and so does the **New Sitch** button in the sitch browser.
 
 The top of the menu shows the location of the point you clicked:

@@ -37,6 +37,7 @@ async function openBrowser(metadataGet) {
         }
         if (url.includes('getsitches.php')) return json([['mine', '2026-01-01 00:00:00', null], ['other', '2026-01-02 00:00:00', null]]);
         if (url.includes('metadata.php?featured')) return json({sitches: []});
+        if (url.includes('metadata.php?templates')) return json({sitches: []});
         if (url.includes('metadata.php')) return metadataGet();
         throw new Error(`unexpected fetch ${url}`);
     });
@@ -131,6 +132,7 @@ describe('when the stored labels were read', () => {
                 if (options.method === 'POST') { posts.push(JSON.parse(options.body)); return json({success: true}); }
                 if (url.includes('getsitches.php')) return json([['mine', '2026-01-01 00:00:00', null]]);
                 if (url.includes('metadata.php?featured')) return json({sitches: []});
+                if (url.includes('metadata.php?templates')) return json({sitches: []});
                 return json({error: 'Metadata storage unavailable'}, 500);
             });
             browser.open();

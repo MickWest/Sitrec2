@@ -12,6 +12,12 @@
  *
  * GET: Returns user metadata {labels: [...], sitchLabels: {...}}
  * POST: Saves user metadata. If "updateSitches" array is provided, also writes per-sitch metadata.json for each.
+ *
+ * Two shared lists sit beside the per-user files. An administrator writes them and
+ * anyone can read them, logged in or not:
+ *   - metadata/featured.json  : the featured sitches      (GET ?featured=1,  POST updateFeatured)
+ *   - metadata/templates.json : the global templates      (GET ?templates=1, POST updateTemplates)
+ * A sitch on either list is published: getsitches.php lets any caller list its versions.
  */
 
 // The CORS origin below is built before config_paths.php is loaded, so settle the scheme first.
@@ -54,8 +60,8 @@ require_once __DIR__ . '/config.php';
 require_once __DIR__ . '/config_paths.php';
 require_once __DIR__ . '/object_helpers.php';
 
-// Allow unauthenticated GET for featured data only; everything else requires login
-if ($user_id == 0 && !($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['featured']))) {
+// Allow unauthenticated GET for the two shared lists only; everything else requires login
+if ($user_id == 0 && !($_SERVER['REQUEST_METHOD'] === 'GET' && (isset($_GET['featured']) || isset($_GET['templates'])))) {
     http_response_code(401);
     echo json_encode(['error' => 'Not logged in']);
     exit();
@@ -198,31 +204,74 @@ function writeLocalJson($path, $data) {
     }
 }
 
-function readFeaturedData($s3Data = null) {
-    global $useAWS, $UPLOAD_PATH;
+// The shared lists. Each is one file, {"sitches": [{name, userID, screenshotVersion, date, ...}]}.
+define('SHARED_LISTS', ['featured', 'templates']);
 
-    if ($useAWS) {
-        if ($s3Data === null) {
-            $s3Data = startS3();
-        }
-        return readS3Json($s3Data['s3'], $s3Data['aws'], 'metadata/featured.json');
-    }
-
-    return readLocalJson($UPLOAD_PATH . 'metadata/featured.json');
+function sharedListFile($list) {
+    if (!in_array($list, SHARED_LISTS, true)) throw new RuntimeException('Unknown shared list');
+    return 'metadata/' . $list . '.json';
 }
 
-function writeFeaturedData($data, $s3Data = null) {
+function readSharedList($list, $s3Data = null) {
     global $useAWS, $UPLOAD_PATH;
 
     if ($useAWS) {
         if ($s3Data === null) {
             $s3Data = startS3();
         }
-        writeS3Json($s3Data['s3'], $s3Data['aws'], 'metadata/featured.json', $data);
+        return readS3Json($s3Data['s3'], $s3Data['aws'], sharedListFile($list));
+    }
+
+    return readLocalJson($UPLOAD_PATH . sharedListFile($list));
+}
+
+function writeSharedList($list, $data, $s3Data = null) {
+    global $useAWS, $UPLOAD_PATH;
+
+    if ($useAWS) {
+        if ($s3Data === null) {
+            $s3Data = startS3();
+        }
+        writeS3Json($s3Data['s3'], $s3Data['aws'], sharedListFile($list), $data);
         return;
     }
 
-    writeLocalJson($UPLOAD_PATH . 'metadata/featured.json', $data);
+    writeLocalJson($UPLOAD_PATH . sharedListFile($list), $data);
+}
+
+/**
+ * The valid entries of a stored shared list, in their stored order and stored shape
+ * ({name, userID, screenshotVersion, date, screenshotName}), so they can be written back.
+ */
+function validSharedEntries($raw) {
+    $entries = [];
+    if (!isset($raw['sitches']) || !is_array($raw['sitches'])) return $entries;
+    foreach ($raw['sitches'] as $entry) {
+        if (!is_array($entry) || !isset($entry['name']) || !isset($entry['userID'])) continue;
+        $name = basename(strval($entry['name']));
+        $uid = intval($entry['userID']);
+        if ($uid <= 0 || !isValidSitchName($name)) continue;
+        $entry['name'] = $name;
+        $entry['userID'] = $uid;
+        $entry['date'] = strval($entry['date'] ?? '');
+        $entries[] = $entry;
+    }
+    return $entries;
+}
+
+/** The {name, userID} pairs of a request, validated. Anything else in an entry is dropped. */
+function requestedSharedEntries($input) {
+    $entries = [];
+    if (!is_array($input)) return $entries;
+    foreach ($input as $entry) {
+        if (!is_array($entry) || !isset($entry['name']) || !isset($entry['userID'])) continue;
+        $name = basename(strval($entry['name']));
+        $uid = intval($entry['userID']);
+        if ($uid > 0 && isValidSitchName($name)) {
+            $entries[] = ['name' => $name, 'userID' => $uid];
+        }
+    }
+    return $entries;
 }
 
 // $screenshotName is the stored filename from featured.json. It is absent for
@@ -370,30 +419,16 @@ function refreshFeaturedDates(&$sitches, $s3Data = null) {
 // Handle GET - Fetch metadata
 // ============================
 if ($_SERVER['REQUEST_METHOD'] === 'GET') {
-    // GET ?featured=1 — return global featured.json (no auth required beyond login)
-    // Returns [{name, userID, screenshotUrl, date}] so any user can browse and load featured sitches.
-    if (isset($_GET['featured'])) {
-        sitrecAuditOperation('featured.read');
-        sitrecAuditResource('metadata/featured');
+    // GET ?featured=1 or ?templates=1 — return a shared list (no login required).
+    // Returns [{name, userID, screenshotUrl, date}] so any user can browse and load these sitches.
+    $sharedList = isset($_GET['templates']) ? 'templates' : (isset($_GET['featured']) ? 'featured' : null);
+    if ($sharedList !== null) {
+        sitrecAuditOperation($sharedList . '.read');
+        sitrecAuditResource('metadata/' . $sharedList);
         try {
             global $useAWS;
             $s3Data = $useAWS ? startS3() : null;
-            $raw = readFeaturedData($s3Data);
-            // Validated copies of the stored entries, keeping their on-disk shape
-            // ({name, userID, screenshotVersion, date}) so they can be written back.
-            $storedEntries = [];
-            if (isset($raw['sitches']) && is_array($raw['sitches'])) {
-                foreach ($raw['sitches'] as $entry) {
-                    if (!is_array($entry) || !isset($entry['name']) || !isset($entry['userID'])) continue;
-                    $name = basename(strval($entry['name']));
-                    $uid = intval($entry['userID']);
-                    if ($uid <= 0 || !isValidSitchName($name)) continue;
-                    $entry['name'] = $name;
-                    $entry['userID'] = $uid;
-                    $entry['date'] = strval($entry['date'] ?? '');
-                    $storedEntries[] = $entry;
-                }
-            }
+            $storedEntries = validSharedEntries(readSharedList($sharedList, $s3Data));
 
             // This path only ever reads. Entries stored before dates existed report an
             // empty date until the next featured-list edit, which rescans them all
@@ -418,7 +453,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
 
             $payload = json_encode(['sitches' => $sitches]);
             $etag = '"' . sha1($payload) . '"';
-            header('Cache-Control: public, max-age=60, stale-while-revalidate=300');
+            // The template list is checked before each save, to keep a template from being
+            // saved over, so the browser must not answer that check from a minute-old copy.
+            // It revalidates each time; the ETag makes an unchanged list a 304.
+            header($sharedList === 'templates'
+                ? 'Cache-Control: no-cache'
+                : 'Cache-Control: public, max-age=60, stale-while-revalidate=300');
             header('ETag: ' . $etag);
             if (isset($_SERVER['HTTP_IF_NONE_MATCH']) && trim($_SERVER['HTTP_IF_NONE_MATCH']) === $etag) {
                 sitrecAuditResult();
@@ -503,28 +543,33 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 writeLocalJson($metaPath, $existing);
             }
 
-            // Keep featured screenshot cache-busters in sync so featured GET does not need
-            // to probe storage for screenshot existence/version.
+            // Keep the shared lists' screenshot cache-busters in sync so their GET does not
+            // need to probe storage for screenshot existence/version.
             if (!empty($bumpedNames)) {
-                $featured = readFeaturedData($s3Data);
-                $featuredChanged = false;
-                if (isset($featured['sitches']) && is_array($featured['sitches'])) {
-                    foreach ($featured['sitches'] as &$entry) {
-                        if (!is_array($entry) || !isset($entry['name']) || !isset($entry['userID'])) continue;
-                        $name = basename(strval($entry['name']));
-                        $uid = intval($entry['userID']);
-                        if ($uid !== $user_id || !isset($bumpedNames[$name])) continue;
-                        $entry['screenshotVersion'] = intval($entry['screenshotVersion'] ?? 0) + $bumpedNames[$name];
-                        // A bump means this sitch was just saved, so refresh its stored date
-                        // (one prefix-scoped listing) to keep the featured sort current.
-                        $freshDate = sitchDatesForUser($user_id, $s3Data, $name)[$name] ?? null;
-                        if ($freshDate !== null) $entry['date'] = $freshDate;
-                        $featuredChanged = true;
+                foreach (SHARED_LISTS as $list) {
+                    $shared = readSharedList($list, $s3Data);
+                    $sharedChanged = false;
+                    if (isset($shared['sitches']) && is_array($shared['sitches'])) {
+                        foreach ($shared['sitches'] as &$entry) {
+                            if (!is_array($entry) || !isset($entry['name']) || !isset($entry['userID'])) continue;
+                            $name = basename(strval($entry['name']));
+                            $uid = intval($entry['userID']);
+                            if ($uid !== $user_id || !isset($bumpedNames[$name])) continue;
+                            $entry['screenshotVersion'] = intval($entry['screenshotVersion'] ?? 0) + $bumpedNames[$name];
+                            // A bump means this sitch was just saved, so refresh its stored date
+                            // and screenshot name (one prefix-scoped listing). Screenshots carry
+                            // their own token, so the old name would show the old thumbnail.
+                            $shots = [];
+                            $freshDate = sitchDatesForUser($user_id, $s3Data, $name, $shots)[$name] ?? null;
+                            if ($freshDate !== null) $entry['date'] = $freshDate;
+                            if ($list === 'templates' && isset($shots[$name])) $entry['screenshotName'] = $shots[$name];
+                            $sharedChanged = true;
+                        }
+                        unset($entry);
                     }
-                    unset($entry);
-                }
-                if ($featuredChanged) {
-                    writeFeaturedData($featured, $s3Data);
+                    if ($sharedChanged) {
+                        writeSharedList($list, $shared, $s3Data);
+                    }
                 }
             }
 
@@ -544,19 +589,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 exit();
             }
 
-            $sitches = [];
-            if (isset($input['sitches']) && is_array($input['sitches'])) {
-                foreach ($input['sitches'] as $entry) {
-                    if (is_array($entry) && isset($entry['name']) && isset($entry['userID'])) {
-                        $name = basename(strval($entry['name']));
-                        $uid = intval($entry['userID']);
-                        if ($uid > 0 && isValidSitchName($name)) {
-                            $sitches[] = ['name' => $name, 'userID' => $uid];
-                        }
-                    }
-                }
-            }
-            $existingFeatured = readFeaturedData();
+            $sitches = requestedSharedEntries($input['sitches'] ?? null);
+            $existingFeatured = readSharedList('featured');
             $existingVersions = [];
             $existingDates = [];
             if (isset($existingFeatured['sitches']) && is_array($existingFeatured['sitches'])) {
@@ -584,10 +618,73 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             refreshFeaturedDates($sitches, $s3Data);
             $featuredData = ['sitches' => $sitches];
 
-            writeFeaturedData($featuredData, $s3Data);
+            writeSharedList('featured', $featuredData, $s3Data);
 
             sitrecAuditResult();
             echo json_encode(['success' => true, 'featured' => $featuredData]);
+            exit();
+        }
+
+        // Handle updateTemplates: admin-only, changes the global template list
+        // (metadata/templates.json). Unlike updateFeatured it does not replace the list.
+        // The request names the entries to add and to remove, and the server applies them
+        // to the stored list. "Save as Template" in the File menu adds one entry without
+        // the sitch browser open, so it has no complete list to send.
+        if (isset($input['updateTemplates']) && $input['updateTemplates']) {
+            sitrecAuditOperation('templates.write');
+            sitrecAuditResource('metadata/templates');
+            if (!isAdmin()) {
+                http_response_code(403);
+                echo json_encode(['error' => 'Admin access required']);
+                exit();
+            }
+
+            $toAdd = requestedSharedEntries($input['add'] ?? null);
+            $toRemove = requestedSharedEntries($input['remove'] ?? null);
+            $removeKeys = [];
+            foreach ($toRemove as $entry) {
+                $removeKeys[$entry['userID'] . ':' . $entry['name']] = true;
+            }
+
+            global $useAWS;
+            $s3Data = $useAWS ? startS3() : null;
+
+            // Keep the stored order: the start screen shows the templates in this order.
+            $sitches = [];
+            $present = [];
+            foreach (validSharedEntries(readSharedList('templates', $s3Data)) as $entry) {
+                $key = $entry['userID'] . ':' . $entry['name'];
+                if (isset($removeKeys[$key]) || isset($present[$key])) continue;
+                $present[$key] = true;
+                $sitches[] = $entry;
+            }
+            $added = [];
+            foreach ($toAdd as $entry) {
+                $key = $entry['userID'] . ':' . $entry['name'];
+                if (isset($present[$key])) continue;
+                $present[$key] = true;
+                $entry['screenshotVersion'] = 0;
+                $entry['date'] = '';
+                $added[] = $entry;
+            }
+            // Fill the date and the screenshot name of the new entries from storage, with
+            // one listing for each, of that sitch's folder only. The owner can have
+            // hundreds of sitches, and a listing of all of them is slow. The stored
+            // entries keep what they have.
+            foreach ($added as &$entry) {
+                $shots = [];
+                $dates = sitchDatesForUser($entry['userID'], $s3Data, $entry['name'], $shots);
+                $entry['date'] = $dates[$entry['name']] ?? '';
+                if (isset($shots[$entry['name']])) $entry['screenshotName'] = $shots[$entry['name']];
+            }
+            unset($entry);
+            $sitches = array_merge($sitches, $added);
+            $templateData = ['sitches' => $sitches];
+
+            writeSharedList('templates', $templateData, $s3Data);
+
+            sitrecAuditResult();
+            echo json_encode(['success' => true, 'templates' => $templateData]);
             exit();
         }
 

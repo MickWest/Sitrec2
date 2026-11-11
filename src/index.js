@@ -203,9 +203,12 @@ import {parseLatLonAlt} from "./CoordinateParser";
 import {
     isExplicitStartupAction,
     runStartupToolAction,
+    startScreenForAction,
     startupActionFromSearch,
 } from "./StartupActions";
 import {openBotBenchDialog} from "./analysis/BotBenchUI";
+import {removeTemplateIntro} from "./SitchTemplateInstructions";
+import {templateAddress} from "./SitchTemplates";
 
 // Initialize debug log capture BEFORE any console output
 debugLog.init();
@@ -743,9 +746,14 @@ if (!hasExplicitStartupRequest) {
     }
 }
 
+// "?template=<name>" opens that template. It is the start screen with the template
+// already chosen: the same blank page behind, and no screen to choose from. So it
+// works only where the start screen opens, and a sitch in the address comes before it.
+const startupTemplateName = shouldAutoOpenBrowser ? (urlParams.get("template") || null) : null;
+
 // This must be set before initializeOnce() creates CFileManager so startup
 // fetches can be suppressed when the browser will immediately fetch the same data.
-Globals.sitchBrowserWillOpen = shouldAutoOpenBrowser;
+Globals.sitchBrowserWillOpen = shouldAutoOpenBrowser && !startupTemplateName;
 
 // a count of async pending actions, so we can tell when a level has fully loaded and settled up
 Globals.pendingActions = 0;
@@ -1107,9 +1115,22 @@ if (Sit.name === "empty") {
     Globals.menuBar.showOnlyMenus(["main", "file", "help"]);
 }
 
-// Auto-open sitch browser when no explicit sitch/action is specified
-if (Globals.sitchBrowserWillOpen && FileManager.sitchBrowser) {
-    FileManager.sitchBrowser.open({hideCancelButton: Sit.name === "empty"});
+// Auto-open the start screen when no explicit sitch/action is specified.
+// It shows the sitch templates. With no template to show, or with ?action=browse,
+// it is the sitch browser.
+const openStartScreen = () => FileManager.sitchBrowser?.open({
+    hideCancelButton: Sit.name === "empty",
+    screen: startScreenForAction(startupAction),
+    browseIfNoTemplates: true,
+});
+if (startupTemplateName) {
+    // If the template does not open, the reason is on the screen. Then show the start
+    // screen, so that the user is not left on the blank page.
+    FileManager.loadTemplateByName(startupTemplateName).then(opened => {
+        if (!opened) openStartScreen();
+    });
+} else if (Globals.sitchBrowserWillOpen) {
+    openStartScreen();
 }
 Globals.sitchBrowserWillOpen = false;
 
@@ -1597,7 +1618,11 @@ async function transitionToSitch(situation, customSetup) {
         url = SITREC_SHARE_APP + "?sitch=" + situation
     } else {
         // set the URL to the default
-        if (FileManager.loadURL !== undefined) {
+        if (situation?.templateSource?.name) {
+            // A sitch from a template is not a version of the template, so its address is
+            // the template by name. A reload opens the template again.
+            url = templateAddress(SITREC_SHARE_APP, situation.templateSource);
+        } else if (FileManager.loadURL !== undefined) {
             // Share stable object-key values instead of host-bound storage URLs.
             url = SITREC_SHARE_APP + "?custom=" + encodeShareParam(toShareableCustomValue(FileManager.loadURL));
         } else {
@@ -1608,7 +1633,9 @@ async function transitionToSitch(situation, customSetup) {
 
     }
 
-    if (url !== undefined) {
+    // Not when the address is this one already (a start at "?template=<name>"):
+    // a second entry for the same address makes Back do nothing one time.
+    if (url !== undefined && url !== window.location.href) {
         window.history.pushState({}, null, url);
     }
 
@@ -3509,6 +3536,8 @@ function disposeEverything() {
     Globals.disposing = true;
     disposeVideoFormatLayer();
     disposeRefractionTool();
+    // The intro box of a template is for the sitch that is going away.
+    removeTemplateIntro();
 
     // cancel any requested animation frames
     clearScheduledAnimation();

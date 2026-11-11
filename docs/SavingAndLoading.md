@@ -22,7 +22,8 @@ In **File → Server**, you will see:
 
 - **Save**: save a new version of the current sitch. The first save of a new sitch prompts for a name.
 - **Save As**: save under a new sitch name.
-- **Open**: open the sitch browser to load your saved sitches (and featured sitches).
+- **Save as Template**: save the sitch as a [template](#templates). Only an administrator has this item.
+- **Open**: open the sitch browser to load your saved sitches (and featured sitches). The address changes to `?action=browse` while the sitch browser shows. See [Startup actions](URLParameters.md#startup-actions).
 - **Versions**: load any saved version of the currently loaded sitch.
 
 To remove a sitch from your list, select it in the sitch browser and press Delete, or right-click it and choose **Delete**. It moves to the **Deleted** list, and **Undelete** brings it back. The files stay on the server, and links to them still work.
@@ -41,6 +42,74 @@ If you are not logged in, the Server folder shows only **Saving Disabled (click 
 
 - **Save** keeps the current sitch name and appends a new version. If you opened another user's sitch, such as a featured one, **Save** writes to your own account under that name. The other user's sitch does not change.
 - **Save As** prompts for a sitch name. A new name starts a separate sitch history. If you already have a sitch with that name, Sitrec asks you to confirm, then adds a new version to that sitch.
+- **Save** and **Save As** do not write to a [template](#templates). See [Saving and templates](#saving-and-templates).
+
+### Templates
+
+A template is a saved sitch that is a start point for a task. It can have menus open, menus in a sidebar, and options set. A template is a normal saved sitch with a template label. There are two labels:
+
+- **Global Template**: every user sees the template, logged in or not. Only an administrator can add or remove this label.
+- **Local Template**: only you see the template. It is one of your own sitches.
+
+#### The start screen
+
+When you open Sitrec with no sitch in the address, the start screen shows the templates. **Global Templates** come first, in the order in which the administrator added them. **Local Templates** come next, in name order, when you are logged in and have some.
+
+- Click a template to open it.
+- **New Sitch** starts a blank sitch.
+- **Browse Sitches** shows the sitch browser, and sets the address to `?action=browse`. That address opens Sitrec at the sitch browser. The **Templates** button in the sitch browser goes back to the start screen.
+- **Login** shows when you are not logged in.
+
+When there is no template to show, Sitrec opens the sitch browser as the start screen.
+
+A sitch that you open from a template is a new sitch with no name. Your work in it does not change the template.
+
+The address of that sitch is the template by name, for example `?template=Star%20Tracker`. That address opens the template again, at its latest version. See [template](URLParameters.md#template). After you save the sitch, the address is the address of your saved sitch.
+
+#### A new sitch from the File menu
+
+The File menu has two items that start a new sitch:
+
+- **New Sitch (Empty)** starts a blank sitch. It reloads Sitrec.
+- **New Sitch from Template** shows the templates, on the same screen as the start screen. Click a template to open it as a new sitch. **Cancel** closes the screen, and the sitch that you had open stays open. If there are no templates, the screen says so. The File menu has this item only when the installation saves sitches to a server, because a template is a sitch on the server.
+
+#### Making a template
+
+To make one of your sitches a template, open the sitch browser, right-click the sitch and select **Local Template**. You can also drag the sitch to **Local Templates** in the sidebar. Clear the label to make it a normal sitch again. An administrator has **Global Template** in the same menu, and can drag a sitch to **Global Templates**.
+
+The sidebar links **Global Templates** and **Local Templates** show the templates. The label does not change the sitch file, and a link to a version of a template opens that version as a normal sitch.
+
+An administrator can also use **File → Server → Save as Template**. It asks for a name and for the type of template, saves the sitch, and adds the label. The address then is the template by name, `?template=<name>`.
+
+#### Instructions for a template
+
+The Notes of a template are its instructions. To open the Notes, use **Show → Notes**, or press **N**.
+
+In the Notes, `##` and a name start a section. The section ends at the next `##`, or at the end of the Notes. Text before the first `##` is in no section.
+
+```text
+##intro
+Drag in or import a video.
+Then press Play.
+```
+
+- The `intro` section shows in a box over the views when a sitch opens from the template. The box fades out when you click on something or drop in a file.
+- The box shows only when the sitch opens from the template: from the start screen, from the sitch browser, or from a `?template=` address. It does not show for a sitch that you saved from a template, or for a link to one version of a template.
+- The section name is not case-sensitive. If the Notes have two sections with the same name, Sitrec uses the first.
+- The box shows the text as plain text, with its line breaks. A link in it is not a clickable link.
+
+To change the instructions, open the template, change the Notes, and use **File → Server → Save as Template**.
+
+The Notes stay in the sitch. A sitch that you save from a template has the same Notes, but it shows no box.
+
+#### Saving and templates
+
+- The first **Save** of a sitch that you opened from a template asks for a name.
+- If the sitch has the name of one of your templates, **Save** asks for a new name and does not write to the template.
+- **Save** and **Save As** refuse a name that is one of your templates.
+- **Save as Template** is the only save that writes to a template. For a name that is a template already, it asks you to confirm, then saves a new version. The older versions stay.
+- Before a server save, Sitrec asks the server if the name is a template. If the server does not answer, Sitrec does not save and shows a message. Your sitch stays open. Save again.
+- A save to a local folder has no such check, because a template is on the server.
 
 ### Asset handling on server save
 
@@ -126,7 +195,7 @@ The **File** menu in a browser, with a working folder selected. The **Local** ti
 
 ### Important `Save Local` behavior
 
-- After **New Sitch** or after loading from the server, `Save Local` behaves like `Save Local As...` first.
+- After **New Sitch (Empty)** or after loading from the server, `Save Local` behaves like `Save Local As...` first.
 - This prevents accidentally overwriting your last local sitch file.
 
 ### What gets copied into the local folder

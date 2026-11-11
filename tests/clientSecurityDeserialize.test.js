@@ -37,6 +37,9 @@ function harness() {
         deserializePointTrackFrequencyGraph: async () => {}, deserializeVideoNoisePattern: async () => {},
         applyFlightLightweightGating() {},
         checkAndOfferTLERefresh: async () => {},
+        // The real rule for which sitch shows an intro, and a stub for the box itself.
+        templateIntroText: require('../src/SitchTemplateInstructions').templateIntroText,
+        showTemplateIntro: jest.fn(),
     };
     vm.createContext(context);
     vm.runInContext(code + ';globalThis.methods = serializeMethods;', context);
@@ -87,6 +90,42 @@ describe('restoring a saved sitch\'s globals', () => {
         await manager.finishDeserialization({globals: {showTracks: false}}, 1);
         expect(Globals.showTracks).toBe(false);
         expect(Globals.showTracksLook).toBe(false);
+    });
+
+    describe('the intro of a template, at the end of the load', () => {
+        const NOTES = 'Source notes\n##intro\nDrop a video here.\n##tips\nMore.';
+        const withNotes = (context) => { context.NodeMan.get = id => (id === 'notesView' ? {notesText: NOTES} : undefined); };
+
+        test('a sitch that opened from a template shows the intro section of its Notes', async () => {
+            const {manager, context} = harness();
+            withNotes(context);
+            context.Sit.templateSource = {name: 'Video Viewer', userID: 1};
+
+            await manager.finishDeserialization({}, 1);
+
+            expect(context.showTemplateIntro).toHaveBeenCalledWith('Drop a video here.');
+        });
+
+        test('the same Notes in a sitch that did not open from a template show no intro', async () => {
+            const {manager, context} = harness();
+            withNotes(context);
+
+            await manager.finishDeserialization({}, 1);
+
+            // showTemplateIntro("") makes no box, and removes one that is left from before.
+            expect(context.showTemplateIntro).toHaveBeenCalledWith('');
+        });
+
+        test('a load that a newer load replaced shows no intro', async () => {
+            const {manager, context, Globals} = harness();
+            withNotes(context);
+            context.Sit.templateSource = {name: 'Video Viewer', userID: 1};
+            context.restoreRefractionTool = async () => { Globals.loadGeneration = 2; };
+
+            await manager.finishDeserialization({}, 1);
+
+            expect(context.showTemplateIntro).not.toHaveBeenCalled();
+        });
     });
 
     test('every global the save writes is one the load restores', () => {

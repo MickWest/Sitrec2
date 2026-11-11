@@ -19,7 +19,7 @@ This guide covers:
 
 ## Importing Tracks
 
-Open Sitrec. **File → New Sitch** starts a fresh custom sitch. See [Getting Started with Sitrec](CustomSitchTool.md).
+Open Sitrec. **File → New Sitch (Empty)** starts a fresh custom sitch. See [Getting Started with Sitrec](CustomSitchTool.md).
 
 To load a track from a file, drag it in or use **File → Import File**. Sitrec detects the format. See [Supported Track Formats](#supported-track-formats). You can also fetch an aircraft by its hex address ([Import ADS-B Track](#ads-b-trace-by-aircraft-adsblol)), click an aircraft in [Live ADS-B Traffic](#live-ads-b-traffic-adsblol), or draw a track by hand ([Hand-Drawn Tracks](#hand-drawn-tracks)).
 

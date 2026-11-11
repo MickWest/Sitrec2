@@ -20,7 +20,7 @@ name labels follow. Terrain has a limit: see [Limitations](#limitations).
 The look view after **Point Straight Up (Allsky)**, with the **Fisheye** folder dragged out of its menu. The tick beside the **Fisheye** title is **Fisheye Lens**. The disc is the image circle, and **Show Image Circle** masks everything outside it to black. With **Fisheye FOV °** at 180, the rim of the disc is the horizon. North is at the top: Polaris is above the centre. East is on the left, on the Pegasus side. The sky is at dusk, so that the disc shows against the black, and **Star Brightness** in **Show → Celestial → Stars and Planets** is raised. **Show → Celestial → Lines → Constellation Lines** draws the lines. **Show → Celestial → Labels → Constellation Names** independently controls the large names. The small names come from **Star/Planet Names in Look**, limited to a few stars with **Show → Celestial → Labels → Name Filter**. Each name is drawn at its own point in the sky. Sitrec does not move names apart or cut them at the rim, so close neighbours can overlap, such as Andromeda and Cassiopeia, and a name near the rim can cross onto the black, such as Aquarius.
 
 The Fisheye menu is available in custom sitches only, and the Starlink sitch is
-one of them. To start a custom sitch, use **File → New Sitch** or open
+one of them. To start a custom sitch, use **File → New Sitch (Empty)** or open
 `?sitch=custom`. Fisheye and [Panoramic Camera](PanoramicCamera.md) cannot be on
 together: enabling one turns the other off.
 

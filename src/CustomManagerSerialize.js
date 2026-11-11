@@ -26,6 +26,7 @@ import {
     withTestUser
 } from "./Globals";
 import {checkAndOfferTLERefresh} from "./TLERefresh";
+import {showTemplateIntro, templateIntroText} from "./SitchTemplateInstructions";
 import {isKeyHeld, toggler} from "./KeyBoardHandler";
 import {ECEFToLLAVD_radii, LLAToECEF} from "./LLA-ECEF-ENU";
 import {par} from "./par";
@@ -198,6 +199,9 @@ export const serializeMethods = {
                 ...out,
                 ...Sit
             }
+            // The record of the template that this sitch came from is for this
+            // session only. A saved sitch is not attached to a template.
+            delete out.templateSource;
         }
 
         // Serialize video state for any sitch with a video node
@@ -2074,6 +2078,13 @@ export const serializeMethods = {
         // away from does not prompt about data that is no longer on screen.
         if (Globals.loadGeneration === myGeneration) {
             checkAndOfferTLERefresh().catch(e => console.warn("TLE refresh check:", e));
+        }
+
+        // A sitch that opened from a template shows the template's instructions: the
+        // "##intro" section of its Notes. Here, at the end of the load, the Notes are
+        // restored and the views are there for the box to go over.
+        if (Globals.loadGeneration === myGeneration) {
+            showTemplateIntro(templateIntroText(Sit.templateSource, NodeMan.get("notesView", false)?.notesText));
         }
     },
 
