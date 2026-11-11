@@ -2336,7 +2336,7 @@ const en = {
                 editClouds: "Turn edit mode on or off for the cloud layer at this point.",
                 editOverlay: "Turn edit mode on or off for the ground overlay or grid at this point.",
                 dropPin: "Add a pin (a labeled marker) at this point, and open its menu so you can type the label.",
-                addFixedObject: "Add a 3D object that stays at this point: a gray sphere, 5 m in radius. Its menu opens so you can change it.\nTo put it on a track later, use Location > Position in its menu.",
+                addFixedObject: "Add a 3D object that stays at this point: a gray sphere, 5 m in radius. Its menu opens so you can change it.\nTo put it on a track later, use Location > Position in its menu.\nWhile it is not on a track, the track lists (Target Track and others) have it under its name.",
                 createTrackWithObject: "Add a new track that starts at this point on the current frame, with a 3D object on it.\nThe track opens in edit mode, so you can add more points.",
                 createInOutObjectTrack: "Add a straight track with a 3D object on it, at constant speed. It runs from this point at the In frame to a point 200 screen pixels to the right at the Out frame (the whole sitch when In and Out are not set).\nIts altitude is locked, so raising one point raises the whole track.",
                 createTrackNoObject: "Add a new track with no object, which starts at this point on the current frame.\nThe track opens in edit mode, so you can add more points.",
@@ -3739,7 +3739,8 @@ const en = {
                 tooltip: "What sets the position of this object.\n"
                     + "Manual: the Lat, Lon and Alt values below. You can also drag the object.\n"
                     + "A track: the object moves along that track and points along it, and the manual values are hidden.\n"
-                    + "When you go back to Manual, the object stays where the track put it on the current frame",
+                    + "When you go back to Manual, the object stays where the track put it on the current frame.\n"
+                    + "While Position is Manual, this object is in the other track lists under its name: Target Track, the camera's Position, the Position of other objects",
             },
         },
         meshDetail: {
@@ -3928,6 +3929,67 @@ const en = {
         },
     },
 
+    balloonLaunchFinder: {
+        folderTooltip: "For an object that can be a balloon: find where it left the ground.\nA balloon rises at its buoyancy, and the wind of each height moves it. The finder follows that flight back in time, from the object down to the ground. The object is on the line of sight of Traverse > LOS Source at the current frame, or it is the target or a track.\nThe result is an area on the ground in the main view.",
+        enabled: {
+            label: "Show Launch Sites",
+            tooltip: "Draw the possible launch sites on the ground in the main view.\nEach outline holds the launch sites for one balloon position. The line in it is for the wind as it is set, from the highest buoyancy to the lowest, and each end has its buoyancy and the flight time. A white line is the flight for the middle buoyancy.\nOn a line of sight, the orange lines are the sides of the area for all the balloon sizes, and the wide yellow line is its middle.",
+        },
+        source: {
+            label: "Start From",
+            tooltip: "Where the balloon is at the current frame.\nLine of Sight: on the line of Traverse > LOS Source. The Object Size and the Balloon Size values give the distance.\nTarget: at the position of Target > Target Track.\nA track: at the position of that track.\nA 3D object whose Position is Manual: at that object.",
+            lineOfSight: "Line of Sight",
+            target: "Target",
+        },
+        objectPixels: {
+            label: "Object Size (px)",
+            tooltip: "The size of the object in the video, in pixels of the video frame.\nThe camera's field of view makes this an angle: see Angular Size.",
+        },
+        sizeMin: {
+            label: "Balloon Size Min (m)",
+            tooltip: "The smallest real size of the balloon, in meters. A smaller balloon is nearer to the camera.",
+        },
+        sizeMax: {
+            label: "Balloon Size Max (m)",
+            tooltip: "The largest real size of the balloon, in meters. A larger balloon is farther from the camera.",
+        },
+        buoyancyMin: {
+            label: "Buoyancy Min (m/s)",
+            tooltip: "The lowest speed at which the balloon rises. A balloon that rises more slowly was in the air for a longer time, so it comes from farther upwind.\nThis is the Buoyancy of a balloon from Add Balloon, which is 5 m/s at first.",
+        },
+        buoyancyMax: {
+            label: "Buoyancy Max (m/s)",
+            tooltip: "The highest speed at which the balloon rises. A balloon that rises faster comes from nearer to the point below it.",
+        },
+        windError: {
+            label: "Wind Direction Error (±°)",
+            tooltip: "How far the wind direction can be from the wind of the sitch, to each side, at every height.\nThe wind of the sitch is in Physics > Wind. With weather profiles, the finder uses the wind of each height.",
+        },
+        maxMinutes: {
+            label: "Max Flight Time (min)",
+            tooltip: "The longest time from the launch to the current frame. A flight that needs more time than this has no launch site in the result.",
+        },
+        angularText: {
+            label: "Angular Size",
+            tooltip: "The angle that the Object Size makes at the camera, in degrees and in milliradians. Only for Start From: Line of Sight.",
+        },
+        windText: {
+            label: "Wind at Balloon",
+            tooltip: "The wind of the sitch at the balloon, at the current frame: the direction that it comes from, and its speed. On a line of sight, it is the wind at the middle of the balloon positions.",
+        },
+        distanceText: {
+            label: "Balloon Distance",
+            tooltip: "The distance from the camera to the balloon, for the smallest and the largest balloon size. Only for Start From: Line of Sight.",
+        },
+        heightText: {
+            label: "Balloon Height",
+            tooltip: "The height of the balloon above the ground below it. On a line of sight: the lowest and the highest of the balloon positions.",
+        },
+        timeText: {
+            label: "Flight Time",
+            tooltip: "The time from the launch to the current frame: the shortest and the longest of the flights in the result.\nPart longer than the limit: some flights need more than Max Flight Time, and they have no launch site.",
+        },
+    },
     kiteAnchorFinder: {
         folderTooltip: "For an object that can be a kite: find where on the ground its line is held.\nThe kite is on the line of sight of Traverse > LOS Source at the current frame. The size of the object in the video and a range of real kite sizes give the part of that line where the kite can be. The anchor of each kite is upwind of it, where a straight line that goes down at the flight angle meets the ground.\nThe result is a band on the ground in the main view.",
         enabled: {

@@ -6,6 +6,7 @@ import {addAltitudeLockControls, lockHeightAt} from "./AltitudeLockGUI";
 import {addCustomGraphControl} from "./CustomGraphUI";
 import {CNodeScale} from "./nodes/CNodeScale";
 import {requestCameraFocusSync} from "./CameraFocusUI";
+import {addManualObjectsToSelector, trackSelectors} from "./TrackSelectors";
 import {showConfirm, showChoice} from "./showError";
 import {CNodeGUIValue, CNodeGUIFlag} from "./nodes/CNodeGUIValue";
 import {CNodeConstant} from "./nodes/CNode";
@@ -3084,8 +3085,8 @@ class CTrackManager extends CManager {
                 // The object gets its Location folder, with its Position on this track. Its
                 // TrackPosition and ObjectTilt controllers read that Position selector, so
                 // the user can later take the object off the track or put it on another.
-                // NOTE: ObjectTilt creates internal CNodeSmoothedPositionTrack that must be cleaned up
-                // When disposing this object, use: CustomMan.disposeObjectWithControllers(objectID)
+                // NOTE: ObjectTilt creates internal CNodeSmoothedPositionTrack that must be cleaned up.
+                // To remove this object, use CustomManager.deleteObject(objectNode).
                 const first = options.initialPoints?.[0];
                 const start = options.startPoint ? new Vector3(options.startPoint.x, options.startPoint.y, options.startPoint.z)
                     : first ? new Vector3(first[1], first[2], first[3]) : null;
@@ -3506,13 +3507,8 @@ class CTrackManager extends CManager {
     // (noAutoSelect, see CustomManager.addObjectLocation) gets that node: a synthetic track
     // gives the other switches its spline, and gives an object its smoothed track.
     setTrackSwitchOption(shortName, trackNode, finishedNode = trackNode) {
-        // a copy: a switch that is disposed while this runs leaves the list
-        for (let switchID of [...(Sit.dropTargets?.["track"] ?? [])]) {
-            // a switch can be listed as "name-N", to select only track N of a file
-            const match = switchID.match(/-(\d+)$/);
-            if (match !== null) switchID = switchID.substring(0, switchID.length - match[0].length);
-            if (!NodeMan.exists(switchID)) continue;
-            const switchNode = NodeMan.get(switchID);
+        // a switch that is disposed while this runs is not given (see trackSelectors)
+        for (const switchNode of trackSelectors()) {
             switchNode.removeOption(shortName);
             if (trackNode) switchNode.addOption(shortName, switchNode.noAutoSelect ? finishedNode : trackNode);
         }
@@ -3520,7 +3516,8 @@ class CTrackManager extends CManager {
 
     // Give a switch that was made after the tracks every track there is now, under the
     // short name and with the display name, as setTrackSwitchOption and relabelTrackOptions
-    // do for a track that is made after the switch.
+    // do for a track that is made after the switch. Then the objects that are on a manual
+    // position, which are options too (TrackSelectors.js).
     addTracksToSwitch(switchNode) {
         this.iterate((id, trackOb) => {
             const key = trackOb.menuText;
@@ -3528,6 +3525,7 @@ class CTrackManager extends CManager {
             const name = trackOb.displayName;
             switchNode.addOption(key, trackOb.trackNode, name !== undefined && name !== key ? name : undefined);
         });
+        addManualObjectsToSelector(switchNode);
     }
 
     // Take a short name that no track has: Kite, Kite_1, Kite_2, ...

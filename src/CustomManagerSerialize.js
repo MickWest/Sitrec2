@@ -796,7 +796,7 @@ export const serializeMethods = {
      *
      * They are found by the `fixedObjectPositionID` tag createFixedObject() puts on the
      * object node, because a fixed object is in no manager's list — that is the whole
-     * point of it (no Contents entry, no track picker entry, no spline editor).
+     * point of it (no Contents entry, no spline editor).
      *
      * Both halves must still be alive: deleting either the object or its position node
      * is deleting the object, and a save must not resurrect it.

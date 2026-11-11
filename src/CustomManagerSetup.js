@@ -80,6 +80,7 @@ import {CNodeAutoTrackLOS} from "./nodes/CNodeAutoTrackLOS";
 import {CNodeGroundTrack} from "./nodes/CNodeGroundTrack";
 import {CNodeGroundTrackLOS} from "./nodes/CNodeGroundTrackLOS";
 import {CNodeKiteAnchorFinder} from "./nodes/CNodeKiteAnchorFinder";
+import {CNodeBalloonLaunchFinder} from "./nodes/CNodeBalloonLaunchFinder";
 import {CNodeAnnotateOverlay} from "./nodes/CNodeAnnotateOverlay";
 import {CNodeMaskOverlay} from "./nodes/CNodeMaskOverlay";
 import {CNodeFitCameraPoints} from "./nodes/CNodeFitCameraPoints";
@@ -351,6 +352,14 @@ export const setupMethods = {
         if (Sit.isCustom && NodeMan.exists("JetLOSCameraCenter") && NodeMan.exists("JetLOS")
             && !NodeMan.exists("kiteAnchorFinder")) {
             new CNodeKiteAnchorFinder({id: "kiteAnchorFinder"});
+        }
+
+        // The Reverse Balloon Launch Finder (Traverse menu), on the same terms: for a balloon on
+        // the line of sight, or at the position of a track, it draws where the balloon can have
+        // left the ground. It does no work until its title checkbox is on.
+        if (Sit.isCustom && NodeMan.exists("JetLOSCameraCenter") && NodeMan.exists("JetLOS")
+            && !NodeMan.exists("balloonLaunchFinder")) {
+            new CNodeBalloonLaunchFinder({id: "balloonLaunchFinder"});
         }
 
         // Create the Annotate overlay on the video view. It's hidden / no-op until the

@@ -315,6 +315,82 @@ The finder has these limits:
 - The result is for the current frame. When the object moves in the video, or the camera moves,
   the band moves.
 
+### Reverse Balloon Launch Finder
+
+**Add Balloon** starts from the launch point and gives the flight of the balloon. The **Reverse
+Balloon Launch Finder** does the reverse. It starts from an object, and it shows where on the
+ground a balloon at that position can have been launched. It is the **Reverse Balloon Launch
+Finder** folder in the **Traverse** menu of a custom sitch, below the **Kite Anchor Finder**.
+
+A balloon rises at its buoyancy, and the wind of each height moves it. The finder follows that
+flight back in time: down at the buoyancy and against the wind of each height, until the path
+meets the ground. A balloon that rises more slowly was in the air for a longer time, so it
+comes from farther upwind.
+
+To use it:
+
+1. Set the wind of that time. See [Wind in Sitrec](Wind.md). With weather profiles, the finder
+   uses the wind of each height.
+2. In **Traverse → Reverse Balloon Launch Finder**, set **Start From**:
+   - **Line of Sight**: the balloon is on the line of **Traverse → LOS Source** at the current
+     frame. Set **Object Size (px)** to the size of the object in the video, and **Balloon Size
+     Min (m)** and **Balloon Size Max (m)** to the range of real sizes. They give the distance,
+     as in the [Kite Anchor Finder](#kite-anchor-finder).
+   - **Target**: the balloon is at the position of **Target → Target Track**.
+   - A track: the balloon is at the position of that track at the current frame.
+   - A 3D object whose **Position** is **Manual**: the balloon is at that object. The object is
+     in the list under its name. See [Location](#location-a-manual-position-or-a-track).
+3. Set **Buoyancy Min (m/s)** and **Buoyancy Max (m/s)** to the range of speeds at which the
+   balloon can rise.
+4. Turn on the checkbox in the title of the folder (**Show Launch Sites**).
+
+![The launch sites of a balloon in the main view: a yellow outline on the ground, a wide yellow line in it with the labels "5 m/s: 28 s" and "1 m/s: 2 min" at its ends, and a white line from the ground up to the balloon](docimages/scene-objects-balloon-launch-finder.jpg)
+
+The finder draws these lines in the main view. They are drawn over the terrain and the buildings.
+
+| Line | Meaning |
+|---|---|
+| Yellow outline | All the launch sites for one balloon position: each buoyancy in the range, with the wind turned to the left and to the right by **Wind Direction Error (±°)** |
+| Line in the outline, with a label at each end | The launch sites for the wind direction of the sitch, from the highest buoyancy (the near end) to the lowest. Each label gives the buoyancy and the flight time. On a line of sight, the first label also gives the balloon size |
+| White line from the ground to the balloon | The flight of the balloon for the middle buoyancy and the wind direction of the sitch |
+| White line in the air (line of sight only) | The part of the line of sight where the balloon can be, from the smallest balloon size to the largest |
+| Wide yellow line and four orange lines (line of sight only) | The middle and the sides of the area for all the balloon sizes |
+
+The folder has these settings. They are saved with the sitch.
+
+| Control | Default | What it does |
+|---|---|---|
+| **Show Launch Sites** (the checkbox in the title) | off | Draws the launch sites. While it is off, the finder does no work |
+| **Start From** | Line of Sight | Where the balloon is at the current frame: on the line of sight, at the target, at the position of a track, or at a 3D object whose **Position** is **Manual** |
+| **Object Size (px)** | 10 | The size of the object in the video, in pixels of the video frame. Only for **Line of Sight** |
+| **Balloon Size Min (m)** | 0.3 | The smallest real size of the balloon. A smaller balloon is nearer to the camera. Only for **Line of Sight** |
+| **Balloon Size Max (m)** | 2 | The largest real size of the balloon. A larger balloon is farther from the camera. Only for **Line of Sight** |
+| **Buoyancy Min (m/s)** | 1 | The lowest speed at which the balloon rises. This is the **Buoyancy (m/s)** of a balloon from **Add Balloon** |
+| **Buoyancy Max (m/s)** | 5 | The highest speed at which the balloon rises |
+| **Wind Direction Error (±°)** | 10 | How far the wind direction can be from the wind of the sitch, to each side, at every height |
+| **Max Flight Time (min)** | 120 | The longest time from the launch to the current frame. A flight that needs more time has no launch site in the result |
+| **Angular Size** (read only) | | The angle that the object makes at the camera. Only for **Line of Sight** |
+| **Wind at Balloon** (read only) | | The wind of the sitch at the balloon: the direction that it comes from, and its speed |
+| **Balloon Distance** (read only) | | The distance from the camera to the balloon, for the smallest and the largest balloon size. Only for **Line of Sight** |
+| **Balloon Height** (read only) | | The height of the balloon above the ground below it |
+| **Flight Time** (read only) | | The time from the launch to the current frame: the shortest and the longest of the flights in the result. It ends with *part longer than the limit* when some flights need more than **Max Flight Time (min)** |
+
+With **Start From** at a balloon from **Add Balloon** that has a **Wind Variability (%)** of 0,
+and with its buoyancy, the launch site is the same from every frame: the point where the track
+of that balloon leaves the ground. That is the launch point of the balloon when its **Start
+Altitude (m MSL)** is the height of the ground there. The flight time grows by the time between
+the frames.
+
+The finder has these limits:
+
+- The wind is the wind of the sitch at the current frame, for the whole flight. The finder does
+  not use the wind of an earlier time.
+- The buoyancy is the same for the whole flight.
+- The flight has no gusts.
+- The ground is the elevation data of the terrain. It is not the surface of the 3D building
+  tiles, which has the roofs and the trees.
+- A balloon position that is below the ground has no launch site.
+
 ### Pins
 
 **Drop Pin** places a pin labelled *New Feature* and opens a window titled **Edit: *label***. In
@@ -352,6 +428,27 @@ So, to put an object on a path that is already there, select the path in **Posit
 objects can be on one track. When you change **Position** back to **Manual**, the object stays
 where the track put it on the current frame. The same happens when you delete the track. A track
 that you add or load later comes into the list by itself, and no object goes to it by itself.
+
+While **Position** is **Manual**, the object is itself in the other track lists of the sitch,
+under its name. Select it there as you select a track:
+
+| List | With the object selected |
+|---|---|
+| **Target → Target Track** | The target is at the object |
+| **Camera → Location → Position** | The camera is at the object |
+| **Camera → Camera Tweaks → Orbit Target** | The Orbit camera position circles the object |
+| **Position** of another object | That object is at the same place |
+| **Traverse → Reverse Balloon Launch Finder → Start From** | The reverse flight starts at the object |
+| **Terrain → Zoom to track** | The terrain moves to the object |
+
+The position that these lists use is the **Lat**, **Lon** and **Alt** of the object. When you
+give the object a new name, the lists show the new name, and a list that has the object selected
+keeps it. When a track has the same name as the object, the object is in the lists with
+*(object)* after its name.
+
+When you put the object on a track, the object goes out of these lists, because the track is in
+them. A list that had the object selected then changes to that track, so it stays with the
+object. When you delete the object, a list that had it selected goes back to its first choice.
 
 ![The Location group of an object in two states. Left: Position on Manual, with the Lat, Lon and Alt values. Right: Position on Track 1, with those values hidden](docimages/scene-objects-location.jpg)
 
