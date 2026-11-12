@@ -81,7 +81,7 @@
     {
       "host": "s3.amazonaws.com",
       "purpose": "Terrarium elevation tiles (elevation-tiles-prod), and operator-configured object storage",
-      "trigger": "elevation tiles automatically while terrain is shown; storage only when the user uploads or opens a file",
+      "trigger": "elevation tiles automatically while terrain is shown, and during a Doppler geolocation archive search that an administrator starts; storage only when the user uploads or opens a file",
       "mayReceive": ["coarse-area", "user-file"]
     },
     {
@@ -595,7 +595,7 @@
     }
   ],
   "serverEndpoints": [
-    {"endpoint": "getsitches.php", "purpose": "list of available situations, or one situation by name", "trigger": "automatic at startup and when the user opens the browser of situations", "mayReceive": ["identifier"]},
+    {"endpoint": "getsitches.php", "purpose": "list of available situations, or one situation by name; the list of saved versions of a situation that is on a published list (featured situations, or global templates) is readable without login", "trigger": "automatic at startup and when the user opens the browser of situations", "mayReceive": ["identifier"]},
     {"endpoint": "record_visit.php", "purpose": "visit counter, by situation name", "trigger": "automatic when a situation loads, only where the operator has enabled SITREC_TRACK_STATS", "mayReceive": ["identifier"]},
     {"endpoint": "uilog.php", "purpose": "usage statistics: names of controls used, with timestamps; the server records them with the user id and address", "trigger": "batched, only where the operator has enabled LOG_UI_INTERACTIONS", "mayReceive": ["usage-stats"]},
     {"endpoint": "tile_usage.php", "purpose": "usage statistics: tile counts per provider", "trigger": "batched, only where the operator has enabled SITREC_TRACK_STATS", "mayReceive": ["usage-stats"]},
@@ -604,7 +604,7 @@
     {"endpoint": "object.php", "purpose": "presigned object-storage access for a file the user uploads or opens", "trigger": "the user chooses to upload or opens a shared file", "mayReceive": ["user-file"]},
     {"endpoint": "s3-proxy.php", "purpose": "stream a stored object by key", "trigger": "the user opens a shared file", "mayReceive": ["identifier"]},
     {"endpoint": "shortener.php", "purpose": "short link for a situation the user shares; receives the link to shorten", "trigger": "the user chooses to share", "mayReceive": ["user-file"]},
-    {"endpoint": "metadata.php", "purpose": "load and save the user's label definitions", "trigger": "the user edits labels", "mayReceive": ["user-text"]},
+    {"endpoint": "metadata.php", "purpose": "load and save the user's label definitions; and the two published lists (featured situations, and global templates), which only an administrator can write and anyone can read without login. An entry of a published list holds the name of a situation, the id of its owner, its date and its screenshot reference", "trigger": "the user edits labels; an administrator puts a situation on a published list or takes it off; the published lists load when the start screen or the browser of situations opens, and before a save to the server", "mayReceive": ["user-text", "identifier"]},
     {"endpoint": "settings.php", "purpose": "load and save the user's settings, when server-side settings are enabled; a save sends the whole settings set, which includes the startup position if the user has set one", "trigger": "loaded automatically at startup; saved when the user changes a setting", "mayReceive": ["user-text", "precise-position"]},
     {"endpoint": "channels.php", "purpose": "same-origin authenticated build selection and a boolean Beta preference; receives the existing account cookie, never the shared sitch or local file", "trigger": "loaded at startup when channels are enabled; the boolean is saved only when the user changes the Beta preference", "mayReceive": ["identifier"]},
     {"endpoint": "channel_preferences.php", "purpose": "server-internal channel preference storage helper", "trigger": "never requested by the browser", "mayReceive": ["none"]},
