@@ -467,7 +467,7 @@ async function runTweakSweep(onProgress, seed = null) {
         return result;
     };
 
-    // With "Auto detect threshold" on, the next Full Analysis measures its own threshold before it
+    // With "Auto detect threshold" on, the next Star Tracker Analysis measures its own threshold before it
     // runs, so anything found here would be discarded on the way to being used. Sweeping it would
     // spend ten evaluations to report a number that is not going to survive.
     const sweepThreshold = !starTrackerAutoSigma();
@@ -853,7 +853,7 @@ async function runOptimization() {
     // way round: they changed nothing, so the previous analysis is still the true one.
     //
     // The cost is honest and worth stating: on a video, this leaves a SINGLE-FRAME analysis where a
-    // whole-clip one may have been. Run Full Analysis to get the clip back - and it will now
+    // whole-clip one may have been. Run Star Tracker Analysis to get the clip back - and it will now
     // reproduce these numbers, because the settings it uses are the ones just verified.
     await showWinningAnalysis();
 
@@ -885,7 +885,7 @@ async function runOptimization() {
  * The sweep leaves whichever candidate it measured LAST in place, and that is almost never the
  * winner - so without this the overlay quietly describes settings nobody has. One more
  * identification is a fair price for the run ending with the names visible instead of the user
- * having to press Full Analysis to find out what was found.
+ * having to press Star Tracker Analysis to find out what was found.
  *
  * Deliberately still a scoring run: it names the stars but does not re-point a camera the user
  * synced from a whole clip.
@@ -1044,7 +1044,7 @@ export function addStarOptimizeControls(folder, name = "Optimize For Star Tracki
             + "Stage 2 checks the best 3 against the star catalog, then tries values of Min blob area and, "
             + "unless Auto detect threshold is on, Detect threshold.\n"
             + "If nothing identifies more stars than your settings, all settings go back. "
-            + "If new settings are kept, a one-frame analysis is left on screen: run Full Analysis again for the whole clip.\n"
+            + "If new settings are kept, a one-frame analysis is left on screen: run Star Tracker Analysis again for the whole clip.\n"
             + "Needs Enable Video Effects and Star Tracker > Apply adjustments on. Slow.");
 
     const enoughBtn = folder.add(controls, "enough").name("Enough (Accept)")

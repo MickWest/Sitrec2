@@ -13,7 +13,7 @@ The Star Tracker takes a video of the night sky and works out, frame by frame, w
 1. Load a video of the night sky and open **Video → Star Tracker**.
 2. If trees, buildings or burned-in text are in the frame, mask them first. See [Masking out the ground](#masking-out-the-ground).
 3. Set the **In** and **Out** markers on the timeline (press **I** and **O**, or drag the markers) to the stretch you want analysed. On a new video they sit at the first and last frames, so the analysis covers the whole clip until you move them. Analysis time grows with the number of frames.
-4. Click **Full Analysis**.
+4. Click **Star Tracker Analysis**.
 5. Wait. Detection decodes and scans **every frame in the range**, so the time scales with the frame count, and with the resolution and busyness of the footage. Press **Enough (solve what we have)** at any point to stop scanning and solve what has been measured so far.
 
 That is the whole common path. When it succeeds, the **Status** line gives the identification, for example `identified 72/231 stars - field 42.3 deg at RA 11.52h Dec 52.1 deg, rms 1.2 px`. That is the stars matched out of the stars offered, the field of view, the sky position of the field's centre, and the fit error. The menu row can cut the line short. The copy at the top left of the video shows all of it. [Where the answer is](#where-the-answer-is) says how to use these numbers.
@@ -22,11 +22,11 @@ The identification replaces the analysis summary. To see that summary, press **F
 
 The sigma figure is the clip's position noise, and it is the one to sanity-check: a few tenths of a pixel means the stars are being measured crisply. Sitrec will not report below 0.15 px whatever the fit says, so a value pinned there is a floor rather than a measurement. Values of several pixels can come from soft focus, compression or camera shake — the analysis still runs, but a point must then move further before Sitrec calls it moving.
 
-**Full Analysis** runs three steps, each of which also has its own button in [Star Tracker Tweaks](#star-tracker-tweaks) if you want to run it alone: *Detect Star Size* → *Find Candidate Stars* → *Identify Stars (catalog)*. When identification succeeds and **Sync Camera to Star Field** is ticked (the default), it also points Sitrec's camera to match.
+**Star Tracker Analysis** runs three steps, each of which also has its own button in [Star Tracker Tweaks](#star-tracker-tweaks) if you want to run it alone: *Detect Star Size* → *Find Candidate Stars* → *Identify Stars (catalog)*. When identification succeeds and **Sync Camera to Star Field** is ticked (the default), it also points Sitrec's camera to match.
 
 ## Where the answer is
 
-After a successful **Full Analysis**:
+After a successful **Star Tracker Analysis**:
 
 | You want | Where it is |
 |---|---|
@@ -63,7 +63,7 @@ To check the match, compare the stars in the look view with the stars in the vid
 
 ## Reading the results
 
-With **Fade at completion** on (the default), a successful identification removes most of the annotation after about three seconds: first the quad lines, then the circles shrink into their stars, then the HIP-number labels, one second each. Their switches (**Show quad lines**, **Show star markers**, **Show HIP star numbers**) turn off as each layer goes. What stays is the named stars over your footage, and any red and orange markers. If fewer than 12 stars have proper names, the brightest HIP-numbered stars stay too, up to 12 labels. To see or toggle stars again, tick **Show star markers** back on; to keep the full annotation, untick **Fade at completion** before you run. A failed run never fades.
+With **Fade at completion** on (the default), a successful identification removes most of the annotation after about three seconds: first the quad lines, then the circles shrink into their stars, then the HIP-number labels, one second each. Their switches in [Star Tracker Display](#star-tracker-display) (**Show quad lines**, **Show star markers**, **Show HIP star numbers**) turn off as each layer goes. What stays is the named stars over your footage, and any red and orange markers. If fewer than 12 stars have proper names, the brightest HIP-numbered stars stay too, up to 12 labels. To see or toggle stars again, tick **Show star markers** back on in **Star Tracker Display**; to keep the full annotation, untick **Fade at completion** before you run. A failed run never fades.
 
 Before the fade, the video view is annotated like this:
 
@@ -111,22 +111,34 @@ Green means only that the point did not move measurably. A planet is green, and 
 
 The Star Tracker folder lives under **Video**.
 
-![The Star Tracker folder with Star Tracker Tweaks open](star-images/startracker-menu.jpg)
+![The Star Tracker folder with Star Tracker Display and Star Tracker Tweaks open](star-images/startracker-menu.jpg)
 
-*The folder after a run, with [Star Tracker Tweaks](#star-tracker-tweaks) open. The completion fade has turned off **Show star markers**, **Show HIP star numbers** and **Show quad lines**. The menu is one column. It is cut in two here to fit the page: the part on the right continues from the bottom of the part on the left.*
+*The folder after a run, with [Star Tracker Display](#star-tracker-display) and [Star Tracker Tweaks](#star-tracker-tweaks) open. The completion fade has turned off **Show star markers**, **Show HIP star numbers** and **Show quad lines**. The menu is one column. It is cut in two here to fit the page: the part on the right continues from the bottom of the part on the left.*
 
 | Control | What it does |
 |---|---|
+| **Star Tracker Analysis** | The one-click path: run all three steps in order. If the analysis fails, the chain stops and its error stays on screen. A failed *Detect Star Size* does not stop it — see [Stage 0](#stage-0--measure-the-star-size) |
 | **Analysis Resolution** / **Analysis pixels** | The resolution the frames are analysed at, shared with the other video analysis tools. See [Analysis resolution](PointTrack.md#analysis-resolution) in Point Track |
-| **Full Analysis** | The one-click path: run all three steps in order. If the analysis fails, the chain stops and its error stays on screen. A failed *Detect Star Size* does not stop it — see [Stage 0](#stage-0--measure-the-star-size) |
 | **Sync Camera to Star Field** | On by default. Whenever an identification succeeds, point Sitrec's camera the way the identification says the real one was pointing: *Star Track* is selected as both the heading and the FOV source (only the heading on a fisheye or timelapse run, where the Fisheye render carries the field of view). Untick it to put both back to the sources they were on before, so you can compare the solved pointing with your own |
-| **Fade at completion** | On by default. After a successful identification, fade out the quad lines, then the star circles, then most HIP-number labels, and turn off their switches. See [Reading the results](#reading-the-results). Tick a switch again to bring its layer back. A failed run never fades |
+| **Fade at completion** | On by default. After a successful identification, fade out the quad lines, then the star circles, then most HIP-number labels, and turn off their switches in [Star Tracker Display](#star-tracker-display). See [Reading the results](#reading-the-results). Tick a switch again to bring its layer back. A failed run never fades |
 | **Optimize Adjustments for Frame** | Tune the picture for this analysis — the same thing as *Optimize For Star Tracking* under Video Adjustments, offered here because this is where you are when you want it. See [Optimize For Star Tracking](#optimize-for-star-tracking). Its *Enough* / *Abort* controls appear in whichever folder you can see, so a run started here can be stopped here |
 | **Status** | What the last stage did, or what it found |
+| **Use mask** | Discard detections that fall inside the video mask, so trees, rooftops and other lit foreground are never mistaken for stars. On by default, and does nothing unless a mask has been painted — see [Masking out the ground](#masking-out-the-ground) |
+| **Apply adjustments** | Analyse the frame as you see it, with **Video → Video Adjustments** applied — levels, curves, sharpen, blur, brightness and the rest. On by default, and does nothing unless you have set some adjustments. Turn it off to analyse the raw decoded frame instead, which can find stars that are not visible on screen, or miss ones that only the adjustments bring out |
 | **Fit lens from stars** | Measure the camera's actual optics from the star field, and judge motion on a sphere rather than with a flat model. Reasonable to leave on: it declines when the clip does not constrain a lens, and says so. See [why this matters](#why-fitting-the-lens-matters) |
 | **Fixed camera** | The camera did not move, turn or zoom during the clip — a mounted allsky or meteor camera. The sky then turns rigidly about one axis at one rate, so the solver fits three numbers for the whole clip instead of an orientation per frame. Far more robust on a sparse or very wide field, and the **Lens** field reports the exposure interval the fitted rate implies. It needs a lens: the Fisheye render, or a successful **Fit lens from stars**. Off by default; leave it off for hand-held or panned footage. See [Allsky and fisheye footage](#allsky-and-fisheye-footage) |
-| **From timelapse** | The loaded file is one still image: a stack of star trails from a fixed camera, taken between the **In** and **Out** frames. Full Analysis then finds the trails instead of points, and the lens and the camera's pointing are fitted from both ends of every trail. On a real video this box has no effect. Off by default. See [Timelapse star trails](#timelapse-star-trails) |
+| **From timelapse** | The loaded file is one still image: a stack of star trails from a fixed camera, taken between the **In** and **Out** frames. Star Tracker Analysis then finds the trails instead of points, and the lens and the camera's pointing are fitted from both ends of every trail. On a real video this box has no effect. Off by default. See [Timelapse star trails](#timelapse-star-trails) |
 | **Lens** | The fitted lens, e.g. `custom, 96 deg, rms 0.15 px`, or why it declined. The angle is the horizontal field of view, and **custom** means a lens curve fitted from the stars. **Camera → Lens** holds the full fit, with the horizontal, vertical and diagonal fields of view and a **Copy lens JSON** button. Sitrec's camera FOV is the vertical value. When the Fisheye render is on it reports that lens instead, e.g. `fisheye (Camera menu) Equisolid-angle fisheye, 158.6 deg circle, rms 0.30 px` — plus, after identification, the lens calibrated from the named stars |
+| **Star Tracker Display** | A sub-menu with the switches for what the Star Tracker draws on the video. See [Star Tracker Display](#star-tracker-display) |
+| **Star Tracker Tweaks** | A sub-menu with the detection and classification settings, and the separate steps that **Star Tracker Analysis** runs. See [Star Tracker Tweaks](#star-tracker-tweaks) |
+| **Clear** | Discard the analysis: the overlay, the solve, the fitted lens reported in the Camera menu, and the camera options that Sync added. Your Tweaks settings are left alone |
+
+### Star Tracker Display
+
+The switches for what the Star Tracker draws. Each switch controls one layer, so you can turn one off and keep the others.
+
+| Control | What it does |
+|---|---|
 | **Show star markers** | Draw the green circles round the stars. The circles only — the names and the quad lines are separate switches, so you can read the names over clean video |
 | **Show star names** | Label identified stars with their catalog names. Independent of **Show star markers**: with the circles off the name sits beside the star itself |
 | **Show HIP star numbers** | Also label the stars that have no proper name, by Hipparcos number. Most matches are these; untick it to leave only the named stars. Needs **Show star names** |
@@ -134,22 +146,19 @@ The Star Tracker folder lives under **Video**.
 | **Show moving** | Draw the red circles |
 | **Show light clusters** | Draw the orange rings |
 | **Show rejected** | Also draw the tracks classified `incoherent` or `cameraFixed`. These are things that *were* followed but did not qualify as stars — not blobs the detector threw out earlier |
-| **Use mask** | Discard detections that fall inside the video mask, so trees, rooftops and other lit foreground are never mistaken for stars. On by default, and does nothing unless a mask has been painted — see [Masking out the ground](#masking-out-the-ground) |
-| **Apply adjustments** | Analyse the frame as you see it, with **Video → Video Adjustments** applied — levels, curves, sharpen, blur, brightness and the rest. On by default, and does nothing unless you have set some adjustments. Turn it off to analyse the raw decoded frame instead, which can find stars that are not visible on screen, or miss ones that only the adjustments bring out |
-| **Chart: object tracks** | Include moving-object tracks on the star chart exported by *Make Star Chart (PNG)*, rather than stars alone |
 | **Display during analysis** | Show what each stage is working on while it runs — see [Watching it work](#watching-it-work). On by default |
-| **Clear** | Discard the analysis: the overlay, the solve, the fitted lens reported in the Camera menu, and the camera options that Sync added. Your Tweaks settings are left alone |
+| **Chart: object tracks** | Include moving-object tracks on the star chart exported by *Make Star Chart (PNG)*, rather than stars alone |
 
 ### Star Tracker Tweaks
 
-**Full Analysis** measures **Min blob area** for you, unless you chose it, and sets **Detect threshold (sigma)** only when **Auto detect threshold** is on. The other sliders keep their values. These controls are here for footage the defaults do not suit.
+**Star Tracker Analysis** measures **Min blob area** for you, unless you chose it, and sets **Detect threshold (sigma)** only when **Auto detect threshold** is on. The other sliders keep their values. These controls are here for footage the defaults do not suit.
 
 | Control | Range | What it does |
 |---|---|---|
-| **Detect Star Size (current frame)** | — | Measure the star blob size on the frame currently shown, and scale the detection settings to it. Pressing it replaces *Min blob area* whatever it was set to; the copy that runs inside **Full Analysis** leaves a value you chose alone |
-| **Auto detect threshold** | — | Off by default. Measure the detection threshold from three spread-out frames each time *Detect Star Size* runs: inside **Full Analysis**, or when you press the button. **Find Candidate Stars** alone uses the slider value. The slider below shows the value it chose; when the frames are too sparse to read, the slider's own value stands |
+| **Detect Star Size (current frame)** | — | Measure the star blob size on the frame currently shown, and scale the detection settings to it. Pressing it replaces *Min blob area* whatever it was set to; the copy that runs inside **Star Tracker Analysis** leaves a value you chose alone |
+| **Auto detect threshold** | — | Off by default. Measure the detection threshold from three spread-out frames each time *Detect Star Size* runs: inside **Star Tracker Analysis**, or when you press the button. **Find Candidate Stars** alone uses the slider value. The slider below shows the value it chose; when the frames are too sparse to read, the slider's own value stands |
 | **Detect threshold (sigma)** | 2–10 | How far above the local sky a pixel must be to count, in multiples of the sky's *brightness* noise. Lower finds fainter stars and more false ones. Tuned automatically by [Optimize For Star Tracking](#optimize-for-star-tracking) |
-| **Min blob area (px)** | 2–40 | Smallest blob accepted. Once you set it by hand — or [Optimize For Star Tracking](#optimize-for-star-tracking) sets it — it is yours: **Full Analysis** runs with it rather than quietly measuring over it. Pressing **Detect Star Size** still replaces it, because that button *is* the request to measure |
+| **Min blob area (px)** | 2–40 | Smallest blob accepted. Once you set it by hand — or [Optimize For Star Tracking](#optimize-for-star-tracking) sets it — it is yours: **Star Tracker Analysis** runs with it rather than quietly measuring over it. Pressing **Detect Star Size** still replaces it, because that button *is* the request to measure |
 | **Min detections per track** | 3–40 | How many frames a point must appear in before it is judged at all. Below this it is `short` |
 | **Moving: significance** | 2–20 | How *confident* the drift must be — how many times larger than its own uncertainty. Raise it if slow-drifting stars are being called movers |
 | **Moving: min drift (sigma)** | 2–40 | How *far* it must actually move, in multiples of this clip's position noise. Raise it to ignore small real motions and only catch obvious ones |
@@ -166,7 +175,7 @@ visible; it works on the current frame only. The same button is in the Star Trac
 *Abort* controls appear in both while it runs.
 
 It finishes by identifying the stars for the settings it chose, so the run **ends with the stars
-named on screen** rather than leaving you to press *Full Analysis* to find out what it found.
+named on screen** rather than leaving you to press *Star Tracker Analysis* to find out what it found.
 
 It runs in two parts: a search over the picture, then a check against the catalog. You can press
 **Enough (Accept)** to stop the picture search. The catalog check still runs, and it can still
@@ -209,11 +218,11 @@ Other footage can differ.
 The search is stochastic, so runs differ; pressing it twice is reasonable if a result looks
 unambitious.
 
-The settings it chose are the settings **Full Analysis** runs with — including *Min blob area*,
+The settings it chose are the settings **Star Tracker Analysis** runs with — including *Min blob area*,
 which the chained *Detect Star Size* would otherwise have silently re-measured. On a still image,
-Full Analysis therefore gives the same result as the optimizer. On a video the optimizer scores
-only the current frame, so a whole-clip Full Analysis can identify a different number of stars. With
-**Auto detect threshold** on, the threshold is re-measured before every **Full Analysis**, so the
+Star Tracker Analysis therefore gives the same result as the optimizer. On a video the optimizer scores
+only the current frame, so a whole-clip Star Tracker Analysis can identify a different number of stars. With
+**Auto detect threshold** on, the threshold is re-measured before every **Star Tracker Analysis**, so the
 optimizer does not sweep one; it tunes the picture and the blob size and leaves the threshold to
 the automation you asked for.
 
@@ -228,7 +237,7 @@ Four things worth knowing:
   it stays a half-minute job on a clip of any length. The adjustments it picks are still applied to
   the whole clip when you run the analysis.
 - When it applies new settings it leaves *their* analysis on screen, stars named. On a video that
-  is a single-frame analysis where a whole-clip one may have been — run **Full Analysis** to get
+  is a single-frame analysis where a whole-clip one may have been — run **Star Tracker Analysis** to get
   the clip back. When it changes nothing (aborted, or it could not beat your settings) your previous
   analysis is restored.
 
@@ -265,7 +274,7 @@ Detection walks every frame in the In/Out range before anything can be solved, s
 
 *Detection on a generated test clip, at frame 16 of 150. Behind the dialog, **Display during analysis** circles the detections on this frame, and the top left gives the count, `99 detected`. See [Watching it work](#watching-it-work).*
 
-- **Enough (solve what we have)** — stop scanning, keep every frame measured so far, and run the full solve on that shorter stretch. If you started from **Full Analysis**, identification and camera sync still follow exactly as on a complete run; if you started from **Find Candidate Stars**, only the analysis runs, as it would anyway. After **Find Candidate Stars**, the Status line records how much of the clip the numbers came from, e.g. `(stopped early, 60/300 frames)`. After **Full Analysis**, the identification line replaces it. The button goes away when scanning ends, because after that there is nothing left to stop short of.
+- **Enough (solve what we have)** — stop scanning, keep every frame measured so far, and run the full solve on that shorter stretch. If you started from **Star Tracker Analysis**, identification and camera sync still follow exactly as on a complete run; if you started from **Find Candidate Stars**, only the analysis runs, as it would anyway. After **Find Candidate Stars**, the Status line records how much of the clip the numbers came from, e.g. `(stopped early, 60/300 frames)`. After **Star Tracker Analysis**, the identification line replaces it. The button goes away when scanning ends, because after that there is nothing left to stop short of.
 - **Abort** — stop and discard the run. It takes effect within a fraction of a second while frames are scanned, and while the camera motion and the star map are solved. The stages after those check it only between steps, so pressing it during the lens fit may not take effect until that stage finishes.
 
 Use **Enough** when the answer has clearly settled, or when you set the range wider than you meant to.
@@ -407,7 +416,7 @@ where the hand-matched lens had been fifteen pixels out at 30° off-axis.
 A fixed camera that stacks its exposures into one image draws every star as an arc about the
 celestial pole. There are no points to detect, but each trail holds two exact star positions:
 where the star was when the stack started, and where it was when the stack ended. Load the one image, tick **From
-timelapse**, set **In** and **Out** to the start and end of the stack, and press **Full Analysis**.
+timelapse**, set **In** and **Out** to the start and end of the stack, and press **Star Tracker Analysis**.
 On a real video the box has no effect.
 
 1. **Trails.** The image is thresholded against the local sky, and the pixels kept are the
@@ -421,7 +430,7 @@ On a real video the box has no effect.
    counterclockwise about the north celestial pole as seen looking at it, so a trail starts at its
    clockwise end around the pole and ends at its counterclockwise end (the other way round about
    the south pole). The *Status* line shows the centre and the turn only when **Find Candidate
-   Stars** runs alone. After **Full Analysis** the **Lens** line reports the turn.
+   Stars** runs alone. After **Star Tracker Analysis** the **Lens** line reports the turn.
 3. **Identification.** The starts become the image's stars at the **In** frame, and are identified
    as for any still. A star too close to the centre to show an arc is used at its middle.
 4. **Lens and pointing.** A fixed camera has one orientation relative to the ground for the
@@ -501,8 +510,8 @@ reference to find, and the search will under-credit adjustments that genuinely r
 | Symptom | Likely cause |
 |---|---|
 | Almost everything is called *moving* | The lens was not fitted and the clip is wide or cropped, so the flat model is biased at the frame edges. Check the **Lens** field |
-| Very few stars found | **Detect threshold (sigma)** too high, or **Min blob area** too large for this footage. Run **Detect Star Size** on a representative frame first, or press **Optimize Adjustments for Frame** on a frame with sky and then run **Full Analysis** |
-| A visible star is not circled | Check that **Show star markers** is on: the completion fade turns it off. Then turn on **Show rejected**: if the point appears, it was followed but judged `incoherent` or `cameraFixed`. If it does not, it is a `short` track (lower **Min detections per track**, or use a longer In/Out range), a detection under the mask (turn on **Show Mask** to check), or a point the detector never accepted (lower **Detect threshold (sigma)** or **Min blob area**) |
+| Very few stars found | **Detect threshold (sigma)** too high, or **Min blob area** too large for this footage. Run **Detect Star Size** on a representative frame first, or press **Optimize Adjustments for Frame** on a frame with sky and then run **Star Tracker Analysis** |
+| A visible star is not circled | Check that **Show star markers** is on, in **Star Tracker Display**: the completion fade turns it off. Then turn on **Show rejected**: if the point appears, it was followed but judged `incoherent` or `cameraFixed`. If it does not, it is a `short` track (lower **Min detections per track**, or use a longer In/Out range), a detection under the mask (turn on **Show Mask** to check), or a point the detector never accepted (lower **Detect threshold (sigma)** or **Min blob area**) |
 | Identification finds nothing | Too few solved stars, or a field too sparse for a unique quad: try a longer In/Out range. Or too many detections: clutter defeats the match. Mask the ground, raise **Detect threshold (sigma)**, or press **Optimize Adjustments for Frame** |
 | Fisheye footage: many real stars called *moving*, or the sphere solve fails | Turn on **Fixed camera** for a mounted camera. Check the Fisheye render is roughly matched to the footage first — the solve takes that lens as given |
 | The run is taking forever | Press **Enough (solve what we have)**, or shorten the In/Out range |

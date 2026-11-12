@@ -115,7 +115,7 @@ does not turn. Tick **Fixed camera** in that folder for a mounted camera: the sk
 one rotation axis and one rate for the whole clip. A single still image, without **From timelapse**,
 is analysed without this lens.
 
-Press **Full Analysis**. It ends with the identification, which you can also run alone with
+Press **Star Tracker Analysis**. It ends with the identification, which you can also run alone with
 **Identify Stars (catalog)** in **Star Tracker Tweaks**. The named stars calibrate the lens. With
 **Sync Camera to Star Field** ticked (the default), a successful identification sets **Fisheye FOV**,
 **Center X %** and **Center Y %** from them and points the camera. The projection type and

@@ -136,7 +136,7 @@ let minAreaCalibrated = false;
 // optimizer - as opposed to measured or left at its default. Three states are needed, not two:
 // an untouched default must still be calibrated by a chained Detect Star Size, a measured value
 // may be re-measured freely, and a chosen one must survive until somebody asks for a measurement
-// explicitly. Without this, pressing Optimize and then Full Analysis silently discarded the blob
+// explicitly. Without this, pressing Optimize and then Star Tracker Analysis silently discarded the blob
 // size the optimizer had just verified, and the analysis differed from the one it promised.
 let minAreaChosen = false;
 // Monotonic ticket for calibration runs: only the newest request may publish. Two clicks in
@@ -468,7 +468,7 @@ export function setStarTrackerTweaks({threshSigma, minArea,
     if (minArea !== undefined) {
         params.minArea = minArea;
         // A searched value is a CHOICE, not a measurement: it was verified against the catalog,
-        // and the chained Detect Star Size inside Full Analysis must leave it alone or the
+        // and the chained Detect Star Size inside Star Tracker Analysis must leave it alone or the
         // analysis differs from the one the search just proved. A restore passes both flags back
         // and keeps whatever they were.
         minAreaCalibrated = calibrated ?? false;
@@ -567,7 +567,7 @@ function dropCalibrationForOtherVideo(videoData) {
  * changed during the decode wait, a newer calibration superseded this one, or there was nothing
  * to run against - true otherwise, including when the measurement itself failed (a failed
  * calibration keeps the previous parameters precisely so analysis remains runnable, so it must
- * not read as "stop"). The chained Full Analysis button gates on this; a false
+ * not read as "stop"). The chained Star Tracker Analysis button gates on this; a false
  * that went unchecked would let a click's analysis and camera sync land on a video the user
  * swapped in AFTER clicking.
  */
@@ -579,7 +579,7 @@ export async function detectStarSize(opts = {}) {
 
 async function detectStarSizeAtResolution(opts, resolutionSession) {
     // opts.measure marks the button - an explicit "measure it for me", which overwrites the blob
-    // size whatever its provenance. The Full Analysis chain calls this WITHOUT it, because there
+    // size whatever its provenance. The Star Tracker Analysis chain calls this WITHOUT it, because there
     // the user asked to run an analysis with the settings they have, not to have one of them
     // silently re-derived.
     const measureRequested = !!opts.measure;
@@ -3704,7 +3704,7 @@ function completionFadeOpacities() {
  * the video - and the run that most needs to say what it is doing is a blind solve that
  * verifies nothing, which draws no quads and so leaves no other mark on screen at all. Without
  * this, a search working normally is indistinguishable from a hung one. That is not
- * hypothetical: Full Analysis calls hideProgress() before identifyStars(), so the modal
+ * hypothetical: Star Tracker Analysis calls hideProgress() before identifyStars(), so the modal
  * progress bar disappears and the longest stage of the run has the screen to itself.
  *
  * Wrapped rather than truncated - a failure line now carries the arithmetic that explains it
@@ -4286,7 +4286,7 @@ async function runFullStarTracker() {
     if (!analyzed) return;
     // No sync call here any more: identifyStars does it whenever "Sync camera to star field"
     // is set, so the one-click path and the Identify button now agree, and clearing the flag
-    // means Full Analysis leaves the camera alone rather than quietly taking it anyway.
+    // means Star Tracker Analysis leaves the camera alone rather than quietly taking it anyway.
     await identifyStars();
 }
 
@@ -4308,15 +4308,16 @@ export function setupStarTrackerMenu() {
         .tooltip("Find the stars in the video, track them from the In frame to the Out frame, and identify them "
             + "against a star catalog. The result can point the look camera to match the footage, "
             + "and finds objects that move against the stars.");
-    addVideoAnalysisResolutionMenu(folder, () => videoView()?.videoData);
-
+    // The first row of the folder: it is the one-click path, and the row most people open the
+    // folder for.
     folder.add({all: () => { runFullStarTracker(); }}, "all")
-        .name("Full Analysis")
+        .name("Star Tracker Analysis")
         .tooltip("Run every step: Detect Star Size on the current frame, Find Candidate Stars from the In frame "
             + "to the Out frame, then Identify Stars (catalog).\n"
             + "With Sync Camera to Star Field on, a successful identification also points the look camera. "
             + "The first identification downloads a 2.5 MB star catalog.");
-    // Directly under Full Analysis, not down in Tweaks. Full Analysis syncs the camera itself on
+    addVideoAnalysisResolutionMenu(folder, () => videoView()?.videoData);
+    // In the main folder, not down in Tweaks. Star Tracker Analysis syncs the camera itself on
     // success, so this is the button for the case where it did NOT - a run that had to be tuned
     // by hand, or one whose sync was undone by moving the camera afterwards. That is a
     // main-folder action following a main-folder action, not a tweak.
@@ -4333,7 +4334,7 @@ export function setupStarTrackerMenu() {
             + "second each: the quad lines, then the star circles, then the catalog-number labels. "
             + "The named stars keep their labels. If fewer than 12 stars have names, the brightest "
             + "numbered stars keep theirs too.\n"
-            + "Each layer's display switch below is turned off as it goes, so you can turn it back on. "
+            + "Each layer's switch in Star Tracker Display is turned off as it goes, so you can turn it back on. "
             + "A FAILED run never fades: its marks show what went wrong.");
     // The same optimization the Video Adjustments folder offers, reachable from here as well: it
     // tunes the picture FOR this analysis, so this is where somebody about to run one looks for it.
@@ -4397,7 +4398,7 @@ export function setupStarTrackerMenu() {
             + "footage.");
     folder.add(params, "fromTimelapse").name("From timelapse")
         .tooltip("The video is a single stacked timelapse image of star trails, taken by a "
-            + "fixed camera between the In and Out frames. Full Analysis then finds the trails "
+            + "fixed camera between the In and Out frames. Star Tracker Analysis then finds the trails "
             + "and their center of rotation, takes each trail's START as the star's position at "
             + "the In frame, identifies those stars, and fits the lens (projection, curve, focal "
             + "length and optical centre) and the fixed camera's pointing from both ends of every "
@@ -4407,55 +4408,60 @@ export function setupStarTrackerMenu() {
         .tooltip("Shows the result of the lens fit: the lens type, its field of view and the fit error, "
             + "or why no lens was fitted. \"off\" means Fit lens from stars is off. "
             + "The full lens is shown in Camera > Lens.");
-    // The overlay switches, in the order they are reached for: the circles, the names beside
-    // them, the solver's quad lines, then the less-used classes. Each gates exactly one layer.
+    // The overlay switches, in a sub-menu of their own so the main folder stays short. In the
+    // order they are reached for: the circles, the names beside them, the solver's quad lines,
+    // then the less-used classes. Each gates exactly one layer.
     // The three the completion fade retires are .listen()ed, because it turns them off from
     // code and a checkbox that still reads "on" over a layer that is gone is worse than no
     // checkbox at all. lil-gui polls the value, and the poll reaches the menu-bar mirror twins
     // the same way the Status row's does.
-    folder.add(params, "showStars").name("Show star markers").onChange(setRenderOne).listen()
+    const display = folder.addFolder("Star Tracker Display").close()
+        .tooltip("What the Star Tracker draws on the video: the star circles, names and quad lines, the "
+            + "moving objects, the light clusters and the rejected tracks. Also the detections shown "
+            + "during a scan, and the object tracks on the star chart.");
+    display.add(params, "showStars").name("Show star markers").onChange(setRenderOne).listen()
         .tooltip("Draw a green circle around each star that the tracker found, identified or not. Only the "
             + "circles - the catalog names and the quad lines have their own switches, so the names "
             + "can be read over clean video with every circle hidden.\n"
             + "Click a circle to leave that star out of Identify Stars; click it again to put it back.");
-    folder.add(params, "showStarNames").name("Show star names").onChange(setRenderOne)
+    display.add(params, "showStarNames").name("Show star names").onChange(setRenderOne)
         .tooltip("Label each identified star with its catalog name. Works whether or not the "
             + "star markers are drawn.");
-    folder.add(params, "showHipNumbers").name("Show HIP star numbers").onChange(setRenderOne)
+    display.add(params, "showHipNumbers").name("Show HIP star numbers").onChange(setRenderOne)
         .listen()
         .tooltip("Include the stars whose catalog entry has no proper name - Bayer designations "
             + "(Alpha Cas) and bare HIP numbers. Most matches are these, so they are most of the "
             + "labelling; turning them off leaves the named stars - Deneb, Schedar - on their "
             + "own. Needs Show star names.");
-    folder.add(params, "showQuadLines").name("Show quad lines").onChange(setRenderOne).listen()
+    display.add(params, "showQuadLines").name("Show quad lines").onChange(setRenderOne).listen()
         .tooltip("Draw the four-star shapes the blind solve matched against the catalog, with "
             + "line weight showing how much of the field each one explains. They are the visible "
             + "evidence for the identification; turn them off once you trust it.");
-    folder.add(params, "showMoving").name("Show moving").onChange(setRenderOne)
+    display.add(params, "showMoving").name("Show moving").onChange(setRenderOne)
         .tooltip("Draw a red circle on each track that moves against the stars, labeled with how far it "
             + "moved, in pixels. It shows only on the frames where the track was seen.");
-    folder.add(params, "showClusters").name("Show light clusters").onChange(setRenderOne)
+    display.add(params, "showClusters").name("Show light clusters").onChange(setRenderOne)
         .tooltip("Draw a dashed orange ring around lights that move together, and around faint moving "
             + "objects that no single track follows. The label gives the number of lights and the "
             + "distance moved, in pixels.");
-    folder.add(params, "showRejected").name("Show rejected").onChange(setRenderOne)
+    display.add(params, "showRejected").name("Show rejected").onChange(setRenderOne)
         .tooltip("Draw the tracks that are neither stars nor moving objects.\n"
             + "Gray dashed circle: seen too rarely, or too scattered, to be a steady source.\n"
             + "Yellow circle: fixed in the frame, not on the sky, for example a hot pixel or burned-in text.");
-    folder.add(params, "showDuringAnalysis").name("Display during analysis")
+    display.add(params, "showDuringAnalysis").name("Display during analysis")
         .tooltip("While an analysis is scanning, circle each frame's detections as they are "
             + "found. Nothing is solved yet at that point, so these are raw detections - every "
             + "one drawn the same, with no classification or names - which is what makes a bad "
             + "detect threshold or blob size obvious without waiting for the run to finish.");
-    folder.add(params, "chartTracks").name("Chart: object tracks")
+    display.add(params, "chartTracks").name("Chart: object tracks")
         .tooltip("Include the paths of moving objects (solid red) and light clusters (dashed orange) in "
             + "Make Star Chart (PNG), with an arrowhead at the end of each path. Off: the chart shows stars only.");
 
     const tweaks = folder.addFolder("Star Tracker Tweaks").close()
-        .tooltip("Detection and classification settings, and the separate steps that Full Analysis runs.");
+        .tooltip("Detection and classification settings, and the separate steps that Star Tracker Analysis runs.");
 
     tweaks.add(params, "autoSigma").name("Auto detect threshold")
-        .tooltip("Set Detect threshold from the footage when Full Analysis or Detect Star Size runs, "
+        .tooltip("Set Detect threshold from the footage when Star Tracker Analysis or Detect Star Size runs, "
             + "instead of using the slider value. It tests the In, middle and Out frames, and picks the "
             + "level where the blob count stops falling as the threshold goes up.\n"
             + "The slider then shows the chosen value. When the frames have too few blobs to judge, "
@@ -4472,7 +4478,7 @@ export function setupStarTrackerMenu() {
     minAreaController = tweaks.add(params, "minArea", 2, 40, 1).name("Min blob area (px)")
         .onFinishChange(() => {
             minAreaCalibrated = false;
-            // Deliberate, so a Full Analysis will now run with it rather than quietly measuring
+            // Deliberate, so a Star Tracker Analysis will now run with it rather than quietly measuring
             // over it. Pressing Detect Star Size still overwrites it - that is what it is for.
             minAreaChosen = true;
             calibrationRequest++;
@@ -4484,17 +4490,17 @@ export function setupStarTrackerMenu() {
             }
         })
         .tooltip("Smallest blob, in pixels, that counts as a star. Smaller blobs are rejected as noise.\n"
-            + "Detect Star Size measures it. A value you set by hand is kept by Full Analysis, "
+            + "Detect Star Size measures it. A value you set by hand is kept by Star Tracker Analysis, "
             + "until you press Detect Star Size.");
     // Blob sizes depend on resolution, zoom and exposure, so the pixel-scale settings are
     // measurable rather than guessable - this measures them from the frame on screen.
     // measure:true - pressing this IS the request to re-measure, so it overwrites a blob size
-    // however it was arrived at. The chained call inside Full Analysis deliberately does not.
+    // however it was arrived at. The chained call inside Star Tracker Analysis deliberately does not.
     tweaks.add({cal: () => { detectStarSize({measure: true}); }}, "cal")
         .name("Detect Star Size (current frame)")
         .tooltip("Measure the star blobs on the current frame, and set Min blob area and the measuring "
             + "apertures from them. Use a typical frame.\n"
-            + "Full Analysis also does this first, but keeps a Min blob area that you set by hand.");
+            + "Star Tracker Analysis also does this first, but keeps a Min blob area that you set by hand.");
     tweaks.add(params, "minObservations", 3, 40, 1).name("Min detections per track")
         .tooltip("Fewest detections a track needs before it is classified. Shorter tracks are ignored.");
     tweaks.add(params, "driftSignificance", 2, 20, 0.5).name("Moving: significance")
@@ -4515,7 +4521,7 @@ export function setupStarTrackerMenu() {
         .tooltip("Match the stars from Find Candidate Stars to a star catalog, and label them. Stars "
             + "you clicked off are left out. The first use downloads a 2.5 MB catalog.\n"
             + "With Sync Camera to Star Field on, a success also points the look camera.");
-    // Sync Camera to Star Field lives in the MAIN folder, under Full Analysis.
+    // Sync Camera to Star Field lives in the MAIN folder, under Star Tracker Analysis.
     tweaks.add({chart: () => { makeStarChart(); }}, "chart").name("Make Star Chart (PNG)")
         .tooltip("Download star-chart.png: each star found, drawn once at its place on the solved sky "
             + "map and sized by its measured brightness. Identified stars get their names.\n"
