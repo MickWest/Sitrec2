@@ -60,7 +60,7 @@ removes everything, and so does importing new footage (see [Saving](#saving)).
 | Control | What it does |
 | --- | --- |
 | **Show Mask** | Show the red exclusion overlay without painting. It is stronger with **Enable Mask** on and dimmer with it off. |
-| **Edit Mask** | Show the mask and paint by hand. Drag to add, **Alt/Option**-drag to erase, `[` and `]` for brush size. **Shift**-drag fills a rectangle; **Alt/Option-Shift**-drag erases a rectangle. |
+| **Edit Mask** | Show the mask and paint by hand. Drag to add, **Alt/Option**-drag to erase, `[` and `]` for brush size. **Shift**-drag fills a rectangle; **Alt/Option-Shift**-drag erases a rectangle. A green circle shows the brush while the pointer is over the video. |
 | **Mask Ground (auto)** | *(Auto Masking)* No clicks. Splits the frame into blocks and keeps as sky only what a large, uniform block can describe — so foliage, which forces the blocks to keep subdividing, is picked out. Best first thing to try. |
 | **Mask Ground (click sky, then ground)** | *(Auto Masking)* Click a patch of sky, then a patch of ground. The second click lets Sitrec *measure* which of brightness or texture separates them in your particular clip rather than assuming. |
 | **Auto Mask OSD** | *(Auto Masking)* Finds pixels that do not change over a window of frames and are close to **Target Color** — burned-in text, timestamps, reticles. **Target Color** is near-white by default, so set it to match green, black or other colored text. **Color Tolerance** sets how close a pixel must be. |
@@ -77,7 +77,9 @@ run replaces the tool's last result, unless you changed the mask in between.
 
 **Brush Size** is the brush radius in the video's own pixels, and the maximum scales with the
 resolution — so the largest brush covers the same fraction of the picture on a 720p clip as on
-a 4000-pixel-wide photograph.
+a 4000-pixel-wide photograph. A new sitch starts with a brush of 100 pixels. A saved sitch keeps
+the size that was saved with it. A sitch from before version 2.113.0 has no saved size, and it
+also starts with 100.
 
 ### Which ground method should I use?
 

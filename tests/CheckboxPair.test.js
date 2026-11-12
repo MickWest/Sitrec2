@@ -170,3 +170,67 @@ test("other views and controls in different folders never join an unrelated pair
     expect(video._checkboxPair).toBeUndefined();
     expect(look._checkboxPair).toBeUndefined();
 });
+
+describe("a third box for the video view", () => {
+    test("the row reads V, M, L and each box sets only its own value", () => {
+        const state = {main: false, look: false, video: false};
+        const pair = gui.addCheckboxPair(state, "main", "look", "Grid", "video");
+        const caption = pair.domElement.querySelector(".lil-checkbox-pair-name");
+        expect([...pair.domElement.children]).toEqual(
+            [caption, pair.video.domElement, pair.main.domElement, pair.look.domElement]);
+        expect([pair.video, pair.main, pair.look].map(c => c.$widget.textContent)).toEqual(["V", "M", "L"]);
+        expect(pair.video._name).toBe("Grid in Video");
+        expect(gui.domElement.querySelectorAll(".lil-checkbox-pair")).toHaveLength(1);
+        pair.video.$input.click();
+        expect(state).toEqual({main: false, look: false, video: true});
+        pair.look.$input.click();
+        expect(state).toEqual({main: false, look: true, video: true});
+    });
+
+    test.each([
+        [["video", "mainView", "lookView"]], [["mainView", "video", "lookView"]], [["mainView", "lookView", "video"]],
+    ])("controls made in the order %j give one row in the order V, M, L", order => {
+        const made = {};
+        for (const view of order) {
+            made[view] = gui.add({visible: false}, "visible").asViewCheckbox(view, "Names", "names", true);
+        }
+        const pair = made.mainView._checkboxPair;
+        expect(gui.domElement.querySelectorAll(".lil-checkbox-pair")).toHaveLength(1);
+        expect([...pair.domElement.querySelectorAll(".controller")]).toEqual(
+            [made.video.domElement, made.mainView.domElement, made.lookView.domElement]);
+        expect(pair.video).toBe(made.video);
+    });
+
+    test("a video control that does not ask to join keeps its own row", () => {
+        const video = gui.add({visible: false}, "visible").asViewCheckbox("video", "Time", "time");
+        const main = gui.add({visible: false}, "visible").asViewCheckbox("mainView", "Time", "time");
+        gui.add({visible: false}, "visible").asViewCheckbox("lookView", "Time", "time");
+        expect(main._checkboxPair.video).toBeNull();
+        expect(video._checkboxPair).toBeUndefined();
+        expect(video.domElement.parentNode).toBe(gui.$children);
+    });
+
+    test("a copy of the folder has the same three boxes", () => {
+        const state = {main: false, look: false, video: false};
+        gui.addCheckboxPair(state, "main", "look", "Grid", "video");
+        const copy = new GUI({autoPlace: false});
+        document.body.appendChild(copy.domElement);
+        try {
+            copy.mirrorFolderFrom(gui);
+            const mirrored = copy.controllers.find(c => c.property === "main")._checkboxPair;
+            expect([...mirrored.domElement.children].map(el => el.textContent))
+                .toEqual(["Grid", "Grid in VideoV", "Grid in MainM", "Grid in LookL"]);
+            mirrored.video.$input.click();
+            expect(state).toEqual({main: false, look: false, video: true});
+        } finally {
+            copy.destroy();
+        }
+    });
+
+    test("the row stays for Main and Look when the video control goes", () => {
+        const pair = gui.addCheckboxPair({main: false, look: false, video: false}, "main", "look", "Grid", "video");
+        pair.video.destroy();
+        expect(pair.domElement.isConnected).toBe(true);
+        expect(pair.domElement.querySelectorAll('input[type="checkbox"]')).toHaveLength(2);
+    });
+});

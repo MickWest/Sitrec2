@@ -39,7 +39,7 @@ import {CNodeDisplayTrack} from "./nodes/CNodeDisplayTrack";
 import {motionTrackScale} from "./MotionTrackScale";
 import {startMaskGroundPick, applyQuadTreeGroundMask} from "./SkyMaskTool";
 import {maskGroundWithAI} from "./SkyMaskAI";
-import {BRUSH_MAX_AT_720} from "./nodes/CNodeMaskOverlay";
+import {BRUSH_MAX_AT_720, DEFAULT_BRUSH_SIZE} from "./nodes/CNodeMaskOverlay";
 import {viewMenuKey} from "./ViewUIBarMenus";
 import {showError} from "./showError";
 import {
@@ -2581,7 +2581,7 @@ function createMaskingFolder(parentFolder) {
     }
     Object.defineProperty(maskParams, 'brushSize', {
         enumerable: true,
-        get() { return motionAnalyzer?.maskOverlayNode?.brushSize ?? 20; },
+        get() { return (motionAnalyzer?.maskOverlayNode ?? NodeMan.get("videoMask", false))?.brushSize ?? DEFAULT_BRUSH_SIZE; },
         set(v) { const a = ensureMaskingAnalyzer(); if (a?.maskOverlayNode) { a.maskOverlayNode.brushSize = v; setRenderOne(true); } },
     });
     for (const [property, field] of [['showMask', 'showMaskPreview'], ['editMask', 'editing']]) {
@@ -2622,8 +2622,10 @@ function createMaskingFolder(parentFolder) {
     showMaskController.shareAs(viewMenuKey("video", "maskShow"));
     editMaskController.shareAs(viewMenuKey("video", "maskEdit"));
 
+    // listen(): the size also changes with [ and ], and when a save gives the mask its size
+    // after this row is made.
     const brushSizeController = maskFolder.add(maskParams, 'brushSize', 5, BRUSH_MAX_AT_720, 1)
-        .name("Brush Size").perm()
+        .name("Brush Size").perm().listen()
         .tooltip("Mask brush radius, in video pixels. The maximum scales with the video's "
             + "resolution against a 720-line reference, so the brush covers the same fraction "
             + "of the picture whatever the source. [ and ] resize it while painting.");

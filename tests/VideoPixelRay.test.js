@@ -1,5 +1,5 @@
 import {Vector3} from "three";
-import {videoPixelRay} from "../src/VideoPixelRay";
+import {directionToVideoPixel, videoPixelRay} from "../src/VideoPixelRay";
 
 const OW = 1920;
 const OH = 1080;
@@ -100,4 +100,30 @@ test("no rotation and a 180 degree rotation give exactly the unrotated result", 
         expect(videoPixelRay(makeLOS(), VFOV, vx, vy, OW, OH, 0).toArray()).toEqual(plain);
         expect(videoPixelRay(makeLOS(), VFOV, vx, vy, OW, OH, 180).toArray()).toEqual(plain);
     }
+});
+
+describe("directionToVideoPixel", () => {
+    const pixel = {x: 0, y: 0};
+
+    test.each([[OW / 2, OH / 2], [0, 0], [OW, OH], [1500, 200], [37.5, 911.25]])(
+        "it is the inverse of videoPixelRay at (%p, %p)", (vx, vy) => {
+            const direction = ray(vx, vy);
+            // makeLOS: right is +x, up is +y and the heading is -z.
+            expect(directionToVideoPixel(direction.x, direction.y, -direction.z, VFOV, OW, OH, pixel)).toBe(true);
+            expect(pixel.x).toBeCloseTo(vx, 9);
+            expect(pixel.y).toBeCloseTo(vy, 9);
+        });
+
+    test("the length of the direction does not change the pixel", () => {
+        const direction = ray(1500, 200).multiplyScalar(250);
+        directionToVideoPixel(direction.x, direction.y, -direction.z, VFOV, OW, OH, pixel);
+        expect(pixel.x).toBeCloseTo(1500, 9);
+        expect(pixel.y).toBeCloseTo(200, 9);
+    });
+
+    test("a direction beside or behind the camera has no pixel", () => {
+        expect(directionToVideoPixel(1, 0, 0, VFOV, OW, OH, pixel)).toBe(false);
+        expect(directionToVideoPixel(0, 0, -1, VFOV, OW, OH, pixel)).toBe(false);
+        expect(directionToVideoPixel(0, 0, NaN, VFOV, OW, OH, pixel)).toBe(false);
+    });
 });

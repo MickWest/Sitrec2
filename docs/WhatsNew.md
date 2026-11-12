@@ -9,6 +9,18 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.194.2 (2026-11-12)
+
+### New Features
+- **Celestial lines over the video** (Show → Celestial → Lines, in a custom sitch): the rows *Equatorial Grid*, *Azimuthal Grid* and *Constellation Lines* now have three boxes: *V* for the video view, *M* for the main view and *L* for the look view. The *V* box draws those lines over the picture in the video view, at the positions where the look camera sees them. The lines are in the correct place on the video only when the look camera has the position, the direction and the field of view of the camera that made the video. The lines follow the zoom and the pan of the video view, and they stay inside the picture. *Grid Spacing*, *Asterism Style* and *Line Width* apply to them. The ground in the video does not hide them. The *V* boxes are off at the start, and they are saved with the sitch. *Ridgeline* has no *V* box.
+
+### Improvements
+- **A larger brush for a new mask** (Video → Masking → *Brush Size*): a new mask now starts with a *Brush Size* of 100 (it was 20). The value is the radius of the brush in video pixels. A saved sitch, and a sitch that opens from a template, keeps the size that it was saved with. A sitch that was saved before version 2.113.0 has no saved size, so it also starts at 100.
+
+### Bug Fixes
+- Fixed the green brush circle of *Edit Mask* (Video → Masking), which stayed on the video at its last position when the pointer moved to a menu, to a different view or out of the browser window. The circle now shows only while the pointer is over the video, and during a brush stroke.
+- Fixed the *Brush Size* slider (Video → Masking), which did not show the brush size of the mask after a saved sitch opened, or after the [ and ] keys changed the size.
+
 ## Version 2.194.1 (2026-11-12)
 
 ### Improvements

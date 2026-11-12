@@ -37,7 +37,7 @@ export function acquireControlLease(controls) {
     };
 }
 
-function nativeTarget(e) {
+export function nativeTarget(e) {
     return e.target?.closest?.("input,textarea,select,button,a,dialog,[contenteditable=true],#menuBar,.lil-gui,.view-uibar,.resize-handle,[data-interaction-native]");
 }
 

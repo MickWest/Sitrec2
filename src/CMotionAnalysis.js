@@ -3,7 +3,7 @@ import {par} from "./par";
 import {beginVideoAnalysis} from './VideoAnalysisResolution';
 import {startAnalysis, updateGuiValues, updateOptimizeStatus} from "./CMotionAnalysisShared";
 
-import {CNodeMaskOverlay} from "./nodes/CNodeMaskOverlay";
+import {CNodeMaskOverlay, DEFAULT_BRUSH_SIZE} from "./nodes/CNodeMaskOverlay";
 import {CNodeSpeedOverlay} from "./nodes/CNodeSpeedOverlay";
 import {getCV, loadOpenCV} from "./openCVLoader";
 import {applyConvolution} from "./nodes/CNodeVideoView";
@@ -195,7 +195,7 @@ export class MotionAnalyzer {
         
         this.maskOverlayNode = null;
         this.maskEnabled = true;
-        this.brushSize = 20;
+        this.brushSize = DEFAULT_BRUSH_SIZE;
         
         this.speedOverlayNode = null;
         this.speedOverlayEnabled = false;

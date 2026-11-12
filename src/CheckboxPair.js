@@ -1,5 +1,6 @@
-// Two independent Main/Look booleans on one row. Keep ordinary controllers so
-// saving, menu APIs, mirrors, disabled states and checkbox drag painting work.
+// Two independent Main/Look booleans on one row, with an optional third for the
+// video view. Keep ordinary controllers so saving, menu APIs, mirrors, disabled
+// states and checkbox drag painting work.
 import GUI, {Controller} from "./js/lil-gui.esm";
 
 const STYLE_ID = "lil-checkbox-pair-style";
@@ -43,11 +44,13 @@ function injectStyles() {
 
 // Pair existing controllers, including controls on different view/node objects.
 // The outer .controller inherits the same spacing and height as every menu row;
-// only its two inner controllers suppress their own margins and padding.
-export function pairCheckboxControllers(main, look, name) {
-    if (main._checkboxPair && main._checkboxPair === look._checkboxPair) return main._checkboxPair;
-    main._checkboxPair?.remove();
-    look._checkboxPair?.remove();
+// only its inner controllers suppress their own margins and padding.
+// An optional Video controller goes first, so the boxes read V M L.
+export function pairCheckboxControllers(main, look, name, video = null) {
+    const existing = main._checkboxPair;
+    if (existing && existing === look._checkboxPair && existing.video === video) return existing;
+    const members = video ? [video, main, look] : [main, look];
+    for (const controller of members) controller._checkboxPair?.remove();
     injectStyles();
     const gui = main.parent;
     const row = document.createElement("div");
@@ -58,16 +61,16 @@ export function pairCheckboxControllers(main, look, name) {
     caption.className = "name lil-checkbox-pair-name";
     caption.textContent = name;
     row.appendChild(caption);
-    const first = [...gui.$children.children].find(el => el === main.domElement || el === look.domElement);
+    const first = [...gui.$children.children].find(el => members.some(c => c.domElement === el));
     gui.$children.insertBefore(row, first);
 
     let active = true;
     const cleanups = [];
-    const pair = {main, look, domElement: row, remove() {
+    const pair = {main, look, video, domElement: row, remove() {
         if (!active) return;
         if (main._folderToggleOptions?.paired) main._removeFolderToggle?.();
         active = false;
-        for (const controller of [main, look]) {
+        for (const controller of members) {
             if (controller.domElement.parentNode === row) gui.$children.insertBefore(controller.domElement, row);
             delete controller._checkboxPair;
         }
@@ -76,11 +79,12 @@ export function pairCheckboxControllers(main, look, name) {
     }};
     const sync = () => {
         if (!active) return;
-        const live = [main, look].filter(c => gui.controllers.includes(c));
+        const live = members.filter(c => gui.controllers.includes(c));
         if (live.length < 2) { pair.remove(); return; }
         row.style.display = live.some(c => !c._hidden) ? "" : "none";
     };
-    for (const [controller, letter] of [[main, "M"], [look, "L"]]) {
+    for (const controller of members) {
+        const letter = controller === video ? "V" : controller === main ? "M" : "L";
         controller._checkboxPair = pair;
         controller.listen();
         row.appendChild(controller.domElement);
@@ -127,22 +131,28 @@ export function pairCheckboxControllers(main, look, name) {
 // controls with the same key in the same folder. Other views retain normal rows.
 // Destroying either side restores the survivor's normal row; a replacement can
 // pair with it again without leaving stale controllers or duplicate callbacks.
-Controller.prototype.asViewCheckbox = function (viewId, name, key = name) {
-    if (viewId !== "mainView" && viewId !== "lookView") return this;
+//
+// A control of the video view joins the Main/Look row as a third box only when it
+// asks to with joinVideo. Other video controls with the same key keep normal rows.
+Controller.prototype.asViewCheckbox = function (viewId, name, key = name, joinVideo = false) {
+    const member = viewId === "mainView" || viewId === "lookView" || (viewId === "video" && joinVideo);
+    if (!member) return this;
     if (this.$input?.type !== "checkbox") return this;
-    this._viewCheckbox = {viewId, name, key};
-    const other = this.parent.controllers.find(c => c !== this
-        && c._viewCheckbox?.key === key && c._viewCheckbox.viewId !== viewId);
-    if (other) {
-        const main = viewId === "mainView" ? this : other;
-        const look = viewId === "lookView" ? this : other;
-        pairCheckboxControllers(main, look, name);
-    }
+    this._viewCheckbox = {viewId, name, key, joinVideo};
+    const find = id => id === viewId ? this : this.parent.controllers.find(c =>
+        c._viewCheckbox?.key === key && c._viewCheckbox.viewId === id) ?? null;
+    const main = find("mainView"), look = find("lookView");
+    if (main && look) pairCheckboxControllers(main, look, name, find("video"));
     return this;
 };
 
-// Convenience for two properties on one object. Both APIs use the same row.
-GUI.prototype.addCheckboxPair = function (object, mainProperty, lookProperty, name) {
+// Convenience for properties on one object. Both APIs use the same row.
+// videoProperty adds the third box, for the video view.
+GUI.prototype.addCheckboxPair = function (object, mainProperty, lookProperty, name, videoProperty) {
+    if (videoProperty !== undefined) {
+        this.add(object, videoProperty).name(`${name} in Video`).listen()
+            .asViewCheckbox("video", name, name, true);
+    }
     const main = this.add(object, mainProperty).name(`${name} in Main`).listen()
         .asViewCheckbox("mainView", name);
     const look = this.add(object, lookProperty).name(`${name} in Look`).listen()

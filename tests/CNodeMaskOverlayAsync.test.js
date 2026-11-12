@@ -1,10 +1,25 @@
+// The video view's page, as far as the mask overlay uses it: the listeners it adds.
+const mockPage = {listeners: [], element(name) {
+    return {
+        addEventListener: (type, fn) => mockPage.listeners.push({name, type, fn}),
+        removeEventListener: (type, fn) => {
+            mockPage.listeners = mockPage.listeners.filter(l => !(l.name === name && l.type === type && l.fn === fn));
+        },
+    };
+}};
 jest.mock('../src/nodes/CNodeTrackingOverlay', () => ({CNodeActiveOverlay: class {
+    constructor() {
+        const ownerDocument = {...mockPage.element("document"), documentElement: mockPage.element("root")};
+        this.overlayView = {div: {ownerDocument, style: {}, querySelectorAll: () => []}};
+    }
     modSerialize() { return {}; }
     modDeserialize() {}
     renderCanvas() {}
+    dispose() {}
 }}));
 jest.mock('../src/Globals', () => ({setRenderOne: jest.fn()}));
-jest.mock('../src/ViewUtils', () => ({mouseToCanvas: jest.fn()}));
+jest.mock('../src/ViewUtils', () => ({mouseToCanvas: jest.fn(), mouseInViewOnly: jest.fn()}));
+jest.mock('../src/InteractionRouter', () => ({nativeTarget: jest.fn()}));
 jest.mock('../src/UndoManager', () => ({undoManager: {}}));
 jest.mock('../src/KeyBoardHandler', () => ({isKeyCodeHeld: jest.fn()}));
 jest.mock('../src/FlowAlignment', () => ({getFlowAlignRotation: jest.fn()}));
@@ -15,6 +30,7 @@ const {CNodeMaskOverlay} = require('../src/nodes/CNodeMaskOverlay');
 let images, originalImage, originalDocument;
 
 beforeEach(() => {
+    mockPage.listeners = [];
     images = [];
     originalImage = global.Image;
     originalDocument = global.document;
@@ -125,4 +141,81 @@ test.each([true, false])('preview intensity follows Enable=%s in both Show and E
         overlay.renderCanvas(0);
         expect(overlay.ctx.globalAlpha).toBe(enabled ? .4 : .2);
     }
+});
+
+describe('brush circle', () => {
+    const {mouseInViewOnly} = require('../src/ViewUtils');
+    const {nativeTarget} = require('../src/InteractionRouter');
+    const send = (name, type, event = {}) => mockPage.listeners
+        .filter(l => l.name === name && l.type === type).forEach(l => l.fn(event));
+
+    beforeEach(() => {
+        mouseInViewOnly.mockReset().mockReturnValue(true);
+        nativeTarget.mockReset().mockReturnValue(null);
+    });
+
+    test('a new mask has a brush of 100 video pixels', () => {
+        expect(new CNodeMaskOverlay({}).brushSize).toBe(100);
+        expect(new CNodeMaskOverlay({brushSize: 35}).brushSize).toBe(35);
+    });
+
+    test('the circle shows only while the pointer is over the video', () => {
+        const overlay = new CNodeMaskOverlay({});
+        overlay.setEditing(true);
+        expect(overlay.brushCursorShown()).toBe(false);
+
+        send("document", "pointermove", {clientX: 10, clientY: 20});
+        expect(mouseInViewOnly).toHaveBeenLastCalledWith(overlay, 10, 20);
+        expect(overlay.brushCursorShown()).toBe(true);
+
+        mouseInViewOnly.mockReturnValue(false);
+        send("document", "pointermove", {clientX: 900, clientY: 20});
+        expect(overlay.brushCursorShown()).toBe(false);
+    });
+
+    test('the circle hides over a menu that covers the video', () => {
+        const overlay = new CNodeMaskOverlay({});
+        overlay.setEditing(true);
+        send("document", "pointermove", {clientX: 10, clientY: 20});
+        nativeTarget.mockReturnValue({});
+        send("document", "pointermove", {clientX: 11, clientY: 20});
+        expect(overlay.brushCursorShown()).toBe(false);
+    });
+
+    test('the circle hides when the pointer leaves the window', () => {
+        const overlay = new CNodeMaskOverlay({});
+        overlay.setEditing(true);
+        send("document", "pointermove", {clientX: 10, clientY: 20});
+        send("root", "pointerleave");
+        expect(overlay.brushCursorShown()).toBe(false);
+    });
+
+    test('the circle stays during a stroke that leaves the video', () => {
+        const overlay = new CNodeMaskOverlay({});
+        overlay.setEditing(true);
+        overlay.isDrawing = true;
+        mouseInViewOnly.mockReturnValue(false);
+        send("document", "pointermove", {clientX: 900, clientY: 20});
+        expect(overlay.brushCursorShown()).toBe(true);
+        overlay.isDrawing = false;
+        expect(overlay.brushCursorShown()).toBe(false);
+    });
+
+    test('the circle does not come back when Edit Mask is switched on again', () => {
+        const overlay = new CNodeMaskOverlay({});
+        overlay.setEditing(true);
+        send("document", "pointermove", {clientX: 10, clientY: 20});
+        overlay.setEditing(false);
+        send("document", "pointermove", {clientX: 12, clientY: 20});
+        expect(mouseInViewOnly).toHaveBeenCalledTimes(1);
+        overlay.setEditing(true);
+        expect(overlay.brushCursorShown()).toBe(false);
+    });
+
+    test('dispose removes the pointer listeners', () => {
+        const overlay = new CNodeMaskOverlay({});
+        expect(mockPage.listeners).toHaveLength(2);
+        overlay.dispose();
+        expect(mockPage.listeners).toHaveLength(0);
+    });
 });

@@ -64,3 +64,16 @@ export function videoPixelRay(los, vFOVDegrees, vx, vy, originalWidth, originalH
         .addScaledVector(los.up, -dy)
         .normalize();
 }
+
+// The inverse of videoPixelRay, for the shown frame: where a direction lands in a w x h
+// picture whose height the vertical FOV spans. right, up and forward are the direction's
+// components on the camera's axes (any length). Writes out.x and out.y in picture pixels,
+// which can be outside the picture. Returns false for a direction that is not in front of
+// the camera, where a pinhole camera has no image.
+export function directionToVideoPixel(right, up, forward, vFOVDegrees, w, h, out) {
+    if (!(forward > 0)) return false;
+    const fpx = focalLengthPixels(vFOVDegrees, h);
+    out.x = w / 2 + fpx * right / forward;
+    out.y = h / 2 - fpx * up / forward;
+    return true;
+}

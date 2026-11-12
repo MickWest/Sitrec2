@@ -439,8 +439,8 @@ GUI.prototype.mirrorFolderFrom = function (sourceFolder, opts = {}) {
             // the copy promotes that control's twin the same way.
             if (twin && child === sourceFolder._folderToggle) folderToggleTwin = twin;
             if (twin && child._viewCheckbox) {
-                const {viewId, name, key} = child._viewCheckbox;
-                twin.asViewCheckbox(viewId, name, key);
+                const {viewId, name, key, joinVideo} = child._viewCheckbox;
+                twin.asViewCheckbox(viewId, name, key, joinVideo);
             }
         }
     }

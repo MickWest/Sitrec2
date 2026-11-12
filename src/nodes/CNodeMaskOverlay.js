@@ -1,6 +1,7 @@
 import {CNodeActiveOverlay} from "./CNodeTrackingOverlay";
 import {setRenderOne} from "../Globals";
-import {mouseToCanvas} from "../ViewUtils";
+import {mouseInViewOnly, mouseToCanvas} from "../ViewUtils";
+import {nativeTarget} from "../InteractionRouter";
 import {undoManager} from "../UndoManager";
 import {isKeyCodeHeld} from "../KeyBoardHandler";
 import {getFlowAlignRotation} from "../FlowAlignment";
@@ -37,6 +38,9 @@ import {par} from "../par";
 // reference (see maxBrushSize) so the brush covers the same fraction of the picture.
 export const BRUSH_MAX_AT_720 = 100;
 
+// Brush radius of a new mask, in video pixels.
+export const DEFAULT_BRUSH_SIZE = 100;
+
 // Width the mask is encoded at for SAVING. The live canvas stays at the video's own size; only
 // the serialized copy is capped. See encodeMaskForSave for the measurements behind the number.
 export const SAVED_MASK_MAX_WIDTH = 1024;
@@ -48,7 +52,7 @@ export class CNodeMaskOverlay extends CNodeActiveOverlay {
         
         this.separateVisibility = true;
         
-        this.brushSize = v.brushSize ?? 20;
+        this.brushSize = v.brushSize ?? DEFAULT_BRUSH_SIZE;
         // Several systems read this mask - motion analysis, the pano exporters, the star
         // tracker - so change notification is a LIST, not the single callback it began as.
         // A single slot silently made whoever constructed the node its owner, which is what
@@ -70,6 +74,8 @@ export class CNodeMaskOverlay extends CNodeActiveOverlay {
         this.rectErase = false;
         this.lastMouseX = 0;
         this.lastMouseY = 0;
+        this.cursorOverVideo = false;
+        this.trackCursorOverVideo();
         this.preDrawMaskData = null;
         this.lastBrushAdjustTime = 0;
         this.showMaskPreview = false;
@@ -122,8 +128,45 @@ export class CNodeMaskOverlay extends CNodeActiveOverlay {
         this.setEditing(!!v.editing);
     }
     
+    /**
+     * Keep cursorOverVideo true only while the pointer is where the brush can paint.
+     *
+     * onMouseMove cannot do this alone. It arrives only while the pointer IS over the view, so
+     * nothing said that the pointer had left, and the brush circle stayed at its last position.
+     * The test is the one the interaction router makes for this overlay (in the view, and not on
+     * a menu or another control), so the circle shows exactly where a press would paint. Leaving
+     * the window sends no move event, so the document's own pointerleave covers that.
+     */
+    trackCursorOverVideo() {
+        const doc = this.overlayView.div.ownerDocument;
+        const moved = e => {
+            if (!this.editing) return;
+            this.setCursorOverVideo(!nativeTarget(e) && mouseInViewOnly(this, e.clientX, e.clientY));
+        };
+        const left = () => this.setCursorOverVideo(false);
+        doc.addEventListener("pointermove", moved, true);
+        doc.documentElement.addEventListener("pointerleave", left);
+        this.stopTrackingCursor = () => {
+            doc.removeEventListener("pointermove", moved, true);
+            doc.documentElement.removeEventListener("pointerleave", left);
+        };
+    }
+
+    setCursorOverVideo(over) {
+        if (this.cursorOverVideo === over) return;
+        this.cursorOverVideo = over;
+        setRenderOne(true);
+    }
+
+    dispose() {
+        this.stopTrackingCursor?.();
+        this.removeMaskRestoreListener();
+        super.dispose();
+    }
+
     setEditing(editing) {
         this.editing = !!editing;
+        if (!this.editing) this.cursorOverVideo = false;
         this.updateVisibility();
         if (this.overlayView && this.overlayView.div) {
             this.overlayView.div.style.cursor = editing ? 'none' : '';
@@ -561,6 +604,9 @@ export class CNodeMaskOverlay extends CNodeActiveOverlay {
         
         this.lastMouseX = mouseX;
         this.lastMouseY = mouseY;
+        // The router sends this only while the pointer is over this overlay. It also covers a
+        // view in its own browser window, which the document listener above does not hear.
+        this.cursorOverVideo = true;
         setRenderOne(true);
     }
     
@@ -677,11 +723,16 @@ export class CNodeMaskOverlay extends CNodeActiveOverlay {
             ctx.restore();
         }
 
-        if (this.editing && !this.isRectDragging) {
+        if (this.brushCursorShown()) {
             this.drawBrushCursor(flowRotation);
         }
     }
     
+    // While a stroke is in progress the pointer is captured, so the circle stays with it.
+    brushCursorShown() {
+        return this.editing && !this.isRectDragging && (this.cursorOverVideo || this.isDrawing);
+    }
+
     drawBrushCursor(flowRotation = 0) {
         const ctx = this.ctx;
         const [cx, cy] = mouseToCanvas(this, this.lastMouseX, this.lastMouseY);

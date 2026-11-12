@@ -49,6 +49,7 @@ import {
 import {ViewMan} from "../CViewManager";
 import {CNodeLabeledArrow} from "./CNodeLabels3D";
 import {CNodeDisplaySkyOverlay} from "./CNodeDisplaySkyOverlay";
+import {CNodeVideoSkyLines} from "./CNodeVideoSkyLines";
 import {CNodeViewUI} from "./CNodeViewUI";
 import {CNodeViewEphemeris} from "./CNodeViewEphemeris";
 import {CNodeSkyPlotView} from "./CNodeSkyPlotView";
@@ -799,8 +800,18 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
 
         // OFF in the look view unless requested; keep the existing saved keys.
         this.showEquatorialGridLook = v.showEquatorialGridLook ?? false;
+
+        // The V boxes: the same lines drawn over the video picture (CNodeVideoSkyLines).
+        this.showEquatorialGridVideo = v.showEquatorialGridVideo ?? false;
+        this.showAzimuthalGridVideo = v.showAzimuthalGridVideo ?? false;
+        this.showConstellationsVideo = v.showConstellationsVideo ?? false;
+        this.addSimpleSerials(["showEquatorialGridVideo", "showAzimuthalGridVideo", "showConstellationsVideo"]);
+
         const equatorialGrid = this.linesGUI.addCheckboxPair(this,
-            "showEquatorialGridMain", "showEquatorialGridLook", t("viewMenus.equatorialGrid"));
+            "showEquatorialGridMain", "showEquatorialGridLook", t("viewMenus.equatorialGrid"),
+            "showEquatorialGridVideo");
+        this.setupVideoLinesCheckbox(equatorialGrid.video, t("nightSky.equatorialGridVideo.label"),
+            t("nightSky.equatorialGridVideo.tooltip"));
         equatorialGrid.main.onChange(() => {
             setRenderOne(true);
             this.updateVis()
@@ -825,7 +836,10 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
         this.showAzimuthalGridMain = v.showAzimuthalGridMain ?? false;
         this.showAzimuthalGridLook = v.showAzimuthalGridLook ?? false;
         const azimuthalGrid = this.linesGUI.addCheckboxPair(this,
-            "showAzimuthalGridMain", "showAzimuthalGridLook", t("viewMenus.azimuthalGrid"));
+            "showAzimuthalGridMain", "showAzimuthalGridLook", t("viewMenus.azimuthalGrid"),
+            "showAzimuthalGridVideo");
+        this.setupVideoLinesCheckbox(azimuthalGrid.video, t("nightSky.azimuthalGridVideo.label"),
+            t("nightSky.azimuthalGridVideo.tooltip"));
         for (const [controller, view] of [[azimuthalGrid.main, "mainView"], [azimuthalGrid.look, "lookView"]]) {
             controller.onChange(() => {
                 this.updateVis();
@@ -846,9 +860,12 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
 
         this.constellationsGroup = new Group();
         this.celestialSphere.add(this.constellationsGroup);
-        this.addCelestialViewPair(this.linesGUI, "showConstellations", t("nightSky.constellationLines.label"),
+        const constellationLines = this.addCelestialViewPair(this.linesGUI, "showConstellations",
+            t("nightSky.constellationLines.label"),
             "constellationLines", t("nightSky.constellationLines.tooltip"),
-            () => { this.updateVis(); setRenderOne(true); });
+            () => { this.updateVis(); setRenderOne(true); }, "showConstellationsVideo");
+        this.setupVideoLinesCheckbox(constellationLines.video, t("nightSky.constellationLinesVideo.label"),
+            t("nightSky.constellationLinesVideo.tooltip"));
         this.addCelestialViewPair(this.labelsGUI, "showConstellationNames", "Constellation Names",
             "constellationNames", "Show constellation names in this view, independently of Constellation Lines.",
             () => setRenderOne(true));
@@ -1087,8 +1104,9 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
         return names.some(name => this.labelPasses(name));
     }
 
-    addCelestialViewPair(gui, key, label, slot, tooltip, onChange) {
-        const pair = gui.addCheckboxPair(this, `${key}Main`, `${key}Look`, label);
+    // videoProperty adds a V box to the row; setupVideoLinesCheckbox gives it its behavior.
+    addCelestialViewPair(gui, key, label, slot, tooltip, onChange, videoProperty) {
+        const pair = gui.addCheckboxPair(this, `${key}Main`, `${key}Look`, label, videoProperty);
         for (const [controller, view] of [[pair.main, "mainView"], [pair.look, "lookView"]]) {
             controller.tooltip(tooltip).onChange(onChange);
             if (slot) controller.shareAs(viewMenuKey(view, slot));
@@ -1230,6 +1248,28 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
 
         propagateLayerMaskObject(this.equatorialSphereGroup)
         propagateLayerMaskObject(this.azimuthalSphereGroup);
+
+        this.updateVideoSkyLines();
+    }
+
+    setupVideoLinesCheckbox(controller, label, tooltip) {
+        controller.name(label).tooltip(tooltip).onChange(() => {
+            this.updateVideoSkyLines();
+            setRenderOne(true);
+        });
+        // Only a custom sitch has the video view that these lines are drawn over. In another
+        // sitch the box would do nothing, so the row keeps its M and L boxes only.
+        if (!Sit.isCustom) controller.hide();
+    }
+
+    // The lines over the video are drawn by an overlay of the video view. It is made the
+    // first time a V box is on and the video view is there, and hidden while all are off.
+    updateVideoSkyLines() {
+        const wanted = !!(this.showEquatorialGridVideo || this.showAzimuthalGridVideo || this.showConstellationsVideo);
+        if (wanted && !this.videoSkyLines && NodeMan.exists("video")) {
+            this.videoSkyLines = new CNodeVideoSkyLines({id: "videoSkyLines", overlayView: "video", nightSky: this});
+        }
+        if (this.videoSkyLines) this.videoSkyLines.visible = wanted;
     }
 
     rebuildCelestialGrids() {
