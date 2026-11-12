@@ -712,6 +712,102 @@ describe("StarDetect source extraction", () => {
     });
 });
 
+describe("StarDetect blend splitting", () => {
+    // A blob with more than one peak is two or more sources. Measured whole, its centroid
+    // belongs to none of them. Such a blob was once rejected, and that threw away the brightest
+    // stars of a clean still: a bright star has a large halo, and a large halo always holds a
+    // faint neighbour or a ripple from the codec. The blob is now split at the dips between its
+    // peaks, and the source is the part that holds the biggest peak.
+    //
+    // The frames are a flat sky at luma 19 with no noise, the regime that showed the fault: the
+    // measured sky noise sits on its 0.5 floor, so the threshold is only 2.5 above the sky and a
+    // bright star's blob takes in the whole of its faint halo.
+    const W = 160, H = 160, SKY = 19;
+
+    /** A grey frame: the flat sky plus a sum of round Gaussian blobs, clipped at `clip`. */
+    function greyFrame(blobs, clip = 245) {
+        const rgba = new Uint8ClampedArray(W * H * 4);
+        for (let y = 0; y < H; y++) {
+            for (let x = 0; x < W; x++) {
+                let level = SKY;
+                for (const blob of blobs) {
+                    const d2 = (x - blob.x) ** 2 + (y - blob.y) ** 2;
+                    level += blob.height * Math.exp(-d2 / (2 * blob.sigma * blob.sigma));
+                }
+                const v = Math.min(clip, Math.round(level));
+                const p = (y * W + x) * 4;
+                rgba[p] = v; rgba[p + 1] = v; rgba[p + 2] = v; rgba[p + 3] = 255;
+            }
+        }
+        return rgba;
+    }
+
+    /** The one source of a frame that holds a single blob, with its distance from `truth`. */
+    function onlySource(blobs, truth) {
+        const {sources} = detectSources(greyFrame(blobs), W, H);
+        expect(sources.length).toBe(1);
+        return {source: sources[0], off: Math.hypot(sources[0].x - truth.x, sources[0].y - truth.y)};
+    }
+
+    const star = {x: 80, y: 80, height: 226, sigma: 2.5};
+
+    test("a ripple in a bright star's halo is cut away, and the star is kept", () => {
+        // The ripple peaks at about luma 35 and the dip between it and the core is at about 23.
+        // Measured as one blob, the centroid is 0.18 px off the star.
+        const halo = {x: 80, y: 80, height: 4, sigma: 8};
+        const ripple = {x: 91, y: 80, height: 14, sigma: 1.2};
+        const {source, off} = onlySource([star, halo, ripple], star);
+        expect(source.nPeaks).toBe(2);
+        expect(source.area).toBeLessThan(source.blobArea);
+        expect(source.maxX).toBeLessThan(ripple.x);
+        expect(rejectReason(source)).toBeNull();
+        expect(off).toBeLessThan(0.1);
+    });
+
+    test("of two merged stars, the source is the brighter one, at its own position", () => {
+        // Measured as one blob, the centroid is 4.2 px off, between the two stars.
+        const companion = {x: 89, y: 80, height: 200, sigma: 2.5};
+        const {source, off} = onlySource([star, companion], star);
+        expect(source.nPeaks).toBe(2);
+        expect(rejectReason(source)).toBeNull();
+        expect(off).toBeLessThan(0.25);
+        // The companion's part is a neighbour inside the aperture, and the photometry says so.
+        expect(source.apertureContaminated).toBe(true);
+    });
+
+    test("a faint companion in the halo does not pull the star's centroid", () => {
+        // A companion a fifth as high as the star, 16 px away, joined to it by a wide faint
+        // halo. Measured as one blob, the centroid is 2 px off the star.
+        const wideHalo = {x: 80, y: 80, height: 6, sigma: 12};
+        const companion = {x: 96, y: 80, height: 41, sigma: 2.5};
+        const {source, off} = onlySource([star, wideHalo, companion], star);
+        expect(source.nPeaks).toBe(2);
+        expect(source.maxX).toBeLessThan(companion.x);
+        expect(rejectReason(source)).toBeNull();
+        expect(off).toBeLessThan(0.6);
+    });
+
+    test("between two clipped stars, the one with the larger bloom is the biggest peak", () => {
+        // Both cores read the clip level, so the height of the peak says nothing. The smaller
+        // star is the first one the scan meets, so a choice by height alone would take it.
+        const small = {x: 70, y: 66, height: 300, sigma: 2.0};
+        const large = {x: 80, y: 80, height: 2000, sigma: 2.5};
+        const {source, off} = onlySource([small, large], large);
+        expect(source.nPeaks).toBe(2);
+        expect(rejectReason(source)).toBeNull();
+        expect(off).toBeLessThan(0.25);
+    });
+
+    test("a blob too large to be a star stays rejected when it is split", () => {
+        // The size limit is on the whole blob: a bright part of a cloud edge or of a lit
+        // building is not a star because the rest of the blob was cut away from it.
+        const part = {area: 120, blobArea: STAR_DETECT_DEFAULTS.maxArea + 1, nPeaks: 5,
+            elongation: 1.1, peakSNR: 100, edgeTouching: false, green: false, colorUnknown: false};
+        expect(rejectReason(part)).toBe("huge");
+        expect(rejectReason({...part, blobArea: STAR_DETECT_DEFAULTS.maxArea})).toBeNull();
+    });
+});
+
 describe("StarDetect calibration", () => {
     // Every pixel-denominated constant in the pipeline assumes one particular resolution, zoom
     // and exposure. calibrateDetection measures the blobs a frame actually contains and derives

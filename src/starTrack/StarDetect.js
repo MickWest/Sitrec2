@@ -84,8 +84,10 @@ export const STAR_DETECT_DEFAULTS = {
     // smoothing dilates the mask beyond the source.
     minColorPixels: 4,
 
-    // Deblending: a local maximum counts as separate if it is at least this many pixels from
-    // another and rises this fraction of its own height above the saddle between them.
+    // Deblending: a local maximum counts as a separate peak if it is at least this many pixels
+    // from another and rises this fraction of its own height above the saddle between them. A
+    // blob with more than one such peak is split, and the part that holds the biggest peak is
+    // the source - see splitAtPeaks.
     deblendMinSeparation: 4,
     deblendContrast: 0.25,
 };
@@ -221,13 +223,18 @@ export function gaussianBlur(L, W, H, sigma) {
 }
 
 /**
- * Count the significant local maxima inside one blob.
+ * The significant local maxima inside one blob, brightest first.
  *
- * Used to FLAG blended sources - a star sitting under the laser, or two stars merged by blooming.
- * A blended blob has a corrupted centroid and an inflated area, so the later stages must not
- * treat it as a clean measurement. We only count peaks here; splitting them is a later refinement.
+ * More than one means a BLENDED blob - a star with a neighbour inside its halo, two stars merged
+ * by blooming, a star sitting under the laser. Measured whole, such a blob has a centroid that
+ * belongs to none of its parts and an inflated area, so detectSources hands it to splitAtPeaks.
+ *
+ * The test is deliberately sensitive: a peak is judged against its OWN height, so a companion a
+ * few percent as bright as its neighbour still counts. That costs nothing now that a blend is
+ * split and not thrown away - a false second peak only trims a little halo off the star - and it
+ * is what keeps a faint real companion out of the star's centroid.
  */
-function countPeaks(pixels, L, W, P) {
+function significantPeaks(pixels, L, W, P) {
     // Candidate maxima: pixels not lower than any 8-neighbour that is also in the blob.
     const inBlob = new Set(pixels);
     const peaks = [];
@@ -244,7 +251,7 @@ function countPeaks(pixels, L, W, P) {
         }
         if (isMax) peaks.push({i, x, y, v});
     }
-    if (peaks.length <= 1) return peaks.length;
+    if (peaks.length <= 1) return peaks;
 
     // Merge maxima that are close together or not separated by a deep enough saddle. Without this
     // every noisy flat-topped saturated core reports dozens of "peaks".
@@ -269,7 +276,108 @@ function countPeaks(pixels, L, W, P) {
         }
         if (!merged) kept.push(p);
     }
-    return kept.length;
+    return kept;
+}
+
+/**
+ * Split a blended blob at the dips between its peaks, and return the part of the biggest peak.
+ *
+ * A blended blob used to be rejected whole, on the reasoning that a missing star is better than
+ * a star with a corrupted centroid. That reasoning fails on the stars that matter most. A blob
+ * grows with the star's brightness, so the brightest stars have the largest halos, and a large
+ * halo always holds something: a faint neighbour, or a ripple the codec left beside the core.
+ * On a clean 2048x1536 still of Orion (sky noise on its 0.5 floor, so the threshold sat 2.6 luma
+ * above the sky and each blob took in the whole halo) none of the 10 brightest blobs survived,
+ * and in 91 of the 123 blended blobs the second peak was under a tenth of the first.
+ *
+ * So the blob is divided instead, as a watershed: every peak floods outward and downhill at the
+ * same time, brightest pixels first, and a pixel belongs to the flood that reaches it first. The
+ * floods meet along the dips. The part that belongs to the biggest peak is measured as the
+ * source; the other parts are dropped, not measured - one blob gives one source, as before.
+ *
+ * "Biggest" is the brightest peak, with one exception. A clipped core carries no height: two
+ * stars that both clip read the same luma, and which pixel is the maximum is decided by noise -
+ * differently on the next frame, which would move the source from one star to the other and back.
+ * Between peaks that are all at the clip level, the part with the most light wins, because for a
+ * clipped star it is the extent of the bloom that carries the brightness.
+ *
+ * @param {number[]} blob - pixel indices of the whole blob.
+ * @param {Array<{i: number, v: number}>} peaks - from significantPeaks, brightest first.
+ * @returns {{main: number[], rest: number[]}} both in the blob's own pixel order.
+ */
+function splitAtPeaks(blob, peaks, L, W, bgPix, P) {
+    // Which peak each pixel belongs to: an index into `peaks`, or -1 while no flood has reached it.
+    const owner = new Map();
+    for (const i of blob) owner.set(i, -1);
+
+    // A binary max-heap of pixels, keyed by luma. Pixels of equal luma leave in the order they
+    // entered, so a flat clipped core floods outward in rings and not in a streak.
+    const heapPixel = [], heapOrder = [];
+    let entered = 0;
+    const ahead = (a, b) => {
+        const va = L[heapPixel[a]], vb = L[heapPixel[b]];
+        return va > vb || (va === vb && heapOrder[a] < heapOrder[b]);
+    };
+    const swap = (a, b) => {
+        const pixel = heapPixel[a]; heapPixel[a] = heapPixel[b]; heapPixel[b] = pixel;
+        const order = heapOrder[a]; heapOrder[a] = heapOrder[b]; heapOrder[b] = order;
+    };
+    const push = (i) => {
+        let at = heapPixel.length;
+        heapPixel.push(i); heapOrder.push(entered++);
+        while (at > 0) {
+            const parent = (at - 1) >> 1;
+            if (!ahead(at, parent)) break;
+            swap(at, parent);
+            at = parent;
+        }
+    };
+    const pop = () => {
+        const top = heapPixel[0];
+        const last = heapPixel.length - 1;
+        swap(0, last);
+        heapPixel.pop(); heapOrder.pop();
+        let at = 0;
+        for (;;) {
+            const left = 2 * at + 1, right = left + 1;
+            let best = at;
+            if (left < last && ahead(left, best)) best = left;
+            if (right < last && ahead(right, best)) best = right;
+            if (best === at) break;
+            swap(at, best);
+            at = best;
+        }
+        return top;
+    };
+
+    for (let k = 0; k < peaks.length; k++) { owner.set(peaks[k].i, k); push(peaks[k].i); }
+    while (heapPixel.length) {
+        const i = pop();
+        const mine = owner.get(i);
+        const x = i % W, y = (i / W) | 0;
+        for (let dy = -1; dy <= 1; dy++) {
+            for (let dx = -1; dx <= 1; dx++) {
+                const nx = x + dx;
+                // A neighbour off the row's end is a pixel of the NEXT row, not a neighbour.
+                if (nx < 0 || nx >= W) continue;
+                const j = (y + dy) * W + nx;
+                if (owner.get(j) === -1) { owner.set(j, mine); push(j); }
+            }
+        }
+    }
+
+    let biggest = 0;
+    if (peaks[0].v >= P.saturationLevel) {
+        const light = new Float64Array(peaks.length);
+        for (const i of blob) light[owner.get(i)] += Math.max(0, L[i] - bgPix[i]);
+        for (let k = 1; k < peaks.length; k++) {
+            if (peaks[k].v >= P.saturationLevel && light[k] > light[biggest]) biggest = k;
+        }
+    }
+
+    const main = [], rest = [];
+    for (const i of blob) (owner.get(i) === biggest ? main : rest).push(i);
+    return {main, rest};
 }
 
 /**
@@ -281,7 +389,8 @@ function countPeaks(pixels, L, W, P) {
  * @param {object} [opts] - overrides for {@link STAR_DETECT_DEFAULTS}.
  * @returns {{sources: Array<object>, background: object}} sources are ordered brightest-first by
  *   flux. Each carries enough measurement for the caller to accept or reject it; nothing is
- *   silently discarded except sub-minArea specks, so the rejection policy stays with the caller.
+ *   silently discarded except sub-minArea specks and the fainter parts of a blended blob (see
+ *   splitAtPeaks), so the rejection policy stays with the caller.
  */
 export function detectSources(rgba, W, H, opts = {}) {
     const P = {...STAR_DETECT_DEFAULTS, ...opts};
@@ -348,9 +457,42 @@ export function detectSources(rgba, W, H, opts = {}) {
         stack[sp++] = seed;
         const myComponent = component++;
         labels[seed] = myComponent;
-        const pixels = [];
+        // The flood fill only COLLECTS the blob. Measuring waits until the blob has been checked
+        // for more than one peak, because a blended blob is measured over one part of it.
+        const blob = [];
+        while (sp > 0) {
+            const i = stack[--sp];
+            const x = i % W, y = (i / W) | 0;
+            blob.push(i);
+            for (let dy = -1; dy <= 1; dy++) {
+                const ny = y + dy;
+                if (ny < 0 || ny >= H) continue;
+                for (let dx = -1; dx <= 1; dx++) {
+                    const nx = x + dx;
+                    if (nx < 0 || nx >= W) continue;
+                    const j = ny * W + nx;
+                    if (mask[j] && labels[j] < 0) { labels[j] = myComponent; stack[sp++] = j; }
+                }
+            }
+        }
+        if (blob.length < P.minArea) continue;
 
-        let area = 0, flux = 0, sx = 0, sy = 0, peak = 0, peakI = seed;
+        // More than one peak: the source is the part of the blob that holds the biggest peak.
+        const peaks = significantPeaks(blob, L, W, P);
+        let pixels = blob;
+        if (peaks.length > 1) {
+            const parts = splitAtPeaks(blob, peaks, L, W, bgPix, P);
+            pixels = parts.main;
+            // The parts cut away get a component of their own, with no source. That makes the
+            // aperture photometry below treat them as it treats any neighbour: their pixels are
+            // left out of this source's aperture and sky annulus, and the source is flagged as
+            // contaminated when they reach into its aperture.
+            const cutAway = component++;
+            for (const i of parts.rest) labels[i] = cutAway;
+            if (pixels.length < P.minArea) continue;
+        }
+
+        let area = 0, flux = 0, sx = 0, sy = 0, peak = 0, peakI = pixels[0];
         let satCount = 0, edge = 0;
         // Color is accumulated only over pixels where NO channel is clipped, and only as an
         // excess over the sky.
@@ -369,8 +511,7 @@ export function detectSources(rgba, W, H, opts = {}) {
         let srP = 0, sgP = 0, sbP = 0, nPartial = 0;
         let minX = W, maxX = -1, minY = H, maxY = -1;
 
-        while (sp > 0) {
-            const i = stack[--sp];
+        for (const i of pixels) {
             const x = i % W, y = (i / W) | 0;
             const v = L[i];
             const w = Math.max(0, v - bgPix[i]);
@@ -408,21 +549,9 @@ export function detectSources(rgba, W, H, opts = {}) {
             if (x === 0 || y === 0 || x === W - 1 || y === H - 1) edge = 1;
             if (x < minX) minX = x; if (x > maxX) maxX = x;
             if (y < minY) minY = y; if (y > maxY) maxY = y;
-            pixels.push(i);
-
-            for (let dy = -1; dy <= 1; dy++) {
-                const ny = y + dy;
-                if (ny < 0 || ny >= H) continue;
-                for (let dx = -1; dx <= 1; dx++) {
-                    const nx = x + dx;
-                    if (nx < 0 || nx >= W) continue;
-                    const j = ny * W + nx;
-                    if (mask[j] && labels[j] < 0) { labels[j] = myComponent; stack[sp++] = j; }
-                }
-            }
         }
 
-        if (area < P.minArea || flux <= 0) continue;
+        if (flux <= 0) continue;
 
         const cx = sx / flux, cy = sy / flux;
 
@@ -501,7 +630,11 @@ export function detectSources(rgba, W, H, opts = {}) {
             // Bounding box, kept so proximity tests can bound an ELONGATED component. An
             // equivalent-circle radius from the area badly under-states the reach of a streak.
             minX, minY, maxX, maxY,
-            nPeaks: countPeaks(pixels, L, W, P),
+            // How many peaks the WHOLE blob held, and how large it was. More than one peak means
+            // this source is the biggest peak's part of a blended blob, and every measurement
+            // above is over that part alone; blobArea is then larger than area.
+            nPeaks: peaks.length,
+            blobArea: blob.length,
         });
     }
 
@@ -630,7 +763,9 @@ export function detectSources(rgba, W, H, opts = {}) {
 export function rejectReason(s, opts = {}) {
     const P = {...STAR_DETECT_DEFAULTS, ...opts};
     if (s.area < P.minArea) return "tiny";
-    if (s.area > P.maxArea) return "huge";
+    // Judged on the WHOLE blob. A split source is one part of its blob, and a small bright part
+    // of a cloud edge or a lit building is not a star because the rest was cut away from it.
+    if ((s.blobArea ?? s.area) > P.maxArea) return "huge";
     // Green convicts a LASER, and a laser is never a dot: its beam is elongated and its core
     // large. A COMPACT, ROUND green source is a light - an aircraft's starboard light is
     // exactly this, and on a twilight still two bright green lights were the only sources the
@@ -648,7 +783,8 @@ export function rejectReason(s, opts = {}) {
     // streak. Only a colourless blob that is also non-round is refused.
     if (s.colorUnknown && s.elongation > P.noColorMaxElongation) return "noColor";
     if (s.elongation > P.maxElongation) return "elongated";
-    if (s.nPeaks > 1) return "blended";
+    // More than one peak (nPeaks > 1) is not a reason to reject. detectSources has already split
+    // such a blob, and this source is the biggest peak's part of it, measured alone.
     if (s.edgeTouching) return "edge";
     // A large blob whose peak barely clears the detection threshold means the local background
     // was under-estimated, not that a faint extended source is present.

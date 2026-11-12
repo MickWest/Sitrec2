@@ -80,7 +80,7 @@
     <text x="176" y="146" text-anchor="middle" fill="#d33" font-size="10">too large</text>
 
     <text x="115" y="182" text-anchor="middle" fill="#456">flood-fill connected pixels; a blob with</text>
-    <text x="115" y="197" text-anchor="middle" fill="#456">two peaks is rejected as blended</text>
+    <text x="115" y="197" text-anchor="middle" fill="#456">two peaks is split, biggest peak kept</text>
     <text x="115" y="215" text-anchor="middle" fill="#789" font-size="11">each rejection is tallied on the result,</text>
     <text x="115" y="229" text-anchor="middle" fill="#789" font-size="11">except specks below the minimum area</text>
   </g>
