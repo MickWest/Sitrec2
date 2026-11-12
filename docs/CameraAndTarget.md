@@ -55,6 +55,7 @@ goes back to the Manual position.
 | **Flight Sim** | The camera flies a simple simulated aircraft path. The path starts at the Manual position and is controlled from **Physics → Simple Flight Sim**. See [Flight Sim](#flight-sim). |
 | **Orbit** | The camera circles a chosen track or point at a set radius, altitude and period. The settings are in **Camera → Camera Tweaks**. See [Orbit](#orbit). |
 | *An imported track* | Each track you import is added to this list. In a new sitch, the first track you import is selected as the camera position. If that first import is one file with two or more tracks, and the file does not say which track is the camera, Sitrec asks first. See [Camera and Target from One File](Tracks.md#camera-and-target-from-one-file). After you set up the camera, time or position yourself, imported tracks do not change them, even after **Remove All Tracks**. |
+| *A 3D object* | A 3D object whose **Position** is **Manual** is in this list under its name. Select it to put the camera at the **Lat**, **Lon** and **Alt** of that object. See [Location](SceneObjects.md#location-a-manual-position-or-a-track). |
 
 Holding **C** with the pointer over a 3D view moves the Manual camera position to the
 point under the pointer, and keeps its altitude. If the Position was following an imported track, this switches
@@ -218,7 +219,7 @@ Less common adjustments.
 | **xOffset**, **yOffset** | 0 | Turn the look view off-center by this many degrees, horizontally or vertically (-20 to 20). Useful when the tracked object is not at the center of the video frame. |
 | **Near Plane (m)** | 0.1 | Near clipping distance of the look camera. Sometimes useful for very close objects, or to cut out near objects. |
 | **Diffraction Glare** (folder) | — | Adds glare from an imported point spread function. See [Diffraction Glare](DiffractionGlare.md). |
-| **Orbit Target** | Manual Camera | What the Orbit position circles. **Manual Camera** is the Manual camera position (**Cam [C] Lat/Lon**). Imported tracks are added to the list. |
+| **Orbit Target** | Manual Camera | What the Orbit position circles. **Manual Camera** is the Manual camera position (**Cam [C] Lat/Lon**). Imported tracks are added to the list, and so is a 3D object whose **Position** is **Manual**. |
 | **Orbit Radius (m)** | 5000 | Radius of the circle, in meters. |
 | **Orbit Altitude (m)** | 1000 | Altitude of the camera while orbiting, in meters above the WGS84 ellipsoid (HAE). This is not sea level; the two differ by the local geoid offset, up to about 100 m. |
 | **Start Angle (°)** | 0 | Compass bearing from the center to the camera at frame 0. 0 is north, 90 is east. |
@@ -331,6 +332,7 @@ is measured at it.
 | **Manual** | The target stays at **Target [X] Lat/Lon/Alt** for the whole sitch. |
 | **Manual + Wind** | The target starts at **Target [X] Lat/Lon/Alt** and drifts with the target wind (**Physics → Wind**). The target wind is 0 knots by default, so set a wind first. |
 | *An imported track* | Each imported track is added here. Select one to make it the target. If the first import into a new sitch is one file with two or more tracks, and the file does not say which track is the camera, Sitrec asks whether to use them as camera and target. See [Camera and Target from One File](Tracks.md#camera-and-target-from-one-file). |
+| *A 3D object* | A 3D object whose **Position** is **Manual** is in this list under its name. Select it to make the object the target. See [Location](SceneObjects.md#location-a-manual-position-or-a-track). |
 
 Holding **X** with the pointer over a 3D view moves the fixed target to the point under the
 pointer, and keeps its altitude. **Shift+X** puts it 7 ft above the ground. The Target

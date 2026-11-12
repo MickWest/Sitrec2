@@ -45,7 +45,8 @@ import {
     Units,
     withTestUser
 } from "./Globals";
-import {ownedSubNodeIds} from "./UserObjects";
+import {isUserMadeObjectId, ownedSubNodeIds} from "./UserObjects";
+import {unlistManualObject} from "./TrackSelectors";
 import {requestCameraFocusSync} from "./CameraFocusUI";
 import {isKeyHeld, toggler} from "./KeyBoardHandler";
 import {registerMirrorSource, syncMirroredSource} from "./MenuMirror";
@@ -503,10 +504,15 @@ export class CCustomManager {
     }
 
     /**
-     * Delete a 3D object the user made (its Delete Object button, or Delete Track's "Delete
-     * Track and Object"). Closes its panel, detaches it from its track (the track stays), and
-     * removes every node it made: its sub-nodes (`<id>_size`, its controllers, ...), the
-     * object, and a fixed object's position node.
+     * Delete a 3D object the user made. This is the ONE way to remove such an object: its
+     * Delete Object button, Delete Track's "Delete Track and Object", Remove All Tracks, and
+     * the undo of each way to add one all come here. Do not remove the nodes of an object
+     * anywhere else: an object has more than its nodes, and a second way to delete it will
+     * miss some of that.
+     *
+     * Closes its panel, detaches it from its track (the track stays), takes it out of the
+     * track selectors, and removes every node it made: its sub-nodes (`<id>_size`, its
+     * controllers, its Location, ...), the object, and a fixed object's position node.
      * @param {CNode3DObject} node
      */
     deleteObject(node) {
@@ -521,11 +527,14 @@ export class CCustomManager {
         const trackOb = TrackManager.trackForObject(id);
         if (trackOb?.objectID === id) TrackManager.detachObject(trackOb);
 
-        // The Location folder of the object (addObjectLocation) listens to its Position.
-        if (node.positionChoiceHandler) {
-            EventManager.removeEventListener(node.positionChoiceEvent, node.positionChoiceHandler);
-            node.positionChoiceHandler = null;
-        }
+        // The Location of the object (addObjectLocation) listens to its Position and to its
+        // name. The listeners go first, so that nothing below puts the object back.
+        for (const [event, listener] of node.locationListeners ?? []) EventManager.removeEventListener(event, listener);
+        node.locationListeners = null;
+        // While its Position is Manual, the object is an option in the track selectors. The
+        // option must go before the nodes: a node that is removed takes its graph links with
+        // it, but not the rows of the menus.
+        unlistManualObject(node);
 
         const positionID = node.fixedObjectPositionID;
         // Sub-nodes first, the object last, so no node is disposed holding a link to a
@@ -1779,20 +1788,13 @@ export class CCustomManager {
 
 
     removeAllTracks() {
-        // First, dispose any synthetic objects that might be associated with tracks
-        // This ensures their controllers are properly cleaned up
-        const nodesToDispose = [];
+        // First the objects that the user made: they go too, on a track or not. Each is
+        // removed as its own Delete Object button removes it.
+        const objects = [];
         NodeMan.iterate((id, node) => {
-            // Find any synthetic 3D objects (typically starting with "syntheticObject_")
-            if (id.startsWith("syntheticObject_") && node.inputs) {
-                nodesToDispose.push(id);
-            }
+            if (isUserMadeObjectId(id) && node instanceof CNode3DObject) objects.push(node);
         });
-
-        // Dispose objects with their controllers
-        for (const objectId of nodesToDispose) {
-            this.disposeObjectWithControllers(objectId);
-        }
+        for (const node of objects) this.deleteObject(node);
 
         // Then dispose all tracks
         TrackManager.iterate((id, track) => {

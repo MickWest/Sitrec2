@@ -95,17 +95,59 @@ describe("integrateKiteStates", () => {
     });
 
     test("gusts move the kite, and the same seed gives the same flight", () => {
-        const one = integrateKiteStates(base({variabilityPct: 30, seed: 7}), fromWest(8));
-        const two = integrateKiteStates(base({variabilityPct: 30, seed: 7}), fromWest(8));
-        const other = integrateKiteStates(base({variabilityPct: 30, seed: 8}), fromWest(8));
+        // One minute: a kite follows a gust with a delay (7 seconds here), and in a sitch of a
+        // few seconds the gusts are small, because the slow part of them is the mean of the sitch.
+        const minute = {variabilityPct: 30, frames: 60 * FPS};
+        const one = integrateKiteStates(base({...minute, seed: 7}), fromWest(8));
+        const two = integrateKiteStates(base({...minute, seed: 7}), fromWest(8));
+        const other = integrateKiteStates(base({...minute, seed: 8}), fromWest(8));
         expect(one[200].position.equals(two[200].position)).toBe(true);
         expect(one[200].position.equals(other[200].position)).toBe(false);
-        expect(one[200].position.distanceTo(one[0].position)).toBeGreaterThan(0.5);
+        expect(Math.max(...one.map(state => state.position.distanceTo(one[0].position)))).toBeGreaterThan(2);
         // a gust changes the wind a little on each frame, not in a jump
         for (let f = 1; f < one.length; f++) expect(Math.abs(one[f].kite.windSpeed - one[f - 1].kite.windSpeed)).toBeLessThan(0.1);
         // and the kite does not change its motion in a jump: no sharp corner in its path
         const step = f => one[f].position.clone().sub(one[f - 1].position);
         for (let f = 2; f < one.length; f++) expect(step(f).distanceTo(step(f - 1)) / DT).toBeLessThan(0.2);
+    });
+
+    test("over the sitch the gusts have no mean: the mean wind at the kite is the wind of the wind source", () => {
+        // 30 seconds is less than one slow gust. With a mean, one gust holds the wind to one
+        // side for the whole sitch, and the kite flies as if the wind came from another direction.
+        const pct = 20;
+        const mean = values => values.reduce((sum, value) => sum + value, 0) / values.length;
+        // A light kite in a good wind. And a heavy kite in a wind near its lowest wind (4.0 m/s):
+        // it sinks in each lull, so it is at other heights in each run of the bake.
+        const heavy = {massKg: 4, areaM2: 7.39, liftCoefficient: 0.55, dragCoefficient: 0.6};
+        for (const [wind, kiteProperties] of [[8, properties], [4.47, heavy]]) {
+            for (const seed of [1, 2, 3, 7, 11, 23]) {
+                const out = integrateKiteStates(base({variabilityPct: pct, seed, frames: 30 * FPS, properties: kiteProperties}), fromWest(wind));
+                const along = out.map(({kite}) => kite.windSpeed * Math.sin(kite.windToward));
+                const across = out.map(({kite}) => kite.windSpeed * Math.cos(kite.windToward));
+                expect(mean(along)).toBeCloseTo(wind, 9);
+                expect(mean(across)).toBeCloseTo(0, 9);
+                // the wind still changes in the sitch, and it is on each side of its mean direction
+                expect(Math.max(...across)).toBeGreaterThan(0.05 * wind);
+                expect(Math.min(...across)).toBeLessThan(-0.05 * wind);
+                expect(Math.max(...along) - Math.min(...along)).toBeGreaterThan(0.05 * wind);
+            }
+        }
+    });
+
+    test("in the gusts, the kite starts where the wind of the wind source puts it, and its mean position is near there", () => {
+        // A kite follows the wind with a delay, so a kite that starts in balance with the gust
+        // of the first frame stays to that side for most of a short sitch.
+        const steady = integrateKiteStates(base({frames: 30 * FPS}), fromWest(8));
+        const sideways = [];
+        for (let seed = 1; seed <= 30; seed++) {
+            const out = integrateKiteStates(base({variabilityPct: 20, seed, frames: 30 * FPS}), fromWest(8));
+            expect(out[0].position.distanceTo(steady[0].position)).toBeLessThan(1e-6);
+            // the mean of the kite's bearing from the anchor, in degrees from downwind (east)
+            sideways.push(out.reduce((sum, {kite}) => sum + kite.bearing, 0) / out.length * 180 / Math.PI - 90);
+        }
+        const size = Math.sqrt(sideways.reduce((sum, value) => sum + value * value, 0) / sideways.length);
+        // The wind direction changes by about 9 degrees at this Wind Variability
+        expect(size).toBeLessThan(1.5);
     });
 
     test("the gusts have the size of Wind Variability, and the crosswind gusts are 0.8 of the along-wind gusts", () => {

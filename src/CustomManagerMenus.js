@@ -30,6 +30,8 @@ import {ECEFToLLAVD_radii, LLAToECEF} from "./LLA-ECEF-ENU";
 import {par} from "./par";
 import {exitTrackEditMode, trackAndObjectMenuActions} from "./TrackEditMode";
 import {makeCreateObjectUndoAction} from "./undoCreateObject";
+import {OBJECT_MANUAL_POSITION, syncManualObject} from "./TrackSelectors";
+import {DISPLAY_NAME_CHANGED} from "./DisplayName";
 import {GlobalScene} from "./LocalFrame";
 import {refreshLabelsAfterLoading} from "./nodes/CNodeLabels3D";
 import {assert} from "./assert";
@@ -105,10 +107,6 @@ function addGeneratedTrackUndo(trackOb, kind, record, addTrack) {
     });
 }
 
-// The key of the manual option in an object's Position selector (addObjectLocation). It is
-// saved with the sitch as the selector's choice, so it does not change with the language.
-export const OBJECT_MANUAL_POSITION = "manualPosition";
-
 export const menuMethods = {
     /**
      * Parse flexible object input string for coordinates and name
@@ -182,7 +180,7 @@ export const menuMethods = {
      * @param {number} lon - Longitude in decimal degrees
      * @param {number} alt - Altitude in meters (or 0 if not explicit)
      * @param {boolean} hasExplicitAlt - Whether altitude was explicitly provided
-     * @returns {Object} Object with {objectNode, trackOb, objectID, trackID, ownedNodeIds, name},
+     * @returns {Object} Object with {objectNode, trackOb, objectID, trackID, name},
      *          name being the object's name
      */
     createObjectFromInput(name, lat, lon, alt, hasExplicitAlt) {
@@ -209,14 +207,6 @@ export const menuMethods = {
         const objectID = NodeMan.UniqueName(`syntheticObject_${Date.now()}`);
         const trackID = NodeMan.UniqueName(`syntheticTrack_${Date.now()}`);
 
-        // Snapshot the node ids that exist BEFORE construction. Anything under
-        // `${objectID}_` that appears afterwards was auto-created by CNode3DObject
-        // (_size, _color_colorInput, _modelLength, the controllers and their GUI
-        // values) and is owned by this object alone, so undo can sweep exactly those
-        // and nothing else. The prefix is unique by construction - objectID carries a
-        // timestamp - so the sweep can never reach an unrelated node.
-        const preObjectNodeIDs = new Set(Object.keys(NodeMan.list));
-
         // Create the 3D object. The name is the object's; its track's is pairNames.trackName.
         const objectNode = new CNode3DObject({
             id: objectID,
@@ -237,29 +227,24 @@ export const menuMethods = {
             startFrame: par.frame
         });
 
-        const ownedNodeIds = Object.keys(NodeMan.list)
-            .filter(id => id.startsWith(objectID + "_") && !preObjectNodeIDs.has(id));
-
         console.log(`Created object "${name}" at ${lat}, ${lon}, ${finalAlt}m`);
 
         // Make object creation undoable. Both entry points — the "Add Object" menu
         // (index.js) and the addObjectAtLLA API (CSitrecAPI) — route through here, and
         // previously neither pushed an undo action, so a created object could not be
         // undone (unlike synth buildings/clouds/overlays, which already register undo in
-        // this file). Mirror that pattern: undo removes the synthetic track (which tears
-        // down its display/data nodes), the sub-nodes the object auto-created
-        // (ownedNodeIds, gathered above) and the 3D object node itself; redo re-creates
-        // via this same method. We hold the live ids in closure vars because redo gets
-        // fresh ids — the nested add() below is a no-op while UndoManager.isRedoing, so it
-        // does not stack a duplicate action.
+        // this file). Mirror that pattern: undo removes the object with deleteObject (the
+        // one function that removes an object and every node it made) and then the
+        // synthetic track; redo re-creates via this same method. We hold the live ids in
+        // closure vars because redo gets fresh ids — the nested add() below is a no-op
+        // while UndoManager.isRedoing, so it does not stack a duplicate action.
         if (UndoManager && trackOb) {
             UndoManager.add(makeCreateObjectUndoAction({
                 name,
                 objectID,
                 trackID: trackOb.trackID ?? trackID,
-                ownedNodeIds,
                 trackManager: TrackManager,
-                nodeMan: NodeMan,
+                deleteObject: (id) => this.deleteObject(NodeMan.get(id, false)),
                 // Redo re-creates via this same method (the nested UndoManager.add is a no-op
                 // while isRedoing, so it does not stack a duplicate action) and returns the
                 // fresh ids so a subsequent undo targets the recreated pair.
@@ -268,13 +253,12 @@ export const menuMethods = {
                     return {
                         objectID: r.objectID,
                         trackID: r.trackOb?.trackID ?? r.trackID,
-                        ownedNodeIds: r.ownedNodeIds,
                     };
                 },
             }));
         }
 
-        return { objectNode, trackOb, objectID, trackID, ownedNodeIds, name };
+        return { objectNode, trackOb, objectID, trackID, name };
     },
 
     /**
@@ -335,6 +319,10 @@ export const menuMethods = {
      * track that is made or loaded later becomes an option by itself, because a
      * CNodeTrackSwitch is a track drop target.
      *
+     * While Position is Manual, the object is itself an option in every other track selector
+     * (Target Track, the camera's Position, the Position of another object, ...), under its
+     * name: see TrackSelectors.js. deleteObject() takes it out again.
+     *
      * Every node made here has an id that starts with the object's id and "_", except a
      * fixed object's position node. deleteObject() and the create-object undo find the
      * nodes of an object by that prefix.
@@ -381,9 +369,10 @@ export const menuMethods = {
         // A track that the user loads must not take the object: the user selects it.
         switchNode.noAutoSelect = true;
         switchNode.controller?.moveToFirst?.();
+        objectNode.positionSwitchID = switchNode.id;
+        // The tracks, and the other objects that are on a manual position.
         TrackManager.addTracksToSwitch(switchNode);
         if (track && switchNode.inputs[track] !== undefined) switchNode.selectOptionQuietly(track);
-        objectNode.positionSwitchID = switchNode.id;
 
         objectNode.addController("TrackPosition", {
             sourceTrack: switchNode.id,
@@ -413,13 +402,24 @@ export const menuMethods = {
             for (const control of [positionNode.aglController, positionNode.smallAltitudesController]) {
                 if (control) manual ? control.show() : control.hide();
             }
+            // On Manual the object is at one point, which no track has. So it is then an
+            // option in every other track selector (Target Track, Start From of a finder,
+            // the Position of another object, ...), under its name. See TrackSelectors.js.
+            syncManualObject(objectNode);
             if (Globals.deserializing || Globals.disposing || choice === from || !manual) return;
             const group = objectNode.group ?? objectNode._object;
             if (group && positionNode.mirrorECEF(group.getWorldPosition(new Vector3()))) setRenderOne(true);
         };
-        objectNode.positionChoiceEvent = "Switch.choiceChanged." + switchNode.id;
-        objectNode.positionChoiceHandler = onChoice;
-        EventManager.addEventListener(objectNode.positionChoiceEvent, onChoice);
+        // That option shows the name of the object, so it follows a rename.
+        const onRename = (renamed) => {
+            if (renamed?.id === id) syncManualObject(objectNode);
+        };
+        // deleteObject() removes these listeners.
+        objectNode.locationListeners = [
+            ["Switch.choiceChanged." + switchNode.id, onChoice],
+            [DISPLAY_NAME_CHANGED, onRename],
+        ];
+        for (const [event, listener] of objectNode.locationListeners) EventManager.addEventListener(event, listener);
         onChoice();
 
         return positionNode;
@@ -434,10 +434,12 @@ export const menuMethods = {
      * and the sitch deserializer — so a reloaded object is constructed exactly like a
      * freshly-placed one.
      *
-     * The object node is tagged with `fixedObjectPositionID`, and that tag is the only
-     * way the pair can be found again: a fixed object is deliberately NOT registered
-     * with TrackManager, so nothing else enumerates it. serializeFixedObjects() scans
-     * NodeMan for the tag.
+     * The object node is tagged with `fixedObjectPositionID`, and that tag is how the pair
+     * is found again for a save: a fixed object is deliberately NOT registered with
+     * TrackManager, so it has no entry in Contents and no spline editor.
+     * serializeFixedObjects() scans NodeMan for the tag. The track selectors do list the
+     * object while its Position is Manual (addObjectLocation), from its Location and not
+     * from TrackManager.
      *
      * @param {string} objectID - id for the CNode3DObject
      * @param {string} positionID - id for its CNodePositionLLA
@@ -669,10 +671,10 @@ export const menuMethods = {
             // of keyframes that exist only to say "here, always".
             //
             // So it gets a CNodePositionLLA instead: a single lat/lon/alt that satisfies
-            // the same interface. It is hidden from the UI by NOT being registered with
-            // TrackManager — TrackManager is what creates the Contents folder and what the
-            // track pickers enumerate — and by being constructed with no `gui`, so it adds
-            // no controls anywhere.
+            // the same interface. It is NOT registered with TrackManager, which is what
+            // creates the Contents folder, so it has no track menu. Its Lat, Lon and Alt
+            // are in the Location group of the object, and the track selectors list the
+            // object by its name while it is on that manual position (addObjectLocation).
             //
             // Dragging keeps working with no extra wiring: CObjectMoveWidget's
             // resolveMoveTarget() already recognises a fixed position by behaviour

@@ -178,7 +178,7 @@ you have added your own Google or Cesium Ion key. An own key shows the rows afte
 | **Layer** | top | The image layer of the current Map Type. A source with one layer shows only that layer |
 | **Latitude** / **Longitude** / **Zoom Level** / **Tiles per Side** | top | Where the terrain square sits and how big it is. A lower Zoom Level covers more ground per tile; Tiles per Side (1–8) sets how many tiles across, so the two together decide the area. Hidden while Dynamic Subdivision is on |
 | **Refresh** | top | Re-request the tiles. Use after a network glitch |
-| **Zoom to track** | top | Move the terrain to the extents of the selected track over the sitch's frames. Hidden while Dynamic Subdivision is on |
+| **Zoom to track** | top | Move the terrain to the extents of the selected track over the sitch's frames. A 3D object whose **Position** is **Manual** is in the list too: the terrain moves to that object. Hidden while Dynamic Subdivision is on |
 | **3D Buildings** | top | Cesium Ion or Google tiles. Turning this on forces the ellipsoid Earth model, because the tiles are true-ECEF, and forces Dynamic Subdivision on |
 | **Buildings Source** | top | Which provider supplies the 3D building tiles. Shown only when both are available |
 | **Ocean Surface (Beta)** | top | Sea-level water surface under Google 3D tiles |
