@@ -410,6 +410,7 @@ export class CCustomManager {
 
         this.editingObjectNodeId = nodeId;
         this.editingObjectMenu = menu ?? null;
+        setRenderOne(true);
 
         if (menu && !menu._clearsEditingObjectOnDestroy) {
             const originalDestroy = menu.destroy.bind(menu);
@@ -419,6 +420,7 @@ export class CCustomManager {
                     if (this.editingObjectNodeId === nodeId) {
                         this.editingObjectNodeId = null;
                     }
+                    setRenderOne(true);
                 }
                 return originalDestroy(...args);
             };
@@ -442,6 +444,7 @@ export class CCustomManager {
         if (!nodeId || this.editingObjectNodeId === nodeId) {
             this.editingObjectNodeId = null;
         }
+        setRenderOne(true);
     }
 
     getEditingObjectNode() {

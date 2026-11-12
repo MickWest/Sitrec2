@@ -50,6 +50,7 @@ import {getLocalUpVector} from "./SphericalMath";
 import {getPointBelow} from "./threeExt";
 import {undoManager as UndoManager} from "./UndoManager";
 import {isAltitudeLockActive} from "./AltitudeLock";
+import {updateObjectLocatorRings} from "./ObjectLocatorOverlay";
 
 // How close the cursor has to get, in screen pixels, before the widget appears. The
 // widget's own disc is 40px and its arrows 30px, so this is a little wider than the
@@ -176,6 +177,12 @@ class CObjectMoveWidget {
         // space right before it renders (same reason as PointEditor.updateCubeScales).
         if (this.widget && this.widget.object && view.pixelsToMeters) {
             this.widget.updateHandleScales(view);
+        }
+
+        if (view.id === "mainView") {
+            const editing = CustomManager?.getEditingObjectNode?.();
+            const nodes = editing ? [editing] : this.altHeld ? this.objects() : [];
+            updateObjectLocatorRings(view, nodes.filter(node => this.isObjectShownInView(node, view)));
         }
     }
 

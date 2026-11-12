@@ -20,26 +20,33 @@ html[data-theme="light"] .sitrec-modern {
     --title-background-color: var(--panel-field); --title-text-color: var(--panel-text);
     --widget-color: var(--panel-field); --hover-color: var(--panel-hover);
     --focus-color: var(--panel-hover); --number-color: var(--panel-accent);
-    --string-color: var(--panel-text); --font-size: 12px; --widget-height: 26px;
-    font-family: system-ui, -apple-system, sans-serif;
+    --string-color: var(--panel-text);
     border-radius: 6px;
 }
-.sitrec-modern .controller { min-height: 28px; margin: 3px 0; border-radius: 4px; }
-.sitrec-modern .controller .name { white-space: normal; line-height: 1.25; background: transparent; }
+.sitrec-modern .controller { border-radius: 4px; }
+.sitrec-modern .controller .name { background: transparent; }
+/* Menus keep lil-gui's original row spacing, fonts and slider height. The larger,
+   stacked controls belong only to groups embedded in the viewing panel. */
+:root .lil-gui.modern-embedded, :root .modern-embedded .lil-gui {
+    --font-size: 12px; --widget-height: 26px;
+    font-family: system-ui, -apple-system, sans-serif;
+}
+.modern-embedded .controller { min-height: 28px; margin: 3px 0; }
+.modern-embedded .controller .name { white-space: normal; line-height: 1.25; }
 .sitrec-modern .controller input[type=checkbox] { border: 1px solid var(--panel-border); }
 .sitrec-modern .lil-gui > .children { background: var(--panel-bg); border-color: var(--panel-divider); }
 .sitrec-modern .controller input, .sitrec-modern .controller select,
 .sitrec-modern .controller button { border-radius: 4px; }
 .sitrec-modern .controller input:focus-visible, .sitrec-modern .controller select:focus-visible,
 .sitrec-modern .controller button:focus-visible { outline: 2px solid var(--panel-accent); outline-offset: 1px; }
-.sitrec-modern .lil-checkbox-pair { min-height: 28px; }
+.modern-embedded .lil-checkbox-pair { min-height: 28px; }
 .sitrec-modern .lil-checkbox-pair .controller { margin: 0; }
 .lil-gui.modern-embedded { width: 100%; max-width: 100%; border: 0; box-shadow: none; }
 .lil-gui.root.sitrec-modern > .children { background: var(--panel-bg) !important; border-color: var(--panel-border) !important; }
 .lil-gui.root.sitrec-modern > .title { background: var(--panel-field) !important; border-color: var(--panel-border) !important; }
 .lil-gui.root.modern-embedded > .title { display: none !important; }
 .lil-gui.root.modern-embedded > .children { border: 0 !important; padding: 0; }
-.sitrec-modern .controller.function button { background: var(--panel-field); border: 1px solid var(--panel-border); padding: 5px 7px; }
+.sitrec-modern .controller.function button { background: var(--panel-field); border: 1px solid var(--panel-border); padding: 0 7px; }
 .sitrec-modern .controller.function button:hover { background: var(--panel-hover); }
 .modern-embedded .controller.number, .modern-embedded .controller.string { flex-wrap: wrap; }
 .modern-embedded .controller.number > .name, .modern-embedded .controller.string > .name { flex: 0 0 100%; margin-bottom: 4px; }

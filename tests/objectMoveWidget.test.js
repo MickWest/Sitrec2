@@ -2,7 +2,8 @@ import {Group, Mesh, MeshBasicMaterial, Object3D, PerspectiveCamera, SphereGeome
 import {ObjectMoveWidget} from "../src/CObjectMoveWidget";
 import {CNodeBalloonTrack} from "../src/nodes/CNodeBalloonTrack";
 import {CNode3DObject} from "../src/nodes/CNode3DObject";
-import {setNodeMan, setSit} from "../src/Globals";
+import {mainLoopCount, setCustomManager, setNodeMan, setSit} from "../src/Globals";
+import {updateObjectLocatorRings} from "../src/ObjectLocatorOverlay";
 import {ViewMan} from "../src/CViewManager";
 import {LLAToECEF, ECEFToLLAVD_radii} from "../src/LLA-ECEF-ENU";
 import {meanSeaLevelOffset} from "../src/EGM96Geoid";
@@ -19,6 +20,7 @@ jest.mock("../src/threeExt", () => ({getPointBelow: p => p.clone()}));
 jest.mock("../src/CViewManager", () => ({ViewMan: {iterate: jest.fn()}}));
 jest.mock("../src/EGM96Geoid", () => ({meanSeaLevelOffset: (lat, lon) => 20 + lat * .1 + lon * .03}));
 jest.mock("../src/UndoManager", () => ({undoManager: {add: jest.fn()}}));
+jest.mock("../src/ObjectLocatorOverlay", () => ({updateObjectLocatorRings: jest.fn()}));
 
 class CNodeController {}
 class CNodeControllerTrackPosition extends CNodeController {
@@ -60,6 +62,39 @@ beforeEach(() => {
 afterEach(() => {
     ObjectMoveWidget.dragging = false; ObjectMoveWidget.dragPrepared = false;
     ObjectMoveWidget.target = ObjectMoveWidget.node = null;
+});
+
+test("an edited object owns the ring; otherwise Alt highlights every shown object and release clears them", () => {
+    const widget = ObjectMoveWidget;
+    const selected = objectFor({}), other = objectFor({}), hidden = objectFor({});
+    other.id = "other"; hidden.id = "hidden";
+    for (const node of [selected, other, hidden]) {
+        node.group.add(new Mesh(new SphereGeometry(), new MeshBasicMaterial()));
+    }
+    hidden.group.visible = false;
+    const view = {id: "mainView", camera: new PerspectiveCamera()};
+    const manager = {getEditingObjectNode: () => selected};
+    setCustomManager(manager);
+    const objects = jest.spyOn(widget, "objects").mockReturnValue([selected, other, hidden]);
+    widget.lastMainLoopCount = mainLoopCount;
+    widget.widget = null;
+    try {
+        widget.altHeld = true;
+        widget.update(view);
+        expect(updateObjectLocatorRings).toHaveBeenLastCalledWith(view, [selected]);
+        manager.getEditingObjectNode = () => null;
+        widget.update(view);
+        expect(updateObjectLocatorRings).toHaveBeenLastCalledWith(view, [selected, other]);
+        widget.altHeld = false;
+        widget.update(view);
+        expect(updateObjectLocatorRings).toHaveBeenLastCalledWith(view, []);
+    } finally {
+        objects.mockRestore(); setCustomManager(null); widget.altHeld = false;
+        widget.lastMainLoopCount = -1;
+        for (const node of [selected, other, hidden]) {
+            node.group.children[0].geometry.dispose(); node.group.children[0].material.dispose();
+        }
+    }
 });
 
 test("dragging suspends only matching camera focus and never restores a stale selection", () => {
