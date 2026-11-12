@@ -1628,6 +1628,10 @@ const en = {
             label: "Edit in time zone",
             tooltip: "Changes how time is displayed and entered. The instant stays the same.",
         },
+        utc: {
+            label: "UTC",
+            tooltip: "Display and edit time in UTC. The instant stays the same.",
+        },
         cameraZone: {
             label: "From camera",
             tooltip: "Use the time zone at the camera location on the scene date",

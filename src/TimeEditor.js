@@ -42,6 +42,7 @@ export class TimeEditor {
             <div class="te-error" role="status" data-id="error"></div>
             <div class="te-row">
                 <select class="te-grow" data-id="zone" data-i18n-label="timeEditor.zone.label" data-i18n-title="timeEditor.zone.tooltip"></select>
+                <button type="button" data-action="utc" data-i18n="timeEditor.utc.label" data-i18n-title="timeEditor.utc.tooltip"></button>
                 <button type="button" data-action="cameraZone" data-i18n="timeEditor.cameraZone.label" data-i18n-title="timeEditor.cameraZone.tooltip"></button>
             </div>
             <div class="te-row te-target" data-i18n-label="timeEditor.target.label">
@@ -169,6 +170,7 @@ export class TimeEditor {
         if (action === "play") this.adapter.play();
         if (action === "live") { this.target = "now"; this.adapter.live(); }
         if (action === "undo") this.adapter.undo();
+        if (action === "utc") { this.adapter.zone("__utc__"); this.clearError(); this.refresh(true); }
         if (action === "cameraZone") this.adapter.cameraZone();
         this.refresh();
     }
