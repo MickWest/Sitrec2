@@ -162,36 +162,44 @@ if (count($_GET) == 0) {
 // It had no callers: nothing in src/, tools/, tests/ or docs/ referenced it.
 // Deleted rather than gated, because dead code cannot be reviewed into safety.
 
-// Is (userID, name) on the published featured list?
+// Is (userID, name) on a published list?
 //
-// The featured list (metadata/featured.json, written by the admin featured-list
-// editor and served by metadata.php?featured=1) is the ONLY reason a cross-user
-// or anonymous version listing is allowed. Featured sitches are deliberately
+// The two shared lists are the ONLY reason a cross-user or anonymous version
+// listing is allowed:
+//   - metadata/featured.json  (the featured sitches,  metadata.php?featured=1)
+//   - metadata/templates.json (the global templates,  metadata.php?templates=1)
+// Only an administrator can write them. The sitches on them are deliberately
 // published, so enumerating their versions discloses nothing that was not
 // already public; every other sitch's version list is private to its owner.
 //
 // Deliberately a local copy rather than a require of metadata.php: that file is
 // an endpoint and including it would execute it.
-function isFeaturedSitch($userID, $name) {
+function isPublishedSitch($userID, $name) {
+    return isOnSharedList('featured', $userID, $name)
+        || isOnSharedList('templates', $userID, $name);
+}
+
+function isOnSharedList($list, $userID, $name) {
     global $useAWS, $UPLOAD_PATH, $s3creds;
 
+    $file = 'metadata/' . $list . '.json';
     $entries = null;
     if (!$useAWS) {
-        $path = $UPLOAD_PATH . 'metadata/featured.json';
+        $path = $UPLOAD_PATH . $file;
         if (!is_file($path)) return false;
         $entries = json_decode(@file_get_contents($path), true);
     } else {
         if (!s3HasCredentials() || empty($s3creds['bucket'])) return false;
         try {
             $s3 = getS3Client();
-            $res = $s3->getObject(['Bucket' => $s3creds['bucket'], 'Key' => 'metadata/featured.json']);
+            $res = $s3->getObject(['Bucket' => $s3creds['bucket'], 'Key' => $file]);
             $entries = json_decode((string)$res['Body'], true);
         } catch (Exception $e) {
-            return false;   // fail CLOSED: no featured list means no cross-user access
+            return false;   // fail CLOSED: no list means no cross-user access
         }
     }
 
-    // metadata.php stores the list as {"sitches": [{name, userID, ...}, ...]}.
+    // metadata.php stores each list as {"sitches": [{name, userID, ...}, ...]}.
     if (!is_array($entries) || !isset($entries['sitches']) || !is_array($entries['sitches'])) return false;
     foreach ($entries['sitches'] as $entry) {
         if (!is_array($entry)) continue;
@@ -214,17 +222,17 @@ if (isset($_GET['get'])) {
     sitrecAuditResource('sitches/' . $userID);
 
     // Not logged in: an empty array, EXCEPT for the version list of a sitch that is
-    // actually on the published featured list. The old condition allowed any
-    // `versions` request carrying any `userid`, which let an anonymous caller
-    // enumerate every version of any sitch whose name they knew - and the name is
-    // not secret, it appears in full in every shared link. The featured check
+    // actually on a published list (featured, or global template). The old condition
+    // allowed any `versions` request carrying any `userid`, which let an anonymous
+    // caller enumerate every version of any sitch whose name they knew - and the name
+    // is not secret, it appears in full in every shared link. The published check
     // narrows that to the set that is deliberately public.
     if ($dir == "") {
-        $featuredOK = ($_GET['get'] ?? '') === 'versions'
+        $publishedOK = ($_GET['get'] ?? '') === 'versions'
             && isset($_GET['userid']) && preg_match('/^\d+$/', $_GET['userid'])
             && isset($_GET['name']) && preg_match(SITCH_NAME_PATTERN, $_GET['name'])
-            && isFeaturedSitch($_GET['userid'], basename($_GET['name']));
-        if (!$featuredOK) {
+            && isPublishedSitch($_GET['userid'], basename($_GET['name']));
+        if (!$publishedOK) {
             sitrecAuditResult('denied', 'authentication_required');
             echo json_encode(array());
             exit();
@@ -410,14 +418,14 @@ if (isset($_GET['get'])) {
             $name = basename($name); // Extra safety: strip any path components
 
             // A `userid` may name ANOTHER user's directory, so it is restricted to the
-            // three cases that are legitimate: your own id, a sitch on the published
-            // featured list, or an admin. Anything else falls through and lists your
+            // three cases that are legitimate: your own id, a sitch on a published
+            // list (featured, or global template), or an admin. Anything else falls through and lists your
             // own directory, which is what an unentitled caller is allowed to see.
             if (isset($_GET['userid']) && preg_match('/^\d+$/', $_GET['userid'])) {
                 $requested = $_GET['userid'];
                 if ((string)$requested === (string)$userID
                     || isAdmin()
-                    || isFeaturedSitch($requested, $name)) {
+                    || isPublishedSitch($requested, $name)) {
                     $userID = $requested;
                     $dir = $useAWS ? getShortDir($userID) : getUserDir($userID);
                 } else {

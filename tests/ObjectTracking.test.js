@@ -620,6 +620,34 @@ test('timeline distinguishes estimates from detections and user observations', (
     expect(t.getCacheStatusArray().slice(1, 5)).toEqual([1, 3, 0, 2]);
 });
 
+test('the timeline marks interpolated frames, and Go to Next Untracked finds each gap', () => {
+    const {t} = makeTracker();
+    t.tracking = false;
+    for (const f of [2, 3, 4, 8, 9, 12]) t.trackedPositions.set(f, {x: 10 * f, y: 5});
+    t.trackedPositions.markUnmeasured(10);
+    // 5–7 are on the line from 4 to 8. 10 and 11 have no position: the object was not found on 10.
+    expect(t.getCacheStatusArray().slice(0, 14)).toEqual([0, 0, 1, 1, 1, 4, 4, 4, 1, 1, 0, 0, 1, 0]);
+    expect([4, 5, 10, 11, 0].map(f => t.frameStatus(f))).toEqual([1, 4, 0, 0, 0]);
+    try {
+        Sit.aFrame = 2; Sit.bFrame = 12;
+        par.frame = 2;
+        expect(t.goToNextUntracked()).toEqual({first: 5, last: 7});
+        expect(par.frame).toBe(5);
+        expect(t.goToNextUntracked()).toEqual({first: 10, last: 11});
+        expect(t.goToNextUntracked()).toEqual({first: 5, last: 7});
+        // A tracking run owns the playhead: the button must not move it.
+        t.tracking = true;
+        expect(t.goToNextUntracked()).toBeNull();
+        expect(par.frame).toBe(5);
+        // A complete region has nowhere to go.
+        t.tracking = false;
+        Sit.aFrame = 2; Sit.bFrame = 4;
+        expect(t.goToNextUntracked()).toBeNull();
+    } finally {
+        Sit.aFrame = 0;
+    }
+});
+
 test('an off-screen return must be confirmed before camera estimates fill the gap', async () => {
     const {t} = makeTracker();
     // Initialise the same module-local CV handle used by Start/Analyse Object.

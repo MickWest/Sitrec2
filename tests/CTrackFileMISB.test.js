@@ -475,6 +475,54 @@ describe('CTrackFileMISB', () => {
         });
     });
 
+    // The display name of a track from a TS stream: "S<n> LS<v>", then the tail number
+    // or the derived kind (MISBStreamTrackName.js). The short name does not change.
+    describe('getDefaultDisplayName', () => {
+        // A stream as the TS demux gives it: ffprobe #0:<index>, PID, tag 65 in each row.
+        const fromTS = ({index = 1, version = 7, tail = 'AF00371', target = false} = {}) => {
+            const rows = createTestMISBArray(true, false);
+            rows.forEach((row, i) => {
+                row[MISB.UASDatalinkLSVersionNumber] = version;
+                row[MISB.PlatformTailNumber] = tail;
+                if (target) {
+                    row[MISB.TargetLocationLatitude] = 40.3 + i * 0.001;
+                    row[MISB.TargetLocationLongitude] = -104.3 + i * 0.001;
+                    row[MISB.TargetLocationElevation] = 4600;
+                }
+            });
+            rows.klvPid = 0x100 + index;
+            rows.klvStreamIndex = index;
+            return new CTrackFileMISB(rows);
+        };
+
+        test('names the platform track by stream, tag 65 and tail number', () => {
+            const tf = fromTS();
+            expect(tf.getDefaultDisplayName(0)).toBe('S1 LS7 AF00371');
+            expect(tf.getStreamNameParts(0)).toEqual({stream: 1, version: 7, tail: 'AF00371', kind: null});
+        });
+
+        test('names a derived track by its kind, not the tail number', () => {
+            const tf = fromTS({index: 0, version: 5, target: true});
+            expect(tf.getDefaultDisplayName(1)).toBe('S0 LS5 Frame Center');
+            expect(tf.getDefaultDisplayName(2)).toBe('S0 LS5 Target Location');
+        });
+
+        test('names a platform track with no tail number "Platform"', () => {
+            expect(fromTS({index: 0, version: 5, tail: null}).getDefaultDisplayName(0)).toBe('S0 LS5 Platform');
+        });
+
+        test('does not change the short name, which is a key', () => {
+            const tf = fromTS();
+            expect(tf.getShortName(0, 'clip.mpg_klv_257.klv')).toBe('AF00371');
+            expect(tf.getShortName(1, 'clip.mpg_klv_257.klv')).toBe('Center_AF00371');
+        });
+
+        test('gives no name for a file that is not from a TS', () => {
+            expect(trackFile.getDefaultDisplayName(0)).toBeNull();
+            expect(trackFile.getStreamNameParts(0)).toBeNull();
+        });
+    });
+
     describe('hasMoreTracks', () => {
         test('returns false for track 0 if no center track', () => {
             expect(trackFile.hasMoreTracks(0)).toBe(false);

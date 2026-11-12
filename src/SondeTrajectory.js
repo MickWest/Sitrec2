@@ -209,8 +209,14 @@ export function reconstructTrajectory(sondeData) {
         if (prevHasWind || currHasWind) {
             let avgSpeed, avgDir;
             if (prevHasWind && currHasWind) {
-                avgSpeed = (prev.windSpeed + curr.windSpeed) / 2;
-                avgDir = circularMean(prev.windDir, curr.windDir);
+                // Mean wind of the layer, as a vector: averaging the angle and
+                // the speed apart gives a full-speed wind across two opposite
+                // ones, where the balloon really drifts very little.
+                const DEG = Math.PI / 180;
+                const x = (prev.windSpeed * Math.sin(prev.windDir * DEG) + curr.windSpeed * Math.sin(curr.windDir * DEG)) / 2;
+                const y = (prev.windSpeed * Math.cos(prev.windDir * DEG) + curr.windSpeed * Math.cos(curr.windDir * DEG)) / 2;
+                avgSpeed = Math.hypot(x, y);
+                avgDir = avgSpeed > 1e-9 ? ((Math.atan2(x, y) / DEG) % 360 + 360) % 360 : prev.windDir;
             } else if (currHasWind) {
                 avgSpeed = curr.windSpeed;
                 avgDir = curr.windDir;

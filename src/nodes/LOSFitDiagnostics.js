@@ -54,13 +54,20 @@ function locationText(a) {
 export function updateFitDiagnosticsGUI(node, folderTitle, assessment) {
     if (!guiMenus.traverse) return;
     disposeFitDiagnosticsGUI(node);
-    const folder = guiMenus.traverse.addFolder(folderTitle);
+    const folder = guiMenus.traverse.addFolder(folderTitle)
+        .tooltip("Checks on this Global Fit: does the geometry fix the range, and did the fit collapse onto the camera? " +
+            "The folder opens by itself when there is a problem.");
     const rows = {
         _cond: conditioningText(assessment),
         _loc: locationText(assessment),
     };
-    folder.add(rows, "_cond").name("CV-family conditioning").disable();
-    folder.add(rows, "_loc").name("Fitted location").disable();
+    folder.add(rows, "_cond").name("CV-family conditioning").disable()
+        .tooltip("How well the LOS geometry fixes the range for the CV (constant velocity) family of fits: " +
+            "Constant Velocity, Constant Acceleration, Kalman Smoother and Monte Carlo 1 and 2. " +
+            "rcond is the reciprocal condition number. A very small rcond means the range is poorly determined.");
+    folder.add(rows, "_loc").name("Fitted location").disable()
+        .tooltip("Where the fitted path is relative to the camera. \"ON/BEHIND the camera\" means the fit collapsed " +
+            "and its range has no meaning. Otherwise it shows the median range.");
     // Open the folder only when there is something the user must see.
     if (assessment.collapse || assessment.conditioning === "poor") folder.open();
     else folder.close();

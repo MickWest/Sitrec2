@@ -6,13 +6,15 @@ jest.mock("../src/Globals", () => ({
     // No earth radii set, so the refraction helpers use WGS84.
     Globals: {},
     guiMenus: {},
+    NodeMan: {get: jest.fn()},
     setRenderOne: () => {},
 }));
 
-import {Globals, Sit} from "../src/Globals";
+import {Globals, NodeMan, Sit} from "../src/Globals";
 import {
     apparentPositionFrom,
     applyRefractionMaster,
+    currentTerrestrialLiftContext,
     ensureRefractionSettings,
     installTerrestrialRefractionSceneHook,
     resetTerrestrialRefractionSweep,
@@ -25,6 +27,21 @@ function reset(props = {}) {
 }
 
 describe("master switch", () => {
+
+    test("master and terrain switches also gate ray-traced CPU aiming and labels", () => {
+        reset({refraction: true, refractionTerrain: true, refractionSky: true,
+            raytracedRefraction: {enabled: true, view: "lookView"}});
+        const camera = new PerspectiveCamera(), context = {rayTable: {}};
+        NodeMan.get.mockReturnValue({camera, raytracedRefraction: {geometryContext: () => context}});
+        expect(currentTerrestrialLiftContext(camera.position, camera)).toBe(context);
+        Sit.refraction = false; applyRefractionMaster();
+        expect(currentTerrestrialLiftContext(camera.position, camera)).toBeNull();
+        Sit.refraction = true; Sit.refractionTerrain = false; applyRefractionMaster();
+        expect(currentTerrestrialLiftContext(camera.position, camera)).toBeNull();
+        Sit.refractionTerrain = true; applyRefractionMaster();
+        expect(currentTerrestrialLiftContext(camera.position, camera)).toBe(context);
+        NodeMan.get.mockReset();
+    });
 
     test("a fresh sitch is on, with both halves armed", () => {
         reset();

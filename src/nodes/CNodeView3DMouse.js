@@ -842,29 +842,38 @@ export const mouseMethods = {
         if (celestialObject.type === 'planet') {
             const data = celestialObject.data;
             if (data.ra !== undefined) {
-                standaloneMenu.add({raHours: (data.ra * 12 / Math.PI).toFixed(3)}, 'raHours').name(t("view3d.celestial.raHours")).listen().disable();
+                standaloneMenu.add({raHours: (data.ra * 12 / Math.PI).toFixed(3)}, 'raHours').name(t("view3d.celestial.raHours")).listen().disable()
+                    .tooltip(t("view3d.celestial.tips.raHours"));
             }
             if (data.dec !== undefined) {
-                standaloneMenu.add({decDegrees: (data.dec * 180 / Math.PI).toFixed(3)}, 'decDegrees').name(t("view3d.celestial.decDegrees")).listen().disable();
+                standaloneMenu.add({decDegrees: (data.dec * 180 / Math.PI).toFixed(3)}, 'decDegrees').name(t("view3d.celestial.decDegrees")).listen().disable()
+                    .tooltip(t("view3d.celestial.tips.decDegrees"));
             }
             if (data.mag !== undefined) {
-                standaloneMenu.add({magnitude: data.mag.toFixed(2)}, 'magnitude').name(t("view3d.celestial.magnitude")).listen().disable();
+                standaloneMenu.add({magnitude: data.mag.toFixed(2)}, 'magnitude').name(t("view3d.celestial.magnitude")).listen().disable()
+                    .tooltip(t("view3d.celestial.tips.magnitude"));
             }
         } else if (celestialObject.type === 'satellite') {
-            standaloneMenu.add({noradNum: String(celestialObject.number)}, 'noradNum').name(t("view3d.celestial.noradNumber")).listen().disable();
-            standaloneMenu.add({name: celestialObject.name}, 'name').name(t("view3d.celestial.name")).listen().disable();
+            standaloneMenu.add({noradNum: String(celestialObject.number)}, 'noradNum').name(t("view3d.celestial.noradNumber")).listen().disable()
+                .tooltip(t("view3d.celestial.tips.noradNumber"));
+            standaloneMenu.add({name: celestialObject.name}, 'name').name(t("view3d.celestial.name")).listen().disable()
+                .tooltip(t("view3d.celestial.tips.name"));
             for (const [key, value] of satelliteInfoRows(celestialObject.data)) {
-                standaloneMenu.add({[key]: value}, key).name(t("view3d.celestial." + key)).listen().disable();
+                standaloneMenu.add({[key]: value}, key).name(t("view3d.celestial." + key)).listen().disable()
+                    .tooltip(t("view3d.celestial.tips." + key));
             }
         } else if (celestialObject.type === 'star') {
             if (celestialObject.ra !== undefined) {
-                standaloneMenu.add({raHours: (celestialObject.ra * 12 / Math.PI).toFixed(3)}, 'raHours').name(t("view3d.celestial.raHours")).listen().disable();
+                standaloneMenu.add({raHours: (celestialObject.ra * 12 / Math.PI).toFixed(3)}, 'raHours').name(t("view3d.celestial.raHours")).listen().disable()
+                    .tooltip(t("view3d.celestial.tips.raHours"));
             }
             if (celestialObject.dec !== undefined) {
-                standaloneMenu.add({decDegrees: (celestialObject.dec * 180 / Math.PI).toFixed(3)}, 'decDegrees').name(t("view3d.celestial.decDegrees")).listen().disable();
+                standaloneMenu.add({decDegrees: (celestialObject.dec * 180 / Math.PI).toFixed(3)}, 'decDegrees').name(t("view3d.celestial.decDegrees")).listen().disable()
+                    .tooltip(t("view3d.celestial.tips.decDegrees"));
             }
             if (celestialObject.magnitude !== undefined && celestialObject.magnitude !== 'Unknown') {
-                standaloneMenu.add({magnitude: celestialObject.magnitude.toFixed(2)}, 'magnitude').name(t("view3d.celestial.magnitude")).listen().disable();
+                standaloneMenu.add({magnitude: celestialObject.magnitude.toFixed(2)}, 'magnitude').name(t("view3d.celestial.magnitude")).listen().disable()
+                    .tooltip(t("view3d.celestial.tips.magnitude"));
             }
         }
         
@@ -891,7 +900,8 @@ export const mouseMethods = {
                     trackNode.setSatelliteText(celestialObject.number);
                     console.log(`Set ${nodeID} to track satellite: ${celestialObject.name} (${celestialObject.number})`);
                 };
-                standaloneMenu.add(satTrackActions, key).name(t(labelKey, {defaultValue: defaultLabel}));
+                standaloneMenu.add(satTrackActions, key).name(t(labelKey, {defaultValue: defaultLabel}))
+                    .tooltip(t("view3d.celestial.tips." + key));
             }
         }
 

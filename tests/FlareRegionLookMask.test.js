@@ -22,6 +22,7 @@ function makeNightSky(showFlareRegionLook = false) {
         getSatelliteNormal: (X, O) => X.clone().sub(O).normalize(),
     };
     node.updateVis = jest.fn();
+    node.celestialElements = {setLineWidth: jest.fn()};
     return node;
 }
 

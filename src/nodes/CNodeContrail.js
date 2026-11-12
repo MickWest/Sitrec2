@@ -161,7 +161,7 @@ export class CNodeContrail extends CNode3DGroup {
             if (Number.isFinite(lla.x) && Number.isFinite(lla.y)) {
                 const altMsl = (Number.isFinite(trackAltHae) ? trackAltHae : lla.z)
                     - meanSeaLevelOffset(lla.x, lla.y);
-                const uv = windField.sampleWindAtAltitude(lla.x, lla.y, altMsl);
+                const uv = windField.sampleWindAtAltitude(lla.x, lla.y, altMsl, frame);
                 if (uv && Number.isFinite(uv.u) && Number.isFinite(uv.v)) {
                     const east = getLocalEastVector(pos);
                     const north = getLocalNorthVector(pos);

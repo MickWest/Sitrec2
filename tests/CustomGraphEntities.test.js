@@ -30,6 +30,7 @@ import {EventManager} from "../src/CEventManager";
 function fakeFolder() {
     const folder = {
         controllers: [], addFolder: () => fakeFolder(), onOpenClose() {}, title() {}, open: jest.fn(),
+        tooltip() {return this;},
         add(object, property, options) {
             const controller = {
                 object, property, options,

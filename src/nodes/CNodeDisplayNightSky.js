@@ -79,6 +79,7 @@ import {EventManager} from "../CEventManager";
 import {showTLEFilterDialog} from "../TLEFilterDialog";
 import {showError} from "../showError";
 import {t} from "../i18n";
+import {docUrl} from "../docsRegistry";
 
 
 // A date of the loaded TLE range as "YYYY-MM-DD HH:MM:SS" (UTC), as shown at the top right of
@@ -161,8 +162,13 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
 
         // Create celestial elements instance (grid, constellations)
         this.celestialElements = new CCelestialElements({
-            sphereRadius: 100
+            sphereRadius: 100,
+            lineWidth: v.celestialLineWidth ?? 0.25,
         });
+        this.celestialLineWidth = this.celestialElements.lineWidth;
+        this.addSimpleSerial("celestialLineWidth");
+        this.celestialGridSpacing = v.celestialGridSpacing ?? 10;
+        this.addSimpleSerial("celestialGridSpacing");
 
         // Create planets instance
         this.planets = new CPlanets({
@@ -191,7 +197,7 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
         if (envFlag(Globals.env?.SITREC_USE_CUSTOM_TLE)) {
 
             const menuName = Globals.env.SITREC_CUSTOM_TLE_MENU_NAME || "Custom Satellites";
-            const tooltipText = Globals.env.SITREC_CUSTOM_TLE_TOOLTIP || "Load custom TLE data for satellites from the custom source.";
+            const tooltipText = Globals.env.SITREC_CUSTOM_TLE_TOOLTIP || "Download satellite orbits (TLE data) for the sitch start date from this deployment's own source.\nIf satellites are already loaded, Sitrec asks whether to merge or replace them.";
 
 
             satGUI.add(this.satellites,"updateCustomSats").name(menuName)
@@ -276,8 +282,18 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
             markSitchDirty();
             setRenderOne(true);
         };
+        this.satelliteMagnitudeLimitEnabled = false;
+        this.satelliteMagnitudeLimit = 7.5;
+        this.addSimpleSerial("satelliteMagnitudeLimitEnabled");
+        this.addSimpleSerial("satelliteMagnitudeLimit");
         satGUI.add(this.satellites, "brightnessModel", ["Photometric estimate", "Legacy cone"]).listen()
             .name(t("nightSky.brightnessModel.label")).tooltip(t("nightSky.brightnessModel.tooltip"))
+            .onChange(changedPhotometry);
+        this.magnitudeLimitEnabledController = satGUI.add(this, "satelliteMagnitudeLimitEnabled").listen()
+            .name(t("nightSky.limitByMagnitude.label")).tooltip(t("nightSky.limitByMagnitude.tooltip"))
+            .asListCheckbox().onChange(changedPhotometry);
+        this.magnitudeLimitController = satGUI.add(this, "satelliteMagnitudeLimit", -5, 20, 0.1).listen()
+            .name(t("nightSky.satelliteMagnitudeLimit.label")).tooltip(t("nightSky.satelliteMagnitudeLimit.tooltip"))
             .onChange(changedPhotometry);
         const profiles = Object.fromEntries(Object.entries(STARLINK_PROFILES).map(([key, profile]) => [profile.label, key]));
         // Second in the list: each satellite's own design, from the GCAT catalog.
@@ -308,16 +324,49 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
         this.addSimpleSerial("showSunArrows")
 
         this.celestialGUI = guiShowHide.addFolder("Celestial").close().tooltip(t("nightSky.celestialFolder.tooltip"));
+        this.starsAndPlanetsGUI = this.celestialGUI.addFolder("Stars and Planets").close();
+        this.linesGUI = this.celestialGUI.addFolder("Lines").close();
+        this.labelsGUI = this.celestialGUI.addFolder("Labels").close();
+        this.horizonCompassGUI = this.celestialGUI.addFolder("Horizon Compass").close();
+        this.vectorsGUI = this.celestialGUI.addFolder("Vectors").close();
+        this.shadowsGUI = this.celestialGUI.addFolder("Shadows").close();
+        this.eclipsesGUI = this.celestialGUI.addFolder("Eclipses").close();
+        this.extraViewsGUI = this.celestialGUI.addFolder("Extra Celestial Views").close();
 
-        this.addCelestialArrow("Venus")
-        this.addCelestialArrow("Mars")
-        this.addCelestialArrow("Jupiter")
-        this.addCelestialArrow("Saturn")
-        this.addCelestialArrow("Sun")
-        this.addCelestialArrow("Moon")
+        this.restoreCelestialViewVisibility(v, true);
+        const horizonVisibility = this.addCelestialViewPair(this.horizonCompassGUI,
+            "showHorizonCompassRibbon", "Horizon Compass", "horizonCompass",
+            "Show true compass bearings and degree ticks along the sea-level horizon. Distant terrain can rise above the ribbon.",
+            () => setRenderOne(true));
+        horizonVisibility.main.asFolderToggle({paired: true});
+        this.showHorizonCompassCardinals = v.showHorizonCompassCardinals ?? true;
+        this.showHorizonCompassHeadings = v.showHorizonCompassHeadings ?? true;
+        this.horizonCompassGUI.add(this, "showHorizonCompassCardinals").asListCheckbox().listen()
+            .name("Cardinal Directions").tooltip("Show N, NE, E, SE, S, SW, W and NW labels on the compass ribbon.")
+            .onChange(() => setRenderOne(true));
+        this.horizonCompassGUI.add(this, "showHorizonCompassHeadings").asListCheckbox().listen()
+            .name("Headings (Degrees)").tooltip("Show numeric degree labels on the compass ribbon. Tick marks remain visible.")
+            .onChange(() => setRenderOne(true));
+        this.horizonCompassOpacity = v.horizonCompassOpacity ?? 1;
+        this.horizonCompassTextSize = v.horizonCompassTextSize ?? 14;
+        this.horizonCompassGUI.add(this, "horizonCompassOpacity", 0, 1, 0.01).name("Opacity")
+            .listen().onChange(() => setRenderOne(true))
+            .tooltip("Opacity of the horizon line, ticks and compass labels.");
+        this.horizonCompassGUI.add(this, "horizonCompassTextSize", 6, 40, 1).name("Text Size")
+            .listen().onChange(() => setRenderOne(true))
+            .tooltip("Size of compass direction labels in display pixels. Degree labels scale with them.");
+        this.addSimpleSerials(["horizonCompassOpacity", "horizonCompassTextSize",
+            "showHorizonCompassCardinals", "showHorizonCompassHeadings"]);
+
+        const vectorVisibility = this.addCelestialViewPair(this.vectorsGUI,
+            "showCelestialVectors", "Celestial Vectors", "celestialVectors",
+            "Show the selected celestial vectors in this view. The individual vector choices are retained while the folder is off.",
+            () => { this.updateCelestialVectorVisibility(); setRenderOne(true); });
+        vectorVisibility.main.asFolderToggle({paired: true});
+        for (const name of this.planets.planets) this.addCelestialArrow(name);
 
         this.celestialArrowsOnTraverse = false;
-        this.celestialGUI.add(this, "celestialArrowsOnTraverse")
+        this.vectorsGUI.add(this, "celestialArrowsOnTraverse").asListCheckbox()
             .listen()
             .onChange((x) => {
                 if (x) {
@@ -328,21 +377,7 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
             })
             .name(t("nightSky.vectorsOnTraverse.label"))
             .tooltip(t("nightSky.vectorsOnTraverse.tooltip"));
-
-
-        this.celestialArrowsInLookView = false;
-        this.celestialGUI.add(this, "celestialArrowsInLookView")
-            .listen()
-            .onChange((x) => {
-                if (x) {
-                    this.updateCelestialArrowsMask(LAYER.MASK_LOOKRENDER)
-                } else {
-                    this.updateCelestialArrowsMask(LAYER.MASK_HELPERS)
-                }
-            })
-            .name(t("nightSky.vectorsInLookView.label"))
-            .tooltip(t("nightSky.vectorsInLookView.tooltip"))
-            .shareAs(viewMenuKey("lookView", "celestialVectors"));
+        this.addSimpleSerial("celestialArrowsOnTraverse");
 
 
         this.flareRegionGroup = new Group();
@@ -386,7 +421,7 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
             id: "earthShadow",
             altitude: this.earthShadowAltitude,
             fromSun: this.satellites.fromSun.clone(),
-            gui: this.celestialGUI,
+            gui: this.shadowsGUI,
             visible: Sit.showEarthShadow,
         });
 
@@ -395,7 +430,7 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
 
         this.moonShadow = new CNodeDisplayMoonShadow({
             id: "moonShadow",
-            gui: this.celestialGUI,
+            gui: this.shadowsGUI,
             visible: Sit.showMoonShadow,
         });
 
@@ -519,6 +554,10 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
                 option.action();
             }).name(option.name);
             if (option.tip) ctrl.tooltip(option.tip);
+            if (option.key === "showSatelliteNames" || option.key === "showSatelliteNamesMain") {
+                ctrl.asViewCheckbox(option.key === "showSatelliteNamesMain" ? "mainView" : "lookView",
+                    t("nightSky.satelliteLabels"));
+            }
             if (option.key === "showSatellites") showSatellitesController = ctrl;
             // All satellite properties now have getters/setters on NightSkyNode
             // so they should be serialized directly (not with satellites. prefix)
@@ -563,17 +602,9 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
         // intensity looks WORSE than the disc approximation, because nothing is left to turn
         // that intensity into apparent size. See docs/DiffractionGlare.md.
         if (Sit.physicalPointSources === undefined) Sit.physicalPointSources = false;
-        guiMenus.view.add(Sit, "physicalPointSources").name(t("nightSky.physicalPointSources.label"))
-            .tooltip(t("nightSky.physicalPointSources.tooltip"))
-            .listen()
-            .onChange(() => {
-                // The mode is compiled into the shader, so the cloud has to be rebuilt.
-                this.starField.createStarCloud(this.starField.scene);
-                setRenderOne(true);
-            });
 
         // Create star brightness slider and store reference
-        this.guiStarScale = guiMenus.view.add(Sit, "starScale", 0, 3, 0.01).name(t("nightSky.starBrightness.label")).listen()
+        this.guiStarScale = this.starsAndPlanetsGUI.add(Sit, "starScale", 0, 3, 0.01).name(t("nightSky.starBrightness.label")).listen()
             .tooltip(t("nightSky.starBrightness.tooltip"))
             .onChange(() => {
                 setRenderOne(true);
@@ -589,11 +620,11 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
             Sit.starLimit = 15; // default to 15 if not set
 
 
-        guiMenus.view.add(Sit, "starLimit", -2, 15, 0.01).name(t("nightSky.starLimit.label")).listen()
+        this.starsAndPlanetsGUI.add(Sit, "starLimit", -2, 15, 0.01).name(t("nightSky.starLimit.label")).listen()
             .tooltip(t("nightSky.starLimit.tooltip"))
             .onChange(() => {
                 setRenderOne(true);
-                this.starField.updateStarVisibility(Sit.starLimit, this.celestialSphere);
+                this.starField.updateStarVisibility(Sit.starLimit);
             })
 
 
@@ -604,20 +635,29 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
             Sit.lockStarPlanetBrightness = true; // default to true (locked) if not set
 
         // Create planet brightness slider and store reference
-        this.guiPlanetScale = guiMenus.view.add(Sit, "planetScale", 0, 3, 0.01).name(t("nightSky.planetBrightness.label")).listen()
+        this.guiPlanetScale = this.starsAndPlanetsGUI.add(Sit, "planetScale", 0, 3, 0.01).name(t("nightSky.planetBrightness.label")).listen()
             .tooltip(t("nightSky.planetBrightness.tooltip"))
             .onChange(() => {
                 if (Sit.lockStarPlanetBrightness) {
                     Sit.starScale = Sit.planetScale;
                     this.guiStarScale.updateDisplay();
                 }
+                setRenderOne(true);
             })
 
         // Add lock checkbox
-        guiMenus.view.add(Sit, "lockStarPlanetBrightness").name(t("nightSky.lockStarPlanetBrightness.label")).listen()
+        this.starsAndPlanetsGUI.add(Sit, "lockStarPlanetBrightness").asListCheckbox().name(t("nightSky.lockStarPlanetBrightness.label")).listen()
             .tooltip(t("nightSky.lockStarPlanetBrightness.tooltip"))
 
-        // View > Atmospheric Refraction — master switch plus both halves. Built
+        this.starsAndPlanetsGUI.add(Sit, "physicalPointSources").asListCheckbox().name(t("nightSky.physicalPointSources.label"))
+            .tooltip(t("nightSky.physicalPointSources.tooltip"))
+            .listen().onChange(() => {
+                // The mode is compiled into the shader, so the cloud has to be rebuilt.
+                this.starField.createStarCloud(this.starField.scene);
+                setRenderOne(true);
+            });
+
+        // Effects > Atmospheric Refraction — master switch and both models. Built
         // in one place because either owning node can be absent; see
         // atmosphere/refractionSettings.js.
         setupRefractionGUI();
@@ -631,6 +671,7 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
 
         satGUI.add(Sit, "satCutOff", 0, 0.5, 0.001).name(t("nightSky.satCutOff.label")).listen()
             .tooltip(t("nightSky.satCutOff.tooltip"))
+            .onChange(changedPhotometry);
 
 
         satGUI.add(this.satellites, "arrowRange", 10, 100000, 1).name(t("nightSky.displayRange.label")).listen()
@@ -648,6 +689,10 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
 
         this.celestialSphere = new Group();
         GlobalNightSkyScene.add(this.celestialSphere)
+        // Keep stars and planet sprites together so the master switch survives
+        // star-cloud rebuilds and never hides the independent constellation/grid lines.
+        this.starsAndPlanetsGroup = new Group();
+        this.celestialSphere.add(this.starsAndPlanetsGroup);
 
         // Create a separate celestial sphere for the day sky scene
         this.celestialDaySphere = new Group();
@@ -680,10 +725,10 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
         this.satelliteGroup.add(this.satelliteGroundGroup)
 
 //        console.log("Loading stars")
-        this.starField.addToScene(this.celestialSphere)
+        this.starField.addToScene(this.starsAndPlanetsGroup)
 
 //        console.log("Loading planets")
-        this.planets.addPlanets(this.celestialSphere, this.celestialDaySphere, {
+        this.planets.addPlanets(this.starsAndPlanetsGroup, this.celestialDaySphere, {
             date: this.in.startTime.dateNow,
             cameraPos: this.camera.position,
             ecefToLla: (pos) => {
@@ -717,7 +762,7 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
 //        console.log("Adding celestial grid")
         this.equatorialSphereGroup = new Group();
         this.celestialSphere.add(this.equatorialSphereGroup);
-        this.celestialElements.addCelestialSphereLines(this.equatorialSphereGroup, 10);
+        this.celestialElements.addCelestialSphereLines(this.equatorialSphereGroup, this.celestialGridSpacing);
         // Two INDEPENDENT per-view flags, matching showLabelsMain/showLabelsLook and the rest of
         // the "…in Main" / "…in Look" pairs. This used to be a master ("Equatorial Grid") plus a
         // look include ("Equatorial Grid in Look View"): the look row could be ticked and do
@@ -725,7 +770,11 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
         // carrying the old master key are converted in modDeserialize.
         this.showEquatorialGridMain = v.showEquatorialGridMain ?? v.showEquatorialGrid ?? true;
 
-        this.celestialGUI.add(this, "showEquatorialGridMain").listen().onChange(() => {
+        // OFF in the look view unless requested; keep the existing saved keys.
+        this.showEquatorialGridLook = v.showEquatorialGridLook ?? false;
+        const equatorialGrid = this.linesGUI.addCheckboxPair(this,
+            "showEquatorialGridMain", "showEquatorialGridLook", t("viewMenus.equatorialGrid"));
+        equatorialGrid.main.onChange(() => {
             setRenderOne(true);
             this.updateVis()
         }).name(t("nightSky.equatorialGridMain.label")).tooltip(t("nightSky.equatorialGridMain.tooltip"))
@@ -733,14 +782,49 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
         this.addSimpleSerial("showEquatorialGridMain")
 
 
-        this.constellationsGroup = new Group();
-        this.celestialSphere.add(this.constellationsGroup);
-        this.showConstellations = (v.showConstellations !== undefined) ? v.showConstellations : true;
-        this.celestialGUI.add(this, "showConstellations").listen().onChange(() => {
+        equatorialGrid.look.onChange(() => {
             setRenderOne(true);
             this.updateVis()
-        }).name(t("nightSky.constellationLines.label")).tooltip(t("nightSky.constellationLines.tooltip"))
-        this.addSimpleSerial("showConstellations")
+
+        }).name(t("nightSky.equatorialGridLook.label")).tooltip(t("nightSky.equatorialGridLook.tooltip"))
+            .shareAs(viewMenuKey("lookView", "equatorialGrid"))
+        this.addSimpleSerial("showEquatorialGridLook")
+
+        // Horizontal coordinates belong to the observer, not to the rotating
+        // equatorial sphere. Reorient this shared grid for each rendered view.
+        this.azimuthalSphereGroup = new Group();
+        GlobalNightSkyScene.add(this.azimuthalSphereGroup);
+        this.celestialElements.addAzimuthalSphereLines(this.azimuthalSphereGroup, this.celestialGridSpacing);
+        this.showAzimuthalGridMain = v.showAzimuthalGridMain ?? false;
+        this.showAzimuthalGridLook = v.showAzimuthalGridLook ?? false;
+        const azimuthalGrid = this.linesGUI.addCheckboxPair(this,
+            "showAzimuthalGridMain", "showAzimuthalGridLook", t("viewMenus.azimuthalGrid"));
+        for (const [controller, view] of [[azimuthalGrid.main, "mainView"], [azimuthalGrid.look, "lookView"]]) {
+            controller.onChange(() => {
+                this.updateVis();
+                setRenderOne(true);
+            }).tooltip("Show azimuth and elevation lines aligned to this view's local north and level horizon. Grid Spacing controls the angle between lines.")
+                .shareAs(viewMenuKey(view, "azimuthalGrid"));
+        }
+        this.addSimpleSerials(["showAzimuthalGridMain", "showAzimuthalGridLook"]);
+
+        this.addCelestialViewPair(this.linesGUI, "showRidgeline", "Ridgeline", "ridgeline",
+            "Trace the visible terrain skyline with a 0.5-pixel line. Disabled views do no ridgeline rendering.",
+            () => setRenderOne(true));
+
+        this.linesGUI.add(this, "celestialGridSpacing", 5, 45, 5).name("Grid Spacing").listen()
+            .tooltip("Angular spacing in degrees for both the equatorial and azimuthal grids.")
+            .onChange(() => this.rebuildCelestialGrids());
+
+
+        this.constellationsGroup = new Group();
+        this.celestialSphere.add(this.constellationsGroup);
+        this.addCelestialViewPair(this.linesGUI, "showConstellations", t("nightSky.constellationLines.label"),
+            "constellationLines", t("nightSky.constellationLines.tooltip"),
+            () => { this.updateVis(); setRenderOne(true); });
+        this.addCelestialViewPair(this.labelsGUI, "showConstellationNames", "Constellation Names",
+            "constellationNames", "Show constellation names in this view, independently of Constellation Lines.",
+            () => setRenderOne(true));
 
         // Asterism style: which dataset draws the constellation lines.
         // Values map to FileManager keys registered in ExtraFiles.js.
@@ -748,10 +832,17 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
         const constellationStyleOptions = {};
         constellationStyleOptions[t("nightSky.constellationStyle.optionD3")] = "d3celestial";
         constellationStyleOptions[t("nightSky.constellationStyle.optionAstrometry")] = "astrometry";
-        this.celestialGUI.add(this, "constellationStyle", constellationStyleOptions).listen().onChange(() => {
+        this.linesGUI.add(this, "constellationStyle", constellationStyleOptions).listen().onChange(() => {
             this.rebuildConstellationLines();
         }).name(t("nightSky.constellationStyle.label")).tooltip(t("nightSky.constellationStyle.tooltip"))
         this.addSimpleSerial("constellationStyle")
+
+        this.linesGUI.add(this, "celestialLineWidth", 0.01, 3, 0.01).name("Line Width").listen()
+            .tooltip("Width of constellation, equatorial grid and azimuthal grid lines in display pixels.")
+            .onChange(() => {
+                this.celestialElements.setLineWidth(this.celestialLineWidth);
+                setRenderOne(true);
+            });
 
         // Build the lines now, as the pre-deferral code did (even when hidden — the group's
         // visibility handles that). For the default d3celestial style the data is already
@@ -760,16 +851,16 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
         // deferred file — see ExtraFiles.js).
         this.rebuildConstellationLines();
 
+        // Keep the saved key for older sitches; it now controls planets as well.
         this.showStars = (v.showStars !== undefined) ? v.showStars : true;
-        this.celestialGUI.add(this, "showStars").listen().onChange(() => {
+        this.starsAndPlanetsGUI.add(this, "showStars").listen().onChange(() => {
             setRenderOne(true);
             this.updateVis()
-        }).name(t("nightSky.renderStars.label")).tooltip(t("nightSky.renderStars.tooltip"))
+        }).name(t("nightSky.renderStars.label")).tooltip(t("nightSky.renderStars.tooltip")).asFolderToggle();
         this.addSimpleSerial("showStars")
 
-        // (constellation NAMES are drawn by CNodeDisplaySkyOverlay, as 2D text at a fixed
-        // pixel size, and follow showConstellations rather than a switch of their own. Their
-        // data file is fetched here with the line sets, by rebuildConstellationLines.)
+        // Constellation names are drawn by CNodeDisplaySkyOverlay at a fixed pixel size.
+        // Their data file is fetched with the line sets by rebuildConstellationLines.
 
         // For the stars to show up in the lookView
         // we need to enable the layer for everything in the celestial sphere.
@@ -784,18 +875,6 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
         // }).name("Day/Night Sky")
 
 
-        // OFF unless the sitch asks for it. The look view is the one you match against a
-        // photo or video frame, and a coordinate grid drawn over that is in the way far
-        // more often than it is wanted. (The main view keeps its own default, above.)
-        this.showEquatorialGridLook = (v.showEquatorialGridLook !== undefined) ? v.showEquatorialGridLook : false;
-        this.celestialGUI.add(this, "showEquatorialGridLook").listen().onChange(() => {
-            setRenderOne(true);
-            this.updateVis()
-
-        }).name(t("nightSky.equatorialGridLook.label")).tooltip(t("nightSky.equatorialGridLook.tooltip"))
-            .shareAs(viewMenuKey("lookView", "equatorialGrid"))
-        this.addSimpleSerial("showEquatorialGridLook")
-
         // same for the flare region
         this.showFlareRegionLook = false;
         satGUI.add(this, "showFlareRegionLook").listen().onChange(() => {
@@ -803,7 +882,7 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
         }).name(t("nightSky.flareRegionLook.label")).tooltip(t("nightSky.flareRegionLook.tooltip"));
         this.addSimpleSerial("showFlareRegionLook");
 
-        // Show > Celestial > Label List. Empty (the default) is a no-op and everything
+        // Show > Celestial > Labels > Label List. Empty (the default) is a no-op and everything
         // is labelled as before. Otherwise ONLY labels whose name matches one of the
         // comma-separated entries are drawn - stars, planets, the Sun and Moon, and
         // satellites alike. The GUI row is added in addNightSky(), after the per-view
@@ -865,9 +944,8 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
                     left: 0.05, top: 0.10, width: 0.60, height: 0.80,
                 });
                 
-                this.celestialGUI.add(this.ephemerisView, "show").name(t("nightSky.satelliteEphemeris.label")).onChange(() => {
-                    this.celestialGUI.close();
-                });
+                this.addExtraViewToggle(this.ephemerisView, t("nightSky.satelliteEphemeris.label"),
+                    t("nightSky.satelliteEphemeris.tooltip"));
             }
             
             if (!this.skyPlotView) {
@@ -879,21 +957,19 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
                     left: 0.60, top: 0.10, width: 0.35, height: 0.35,
                 });
                 
-                this.celestialGUI.add(this.skyPlotView, "show").name(t("nightSky.skyPlot.label")).onChange(() => {
-                    this.celestialGUI.close();
-                });
+                this.addExtraViewToggle(this.skyPlotView, t("nightSky.skyPlot.label"), t("nightSky.skyPlot.tooltip"));
             }
         });
 
-        // Star Chart: printable Heavens-Above style whole-sky chart, with its
-        // own "Star Chart" folder under Show. Created here (not on tleLoaded)
+        // Star Chart: printable whole-sky chart, with its own folder under
+        // Extra Celestial Views. Created here (not on tleLoaded)
         // because stars and constellations don't need TLE data; the satellite
         // track option just draws nothing until a satellite is tracked.
         this.starChartView = new CNodeStarChartView({
             id: "starChartView",
             nightSkyNode: this,
             visible: false,
-            // The chart is shown/hidden by its own Show > Star Chart folder; a second
+            // The chart is shown/hidden by its own Star Chart folder; a second
             // toggle in Show > Views would fight it.
             excludeFromViewsMenu: true,
             draggable: true, resizable: true, freeAspect: true,
@@ -901,6 +977,16 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
         });
 
 //        console.log("Done with CNodeDisplayNightSky constructor")
+    }
+
+    addExtraViewToggle(view, label, tooltip) {
+        return this.extraViewsGUI.add(view, "visible").asListCheckbox().name(label).listen()
+            .tooltip(tooltip).onChange(value => {
+                view.visible = undefined; // the controller has already assigned the flag
+                view.setVisible(value);
+                if (value) view.recalculate();
+                setRenderOne(true);
+            });
     }
 
     // The Label List parsed into a set of uppercase prefixes, or null when the box is
@@ -943,15 +1029,47 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
         return names.some(name => this.labelPasses(name));
     }
 
+    addCelestialViewPair(gui, key, label, slot, tooltip, onChange) {
+        const pair = gui.addCheckboxPair(this, `${key}Main`, `${key}Look`, label);
+        for (const [controller, view] of [[pair.main, "mainView"], [pair.look, "lookView"]]) {
+            controller.tooltip(tooltip).onChange(onChange);
+            if (slot) controller.shareAs(viewMenuKey(view, slot));
+        }
+        this.addSimpleSerials([`${key}Main`, `${key}Look`]);
+        return pair;
+    }
+
+    // Old single switches showed lines, names and compass in both views. Old
+    // vector switches showed in Main, with one additional flag enabling Look.
+    // Explicit per-view values always win; partial restores retain other choices.
+    restoreCelestialViewVisibility(v, initial = false) {
+        const pair = (key, legacyMain, legacyLook, fallbackMain, fallbackLook = fallbackMain) => {
+            this[`${key}Main`] = v[`${key}Main`] ?? legacyMain ?? this[`${key}Main`] ?? fallbackMain;
+            this[`${key}Look`] = v[`${key}Look`] ?? legacyLook ?? this[`${key}Look`] ?? fallbackLook;
+        };
+        pair("showConstellations", v.showConstellations, v.showConstellations, true);
+        const legacyNames = v.showConstellationNames ?? v.showConstellations;
+        pair("showConstellationNames", legacyNames, legacyNames, this.showConstellationsMain, this.showConstellationsLook);
+        pair("showHorizonCompassRibbon", v.showHorizonCompassRibbon, v.showHorizonCompassRibbon, false);
+        pair("showRidgeline", undefined, undefined, false);
+        pair("showCelestialVectors", undefined, undefined, true);
+        for (const name of this.planets?.planets ?? []) {
+            const key = `show${name}Arrow`;
+            const legacy = v[key] ?? (initial ? Sit[key] : undefined);
+            const legacyLook = legacy === undefined ? undefined : legacy && (v.celestialArrowsInLookView ?? false);
+            pair(key, legacy, legacyLook, false);
+        }
+    }
+
     // See updateArrow
     addCelestialArrow(name) {
         const flagName = "show" + name + "Arrow";
         const groupName = name + "ArrowGroup";
         const obName = name + "ArrowOb";
 
-        this[flagName] = Sit[flagName] ?? false;
+        const visible = this.celestialVectorMask(name) !== 0;
         this[groupName] = new CNode3DGroup({id: groupName});
-        this[groupName].show(this[flagName]);
+        this[groupName].show(visible);
         // Celestial arrows point at directions that are ALREADY refracted by the
         // Saemundsson path (see the arrow-direction update below), so the
         // terrestrial warp must not touch them a second time.
@@ -959,7 +1077,7 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
 
         this[obName] = new CNodeLabeledArrow({
             id: obName,
-            visible: this[flagName],
+            visible,
             start: "lookCamera",
             // Placeholder only -- update() below points the arrow every frame via
             // updateDirection(). directionFromCode keeps it hidden until then, so
@@ -976,12 +1094,9 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
         })
 
 
-        this.celestialGUI.add(this, flagName).listen().onChange(() => {
-            setRenderOne(true);
-            this[obName].show(this[flagName]);
-            this[groupName].show(this[flagName]);
-        }).name(t("nightSky.celestialVector.label", {name})).tooltip(t("nightSky.celestialVector.tooltip", {name}));
-        this.addSimpleSerial(flagName)
+        this.addCelestialViewPair(this.vectorsGUI, flagName, t("nightSky.celestialVector.label", {name}),
+            null, t("nightSky.celestialVector.tooltip", {name}),
+            () => { this.updateCelestialVectorVisibility(); setRenderOne(true); });
     }
 
     // Update all celestial arrows to use a new start object
@@ -999,22 +1114,6 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
         // it takes two frames for this to have an effect
         setRenderOne(2);
     }
-
-    // Update all celestial arrows to use a new start object
-    updateCelestialArrowsMask(mask) {
-
-        this.planets.planets.forEach(name => {
-            const groupName = name + "ArrowGroup";
-            if (this[groupName]) {
-                this[groupName].group.layers.mask = mask;
-                this[groupName].propagateLayerMask()
-            }
-        });
-
-        // it takes two frames for this to have an effect
-        setRenderOne(2);
-    }
-
 
     /**
      * (Re)build the constellation lines for the current asterism style, and fetch the name
@@ -1047,23 +1146,23 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
 
     updateVis() {
 
-        this.constellationsGroup.visible = this.showConstellations;
-        if (this.starSprites) {
-            this.starSprites.visible = this.showStars;
-        }
+        const constellationMask = LAYER.perViewLayerMask(this.showConstellationsMain, this.showConstellationsLook);
+        this.constellationsGroup.visible = constellationMask !== 0;
+        this.constellationsGroup.layers.mask = constellationMask;
+        propagateLayerMaskObject(this.constellationsGroup);
+        this.updateStarPlanetVisibility();
 
         // The grid's two view flags are independent, so the mask is built from both rather than
         // one gating the other. See perViewLayerMask for why this is not MASK_MAINRENDER.
         const equatorialMask = LAYER.perViewLayerMask(this.showEquatorialGridMain, this.showEquatorialGridLook);
         this.equatorialSphereGroup.visible = equatorialMask !== 0;
         this.equatorialSphereGroup.layers.mask = equatorialMask;
+        const azimuthalMask = LAYER.perViewLayerMask(this.showAzimuthalGridMain, this.showAzimuthalGridLook);
+        this.azimuthalSphereGroup.visible = azimuthalMask !== 0;
+        this.azimuthalSphereGroup.layers.mask = azimuthalMask;
 
         this.sunArrowGroup.visible = this.showSunArrows;
-        this.VenusArrowGroup.show(this.showVenusArrow);
-        this.MarsArrowGroup.show(this.showMarsArrow);
-        this.JupiterArrowGroup.show(this.showJupiterArrow);
-        this.SunArrowGroup.show(this.showSunArrow);
-        this.MoonArrowGroup.show(this.showMoonArrow);
+        this.updateCelestialVectorVisibility();
         this.flareRegionGroup.visible = this.showFlareRegion;
         this.flareBandGroup.visible = this.showFlareBand;
         this.satelliteGroup.visible = this.satellites.showSatellites;
@@ -1072,6 +1171,48 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
         this.satelliteGroundGroup.visible = this.satellites.showSatelliteGround;
 
         propagateLayerMaskObject(this.equatorialSphereGroup)
+        propagateLayerMaskObject(this.azimuthalSphereGroup);
+    }
+
+    rebuildCelestialGrids() {
+        this.celestialElements.rebuildGridLines(this.equatorialSphereGroup, this.azimuthalSphereGroup,
+            this.celestialGridSpacing);
+        this.updateVis();
+        setRenderOne(true);
+    }
+
+    syncAzimuthalGridToObserver(observer) {
+        if (!this.azimuthalSphereGroup.visible) return;
+        this.celestialElements.orientAzimuthalGrid(this.azimuthalSphereGroup, observer,
+            Globals.equatorRadius, Globals.polarRadius);
+    }
+
+    updateStarPlanetVisibility() {
+        this.starsAndPlanetsGroup.visible = this.showStars;
+        // The Sun and Moon have a separate daytime render pass.
+        this.celestialDaySphere.visible = this.showStars;
+    }
+
+    celestialVectorMask(name) {
+        return LAYER.perViewLayerMask(
+            this.showCelestialVectorsMain && this[`show${name}ArrowMain`],
+            this.showCelestialVectorsLook && this[`show${name}ArrowLook`]);
+    }
+
+    updateCelestialVectorVisibility() {
+        for (const name of this.planets.planets) {
+            const mask = this.celestialVectorMask(name);
+            const group = this[`${name}ArrowGroup`], arrow = this[`${name}ArrowOb`];
+            group?.show(mask !== 0);
+            arrow?.show(mask !== 0);
+            // The label and later arrow rebuilds use the node's layerMask as
+            // well as the Three.js object's mask. Keep both in the same view.
+            if (arrow) arrow.layerMask = mask;
+            if (group) {
+                group.group.layers.mask = mask;
+                group.propagateLayerMask();
+            }
+        }
     }
 
     // Set the flare region's layer mask from showFlareRegionLook, and copy it to the children
@@ -1093,6 +1234,9 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
     updatePhotometryControls() {
         const photometric = this.satellites.brightnessModel === "Photometric estimate";
         this.starlinkProfileController?.[photometric ? "show" : "hide"]();
+        this.magnitudeLimitEnabledController?.[photometric ? "show" : "hide"]();
+        this.magnitudeLimitController?.[photometric ? "show" : "hide"]();
+        this.magnitudeLimitController?.enable(this.satelliteMagnitudeLimitEnabled);
         this.flareScaleController?.[photometric ? "hide" : "show"]();
         this.penumbraController?.[this.satellites.illuminationModel === "Legacy fade" ? "show" : "hide"]();
     }
@@ -1108,6 +1252,9 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
 
     modDeserialize(v) {
         super.modDeserialize(v);
+        this.restoreCelestialViewVisibility(v);
+        this.celestialElements.setLineWidth(this.celestialLineWidth);
+        if (v.celestialGridSpacing !== undefined) this.rebuildCelestialGrids();
 
         // Legacy saves carry the old MASTER flag "showEquatorialGrid" (on = visible, with
         // showEquatorialGridLook deciding whether the look view got it too). The pair is two
@@ -1127,6 +1274,11 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
             }
         }
         this.updatePhotometryControls();
+        if (v.celestialArrowsOnTraverse !== undefined) {
+            const start = this.celestialArrowsOnTraverse && NodeMan.exists("traverseObject")
+                ? "traverseObject" : "lookCamera";
+            this.updateCelestialArrowsTo(start);
+        }
 
         if (Globals.exportTagNumber <= 2025003) {
             console.log("Old save with Dispay Range, updating from " + this.arrowRange + " to 100000");
@@ -1451,7 +1603,9 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
             }
             // need the /5 as brightness calculation has changed
             const cutOff = Sit.satCutOff / 5;
-            if (brightness < cutOff) {
+            const limitByMagnitude = this.satellites.brightnessModel === "Photometric estimate"
+                && this.satelliteMagnitudeLimitEnabled;
+            if (limitByMagnitude ? !(satData.apparentMagnitude <= this.satelliteMagnitudeLimit) : brightness < cutOff) {
                 brightness = 0;
             }
             if (mainBrightness < cutOff) {
@@ -1807,16 +1961,8 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
         }
 
         const name = planet;
-        const flagName = "show" + name + "Arrow";
-        const groupName = name + "ArrowGroup";
-        const arrowName = name + "arrow";
         const obName = name + "ArrowOb";
-
-        if (this[flagName] === undefined) {
-            return;
-        }
-
-        if (this[flagName]) {
+        if (this.celestialVectorMask(name) !== 0) {
             const ecefDir = getCelestialDirectionFromRaDec(ra, dec, date)
             // Arrows are visual pointers at the rendered disk, so refract the
             // direction to match where the user sees the body. The geometric
@@ -1975,6 +2121,7 @@ export class CNodeDisplayNightSky extends CNode3DGroup {
         if (this.celestialElements) {
             this.celestialElements.dispose(this.celestialSphere);
         }
+        this.azimuthalSphereGroup?.removeFromParent();
         
         // Clean up planets resources
         if (this.planets) {
@@ -2011,7 +2158,7 @@ export function addNightSky(def) {
                 overlayView: view,
                 camera: view.camera,
                 nightSky: nightSky,
-                gui: nightSky.celestialGUI,
+                gui: nightSky.labelsGUI,
             });
         }
     })
@@ -2019,7 +2166,7 @@ export function addNightSky(def) {
     // Added here rather than in the constructor so it lands BELOW the per-view
     // "Star Names" / "Only Label Planets" rows the overlays just added, which are
     // the toggles it further filters.
-    nightSky.celestialGUI.add(nightSky, "labelList")
+    nightSky.labelsGUI.add(nightSky, "labelList")
         .listen()
         .onChange(() => setRenderOne(true))
         .name(t("nightSky.labelList.label"))
@@ -2054,6 +2201,9 @@ export function addNightSky(def) {
     if (!NodeMan.exists("waterReflection")) {
         new CNodeWaterReflection({id: "waterReflection"});
     }
+
+    nightSky.celestialGUI.add({help: () => window.open(docUrl("docs/Celestial"), "_blank")}, "help")
+        .name("Celestial Help").tooltip("Guide to celestial display controls and the related menus.");
 
     return nightSky;
 }

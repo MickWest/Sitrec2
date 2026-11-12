@@ -95,6 +95,21 @@ smaller view over the main view, or over the look view when the main view is hid
 For `C`, `X`, `V` and `B`, hold the key and move the mouse over the ground in the main view or
 the look view. You do not need to click.
 
+A new sitch has no V/B measurement. The first press of `V` or `B` puts that end of a new
+measurement under the mouse and the other end one foot to the east of it. Hold the key and
+move the mouse to drag that end. When there is a measurement, `V` moves its start and `B`
+moves its end. The two ends always stay at least one foot apart. To remove the measurement,
+drag one end onto the other and release the key.
+
+The V/B measurement shows the distance and true heading from V toward B, measured clockwise
+from north (0° north, 90° east). A dot marks the V end and an arrowhead marks the B end. The
+ruler icon on the header bar of the main view and of the
+look view sets how that view draws it: off, the line, or the line with a circle centered on V
+through B. Each click moves to the next state. The same settings are **V/B Measure in Main** /
+**in Look** and **V/B Circle in Main** / **in Look** under **Show → Measurements**. They are
+separate from **Measurements in Main** / **in Look**, which show and hide the other
+measurements. The line and the circle stay visible over terrain.
+
 ## Moving the camera
 
 For the complete gesture reference, open **Help → Mouse, touch and pen controls**. With the **K** overlay open, hover over a tool to see its controls.

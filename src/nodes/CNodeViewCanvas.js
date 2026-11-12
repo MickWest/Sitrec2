@@ -57,7 +57,7 @@ export class CNodeViewCanvas extends CNodeView {
                 id: this.id+"_transparency",
                 value: this.transparency, start: 0, end: 1, step: 0.01,
                 desc: "Vid Overlay Trans %",
-                tip: "If non-zero, then the video will overlay the look view, with this transparency (0-1)\nIf there's no video, it will use a black screen as overlay",
+                tip: "Opacity of the video drawn over the look view, from 0 to 1. 0 = no overlay; 1 = the video fully covers the look view.\nWith no video loaded, the overlay is a black screen.",
                 onChange: (value) => {
                     this.transparency = value;
                     this.canvas.style.opacity = this.transparency;
@@ -85,7 +85,7 @@ export class CNodeViewCanvas extends CNodeView {
             this.addSimpleSerial("keyColor");
             guiMenus.view.addColor(this, "keyColor")
                 .name("Key Color")
-                .tooltip("Colour in the look view that comes through the video overlay at full strength. Works with Key Tolerance — at 0 tolerance nothing is keyed")
+                .tooltip("Color in the look view that comes through the video overlay at full strength. Works with Key Tolerance — at 0 tolerance nothing is keyed")
                 .listen()
                 .onChange(() => setRenderOne(true))
                 .shareAs(viewMenuKey(hostViewId, "overlayKeyColor"));
@@ -95,7 +95,7 @@ export class CNodeViewCanvas extends CNodeView {
                 id: this.id + "_keyTolerance",
                 value: v.keyTolerance ?? 0, start: 0, end: 100, step: 0.5,
                 desc: "Key Tolerance %",
-                tip: "How far from Key Color a look-view pixel may be and still come through onto the video overlay, as a percentage of the largest possible colour difference. 0 = off. Raise it until the shaded/antialiased edges of the keyed area fill in",
+                tip: "How far from Key Color a look-view pixel may be and still come through onto the video overlay, as a percentage of the largest possible color difference. 0 = off. Raise it until the shaded/antialiased edges of the keyed area fill in",
                 onChange: () => setRenderOne(true),
             }, guiMenus.view)
             this.keyToleranceNode.guiEntry.shareAs(viewMenuKey(hostViewId, "overlayKeyTolerance"));

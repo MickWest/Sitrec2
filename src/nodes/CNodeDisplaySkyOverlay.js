@@ -1,7 +1,7 @@
 // CNodeDisplaySkyOverlay takes a CNodeCanvas derived node, CNodeDisplayNightSky and a camera
 // and displays star names on an overlay
 import {CNodeViewUI} from "./CNodeViewUI";
-import {FileManager, GlobalDateTimeNode, guiShowHide, NodeMan, setRenderOne, Sit} from "../Globals";
+import {FileManager, GlobalDateTimeNode, Globals, guiShowHide, NodeMan, setRenderOne, Sit} from "../Globals";
 import {applyAnnualAberration, getStarDirectionECEF, raDec2Celestial} from "../CelestialMath";
 import {applyRefractionECI, refractionUniforms, refractionOptsFromUniforms} from "../atmosphere/refraction";
 import {wgs84} from "../LLA-ECEF-ENU";
@@ -11,9 +11,12 @@ import {calculateAltitude} from "../threeExt";
 import {getHUDColor} from "../HUDColor";
 import {viewControlLabel, viewMenuKey} from "../ViewUIBarMenus";
 import {renderedRect, withDisplayedCamera} from "../ViewUtils";
-import {fisheyeProjectVector, isFisheyeCamera} from "../FisheyeProjection";
-import {isPanoramicCamera, panoramicProjectVector} from "../PanoramicCamera";
+import {fisheye, fisheyeProjectVector, isFisheyeCamera} from "../FisheyeProjection";
+import {isPanoramicCamera, panoramic, panoramicProjectVector} from "../PanoramicCamera";
 import {labelPixelOffset} from "../LabelOffsets";
+import {drawHorizonCompassRibbon, horizonCompassFrame} from "../HorizonCompassRibbon";
+import {perViewLayerMask} from "../LayerMasks";
+import {liftWorldPoint} from "../atmosphere/terrestrialRefraction";
 
 // World-space Vector3 → NDC through whatever projection the view is actually
 // rendering: the fisheye twin when the fisheye applies to this camera,
@@ -81,20 +84,29 @@ export class CNodeDisplaySkyOverlay extends CNodeViewUI {
         // the set of views is not known up front; viewControlLabel keeps them to the same
         // "<Thing> in Main" / "<Thing> in Look" shape as every other per-view row. The header
         // menus mirror the same controllers and drop the suffix, since the menu names the view.
-        const starNames = gui.add(this, "showStarNames").onChange(() => {
+        const starNames = gui.add(this, "showStarNames").asListCheckbox().onChange(() => {
+            this.onlyPlanetsController?.enable(this.showStarNames);
             setRenderOne(true);
-        }).name(viewControlLabel(this.overlayView.id, "Star Names"))
-            .tooltip("Show star name labels in this view").listen();
+        }).name(viewControlLabel(this.overlayView.id, "Star/Planet Names"))
+            .tooltip("Show name labels in this view for the named stars, and for the Sun, Moon and planets.\nStars fainter than Celestial > Stars and Planets > Star Magnitude Limit get no label.").listen();
         this.addSimpleSerial("showStarNames");
-        starNames.shareAs(viewMenuKey(this.overlayView.id, "starNames"));
+        starNames.shareAs(viewMenuKey(this.overlayView.id, "starNames"))
+            .asViewCheckbox(this.overlayView.id, "Star/Planet Names");
 
-        const onlyPlanets = gui.add(this, "onlyLabelPlanets").onChange(() => {
+        const onlyPlanets = this.onlyPlanetsController = gui.add(this, "onlyLabelPlanets").asListCheckbox().onChange(() => {
             setRenderOne(true);
-        }).name(viewControlLabel(this.overlayView.id, "Only Label Planets"))
-            .tooltip("When checked, suppress star labels but always show planet names").listen();
+        }).name(viewControlLabel(this.overlayView.id, "Planets Only"))
+            .tooltip("Restrict Star/Planet Names to the Sun, Moon and planets in this view. Enable Star/Planet Names first.").listen();
+        onlyPlanets.enable(this.showStarNames);
         this.addSimpleSerial("onlyLabelPlanets");
-        onlyPlanets.shareAs(viewMenuKey(this.overlayView.id, "onlyPlanets"));
+        onlyPlanets.shareAs(viewMenuKey(this.overlayView.id, "onlyPlanets"))
+            .asViewCheckbox(this.overlayView.id, "Planets Only");
 
+    }
+
+    modDeserialize(v) {
+        super.modDeserialize(v);
+        this.onlyPlanetsController?.enable(this.showStarNames);
     }
 
     // The host view's camera, read LIVE rather than captured at construction.
@@ -163,11 +175,15 @@ export class CNodeDisplaySkyOverlay extends CNodeViewUI {
         return this.nightSky.maxLabelsDisplayed;
     }
 
-    // A constellation is its lines and its name together, so the label follows the night sky's
-    // own Constellation Lines switch rather than adding a second one that could disagree with
-    // it - a named figure with no lines, or lines the user cannot identify.
+    // Shared by the 3D views, independently of the constellation line switch.
     get showConstellationNames() {
-        return !!this.nightSky?.showConstellations;
+        return !!(this.camera.layers.mask & perViewLayerMask(
+            this.nightSky?.showConstellationNamesMain, this.nightSky?.showConstellationNamesLook));
+    }
+
+    get showHorizonCompassRibbon() {
+        return !!(this.camera.layers.mask & perViewLayerMask(
+            this.nightSky?.showHorizonCompassRibbonMain, this.nightSky?.showHorizonCompassRibbonLook));
     }
 
     /**
@@ -208,8 +224,9 @@ export class CNodeDisplaySkyOverlay extends CNodeViewUI {
 
         const showSatelliteNames = this.showSatelliteNames;
         const showConstellationNames = this.showConstellationNames;
-        const anyLabels = registeredLabels.size > 0 || this.showStarNames || showSatelliteNames
-            || showConstellationNames;
+        const showStarNames = this.showStarNames && this.nightSky.showStars !== false;
+        const anyLabels = registeredLabels.size > 0 || showStarNames || showSatelliteNames
+            || showConstellationNames || this.showHorizonCompassRibbon;
         if (!anyLabels) return;
 
         // Measured once per frame: renderedRect() does two getBoundingClientRect()
@@ -227,9 +244,13 @@ export class CNodeDisplaySkyOverlay extends CNodeViewUI {
         // again here would double-count it.
         withDisplayedCamera(this.overlayView, (live) => {
 
+            if (this.showHorizonCompassRibbon) {
+                this.renderHorizonCompassRibbon(live);
+            }
+
             this.renderLabels3D(frame, this.displayedCamera(live));
 
-            if (!this.showStarNames && !showSatelliteNames && !showConstellationNames) return;
+            if (!showStarNames && !showSatelliteNames && !showConstellationNames) return;
 
             const earthSphere = new Sphere(V3(0, 0, 0), wgs84.POLAR_RADIUS)
             const actualCameraPosition = this.camera.position
@@ -271,7 +292,7 @@ export class CNodeDisplaySkyOverlay extends CNodeViewUI {
             this.ctx.strokeStyle = '#ffffff';
             this.ctx.textAlign = 'left';
 
-            if (this.showStarNames) {
+            if (showStarNames) {
                 // Camera at the origin: the celestial sphere holds directions on a
                 // huge radius and is rendered that way in GlobalNightSkyScene.
                 this.renderStarNames(this.displayedCamera(live, true), earthSphere,
@@ -285,10 +306,48 @@ export class CNodeDisplaySkyOverlay extends CNodeViewUI {
         });
     }
 
+    renderHorizonCompassRibbon(live) {
+        const frame = horizonCompassFrame(live.position, Globals.equatorRadius, Globals.polarRadius);
+        const camera = this.displayedCamera(live, true);
+        const pos = V3();
+        const forward = camera.getWorldDirection(V3());
+        const nonlinear = isFisheyeCamera(camera) || isPanoramicCamera(camera);
+        // Sky directions have no depth. Place them between the camera's clip
+        // planes so the label projection also works with a distant main camera.
+        const distance = Math.sqrt(camera.near * camera.far);
+        const project = direction => {
+            if (!nonlinear && direction.dot(forward) <= 0) return null;
+            projectForCamera(pos.copy(direction).multiplyScalar(distance), camera);
+            if (!Number.isFinite(pos.x) || !Number.isFinite(pos.y) || pos.z < -1 || pos.z > 1) return null;
+            const [x, y] = this.labelXY(pos);
+            return {x, y};
+        };
+        const rect = this._renderedRect;
+        const panorama = isPanoramicCamera(camera);
+        // A zoom-dependent angular scale, independent of camera heading and
+        // roll, keeps the selected tick/label bearings stable while dragging.
+        let pixelsPerDegree;
+        if (panorama) {
+            pixelsPerDegree = rect.w / panoramic.hfov;
+        } else if (isFisheyeCamera(camera)) {
+            pixelsPerDegree = 0.7 * rect.h * fisheye.circlePct / 100 / fisheye.fov;
+        } else {
+            const m = camera.projectionMatrix.elements;
+            pixelsPerDegree = Math.min(Math.abs(m[0]) * rect.w, Math.abs(m[5]) * rect.h) * Math.PI / 360;
+        }
+        drawHorizonCompassRibbon(this.ctx, frame, project, rect, {
+            wrap: panorama,
+            opacity: this.nightSky.horizonCompassOpacity,
+            textSize: this.nightSky.horizonCompassTextSize,
+            showCardinals: this.nightSky.showHorizonCompassCardinals,
+            showDegrees: this.nightSky.showHorizonCompassHeadings,
+            pixelsPerDegree,
+        });
+    }
+
     /**
-     * The names, drawn to track the asterism lines they belong to in every respect that can
-     * move them apart: refraction, occlusion and brightness. A name that leaves its figure is
-     * worse than no name, because it then labels whatever it happens to land on.
+     * Constellation names use the same projection, refraction and occlusion as
+     * the asterism lines, with their own visibility switch.
      */
     renderConstellationNames(camera, earthSphere, actualCameraPosition, date) {
         const labels = this.constellationLabels();
@@ -352,7 +411,7 @@ export class CNodeDisplaySkyOverlay extends CNodeViewUI {
     renderStarNames(camera, earthSphere, actualCameraPosition, date, starAlpha = 1) {
         const alphaHex = Math.floor(starAlpha * 255).toString(16).padStart(2, '0');
 
-        // Show > Celestial > Label List. Hoisted out of the loops: null means the box is
+        // Show > Celestial > Labels > Name Filter. Hoisted out of the loops: null means the box is
         // empty, which is the usual case and then costs one comparison per label.
         const labelList = this.nightSky.labelListPrefixes;
 
@@ -543,7 +602,17 @@ export class CNodeDisplaySkyOverlay extends CNodeViewUI {
                 label.preRender(this.overlayView);
             }
 
-            const screenPos = projectForCamera(label.textPosition.clone(), camera);
+            // The overlay's projection camera is a copy. Use the host camera
+            // for its ray table, so finite labels follow the same pre-depth
+            // projection as their anchors and arrows.
+            const rayContext = this.overlayView.camera?._rayGeometryPass?.geometryContext();
+            if (rayContext) {
+                const rel = label.textPosition.clone().sub(rayContext.observer);
+                const up = rel.dot(rayContext.zenith);
+                const distances = rayContext.rayTable.distances;
+                if (rel.lengthSq() - up * up > distances[distances.length - 1] ** 2) continue;
+            }
+            const screenPos = projectForCamera(liftWorldPoint(rayContext, label.textPosition), camera);
             if (screenPos.z < -1 || screenPos.z > 1) continue;
             if (screenPos.x < -1.5 || screenPos.x > 1.5
                 || screenPos.y < -1.5 || screenPos.y > 1.5) continue;

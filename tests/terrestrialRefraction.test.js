@@ -77,7 +77,8 @@ import {
     isTerrestrialRefractionInstalled,
     injectTerrestrialRefractionChunk,
     atmosphericDensityFactor,
-    pathDensityFactor,
+    sightLineDensityFactor,
+    SIGHT_LINE_SAG_FREE,
     saturateLift,
     ellipsoidAltitude,
     terrestrialLiftContext,
@@ -91,6 +92,7 @@ import {
 } from "../src/atmosphere/terrestrialRefraction";
 import {Frustum, Group, Matrix4, Mesh, MeshBasicMaterial, PerspectiveCamera, ShaderLib, SphereGeometry, Vector3} from "three";
 import {readFileSync} from "fs";
+import {sightLineDensity as thermalSightLineDensity} from "../tools/thermal/atmosphere.js";
 import path from "path";
 
 const R = 6371000;
@@ -248,9 +250,33 @@ describe("saturation", () => {
 // A ray only curves where there is air. Without this the surveying law charged
 // the full surface k over a sight line that is almost entirely vacuum, and a
 // camera at 237 km lofted the visible limb of the Earth by 15 km.
-describe("altitude: only the air along the path bends the ray", () => {
+describe("altitude: only the air along the sight line bends the ray", () => {
 
     const H = TERRESTRIAL_REFRACTION_DEFAULTS.scaleHeightM;
+    const k = 0.1755;
+    // The factor for a short line, where the Earth's curve does not matter.
+    const straight = (hObs, hTarget) => sightLineDensityFactor(hObs, hTarget, 0, R, k, H);
+    // The reference: a self-consistent ray. Its height is the chord's height
+    // above the curved Earth plus the bow that its own curvature
+    // kappa = k * rho(h) / R produces between the fixed ends,
+    //     y(t) = d^2 [ (1-t) * int_0^t tau kappa + t * int_t^1 (1-tau) kappa ],
+    // iterated to convergence; then 2 * int (1-t) rho(h(t)) dt by trapezoid.
+    const reference = (hObs, hTarget, d) => {
+        const N = 2000;
+        const t = Array.from({length: N + 1}, (_, i) => i / N);
+        const chord = t.map(x => (1 - x) * hObs + x * hTarget - d * d * x * (1 - x) / (2 * R));
+        let h = chord.map(v => Math.max(0, v));
+        for (let iteration = 0; iteration < 20; iteration++) {
+            const kappa = h.map(v => k * Math.exp(-v / H) / R);
+            const A = new Float64Array(N + 1), B = new Float64Array(N + 1);
+            for (let i = 1; i <= N; i++) A[i] = A[i - 1] + 0.5 * (t[i] * kappa[i] + t[i - 1] * kappa[i - 1]) / N;
+            for (let i = N - 1; i >= 0; i--) B[i] = B[i + 1] + 0.5 * ((1 - t[i]) * kappa[i] + (1 - t[i + 1]) * kappa[i + 1]) / N;
+            h = t.map((x, i) => Math.max(0, chord[i] + d * d * ((1 - x) * A[i] + x * B[i])));
+        }
+        let sum = 0;
+        for (let i = 0; i <= N; i++) sum += (i === 0 || i === N ? 0.5 : 1) * 2 * (1 - t[i]) * Math.exp(-h[i] / H);
+        return sum / N;
+    };
 
     test("density is 1 at sea level and 1/e one scale height up", () => {
         expect(atmosphericDensityFactor(0, H)).toBe(1);
@@ -259,34 +285,45 @@ describe("altitude: only the air along the path bends the ray", () => {
 
     test("below sea level counts as sea level, never as denser-than-surface", () => {
         expect(atmosphericDensityFactor(-500, H)).toBe(1);
-        expect(pathDensityFactor(-500, -200, H)).toBe(1);
+        expect(straight(-500, -200)).toBe(1);
     });
 
     // THE load-bearing case. Everything Sitrec is actually used for — an
     // observer on the deck looking at terrain on the deck — must come out of
     // this layer completely untouched, or the change is a regression dressed
-    // up as a fix.
+    // up as a fix. Any range: the sag only takes the line further down.
     test("a ground observer looking at the ground is EXACTLY unchanged", () => {
-        expect(pathDensityFactor(0, 0, H)).toBe(1);
+        for (const d of [0, 20600, 300000]) expect(sightLineDensityFactor(0, 0, d, R, k, H)).toBe(1);
     });
 
-    test("equal heights give the density at that height, not 0/0", () => {
+    test("equal heights at short range give the density at that height", () => {
         for (const h of [0, 1, 500, 8500, 40000]) {
-            expect(pathDensityFactor(h, h, H)).toBeCloseTo(atmosphericDensityFactor(h, H), 12);
+            expect(straight(h, h)).toBeCloseTo(atmosphericDensityFactor(h, H), 12);
         }
         // and approaching equality is continuous, not a cliff
-        expect(pathDensityFactor(5000 + 1e-9, 5000, H))
-            .toBeCloseTo(atmosphericDensityFactor(5000, H), 9);
+        expect(straight(5000 + 1e-9, 5000)).toBeCloseTo(atmosphericDensityFactor(5000, H), 9);
     });
 
-    test("the path is the same path in either direction", () => {
-        expect(pathDensityFactor(9000, 0, H)).toBeCloseTo(pathDensityFactor(0, 9000, H), 12);
+    test("a straight line is integrated exactly", () => {
+        // 2 * integral of (1-t) exp(-(1-t) a) dt = 2 (1 - e^-a (1+a)) / a^2, target on the deck
+        for (const hObs of [4000, 10000, 237300]) {
+            const a = hObs / H;
+            expect(straight(hObs, 0)).toBeCloseTo(2 * (1 - Math.exp(-a) * (1 + a)) / (a * a), 12);
+        }
+    });
+
+    // The lift integrates each bend times its distance from the TARGET, so the
+    // observer's end of the line counts most. A ground observer looking up at an
+    // aircraft bends through dense air at the end that counts; the aircraft
+    // looking back down bends there at the end that does not.
+    test("the observer's end of the line counts most", () => {
+        expect(straight(0, 9000)).toBeGreaterThan(straight(9000, 0) + 0.2);
     });
 
     test("a higher observer always crosses thinner air", () => {
         let prev = Infinity;
         for (const h of [0, 1000, 4000, 10000, 30000, 100000, 237300]) {
-            const f = pathDensityFactor(h, 0, H);
+            const f = straight(h, 0);
             expect(f).toBeLessThan(prev);
             expect(f).toBeGreaterThan(0);
             expect(f).toBeLessThanOrEqual(1);
@@ -294,18 +331,64 @@ describe("altitude: only the air along the path bends the ray", () => {
         }
     });
 
-    test("far above the atmosphere the factor is H/h — the fraction in air", () => {
-        // e^-h/H has died, so the integral is all of H over all of h
-        expect(pathDensityFactor(237300, 0, H)).toBeCloseTo(H / 237300, 9);
-        expect(pathDensityFactor(237300, 0, H)).toBeCloseTo(0.03582, 5);
-    });
-
-    test("a 4 km observer keeps most of it — this is the look view", () => {
-        expect(pathDensityFactor(4000, 0, H)).toBeCloseTo(0.79765, 5);
+    test("far above the atmosphere the factor is about 2 (H/h)^2", () => {
+        expect(straight(237300, 0)).toBeCloseTo(2 * (H / 237300) ** 2, 9);
     });
 
     test("a path entirely above the air bends essentially nothing", () => {
-        expect(pathDensityFactor(200000, 100000, H)).toBeLessThan(1e-4);
+        expect(straight(200000, 100000)).toBeLessThan(1e-4);
+    });
+
+    // The case this model was changed for (Pic de Finestrelles, 2869 m, to the
+    // Grand Ferrand, 2810 m above the ellipsoid, 392.5 km). The line between the
+    // summits sags to about 350 m, so the air along it is much denser than at
+    // either end. The previous model averaged the density between the two end
+    // heights only, which gave the summit 0.716 but the line to the sea horizon
+    // in front of it 0.849, so the summit was raised less than that horizon.
+    test("a long line between two summits sags into denser air", () => {
+        const endHeightMean = (h1, h2) => H * (Math.exp(-h2 / H) - Math.exp(-h1 / H)) / (h1 - h2);
+        const summit = sightLineDensityFactor(2869, 2810, 392500, R, k, H);
+        expect(endHeightMean(2869, 2810)).toBeCloseTo(0.716, 3);
+        expect(summit).toBeGreaterThan(0.85);
+        const seaHorizon = sightLineDensityFactor(2869, 0, 204000, R, k, H);
+        expect(endHeightMean(2869, 0)).toBeCloseTo(0.849, 3);
+        expect(Math.abs(seaHorizon - endHeightMean(2869, 0))).toBeLessThan(0.01);
+        expect(summit).toBeGreaterThan(seaHorizon);
+    });
+
+    // The ray bows only where there is air. With the full k in the bow, the limb
+    // seen from 237 km came out 39% low, because a ray through near-vacuum stays
+    // close to the straight chord.
+    test("stays close to a self-consistent ray, from mountains to orbit", () => {
+        for (const [hObs, hTarget, d, tolerance] of [
+            [2869, 2810, 392500, 0.01], [2869, 3936, 443700, 0.01], [2869, 0, 204000, 0.01],
+            [10000, 0, 100000, 0.01], [0, 10000, 100000, 0.01],
+            [237300, 0, 1693000, 0.03], [237300, 0, 1500000, 0.03], [237300, 0, 1000000, 0.03],
+        ]) {
+            const ref = reference(hObs, hTarget, d);
+            expect(Math.abs(sightLineDensityFactor(hObs, hTarget, d, R, k, H) - ref) / ref).toBeLessThan(tolerance);
+        }
+    });
+
+    // Short lines skip the sag (the shader's cheap path). The switch must not
+    // show as a step in the lifted terrain.
+    test("the short-line shortcut joins the full calculation smoothly", () => {
+        const switchAt = Math.sqrt(SIGHT_LINE_SAG_FREE * H * 8 * R);
+        for (const [hObs, hTarget] of [[2, 3000], [3000, 0], [2869, 2810], [10000, 0], [0, 10000]]) {
+            const below = sightLineDensityFactor(hObs, hTarget, switchAt * 0.999, R, k, H);
+            const above = sightLineDensityFactor(hObs, hTarget, switchAt * 1.001, R, k, H);
+            expect(Math.abs(above / below - 1)).toBeLessThan(0.005);
+        }
+    });
+
+    // tools/thermal cannot import from src, so it keeps its own copy. Its rays
+    // must reproject exactly through the host's lift.
+    test("the thermal tools' copy gives the same numbers", () => {
+        for (const [hObs, hTarget, d] of [[0, 0, 1e5], [2, 3000, 2e4], [2869, 2810, 392500],
+            [2869, 0, 204000], [10000, 0, 1e5], [237300, 0, 1693000], [5000, 5000, 1e3]]) {
+            expect(thermalSightLineDensity(hObs, hTarget, d, R, k, H))
+                .toBe(sightLineDensityFactor(hObs, hTarget, d, R, k, H));
+        }
     });
 });
 
@@ -354,7 +437,7 @@ describe("the regression this fixes: a camera in space", () => {
 
     // Reproduces applyTerrestrialRefraction_chunk on the CPU.
     const liftWithAltitude = (d, hObs, hTgt) =>
-        saturateLift(terrestrialLift(d, k * pathDensityFactor(hObs, hTgt, H), R), maxLift);
+        saturateLift(terrestrialLift(d, k * sightLineDensityFactor(hObs, hTgt, d, R, k, H), R), maxLift);
 
     test("the bare law lofted the visible limb by 15 km", () => {
         expect(terrestrialLift(limb, k, R)).toBeGreaterThan(15000);
@@ -369,7 +452,7 @@ describe("the regression this fixes: a camera in space", () => {
     test("the deck is not paying for it — the density layer is exactly transparent", () => {
         // A ground-to-ground path crosses full-density air by definition, so the
         // attenuation is identically 1 and k is handed through untouched.
-        expect(k * pathDensityFactor(0, 0, H)).toBe(k);
+        expect(k * sightLineDensityFactor(0, 0, 300000, R, k, H)).toBe(k);
     });
 
     test("...and the lift ceiling perturbs a ground sight line negligibly", () => {
@@ -641,8 +724,8 @@ describe("CPU twin of the shader lift", () => {
         const horizontal = rel.clone().addScaledVector(ctx.zenith, -upComponent);
         const d = horizontal.length();
         const targetAlt = u.uTerrObsAlt.value + upComponent + 0.5 * d * d * u.uTerrInvR.value;
-        const kEff = u.uTerrK.value
-            * pathDensityFactor(u.uTerrObsAlt.value, targetAlt, 1 / u.uTerrInvH.value);
+        const kEff = u.uTerrK.value * sightLineDensityFactor(u.uTerrObsAlt.value, targetAlt, d,
+            1 / u.uTerrInvR.value, u.uTerrK.value, 1 / u.uTerrInvH.value);
         const uu = kEff * d * 0.5 * u.uTerrInvR.value / u.uTerrMaxBend.value;
         const bend = u.uTerrMaxBend.value * uu / Math.sqrt(1 + uu * uu);
         const vv = (d * bend) / u.uTerrMaxLift.value;
@@ -956,6 +1039,9 @@ void main() {
             .toBeLessThan(out.indexOf("vec4 clipStart = projectionMatrix * start;"));
         // and the approximate mvPosition handed to clipping/fog stays physical
         expect(out).toContain("? sitrecPhysicalStart : sitrecPhysicalEnd;");
+        expect(out).toContain("vRayGeometryPhysical = mvPosition.xyz;");
+        expect(out.lastIndexOf("vRayGeometryPhysical = mvPosition.xyz;"))
+            .toBeGreaterThan(out.indexOf("? sitrecPhysicalStart : sitrecPhysicalEnd;"));
     });
 
     test("an unsupported custom shader warns instead of failing silently", () => {
@@ -975,6 +1061,28 @@ void main() {
 // narrow field of view and a camera aimed at the lofted target, the physical position is outside
 // the frustum, and the parts of an aircraft with small bounding spheres were not drawn.
 describe("frustum culling uses the lofted position", () => {
+
+    test("ray geometry keeps a small surface whose physical sphere misses a narrow view", () => {
+        const root = new Group(), surface = new Mesh(new SphereGeometry(5), new MeshBasicMaterial());
+        surface.position.set(443000, -14350, 0); root.add(surface); root.updateMatrixWorld(true);
+        const table = {width: 2, rows: 2, minAngle: -0.04, maxAngle: 0, height: 2828,
+            distances: new Float64Array([0, 500000]),
+            data: new Float32Array([0, 0, 500000, 0, -0.005, 0, 500000, 0,
+                0, 0, 500000, 0, -0.005, 0, 500000, 0])};
+        const ctx = {observer: new Vector3(), zenith: new Vector3(0, 1, 0), rayTable: table};
+        const camera = new PerspectiveCamera(0.29678, 1.5, 0.1, 1e6);
+        camera.up.set(0, 1, 0); camera.lookAt(liftWorldPoint(ctx, surface.position));
+        camera.updateMatrixWorld(true);
+        const frustum = new Frustum().setFromProjectionMatrix(new Matrix4().multiplyMatrices(
+            camera.projectionMatrix, camera.matrixWorldInverse));
+        expect(frustum.intersectsObject(surface)).toBe(false);
+        const lofted = [];
+        sweepTerrestrialRefraction(root, -1, lofted);
+        cullLoftedObjects(lofted, camera, ctx);
+        expect(surface.frustumCulled).toBe(false);
+        restoreLoftedCulling(lofted);
+        expect(surface.frustumCulled).toBe(true);
+    });
 
     const OPTS = {enabled: true, k: 0.176, equatorRadius: WGS84_A, polarRadius: WGS84_B};
     // On the equator at 3.5 km, with an airliner 125 km away: the test sitch.

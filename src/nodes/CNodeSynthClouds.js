@@ -749,23 +749,27 @@ export class CNodeSynthClouds extends CNode3DGroup {
     
     createGUIFolder() {
         this.guiFolder = guiMenus.objects.addFolder(`Clouds: ${this.name}`);
-        
+        this.guiFolder.tooltip(t("synthClouds.folder.tooltip"));
+
         addNameControl(this.guiFolder, this, {
             prefix: "Clouds",
             onFinishChange: () => CustomManager.saveGlobalSettings(true),
         }).keepLiveWhenFolderOff();
         
-        this.guiFolder.add(this, 'visible').name(t("synthClouds.visible.label")).onChange((value) => {
+        this.guiFolder.add(this, 'visible').name(t("synthClouds.visible.label"))
+            .tooltip(t("synthClouds.visible.tooltip")).onChange((value) => {
             this.show(value);
             setRenderOne(true);
         }).onFinishChange(() => { CustomManager.saveGlobalSettings(true); }).asFolderToggle();
 
         const editModeData = {editMode: this.editMode};
-        this.editModeController = this.guiFolder.add(editModeData, 'editMode').name(t("synthClouds.editMode.label")).onChange((value) => {
+        this.editModeController = this.guiFolder.add(editModeData, 'editMode').name(t("synthClouds.editMode.label"))
+            .tooltip(t("synthClouds.editMode.tooltip")).onChange((value) => {
             this.setEditMode(value);
         });
-        
+
         const propsFolder = this.guiFolder.addFolder('Properties').close();
+        propsFolder.tooltip(t("synthClouds.properties.tooltip"));
         
         const altitudeProxy = {
             _displayValue: this.altitude,
@@ -774,7 +778,7 @@ export class CNodeSynthClouds extends CNode3DGroup {
         };
         this.altitudeProxy = altitudeProxy;
         this.altitudeController = propsFolder.add(altitudeProxy, 'altitude', 0, 20000, 10)
-            .name(t("synthClouds.altitude.label"))
+            .name(t("synthClouds.altitude.label")).tooltip(t("synthClouds.altitude.tooltip"))
             .setUnitType('small')
             .onChange(() => {
                 this.altitude = this.altitudeController.getSIValue();
@@ -791,7 +795,7 @@ export class CNodeSynthClouds extends CNode3DGroup {
         };
         this.radiusProxy = radiusProxy;
         this.radiusController = propsFolder.add(radiusProxy, 'radius', 100, 100000, 10)
-            .name(t("synthClouds.radius.label"))
+            .name(t("synthClouds.radius.label")).tooltip(t("synthClouds.radius.tooltip"))
             .setUnitType('small')
             .onChange(() => {
                 this.radius = this.radiusController.getSIValue();
@@ -808,7 +812,7 @@ export class CNodeSynthClouds extends CNode3DGroup {
         };
         this.cloudSizeProxy = cloudSizeProxy;
         this.cloudSizeController = propsFolder.add(cloudSizeProxy, 'cloudSize', 50, 1000, 10)
-            .name(t("synthClouds.cloudSize.label"))
+            .name(t("synthClouds.cloudSize.label")).tooltip(t("synthClouds.cloudSize.tooltip"))
             .setUnitType('small')
             .onChange(() => {
                 this.cloudSize = this.cloudSizeController.getSIValue();
@@ -818,7 +822,7 @@ export class CNodeSynthClouds extends CNode3DGroup {
             .onFinishChange(() => { CustomManager.saveGlobalSettings(true); });
         
         propsFolder.add(this, 'density', 0.1, 2.0, 0.1)
-            .name(t("synthClouds.density.label"))
+            .name(t("synthClouds.density.label")).tooltip(t("synthClouds.density.tooltip"))
             .onChange(() => {
                 this.buildCloudMesh();
                 setRenderOne(true);
@@ -826,7 +830,7 @@ export class CNodeSynthClouds extends CNode3DGroup {
             .onFinishChange(() => { CustomManager.saveGlobalSettings(true); });
         
         propsFolder.add(this, 'opacity', 0.1, 1.0, 0.05)
-            .name(t("synthClouds.opacity.label"))
+            .name(t("synthClouds.opacity.label")).tooltip(t("synthClouds.opacity.tooltip"))
             .onChange(() => {
                 if (this.cloudMesh && this.cloudMesh.material && this.cloudMesh.material.uniforms) {
                     this.cloudMesh.material.uniforms.opacity.value = this.opacity;
@@ -836,7 +840,7 @@ export class CNodeSynthClouds extends CNode3DGroup {
             .onFinishChange(() => { CustomManager.saveGlobalSettings(true); });
         
         propsFolder.add(this, 'brightness', 0, 2, 0.05)
-            .name(t("synthClouds.brightness.label"))
+            .name(t("synthClouds.brightness.label")).tooltip(t("synthClouds.brightness.tooltip"))
             .onChange(() => {
                 this.buildCloudMesh();
                 setRenderOne(true);
@@ -844,7 +848,7 @@ export class CNodeSynthClouds extends CNode3DGroup {
             .onFinishChange(() => { CustomManager.saveGlobalSettings(true); });
 
         propsFolder.add(this, 'sunReflection', 0, 10000, 1)
-            .name(t("synthClouds.sunReflection.label"))
+            .name(t("synthClouds.sunReflection.label")).tooltip(t("synthClouds.sunReflection.tooltip"))
             .onChange(() => {
                 setRenderOne(true);
             })
@@ -857,7 +861,7 @@ export class CNodeSynthClouds extends CNode3DGroup {
         };
         this.depthProxy = depthProxy;
         this.depthController = propsFolder.add(depthProxy, 'depth', 0, 2000, 10)
-            .name(t("synthClouds.depth.label"))
+            .name(t("synthClouds.depth.label")).tooltip(t("synthClouds.depth.tooltip"))
             .setUnitType('small')
             .onChange(() => {
                 this.depth = this.depthController.getSIValue();
@@ -867,7 +871,7 @@ export class CNodeSynthClouds extends CNode3DGroup {
             .onFinishChange(() => { CustomManager.saveGlobalSettings(true); });
         
         propsFolder.add(this, 'edgeWiggle', 0, 0.5, 0.01)
-            .name(t("synthClouds.edgeWiggle.label"))
+            .name(t("synthClouds.edgeWiggle.label")).tooltip(t("synthClouds.edgeWiggle.tooltip"))
             .onChange(() => {
                 this.buildCloudMesh();
                 setRenderOne(true);
@@ -875,7 +879,7 @@ export class CNodeSynthClouds extends CNode3DGroup {
             .onFinishChange(() => { CustomManager.saveGlobalSettings(true); });
         
         propsFolder.add(this, 'edgeFrequency', 1, 20, 1)
-            .name(t("synthClouds.edgeFrequency.label"))
+            .name(t("synthClouds.edgeFrequency.label")).tooltip(t("synthClouds.edgeFrequency.tooltip"))
             .onChange(() => {
                 this.buildCloudMesh();
                 setRenderOne(true);
@@ -883,7 +887,7 @@ export class CNodeSynthClouds extends CNode3DGroup {
             .onFinishChange(() => { CustomManager.saveGlobalSettings(true); });
         
         propsFolder.add(this, 'seed', 0, 9999, 1)
-            .name(t("synthClouds.seed.label"))
+            .name(t("synthClouds.seed.label")).tooltip(t("synthClouds.seed.tooltip"))
             .onChange(() => {
                 this.buildCloudMesh();
                 setRenderOne(true);
@@ -897,7 +901,7 @@ export class CNodeSynthClouds extends CNode3DGroup {
         };
         this.featherProxy = featherProxy;
         this.featherController = propsFolder.add(featherProxy, 'feather', 0, 50000, 10)
-            .name(t("synthClouds.feather.label"))
+            .name(t("synthClouds.feather.label")).tooltip(t("synthClouds.feather.tooltip"))
             .setUnitType('small')
             .onChange(() => {
                 this.feather = this.featherController.getSIValue();
@@ -907,10 +911,11 @@ export class CNodeSynthClouds extends CNode3DGroup {
             .onFinishChange(() => { CustomManager.saveGlobalSettings(true); });
         
         const windFolder = this.guiFolder.addFolder('Wind').close();
+        windFolder.tooltip(t("synthClouds.wind.tooltip"));
         
         const windModes = ["No Wind", "Use Local", "Use Target", "Custom"];
         this.windModeController = windFolder.add(this, 'windMode', windModes)
-            .name(t("synthClouds.windMode.label"))
+            .name(t("synthClouds.windMode.label")).tooltip(t("synthClouds.windMode.tooltip"))
             .onChange(() => {
                 const isCustom = this.windMode === "Custom";
                 if (this.windFromController) this.windFromController.show(isCustom);
@@ -920,7 +925,7 @@ export class CNodeSynthClouds extends CNode3DGroup {
             });
         
         this.windFromController = windFolder.add(this, 'windFrom', 0, 359, 1)
-            .name(t("synthClouds.windFrom.label"))
+            .name(t("synthClouds.windFrom.label")).tooltip(t("synthClouds.windFrom.tooltip"))
             .onChange(() => {
                 setRenderOne(true);
             })
@@ -928,7 +933,7 @@ export class CNodeSynthClouds extends CNode3DGroup {
         this.windFromController.show(this.windMode === "Custom");
         
         this.windKnotsController = windFolder.add(this, 'windKnots', 0, 200, 1)
-            .name(t("synthClouds.windKnots.label"))
+            .name(t("synthClouds.windKnots.label")).tooltip(t("synthClouds.windKnots.tooltip"))
             .onChange(() => {
                 setRenderOne(true);
             })
@@ -938,7 +943,7 @@ export class CNodeSynthClouds extends CNode3DGroup {
         const actions = {
             delete: () => this.deleteClouds()
         };
-        this.guiFolder.add(actions, 'delete').name(t("synthClouds.deleteClouds.label")).keepLiveWhenFolderOff();
+        this.guiFolder.add(actions, 'delete').name(t("synthClouds.deleteClouds.label")).tooltip(t("synthClouds.deleteClouds.tooltip")).keepLiveWhenFolderOff();
     }
     
     updateGUIControllers() {

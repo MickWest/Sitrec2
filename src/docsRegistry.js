@@ -186,7 +186,7 @@ export const helpDocs = [
     {
         file: "docs/CustomModels", labelKey: "menus.help.documentation.customModels",
         section: "data", menuId: "objects", role: "reference",
-        chatDesc: "Displaying and importing 3D models and the Model Inspector. Sitrec imports two model file formats: GLB (binary glTF) and PLY (mesh, Gaussian splat, or point cloud). Plain .gltf is NOT accepted — export as .glb. Also covers the built-in aircraft and other models, the preset vehicle library, flocks of birds, simple shapes, sizing, and preparing a model in Blender.",
+        chatDesc: "Displaying and importing 3D models and the Model Inspector. Sitrec imports two model file formats: GLB (binary glTF) and PLY (mesh, Gaussian splat, or point cloud). Plain .gltf is NOT accepted — export as .glb. Also covers the built-in aircraft and other models, the Custom Object Designer library of preset vehicles, balloons, kites and birds with wings that flap (Browse custom objects), flocks of birds, simple shapes, sizing, and preparing a model in Blender.",
     },
     {
         file: "docs/ObjectReferences", labelKey: "menus.help.documentation.objectReferences",
@@ -196,7 +196,7 @@ export const helpDocs = [
     {
         file: "docs/SceneObjects", labelKey: "menus.help.documentation.sceneObjects",
         section: "data", menuId: "objects", role: "reference",
-        chatDesc: "How do I add a building, clouds, a ground overlay image or a measurement grid to my sitch, and how do I edit or delete them? What does each item in the right-click ground menu do, such as Drop Pin, Add 3D Object, Add Moving Object or Add Balloon? How do I delete a 3D object? How do I line up a map or satellite image with the ground?",
+        chatDesc: "How do I add a building, clouds, a ground overlay image or a measurement grid to my sitch, and how do I edit or delete them? What does each item in the right-click ground menu do, such as Drop Pin, Add 3D Object, Add Moving Object, Add Balloon or Add Kite? How do I add a kite on a line, set its line length and wind, and choose a kite type such as an octopus kite? If an object in the video is a kite, how do I find where on the ground its line is held (Traverse > Kite Anchor Finder, the band of possible anchors from the object's size in pixels, a range of kite sizes, the flight angle and the wind)? If an object is a balloon, how do I find where it was launched (Traverse > Reverse Balloon Launch Finder, which follows the flight back to the ground from a line of sight, the target, a track or a 3D object, for a range of buoyancy and the wind of each height)? How do I use a 3D object that I placed by hand as the target, the camera position or the start of a finder (an object whose Position is Manual is in the track lists under its name)? How do I delete a 3D object? How do I line up a map or satellite image with the ground?",
     },
 
     // ── The world ───────────────────────────────────────────────────────────
@@ -233,12 +233,17 @@ export const helpDocs = [
     {
         file: "docs/Lighting", labelKey: "menus.help.documentation.lighting",
         section: "world", menuId: "lighting", role: "reference",
-        chatDesc: "Reference for every control in the Lighting menu: sun, ambient and scattered light, exposure, shadows, atmosphere and haze, the look-view tone mapping, halos and the Brocken spectre, city lights, and eclipses. Read for 'why is my night scene so bright/dark', 'how do I turn on shadows', 'how do I match the video's exposure', or 'are the city lights real'.",
+        chatDesc: "Reference for the Lighting menu: sun, ambient and scattered light, exposure, shadows, atmosphere and haze, the look-view tone mapping and city lights. Also describes the halos, rainbow, Brocken spectre and eclipse controls now under Show > Celestial, and how a rainbow in a video gives the time. Read for 'why is my night scene so bright/dark', 'how do I turn on shadows', 'how do I match the video's exposure', or 'are the city lights real'.",
+    },
+    {
+        file: "docs/Celestial", labelKey: "menus.help.documentation.celestial",
+        section: "world", menuId: "showhide", role: "reference",
+        chatDesc: "Show > Celestial: stars and planets, constellation lines and names, equatorial grids, horizon compass, direction vectors, Earth and Moon shadows, eclipse visuals, halos, Star Chart, Satellite Ephemeris and Sky Plot. Explains the master visibility checkbox, star magnitude versus brightness, per-view labels and name filtering, and which related controls remain in Time, Camera, Lighting and Satellites.",
     },
     {
         file: "docs/LunarEclipse", labelKey: "menus.help.documentation.lunarEclipse",
-        section: "world", menuId: "lighting", role: "reference",
-        chatDesc: "Lunar eclipses (Lighting → Lunar Eclipse): the Earth's shadow on the Moon. What the penumbra and umbra are and why the umbral edge is soft, why a totally eclipsed Moon turns red (sunlight refracted through the Earth's atmosphere, with the blue scattered out) and why there is a turquoise fringe at the umbral edge (ozone). The controls: Atmospheric Clarity and how it moves along the Danjon L0-L4 scale of how dark an eclipse looks, why exposure has to be raised at all when totality is ten magnitudes below a full Moon, and Shadow Outlines, which rings the whole umbra and penumbra at the Moon's distance. Also the 88 km shadow enlargement and the Chauvenet/Danjon dispute behind it. Includes dates of recent and forthcoming eclipses, and what is and is not modelled. Read this for 'why is the Moon red', 'blood moon', 'how do I show a lunar eclipse', 'what is the umbra', 'what is the Danjon scale', or any question about eclipses of the Moon. NOT for solar eclipses or for the Moon's shadow on the Earth.",
+        section: "world", menuId: "showhide", role: "reference",
+        chatDesc: "Lunar eclipses (Show → Celestial → Eclipses → Lunar Eclipse): the Earth's shadow on the Moon. What the penumbra and umbra are and why the umbral edge is soft, why a totally eclipsed Moon turns red (sunlight refracted through the Earth's atmosphere, with the blue scattered out) and why there is a turquoise fringe at the umbral edge (ozone). The controls: Atmospheric Clarity and how it moves along the Danjon L0-L4 scale of how dark an eclipse looks, why exposure has to be raised at all when totality is ten magnitudes below a full Moon, and Shadow Outlines, which rings the whole umbra and penumbra at the Moon's distance. Also the 88 km shadow enlargement and the Chauvenet/Danjon dispute behind it. Includes dates of recent and forthcoming eclipses, and what is and is not modelled. Read this for 'why is the Moon red', 'blood moon', 'how do I show a lunar eclipse', 'what is the umbra', 'what is the Danjon scale', or any question about eclipses of the Moon. NOT for solar eclipses or for the Moon's shadow on the Earth.",
     },
     {
         file: "docs/AtmosphericAerialPerspective", labelKey: "menus.help.documentation.aerialPerspective",
@@ -271,6 +276,11 @@ export const helpDocs = [
         file: "docs/PointTrack", labelKey: "menus.help.documentation.pointTrack",
         section: "video", menuId: "video", role: "reference",
         chatDesc: "Point Tracking (Video \u2192 Point Track): following an object through the video automatically, then using the track as a line of sight and to stabilize the footage. Covers the standard procedure (drag the cursor onto the object, choose Motion (Background), press Analyse Object, then Start Point Track), recovering a track that goes wrong (Clear from Here, user points, analysing again inside a hard section), the tracking methods and when each is right, how Motion (Background) and Analyse Object work, Show Motion Field, the Traverse LOS Source Camera + Point Track and how Point Track differs from Manual Tracking (Camera + Object Track) and Ground Track (Camera + Ground Track), the field-of-view caveat, Stabilize and Render Stabilized Video / Expanded, and a symptom-by-symptom troubleshooting table for every setting (radii, Feature Size, polarity, frame gap, parallax slack, threshold, mask, smoothing, Edit Head Only, analysis resolution). Read for 'how do I track the object', 'why did the track jump or get lost', 'how do I stabilize the video', or 'how do I get a line of sight from the video'.",
+    },
+    {
+        file: "docs/FrequencyAnalysis", labelKey: "menus.help.documentation.frequencyAnalysis",
+        section: "video", menuId: "video", role: "reference",
+        chatDesc: "Frequency Analysis (Video → Point Track): finding repeated brightness changes such as wing flapping or flashing lights. Covers frame-rate, exposure, duration and pixel limits; aperture, background, percent amplitude, peak search floor, Hz versus flashes per minute and CSV export; simple DFT/FFT explanations with diagrams; source timing, nonuniform FFT, Hann window, zero padding, harmonics and aliasing; and why tiny objects, tracking errors and noisy backgrounds can hide a signal or create a false peak.",
     },
     {
         file: "docs/MotionAnalysis", labelKey: "menus.help.documentation.motionAnalysis",
@@ -414,7 +424,7 @@ export const helpDocs = [
     {
         file: "docs/URLParameters", labelKey: "menus.help.documentation.urlParameters",
         section: "advanced", role: "reference",
-        chatDesc: "The query parameters you can add to a Sitrec address: opening a sitch (sitch, custom, mod), loading a file from a URL (drop), setting the location, map and elevation source (latlon, mapType, elevationType), setting the start time or pinning a frame (datetime, frame), and startup actions (action=new, trackbrowser, botbench). Read for 'how do I link to a location or time', 'what does ?custom= accept', 'why does ?latlon= do nothing', or 'what URL do I share'.",
+        chatDesc: "The query parameters you can add to a Sitrec address: opening a sitch (sitch, custom, mod, template), loading a file from a URL (drop), setting the location, map and elevation source (latlon, mapType, elevationType), setting the start time or pinning a frame (datetime, frame), and startup actions (action=new, browse, trackbrowser, botbench). Read for 'how do I link to a location or time', 'what does ?custom= accept', 'why does ?latlon= do nothing', or 'what URL do I share'.",
     },
     {
         file: "docs/APIKeys", labelKey: "menus.help.documentation.apiKeys",

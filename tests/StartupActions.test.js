@@ -2,7 +2,9 @@ import {
     isExplicitStartupAction,
     runStartupToolAction,
     STARTUP_ACTION_BOTBENCH,
+    STARTUP_ACTION_BROWSE,
     STARTUP_ACTION_NEW,
+    startScreenForAction,
     startupActionFromSearch,
 } from "../src/StartupActions";
 
@@ -18,6 +20,19 @@ describe("startup URL actions", () => {
         expect(isExplicitStartupAction(STARTUP_ACTION_BOTBENCH)).toBe(true);
         expect(isExplicitStartupAction(startupActionFromSearch("?action=unknown"))).toBe(false);
         expect(isExplicitStartupAction(startupActionFromSearch(""))).toBe(false);
+    });
+
+    test("action=browse keeps the start screen and makes it the sitch browser", () => {
+        const action = startupActionFromSearch("?action=Browse");
+        expect(action).toBe(STARTUP_ACTION_BROWSE);
+        // It must not be an explicit action: an explicit action stops the start screen.
+        expect(isExplicitStartupAction(action)).toBe(false);
+        expect(startScreenForAction(action)).toBe("browse");
+    });
+
+    test("the start screen shows the templates for an address with no action", () => {
+        expect(startScreenForAction(startupActionFromSearch(""))).toBe("templates");
+        expect(startScreenForAction(startupActionFromSearch("?action=unknown"))).toBe("templates");
     });
 
     test("opens BOTBench once after setup and ignores other actions", () => {

@@ -77,6 +77,15 @@ export const VIEW_UIBAR_FOLDERS = {
     masking: "Masking",
 };
 
+// Tooltips for those sub-folders. Each row inside keeps the tooltip of the control it mirrors.
+const VIEW_UIBAR_FOLDER_TIPS = {
+    nightSky: "Night sky controls for this view: satellites, star and planet labels, and sky grids.",
+    videoOverlay: "The video drawn over this view: its opacity, the color key that lets chosen colors show through it, "
+        + "and the video projected on the ground.",
+    adjustments: "Brightness and contrast for this video, and the switch that turns all the video adjustments on or off.",
+    masking: "Mask out parts of this video: turn the mask on, show it, and edit it.",
+};
+
 /**
  * The registry: for each view, the ordered contents of its header menu.
  *
@@ -91,6 +100,8 @@ export const VIEW_UIBAR_FOLDERS = {
 export const VIEW_UIBAR_MENUS = {
     mainView: [
         {slot: "measurements", name: "Measurements"},
+        {slot: "vbMeasure", name: "V/B Measure"},
+        {slot: "vbCircle", name: "V/B Circle"},
         {slot: "labels", name: "Labels"},
         {slot: "features", name: "Pins"},
         {slot: "los", name: "Lines of Sight"},
@@ -105,14 +116,22 @@ export const VIEW_UIBAR_MENUS = {
         {slot: "fov", name: "Field of View"},
         {slot: "yCompress", name: "Y-Compress"},
         {slot: "showSatellites", name: "Satellites", shared: true, folder: "nightSky"},
-        {slot: "starNames", name: "Star Names", folder: "nightSky"},
-        {slot: "onlyPlanets", name: "Only Label Planets", folder: "nightSky"},
+        {slot: "starNames", name: "Star/Planet Names", folder: "nightSky"},
+        {slot: "onlyPlanets", name: "Planets Only", folder: "nightSky"},
         {slot: "equatorialGrid", name: "Equatorial Grid", folder: "nightSky"},
+        {slot: "azimuthalGrid", name: "Azimuthal Grid", folder: "nightSky"},
+        {slot: "constellationLines", name: "Constellation Lines", folder: "nightSky"},
+        {slot: "constellationNames", name: "Constellation Names", folder: "nightSky"},
+        {slot: "horizonCompass", name: "Horizon Compass", folder: "nightSky"},
+        {slot: "ridgeline", name: "Ridgeline", folder: "nightSky"},
+        {slot: "celestialVectors", name: "Celestial Vectors", folder: "nightSky"},
     ],
 
     lookView: [
         {slot: "freeLook", name: "Free Look"},
         {slot: "measurements", name: "Measurements"},
+        {slot: "vbMeasure", name: "V/B Measure"},
+        {slot: "vbCircle", name: "V/B Circle"},
         {slot: "labels", name: "Labels"},
         {slot: "features", name: "Pins"},
         {slot: "allTracks", name: "All Tracks"},
@@ -125,9 +144,14 @@ export const VIEW_UIBAR_MENUS = {
         {slot: "northUp", name: "North Up"},
         {slot: "yCompress", name: "Y-Compress"},
         {slot: "showSatellites", name: "Satellites", shared: true, folder: "nightSky"},
-        {slot: "starNames", name: "Star Names", folder: "nightSky"},
-        {slot: "onlyPlanets", name: "Only Label Planets", folder: "nightSky"},
+        {slot: "starNames", name: "Star/Planet Names", folder: "nightSky"},
+        {slot: "onlyPlanets", name: "Planets Only", folder: "nightSky"},
         {slot: "equatorialGrid", name: "Equatorial Grid", folder: "nightSky"},
+        {slot: "azimuthalGrid", name: "Azimuthal Grid", folder: "nightSky"},
+        {slot: "constellationLines", name: "Constellation Lines", folder: "nightSky"},
+        {slot: "constellationNames", name: "Constellation Names", folder: "nightSky"},
+        {slot: "horizonCompass", name: "Horizon Compass", folder: "nightSky"},
+        {slot: "ridgeline", name: "Ridgeline", folder: "nightSky"},
         {slot: "celestialVectors", name: "Celestial Vectors", folder: "nightSky"},
         {slot: "overlayTransparency", name: "Transparency %", folder: "videoOverlay"},
         {slot: "overlayKeyColor", name: "Key Color", folder: "videoOverlay"},
@@ -257,6 +281,22 @@ const ICON_MEASUREMENTS = `<svg viewBox="0 0 26 16" width="24" height="15" aria-
     <text x="13.2" y="11.2" text-anchor="middle" font-family="sans-serif" font-size="9"
           font-weight="700" fill="currentColor">12</text></svg>`;
 
+// A ruler: the V/B measurement as a line. Same box as the circle version below, so the button
+// keeps its width when the state changes.
+const ICON_RULER = `<svg viewBox="0 0 26 16" width="24" height="15" aria-hidden="true">
+    <rect x="1.6" y="4.6" width="22.8" height="6.8" rx="1" fill="none" stroke="#00ff00" stroke-width="1.3"/>
+    <g stroke="#00ff00" stroke-width="1.1" stroke-linecap="round">
+        <path d="M5.4 4.6 V7.6"/><path d="M9.2 4.6 V9.4"/><path d="M13 4.6 V7.6"/>
+        <path d="M16.8 4.6 V9.4"/><path d="M20.6 4.6 V7.6"/>
+    </g></svg>`;
+
+// The same measurement with its circle: a ring around the V end, with the radius to the B end.
+const ICON_MEASURE_CIRCLE = `<svg viewBox="0 0 26 16" width="24" height="15" aria-hidden="true">
+    <circle cx="13" cy="8" r="6.4" fill="none" stroke="#00ff00" stroke-width="1.3"/>
+    <path d="M13 8 H19.4" stroke="#00ff00" stroke-width="1.3" stroke-linecap="round"/>
+    <circle cx="13" cy="8" r="1.4" fill="#00ff00"/>
+    <circle cx="19.4" cy="8" r="1.4" fill="#00ff00"/></svg>`;
+
 // A track: the same line the extend-to-ground icon hangs its curtain from, with its sample
 // points on it, so the pair reads as two things you can do to the same object.
 const ICON_SHOW_TRACKS = `<svg viewBox="0 0 20 16" width="19" height="15" aria-hidden="true">
@@ -365,7 +405,7 @@ const ICON_ZOOM_100 = `<span style="font:600 11px/1 sans-serif; letter-spacing:0
 // declutters what it actually has — the look view has no camera frustum to hide, and only the
 // view that hosts a readout can turn one off.
 const DECLUTTER_SLOTS = [
-    "labels", "features", "measurements", "showTracks", "starNames",
+    "labels", "features", "measurements", "vbMeasure", "showTracks", "starNames",
     "compass", "timeDisplay", "simInfo", "videoInfo", "los", "frustum", "latLonGrid",
 ];
 
@@ -377,6 +417,8 @@ const COMMON_3D_ICONS = [
     {slot: "labels", icon: ICON_LABELS},
     {slot: "features", icon: ICON_PINS},
     {slot: "measurements", icon: ICON_MEASUREMENTS},
+    {slot: "vbMeasure", stage: "vbCircle", icon: ICON_RULER, stageIcon: ICON_MEASURE_CIRCLE,
+        tip: "V/B measure — off, the ruler, or the ruler with its circle; each click moves to the next"},
     {slot: "showTracks", icon: ICON_SHOW_TRACKS},
     {slot: "extendToGround", icon: ICON_EXTEND_GROUND, shared: true,
         double: "clearExtendToGround"},
@@ -449,6 +491,10 @@ export function viewIconItems(viewId) {
  *   slider — the slot is a NUMBER control, and the button is its on/off switch with the control's
  *            slider on hover (CUIBar.addSliderIcon): a click takes it to 0 and back to the last
  *            value it had; hovering drops the slider down under the button. Needs `tip`.
+ *   stage  — slot of a second boolean row that only means anything while `slot` is on: the
+ *            button then cycles off, on, on with the stage, off (CUIBar.addStagedIcon), and draws
+ *            `stageIcon` while the stage is on. Needs `tip`, since the cycle is not what either
+ *            row's label describes.
  *   peek   — keep a copy of this icon on screen while the header is HIDDEN and its control is
  *            ON. For a MODE that changes what the view does rather than what it draws: with the
  *            bar away there would otherwise be nothing at all to say you are in it.
@@ -527,6 +573,17 @@ export function populateViewUIBarIcons(view) {
             });
             continue;
         }
+        if (item.stage) {
+            bar.addStagedIcon(keyForItem(view.id, item), keyForItem(view.id, {slot: item.stage}), {
+                html: item.icon,
+                stageHtml: item.stageIcon,
+                action: `icon-${item.slot}`,
+                label: rowLabel(view.id, item.slot),
+                tooltip: iconTip(item),
+                left: true,
+            });
+            continue;
+        }
         bar.addControlIcon(keyForItem(view.id, item), {
             html: item.icon,
             action: `icon-${item.slot}`,
@@ -584,6 +641,7 @@ function folderFor(menu, folders, id, index) {
     let folder = folders.get(id);
     if (!folder) {
         folder = menu.addFolder(t(`viewMenus.folders.${id}`, {defaultValue: VIEW_UIBAR_FOLDERS[id] ?? id}));
+        if (VIEW_UIBAR_FOLDER_TIPS[id]) folder.tooltip(VIEW_UIBAR_FOLDER_TIPS[id]);
         folder.hide();
         placeInOrder(folder.domElement, index);
         folders.set(id, folder);

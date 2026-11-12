@@ -123,7 +123,7 @@ describe("MisbTimingStats", () => {
 
         expect(klvStreamLabels([async, center, sync, reloaded, odd, file])).toEqual([
             "KLV #0:1 [0x1000], async",
-            "Center (derived from KLV #0:1 [0x1000], async)",
+            "Frame Center (derived from KLV #0:1 [0x1000], async)",
             "KLV #0:3 [0x1002], sync",
             "KLV [0x1002]",
             "KLV #0:2 [0x12c]",
@@ -850,6 +850,58 @@ describe("MisbTimingStats", () => {
             expect(text).toContain("KLV (hasRecordPTS no): 1 track(s), UnixTimeStamp pairing (nominal rate)");
             expect(text).toContain("One or more tracks pair by UnixTimeStamp");
             expect(text).toContain("synthetic (uniform);  patching: WRAPPED");
+        });
+
+        describe("track names", () => {
+            const parts = (stream, version, tail, kind = null) => ({stream, version, tail, kind});
+            const names = [
+                {label: "KLV #0:0 [0x100], sync", name: "S0 LS5 Platform", parts: parts(0, 5, null)},
+                {label: "Frame Center (derived from KLV #0:0 [0x100], sync)", name: "S0 LS5 Frame Center", parts: parts(0, 5, null, "Center")},
+                {label: "KLV #0:1 [0x101], async", name: "S1 LS7 AF00371", parts: parts(1, 7, "AF00371")},
+            ];
+            const render = (entries, hideNames = false) =>
+                renderTracks([group("KLV", "pts", 3)], {realPTS: true, wrapped: false}, {names: entries, hideNames}).join("\n");
+
+            test("lists each name with its stream, and explains the parts", () => {
+                const text = render(names);
+                expect(text).toMatch(/\n {4}"S1 LS7 AF00371" {7}KLV #0:1 \[0x101\], async\n/);
+                expect(text).toMatch(/\n {4}"S0 LS5 Frame Center" {2}Frame Center \(derived from KLV #0:0 \[0x100\], sync\)\n/);
+                expect(text).toMatch(/\n {4}S<n> {10}the number of the stream in the TS: ffprobe and ffmpeg -map call it #0:<n>\n/);
+                expect(text).toMatch(/\n {4}LS<v> {9}tag 65, UAS Datalink LS Version Number/);
+                expect(text).toContain('tag 4, Platform Tail Number. "Platform" when the stream has none.');
+                expect(text).toMatch(/\n {4}Frame Center {2}a track from tags 23 and 24: where the line of sight through the image center meets the ground,\n {18}as the platform computed it(\n|$)/);
+                expect(text).not.toContain("Target Location");
+                expect(text).not.toContain("not Sitrec's name");
+            });
+
+            test("names the kinds by their display names", () => {
+                const text = render([{label: "Target Location (derived from KLV #0:0 [0x100], sync)", name: "S0 LS5 Target Location",
+                    parts: parts(0, 5, null, "Target")}]);
+                expect(text).toContain("Target Location  a track from tags 40 to 42: where the platform says the target is");
+                expect(text).not.toContain("Sitrec's name");
+            });
+
+            test("hides a tail number and a name the user gave, when names are hidden", () => {
+                const renamed = [...names, {label: "KLV #0:2 [0x102], sync", name: "My drone", parts: parts(2, 7, "N1")}];
+                const text = render(renamed, true);
+                expect(text).toContain('"S1 LS7 hidden"');
+                expect(text).not.toContain("AF00371");
+                expect(text).not.toContain("My drone");
+                expect(text).toContain('"S0 LS5 Platform"');
+            });
+
+            test("shows Sitrec's name next to a name that differs", () => {
+                const text = render([{label: "KLV #0:1 [0x101], async", name: "My drone", parts: parts(1, 7, "AF00371")}]);
+                expect(text).toContain('"My drone" (Sitrec\'s name: "S1 LS7 AF00371")');
+                expect(text).toContain("changed with the Name control, or was saved by an");
+            });
+
+            test("says how a track that is not from a TS is named", () => {
+                const text = render([{label: "MISB file", name: "N97826", parts: null}]);
+                expect(text).toContain('"N97826"  MISB file');
+                expect(text).toContain("named by its tail number (tag 4), or by its file");
+                expect(text).not.toContain("S<n>");
+            });
         });
     });
 });

@@ -293,6 +293,31 @@ export function DebugWireframeSphere(name, origin, radius = 100, color = 0xfffff
 
 export let DebugArrows = {}
 
+// What marks the end of a debug arrow: a cone (an arrowhead) or a dot, a sphere, so it is a
+// filled circle from every direction. The shape is a property of the arrow, like its head
+// length, so a caller asks for one rather than drawing its own marker.
+export const ARROW_HEAD_CONE = "cone";
+export const ARROW_HEAD_DOT = "dot";
+// For a dot, the head length IS its diameter, so one number sizes either kind of head and
+// scaleArrows keeps both constant on screen the same way.
+let _dotGeometry = null;
+
+function dotHead(arrow) {
+    _dotGeometry ??= new SphereGeometry(0.5, 16, 12);
+    arrow.cone.geometry = _dotGeometry;
+    arrow.headType = ARROW_HEAD_DOT;
+    // ArrowHelper.setLength stops the line a head length short of the end and scales the cone
+    // to (width, length, width). A dot sits ON the end point, the line reaches it, and it is
+    // round whichever way it is seen.
+    arrow.setLength = function (length, headLength = length * 0.2) {
+        this.line.scale.set(1, Math.max(0.0001, length), 1);
+        this.line.updateMatrix();
+        this.cone.scale.set(headLength, headLength, headLength);
+        this.cone.position.y = length;
+        this.cone.updateMatrix();
+    };
+}
+
 export function disposeDebugArrows() {
     for (const key in DebugArrows) {
         const arrow = DebugArrows[key];
@@ -315,7 +340,7 @@ export function disposeDebugSpheres() {
 
 // creat a debug arrow if it does not exist, otherwise update the existing one
 // uses an array to record all the debug arrows.
-export function DebugArrow(name, direction, origin, _length = 100, color="#FFFFFF", visible=true, parent, _headLength=20, layerMask=LAYER.MASK_HELPERS) {
+export function DebugArrow(name, direction, origin, _length = 100, color="#FFFFFF", visible=true, parent, _headLength=20, layerMask=LAYER.MASK_HELPERS, headType=ARROW_HEAD_CONE) {
     const dir = direction.clone()
     dir.normalize();
 
@@ -333,6 +358,11 @@ export function DebugArrow(name, direction, origin, _length = 100, color="#FFFFF
     }
 
 
+    // A different head shape is a different arrow.
+    if (DebugArrows[name] !== undefined && (DebugArrows[name].headType ?? ARROW_HEAD_CONE) !== headType) {
+        removeDebugArrow(name);
+    }
+
     if (DebugArrows[name] === undefined) {
         color = new Color(color)  // convert from whatever format, like "green" or "#00ff00" to a THREE.Color(r,g,b)
 //        DebugArrows[name] = new ArrowHelper(dir, origin, _length, color, _headLength);
@@ -347,6 +377,11 @@ export function DebugArrow(name, direction, origin, _length = 100, color="#FFFFF
         arrow.add(arrow.line);
         oldLine.material.dispose();
         patchMaterialForLinearOutput(arrow.cone.material);
+        arrow.headType = ARROW_HEAD_CONE;
+        if (headType === ARROW_HEAD_DOT) {
+            dotHead(arrow);
+            arrow.setLength(_length, _headLength);
+        }
         DebugArrows[name].visible = visible
         DebugArrows[name].length = _length;
         DebugArrows[name].headLength = _headLength;
@@ -550,12 +585,12 @@ function DebugArrowOrigin(name, direction, length = 100, color, visible=true, pa
     return DebugArrow(name, direction, origin, length, color, visible, parent, headLength)
 }
 
-export function DebugArrowAB(name, A, B, color, visible, parent, headLength=20, layerMask) {
+export function DebugArrowAB(name, A, B, color, visible, parent, headLength=20, layerMask, headType) {
     const direction = B.clone()
     direction.sub(A)
     const length = direction.length()
     direction.normalize()
-    return DebugArrow(name, direction, A, length, color, visible, parent, headLength, layerMask)
+    return DebugArrow(name, direction, A, length, color, visible, parent, headLength, layerMask, headType)
 }
 
 

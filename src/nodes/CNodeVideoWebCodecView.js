@@ -124,7 +124,8 @@ export class CNodeVideoWebCodecView extends CNodeVideoView {
         };
 
         // Add a button to the GUI
-        this.button = FileManager.guiFolder.add(obj, 'openURL').name(t("misc.downloadVideo.label"));
+        this.button = FileManager.guiFolder.add(obj, 'openURL').name(t("misc.downloadVideo.label"))
+            .tooltip(t("misc.downloadVideo.tooltip"));
     }
 
     removeDownloadButton() {

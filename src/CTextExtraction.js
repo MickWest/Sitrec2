@@ -704,7 +704,8 @@ export function addTextExtractionMenu() {
     if (!guiMenus.view) return;
     if (!isLocal) return;
 
-    textExtractionFolder = guiMenus.video.addFolder(tt("menu.title")).close().perm();
+    textExtractionFolder = guiMenus.video.addFolder(tt("menu.title")).close().perm()
+        .tooltip(tt("menu.tooltip"));
     addVideoAnalysisResolutionMenu(textExtractionFolder, () => NodeMan.get('video', false)?.videoData);
 
     const menuActions = {

@@ -5,6 +5,7 @@ import {explainTraverseTerms, TRAVERSE_TERM_CSS} from "./TraverseTerminology";
 import {AIR_MOTION_BASIS, airMotionRows, candidateAirMetrics, candidateWindDataset,
     horizontalAirText, verticalAirText} from "./TraverseAirMotion";
 import {formatWind} from "./TraverseWind";
+import {windSeriesSummary} from "./nodes/WindHelpers";
 import {showAngularSizeDialog} from "./AngularSizeDialog";
 import {assessExecutiveVerdict} from "./TraverseRanking";
 import {angularSizeSummary, angularSizeFitSummary, angularSizeInventory} from "./AngularSize";
@@ -1441,8 +1442,10 @@ export function addAnalyzeButton(folder) {
     const controller = folder.add(proxy, "analyze")
         .name(t("traverseAnalysis.analyzeButton", {defaultValue: "Analyze Traverse Methods..."}));
     if (controller.tooltip) {
-        controller.tooltip("Search for physically plausible object trajectories consistent " +
-            "with the lines of sight, and generate an HTML report");
+        controller.tooltip("Fit many traverse methods and object models to the LOS (lines of sight) " +
+            "in the A-B range, then show the candidate paths in a gallery.\n" +
+            "\"Use exact\" on a result makes it the traverse. Open Full Report opens an HTML report.\n" +
+            "Traverse Analysis Tweaks holds its options.");
     }
     analyzeButtons.set(folder, controller);
     return controller;
@@ -1657,6 +1660,9 @@ export function addAnalyzeTweaks(traverseMenu) {
     if (prev) { try { prev.destroy(); } catch (e) { /* already gone */ } }
 
     const folder = traverseMenu.addFolder("Traverse Analysis Tweaks").close();
+    folder.tooltip("Options for Analyze Traverse Methods: the range to search, ground contact, a truth track, " +
+        "which extra hypotheses to test, and the wind to use.\n" +
+        "Min Dist and Max Dist also limit Global Fit: Minimum Acceleration.");
     tweaksFolders.set(traverseMenu, folder);
 
     // Min/Max distance envelope for the traverse analysis lives here now. The
@@ -1671,7 +1677,8 @@ export function addAnalyzeTweaks(traverseMenu) {
         desc: "Min Dist",
         color: "#C0E0FF",
         unitType: "big",
-        tooltip: "Lower bound on start range used by the traverse analysis (0 = no limit).",
+        tooltip: "Smallest start range that Analyze Traverse Methods and Global Fit: Minimum Acceleration search.\n" +
+            "When Min Dist is 0 and Max Dist is at least 999 NM, the analysis picks its own range around Tgt Start Dist.",
     }, folder);
 
     new CNodeGUIValue({
@@ -1680,7 +1687,8 @@ export function addAnalyzeTweaks(traverseMenu) {
         desc: "Max Dist",
         color: "#C0E0FF",
         unitType: "big",
-        tooltip: "Upper bound on start range used by the traverse analysis.",
+        tooltip: "Largest start range that Analyze Traverse Methods and Global Fit: Minimum Acceleration search.\n" +
+            "When Min Dist is 0 and Max Dist is at least 999 NM, the analysis picks its own range around Tgt Start Dist.",
     }, folder);
 
     const groundMode = folder.add(analyzeTweaks, "groundMode", GROUND_MODES).name("Ground contact");
@@ -1701,7 +1709,7 @@ export function addAnalyzeTweaks(traverseMenu) {
             "completed methods are ordered by mean 3D separation from this track, with incomplete fits shown after them; each rank basis reports " +
             "where they agree/diverge (location, altitude, speed, heading), and the track is drawn dashed " +
             "in the 3D graphs. Selected automatically for a loaded \"Truth_\" track (e.g. from " +
-            "truth_lat/truth_long CSV columns) and for the Truth track of a BOT interchange file.");
+            "truth_lat/truth_long CSV columns) and for the Truth track of a BOT (bearings-only traversal) interchange file.");
     }
     refreshTruthTrackOptions();
     // Re-register the tracksChanged hook on EVERY rebuild. EventManager.removeAll()
@@ -1756,19 +1764,22 @@ export function addAnalyzeTweaks(traverseMenu) {
         .tooltip("Assumed one-component uncertainty for the balloon's supplied-wind correction. " +
             "15 kt is an analyst default, not measured weather uncertainty. Smaller values hold the wind closer to the input.");
     if (cbFixed.tooltip) {
-        cbFixed.tooltip("Include the stationary-object interpretation: either a fixed point in space (sightlines " +
-            "converge) or a fixed point in the sky at infinity like the Moon (parallel sightlines), whichever fits.");
+        cbFixed.tooltip("AO = astronomical object. Include the stationary-object interpretation: either a fixed point in space " +
+            "(the sightlines converge) or a fixed point in the sky at infinity, like the Moon (parallel sightlines), whichever fits better.");
     }
     if (cbSat.tooltip) {
-        cbSat.tooltip("Load the historical LEO satellite catalogue for the sitch's date (via the server, cached " +
+        cbSat.tooltip("Load the historical LEO (low Earth orbit) satellite catalog for the sitch's date (via the server, cached " +
             "permanently — slow the first time) and find the satellite whose pass best matches the sightlines. " +
             "Needs a real sitch date.");
     }
     if (cbKnownNow.tooltip) {
-        cbKnownNow.tooltip("Ephemeris: at the clip's time, find the nearest bright planet or star to the sightlines.");
+        cbKnownNow.tooltip("AO = astronomical object. At the middle of the clip, find the Sun, Moon, planet or bright star that best " +
+            "fits the sightlines. A fainter object must fit more closely. A narrow field of view lets fainter objects count.\n" +
+            "Off by default, because the star search is slow.");
     }
     if (cbKnownOther.tooltip) {
-        cbKnownOther.tooltip("Ephemeris: search a time window for when a bright planet would best align with the mean sightline.");
+        cbKnownOther.tooltip("AO = astronomical object. For each of Mercury, Venus, Mars, Jupiter and Saturn, search from 180 days " +
+            "before to 180 days after the clip for the time when it is nearest to the mean sightline.\nOff by default.");
     }
 
     return folder;
@@ -1859,6 +1870,36 @@ function captureLiveInputFiltering(losNode, range) {
     return captureInputFiltering(roots, {fps: Sit.fps / (Sit.simSpeed ?? 1), ...range});
 }
 
+// The wind an analysis used, one {from, knots} per frame, from the dataset's
+// per-frame wind displacement W (ENU metres per frame; x east, y north).
+export function datasetWindSeries(dataset) {
+    const series = [];
+    const W = dataset?.W;
+    if (!W || !(dataset.fps > 0)) return series;
+    for (let f = 0; f < dataset.n; f++) {
+        const east = W[f * 3], north = W[f * 3 + 1];
+        const speedMS = Math.hypot(east, north) * dataset.fps;
+        // The wind blows TO (east, north); it is named by where it comes FROM.
+        const from = ((Math.atan2(-east, -north) * 180 / Math.PI) % 360 + 360) % 360;
+        series.push({from, knots: speedMS / KNOTS_TO_MS});
+    }
+    return series;
+}
+
+// A phrase for the wind series an analysis used, from {from, knots} per frame:
+// "12–15–19 kt per frame (min, median, max of 900 frames), mean direction
+// from 265°", or "15 kt from 265° on every frame", or "none".
+export function describeWindSeries(series) {
+    const summary = windSeriesSummary(series);
+    if (!summary) return "none";
+    const kt = (x) => x.toFixed(0);
+    if (summary.maxKnots - summary.minKnots < 0.5) {
+        return `${kt(summary.medianKnots)} kt from ${summary.meanFrom.toFixed(0)}° on every frame`;
+    }
+    return `${kt(summary.minKnots)}–${kt(summary.medianKnots)}–${kt(summary.maxKnots)} kt per frame `
+        + `(min, median, max of ${summary.count} frames), mean direction from ${summary.meanFrom.toFixed(0)}°`;
+}
+
 function computeAnalysisFingerprint(losNode, capturedProvenance = null) {
     const analysisFrames = analysisFrameRange(losNode);
     const windNode = NodeMan.get("targetWind", false) || null;
@@ -1880,12 +1921,19 @@ function computeAnalysisFingerprint(losNode, capturedProvenance = null) {
     const windSeries = [];
     if (analysisWindNode) {
         windSeries.push(analysisWindNode.trackSource ?? "");
-        if (typeof analysisWindNode.trackWindAt === "function" && analysisWindNode.trackSource) {
+        if (typeof analysisWindNode.trackWindAt === "function" && analysisWindNode.trackSource
+            && !analysisWindNode.override) {
             for (let f = analysisFrames.frame0; f <= analysisFrames.frame1; f++) {
                 const sample = analysisWindNode.trackWindAt(f);
                 windSeries.push(sample ? sample.from : analysisWindNode.from,
                     sample ? sample.knots : analysisWindNode.knots);
             }
+        } else if (typeof analysisWindNode.windCacheKey === "function") {
+            // A node that reads the wind field: the source and its data
+            // version (the per-frame wind is a function of those and the
+            // sightlines). Its From and Knots follow the playhead, so they
+            // are not in the key. Manual and Override: the values.
+            windSeries.push(analysisWindNode.windCacheKey());
         } else {
             windSeries.push(analysisWindNode.from, analysisWindNode.knots);
         }
@@ -2417,9 +2465,14 @@ async function runTraverseAnalysisWithCurrentAngles() {
         } catch (e) {
             dataset.groundLevelM = 0;
         }
+        // The wind the fits used is the per-frame series in the dataset (W),
+        // read where the anchor point is on each frame. Report that series,
+        // not the slider's one value.
         dataset.windSource = analyzeTweaks.windMode === "Zero wind" ? "Calm wind assumed for supplied fits."
-            : `Supplied wind: ${analysisWindNode?.knots ?? 0} kt from ${analysisWindNode?.from ?? 0}°. `
-                + (analysisWindNode?.trackSource ? "Captured wind series from the loaded track." : "User-supplied wind; uncertainty is an input assumption.");
+            : `Supplied wind: ${describeWindSeries(datasetWindSeries(dataset))}. `
+                + (typeof analysisWindNode?.describeSource === "function"
+                    ? analysisWindNode.describeSource()
+                    : "User-supplied wind; uncertainty is an input assumption.");
         const inputFiltering = captureLiveInputFiltering(losNode, analysisFrames);
         const outputFiltering = captureInputFiltering([
             {node: NodeMan.get("traverseSmoothedTrack", false), role: "Live traverse output", shallow: true},
@@ -2643,26 +2696,9 @@ async function runTraverseAnalysisWithCurrentAngles() {
             dataset, sweep, resolvedRanges, hypotheses, slowProfile, slowOpts});
 
         let windText = "zero / ignored";
-        if (analysisWindNode && isFinite(analysisWindNode.knots)) {
-            if (analysisWindNode.trackSource && typeof analysisWindNode.trackWindAt === "function") {
-                const speeds = [];
-                for (let f = analysisFrames.frame0; f <= analysisFrames.frame1; f++) {
-                    const sample = analysisWindNode.trackWindAt(f);
-                    if (sample && Number.isFinite(sample.knots)) speeds.push(sample.knots);
-                }
-                speeds.sort((a, b) => a - b);
-                if (speeds.length) {
-                    const median = speeds[Math.floor(speeds.length / 2)];
-                    windText = `time-varying track wind (${analysisWindNode.trackSource}): ` +
-                        `${speeds[0].toFixed(0)}–${median.toFixed(0)}–${speeds[speeds.length - 1].toFixed(0)} kt ` +
-                        `(min/median/max; direction sampled by timestamp)`;
-                } else {
-                    windText = `track wind (${analysisWindNode.trackSource}); no valid historical samples`;
-                }
-            } else {
-                windText = `${Number(analysisWindNode.knots).toFixed(0)} kt from ` +
-                    `${Number(analysisWindNode.from).toFixed(0)}°`;
-            }
+        if (analysisWindNode) {
+            // The series the fits used (see dataset.windSource above).
+            windText = describeWindSeries(datasetWindSeries(dataset));
         }
 
         // LAZY report: the full HTML report (dozens of 2x PNG chart encodes,

@@ -8,9 +8,9 @@
  */
 
 import {areArrayBuffersEqual, disableAllInput, enableAllInput, getDateTimeFilename, getFileExtension, isHttpOrHttps, screenshotFilename, updateDocumentTitle} from "./utils";
-import {showConfirm} from "./showError";
-import {CustomManager, Globals, NodeMan, Sit, withTestUser} from "./Globals";
-import {SITREC_SERVER, SITREC_UPLOAD} from "./configUtils";
+import {showChoice, showConfirm, showError} from "./showError";
+import {CustomManager, getEffectiveUserID, Globals, NodeMan, Sit, withTestUser} from "./Globals";
+import {isAdmin, SITREC_SERVER, SITREC_SHARE_APP, SITREC_UPLOAD} from "./configUtils";
 import {par} from "./par";
 import {assert} from "./assert";
 import {addOptionToGUIMenu} from "./lil-gui-extras";
@@ -21,10 +21,20 @@ import {t} from "./i18n";
 import {
     isAbortLikeError,
     loadFromIDB,
+    sanitizeSitchName,
     saveToIDB,
     showLocalFolderAccessUnsupportedMessage,
     supportsDirectoryPicker,
 } from "./CFileManagerUtils";
+import {promptForText} from "./TextPrompt";
+import {
+    GLOBAL_TEMPLATE_LABEL,
+    LOCAL_TEMPLATE_LABEL,
+    addLocalTemplateLabel,
+    ownTemplateLabels,
+    templateAddress,
+    updateGlobalTemplates,
+} from "./SitchTemplates";
 
 // Browser folder handles compare by identity (re-picking a folder just misses
 // the cache and re-verifies); desktop handles are rebuilt per pick, so compare paths.
@@ -199,14 +209,89 @@ export const saveMethods = {
     },
 
     /**
+     * The template labels of one of the user's own sitches, for a server save.
+     *
+     * It REJECTS when the server does not answer. The caller must then not save.
+     * With no answer the name can be a template, and a save to it changes what
+     * each user opens from that template. The work stays open in the page, so the
+     * user can save again.
+     *
+     * @param {string} sitchName
+     * @returns {Promise<string[]>}
+     */
+    ownTemplateLabelsForSave(sitchName) {
+        return ownTemplateLabels(sitchName);
+    },
+
+    /**
+     * ownTemplateLabelsForSave() for the menu saves: it tells the user about a check
+     * that the server did not answer, then stops the save.
+     * @param {string} sitchName
+     * @returns {Promise<string[]>}
+     */
+    async templateLabelsOrStopSave(sitchName) {
+        const saveGeneration = Globals.loadGeneration;
+        try {
+            return await this.ownTemplateLabelsForSave(sitchName);
+        } catch (error) {
+            // A different sitch that loaded in that time has no use for this message.
+            if (saveGeneration === Globals.loadGeneration) {
+                showError(`Sitrec could not check if "${sitchName}" is a template, so it did not save.\n\n`
+                    + "A save must not write to a template. Your work is still open. Save again.", error);
+            }
+            throw "Save Cancelled";
+        }
+    },
+
+    /**
      * Saves the current sitch. Prompts for a name if one isn't set.
      * Updates GUI dropdowns with the new save entry.
+     *
+     * A server save does not write to one of the user's own templates. If the sitch
+     * has the name of a template, it asks for a new name, as Save As does. Only
+     * saveSitchAsTemplate() writes to a template.
+     *
      * @param {boolean} [local=false] - If true, saves locally instead of to server
      * @param {FileSystemDirectoryHandle|null} [directoryHandle=null] - Target working folder for local saves
      * @param {FileSystemFileHandle|null} [fileHandle=null] - Target file for local saves
      * @returns {Promise<void>} Resolves when save completes
      */
-    saveSitch(local = false, directoryHandle = null, fileHandle = null) {
+    async saveSitch(local = false, directoryHandle = null, fileHandle = null) {
+        // No await before this test: saveSitchAs() clears the name and then calls this.
+        if (local || Sit.sitchName === undefined) {
+            return this.saveSitchUnguarded(local, directoryHandle, fileHandle);
+        }
+        const saveGeneration = Globals.loadGeneration;
+        const currentName = Sit.sitchName;
+        const templateLabels = await this.templateLabelsOrStopSave(currentName);
+        if (saveGeneration !== Globals.loadGeneration) return;
+        if (templateLabels.length === 0) {
+            return this.saveSitchUnguarded(false);
+        }
+        Sit.sitchName = undefined;
+        try {
+            return await this.saveSitchUnguarded(false, null, null, {
+                nameMessage: `"${currentName}" is a template, and Save does not change a template.\n`
+                    + "Enter a name for the new sitch",
+            });
+        } catch (error) {
+            // Cancelled with no new name: the sitch keeps the name that it had.
+            if (saveGeneration === Globals.loadGeneration && Sit.sitchName === undefined) {
+                Sit.sitchName = currentName;
+            }
+            throw error;
+        }
+    },
+
+    /**
+     * The save that saveSitch() does after its template check.
+     * @param {boolean} [local=false]
+     * @param {FileSystemDirectoryHandle|null} [directoryHandle=null]
+     * @param {FileSystemFileHandle|null} [fileHandle=null]
+     * @param {{nameMessage?: string}} [options] - nameMessage: text for the name prompt
+     * @returns {Promise<void>}
+     */
+    saveSitchUnguarded(local = false, directoryHandle = null, fileHandle = null, {nameMessage} = {}) {
         const saveGeneration = Globals.loadGeneration;
         // Once the user saves, versions should reflect their own user, not the source
         if (!local) {
@@ -214,9 +299,26 @@ export const saveMethods = {
         }
         if (Sit.sitchName === undefined) {
             const previousSitchName = Sit.sitchName;
-            return this.inputSitchName().then(async () => {
+            return this.inputSitchName(nameMessage ? {message: nameMessage} : {}).then(async () => {
                 if (saveGeneration !== Globals.loadGeneration) return;
                 const sitchName = Sit.sitchName;
+                // A name that the user typed gets the same check as a name that the sitch had.
+                if (!local) {
+                    let templateLabels;
+                    try {
+                        templateLabels = await this.templateLabelsOrStopSave(sitchName);
+                    } catch (error) {
+                        if (saveGeneration === Globals.loadGeneration) Sit.sitchName = previousSitchName;
+                        throw error;
+                    }
+                    if (saveGeneration !== Globals.loadGeneration) return;
+                    if (templateLabels.length > 0) {
+                        Sit.sitchName = previousSitchName;
+                        showError(`"${sitchName}" is a template, so Save did not write to it.\n\n`
+                            + "Save with a different name, or use File > Save as Template to change the template.");
+                        throw "Save Cancelled";
+                    }
+                }
                 const confirmed = await this.confirmOverwriteForNamedSave({
                     sitchName,
                     local,
@@ -254,6 +356,108 @@ export const saveMethods = {
                 throw error;
             })
         }
+    },
+
+    /**
+     * GUI menu handler for "Save as Template". Administrators only, for now.
+     *
+     * This is the only save that writes to a template. It saves the current sitch
+     * to the server with the name that the user gives, then makes that sitch a
+     * template. For a name that is a template already, it saves a new version and
+     * the labels stay as they are.
+     *
+     * @returns {Promise<boolean>} true if the template was saved
+     */
+    async saveSitchAsTemplate() {
+        if (!isAdmin()) return false;
+        const saveGeneration = Globals.loadGeneration;
+        const superseded = () => saveGeneration !== Globals.loadGeneration;
+        this.activateStorageFolder("server");
+        const previousSitchName = Sit.sitchName;
+
+        const rawName = await promptForText({
+            confirmLabel: "Save",
+            // A sitch that came from a template, and has no name of its own, is that template.
+            defaultValue: previousSitchName ?? Sit.templateSource?.name ?? "",
+            message: "Enter a name for the template",
+            title: "Save as Template",
+            validate: (name) => sanitizeSitchName(name) === ""
+                ? "Enter a valid template name."
+                : "",
+        });
+        if (rawName === null || superseded()) return false;
+        const templateName = sanitizeSitchName(rawName);
+
+        let existingLabels;
+        try {
+            existingLabels = await ownTemplateLabels(templateName);
+        } catch (error) {
+            showError("The template labels could not be read from the server, so the template was not saved.", error);
+            return false;
+        }
+        if (superseded()) return false;
+
+        // The label to add after the save. null: the sitch is a template already.
+        let newLabel = null;
+        if (existingLabels.length > 0) {
+            const update = await showConfirm(
+                `"${templateName}" is a template (${existingLabels.join(", ")}).\n\n` +
+                "Save the current sitch as a new version of this template?",
+                {title: "Change Template", yesLabel: "Change Template", noLabel: "Cancel"}
+            );
+            if (!update || superseded()) return false;
+        } else {
+            newLabel = await showChoice(`Which type of template is "${templateName}"?`, {
+                title: "Save as Template",
+                options: [
+                    {label: GLOBAL_TEMPLATE_LABEL, value: GLOBAL_TEMPLATE_LABEL, primary: true, color: "#1976d2",
+                        description: "All users see it on the start screen."},
+                    {label: LOCAL_TEMPLATE_LABEL, value: LOCAL_TEMPLATE_LABEL, color: "#1976d2",
+                        description: "Only you see it on the start screen."},
+                    {label: "Cancel", value: null, cancel: true, color: "#757575"},
+                ],
+            });
+            if (newLabel === null || superseded()) return false;
+            // The name can be that of a different, normal sitch of the user.
+            if (templateName !== previousSitchName) {
+                const confirmed = await this.confirmOverwriteForNamedSave({sitchName: templateName});
+                if (!confirmed || superseded()) return false;
+            }
+        }
+
+        this.sourceUserID = null;
+        Sit.sitchName = templateName;
+        try {
+            await this.saveSitchNamed(templateName);
+        } catch (error) {
+            if (!superseded()) Sit.sitchName = previousSitchName;
+            console.log("Error in saveSitchAsTemplate:", error);
+            return false;
+        }
+        if (superseded()) return false;
+
+        try {
+            if (newLabel === GLOBAL_TEMPLATE_LABEL) {
+                await updateGlobalTemplates({add: [{name: templateName, userID: getEffectiveUserID()}]});
+            } else if (newLabel === LOCAL_TEMPLATE_LABEL) {
+                await addLocalTemplateLabel(templateName);
+            }
+        } catch (error) {
+            showError(`The sitch "${templateName}" was saved, but it could not be made a template.`, error);
+            return false;
+        }
+        if (superseded()) return true;
+
+        // The sitch is a template, so its address is the template by name. The save put
+        // the address of this one version there a moment ago: replace that entry.
+        window.history.replaceState(window.history.state, "", templateAddress(SITREC_SHARE_APP, {name: templateName}));
+
+        this.lastSaveAction = "server";
+        console.log("Template saved as " + templateName);
+        await this.refreshVersions();
+        // An open sitch browser shows the labels as they were before this save.
+        if (this.sitchBrowser?.overlay) this.sitchBrowser.fetchFromServer();
+        return true;
     },
 
     refreshVersions() {

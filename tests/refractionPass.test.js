@@ -8,9 +8,11 @@ import {HalfFloatType, LinearSRGBColorSpace, PerspectiveCamera, WebGLRenderTarge
 import {Sit} from "../src/Globals";
 import {RefractionPass} from "../src/refraction/RefractionPass";
 import {normalizeSettings} from "../src/refraction/RefractionPhysics";
+import {sharedUniforms} from "../src/js/map33/material/SharedUniforms";
 
 let pass, view, tool;
 beforeEach(() => {
+    Object.assign(Sit, {refraction: true, refractionTerrain: true, refractionSky: true});
     global.Worker = jest.fn().mockImplementation(() => ({postMessage: jest.fn(), terminate: jest.fn()}));
     const camera = new PerspectiveCamera(1, 1, 0.1, 1e7);
     camera.position.set(6371010, 0, 0); camera.up.set(1, 0, 0); camera.lookAt(6371010, 10000, 0);
@@ -22,10 +24,31 @@ beforeEach(() => {
 });
 afterEach(() => { pass.dispose(); delete global.Worker; });
 
-const reply = (job = pass.busy) => ({id: job.id, result: {data: new Float32Array(16), width: 2, rows: 2,
-    minAngle: -0.1, maxAngle: 0.1, distances: new Float64Array([0, 50000]), milliseconds: 1}});
+const reply = (job = pass.busy) => {
+    const data = new Float32Array(16);
+    for (let i = 2; i < data.length; i += 4) data[i] = 50000;
+    return {id: job.id, result: {data, width: 2, rows: 2,
+        minAngle: -0.1, maxAngle: 0.1, distances: new Float64Array([0, 50000]), milliseconds: 1}};
+};
 
 const previewReply = () => reply(pass.previewBusy);
+
+test.each([false, true])("coverage uses its own output and restores normal rendering after failure=%s", fail => {
+    pass.capture(view); pass.receive(reply());
+    const input = new WebGLRenderTarget(100, 100), output = new WebGLRenderTarget(100, 100);
+    view.fullscreenQuad = {};
+    view.fullscreenQuadCamera = {};
+    view.renderer.setRenderTarget = jest.fn();
+    view.renderer.render = jest.fn(() => {
+        expect(pass.material.uniforms.coverageMask.value).toBe(true);
+        if (fail) throw new Error("draw failed");
+    });
+    if (fail) expect(() => pass.renderMask(view, input, output)).toThrow("draw failed");
+    else expect(pass.renderMask(view, input, output)).toBe(output);
+    expect(view.renderer.setRenderTarget).toHaveBeenCalledWith(output);
+    expect(pass.material.uniforms.coverageMask.value).toBe(false);
+    input.dispose(); output.dispose();
+});
 
 test("continuous profile edits retain refraction and display advancing previews", () => {
     pass.capture(view); pass.receive(reply());
@@ -142,6 +165,108 @@ test("disabling releases depth, textures, worker, and ignores late replies", () 
     expect(worker.terminate).toHaveBeenCalled();
     pass.receive(response);
     expect(tool.setResult).not.toHaveBeenCalled();
+    expect(view.camera._rayGeometryPass).toBeUndefined();
+});
+
+test("geometry range clipping restores the camera even when a render fails", () => {
+    tool.settings.projectionMode = "geometry"; tool.settings.maxDistance = 500000;
+    const far = view.camera.far, projection = view.camera.projectionMatrix.clone();
+    sharedUniforms.farPlane.value = far;
+    const restore = pass.begin();
+    try {
+        expect(view.camera.far).toBe(500000);
+        expect(sharedUniforms.farPlane.value).toBe(view.camera.far);
+    }
+    finally { restore(); }
+    expect(view.camera.far).toBe(far);
+    expect(view.camera.projectionMatrix.equals(projection)).toBe(true);
+    expect(sharedUniforms.farPlane.value).toBe(far);
+});
+
+test.each(["screen", "geometry"])("master off bypasses %s refraction and preserves the cached profile", mode => {
+    tool.settings.projectionMode = mode;
+    pass.capture(view); pass.receive(reply());
+    const texture = pass.texture, result = pass.result, jobs = pass.jobs, far = view.camera.far;
+    Sit.refraction = false; Sit.refractionEnabled = false; Sit.terrestrialRefraction = false;
+    expect(pass.isActive()).toBe(false);
+    const restore = pass.begin();
+    expect(view.camera.far).toBe(far);
+    expect(pass.geometryContext({forAim: true})).toBeNull();
+    pass.capture(view);
+    expect(pass.jobs).toBe(jobs);
+    const input = {};
+    expect(pass.render(view, input)).toBe(input);
+    pass.captureBackground(view, input);
+    expect(pass.skyTarget).toBeUndefined();
+    restore();
+    Sit.refraction = true; Sit.refractionEnabled = true; Sit.terrestrialRefraction = true;
+    expect(pass.isActive()).toBe(true);
+    expect(pass.texture).toBe(texture);
+    expect(pass.result).toBe(result);
+    if (mode === "geometry") {
+        const end = pass.begin();
+        // The temporarily suppressed analytic flags must not turn ray geometry off.
+        expect(pass.geometryContext()).not.toBeNull();
+        end();
+    }
+});
+
+test.each(["screen", "geometry"])("%s mode respects separate sky and terrain switches", mode => {
+    tool.settings.projectionMode = mode;
+    pass.capture(view); pass.receive(reply());
+    const input = new WebGLRenderTarget(20, 10);
+    view.renderTargetA = input; view.renderTargetB = {};
+    view.fullscreenQuad = {};
+    view.renderer.setRenderTarget = jest.fn(); view.renderer.render = jest.fn();
+    Sit.refractionTerrain = false;
+    const far = view.camera.far, end = pass.begin();
+    expect(view.camera.far).toBe(far);
+    expect(pass.geometryContext({forAim: true})).toBeNull();
+    expect(pass.render(view, input)).toBe(view.renderTargetB);
+    expect(pass.material.uniforms.geometryMode.value).toBe(1);
+    expect(pass.material.uniforms.refractSky.value).toBe(1);
+    end();
+    Sit.refractionTerrain = true; Sit.refractionSky = false;
+    pass.render(view, input);
+    expect(pass.material.uniforms.refractSky.value).toBe(0);
+    expect(pass.material.uniforms.geometryMode.value).toBe(mode === "geometry" ? 1 : 0);
+    Sit.refractionTerrain = false;
+    expect(pass.isActive()).toBe(false);
+    expect(pass.render(view, input)).toBe(input);
+    input.dispose();
+});
+
+test("To Target retains its settled ray solution while new view coverage traces", () => {
+    tool.settings.projectionMode = "geometry";
+    pass.capture(view); pass.receive(reply());
+    expect(pass.geometryContext()).not.toBeNull();
+    view.camera.rotateX(0.2);
+    pass.capture(view);
+    expect(pass.geometryContext()).toBeNull();
+    expect(pass.geometryContext({forAim: true})).not.toBeNull();
+    view.camera.position.x += 100;
+    pass.capture(view);
+    expect(pass.geometryContext({forAim: true})).toBeNull();
+});
+
+test("cold narrow geometry views include eye level and expand if that ray also terminates", () => {
+    tool.settings.projectionMode = "geometry";
+    view.camera.fov = 0.29678;
+    view.camera.lookAt(6371010 + 10000 * Math.tan(-1.8558 * Math.PI / 180), 10000, 0);
+    view.camera.updateProjectionMatrix();
+    pass.capture(view);
+    expect(pass.busy.request.maxAngle).toBe(0);
+    expect(pass.busy.request.minAngle).toBeLessThan(pass.visibleMin);
+    const stopped = reply(); stopped.result.maxAngle = 0;
+    stopped.result.data[10] = 1000;
+    pass.receive(stopped);
+    expect(tool.status).toHaveBeenLastCalledWith("Expanding ray coverage above the view…");
+    pass.capture(view);
+    expect(pass.busy.request.maxAngle).toBe(0.01);
+    expect(pass.jobs).toBe(2);
+    pass.receive(reply());
+    pass.capture(view);
+    expect(pass.jobs).toBe(2);
 });
 
 test("sky capture is dormant until ready and preserves scene format and render state", () => {

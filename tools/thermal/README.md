@@ -1164,7 +1164,7 @@ Linked focal length and field remain consistent. `presetMetadata` survives seria
 and identifies edited preset values. Temperature/emissivity settings provide suggested
 values for authoring tags; empty models still use the documented ambient fallback.
 
-Run the thermal, Vehicle Designer and PSF tests and the import check (Jest matches each pattern
+Run the thermal, Custom Object Designer and PSF tests and the import check (Jest matches each pattern
 against test paths without regard to case, so `tests/thermal` also selects `tests/Thermal…`):
 
 ```sh

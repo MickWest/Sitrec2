@@ -18,7 +18,7 @@ This page has four parts:
 ## A. The ground menu
 
 Right-click the ground (terrain, or the globe) in the main view or the look view. The menu is
-titled **Ground**. It is only available in a Custom sitch. **File → New Sitch** starts a fresh
+titled **Ground**. It is only available in a Custom sitch. **File → New Sitch (Empty)** starts a fresh
 one, and so does the **New Sitch** button in the sitch browser.
 
 The top of the menu shows the location of the point you clicked:
@@ -38,11 +38,12 @@ You can select and copy this text.
 | **Set Target Above** | Moves the target's fixed position to the clicked latitude and longitude. The target keeps its current altitude | The target position |
 | **Set Target on Ground** | Moves the target's fixed position to the clicked point, on the ground | The target position |
 | **Drop Pin** | Places a labelled pin (a feature marker) and opens its edit window with the label text selected, ready to type | See [Pins](#pins) |
-| **Add 3D Object** | Places a grey sphere, 5 m in radius (10 m across), that stays in one place. It has no track | **Objects** menu, as *Object 1*, *Object 2*, ... |
+| **Add 3D Object** | Places a grey sphere, 5 m in radius (10 m across), that stays in one place. It has no track, but you can put it on one later: see [3D objects](#3d-objects) | **Objects** menu, as *Object 1*, *Object 2*, ... |
 | **Add Moving Object** | Starts a new hand-drawn track at the clicked point, at the current frame, with a grey sphere, 5 m in radius, riding on it. The track opens in edit mode | Track in **Contents** and object in **Objects**, with the same number: *Track 3* and *Object 3*, one more than the highest track or object number |
 | **Add Moving Object (In→Out)** | Makes a straight track with an object riding on it, with control points at the In and Out frames. See [In→Out tracks](#in-out-tracks) | Track in **Contents**, object in **Objects**, named as above |
 | **Add Flight Path** | Starts a new hand-drawn track, with no object, at the clicked point, at the current frame, in edit mode | **Contents**, as *Track 1*, *Track 2*, ... |
 | **Add Balloon** | Adds a balloon that launches from the clicked point, rises and drifts with the wind. See [Balloons](#balloons) | **Contents**, as *Balloon*, *Balloon_1*, ...; its sphere in **Objects**, as *Object N* |
+| **Add Kite** | Adds a kite on a line that is held at the clicked point. The kite flies downwind of that point, where the wind puts it. See [Kites](#kites) | **Contents**, as *Kite*, *Kite_1*, ...; the kite in **Objects**, as *Object N* |
 | **Add Building** | Adds a 15 × 15 m building, 4 m high, centered on the clicked point, and opens its editor | **Objects**, as *Building: Building 1* |
 | **Add Clouds** | Adds a round layer of clouds at 10,000 ft, 500 m in radius, centered above the clicked point, and opens its editor | **Objects**, as *Clouds: Clouds 1* |
 | **Add Ground Overlay** | Adds an image overlay draped on the ground, 0.02° square, centered on the clicked point, and opens its editor. It has no image until you give it one | **Objects**, as *Overlay: Overlay 1* |
@@ -71,8 +72,8 @@ The camera and target items move the fixed positions that the camera and target 
 not following a track. If the camera or target follows a track, the move has no visible effect
 until you switch back to the fixed position.
 
-If you right-clicked in the **look view**, a new track (from any of the three track items or from
-**Add Balloon**) is also shown in the look view. A track made from the main view is shown only in
+If you right-clicked in the **look view**, a new track (from any of the three track items, from
+**Add Balloon** or from **Add Kite**) is also shown in the look view. A track made from the main view is shown only in
 the main view. You can change this later with **Show in look view** in the track's folder.
 
 ### In->Out tracks
@@ -130,6 +131,294 @@ Its folder in **Contents** has these launch settings:
 
 It also has **Show in look view** and **Delete Track**, which asks before it deletes the balloon.
 
+### Kites
+
+**Add Kite** makes a kite on a flying line. The clicked point is the anchor, where the line is
+held. The kite flies downwind of the anchor, at the height where its lift, its drag, its weight
+and the pull of the line are in balance. Use it to test if a kite can be at the position of an
+object in a video, with the wind of that day.
+
+![Main view of a black octopus kite in the air above a town. The kite has a wide head with pale openings at its front, an eye with an orange rim, and eight long tentacles with orange spots that trail to the right. Thin lines go from the underside of the head to one point below it, and a white line goes from that point down to the lower left. A blue line shows the path of the kite](docimages/scene-objects-kite.jpg)
+
+A kite in the main view. The white line is the flying line, from the anchor on the ground to the tow point of the kite. The thin lines above the tow point are the bridle of the kite. The blue line is the kite's track. This kite is the **Octopus kite · 14 m, black** design.
+
+A new kite is a small diamond kite. To change it, open the kite's folder in **Objects** and
+select **Browse custom objects…**, then the **Kites** type. See
+[Objects and 3D Models](CustomModels.md#procedural-custom-objects). The kite points its nose into the
+wind, and its tails or tentacles move with the wind at the kite: faster in a stronger wind, and
+slower for a larger kite.
+
+**The wind.** The kite uses the same wind as a balloon (see [Wind in Sitrec](Wind.md)). With the
+**Manual** wind source that is **Target Wind**. A wind is named by the direction it comes from,
+so a wind from the west puts the kite east of its anchor. A new custom sitch has a Target Wind
+of zero, so a new kite is on the ground until you set a wind.
+
+**The flight model.** The lift and the drag of a kite go with the square of the wind speed, and
+its weight does not change. So:
+
+- below a minimum wind, the lift is less than the weight and the kite is on the ground
+- above it, the kite rises as the wind becomes stronger
+- in a strong wind, the line comes near a maximum angle, which is set by the ratio of lift to drag
+
+The line has weight and the wind pushes on it, so it sags: it is steepest at the kite and
+flattest at the anchor. A heavy or thick line holds the kite lower.
+
+On each frame the wind gives the kite a balance position. When the wind changes, from the wind
+source or from the gusts, the kite follows the new position with a delay. The delay is the time
+that the wind takes to go the horizontal distance from the anchor to the kite: about 15 seconds
+for a kite that is 75 m downwind in a wind of 5 m/s. The kite moves faster when it is farther
+from its balance position, at up to half the wind speed. A kite that the wind cannot hold sinks
+at 1 m/s or more. The delay and the two speed limits are estimates from a simple model. The
+model does not include the momentum of the kite, or a person who pulls the line. A kite in a
+wind near its minimum sinks in each lull and rises again in each gust.
+
+**The gusts.** **Wind Variability (%)** is the turbulence intensity of the wind: the typical
+size (the standard deviation) of the gusts along the wind, as a percentage of the wind speed.
+The gusts across the wind are 0.8 of that size, and they turn the wind from side to side. A
+gust is a body of air that the wind carries past the kite, so it lasts for its length divided
+by the wind speed. For a kite 60 m or more above the ground in a wind of 5 m/s, a gust along the
+wind lasts about one minute, and a gust across the wind about 20 seconds. Nearer the ground the
+gusts are shorter. The ratio and the lengths are those of the Kaimal turbulence model in the
+wind-turbine standard IEC 61400-1.
+
+Over the frames of the sitch, the gusts have a mean of zero. So the mean wind at the kite is
+the wind of the sitch, and the kite moves about the position that this wind gives. On the first
+frame the kite is at that position, and the gusts then move it. A gust that
+lasts longer than the sitch is not in it. Thus in a short sitch the wind changes less than
+**Wind Variability (%)** gives. The mean is over all the frames of the sitch: if you change the
+number of frames, the gusts change, and the kite moves at every frame.
+
+Typical values of **Wind Variability (%)** at a height of 50 m, from the turbulence formula of
+the wind-load standard EN 1991-1-4. The values are larger nearer the ground: at 20 m, by one
+tenth over the sea and by one third in a town center.
+
+| Ground upwind of the kite | Wind Variability (%) |
+|---|---|
+| Open sea, or a beach with the wind from the sea | 10 |
+| Flat open ground: lakes, grassland | 12 |
+| Open country with some trees and buildings | 15 |
+| Suburbs and woods | 20 |
+| Town centers | 26 |
+
+With the default of 10%, in a wind of 5 m/s, a new kite on a 100 m line is within about 10 m of
+its mean position for most of the time, and it moves at about 0.2 m/s.
+
+The mass, the lifting area, the lift coefficient and the drag coefficient are part of the kite
+design: **Edit design…** in the kite's object folder, then the **Flight** folder. The values of
+the preset kites are estimates for each type of kite. They are not measurements of a real kite.
+
+The kite's folder in **Contents** has these settings:
+
+| Control | Default | What it does |
+|---|---|---|
+| **Anchor Altitude (m MSL)** | ground at the clicked point | Altitude above mean sea level of the point where the line is held |
+| **Line Length (m)** | 100 | Length of the flying line, from the anchor to the kite |
+| **Line Weight (g/m)** | 0.5 | Weight of one meter of line. About 0.5 for a small kite, and 5 or more for a large show kite |
+| **Line Diameter (mm)** | 1 | Thickness of the line, for the push of the wind on it. About 1 for a small kite, and 3 or more for a large show kite |
+| **Wind Variability (%)** | 10 | How gusty the wind is, from 0 to 40: the typical size of a gust as a percentage of the wind speed. The gusts move the kite slowly from side to side, and up and down. See **The gusts** above |
+| **Random Seed** | 1 | Change it for a different, but repeatable, pattern of gusts |
+| **Kite Position** (read only) | | At the current frame: the height of the kite above the anchor, its distance downwind of the anchor, and the angle of a straight line from the anchor to the kite. *On the ground* when the wind is too light |
+| **Wind and Pull** (read only) | | At the current frame: the wind speed at the kite and the pull of the line. On the ground, the second value is the wind that this kite needs |
+
+It also has the track display controls, **Show in look view** (for the track and the flying
+line) and **Delete Track**, which asks before it deletes the kite and its object. To move the
+anchor, drag the kite with its move widget, or hold **Option** / **Alt** and drag it: the anchor
+moves by the same amount, and the kite flies from the new anchor. The kite is added to the
+camera and target track lists.
+
+### Kite Anchor Finder
+
+**Add Kite** starts from the anchor and gives the position of the kite. The **Kite Anchor
+Finder** does the reverse. It starts from an object in the video, and it shows where on the
+ground the line of a kite at that position can be held. You can then see if that place is one
+where a person can fly a kite, such as a park. It is the **Kite Anchor Finder** folder in the
+**Traverse** menu of a custom sitch.
+
+![Main view from above a park at an angle. A white line goes across the picture in the air above a row of houses. Below it, on the grass of the park, one wide yellow line and four orange lines go from the lower left to the upper right. A yellow outline on the grass has the label "2 m kite, 54 m line". A white line goes from the outline up to the white line in the air. A thinner white line goes from a small kite in the air down to the yellow line on the grass](docimages/scene-objects-kite-anchor-finder.jpg)
+
+The Kite Anchor Finder in the main view. The white line in the air is the part of the line of sight where the kite can be. The wide yellow line and the four orange lines on the ground are the band of possible anchors. The yellow outline holds the anchors for a kite that is 2 m across, and a white line goes from that kite to the middle of the outline. The thinner white line is the flying line of a kite from **Add Kite**. Its anchor is in the band.
+
+To use it:
+
+1. Give Sitrec the line of sight to the object. The finder uses **Traverse → LOS Source** at the
+   current frame. Point the camera at the object, with **LOS Source** at **Camera Center**. Or
+   mark the object in the video: hold **Ctrl** (**Cmd** on a Mac) and click it, then set **LOS
+   Source** to **Camera + Object Track**. See
+   [Point Track, Manual Tracking and Ground Track](PointTrack.md#point-track-manual-tracking-and-ground-track).
+2. Set the wind of that time. See [Wind in Sitrec](Wind.md).
+3. In **Traverse → Kite Anchor Finder**, set **Object Size (px)** to the size of the object in
+   the video, in pixels of the video frame. Measure one part of the object, for example the width
+   of its head.
+4. Set **Kite Size Min (m)** and **Kite Size Max (m)** to the range of real sizes of that same
+   part of the kite.
+5. Turn on the checkbox in the title of the folder (**Show Anchor Band**).
+
+The finder does this calculation:
+
+- **Object Size (px)** and the field of view of the camera give the angle that the object makes
+  at the camera. A kite of one real size is then at one distance from the camera: its size
+  divided by that angle in radians. The range of kite sizes gives a part of the line of sight.
+- A kite flies downwind of its anchor. So, for each position of the kite, the anchor is upwind,
+  at the point where a straight line that goes down at the flight angle meets the ground. Over
+  flat ground, the distance to that point is the height of the kite divided by the tangent of
+  the flight angle. For a kite 60 m above the ground, that is 104 m at 30°, 60 m at 45° and 35 m
+  at 60°.
+- The flight angle and the wind direction each have a range. So one kite size gives an area on
+  the ground, and all the kite sizes give a band.
+
+The finder draws these lines in the main view. They are drawn over the terrain and the buildings.
+
+| Line | Meaning |
+|---|---|
+| White line in the air | The part of the line of sight where the kite can be, from the smallest kite size to the largest |
+| Wide yellow line | The anchors for the middle flight angle and the wind direction of the sitch |
+| Four orange lines | The sides of the band: the lowest and the highest flight angle, each with the wind turned to the left and to the right by **Wind Direction Error (±°)** |
+| Yellow outline with a label | All the anchors for one kite size. The label gives that size and the length of a straight line from the anchor to the kite |
+| White line from the air to an outline | The flying line of that kite as a straight line, for the middle flight angle and the wind direction of the sitch |
+
+The folder has these settings. They are saved with the sitch.
+
+| Control | Default | What it does |
+|---|---|---|
+| **Show Anchor Band** (the checkbox in the title) | off | Draws the band. While it is off, the finder does no work |
+| **Object Size (px)** | 10 | The size of the object in the video, in pixels of the video frame |
+| **Kite Size Min (m)** | 1 | The smallest real size of that part of the kite. A smaller kite is nearer to the camera |
+| **Kite Size Max (m)** | 5 | The largest real size of that part of the kite. A larger kite is farther from the camera |
+| **Flight Angle Min (°)** | 30 | The lowest angle above the horizontal of a straight line from the anchor to the kite. A lower angle puts the anchor farther upwind |
+| **Flight Angle Max (°)** | 60 | The highest angle above the horizontal of a straight line from the anchor to the kite |
+| **Wind Direction Error (±°)** | 20 | How far the wind direction at the kite can be from the wind of the sitch, to each side |
+| **Max Line Length (m)** | 300 | The longest flying line. A kite that needs a longer line has no anchor in the band |
+| **Angular Size** (read only) | | The angle that the object makes at the camera, in degrees and in milliradians |
+| **Wind at Kite** (read only) | | The wind of the sitch at the middle of the kite positions: the direction that it comes from, and its speed |
+| **Kite Distance** (read only) | | The distance from the camera to the kite, for the smallest and the largest kite size |
+| **Kite Height** (read only) | | The height of the kite above the ground below it: the lowest and the highest of the kite positions. It ends with *part below the ground* when some kite positions are in the ground |
+| **Line Length** (read only) | | The length of a straight line from the anchor to the kite for the middle flight angle: the shortest and the longest in the band. When only some kite sizes have an anchor, those sizes follow |
+
+**The flight angle.** This is the angle that **Kite Position** shows for a kite from **Add
+Kite**. In a strong wind, the preset kites fly at about 40° (octopus kite) to about 60° (delta
+kite), from the lift and drag estimates of their designs. A kite flies lower in a light wind,
+and on a heavy line. The finder does not use a kite design: the flight angle is a setting.
+
+**The wind.** The finder uses the wind of the sitch at each position of the kite, at the current
+frame. With weather profiles, that is the wind at the height of the kite. A weather report is
+for a different place and height, and hills and buildings turn the wind: **Wind Direction Error
+(±°)** is for that difference.
+
+The finder has these limits:
+
+- The ground is the elevation data of the terrain. It is not the surface of the 3D building
+  tiles, which has the roofs and the trees.
+- The line from the anchor to the kite is straight. A real line sags, so it is longer than the
+  **Line Length**.
+- A kite position that is below the ground has no anchor. This occurs where the line of sight
+  goes into a hill.
+- The result is for the current frame. When the object moves in the video, or the camera moves,
+  the band moves.
+
+### Reverse Balloon Launch Finder
+
+**Add Balloon** starts from the launch point and gives the flight of the balloon. The **Reverse
+Balloon Launch Finder** does the reverse. It starts from an object, and it shows where on the
+ground a balloon at that position can have been launched. It is the **Reverse Balloon Launch
+Finder** folder in the **Traverse** menu of a custom sitch, below the **Kite Anchor Finder**.
+
+A balloon rises at its buoyancy, and the wind of each height moves it. The finder follows that
+flight back in time: down at the buoyancy and against the wind of each height, until the path
+meets the ground. A balloon that rises more slowly was in the air for a longer time, so it
+comes from farther upwind.
+
+To use it:
+
+1. Set the wind of that time. See [Wind in Sitrec](Wind.md). With weather profiles, the finder
+   uses the wind of each height.
+2. In **Traverse → Reverse Balloon Launch Finder**, set **Start From**:
+   - **Line of Sight**: the balloon is on the line of **Traverse → LOS Source** at the current
+     frame. Set **Object Size (px)** to the size of the object in the video, and **Balloon Size
+     Min (m)** and **Balloon Size Max (m)** to the range of real sizes. They give the distance,
+     as in the [Kite Anchor Finder](#kite-anchor-finder).
+   - **Target**: the balloon is at the position of **Target → Target Track**.
+   - A track: the balloon is at the position of that track at the current frame.
+   - A 3D object whose **Position** is **Manual**: the balloon is at that object. The object is
+     in the list under its name. See [Location](#location-a-manual-position-or-a-track).
+3. Set **Buoyancy Min (m/s)** and **Buoyancy Max (m/s)** to the range of speeds at which the
+   balloon can rise.
+4. Turn on the checkbox in the title of the folder (**Show Launch Sites**).
+
+![The launch sites of a balloon in the main view: a yellow outline on the ground, a wide yellow line in it with the labels "5 m/s: 28 s" and "1 m/s: 2 min" at its ends, and a white line from the ground up to the balloon](docimages/scene-objects-balloon-launch-finder.jpg)
+
+The finder draws these lines in the main view. They are drawn over the terrain and the buildings.
+
+| Line | Meaning |
+|---|---|
+| Yellow outline | All the launch sites for one balloon position: each buoyancy in the range, with the wind turned to the left and to the right by **Wind Direction Error (±°)** |
+| Line in the outline, with a label at each end | The launch sites for the wind direction of the sitch, from the highest buoyancy (the near end) to the lowest. Each label gives the buoyancy and the flight time. On a line of sight, the first label also gives the balloon size |
+| White line from the ground to the balloon | The flight of the balloon for the middle buoyancy and the wind direction of the sitch |
+| White line in the air (line of sight only) | The part of the line of sight where the balloon can be, from the smallest balloon size to the largest |
+| Wide yellow line and four orange lines (line of sight only) | The middle and the sides of the area for all the balloon sizes |
+
+The folder has these settings. They are saved with the sitch.
+
+| Control | Default | What it does |
+|---|---|---|
+| **Show Launch Sites** (the checkbox in the title) | off | Draws the launch sites. While it is off, the finder does no work |
+| **Start From** | Line of Sight | Where the balloon is at the current frame: on the line of sight, at the target, at the position of a track, or at a 3D object whose **Position** is **Manual** |
+| **Object Size (px)** | 10 | The size of the object in the video, in pixels of the video frame. Only for **Line of Sight** |
+| **Balloon Size Min (m)** | 0.3 | The smallest real size of the balloon. A smaller balloon is nearer to the camera. Only for **Line of Sight** |
+| **Balloon Size Max (m)** | 2 | The largest real size of the balloon. A larger balloon is farther from the camera. Only for **Line of Sight** |
+| **Buoyancy Min (m/s)** | 1 | The lowest speed at which the balloon rises. This is the **Buoyancy (m/s)** of a balloon from **Add Balloon** |
+| **Buoyancy Max (m/s)** | 5 | The highest speed at which the balloon rises |
+| **Wind Direction Error (±°)** | 10 | How far the wind direction can be from the wind of the sitch, to each side, at every height |
+| **Resolution (steps)** | 128 | The number of steps of each flight, from the balloon down to the ground. With more steps, a flight follows the change of the wind with the height more closely, and the result takes more time to calculate. See [Resolution](#resolution) |
+| **Angular Size** (read only) | | The angle that the object makes at the camera. Only for **Line of Sight** |
+| **Wind at Balloon** (read only) | | The wind of the sitch at the balloon: the direction that it comes from, and its speed |
+| **Balloon Distance** (read only) | | The distance from the camera to the balloon, for the smallest and the largest balloon size. Only for **Line of Sight** |
+| **Balloon Height** (read only) | | The height of the balloon above the ground below it |
+| **Flight Time** (read only) | | The time from the launch to the current frame: the shortest and the longest of the flights in the result. It ends with *part longer than 10 h* when a part of the buoyancy range needs more than 10 hours. It is *Longer than 10 h* when all of that range does. See [The longest flight](#the-longest-flight) |
+
+With **Start From** at a balloon from **Add Balloon** that has a **Wind Variability (%)** of 0,
+and with its buoyancy, the launch site is the same from every frame: the point where the track
+of that balloon leaves the ground. That is the launch point of the balloon when its **Start
+Altitude (m MSL)** is the height of the ground there. The flight time grows by the time between
+the frames.
+
+The finder has these limits:
+
+- The wind is the wind of the sitch at the current frame, for the whole flight. The finder does
+  not use the wind of an earlier time.
+- The buoyancy is the same for the whole flight.
+- The flight has no gusts.
+- The ground is the elevation data of the terrain. It is not the surface of the 3D building
+  tiles, which has the roofs and the trees.
+- A balloon position that is below the ground has no launch site.
+
+#### Resolution
+
+Each flight goes down from the balloon in steps of equal height. A step uses the wind of its
+middle height for all of the step. So where the wind changes much inside one step, the launch
+site is not exact. **Resolution (steps)** is the number of steps from the balloon to the ground
+below it, from 8 to 1024. A step is 5 m high at least, so a balloon that is low has fewer steps.
+
+With more steps, the steps are smaller and the launch site is nearer to the exact one. The time
+to calculate the result goes up with the number of steps.
+
+In tests with a wind from weather profiles, the balloon was at 17.9 km and at 30 km, and the
+farthest launch site was 18 km to 77 km away. At 32 steps that launch site was 0.2% to 0.6% of
+its distance from the launch site at 4096 steps. At 128 steps it was 0.2% or less.
+
+#### The longest flight
+
+The flight time is the height of the balloon above the launch site, divided by the buoyancy. The
+finder follows a flight for 10 hours at most. At 1 m/s, a balloon gets to 36 km (118,000 ft) in
+that time.
+
+When a part of the buoyancy range needs more than 10 hours, the result has only the other part.
+The outline is shorter: its far end is at the buoyancy whose flight takes 10 hours, and the label
+at that end shows that buoyancy, not **Buoyancy Min (m/s)**. **Flight Time** ends with *part
+longer than 10 h*.
+
+When the flight at **Buoyancy Max (m/s)** also needs more than 10 hours, there is no launch
+site, and **Flight Time** shows *Longer than 10 h*.
+
 ### Pins
 
 **Drop Pin** places a pin labelled *New Feature* and opens a window titled **Edit: *label***. In
@@ -149,6 +438,53 @@ radius on open ground can be hard to find. While the window is open you can drag
 the move widget that appears when the pointer is near it. The window holds the same controls as the
 object's folder in the **Objects** menu: geometry or model, size, material and so on. See
 [Objects and 3D Models](CustomModels.md).
+
+#### Location: a manual position, or a track
+
+The folder of an object from **Add 3D Object**, **Add Moving Object** or **Add Moving Object
+(In→Out)** has a **Location** group, directly below **Name**. Its **Position** control sets what
+gives the object its position:
+
+- **Manual**: the **Lat**, **Lon** and **Alt** values below it, with **Above Ground Level** and
+  **Allow Small Altitudes**, as in the camera's **Location** group. You can also drag the object
+  with the move widget. An object from **Add 3D Object** starts here.
+- **A track**: every track of the sitch is in the list, by its name: hand-drawn tracks, loaded
+  tracks, balloons and kites. The object moves along the track and points along it, and the manual
+  values are hidden. An object from **Add Moving Object** starts on its own track.
+
+So, to put an object on a path that is already there, select the path in **Position**. Several
+objects can be on one track. When you change **Position** back to **Manual**, the object stays
+where the track put it on the current frame. The same happens when you delete the track. A track
+that you add or load later comes into the list by itself, and no object goes to it by itself.
+
+While **Position** is **Manual**, the object is itself in the other track lists of the sitch,
+under its name. Select it there as you select a track:
+
+| List | With the object selected |
+|---|---|
+| **Target → Target Track** | The target is at the object |
+| **Camera → Location → Position** | The camera is at the object |
+| **Camera → Camera Tweaks → Orbit Target** | The Orbit camera position circles the object |
+| **Position** of another object | That object is at the same place |
+| **Traverse → Reverse Balloon Launch Finder → Start From** | The reverse flight starts at the object |
+| **Terrain → Zoom to track** | The terrain moves to the object |
+
+The position that these lists use is the **Lat**, **Lon** and **Alt** of the object. When you
+give the object a new name, the lists show the new name, and a list that has the object selected
+keeps it. When a track has the same name as the object, the object is in the lists with
+*(object)* after its name.
+
+When you put the object on a track, the object goes out of these lists, because the track is in
+them. A list that had the object selected then changes to that track, so it stays with the
+object. When you delete the object, a list that had it selected goes back to its first choice.
+
+![The Location group of an object in two states. Left: Position on Manual, with the Lat, Lon and Alt values. Right: Position on Track 1, with those values hidden](docimages/scene-objects-location.jpg)
+
+The **Banking** control of the object sets how it points on the track. With **Position** on
+**Manual** the object does not move, so it keeps the heading that it has: north for a new object.
+Select **Fixed Heading** in **Banking** to turn it.
+
+A balloon's sphere and a kite stay with their own track, and have no **Location** group.
 
 In the folder, the size of a generated shape (for example **Radius (m)**) is just below
 **Geometry**, and its segment counts are in the closed **Mesh Detail** group. Sizes are in

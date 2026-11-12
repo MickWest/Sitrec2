@@ -71,10 +71,11 @@ import {
     parseFR24CSV
 } from "./ParseCustom1CSV";
 import {findColumn, stripDuplicateTimes} from "./ParseUtils";
-import {isConsole, isLocal, isServerless, SITREC_APP, SITREC_SHARE_APP, SITREC_DOMAIN, SITREC_SERVER} from "./configUtils";
+import {isAdmin, isConsole, isLocal, isServerless, SITREC_APP, SITREC_SHARE_APP, SITREC_DOMAIN, SITREC_SERVER} from "./configUtils";
 import {TSParser} from "./TSParser";
 import {NITFParser} from "./NITFParser";
 import {showError, showErrorOnce, showConfirm} from "./showError";
+import {findTemplateByName} from "./SitchTemplates";
 import {asyncOperationRegistry} from "./AsyncOperationRegistry";
 import {ECEFToLLAVD_radii} from "./LLA-ECEF-ENU";
 import {projectedBoundsToWGS84} from "./proj4Loader";
@@ -155,7 +156,11 @@ export class CFileManager extends CManager {
         if (!isConsole) {
             this.guiFolder = guiMenus.file;
             this.guiFolder.add(this, "newSitch").name(t("file.newSitch.label")).perm().tooltip(t("file.newSitch.tooltip"));
-
+            // A template is a saved sitch on the server, so this item needs the sitch browser.
+            if (this.ensureSitchBrowser()) {
+                this.guiFolder.add(this, "newSitchFromTemplate").name(t("file.newSitchFromTemplate.label")).perm()
+                    .tooltip(t("file.newSitchFromTemplate.tooltip"));
+            }
 
             // the Save and Load buttons should only be available for the custom sitch
 
@@ -167,7 +172,8 @@ export class CFileManager extends CManager {
                     serverName = getEnv("S3_BUCKET", process.env.S3_BUCKET) + ".s3"
                 }
 
-                this.guiServer = this.guiFolder.addFolder("Server (" + serverName + ") "+getEffectiveUserID()).perm().open();
+                this.guiServer = this.guiFolder.addFolder("Server (" + serverName + ") "+getEffectiveUserID()).perm().open()
+                    .tooltip(t("file.server.folderTooltip"));
 
                 // Server-side rehosting only for logged-in users
                 if (getEffectiveUserID() > 0) {
@@ -176,7 +182,8 @@ export class CFileManager extends CManager {
 
                     // this.guiFolder.add(this, "rehostFile").name("Rehost File").perm().tooltip("Rehost a file from your local system. DEPRECATED");
                 } else {
-                    this.loginButton = this.guiServer.add(this, "loginServer").name(t("file.savingDisabled")).setLabelColor("#FF8080").perm();
+                    this.loginButton = this.guiServer.add(this, "loginServer").name(t("file.savingDisabled")).setLabelColor("#FF8080").perm()
+                        .tooltip(t("file.savingDisabledTooltip"));
                     // Still add Browse button for non-logged-in users so featured sitches remain discoverable.
                     this.ensureBrowseButton(t("file.server.browseFeatured"));
                     this.guiServer.close();
@@ -186,7 +193,8 @@ export class CFileManager extends CManager {
             if (getEnvBool("SAVE_TO_LOCAL", process.env.SAVE_TO_LOCAL)) {
                 const useDesktopLocalUi = this.isDesktopLocalFsAvailable();
                 // Local save/load is always available for the custom sitch, regardless of login status
-                this.guiLocal = this.guiFolder.addFolder("Local").perm().open();
+                this.guiLocal = this.guiFolder.addFolder("Local").perm().open()
+                    .tooltip(t("file.local.folderTooltip"));
                 this._localStatus = {value: useDesktopLocalUi ? t("file.local.noFileSelected") : t("file.local.noFolderSelected")};
                 this._localStatusController = this.guiLocal.add(this._localStatus, "value")
                     .name(t("file.local.status"))
@@ -228,7 +236,8 @@ export class CFileManager extends CManager {
 
 
             this.guiFolder.add(this, "importFile").name(t("file.importFile.label")).perm().tooltip(t("file.importFile.tooltip"));
-            this.guiFolder.add({openFireballBrowser}, "openFireballBrowser").name(t("fireballs.menuItem")).perm();
+            this.guiFolder.add({openFireballBrowser}, "openFireballBrowser").name(t("fireballs.menuItem")).perm()
+                .tooltip(t("fireballs.menuTooltip"));
 
             // Settings that change what importing DOES, as opposed to the
             // commands above that do it. `perm` so the folder and its state
@@ -246,10 +255,14 @@ export class CFileManager extends CManager {
             //this.guiFolder.add(this, "resetOrigin").name("Reset Origin").perm();
 
             if (isLocal) {
-                guiMenus.debug.add(NodeMan, "recalculateAllRootFirst").name(t("file.debug.recalculateAll")).perm();
-                guiMenus.debug.add(this, "dumpNodes").name(t("file.debug.dumpNodes")).perm();
-                guiMenus.debug.add(this, "dumpNodesBackwards").name(t("file.debug.dumpNodesBackwards")).perm();
-                guiMenus.debug.add(this, "dumpRoots").name(t("file.debug.dumpRoots")).perm();
+                guiMenus.debug.add(NodeMan, "recalculateAllRootFirst").name(t("file.debug.recalculateAll")).perm()
+                    .tooltip(t("file.debug.recalculateAllTooltip"));
+                guiMenus.debug.add(this, "dumpNodes").name(t("file.debug.dumpNodes")).perm()
+                    .tooltip(t("file.debug.dumpNodesTooltip"));
+                guiMenus.debug.add(this, "dumpNodesBackwards").name(t("file.debug.dumpNodesBackwards")).perm()
+                    .tooltip(t("file.debug.dumpNodesBackwardsTooltip"));
+                guiMenus.debug.add(this, "dumpRoots").name(t("file.debug.dumpRoots")).perm()
+                    .tooltip(t("file.debug.dumpRootsTooltip"));
             }
 
             this.setupResourcesMenu();
@@ -756,6 +769,10 @@ export class CFileManager extends CManager {
 
         this.guiServer.add(this, "saveSitchFromMenu").name(t("file.server.save.label")).perm().tooltip(t("file.server.save.tooltip"));
         this.guiServer.add(this, "saveSitchAs").name(t("file.server.saveAs.label")).perm().tooltip(t("file.server.saveAs.tooltip"));
+        // The only save that writes to a template. Administrators only, for now.
+        if (isAdmin()) {
+            this.guiServer.add(this, "saveSitchAsTemplate").name(t("file.server.saveAsTemplate.label")).perm().tooltip(t("file.server.saveAsTemplate.tooltip"));
+        }
 
         this.guiServer.open();
 
@@ -802,7 +819,7 @@ export class CFileManager extends CManager {
     openBrowseDialog() {
         this.activateStorageFolder("server");
         if (this.sitchBrowser) {
-            this.sitchBrowser.open();
+            this.sitchBrowser.openBrowseScreen();
         }
     }
 
@@ -1051,6 +1068,18 @@ export class CFileManager extends CManager {
     }
 
     /**
+     * GUI menu handler: shows the sitch templates, to start a new sitch from one.
+     * The sitch that opens has no name, so a Save does not write to the template.
+     */
+    newSitchFromTemplate() {
+        const sitchBrowser = this.ensureSitchBrowser();
+        if (!sitchBrowser) return;
+        // The template screen is below the menu bar. An open File dropdown would cover its buttons.
+        this.#closeFileMenuIfDropdown();
+        sitchBrowser.openTemplateScreen();
+    }
+
+    /**
      * Fetches all saved versions of a sitch from the server.
      * @param {string} name - The name of the sitch to get versions for
      * @returns {Promise<Array<{version: string, ref: string, url?: string}>>}
@@ -1139,9 +1168,14 @@ export class CFileManager extends CManager {
      * @param {string} name - The name of the sitch to load
      * @param {string|null} [sourceUserID=null] - Optional owner user ID for cross-user shared sitches.
      * If provided, version listing and latest-resolution are performed against that owner's folder.
+     * @param {{asTemplate?: boolean}} [options] - asTemplate: open the sitch as a template.
+     * It then has no name, so the next Save asks for one and does not write to the template.
+     * `Sit.templateSource` records the template that it came from.
+     * @returns {Promise<boolean>} true when the sitch is on its way to the screen. On false,
+     * the reason is on the screen already.
      */
-    async loadSavedFile(name, sourceUserID = null) {
-        if (name === "-") { this.updateVersionsDropdown([]); return; }
+    async loadSavedFile(name, sourceUserID = null, {asTemplate = false} = {}) {
+        if (name === "-") { this.updateVersionsDropdown([]); return false; }
         try {
             const versions = await this.getVersions(name, sourceUserID);
             if (!versions?.length) throw new Error("No versions found for " + name);
@@ -1150,15 +1184,54 @@ export class CFileManager extends CManager {
             const response = await fetch(await resolveURLForFetch(reference));
             if (!response.ok) throw new Error(`Sitch load failed: HTTP ${response.status}`);
             const sitch = textSitchToObject(await response.text());
-            if (!await approveSitchChannel(sitch, {sourceRef: reference})) return;
+            if (!await approveSitchChannel(sitch, {sourceRef: reference})) return false;
             this.clearLocalSitchContext();
             this.localSaveTargetArmed = false;
-            this.loadName = name;
             this.sourceUserID = sourceUserID;
             this.loadURL = reference;
-            this.updateVersionsDropdown(versions);
+            if (asTemplate) {
+                // A saved sitch has its name in two places: at the top level, and in
+                // the "Sit" block that deserialize applies after the sitch is set up.
+                delete sitch.sitchName;
+                if (sitch.Sit) delete sitch.Sit.sitchName;
+                sitch.templateSource = {name, userID: Number(sourceUserID) || getEffectiveUserID()};
+                // The new sitch is not a version of the template, so it lists none.
+                this.loadName = "-";
+                this.updateVersionsDropdown([]);
+            } else {
+                this.loadName = name;
+                this.updateVersionsDropdown(versions);
+            }
             setNewSitchObject(sitch);
-        } catch (error) { showError("Could not open the saved sitch.", error); }
+            return true;
+        } catch (error) {
+            showError("Could not open the saved sitch.", error);
+            return false;
+        }
+    }
+
+    /**
+     * Open the template with this name, as "?template=<name>" in the address does.
+     * A global template comes before one of the user's own local templates.
+     * @param {string} name
+     * @returns {Promise<boolean>} true when the template is on its way to the screen. On
+     * false, the reason is on the screen already.
+     */
+    async loadTemplateByName(name) {
+        let template;
+        try {
+            template = await findTemplateByName(name);
+        } catch (error) {
+            showError(`Could not look for the template "${name}".`, error);
+            return false;
+        }
+        if (!template) {
+            showError(`There is no template with the name "${name}".`);
+            return false;
+        }
+        // As the sitch browser does: no owner for one of the user's own sitches.
+        const sourceUserID = template.userID === getEffectiveUserID() ? null : template.userID;
+        return this.loadSavedFile(template.name, sourceUserID, {asTemplate: true});
     }
 
     /**
@@ -1259,14 +1332,15 @@ export class CFileManager extends CManager {
 
     /**
      * Prompts the user to enter a name for the sitch via a browser dialog.
+     * @param {{message?: string}} [options] - message: text above the name box
      * @returns {Promise<void>} Resolves when user enters a valid name (sets Sit.sitchName), rejects if cancelled
      */
-    inputSitchName() {
+    inputSitchName({message = "Enter a name for the sitch"} = {}) {
         const generation = Globals.loadGeneration;
         return promptForText({
             confirmLabel: "Save",
             defaultValue: Sit.sitchName ?? "",
-            message: "Enter a name for the sitch",
+            message,
             title: "Save Sitch",
             validate: (rawName) => sanitizeSitchName(rawName) === ""
                 ? "Enter a valid sitch name."
@@ -1489,7 +1563,8 @@ export class CFileManager extends CManager {
      */
     makeExportButton(object, functionName, exportType, folderName) {
         if (this.exportFolder === undefined) {
-            this.exportFolder = this.guiFolder.addFolder("Export").perm().close();
+            this.exportFolder = this.guiFolder.addFolder("Export").perm().close()
+                .tooltip("Save data from this sitch to files: the data of tracks, lines of sight and cameras, sets of images, and copies of the files that the sitch loaded.");
         }
 
         // Some common folder names
@@ -1504,7 +1579,7 @@ export class CFileManager extends CManager {
         // decorate the object with an exportSubFolder property
         if (object.exportSubFolder === undefined) {
             object.exportSubFolder = this.exportFolder.addFolder(folderName).perm().close()
-                .tooltip("Export options for " + folderName);
+                .tooltip("Save the data of " + folderName + " to a file. Each button saves it in one format.");
 
         }
 
@@ -2508,7 +2583,8 @@ export class CFileManager extends CManager {
     setupImageSetExportMenu() {
         if (!guiMenus.file) return;
         if (this.exportFolder === undefined) {
-            this.exportFolder = this.guiFolder.addFolder("Export").perm().close();
+            this.exportFolder = this.guiFolder.addFolder("Export").perm().close()
+                .tooltip("Save data from this sitch to files: the data of tracks, lines of sight and cameras, sets of images, and copies of the files that the sitch loaded.");
         }
         // Construct the exporter once so user-set fields (azStep, trackToOrbit,
         // etc.) survive sitch reloads; setupMenu is idempotent.
@@ -2528,7 +2604,8 @@ export class CFileManager extends CManager {
 
         // Ensure the Export folder exists (same lazy creation as makeExportButton)
         if (this.exportFolder === undefined) {
-            this.exportFolder = this.guiFolder.addFolder("Export").perm().close();
+            this.exportFolder = this.guiFolder.addFolder("Export").perm().close()
+                .tooltip("Save data from this sitch to files: the data of tracks, lines of sight and cameras, sets of images, and copies of the files that the sitch loaded.");
         }
 
         // Drop any previous Resources subfolder before re-adding.
@@ -2613,7 +2690,8 @@ export class CFileManager extends CManager {
         if (count === 0) {
             const empty = {};
             empty.noFiles = () => {};
-            folder.add(empty, 'noFiles').name('(no downloadable files)').disable();
+            folder.add(empty, 'noFiles').name('(no downloadable files)').disable()
+                .tooltip("This sitch has loaded no file that can be downloaded.");
         }
     }
 

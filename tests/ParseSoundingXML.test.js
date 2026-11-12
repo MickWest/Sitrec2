@@ -134,6 +134,7 @@ describe('parseSoundingXML', () => {
 
     test('reads the time as UTC when it has no zone', () => {
         expect(sonde.datetime.toISOString()).toBe("2024-03-05T18:00:00.000Z");
+        expect(sonde.timeFromFile).toBe(true);
     });
 
     test('uses the default date when no time tag is set', () => {
@@ -141,6 +142,49 @@ describe('parseSoundingXML', () => {
         const fallback = new Date(Date.UTC(2020, 0, 2, 3));
         const result = parseSoundingXML(parseXml(sampleXML), layoutFor(noTime), fallback);
         expect(result.datetime).toBe(fallback);
+        // The profile then keeps to the sitch start (CNodeAtmosphericProfile.update).
+        expect(result.timeFromFile).toBe(false);
+    });
+
+    // A missing-value code must not become a level. Before 2026-11-02 a direction
+    // of 999 was read as 279 degrees, and an altitude of -9999 ft made a level
+    // 3 km under the ground.
+    const withCodes = (dir, speed, alt) => sampleXML
+        .replace("<wx:Value>300</wx:Value></wx:WindDirection>", `<wx:Value>${dir}</wx:Value></wx:WindDirection>`)
+        .replace("<wx:Value>40</wx:Value></wx:WindSpeed>", `<wx:Value>${speed}</wx:Value></wx:WindSpeed>`)
+        .replace("<wx:Value>30000</wx:Value></wx:Altitude>", `<wx:Value>${alt}</wx:Value></wx:Altitude>`);
+
+    test('values named in _MISSING_VALUES are missing', () => {
+        const layout = layoutFor({...sampleEnv, SITREC_CUSTOM_SOUNDING_WX_MISSING_VALUES: "-9999, 999"});
+        const result = parseSoundingXML(parseXml(withCodes(999, 999, 30000)), layout);
+        expect(result.levels[1].windDir).toBeNull();
+        expect(result.levels[1].windSpeed).toBeNull();
+        expect(result.levels[1].height).toBeCloseTo(3048);   // the level stays, with no wind
+    });
+
+    test('a value outside the possible range is missing, even with no _MISSING_VALUES', () => {
+        const warn = jest.spyOn(console, "warn").mockImplementation(() => {});
+        const result = parseSoundingXML(parseXml(withCodes(999, 999, -9999)), layoutFor(sampleEnv));
+        expect(warn).toHaveBeenCalled();
+        warn.mockRestore();
+        expect(result.levels[1].windDir).toBeNull();   // 999 degrees is not a direction
+        expect(result.levels[1].windSpeed).toBeNull(); // 999 kt is above 200 m/s
+        // -9999 ft is far under any ground. The level also has a pressure, so it
+        // stays, with no height.
+        expect(result.levels[2].height).toBeNull();
+    });
+
+    test('360 is a valid direction', () => {
+        const result = parseSoundingXML(parseXml(withCodes(360, 40, 30000)), layoutFor(sampleEnv));
+        expect(result.levels[1].windDir).toBe(0);
+        expect(result.levels[1].windSpeed).toBeCloseTo(40 * 0.514444);
+    });
+
+    test('a list of _MISSING_VALUES that is not numbers leaves the layout out', () => {
+        const reports = [];
+        const layouts = soundingXMLLayoutsFromEnv({...sampleEnv, SITREC_CUSTOM_SOUNDING_WX_MISSING_VALUES: "none"}, m => reports.push(m));
+        expect(layouts).toHaveLength(0);
+        expect(reports[0]).toMatch(/MISSING_VALUES/);
     });
 
     test('a "to" direction is turned into a "from" direction', () => {

@@ -241,7 +241,7 @@ export class ImageSetExporter {
         }
 
         const folder = parentFolder.addFolder("Orbit Image Set").close()
-            .tooltip("Export a set of images of the look view from az/el positions around the target into a folder you choose, optionally stepping the sitch time forward between sweeps");
+            .tooltip("Export images of the look view from many azimuth and elevation (az/el) positions around a track, into a folder you choose.\nThe sitch time can step forward between sweeps.");
         this.menuFolder = folder;
 
         // Track selector — options are rebuilt from targetTrackSwitch each time
@@ -255,7 +255,7 @@ export class ImageSetExporter {
             .tooltip("Starting azimuth in degrees (0-355, multiples of 5). 0 = North; sweeps clockwise from here.");
         folder.add(this, "azStep", 0, 90, 5)
             .name("AZ Step (deg)")
-            .tooltip("Azimuth step (0-90, multiples of 5). 360 / azStep images per elevation. Set to 0 to take a single shot at AZ Start.");
+            .tooltip("Azimuth step (0-90, multiples of 5). Each elevation gets 360 / AZ Step images. Set to 0 to take a single shot at AZ Start.");
         folder.add(this, "elStart", 0, 80, 1)
             .name("EL Start (deg)")
             .tooltip("Lowest elevation in the sweep (0-80). 0 = horizontal, higher values skip the most grazing angles.");
@@ -268,7 +268,7 @@ export class ImageSetExporter {
         this.orbitModeController = folder.add(this, "orbitMode",
             {"Fixed Distance": "distance", "Fixed Altitude": "altitude"})
             .name("Orbit Mode")
-            .tooltip("Fixed Distance: orbit at a constant slant range to the target (camera altitude rises with elevation). Fixed Altitude: hold the camera at a constant altitude above sea level (HAE); each elevation step sets how far out the camera sits.")
+            .tooltip("Fixed Distance: orbit at a constant slant range to the target (camera altitude rises with elevation).\nFixed Altitude: hold the camera at a constant height above the WGS84 ellipsoid (HAE); each elevation step sets how far out the camera sits.")
             .onChange(() => {
                 this._updateOrbitModeVisibility();
                 // The preview snapshots the orbit mode at enter time, so re-enter
@@ -317,7 +317,7 @@ export class ImageSetExporter {
         // in small units (ft / m). Only relevant in "altitude" orbit mode.
         this.useCurrentAltitudeController = folder.add(this, "useCurrentAltitude")
             .name("Use Current Camera Altitude")
-            .tooltip("If on, hold the orbit at the look camera's current altitude above sea level (HAE). If off, use the Orbit Altitude slider below.")
+            .tooltip("If on, hold the orbit at the look camera's current height above the WGS84 ellipsoid (HAE). If off, use the Orbit Altitude slider below.")
             .onChange(() => this._updateOrbitModeVisibility());
 
         // Altitude slider. unitType "small" displays ft/m per the user's units
@@ -336,7 +336,7 @@ export class ImageSetExporter {
                 elasticMax: 10000,
                 unitType: "big",
                 desc: "Orbit Altitude",
-                tooltip: "Camera altitude above sea level (HAE) for the orbit. Each elevation step places the camera at this altitude, varying how far out it sits. Only used when 'Use Current Camera Altitude' is off.",
+                tooltip: "Camera height above the WGS84 ellipsoid (HAE) for the orbit, in the large distance unit (km, mi or NM). Each elevation step places the camera at this height, so how far out it sits varies. Only used when 'Use Current Camera Altitude' is off.",
             }, folder);
         } else {
             this.orbitAltitudeNode = NodeMan.get("imageSetOrbitAltitude");
@@ -369,10 +369,10 @@ export class ImageSetExporter {
             .tooltip("Minutes to advance the sitch start time between successive sweeps. Ignored when Number of Time Steps is 1.");
         folder.add(this, "numTimeSteps", 1, 240, 1)
             .name("Number of Time Steps")
-            .tooltip("How many time-stepped sweeps to render. Step 0 uses Sit.startTime; step N adds N * Time Step.");
+            .tooltip("How many time-stepped sweeps to render. Step 0 uses the current sitch start time; step N adds N × Time Step.");
         folder.add(this, "usePNGs")
             .name("Use PNGs")
-            .tooltip("Off (default): save each shot as JPEG. Much faster to encode (5-20x), smaller files, but lossy compression (subtle blocking around high-contrast edges, slight color shift). Recommended for previews, large sweeps, and shots dominated by terrain/sky. On: save lossless PNG. Pixel-perfect, larger files, slower per shot — use when you need to compare against a reference image or scrub for sub-pixel artifacts.");
+            .tooltip("Off (default): save each shot as a JPEG. JPEG is 5-20 times faster to encode and makes smaller files, but its compression loses some detail at high-contrast edges and shifts colors slightly.\nOn: save each shot as a lossless PNG. Use it to compare with a reference image pixel by pixel.");
 
         this.orbitPreviewController = folder.add(this, "orbitPreview")
             .name("Orbit Preview")
@@ -404,7 +404,7 @@ export class ImageSetExporter {
             if (!lightingNode?._lightingPresets) return;
             const ctrl = folder.add(lightingNode, "lightingPreset", Object.keys(lightingNode._lightingPresets))
                 .name("Lighting Preset")
-                .tooltip("Mirror of the Lighting menu's preset dropdown — applies the same set of values to the lighting sliders, master shadows toggle, and lookView atmosphere flag.")
+                .tooltip("A copy of Lighting > Lighting Preset. It sets the light levels and the Shadows switch, as the Lighting menu does.")
                 .listen()
                 .onChange((v) => lightingNode.applyLightingPreset(v));
             // lil-gui's add() appends at the end; re-position the row so it

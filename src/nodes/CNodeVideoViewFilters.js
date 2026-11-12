@@ -42,25 +42,30 @@ const TONAL_LUMA_B = 0.114;
 export function addFiltersToVideoNode(videoNode) {
 
     if (guiVideoEffectsFolder === null) {
-        guiVideoEffectsFolder = guiMenus.video.addFolder(t("videoView.folders.videoAdjustments")).close().perm();
+        guiVideoEffectsFolder = guiMenus.video.addFolder(t("videoView.folders.videoAdjustments")).close().perm()
+            .tooltip(t("videoView.folderTooltips.videoAdjustments"));
     }
 
     if (guiVideoProcessingFolder === null) {
-        guiVideoProcessingFolder = guiMenus.video.addFolder(t("videoView.folders.videoProcessing")).close().perm();
+        guiVideoProcessingFolder = guiMenus.video.addFolder(t("videoView.folders.videoProcessing")).close().perm()
+            .tooltip(t("videoView.folderTooltips.videoProcessing"));
     }
 
     if (guiVideoForensicsFolder === null) {
-        guiVideoForensicsFolder = guiMenus.video.addFolder(t("videoView.folders.forensics")).close().perm();
+        guiVideoForensicsFolder = guiMenus.video.addFolder(t("videoView.folders.forensics")).close().perm()
+            .tooltip(t("videoView.folderTooltips.forensics"));
         guiVideoForensicsFolder.onOpenClose(() => setRenderOne(true));
     }
 
     if (guiVideoELAFolder === null) {
-        guiVideoELAFolder = guiVideoForensicsFolder.addFolder(t("videoView.folders.errorLevelAnalysis")).close().perm();
+        guiVideoELAFolder = guiVideoForensicsFolder.addFolder(t("videoView.folders.errorLevelAnalysis")).close().perm()
+            .tooltip(t("videoView.folderTooltips.errorLevelAnalysis"));
         guiVideoELAFolder.onOpenClose(() => setRenderOne(true));
     }
 
     if (guiVideoNoiseFolder === null) {
-        guiVideoNoiseFolder = guiVideoForensicsFolder.addFolder(t("videoView.folders.noiseAnalysis")).close().perm();
+        guiVideoNoiseFolder = guiVideoForensicsFolder.addFolder(t("videoView.folders.noiseAnalysis")).close().perm()
+            .tooltip(t("videoView.folderTooltips.noiseAnalysis"));
         guiVideoNoiseFolder.onOpenClose(() => setRenderOne(true));
         addVideoQPGraphMenu(guiVideoForensicsFolder);
         addVideoTonalGraphMenu(guiVideoForensicsFolder);
@@ -186,7 +191,7 @@ export function addFiltersToVideoNode(videoNode) {
     if (!NodeMan.exists("videoBrightness")) {
             brightness = new CNodeGUIValue({ id: "videoBrightness", value: 1, start: 0, end: 5, step: 0.01, desc: "Brightness", tip: "Brightness multiplier (1 = normal)" }, guiVideoEffectsFolder),
             contrast = new CNodeGUIValue({ id: "videoContrast", value: 1, start: 0, end: 5, step: 0.01, desc: "Contrast", tip: "Contrast multiplier (1 = normal)" }, guiVideoEffectsFolder),
-            levels = new CNodeGUIFlag({ id: "videoLevels", value: false, desc: "Levels", tip: "Apply Photoshop-style input/output levels", onChange: () => {
+            levels = new CNodeGUIFlag({ id: "videoLevels", value: false, desc: "Levels", tip: "Show the Levels editor, to set the input black and white points, the midtones and the output range. The editor shows over the video while Video Adjustments is open.\nLevel settings stay applied when this is off. Reset Video Adjustments clears them.", onChange: () => {
                 updateLevelsControlVisibility();
                 videoNode.invalidateLevelsResult?.();
             }}, guiVideoEffectsFolder),
@@ -195,13 +200,13 @@ export function addFiltersToVideoNode(videoNode) {
             levelsInputWhite = new CNodeConstant({ id: "videoLevelsInputWhite", value: 255 }),
             levelsOutputBlack = new CNodeConstant({ id: "videoLevelsOutputBlack", value: 0 }),
             levelsOutputWhite = new CNodeConstant({ id: "videoLevelsOutputWhite", value: 255 }),
-            showHistogram = new CNodeGUIFlag({ id: "videoShowHistogram", value: true, desc: "Histogram", tip: "Show the live video RGB histogram", onChange: () => {
+            showHistogram = new CNodeGUIFlag({ id: "videoShowHistogram", value: true, desc: "Histogram", tip: "Show a live red, green and blue histogram of the video while Video Adjustments is open", onChange: () => {
                 videoNode.updateHistogramVisibilityFromVideoAdjustments?.();
             }}, guiVideoEffectsFolder),
             histogramOnScreen = new CNodeGUIFlag({ id: "videoHistogramOnScreen", value: false, desc: "Histogram On-Screen", tip: "Limit the histogram to the pixels currently visible in the video view", onChange: () => {
                 setRenderOne(true);
             }}, guiVideoEffectsFolder),
-            curves = new CNodeGUIFlag({ id: "videoCurves", value: false, desc: "Curves", tip: "Apply the video tone curve", onChange: () => {
+            curves = new CNodeGUIFlag({ id: "videoCurves", value: false, desc: "Curves", tip: "Apply a tone curve to the video. Edit the curve in the Curves editor, which shows while Video Adjustments is open and Show Curves is on.", onChange: () => {
                 updateCurvesControlVisibility();
             }}, guiVideoEffectsFolder),
             showCurves = new CNodeGUIFlag({ id: "videoShowCurves", value: true, desc: "Show Curves", tip: "Show the video tone curve editor when Curves is enabled", onChange: () => {
@@ -210,22 +215,22 @@ export function addFiltersToVideoNode(videoNode) {
             shadows = new CNodeGUIValue({ id: "videoShadows", value: 0, start: -100, end: 100, step: 1, desc: "Shadows", tip: "Raise or lower darker tones (0 = none)" }, guiVideoEffectsFolder),
             highlights = new CNodeGUIValue({ id: "videoHighlights", value: 0, start: -100, end: 100, step: 1, desc: "Highlights", tip: "Raise or lower brighter tones (0 = none)" }, guiVideoEffectsFolder),
             dehaze = new CNodeGUIValue({ id: "videoDehaze", value: 0, start: -100, end: 100, step: 1, desc: "Dehaze", tip: "Reduce or add atmospheric haze (0 = none)" }, guiVideoEffectsFolder),
-            blur = new CNodeGUIValue({ id: "videoBlur", value: 0, start: 0, end: 50, step: 0.05, desc: "Blur Src Px", tip: "Gaussian blur radius in source pixels (0 = none)" }, guiVideoEffectsFolder),
+            blur = new CNodeGUIValue({ id: "videoBlur", value: 0, start: 0, end: 50, step: 0.05, desc: "Blur Src Px", tip: "Gaussian blur of the video, in source pixels (the standard deviation of the blur). 0 = none" }, guiVideoEffectsFolder),
             hue = new CNodeGUIValue({ id: "videoHue", value: 0, start: 0, end: 360, step: 1, desc: "Hue Rotate", tip: "Rotate the hue of the video in degrees" }, guiVideoEffectsFolder),
-            invert = new CNodeGUIFlag({ id: "videoInvert", value: false, desc: "Invert", tip: "Invert colors with exact 255 - byte mapping" }, guiVideoEffectsFolder),
+            invert = new CNodeGUIFlag({ id: "videoInvert", value: false, desc: "Invert", tip: "Invert the colors: each red, green and blue value v becomes 255 − v" }, guiVideoEffectsFolder),
             saturate = new CNodeGUIValue({ id: "videoSaturate", value: 1, start: 0, end: 5, step: 0.01, desc: "Saturate", tip: "Saturation multiplier (1 = normal, 0 = desaturated)" }, guiVideoEffectsFolder),
             enableVideoEffects = new CNodeGUIFlag({ id: "videoEnableEffects", value: true, desc: "Enable Video Effects", tip: "Master toggle for all video adjustments" }, guiVideoEffectsFolder),
             sharpenAmount = new CNodeGUIValue({ id: "videoSharpenAmount", value: 1, start: 0, end: 5, step: 0.1, desc: "Sharpen Amount", tip: "Strength of the sharpen convolution filter" }, guiVideoEffectsFolder),
             edgeDetectThreshold = new CNodeGUIValue({ id: "videoEdgeDetectThreshold", value: 0, start: 0, end: 255, step: 1, desc: "Edge Threshold", tip: "Minimum edge intensity to display (0 = show all)" }, guiVideoEffectsFolder),
             embossDepth = new CNodeGUIValue({ id: "videoEmbossDepth", value: 1, start: 0, end: 3, step: 0.1, desc: "Emboss Depth", tip: "Strength of the emboss convolution effect" }, guiVideoEffectsFolder),
-            echoMin = new CNodeGUIFlag({ id: "videoEchoMin", value: false, desc: "Echo Dark", tip: "Accumulate darkest pixel values across frames", onChange: () => {
+            echoMin = new CNodeGUIFlag({ id: "videoEchoMin", value: false, desc: "Echo Dark", tip: "Show each pixel at its darkest value over the last Echo Frames frames, so dark moving objects leave a trail.\nWith Echo Light also on, each pixel takes whichever extreme is farther from its average.", onChange: () => {
                 videoNode.restartFullABEchoIfActive();
             }}, guiVideoProcessingFolder),
-            echoMax = new CNodeGUIFlag({ id: "videoEchoMax", value: false, desc: "Echo Light", tip: "Accumulate brightest pixel values across frames", onChange: () => {
+            echoMax = new CNodeGUIFlag({ id: "videoEchoMax", value: false, desc: "Echo Light", tip: "Show each pixel at its lightest value over the last Echo Frames frames, so bright moving objects leave a trail.\nWith Echo Dark also on, each pixel takes whichever extreme is farther from its average.", onChange: () => {
                 videoNode.restartFullABEchoIfActive();
             }}, guiVideoProcessingFolder),
-            echoFrames = new CNodeGUIValue({ id: "videoEchoFrames", value: 10, start: 2, end: 100, step: 1, desc: "Echo Frames", tip: "Number of frames to accumulate for echo effects" }, guiVideoProcessingFolder),
-            fullABEcho = new CNodeGUIFlag({ id: "videoFullABEcho", value: false, desc: "Full A-B Echo", tip: "Echo accumulation across the full A-B frame range", onChange: () => {
+            echoFrames = new CNodeGUIValue({ id: "videoEchoFrames", value: 10, start: 2, end: 100, step: 1, desc: "Echo Frames", tip: "How many frames, up to and including the current one, Echo Dark and Echo Light combine. Only frames already decoded into memory are used." }, guiVideoProcessingFolder),
+            fullABEcho = new CNodeGUIFlag({ id: "videoFullABEcho", value: false, desc: "Full A-B Echo", tip: "Step through the whole A-B range once and combine every frame with Echo Dark and/or Echo Light. The result shows over the video at A-B Echo Opacity %, and playback stops at frame B.\nIf neither Echo is on, this turns on Echo Light. It turns off the other Full A-B modes.", onChange: () => {
                 if (fullABEcho.value) {
                     if (fullABBlend.value) fullABBlend.value = false;
                     if (fullABExposure.value) fullABExposure.value = false;
@@ -237,7 +242,7 @@ export function addFiltersToVideoNode(videoNode) {
                     videoNode.stopFullABEcho();
                 }
             }}, guiVideoProcessingFolder),
-            fullABBlend = new CNodeGUIFlag({ id: "videoFullABBlend", value: false, desc: "Full A-B Blend", tip: "Average blend of all frames in the A-B range", onChange: () => {
+            fullABBlend = new CNodeGUIFlag({ id: "videoFullABBlend", value: false, desc: "Full A-B Blend", tip: "Step through the whole A-B range once and show the average of all its frames over the video, at A-B Echo Opacity %. Playback stops at frame B.\nIt turns off the other Full A-B modes.", onChange: () => {
                 if (fullABBlend.value) {
                     if (fullABEcho.value) fullABEcho.value = false;
                     if (fullABExposure.value) fullABExposure.value = false;
@@ -246,7 +251,7 @@ export function addFiltersToVideoNode(videoNode) {
                     videoNode.stopFullABBlend();
                 }
             }}, guiVideoProcessingFolder),
-            fullABExposure = new CNodeGUIFlag({ id: "videoFullABExposure", value: false, desc: "Full A-B Exposure", tip: "Long-exposure simulation across the A-B frame range", onChange: () => {
+            fullABExposure = new CNodeGUIFlag({ id: "videoFullABExposure", value: false, desc: "Full A-B Exposure", tip: "Step through the whole A-B range once and add up the frames, like a long exposure. The image starts dark and builds up to the average of all frames at frame B, the same final image as Full A-B Blend.\nIt turns off the other Full A-B modes.", onChange: () => {
                 if (fullABExposure.value) {
                     if (fullABEcho.value) fullABEcho.value = false;
                     if (fullABBlend.value) fullABBlend.value = false;
@@ -256,7 +261,7 @@ export function addFiltersToVideoNode(videoNode) {
                 }
             }}, guiVideoProcessingFolder),
             fullABEchoOpacity = new CNodeGUIValue({ id: "videoFullABEchoOpacity", value: 100, start: 0, end: 100, step: 1, desc: "A-B Echo Opacity %", tip: "Opacity of the A-B echo/blend/exposure overlay" }, guiVideoProcessingFolder),
-            showCache = new CNodeGUIFlag({ id: "videoShowCache", value: false, desc: "Show Cache", tip: "Show the current state of the video frame cache" }, guiVideoProcessingFolder),
+            showCache = new CNodeGUIFlag({ id: "videoShowCache", value: false, desc: "Show Cache", tip: "Mark on the timeline which video frames are decoded and held in memory" }, guiVideoProcessingFolder),
             elaEnabled = new CNodeGUIFlag({ id: "videoELAEnabled", value: false, desc: "Show Error Level Analysis", tip: "Show the error level analysis overlay on the video" }, guiVideoELAFolder),
             elaJpegQuality = new CNodeGUIValue({ id: "videoELAJpegQuality", value: 90, start: 1, end: 100, step: 1, desc: "JPEG Quality", tip: "JPEG compression quality used for error level re-encoding", onChange: () => {
                 videoNode.invalidateELAResult();
@@ -290,10 +295,10 @@ export function addFiltersToVideoNode(videoNode) {
                 setRenderOne(true);
             }),
             noiseEnabled = new CNodeGUIFlag({ id: "videoNoiseEnabled", value: false, desc: "Show Noise Analysis", tip: "Show the noise analysis overlay on the video" }, guiVideoNoiseFolder),
-            noiseBlockSize = new CNodeGUIValue({ id: "videoNoiseBlockSize", value: 16, start: 4, end: 128, step: 1, desc: "Block Size", tip: "Size of blocks used for noise variance estimation", onChange: () => {
+            noiseBlockSize = new CNodeGUIValue({ id: "videoNoiseBlockSize", value: 16, start: 4, end: 128, step: 1, desc: "Block Size", tip: "Size in pixels of the blocks that the Noise Heatmap measures. Used only in the Noise Heatmap display mode", onChange: () => {
                 videoNode.invalidateNoiseResult();
             }}, guiVideoNoiseFolder),
-            noiseScale = new CNodeGUIValue({ id: "videoNoiseScale", value: 5, start: 0.1, end: 20, step: 0.1, desc: "Noise Scale", tip: "Multiplier to amplify the noise visualization", onChange: () => {
+            noiseScale = new CNodeGUIValue({ id: "videoNoiseScale", value: 5, start: 0.1, end: 20, step: 0.1, desc: "Noise Scale", tip: "Multiplier that makes the noise more visible. Used only in the Noise Residual display mode", onChange: () => {
                 videoNode.invalidateNoiseResult();
             }}, guiVideoNoiseFolder),
             noiseOpacity = new CNodeGUIValue({ id: "videoNoiseOpacity", value: 65, start: 0, end: 100, step: 1, desc: "Opacity %", tip: "Opacity of the noise analysis overlay" }, guiVideoNoiseFolder),
@@ -489,7 +494,8 @@ export function addFiltersToVideoNode(videoNode) {
     });
 
     if (!NodeMan.exists("videoGridOverlay")) {
-        const gridFolder = guiMenus.video.addFolder(t("videoView.folders.grid")).close();
+        const gridFolder = guiMenus.video.addFolder(t("videoView.folders.grid")).close()
+            .tooltip(t("videoView.folderTooltips.grid"));
 
         const gridOverlay = new CNodeGridOverlay({
             id: "videoGridOverlay",
@@ -618,7 +624,10 @@ export function applyConvolution(ctx, width, height, kernelName, params = {}) {
 
 // `store` false means "use these pixels for this pass, but do not remember them".
 // The cache is keyed by frame number alone, so a wrong entry is served forever.
-function getOrCachePixelData(videoView, frameImage, frame, width, height, store = true) {
+// getFrameImage is called only on a miss: for a past frame it draws a full-size
+// stabilized canvas, which playback must not pay for every frame in the window.
+// Returns null when there is no image.
+function getOrCachePixelData(videoView, getFrameImage, frame, width, height, store = true) {
     if (!videoView._echoPixelCache) {
         videoView._echoPixelCache = new Map();
     }
@@ -627,6 +636,9 @@ function getOrCachePixelData(videoView, frameImage, frame, width, height, store 
     if (cached && cached.length === width * height * 4) {
         return cached;
     }
+
+    const frameImage = getFrameImage();
+    if (!frameImage || frameImage.width === 0) return null;
 
     const tmpCtx = videoView._echoTmpCtx;
     tmpCtx.drawImage(frameImage, 0, 0, width, height);
@@ -676,6 +688,10 @@ export function applyEchoEffect(videoView, currentImage, currentFrame, wantMin, 
         videoView._echoCanvas.width = width;
         videoView._echoCanvas.height = height;
         videoView._echoCtx = videoView._echoCanvas.getContext('2d', { willReadFrequently: true });
+        videoView._echoProvisionalCanvas = document.createElement('canvas');
+        videoView._echoProvisionalCanvas.width = width;
+        videoView._echoProvisionalCanvas.height = height;
+        videoView._echoProvisionalCtx = videoView._echoProvisionalCanvas.getContext('2d', { willReadFrequently: true });
         videoView._echoTmpCanvas = document.createElement('canvas');
         videoView._echoTmpCanvas.width = width;
         videoView._echoTmpCanvas.height = height;
@@ -691,7 +707,13 @@ export function applyEchoEffect(videoView, currentImage, currentFrame, wantMin, 
         return videoView._lastEchoResult;
     }
 
-    const echoCtx = videoView._echoCtx;
+    // A provisional result (current frame not decoded yet) goes to its own canvas.
+    // The stages after Echo (Levels, Curves, Tonal, Invert) cache on the IDENTITY
+    // of their input canvas plus the frame number. If the final result went into
+    // the same canvas as the provisional one, at the same frame, they kept serving
+    // their copy of the provisional picture: a black video view after every load.
+    const echoCanvas = currentDecoded ? videoView._echoCanvas : videoView._echoProvisionalCanvas;
+    const echoCtx = currentDecoded ? videoView._echoCtx : videoView._echoProvisionalCtx;
 
     const pixelCount = width * height * 4;
     const minPixels = wantMin ? new Uint8ClampedArray(pixelCount) : null;
@@ -701,16 +723,17 @@ export function applyEchoEffect(videoView, currentImage, currentFrame, wantMin, 
     let initialized = false;
 
     for (let f = startFrame; f <= currentFrame; f++) {
-        let frameImage;
-        if (f === currentFrame) {
-            frameImage = currentImage;
-        } else {
-            frameImage = videoView.videoData.getCachedImage(f);
-        }
-        if (!frameImage || frameImage.width === 0) continue;
+        const isCurrent = f === currentFrame;
+        // currentImage came from getImage(), so it carries the stabilization
+        // shift. getCachedImage() is the RAW decoded frame: use it only to ask
+        // whether frame f decoded, never for its pixels, or Echo combines one
+        // stabilized frame with unstabilized ones and the trail is the shake.
+        if (!isCurrent && !videoView.videoData.getCachedImage(f)) continue;
 
-        const frameData = getOrCachePixelData(videoView, frameImage, f, width, height,
-            f !== currentFrame || currentDecoded);
+        const frameData = getOrCachePixelData(videoView,
+            () => isCurrent ? currentImage : videoView.videoData.getCachedStabilizedImage(f),
+            f, width, height, !isCurrent || currentDecoded);
+        if (!frameData) continue;
 
         if (!initialized) {
             if (minPixels) minPixels.set(frameData);
@@ -764,14 +787,14 @@ export function applyEchoEffect(videoView, currentImage, currentFrame, wantMin, 
         videoView._lastEchoWantMin = wantMin;
         videoView._lastEchoWantMax = wantMax;
         videoView._lastEchoNumFrames = numEchoFrames;
-        videoView._lastEchoResult = videoView._echoCanvas;
+        videoView._lastEchoResult = echoCanvas;
     } else {
         // Provisional: show it, but recompute next render, once the frame is real.
         videoView._lastEchoFrame = undefined;
         videoView._lastEchoResult = undefined;
     }
 
-    return videoView._echoCanvas;
+    return echoCanvas;
 }
 
 export function applyConvolutionToImage(image, kernelName, params, videoView, frame = undefined) {

@@ -26,12 +26,14 @@ import {
     withTestUser
 } from "./Globals";
 import {checkAndOfferTLERefresh} from "./TLERefresh";
+import {showTemplateIntro, templateIntroText} from "./SitchTemplateInstructions";
 import {isKeyHeld, toggler} from "./KeyBoardHandler";
 import {ECEFToLLAVD_radii, LLAToECEF} from "./LLA-ECEF-ENU";
 import {par} from "./par";
 import {GlobalScene} from "./LocalFrame";
 import {refreshLabelsAfterLoading} from "./nodes/CNodeLabels3D";
 import {refreshLatLonGridVisibility} from "./LatLonGrid";
+import {refreshTimeZoneBordersVisibility} from "./TimeZoneBorders";
 import {assert} from "./assert";
 import {getShortURL} from "./urlUtils";
 import {REMOVED_NODE_IDS} from "./RemovedNodes";
@@ -119,12 +121,17 @@ import {restoreRefractionTool} from "./refraction/RefractionLoader";
 const RESTORABLE_GLOBALS = {
     showMeasurements: "boolean",
     showMeasurementsLook: "boolean",
+    showVBMeasureMain: "boolean",
+    showVBMeasureLook: "boolean",
+    showVBCircleMain: "boolean",
+    showVBCircleLook: "boolean",
     showLabelsMain: "boolean",
     showLabelsLook: "boolean",
     showFeaturesMain: "boolean",
     showFeaturesLook: "boolean",
     showLatLonGridMain: "boolean",
     showLatLonGridLook: "boolean",
+    showTimeZones: "boolean",
     objectScale: "number",
     objectScaleMain: "number",
     showAllTracksInLook: "boolean",
@@ -132,6 +139,7 @@ const RESTORABLE_GLOBALS = {
     showTracksLook: "boolean",
     limitTracksInOut: "boolean",
     showTimeDisplay: "boolean",
+    showTimeDisplayMain: "boolean",
 };
 
 export const serializeMethods = {
@@ -191,6 +199,9 @@ export const serializeMethods = {
                 ...out,
                 ...Sit
             }
+            // The record of the template that this sitch came from is for this
+            // session only. A saved sitch is not attached to a template.
+            delete out.templateSource;
         }
 
         // Serialize video state for any sitch with a video node
@@ -585,12 +596,17 @@ export const serializeMethods = {
         const globalsNeeded = [
             "showMeasurements",         // "Measurements in Main" — name kept for older saves
             "showMeasurementsLook",
+            "showVBMeasureMain",        // the V/B measurement, per view, apart from the measurements
+            "showVBMeasureLook",
+            "showVBCircleMain",         // ...and its circle
+            "showVBCircleLook",
             "showLabelsMain",
             "showLabelsLook",
             "showFeaturesMain",
             "showFeaturesLook",
             "showLatLonGridMain",
             "showLatLonGridLook",
+            "showTimeZones",            // Time > Show Time Zones (TimeZoneBorders.js)
             "objectScale",
             "objectScaleMain",
             "showAllTracksInLook",
@@ -598,6 +614,7 @@ export const serializeMethods = {
             "showTracksLook",           // Show Tracks in Look (CCustomManager.showTracksLook)
             "limitTracksInOut",         // draw tracks over In..Out only, without the raw data tracks
             "showTimeDisplay",          // the UTC/local clock overlaid on the look view
+            "showTimeDisplayMain",      // the same clock on the main view (CustomSupport.setupMainTimeDisplay)
         ]
 
         let pars = {}
@@ -700,6 +717,10 @@ export const serializeMethods = {
         // deserializeBalloons recreates identical node ids before the mods pass
         out.balloonTracks = TrackManager.serializeBalloons()
 
+        // Kite tracks: the same pattern. The kite design is in the mod of the kite's object.
+        const kiteTracks = TrackManager.serializeKites()
+        out.kiteTracks = kiteTracks.length ? kiteTracks : undefined
+
         // Synthetic fromApp flight: persist ONLY the compact generator params
         // (origin/dest lat-lon, cruise altitude, flight start/duration). The generated
         // MISB file is flagged skipSerialization, so it's never rehosted — on reload
@@ -780,7 +801,7 @@ export const serializeMethods = {
      *
      * They are found by the `fixedObjectPositionID` tag createFixedObject() puts on the
      * object node, because a fixed object is in no manager's list — that is the whole
-     * point of it (no Contents entry, no track picker entry, no spline editor).
+     * point of it (no Contents entry, no spline editor).
      *
      * Both halves must still be alive: deleting either the object or its position node
      * is deleting the object, and a save must not resurrect it.
@@ -1341,6 +1362,9 @@ export const serializeMethods = {
             if (sitchData.balloonTracks) {
                 TrackManager.deserializeBalloons(sitchData.balloonTracks)
             }
+            if (sitchData.kiteTracks) {
+                TrackManager.deserializeKites(sitchData.kiteTracks)
+            }
 
             // Recreate walker marker objects (createWalker) from their saved
             // specs — appFlight contract: deterministic ids, BEFORE the mods
@@ -1839,11 +1863,12 @@ export const serializeMethods = {
             // been deserialized — see CNodeDisplayWindField.modDeserialize.
             // Manual / sounding sources read live values from targetWind,
             // localWind, atmospheric profiles, etc., and would otherwise
-            // race the deserialize loop's awaits.
+            // race the deserialize loop's awaits. A grid source restored from
+            // its saved files fills here too, to blend the grid times.
             if (windNode._needsPostDeserializeFetch) {
                 windNode._needsPostDeserializeFetch = false;
                 windNode.fetchWindForAltitude(windNode.windAltFt).catch(err => {
-                    console.warn("Non-GFS wind reload failed:", err);
+                    console.warn("Wind reload failed:", err);
                 });
             } else if (Array.isArray(windNode._needsPostDeserializeReloadGFS)) {
                 const savedLevels = windNode._needsPostDeserializeReloadGFS;
@@ -1931,6 +1956,7 @@ export const serializeMethods = {
 
         refreshLabelsAfterLoading();
         refreshLatLonGridVisibility();
+        refreshTimeZoneBordersVisibility();
         this.refreshLookViewTracks();
         // In/Out is restored with Sit, after the globals, so the limited tracks are built here.
         if (Globals.limitTracksInOut) this.applyTrackLimit();
@@ -2038,6 +2064,12 @@ export const serializeMethods = {
         this.markChapterBaseline();
         Globals.deserializing = false;
         Globals.sitchDirty = false;
+        // A sitch that came back from a temporary save (StaleBuildRecovery.js) had changes
+        // that were not saved, and it still has them: keep the "Leave site?" protection.
+        if (Globals.restoreDirtyAfterLoad) {
+            Globals.restoreDirtyAfterLoad = false;
+            Globals.sitchDirty = true;
+        }
         setRenderOne(3);
 
         // The sitch is fully loaded and interactive before this runs: the check
@@ -2047,6 +2079,13 @@ export const serializeMethods = {
         // away from does not prompt about data that is no longer on screen.
         if (Globals.loadGeneration === myGeneration) {
             checkAndOfferTLERefresh().catch(e => console.warn("TLE refresh check:", e));
+        }
+
+        // A sitch that opened from a template shows the template's instructions: the
+        // "##intro" section of its Notes. Here, at the end of the load, the Notes are
+        // restored and the views are there for the box to go over.
+        if (Globals.loadGeneration === myGeneration) {
+            showTemplateIntro(templateIntroText(Sit.templateSource, NodeMan.get("notesView", false)?.notesText));
         }
     },
 

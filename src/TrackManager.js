@@ -6,6 +6,7 @@ import {addAltitudeLockControls, lockHeightAt} from "./AltitudeLockGUI";
 import {addCustomGraphControl} from "./CustomGraphUI";
 import {CNodeScale} from "./nodes/CNodeScale";
 import {requestCameraFocusSync} from "./CameraFocusUI";
+import {addManualObjectsToSelector, trackSelectors} from "./TrackSelectors";
 import {showConfirm, showChoice} from "./showError";
 import {CNodeGUIValue, CNodeGUIFlag} from "./nodes/CNodeGUIValue";
 import {CNodeConstant} from "./nodes/CNode";
@@ -217,6 +218,13 @@ import {hasOtherTrackSourceReference, shouldPreserveAnglesHeading} from "./track
 import {extractTrackPreviewInfo, showMultiTrackLoadDialog, getCameraFilterState} from "./TrackFilterDialog";
 import {t} from "./i18n";
 import {CNodeBalloonTrack} from "./nodes/CNodeBalloonTrack";
+import {CNodeKiteTrack} from "./nodes/CNodeKiteTrack";
+import {CNodeDisplayKiteLine} from "./nodes/CNodeDisplayKiteLine";
+
+// A track colour as 0xRRGGBB, the form the saved sitch holds.
+function trackColorHex(color) {
+    return (Math.round(color.r * 255) << 16) | (Math.round(color.g * 255) << 8) | Math.round(color.b * 255);
+}
 
 function disposeDirectTrackDependentControllers(trackNode) {
     if (!trackNode?.outputs?.length) {
@@ -241,6 +249,24 @@ function disposeDirectTrackDependentControllers(trackNode) {
 }
 
 
+
+// A track that sets the time of a new sitch is also where the sitch is: it is the first track
+// of a new sitch, which the view usually centers on. So, as for a dropped photo or video with a
+// position, show times in the time zone of the place where the track starts: its first
+// row with a valid position. The lookup is async; a zone set some other way in the meantime
+// (by hand, or by a later drop) wins (CNodeDateTime.startTimeZoneLookup).
+function setTimeZoneFromTrackStart(trackDataID) {
+    const data = NodeMan.get(trackDataID, false);
+    if (!data?.misb || !data.isValid || !data.getLat || !data.getLon) return;
+    let row = 0;
+    while (row < data.misb.length && !data.isValid(row)) row++;
+    if (row >= data.misb.length) return;
+    const lat = data.getLat(row), lon = data.getLon(row);
+    GlobalDateTimeNode.setTimeZoneFromLocation(lat, lon)
+        .then(zone => console.log(`Track time zone from its start position (${lat}, ${lon}): `
+            + `${zone ?? "not set"} (${GlobalDateTimeNode.timeZoneName})`))
+        .catch(error => console.warn("Track time zone lookup failed:", error));
+}
 
 // The x on screen of the menu button just clicked: a lil-gui button keeps focus after a click.
 // A panel opened from a button in a folder goes beside it. The middle of the window otherwise.
@@ -293,25 +319,7 @@ class CMetaTrack {
         // RESTORE SELECTIONS ON DROP IF A TRACK IS RE-LOADED
         // (currently it restets it to the first selection, fixed target)
 
-        if (Sit.dropTargets !== undefined && Sit.dropTargets["track"] !== undefined) {
-            const dropTargets = Sit.dropTargets["track"]
-            for (let dropTargetSwitch of dropTargets) {
-
-
-                // if it ends with a - and a number, then we delete that part
-                const match = dropTargetSwitch.match(/-(\d+)$/);
-                if (match !== null) {
-                    dropTargetSwitch = dropTargetSwitch.substring(0, dropTargetSwitch.length - match[0].length);
-                }
-
-
-                if (NodeMan.exists(dropTargetSwitch)) {
-//                    console.log("Removing track ", shortName, " from drop target: ", dropTargetSwitch)
-                    const switchNode = NodeMan.get(dropTargetSwitch);
-                    switchNode.removeOption(shortName)
-                }
-            }
-        }
+        TrackManager.setTrackSwitchOption(shortName, null);
 
 
 
@@ -535,7 +543,7 @@ class CTrackManager extends CManager {
     }
 
     // Next auto colour for a track that is created directly by the user rather
-    // than imported — balloons and synthetic (spline) tracks. These aren't part
+    // than imported — balloons, kites and synthetic (spline) tracks. These aren't part
     // of the shortName-ranked reassignment below (their colour lives in a
     // per-track colour node, and they're created one at a time by an explicit
     // click, so there's no async-ordering problem to solve), but they should
@@ -545,7 +553,7 @@ class CTrackManager extends CManager {
     nextPaletteColor() {
         let n = 0;
         this.iterate((id, t) => {
-            if (t.paletteColored || t.isBalloon || t.isSynthetic) n++;
+            if (t.paletteColored || t.isBalloon || t.isKite || t.isSynthetic) n++;
         });
         return TRACK_PALETTE[n % TRACK_PALETTE.length].clone();
     }
@@ -690,6 +698,9 @@ class CTrackManager extends CManager {
             // the pipeline skips the MSL->HAE geoid add. Default false keeps MSL sources as-is.
             altitudeIsHAE: (trackFile instanceof CTrackFile) && trackFile.isAltitudeHAE(trackIndex),
             fireballObservedInterval: !!trackFile.fireball,
+            // A sounding's path is a reconstructed ascent: before launch and
+            // after the top level there is no balloon to extrapolate to.
+            holdDataEnds: !!trackFile.isSondeTrack?.(),
         });
 
         return true;
@@ -742,6 +753,7 @@ class CTrackManager extends CManager {
             end: 200,
             step: 1,
             desc: "Smoothing window",
+            tooltip: "Number of frames averaged at each point, for the moving, movingPolyEdge, sliding and savgol methods. 0 = no smoothing.\nIt is limited to the number of frames minus 3.",
         }, guiFolder);
 
         new CNodeGUIValue({
@@ -751,6 +763,7 @@ class CTrackManager extends CManager {
             end: 1,
             step: 0.01,
             desc: "Catmull Tension",
+            tooltip: "Tension of the legacy catmull curve. It has no visible effect: that curve is built as a chordal curve, which does not use tension.",
         }, guiFolder);
 
         new CNodeGUIValue({
@@ -760,6 +773,7 @@ class CTrackManager extends CManager {
             end: 100,
             step: 1,
             desc: "Catmull Intervals",
+            tooltip: "Number of spline segments along the track. More segments follow the data more closely.",
         }, guiFolder);
 
         new CNodeGUIValue({
@@ -769,6 +783,7 @@ class CTrackManager extends CManager {
             end: 5,
             step: 1,
             desc: "SavGol Poly Order",
+            tooltip: "Order of the polynomial that the savgol (Savitzky-Golay) method fits in each window. Higher orders keep sharper turns but smooth less.",
         }, guiFolder);
 
         new CNodeGUIValue({
@@ -778,6 +793,7 @@ class CTrackManager extends CManager {
             end: 5,
             step: 1,
             desc: "Edge Fit Order",
+            tooltip: "Order of the polynomial that extends the data past each end of the track before smoothing, so the ends do not bend.",
         }, guiFolder);
 
         new CNodeGUIValue({
@@ -787,6 +803,7 @@ class CTrackManager extends CManager {
             end: 400,
             step: 1,
             desc: "Edge Fit Window",
+            tooltip: "Number of frames at each end of the track that the Edge Fit Order polynomial is fitted to.",
         }, guiFolder);
 
         // Center / supplementary tracks (trackIndex !== 0) are target reference
@@ -831,6 +848,11 @@ class CTrackManager extends CManager {
         const establishedByUserBeforeImport = isSitchEstablishedByUser();
         const showDialog = options.showDialog !== false && !Globals.deserializing;
         const syncTime = options.syncTime !== false;
+        // A track that sets the time of a new sitch also sets its time zone (see
+        // setTimeZoneFromTrackStart). Not for the tracks of a sitch definition, which can
+        // name its own zone (Sit.timeZone), and not while a saved sitch loads: it restores
+        // its saved zone.
+        const setTimeZone = options.setTimeZone !== false && !Globals.deserializing;
 
         // Tracks that centerOnTrack decided the view is allowed to move for. Collected
         // here rather than acted on there because framing a camera+target pair needs
@@ -866,7 +888,7 @@ class CTrackManager extends CManager {
                 step: 0.01,
                 desc: "Global Radius Resize",
                 tip: "Resize every object in the Objects menu whose only dimension is a radius "
-                    + "— spheres, icosahedrons, circles and the like — to this radius, in metres. "
+                    + "(spheres, icosahedrons, circles and the like) to this radius, in meters.\n"
                     + "Shapes with a second length (capsule, cone, torus) and models are left alone.",
                 onChange: (v) => resizeAllObjectSpheres(v),
             }, guiMenus.objects)
@@ -1040,7 +1062,8 @@ class CTrackManager extends CManager {
                 // Contents menu, not the internal node id ("Track_elevated_track…").
                 // getFolder() still resolves the folder by its node id via _lookupId, so
                 // the CNodeDisplayTrack lookup (menu.getFolder(track.id)) keeps working.
-                const guiFolder = guiMenus.contents.addFolder(shortName);
+                const guiFolder = guiMenus.contents.addFolder(shortName)
+                    .tooltip(t("trackManager.tips.folder"));
                 guiFolder._lookupId = trackID;
                 // just use the default MISB Columns, so no columns are specified
                 //const success = this.makeTrackFromDataFile(trackFileName, trackDataID, trackID, undefined, trackIndex, guiFolder);
@@ -1108,6 +1131,9 @@ class CTrackManager extends CManager {
                         }
                         GlobalDateTimeNode.syncStartTimeTrack();
                         syncedFromThisFile = true;
+                        // The time and the place now come from this track: show times in
+                        // the time zone of where it starts.
+                        if (setTimeZone) setTimeZoneFromTrackStart(trackDataID);
                     }
 
                     this.makeTrackFromMISBData(trackFileName, trackDataID, trackID, undefined, guiFolder, trackIndex);
@@ -1128,7 +1154,14 @@ class CTrackManager extends CManager {
 
                     // track folder in Contents menu
                     trackOb.guiFolder = guiFolder;
-                    TrackManager.initTrackDisplayName(trackOb);
+                    // A track from a TS stream is shown as "S1 LS7 AF00371" (MISBStreamTrackName.js).
+                    // Only on a new import: a saved sitch restores the names it was saved with
+                    // (trackDisplayNames, and each object's own name), so an old save keeps its
+                    // old names. The parts are kept for the Timing Analysis report.
+                    const fileForName = FileManager.get(trackFileName);
+                    trackOb.streamNameParts = fileForName?.getStreamNameParts?.(trackIndex) ?? null;
+                    TrackManager.initTrackDisplayName(trackOb,
+                        Globals.deserializing ? null : fileForName?.getDefaultDisplayName?.(trackIndex));
                     const fireball = FileManager.get(trackFileName)?.fireball;
                     if (fireball) addFireballTrackControls(trackOb.guiFolder, fireball);
 
@@ -1168,14 +1201,16 @@ class CTrackManager extends CManager {
                         }
                     }
 
-                    trackOb.guiFolder.add(dummy, "removeTrack").name(t("trackManager.deleteTrack"));
+                    trackOb.guiFolder.add(dummy, "removeTrack").name(t("trackManager.deleteTrack"))
+                        .tooltip(t("trackManager.tips.deleteImported"));
 
                     if (trackNode.frames >= 2) {
                         const splineName = shortName + "_sp";
                         let splineExists = false;
                         TrackManager.iterate((k, t) => { if (t.menuText === splineName) splineExists = true; });
                         if (!splineExists) {
-                            trackOb.guiFolder.add(dummy, "createSpline").name(t("trackManager.createSpline"));
+                            trackOb.guiFolder.add(dummy, "createSpline").name(t("trackManager.createSpline"))
+                                .tooltip(t("trackManager.tips.createSpline"));
                         }
                     }
 
@@ -1224,6 +1259,18 @@ class CTrackManager extends CManager {
                     trackOb.isSondeTrack = isSondeTrack;
                     if (isSondeTrack && loadedTrackFileForKind.getSondeData(0)?.source === "xml") {
                         importedCustomWindProfileTrack = trackDataNode.id;
+                    }
+                    // A sounding with no position at each level (an XML profile,
+                    // a sounding without GPS winds) is drawn on a path that Sitrec
+                    // makes: a 5 m/s ascent from the launch, moved by the file's own
+                    // winds (SondeTrajectory.reconstructTrajectory). The track's
+                    // folder says so (decision D3: keep the path, with a label).
+                    const sondeForPath = isSondeTrack ? loadedTrackFileForKind.getSondeData(trackIndex) : null;
+                    if (sondeForPath && !sondeForPath.hasGPS) {
+                        trackOb.guiFolder.add({path: t("trackManager.reconstructedAscent.label")}, "path")
+                            .name(t("trackManager.reconstructedAscent.name"))
+                            .tooltip(t("trackManager.reconstructedAscent.tooltip"))
+                            .disable();
                     }
 
                     // The track's DECLARED role, if its source file states one
@@ -1275,6 +1322,8 @@ class CTrackManager extends CManager {
                         hasAngles = this.updateDropTargets(trackNumber, shortName, trackID, trackDataID, trackNode, hasFOV, trackOb,
                             !declinedPairing.has(trackFileName));
                     }
+                    // The options were added under the short name; show the display name.
+                    if (trackOb.displayName !== shortName) this.relabelTrackOptions(trackOb);
 
                     this.makeMotionTrack(trackOb, shortName, trackColor, dropColor, trackID);
 
@@ -1478,6 +1527,9 @@ class CTrackManager extends CManager {
 
 
         const sphereId = trackOb.menuText ?? shortName;
+        // The marker shares the track's name ("S1 LS7 AF00371" for a TS stream), so the track,
+        // the object and its 3D label agree. The id stays the short name.
+        const objectName = trackOb.displayName ?? shortName;
 
         // GROUND TRUTH FIRST, ahead of the supplementary branch below.
         //
@@ -1504,7 +1556,8 @@ class CTrackManager extends CManager {
                 radius: DEFAULT_TRACK_SPHERE_RADIUS_M,
                 material: "phong",
                 color: trackColor,
-                label: shortName,
+                displayName: objectName,
+                label: objectName,
             });
         } else if (isSonde) {
             trackOb.displayTargetSphere = new CNodeDisplayBalloonSphere({
@@ -1541,7 +1594,8 @@ class CTrackManager extends CManager {
                 // must be as easy to see at night as the platform it came with.
                 material: "basic",
                 color: trackColor,
-                label: shortName,
+                displayName: objectName,
+                label: objectName,
                 visible: isObject,
             });
         } else if (getEnv("DEFAULT_PLATFORM_MODEL", process.env.DEFAULT_PLATFORM_MODEL) && trackOb.trackFileName.endsWith(".klv")) {
@@ -1552,7 +1606,8 @@ class CTrackManager extends CManager {
                     id: sphereId + "_ob",
                     model: getEnv("DEFAULT_PLATFORM_MODEL", process.env.DEFAULT_PLATFORM_MODEL),
 
-                    label: shortName,
+                    displayName: objectName,
+                    label: objectName,
                 })
             }
         }
@@ -1577,7 +1632,8 @@ class CTrackManager extends CManager {
                 // for the same reason.
                 material: this.isCandidateTrack(sphereId) ? "phong" : "basic",
                 color: trackColor,
-                label: shortName,
+                displayName: objectName,
+                label: objectName,
 
             });
         }
@@ -1634,6 +1690,9 @@ class CTrackManager extends CManager {
                 // Every sounding: its Track entry in the Wind Source menu reads
                 // the profile at the target's altitude, not the row for the time.
                 windByAltitude: true,
+                // A profile file with no time took the sitch start; the profile
+                // then keeps to the sitch start (CNodeAtmosphericProfile.update).
+                timeFromFile: sonde0?.timeFromFile !== false,
             });
         }
     }
@@ -2085,6 +2144,9 @@ class CTrackManager extends CManager {
                         } else {
                             autoSelect = trackNumber === selectNumber;
                         }
+                        // The Position of an object (CustomManager.addObjectLocation): the
+                        // user selects its track.
+                        if (switchNode.noAutoSelect) autoSelect = false;
 
                         // A role-declaring file nominates BOTH a camera and a target,
                         // so its pair describes ONE scenario and must stay together.
@@ -2525,6 +2587,8 @@ class CTrackManager extends CManager {
             this.disposeSyntheticTrack(trackID);
         } else if (trackOb?.isBalloon) {
             this.disposeBalloonTrack(trackID);
+        } else if (trackOb?.isKite) {
+            this.disposeKiteTrack(trackID);
         } else {
             super.disposeRemove(trackID);
         }
@@ -2641,13 +2705,17 @@ class CTrackManager extends CManager {
         // So we create the folder with trackID, which is what the display track will reference
         // IMPORTANT: Don't change the folder title yet! getFolder() looks up by innerText,
         // so we need to keep it as trackID until after CNodeDisplayTrack finds it
-        const guiFolder = guiMenus.contents.addFolder(trackID);
+        const guiFolder = guiMenus.contents.addFolder(trackID)
+            .tooltip(t("trackManager.tips.folder"));
 
         // The folder's groups. Name, Edit Track, the camera buttons and the actions stay at the
         // top level (the order is set at the end of this method); the rest is grouped here.
-        const pathFolder = guiFolder.addFolder(t("trackManager.pathFolder"));
-        const smoothingFolder = guiFolder.addFolder(t("trackManager.smoothingFolder")).close();
-        const displayFolder = guiFolder.addFolder(t("trackManager.displayFolder")).close();
+        const pathFolder = guiFolder.addFolder(t("trackManager.pathFolder"))
+            .tooltip(t("trackManager.tips.pathFolder"));
+        const smoothingFolder = guiFolder.addFolder(t("trackManager.smoothingFolder")).close()
+            .tooltip(t("trackManager.tips.smoothingFolder"));
+        const displayFolder = guiFolder.addFolder(t("trackManager.displayFolder")).close()
+            .tooltip(t("trackManager.tips.displayFolder"));
         
         // Create unsmoothed spline editor node (the raw data track)
         // Pass skipGUI: true to prevent it from creating its own GUI in physics menu
@@ -2683,6 +2751,7 @@ class CTrackManager extends CManager {
             end: 200,
             step: 1,
             desc: "Smoothing window",
+            tooltip: "Number of frames averaged at each point, for the moving, movingPolyEdge, sliding and savgol methods. 0 = no smoothing.\nIt is limited to the number of frames minus 3.",
         }, smoothingFolder);
 
         new CNodeGUIValue({
@@ -2692,6 +2761,7 @@ class CTrackManager extends CManager {
             end: 1,
             step: 0.01,
             desc: "Catmull Tension",
+            tooltip: "Tension of the legacy catmull curve. It has no visible effect: that curve is built as a chordal curve, which does not use tension.",
         }, smoothingFolder);
 
         new CNodeGUIValue({
@@ -2701,6 +2771,7 @@ class CTrackManager extends CManager {
             end: 100,
             step: 1,
             desc: "Catmull Intervals",
+            tooltip: "Number of spline segments along the track. More segments follow the data more closely.",
         }, smoothingFolder);
 
         new CNodeGUIValue({
@@ -2710,6 +2781,7 @@ class CTrackManager extends CManager {
             end: 5,
             step: 1,
             desc: "SavGol Poly Order",
+            tooltip: "Order of the polynomial that the savgol (Savitzky-Golay) method fits in each window. Higher orders keep sharper turns but smooth less.",
         }, smoothingFolder);
 
         new CNodeGUIValue({
@@ -2719,6 +2791,7 @@ class CTrackManager extends CManager {
             end: 5,
             step: 1,
             desc: "Edge Fit Order",
+            tooltip: "Order of the polynomial that extends the data past each end of the track before smoothing, so the ends do not bend.",
         }, smoothingFolder);
 
         new CNodeGUIValue({
@@ -2728,6 +2801,7 @@ class CTrackManager extends CManager {
             end: 400,
             step: 1,
             desc: "Edge Fit Window",
+            tooltip: "Number of frames at each end of the track that the Edge Fit Order polynomial is fitted to.",
         }, smoothingFolder);
         
         // Create smoothed track node that wraps the unsmoothed spline editor
@@ -2753,13 +2827,7 @@ class CTrackManager extends CManager {
         // always carries its colour, so only a brand-new one falls through to
         // the auto palette — this used to default to pure yellow, which is the
         // traverse track's colour and is deliberately excluded from the palette.
-        const trackColor = colorHex !== undefined
-            ? new Color(
-                ((colorHex >> 16) & 0xff) / 255,
-                ((colorHex >> 8) & 0xff) / 255,
-                (colorHex & 0xff) / 255
-            )
-            : this.nextPaletteColor();
+        const trackColor = this.userTrackColor(colorHex);
         
         // Create display track for visualization
         // Don't use skipGUI - let it create its controls in the folder we just created
@@ -2846,7 +2914,8 @@ class CTrackManager extends CManager {
         // Exits from outside the checkbox (the edit menus, Esc) go through setEditMode, so the
         // checkbox, the editor and Globals.editingTrack cannot disagree. listen() keeps the
         // checkbox current when another track's edit mode switches this one off.
-        const editModeController = guiFolder.add(trackOb, 'editMode').name(t("trackManager.editTrack")).listen()
+        const editModeController = guiFolder.add(trackOb, 'editMode').name(t("trackManager.editTrack"))
+            .tooltip(t("trackManager.tips.editTrack")).listen()
             .onChange((value) => applyEditMode(value));
         trackOb.setEditMode = (value) => {
             trackOb.editMode = value;
@@ -2870,7 +2939,8 @@ class CTrackManager extends CManager {
         
         // Add constant speed checkbox to the GUI folder
         // This checkbox controls whether the track uses constant speed interpolation
-        pathFolder.add(trackOb, 'constantSpeed').name(t("trackManager.constantSpeed")).onChange((value) => {
+        pathFolder.add(trackOb, 'constantSpeed').name(t("trackManager.constantSpeed"))
+            .tooltip(t("trackManager.tips.constantSpeed")).onChange((value) => {
             splineEditorNode.constantSpeed = value;
             splineEditorNode.recalculateCascade();
             console.log(`Constant speed ${value ? 'enabled' : 'disabled'} for track: ${shortName}`);
@@ -2878,7 +2948,8 @@ class CTrackManager extends CManager {
         
         // Add extrapolate track checkbox to the GUI folder
         // This checkbox controls whether the track extrapolates beyond first/last control points
-        pathFolder.add(trackOb, 'extrapolateTrack').name(t("trackManager.extrapolateTrack")).onChange((value) => {
+        pathFolder.add(trackOb, 'extrapolateTrack').name(t("trackManager.extrapolateTrack"))
+            .tooltip(t("trackManager.tips.extrapolateTrack")).onChange((value) => {
             splineEditorNode.extrapolateTrack = value;
             splineEditorNode.recalculateCascade();
             console.log(`Extrapolate track ${value ? 'enabled' : 'disabled'} for track: ${shortName}`);
@@ -2910,6 +2981,7 @@ class CTrackManager extends CManager {
             step: 1,
             desc: "Alt offset",
             unitType: "small",
+            tooltip: "Raise (positive) or lower (negative) the whole track by this height.\nNo effect while Lock Altitude is on.",
             onChange: (v) => {
                 trackOb.altitudeOffset = v;
                 splineEditorNode.setAltitudeOffset(v);
@@ -2933,6 +3005,7 @@ class CTrackManager extends CManager {
             step: 1,
             desc: "Lock Height",
             unitType: "small",
+            tooltip: "Height at which Lock Altitude holds the whole track, measured as Height From says.\nShown only while Lock Altitude is on.",
             onChange: (v) => {
                 trackOb.altitudeLock = v;
                 splineEditorNode.setAltitudeLock(v);
@@ -2977,21 +3050,15 @@ class CTrackManager extends CManager {
         // Show-in-look-view toggle. Synthetic tracks default to MASK_HELPERS
         // (main view only); enabling this adds the LOOK layer bit so the
         // displayTrack renders in the look view too.
-        trackOb.showInLook = showInLook;
-        if (showInLook) {
-            displayTrack.setLayerBit(LAYER.LOOK, true);
-        }
-        displayFolder.add(trackOb, "showInLook").name(t("misc.showInLookView.label")).listen().onChange((value) => {
-            displayTrack.setLayerBit(LAYER.LOOK, value);
-            setRenderOne(true);
-        });
+        this.addShowInLookToggle(trackOb, displayFolder, [displayTrack], showInLook);
 
         // Write the control points out as a droppable .spline.json. Lives on the
         // unsmoothed spline node (that's where the control points are), but is
         // surfaced here so it sits with the rest of the track's controls.
         guiFolder.add({
             exportSpline: () => splineEditorNode.exportSplineJSON()
-        }, "exportSpline").name(t("trackManager.exportSpline"));
+        }, "exportSpline").name(t("trackManager.exportSpline"))
+            .tooltip(t("trackManager.tips.exportSpline"));
 
         // ...and the full set under File > Export, alongside every other track:
         // the same control points, plus the per-frame track this spline
@@ -3003,25 +3070,11 @@ class CTrackManager extends CManager {
         const dummy = {
             deleteTrack: () => this.confirmDeleteSyntheticTrack(trackID, trackOb.displayName ?? shortName),
         };
-        const deleteController = guiFolder.add(dummy, "deleteTrack").name(t("trackManager.deleteTrack"));
+        const deleteController = guiFolder.add(dummy, "deleteTrack").name(t("trackManager.deleteTrack"))
+            .tooltip(t("trackManager.tips.deleteSynthetic"));
         
         // Add to drop targets if configured
-        if (Sit.dropTargets !== undefined && Sit.dropTargets["track"] !== undefined) {
-            const dropTargets = Sit.dropTargets["track"];
-            for (let dropTargetSwitch of dropTargets) {
-                // Strip off any -number suffix
-                const match = dropTargetSwitch.match(/-(\d+)$/);
-                if (match !== null) {
-                    dropTargetSwitch = dropTargetSwitch.substring(0, dropTargetSwitch.length - match[0].length);
-                }
-                
-                if (NodeMan.exists(dropTargetSwitch)) {
-                    const switchNode = NodeMan.get(dropTargetSwitch);
-                    switchNode.removeOption(shortName);
-                    switchNode.addOption(shortName, splineEditorNode);
-                }
-            }
-        }
+        this.setTrackSwitchOption(shortName, splineEditorNode, smoothedTrackNode);
         // The options were added under the short name; show the display name instead.
         this.relabelTrackOptions(trackOb);
         
@@ -3029,19 +3082,15 @@ class CTrackManager extends CManager {
         if (options.objectID) {
             const objectNode = NodeMan.get(options.objectID);
             if (objectNode) {
-                // Add TrackPosition controller to follow the track
-                objectNode.addController("TrackPosition", {
-                    sourceTrack: trackID
-                });
-
-                // Add ObjectTilt controller to orient in direction of motion
-                // NOTE: ObjectTilt creates internal CNodeSmoothedPositionTrack that must be cleaned up
-                // When disposing this object, use: CustomMan.disposeObjectWithControllers(objectID)
-                objectNode.addController("ObjectTilt", {
-                    track: trackID,
-                    tiltType: "banking",
-                    guiFolder: objectNode.gui,
-                });
+                // The object gets its Location folder, with its Position on this track. Its
+                // TrackPosition and ObjectTilt controllers read that Position selector, so
+                // the user can later take the object off the track or put it on another.
+                // NOTE: ObjectTilt creates internal CNodeSmoothedPositionTrack that must be cleaned up.
+                // To remove this object, use CustomManager.deleteObject(objectNode).
+                const first = options.initialPoints?.[0];
+                const start = options.startPoint ? new Vector3(options.startPoint.x, options.startPoint.y, options.startPoint.z)
+                    : first ? new Vector3(first[1], first[2], first[3]) : null;
+                CustomManager.addObjectLocation(objectNode, {ecef: start, track: shortName});
 
                 this.linkTrackAndObject(trackOb, objectNode);
 
@@ -3138,20 +3187,7 @@ class CTrackManager extends CManager {
         
         // Remove from drop targets
         const shortName = trackOb.menuText;
-        if (Sit.dropTargets !== undefined && Sit.dropTargets["track"] !== undefined) {
-            const dropTargets = Sit.dropTargets["track"];
-            for (let dropTargetSwitch of dropTargets) {
-                const match = dropTargetSwitch.match(/-(\d+)$/);
-                if (match !== null) {
-                    dropTargetSwitch = dropTargetSwitch.substring(0, dropTargetSwitch.length - match[0].length);
-                }
-                
-                if (NodeMan.exists(dropTargetSwitch)) {
-                    const switchNode = NodeMan.get(dropTargetSwitch);
-                    switchNode.removeOption(shortName);
-                }
-            }
-        }
+        this.setTrackSwitchOption(shortName, null);
         
         // Remove GUI folder
         if (trackOb.guiFolder) {
@@ -3233,18 +3269,13 @@ class CTrackManager extends CManager {
         const lineWidth = options.lineWidth || 1;
 
         // unique short name: Balloon, Balloon_1, ...
-        let shortName = options.shortName || "Balloon";
-        let counter = 1;
-        while (this.usedShortNames.has(shortName)) {
-            shortName = (options.shortName || "Balloon") + "_" + counter;
-            counter++;
-        }
-        this.usedShortNames.add(shortName);
+        const shortName = this.uniqueShortName(options.shortName || "Balloon");
 
         // GUI folder in Contents. Titled with the trackID first —
         // CNodeDisplayTrack locates it by the track node's id — then renamed
         // to the short name below.
-        const guiFolder = guiMenus.contents.addFolder(trackID);
+        const guiFolder = guiMenus.contents.addFolder(trackID)
+            .tooltip(t("trackManager.tips.balloonFolder"));
 
         // Launch parameters (persisted via the mods pass; ids are stable)
         new CNodeGUIValue({
@@ -3301,13 +3332,7 @@ class CTrackManager extends CManager {
         // freshly added one falls through to the auto palette. Previously this
         // defaulted to a fixed orange, so every balloon in a sitch came out the
         // same colour (and reinforced the overall orange bias).
-        const trackColor = options.color !== undefined
-            ? new Color(
-                ((options.color >> 16) & 0xff) / 255,
-                ((options.color >> 8) & 0xff) / 255,
-                (options.color & 0xff) / 255
-            )
-            : this.nextPaletteColor();
+        const trackColor = this.userTrackColor(options.color);
 
         const displayTrack = new CNodeDisplayTrack({
             id: displayTrackID,
@@ -3356,45 +3381,17 @@ class CTrackManager extends CManager {
         this.linkTrackAndObject(trackOb, objectNode);
 
         // Show-in-look-view toggle (same semantics as synthetic tracks)
-        trackOb.showInLook = !!options.showInLook;
-        if (trackOb.showInLook) {
-            displayTrack.setLayerBit(LAYER.LOOK, true);
-        }
-        guiFolder.add(trackOb, "showInLook").name(t("misc.showInLookView.label")).listen().onChange((value) => {
-            displayTrack.setLayerBit(LAYER.LOOK, value);
-            setRenderOne(true);
-        });
-
-        const dummy = {
-            deleteTrack: async () => {
-                if (await showConfirm(`Delete balloon "${shortName}"?`, {title: "Delete Balloon"})) {
-                    this.disposeRemove(trackID);
-                }
-            }
-        };
-        guiFolder.add(dummy, "deleteTrack").name(t("trackManager.deleteTrack"));
+        this.addShowInLookToggle(trackOb, guiFolder, [displayTrack], !!options.showInLook);
+        this.addGeneratedTrackDeleteButton(trackOb, "balloon", t("trackManager.tips.deleteBalloon"));
 
         // Register in the track drop-target switches (Camera/Target Track...)
         // so the camera can track the balloon — which also makes it the truth
         // source for the MISB CSV export.
-        if (Sit.dropTargets !== undefined && Sit.dropTargets["track"] !== undefined) {
-            const dropTargets = Sit.dropTargets["track"];
-            for (let dropTargetSwitch of dropTargets) {
-                const match = dropTargetSwitch.match(/-(\d+)$/);
-                if (match !== null) {
-                    dropTargetSwitch = dropTargetSwitch.substring(0, dropTargetSwitch.length - match[0].length);
-                }
-                if (NodeMan.exists(dropTargetSwitch)) {
-                    const switchNode = NodeMan.get(dropTargetSwitch);
-                    switchNode.removeOption(shortName);
-                    switchNode.addOption(shortName, balloonNode);
-                }
-            }
-        }
+        this.setTrackSwitchOption(shortName, balloonNode);
         // The options were added under the short name; show the display name instead.
         this.relabelTrackOptions(trackOb);
 
-        console.log(`Created balloon track: ${trackID} (${shortName}) at ${options.startLat}, ${options.startLon}`);
+        console.log(`Created balloon track: ${trackID} (${shortName})`);
 
         NodeMan.recalculateAllRootFirst();
         setRenderOne(true);
@@ -3416,19 +3413,7 @@ class CTrackManager extends CManager {
         disposeDirectTrackDependentControllers(NodeMan.get(trackID, false));
 
         // remove from the track drop-target switches
-        const shortName = trackOb.menuText;
-        if (Sit.dropTargets !== undefined && Sit.dropTargets["track"] !== undefined) {
-            const dropTargets = Sit.dropTargets["track"];
-            for (let dropTargetSwitch of dropTargets) {
-                const match = dropTargetSwitch.match(/-(\d+)$/);
-                if (match !== null) {
-                    dropTargetSwitch = dropTargetSwitch.substring(0, dropTargetSwitch.length - match[0].length);
-                }
-                if (NodeMan.exists(dropTargetSwitch)) {
-                    NodeMan.get(dropTargetSwitch).removeOption(shortName);
-                }
-            }
-        }
+        this.setTrackSwitchOption(trackOb.menuText, null);
 
         if (trackOb.guiFolder) {
             trackOb.guiFolder.destroy();
@@ -3492,10 +3477,7 @@ class CTrackManager extends CManager {
                 // width lives on the display node's "width" INPUT (edited by
                 // the Line Width slider) — there is no .width property
                 lineWidth: trackOb.displayTrack?.in?.width?.value ?? 1,
-                color: trackOb.trackColor ?
-                    (Math.round(trackOb.trackColor.r * 255) << 16) |
-                    (Math.round(trackOb.trackColor.g * 255) << 8) |
-                    Math.round(trackOb.trackColor.b * 255) : 0xffa040,
+                color: trackOb.trackColor ? trackColorHex(trackOb.trackColor) : 0xffa040,
             });
         });
         return balloons;
@@ -3510,6 +3492,344 @@ class CTrackManager extends CManager {
                 this.addBalloonTrack(b);
             } catch (e) {
                 console.error(`Failed to recreate balloon track ${b.trackID}:`, e);
+            }
+        }
+    }
+
+    // --- shared by the tracks the user adds in the scene -----------------------
+    //
+    // The synthetic (spline), balloon and kite tracks are all made from the ground
+    // context menu, and have the same small parts.
+
+    // Add or remove a track in the track drop-target switches (Camera Track,
+    // Target Track and so on), under its short name. A null node removes it.
+    // `finishedNode` is the track as its own object follows it. The Position of an object
+    // (noAutoSelect, see CustomManager.addObjectLocation) gets that node: a synthetic track
+    // gives the other switches its spline, and gives an object its smoothed track.
+    setTrackSwitchOption(shortName, trackNode, finishedNode = trackNode) {
+        // a switch that is disposed while this runs is not given (see trackSelectors)
+        for (const switchNode of trackSelectors()) {
+            switchNode.removeOption(shortName);
+            if (trackNode) switchNode.addOption(shortName, switchNode.noAutoSelect ? finishedNode : trackNode);
+        }
+    }
+
+    // Give a switch that was made after the tracks every track there is now, under the
+    // short name and with the display name, as setTrackSwitchOption and relabelTrackOptions
+    // do for a track that is made after the switch. Then the objects that are on a manual
+    // position, which are options too (TrackSelectors.js).
+    addTracksToSwitch(switchNode) {
+        this.iterate((id, trackOb) => {
+            const key = trackOb.menuText;
+            if (!key || !trackOb.trackNode || switchNode.inputs[key] !== undefined) return;
+            const name = trackOb.displayName;
+            switchNode.addOption(key, trackOb.trackNode, name !== undefined && name !== key ? name : undefined);
+        });
+        addManualObjectsToSelector(switchNode);
+    }
+
+    // Take a short name that no track has: Kite, Kite_1, Kite_2, ...
+    uniqueShortName(base) {
+        let shortName = base;
+        for (let counter = 1; this.usedShortNames.has(shortName); counter++) shortName = base + "_" + counter;
+        this.usedShortNames.add(shortName);
+        return shortName;
+    }
+
+    // The colour of a track: the saved one (0xRRGGBB, see trackColorHex), or
+    // the next palette colour for a track that is new.
+    userTrackColor(hex) {
+        return hex !== undefined
+            ? new Color(((hex >> 16) & 0xff) / 255, ((hex >> 8) & 0xff) / 255, (hex & 0xff) / 255)
+            : this.nextPaletteColor();
+    }
+
+    // The "Show in look view" checkbox of a track. Its display nodes are in the
+    // main view only (MASK_HELPERS) until the LOOK layer bit is set.
+    addShowInLookToggle(trackOb, folder, displayNodes, showInLook) {
+        const apply = (value) => displayNodes.forEach(node => node.setLayerBit(LAYER.LOOK, value));
+        trackOb.showInLook = showInLook;
+        if (showInLook) apply(true);
+        folder.add(trackOb, "showInLook").name(t("misc.showInLookView.label"))
+            .tooltip(t("misc.showInLookView.tooltip")).listen().onChange((value) => {
+            apply(value);
+            setRenderOne(true);
+        }).fadeWhenFolderOff();
+    }
+
+    // The Delete Track button of a balloon or a kite. Its object goes with it.
+    addGeneratedTrackDeleteButton(trackOb, kind, tooltip) {
+        const title = kind[0].toUpperCase() + kind.slice(1);
+        const dummy = {
+            deleteTrack: async () => {
+                if (await showConfirm(`Delete ${kind} "${trackOb.menuText}"?`, {title: `Delete ${title}`})) {
+                    this.disposeRemove(trackOb.trackID);
+                }
+            }
+        };
+        trackOb.guiFolder.add(dummy, "deleteTrack").name(t("trackManager.deleteTrack")).tooltip(tooltip);
+    }
+
+    // --- kites ---------------------------------------------------------------
+
+    /**
+     * Add a simulated kite ("Add Kite" in the ground context menu): a track, a
+     * kite object on it, and the flying line from the anchor to the kite.
+     * CNodeKiteTrack computes the per-frame positions from the anchor, the line
+     * and the wind, so, like a balloon, it is not flagged isSynthetic.
+     * serializeKites() saves the parameters, and deserializeKites() makes the
+     * same node ids again before the mods pass.
+     *
+     * @param {Object} options
+     * @param {number} options.anchorLat - anchor latitude (degrees)
+     * @param {number} options.anchorLon - anchor longitude (degrees)
+     * @param {number} options.anchorAltitude - anchor altitude (m MSL)
+     * @param {number} options.lineLength - line length in metres (default 100)
+     * @param {number} options.lineWeight - line weight in g/m (default 0.5)
+     * @param {number} options.lineDiameter - line diameter in mm (default 1)
+     * @param {number} options.windVariability - turbulence intensity in % (default 10)
+     * @param {number} options.seed - PRNG seed (default 1)
+     * @param {Object} options.recipe - the kite design for a new kite. A saved kite
+     *        has none: the mods pass restores the design on its object.
+     * @param {string} options.trackID/objectID/displayTrackID/lineDisplayID - preserved ids on deserialize
+     * @param {number} options.color - track color hex
+     * @param {boolean} options.showInLook - also draw the track and the line in the look view
+     * @returns {Object|null} The created CMetaTrack entry
+     */
+    addKiteTrack(options) {
+        // Generated ids only - a deserialize passes its saved ids and must keep them.
+        const trackID = options.trackID || NodeMan.UniqueName(`kiteTrack_${Date.now()}`);
+        const objectID = options.objectID || NodeMan.UniqueName(`kiteObject_${Date.now()}`);
+        const displayTrackID = options.displayTrackID || NodeMan.UniqueName(`kiteTrackDisplay_${Date.now()}`);
+        const lineDisplayID = options.lineDisplayID || NodeMan.UniqueName(`kiteLineDisplay_${Date.now()}`);
+
+        // unique short name: Kite, Kite_1, ...
+        const shortName = this.uniqueShortName(options.shortName || "Kite");
+
+        // Titled with the trackID first (CNodeDisplayTrack finds the folder by
+        // the track node's id); initTrackDisplayName gives it its name below.
+        const guiFolder = guiMenus.contents.addFolder(trackID)
+            .tooltip(t("trackManager.tips.kiteFolder"));
+
+        // Flight parameters (persisted via the mods pass; ids are stable)
+        new CNodeGUIValue({
+            id: trackID + "_anchorAltitude",
+            value: options.anchorAltitude ?? 0,
+            start: 0, end: 10000, step: 1,
+            desc: "Anchor Altitude (m MSL)",
+            elastic: true, elasticMin: 1000, elasticMax: 40000,
+            tip: "Altitude in meters MSL of the point where the line is held (defaults to the ground at the click point)",
+        }, guiFolder);
+        new CNodeGUIValue({
+            id: trackID + "_lineLength",
+            value: options.lineLength ?? 100,
+            start: 5, end: 500, step: 1,
+            desc: "Line Length (m)",
+            elastic: true, elasticMin: 100, elasticMax: 5000,
+            tip: "Length of the flying line, from the anchor to the kite",
+        }, guiFolder);
+        new CNodeGUIValue({
+            id: trackID + "_lineWeight",
+            value: options.lineWeight ?? 0.5,
+            start: 0, end: 20, step: 0.1,
+            desc: "Line Weight (g/m)",
+            tip: "Weight of one meter of line, in grams. A heavy line sags and holds the kite lower.\n"
+                + "About 0.5 for a small kite, and 5 or more for a large show kite",
+        }, guiFolder);
+        new CNodeGUIValue({
+            id: trackID + "_lineDiameter",
+            value: options.lineDiameter ?? 1,
+            start: 0, end: 10, step: 0.1,
+            desc: "Line Diameter (mm)",
+            tip: "Thickness of the line. The wind pushes on a thick line, which holds the kite lower.\n"
+                + "About 1 for a small kite, and 3 or more for a large show kite",
+        }, guiFolder);
+        new CNodeGUIValue({
+            id: trackID + "_windVariability",
+            value: options.windVariability ?? 10,
+            start: 0, end: 40, step: 1,
+            desc: "Wind Variability (%)",
+            tip: "How gusty the wind is: the typical size of a gust as a percentage of the wind speed (the turbulence intensity).\n"
+                + "About 10 over open flat ground or water, 15 in open country, 20 among trees and houses, and 30 in a town.\n"
+                + "The gusts move the kite slowly from side to side, and up and down",
+        }, guiFolder);
+        new CNodeGUIValue({
+            id: trackID + "_seed",
+            value: options.seed ?? 1,
+            start: 1, end: 9999, step: 1,
+            desc: "Random Seed",
+            tip: "Change for a different (but repeatable) pattern of gusts",
+        }, guiFolder);
+
+        const kiteNode = new CNodeKiteTrack({
+            id: trackID,
+            anchorLat: options.anchorLat,
+            anchorLon: options.anchorLon,
+            objectID,
+            anchorAltitude: trackID + "_anchorAltitude",
+            lineLength: trackID + "_lineLength",
+            lineWeight: trackID + "_lineWeight",
+            lineDiameter: trackID + "_lineDiameter",
+            windVariability: trackID + "_windVariability",
+            seed: trackID + "_seed",
+        });
+        kiteNode.menuText = shortName;
+        kiteNode.shortName = shortName;
+
+        // Where the kite is and what the wind does to it, at the current frame.
+        const status = {position: "", wind: ""};
+        kiteNode.onStatus = (position, wind) => { status.position = position; status.wind = wind; };
+        guiFolder.add(status, "position").name("Kite Position").listen().disable()
+            .tooltip("Where the kite is at this frame: its height above the anchor, its distance downwind of the anchor, and the angle of a straight line from the anchor to it.\n"
+                + "\"On the ground\" means that the wind is too light to lift this kite");
+        guiFolder.add(status, "wind").name("Wind and Pull").listen().disable()
+            .tooltip("The wind speed at the kite at this frame, and the pull of the line at the kite.\n"
+                + "On the ground, the second number is the wind that this kite needs to fly");
+
+        // A saved or redone kite carries its colour; a new one takes the next palette colour.
+        const trackColor = this.userTrackColor(options.color);
+
+        const displayTrack = new CNodeDisplayTrack({
+            id: displayTrackID,
+            track: trackID,
+            color: new CNodeConstant({
+                id: "colorKite_" + trackID,
+                value: trackColor,
+                pruneIfUnused: true
+            }),
+            width: options.lineWidth || 1,
+            // generated for the whole sitch, like a balloon: never greyed outside In/Out
+            ignoreAB: true,
+        });
+
+        const lineDisplay = new CNodeDisplayKiteLine({id: lineDisplayID, track: trackID});
+
+        // The kite itself. A new kite gets its design here. A saved kite gets a
+        // plain sphere, and the mods pass then restores the design it was saved with.
+        const objectNode = new CNode3DObject({
+            id: objectID,
+            displayName: CustomManager.getNextObjectName(),
+            ...(options.recipe
+                ? {proceduralModel: {mode: "procedural", recipe: options.recipe}}
+                : {geometry: "sphere", radius: 0.5, color: 0xf0f0f0, material: "phong"}),
+        });
+        objectNode.addController("TrackPosition", {sourceTrack: trackID});
+        // after TrackPosition: it turns the kite about the position that one sets
+        objectNode.addController("KiteHeading", {track: trackID});
+
+        const trackOb = this.add(trackID, new CMetaTrack(null, kiteNode, kiteNode));
+        trackOb.trackID = trackID;
+        trackOb.menuText = shortName;
+        trackOb.isKite = true;
+        trackOb.displayTrack = displayTrack;
+        trackOb.displayTrackID = displayTrackID;
+        trackOb.lineDisplayID = lineDisplayID;
+        trackOb.guiFolder = guiFolder;
+        trackOb.trackColor = trackColor;
+        trackOb.objectID = objectID;
+        this.initTrackDisplayName(trackOb, options.displayName);
+        this.linkTrackAndObject(trackOb, objectNode);
+
+        // Show-in-look-view toggle, for the track line and the flying line.
+        this.addShowInLookToggle(trackOb, guiFolder, [displayTrack, lineDisplay], !!options.showInLook);
+        this.addGeneratedTrackDeleteButton(trackOb, "kite", t("trackManager.tips.deleteKite"));
+
+        // In the Camera/Target Track switches, so the camera can follow the kite.
+        this.setTrackSwitchOption(shortName, kiteNode);
+        // The options were added under the short name; show the display name instead.
+        this.relabelTrackOptions(trackOb);
+
+        console.log(`Created kite track: ${trackID} (${shortName})`);
+
+        NodeMan.recalculateAllRootFirst();
+        setRenderOne(true);
+        this.notifyTracksChanged();
+
+        return trackOb;
+    }
+
+    disposeKiteTrack(trackID) {
+        const trackOb = this.get(trackID);
+        if (!trackOb || !trackOb.isKite) {
+            console.warn(`Kite track ${trackID} not found`);
+            return;
+        }
+
+        this.usedShortNames.delete(trackOb.menuText);
+
+        // the kite object's controllers (and anything else riding the track)
+        disposeDirectTrackDependentControllers(NodeMan.get(trackID, false));
+        this.setTrackSwitchOption(trackOb.menuText, null);
+
+        if (trackOb.guiFolder) {
+            trackOb.guiFolder.destroy();
+        }
+
+        NodeMan.unlinkDisposeRemove(trackOb.lineDisplayID);
+        NodeMan.unlinkDisposeRemove(trackOb.displayTrackID);
+        NodeMan.unlinkDisposeRemove("colorKite_" + trackID);
+
+        // the kite object belongs to the kite, so it goes with it
+        if (trackOb.objectID) {
+            NodeMan.unlinkDisposeRemove(trackOb.objectID);
+        }
+
+        for (const suffix of ["_anchorAltitude", "_lineLength", "_lineWeight", "_lineDiameter", "_windVariability", "_seed"]) {
+            NodeMan.unlinkDisposeRemove(trackID + suffix);
+        }
+        NodeMan.unlinkDisposeRemove(trackID);
+
+        this.remove(trackID);
+        NodeMan.pruneUnusedFlagged();
+
+        console.log(`Deleted kite track: ${trackID}`);
+
+        if (!Globals.disposing) {
+            NodeMan.recalculateAllRootFirst();
+            setRenderOne(true);
+        }
+    }
+
+    /**
+     * Serialize all kite tracks: compact generator parameters, made again on
+     * load (deserializeKites) BEFORE the mods pass, which then restores the GUI
+     * values and the kite design by node id.
+     */
+    serializeKites() {
+        const kites = [];
+        this.iterate((id, trackOb) => {
+            if (!trackOb.isKite) return;
+            const node = trackOb.trackNode;
+            const paramValue = (suffix) => NodeMan.get(trackOb.trackID + suffix).value;
+            kites.push({
+                trackID: trackOb.trackID,
+                displayTrackID: trackOb.displayTrackID,
+                lineDisplayID: trackOb.lineDisplayID,
+                objectID: trackOb.objectID,
+                shortName: trackOb.menuText,
+                anchorLat: node.anchorLat,
+                anchorLon: node.anchorLon,
+                anchorAltitude: paramValue("_anchorAltitude"),
+                lineLength: paramValue("_lineLength"),
+                lineWeight: paramValue("_lineWeight"),
+                lineDiameter: paramValue("_lineDiameter"),
+                windVariability: paramValue("_windVariability"),
+                seed: paramValue("_seed"),
+                showInLook: !!trackOb.showInLook,
+                // the width is on the display node's "width" input, which the Line Width slider edits
+                lineWidth: trackOb.displayTrack?.in?.width?.value ?? 1,
+                color: trackColorHex(trackOb.trackColor),
+            });
+        });
+        return kites;
+    }
+
+    deserializeKites(kitesData) {
+        for (const kite of kitesData ?? []) {
+            try {
+                this.addKiteTrack(kite);
+            } catch (e) {
+                console.error(`Failed to recreate kite track ${kite.trackID}:`, e);
             }
         }
     }
@@ -3751,10 +4071,7 @@ class CTrackManager extends CManager {
                     showInLook: !!trackOb.showInLook,
                     altitudeLock: trackOb.altitudeLock,
                     altitudeLockAGL: trackOb.altitudeLockAGL,
-                    color: trackOb.trackColor ? 
-                        (Math.round(trackOb.trackColor.r * 255) << 16) |
-                        (Math.round(trackOb.trackColor.g * 255) << 8) |
-                        Math.round(trackOb.trackColor.b * 255) : 0xffff00,
+                    color: trackOb.trackColor ? trackColorHex(trackOb.trackColor) : 0xffff00,
                     lineWidth: trackOb.displayTrack?.width || 1,
                     positions: positions,
                     objectData: objectData,

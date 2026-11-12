@@ -23,6 +23,7 @@ A plain `+` is read as a space.
 | `sitch` | The name of a built-in sitch. Not case-sensitive | Opens that sitch | `?sitch=custom` |
 | `custom` | A saved-sitch reference or a URL (see below) | Loads a saved sitch | `?custom=99999999/My%20Sitch/20250701_215755.js` |
 | `mod` | Same as `custom` | Loads a saved modification of a built-in sitch. Works the same as `custom` | `?mod=…` |
+| `template` | The name of a [template](SavingAndLoading.md#templates) | Opens a new sitch from that template | `?template=Star%20Tracker` |
 | `drop` | The URL of a file | Loads that file after the sitch is set up, as if you pasted the URL onto Sitrec | `?action=new&drop=https://example.com/clip.mp4` |
 | `sit` | Same as `sitch` | Old name for `sitch`. If both are given, `sitch` wins | `?sit=gimbal` |
 
@@ -55,6 +56,23 @@ shows an error, with the likely cause when it can tell. It then opens the sitch 
 
 A sitch loaded from `custom` or `mod` restores its saved camera, terrain and time. The
 preferences in **Sitrec → Settings → New Sitch Startup** are not applied.
+
+### template
+
+`template` opens a new sitch from the [template](SavingAndLoading.md#templates) with that
+name. The address has the name only, so it always opens the latest version of the template.
+The new sitch has no name, and your work in it does not change the template.
+
+Sitrec writes this address into the address bar when you open a template. A link to it opens
+the same template for another user, if it is a global template.
+
+- The name must be exact, with the same capital letters. Write a space as `%20`.
+- Sitrec looks for a global template with that name first. If there is none and you are
+  logged in, it looks in your own local templates.
+- If there is no template with that name, Sitrec shows an error and then the start screen.
+- `template` works only on an installation that saves sitches to a server. With a `sitch`,
+  `custom` or `mod` parameter, or with `action=new`, that parameter is used and `template`
+  is not.
 
 ### drop
 
@@ -172,19 +190,34 @@ parameter. It is intended for screenshots and repeatable comparisons, not for no
 | Parameter | Values | Effect | Example |
 |---|---|---|---|
 | `action` | `new` | Starts a new custom sitch | `?action=new` |
+| | `browse` | Opens the sitch browser as the start screen | `?action=browse` |
 | | `trackbrowser` | Starts a new custom sitch and opens the Track Browser | `?action=trackbrowser` |
 | | `botbench` | Starts a new custom sitch and opens the BOTBench window | `?action=botbench` |
 
 The value is not case-sensitive. Unknown values are ignored.
 
 **Why `action=new` matters.** On an installation that saves sitches to a server, such as
-www.metabunk.org, an address with no `sitch`, `custom`, `mod` or `action` parameter opens
-the sitch browser over a blank page that has no terrain or cameras, so `latlon`, `mapType`
+www.metabunk.org, an address with no `sitch`, `custom`, `mod`, `template` or `action` parameter opens
+the start screen (the [templates](SavingAndLoading.md#templates), or the sitch browser when
+there are none) over a blank page that has no terrain or cameras, so `latlon`, `mapType`
 and `elevationType` do nothing there. Add `action=new` (or
 `sitch=custom`) when you use those parameters.
 
-**File → New Sitch**, and the **New Sitch** button in the sitch browser, reload Sitrec with
-`?action=new`.
+**File → New Sitch (Empty)**, and the **New Sitch** button on the start screen and in the
+sitch browser, reload Sitrec with `?action=new`.
+
+**`action=browse`.** The address with no parameter opens the start screen with the
+templates. `action=browse` opens the same start screen with the sitch browser, over the
+same blank page. Use it alone: with a `sitch`, `custom` or `mod` parameter, that sitch opens
+and the sitch browser does not. It does nothing on an installation that does not save
+sitches to a server.
+
+**Browse Sitches** on the start screen and **File → Server → Open** show the sitch browser
+and set the address to `?action=browse`. Sitrec does not reload, so a sitch that you have
+open stays open behind the sitch browser. When you close the sitch browser, or go back to
+the templates, the address goes back to what it was. If you reload while the address is
+`?action=browse`, Sitrec opens the sitch browser and the sitch that was open is not
+loaded.
 
 ---
 

@@ -9,7 +9,7 @@ export function copyVehicleRecipe(value, {allowFuture = false} = {}) {
     if (!value || value.format !== "sitrec-procedural-vehicle" || value.version !== 1 ||
         (value.generator && value.generator !== VEHICLE_GENERATOR) || !value.parameters ||
         typeof value.parameters !== "object" || Array.isArray(value.parameters))
-        throw new Error("Choose a Vehicle Designer recipe (version 1).");
+        throw new Error("Choose a Custom Object Designer recipe (version 1).");
     const revision = value.generatorRevision ?? 1;
     if (!Number.isInteger(revision) || revision < 1 || (!allowFuture && revision !== VEHICLE_GENERATOR_REVISION))
         throw new Error(`Vehicle generator revision ${revision} is not supported. Use its frozen GLB or a compatible Sitrec version.`);

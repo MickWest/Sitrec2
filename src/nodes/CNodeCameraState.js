@@ -168,20 +168,30 @@ export class CNodeCameraState extends CNode {
     // been fitted.
     setupMenu(parent) {
         if (!parent) return;
-        const modes = this.modeFolder = parent.addFolder("IR/TV Mode Switches").close();
-        modes.add(this.modeEditor, "frame", 0, undefined, 1).name("Frame").listen();
+        const modes = this.modeFolder = parent.addFolder("IR/TV Mode Switches").close()
+            .tooltip("Switch the look view between IR (infrared) and TV (visible light) at chosen frames.\n" +
+                "Each switch holds from its frame until the next switch. The mode also shows on the camera overlays.");
+        modes.add(this.modeEditor, "frame", 0, undefined, 1).name("Frame").listen()
+            .tooltip("Frame number that Add / Replace Switch and Remove Switch act on.");
         modes.add(this.modeEditor, "mode", ["IR", "TV"]).name("Mode")
-            .tooltip("Manual keys override CSV modes from their frame onward, even when Drive Look View is off. Lens and polarity still come from active CSV data or saved settings.");
-        modes.add(this, "modeSummary").name("Switches").listen().disable();
+            .tooltip("Mode that Add / Replace Switch sets: IR (infrared) or TV (visible light).\n" +
+                "A switch overrides the camera data mode from its frame onward, even when Camera Data > Drive Look View is off.\n" +
+                "The lens step and polarity still come from the camera data or the saved settings.");
+        modes.add(this, "modeSummary").name("Switches").listen().disable()
+            .tooltip("The mode switches, as frame: mode.");
         const actions = {
             current: () => { this.modeEditor.frame = Math.floor(par.frame); },
             set: () => this.setModeKey(this.modeEditor.frame, this.modeEditor.mode),
             removeSwitch: () => this.removeModeKey(this.modeEditor.frame),
         };
-        modes.add(actions, "current").name("Use Current Frame");
-        modes.add(actions, "set").name("Add / Replace Switch");
-        modes.add(actions, "removeSwitch").name("Remove Switch");
-        const folder = this.guiFolder = parent.addFolder(t("cameraState.folder")).close();
+        modes.add(actions, "current").name("Use Current Frame")
+            .tooltip("Set Frame to the current frame.");
+        modes.add(actions, "set").name("Add / Replace Switch")
+            .tooltip("Add a switch to Mode at Frame. A switch that is already at that frame is replaced.");
+        modes.add(actions, "removeSwitch").name("Remove Switch")
+            .tooltip("Remove the switch at Frame, if there is one.");
+        const folder = this.guiFolder = parent.addFolder(t("cameraState.folder")).close()
+            .tooltip(t("cameraState.folderTooltip"));
 
         const readOnly = (property, key) => folder.add(this.menuText, property)
             .name(t(`cameraState.${key}.label`))
@@ -201,7 +211,9 @@ export class CNodeCameraState extends CNode {
             });
 
         folder.add(this, "useFreeFocal").name("Use CSV Free Focal Length (Conditional)").listen()
-            .tooltip("For sensors without lens steps, use CSV FL as optical focal length with the selected aperture and detector. This is a conditional model, not calibration. CSV Zoom remains electronic; set framing separately with Camera FOV.")
+            .tooltip("For a thermal sensor with no lens steps, use the focal length from the camera data as the optical focal length.\n" +
+                "The selected aperture and detector stay the same. It is a conditional model, not a calibration.\n" +
+                "The camera data zoom stays electronic: set the framing with Camera FOV.")
             .onChange(() => this.changed());
 
         folder.add({remove: () => this.clear()}, "remove")

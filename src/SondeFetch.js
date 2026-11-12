@@ -408,6 +408,23 @@ export async function pickStation() {
  * @param {string} source - "uwyo" or "igra2"
  * @returns {Promise<Array>} Array of {station, filename, success, error?} results
  */
+// The 00Z and 12Z launches on each side of a time, the nearest first (a tie
+// goes to the later one: a "12Z" sounding is launched about 11:00Z and
+// measures over the next hour or two). A launch after nowMs has no data yet and
+// is left out; if both are, the last launch before nowMs is the one candidate.
+// Each is {date: "YYYY-MM-DD", hour: 0 | 12, ms}. The automatic load and the
+// Import Sounding dialog both use it (wind plan phase 4 item 2).
+export function nearestLaunches(timeMs, nowMs = Date.now()) {
+    const HALF_DAY_MS = 12 * 3600000;
+    const at = (ms) => ({date: new Date(ms).toISOString().slice(0, 10), hour: new Date(ms).getUTCHours(), ms});
+    const before = Math.floor(timeMs / HALF_DAY_MS) * HALF_DAY_MS;
+    const sides = [before, before + HALF_DAY_MS]
+        .filter(ms => ms <= nowMs)
+        .sort((x, y) => Math.abs(x - timeMs) - Math.abs(y - timeMs) || y - x);
+    if (sides.length === 0) return [at(Math.floor(nowMs / HALF_DAY_MS) * HALF_DAY_MS)];
+    return sides.map(at);
+}
+
 export async function getNearbyWeatherBalloons(count = 1, source = "uwyo") {
     count = Math.max(1, Math.min(count, 10));
 
@@ -434,26 +451,18 @@ export async function getNearbyWeatherBalloons(count = 1, source = "uwyo") {
         camLon = Sit.lon || 0;
     }
 
-    // Target time: sitch start + 1 hour
+    // The launch nearest to the sitch start, then the one on the other side of
+    // it (nearestLaunches), as the Import Sounding dialog does. Until
+    // 2026-11-03 this took the last launch at or before the start + 1 hour, so a
+    // sitch at 10:30Z got the 00Z launch, 10.5 h old, not the 12Z one 1.5 h later.
     let targetDate;
     try {
         targetDate = GlobalDateTimeNode.frameToDate(0);
-        targetDate = new Date(targetDate.getTime() + 3600000); // +1 hour
     } catch {
         targetDate = new Date();
     }
-
-    // Find the most recent 00Z or 12Z launch before target
-    const targetHour = targetDate.getUTCHours();
-    let launchHour, launchDate;
-    if (targetHour >= 12) {
-        launchHour = 12;
-        launchDate = targetDate.toISOString().slice(0, 10);
-    } else {
-        // Before 12Z today → use 00Z today, or 12Z yesterday
-        launchHour = 0;
-        launchDate = targetDate.toISOString().slice(0, 10);
-    }
+    const launches = nearestLaunches(targetDate.getTime());
+    const launchDate = launches[0].date;
 
     // Sort stations by proximity to camera, excluding inactive stations
     const targetYear = targetDate.getUTCFullYear();
@@ -490,17 +499,16 @@ export async function getNearbyWeatherBalloons(count = 1, source = "uwyo") {
                 const text = await fetchIGRA2Data(station.id, year);
                 const soundings = listIGRA2Soundings(text);
 
-                // Find sounding closest to target but not after target + 1h
+                // The sounding nearest to the sitch start, before or after it
+                // (until 2026-11-03: the last one at or before the start + 1 h).
                 const targetMs = targetDate.getTime();
                 let bestIdx = 0;
                 let bestDist = Infinity;
                 for (const s of soundings) {
                     const sHour = s.hour != null ? s.hour : 12;
                     const sMs = new Date(s.date + "T" + String(sHour).padStart(2, "0") + ":00:00Z").getTime();
-                    if (sMs <= targetMs) {
-                        const dist = targetMs - sMs;
-                        if (dist < bestDist) { bestDist = dist; bestIdx = s.index; }
-                    }
+                    const dist = Math.abs(targetMs - sMs);
+                    if (dist < bestDist) { bestDist = dist; bestIdx = s.index; }
                 }
 
                 const single = extractSingleSounding(text, bestIdx);
@@ -516,8 +524,22 @@ export async function getNearbyWeatherBalloons(count = 1, source = "uwyo") {
                     if (cancelledRef.cancelled) break;
                 }
                 updateProgress({ status: `Fetching UWYO for ${label}...` });
-                const html = await fetchUWYOSounding(station.wmo, launchDate, launchHour, "list");
-                filename = `sounding_${station.wmo}_${launchDate}_${String(launchHour).padStart(2, "0")}Z.html`;
+                // The nearest launch; if the station has none then, the one on
+                // the other side of the sitch start. A rate limit is not a
+                // missing launch: it goes to the retry below.
+                let html = null, firstError = null, used = launches[0];
+                for (const launch of launches) {
+                    try {
+                        html = await fetchUWYOSounding(station.wmo, launch.date, launch.hour, "list");
+                        used = launch;
+                        break;
+                    } catch (err) {
+                        if (String(err?.message).includes("rate limit")) throw err;
+                        firstError ??= err;
+                    }
+                }
+                if (html === null) throw firstError;
+                filename = `sounding_${station.wmo}_${used.date}_${String(used.hour).padStart(2, "0")}Z.html`;
                 updateProgress({ status: `Importing ${label}...` });
                 await FileManager.parseResult(filename, new TextEncoder().encode(html).buffer);
             }
@@ -653,15 +675,13 @@ export async function importSoundingDialog() {
     return await importViaUWYO(station, date);
 }
 
-// Closest 00Z / 12Z launch to the sitch start time. Picks 00Z if the
-// sitch starts in the [00:00, 06:00) UTC window, 12Z for [06:00, 18:00),
-// and rolls forward to the next-day 00Z for [18:00, 24:00) — that
-// next-day launch is genuinely closer in time to a late-evening sitch
-// start than that day's earlier 12Z.
+// Closest 00Z / 12Z launch to the sitch start time (nearestLaunches, the same
+// rule as the automatic load): for a sitch starting between 18Z and midnight
+// that is the next day's 00Z, and a launch that has not happened yet is not
+// offered.
 //
-// Returns {date: "YYYY-MM-DD", hour: "0" | "12"}. Falls back to today /
-// 12Z when GlobalDateTimeNode isn't ready yet (legacy fixed sitches
-// during bootstrap).
+// Returns {date: "YYYY-MM-DD", hour: "0" | "12"}. Falls back to now when
+// GlobalDateTimeNode isn't ready yet (legacy fixed sitches during bootstrap).
 function _closestLaunchToSitch() {
     let sitStart;
     try {
@@ -669,12 +689,8 @@ function _closestLaunchToSitch() {
     } catch {
         sitStart = new Date();
     }
-    const d = new Date(sitStart.getTime());
-    const h = d.getUTCHours();
-    if (h < 6)  return {date: d.toISOString().slice(0, 10), hour: "0"};
-    if (h < 18) return {date: d.toISOString().slice(0, 10), hour: "12"};
-    d.setUTCDate(d.getUTCDate() + 1);
-    return {date: d.toISOString().slice(0, 10), hour: "0"};
+    const nearest = nearestLaunches(sitStart.getTime())[0];
+    return {date: nearest.date, hour: String(nearest.hour)};
 }
 
 async function importViaUWYO(station, date) {

@@ -113,6 +113,7 @@ export function resolveVehicleThermal(recipe, {airTemperatureK, mach, power, can
         if (p.vehicleType === "balloon") profile = ["foil", "star", "heart"].includes(p.balloonShape) ? "foil" :
             ["lantern", "boxlantern", "pagoda"].includes(p.balloonShape) ? "lantern" :
             ["hotair", "solar"].includes(p.balloonShape) ? "hotair" : ["blimp"].includes(p.balloonShape) ? "unpowered" : "latex";
+        else if (["kite", "bird"].includes(p.vehicleType)) profile = "unpowered";
         else if (p.rotorLayout && p.rotorLayout !== "none") profile = "turboshaft";
         else if (p.vehicleType === "drone" && p.droneStyle !== "fixedwing") profile = "electric";
         else if (p.engineType === "none") profile = "unpowered";
@@ -224,7 +225,8 @@ export function createThermalControls(mount, getSettings, set, {translate = null
     if (mount.addFolder) {
         const fields = [], state = {}, folders = [];
         for (const [group, parameters] of thermalControlGroups()) {
-            const folder = mount.addFolder(translate(`thermal.groups.${group}`)).close();
+            const folder = mount.addFolder(translate(`thermal.groups.${group}`)).close()
+                .tooltip(translate(`thermal.groupTooltips.${group}`));
             folders.push(folder);
             for (const parameter of parameters) {
                 if (hidden(parameter)) continue;

@@ -52,7 +52,9 @@ something distinctive happens in the video, then set the date and time of that m
 Start Time follows.
 
 The look view shows the Now Time in UTC and in the selected time zone. To hide this
-readout, turn off **Show → Time Display in Look**.
+readout, turn off **Show → Time Display in Look**. The main view can show the same readout
+at its bottom right: turn on **Show → Time Display in Main**, or the clock button on the
+main view's header bar. It is off by default, and the setting is saved with the sitch.
 
 ### Time zones
 
@@ -66,17 +68,137 @@ The list has fixed offsets, for example `PST UTC-8` and `PDT UTC-7`. Sitrec does
 change between standard time and daylight time for you, so select the zone that was in
 effect on the date. For example, Chile is `CLT UTC-4` in its winter and `CLST UTC-3` in
 its summer. China is `BJT UTC+8` (Beijing Time), because `CST UTC-6` is US Central
-Standard Time. When Sitrec selects the zone itself, the name can be another zone with the
-same offset, for example `MDT UTC-6` for US Central Standard Time. Only the offset is used.
+Standard Time. When Sitrec selects the zone from an offset, the name can be another zone with
+the same offset, for example `MDT UTC-6` for US Central Standard Time. Only the offset is used.
 
 Sitrec selects the zone when the sitch loads. If the sitch names a zone, Sitrec uses it. If
 not, it uses your computer's zone **on the date of the sitch**, so a sitch with an old date
 gets the daylight-saving rules of that time. A new custom sitch starts with a built-in date.
-A saved sitch keeps its own zone.
+A saved sitch keeps its own zone. Sitrec does not use the sitch location when it loads,
+because a new custom sitch has a default location until you set one.
 
-When a video file sets the Start Time, it also sets the zone, from the UTC offset in the
-file's date. If that date is plain UTC, the zone becomes `GMT UTC+0`. A date from a track or
-a photo, or one that you set yourself, does not change the zone.
+**Set Time Zone from Camera Location** sets the zone at the position of the look camera. Sitrec
+finds the zone (for example `Europe/Berlin`) on the same time zone map as **Show Time Zones**
+(see [Time zone borders](#time-zone-borders)), which also has the small areas with their own
+clock: the Hopi reservation in Arizona stays on UTC-7 in summer, but the Navajo Nation around
+it uses daylight saving time. Then Sitrec uses the offset of that zone on the date of the Start
+Time, so the daylight saving rule of that date applies. The name is the entry
+in the list with the same abbreviation and offset, for example `JST UTC+9` for Tokyo and
+`AEDT UTC+11` for Sydney in January. If the list has no such entry, the name is the offset
+alone, for example `UTC+8.00` for Hong Kong. The time does not change. Only the zone that
+shows it changes. A message at the top of the main view gives the new zone, for example
+*Time Zone Set to JST UTC+9 (Asia/Tokyo)*. Time zone borders: © OpenStreetMap contributors, from
+[timezone-boundary-builder](https://github.com/evansiroky/timezone-boundary-builder) (ODbL).
+
+A video, photo or track file can also set the zone:
+
+- A video file's date can have a UTC offset (iPhone, Samsung). Then the zone comes from that
+  offset.
+- If a video file's date is plain UTC, or the file has no date, and the file has a location,
+  the zone is the zone at that location. If the date is plain UTC and there is no location,
+  the zone becomes `GMT UTC+0`. Sitrec reads the time and location of a video only while the
+  sitch is new.
+- A photo with a GPS position sets the zone at that position. See
+  [Set the date from a photo](#set-the-date-from-a-photo).
+- A track (KML, ADS-B, CSV, MISB or another track file) that sets the Start Time of a new
+  sitch also sets the zone at the place where the track starts. This is the first track
+  that you drop into a new sitch.
+
+A date that you set yourself does not change the zone, and neither does a track that you add
+after the sitch has its time. When a saved sitch loads, it keeps its saved zone, also when it
+holds a photo, a video or a track.
+
+### Time zone borders
+
+**Show Time Zones** in the Time menu draws the time zones over the globe, in the main view
+only: the borders as yellow lines, 1.5 pixels wide, and each zone in a light color. Like the
+Lat/Lon grid, the lines and the colors show over the terrain, but not on the far side of the
+Earth. The setting is saved with the sitch.
+
+A row of labels runs across the view at the latitude of the centre of the screen. Each zone
+on that row has one label, in the middle of the part of the zone that you can see. The label
+gives the name and the UTC offset of the zone on the sitch date, on two lines, for example
+**PDT** over **UTC-7** in summer and **PST** over **UTC-8** in winter, named as in the
+**Time Zone** list. At sea, and where the name is not known, the label gives the offset
+alone, for example **UTC-10**. Labels are smaller toward the edge of the globe, and a zone
+with too little room on the screen has no label. The labels move with the view.
+
+![The main view looking down on the United States with Show Time Zones on, on a September date. Each zone has a light color: Pacific time and Arizona (UTC-7) pink, Mountain daylight time (UTC-6) orange-brown, Central daylight time (UTC-5) yellow and Eastern daylight time (UTC-4) green. Yellow lines mark where the clocks on the two sides differ. A line runs around Arizona, which stays on UTC-7, but the Navajo Nation in its north-east corner has the Mountain daylight time color, with a small loop inside it around the Hopi reservation, which also stays on UTC-7. A line follows most of the Rio Grande, because most of Mexico does not use daylight saving time. In Canada, Alberta and Saskatchewan have the same color and no line between them. A row of yellow labels across the middle of the view reads MDT UTC-6, CDT UTC-5 and EDT UTC-4, each in the middle of its zone](docimages/time-and-sync-show-time-zones.jpg)
+
+The map shows the time zones at the **Now Time**, with daylight saving time. A line marks a
+place where the clocks on the two sides show different times at that moment, and each zone
+has the color of its UTC offset then, so the colors agree with the labels. For example, in
+July a line runs around Arizona, which stays on UTC-7, inside Mountain daylight time
+(UTC-6). In January, Arizona and New Mexico are both on UTC-7, so they have the same color
+and no line. France and Germany have had the same clocks since 1980, so after 1980 there is no
+line between them; in the summers of 1976 to 1979, when France had summer time and Germany did
+not, there is. When the Now Time crosses a
+change of daylight saving time, for example when you play the sitch across one, the lines
+and the colors change with it. At sea, the zones are the 15-degree bands of nautical time,
+so lines run across the oceans, and a country whose time differs from the band around it is
+outlined along its coast (the limit of its territorial sea).
+
+Each zone has a color for its UTC offset, at 15% opacity, so the terrain shows through.
+The colors repeat every 6 hours: UTC is orange, UTC+1 yellow, UTC+2 green, UTC+3 blue, UTC+4
+purple and UTC+5 red, and UTC+6 is orange again. So two zones that are next to each other do
+not have the same color, and UTC+13 has the color of UTC-11, which has the same clock time a
+day earlier. A zone on a half or quarter hour has diagonal stripes of the colors of the two
+hours next to it. India (UTC+5:30) has red and orange stripes of the same width, and Nepal
+(UTC+5:45) has orange stripes three times as wide as its red ones. Where two zones cover the
+same land, the area has stripes of the two colors. An example is Xinjiang, which has the
+UTC+8 of China and also its own UTC+6. The stripes keep the same width on the screen when you
+zoom.
+
+The time zone data (about 250 KB) loads the first time you turn **Show Time Zones** on, or
+the first time Sitrec finds a zone from a location.
+
+#### Data source and method
+
+**Source.** The map comes from the "1970" set with oceans of the 2026f release of
+[timezone-boundary-builder](https://github.com/evansiroky/timezone-boundary-builder), which
+makes the borders of the IANA time zones from OpenStreetMap. That set has 304 zones. Each zone
+is an area where the clocks have been the same since 1970, named after an IANA zone, for
+example `America/Vancouver`. Zones whose clocks differed at any time since 1970 stay apart,
+also when they are the same today. At sea, the zones are the 15-degree bands of nautical time,
+and a country's territorial sea has the zone of the country. Time zone borders:
+© OpenStreetMap contributors (ODbL).
+
+**The data file.** `scripts/buildTimeZoneBorders.js` makes `data/timezones/timezone-borders.bin.gz`
+from the source:
+
+1. It repairs the shared borders. Points less than about 1 m apart become one point, and
+   where one zone has a long straight edge and its neighbour has points along that edge, the
+   edge is split at those points. Then the two sides of each border share the same edges.
+2. It keeps the edges that have different zones on their two sides and joins them into
+   lines. It drops a closed line that encloses less than about 800 m²: there, the source
+   shapes of two zones cross by a few metres.
+3. It finds the areas between the lines, and gives each area the zones that cover it: the
+   zones of the lines around it, and the zones that a point test well inside it finds. The
+   point test is necessary where a zone lies wholly inside another one. The areas of the West
+   Bank under the Palestinian clock (Hebron, Nablus, Ramallah) are an example.
+4. It simplifies the lines to about 1.1 km and stores the points to 0.0001 degree (about
+   11 m).
+
+The file is a database derived from OpenStreetMap data, so it is under the ODbL too (see
+`data/timezones/README.md`).
+
+**In Sitrec.** The browser's own time zone rules give the UTC offset of each zone at the Now
+Time, with daylight saving time. Sitrec checks the offsets again at the start of each quarter
+hour of sitch time. A line shows where the
+offsets on its two sides differ, and each area has the color of its offset. The colored areas
+are made of triangles, at most 3 degrees long, so that they follow the curve of the Earth.
+**Set Time Zone from Camera Location**, a photo with a GPS position, and the labels use the
+zone of the area that holds the point. Where two zones cover the same area (Xinjiang, the West
+Bank), a smaller table from the same source, from
+[@photostructure/tz-lookup](https://github.com/photostructure/tz-lookup), chooses between
+them. If the map file does not load, that table gives the zone.
+
+**Limits.** The map is correct for any date since 1970: British Columbia is on UTC-8 in
+January 2025, and Mexico City uses daylight saving time in July 2015. Before 1970, an offset
+can be wrong, because zones that differed only before 1970 are one zone. A browser with older
+time zone rules can show an old offset for a zone whose rules changed recently. Within about
+1 km of a border, because of the simplified lines, a position can get the zone on the other
+side.
 
 ### How tracks line up
 
@@ -156,6 +278,8 @@ Analysis...** has [its own section](#timing-analysis).
 | **Note** | Hidden | Shows only for a date that needs care: *Before 1957 - no artificial satellites existed*, or *Outside 1700-2200 - Sun, Moon and planet positions degrade*. See [Historic Skies](HistoricSkies.md) |
 | **Use Time Zone in UI** | On (off for older saved sitches) | Shows the date and time sliders in the selected time zone, not UTC |
 | **Time Zone** | The sitch's zone, or your computer's zone | The zone for the readouts. See [Time zones](#time-zones) |
+| **Set Time Zone from Camera Location** | | Sets **Time Zone** to the zone at the look camera position, with the daylight saving rule of the Start Time date. The time does not change. See [Time zones](#time-zones) |
+| **Show Time Zones** | Off | Draws the time zones at the Now Time in the main view: the borders as lines, and each zone in a color for its UTC offset. See [Time zone borders](#time-zone-borders) |
 | **Simulation Speed** | 1 | How many seconds of simulated time pass in one second of frames. Use it for a time-lapse video: if the video is 30× faster than real time, set 30. It does not change how fast the video plays. When you change it, the current frame keeps its Now Time and the Start Time moves. Range 0.01 to 1200 |
 
 The Year slider starts at 1947. To go earlier, type the year in the box, or press **G** and
@@ -358,8 +482,16 @@ EXIF capture times do not always include a time zone:
 
 - If the photo has an EXIF time zone offset (most modern phones write one), Sitrec uses it,
   and the time is correct.
-- If there is no offset, Sitrec reads the time as if the photo was taken in your computer's
-  time zone. If the photo was taken in a different zone, set the time yourself.
+- If there is no offset and the photo has a GPS position, Sitrec reads the time as local time
+  at that position, with the daylight saving rule of that date. This assumes that the camera
+  clock was set to local time. If it was not (for example, a camera that was not changed after
+  travel), set the time yourself.
+- If there is no offset and no GPS position, Sitrec reads the time as if the photo was taken
+  in your computer's time zone. If the photo was taken in a different zone, set the time
+  yourself.
+
+A photo with a GPS position also sets **Time Zone** to the zone at that position, so the
+readouts show the local time of the photo. The zone is found a moment after the photo loads.
 
 A video file's date also sets the Start Time, but only while the sitch is new. Its time zone
 rules are different: see
@@ -407,8 +539,7 @@ because the encoder sends the data in two ways.
 The report starts with the name and size of the loaded file, and then has three parts:
 
 - **Streams**: what each KLV stream is and holds.
-- **Tracks**: which stream each track uses. It is shown if there is more than one KLV stream, or if a
-  track does not use PES timestamps (see below).
+- **Tracks**: which stream each track uses, and how Sitrec made the name of each track.
 - **Analysis**: the timing of one stream in detail. The heading names the stream, and **Analyzed below**
   in the Streams table gives the reason. Sitrec analyzes the stream that the platform track uses. The
   platform track is the track that the camera is on: the **Position** setting in the **Camera** menu. If the camera is
@@ -416,8 +547,8 @@ The report starts with the name and size of the loaded file, and then has three 
   choice says nothing about which stream is better. A stream that is not analyzed can have a different
   rate and gap pattern, so use the Streams table to compare them.
 
-The report does not include track or node names, but the file line and the Streams table can include
-a tail number, a mission ID, a call sign or a start time. Clear **Show Filename and Names** in the
+The report does not include node names. The file line, the Streams table and the track names can
+include a tail number, a mission ID, a call sign or a start time. Clear **Show Filename and Names** in the
 dialog to remove these from the text, from **Copy Analysis** and from **Download Analysis**. The file
 line goes, and each text value in the table changes to `hidden`, even if the text is all digits. The
 first time and the sun height change to `hidden` too. Numbers from 0 to 65535 stay, and so does a raw
@@ -460,8 +591,9 @@ and measurements have no mark, because they nearly always differ, so read those 
 
 Text values are what the file says. Sitrec does not check them, and `Default` and `N/A` can be
 fields that nobody set. Derived tracks are not listed, because their records hold only time and
-position. A line under the table gives their number. They are Center (the frame center), Target (the
-target location) and Truth (a track that the file labels as truth, which Sitrec does not verify).
+position. A line under the table gives their number. They are Frame Center, Target Location and
+Truth (a track that the file labels as truth, which Sitrec does not verify). The Tracks part says
+what each one is.
 
 The rows are in these groups:
 
@@ -555,6 +687,32 @@ audio and private data. Sitrec does not read private data, so this is the only s
 Each line gives a stream, the number of tracks that use it, and how those tracks pair with the video:
 by PES PTS, or by UnixTimeStamp at the nominal rate, which is the video's frame rate. A further line
 says whether the video frame times are real or synthetic, and whether frame patching is on.
+
+**Track names** then lists the name of each track, as in the Contents menu, with its stream. Below
+the list, the report tells how Sitrec made the names. A track from a KLV stream in a TS file is named
+`S<n> LS<v>`, then the tail number of the platform track, or the kind of a derived track. For
+example, `S1 LS7 AF00371`, `S1 LS7 Frame Center` and `S0 LS5 Platform`:
+
+- `S1` is the stream's number in the TS, the same number as `#0:1` in the stream name.
+- `LS7` is tag 65, the UAS Datalink LS Version Number, from the first record that has one.
+- `AF00371` is tag 4, the Platform Tail Number. If the stream has none, the platform track has
+  `Platform` there.
+- A derived track has its kind in place of the tail number:
+  - `Frame Center`: tags 23 and 24. It is where the line of sight through the center of the image
+    meets the ground. The platform computes this point with its own terrain model. Sitrec reads it
+    from the KLV and does not compute it. A record has no frame center when the camera looks above
+    the horizon.
+  - `Target Location`: tags 40 to 42. It is where the platform says the target is. It is an
+    estimate by the platform, not ground truth, and it can be in the air.
+  - `Truth`: the truth columns.
+
+The track called `Target Location` is not the same as the **Target Track** setting in the Target
+menu. **Target Track** can be any track. Look at that menu to see which track it is.
+
+A track that is not from a TS stream has its tail number, or the name of its file. If a track's name
+is not the name that Sitrec made, for example because you renamed it, the report gives Sitrec's name
+after it. With **Show Filename and Names** cleared, a tail number and a name that you gave change to
+`hidden`.
 
 ### Analysis
 

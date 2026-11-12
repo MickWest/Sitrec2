@@ -75,7 +75,7 @@ sitch = {
         step: 0.01,
         desc: "Defocus",
         gui: "effects",
-        tip: "Blurs the output, pixel range"
+        tip: "Blurs the look view image, like an out-of-focus lens. 0 = sharp.\nThe value is the blur step in pixels; the blur reaches about 4 times this far."
     },
 
     canvasResolution: {
@@ -86,7 +86,7 @@ sitch = {
         step: 1,
         desc: "Resolution",
         gui: "effects",
-        tip: "Horizontal resolution of the output canvas"
+        tip: "Size of the look view's rendered image, in pixels along its longer side. The shorter side follows the view's shape."
     },
 
     //canvasHeight: {kind: "Math", math: "$canvasResolution/1.7927"},
@@ -135,7 +135,7 @@ sitch = {
                         step: 0.01,
                         desc: "Noise Amount",
                         gui: "effects",
-                        tip: "Opacity of the added noise"
+                        tip: "Strength of the random static added to the look view image. Each pixel gets brighter by a random amount, up to this value (0-1 scale). 0 = off."
                     },
                 }
             },
@@ -174,7 +174,7 @@ sitch = {
                         step: 0.01,
                         desc: "TV Gamma",
                         gui: "effects",
-                        tip: "Gamma correction"
+                        tip: "Gamma applied to the mid-tones. 1 = no change; above 1 darkens them; below 1 brightens them."
                     },
                     outputBlack: {
                         kind: "GUIValue",
@@ -244,6 +244,7 @@ sitch = {
                         desc: "Pixel Zoom %",
                         gui: "effects",
                         hidden: true,
+                        tip: "How much the Pixel Zoom effect enlarges the look view pixels, in percent (100 = none). Set automatically from View > Video Zoom %.",
                     },
                 }
             },
@@ -316,19 +317,21 @@ sitch = {
     jetTAS: {
         // note, no units. This is a legacy value that is in knots
         kind: "GUIValue", value: 500, start: 0, end: 1000, step: 1, desc: "TAS", gui: "simpleFlightSim", // unitType: "speed",
-        elastic: true, elasticMin: 5, elasticMax: 1000
+        elastic: true, elasticMin: 5, elasticMax: 1000,
+        tooltip: "True airspeed of the flight-sim jet, in knots. Sitrec adds the local wind (Physics > Wind), so the ground speed is different.\nThe Manual Bank and Horizon Extractor turn rates also use it.\nUsed when Camera > Location > Position is Flight Sim.",
     },
 
     // turnRate should really be derived from the bank angle, but we'll use it for now
     turnRate: {
         kind: "GUIValue", value: 0, start: -10, end: 10, step: 0.001,
         desc: "Turn Rate", gui: "simpleFlightSim",
+        tooltip: "Turn rate of the flight-sim jet, in degrees per second. Positive turns right (clockwise seen from above). Negative turns left.\nUsed when Turn Rate Source is Manual Turn Rate.",
         quietLink: "totalTurn", linkMath: "$turnRate * $frames / $fps"
     },
 
     totalTurn: {
         kind: "GUIValue", value: 0, start: -360, end: 360, step: 0.1,
-        desc: "Total Turn", gui: "simpleFlightSim", tooltip: "amount of turn over the entire sitch (constant-rate approximation)",
+        desc: "Total Turn", gui: "simpleFlightSim", tooltip: "Total heading change, in degrees, over the whole sitch at a constant Turn Rate.\nA change here sets Turn Rate to this value divided by the sitch duration.",
         link: "turnRate", linkMath: "$totalTurn / ($frames / $fps)",
         inheritVisibility: "turnRate"
     },
@@ -354,7 +357,8 @@ sitch = {
     // When B changes, A is updated, and the propagation (from A)
 
 
-    jetHeadingManual: {kind: "GUIValue", value: 0, start: 0, end: 360, step: 0.1, desc: "Jet Heading", gui: "simpleFlightSim"},
+    jetHeadingManual: {kind: "GUIValue", value: 0, start: 0, end: 360, step: 0.1, desc: "Jet Heading", gui: "simpleFlightSim",
+        tooltip: "Start heading of the flight-sim jet, in degrees true (0 = north, 90 = east).\nUsed when Heading Source is manual, and by custom until a heading file is loaded."},
 
     customHeadingSmooth: {
         kind: "GUIValue",
@@ -363,7 +367,7 @@ sitch = {
         start: 0,
         end: 200,
         step: 1,
-        tip: "Smooth custom Heading",
+        tip: "Number of frames in the moving average applied to a loaded heading file (a CSV file with a Heading column). 0 = no smoothing.\nUsed when Simple Flight Sim > Heading Source is custom.",
         gui: "physics",
     },
 
@@ -382,7 +386,8 @@ sitch = {
         },
         desc: "Turn Rate Control",
         gui: "simpleFlightSim",
-        tooltip: "Control how the turn rate is determined\nManual means you control the turn rate directly\nAutomatic means the turn rate is automatically calculated based on the TAS and wind"
+        // Shown as "Heading Source": CustomSupport.setupSimpleFlightSim() renames the label.
+        tooltip: "Selects where the flight-sim heading comes from.\nmanual: start at Jet Heading, then turn at the rate from Turn Rate Source.\ncustom: follow the heading in a loaded CSV file with a Heading column, smoothed by Physics > Heading Smooth. Turn Rate is not used. Until a file is loaded, the jet flies straight at Jet Heading."
     },
 
 
@@ -435,6 +440,8 @@ sitch = {
         },
         desc: "Position",
         gui: "cameraLocation",
+        // One string: this file is read by parseJavascriptObject, which cannot join strings with +.
+        tooltip: "Choose what sets the look camera's position.\nManual: Cam [C] Lat, Lon and Alt below. Hold C over a 3D view to move it to the cursor.\nFlight Sim: the path from Physics > Simple Flight Sim.\nOrbit: a circle around Camera Tweaks > Orbit Target.\nA loaded track adds its own option.",
     },
 
     // Smoothed version of the camera track
@@ -497,6 +504,7 @@ sitch = {
         },
         desc: "Target Track",
         gui: "target",
+        tooltip: "Selects the track that the target follows.\nfixedTarget: stays at the Target position (the Target [X] Lat/Lon/Alt values, or hold X with the pointer over a 3D view).\nfixedTarget + Wind: starts at the Target position and drifts with the target wind (Physics > Wind).\nTracks that you load are added to this list.\nThe camera's To Target heading and the Target Object traverse use it, after Traverse > Target Smooth Window.",
     },
 
     targetTrackSwitchSmooth: {
@@ -505,7 +513,7 @@ sitch = {
         method: "moving",
         source: "targetTrackSwitch",
         window: {kind: "GUIValue", value: 20, start:0, end:1000, step:1, desc:"Target Smooth Window", gui:"traverse",
-            tooltip:"Smoothing for target track.\nThis is the number of frames to smooth over.\nOnly use with noisy data, not generated tracks" },
+            tooltip:"Number of frames in the moving average that smooths the target track (Target > Target Track). 0 = no smoothing.\nThe camera's To Target heading and the Target Object traverse use the smoothed track.\nUse it only with noisy data, not with generated tracks." },
         // iterations: {kind: "GUIValue", value: 6, start:1, end:100, step:1, desc:"Target Smooth Iterations", gui:"traverse"}
     },
 
@@ -515,7 +523,8 @@ sitch = {
     // note, it's only used in the Custom sitch, and is hard linked in the code
     // to any instance of the CNodeControllerPTZUI
 //    fovUI: {kind: "GUIValue", value: 30, start: 0.00001, end: 40, step: 0.001, elastic: true, elasticMin: 5, elasticMax: 170, desc: "vFOVx",gui:"camera", hidden: true},
-    fovUI: {kind: "GUIValue", value: 30, start: 0.00000, end: 180, step: 0.001, desc: "vFOV",gui:"cameraFOV", hidden: true},
+    fovUI: {kind: "GUIValue", value: 30, start: 0.00000, end: 180, step: 0.001, desc: "vFOV",gui:"cameraFOV", hidden: true,
+        tooltip: "Stored vertical field of view, in degrees, for the Manual Camera FOV source. Set it with VFOV (deg)."},
 
     fovSwitch: {
         kind: "Switch",
@@ -530,6 +539,7 @@ sitch = {
         },
         desc: "Camera FOV",
         gui: "cameraFOV",
+        tooltip: "Choose what sets the look camera's vertical field of view.\nManual: VFOV (deg) below.\nFOV Editor: the FOV curve drawn in the FOV Editor.\nLoaded tracks with FOV data, and Fit Camera to Points, add their own options.",
     },
 
     fovController: {
@@ -575,7 +585,7 @@ sitch = {
         start: 0,
         end: 200,
         step: 1,
-        tip: "Smooth custom Az",
+        tip: "Number of frames in the moving average applied to the azimuth from a loaded file (a CSV file with an Az column). 0 = no smoothing.\nUsed when Camera > Heading > Camera Heading is Custom Az/El.",
         gui: "gimbalAnalysis",
     },
 
@@ -586,7 +596,7 @@ sitch = {
         start: 0,
         end: 200,
         step: 1,
-        tip: "Smooth custom El",
+        tip: "Number of frames in the moving average applied to the elevation from a loaded file (a CSV file with an El column). 0 = no smoothing.\nUsed when Camera > Heading > Camera Heading is Custom Az/El.",
         gui: "gimbalAnalysis",
     },
 
@@ -622,7 +632,8 @@ sitch = {
         },
         default: "Manual",
         desc: "Camera Heading",
-        gui: "cameraHeading"
+        gui: "cameraHeading",
+        tooltip: "Choose what sets the direction the look camera points.\nManual: Pan, Tilt and Roll below.\nTo Target: aim at Target > Target Track.\nCelestial Lock: follow the body or star named in Celestial Object.\nHorizon Flare Region: aim at the Sun's azimuth, 9° above the horizon.\nLoaded files with angle data add their own options.",
     },
 
     // Since we are controlling the camera with the LOS controller, we can extract the LOS
@@ -656,7 +667,7 @@ sitch = {
         },
         desc: "LOS Source",
         gui: "traverse",
-        tooltip: "Select where the LOS (Lines Of Sight) used for traversal calculations come from.\nCamera Center is the centerline of the camera, which is used for most traversals.\nCamera + Object Track uses the manual tracking overlay to modify the LOS to follow an object in the video.\nCamera + Point Track uses Point Track (Video menu) to modify the LOS to follow an automatically tracked object.",
+        tooltip: "Selects the LOS (lines of sight) that the traverse methods use.\nCamera Center: the center line of the look camera.\nCamera + Object Track: the camera LOS, moved to follow the object you mark in Traverse > Manual Tracking. Offered when a video is loaded.\nCamera + Point Track: the camera LOS, moved to follow the object that Video > Point Track tracks.\nCamera + Ground Track: lines from the camera to the points placed in Traverse > Ground Track.",
     },
 
 
@@ -736,7 +747,7 @@ sitch = {
             end: 1000,
             step: 1,
             desc: "Traverse Smooth Window",
-            tooltip: "Filter the traverse positions used by its line, object, measurements, and export. 0 disables filtering. Exact analysis snapshots always bypass this filter.",
+            tooltip: "Number of frames in the moving average applied to the traverse positions used by its line, object, measurements, and export. 0 disables filtering. Exact analysis snapshots always bypass this filter.",
             gui: "traverse"
         },
     },
@@ -882,7 +893,8 @@ sitch = {
         kind: "GUIColor",
         value: "#00FFFF",
         desc: "Frustum",
-        gui: "contents"
+        gui: "contents",
+        tip: "Color of the look camera's view frustum (the lines that show what the camera sees) in the main view."
     },
 
     DisplayCameraFrustum: {radius: 500000, lineWeight: 1.0, color: "frustumColor"},

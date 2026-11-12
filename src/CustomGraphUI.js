@@ -15,7 +15,8 @@ export function addCustomGraphControl(folder, entity) {
     };
     const controller = folder.add(action, "addCustomGraph")
         .name(t("menus.showHide.graphs.addCustom.label"))
-        .tooltip("Plot this entity’s ground speed and altitude in a new custom graph.");
+        .tooltip("Make a new custom graph of the ground speed and altitude of this track or object.\n"
+            + "Its controls are in Show > Graphs.");
     controller.keepLiveWhenFolderOff();
     folder._addEntityGraphController = controller;
     return controller;

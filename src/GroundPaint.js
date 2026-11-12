@@ -120,13 +120,13 @@ for (let i = 0; i < DISC_SIDES; i++) {
 // ---------------------------------------------------------------------------
 export const GROUND_PAINT_DEFS = [
     {key: "paintMode", type: "bool", default: false,
-        label: "Paint Mode", tooltip: "Paint the colour below onto the ground textures. While on, left-click-dragging over the terrain or the 3D tiles paints under the brush; a ring shows the footprint. SHIFT-CLICK draws a straight line from wherever you last painted — the end of your last drag, or your last click — so shift-clicks chain into a polyline and continue on from a freehand stroke. [ and ] shrink and grow the brush. Strokes are undoable (Ctrl/Cmd+Z). Hold Option/Alt while painting to ERASE back to the original imagery"},
+        label: "Paint Mode", tooltip: "While on, left-click-drag over the terrain or the 3D tiles to paint the Paint Color onto the ground images. A ring shows the brush.\nShift-click: draw a straight line from the last point you painted, so that shift-clicks make a polyline.\n[ and ]: make the brush smaller or larger.\nHold Option/Alt while painting to erase back to the original imagery. Ctrl/Cmd+Z undoes a stroke."},
     {key: "brushRadius", type: "num", default: 8, min: 0.5, max: 200, step: 0.5,
-        label: "Brush Radius (m)", tooltip: "World-space radius of the paint brush, in metres. Held in metres (not pixels) so a stroke covers the same ground however far the tiles later subdivide. [ and ] adjust it while Paint Mode is on"},
+        label: "Brush Radius (m)", tooltip: "Radius of the paint brush on the ground, in meters. Because it is in meters, not pixels, a stroke covers the same ground at every tile detail level. [ and ] change it while Paint Mode is on."},
     {key: "color", type: "color", default: 0x6b7a52,
-        label: "Paint Color", tooltip: "Colour applied by the brush. Stored per dab, so changing it does not restyle strokes already painted"},
+        label: "Paint Color", tooltip: "Color that the brush paints. Each stroke keeps its own color, so a change does not recolor strokes already painted."},
     {key: "applyPaint", type: "bool", default: true,
-        label: "Apply Paint", tooltip: "Re-apply the saved paint to tiles as they load (persists with Paint Mode off). Turn off to temporarily see the original imagery without discarding the strokes"},
+        label: "Apply Paint", tooltip: "Apply the saved paint strokes to the tiles, also to tiles that load later. This works when Paint Mode is off too.\nTurn it off to see the original imagery without discarding the strokes."},
 ];
 
 export function makeDefaultGroundPaintParams() {

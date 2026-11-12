@@ -14,6 +14,8 @@ jest.mock("../src/nodes/CNodeViewUI", () => ({forceUpdateUIText: () => {}}));
 jest.mock("../src/JetGUI", () => ({updateGUIFrames: () => {}}));
 jest.mock("../src/nodes/CNodeFrameSlider", () => ({updateFrameSlider: () => {}}));
 jest.mock("../src/showTimingAnalysis", () => ({showTimingAnalysis: () => {}}));
+// CNodeDateTime -> TimeZoneBorders -> the overlay that draws its labels, which extends the mocked CNodeViewUI.
+jest.mock("../src/nodes/CNodeDisplaySkyOverlay", () => ({registerLabel3D: () => {}, unregisterLabel3D: () => {}}));
 
 const SITCH_START = "2021-07-04T18:00:00.000Z";
 const BAD_DATETIMES = ["22/02/2022", "2022-13-01", "garbage", ""];

@@ -55,6 +55,7 @@ goes back to the Manual position.
 | **Flight Sim** | The camera flies a simple simulated aircraft path. The path starts at the Manual position and is controlled from **Physics → Simple Flight Sim**. See [Flight Sim](#flight-sim). |
 | **Orbit** | The camera circles a chosen track or point at a set radius, altitude and period. The settings are in **Camera → Camera Tweaks**. See [Orbit](#orbit). |
 | *An imported track* | Each track you import is added to this list. In a new sitch, the first track you import is selected as the camera position. If that first import is one file with two or more tracks, and the file does not say which track is the camera, Sitrec asks first. See [Camera and Target from One File](Tracks.md#camera-and-target-from-one-file). After you set up the camera, time or position yourself, imported tracks do not change them, even after **Remove All Tracks**. |
+| *A 3D object* | A 3D object whose **Position** is **Manual** is in this list under its name. Select it to put the camera at the **Lat**, **Lon** and **Alt** of that object. See [Location](SceneObjects.md#location-a-manual-position-or-a-track). |
 
 Holding **C** with the pointer over a 3D view moves the Manual camera position to the
 point under the pointer, and keeps its altitude. If the Position was following an imported track, this switches
@@ -122,12 +123,13 @@ them.
 | **Cam [C] Lon** | -118.428486 | Longitude of the Manual position, in degrees. |
 | **Cam [C] Alt** | 10,000 m (32,808 ft) | Altitude of the Manual position, [above mean sea level (MSL)](GIS.md#three-kinds-of-height). The label shows the current unit. |
 | **Above Ground Level** | Off | When on, **Cam [C] Alt** is a height above the ground under the camera, not above sea level. Switching it does not move the camera: **Cam [C] Alt** changes to the same position measured the new way. If the ground under the camera has not loaded yet, the number stays as it is. |
+| **Allow Small Altitudes** | Off | The **Cam [C] Alt** slider zooms: when you drag past its left end, its range gets smaller. When this is off, the range stops at 100 ft (30 m), and the slider moves in steps of 1 ft. When it is on, the range can go down to 1 ft, in steps as small as 0.002 ft. A value that you type, or that a file or a lookup sets, is never rounded. |
 | **Lookup** | (empty) | Type a place name or coordinates and press Enter. The camera, the terrain and the main view move there. If the text gives no altitude (a place name, or a plain lat, lon), the altitude is set to the ground height there. A lat, lon, alt entry or ECEF x,y,z keeps its own altitude. The serverless and desktop builds do not have this row: paste the coordinates into **Cam [C] Lat**, set **Cam [C] Alt**, then click **Go To the above position**. A pasted lat, lon does not change the altitude. |
-| **Geolocate from browser** | — | Sets the position to an approximate location that the ipapi.co web service finds from your IP address. It does not use the browser's location permission. It also turns on **Above Ground Level**, sets **Cam [C] Alt** to 3 m, and moves the terrain and the main view there. |
+| **Geolocate from IP Address** | — | Sets the position to an approximate location that the ipapi.co web service finds from your IP address. It does not use the browser's location permission. It also turns on **Above Ground Level**, sets **Cam [C] Alt** to 3 m, and moves the terrain and the main view there. |
 | **Go To the above position** | — | Moves the main view to look down at the entered position from about 100 km up, and terrain loads there. It does not move the look camera. It is always available, whatever the Position source. |
 | **Use Relative Altitude (N m)** | Hidden | Appears when you import a photo that records its height above takeoff (usually a drone photo). It puts the camera at the ground height under it plus that recorded height, instead of the absolute altitude in the photo. The absolute altitude in a drone photo can be less accurate than the relative height. |
 
-The Lat, Lon, Alt, Above Ground Level, Lookup and Geolocate controls only work when
+The Lat, Lon, Alt, Above Ground Level, Allow Small Altitudes, Lookup and Geolocate controls only work when
 **Position** is **Manual**.
 
 #### Flight Sim
@@ -217,7 +219,7 @@ Less common adjustments.
 | **xOffset**, **yOffset** | 0 | Turn the look view off-center by this many degrees, horizontally or vertically (-20 to 20). Useful when the tracked object is not at the center of the video frame. |
 | **Near Plane (m)** | 0.1 | Near clipping distance of the look camera. Sometimes useful for very close objects, or to cut out near objects. |
 | **Diffraction Glare** (folder) | — | Adds glare from an imported point spread function. See [Diffraction Glare](DiffractionGlare.md). |
-| **Orbit Target** | Manual Camera | What the Orbit position circles. **Manual Camera** is the Manual camera position (**Cam [C] Lat/Lon**). Imported tracks are added to the list. |
+| **Orbit Target** | Manual Camera | What the Orbit position circles. **Manual Camera** is the Manual camera position (**Cam [C] Lat/Lon**). Imported tracks are added to the list, and so is a 3D object whose **Position** is **Manual**. |
 | **Orbit Radius (m)** | 5000 | Radius of the circle, in meters. |
 | **Orbit Altitude (m)** | 1000 | Altitude of the camera while orbiting, in meters above the WGS84 ellipsoid (HAE). This is not sea level; the two differ by the local geoid offset, up to about 100 m. |
 | **Start Angle (°)** | 0 | Compass bearing from the center to the camera at frame 0. 0 is north, 90 is east. |
@@ -316,8 +318,9 @@ is measured at it.
 | **Target [X] Lon** | -118.428486 | Longitude of the fixed target, in degrees. |
 | **Target [X] Alt** | 5,000 m (16,404 ft) | Altitude of the fixed target, above mean sea level (MSL). The label shows the current unit. |
 | **Above Ground Level** | Off | When on, **Target [X] Alt** is a height above the ground. Switching it does not move the target: **Target [X] Alt** changes to the same position measured the new way. |
+| **Allow Small Altitudes** | Off | Works like the camera's **Allow Small Altitudes**, for the **Target [X] Alt** slider. |
 | **Lookup** | (empty) | Works like the camera's **Lookup**: the fixed target, the terrain and the main view move there. If the text gives no altitude, the altitude is set to the ground height there. |
-| **Geolocate from browser** | — | Works like the camera's **Geolocate from browser**, for the fixed target. It turns on **Above Ground Level** and sets **Target [X] Alt** to 3 m. |
+| **Geolocate from IP Address** | — | Works like the camera's **Geolocate from IP Address**, for the fixed target. It turns on **Above Ground Level** and sets **Target [X] Alt** to 3 m. |
 | **Go To the above position** | — | Moves the main view to look down at the target position, and terrain loads there. |
 | **Target Track** | Manual | What the target is. See the choices below. |
 | **Stop At** | 0 | Appears once **Camera Heading** is **To Target**. After this frame, the camera keeps aiming at where the target was at this frame, even if the target track continues. Use it to simulate losing lock on a moving target. 0 turns it off. |
@@ -329,6 +332,7 @@ is measured at it.
 | **Manual** | The target stays at **Target [X] Lat/Lon/Alt** for the whole sitch. |
 | **Manual + Wind** | The target starts at **Target [X] Lat/Lon/Alt** and drifts with the target wind (**Physics → Wind**). The target wind is 0 knots by default, so set a wind first. |
 | *An imported track* | Each imported track is added here. Select one to make it the target. If the first import into a new sitch is one file with two or more tracks, and the file does not say which track is the camera, Sitrec asks whether to use them as camera and target. See [Camera and Target from One File](Tracks.md#camera-and-target-from-one-file). |
+| *A 3D object* | A 3D object whose **Position** is **Manual** is in this list under its name. Select it to make the object the target. See [Location](SceneObjects.md#location-a-manual-position-or-a-track). |
 
 Holding **X** with the pointer over a 3D view moves the fixed target to the point under the
 pointer, and keeps its altitude. **Shift+X** puts it 7 ft above the ground. The Target

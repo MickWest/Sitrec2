@@ -1,13 +1,33 @@
 import {CTrackFile} from "./CTrackFile";
 import {MISB, MISBFields} from "../MISBFields";
-import {CustomManager, FileManager, NodeMan, Sit, Synth3DManager} from "../Globals";
+import {CustomManager, FileManager, Globals, NodeMan, Sit, Synth3DManager} from "../Globals";
 import {timeStrToEpoch} from "../DateTimeUtils";
 import {CNodeTrackFromLLAArray} from "../nodes/CNodeTrack";
 import {CNodeDisplayTrack} from "../nodes/CNodeDisplayTrack";
 import * as LAYERS from "../LayerMasks";
 import {FeatureManager} from "../CFeatureManager";
 
+// KML altitude modes that measure the altitude from the ground instead of from mean sea level.
+// The "clamp" modes ignore the altitude and put the point on the surface. Sitrec's terrain has
+// no sea floor, so the gx: sea-floor modes are read as relative to the terrain, which is what
+// Google Earth does over land.
+const GROUND_RELATIVE_ALTITUDE_MODES = new Set(["relativeToGround", "clampToGround", "relativeToSeaFloor", "clampToSeaFloor"]);
+const CLAMPED_ALTITUDE_MODES = new Set(["clampToGround", "clampToSeaFloor"]);
+
+// The last version that read every KML track altitude as MSL, whatever its <altitudeMode>.
+const LAST_VERSION_WITHOUT_TRACK_ALTITUDE_MODE = 2190000; // 2.190.0
+
 export class CTrackFileKML extends CTrackFile {
+    constructor(data) {
+        super(data);
+        // Reading <altitudeMode> moves a ground-relative track from MSL up to the terrain.
+        // A sitch saved by 2.190.0 or earlier keeps the old reading, so its tracks do not move.
+        // This is decided when the file is read, because toMISB() can run again after the
+        // restore has finished (and Globals.deserializing is false again).
+        this.readsTrackAltitudeMode = !Globals?.deserializing
+            || Globals.exportTagNumber > LAST_VERSION_WITHOUT_TRACK_ALTITUDE_MODE;
+    }
+
     static canHandle(filename, data) {
         if (!data || typeof data !== 'object') {
             return false;
@@ -35,13 +55,16 @@ export class CTrackFileKML extends CTrackFile {
             return false;
         }
 
+        // A ground-relative track goes in the AGL column, with the MSL column left empty.
+        // CNodeMISBData then reads it as height above the terrain.
+        const altitudeField = info.groundRelative ? MISB.AltitudeAGL : MISB.SensorTrueAltitude;
         const misb = [];
         for (let i = 0; i < _times.length; i++) {
             misb[i] = new Array(MISBFields);
             misb[i][MISB.UnixTimeStamp] = _times[i];
             misb[i][MISB.SensorLatitude] = _coord[i].lat;
             misb[i][MISB.SensorLongitude] = _coord[i].lon;
-            misb[i][MISB.SensorTrueAltitude] = _coord[i].alt;
+            misb[i][altitudeField] = _coord[i].alt;
         }
         return misb;
     }
@@ -150,12 +173,19 @@ export class CTrackFileKML extends CTrackFile {
         return item ? item["#text"] : undefined;
     }
 
+    // The <altitudeMode> (or Google's <gx:altitudeMode>) of a geometry element, or undefined.
+    altitudeModeOf(node) {
+        return (this.textOf(node, "altitudeMode") ?? this.textOf(node, "gx:altitudeMode"))?.trim();
+    }
+
     // Samples from one <gx:Track>: paired <when>/<gx:coord> (space-separated "lon lat alt"),
     // skipping a sample whose <when> string equals the immediately preceding array element
     // (matches the historical per-segment dedup at the old line 273).
-    samplesFromGxTrack(gxTrack) {
+    // A track without its own altitude mode uses the one of its <gx:MultiTrack>, if any.
+    samplesFromGxTrack(gxTrack, parentAltitudeMode) {
         const whenArr = this.asArray(gxTrack["when"]);
         const coordArr = this.asArray(gxTrack["gx:coord"]);
+        const altitudeMode = this.altitudeModeOf(gxTrack) ?? parentAltitudeMode;
         const len = whenArr.length;
         const out = [];
         for (let i = 0; i < len; i++) {
@@ -163,7 +193,7 @@ export class CTrackFileKML extends CTrackFile {
             const w = whenArr[i] ? whenArr[i]["#text"] : undefined;
             const c = coordArr[i] ? coordArr[i]["#text"] : undefined;
             const cs = (c === undefined ? "" : c).split(' ');
-            out.push({t: timeStrToEpoch(w), lon: Number(cs[0]), lat: Number(cs[1]), alt: Number(cs[2])});
+            out.push({t: timeStrToEpoch(w), lon: Number(cs[0]), lat: Number(cs[1]), alt: Number(cs[2]), altitudeMode});
         }
         return out;
     }
@@ -179,7 +209,8 @@ export class CTrackFileKML extends CTrackFile {
         const coordText = this.textOf(pm["Point"], "coordinates");
         if (coordText === undefined) return null;
         const cs = coordText.split(',');
-        return {whenText, t: timeStrToEpoch(whenText), lon: Number(cs[0]), lat: Number(cs[1]), alt: Number(cs[2])};
+        return {whenText, t: timeStrToEpoch(whenText), lon: Number(cs[0]), lat: Number(cs[1]), alt: Number(cs[2]),
+            altitudeMode: this.altitudeModeOf(pm["Point"])};
     }
 
     // Walk the parsed tree → ordered track groups (memoized; this.data is immutable per instance).
@@ -208,14 +239,15 @@ export class CTrackFileKML extends CTrackFile {
                 // gather <gx:Track> segments, directly or via <gx:MultiTrack>
                 const segs = [];
                 for (const mt of this.asArray(pm["gx:MultiTrack"])) {
-                    for (const t of this.asArray(mt["gx:Track"])) segs.push(t);
+                    const multiTrackAltitudeMode = this.altitudeModeOf(mt);
+                    for (const t of this.asArray(mt["gx:Track"])) segs.push({track: t, parentAltitudeMode: multiTrackAltitudeMode});
                 }
-                for (const t of this.asArray(pm["gx:Track"])) segs.push(t);
+                for (const t of this.asArray(pm["gx:Track"])) segs.push({track: t});
 
                 if (segs.length > 0) {
                     const g = ensureGroup(container, folderName, this.textOf(pm, "name"));
                     for (const seg of segs) {
-                        const ss = this.samplesFromGxTrack(seg);
+                        const ss = this.samplesFromGxTrack(seg.track, seg.parentAltitudeMode);
                         for (const s of ss) g.samples.push(s);
                     }
                     continue;
@@ -230,7 +262,7 @@ export class CTrackFileKML extends CTrackFile {
                         g._prevTimedWhen = ts.whenText;
                     } else {
                         g._prevTimedWhen = ts.whenText;
-                        g.samples.push({t: ts.t, lat: ts.lat, lon: ts.lon, alt: ts.alt});
+                        g.samples.push({t: ts.t, lat: ts.lat, lon: ts.lon, alt: ts.alt, altitudeMode: ts.altitudeMode});
                     }
                 }
                 // else: no usable time+geometry → static shape (extractKMLObjectsInternal handles it)
@@ -253,12 +285,25 @@ export class CTrackFileKML extends CTrackFile {
         // keyed on Track_<name> is orphaned. (Verified by the full-corpus name parity diff.)
         // The Phase-4 name registry will replace this seed behind a version gate.
         info.name = this.legacyTrackName(trackIndex) || "Unnamed Track";
+        // A track is ground-relative only when ALL its samples are: the track node reads one
+        // altitude column for the whole track. A missing mode, or a track that mixes modes,
+        // keeps the historical reading of the altitude as MSL, as does a sitch saved before
+        // the mode was read (see the constructor).
+        info.groundRelative = this.readsTrackAltitudeMode && this.isTrackGroundRelative(trackIndex);
         if (when === undefined) return true;     // probe mode: a track exists at this index
         for (const s of g.samples) {
             when.push(s.t);
-            coord.push({lat: s.lat, lon: s.lon, alt: s.alt});
+            const alt = info.groundRelative && CLAMPED_ALTITUDE_MODES.has(s.altitudeMode) ? 0 : s.alt;
+            coord.push({lat: s.lat, lon: s.lon, alt});
         }
         return true;
+    }
+
+    // True if every sample of the track has a ground-relative altitude mode
+    // (relativeToGround, clampToGround, or the gx: sea-floor equivalents).
+    isTrackGroundRelative(trackIndex = 0) {
+        const g = this.extractTrackGroups()[trackIndex];
+        return !!g && g.samples.every(s => GROUND_RELATIVE_ALTITUDE_MODES.has(s.altitudeMode));
     }
 
     // Reproduces the historical `info.name` assignment from the old branch ladder, used only as

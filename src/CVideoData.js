@@ -223,6 +223,24 @@ export class CVideoData {
         this.stabilizationReferencePoint = referencePoint;
         this.stabilizationDirectOffset = directOffset;
         this.stabilizedImageCache = [];
+        this._stabilizationRevision = (this._stabilizationRevision ?? 0) + 1;
+    }
+
+    // Changes whenever the shift getImage() applies could change. A filter cache
+    // keyed by frame number (Echo) must include it, or after a toggle or a re-track
+    // it serves pixels with the old shift. Read from the live fields because some
+    // callers write stabilizationEnabled and stabilizeCenters directly.
+    getStabilizationKey() {
+        if (!this.stabilizationEnabled || !this.stabilizationData || !this.stabilizationReferencePoint) return "off";
+        const mode = this.stabilizationDirectOffset ? "offset" : this.stabilizeCenters ? "center" : "point";
+        return `${mode}:${this._stabilizationRevision ?? 0}`;
+    }
+
+    // The decoded frame as getImage() shows it, or null if it has not decoded.
+    // A class whose getImage() applies stabilization overrides this; here it is
+    // the decoder's frame as is.
+    getCachedStabilizedImage(frame) {
+        return this.getCachedImage?.(frame) ?? null;
     }
 
     // Enable/disable stabilization

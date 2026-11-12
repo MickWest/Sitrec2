@@ -3,16 +3,27 @@ import {VEHICLE_THERMAL_GROUP, vehicleThermalDefaults} from "./thermalTags.js";
 import {LIGHT_GROUP} from "./vehicleLights.js";
 import {BRAND_GROUP} from "./vehicleLivery.js";
 import {DRONE_GROUPS, BALLOON_GROUPS, isMultirotor, isBalloon} from "./aerialParameters.js";
+import {KITE_GROUPS, isKite} from "./kiteParameters.js";
+import {BIRD_GROUPS, isBird} from "./birdParameters.js";
 export {isMultirotor, isBalloon} from "./aerialParameters.js";
+export {isKite} from "./kiteParameters.js";
+export {isBird} from "./birdParameters.js";
 
 const number = (key, label, min, max, step, value) => ({key, label, min, max, step, value, type: "number"});
 const choice = (key, label, options, value) => ({key, label, options, value, type: "select"});
 const check = (key, label, value) => ({key, label, value, type: "checkbox"});
 const color = (key, label, value) => ({key, label, value, type: "color"});
+// One multiplier for every dimension of an object, for a scale model. buildVehicle (vehicle.js)
+// applies it to the finished model, so a part with a fixed size in metres (a door, a wheel) is
+// scaled too. `log` gives the field a slider that moves by ratio, with 1 in the middle, because
+// the range is four powers of ten.
+export const SCALE_GROUP = {name: "Scale", open: true,
+    note: "Multiplies every dimension of the object: 0.1 makes a 1:10 scale model. The numbers below stay the full-size dimensions.",
+    fields: [{...number("overallScale", "Overall scale · ×", 0.01, 100, 0.01, 1), log: true}]};
 export const ROAD_GROUPS = [
     {name: "Body & cabin", open: true, fields: [
-        number("length", "Body length · m", 2.5, 18, 0.01, 4.65), number("width", "Body width · m", 1.3, 3.4, 0.01, 1.82),
-        number("height", "Height · m", 1, 4.5, 0.01, 1.46), number("clearance", "Ground clearance · m", 0.08, 0.8, 0.01, 0.17),
+        number("length", "Body length · m", 0.01, 18, 0.01, 4.65), number("width", "Body width · m", 0.01, 3.4, 0.01, 1.82),
+        number("height", "Height · m", 0.01, 4.5, 0.01, 1.46), number("clearance", "Ground clearance · m", 0.01, 0.8, 0.01, 0.17),
         number("beltLevel", "Belt line · % height", 35, 70, 1, 54), number("cabFront", "Cabin starts · % from front", 3, 45, 1, 30),
         number("cabRear", "Cabin ends · % from front", 35, 98, 1, 82), number("cabHeight", "Cabin roof · % height", 60, 100, 1, 100),
         number("roofWidth", "Roof width · % body", 65, 100, 1, 87), number("windshieldRake", "Windscreen rake · °", 0, 60, 1, 35),
@@ -22,7 +33,7 @@ export const ROAD_GROUPS = [
         number("sideWindows", "Side panes per side", 1, 12, 1, 2), number("pillarWidth", "Window pillars · cm", 2, 20, 0.5, 6),
         number("doorsPerSide", "Doors per side", 1, 4, 1, 2), color("glassColor", "Glass color", "#173346") ]},
     {name: "Wheels & stance", open: true, fields: [
-        number("wheelRadius", "Wheel radius · m", 0.2, 0.9, 0.01, 0.34), number("tireWidth", "Tire width · m", 0.15, 0.6, 0.01, 0.24),
+        number("wheelRadius", "Wheel radius · m", 0.01, 0.9, 0.01, 0.34), number("tireWidth", "Tire width · m", 0.01, 0.6, 0.01, 0.24),
         number("wheelbase", "Wheelbase · % body length", 38, 82, 1, 60), number("track", "Wheel track · % body width", 68, 104, 1, 88),
         choice("axles", "Axle count", {2: "2", 3: "3", 4: "4"}, 2), check("dualRear", "Dual rear tires", false),
         number("steering", "Front-wheel steering · °", -38, 38, 1, 0),
@@ -39,16 +50,20 @@ export const ROAD_GROUPS = [
         number("roughness", "Paint roughness", 0.15, 1, 0.01, 0.38)]},
 ];
 export const isRoad = p => p.vehicleType === "car" || p.vehicleType === "truck";
-export const vehicleKind = p => isRoad(p) || p.vehicleType === "drone" || isBalloon(p) ? p.vehicleType : p.rotorLayout !== "none" && p.rotorLayout ? "helicopter" : "aircraft";
+export const vehicleKind = p => isRoad(p) || p.vehicleType === "drone" || isBalloon(p) || isKite(p) || isBird(p) ? p.vehicleType : p.rotorLayout !== "none" && p.rotorLayout ? "helicopter" : "aircraft";
 export function parameterGroups(p) {
+    // A kite or a bird has no lamps, and no surface that fits the SITREC lettering.
+    if(isKite(p))return [SCALE_GROUP,...KITE_GROUPS,VEHICLE_THERMAL_GROUP];
+    if(isBird(p))return [SCALE_GROUP,...BIRD_GROUPS,VEHICLE_THERMAL_GROUP];
     const groups=isMultirotor(p)?DRONE_GROUPS:isBalloon(p)?BALLOON_GROUPS:isRoad(p)?ROAD_GROUPS:AIRCRAFT_GROUPS;
     const lightFields=isBalloon(p)?["lightsEnabled","lightGain"]:isMultirotor(p)?["lightsEnabled","positionLights","landingLights","strobeLights","beaconLights","lightGain","flashPeriod","flashDuration"]:null;
     const lights=lightFields?{...LIGHT_GROUP,note:isBalloon(p)?"Warm light follows the flame. Envelope glow is set in Basket, tether & glow.":"Editable status LEDs and auxiliary lights. Colors are generic visual defaults, not flight-status telemetry.",fields:LIGHT_GROUP.fields.filter(f=>lightFields.includes(f.key)).map(f=>({...f,label:({positionLights:"Motor status LEDs",landingLights:"Downward auxiliary light",strobeLights:"White strobe",beaconLights:"Red beacon"})[f.key]??f.label}))}:LIGHT_GROUP;
-    return [...groups,BRAND_GROUP,lights,VEHICLE_THERMAL_GROUP];
+    return [SCALE_GROUP,...groups,BRAND_GROUP,lights,VEHICLE_THERMAL_GROUP];
 }
+// The parameters that every type of object has: the scale, the lights, the lettering and the thermal values.
 function lightParameters(input) {
     const result={};
-    for(const f of [...LIGHT_GROUP.fields,...BRAND_GROUP.fields,...VEHICLE_THERMAL_GROUP.fields]) {
+    for(const f of [...SCALE_GROUP.fields,...LIGHT_GROUP.fields,...BRAND_GROUP.fields,...VEHICLE_THERMAL_GROUP.fields]) {
         const v=input[f.key] ?? vehicleThermalDefaults(input)[f.key];
         if(f.type==="number")result[f.key]=Number.isFinite(v)?Math.max(f.min,Math.min(f.max,v)):f.value;
         else if(f.type==="select")result[f.key]=Object.hasOwn(f.options,v)?v:f.value;
@@ -59,11 +74,11 @@ function lightParameters(input) {
 }
 export function normalizeParameters(input = {}) {
     if (!input || typeof input !== "object" || Array.isArray(input)) throw new Error("Vehicle parameters must be an object.");
-    const drone=isMultirotor(input),balloon=isBalloon(input);
-    if (!isRoad(input) && !drone && !balloon) return {...normalizeAircraft(input), vehicleType: input.vehicleType==="drone"?"drone":"aircraft", ...(input.vehicleType==="drone"?{droneStyle:"fixedwing"}:{}), ...lightParameters(input)};
-    const defaults=balloon?{positionLights:false,landingLights:false,beaconLights:false,strobeLights:false}:drone?{landingLights:false,beaconLights:false,strobeLights:false}:{};
+    const drone=isMultirotor(input),balloon=isBalloon(input),kite=isKite(input),bird=isBird(input);
+    if (!isRoad(input) && !drone && !balloon && !kite && !bird) return {...normalizeAircraft(input), vehicleType: input.vehicleType==="drone"?"drone":"aircraft", ...(input.vehicleType==="drone"?{droneStyle:"fixedwing"}:{}), ...lightParameters(input)};
+    const defaults=balloon||kite||bird?{positionLights:false,landingLights:false,beaconLights:false,strobeLights:false}:drone?{landingLights:false,beaconLights:false,strobeLights:false}:{};
     const p = {vehicleType: input.vehicleType, ...(drone?{droneStyle:"multirotor"}:{}), ...lightParameters({...defaults,...input})};
-    for (const f of (drone?DRONE_GROUPS:balloon?BALLOON_GROUPS:ROAD_GROUPS).flatMap(g => g.fields)) {
+    for (const f of (drone?DRONE_GROUPS:balloon?BALLOON_GROUPS:kite?KITE_GROUPS:bird?BIRD_GROUPS:ROAD_GROUPS).flatMap(g => g.fields)) {
         const v = input[f.key];
         if (f.type === "number") {const n = Number.isFinite(v) ? v : f.value; p[f.key] = Math.max(f.min, Math.min(f.max, f.step === 1 ? Math.round(n) : n));}
         else if (f.type === "select") p[f.key] = Object.hasOwn(f.options, v) ? (typeof f.value === "number" ? Number(v) : v) : f.value;
@@ -93,7 +108,7 @@ export function readParameterFile(data) {
         const legacy = readAircraftFile(data); return parameterFile(legacy.parameters, legacy.name);
     }
     if (!data || data.format !== "sitrec-procedural-vehicle" || data.version !== 1 || !data.parameters ||
-        typeof data.parameters !== "object" || Array.isArray(data.parameters) || !["car", "truck", "aircraft","drone","balloon"].includes(data.parameters.vehicleType))
-        throw new Error("Choose a Vehicle Designer or legacy Aircraft Designer parameter file (version 1).");
+        typeof data.parameters !== "object" || Array.isArray(data.parameters) || !["car", "truck", "aircraft","drone","balloon","kite","bird"].includes(data.parameters.vehicleType))
+        throw new Error("Choose a Custom Object Designer or legacy Aircraft Designer parameter file (version 1).");
     return parameterFile(data.parameters, typeof data.name === "string" ? data.name : "Imported vehicle");
 }

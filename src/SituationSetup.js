@@ -589,6 +589,7 @@ export async function SetupFromKeyAndData(key, _data, depth=0) {
                     guiMenus.camera.add(lookCameraNode.camera, 'fov', 0.35, 80, 0.01).onChange(value => {
                         lookCameraNode.camera.updateProjectionMatrix()
                     }).listen().name(t("situationSetup.lookCameraFov"))
+                        .tooltip(t("situationSetup.lookCameraFovTooltip"))
                 }
             }
 
@@ -1140,6 +1141,9 @@ export async function SetupFromKeyAndData(key, _data, depth=0) {
             await TrackManager.addTracks(data.tracks, removeDuplicates, sphereMask, {
                 showDialog: false,
                 syncTime: Sit.startTime === undefined || Sit.startTime === "current",
+                // A sitch definition names its own zone (Sit.timeZone); only a dropped
+                // track sets the zone from where it starts.
+                setTimeZone: false,
             });
             break;
 
@@ -1321,6 +1325,7 @@ export async function SetupFromKeyAndData(key, _data, depth=0) {
                     aZMax = t;
                 }
                 guiPhysics.add(par, 'az', aZMin, aZMax, 0.2).listen().onChange(UIChangedAz).name(t("situationSetup.azimuth"))
+                    .tooltip(t("situationSetup.azimuthTooltip"))
             }
             break;
 
@@ -1496,6 +1501,7 @@ export async function SetupFromKeyAndData(key, _data, depth=0) {
                 // calculateGlareStartAngle();
                 setRenderOne(true);
             }).listen().name(t("situationSetup.jetPitch"))
+                .tooltip(t("situationSetup.jetPitchTooltip"))
             Sit.update = function(f) {
                 let IRW = true;
                 if (f>=536 && f<1236) {

@@ -15,10 +15,24 @@ import {SceneLineMaterial} from "../SceneLineMaterial";
  * - CelestialMath.raDec2Celestial: Converts RA/DEC to 3D coordinates
  */
 
-import {BufferGeometry, MathUtils, Vector3} from "three";
+import {BufferGeometry, MathUtils, Matrix4, Vector3} from "three";
 import {FileManager} from "../Globals";
 import {raDec2Celestial} from "../CelestialMath";
 import {installRefractionOnMaterial} from "../atmosphere/refraction";
+import {horizonCompassFrame} from "../HorizonCompassRibbon";
+import {CelestialGridMaterial} from "../CelestialGridMaterial";
+
+function clearLines(lines) {
+    const materials = new Set();
+    for (const line of lines) {
+        line.removeFromParent();
+        line.geometry?.dispose();
+        line.sourceGeometry?.dispose();
+        if (line.material) materials.add(line.material);
+    }
+    for (const material of materials) material.dispose();
+    lines.length = 0;
+}
 
 export class CCelestialElements {
     /**
@@ -28,9 +42,11 @@ export class CCelestialElements {
      */
     constructor(config = {}) {
         this.sphereRadius = config.sphereRadius ?? 100;
+        this.lineWidth = config.lineWidth ?? 0.25;
         
         // Store references to created objects for potential cleanup/updates
         this.celestialGridLines = [];
+        this.azimuthalGridLines = [];
         this.constellationLines = [];
     }
 
@@ -44,22 +60,30 @@ export class CCelestialElements {
      * @param {number} [color=0x808080] Hex color for grid lines (default: gray)
      */
     addCelestialSphereLines(scene, gap = 15, color = 0x808080) {
-        const material = new SceneLineMaterial({color: color});
-        const materialWhite = new SceneLineMaterial({color: "#FF00FF"}); // Reference line (0° RA or poles)
-        installRefractionOnMaterial(material);
-        installRefractionOnMaterial(materialWhite);
-        const segments = 100; // Number of segments per line
+        this.addSphereGridLines(scene, gap, color, this.celestialGridLines, true);
+    }
 
-        // Helper function to create a single line
-        function createLine(start, end) {
-            const geometry = new BufferGeometry().setFromPoints([start, end]);
-            return new SceneLine(geometry, material);
-        }
+    // In the observer's East/North/Up frame, longitude circles are azimuths
+    // and latitude circles are elevations. Keep these measured angles free of
+    // celestial refraction; the equatorial grid instead follows refracted stars.
+    addAzimuthalSphereLines(scene, gap = 10, color = 0x808080) {
+        this.addSphereGridLines(scene, gap, color, this.azimuthalGridLines, false, true);
+    }
+
+    orientAzimuthalGrid(group, observer, equatorRadius, polarRadius) {
+        const {east, north, up} = horizonCompassFrame(observer, equatorRadius, polarRadius);
+        group.setRotationFromMatrix(new Matrix4().makeBasis(east, north, up));
+    }
+
+    addSphereGridLines(scene, gap, color, lines, refracted, azimuthal = false) {
+        const material = new CelestialGridMaterial({color, linewidth: this.lineWidth,
+            sphereRadius: this.sphereRadius, refracted});
 
         // Adding lines for RA (Right Ascension)
         // These go from celestial North to South poles, similar to lines of longitude
         for (let ra = 0; ra < 360; ra += gap) {
-            const raRad = MathUtils.degToRad(ra);
+            // Azimuth starts at north (local +Y) and increases toward east (+X).
+            const raRad = MathUtils.degToRad(azimuthal ? 90 - ra : ra);
             const points = [];
             for (let dec = -90; dec <= 90; dec += 1.8) {
                 const decRad = MathUtils.degToRad(dec);
@@ -67,15 +91,19 @@ export class CCelestialElements {
                 points.push(new Vector3(equatorial.x, equatorial.y, equatorial.z));
             }
             const geometry = new BufferGeometry().setFromPoints(points);
-            // Highlight 0° RA line in white for reference
-            const line = new SceneLine(geometry, ra === 0 ? materialWhite : material);
+            const line = new SceneLine(geometry, material);
             scene.add(line);
-            this.celestialGridLines.push(line);
+            lines.push(line);
         }
 
         // Adding lines for Dec (Declination)
         // These go all the way around at constant declination, similar to lines of latitude
-        for (let dec = -90; dec <= 90; dec += gap) {
+        // Anchor parallels at zero, even for spacings such as 25 or 35 degrees
+        // that do not divide 90. Always include the equator / level horizon.
+        const declinations = [-90, 0, 90];
+        for (let dec = gap; dec < 90; dec += gap) declinations.push(-dec, dec);
+        declinations.sort((a, b) => a - b);
+        for (const dec of declinations) {
             const decRad = MathUtils.degToRad(dec);
             const points = [];
             for (let ra = 0; ra <= 360; ra += 1.5) {
@@ -84,10 +112,9 @@ export class CCelestialElements {
                 points.push(new Vector3(equatorial.x, equatorial.y, equatorial.z));
             }
             const geometry = new BufferGeometry().setFromPoints(points);
-            // Highlight celestial poles in white for reference
-            const line = new SceneLine(geometry, (dec === 90 - gap) ? materialWhite : material);
+            const line = new SceneLine(geometry, material);
             scene.add(line);
-            this.celestialGridLines.push(line);
+            lines.push(line);
         }
     }
 
@@ -100,7 +127,7 @@ export class CCelestialElements {
      */
     addConstellationLines(scene, dataKey = "constellationsLines") {
         // Use a single material for all line segments (more efficient)
-        const material = new SceneLineMaterial({color: 0x808080});
+        const material = new SceneLineMaterial({color: 0x808080, linewidth: this.lineWidth});
         installRefractionOnMaterial(material);
 
         const constellationsLines = FileManager.get(dataKey);
@@ -148,6 +175,20 @@ export class CCelestialElements {
         }
     }
 
+    setLineWidth(width) {
+        this.lineWidth = width;
+        for (const line of [...this.celestialGridLines, ...this.azimuthalGridLines, ...this.constellationLines]) {
+            line.material.linewidth = width;
+        }
+    }
+
+    rebuildGridLines(equatorialGroup, azimuthalGroup, spacing) {
+        clearLines(this.celestialGridLines);
+        clearLines(this.azimuthalGridLines);
+        this.addCelestialSphereLines(equatorialGroup, spacing);
+        this.addAzimuthalSphereLines(azimuthalGroup, spacing);
+    }
+
     // Constellation NAMES are not built here. They are drawn as 2D text by
     // CNodeDisplaySkyOverlay, alongside the star and satellite labels: that keeps them at a
     // fixed pixel size whatever the field of view, and gives them the same projection - fisheye
@@ -160,12 +201,7 @@ export class CCelestialElements {
      * @param {Scene} scene Three.js scene to remove from
      */
     clearConstellationLines(scene) {
-        for (const line of this.constellationLines) {
-            scene.remove(line);
-            if (line.geometry) line.geometry.dispose();
-            if (line.material) line.material.dispose();
-        }
-        this.constellationLines = [];
+        clearLines(this.constellationLines);
     }
 
     /**
@@ -174,13 +210,8 @@ export class CCelestialElements {
      * @param {Scene} scene Three.js scene to remove from
      */
     dispose(scene) {
-        // Remove celestial grid lines
-        for (const line of this.celestialGridLines) {
-            scene.remove(line);
-            if (line.geometry) line.geometry.dispose();
-            if (line.material) line.material.dispose();
-        }
-        this.celestialGridLines = [];
+        clearLines(this.celestialGridLines);
+        clearLines(this.azimuthalGridLines);
 
         this.clearConstellationLines(scene);
     }

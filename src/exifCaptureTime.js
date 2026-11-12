@@ -16,8 +16,23 @@
 // straight back, whatever the machine timezone. Reinterpreting them at the
 // offset EXIF actually recorded gives the true instant.
 //
-// Dependency-free so it can be unit-tested without the app graph (EXIFUtils
-// pulls in threeExt, which Jest cannot load).
+// With no OffsetTime but a GPS position, the zone of that position is the next
+// best guess (applyExifTimeZone): a camera clock is normally set to local time.
+//
+// Free of the app graph so it can be unit-tested (EXIFUtils pulls in threeExt,
+// which Jest cannot load). TimeZoneLookup.js imports nothing from the app.
+
+import {zoneWallClockToInstant} from "./TimeZoneLookup";
+
+// The EXIF wall-clock numbers of a naive capture Date, written as if they were UTC.
+// Local getters return the original EXIF numbers by construction (see above).
+function wallClockAsUTC(naiveDate) {
+    return Date.UTC(
+        naiveDate.getFullYear(), naiveDate.getMonth(), naiveDate.getDate(),
+        naiveDate.getHours(), naiveDate.getMinutes(), naiveDate.getSeconds(),
+        naiveDate.getMilliseconds(),
+    );
+}
 
 // "+02:00", "-07:00", "+0200", "Z" -> minutes east of UTC. null when absent or
 // unparseable, which means "no zone information" rather than "UTC".
@@ -43,13 +58,15 @@ export function applyExifUtcOffset(naiveDate, offset) {
     const minutes = parseExifUtcOffset(offset);
     if (minutes === null) return naiveDate;
 
-    // Local getters return the original EXIF wall-clock numbers by construction.
-    const wallAsUTC = Date.UTC(
-        naiveDate.getFullYear(), naiveDate.getMonth(), naiveDate.getDate(),
-        naiveDate.getHours(), naiveDate.getMinutes(), naiveDate.getSeconds(),
-        naiveDate.getMilliseconds(),
-    );
-    return new Date(wallAsUTC - minutes * 60000);
+    return new Date(wallClockAsUTC(naiveDate) - minutes * 60000);
+}
+
+// Reinterpret a timezone-naive capture Date as wall-clock time in an IANA zone
+// ("Europe/Berlin"), with that zone's offset on the capture date. For a photo with
+// a GPS position and no OffsetTime tag. null when it cannot be done.
+export function applyExifTimeZone(naiveDate, zone) {
+    if (!(naiveDate instanceof Date) || Number.isNaN(naiveDate.getTime())) return null;
+    return zoneWallClockToInstant(wallClockAsUTC(naiveDate), zone);
 }
 
 // The offset tag to believe, in order of authority: the one written for the

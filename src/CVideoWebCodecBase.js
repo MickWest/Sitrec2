@@ -1422,6 +1422,17 @@ export class CVideoWebCodecBase extends CVideoAndAudio {
         return (img && img.width > 0) ? img : null;
     }
 
+    // getCachedImage() is the RAW decoded frame, and getImage() substitutes the
+    // nearest frame when this one has not decoded. Echo combines several frames,
+    // so it needs neither: it needs this frame, shifted exactly as getImage()
+    // shifts it. Same indexing as getImage(): cache index for both arguments.
+    getCachedStabilizedImage(frame) {
+        const image = this.getCachedImage(frame);
+        if (!image) return null;
+        const index = Math.floor(frame / this.videoSpeed);
+        return this.getStabilizedImage(index, image, index);
+    }
+
     /**
      * Set the last good frame for fallback display
      * Uses O(1) index-based lookup instead of O(n) .includes() scan

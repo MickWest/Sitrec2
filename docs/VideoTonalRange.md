@@ -129,7 +129,7 @@ radius is a guard gap, which neither line uses. It keeps the edge of the object 
 background. All regions obey the enabled video mask.
 
 Sitrec does not draw this aperture or ring on the video. The circle that
-[Frequency Analysis](PointTrack.md#frequency-analysis-of-brightness) draws is a different
+[Frequency Analysis](FrequencyAnalysis.md) draws is a different
 aperture, with its own **Object radius (px)**.
 
 Set **Object radius (px)** so that the circle just contains the object. A larger circle averages

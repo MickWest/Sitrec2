@@ -19,7 +19,7 @@ This guide covers:
 
 ## Importing Tracks
 
-Open Sitrec. **File → New Sitch** starts a fresh custom sitch. See [Getting Started with Sitrec](CustomSitchTool.md).
+Open Sitrec. **File → New Sitch (Empty)** starts a fresh custom sitch. See [Getting Started with Sitrec](CustomSitchTool.md).
 
 To load a track from a file, drag it in or use **File → Import File**. Sitrec detects the format. See [Supported Track Formats](#supported-track-formats). You can also fetch an aircraft by its hex address ([Import ADS-B Track](#ads-b-trace-by-aircraft-adsblol)), click an aircraft in [Live ADS-B Traffic](#live-ads-b-traffic-adsblol), or draw a track by hand ([Hand-Drawn Tracks](#hand-drawn-tracks)).
 
@@ -130,11 +130,13 @@ During a multi-track import, the filter panel narrows down which tracks to load.
 
 In a sitch that is already set up, these filters read only the data inside the sitch time. On the first import into a new sitch they read the whole track.
 
+The altitudes in the **Select Tracks** list and the **Altitude Range (ft)** filter are above mean sea level. For a track whose altitudes are above ground (a KML `relativeToGround` track, or a CSV with only an AGL column), Sitrec adds the height of the terrain that it has loaded at each point. Where no terrain is loaded, it uses the ellipsoid instead. In the [Track Browser](#browsing-a-folder-of-tracks), such a track shows its height above ground, marked **m AGL**.
+
 ### Managing Loaded Tracks
 
 Each loaded track gets its own folder in the **Contents** menu. You can:
 
-- **Show/hide** individual tracks with the **Show Track Line** checkbox
+- **Show/hide** individual tracks with the **Show Track Line** title checkbox, at the right end of the folder title. Drag over several title checkboxes to set them all
 - **Recolor** tracks using the Line Color picker (the folder label color updates to match)
 - **Delete** a track with the **Delete Track** button (with confirmation). This removes the track from the sitch; the file you loaded does not change
 - **Highlight** a track by hovering over its folder label (the track line turns white temporarily)
@@ -156,13 +158,13 @@ Each track has a folder in the Contents menu. The sections below list its contro
 
 **Name**, at the top of the folder, is the name shown for the track: the folder title, the track's menus, the camera and target track lists, graphs and measurements. You can change it at any time, and it is saved with the sitch. Renaming changes only what you see. The track's short name (such as `synth_01_d`) stays the same underneath, so choices saved in the sitch, such as which track is the target, keep working.
 
-Every track has its own name. A track you make in Sitrec is named **Track 1**, **Track 2** and so on, and an object is named **Object 1**, **Object 2** and so on. A track made with an object, and that object, get the same number: one more than the highest track or object number in use, so a number can be skipped (with *Track 1*, *Object 1* and *Track 2*, the next pair is *Track 3* and *Object 3*). Each can be renamed on its own. The object's **Name** is at the top of its folder in the Objects menu. An imported track and its sphere share one name, so renaming one renames the other. If you give a track a name that another track has, Sitrec adds `-1` (or the next free number) when you finish typing. A sitch saved with two tracks of one name loads with the later one renamed in the same way.
+Every track has its own name. A track you make in Sitrec is named **Track 1**, **Track 2** and so on, and an object is named **Object 1**, **Object 2** and so on. A track made with an object, and that object, get the same number: one more than the highest track or object number in use, so a number can be skipped (with *Track 1*, *Object 1* and *Track 2*, the next pair is *Track 3* and *Object 3*). Each can be renamed on its own. The object's **Name** is at the top of its folder in the Objects menu. An imported track and its sphere share one name, so renaming one renames the other. A track from a KLV stream in a TS file is named by its stream number, its tag 65 (the "local set" number) and its tail number, for example `S1 LS7 AF00371`, or `S0 LS5 Platform` when the stream has no tail number. A track derived from that stream has its kind in place of the tail number, for example `S1 LS7 Frame Center` (where the line of sight through the image center meets the ground) and `S1 LS7 Target Location` (where the platform says the target is). The [Timing Analysis](TimeAndSync.md#tracks) report explains each part. A sitch saved with the older names, such as `Center_AF00371`, keeps them. If you give a track a name that another track has, Sitrec adds `-1` (or the next free number) when you finish typing. A sitch saved with two tracks of one name loads with the later one renamed in the same way.
 
 ### Visibility and Appearance
 
 | Control | Description |
 |---------|-------------|
-| **Show Track Line** | Show or hide this track |
+| **Show Track Line** | The title checkbox of the track's folder. Show or hide the track line and its wall. The object on the track and the contrail do not change. When it is off, the rows that change only the line are grey: **Line Color**, **Color Mode**, **Line Width**, **Poly Color**, **Extend To Ground**, **Display Step** and **Show in look view**. The other rows still work |
 | **Line Color** | Color picker for the track line |
 | **Color Mode** | Radiosonde tracks only: color the track by **Temperature**, **Altitude** or **Pressure**, or **Flat (Line Color)** |
 | **Line Width** | Width of the track line in pixels (0.5-10) |
@@ -363,7 +365,7 @@ Track altitudes come in several reference systems. Understanding these is import
 | **HAE** (Height Above Ellipsoid) | WGS84 ellipsoid | Raw GPS, ADS-B `alt_geom`, STANAG 4676, MISB tags 75/78, Generic CSV `TPHAE` |
 | **MSL** (Mean Sea Level) | Geoid (EGM96) | KML `absolute`, MISB Tag 15, most map software |
 | **Pressure Altitude** | Standard atmosphere (1013.25 hPa) | ADS-B `alt_baro`, flight instruments |
-| **AGL** (Above Ground Level) | Local terrain | A CSV column headed `AGL` or `ALT (m/agl)` |
+| **AGL** (Above Ground Level) | Local terrain | A CSV column headed `AGL` or `ALT (m/agl)`, KML `relativeToGround` |
 
 ### How Sitrec Handles Altitude
 
@@ -371,9 +373,9 @@ Track altitudes come in several reference systems. Understanding these is import
 - Terrain tiles are loaded as **MSL** and converted to HAE using the **EGM96** geoid model
 - KML `absolute` altitudes are **MSL** (measured from the EGM96 geoid, per OGC KML 2.2/2.3)
   and are converted to HAE on the way to the 3D scene, on both import and export
-- Sitrec reads every KML track altitude as MSL, whatever the file's `altitudeMode` says. A KML that
-  holds pressure altitude is therefore wrong by the pressure error, and Sitrec cannot detect this.
-  See [Altitude in the file](KMLDataSources.md#altitude-in-the-file)
+- Sitrec reads a KML track altitude as MSL, unless the track's `altitudeMode` makes it relative to
+  the ground. A KML that holds pressure altitude is therefore wrong by the pressure error, and
+  Sitrec cannot detect this. See [Altitude in the file](KMLDataSources.md#altitude-in-the-file)
 - Sources whose altitudes are **already HAE** are flagged so the MSL→HAE conversion is
   skipped: STANAG 4676 (`cs="WGS_84"`), MISB ellipsoid-height tags 75/78 (used
   automatically when the MSL tag 15/25 is absent), the Generic CSV `TPHAE` column, recorded
@@ -918,4 +920,4 @@ ground, so the terrain model is not drawn in the look view. The main view still 
 **Center on Look Camera** is on, the picture stays centered on the look camera, so its
 angles stay exact when the camera track is a few meters from `origin`. The picture
 already shows where things appeared, so terrestrial refraction does not bend it. Turn off
-**View → Atmospheric Refraction → Enable Refraction** if the objects were also placed where they appeared in the photos.
+the title checkbox of **Effects → Atmospheric Refraction** if the objects were also placed where they appeared in the photos.

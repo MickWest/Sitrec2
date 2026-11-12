@@ -8,25 +8,29 @@ import {t} from "./i18n";
 // TODO: needs work when resizing the browser window or if the viewUI dimensions change dynamically, as the y position of the second text element is calculated based on the initial size and height of the viewUI. To make it more robust, you might want to add an event listener for window resize or viewUI dimension changes to recalculate the y position of the second text element accordingly. This would ensure that the time display remains correctly positioned even when the layout changes.
 
 
-export function AddTimeDisplayToUI(viewUI, x, y, size, color, align = "center") {
+// flag is the Globals key that shows it, and defaultOn its value when a sitch loads: the look
+// view's display is Globals.showTimeDisplay, on; the main view's is Globals.showTimeDisplayMain,
+// off (CustomManagerSetup.js).
+export function AddTimeDisplayToUI(viewUI, x, y, size, color, align = "center",
+                                   {flag = "showTimeDisplay", defaultOn = true} = {}) {
 
-    // Default ON, so every sitch looks exactly as it did before this was made
-    // optional. Set (not ??=) per sitch load, like the other Show-menu display
+    // The look view's default is ON, so every sitch looks exactly as it did before this was
+    // made optional. Set (not ??=) per sitch load, like the other Show-menu display
     // toggles in CNodeLabels3D — a saved custom sitch then overrides it in
     // finishDeserialization, which runs after the sitch has been set up.
-    Globals.showTimeDisplay = true;
+    Globals[flag] = defaultOn;
 
     // Both lines read the flag every frame rather than being switched by the
     // menu's onChange. That keeps them in sync with whatever sets the global —
     // the menu, a restored save, the API — with no refresh hook to remember.
     viewUI.addText("videoTimeLabelUTC", "2022-08-18T07:16:15.540Z", x, y, size, color, align).update(function () {
-        this.visible = Globals.showTimeDisplay;
+        this.visible = Globals[flag];
         var nowDate = GlobalDateTimeNode.dateNow;
         this.text = utcDate(nowDate);
     });
 
     viewUI.addText("videoTimeLabelTZ", "", x, y + 100 * ((Math.abs(size)) / viewUI.heightPx + 2), size, color, align).update(function () {
-        this.visible = Globals.showTimeDisplay;
+        this.visible = Globals[flag];
         var nowDate = GlobalDateTimeNode.dateNow;
 
         this.y = (y + 100 * (Math.abs(size)+2) / viewUI.heightPx)/100; // PATCH Update y position to match the new text element
@@ -35,7 +39,7 @@ export function AddTimeDisplayToUI(viewUI, x, y, size, color, align = "center") 
             " " + GlobalDateTimeNode.getTimeZoneName();
     });
 
-    addTimeDisplayMenu(viewUI);
+    addTimeDisplayMenu(viewUI, flag);
 
 //    viewUI.addInput("dateTimeStart", "dateTimeStart"); // Adding dateTimeStart as in input force this to update when dateTimeStart is updated
 }
@@ -45,18 +49,19 @@ export function AddTimeDisplayToUI(viewUI, x, y, size, color, align = "center") 
 // so it is destroyed and rebuilt with the rest of the per-sitch menu contents.
 // .shareAs() mirrors the SAME controller into the host view's header menu
 // (src/ViewUIBarMenus.js), so there is only ever one flag and one onChange.
-function addTimeDisplayMenu(viewUI) {
+function addTimeDisplayMenu(viewUI, flag) {
     const viewId = viewUI.overlayView?.id ?? "lookView";
 
     // Composed rather than translated, like the per-view night-sky rows: the
     // overlay follows whichever view it was attached to, so the view name is not
     // known until here. The header menu drops the suffix — the menu names the view.
-    guiShowHide.add(Globals, "showTimeDisplay")
+    guiShowHide.add(Globals, flag)
         .name(viewControlLabel(viewId, t("timeDisplay.thing")))
         .tooltip(t("timeDisplay.tooltip"))
         .listen()
         .onChange(() => setRenderOne(true))
-        .shareAs(viewMenuKey(viewId, "timeDisplay"));
+        .shareAs(viewMenuKey(viewId, "timeDisplay"))
+        .asViewCheckbox(viewId, t("timeDisplay.thing"), "timeDisplay");
 }
 
 

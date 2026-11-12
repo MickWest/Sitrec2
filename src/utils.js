@@ -898,6 +898,23 @@ function preventDefaultHandler(e) {
 }
 
 
+// Tooltips are help text, not saved state. A custom-sitch save keeps a full copy of every node
+// definition, nested effect inputs included, so a save would otherwise show the tooltip text
+// (or no tooltip) of the build that wrote it. Copy only string "tooltip" and "tip" fields from
+// the current definition, at any depth, where the save has the same path. Nothing else changes.
+export function refreshSavedTooltips(saved, current) {
+    for (const [key, value] of Object.entries(current)) {
+        if (key === "tooltip" || key === "tip") {
+            if (typeof value === "string") saved[key] = value;
+        } else if (value !== null && typeof value === "object" && !Array.isArray(value)) {
+            const savedValue = saved[key];
+            if (savedValue !== null && typeof savedValue === "object" && !Array.isArray(savedValue)) {
+                refreshSavedTooltips(savedValue, value);
+            }
+        }
+    }
+}
+
 // During development we may add new custom fields to the "custom" sitch
 // so we need to update any loaded sitchObject with those new fields
 export function updateNewCustomFields(sitchObject) {
@@ -991,6 +1008,7 @@ export function updateNewCustomFields(sitchObject) {
             }
 
         }
+        refreshSavedTooltips(sitchObject, customObj);
     }
     return sitchObject;
 }

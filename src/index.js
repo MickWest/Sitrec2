@@ -9,7 +9,7 @@
  */
 import {ColorManagement, Group, REVISION, Scene, WebGLRenderer,} from "three";
 import {disposeVideoFormatLayer, setupVideoFormatEffectsMenu} from "./videoFilters/VideoFormatLayer";
-import {disposeRefractionTool, setupRefractionToolMenu} from "./refraction/RefractionLoader";
+import {disposeRefractionTool} from "./refraction/RefractionLoader";
 import {addDopplerGeolocationMenu, disposeDopplerGeolocation} from "./doppler/DopplerLoader";
 import "./js/uPlot/uPlot.css"
 import {makeDraggable} from "./DragResizeUtils";
@@ -54,6 +54,7 @@ import {
 import {disableScroll, f2m, stripComments, updateDocumentTitle} from './utils'
 import {CSituation} from "./CSituation";
 import {helpDocs, DOC_SECTIONS, getDocsForMenu, docMenuIds} from "./docsRegistry";
+import {showDocumentationSearch} from "./documentation/DocumentationSearchDialog";
 import {EXTRA_TOOLS} from "./extraTools";
 import {parseFromAppParams, buildFromAppSitch, finishFromApp} from "./fromApp.js";
 import {par, resetPar} from "./par";
@@ -65,6 +66,7 @@ import {registerNodes} from "./RegisterNodes";
 import {registerSitches, textSitchToObject} from "./RegisterSitches";
 import {approveSitchChannel} from './release/ChannelUI';
 import {takeChannelHandoff} from './release/channelHandoff';
+import {installStaleBuildRecovery} from "./StaleBuildRecovery";
 import {SetupMouseHandler} from "./mouseMoveView";
 import {initKeyboard, showHider} from "./KeyBoardHandler";
 import {initTooltips} from "./Tooltips";
@@ -112,6 +114,7 @@ import {VideoLoadingManager} from "./CVideoLoadingManager";
 import {disposeDebugArrows, disposeDebugSpheres, disposeScene} from "./threeExt";
 import {removeMeasurementUI, setupMeasurementUI} from "./nodes/CNodeLabels3D";
 import {removeLatLonGrid, setupLatLonGrid} from "./LatLonGrid";
+import {removeTimeZoneBorders} from "./TimeZoneBorders";
 import {imageQueueManager} from "./js/get-pixels-mick";
 import {disposeGimbalChart} from "./JetChart";
 import {CNode} from "./nodes/CNode";
@@ -201,9 +204,12 @@ import {parseLatLonAlt} from "./CoordinateParser";
 import {
     isExplicitStartupAction,
     runStartupToolAction,
+    startScreenForAction,
     startupActionFromSearch,
 } from "./StartupActions";
 import {openBotBenchDialog} from "./analysis/BotBenchUI";
+import {removeTemplateIntro} from "./SitchTemplateInstructions";
+import {templateAddress} from "./SitchTemplates";
 
 // Initialize debug log capture BEFORE any console output
 debugLog.init();
@@ -270,6 +276,10 @@ document.addEventListener('touchmove', (event) => {
 }, { passive: false });
 
 console.log ("SITREC START " + process.env.BUILD_VERSION_STRING);
+
+// A lazy part of Sitrec that cannot load because the server has a new build gives the user
+// a dialog (save and reload, reload with a temporary save, or try to continue).
+installStaleBuildRecovery();
 
 // Check for stale cached index.html by comparing built-in version with server version
 if (typeof window !== 'undefined') {
@@ -737,9 +747,14 @@ if (!hasExplicitStartupRequest) {
     }
 }
 
+// "?template=<name>" opens that template. It is the start screen with the template
+// already chosen: the same blank page behind, and no screen to choose from. So it
+// works only where the start screen opens, and a sitch in the address comes before it.
+const startupTemplateName = shouldAutoOpenBrowser ? (urlParams.get("template") || null) : null;
+
 // This must be set before initializeOnce() creates CFileManager so startup
 // fetches can be suppressed when the browser will immediately fetch the same data.
-Globals.sitchBrowserWillOpen = shouldAutoOpenBrowser;
+Globals.sitchBrowserWillOpen = shouldAutoOpenBrowser && !startupTemplateName;
 
 // a count of async pending actions, so we can tell when a level has fully loaded and settled up
 Globals.pendingActions = 0;
@@ -799,6 +814,9 @@ if (channelHandoff) {
         setSit(new CSituation(handedSitch));
         Globals.sitchEstablished = true;
         Sit.initialDropZoneAnimation = false;
+        // The sitch is the state of an open sitch that had changes not yet saved (a reload
+        // with a temporary save, StaleBuildRecovery.js). The end of the load marks it so.
+        if (channelHandoff.context.restoreDirty) Globals.restoreDirtyAfterLoad = true;
         markSitrecReady();
     } else {
         selectInitialSitch();
@@ -1098,9 +1116,22 @@ if (Sit.name === "empty") {
     Globals.menuBar.showOnlyMenus(["main", "file", "help"]);
 }
 
-// Auto-open sitch browser when no explicit sitch/action is specified
-if (Globals.sitchBrowserWillOpen && FileManager.sitchBrowser) {
-    FileManager.sitchBrowser.open({hideCancelButton: Sit.name === "empty"});
+// Auto-open the start screen when no explicit sitch/action is specified.
+// It shows the sitch templates. With no template to show, or with ?action=browse,
+// it is the sitch browser.
+const openStartScreen = () => FileManager.sitchBrowser?.open({
+    hideCancelButton: Sit.name === "empty",
+    screen: startScreenForAction(startupAction),
+    browseIfNoTemplates: true,
+});
+if (startupTemplateName) {
+    // If the template does not open, the reason is on the screen. Then show the start
+    // screen, so that the user is not left on the blank page.
+    FileManager.loadTemplateByName(startupTemplateName).then(opened => {
+        if (!opened) openStartScreen();
+    });
+} else if (Globals.sitchBrowserWillOpen) {
+    openStartScreen();
 }
 Globals.sitchBrowserWillOpen = false;
 
@@ -1588,7 +1619,11 @@ async function transitionToSitch(situation, customSetup) {
         url = SITREC_SHARE_APP + "?sitch=" + situation
     } else {
         // set the URL to the default
-        if (FileManager.loadURL !== undefined) {
+        if (situation?.templateSource?.name) {
+            // A sitch from a template is not a version of the template, so its address is
+            // the template by name. A reload opens the template again.
+            url = templateAddress(SITREC_SHARE_APP, situation.templateSource);
+        } else if (FileManager.loadURL !== undefined) {
             // Share stable object-key values instead of host-bound storage URLs.
             url = SITREC_SHARE_APP + "?custom=" + encodeShareParam(toShareableCustomValue(FileManager.loadURL));
         } else {
@@ -1599,7 +1634,9 @@ async function transitionToSitch(situation, customSetup) {
 
     }
 
-    if (url !== undefined) {
+    // Not when the address is this one already (a start at "?template=<name>"):
+    // a second entry for the same address makes Back do nothing one time.
+    if (url !== undefined && url !== window.location.href) {
         window.history.pushState({}, null, url);
     }
 
@@ -1775,6 +1812,9 @@ async function initializeOnce() {
                     return true;
                 }
             }
+            // The motion analysis of the frame shown, when it is on. Its overlay is drawn
+            // only when its result is ready, which can be after the frame is decoded.
+            if (getMotionAnalyzerForTesting()?.isResultPending(par.frame ?? 0)) return true;
             return false;
         };
         window.NodeMan = NodeMan;
@@ -1963,20 +2003,12 @@ async function initializeOnce() {
         .tooltip(t("menus.view.tooltip"));
     setupHUDColor(guiMenus.view);
 
-    // Both refraction models live together here: the celestial one (whole
-    // atmosphere, Saemundsson, for Sun/Moon/planets/stars) added by
-    // CNodeDisplayNightSky, and the terrestrial one (range-dependent, for
-    // terrain/buildings/sea) added by CNodeTerrainUI. Permanent shell created
-    // once at init — the contents are non-permanent and get rebuilt per sitch.
-    addGUIFolder("refraction", "Atmospheric Refraction", "view")
-        .tooltip("How much the atmosphere bends light on its way to the camera — separately for celestial objects and for the solid scene.");
-
     // Reset Layout: snap the open views back into a clean default grid (Main on the left, the
     // rest stacked on the right), ignoring their current positions — recovery for a layout that
     // got messy. Views are free rectangles; shared edges become draggable seams automatically
     // (see CLayoutManager), so there is no separate "tiled" mode to toggle.
     guiMenus.view.add({reset: () => LayoutMan.resetLayout()}, "reset").name("Reset Layout")
-        .tooltip("Snap all open views back into a clean default grid");
+        .tooltip("Put the open views back in a default grid. The main view fills the left half, and the other views share the right half, one above another.\nHas no effect when fewer than two views are open.");
 
 
 
@@ -2040,18 +2072,25 @@ async function initializeOnce() {
     // rebuilt by CCustomManager.setup() on every sitch load; the folder shells
     // live here so we don't end up with duplicate husks after destroy(false).
     addGUIFolder("wind", "Wind", "physics");
-    addGUIFolder("simpleFlightSim", "Simple Flight Sim", "physics");
+    addGUIFolder("simpleFlightSim", "Simple Flight Sim", "physics")
+        .tooltip("A simple flight simulator. It makes a jet track from a true airspeed, a start heading and a turn rate, with an optional racetrack pattern and climb rate.\nThe look camera follows this track when Camera > Location > Position is Flight Sim.");
 
     // Scenarios: self-contained simulation packages (see CScenarioManager).
     // Permanent shells only — contents are populated lazily when the
     // Scenarios menu is first opened, and a scenario's nodes exist only
     // after it is explicitly activated (an untouched scenario is a no-op).
-    addGUIFolder("scenarios", "Scenarios", "physics");
-    addGUIFolder("gimbalAnalysis", "Gimbal Analysis", "scenarios");
-    addGUIFolder("football", "Football", "scenarios");
-    addGUIFolder("nimitz", "Nimitz", "scenarios");
-    addGUIFolder("floodSim", "Flood Sim", "scenarios");
-    addGUIFolder("flatEarth", "Flat Earth", "scenarios");
+    addGUIFolder("scenarios", "Scenarios", "physics")
+        .tooltip("Ready-made simulations. A scenario adds its objects and controls to the sitch only when you enable or load it.\nA scenario that you do not enable changes nothing.");
+    addGUIFolder("gimbalAnalysis", "Gimbal Analysis", "scenarios")
+        .tooltip("Build a recreation of the Gimbal video as a new custom sitch. Set the cloud wind and the display options, then create the sitch in one step, or build it step by step.");
+    addGUIFolder("football", "Football", "scenarios")
+        .tooltip("Simulate a kicked soccer ball with spin and air drag, a cable cam on its wires, and a broadcast camera.\nClick Enable Football Simulation, or the Load button, to show its controls.");
+    addGUIFolder("nimitz", "Nimitz", "scenarios")
+        .tooltip("Recreate the November 2004 Nimitz (Tic Tac) encounter: the jets, the Tic Tac, the ships and the disturbance in the water.\nClick Enable Nimitz Simulation, or a Load button, to show its controls.");
+    addGUIFolder("floodSim", "Flood Sim", "scenarios")
+        .tooltip("Simulate water that flows over the terrain, from rain or a dam burst.\nClick Enable Flood Sim to make the simulator and show its controls.");
+    addGUIFolder("flatEarth", "Flat Earth", "scenarios")
+        .tooltip("Experimental: draw the world as a flat disc, to compare with the globe.\nDisplay only. Physics, tracks and measurements stay on the globe.");
 
     // addGUIMenu("missile", "Missile").tooltip("Homing missile parameters\nControls for the missile simulation including mass, thrust, air resistance, and burn time");
 
@@ -2064,15 +2103,19 @@ async function initializeOnce() {
     // manual controls — which grey out when a computed source drives that aspect.
     // Created as permanent shells so they survive menuBar.destroy(false); their
     // contents are routed in per sitch by the camera nodes/switches (gui: "cameraX").
-    addGUIFolder("cameraLocation", "Location", "camera").open();
-    addGUIFolder("cameraHeading", "Heading", "camera").open();
-    addGUIFolder("cameraFOV", "FOV (Zoom)", "camera").open();
+    addGUIFolder("cameraLocation", "Location", "camera").open()
+        .tooltip("The position of the look camera. Position selects what sets it.\nThe manual controls (latitude, longitude, altitude and others) are grayed out unless Position is Manual.");
+    addGUIFolder("cameraHeading", "Heading", "camera").open()
+        .tooltip("The direction in which the look camera points. Camera Heading selects what sets it.\nThe manual pan, tilt and similar controls are grayed out unless Camera Heading is Manual.");
+    addGUIFolder("cameraFOV", "FOV (Zoom)", "camera").open()
+        .tooltip("The field of view (FOV) of the look camera. Camera FOV selects what sets it.\nThe manual zoom controls are grayed out unless Camera FOV is Manual.");
     // The LENS - what maps a field angle to a pixel radius, which FOV alone cannot say. Sitrec
     // assumes a pinhole everywhere until something measures otherwise, and the only thing that
     // does is Star Track's calibration, so this folder stays empty (and hidden) until a lens has
     // actually been fitted. It is a permanent shell for the same reason its neighbours are:
     // menuBar.destroy(false) keeps the folder and takes its contents.
-    addGUIFolder("cameraLens", "Lens", "camera");
+    addGUIFolder("cameraLens", "Lens", "camera")
+        .tooltip("The lens model that a Video > Star Tracker calibration fitted to the video: its type, focal length, optical center and distortion.\nShown only after a calibration fits a lens.");
 
     // Lift whatever is currently driving the camera FOV into a .fov.json of
     // keyframes, for loading into the FOV Editor (of this or another sitch).
@@ -2092,7 +2135,8 @@ async function initializeOnce() {
     // the ground-track switch). Created here as a permanent shell so it survives
     // menuBar.destroy(false); its contents are (re)populated per sitch by the
     // PTZ controller, the lookView, CCustomManager.setup(), and the camera node.
-    addGUIFolder("cameraTweaks", "Camera Tweaks", "camera");
+    addGUIFolder("cameraTweaks", "Camera Tweaks", "camera")
+        .tooltip("Less-used controls for the look camera, such as the lens X/Y offset, the near plane, the orbit camera, free look and Diffraction Glare.");
 
     // Ship the whole camera solution — position, heading, tilt, roll, field of view —
     // out to Google Earth as a PhotoOverlay with the current video frame in it, so the
@@ -2120,18 +2164,27 @@ async function initializeOnce() {
         .tooltip(t("menus.showHide.measurements.tooltip"));
     const _guiTweaks = addTranslatedGUIMenu("effects", "menus.effects.title", {closeFolders: true})
         .tooltip(t("menus.effects.tooltip"));
-    addGUIFolder("renderingEffects", "Rendering Effects", "effects");
+    addGUIFolder("renderingEffects", "Rendering Effects", "effects")
+        .tooltip("Image effects on the rendered views, such as blur, levels and simulated JPEG artifacts, with their settings.\nThe Rendering Effects checkbox turns them all on or off. Effects On/Off and Thermal/NV turn single effects on or off.");
     // Permanent sub-folder that groups the sensor-look simulations: the
     // FLIRShader/Thermal/NightVision enable flags plus their parameter
     // sliders (routed in per sitch via gui: "thermalNV" / enabledGUI).
     // Hidden when a sitch leaves it empty — see showFolderIfPopulated.
-    addGUIFolder("thermalNV", "Thermal/NV", "renderingEffects");
+    addGUIFolder("thermalNV", "Thermal/NV", "renderingEffects")
+        .tooltip("Sensor simulations for the look view: FLIR (forward-looking infrared) shading, thermal, night vision and diffraction glare. Each has an on/off checkbox and sliders.\nThey work only when the Rendering Effects checkbox is on.");
     // Live analog / off-a-screen video format simulation. Permanent, like the folder
     // above, and populated once at init rather than per sitch - it is not a node.
-    addGUIFolder("videoFormat", "Video Format Effects", "effects");
+    addGUIFolder("videoFormat", "Video Format Effects", "effects")
+        .tooltip("Settings to simulate an analog video format, and optionally a phone filming a screen, over the look view.\nThe checkbox on this title turns the simulation on and off.");
     setupVideoFormatEffectsMenu();
-    addGUIFolder("raytracedRefraction", "Ray-traced Refraction", "effects");
-    setupRefractionToolMenu();
+    // Atmospheric refraction, both models in one folder: Standard (the analytic
+    // celestial and terrestrial bends, in every view) or Ray-traced (one view
+    // drawn through an atmosphere defined by profiles). Permanent shell created
+    // once at init; setupRefractionGUI() (atmosphere/refractionSettings.js)
+    // rebuilds the contents per sitch, from CNodeDisplayNightSky or
+    // CNodeTerrainUI, whichever is created first.
+    addGUIFolder("refraction", "Atmospheric Refraction", "effects")
+        .tooltip("How the atmosphere bends light on its way to the camera.\nThe checkbox on this title turns refraction on and off in every view. Model chooses Standard refraction or Ray-traced refraction, and shows the settings for that model.");
     addTranslatedGUIMenu("lighting", "menus.lighting.title", {closeFolders: true})
         .tooltip(t("menus.lighting.tooltip"));
     addTranslatedGUIMenu("contents", "menus.contents.title")
@@ -2147,12 +2200,14 @@ async function initializeOnce() {
     function addDocLink(parent, nameKey, file) {
         const translatedName = t(nameKey);
         if (localDocsEnabled) {
-            return parent.addExternalLink(translatedName, "./"+file+".html").perm().tooltip(translatedName);
+            return parent.addExternalLink(translatedName, "./"+file+".html").perm()
+                .tooltip(t("menus.help.docLinkTooltip", {name: translatedName}));
         } else {
             return parent.addExternalLink(
                 t("menus.help.documentation.githubLinkLabel", {name: translatedName}),
                 "https://github.com/MickWest/Sitrec2/blob/main/"+file+".md"
-            ).perm();
+            ).perm()
+                .tooltip(t("menus.help.githubDocLinkTooltip", {name: translatedName}));
         }
     }
 
@@ -2173,6 +2228,11 @@ async function initializeOnce() {
             : t("menus.help.documentation.githubTooltip")
         ).perm();
 
+    docs.add({searchDocumentation: () => showDocumentationSearch(
+        new URL('docs/search-index.json', SITREC_APP).href
+    )}, 'searchDocumentation').name(t('documentationSearch.title'))
+        .tooltip(t('documentationSearch.tooltip')).perm();
+
     // Grouped by section rather than one flat list — with ~30 docs a single list is
     // unreadable, and the grouping is the only signposting a new user gets. Sections
     // with no docs are skipped, so removing the last doc from a section removes the
@@ -2180,7 +2240,8 @@ async function initializeOnce() {
     for (const s of DOC_SECTIONS) {
         const inSection = helpDocs.filter(d => d.section === s.id);
         if (inSection.length === 0) continue;
-        const folder = addTranslatedGUIFolder("docsSection_" + s.id, s.labelKey, "doumentation").perm();
+        const folder = addTranslatedGUIFolder("docsSection_" + s.id, s.labelKey, "doumentation").perm()
+            .tooltip(t("menus.help.docSectionTips." + s.id));
         for (const d of inSection) addDocLink(folder, d.labelKey, d.file);
     }
 
@@ -2205,7 +2266,8 @@ async function initializeOnce() {
                 name: t("menus.help.documentation.thirdPartyNotices"),
             }),
             "https://github.com/MickWest/Sitrec2/blob/main/ThirdPartyNotices.txt"
-        ).perm();
+        ).perm()
+            .tooltip(t("menus.help.documentation.thirdPartyNoticesTooltip"));
     }
 
     // Only in a build that packaged the Bridge zip (BRIDGE_ZIP_PACKAGED, webpack.common.js).
@@ -2224,13 +2286,13 @@ async function initializeOnce() {
         for (const [key, value] of Object.entries(configParams.extraHelpLinks)) {
             if (typeof value === "string") {
                 const e = external.addExternalLink(key, value).perm();
-                e.tooltip(key);
+                e.tooltip(t("menus.help.externalLinks.linkTooltip", {name: key}));
             } else {
                 const e = external.addExternalLink(key, value.url).perm();
                 if (value.tooltip !== undefined) {
                     e.tooltip(value.tooltip);
                 } else {
-                    e.tooltip(key);
+                    e.tooltip(t("menus.help.externalLinks.linkTooltip", {name: key}));
                 }
             }
         }
@@ -2473,7 +2535,8 @@ function legacySetup() {
     assert(Sit !== undefined, "legacySetup called before Sit is defined");
     let _guiJetTweaks;
     if (Sit.jetStuff) {
-        _guiJetTweaks = guiTweaks.addFolder('Jet Tweaks').close();
+        _guiJetTweaks = guiTweaks.addFolder('Jet Tweaks').close()
+            .tooltip("Settings for the jet and its targeting pod in a Gimbal recreation, such as the pod pitch and roll, the derotation and the jet pitch.");
     }
     setupGUIjetTweaks(_guiJetTweaks)
     // guiTweaks.add(par,"effects")
@@ -2525,6 +2588,12 @@ async function setupFunctions() {
 
     Globals.showMeasurements = true;
     Globals.showMeasurementsLook = false;
+    // The V/B measurement's own per-view toggles too, so a sitch saved before they existed does
+    // not inherit the previous sitch's. A saved sitch that has them sets them again on load.
+    Globals.showVBMeasureMain = true;
+    Globals.showVBMeasureLook = false;
+    Globals.showVBCircleMain = false;
+    Globals.showVBCircleLook = false;
 
 
     // Setup the watch nodes that allow access via Math expressions
@@ -2723,6 +2792,7 @@ async function setupFunctions() {
         // otherwise use 1.0, so we get a perfect match with collisions.
         par.globe = addAlignedGlobe(Sit.globeScale ?? (Sit.terrain !== undefined ? 0.9999 : 1.0))
         showHider(par.globe,"[G]lobe", true, "g").name(t("showHiders.globe.label"))
+            .tooltip(t("showHiders.globe.tooltip"))
     }
 
 // Finally move the camera and reset the start time, if defined in the URL parameters
@@ -3469,6 +3539,8 @@ function disposeEverything() {
     disposeVideoFormatLayer();
     disposeRefractionTool();
     disposeDopplerGeolocation();
+    // The intro box of a template is for the sitch that is going away.
+    removeTemplateIntro();
 
     // cancel any requested animation frames
     clearScheduledAnimation();
@@ -3487,6 +3559,7 @@ function disposeEverything() {
     // so we need to make sure it knows it's been destroyed
     removeMeasurementUI();
     removeLatLonGrid();
+    removeTimeZoneBorders();
 
 
     // dispose the track manager managed nodes

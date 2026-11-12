@@ -1,4 +1,4 @@
-import {Globals, guiMenus, NodeMan, setRenderOne, setSitchEstablished, Sit, TrackManager} from "../Globals";
+import {Globals, guiMenus, markSitchDirty, NodeMan, setRenderOne, setSitchEstablished, Sit, TrackManager} from "../Globals";
 import {CNode} from "./CNode";
 import {par} from "../par";
 import {isKeyCodeHeld, isKeyHeld} from "../KeyBoardHandler";
@@ -9,8 +9,13 @@ import {calculateGST} from "../CelestialMath";
 import {updateGUIFrames} from "../JetGUI";
 import {updateFrameSlider} from "./CNodeFrameSlider";
 import {frameTimeOffsetMS, getOffsetFromDateTimeString} from "../DateTimeUtils";
+import {formatUtcOffset, lookupTimeZone, utcOffsetHoursInZone, zoneAbbreviations} from "../TimeZoneLookup";
+import {ECEFToLLAVD_radii} from "../LLA-ECEF-ENU";
 import {EventManager} from "../CEventManager";
 import {t} from "../i18n";
+import {ViewMan} from "../CViewManager";
+import {showViewMessage} from "../ViewMessage";
+import {addShowTimeZonesControl} from "../TimeZoneBorders";
 import {showTimingAnalysis} from "../showTimingAnalysis";
 import {
     chooseAnalyzedStream, klvStreamLabels, renderSourceFiles, renderStreams, renderTracks, streamOfDataNode, streamsOnSitchClock,
@@ -100,7 +105,8 @@ export const timeZoneOffsets = {
     "MAGT UTC+11": 11,      // Magadan Time
     "PETT UTC+12": 12,      // Kamchatka Time
     "LHST UTC+10.5": 10.5,  // Lord Howe Standard Time
-    "LHDT UTC+11": 11       // Lord Howe Daylight Time
+    "LHDT UTC+11": 11,      // Lord Howe Daylight Time
+    "AEDT UTC+11": 11,      // Australian Eastern Daylight Time
 };
 
 // Create a new object where both keys and values are the keys from timeZoneOffsets
@@ -125,6 +131,28 @@ export function timeZoneKeyFromSitTimeZone(sitTimeZone) {
         }
     }
     return match;
+}
+
+// The name for an offset that has no entry in the list: "UTC+8.00", "UTC-3.50".
+export function genericTimeZoneName(offset) {
+    return "UTC" + (offset >= 0 ? "+" : "-") + Math.abs(offset).toFixed(2);
+}
+
+// The offset in hours that a Time Zone name stands for: a list entry, or a name made
+// by genericTimeZoneName(). undefined for any other name.
+export function offsetFromTimeZoneName(name) {
+    if (Object.hasOwn(timeZoneOffsets, name ?? "")) return timeZoneOffsets[name];
+    const match = /^UTC([+-])(\d+(?:\.\d+)?)$/.exec(name ?? "");
+    if (!match) return undefined;
+    return (match[1] === "-" ? -1 : 1) * Number(match[2]);
+}
+
+// The list entry for an IANA zone at an instant: the one with that zone's offset AND
+// one of its abbreviations. undefined when there is none. Matching the offset alone
+// would show Tokyo as "YAKT UTC+9" and Lagos as "BST UTC+1".
+export function timeZoneKeyForZone(zone, date, offset) {
+    const abbreviations = zoneAbbreviations(zone, date);
+    return timeZoneKeys.find(key => timeZoneOffsets[key] === offset && abbreviations.has(key.split(" ")[0]));
 }
 
 // given a start time in ms, calculate the current "now" time based on the frame and the simSpeed and fps
@@ -311,9 +339,14 @@ export class CNodeDateTime extends CNode {
         // UTC-6 for April 1897 and UTC-5 for April 1918: US daylight saving only
         // began on 31 March 1918. Reading it from new Date() picked today's rule and
         // put a historic sitch an hour out. dateNow is already set (see above).
-        // There is no lat/lon -> timezone lookup, so this is only the right zone when
-        // the viewer happens to be where the sighting was; historic sitches should
-        // name their zone with Sit.timeZone rather than rely on it.
+        // This is only the right zone when the viewer happens to be where the sighting
+        // was. The zone of the place (setTimeZoneFromLocation) is NOT applied here: a new
+        // custom sitch sits at a default origin until a real location is set, so a
+        // lookup now would give every user that origin's zone. It is applied on a real
+        // location event instead: a dropped photo or video with a GPS position, a track that
+        // sets the time of a new sitch (TrackManager setTimeZoneFromTrackStart), or the
+        // "Set Time Zone from Camera Location" menu item. Historic sitches should name their
+        // zone with Sit.timeZone.
         if (!sitTimeZoneApplied) {
             const offset = this.dateNow.getTimezoneOffset() / -60; // minutes -> hours, sign flipped
             this.setTimeZoneNameFromOffset(offset);
@@ -333,12 +366,18 @@ export class CNodeDateTime extends CNode {
         this.dateTimeFolder.add(this, "timeZoneName", timeZoneKeys).name(t("dateTime.timeZone.label")).listen().onChange(
             v => {
                 console.log("Timezone "+v)
+                this._bumpTimeZoneSerial(); // a zone picked by hand wins over a lookup still loading
                 this.populate();
                 forceUpdateUIText();
                 setRenderOne(true);
             }
         )
             .tooltip(t("dateTime.timeZone.tooltip"));
+
+        this.dateTimeFolder.add(this, "setTimeZoneFromCameraLocation")
+            .name(t("dateTime.setTimeZoneFromCameraLocation.label"))
+            .tooltip(t("dateTime.setTimeZoneFromCameraLocation.tooltip"));
+        addShowTimeZonesControl(this.dateTimeFolder);   // Show Time Zones (TimeZoneBorders.js)
 
         this.oldSimSpeed = Sit.simSpeed;
 
@@ -460,7 +499,8 @@ export class CNodeDateTime extends CNode {
         // looks one up at click time so the button appears regardless and
         // shows a helpful message if no MISB is present.
         this._runTimingAnalysis = () => this._timingAnalysisAction();
-        this.dateTimeFolder.add(this, "_runTimingAnalysis").name("Timing Analysis...");
+        this.dateTimeFolder.add(this, "_runTimingAnalysis").name("Timing Analysis...")
+            .tooltip(t("dateTime.timingAnalysis.tooltip"));
 
         this.update(0);
 
@@ -653,24 +693,22 @@ export class CNodeDateTime extends CNode {
             return lines.length > 0 ? lines.join("\n") + "\n\n" : "";
         };
         const fileText = fileLines.length > 0 ? fileLines.join("\n") + "\n\n" : "";
-        const fileHeader = fileText + streamsText(false);
-        const plainHeader = streamsText(true);
 
         // ── Tracks ───────────────────────────────────────────────────
         // For each derived MISB track (CNodeTrackFromMISB and subclasses), the
         // stream it uses and how it pairs to the video. This answers "is the
         // displayed track on this KLV stream or that one?" for multi-PID files.
-        // Structural only: stream names from container ids + track counts, no
-        // node ids and no tag values. Detected by the .pairingInfo stamp that
-        // CNodeTrackFromMISB.recalculate() leaves behind (so subclasses like
-        // CNodeLazyMISBFlightTrack are included without an instanceof import).
-        let prelude = "";
+        // Detected by the .pairingInfo stamp that CNodeTrackFromMISB.recalculate()
+        // leaves behind (so subclasses like CNodeLazyMISBFlightTrack are included
+        // without an instanceof import). Then the name of each track and how
+        // Sitrec made it. A name can hold a tail number or the user's own text,
+        // so this section is in the header and obeys the checkbox.
         const misbTracks = [];
         NodeMan.iterate((k, n) => {
             if (n.pairingInfo && n.pairingInfo.misbNode) misbTracks.push(n);
         });
-        const anyUTS = misbTracks.some(n => n.pairingInfo.mode === "uts");
-        if (misbTracks.length > 0 && (realStreams.length > 1 || anyUTS)) {
+        let tracksText = () => "";
+        if (misbTracks.length > 0) {
             const groups = new Map();
             for (const n of misbTracks) {
                 const info = n.pairingInfo;
@@ -684,11 +722,24 @@ export class CNodeDateTime extends CNode {
             }
             const ordered = [...groups.values()].sort((a, b) => (a.si - b.si) || a.mode.localeCompare(b.mode));
             const {hasRealVideoPTS, wrapped} = misbTracks[0].pairingInfo;
-            prelude += renderTracks(ordered, {realPTS: hasRealVideoPTS, wrapped}).join("\n") + "\n\n";
+            // One entry per MISB data node that a track uses, in stream order.
+            const names = [];
+            misbNodes.forEach((n, si) => {
+                let trackOb = null;
+                TrackManager.iterate((id, ob) => { if (!trackOb && ob.trackDataNode === n) trackOb = ob; });
+                if (trackOb) {
+                    names.push({label: streamLabels[si], name: trackOb.displayName ?? trackOb.menuText,
+                        parts: trackOb.streamNameParts ?? null});
+                }
+            });
+            tracksText = (hideNames) => renderTracks(ordered, {realPTS: hasRealVideoPTS, wrapped},
+                {names, hideNames}).join("\n") + "\n\n";
         }
+        const fileHeader = fileText + streamsText(false) + tracksText(false);
+        const plainHeader = streamsText(true) + tracksText(true);
 
         // ── Analysis ─────────────────────────────────────────────────
-        prelude += `ANALYSIS OF ${streamLabels[misbNodes.indexOf(misbNode)]} (${analyzedReason})\n\n`;
+        const prelude = `ANALYSIS OF ${streamLabels[misbNodes.indexOf(misbNode)]} (${analyzedReason})\n\n`;
 
         const report = prelude + misbNode.generateTimingAnalysis();
         // Generic download filename — never include sitch name (may
@@ -748,7 +799,15 @@ export class CNodeDateTime extends CNode {
 
         super.modDeserialize(v);
         this.populateStartTimeFromUTCString(v.startDateTime);
+        this._bumpTimeZoneSerial(); // the saved zone wins over a lookup still loading
         this.timeZoneName = v.timeZoneName;
+        // A name that is not in the list ("UTC+8.00") holds its offset only in
+        // timeZoneOffset, which is not saved, so read it back from the name. A local
+        // mean time offset was rounded to 0.01 h (36 s) when the name was made.
+        const savedOffset = offsetFromTimeZoneName(v.timeZoneName);
+        if (savedOffset !== undefined) {
+            this.timeZoneOffset = savedOffset;
+        }
 
 
         Sit.simSpeed = v.simSpeed;
@@ -766,13 +825,95 @@ export class CNodeDateTime extends CNode {
     }
 
     getTimeZoneOffset() {
-        // if the time zone name is not in the array than we just return the current time zone offset
-        if (this.timeZoneName === undefined || !timeZoneOffsets.hasOwnProperty(this.timeZoneName)) {
-            console.warn("CNodeDateTime - getTimeZoneOffset called with unknown time zone name: " + this.timeZoneName);
-            return this.timeZoneOffset;
+        if (this.timeZoneName !== undefined && timeZoneOffsets.hasOwnProperty(this.timeZoneName)) {
+            return timeZoneOffsets[this.timeZoneName];
         }
+        // A name made from an offset ("UTC+8.00", see genericTimeZoneName) is not in the
+        // list; its exact offset is in timeZoneOffset. Anything else is unexpected.
+        if (offsetFromTimeZoneName(this.timeZoneName) === undefined) {
+            console.warn("CNodeDateTime - getTimeZoneOffset called with unknown time zone name: " + this.timeZoneName);
+        }
+        return this.timeZoneOffset;
+    }
 
-        return(timeZoneOffsets[this.timeZoneName])
+    // Every change of zone takes a new number. An async lookup takes one when it starts
+    // (startTimeZoneLookup) and applies its zone only if no other number was taken since
+    // (isTimeZoneLookupCurrent). So a newer lookup, or a zone set any other way - by hand,
+    // by a saved sitch, by a date with an offset - wins over a lookup that ends later.
+    _bumpTimeZoneSerial() {
+        this.timeZoneSerial = (this.timeZoneSerial ?? 0) + 1;
+        return this.timeZoneSerial;
+    }
+
+    startTimeZoneLookup() {
+        return this._bumpTimeZoneSerial();
+    }
+
+    isTimeZoneLookupCurrent(ticket) {
+        return ticket === this.timeZoneSerial;
+    }
+
+    // Show times in an IANA zone ("Europe/Berlin"). The offset is the zone's offset on
+    // the sitch START date, so it has that date's daylight saving rule. Returns the name
+    // now in the Time Zone menu, or null when the browser does not know the zone.
+    setTimeZoneFromZone(zone) {
+        const offset = utcOffsetHoursInZone(zone, this.dateStart);
+        if (offset === null) {
+            console.warn(`CNodeDateTime - this browser has no rules for the time zone ${zone}`);
+            return null;
+        }
+        this._bumpTimeZoneSerial();
+        this.timeZoneOffset = offset;
+        this.timeZoneName = timeZoneKeyForZone(zone, this.dateStart, offset) ?? genericTimeZoneName(offset);
+        this.populate();
+        forceUpdateUIText();
+        setRenderOne(true);
+        return this.timeZoneName;
+    }
+
+    // Label text for an IANA zone at an instant, named as the Time Zone menu names it, on two
+    // lines: "PDT\nUTC-7". A zone with no menu entry gets its offset alone ("UTC+8"). null when
+    // the browser does not know the zone. Used by the Show Time Zones labels (TimeZoneBorders.js,
+    // which reaches it through GlobalDateTimeNode to avoid an import cycle).
+    timeZoneLabelText(zone, date) {
+        const offset = utcOffsetHoursInZone(zone, date);
+        if (offset === null) return null;
+        const key = timeZoneKeyForZone(zone, date, offset);
+        return key ? key.replace(" ", "\n") : formatUtcOffset(offset);
+    }
+
+    // Look up the zone at a position (degrees) and show times in it. The lookup table
+    // loads on first use, so this is async. Returns the IANA zone, or null if nothing
+    // was changed: no zone found, a different sitch loaded, or the zone was set some
+    // other way while the lookup ran (see startTimeZoneLookup).
+    async setTimeZoneFromLocation(latDeg, lonDeg) {
+        const ticket = this.startTimeZoneLookup();
+        const generation = Globals.loadGeneration;
+        const zone = await lookupTimeZone(latDeg, lonDeg);
+        if (!zone || generation !== Globals.loadGeneration || !this.isTimeZoneLookupCurrent(ticket)) return null;
+        return this.setTimeZoneFromZone(zone) ? zone : null;
+    }
+
+    // Menu item: the zone at the look camera, which is where the sighting was seen from.
+    setTimeZoneFromCameraLocation() {
+        const position = NodeMan.get("lookCamera", false)?.camera?.position;
+        let lat = Sit.lat, lon = Sit.lon;
+        if (position && position.lengthSq() > 0) {
+            const lla = ECEFToLLAVD_radii(position);
+            lat = lla.x;
+            lon = lla.y;
+        }
+        this.setTimeZoneFromLocation(lat, lon)
+            .then(zone => {
+                console.log(`Time zone at ${lat}, ${lon}: ${zone ?? "not found"} -> ${this.timeZoneName}`);
+                if (!zone) return;
+                // The zone is saved with the sitch, so this is a change to warn about on unload.
+                markSitchDirty();
+                // The menu shows only the new name, so also say it where the user can see it.
+                showViewMessage(ViewMan.get("mainView", false) ?? ViewMan.get("lookView", false),
+                    t("dateTime.setTimeZoneFromCameraLocation.message", {zone: `${this.timeZoneName} (${zone})`}));
+            })
+            .catch(error => console.warn("Set Time Zone from Camera Location failed:", error));
     }
 
     // add a select node that has the start time
@@ -922,6 +1063,7 @@ export class CNodeDateTime extends CNode {
     setTimeZoneNameFromOffset(offset) {
 
         // we only use this if we can't find the time zone name in the timeZoneOffsets object
+        this._bumpTimeZoneSerial(); // a zone from an offset wins over a lookup still loading
         this.timeZoneOffset = offset;
 
         if (offset === undefined || offset === null) {
@@ -941,7 +1083,7 @@ export class CNodeDateTime extends CNode {
         }
 
         // if we didn't find a match, then set it to plus (or minus) the offset
-        this.timeZoneName = "UTC" + (offset >= 0 ? "+" : "-") + Math.abs(offset).toFixed(2);
+        this.timeZoneName = genericTimeZoneName(offset);
     }
 
     // get the start time from a string in ISO 8601 format

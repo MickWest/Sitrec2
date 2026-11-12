@@ -1,6 +1,7 @@
 import * as Astronomy from "astronomy-engine";
 import {MISB} from "../MISBFields";
 import {maxOf, minOf} from "../SafeArrays";
+import {DERIVED_KIND_NAMES, PLATFORM_NAME, streamTrackName} from "../MISBStreamTrackName";
 
 const DEFAULT_GAP_FACTOR = 3;
 const DEFAULT_MIN_GAP_S = 0.1;
@@ -689,9 +690,10 @@ function hexId(n, digits = 0) {
 // place in the list: "KLV #0:3 [0x1002], sync". #0:N is the stream's place in the
 // PMT, the same number that ffprobe prints and ffmpeg -map uses; [0x1002] is its
 // packet id (PID). A stream with no PID (a .klv or CSV file) is "MISB file",
-// numbered when there are two or more. A derived track is "Center (derived from
-// KLV #0:3 [0x1002], sync)". Names that are the same (two files with the same
-// layout) get "(1 of 2)", "(2 of 2)".
+// numbered when there are two or more. A derived track is "Frame Center (derived
+// from KLV #0:3 [0x1002], sync)", its kind named as in its track name
+// (DERIVED_KIND_NAMES). Names that are the same (two files with the same layout)
+// get "(1 of 2)", "(2 of 2)".
 export function klvStreamLabels(misbs) {
     const files = misbs.filter(misb => misb && !misb.derivedTrack && misb.klvPid == null);
     const streamLabel = (misb) => {
@@ -707,7 +709,8 @@ export function klvStreamLabels(misbs) {
     };
     const labels = misbs.map(misb => {
         if (!misb?.derivedTrack) return streamLabel(misb);
-        const kind = misb.derivedTrack.charAt(0).toUpperCase() + misb.derivedTrack.slice(1);
+        const key = misb.derivedTrack.charAt(0).toUpperCase() + misb.derivedTrack.slice(1);
+        const kind = DERIVED_KIND_NAMES[key] ?? key;
         return `${kind} (derived from ${streamLabel(misb)})`;
     });
     const totals = new Map();
@@ -1288,8 +1291,8 @@ export function renderStreams(misbs, labels, {
 
 // Which stream each track uses, and how it is paired to the video. groups: one for
 // each stream and pairing mode: {label, hasRecordPTS, mode, count}. video:
-// {realPTS, wrapped}.
-export function renderTracks(groups, {realPTS, wrapped}) {
+// {realPTS, wrapped}. names and hideNames: the track names, see renderTrackNames.
+export function renderTracks(groups, {realPTS, wrapped}, {names = [], hideNames = false} = {}) {
     const lines = ["TRACKS (the stream that each track uses)", "─".repeat(60)];
     for (const {label, hasRecordPTS, mode, count} of groups) {
         const pairing = mode === "pts" ? "PES PTS pairing" : "UnixTimeStamp pairing (nominal rate)";
@@ -1305,6 +1308,63 @@ export function renderTracks(groups, {realPTS, wrapped}) {
     } else {
         lines.push("  Every track pairs by PES PTS, so the UnixTimeStamp fallback is not used. Frame");
         lines.push("  patching affects playback cadence only, not how KLV pairs to the video.");
+    }
+    lines.push(...renderTrackNames(names, {hideNames}));
+    return lines;
+}
+
+// What each derived kind in a track name is made from. Keyed as DERIVED_KIND_NAMES.
+const DERIVED_KIND_SOURCES = {
+    Center: "tags 23 and 24: where the line of sight through the image center meets the ground,\n"
+        + "as the platform computed it",
+    Target: "tags 40 to 42: where the platform says the target is",
+    Truth: "the truth columns",
+};
+
+// The name of each track, and how Sitrec made it (MISBStreamTrackName.js). entries: one for
+// each track, in the order of the streams: {label, name, parts}. label: the stream, from
+// klvStreamLabels. name: the track's name now. parts: from streamTrackNameParts, or null for a
+// track that is not from a TS stream. hideNames: a tail number, and a name that is not Sitrec's,
+// print as "hidden".
+export function renderTrackNames(entries, {hideNames = false} = {}) {
+    if (entries.length === 0) return [];
+    let changed = false;
+    const shown = entries.map(({name, parts}) => {
+        const made = parts ? streamTrackName(parts) : null;
+        if (made !== null && name !== made) changed = true;
+        if (!hideNames) return made !== null && name !== made ? `"${name}" (Sitrec's name: "${made}")` : `"${name}"`;
+        if (made === null || name !== made) return HIDDEN_VALUE;
+        return `"${streamTrackName({...parts, tail: parts.tail === null ? null : HIDDEN_VALUE})}"`;
+    });
+    const width = maxOf(shown.map(text => text.length));
+    const lines = ["", "  Track names, as in the Contents menu:"];
+    entries.forEach((entry, i) => lines.push(`    ${shown[i].padEnd(width)}  ${entry.label}`));
+    const withParts = entries.filter(entry => entry.parts);
+    if (withParts.length > 0) {
+        lines.push("  A track from a KLV stream in a TS is named \"S<n> LS<v>\", then the tail number of the",
+            "  platform track, or the kind of a derived track:");
+        const kinds = [...new Set(withParts.map(entry => entry.parts.kind).filter(Boolean))];
+        const parts = [
+            ["S<n>", "the number of the stream in the TS: ffprobe and ffmpeg -map call it #0:<n>"],
+            ["LS<v>", "tag 65, UAS Datalink LS Version Number: the \"local set\" number"],
+            ["tail", `tag 4, Platform Tail Number. "${PLATFORM_NAME}" when the stream has none.`],
+            ...kinds.map(kind => [DERIVED_KIND_NAMES[kind] ?? kind,
+                `a track from ${DERIVED_KIND_SOURCES[kind] ?? "the same stream"}`]),
+        ];
+        const partWidth = maxOf(parts.map(([part]) => part.length));
+        for (const [part, meaning] of parts) {
+            // A meaning of two lines goes on under itself.
+            const [first, ...rest] = meaning.split("\n");
+            lines.push(`    ${part.padEnd(partWidth)}  ${first}`);
+            for (const more of rest) lines.push(`    ${"".padEnd(partWidth)}  ${more}`);
+        }
+    }
+    if (entries.some(entry => !entry.parts)) {
+        lines.push("  A track that is not from a TS stream is named by its tail number (tag 4), or by its file.");
+    }
+    if (changed) {
+        lines.push("  A name that is not Sitrec's name was changed with the Name control, or was saved by an",
+            "  older Sitrec.");
     }
     return lines;
 }

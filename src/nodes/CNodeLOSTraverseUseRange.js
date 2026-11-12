@@ -3,6 +3,10 @@ import {EventManager} from "../CEventManager";
 import {Globals, guiMenus, markSitchDirty, TrackManager} from "../Globals";
 import {misbRangeSources, rangeSamplesForFrames} from "../MISBRange";
 
+const RANGE_SOURCE_TOOLTIP = "MISB range field that the Use Range method uses as the distance, in meters, along the current LOS (line of sight).\n" +
+    "Ground Range is used as it is. It is not converted to slant range.\n" +
+    "A missing reading holds the previous valid range. A gap at the start holds the first valid range.";
+
 export class CNodeLOSTraverseUseRange extends CNodeTrack {
     constructor(v, gui = guiMenus.traverse) {
         super(v);
@@ -18,11 +22,11 @@ export class CNodeLOSTraverseUseRange extends CNodeTrack {
         if (gui) {
             this.rangeSourceController = gui.add(this, "rangeSource", this.sourceOptions())
                 .name("Range Source")
-                .tooltip("Use this MISB field, in metres, as distance along the current LOS. " +
-                    "Ground Range is also applied directly; it is not converted to slant range. " +
-                    "Missing readings hold the previous valid range (the first valid range for a leading gap).")
+                .tooltip(RANGE_SOURCE_TOOLTIP)
                 .listen().onChange(() => this.selectRangeSource(this.rangeSource));
-            this.rangeStatusController = gui.add(this, "rangeStatus").name("Range Data").listen().disable();
+            this.rangeStatusController = gui.add(this, "rangeStatus").name("Range Data").listen().disable()
+                .tooltip("Number of frames with no valid range reading. These frames hold a nearby valid range. " +
+                    "Shown only when there are such frames.");
             this.show(this.visible);
         }
         this._onTracksChanged = () => {
@@ -73,8 +77,7 @@ export class CNodeLOSTraverseUseRange extends CNodeTrack {
         if (this.rangeSourceController) {
             this.rangeSourceController = this.rangeSourceController.options(this.sourceOptions())
                 .name("Range Source")
-                .tooltip("Distance in metres along the current LOS. Ground Range is used directly, without conversion. " +
-                    "Missing readings hold the previous valid range; leading gaps hold the first valid range.")
+                .tooltip(RANGE_SOURCE_TOOLTIP)
                 .listen().onChange(() => this.selectRangeSource(this.rangeSource));
             this.rangeSourceController.show(this.visible);
         }

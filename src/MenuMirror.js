@@ -127,6 +127,7 @@ function buildTwin(source, targetGui, opts = {}) {
     // A row that stays usable while its folder's title checkbox is off (FolderToggle.js) must
     // stay usable in every copy of that folder too.
     if (source._keepLiveWhenFolderOff && typeof twin.keepLiveWhenFolderOff === "function") twin.keepLiveWhenFolderOff();
+    if (source._fadeWhenFolderOff && typeof twin.fadeWhenFolderOff === "function") twin.fadeWhenFolderOff();
     twin.show(!source._hidden);
 
     // Unit metadata is COPIED rather than re-applied through setUnitType(): the name already
@@ -217,6 +218,8 @@ function addTwin(source, gui) {
             if (source._decimals !== undefined) twin.decimals(source._decimals);
             if (source._elastic) {
                 twin.elastic(source._elasticMin, source._elasticMax, source._elasticInteger, source._elasticShrink);
+                // The smallest step of an elastic range (elasticFloor: Allow Small Altitudes).
+                if (source._elasticMinStep > 0) twin.elasticFloor(source._elasticMin, source._elasticMinStep);
             }
             // Typed input has to expand a twin's range the same way it expands the
             // source's, or the same keystrokes give two different answers depending
@@ -333,11 +336,23 @@ function forceUpdateDisplay(controller) {
 // stale range, so the two sliders disagree about where the same value sits.
 function syncRange(source, twin) {
     if (typeof twin._onUpdateMinMax !== "function") return;
-    if (twin._min === source._min && twin._max === source._max) return;
-    twin._min = source._min;
-    twin._max = source._max;
-    twin._maxMax = source._maxMax;
-    twin._onUpdateMinMax();
+    // The floor of an elastic range can change with no change of range (elasticFloor).
+    const floorChanged = source._elastic && twin._elastic
+        && (twin._elasticMin !== source._elasticMin || twin._elasticMinStep !== source._elasticMinStep);
+    if (floorChanged) {
+        twin._elasticMin = source._elasticMin;
+        twin._elasticMinStep = source._elasticMinStep;
+    }
+    if (twin._min !== source._min || twin._max !== source._max) {
+        twin._min = source._min;
+        twin._max = source._max;
+        twin._maxMax = source._maxMax;
+        twin._onUpdateMinMax();
+    } else if (!floorChanged) {
+        return;
+    }
+    // The step of an elastic range follows its range and its floor.
+    if (twin._elastic) twin.updateElasticStep?.();
 }
 
 // --- request / twin bookkeeping --------------------------------------------------------------
@@ -422,9 +437,12 @@ GUI.prototype.mirrorFolderFrom = function (sourceFolder, opts = {}) {
     // A whole-folder mirror is a live editing panel for something being manipulated elsewhere
     // (3D handles, code), so both ends poll by default — see the opts.listen note in buildTwin.
     opts = {listen: true, ...opts};
+    let folderToggleTwin;
     for (const child of childrenInDOMOrder(sourceFolder)) {
         if (child.controllers !== undefined) {
             const folder = this.addFolder(child._title);
+            // A folder's tooltip lives only on its title element (GUI.prototype.tooltip).
+            if (child.$title?.title && typeof folder.tooltip === "function") folder.tooltip(child.$title.title);
             folder.mirrorFolderFrom(child, opts);
             // Open or closed as the source folder is, so a group that is closed in the menu (a
             // track's Smoothing, an object's Material) is closed in its panel too. A toggle in
@@ -438,9 +456,15 @@ GUI.prototype.mirrorFolderFrom = function (sourceFolder, opts = {}) {
             const twin = child.mirrorTo(this, opts);
             // A folder's title checkbox (FolderToggle.js) is a view of one of its controls, so
             // the copy promotes that control's twin the same way.
-            if (twin && child === sourceFolder._folderToggle) twin.asFolderToggle();
+            if (twin && child === sourceFolder._folderToggle) folderToggleTwin = twin;
+            if (twin && child._viewCheckbox) {
+                const {viewId, name, key} = child._viewCheckbox;
+                twin.asViewCheckbox(viewId, name, key);
+            }
         }
     }
+    // Both sides of a paired title toggle must exist before promoting the row.
+    folderToggleTwin?.asFolderToggle(sourceFolder._folderToggle._folderToggleOptions);
     return this;
 };
 
@@ -454,6 +478,14 @@ function childrenInDOMOrder(gui) {
     for (const el of gui.$children.children) {
         const child = byElement.get(el);
         if (child) ordered.push(child);
+        // A paired Main/Look row contains two real controllers. Keep them at
+        // their visual position when cloning a complete folder.
+        else if (el.classList.contains("lil-checkbox-pair")) {
+            for (const option of el.children) {
+                const controller = byElement.get(option);
+                if (controller) ordered.push(controller);
+            }
+        }
     }
     // Anything the DOM walk missed (a controller whose element was re-parented) still gets
     // mirrored, just at the end, rather than silently vanishing from the copy.

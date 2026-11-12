@@ -42,8 +42,8 @@ Here's an informal video demonstrating many of the concepts described here:
 
 ## Which of these are you?
 
-To build your own, start a blank sitch. **File → New Sitch** starts a fresh custom sitch, and the
-**New Sitch** button in the sitch browser does the same. Or go straight to `?sitch=custom`. Then
+To build your own, start a blank sitch. **File → New Sitch (Empty)** starts a fresh custom sitch, and the
+**New Sitch** button on the start screen and in the sitch browser does the same. Or go straight to `?sitch=custom`. Then
 follow whichever of these describes your situation:
 
 ### A. "I filmed it myself, from the ground"
@@ -191,7 +191,7 @@ With Camera Heading set to To Target, Pan and Tilt are greyed out, because the t
 You don't have to know coordinates. The **Camera** menu's **Location** folder (and, for the target, the **Target** menu) has three handy controls for positioning a fixed camera or target:
 
 - **Lookup** — type a **place name** (e.g. "Phoenix, AZ"), `lat,lon` coordinates in any form (decimal degrees, degrees minutes seconds, hemisphere letters — see [Coordinate formats](GIS.md#coordinate-formats)), an MGRS grid reference, a `lat,lon,altitude` triple, or an ECEF `x,y,z` triple in metres, and Sitrec jumps there. The last two also set the altitude; everything else drops to ground level.
-- **Geolocate from browser** — sets the position to an approximate location found from your IP address, 3 m above the ground. It does not use the browser's location permission.
+- **Geolocate from IP Address** — sets the position to an approximate location found from your IP address, 3 m above the ground. It does not use the browser's location permission.
 - **Go To the above position** — moves the view to it.
 
 ### Placing things with a right-click
@@ -231,7 +231,7 @@ Both are shown in **UTC**, the world reference time.
 
 The Year / Month / Day / Hour / Minute / Second sliders in the Time menu edit the **nowTime**; the timeline at the bottom of the screen (and the arrow keys) move you through the frames. A common workflow is to scrub (drag) to a frame with something distinctive on screen, then adjust the time until the simulation matches — Sitrec works out the start time for you. You'll do exactly this when syncing video, next.
 
-**Use Time Zone in UI** is on by default, so these sliders show the selected **Time Zone**, not UTC. Select the zone that was in effect at your location on that date, then enter your local time. See [Time zones](TimeAndSync.md#time-zones).
+**Use Time Zone in UI** is on by default, so these sliders show the selected **Time Zone**, not UTC. Select the zone that was in effect at your location on that date, then enter your local time. When the camera is at the right place, **Set Time Zone from Camera Location** selects that zone for you. See [Time zones](TimeAndSync.md#time-zones).
 
 ## Adding and Syncing Video
 
@@ -295,7 +295,7 @@ In this instance we see the road is correct, but a bit low resolution. Zoom in, 
 
 ![The Terrain menu, with the Terrain Tweaks folder open](docimages/terrain-menu.jpg)
 
-**textureDetail**, **elevationDetail**, **Disable Dynamic Subdivision** and **Building Detail (SSE)** appear only on a local build or for an admin. You will not see them on the public site.
+**Texture Detail**, **Elevation Detail**, **Disable Dynamic Subdivision** and **Building Detail (SSE)** appear only on a local build or for an admin. You will not see them on the public site.
 
 By default, terrain uses **dynamic subdivision** (the **Dynamic Subdivision** checkbox in **Terrain → Terrain Tweaks**): as you move and zoom the camera, Sitrec automatically loads higher-resolution tiles where you're looking, so you don't normally need to set a center point or zoom level by hand. The main control you'll use is **Map Type**, which selects the imagery source (satellite, street map, etc.).
 
@@ -360,7 +360,10 @@ Because orbital predictions drift over time, always load the data for the date y
 
 With the time, location and direction set, the look view shows what the camera would see. To test a candidate, check that it is at the same place in the look view as the object in the video, on the same frame, and that it moves the same way when you scrub.
 
-- **Planets and stars.** In **Show → Celestial**, tick **Star Names in Look** to name the stars and planets in the look view. Also tick **Only Label Planets in Look** to name only the planets.
+- **Stars and planets.** Open **Show → Celestial → Stars and Planets** for star and planet brightness, the star magnitude limit, and Physical Point Sources. The folder checkbox, **Render Stars and Planets**, hides or shows both, including the Sun and Moon and their name labels. Constellation lines and grids keep their separate switches.
+- **Horizon compass.** Tick the **Show → Celestial → Horizon Compass** folder title to show compass directions and degree ticks along the sea-level horizon in the 3D views. Open the folder to adjust **Opacity** and **Text Size**. The ribbon follows camera direction, roll and zoom, and dips below the local horizontal at altitude. Hills can rise above it. Numbers stay upright and ticks stay vertical on screen. Degree labels normally appear every 10°, including beneath the cardinal directions.
+- **Celestial lines.** Use **Show → Celestial → Lines** for constellation lines, the equatorial grids and their shared **Line Width** slider. The default width is 0.25 display pixels, adjustable in steps of 0.01.
+- **Planets and stars.** In **Show → Celestial → Labels**, tick **Star/Planet Names in Look** to name the stars and planets in the look view. **Constellation Names** independently shows or hides constellation labels. Also tick **Planets Only in Look** to name only the planets.
 - **Satellites.** Load them as in [Adding satellites](#adding-satellites), then tick **Satellite Labels (Look View)** in the **Satellites** menu.
 - **Aircraft.** **Help → ADSB Replay for this time and location** and **Help → FlightRadar24 Replay Here** open a flight-tracking replay at the camera's position and the time of the current frame. Find the flights near you, then get a track for each one: see [KML Data Sources](KMLDataSources.md). Drag it in to see where that aircraft was.
 

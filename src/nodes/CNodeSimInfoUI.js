@@ -208,7 +208,9 @@ export class CNodeSimInfoUI extends CNodeVideoInfoUI {
             // track => air speed is undefined, so don't draw the line.
             const wind = NodeMan.get("targetWind", false);
             if (!wind || typeof wind.p !== "function") return null;
-            move.sub(wind.p(f));
+            // The wind at the object's own position on this frame.
+            move.sub(typeof wind.windVectorAt === "function"
+                ? wind.windVectorAt(f, src.p(f)) : wind.p(f));
         }
         if (mode === 'ground' || mode === 'air') {
             // Horizontal component: drop the vertical (ellipsoid-up) part.

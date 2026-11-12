@@ -45,7 +45,8 @@ import {
     Units,
     withTestUser
 } from "./Globals";
-import {ownedSubNodeIds} from "./UserObjects";
+import {isUserMadeObjectId, ownedSubNodeIds} from "./UserObjects";
+import {unlistManualObject} from "./TrackSelectors";
 import {requestCameraFocusSync} from "./CameraFocusUI";
 import {isKeyHeld, toggler} from "./KeyBoardHandler";
 import {registerMirrorSource, syncMirroredSource} from "./MenuMirror";
@@ -69,7 +70,8 @@ import {DebugArrowAB, elevationAtLL, intersectSurface} from "./threeExt";
 import {FeatureManager} from "./CFeatureManager";
 import {CNodeTrackGUI} from "./nodes/CNodeControllerTrackGUI";
 import * as LAYER from "./LayerMasks";
-import {forceUpdateUIText} from "./nodes/CNodeViewUI";
+import {CNodeViewUI, forceUpdateUIText} from "./nodes/CNodeViewUI";
+import {AddTimeDisplayToUI} from "./UIHelpers";
 import {configParams} from "./runtimeConfig";
 import {showError, showConfirm, showChoice, showTextEditor} from "./showError";
 import {applyEnvOverride, envOverrideAvailable} from "./EnvOverride";
@@ -207,14 +209,17 @@ export class CCustomManager {
         // everything, we just give the user a place to track new additions.
         if (!gs.pipeline) gs.pipeline = null;
 
-        const manualFolder = parentFolder.addFolder("Manual Build").close();
+        const manualFolder = parentFolder.addFolder("Manual Build").close()
+            .tooltip("Buttons that add the Gimbal analysis to this sitch one step at a time.\n"
+                + "A step runs at once and is saved with the sitch, so it runs again when the sitch loads.\n"
+                + "A step that needs an earlier step shows an error and does nothing.");
 
         const markDone = (key) => {
             if (!Sit.gimbalSetup.pipeline) Sit.gimbalSetup.pipeline = {};
             Sit.gimbalSetup.pipeline[key] = true;
         };
 
-        const step = (label, key, prereq, run) => {
+        const step = (label, key, prereq, run, tip) => {
             const state = {run: () => {
                 try {
                     const miss = prereq && prereq();
@@ -227,7 +232,8 @@ export class CCustomManager {
                     showError("Step failed: " + (e && e.message ? e.message : e));
                 }
             }};
-            manualFolder.add(state, "run").name(label);
+            const button = manualFolder.add(state, "run").name(label);
+            if (tip) button.tooltip(tip);
         };
 
         const need = (ids, msg) => () => {
@@ -239,31 +245,46 @@ export class CCustomManager {
 
         step("Core (az/el/bank/winds/jetTrack/SAPage)", "core",
             need(["jetAltitude", "jetOrigin"], "Core step needs jetOrigin + jetAltitude"),
-            () => gimbalStepCore(this._gimbalConfig));
+            () => gimbalStepCore(this._gimbalConfig),
+            "Load the Gimbal data and build the core: the az, el, bank and glare angle sources, "
+                + "the three winds, the jet track, the SA Page view and the jet's LOS (line of sight).\n"
+                + "Run this step first.");
 
         step("Traverse Nodes", "traverse",
             need(["JetLOS", "jetTrack"], "Traverse needs Core first"),
-            () => gimbalStepTraverse(this._gimbalConfig.defaultTraverse ?? "Const Air Spd"));
+            () => gimbalStepTraverse(this._gimbalConfig.defaultTraverse ?? "Const Air Spd"),
+            "Add the traverse methods that place the target along the jet's LOS, "
+                + "and the Traverse > LOS Traverse Method menu.\nNeeds Core.");
 
         step("Air Track (target airspeed)", "airTrack",
             need(["LOSTraverseSelect", "targetWind"], "Air Track needs Traverse + Core"),
-            () => gimbalStepAirTrack());
+            () => gimbalStepAirTrack(),
+            "Add the air track: the path of the target through the air, relative to the target wind.\n"
+                + "Needs Core and Traverse Nodes.");
 
         step("Track LOS Display Nodes", "trackLOS",
             need(["JetLOS", "jetTrack", "LOSTraverseSelect"], "Track LOS needs Core + Traverse"),
-            () => gimbalStepTrackLOSNodes());
+            () => gimbalStepTrackLOSNodes(),
+            "Draw the jet's LOS, the jet track and the selected traverse path in the 3D view.\n"
+                + "Needs Core and Traverse Nodes.");
 
         step("Clouds", "clouds",
             need(["jetTrack", "cloudAltitude"], "Clouds need Core"),
-            () => gimbalStepClouds());
+            () => gimbalStepClouds(),
+            "Add the cloud layer, which drifts with the cloud wind, and the track where the LOS "
+                + "meets the cloud altitude.\nNeeds Core.");
 
         step("Fleet (5-ship)", "fleet",
             need(["LOSTraverseSelect"], "Fleet needs Traverse"),
-            () => gimbalStepFleet(this._gimbalConfig));
+            () => gimbalStepFleet(this._gimbalConfig),
+            "Add five aircraft in formation, placed relative to the traverse path, "
+                + "with sliders for the formation.\nNeeds Traverse Nodes.");
 
         step("Jet Views (chart + ATFLIR pod)", "commonViews",
             need(["LOSTraverseSelect"], "Jet Views needs Traverse"),
-            () => gimbalStepCommonViews());
+            () => gimbalStepCommonViews(),
+            "Add the jet charts and graphs, the ATFLIR pod display and the HUD.\n"
+                + "Needs Traverse Nodes. Run it after Fleet to include the fleet speed graph.");
 
         step("Fleet HAFUs on SA Page", "saHAFU",
             () => {
@@ -272,19 +293,27 @@ export class CCustomManager {
                 if (!NodeMan.exists("LOSTraverseSelect")) return "HAFUs need Traverse step first";
                 return null;
             },
-            () => gimbalStepSAHAFU());
+            () => gimbalStepSAHAFU(),
+            "Add the HAFU (hostile, ambiguous, friendly, unknown) symbols for the target and the "
+                + "five fleet aircraft to the SA Page.\nUse it when you turn on the SA Page after the Fleet step.");
 
         step("Gimbal Graphs", "graphs",
             need(["cloudSpeedEditor", "azEditor", "LOSTraverseSelect"], "Graphs need Core + Traverse"),
-            () => gimbalStepGraphs());
+            () => gimbalStepGraphs(),
+            "Add the Gimbal analysis graphs: cloud speed against the sim turn rate, "
+                + "the az comparison, and the target acceleration.\nNeeds Core and Traverse Nodes.");
 
         step("Target Model (FA-18F)", "targetModel",
             need(["LOSTraverseSelect", "airTrack", "targetWind"], "Target Model needs Traverse + Air Track"),
-            () => gimbalStepTargetModel());
+            () => gimbalStepTargetModel(),
+            "Add a 3D FA-18F model and a sphere on the traverse path. "
+                + "The model banks to match its motion through the air.\nNeeds Traverse Nodes and Air Track.");
 
         step("Air Track Display", "airTrackDisplay",
             need(["airTrack"], "Air Track Display needs Air Track step"),
-            () => gimbalStepAirTrackDisplay());
+            () => gimbalStepAirTrackDisplay(),
+            "Draw the air track as a line. It shows only when the WIND button on the SA Page is on.\n"
+                + "Needs Air Track.");
     }
 
     _createSAPage() {
@@ -475,10 +504,15 @@ export class CCustomManager {
     }
 
     /**
-     * Delete a 3D object the user made (its Delete Object button, or Delete Track's "Delete
-     * Track and Object"). Closes its panel, detaches it from its track (the track stays), and
-     * removes every node it made: its sub-nodes (`<id>_size`, its controllers, ...), the
-     * object, and a fixed object's position node.
+     * Delete a 3D object the user made. This is the ONE way to remove such an object: its
+     * Delete Object button, Delete Track's "Delete Track and Object", Remove All Tracks, and
+     * the undo of each way to add one all come here. Do not remove the nodes of an object
+     * anywhere else: an object has more than its nodes, and a second way to delete it will
+     * miss some of that.
+     *
+     * Closes its panel, detaches it from its track (the track stays), takes it out of the
+     * track selectors, and removes every node it made: its sub-nodes (`<id>_size`, its
+     * controllers, its Location, ...), the object, and a fixed object's position node.
      * @param {CNode3DObject} node
      */
     deleteObject(node) {
@@ -492,6 +526,15 @@ export class CCustomManager {
 
         const trackOb = TrackManager.trackForObject(id);
         if (trackOb?.objectID === id) TrackManager.detachObject(trackOb);
+
+        // The Location of the object (addObjectLocation) listens to its Position and to its
+        // name. The listeners go first, so that nothing below puts the object back.
+        for (const [event, listener] of node.locationListeners ?? []) EventManager.removeEventListener(event, listener);
+        node.locationListeners = null;
+        // While its Position is Manual, the object is an option in the track selectors. The
+        // option must go before the nodes: a node that is removed takes its graph links with
+        // it, but not the rows of the menus.
+        unlistManualObject(node);
 
         const positionID = node.fixedObjectPositionID;
         // Sub-nodes first, the object last, so no node is disposed holding a link to a
@@ -571,7 +614,9 @@ export class CCustomManager {
         // The five individual knobs the preset controls. Grouped into a
         // closed sub-folder so the preset stays the front-door control and
         // the tweaks only show up when the user opens the folder.
-        const tweaksFolder = settingsFolder.addFolder("Performance Tweaks").close();
+        const tweaksFolder = settingsFolder.addFolder("Performance Tweaks").close()
+            .tooltip("The separate settings that Performance Preset sets.\n"
+                + "A change to one of them sets Performance Preset to Custom.");
 
         // Render Scale: scales offscreen render targets + canvas pixel ratio.
         // Squared cost: 0.5 = ~1/4 GPU pixel work. Largest single perf knob.
@@ -594,8 +639,8 @@ export class CCustomManager {
         // MSAA samples on the offscreen render target. 0 = disabled (fastest).
         tweaksFolder.add(Globals.settings, "msaaSamples", {
             "Off (fastest)": 0,
-            "2x": 2,
-            "4x (default)": 4,
+            "2x (default)": 2,
+            "4x": 4,
             "8x": 8,
         })
             .name(t("custom.settings.msaaSamples.label"))
@@ -665,11 +710,15 @@ export class CCustomManager {
             const TBM_OPTIONS = { Legacy: "legacy", Metrics: "metrics", Sphere: "sphere", OBB: "obb" };
             tweaksFolder.add(Globals.tileBoundsMode, "mainView", TBM_OPTIONS)
                 .name("Tile Culling (main)")
-                .tooltip("Tile bounding mode for mainView. Legacy = current sea-level sphere. Metrics = collect new bounds + counters without rendering changes. Sphere = use measured sphere. OBB = sphere broad-phase + OBB narrow-phase.")
+                .tooltip("Admin debug. How the main view tests each terrain tile against the camera view, to skip tiles that are out of sight.\n"
+                    + "Legacy: a sphere at sea level.\n"
+                    + "Metrics: as Legacy, and also collects the new bounds and counters.\n"
+                    + "Sphere: a sphere measured from the tile.\n"
+                    + "OBB: the measured sphere, then an OBB (oriented bounding box) test. The default.")
                 .listen();
             tweaksFolder.add(Globals.tileBoundsMode, "lookView", TBM_OPTIONS)
                 .name("Tile Culling (look)")
-                .tooltip("Tile bounding mode for lookView.")
+                .tooltip("Admin debug. The same as Tile Culling (main), for the look view.")
                 .listen();
             // Reach Cull is a V5 Phase 4 placeholder — Globals.enableReachCull
             // exists for the URL parser and stats counter, but no code in the
@@ -677,7 +726,10 @@ export class CCustomManager {
             // ships so users don't toggle a no-op.
             tweaksFolder.add(Globals, "showTileOBB")
                 .name("Show Tile OBB")
-                .tooltip("Debug overlay: render each tile's OBB as line segments. Green = measured, yellow = inherited (from a measured ancestor), red = global default.")
+                .tooltip("Admin debug. Draw each terrain tile's OBB (oriented bounding box) as lines, for tiles at zoom 3 and above.\n"
+                    + "Green: measured from the tile's mesh or elevation data.\n"
+                    + "Yellow: inherited from a measured parent tile.\n"
+                    + "Red: the global default.")
                 .listen();
         }
 
@@ -1093,6 +1145,8 @@ export class CCustomManager {
             smoothingFolder = cameraFolder.addFolder("Smoothing");
         }
         smoothingFolder.close();
+        smoothingFolder.tooltip("Smoothing of the camera position track (Camera > Location > Position). "
+            + "The look camera, the displayed camera track and the camera LOS use the smoothed track.");
 
         const migrateInputToSmoothingFolder = (inputName, nodeId, defaultValue, start, end, step, desc, tooltip = undefined) => {
             const existingInput = smoothTrack.in[inputName];
@@ -1105,6 +1159,7 @@ export class CCustomManager {
             }
 
             if (existingInput && existingInput.gui === smoothingFolder) {
+                if (tooltip) existingInput.guiEntry?.tooltip(tooltip);
                 return existingInput;
             }
 
@@ -1136,16 +1191,28 @@ export class CCustomManager {
             if (smoothTrack.in[inputName] !== inputNode) {
                 smoothTrack.addMoreInputs({[inputName]: inputNode});
             }
+            if (tooltip) inputNode.guiEntry?.tooltip(tooltip);
 
             return inputNode;
         };
 
-        migrateInputToSmoothingFolder("window", "cameraTrackSwitchSmooth_windowValue", 20, 0, 1000, 1, "Camera Smooth Window");
-        migrateInputToSmoothingFolder("tension", "cameraTrackSwitchSmooth_tensionValue", 0.5, 0, 1, 0.01, "Camera Catmull Tension");
-        migrateInputToSmoothingFolder("intervals", "cameraTrackSwitchSmooth_intervalsValue", 20, 2, 200, 1, "Camera Catmull Intervals");
-        migrateInputToSmoothingFolder("polyOrder", "cameraTrackSwitchSmooth_polyOrderValue", 3, 1, 5, 1, "Camera SavGol Poly Order");
-        migrateInputToSmoothingFolder("edgeOrder", "cameraTrackSwitchSmooth_edgeOrderValue", 2, 1, 5, 1, "Camera Edge Fit Order");
-        migrateInputToSmoothingFolder("fitWindow", "cameraTrackSwitchSmooth_fitWindowValue", 100, 3, 1000, 1, "Camera Edge Fit Window");
+        migrateInputToSmoothingFolder("window", "cameraTrackSwitchSmooth_windowValue", 20, 0, 1000, 1, "Camera Smooth Window",
+            "Number of frames in the smoothing window for the camera position track. 0 = no smoothing.\n"
+            + "The Spline method uses it for the Savitzky-Golay pass before it fits the spline.");
+        migrateInputToSmoothingFolder("tension", "cameraTrackSwitchSmooth_tensionValue", 0.5, 0, 1, 0.01, "Camera Catmull Tension",
+            "Tension for the legacy catmull method. It shows only when an old save selects that method. "
+            + "The chordal spline that the method draws does not use this value.");
+        migrateInputToSmoothingFolder("intervals", "cameraTrackSwitchSmooth_intervalsValue", 20, 2, 200, 1, "Camera Catmull Intervals",
+            "Number of spline sections along the whole camera track for the Spline method. "
+            + "A control point goes every (frames / this value) frames. More sections follow the data more closely.");
+        migrateInputToSmoothingFolder("polyOrder", "cameraTrackSwitchSmooth_polyOrderValue", 3, 1, 5, 1, "Camera SavGol Poly Order",
+            "Order of the polynomial that the Savitzky-Golay (SavGol) filter fits in each window. "
+            + "A higher order keeps sharper curves but smooths less. Used by the savgol and Spline methods.");
+        migrateInputToSmoothingFolder("edgeOrder", "cameraTrackSwitchSmooth_edgeOrderValue", 2, 1, 5, 1, "Camera Edge Fit Order",
+            "Order of the polynomial fitted to each end of the track to extend it before smoothing, so the ends do not lag. "
+            + "Used by the movingPolyEdge, savgol and Spline methods.");
+        migrateInputToSmoothingFolder("fitWindow", "cameraTrackSwitchSmooth_fitWindowValue", 100, 3, 1000, 1, "Camera Edge Fit Window",
+            "Number of frames at each end of the track that Camera Edge Fit Order fits its polynomial to.");
 
         if (smoothTrack.smoothingMethodController && smoothTrack.smoothingMethodController.parent !== smoothingFolder) {
             smoothTrack.smoothingMethodController.destroy();
@@ -1266,6 +1333,20 @@ export class CCustomManager {
         simInfo.setupMenu(guiMenus.showhide);
     }
 
+    // Show > Time Display in Main: the look view's date/time readout (UTC, then the selected time
+    // zone), also on the main view, at the same place (bottom right). Off by default; a saved
+    // sitch keeps its own value (showTimeDisplayMain in CustomManagerSerialize.js). Its own 2D
+    // overlay, so hiding it hides nothing else, and the main view's header menu gets the
+    // "timeDisplay" slot (a clock button) only now that the view has one.
+    setupMainTimeDisplay() {
+        if (NodeMan.exists("mainTimeDisplay")) return;
+        const mainView = NodeMan.get("mainView", false);
+        if (!mainView) return;
+        const overlay = new CNodeViewUI({id: "mainTimeDisplay", overlayView: mainView});
+        AddTimeDisplayToUI(overlay, 99.5, 93, -16, "hud", "right", {flag: "showTimeDisplayMain", defaultOn: false});
+        overlay.setVisible(true);
+    }
+
     // Wescam MX gimbal OSD overlay on the look view. Created here rather than
     // in the SitCustom definition so sitches saved before it existed get it too.
     // relativeTo (not overlayView) keeps it in the Views menu, matching MQ9UI.
@@ -1346,6 +1427,9 @@ export class CCustomManager {
     setupSimpleFlightSim() {
         if (!guiMenus.simpleFlightSim) return;
         const folder = guiMenus.simpleFlightSim;
+        folder.tooltip("A simple flight simulator that makes a jet track for the camera. "
+            + "It starts at the Manual camera position, flies at TAS and drifts with the local wind.\n"
+            + "Used when Camera > Location > Position is Flight Sim.");
 
         if (!NodeMan.exists("legLength")) {
             new CNodeGUIValue({
@@ -1451,9 +1535,10 @@ export class CCustomManager {
                 id: "lookCameraMXRollScale",
                 value: 1, start: 0, end: 1, step: 0.01,
                 desc: "MX Roll Amount",
-                tooltip: "1 = an unstabilised two-axis turret (the full geometric roll).\n"
-                    + "0 = a perfectly roll-stabilised turret (level horizon, no roll).\n"
-                    + "A real MX-10 is four-axis stabilised, so the truth may lie in between — "
+                tooltip: "Multiplier on the roll that Roll From MX-Style Camera computes.\n"
+                    + "1 = an unstabilized two-axis turret (the full geometric roll).\n"
+                    + "0 = a perfectly roll-stabilized turret (level horizon, no roll).\n"
+                    + "A real MX-10 is four-axis stabilized, so the truth may lie in between — "
                     + "set this by matching the horizon tilt in the actual video.",
             }, guiMenus.cameraHeading);
         }
@@ -1528,6 +1613,10 @@ export class CCustomManager {
                 },
                 default: "Manual Turn Rate",
                 desc: "Turn Rate Source",
+                tooltip: "Selects what sets the turn rate of the flight-sim jet. Used when Heading Source is manual.\n"
+                    + "Manual Turn Rate: the Turn Rate slider. Leg Length and Transition Time show only with this source.\n"
+                    + "Manual Bank: the rate of a coordinated turn at the Manual Bank angle and TAS (g·tan(bank)/V).\n"
+                    + "Horizon Extractor: the same formula, with the bank angle from the Video > Horizon Extractor keyframes. 0 where there are none.",
             }, folder);
         }
 
@@ -1699,20 +1788,13 @@ export class CCustomManager {
 
 
     removeAllTracks() {
-        // First, dispose any synthetic objects that might be associated with tracks
-        // This ensures their controllers are properly cleaned up
-        const nodesToDispose = [];
+        // First the objects that the user made: they go too, on a track or not. Each is
+        // removed as its own Delete Object button removes it.
+        const objects = [];
         NodeMan.iterate((id, node) => {
-            // Find any synthetic 3D objects (typically starting with "syntheticObject_")
-            if (id.startsWith("syntheticObject_") && node.inputs) {
-                nodesToDispose.push(id);
-            }
+            if (isUserMadeObjectId(id) && node instanceof CNode3DObject) objects.push(node);
         });
-
-        // Dispose objects with their controllers
-        for (const objectId of nodesToDispose) {
-            this.disposeObjectWithControllers(objectId);
-        }
+        for (const node of objects) this.deleteObject(node);
 
         // Then dispose all tracks
         TrackManager.iterate((id, track) => {

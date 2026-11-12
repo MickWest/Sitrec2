@@ -89,6 +89,7 @@ export class CNodeControllerHumanHorizon extends CNodeController {
         if (!CNodeControllerHumanHorizon.guiAdded && guiPhysics) {
             guiPhysics.add(par, 'horizonMethod', ["Human Horizon", "Horizon Angle"])
                 .name(t("controllerVarious.horizonMethod.label"))
+                .tooltip(t("controllerVarious.horizonMethod.tooltip"))
                 .onChange(() => setRenderOne(true));
             CNodeControllerHumanHorizon.guiAdded = true;
         }
@@ -227,7 +228,7 @@ export class CNodeControllerGUIFOV extends CNodeController {
 
         gui.add(this, 'fov', 0.35, 120, 0.01).onChange(value => {
             this.fov = value
-        }).listen().name(t("controllerVarious.lookFOV.label"))
+        }).listen().name(t("controllerVarious.lookFOV.label")).tooltip(t("controllerVarious.lookFOV.tooltip"))
     }
 
     apply(f, objectNode) {

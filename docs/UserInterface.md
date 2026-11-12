@@ -24,6 +24,23 @@ Drop a menu past the left or right edge of the screen and it docks in a sidebar 
 
 To re-dock a menu in the menu bar, either drag it to the top of the screen, or double-click on the title. 
 
+## Search Documentation
+
+Open **Help → Documentation → Search Documentation** to search guide titles and page text.
+Enter a few words, such as `wing flapping`, `frame rate`, or `background`. Results show the
+page title, matching section and a short excerpt, with matching search terms highlighted.
+Click a result to open that section in a
+new tab. Press **Escape** or **Close** to return to Sitrec.
+
+The search ignores letter case and matches word beginnings for words of at least three
+letters: `wing flap` also finds `wings flapping`. All meaningful search words must match in
+the same section or its title. Try fewer words if there are no results. Typing a phrase gives
+nearby words a higher rank; quotation marks are not required.
+
+The **Search menus…** field at the top of Help finds controls in the current menus.
+**Search Documentation** finds explanations in the guides, including features that are not
+currently visible as controls.
+
 ## Folders
 
 Some menus have folders - essentially a sub menu - that you can expand. For example, the Object menu has one folder per object, and each object folder has its own Material folder. 
@@ -31,6 +48,8 @@ Some menus have folders - essentially a sub menu - that you can expand. For exam
 Some folders have a checkbox at the right end of their title line. It switches the thing the folder controls on or off: each object folder's checkbox shows or hides that object, and **Show → Camera View Frustum** shows or hides the frustum. When the checkbox is off, most controls in the folder are greyed out until you switch it on again. A few that still work while it is off, such as Name and Delete, stay live.
 
 ## Checkboxes
+
+Options that apply separately to the Main and Look views share one row with two checkboxes. The left box is **M** (Main), and the right box is **L** (Look). Faint letters appear inside unchecked boxes; checkmarks replace them when enabled. Each box changes only its own view. This applies to grids, labels, pins, measurements, tracks, compasses, time displays and per-view shadows. Hover a box for its description. The matching view-header controls use the same settings.
 
 To set several checkboxes at once, press one and drag over the others without releasing the mouse button. Each checkbox you pass over is set the same way as the first one: on if you pressed an unticked box, off if you pressed a ticked one. This works for the checkboxes in menu rows and for the checkboxes on folder titles, so with the object folders closed you can drag down the Objects menu to hide or show several objects. Every checkbox under the pointer is set, including the rows of an open folder that the drag passes through. Greyed-out checkboxes are skipped.
 
@@ -173,10 +192,11 @@ Next to the name, the busiest of those are repeated as one-click icons.
 | **L** | Labels |
 | map pin | Pins |
 | green dimension line | Measurements |
+| green ruler | V/B Measure: off, the line, or the line with its circle (the icon becomes a ring); each click moves to the next |
 | a track | Show Tracks |
 | a track with a curtain under it | Extend Tracks to Ground |
 | a satellite | Satellites |
-| a star and an **S** | Star Names |
+| a star and an **S** | Star/Planet Names |
 | a globe with latitude and longitude lines | Lat/Lon Grid |
 | compass rose | Compass |
 | clock face | Time Display |
@@ -191,7 +211,7 @@ An icon whose control is off is drained of color and dimmed, so a glance along t
 
 ### Declutter
 
-**Declutter** is the first icon of that run, and it hides most of what is drawn over that view in one press: labels, pins, measurements, tracks, star names, the lat/lon grid, lines of sight, the frustum, the compass, the clock and the readout. It does not change Satellites, Current LOS, the equatorial grid, celestial vectors or the video overlay. It lights up to say the view is clear. Press it again and exactly the ones that were showing come back. If you switch something back on by hand in between, Declutter re-arms, and the next press clears the view again from wherever it now stands.
+**Declutter** is the first icon of that run, and it hides most of what is drawn over that view in one press: labels, pins, measurements, the V/B measure, tracks, star names, the lat/lon grid, lines of sight, the frustum, the compass, the clock and the readout. It does not change Satellites, Current LOS, the equatorial grid, celestial vectors or the video overlay. It lights up to say the view is clear. Press it again and exactly the ones that were showing come back. If you switch something back on by hand in between, Declutter re-arms, and the next press clears the view again from wherever it now stands.
 
 ### Free Look
 
@@ -223,7 +243,7 @@ Anything that can be shown in one view but not another is a **pair** of controls
 
 ## Measurements
 
-**Show → Measurements** holds the measurements drawn in the 3D views. A measurement is either the **altitude** of one thing (its height above ground level (AGL) and above [mean sea level (MSL)](GIS.md#three-kinds-of-height)) or the **distance** between two things. **Measurements in Main** and **Measurements in Look** turn all of them on or off in each view.
+**Show → Measurements** holds the measurements drawn in the 3D views. A measurement is either the **altitude** of one thing (its height above ground level (AGL) and above [mean sea level (MSL)](GIS.md#three-kinds-of-height)) or the **distance** between two things. **Measurements in Main** and **Measurements in Look** turn all of them on or off in each view. The [V/B measurement](KeyboardShortcuts.md#placing-things-in-the-world) is separate: **V/B Measure in Main** / **in Look** show it, **V/B Circle in Main** / **in Look** add its circle, and the ruler icon on each view's header bar cycles through off, the line, and the line with its circle.
 
 In a custom sitch, **Add Measurement** opens a dialog. Select the measurement type, then select the thing to measure: first its kind (Camera, Traverse, Track, Satellite, 3D Object, Pin or Building), then the item in the list. A distance has a **From** and a **To**. You can also set a label (text shown above the value), the color, the line width, and units that are different from the sitch units. For a building, the measurement uses the middle of the roof. A list with many items has a filter box above it: type part of a name or a number to make the list shorter.
 

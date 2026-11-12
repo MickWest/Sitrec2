@@ -893,15 +893,17 @@ export function setupFisheye() {
     const existing = (parent.folders ?? []).find(f => f._title === "Fisheye");
     if (existing) existing.destroy();
 
-    const folder = parent.addFolder("Fisheye").close();
+    const folder = parent.addFolder("Fisheye").close()
+        .tooltip("Render the look view through a fisheye lens, for very wide fields of view such as allsky and meteor cameras.\n" +
+            "Turn it on with the checkbox in the folder title. Turning it on turns off Panoramic Camera.");
 
     folder.add(fisheye, "enabled").listen()
         .name("Fisheye Lens")
         .onChange(applyFisheyeState)
         .tooltip("Render the look view through a fisheye lens instead of the pinhole projection, "
             + "allowing fields of view of 180° and beyond — as an allsky/meteor camera sees the sky. "
-            + "The normal Zoom/VFOV sliders are ignored while this is on; use Fisheye FOV below "
-            + "(the scroll wheel in the look view adjusts it too).")
+            + "While this is on, the other FOV (Zoom) controls are hidden and Panoramic Camera is off; "
+            + "use Fisheye FOV below (the scroll wheel in the look view adjusts it too).")
         .asFolderToggle();
 
     const typeOptions = {};
@@ -919,7 +921,7 @@ export function setupFisheye() {
             applyFisheyeState();
         })
         .tooltip("The lens's radial mapping r(θ) — how far off-axis angles land from the image "
-            + "centre. Cheap allsky board lenses are usually close to equisolid or equidistant. "
+            + "center. Cheap allsky board lenses are usually close to equisolid or equidistant. "
             + "General fisheye adds a Curve k slider that blends between them. "
             + "Same curves as Star Track's camera lens model.");
 
@@ -943,24 +945,24 @@ export function setupFisheye() {
         .onChange(applyFisheyeState)
         .tooltip("Image circle diameter as a percentage of the view height. 100 inscribes the "
             + "circle vertically; larger values crop its top and bottom, as allsky cameras "
-            + "framed 16:9 do (the STLS frame is about 155).");
+            + "framed 16:9 do.");
 
     folder.add(fisheye, "centerX", -100, 100, 0.1).listen()
         .name("Center X %")
         .onChange(applyFisheyeState)
-        .tooltip("Horizontal offset of the image circle's centre from the frame centre, as a "
+        .tooltip("Horizontal offset of the image circle's center from the frame center, as a "
             + "percentage of the view height (so X and Y move in the same physical units).");
 
     folder.add(fisheye, "centerY", -100, 100, 0.1).listen()
         .name("Center Y %")
         .onChange(applyFisheyeState)
-        .tooltip("Vertical offset of the image circle's centre from the frame centre, as a "
+        .tooltip("Vertical offset of the image circle's center from the frame center, as a "
             + "percentage of the view height. Positive moves the circle up.");
 
     folder.add(fisheye, "roll", -180, 180, 0.05).listen()
         .name("Roll °")
         .onChange(applyFisheyeState)
-        .tooltip("Rotate the fisheye image about its centre, matching a camera rotated in its "
+        .tooltip("Rotate the fisheye image about its center, matching a camera rotated in its "
             + "mount. Applied in the image plane, independent of the camera's own orientation.");
 
     folder.add(fisheye, "showCircle").listen()

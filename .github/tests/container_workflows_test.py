@@ -1,9 +1,12 @@
 """Exercise the actual workflow shell against a local fake registry. No network."""
+import hashlib
+import io
 import json
 import os
 from pathlib import Path
 import re
 import subprocess
+import tarfile
 import tempfile
 import unittest
 
@@ -225,12 +228,77 @@ docker() {
                 self.assertLess(upload, names.index(scanner))
 
     def test_scanner_binary_is_pinned(self):
-        # With no version, setup-trivy installs the newest Trivy release at run time,
-        # in a job that holds a registry write token and signing rights.
-        installer = next(s for s in RELEASE['jobs']['package']['steps']
-                         if s.get('uses', '').startswith('aquasecurity/setup-trivy@'))
-        self.assertRegex(installer['uses'], r'@[0-9a-f]{40} *$')
-        self.assertRegex(str(installer.get('with', {}).get('version', '')), r'^v\d+\.\d+\.\d+$')
+        # The job holds a registry write token and signing rights, so the Trivy binary
+        # is pinned by version AND by the hash of each tarball, and comes only from the
+        # GitHub release page (get.trivy.dev stopped resolving on 2026-11-03).
+        installer = step(RELEASE, 'package', 'Install trivy')
+        self.assertNotIn('uses', installer)
+        env = installer['env']
+        self.assertEqual(env['ARCH'], '${{ matrix.suffix }}')
+        self.assertRegex(str(env['TRIVY_VERSION']), r'^\d+\.\d+\.\d+$')
+        for arch in ['AMD64', 'ARM64']:
+            with self.subTest(arch=arch):
+                self.assertRegex(env[f'TRIVY_SHA256_{arch}'], r'^[0-9a-f]{64}$')
+        script = installer['run']
+        self.assertIn('https://github.com/aquasecurity/trivy/releases/download/', script)
+        self.assertNotIn('get.trivy.dev', script)
+        self.assertLess(script.index('sha256sum -c'), script.index('tar -xzf'))
+
+    MOCK_CURL = r'''
+curl() {
+  local out='' url=''
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      -o) out="$2"; shift 2 ;;
+      https://*) url="$1"; shift ;;
+      *) shift ;;
+    esac
+  done
+  printf '%s\n' "$url" >> "$FIXTURES/curl-urls"
+  cp "$FIXTURES/fixture.tar.gz" "$out"
+}
+'''
+
+    def install_trivy(self, arch, hashes):
+        payload = b'#!/bin/sh\necho "Version: fixture"\n'
+        with tarfile.open(self.path / 'fixture.tar.gz', 'w:gz') as tar:
+            info = tarfile.TarInfo('trivy')
+            info.size, info.mode = len(payload), 0o755
+            tar.addfile(info, io.BytesIO(payload))
+        good = hashlib.sha256((self.path / 'fixture.tar.gz').read_bytes()).hexdigest()
+        installer = step(RELEASE, 'package', 'Install trivy')
+        env = {**{k: str(v) for k, v in installer['env'].items()}, 'ARCH': arch,
+               'GITHUB_PATH': str(self.path / 'path')}
+        for name, value in hashes.items():
+            env[f'TRIVY_SHA256_{name}'] = good if value == 'good' else value
+        return self.shell(installer['run'], self.MOCK_CURL, env)
+
+    def test_scanner_install_unpacks_only_a_matching_tarball(self):
+        version = str(step(RELEASE, 'package', 'Install trivy')['env']['TRIVY_VERSION'])
+        release = f'https://github.com/aquasecurity/trivy/releases/download/v{version}/'
+        for arch, asset in [('amd64', 'Linux-64bit'), ('arm64', 'Linux-ARM64')]:
+            with self.subTest(arch=arch):
+                result = self.install_trivy(arch, {arch.upper(): 'good'})
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn('Version: fixture', result.stdout)
+                self.assertEqual((self.path / 'path').read_text().strip(),
+                                 str(self.path / 'trivy-bin'))
+                urls = (self.path / 'curl-urls').read_text().split()
+                self.assertEqual(urls[-1], f'{release}trivy_{version}_{asset}.tar.gz')
+                (self.path / 'path').unlink()
+                (self.path / 'trivy-bin' / 'trivy').unlink()
+
+    def test_scanner_install_refuses_a_wrong_hash(self):
+        result = self.install_trivy('amd64', {'AMD64': '0' * 64})
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse((self.path / 'trivy-bin' / 'trivy').exists())
+        self.assertFalse((self.path / 'path').exists())
+
+    def test_scanner_install_refuses_an_unknown_architecture(self):
+        result = self.install_trivy('riscv64', {})
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("No pinned Trivy build for the architecture 'riscv64'", result.stderr)
+        self.assertFalse((self.path / 'curl-urls').exists())
 
     def test_smoke_tests_use_recorded_platform(self):
         mock = r'''

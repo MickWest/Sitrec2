@@ -111,7 +111,7 @@ which analyses obey it.
 | **Motion panorama** | **Video → Motion Analysis → Panorama → Motion Pano Options → Use Mask in Pano** | Masked pixels are written transparent instead of being stitched into the output. Works only when **Enable Mask** is on. |
 | **Feature panorama** | **Video → Motion Analysis → Panorama → Feature Pano Options → Use Mask** | Masked regions are left out of feature detection and blending. Works only when **Enable Mask** is on. |
 | [**Tonal Range Graph**](VideoTonalRange.md) | On whenever the mask is enabled | Masked pixels are ignored, and the graph recalculates when the mask changes. |
-| [**Frequency Analysis**](PointTrack.md) | On whenever the mask is enabled | Masked pixels are left out of the background ring. The object aperture must stay clear of the mask. |
+| [**Frequency Analysis**](FrequencyAnalysis.md) | On whenever the mask is enabled | Masked pixels are left out of the background ring. The object aperture must stay clear of the mask. |
 
 A tool's mask switch does nothing if there is no mask painted, so leaving them on is harmless.
 

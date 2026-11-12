@@ -8,9 +8,10 @@ import {Globals, NodeMan} from "../Globals";
 import {Vector3} from "three";
 import {arModeManager} from "../ARMode";
 
-import {windSourceShortLabels} from "./WindSources";
+import {windSourceShortLabel} from "./WindSources";
+import {t} from "../i18n";
 import {getHUDColor} from "../HUDColor";
-import {viewMenuKey} from "../ViewUIBarMenus";
+import {viewControlLabel, viewMenuKey} from "../ViewUIBarMenus";
 
 export class   CNodeCompassUI extends CNodeViewUI {
 
@@ -40,6 +41,8 @@ export class   CNodeCompassUI extends CNodeViewUI {
         
         // Enable pointer events for compass interactions (overrides parent's ignoreMouseEvents)
         this.canvas.style.pointerEvents = 'auto';
+        // Say what the colored triangles are (added 2026-11-03).
+        this.canvas.title = t("custom.wind.compass.tooltip");
 
         // The compass is a `relativeTo` child of a big view, so it already has a
         // Show ▸ Views row for its own visibility. Mirror THAT controller into the
@@ -49,7 +52,9 @@ export class   CNodeCompassUI extends CNodeViewUI {
         // so publishing under the host id is enough — see src/ViewUIBarMenus.js.
         const hostView = this.in.relativeTo;
         if (hostView && this.showHideController) {
-            this.showHideController.shareAs(viewMenuKey(hostView.id, "compass"));
+            this.showHideController.name(viewControlLabel(hostView.id, t("viewMenus.compass")))
+                .shareAs(viewMenuKey(hostView.id, "compass"))
+                .asViewCheckbox(hostView.id, t("viewMenus.compass"));
         }
         
         this.installInteraction();
@@ -208,7 +213,13 @@ export class   CNodeCompassUI extends CNodeViewUI {
         const windField = NodeMan.get("windField", false);
         const currentTargetWindFrom = targetWind?.from;
         const currentLocalWindFrom = localWind?.from;
-        const currentWindSourceKey = windField?.source ?? null;
+        // The source name, as the menus show it ("Track: <name>", not the
+        // internal key). With Separate Wind Sources, both.
+        const currentWindSourceKey = windField?.source
+            ? windSourceShortLabel(windField.source)
+                + (windField.sourceSeparate && windField.sourceLocal !== windField.source
+                    ? " / " + windSourceShortLabel(windField.sourceLocal) : "")
+            : null;
         const hudColor = getHUDColor();
 
         // Update canvas dimensions FIRST so we can detect resize
@@ -252,9 +263,7 @@ export class   CNodeCompassUI extends CNodeViewUI {
         // Wind source label (small, attribution-style, under the compass rose)
         this.removeText("windSource");
         if (windField && currentWindSourceKey) {
-            const labels = windSourceShortLabels();
-            const label = labels[currentWindSourceKey] ?? currentWindSourceKey;
-            this.addText("windSource", "Wind: " + label, 50, 97, 7, "#aaaaaa", "center", "Arial");
+            this.addText("windSource", "Wind: " + currentWindSourceKey, 50, 97, 7, "#aaaaaa", "center", "Arial");
         }
 
         // after updating the text, render the text (handles autoFill and context scaling)

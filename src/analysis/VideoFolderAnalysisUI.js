@@ -894,10 +894,10 @@ export function addFileAnalysisMenu() {
     fileAnalysisFolder = guiMenus.file.addFolder("File Analysis")
         .perm()
         .close()
-        .tooltip("Tools that scan files without loading them into the current sitch");
+        .tooltip("Tools that scan many files at once, such as a folder of videos or tracks, without loading each one into the current sitch.");
     fileAnalysisFolder.add({analyzeVideoFMV: openVideoFolderAnalysisDialog}, "analyzeVideoFMV")
         .name("Analyze Video FMV Data...")
-        .tooltip("Open the FMV timing/MISB analyzer — drag in files or a folder, or choose them")
+        .tooltip("Open the Analyze Video FMV Data window. It scans video and KLV files, without loading them into the sitch, and summarizes the timing of their MISB metadata.\nFMV: full-motion video. MISB: Motion Imagery Standards Board.\nDrag in files or a folder, or choose them.")
         .perm();
     addBotBenchMenu(fileAnalysisFolder);
     addResultChartsMenu(fileAnalysisFolder);

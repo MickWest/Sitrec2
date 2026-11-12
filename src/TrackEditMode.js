@@ -18,12 +18,13 @@ export function isPanelShowing(folder) {
 // Show Track Menu, and Show Object Menu when an object rides the track, for both edit menus.
 // Edit mode is modal, so right-clicking the track or its object does not open their menus
 // while it is on; these open them without leaving it. A menu that is already open gets no
-// item. Each is {label, action}.
+// item. Each is {label, tooltip, action}.
 export function trackAndObjectMenuActions(trackOb, clientX, clientY) {
     const actions = [];
     if (!isPanelShowing(trackOb.guiFolder)) {
         actions.push({
             label: t("custom.contextMenu.showTrackMenu"),
+            tooltip: t("custom.contextMenu.tooltips.showTrackMenu"),
             action: () => CustomManager.showTrackMenu(
                 {trackID: trackOb.trackID, guiFolder: trackOb.guiFolder, trackOb}, clientX, clientY),
         });
@@ -32,6 +33,7 @@ export function trackAndObjectMenuActions(trackOb, clientX, clientY) {
     if (object && !isPanelShowing(CustomManager.nodeEditFolder(object))) {
         actions.push({
             label: t("custom.contextMenu.showObjectMenu"),
+            tooltip: t("custom.contextMenu.tooltips.showObjectMenu"),
             action: () => CustomManager.showNodeEditMenu(object, clientX, clientY),
         });
     }

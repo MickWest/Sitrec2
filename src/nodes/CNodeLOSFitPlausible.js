@@ -74,7 +74,8 @@ export class CNodeLOSFitPlausible extends CNodeTrack {
         if (!guiMenus.traverse) return;
         if (this.guiFolder) { this.guiFolder.destroy(); this.guiFolder = null; }
         this.guiFolder = guiMenus.traverse.addFolder(
-            t("losFitPlausible.folder", {defaultValue: "Minimum Acceleration Fit Results"})).close();
+            t("losFitPlausible.folder", {defaultValue: "Minimum Acceleration Fit Results"})).close()
+            .tooltip(t("losFitPlausible.folderTooltip"));
         this.guiDisplay = {};
         // string rows (avoid lil-gui NumberController step requirement)
         this.guiDisplay._range = (result.startDist / METERS_PER_NM).toFixed(1) + " NM";
@@ -83,11 +84,14 @@ export class CNodeLOSFitPlausible extends CNodeTrack {
             : (vTargetMs / KNOTS_TO_MS).toFixed(0) + " kt";
         this.guiDisplay._score = result.score.toFixed(3);
         this.guiFolder.add(this.guiDisplay, "_range")
-            .name(t("losFitPlausible.range.label", {defaultValue: "Found Range"})).disable();
+            .name(t("losFitPlausible.range.label", {defaultValue: "Found Range"})).disable()
+            .tooltip(t("losFitPlausible.range.tooltip"));
         this.guiFolder.add(this.guiDisplay, "_speed")
-            .name(t("losFitPlausible.speed.label", {defaultValue: "Speed Target"})).disable();
+            .name(t("losFitPlausible.speed.label", {defaultValue: "Speed Target"})).disable()
+            .tooltip(t("losFitPlausible.speed.tooltip"));
         this.guiFolder.add(this.guiDisplay, "_score")
-            .name(t("losFitPlausible.score.label", {defaultValue: "Plausibility (lower=better)"})).disable();
+            .name(t("losFitPlausible.score.label", {defaultValue: "Plausibility (lower=better)"})).disable()
+            .tooltip(t("losFitPlausible.score.tooltip"));
     }
 
     getValueFrame(f) {

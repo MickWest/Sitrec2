@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 320" font-family="-apple-system, system-ui, sans-serif" font-size="12">
-  <text x="380" y="26" text-anchor="middle" font-size="16" font-weight="700">Altitude (ft) — what the slider samples</text>
+  <text x="380" y="26" text-anchor="middle" font-size="16" font-weight="700">Altitude — what the slider samples</text>
 
   <!-- ground -->
   <rect x="80" y="270" width="640" height="20" fill="#e9c697"/>
@@ -42,11 +42,11 @@
   <g>
     <line x1="380" y1="270" x2="380" y2="60" stroke="#c80" stroke-width="2" stroke-dasharray="3 3"/>
     <circle cx="380" cy="200" r="8" fill="#c80" stroke="#fff" stroke-width="2"/>
-    <text x="394" y="195" font-size="11" font-weight="700" fill="#c80">Altitude (ft)</text>
+    <text x="394" y="195" font-size="11" font-weight="700" fill="#c80">Altitude</text>
     <text x="394" y="218" font-size="10" fill="#444">between levels, Sitrec blends the two nearest</text>
   </g>
 
   <!-- caption -->
   <text x="380" y="50" text-anchor="middle" fill="#444">GFS publishes wind on pressure levels (six are shown here). Sitrec fetches the two levels on each side of your altitude.</text>
-  <text x="380" y="307" text-anchor="middle" fill="#888" font-size="11">"Lock Altitude to" makes the slider follow the altitude of the camera or target.</text>
+  <text x="380" y="307" text-anchor="middle" fill="#888" font-size="11">"Lock Altitude to" makes the slider follow the altitude of the camera, the target or the traverse.</text>
 </svg>

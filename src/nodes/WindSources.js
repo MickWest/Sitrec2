@@ -84,6 +84,17 @@ export function windSourceShortLabels() {
     return out;
 }
 
+// The short name of any source key, as the menus show it: a built-in source's
+// short label, or "Track: <name>" for a Track entry (the compass showed the raw
+// key, "track:TrackData_<name>", until 2026-11-03).
+export function windSourceShortLabel(key) {
+    const builtIn = windSourceByKey(key);
+    if (builtIn) return builtIn.short;
+    const trackDataId = trackDataIdFromSourceKey(key);
+    if (trackDataId) return "Track: " + trackDataId.replace(/^TrackData_/, "");
+    return key ?? "";
+}
+
 // Track-source key encoding. MISB tracks with embedded WindDirection /
 // WindSpeed columns are exposed as additional options on the source
 // dropdowns; their internal key is `track:<TrackData_*>` so the wind

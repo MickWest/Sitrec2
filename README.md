@@ -24,7 +24,11 @@ In the app, **Help → Documentation** has the same pages, **Help → AI Assista
 
 ## User documentation
 
+Use **Help → Documentation → Search Documentation** to search page titles and text and open a matching section. It works from the documentation packaged with each build.
+
 **Help → Documentation**, the Help folder at the top of a menu, and the reading list of the AI assistant are built from one list, [`src/docsRegistry.js`](https://github.com/MickWest/Sitrec2/blob/main/src/docsRegistry.js). This README is written by hand and has its own groups. If you add a user page, add it to the registry with a label in `src/i18n/en.js`, and link it here: `tests/docsRegistry.test.js` fails if the README link is missing.
+
+The shared webpack build regenerates `docs/search-index.json` from those registered pages on every build, including the production builds used by ship. The index is a generated build asset, not a source file to commit. To measure index generation alone, run `node scripts/buildDocumentationIndex.js --check`.
 
 ### Basics
 
@@ -56,6 +60,7 @@ In the app, **Help → Documentation** has the same pages, **Help → AI Assista
 - [Atmospheric Refraction](docs/Refraction.md) — why distant things appear higher than straight-line geometry says, and what that does to the horizon.
 - [Wind in Sitrec](docs/Wind.md) — wind at the camera platform and at the target, real atmospheric data, streamlines and arrows.
 - [The Lighting Menu](docs/Lighting.md) — sun and ambient light, shadows, sky and distance haze, exposure, halos, city lights and eclipses.
+- [Celestial Display](docs/Celestial.md) — stars and planets, constellation lines and labels, horizon compass, vectors, shadows, eclipses, halos and extra sky views.
 - [Atmospheric Aerial Perspective](docs/AtmosphericAerialPerspective.md) — distance haze in the look view, how it is computed, and what the model leaves out.
 - [Lunar Eclipses](docs/LunarEclipse.md) — the Earth's shadow on the Moon, and the controls that shape it.
 - [Historic Skies](docs/HistoricSkies.md) — the sky for dates back to 1700, how to reach a date, and what stays accurate there.
@@ -69,6 +74,7 @@ To ask whether a shape comes from the camera or from the file: Diffraction Glare
 - [Loading and Adjusting Video](docs/LoadingVideo.md) — formats, frame rate and length, rotation, the video view, and the adjustment, processing and forensic tools.
 - [Masking](docs/Masking.md) — mark the parts of the frame that an analysis should ignore, by hand or automatically.
 - [Point Tracking](docs/PointTrack.md) — follow an object through the video automatically, get a line of sight from it, and stabilize on it.
+- [Frequency Analysis](docs/FrequencyAnalysis.md) — look for repeating brightness changes such as wing flapping; understand the controls, frame and pixel limits, and the DFT/FFT calculation.
 - [Motion Analysis](docs/MotionAnalysis.md) — measure how the whole picture moves, export the motion, stabilize, and make panoramas.
 - [Star Tracker](docs/StarTracker.md) — find the stars in a night-sky video, identify them, and get the camera's pointing, field of view and roll from them.
 - [Long Exposure/Stacking](docs/LongExposure.md) — simulate a long exposure or a brightest-pixel stack of the 3D scene, so that moving lights leave trails.

@@ -168,7 +168,7 @@ export function projectToCanvas(view, world) {
         // Through matrixWorld, matching updateTerrestrialRefractionUniforms — the observer the
         // shader bends about is the camera's WORLD position, not its local one.
         const eye = new Vector3().setFromMatrixPosition(cam.matrixWorld);
-        const apparent = liftWorldPoint(currentTerrestrialLiftContext(eye), world, new Vector3());
+        const apparent = liftWorldPoint(currentTerrestrialLiftContext(eye, view.camera), world, new Vector3());
         const fwd = new Vector3();
         cam.getWorldDirection(fwd);
         if (!isPanoramicCamera(cam) && apparent.clone().sub(eye).dot(fwd) <= 0) return null;

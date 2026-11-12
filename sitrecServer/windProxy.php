@@ -76,13 +76,19 @@ if (file_exists($exactCache)) {
     exit;
 }
 
-// Earlier-cycle fallback: only serve if written less than 4 hours ago
-// (GFS takes ~3.5–4h to process, so after 4h the correct cycle should be available)
-for ($h = $cycleHour - 6; $h >= 0; $h -= 6) {
-    $candidate = $cacheDir . sprintf("wind_%s_%02dz_%s.json", $date, $h, $levelStr);
-    if (file_exists($candidate) && (time() - filemtime($candidate)) < 4 * 3600) {
-        readfile($candidate);
-        exit;
+// Earlier-cycle fallback, only while the requested cycle can still be
+// unpublished: GFS takes ~3.5–4h to process, so a cycle that started more than
+// 6 h ago is published, and the request must get that cycle. Before 2026-11-02
+// this ran for ANY date when the earlier file was under 4 h old, so a past
+// date's 12Z request could get 06Z data with no sign of it.
+$cycleEpoch = gmmktime($cycleHour, 0, 0, (int)substr($date, 4, 2), (int)substr($date, 6, 2), (int)substr($date, 0, 4));
+if (time() - $cycleEpoch < 6 * 3600) {
+    for ($h = $cycleHour - 6; $h >= 0; $h -= 6) {
+        $candidate = $cacheDir . sprintf("wind_%s_%02dz_%s.json", $date, $h, $levelStr);
+        if (file_exists($candidate) && (time() - filemtime($candidate)) < 4 * 3600) {
+            readfile($candidate);
+            exit;
+        }
     }
 }
 

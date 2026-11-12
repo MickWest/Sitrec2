@@ -1,5 +1,6 @@
 import * as THREE from "three";
-import {PRESETS, parameterGroups, isRoad, isMultirotor, isBalloon, normalizeParameters} from "./vehicleParameters.js";
+import {PRESETS, parameterGroups, isRoad, isMultirotor, isBalloon, isKite, isBird, normalizeParameters} from "./vehicleParameters.js";
+import {kiteFlightProperties, kiteLiftingArea, kiteMinimumWind} from "./kiteFlight.js";
 import {usesCanopy, usesAirlinerWindscreen} from "./aircraftSchema.js";
 import {disposeVehicle} from "./vehicle.js";
 import {animateVehicleLights} from "./vehicleLights.js";
@@ -20,7 +21,7 @@ const events = {signal: lifecycle.signal};
 const STORAGE_KEY = "sitrec-vehicle-designer-v1";
 let params = {...PRESETS[0].parameters}, activePreset = PRESETS[0].id, designName = PRESETS[0].name;
 let modified = false, model, modelDirty = true, renderDirty = true, saveTimer, currentView = "perspective";
-let lastBuildMs = 0, disposed = false, frameId, propellerTime = 0, thermalFailed = false, sensorFrame = 0;
+let lastBuildMs = 0, disposed = false, frameId, propellerTime = 0, thermalFailed = false, sensorFrame = 0, wasMoving = false;
 const fieldControls = new Map();
 let matchingPresets = [];
 
@@ -75,7 +76,7 @@ $("renderMode").addEventListener("change", async () => {
         $("thermalPanel").hidden = mode !== "ir"; $("thermalReadout").hidden = mode !== "ir";
         updatePreviewClasses();
         $("autoRotate").checked = false; controls.autoRotate = false;
-        renderer.domElement.setAttribute("aria-label", mode === "ir" ? "Infrared image. Near view: drag to orbit, scroll to zoom, as in the normal view. Far view: use the range and aspect controls beside the image." : "3D vehicle. Drag to orbit, scroll to zoom, right-drag to pan.");
+        renderer.domElement.setAttribute("aria-label", mode === "ir" ? "Infrared image. Near view: drag to orbit, scroll to zoom, as in the normal view. Far view: use the range and aspect controls beside the image." : "3D object. Drag to orbit, scroll to zoom, right-drag to pan.");
         error(""); status(mode === "ir" ? "IR sensor preview · estimated signature and camera values" : "Live preview");
     } catch (failure) {$("renderMode").value = studio.mode; error(`Could not load IR preview: ${failure.message}`);}
 }, events);
@@ -99,8 +100,22 @@ function updateName() {
     }
 }
 
+// A control with no effect on the current bird is shown as inactive.
+function updateBirdControls() {
+    const still = params.flightStyle === "glide", inactive = {
+        wingbeatRate: still, flapAngle: still, wingFold: still,
+        burstBeats: params.flightStyle !== "bursts", glideSeconds: params.flightStyle !== "bursts",
+        legLength: params.legs !== "trailing", headMarkColor: params.headMark === "none",
+        markColor: params.wingPattern === "plain", markExtent: params.wingPattern === "plain", tailBandColor: params.tailBand === 0,
+    };
+    for (const [key, value] of Object.entries(inactive)) for (const control of fieldControls.get(key) ?? []) {
+        control.disabled = value; control.closest(".field").classList.toggle("inactive", value);
+    }
+}
+
 function updateCockpitControls() {
-    if(isMultirotor(params)||isBalloon(params))return;
+    if(isBird(params))return updateBirdControls();
+    if(isMultirotor(params)||isBalloon(params)||isKite(params))return;
     for (const key of ["strobeLights","taxiLights","landingLayout","turnSignal"]) for (const control of fieldControls.get(key) ?? []) {
         const inactive = key === "turnSignal" ? !isRoad(params) : isRoad(params);
         control.disabled = inactive; control.closest(".field").classList.toggle("inactive",inactive);
@@ -125,11 +140,15 @@ function updateCockpitControls() {
     }
 }
 
+// Put the value of a parameter into one of its controls. The slider of a field with `log` holds
+// the base-10 logarithm of the value, so equal moves of the slider multiply the value equally.
+function show(control, key) {
+    if (control.type === "checkbox") control.checked = params[key];
+    else control.value = control.dataset.log ? Math.log10(params[key]) : params[key];
+}
+
 function updateFields() {
-    for (const [key, elements] of fieldControls) for (const element of elements) {
-        if (element.type === "checkbox") element.checked = params[key];
-        else element.value = params[key];
-    }
+    for (const [key, elements] of fieldControls) for (const element of elements) show(element, key);
     updatePresetList();
     $("designName").value = designName;
     updateCockpitControls();
@@ -138,14 +157,18 @@ function updateFields() {
 
 function changed(field, value, source) {
     const next = normalizeParameters({...params, [field.key]: value});
+    // A number box keeps the text that the user types. The limits change the value that the model
+    // uses, but not the text: with a least value of 3, the "2" of "20" must not become "3". The
+    // change event of the box (Enter, or the focus goes away) then shows the value that is used.
+    const typed = source?.type === "number";
     if (next[field.key] === params[field.key]) {
-        if(source && value!==next[field.key])source.value=next[field.key];
+        if(source && !typed && value!==next[field.key])show(source,field.key);
         return;
     }
     params = next;
     for (const [key, controls] of fieldControls) for (const control of controls) {
-        if (control === source && value===next[field.key]) continue;
-        if (control.type === "checkbox") control.checked = params[key]; else control.value = params[key];
+        if (control === source && (typed || value===next[field.key])) continue;
+        show(control, key);
     }
     modified = true; modelDirty = true;
     updateCockpitControls(); updateName(); saveSession();
@@ -174,10 +197,14 @@ for (const group of parameterGroups(params)) {
             const header = document.createElement("div"); header.className = "field-header"; header.append(label, input); row.append(header);
             const range = document.createElement("input"); range.type = "range"; range.id = `slider-${field.key}`; range.setAttribute("aria-label", field.label);
             for (const control of [input, range]) {control.min = field.min; control.max = field.max; control.step = field.step;}
+            if (field.log) {
+                // The slider moves by ratio (see show). Its values have three significant digits, so the box takes any number.
+                range.dataset.log = "1"; range.min = Math.log10(field.min); range.max = Math.log10(field.max); range.step = 0.01; input.step = "any";
+            }
             input.addEventListener("input", () => { if (Number.isFinite(input.valueAsNumber)) changed(field, input.valueAsNumber, input); });
             input.addEventListener("change", () => { input.value = params[field.key]; });
             // input fires during the drag; change only fires when the thumb is released.
-            range.addEventListener("input", () => changed(field, range.valueAsNumber, range));
+            range.addEventListener("input", () => changed(field, field.log ? Number((10 ** range.valueAsNumber).toPrecision(3)) : range.valueAsNumber, range));
             row.append(range); elements.push(range);
         } else {
             row.append(label, input);
@@ -195,7 +222,7 @@ function updatePresetList() {
     const matches = PRESETS.filter(createVehicleFilter({query:$("presetSearch").value,region:$("presetRegion").value,kind:$("presetKind").value}));
     matchingPresets = matches;
     const categories = new Map(), select = $("presetSelect"); select.replaceChildren();
-    const prompt = new Option(matches.length ? "Choose a preset…" : "No matching vehicles", ""); prompt.disabled = true; select.append(prompt);
+    const prompt = new Option(matches.length ? "Choose a preset…" : "No matching objects", ""); prompt.disabled = true; select.append(prompt);
     for (const preset of matches) {
         if (!categories.has(preset.category)) {
             const group = document.createElement("optgroup"); group.label = preset.category;
@@ -241,27 +268,37 @@ function setWireframe(root, value) {
 function rebuild() {
     const start = performance.now();
     const replacement = generateVehicle(createVehicleRecipe(params,designName,activePreset || null));
-    propellerTime = 0;
+    if (!isKite(params) && !isBird(params)) propellerTime = 0;       // kite tails and bird wings keep moving while a slider is dragged
     if (model) disposeVehicle(model.root);
     model = replacement; studio.setModel(model); scene.add(model.root); thermalFailed = false;
     animateVehicleLights(model,0,false);
     setWireframe(model.root, $("wireframe").checked);
-    const road = isRoad(params), drone=isMultirotor(params),balloon=isBalloon(params), aerial=drone||balloon;
+    const road = isRoad(params), drone=isMultirotor(params),balloon=isBalloon(params),kite=isKite(params),bird=isBird(params), aerial=drone||balloon||kite;
     const gridSize = Math.max(model.stats.size.x, model.stats.size.z,model.stats.size.y*.6) * 2.5;
-    grid.scale.setScalar(gridSize); grid.position.y = model.bounds.min.y - (road ? 0.025 : aerial?Math.min(params.width,params.height)*.1:Math.max(params.diameter * 0.15, 0.15));
+    // The model and its stats have the Overall scale. The parameters are the full-size dimensions, so they get it here.
+    const scale = params.overallScale;
+    // Three significant digits for a size below 1 m (or 10 m²), so a small model does not show as 0.00.
+    const metres = value => `${value >= 1 ? value.toFixed(2) : Number(value.toPrecision(3))} m`;
+    const squareMetres = value => `${value >= 10 ? value.toFixed(1) : Number(value.toPrecision(3))} m²`;
+    // The grid of a bird is below the lowest place of its wings.
+    grid.scale.setScalar(gridSize); grid.position.y = bird ? model.sweepBounds.min.y - params.length * .1 * scale :
+        model.bounds.min.y - (road ? 0.025 : aerial?Math.min(params.width,params.height)*.1:Math.max(params.diameter * 0.15, 0.15)) * scale;
     controls.maxDistance = Math.max(300, gridSize * 12);
-    $("lengthMetric").textContent = `${(drone?model.stats.size.z:params.length).toFixed(2)} m`;
-    $("lengthLabel").textContent = drone?"OVERALL LENGTH":balloon?"ENVELOPE LENGTH":road ? "BODY LENGTH" : "FUSELAGE";
+    $("lengthMetric").textContent = metres(drone||kite?model.stats.size.z:params.length*scale);
+    $("lengthLabel").textContent = bird?"LENGTH":drone||kite?"OVERALL LENGTH":balloon?"ENVELOPE LENGTH":road ? "BODY LENGTH" : "FUSELAGE";
     const rotorOnly = !params.wings && params.rotorLayout !== "none";
-    $("spanLabel").textContent = drone?"OVERALL WIDTH":balloon?"ENVELOPE WIDTH":road ? "BODY WIDTH" : rotorOnly ? "ROTOR DIAMETER" : "WINGSPAN";
-    $("spanMetric").textContent = `${(drone?model.stats.size.x:road||balloon ? params.width : rotorOnly ? params.rotorDiameter : model.stats.wingspan).toFixed(2)} m`;
-    $("spanMetric").title = drone?"Current propeller positions; overall sweep varies while spinning":balloon?"Envelope width, excluding fins":road ? "Body width, excluding mirrors" : rotorOnly ? "Diameter of one main rotor" : "Main wings and winglets, including tip thickness";
-    $("areaLabel").textContent = drone?"HEIGHT":balloon?"ENVELOPE HEIGHT":road ? "HEIGHT" : "WING AREA";
-    $("aspectLabel").textContent = drone?"ROTORS":balloon?"TOTAL HEIGHT":road ? "WHEELBASE" : "ASPECT RATIO";
-    $("areaMetric").textContent = aerial?`${(balloon?params.height:model.stats.size.y).toFixed(2)} m`:road ? `${model.stats.height.toFixed(2)} m` : model.stats.area ? `${model.stats.area.toFixed(1)} m²` : "—";
-    $("aspectMetric").textContent = drone?String(model.stats.rotors):balloon?`${model.stats.size.y.toFixed(2)} m`:road ? `${model.stats.wheelbase.toFixed(2)} m` : model.stats.area ? model.stats.aspectRatio.toFixed(2) : "—";
-    $("spinLabel").textContent = road ? "Spin wheels" : "Spin rotors / props";
+    $("spanLabel").textContent = bird?"WINGSPAN":kite?"WIDTH":drone?"OVERALL WIDTH":balloon?"ENVELOPE WIDTH":road ? "BODY WIDTH" : rotorOnly ? "ROTOR DIAMETER" : "WINGSPAN";
+    $("spanMetric").textContent = metres(bird?params.wingspan*scale:drone?model.stats.size.x:road||balloon||kite ? params.width*scale : rotorOnly ? params.rotorDiameter*scale : model.stats.wingspan);
+    $("spanMetric").title = bird?"Wing tip to wing tip, with the wings flat":kite?"Width of the sail or head":drone?"Current propeller positions; overall sweep varies while spinning":balloon?"Envelope width, excluding fins":road ? "Body width, excluding mirrors" : rotorOnly ? "Diameter of one main rotor" : "Main wings and winglets, including tip thickness";
+    $("areaLabel").textContent = bird?"WING AREA":kite?"LIFTING AREA":drone?"HEIGHT":balloon?"ENVELOPE HEIGHT":road ? "HEIGHT" : "WING AREA";
+    $("aspectLabel").textContent = bird?"WINGBEAT":kite?"MINIMUM WIND":drone?"ROTORS":balloon?"TOTAL HEIGHT":road ? "WHEELBASE" : "ASPECT RATIO";
+    $("areaMetric").textContent = bird?squareMetres(model.stats.wingArea):kite?squareMetres(kiteLiftingArea(params)):aerial?metres(balloon?params.height*scale:model.stats.size.y):road ? metres(model.stats.height) : model.stats.area ? squareMetres(model.stats.area) : "—";
+    $("aspectMetric").textContent = bird?(params.flightStyle==="glide"?"Glide":`${Number(params.wingbeatRate.toFixed(2))} / s`):kite?`${(kiteMinimumWind(kiteFlightProperties(params))/0.514444).toFixed(1)} kt`:drone?String(model.stats.rotors):balloon?metres(model.stats.size.y):road ? metres(model.stats.wheelbase) : model.stats.area ? model.stats.aspectRatio.toFixed(2) : "—";
+    $("spinLabel").textContent = bird ? "Flap wings" : kite ? "Move tails in a 12-knot wind" : road ? "Spin wheels" : "Spin rotors / props";
     $("animateProps").disabled=balloon;
+    // The tails of a kite and the wings of a bird move as soon as it is chosen; the box turns the motion off.
+    if((kite||bird)&&!wasMoving)$("animateProps").checked=true;
+    wasMoving=kite||bird;
     $("geometryStats").textContent = `${Math.round(model.stats.triangles).toLocaleString()} triangles · metres`;
     lastBuildMs = performance.now() - start;
     status(`Live preview · ${lastBuildMs.toFixed(0)} ms update`);
@@ -270,7 +307,7 @@ function rebuild() {
 
 function fit() {
     if (!model) return;
-    studio.fit(model.bounds,{view:currentView,paddingX:1.25,paddingY:1.55});
+    studio.fit(model.sweepBounds ?? model.bounds,{view:currentView,paddingX:1.25,paddingY:1.55});
     renderDirty = true;
 }
 
@@ -348,8 +385,8 @@ function animate(now) {
     if (modelDirty) rebuild();
     if (studio.sharesCamera) controls.update(dt);
     if (studio.mode === "visible" && $("animateLights").checked && model.lamps?.length) {animateVehicleLights(model,now/1000,true);renderDirty=true;}
-    if ($("animateProps").checked && model.propellers.length) {
-        propellerTime += dt; poseVehicleSpinners(model.propellers,propellerTime,true);
+    if ($("animateProps").checked && (model.propellers.length || model.waves?.length)) {
+        propellerTime += dt; poseVehicleSpinners([...model.propellers,...(model.waves ?? [])],propellerTime,true);
         renderDirty = true;
     }
     // The IR picture changes from one sensor frame to the next only through detector noise. Without noise a frame

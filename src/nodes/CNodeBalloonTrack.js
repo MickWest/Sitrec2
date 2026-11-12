@@ -16,8 +16,8 @@
 
 import {CNodeTrack} from "./CNodeTrack";
 import {markSitchDirty, NodeMan, Sit} from "../Globals";
-import {metersPerSecondFromKnots, radians} from "../utils";
 import {integrateBalloonPositions} from "../BalloonPhysics";
+import {sampleSceneWind, sceneWindFingerprint} from "../SceneWind";
 import {EventManager} from "../CEventManager";
 import {LLAToECEF} from "../LLA-ECEF-ENU";
 import {meanSeaLevelOffset} from "../EGM96Geoid";
@@ -76,63 +76,14 @@ export class CNodeBalloonTrack extends CNodeTrack {
         };
     }
 
-    // Wind (u = east, v = north, m/s) at a position/altitude. Altitude-aware
-    // wind field first (sounding/GFS profiles), constant targetWind fallback.
+    // Wind (u = east, v = north, m/s) at a position/altitude, and the cheap
+    // change detection for it. Shared with the kite track: see SceneWind.js.
     windUVAt(lat, lon, altMSL, f) {
-        const wf = NodeMan.get("windField", false);
-        if (wf && typeof wf.sampleWindAtAltitude === "function") {
-            try {
-                const s = wf.sampleWindAtAltitude(lat, lon, altMSL);
-                if (s && Number.isFinite(s.u) && Number.isFinite(s.v)) {
-                    return s;
-                }
-            } catch (e) {
-                // no usable profile data at this point — fall through
-            }
-        }
-        const tw = NodeMan.get("targetWind", false);
-        if (tw) {
-            const hist = (typeof tw.trackWindAt === "function") ? tw.trackWindAt(f) : null;
-            const from = hist ? hist.from : tw.from;
-            const knots = hist ? hist.knots : tw.knots;
-            if (Number.isFinite(from) && Number.isFinite(knots)) {
-                // meteorological FROM heading → blow-TO vector (same convention
-                // as CNodeWind.getValueFrame)
-                const speed = metersPerSecondFromKnots(knots);
-                const toRad = radians(from + 180);
-                return {u: Math.sin(toRad) * speed, v: Math.cos(toRad) * speed};
-            }
-        }
-        return {u: 0, v: 0};
+        return sampleSceneWind(lat, lon, altMSL, f);
     }
 
-    // Cheap change detection for the wind sources we can't have as inputs.
-    // For a TRACK-DRIVEN targetWind, from/knots mirror the playhead's wind
-    // every rendered frame (CNodeWind.update) — but the bake already samples
-    // the historical wind per frame through trackWindAt(f), so only the
-    // identity of the driving track matters there; fingerprinting the live
-    // values would rebake the balloon every single frame.
     _currentWindFingerprint() {
-        const wf = NodeMan.get("windField", false);
-        const tw = NodeMan.get("targetWind", false);
-        const twPart = tw
-            ? (tw.trackSource ? `track:${tw.trackSource}` : `${tw.from}|${tw.knots}`)
-            : "";
-        // _windDataVersion/_lastDateCycle capture ASYNC wind-grid arrival
-        // (GFS levels re-fetch after a sitch reload) — without them, a
-        // reloaded balloon would stay baked against the constant-wind
-        // fallback forever once the deferred fetch completes.
-        //
-        // sondeProfileSignature() does the same for SOUNDING sources: UWYO/IGRA2
-        // soundings load asynchronously as tracks after a reload, and their
-        // arrival changes NONE of the fields above — so without this a saved
-        // balloon that baked before the soundings arrived would stay pinned to
-        // the constant-wind fallback (its memoized bake never re-runs because the
-        // fingerprint, hence the bake key, is unchanged).
-        const profSig = (wf && typeof wf.sondeProfileSignature === "function")
-            ? wf.sondeProfileSignature() : "";
-        return `${wf?.source ?? ""}|${wf?.windAltFt ?? ""}`
-            + `|${wf?._windDataVersion ?? ""}|${wf?._lastDateCycle ?? ""}|${twPart}|${profSig}`;
+        return sceneWindFingerprint();
     }
 
     update(f) {

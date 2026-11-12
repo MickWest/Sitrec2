@@ -17,6 +17,7 @@ function observerCacheKey(position) {
 export class CNodeViewEphemeris extends CNodeViewText {
     constructor(v) {
         v.title = 'Satellite Ephemeris';
+        v.menuName = 'Satellite Ephemeris';
         v.idPrefix = 'ephemeris-view';
         v.hideOnFileDrop = false;
         v.maxMessages = 0;

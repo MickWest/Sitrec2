@@ -28,7 +28,9 @@ export class CNodeTrackGUI extends CNode {
 
             // the sphere is the object that is always displayed in the look window
             //this.metaTrack.displayTargetSphere.setLayerBit(LAYERS.LOOK, this.showTrackInLook);
-    }).name(t("misc.showInLookView.label"))
+    }).name(t("misc.showInLookView.label")).tooltip(t("misc.showInLookView.tooltip"))
+        // It draws the line in the look view, so the track's title checkbox fades it.
+        .fadeWhenFolderOff()
 
         this.addSimpleSerial("showTrackInLook");
 

@@ -33,7 +33,8 @@ export function addFireballTrackControls(folder, event) {
         peak: () => jump(peak.time),
         provenance: () => showFireballDetails(event),
     };
-    folder.add(actions, "begin").name(t("fireballs.track.jumpToStart"));
+    folder.add(actions, "begin").name(t("fireballs.track.jumpToStart"))
+        .tooltip(t("fireballs.track.jumpToStartTooltip"));
     const control = folder
         .add(actions, "peak")
         .name(
@@ -43,9 +44,10 @@ export function addFireballTrackControls(folder, event) {
                     : t("fireballs.track.jumpToMeasuredPeak")
                 : t("fireballs.track.peakUnavailable"),
         );
-    if (!peak) control.disable();
+    if (!peak) control.disable().tooltip(t("fireballs.details.noPeak"));
     else control.tooltip(t("fireballs.track.peakTooltip", { label: peak.label }));
-    folder.add(actions, "provenance").name(t("fireballs.track.sourceAndLimits"));
+    folder.add(actions, "provenance").name(t("fireballs.track.sourceAndLimits"))
+        .tooltip(t("fireballs.track.sourceAndLimitsTooltip"));
 }
 function modal(title) {
     document.getElementById("fireball-dialog")?.remove();

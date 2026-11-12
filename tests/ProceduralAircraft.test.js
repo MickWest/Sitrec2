@@ -231,7 +231,7 @@ describe("Procedural aircraft", () => {
         expect(() => readParameterFile({version: 2})).toThrow();
         expect(() => readParameterFile({...file, parameters: []})).toThrow();
         const p = normalizeParameters({length: -1, span: Infinity, propBlades: 3.8, engineCount: "4", bodyColor: "bad", gear: "false", engineType: "bad"});
-        expect(p.length).toBe(3); expect(p.span).toBe(DEFAULTS.span); expect(p.propBlades).toBe(4);
+        expect(p.length).toBe(0.01); expect(p.span).toBe(DEFAULTS.span); expect(p.propBlades).toBe(4);     // 0.01 m is the least length
         expect(p.engineCount).toBe(4); expect(p.bodyColor).toBe(DEFAULTS.bodyColor); expect(p.gear).toBe(false);
         expect(p.engineType).toBe(DEFAULTS.engineType);
     });

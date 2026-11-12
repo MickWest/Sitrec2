@@ -423,8 +423,13 @@ export class CNodeTrack extends CNodeEmptyArray {
     // calculate min and max LLA extents of the track
     // from the ECEF positions
     getLLAExtents() {
-        let pos = this.v(0)
-        if (pos === undefined || pos.position === undefined) {
+        // A track gives {position}. A fixed position (CNodePositionLLA, which is also what an
+        // object on a manual position gives a track selector) gives the point itself.
+        const pointAt = (f) => {
+            const value = this.v(f);
+            return value?.isVector3 ? value : value?.position;
+        };
+        if (pointAt(0) === undefined) {
             showError("No position data to find extents of track");
             return
         }
@@ -435,8 +440,7 @@ export class CNodeTrack extends CNodeEmptyArray {
         let minAlt = 1000000
         let maxAlt = -1000000
         for (let f=0;f<this.frames;f++) {
-            pos=this.v(f)
-            const LLA = ECEFToLLAVD_radii(pos.position)
+            const LLA = ECEFToLLAVD_radii(pointAt(f))
             minLat = Math.min(minLat, LLA.x)
             maxLat = Math.max(maxLat, LLA.x)
             minLon = Math.min(minLon, LLA.y)

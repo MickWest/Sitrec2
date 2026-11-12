@@ -39,7 +39,7 @@ inputs.
 
 ## Manual setup
 
-1. Click **File → New Sitch** to start a custom sitch. Open Physics → Scenarios →
+1. Click **File → New Sitch (Empty)** to start a custom sitch. Open Physics → Scenarios →
    Football and click **Enable Football Simulation**.
 2. **Pitch frame** — in the Football menu, open *Pitch Location* and set Pitch
    Center Lat, Lon and Alt (altitude

@@ -12,7 +12,7 @@ use **Sitrec → Extra Tools** or the [Tools page](https://www.metabunk.org/sitr
 | Compass & Elevation | Measures compass heading and elevation angle with the orientation sensors of a phone | Its card on the Tools page |
 | Starlink Flare Predictor | Predicts the times and sky directions of Starlink horizon flares, for a place or along a flight | [shf/README.md](shf/README.md) |
 | Diffraction PSF Studio | Makes the diffraction point spread function (PSF) of a camera aperture, and exports it for Sitrec's camera glare | [psf/README.md](psf/README.md) |
-| Vehicle Designer | Builds cars, trucks, aircraft, drones, balloons and sky lanterns, and exports GLB models | [vehicles/README.md](vehicles/README.md) |
+| Custom Object Designer | Builds cars, trucks, aircraft, drones, balloons, sky lanterns, kites and birds, and exports GLB models | [vehicles/README.md](vehicles/README.md) |
 | XML Wind Profile Analyzer | Finds the position and the vertical wind profile in an XML weather file, and gives the settings that make Sitrec read it | [xml-wind/README.md](xml-wind/README.md) |
 
 This page also covers the tile download scripts. The last section tells how to add a public tool.

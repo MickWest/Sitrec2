@@ -18,7 +18,7 @@ import {assert} from "../assert";
 import {getCursorPositionFromTopView} from "../mouseMoveView";
 import {disableFreeLookForCameraPosition} from "../FreeLookGuard";
 import {EventManager} from "../CEventManager";
-import {guiMenus, markSitchDirty, NodeMan, setSitchEstablished, Sit, UndoManager} from "../Globals";
+import {guiMenus, markSitchDirty, NodeMan, setSitchEstablished, Sit, UndoManager, Units} from "../Globals";
 import {getApproximateLocationFromIP} from "../GeoLocation";
 import {customAltitudeFunction, customLocationFunction} from "../runtimeConfig";
 import {showError} from "../showError";
@@ -37,19 +37,24 @@ export class CNodePositionLLA extends CNodeTrack {
         this.agl = (v.agl !== undefined) ? v.agl : false; // above ground level, default to false
         this.addSimpleSerial("agl");
 
-        this.tipName = v.tipName || v.gui || "Position";
+        // `gui` is the key of a menu in guiMenus, or a folder (an object's own Location folder).
+        this.tipName = v.tipName || (typeof v.gui === "string" ? v.gui : null) || "Position";
 
         if (v.LLA !== undefined) {
             // copy the array in v.LLA to this._LLA
             this._LLA = v.LLA.slice()
             // if there's a gui specified, the add GUI inputs
             if (v.gui) {
-                 const id = (v.desc ?? "Camera") + (v.key ? " ["+v.key+"]":"");
+                // The ids of the three value nodes come from the description, so two position
+                // nodes with one description would collide. guiIDPrefix gives them their own ids
+                // (one position for each object), and the description can then be empty: the
+                // controls are plain "Lat", "Lon" and "Alt".
+                 const id = v.guiIDPrefix ?? ((v.desc ?? "Camera") + (v.key ? " ["+v.key+"]":""));
                 const name = (v.desc ?? "Cam") + (v.key ? " ["+v.key+"]":"");
                this.guiLat = new CNodeGUIValue({
                    id: id + " Lat",
-                   desc: name + " Lat",
-                   tooltip: this.tipName + " latitude in degrees. Paste a full 'lat, lon' (any format, or ECEF x,y,z in metres) to set both.",
+                   desc: (name + " Lat").trim(),
+                   tooltip: this.tipName + " latitude in degrees. Paste a full 'lat, lon' (any format, or ECEF x,y,z in meters) to set both.",
                    value: this._LLA[0],
                    start: -90, end: 90, step: 0.01,
                    stepExplicit: false, // prevent snapping
@@ -63,8 +68,8 @@ export class CNodePositionLLA extends CNodeTrack {
 
                this.guiLon = new CNodeGUIValue({
                    id: id + " Lon",
-                   desc: name + " Lon",
-                   tooltip: this.tipName + " longitude in degrees.",
+                   desc: (name + " Lon").trim(),
+                   tooltip: this.tipName + " longitude in degrees. Paste a full 'lat, lon' here to set both.",
                    value: this._LLA[1],
                    start: -180, end: 180, step: 0.01,
                    stepExplicit: false, // prevent snapping
@@ -94,8 +99,8 @@ export class CNodePositionLLA extends CNodeTrack {
                 // but the eleasticShrink will be set to true, so it will shrink to the final range
                this.guiAlt = new CNodeGUIValue({
                    id: id + " Alt (ft)",  // including the (ft) for historical reasons, so we have the same id as older saves
-                   desc: name + " Alt",
-                   tooltip: this.tipName + " altitude.",
+                   desc: (name + " Alt").trim(),
+                   tooltip: this.tipName + " altitude: above mean sea level, or above the ground when Above Ground Level is on.",
                    value: 0, // don't set the altitude, as we want to set it with units
                    unitType: "small",
                    start: 0, end: 1000, step: 1,
@@ -117,13 +122,37 @@ export class CNodePositionLLA extends CNodeTrack {
                 }, v.gui)
                 this.guiAlt.setValueWithUnits(this._LLA[2], "metric", "small")
 
-                const gui = guiMenus[v.gui];
+                const gui = typeof v.gui === "string" ? guiMenus[v.gui] : v.gui;
 
                 this.aglController = gui.add(this, "agl").name(t("positionLLA.aboveGroundLevel.label")).tooltip(t("positionLLA.aboveGroundLevel.tooltip")).onChange((v) => {
                     this.keepPositionOnAGLToggle(v);
                     this.recalculateCascade()
                     markSitchDirty();
                 }).listen();
+
+                // Allow Small Altitudes (added 2026-11-03), off by default. The Alt
+                // slider is elastic: a drag past its left end halves its range. Off,
+                // the range stops at 100 ft, in steps of 1 ft. On, it goes down to
+                // 1 ft, in steps of 1/500 of the range (0.002 ft at the bottom), as
+                // every Alt slider did before. A value typed in is never rounded.
+                // A property, so a sitch restore (simpleDeserialize) applies it too.
+                this._allowSmallAltitudes = v.allowSmallAltitudes ?? false;
+                Object.defineProperty(this, "allowSmallAltitudes", {
+                    configurable: true,
+                    enumerable: true,
+                    get: () => this._allowSmallAltitudes,
+                    set: (value) => {
+                        this._allowSmallAltitudes = !!value;
+                        this._applyAltitudeRange();
+                    },
+                });
+                this.addSimpleSerial("allowSmallAltitudes");
+                this._applyAltitudeRange();
+                this.smallAltitudesController = gui.add(this, "allowSmallAltitudes")
+                    .name(t("positionLLA.allowSmallAltitudes.label"))
+                    .tooltip(t("positionLLA.allowSmallAltitudes.tooltip"))
+                    .onChange(() => markSitchDirty())
+                    .listen();
 
 
 
@@ -300,6 +329,17 @@ export class CNodePositionLLA extends CNodeTrack {
      * Only the checkbox calls this. Loading a saved sitch sets `agl` directly
      * (simpleDeserialize), so a saved altitude and AGL flag load unchanged.
      */
+    // The floor of the elastic Alt slider (Allow Small Altitudes): off, a range
+    // of 100 ft at the least, in steps of 1 ft; on, 1 ft, with no smallest step.
+    // In the slider's own unit (Units: feet, or metres for Metric).
+    _applyAltitudeRange() {
+        const entry = this.guiAlt?.guiEntry;
+        if (!entry || typeof entry.elasticFloor !== "function") return;
+        const feetToUnit = 0.3048 / (Units?.small?.toM ?? 0.3048);
+        if (this._allowSmallAltitudes) entry.elasticFloor(1 * feetToUnit, 0);
+        else entry.elasticFloor(100 * feetToUnit, 1 * feetToUnit);
+    }
+
     keepPositionOnAGLToggle(agl) {
         const lla = ECEFToLLAVD_radii(this.ecef);   // HAE
         let alt;
@@ -552,6 +592,35 @@ export class CNodePositionLLA extends CNodeTrack {
         return ground.clone().add(getLocalUpVector(ground).multiplyScalar(agl));
     }
 
+    // The drift (ECEF metres) from the wind by each frame, from the start point:
+    // the sum of the wind's per-frame displacement, read where the drifting
+    // point is on each frame. A Target Wind that reads a source changes with
+    // place, height and time, so one vector times the time is not enough.
+    // Before 2026-11-03 the drift was v0 × frame × Sim Speed: one wind for the
+    // whole clip, and Sim Speed counted twice (v0 already includes it).
+    _bakeWindDrift() {
+        const n = Math.max(2, this.frames || Sit.frames || 2);
+        const drift = new Array(n);
+        drift[0] = V3(0, 0, 0);
+        const at = V3(0, 0, 0);
+        for (let f = 1; f < n; f++) {
+            at.copy(this.ecef).add(drift[f - 1]);
+            drift[f] = drift[f - 1].clone().add(this.in.wind.getValueFrame(f - 1, at));
+        }
+        this._windDrift = drift;
+    }
+
+    // The drift at frame f, interpolated between frames and extrapolated past
+    // the ends with the nearest frame's wind.
+    _windDriftAt(f) {
+        const drift = this._windDrift;
+        if (!drift || drift.length < 2 || !Number.isFinite(f)) return V3(0, 0, 0);
+        const last = drift.length - 1;
+        const i = Math.max(0, Math.min(last - 1, Math.floor(f)));
+        const t = f - i;
+        return drift[i].clone().lerp(drift[i + 1], t);
+    }
+
     recalculate() {
         this.array = [];
         this.elevationCache = null; // flush cache for fresh terrain queries
@@ -587,15 +656,15 @@ export class CNodePositionLLA extends CNodeTrack {
             // `this.array && this.array[f]`, so an undefined array is safe there.
             if (!this.in.wind) {
                 this.array = undefined;
+                this._windDrift = undefined;
                 return;
             }
 
+            this._bakeWindDrift();
             for (let f = 0; f < this.frames; f++) {
-                const time = f * Sit.simSpeed;
                 let pos = this.ecef.clone();
                 if (this.in.wind) {
-                    const wind = this.in.wind.v0.multiplyScalar(time);
-                    pos.add(wind);
+                    pos.add(this._windDriftAt(f));
                     if (this.agl) {
                         if (terrainNode) {
                             pos = this._aglGroundPoint(terrainNode, pos, aglHeight, f);
@@ -618,11 +687,6 @@ export class CNodePositionLLA extends CNodeTrack {
     // return vector3 ECEF for the specified LLA (animateabel)
     getValueFrame(f) {
 
-        // f is the frame niumber in the video
-        // but we need the physical time this represents
-        // as video might be running at different speeds to reality
-        const time = f * Sit.simSpeed;
-
         if (this._LLA !== undefined) {
             // The assert that stood here ("no guiAlt defined") guarded the commented-out
             // return on the next line, which is the only code in this branch that ever read
@@ -632,8 +696,7 @@ export class CNodePositionLLA extends CNodeTrack {
        //     return LLAToECEF(this._LLA[0], this._LLA[1], this.guiAlt.getValueFrame(f))
              let pos = this.ecef.clone();
             if (this.in.wind) {
-                const wind = this.in.wind.v0.multiplyScalar(time);
-                pos.add(wind);
+                pos.add(this._windDriftAt(f));
 
                 if (this.agl) {
                     const terrainNode = NodeMan.get("TerrainModel", false);

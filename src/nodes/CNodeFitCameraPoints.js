@@ -31,7 +31,7 @@ import {CNodeActiveOverlay} from "./CNodeTrackingOverlay";
 import {CNodeVideoView} from "./CNodeVideoView";
 import {Matrix4, Vector3} from "three";
 import {assert} from "../assert";
-import {Globals, guiMenus, NodeMan, setRenderOne, UndoManager} from "../Globals";
+import {Globals, guiMenus, NodeMan, setRenderOne, Sit, UndoManager} from "../Globals";
 import {par} from "../par";
 import {mouseToCanvas} from "../ViewUtils";
 import {showPointContextMenu} from "../PointContextMenu";
@@ -473,7 +473,10 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
     _setupGUI() {
         const parent = guiMenus.camera ?? guiMenus.view ?? guiMenus.main;
         if (!parent) return;
-        this.gui = parent.addFolder("Fit Camera to Points").close();
+        this.gui = parent.addFolder("Fit Camera to Points").close()
+            .tooltip("Solve the look camera's position, pointing and field of view from landmarks that you match\n" +
+                "between the video and the world. Click the video to add a point, then drag its ground handle\n" +
+                "to where that feature really is. Turn it on with the checkbox in the folder title.");
 
         this.gui.add(this, "enabled").name("Enable Fit").listen()
             .onChange((on) => this.setEnabled(on))
@@ -496,8 +499,8 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
         this.gui.add(this, "showRays").name("Show Sight Lines").listen()
             .onChange(() => setRenderOne(true))
             .tooltip("In the main view, draw a line from the camera to each ground point, and " +
-                "mark each video point where it falls on the video in the frustum (Show/Hide " +
-                "-> Video in Frustum). Every line crosses the video at its own marker only for " +
+                "mark each video point where it falls on the video in the frustum (Show > " +
+                "Camera View Frustum > Video in Frustum). Every line crosses the video at its own marker only for " +
                 "the one camera position and pointing that explains all the pairs at once — so " +
                 "any gap you can see is that point's residual, drawn in 3D.");
 
@@ -510,13 +513,12 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
 
         this.gui.add(this, "fitMethod", FIT_METHODS).name("Method").listen()
             .onChange(() => { this.syncMethodControls(); this.requestFit(); })
-            .tooltip("How the camera is solved. '3D points' uses each landmark's real terrain " +
-                "position and searches position, pointing and FOV together. 'Plane homography' " +
-                "instead assumes the landmarks are coplanar, solves the plane-to-image " +
-                "projective map, and recovers the focal length from the rotation columns — the " +
-                "classical method, and the one most published reconstructions use. On " +
-                "well-spread points the two agree; where they disagree, the control points are " +
-                "the reason, not the method.");
+            .tooltip("How the camera is solved.\n" +
+                "3D points: uses each landmark's real terrain position and searches position, " +
+                "pointing and FOV together.\n" +
+                "Plane homography: assumes the landmarks lie on one plane, solves the " +
+                "plane-to-image projective map, and recovers the focal length from it. " +
+                "It cannot hold anything fixed, so the Lock options are greyed out.");
 
         // Kept so the Method dropdown can grey them out: the homography solver recovers
         // position, pointing and focal length from one decomposition and cannot hold any of
@@ -541,7 +543,8 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
             if (tip) c.tooltip(tip);
             return c;
         };
-        ro("status", "Status");
+        ro("status", "Status",
+            "What the fit is doing now, or the result of the last action.");
         ro("residual", "Residual",
             "RMS distance between where each 3D point projects and where its 2D point is, in " +
             "original video pixels. A small residual means the camera explains the points; it " +
@@ -581,32 +584,25 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
 
         this.gui.add(this, "useTiles").name("Place on 3D Buildings").listen()
             .onChange(() => setRenderOne(true))
-            .tooltip("Put control points on the 3D tile geometry that is actually on screen — a " +
-                "roof, a wall, the top of a tree — instead of on the elevation surface. The " +
-                "elevation map has no buildings on it, so a rooftop corner placed against it " +
-                "lands at street level, which at short range is a large error and at long range " +
-                "is none at all. The tiles are used wherever they cover the ray, even when the " +
-                "elevation surface happens to be nearer — which it can be, since it is draped " +
-                "over the buildings rather than around them. A landmark on bare ground still " +
-                "lands on bare ground, because the tilesets carry their own ground. Needs the " +
-                "3D tiles to have loaded; " +
-                "affects where new points are dropped and where dragged handles land, not points " +
-                "already placed.");
+            .tooltip("Put control points on the 3D tile geometry on screen (a roof, a wall, the top " +
+                "of a tree) instead of on the elevation surface, which has no buildings.\n" +
+                "The tiles are used wherever they cover the ray, even where the elevation surface " +
+                "is nearer. A landmark on bare ground still lands on the ground, because the tiles " +
+                "carry their own ground.\n" +
+                "Needs the 3D tiles to have loaded. Changes where new points drop and where " +
+                "dragged handles land, not points already placed.");
 
         this.gui.add(this, "useObjects").name("Place on 3D Objects").listen()
             .onChange(() => setRenderOne(true))
-            .tooltip("Put control points on the scene's own 3D objects — an aircraft, a balloon, " +
-                "a sphere — as well as on the terrain and buildings. Aim at the aircraft and the " +
-                "point lands on the aircraft, instead of passing through it onto the ground " +
-                "beyond. Whichever the ray reaches FIRST wins, so an object hidden behind a " +
-                "building is not picked through it, and clicking past an object still lands on " +
-                "the ground. Only objects that are switched on can be hit, and the camera's own " +
-                "marker never is — it sits where the fit says the camera is, so a point on it " +
-                "would move every time you solved. Like the option above, this affects where " +
-                "new points are dropped and where dragged handles land, not points already " +
-                "placed.");
+            .tooltip("Put control points on the scene's own 3D objects (an aircraft, a balloon, " +
+                "a sphere) as well as on the terrain and buildings.\n" +
+                "The first surface the ray reaches wins. Only objects that are switched on can be " +
+                "hit, and never the camera's own marker.\n" +
+                "Like Place on 3D Buildings, this changes where new points drop and where dragged " +
+                "handles land, not points already placed.");
 
-        this.gui.add(this, "clearAllPoints").name("Clear All Points");
+        this.gui.add(this, "clearAllPoints").name("Clear All Points")
+            .tooltip("Delete every control point and fit keyframe, after you confirm. Undo brings them back.");
         this.syncMethodControls();
     }
 
@@ -799,6 +795,7 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
      * @returns {number|null} null when there is nothing to score.
      */
     currentResidualPx() {
+        if (this.rayGeometryActive()) return null;
         const size = this.videoSize;
         const state = this.currentCameraState();
         // Real observations only, matching the solve: a seeded marker sits wherever some camera
@@ -1740,9 +1737,21 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
         if (this.autoFit) this.runFit(false);
     }
 
+    rayGeometryActive() {
+        const settings = this.lookCameraNode()?.camera?._rayGeometryPass?.tool.settings;
+        return !!(Sit.refraction !== false && Sit.refractionTerrain !== false
+            && settings?.enabled && settings.projectionMode === "geometry");
+    }
+
     /** @returns {boolean} whether a solve actually ran — false on every refusal gate */
     runFit(explicit) {
         if (!this.enabled) return false;
+        // Trial observers require new ray integrations. An analytic fit here
+        // would report a residual for a different model than the rendered view.
+        if (this.rayGeometryActive()) {
+            this.updateStatus("Camera fitting is not supported with ray-traced geometry; camera unchanged.");
+            return false;
+        }
 
         // Re-entrancy guard. Applying a fit selects switches and writes nodes, each of which
         // cascades; anything downstream that pokes this node back must not start a second solve
@@ -2418,7 +2427,9 @@ export class CNodeFitCameraPoints extends CNodeActiveOverlay {
         const [cx, cy] = mouseToCanvas(this, mouseX, mouseY);
         const point = this.pointNear(cx, cy);
         if (!point) return;
-        showPointContextMenu(e, "Camera Fit Point", [{label: "Delete Point", action: () => {
+        showPointContextMenu(e, "Camera Fit Point", [{label: "Delete Point",
+            tooltip: "Delete this landmark from every keyframe, then fit the camera again without it.",
+            action: () => {
             if (this.enabled && this.points.includes(point)) this.removePoint(point.id);
         }}]);
     }

@@ -2,7 +2,7 @@
 
 This page explains what an altitude means and how Sitrec handles it. Read it if a track sits at the wrong height, or if you need to know what an altitude in a file refers to. The [Glossary](Glossary.md) defines terms such as HAE, MSL, AGL, QNE and QNH.
 
-Sitrec works in height [above the WGS84 ellipsoid (HAE)](#three-kinds-of-height). The **Alt** boxes in the Camera and Target menus hold height above mean sea level (MSL), or height above ground level (AGL) when **Above Ground Level** is on. A KML track altitude and a CSV `ALTITUDE` column are read as MSL, and Sitrec converts them to HAE. A CSV `TPHAE` column is read as HAE. For the details, see [Altitude in the file](KMLDataSources.md#altitude-in-the-file) and [Altitude Handling](Tracks.md#altitude-handling).
+Sitrec works in height [above the WGS84 ellipsoid (HAE)](#three-kinds-of-height). The **Alt** boxes in the Camera and Target menus hold height above mean sea level (MSL), or height above ground level (AGL) when **Above Ground Level** is on. A KML track altitude and a CSV `ALTITUDE` column are read as MSL, and Sitrec converts them to HAE. A KML track whose `<altitudeMode>` is `relativeToGround` is read as AGL instead. A CSV `TPHAE` column is read as HAE. For the details, see [Altitude in the file](KMLDataSources.md#altitude-in-the-file) and [Altitude Handling](Tracks.md#altitude-handling).
 
 A custom sitch uses the WGS84 ellipsoid. Most older built-in sitches use a sphere.
 
@@ -334,7 +334,14 @@ Google's `gx:` extension namespace adds two sea-floor variants (`clampToSeaFloor
 
 **Spec point:** KML `absolute` altitude is sea-level referenced (OGC KML: EGM96 geoid vertical datum in the standard geodetic CRS definition).
 
-**Sitrec implementation note:** Sitrec treats KML `absolute` altitude as **MSL** (EGM96 geoid), per the OGC KML vertical datum. A KML track (`gx:Track`, or timed Placemarks) is always read as MSL, whatever its `<altitudeMode>` says. Only LineString and Polygon features read the mode. The track KML exporters (`CNodeArray.exportTrackKML`, `CNode3DObject.exportToKML`) convert HAE→MSL on the way out, so exported tracks and objects open at the correct height in Google Earth.
+**Sitrec implementation note:** Sitrec treats KML `absolute` altitude as **MSL** (EGM96 geoid), per the OGC KML vertical datum. A KML track (`gx:Track`, `gx:MultiTrack`, or timed Placemarks) reads its `<altitudeMode>`:
+
+- `relativeToGround` and `gx:relativeToSeaFloor`: the altitude is height above the terrain.
+- `clampToGround` and `gx:clampToSeaFloor`: the track is on the terrain, and its altitude numbers are not used.
+- `absolute`, or no `<altitudeMode>`: the altitude is MSL. (The KML specification makes a missing mode `clampToGround`. Sitrec does not.)
+- A track whose parts have different modes is read as MSL in all its parts.
+
+Sitrec's terrain has no sea floor, so the two sea-floor modes measure from the terrain surface, as Google Earth does over land. A sitch saved by version 2.190.0 or earlier reads all its KML track altitudes as MSL, as it did when it was saved. LineString and Polygon features also read the mode. The track KML exporters (`CNodeArray.exportTrackKML`, `CNode3DObject.exportToKML`) convert HAE→MSL on the way out, so exported tracks and objects open at the correct height in Google Earth.
 
 ---
 

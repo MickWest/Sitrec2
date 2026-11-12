@@ -67,7 +67,8 @@ export const LIVE_FEEDS = [
         labels: true,
         label: 'Military Aircraft',
         tooltip: 'Aircraft adsb.lol flags as military or government, worldwide.\n'
-            + 'Shown wherever they are, not only near you.\nData: adsb.lol (ODbL)',
+            + 'Shown wherever they are, not only near you.\n'
+            + 'Click an aircraft to import its full track.\nData: adsb.lol (ODbL)',
         attribution: 'adsb.lol (ODbL)',
         coverage: 'Worldwide',
         pollMs: 10000,
@@ -104,7 +105,8 @@ export const LIVE_FEEDS = [
         id: 'ships',
         labels: true,
         label: 'Marine Traffic (AIS)',
-        tooltip: 'Live ship positions worldwide, streamed from aisstream.io.\n'
+        tooltip: 'Live ship positions near the main view camera, streamed from aisstream.io.\n'
+            + 'The area is about 5 degrees of latitude and longitude each way from the camera when the stream starts.\n'
             + 'Needs your own free AISStream key — Settings, API Keys.\n'
             + 'Data: aisstream.io',
         attribution: 'aisstream.io',
@@ -183,7 +185,7 @@ export const LIVE_FEEDS = [
         id: 'webcams',
         labels: true,
         label: 'Webcams',
-        tooltip: 'Live webcams near where you are looking, worldwide.\n'
+        tooltip: 'Up to 50 live webcams within 250 km of the main view camera.\n'
             + 'Needs your own free Windy key — Settings, API Keys.\n'
             + 'Click a camera to open its current image.\nData: Windy.com',
         attribution: 'Windy.com',
@@ -235,7 +237,7 @@ export const LIVE_FEEDS = [
         id: 'traffic',
         labels: false,
         label: 'Road Traffic Incidents',
-        tooltip: 'Live jams, closures and roadworks near where you are looking, worldwide.\n'
+        tooltip: 'Live jams, closures and roadworks within about 0.5 degrees of latitude and longitude of the main view camera.\n'
             + 'Needs your own free TomTom key — Settings, API Keys.\nData: TomTom',
         attribution: 'TomTom',
         coverage: 'Worldwide (needs a key)',
@@ -353,8 +355,8 @@ export const LIVE_FEEDS = [
         id: 'launches',
         labels: true,
         label: 'Rocket Launches',
-        tooltip: 'Recent and upcoming orbital launches, at their launch pads.\n'
-            + '"Was there a launch near this time?" is a recurring mundane explanation.\n'
+        tooltip: 'The 40 most recent rocket launches, each at its launch pad.\n'
+            + 'Click a marker to open its launch record.\n'
             + 'Data: Launch Library 2 (The Space Devs)',
         attribution: 'Launch Library 2 (The Space Devs)',
         coverage: 'Worldwide',
@@ -394,7 +396,8 @@ export const LIVE_FEEDS = [
         id: 'quakes',
         labels: true,
         label: 'Earthquakes',
-        tooltip: 'Magnitude 2.5+ earthquakes in the last 24 hours.\n'
+        tooltip: 'Magnitude 2.5+ earthquakes in the last 24 hours, each at its epicenter and sized by magnitude.\n'
+            + 'Click a marker to open its web page.\n'
             + 'Data: USGS (public domain)',
         attribution: 'USGS',
         coverage: 'Worldwide',

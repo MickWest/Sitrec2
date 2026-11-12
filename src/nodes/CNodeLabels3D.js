@@ -2,14 +2,15 @@
 // Uses the 2D canvas overlay system (CNodeDisplaySkyOverlay) for rendering
 
 import * as LAYER from "../LayerMasks";
-import {
-    DebugArrowAB,
+import {DebugArrowAB,
     DebugArrows,
     getTilesPointBelow,
     isVisible,
     propagateLayerMaskObject,
     removeDebugArrow,
     setLayerMaskRecursive,
+    ARROW_HEAD_CONE,
+    ARROW_HEAD_DOT,
 } from "../threeExt";
 import {pointOnSphereBelow} from "../SphericalMath";
 import {CNodeMunge} from "./CNodeMunge";
@@ -26,6 +27,12 @@ import {EventManager} from "../CEventManager";
 import {registerLabel3D, unregisterLabel3D} from "./CNodeDisplaySkyOverlay";
 import {viewMenuKey} from "../ViewUIBarMenus";
 import {t} from "../i18n";
+import {BufferGeometry, Float32BufferAttribute, Vector3} from "three";
+import {SceneLineLoop} from "../SceneLines";
+import {SceneLineMaterial} from "../SceneLineMaterial";
+import {setAlwaysVisibleOverlay} from "../AlwaysVisibleOverlay";
+import {measurementCircleOffsets, measurementHeading} from "../MeasurementGeometry";
+import {liftWorldPoint, unliftWorldPoint} from "../atmosphere/terrestrialRefraction";
 
 
 const HIGH_ALTITUDE_LABEL_THRESHOLD_M = 100000 * 0.3048;
@@ -64,6 +71,39 @@ export function measurementLayerMask() {
     if (Globals.showMeasurements ?? true) mask |= LAYER.MASK_HELPERS;
     if (Globals.showMeasurementsLook) mask |= LAYER.MASK_LOOK;
     return mask;
+}
+
+/**
+ * Which views draw the V/B measurement. It has its own toggles, apart from the measurements
+ * above: the ruler icon on each 3D view's header bar, or V/B Measure in Main / in Look under
+ * Show > Measurements.
+ */
+export function vbMeasureLayerMask() {
+    let mask = 0;
+    if (Globals.showVBMeasureMain ?? true) mask |= LAYER.MASK_HELPERS;
+    if (Globals.showVBMeasureLook) mask |= LAYER.MASK_LOOK;
+    return mask;
+}
+
+/** Which views draw the V/B measurement's circle: its views, narrowed by the circle flags. */
+export function vbCircleLayerMask() {
+    let mask = 0;
+    if (Globals.showVBCircleMain) mask |= LAYER.MASK_HELPERS;
+    if (Globals.showVBCircleLook) mask |= LAYER.MASK_LOOK;
+    return mask & vbMeasureLayerMask();
+}
+
+/**
+ * Point the V/B measurement at the views its toggles name. Its node.visible is "placed"
+ * (CameraControls.setMeasureArrowShown), so an unplaced measurement stays hidden.
+ */
+export function refreshVBMeasureVisibility() {
+    if (!NodeMan.exists("globalMeasureArrow")) return;
+    const node = NodeMan.get("globalMeasureArrow");
+    const mask = vbMeasureLayerMask();
+    node.group.visible = mask !== 0 && node.visible !== false;
+    node.layerMask = mask;
+    setLayerMaskRecursive(node.group, mask);
 }
 
 /**
@@ -108,6 +148,13 @@ export function setupMeasurementUI() {
     // recreation, and measurement arrows drawn across it are exactly what "not in the recreation"
     // was protecting. This is also what makes the new toggle a no-op for every existing sitch.
     Globals.showMeasurementsLook ??= false;
+    // The V/B measurement's own per-view toggles, apart from the measurements. The ruler icon's
+    // first state is the line and its second adds the circle. Main starts at the line; the look
+    // view starts off, like measurements.
+    Globals.showVBMeasureMain ??= true;
+    Globals.showVBMeasureLook ??= false;
+    Globals.showVBCircleMain ??= false;
+    Globals.showVBCircleLook ??= false;
 
     // We create a group node to hold all the measurement arrows
     measureArrowGroupNode = new CNode3DGroup({
@@ -144,13 +191,38 @@ export function setupMeasurementUI() {
         refreshMeasurementVisibility();
         setRenderOne(true);
     })
-    measurementUIVars.controller.shareAs(viewMenuKey("mainView", "measurements"));
+    measurementUIVars.controller.shareAs(viewMenuKey("mainView", "measurements"))
+        .asViewCheckbox("mainView", t("viewMenus.measurements"));
 
     measurementUIVars.controllerLook = measurementFolder.add(Globals, "showMeasurementsLook").name(t("labels3d.measurementsInLook.label")).tooltip(t("labels3d.measurementsInLook.tooltip")).listen().onChange( (value) => {
         refreshMeasurementVisibility();
         setRenderOne(true);
     })
-    measurementUIVars.controllerLook.shareAs(viewMenuKey("lookView", "measurements"));
+    measurementUIVars.controllerLook.shareAs(viewMenuKey("lookView", "measurements"))
+        .asViewCheckbox("lookView", t("viewMenus.measurements"));
+
+    const vbChanged = () => {
+        refreshVBMeasureVisibility();
+        setRenderOne(true);
+    };
+    measurementUIVars.vbController = measurementFolder.add(Globals, "showVBMeasureMain").name(t("labels3d.vbMeasure.label")).tooltip(t("labels3d.vbMeasure.tooltip")).listen().onChange(vbChanged);
+    measurementUIVars.vbController.shareAs(viewMenuKey("mainView", "vbMeasure"))
+        .asViewCheckbox("mainView", t("viewMenus.vbMeasure"));
+    measurementUIVars.vbControllerLook = measurementFolder.add(Globals, "showVBMeasureLook").name(t("labels3d.vbMeasureLook.label")).tooltip(t("labels3d.vbMeasureLook.tooltip")).listen().onChange(vbChanged);
+    measurementUIVars.vbControllerLook.shareAs(viewMenuKey("lookView", "vbMeasure"))
+        .asViewCheckbox("lookView", t("viewMenus.vbMeasure"));
+
+    // The circle is read per frame by CNodeMeasureAB.updateCircle, so a change only needs a frame.
+    measurementUIVars.vbCircleController = measurementFolder.add(Globals, "showVBCircleMain").name(t("labels3d.vbCircle.label")).tooltip(t("labels3d.vbCircle.tooltip")).listen().onChange(() => {
+        setRenderOne(true);
+    });
+    measurementUIVars.vbCircleController.shareAs(viewMenuKey("mainView", "vbCircle"))
+        .asViewCheckbox("mainView", t("viewMenus.vbCircle"));
+    measurementUIVars.vbCircleControllerLook = measurementFolder.add(Globals, "showVBCircleLook").name(t("labels3d.vbCircleLook.label")).tooltip(t("labels3d.vbCircleLook.tooltip")).listen().onChange(() => {
+        setRenderOne(true);
+    });
+    measurementUIVars.vbCircleControllerLook.shareAs(viewMenuKey("lookView", "vbCircle"))
+        .asViewCheckbox("lookView", t("viewMenus.vbCircle"));
 
     Globals.showLabelsMain = true;
     Globals.showLabelsLook = false;
@@ -169,8 +241,10 @@ export function setupMeasurementUI() {
         setRenderOne(true);
     })
 
-    labelsControllerMain.shareAs(viewMenuKey("mainView", "labels"));
-    labelsControllerLook.shareAs(viewMenuKey("lookView", "labels"));
+    labelsControllerMain.shareAs(viewMenuKey("mainView", "labels"))
+        .asViewCheckbox("mainView", t("viewMenus.labels"));
+    labelsControllerLook.shareAs(viewMenuKey("lookView", "labels"))
+        .asViewCheckbox("lookView", t("viewMenus.labels"));
 
     refreshLabelVisibility();
 
@@ -187,8 +261,10 @@ export function setupMeasurementUI() {
         setRenderOne(true);
     })
 
-    featuresControllerMain.shareAs(viewMenuKey("mainView", "features"));
-    featuresControllerLook.shareAs(viewMenuKey("lookView", "features"));
+    featuresControllerMain.shareAs(viewMenuKey("mainView", "features"))
+        .asViewCheckbox("mainView", t("viewMenus.features"));
+    featuresControllerLook.shareAs(viewMenuKey("lookView", "features"))
+        .asViewCheckbox("lookView", t("viewMenus.features"));
 
     refreshFeatureVisibility();
 
@@ -196,6 +272,7 @@ export function setupMeasurementUI() {
 
 export function refreshLabelsAfterLoading() {
     measurementUIVars.controller._callOnChange(); // PATCH: call the onChange function to update the UI for the visibility of the measurements
+    refreshVBMeasureVisibility();
 
     labelsControllerMain._callOnChange();
     labelsControllerLook._callOnChange();
@@ -368,6 +445,9 @@ export class CNodeLLALabel extends CNodeLabel3D {
 
 }
 
+// Screen size of an end mark when the measurement does not say: a 20 px arrowhead, an 8 px dot.
+const defaultHeadSize = (head) => head === ARROW_HEAD_DOT ? 8 : 20;
+
 export class CNodeMeasureAB extends CNodeLabel3D {
     constructor(v) {
         v.position = v.A;
@@ -375,6 +455,22 @@ export class CNodeMeasureAB extends CNodeLabel3D {
         super(v);
         this.input("A");
         this.input("B");
+        this.showHeading = v.showHeading ?? false;
+        this.showCircle = v.showCircle ?? false;
+        this.alwaysVisible = v.alwaysVisible ?? false;
+        // What marks each end: a cone (an arrowhead) or a dot (threeExt's ARROW_HEAD_* names),
+        // and its size on screen in pixels: an arrowhead's length, or a dot's diameter.
+        this.startHead = v.startHead ?? ARROW_HEAD_CONE;
+        this.endHead = v.endHead ?? ARROW_HEAD_CONE;
+        this.startHeadSize = v.startHeadSize ?? defaultHeadSize(this.startHead);
+        this.endHeadSize = v.endHeadSize ?? defaultHeadSize(this.endHead);
+        // The V/B measurement has its own per-view toggles (vbMeasureLayerMask), apart from the
+        // measurements', whose refreshMeasurementVisibility therefore skips it.
+        this.isVBMeasure = v.isVBMeasure ?? false;
+        if (this.isVBMeasure) {
+            this.isMeasurement = false;
+            this.layerMask = vbMeasureLayerMask();
+        }
         this.update(0)
     }
 
@@ -404,8 +500,13 @@ export class CNodeMeasureAB extends CNodeLabel3D {
         // add an arrow from A to C and B to D
         // Use this.group instead of this.groupNode.group so arrows are children of this measurement
         // and will be hidden/shown along with the text label
-        DebugArrowAB(this.id + "start", this.C, this.A, color, true, this.group, 20, this.layerMask);
-        DebugArrowAB(this.id + "end", this.D, this.B, color, true, this.group, 20, this.layerMask);
+        const startArrow = DebugArrowAB(this.id + "start", this.C, this.A, color, true, this.group, this.startHeadSize, this.layerMask, this.startHead);
+        const endArrow = DebugArrowAB(this.id + "end", this.D, this.B, color, true, this.group, this.endHeadSize, this.layerMask, this.endHead);
+        if (this.alwaysVisible) {
+            setAlwaysVisibleOverlay(startArrow);
+            setAlwaysVisibleOverlay(endArrow);
+        }
+        if (this.showCircle) this.updateCircle(color);
 
         let length
 
@@ -440,12 +541,54 @@ export class CNodeMeasureAB extends CNodeLabel3D {
             //text += "\n "+Units.withUnits(alt, this.decimals, this.unitType)+ " msl";
         } else {
             text = Units.withUnits(length, this.decimals, this.unitType);
+            if (this.showHeading) {
+                const heading = measurementHeading(this.A, this.B);
+                // Round before wrapping, so a bearing near north reads 0.0°, never 360.0°.
+                text += heading === null ? "\n—° true" : `\n${((Math.round(heading * 10) / 10) % 360).toFixed(1)}° true`;
+            }
         }
         this.changeText(text);
 
     }
 
+    updateCircle(color) {
+        if (!this.circle) {
+            this.circle = setAlwaysVisibleOverlay(new SceneLineLoop(new BufferGeometry(),
+                new SceneLineMaterial({color, linewidth: 1.5, toneMapped: false})));
+            this.circle.name = this.id + "Circle";
+            this.group.add(this.circle);
+            this.circleA = new Vector3(NaN, NaN, NaN);
+            this.circleB = new Vector3(NaN, NaN, NaN);
+        }
+        this.circle.layers.mask = this.isVBMeasure ? vbCircleLayerMask() : this.layerMask;
+        this.circle.material.color.set(color);
+        if (this.circleA.equals(this.A) && this.circleB.equals(this.B)
+            && this.circleEquatorRadius === Globals.equatorRadius && this.circlePolarRadius === Globals.polarRadius) return;
+        this.circleA.copy(this.A);
+        this.circleB.copy(this.B);
+        this.circleEquatorRadius = Globals.equatorRadius;
+        this.circlePolarRadius = Globals.polarRadius;
+        const points = measurementCircleOffsets(this.A, this.B);
+        this.circle.visible = points.length > 0;
+        this.circle.position.copy(this.A);
+        const geometry = this.circle.sourceGeometry;
+        let position = geometry.getAttribute("position");
+        if (!position || position.count < points.length) {
+            position = new Float32BufferAttribute(new Float32Array(points.length * 3), 3);
+            geometry.setAttribute("position", position);
+        }
+        points.forEach((point, i) => position.setXYZ(i, point.x, point.y, point.z));
+        geometry.setDrawRange(0, points.length);
+        this.circle.syncGeometry();
+    }
+
     dispose() {
+        if (this.circle) {
+            this.circle.removeFromParent();
+            this.circle.sourceGeometry.dispose();
+            this.circle.geometry.dispose();
+            this.circle.material.dispose();
+        }
         removeDebugArrow(this.id+"start");
         removeDebugArrow(this.id+"end");
         super.dispose();
@@ -852,6 +995,11 @@ export class CNodeFeatureMarker extends CNodeLabel3D {
     
     labelPosition(view) {
         const offset = labelPixelOffset(this);
+        const ctx = view.camera?._rayGeometryPass?.geometryContext();
+        if (ctx) {
+            const apparent = liftWorldPoint(ctx, this.featurePosition);
+            return unliftWorldPoint(ctx, view.offsetScreenPixels(apparent, offset.x, offset.y));
+        }
         return view.offsetScreenPixels(this.featurePosition, offset.x, offset.y);
     }
 

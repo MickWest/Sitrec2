@@ -1,6 +1,12 @@
-// The View > Atmospheric Refraction folder: one master switch, two halves.
+// The Effects > Atmospheric Refraction folder: one master switch, two models.
 //
-// Sitrec models refraction in two places with different physics — the
+// Model chooses between Standard refraction and Ray-traced refraction
+// (src/refraction/, one view drawn through an atmosphere defined by profiles;
+// the other views keep Standard). The folder shows only the chosen model's
+// settings. The choice is Sit.raytracedRefraction.enabled, so saves from before
+// the folder was merged load with the model they were saved with.
+//
+// Standard refraction models two things with different physics — the
 // whole-atmosphere Saemundsson bend for celestial objects (./refraction.js) and
 // the range-dependent bend for the solid scene (./terrestrialRefraction.js).
 // They share the same air, so you rarely want one without the other; the master
@@ -16,7 +22,9 @@
 // consumer reads. They are now DERIVED from the master and their checkbox, so
 // nothing downstream had to change.
 
-import {Globals, guiMenus, setRenderOne, Sit} from "../Globals";
+import {Globals, guiMenus, NodeMan, setRenderOne, Sit} from "../Globals";
+import {setRayGeometryUniforms} from "../refraction/RayGeometryProjection";
+import {getRefractionTool, openRefractionTool} from "../refraction/RefractionLoader";
 import {GlobalScene} from "../LocalFrame";
 import {REFRACTION_DEFAULTS} from "./refraction";
 import {Vector3} from "three";
@@ -34,6 +42,9 @@ import {
 
 let lapseRateController = null;
 let terrestrialKController = null;
+// The rows that belong to one model. updateRefractionGUIState() shows one set.
+let standardControllers = [];
+let rayTracedControllers = [];
 
 // Fill in defaults, and migrate a sitch saved before the master existed.
 export function ensureRefractionSettings() {
@@ -96,13 +107,15 @@ export function installTerrestrialRefractionSceneHook(scene) {
         }
         const opts = terrestrialOptsFrom(Sit, Globals);
         updateTerrestrialRefractionUniforms(camera, opts);
+        const rayContext = camera?._rayGeometryPass?.geometryContext();
+        setRayGeometryUniforms(camera, rayContext);
 
         // Fisheye and Flat Earth are not pinhole projections. Each switches frustum
         // culling off for every object while it is on, and puts it back itself, so
         // while either is on this hook leaves frustum culling alone.
         const projectionOwnsCulling = !!(Globals.fisheye?.enabled || Globals.flatEarthRendering);
 
-        if (!opts.enabled) {
+        if (!opts.enabled && !rayContext) {
             // This render draws nothing lofted (refraction is off, or the ray-traced
             // pass has taken this view over), so Three's own frustum test is right.
             if (!projectionOwnsCulling) {
@@ -125,7 +138,7 @@ export function installTerrestrialRefractionSceneHook(scene) {
         // Decide it from the lofted position, for this camera.
         if (camera && !projectionOwnsCulling) {
             _cameraPosition.setFromMatrixPosition(camera.matrixWorld);
-            cullLoftedObjects(_loftedObjects, camera, terrestrialLiftContext(_cameraPosition, opts));
+            cullLoftedObjects(_loftedObjects, camera, rayContext ?? terrestrialLiftContext(_cameraPosition, opts));
         }
     };
     _sceneHookInstalled = scene;
@@ -177,7 +190,14 @@ export function currentRefractionOpts() {
 //
 // Returns null when refraction is off, so every caller's fast path is "no
 // context, no work" rather than an identity transform.
-export function currentTerrestrialLiftContext(observerECEF) {
+export function currentTerrestrialLiftContext(observerECEF, camera, options) {
+    if (Sit.refraction === false || Sit.refractionTerrain === false) return null;
+    const rayView = Sit.raytracedRefraction?.enabled
+        ? NodeMan?.get(Sit.raytracedRefraction.view, false) : null;
+    if (camera && rayView?.camera === camera) {
+        if (camera.position.distanceToSquared(observerECEF) >= 0.0004) return null;
+        return rayView.raytracedRefraction?.geometryContext(options) ?? null;
+    }
     return terrestrialLiftContext(observerECEF, terrestrialOptsFrom(Sit, Globals));
 }
 
@@ -191,12 +211,17 @@ export function apparentPositionFrom(observerECEF, worldECEF, target = new Vecto
     return liftWorldPoint(currentTerrestrialLiftContext(observerECEF), worldECEF, target);
 }
 
-// Grey out whichever of the two ways to set k is not in force, so the folder can
-// never offer an editable gradient AND an editable k at once.
+// Show the chosen model's rows. Grey out whichever of the two ways to set k is
+// not in force, so the folder can never offer an editable gradient AND an
+// editable k at once. RefractionTool.sync() calls this too, because the
+// ray-traced panel has its own Enable checkbox.
 export function updateRefractionGUIState() {
     const override = !!Sit.terrestrialRefractionOverrideK;
     if (lapseRateController) override ? lapseRateController.disable() : lapseRateController.enable();
     if (terrestrialKController) override ? terrestrialKController.enable() : terrestrialKController.disable();
+    const rayTraced = !!Sit.raytracedRefraction?.enabled;
+    for (const controller of standardControllers) controller.show(!rayTraced);
+    for (const controller of rayTracedControllers) controller.show(rayTraced);
 }
 
 export function setupRefractionGUI() {
@@ -208,34 +233,98 @@ export function setupRefractionGUI() {
     // sitches, so an empty one means this sitch has not built it yet. Whichever
     // of the two owning nodes is created first does the work.
     if (folder.controllers && folder.controllers.length > 0) return;
+    standardControllers = [];
+    rayTracedControllers = [];
 
-    const changed = () => { applyRefractionMaster(); setRenderOne(true); };
+    const changed = () => {
+        applyRefractionMaster();
+        getRefractionTool()?.sync();
+        NodeMan?.get("terrainUI", false)?.requestSubdivisionPass();
+        setRenderOne(true);
+    };
 
     folder.add(Sit, "refraction").listen()
         .name("Enable Refraction")
         .onChange(changed)
-        .tooltip("Master switch for atmospheric refraction. Off means light travels in straight lines — geometrically simple, but not what a camera sees near the horizon.")
+        .tooltip("Turn atmospheric refraction on or off in every view, for either model. Off means light travels in straight lines. The ray-traced atmosphere is kept while refraction is off.")
         .asFolderToggle();
+
+    // The model is Sit.raytracedRefraction.enabled, so a save made before this
+    // folder existed loads with the model it was made with.
+    const raytraced = () => Sit.raytracedRefraction ?? (Sit.raytracedRefraction = {});
+    const model = {
+        get model() { return Sit.raytracedRefraction?.enabled ? "rayTraced" : "standard"; },
+        set model(value) { raytraced().enabled = value === "rayTraced"; },
+    };
+    folder.add(model, "model", {"Standard": "standard", "Ray-traced": "rayTraced"}).listen()
+        .name("Model")
+        .onChange(value => {
+            // The tool's chunk loads only when Ray-traced is first chosen. If it
+            // cannot load, the loader sets the model back to Standard.
+            if (value === "rayTraced") openRefractionTool(false).catch(() => {}).finally(updateRefractionGUIState);
+            updateRefractionGUIState();
+            changed();
+        })
+        .tooltip("Standard: every view uses the approximate bends below. Saemundsson's formula moves the sky, and k*d/(2R) raises terrain and buildings.\n"
+            + "Ray-traced: one 3D view is drawn by tracing light through an atmosphere that you define with temperature and humidity profiles. This can show mirages and terrain beyond the horizon. The other views keep the Standard model with its last settings.");
 
     folder.add(Sit, "refractionTerrain").listen()
         .name("Terrain and Buildings")
         .onChange(changed)
-        .tooltip("Loft distant terrain, buildings and the sea by k*d/(2R) — about 0.7' at 20 km, 3.4' at 100 km. Display only: ground elevations, line-of-sight and altitude readouts stay geometric.");
+        .tooltip("Refract terrain, buildings and the sea.\nStandard raises them by the angle k*d/(2R), where d is the distance and R is the Earth's radius. With the default k (about 0.18) and a camera near the ground, that is about 0.9' (arcminutes) at 20 km and 4.7' at 100 km.\nRay-traced Terrain Geometry needs this on.\nDisplay only: ground elevations, line-of-sight and altitude readouts stay geometric.");
 
     folder.add(Sit, "refractionSky").listen()
         .name("Sky")
         .onChange(changed)
-        .tooltip("Bend Sun/Moon/planet/star apparent positions toward the zenith via Saemundsson's formula — about 29' at the horizon.");
+        .tooltip("Refract the Sun, Moon, planets, stars and satellites.\nStandard raises them toward the zenith with Saemundsson's formula. The bend is about 29' (arcminutes) at the horizon, and less for a high camera.");
 
-    folder.add(Sit, "refractionPressure", 800, 1100, 1).listen()
+    // Ray-traced rows forward each edit to the tool, which traces again when the
+    // optics change and moves its pass when the view changes. They are shown
+    // only for the Ray-traced model, so the tool is loaded whenever they can be
+    // edited; until it loads they show its defaults.
+    const rayChanged = optical => {
+        getRefractionTool()?.changed(optical);
+        NodeMan?.get("terrainUI", false)?.requestSubdivisionPass();
+        setRenderOne(true);
+    };
+    const rayRows = {
+        get view() { return Sit.raytracedRefraction?.view ?? "lookView"; },
+        set view(value) { raytraced().view = value; },
+        get rendering() { return Sit.raytracedRefraction?.projectionMode ?? "screen"; },
+        set rendering(value) { raytraced().projectionMode = value; },
+        get traceKm() { return (Sit.raytracedRefraction?.maxDistance ?? 50000) / 1000; },
+        set traceKm(value) { raytraced().maxDistance = Math.round(value * 1000); },
+        open: () => openRefractionTool().catch(() => {}),
+    };
+    rayTracedControllers.push(
+        folder.add(rayRows, "view", {"Look View": "lookView", "Main View": "mainView"}).listen()
+            .name("Ray-traced View")
+            .onChange(() => rayChanged(false))
+            .tooltip("The 3D view that is drawn through the ray-traced atmosphere. Only one view is ray-traced. The other views use the Standard model."),
+        folder.add(rayRows, "rendering", {"Screen-space Mirages": "screen", "Terrain Geometry": "geometry"}).listen()
+            .name("Rendering")
+            .onChange(() => rayChanged(true))
+            .tooltip("Screen-space Mirages bends the rendered image. It can show folded images of surfaces that are already visible, but it cannot show hidden surfaces.\n"
+                + "Terrain Geometry moves the terrain through the traced rays before the depth test, so terrain beyond the geometric horizon can appear, out to Trace Distance. It needs a ray fan without folds."),
+        folder.add(rayRows, "traceKm", 0.1, 1000, 0.1).listen()
+            .name("Trace Distance (km)")
+            // A slider sends a value at every step of a drag. Trace once, on release.
+            .onFinishChange(() => rayChanged(true))
+            .tooltip("How far each ray is traced. Terrain Geometry can show terrain out to this distance. A longer distance takes longer to trace."),
+        folder.add(rayRows, "open")
+            .name("Profiles, Rays & Lasers…")
+            .tooltip("Open the Ray-traced Refraction panel. In it you edit the temperature and humidity profiles, see the ray paths and the diagnostics, add lasers, and export or import a profile."),
+    );
+
+    standardControllers.push(folder.add(Sit, "refractionPressure", 800, 1100, 1).listen()
         .name("Refraction Pressure (hPa)")
         .onChange(() => setRenderOne(true))
-        .tooltip("Atmospheric pressure. Feeds BOTH halves. Stellarium default: 1010 hPa");
+        .tooltip("Air pressure, in hPa (hectopascals). Both Sky and Terrain and Buildings use it. The default is 1010 hPa."));
 
-    folder.add(Sit, "refractionTemp", -40, 50, 1).listen()
+    standardControllers.push(folder.add(Sit, "refractionTemp", -40, 50, 1).listen()
         .name("Refraction Temperature (°C)")
         .onChange(() => setRenderOne(true))
-        .tooltip("Air temperature. Feeds BOTH halves. Stellarium default: 10 °C");
+        .tooltip("Air temperature, in °C. Both Sky and Terrain and Buildings use it. The default is 10 °C."));
 
     lapseRateController = folder.add(Sit, "terrestrialLapseRate", -35, 50, 0.5).listen()
         .name("Surface Temp Gradient (K/km)")
@@ -254,10 +343,11 @@ export function setupRefractionGUI() {
         .onChange(() => setRenderOne(true))
         .tooltip("k = 503 * (P/T^2) * (0.0342 + dT/dh) — derived from the pressure and temperature above plus the gradient, so it is NOT independent of them. Tick Override to type it in directly instead.");
 
-    folder.add(Sit, "terrestrialRefractionOverrideK").listen()
+    const overrideKController = folder.add(Sit, "terrestrialRefractionOverrideK").listen()
         .name("Override k")
         .onChange(() => { updateRefractionGUIState(); setRenderOne(true); })
         .tooltip("Set k by hand instead of deriving it from pressure, temperature and gradient — for fitting k directly to a measured target. The derived inputs then stop affecting it.");
+    standardControllers.push(lapseRateController, terrestrialKController, overrideKController);
 
     updateRefractionGUIState();
 }

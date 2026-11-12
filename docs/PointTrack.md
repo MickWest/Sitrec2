@@ -44,7 +44,8 @@ On the three reference clips in [What to expect](#what-to-expect), this procedur
    to the Out frame. A long HD clip takes a few minutes.
 8. Scrub through the result. The cyan trail is the track. On the timeline, green marks frames
    where the object was detected, amber marks estimated frames, and magenta marks points you
-   placed by hand.
+   placed by hand. Red marks frames that have no point and are between two points; see
+   [Frames with no point](#frames-with-no-point).
 
 ![The video view after a Point Track run. A solid yellow circle and a dashed yellow circle sit on a small white object, with the label 240 (792, 239). A thin cyan line crosses the frame and has one break. Two magenta crosses lie on the line.](docimages/pointtrack-cursor-and-trail.jpg)
 
@@ -75,9 +76,10 @@ the recommended method in **Tracking Method**, then press **Start Point Track**.
    is a **user point**: the tracker takes it as fact and restarts from it.
 5. Press **Start Point Track** again. Frames that already have points are kept.
 
-The frames between the last good point and your user point now have no points. They show no
-color on the timeline, but the trail and the line of sight cross them in a straight line. Place
-user points there if the object did not move straight.
+The frames between the last good point and your user point now have no points. They are red on
+the timeline, and the trail and the line of sight cross them in a straight line; see
+[Frames with no point](#frames-with-no-point). Place user points there if the object did not
+move straight.
 
 If a whole section is hard, follow the same steps and press **Analyse Object** after step 4. The
 best settings can change as the object's size and contrast change. New settings apply only to
@@ -108,8 +110,14 @@ suit the light: about 1 for a 3 px point.
 
 For several nearby dots, **Center on Bright/Dark/Color** centres on one connected group of
 matching pixels. Separate objects inside the tracking circle are excluded. Set the threshold
-so background pixels do not join the objects together. Both tracking radii can be reduced to
-1 pixel when needed; a smaller Search Radius helps preserve the identity of close neighbours.
+so background pixels do not join the objects together. For **Center on Bright**, the
+**Brightness Threshold** must be above the background level around the object. The default,
+128, is below a bright background: every pixel in the tracking circle then matches, the point
+follows the background and not the object, and no frame is marked as missing. Both tracking
+radii can be reduced to 1 pixel when needed; a smaller Search Radius helps preserve the
+identity of close neighbours. With **High Peak**, neighbours of the same brightness inside
+the Search Radius make each frame ambiguous, and the frames are marked as missing: reduce
+**Search Radius** until it holds only the one object.
 
 ### Large objects with structure
 
@@ -143,8 +151,10 @@ The track is saved with the sitch, user points included. Sitrec has no export fo
 alone. With the [Frequency Analysis](#frequency-analysis-of-brightness) graph open, **Export CSV**
 in **Frequency Analysis Settings** lists the pixel position of each source frame in the In/Out
 range, in its `x_original_px` and `y_original_px` columns. When **Output Smoothing** is on, these are the
-smoothed positions. The button does nothing until the graph shows a spectrum: no point in the
-range can be missing or estimated, and the aperture must stay clear of the mask and the image edge.
+smoothed positions. The button does nothing until the graph shows a spectrum: every frame in the
+range needs a position, and the aperture must stay clear of the mask and the image edge. The
+`position` column says `interpolated` for a [frame with no point](#frames-with-no-point) and for
+an estimated point.
 
 ---
 
@@ -278,6 +288,7 @@ without a shift.
 | The track jumps to on-screen text or a reticle | White or grey overlay is not recognized as overlay | Paint a [mask](Masking.md) over it and keep **Use Mask** on |
 | The track drops out while the object hovers | Motion (Background) cannot see an object that is still relative to the ground | Expected. Place user points on the frames you need, or use *Template Match* or a *Center on* method for that section |
 | Many amber (estimated) frames | The object was hard to detect, so those frames were joined by a straight line or by the camera motion | Check them. To measure them again, follow [If the track goes wrong partway through](#if-the-track-goes-wrong-partway-through): **Start Point Track** keeps frames that already have points, amber ones included. Or place user points |
+| Red marks on the timeline, and red parts of the trail | Those frames have no point, so the track is a straight line across them | **Go to Next Untracked** goes to each gap. See [Frames with no point](#frames-with-no-point) |
 | The track sits on the edge of the object, not its centre | A slow or large object stays in the background samples and is partly subtracted | Raise **Motion Frame Gap** |
 | The track is lost during a fast pan or zoom | The older background samples no longer cover this part of the frame | Lower **Motion Frame Gap**. Analyse again after the zoom |
 | Hilly terrain or buildings give false detections | The background cannot be cancelled exactly at an angle | Raise **Motion Parallax Slack** to 2–3 |
@@ -434,6 +445,7 @@ and full black. The black in those outlines is a strong difference, not a mask.
 | **Output Smoothing** | Off | Off, 2–10 frames | Smooths the output track; see below |
 | **Edit Head Only** | off | — | Only the point at the current frame can be dragged; see below |
 | **Show N Keyframes** | 20 | 0–100 | Draws only this many user points (magenta crosses), the ones nearest the current frame |
+| **Go to Next Untracked** | — | — | Go to the next frame, from the In frame to the Out frame, that has no tracked point; see [Frames with no point](#frames-with-no-point) |
 | **Clear from Here** | — | — | Delete all points, user points included, from the current frame to the Out frame |
 | **Clear User Points** / **Clear Auto Points** | — | — | Delete only your points (asks first), or only the tracker's |
 
@@ -485,6 +497,37 @@ frame you need there. A wrong user point is worse than none, because nothing wil
 **Clear User Points** deletes only yours and asks first. **Clear Auto Points** deletes only the
 tracked points, so you can track again from the same guidance. User points are saved with the
 sitch.
+
+### Frames with no point
+
+A frame of the track can have no point. There are two cases:
+
+- **Interpolated.** The frame is between two points, and the tracker has no record of a loss
+  there. This occurs after you delete points: with `;`, with `Delete`, or with **Clear from Here**
+  and a later user point. The cursor, the trail and the line of sight use the straight line
+  between the points on each side. These frames are red on the timeline, the trail is red across
+  them, and on such a frame the cursor is red, with **interpolated** after the position.
+- **Missing.** The tracker did not find the object. The frame has no position: it has no color on
+  the timeline, and the trail has a break. The frames between the points on each side of a
+  missing frame are not interpolated.
+
+![The video view and the timeline on a generated test clip. The cursor is two red circles, with the red label 204 (699, 262) interpolated. The cyan trail is red where it passes the cursor, and has a second short red part further along. The timeline below is green, with two red marks, one of them at the playhead, a magenta mark, and a part with no color.](docimages/pointtrack-untracked-frames.jpg)
+
+The same generated test clip, with the points of two short stretches deleted. The playhead is on
+frame 204, inside the first stretch, so the cursor is red and its label ends with
+**interpolated**. Each stretch is a red part of the trail and a red mark on the timeline. The part
+of the timeline with no color is where the object is hidden: those frames are missing, and the
+trail has its break there.
+
+**Go to Next Untracked** moves the playhead to the next frame, from the In frame to the Out frame,
+that has no tracked point: an interpolated frame, an estimated (amber) frame or a missing frame. A
+tracked point is one that the tracker detected or that you placed. A message on the video gives
+the frames of that gap. Press the button again for the next gap. After the last gap it goes back
+to the first. It does nothing while a track runs.
+
+To track the frames of a gap, put the cursor on the object and press **Start Point Track**, or
+place user points. [Frequency Analysis](FrequencyAnalysis.md#frames-with-no-tracked-point) measures
+interpolated and estimated frames at their positions, and shows a warning.
 
 ### Leaving the frame and coming back
 
@@ -557,83 +600,15 @@ an earlier point directly.
 
 ### Frequency analysis of brightness
 
-This graph shows the frequency spectrum of an object's brightness: how strong the change in
-brightness is at each frequency. A brightness that repeats at a steady rate, such as a flashing
-light, can give a peak at that rate.
+Frequency Analysis looks for repeating brightness changes in a tracked object, such as wings
+flapping or a flashing light. Track the object through the interval, set **In/Out**, then turn
+on **Video → Point Track → Frequency Analysis**. The green circle shows the measuring aperture;
+its radius is independent of the tracking and search circles.
 
-Track the object through the interval, set the **In** and **Out** markers, then turn on
-**Video → Point Track → Frequency Analysis**. A graph shows the brightness spectrum of that
-object over the selected range. Moving either marker or editing the track recalculates it.
-
-![The Point Track Frequency Analysis graph. A green curve has a tall peak at 1.49 Hz and a row of smaller peaks to its right. A pink curve stays low except at the left end. A dashed vertical line stands at 0.5 Hz.](docimages/pointtrack-frequency-graph.jpg)
-
-The graph on a generated test clip, not real footage, with an object that flashes at a steady rate.
-The green curve (**Object − background**) has its largest peak above the floor at 1.49 Hz. The
-smaller green peaks to its right are harmonics: multiples of that frequency. The pink curve
-(**Local background × aperture area**) shows the same measurement for the ring around the object.
-The dashed vertical line is the peak search floor, at 0.50 Hz. Both curves also rise below the
-floor, and the peak label does not use that part of the graph.
-
-In **Frequency Analysis Settings**, set **Object radius (px)** to include the whole object
-without including its neighbours. This radius is in original video pixels and is independent
-of the tracking/search circles. The smallest radius is 2 pixels; at 1 pixel the background ring
-has too few pixels to measure. Sitrec sums the pixels in a circular aperture, with fractional
-weights at its edge. A green circle matching the object curve shows this aperture on the video
-while the frequency graph is open; it follows the track and scales with video zoom. Sitrec
-subtracts the median background from a ring at 1.75–2.5 times the
-radius. Dark objects keep their negative contrast. **Output Smoothing** applies to aperture
-positions; the brightness samples themselves are not smoothed.
-
-The graph removes a linear trend, applies a Hann window (a taper that fades the ends of the range
-to zero) and plots Fourier **semi-amplitude** (half the peak-to-peak modulation of a sinusoid).
-**Amplitude as percent** divides by the
-absolute mean background-subtracted object flux. Switch it off for recorded intensity × pixel
-area (DN·pixels, where DN, digital number, is the pixel value); that scale is also used when the
-mean flux is zero. The background comparison
-uses the same aperture area and scale. Values are
-recorded brightness, not temperature. **Export CSV** includes the spectrum, measurements and
-analysis settings.
-
-**Peak search floor (Hz)** sets the lowest frequency that the largest-peak label uses. The
-default is 0.5 Hz (30 a minute). Removing a linear trend does not remove slow, curved brightness
-drift, and in the lowest frequency bins (a bin is the smallest step between frequencies that the
-range can separate) that drift can be larger than a real flicker. The spectrum is
-plotted in full: below the floor, only the label is not given. A dashed vertical line shows the
-floor, and the peak line reads "Largest peak above …". The value is always in Hz, also when
-Flashes per minute is on; the graph prints it in the chosen unit. Set 0 to search from about one
-frequency bin above 0 Hz. If the floor is at or above the Nyquist limit (half the frame rate,
-the highest frequency the video can show), no peak is labeled and the graph says why. The
-exported CSV records the floor in its `peak_floor_hz` column.
-
-Keep the floor below the rate you are looking for. A short flash, such as an aircraft
-anti-collision beacon (40–100 a minute), puts much of its power in harmonics at 2, 3, 4… times
-its rate. With the floor above the flash rate, the label goes to one of those harmonics, not to
-the flash rate. Slow drift has no peak of its own: when the label sits just above the dashed
-line, it is probably drift. Move the floor and see if the label follows it.
-
-**Flashes per minute**, the last item in the settings, shows the frequencies as flashes per
-minute (Hz × 60) instead of Hz. The axis covers the same range; only its units change. The
-exported CSV stays in Hz.
-
-The header shows the sample count, duration and independent frequency bin spacing (`fps/N`).
-The curve is interpolated with zero padding (added zeros that make the curve smoother); that
-does not improve the resolution. The right edge is the source video's Nyquist limit. Held
-playback frames are counted once, so playback speed does not change the frequency scale. If a
-point in the range is missing or estimated, or an aperture overlaps a mask or the image edge, the
-graph shows a message and no spectrum. Change the track, the radius, the mask or the In and Out
-markers.
-
-Some videos, often from phones, have a variable frame rate: the time between frames changes.
-Sitrec then calculates the spectrum with each frame at its real time, and the frequency scale
-uses the mean frame rate. Sitrec does not resample the video to an even rate, because
-interpolating between frames weakens fast signals. A warning on the graph shows the range of
-frame rates. Peaks above half the lowest frame rate can be aliases of higher frequencies. The
-exported CSV records the timing in its `irregular_timing`, `min_fps` and `max_fps` columns.
-
-A largest peak is a candidate periodicity, not a statistical detection or an identification
-of the object. Short intervals, motion across pixels, background structure, camera processing
-and compression can all produce peaks. Compare different intervals, aperture radii and the local
-background curve before interpreting one.
+See the dedicated [Frequency Analysis guide](FrequencyAnalysis.md) for the controls, frame-rate
+and pixel limits, diagrams explaining the DFT/FFT calculation, CSV export, and ways that small
+objects and noisy backgrounds can produce misleading peaks. **Export CSV** in **Frequency
+Analysis Settings** includes the measured positions used for each source frame.
 
 ---
 

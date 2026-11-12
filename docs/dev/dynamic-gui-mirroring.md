@@ -16,6 +16,16 @@ video-adjustment edit/context menus use `setupDynamicMirroring()` or `showNodeEd
 The convenience methods `mirrorGUIFolder()`, `mirrorNodeGUI()`, and `createDynamicMirror()` are
 also useful from the browser console.
 
+## Paired Main/Look checkboxes
+
+Use `gui.addCheckboxPair(object, mainProperty, lookProperty, label)` for two boolean properties on one object. It returns `{main, look, domElement}`; configure the two controllers' callbacks and mirror keys normally.
+
+When each view creates its own controller, append `.asViewCheckbox(viewId, label, key)` to each controller. Main and Look controllers with the same key in the same folder join into one M/L row, regardless of construction order or which objects own their values. The key defaults to the label. Other views keep their ordinary rows. Existing controller names, saved properties, callbacks and header mirrors remain intact.
+
+Both APIs use `CheckboxPair.js`. Its outer row inherits the standard `.controller` spacing; avoid separate row dimensions or per-menu CSS overrides. Whole-folder mirrors preserve pairs and their position, while individual view-header mirrors remain single checkboxes. Destroying a paired controller restores its surviving partner to an ordinary row until a replacement arrives.
+
+To put both switches on the folder title, call `pair.main.asFolderToggle({paired: true})` after creating the pair. The folder's settings are dimmed and disabled only when both switches are off. The header keeps the original controllers, so drag painting, listening, callbacks and mirrors work normally. Whole-folder mirrors preserve the paired header; removing either controller restores the surviving ordinary row.
+
 ## Initialization Requirements
 
 Call these methods only after Sitrec has created `Globals.menuBar`. A menu mirror also requires

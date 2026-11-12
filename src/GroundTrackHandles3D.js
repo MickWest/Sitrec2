@@ -176,9 +176,11 @@ class CGroundTrackOverlay extends CTerrainHandleOverlay {
         const frame = hit.frame;
         showPointContextMenu(e, `Point: Frame ${frame}`, [{
             label: `Go to Frame ${frame}`, enabled: !this.isSelected(frame),
+            tooltip: "Move the current frame to this point's frame.",
             action: () => goToFrame(frame),
         }, {
             label: "Delete Point",
+            tooltip: "Delete this point from the ground track.",
             action: () => { if (this.owner.enabled) this.owner.deletePoint(frame); },
         }]);
     }

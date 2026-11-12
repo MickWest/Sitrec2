@@ -1,4 +1,6 @@
-// A folder's own on/off checkbox, drawn at the right end of its title row.
+// A folder's own on/off checkbox, drawn at the right end of its title row: the TITLE CHECKBOX.
+// (A plain row drawn the same way, with its box in that right-hand column, is a LIST CHECKBOX:
+// asListCheckbox() at the end of this file.)
 //
 // Many folders hold one boolean that switches the whole thing on or off — "Visible", "Show",
 // "Enable ..." — as an ordinary row inside the folder. `controller.asFolderToggle()` promotes
@@ -35,6 +37,12 @@
 // reference-counted, because a nested toggle folder and its parent can mark the same row.
 // Rows added while the folder is off are marked too (a MutationObserver on the rows).
 //
+// PARTIAL SWITCH. `asFolderToggle({fadeOnlyMarked: true})` is for a folder whose switch covers
+// only some of its rows: when off, ONLY the rows marked with `fadeWhenFolderOff()` are faded and
+// made inert, and every other row stays live. A track's folder is one: "Show Track Line" hides
+// the line, but the track's name, data, filter and actions still work on the track the object
+// rides, and its contrail is drawn whether the line is or not.
+//
 // A root menu's title is a tab sized to its text (the menu bar sets its width), so there the
 // checkbox goes just after the end of the TAB, not at the edge of the panel, and follows the
 // tab when the title changes width. A torn-out folder is drawn the same way.
@@ -46,6 +54,7 @@ import {Controller} from "./js/lil-gui.esm";
 
 const STYLE_ID = "lil-folder-toggle-style";
 const OFF_COUNT = "folderOffCount";      // dataset key: how many off folders mark this row
+const FADE_CLASS = "lil-fade-when-off";  // a row that a partial switch fades (fadeWhenFolderOff)
 
 function injectStyles() {
     if (document.getElementById(STYLE_ID)) return;
@@ -53,8 +62,8 @@ function injectStyles() {
     style.id = STYLE_ID;
     style.textContent = `
 .lil-gui.lil-has-folder-toggle:not(.root) { position: relative; }
-.lil-gui.lil-has-folder-toggle:not(.root) > .title { padding-right: calc(var(--checkbox-size) + 2 * var(--padding)); }
-.lil-gui > input.lil-folder-toggle {
+.lil-gui.lil-has-folder-toggle:not(.root) > .title { padding-right: calc(var(--folder-toggle-width, var(--checkbox-size)) + 2 * var(--padding)); }
+.lil-gui > .lil-folder-toggle {
     position: absolute;
     top: calc((var(--title-height) - var(--checkbox-size)) / 2);
     right: var(--padding);
@@ -63,7 +72,16 @@ function injectStyles() {
     /* a root menu's element is pointer-events:none, with only its title and rows turned back on */
     pointer-events: auto;
 }
+.lil-gui.lil-has-folder-toggle-pair { --folder-toggle-width: calc(2 * var(--checkbox-size) + var(--spacing)); }
+.lil-gui > .controller.lil-folder-toggle-pair {
+    top: calc((var(--title-height) - var(--widget-height)) / 2);
+    margin: 0;
+    padding: 0;
+}
+.lil-gui > .lil-folder-toggle-pair > .lil-checkbox-pair-name { display: none; }
 .lil-gui .controller.lil-folder-toggle-source { display: none; }
+.lil-gui .controller.boolean.lil-list-checkbox > .name { flex: 1 1 auto; min-width: 0; }
+.lil-gui .controller.boolean.lil-list-checkbox > .widget { flex: 0 0 auto; width: auto; }
 .lil-folder-faded { opacity: 0.4; }
 .lil-folder-faded, .lil-folder-faded * { pointer-events: none !important; }
 `;
@@ -98,7 +116,7 @@ function markRows(elements, marked) {
     for (const el of elements) {
         if (el.classList.contains("lil-keep-live")) continue;
         if (el.classList.contains("lil-gui") && el.querySelector(".lil-keep-live")) {
-            const box = el.querySelector(":scope > input.lil-folder-toggle");
+            const box = el.querySelector(":scope > .lil-folder-toggle");
             if (box) mark(box, marked);
             const sub = el.querySelector(":scope > .children");
             if (sub) markRows(sub.children, marked);
@@ -110,7 +128,7 @@ function markRows(elements, marked) {
 
 // --- the promotion ----------------------------------------------------------------------------
 
-Controller.prototype.asFolderToggle = function () {
+Controller.prototype.asFolderToggle = function ({fadeOnlyMarked = false, paired = false} = {}) {
     const folder = this.parent;
     if (!folder || !folder.domElement) return this;
     if (folder._folderToggle === this) return this;
@@ -118,20 +136,33 @@ Controller.prototype.asFolderToggle = function () {
     folder._folderToggle?._removeFolderToggle?.();
 
     injectStyles();
-    this.listen();
+    const pair = paired ? this._checkboxPair : null;
+    if (paired && !pair) throw new Error("A paired folder toggle needs a Main/Look checkbox pair");
+    const controllers = pair ? [pair.main, pair.look] : [this];
+    for (const controller of controllers) controller.listen();
+    // Kept so that a whole-folder copy (MenuMirror) promotes its twin the same way.
+    this._folderToggleOptions = {fadeOnlyMarked, paired};
 
-    const box = document.createElement("input");
-    box.type = "checkbox";
-    box.className = "lil-folder-toggle";
-    box.setAttribute("aria-label", this._name ?? this.property);
-    box.addEventListener("change", () => {
-        this.setValue(box.checked);
-        this._callOnFinishChange?.();
-    });
+    // A pair uses its real controls on the title, including their M/L letters,
+    // keyboard behavior and drag painting. Single toggles keep their proxy box.
+    const box = pair ? pair.domElement : document.createElement("input");
+    const originalNextSibling = box.nextSibling;
+    if (pair) {
+        box.classList.add("lil-folder-toggle", "lil-folder-toggle-pair");
+        folder.domElement.classList.add("lil-has-folder-toggle-pair");
+    } else {
+        box.type = "checkbox";
+        box.className = "lil-folder-toggle";
+        box.setAttribute("aria-label", this._name ?? this.property);
+        box.addEventListener("change", () => {
+            this.setValue(box.checked);
+            this._callOnFinishChange?.();
+        });
+    }
 
     folder.domElement.insertBefore(box, folder.$children);
     folder.domElement.classList.add("lil-has-folder-toggle");
-    this.domElement.classList.add("lil-folder-toggle-source");
+    if (!pair) this.domElement.classList.add("lil-folder-toggle-source");
     folder._folderToggle = this;
     this._folderToggleBox = box;
 
@@ -148,17 +179,25 @@ Controller.prototype.asFolderToggle = function () {
         const detached = folder.folders
             .filter(f => f._detachedContainer && !folder.$children.contains(f.domElement))
             .map(f => f.domElement);
+        if (fadeOnlyMarked) {
+            for (const root of [folder.$children, ...detached]) {
+                for (const el of root.querySelectorAll("." + FADE_CLASS)) mark(el, marked);
+            }
+            return;
+        }
         markRows([...folder.$children.children, ...detached], marked);
     };
 
     let lastOff = null;
     const sync = () => {
         if (!active) return;
-        const on = !!this.getValue();
-        box.checked = on;
-        box.disabled = !!this._disabled;
-        box.style.display = this._hidden ? "none" : "";
-        box.title = this._tooltip ?? this._name ?? "";
+        const on = controllers.some(controller => !!controller.getValue());
+        if (!pair) {
+            box.checked = on;
+            box.disabled = !!this._disabled;
+            box.title = this._tooltip ?? this._name ?? "";
+        }
+        box.style.display = controllers.every(controller => controller._hidden) ? "none" : "";
         folder.domElement.classList.toggle("lil-folder-off", !on);
         if (lastOff !== !on) {
             lastOff = !on;
@@ -199,31 +238,16 @@ Controller.prototype.asFolderToggle = function () {
     // Per-instance wrappers. They are never unwrapped: restoring a saved method would throw away
     // anything wrapped on top later (MenuMirror's show() patch when .shareAs() comes after this).
     // After removal they only pass through, because sync() checks `active`.
-    const inheritedUpdateDisplay = this.updateDisplay;
-    this.updateDisplay = function (...args) {
-        const result = inheritedUpdateDisplay.apply(this, args);
-        sync();
-        return result;
-    };
-    const inheritedDisable = this.disable;
-    this.disable = function (...args) {
-        const result = inheritedDisable.apply(this, args);
-        sync();
-        return result;
-    };
-    const inheritedShow = this.show;
-    this.show = function (...args) {
-        const result = inheritedShow.apply(this, args);
-        sync();
-        return result;
-    };
-    const inheritedTooltip = this.tooltip;
-    if (typeof inheritedTooltip === "function") {
-        this.tooltip = function (...args) {
-            const result = inheritedTooltip.apply(this, args);
-            sync();
-            return result;
-        };
+    for (const controller of controllers) {
+        for (const method of ["updateDisplay", "disable", "show", "tooltip"]) {
+            const inherited = controller[method];
+            if (typeof inherited !== "function") continue;
+            controller[method] = function (...args) {
+                const result = inherited.apply(this, args);
+                sync();
+                return result;
+            };
+        }
     }
 
     this._removeFolderToggle = () => {
@@ -232,8 +256,13 @@ Controller.prototype.asFolderToggle = function () {
         classObserver.disconnect();
         rowObserver.disconnect();
         clearMarks();
-        box.remove();
-        folder.domElement.classList.remove("lil-has-folder-toggle", "lil-folder-off");
+        if (pair) {
+            box.classList.remove("lil-folder-toggle", "lil-folder-toggle-pair");
+            box.style.left = "";
+            box.style.right = "";
+            folder.$children.insertBefore(box, originalNextSibling?.parentNode === folder.$children ? originalNextSibling : null);
+        } else box.remove();
+        folder.domElement.classList.remove("lil-has-folder-toggle", "lil-has-folder-toggle-pair", "lil-folder-off");
         this.domElement.classList.remove("lil-folder-toggle-source");
         if (folder._folderToggle === this) {
             folder._folderToggle = null;
@@ -245,11 +274,14 @@ Controller.prototype.asFolderToggle = function () {
 
     // lil-gui's destroy(all) keeps a .perm() controller unless `all` — a sitch change calls
     // destroy(false) on every menu — so the promotion must survive exactly when the row does.
-    const inheritedDestroy = this.destroy;
-    this.destroy = function (all = false, ...rest) {
-        if (all || !this.permanent) this._removeFolderToggle?.();
-        return inheritedDestroy.call(this, all, ...rest);
-    };
+    const owner = this;
+    for (const controller of controllers) {
+        const inheritedDestroy = controller.destroy;
+        controller.destroy = function (all = false, ...rest) {
+            if (all || !this.permanent) owner._removeFolderToggle?.();
+            return inheritedDestroy.call(this, all, ...rest);
+        };
+    }
 
     sync();
     return this;
@@ -262,5 +294,26 @@ Controller.prototype.keepLiveWhenFolderOff = function () {
     this.domElement.classList.add("lil-keep-live");
     // Re-mark every toggled folder up the chain, since this row may sit in a nested sub-folder.
     for (let gui = this.parent; gui; gui = gui.parent) gui._folderToggleResync?.();
+    return this;
+};
+
+// Mark a row that a PARTIAL switch (asFolderToggle({fadeOnlyMarked: true})) fades and blocks
+// while it is off. A title checkbox without that option ignores the mark.
+Controller.prototype.fadeWhenFolderOff = function () {
+    this._fadeWhenFolderOff = true;
+    this.domElement.classList.add(FADE_CLASS);
+    for (let gui = this.parent; gui; gui = gui.parent) gui._folderToggleResync?.();
+    return this;
+};
+
+// A LIST CHECKBOX: a checkbox row drawn like a title checkbox. The label takes the free width and
+// the box sits at the right end of the row, in the same column as the title checkboxes of the
+// folders around it. For a folder that is a list of things to switch on and off ("Show Wind at"),
+// so its rows look like the Objects and Effects menus, whose entries are folder titles. Only the
+// look changes: it is still an ordinary boolean row, so drag-to-set over several rows sets them
+// all (CheckboxDragPaint) and a title checkbox that is off still greys it.
+Controller.prototype.asListCheckbox = function () {
+    injectStyles();
+    this.domElement.classList.add("lil-list-checkbox");
     return this;
 };

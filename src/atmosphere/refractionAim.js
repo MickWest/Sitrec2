@@ -20,7 +20,7 @@ const _toDrawn = new Vector3();
 const _toTarget = new Vector3();
 
 export function lookAtDrawnPosition(camera, targetPos) {
-    const context = currentTerrestrialLiftContext(camera.position);
+    const context = currentTerrestrialLiftContext(camera.position, camera, {forAim: true});
     if (!context) {
         camera.lookAt(targetPos);
         camera.userData.geometricAim = null;

@@ -4,8 +4,8 @@
 
 The Lighting menu controls how the 3D scene is lit and how the look view turns that light into
 a picture. It holds the sun and ambient light, shadows, the sky and distance haze, the look
-view's exposure, and a set of optional sky and ground effects: halos, the Brocken spectre, city
-lights and eclipses.
+view's exposure, and city lights. Celestial effects now live in **Show → Celestial**: halos,
+the rainbow, the Brocken spectre and eclipses. Their controls are also described below.
 
 The Sun's position is not set here. Sitrec calculates it from the sitch's date, time and camera
 location, so the lighting follows the **Time** menu. The controls in this menu set how *strong*
@@ -147,7 +147,7 @@ kept.
 
 ## Atmospheric Optics (Halos)
 
-**Lighting → Atmospheric Optics (Halos)**
+**Show → Celestial → Atmospheric Optics (Halos)**
 
 Ice-crystal halos and arcs, drawn on the sky around the Sun by day and around the Moon at night.
 **Show Halos**, the checkbox on the folder title, is off by default. Each optic is drawn only when the Sun (or Moon) is at an
@@ -176,7 +176,7 @@ The look view, facing the Sun with a wide field of view. **Show Halos** is on, a
 
 ### Brocken Spectre
 
-**Lighting → Atmospheric Optics (Halos) → Brocken Spectre**
+**Show → Celestial → Atmospheric Optics (Halos) → Brocken Spectre**
 
 A Brocken spectre is the observer's own shadow cast on fog or cloud below, surrounded by colored
 rings (the *glory*). It appears opposite the Sun. Sitrec draws it in the look view only, at a
@@ -197,6 +197,38 @@ The look view, facing away from the Sun and down onto terrain. **Show Halos** an
 | **Fog Distance (m)** | 350 | The slant distance to the fog (50 to 5,000 m). It sets which terrain hides the spectre. It does not change how large the spectre looks. Use **Spectre Size°** and **Droplet Size (µm)** for that |
 | **Spectre Size°** | 5 | Sets the size of the shadow figure and the Fog Bank (1 to 15). The figure reaches 3.6 times this value in degrees below the center of the rings: 18° at the default |
 | **Droplet Size (µm)** | 10 | The fog droplet diameter (3 to 40 µm). Smaller droplets make a larger glory. About 10 µm is typical of hill fog |
+
+### Rainbow
+
+**Show → Celestial → Atmospheric Optics (Halos) → Rainbow**
+
+A rainbow is sunlight that raindrops send back toward the Sun's side of the sky. It is a circle
+around the point opposite the Sun: the red edge of the main bow is 42.4° from that point, and
+its violet edge is 40.5°. Sitrec calculates these angles from the refraction of light in water,
+and finds the point opposite the Sun from the sitch's date, time and camera location. So the bow
+is in the correct place and at the correct size in the look view for any field of view. The top
+of the bow is at 42° minus the Sun's elevation, so a low Sun gives a high bow, and there is no
+bow above the horizon when the Sun is higher than 42°.
+
+The rainbow does not need **Show Halos**. It needs the Sun above the horizon. Sitrec draws it in
+the look view only, at a real distance, so nearer terrain and objects hide it and it shows in
+front of everything farther away. It adds light to the picture, so it shows best against dark
+cloud or dark terrain.
+
+![Look view of mountains under a blue sky. A wide band of color rises from the lower middle of the picture and leans to the right as it goes up, red on its left edge, then yellow, green and blue. The mountains show through it. A small dark kite with trailing tentacles is in front of the band](docimages/lighting-rainbow.jpg)
+
+The look view, facing east with the Sun low in the north-west and a field of view 6° high. **Show Rainbow** is on, with **Brightness** at 0.6. This is the left leg of the main bow: red is on the outside of the circle, which is the left here. The bow shows over the mountains because they are farther away than the **Rain Distance (m)**.
+
+| Control | Default | What it does |
+|---|---|---|
+| **Show Rainbow** (title checkbox) | Off | Turns on the rainbow. It does not need **Show Halos** |
+| **Secondary Bow** | On | The fainter second bow, 50.4° to 53.7° from the point opposite the Sun. Its colors are in the opposite order, with red on the inside |
+| **Brightness** | 1 | Brightness of the rainbow (0 to 3). **Intensity** does not change it |
+| **Rain Distance (m)** | 3000 | The distance from the camera to the near edge of the rain (100 to 30,000 m). It sets which terrain and objects hide the rainbow. It does not change the size of the bow |
+
+Because the bow is at a known angle from the Sun, a rainbow in a video shows where the Sun was.
+To find the time of a video, set the camera position, heading and field of view, turn on **Show
+Rainbow**, and change the sitch time until the bow in the look view is on the bow in the video.
 
 ---
 
@@ -283,7 +315,7 @@ How the data becomes lights:
 
 ## Eclipses
 
-**Lighting → Solar Eclipse** and **Lighting → Lunar Eclipse**
+**Show → Celestial → Eclipses → Solar Eclipse** and **Show → Celestial → Eclipses → Lunar Eclipse**
 
 Both folders do nothing unless an eclipse is actually in progress at the sitch time and place.
 

@@ -8,7 +8,7 @@ function open() {
         request.onupgradeneeded = () => request.result.createObjectStore("models",{keyPath:"id"});
         request.onsuccess = () => {request.result.onversionchange = () => {request.result.close(); database = undefined;}; resolve(request.result);};
         request.onerror = () => {database = undefined; reject(request.error);};
-        request.onblocked = () => {database = undefined; reject(new Error("Close other Vehicle Designer windows to open My models."));};
+        request.onblocked = () => {database = undefined; reject(new Error("Close other Custom Object Designer windows to open My models."));};
     });
     return database;
 }

@@ -5,6 +5,7 @@ jest.mock("../src/QuadTreeTile", () => ({QuadTreeTile: jest.fn()}));
 
 import {QuadTreeMapTexture} from "../src/QuadTreeMapTexture";
 import {PerspectiveCamera} from "three";
+import {setSit} from "../src/Globals";
 
 const LAYER = 1 << 3;
 
@@ -163,6 +164,148 @@ function isRendering(map, tile) {
 }
 
 describe("QuadTreeMap texture cut reconciliation", () => {
+    test("ray geometry paces refinement and preserves parents at its tile ceiling", () => {
+        const parents = Array.from({length: 30}, (_, x) => makeTile(`10/${x}/0`, {z: 10, x}));
+        const map = makeMap(parents);
+        map.canSubdivide = () => true;
+        map.shouldSubdivideTile = () => true;
+        map.anyProspectiveChildVisible = () => true;
+        map.deactivateParentsWithLoadedChildren = jest.fn();
+        map.reconcileRenderedTileCut = jest.fn();
+        map.triggerLazyLoadIfNeeded = jest.fn();
+        map.subdivideTile = jest.fn();
+        const camera = new PerspectiveCamera(2, 1, 1, 1e6);
+        const setTerrainDetailLimited = jest.fn();
+        const view = {id: "lookView", cameraNode: {camera}, tileLayers: LAYER, heightPx: 500,
+            raytracedRefraction: {drawsTerrainGeometry: () => true, geometryContext: () => ({rayTable: {}}),
+                tool: {setTerrainDetailLimited}}};
+        map.subdivideTilesViewSpecific(view);
+        expect(map.subdivideTile).toHaveBeenCalledTimes(16);
+        expect(map.rayGeometryDetailLimited).toBe(false);
+        while (map.allTiles.size < 5996) map.allTiles.add({tileLayers: 0, children: null, _updateOBBDebug() {}});
+        map.subdivideTile.mockClear();
+        map.subdivideTilesViewSpecific(view);
+        expect(map.subdivideTile).toHaveBeenCalledTimes(1);
+        expect(map.rayGeometryDetailLimited).toBe(true);
+        while (map.allTiles.size < 6000) map.allTiles.add({tileLayers: 0, children: null, _updateOBBDebug() {}});
+        map.subdivideTile.mockClear();
+        map.subdivideTilesViewSpecific(view);
+        expect(map.subdivideTile).not.toHaveBeenCalled();
+        expect(setTerrainDetailLimited).toHaveBeenCalledWith("QuadTreeMapTexture", true);
+        expect(parents.every(tile => isRendering(map, tile))).toBe(true);
+        delete view.raytracedRefraction;
+        map.subdivideTilesViewSpecific(view);
+        expect(map.subdivideTile).toHaveBeenCalledTimes(30);
+    });
+
+    test("standard refraction lifts visibility only; ray-traced geometry owns selection", () => {
+        // Standard refraction is on by default. Its lift may only decide whether
+        // a tile can be seen (_terrainLift); the LOD error stays physical, which
+        // is the selection the visual baselines record. Only a ray-traced
+        // Terrain Geometry context reaches the LOD error (_terrainRefraction).
+        setSit({refraction: true, refractionTerrain: true, terrestrialRefraction: true});
+        try {
+            const map = makeMap([makeTile("10/0/0", {z: 10})]);
+            map.deactivateParentsWithLoadedChildren = jest.fn();
+            map.reconcileRenderedTileCut = jest.fn();
+            map.triggerLazyLoadIfNeeded = jest.fn();
+            map.mergeChildrenIfPossible = jest.fn();
+            const camera = new PerspectiveCamera(30, 1, 1, 1000);
+            const view = {id: "lookView", cameraNode: {camera}, tileLayers: LAYER, heightPx: 500};
+            map.subdivideTilesViewSpecific(view, 1.5);
+            expect(camera._terrainRefraction).toBeNull();
+            expect(camera._terrainLift).toMatchObject({k: expect.any(Number)});
+            expect(camera._terrainLift.rayTable).toBeUndefined();
+            // A ray-traced pass on this view draws its terrain unlifted until it
+            // supplies Terrain Geometry (Screen-space Mirages, or not ready yet).
+            const setTerrainDetailLimited = jest.fn();
+            view.raytracedRefraction = {drawsTerrainGeometry: () => true, geometryContext: () => null,
+                tool: {setTerrainDetailLimited}};
+            map.subdivideTilesViewSpecific(view, 1.5);
+            expect(camera._terrainRefraction).toBeNull();
+            expect(camera._terrainLift).toBeNull();
+            const context = {rayTable: {}};
+            view.raytracedRefraction.geometryContext = () => context;
+            map.subdivideTilesViewSpecific(view, 1.5);
+            expect(camera._terrainRefraction).toBe(context);
+            expect(camera._terrainLift).toBeNull();
+            // Refraction off: no context at all.
+            setSit({refraction: false, refractionTerrain: true, terrestrialRefraction: false});
+            delete view.raytracedRefraction;
+            map.subdivideTilesViewSpecific(view, 1.5);
+            expect(camera._terrainRefraction).toBeNull();
+            expect(camera._terrainLift).toBeNull();
+        } finally {
+            setSit(undefined);
+        }
+    });
+
+    test("leaving Terrain Geometry merges its extra detail without the dead band", () => {
+        // Ray-traced Terrain Geometry refines distant terrain past Standard. Back in
+        // Standard the parents of that detail sit in the merge dead band (1 px here,
+        // between half the 1.5 px target and the target), which kept it for good.
+        const children = [0, 1, 2, 3].map(i => makeTile(`1/${i & 1}/${i >> 1}`, {z: 1, x: i & 1, y: i >> 1}));
+        const parent = link(makeTile("0/0/0", {active: false}), children);
+        const map = makeMap([parent]);
+        map.canSubdivide = () => true;
+        map.deactivateParentsWithLoadedChildren = jest.fn();
+        map.reconcileRenderedTileCut = jest.fn();
+        map.triggerLazyLoadIfNeeded = jest.fn();
+        // Merges once, as a one-level refinement would; then there is nothing left.
+        map.mergeChildrenIfPossible = jest.fn().mockReturnValueOnce(true).mockReturnValue(false);
+        map.updateMergeCameraStability = () => 100;     // the camera has stopped
+        const camera = new PerspectiveCamera(30, 1, 1, 1000);
+        const view = {id: "lookView", cameraNode: {camera}, tileLayers: LAYER, heightPx: 500,
+            raytracedRefraction: {drawsTerrainGeometry: () => true, geometryContext: () => null,
+                tool: {setTerrainDetailLimited: jest.fn()}}};
+        map.subdivideTilesViewSpecific(view, 1.5);
+        map.subdivideTilesViewSpecific(view, 1.5);
+        expect(map.mergeChildrenIfPossible).not.toHaveBeenCalled();
+        // Screen-space Mirages draws terrain unrefracted, as Standard selects it.
+        view.raytracedRefraction.drawsTerrainGeometry = () => false;
+        map.subdivideTilesViewSpecific(view, 1.5);
+        expect(map.mergeChildrenIfPossible).toHaveBeenCalledWith(parent, LAYER);
+        // A deeper refinement collapses one level a pass, so it goes on while
+        // passes merge ...
+        map.mergeChildrenIfPossible.mockClear();
+        map.subdivideTilesViewSpecific(view, 1.5);
+        expect(map.mergeChildrenIfPossible).toHaveBeenCalledTimes(1);
+        // ... and stops at the first that merges nothing: the dead band is back.
+        map.mergeChildrenIfPossible.mockClear();
+        map.subdivideTilesViewSpecific(view, 1.5);
+        expect(map.mergeChildrenIfPossible).not.toHaveBeenCalled();
+    });
+
+    test("an invisible tile is not kept active for having children", () => {
+        // Ray-traced Terrain Geometry refines terrain beyond the horizon. Back in
+        // Standard those tiles are invisible. Their leaves were deactivated, but a
+        // parent stayed active for having children, drawn until timed pruning
+        // removed them, and a merge activated an invisible parent in their place.
+        const quarter = (z, x0, options) => [0, 1, 2, 3].map(i =>
+            makeTile(`${z}/${x0 + (i & 1)}/${i >> 1}`, {z, x: x0 + (i & 1), y: i >> 1, ...options}));
+        // Its children are inactive already: the parent is all that is drawn.
+        const stranded = link(makeTile("1/0/0", {z: 1, visible: false}), quarter(2, 0, {active: false, visible: false}));
+        // Its children are still active: it merges them, and must not replace them.
+        const merging = link(makeTile("1/1/0", {z: 1, x: 1, active: false, visible: false}), quarter(2, 2, {visible: false}));
+        const map = makeMap([stranded, merging]);
+        const visibility = map.calculateTileVisibility;
+        // An invisible tile has no screen-space error.
+        map.calculateTileVisibility = jest.fn((tile, camera, options) => {
+            const result = visibility(tile, camera, options);
+            return result.visible ? result : {...result, screenSpaceError: 0};
+        });
+        map.canSubdivide = () => true;
+        map.deactivateParentsWithLoadedChildren = jest.fn();
+        map.reconcileRenderedTileCut = jest.fn();
+        map.triggerLazyLoadIfNeeded = jest.fn();
+        map.updateMergeCameraStability = () => 100;     // the camera has stopped
+        const camera = new PerspectiveCamera(30, 1, 1, 1000);
+        map.subdivideTilesViewSpecific({id: "lookView", cameraNode: {camera}, tileLayers: LAYER, heightPx: 500}, 1.5);
+        expect(stranded.tileLayers & LAYER).toBe(0);
+        expect(map.deactivateBranch).toHaveBeenCalled();
+        expect(merging.tileLayers & LAYER).toBe(0);
+    });
+
     test("ready ignores render suppression but rendering does not", () => {
         const tile = makeTile("0/0/0", {suppressed: true});
         const map = makeMap([tile]);

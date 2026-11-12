@@ -5,12 +5,13 @@ import {Globals, setRenderOne} from "./Globals";
 export function showPointContextMenu(event, title, actions) {
     const menu = Globals.menuBar?.createStandaloneMenu(title, event.clientX, event.clientY, true, true);
     if (!menu) return null;
-    for (const {label, action, enabled = true} of actions) {
+    for (const {label, action, enabled = true, tooltip} of actions) {
         const controller = menu.add({run: () => {
             menu.destroy();
             if (enabled) action();
             setRenderOne(true);
         }}, "run").name(label);
+        if (tooltip) controller.tooltip?.(tooltip);
         if (!enabled) controller.disable();
     }
     menu.open();

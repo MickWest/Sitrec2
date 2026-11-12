@@ -18,25 +18,27 @@ jest.mock("../src/videoQP/VideoQPAnalysis", () => ({displayIndexForFrame: jest.f
 jest.mock("../src/videoTonal/VideoTonalAnalysis", () => ({startTonalAnalysis: jest.fn()}));
 jest.mock("file-saver", () => ({saveAs: jest.fn()}));
 
-import {NodeMan} from "../src/Globals";
+import {NodeMan, Sit} from "../src/Globals";
 import {saveAs} from "file-saver";
 import {
     addPointTrackFrequencyMenu, clampPeakFloor, FREQUENCY_DEFAULTS, MAX_PEAK_FLOOR_HZ, resetPointTrackFrequencyGraph,
 } from "../src/PointTrackFrequencyGraph";
 import {CNodePointTrackFrequencyGraphView} from "../src/pointFrequency/CNodePointTrackFrequencyGraphView";
 
-function menu() {
+function menuCalls() {
     const calls = [], controller = {};
-    for (const method of ['name', 'tooltip', 'listen', 'perm']) controller[method] = () => controller;
+    for (const method of ['name', 'tooltip', 'listen', 'perm', 'noSlider']) controller[method] = () => controller;
     const folder = {
         add(object, key, min, max, step) { calls.push({object, key, min, max, step}); return controller; },
         addFolder() { return folder; },
         close() { return folder; },
         perm() { return folder; },
+        tooltip() { return folder; },
     };
     addPointTrackFrequencyMenu(folder);
-    return calls.find(call => call.key === 'minPeakHz');
+    return calls;
 }
+const menu = () => menuCalls().find(call => call.key === 'minPeakHz');
 
 // 10 s at 30 fps: a 10 Hz flicker on slow curved drift.
 const indices = Array.from({length: 300}, (_, i) => i);
@@ -93,6 +95,36 @@ test('the menu control keeps the floor a number and re-labels without a new deco
     expect(proxy.minPeakHz).toBe(0.5);
 });
 
+test('the widening frames follow In/Out until they are set', () => {
+    const calls = menuCalls();
+    expect(calls.map(call => call.key)).toEqual(expect.arrayContaining(['in1', 'in2', 'out1', 'out2', 'pingPong', 'renderWidening']));
+    const proxy = calls.find(call => call.key === 'in1').object;
+    try {
+        Sit.aFrame = 522; Sit.bFrame = 905;
+        // In 2/Out 2 are the In/Out region; In 1/Out 1 are its middle quarter.
+        expect([proxy.in1, proxy.in2, proxy.out1, proxy.out2]).toEqual([666, 522, 761, 905]);
+        Sit.aFrame = 100; Sit.bFrame = 110;
+        // A short region still gives at least 16 frames, inside In/Out when it can.
+        expect([proxy.in1, proxy.in2, proxy.out1, proxy.out2]).toEqual([100, 100, 110, 110]);
+
+        proxy.in1 = 618.4; proxy.out1 = '685';
+        Sit.aFrame = 522; Sit.bFrame = 905;
+        expect([proxy.in1, proxy.in2, proxy.out1, proxy.out2]).toEqual([618, 522, 685, 905]);
+        proxy.in2 = -5;
+        expect(proxy.in2).toBe(0);
+        // The reverse part is an option, and it is off until it is set.
+        expect(proxy.pingPong).toBe(false);
+        proxy.pingPong = 1;
+        expect(proxy.pingPong).toBe(true);
+
+        resetPointTrackFrequencyGraph();
+        expect([proxy.in1, proxy.in2, proxy.out1, proxy.out2]).toEqual([666, 522, 761, 905]);
+        expect(proxy.pingPong).toBe(false);
+    } finally {
+        delete Sit.aFrame; delete Sit.bFrame;
+    }
+});
+
 test('saved states are sanitized; saves without a floor get the default', () => {
     const view = analyzedView();
     view.modDeserialize({frequencyOptions: {radius: 6, percent: false}});
@@ -108,6 +140,27 @@ test('saved states are sanitized; saves without a floor get the default', () => 
     view.modDeserialize({});
     expect(view.options.minPeakHz).toBe(0.5);
     expect(view.modSerialize().frequencyOptions.minPeakHz).toBe(0.5);
+});
+
+test('the vertical scale covers only the frequencies that the peak search considers', () => {
+    // DN·px, so the scale is the amplitude itself. The fixture background is constant.
+    const view = analyzedView({minPeakHz: 1.5, percent: false});
+    const scaled = () => { view.updateSpectrum(); view.autoScale(); return view.maxY; };
+    // The labeled 10 Hz flicker fills the plot. The drift below the floor is still
+    // in the spectrum, and taller than the plot.
+    expect(scaled()).toBeCloseTo(view.spectrum.peak.amplitude * 1.1, 9);
+    expect(view.spectrum.peak.amplitude).toBeCloseTo(2, 1);
+    expect(Math.max(...view.spectrum.amplitude)).toBeGreaterThan(5 * view.maxY);
+
+    // With no floor the drift is searched, so it sets the scale as it did before.
+    view.options.minPeakHz = 0;
+    expect(scaled()).toBeCloseTo(view.spectrum.peak.amplitude * 1.1, 9);
+    expect(view.maxY).toBeGreaterThan(10);
+
+    // Nothing to search: the whole spectrum sets the scale, so the curve stays in view.
+    view.options.minPeakHz = 30;
+    expect(scaled()).toBeCloseTo(Math.max(...view.spectrum.amplitude) * 1.1, 9);
+    expect(view.spectrum.peak).toBeNull();
 });
 
 test('the view searches above its floor and exports the floor with the settings', async () => {
@@ -127,7 +180,8 @@ test('the view searches above its floor and exports the floor with the settings'
     const rows = (await saveAs.mock.calls.at(-1)[0].text()).split('\n');
     const header = rows.findIndex(row => row.startsWith('scene_in,'));
     const columns = rows[header].split(','), values = rows[header + 1].split(',');
-    expect(columns.at(-1)).toBe('peak_floor_hz');
+    const floor = columns.indexOf('peak_floor_hz');
+    expect(floor).toBeGreaterThan(-1);
     expect(values.length).toBe(columns.length);
-    expect(Number(values.at(-1))).toBe(2);
+    expect(Number(values[floor])).toBe(2);
 });

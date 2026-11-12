@@ -9,6 +9,215 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.192.1 (2026-11-11)
+
+### New Features
+- **Overall scale in the Custom Object Designer** (Sitrec → Extra Tools → *Custom Object Designer*, or Objects → *object* → *Edit design…*; then *Scale* → *Overall scale · ×*): a new control multiplies every dimension of a custom object, from 0.01 to 100. The default is 1, and a value of 0.1 makes a 1:10 scale model. *Scale* is the first folder of every object type. The other controls keep the full-size dimensions, and the read-outs under the preview show the scaled sizes. The slider moves by ratio, with 1 in the middle. The intensity of the lamps and the lifting area of a kite change with the square of the scale. The mass of a kite and the wingbeat rate of a bird do not change. In Sitrec, *Model Length* of the object still sets its length in the scene when it is not zero.
+
+### Improvements
+- **Kite gusts: *Wind Variability (%)* is now the turbulence intensity** (Contents → *kite* → *Wind Variability (%)*): the value is now the typical size of the gusts along the wind (their standard deviation), as a percentage of the wind speed. Gusts across the wind are 0.8 of that size, and they turn the wind from side to side. A gust now lasts for its length divided by the wind speed: about one minute along the wind and about 20 seconds across it, for a kite 60 m or more above the ground in a wind of 5 m/s. These values are those of the Kaimal turbulence model in the wind-turbine standard IEC 61400-1. The kite now follows its balance position with a delay, which is the time that the wind takes to go the horizontal distance from the anchor to the kite: about 15 seconds for a kite that is 75 m downwind in a wind of 5 m/s. So the kite moves slowly from side to side, and up and down. Before, its motion changed in jumps and its path had sharp corners. The default is now 10 (it was 20), and the range is 0 to 40 (it was 0 to 100). The tooltip gives typical values: about 10 over open flat ground or water, 15 in open country, 20 among trees and houses, and 30 in a town. A kite in a saved sitch keeps its value, but its path is different. *Wind Variability (%)* of a balloon did not change.
+- **Custom Object Designer: lengths as small as 0.01 m** (Sitrec → Extra Tools → *Custom Object Designer*, or Objects → *object* → *Edit design…*): each length in meters now has a lower limit of 0.01 m or less. Before, many lengths had a larger lower limit: for example 3 m for *Fuselage length · m*, 2.5 m for *Body length · m* of a road vehicle, 0.2 m for *Width · m* of a kite and 0.08 m for *Length, bill tip to tail tip · m* of a bird. Some details have a fixed size, for example the doors and the lettering of an airliner, and they are out of proportion on a very small design. To make a small object, keep the full-size dimensions and use *Overall scale* (#15184 "Model designer measurements").
+
+### Bug Fixes
+- Fixed the number boxes of the Custom Object Designer changing the text while you type. Each key press applied the limits of the control to the text, so "20" became "30" in a box with a lower limit of 3. A number box now keeps the text that you type. The model still uses a value inside the limits, and the box shows that value when you press Enter or leave the box (#15184 "Model designer measurements").
+- Fixed an empty preview in the Custom Object Designer for an aircraft with a short fuselage, or with engines offset to behind the tail. Examples are the 737-800 preset with *Fuselage length · m* at 3 or at 12, and the A-10C Thunderbolt II preset with *Forward offset · m* at −4 (#15184 "Model designer measurements").
+
+## Version 2.192.0 (2026-11-11)
+
+### New Features
+- **Birds in the Custom Object Designer** (Sitrec → Extra Tools → *Custom Object Designer*, or Objects → *object* → *Browse custom objects…*): a new object type, *Birds*, has 40 presets of common species in flight: gulls, pelicans, cranes, a raven and a crow, pigeons and doves, geese, swans and a duck, eagles, a hawk and a vulture, a heron, an egret and a stork, seabirds, an owl and small birds. Each bird has the typical length and wingspan of its species and its own colors, and its wings beat as the sitch time runs. In the object's folder, *Bird flight* sets *Flapping*, *Gliding* or *Flap, then glide*, and *Wingbeats per second* sets the rate. Each preset starts with a rate for its species: a measured value from a published paper for 24 presets, and an estimate for the other 16. To match a video, count the wingbeats in the video and set this value. With *Animate moving parts* off, the wings are in the glide position. A bird does not bank or steer: its path and its speed come from its track. The library now has 347 presets.
+- **Location group for an object** (Objects → *object* → *Location*): an object from *Add 3D Object*, *Add Moving Object* or *Add Moving Object (In→Out)* in the ground right-click menu now has a *Location* group, directly below *Name*. Its *Position* control is *Manual* or one of the tracks of the sitch. On *Manual*, the *Lat*, *Lon* and *Alt* values set the position, and you can also drag the object. On a track, the object moves along that track and points along it, and the manual values are hidden. So you can put an object on a track that is already in the sitch, move it to another track, or take it off its track. When you go back to *Manual*, the object stays where the track put it on the current frame. A track that you add or load later comes into the list, and no object goes to it by itself. A balloon and a kite stay with their own track and have no *Location* group.
+- **A dialog when Sitrec is updated while a sitch is open** (the *Sitrec was updated* dialog): Sitrec loads some of its parts only when you first use them, for example the Custom Object Designer. When a new version went on the server, a page that was already open could not load those parts and showed only an error. It now shows a dialog with these choices. *Save and reload* saves the sitch as Ctrl/Cmd+S does, then reloads the page with the new version. *Reload with a temporary save* keeps the sitch in this browser, reloads the page, and opens the sitch again with its unsaved changes. Nothing goes to the server. *Try to continue* loads the part from the new version into the open page. It can fail if the two versions are too different. *Cancel* does nothing. A temporary save cannot keep a file that is only in the memory of the page (a video, a track or a model that you dragged in and did not save). The dialog names those files, and that choice is then grayed out. The dialog is part of the page that is open, so you can see it first at the next update after this one.
+
+### Improvements
+- **Wings, propellers and rotors move in a flock** (Objects → *object* → *Flock*): when the object of a flock is a custom object with moving parts and *Animate moving parts* is on, the parts now move on each member of the flock. The wings of a bird beat, and propellers and rotors turn. Before, they did not move in a flock. The members are at 12 different moments of the motion, so the birds of a flock do not all beat their wings together.
+
+### Bug Fixes
+- Fixed the main camera jumping hundreds of kilometers when an orbit or a zoom started with the pointer on the sky, in a newly loaded sitch. This occurred with a Shift + drag, a middle-button drag, the mouse wheel, the + and − keys and a touch zoom. Now, until you first press or zoom on the ground, an orbit turns the camera in place and a zoom does nothing.
+
+## Version 2.191.1 (2026-11-10)
+
+The features listed under 2.191.0 reach the Metabunk site with this release. Version 2.191.0 was not installed there.
+
+### Security
+- The message that Sitrec writes to the debug log (Help → *Export Debug Log*) when you add a balloon or a kite no longer has a position. Before, the message for a new balloon (ground right-click menu → *Add Balloon*) had the latitude and longitude of its launch point, since 2.102.0, and the message for a new kite (*Add Kite*) had those of its anchor. Each message now has only the id and the name of the track. The debug log is a file that you make and send yourself, for example with a bug report.
+
+## Version 2.191.0 (2026-11-10)
+
+### New Features
+- **Add Kite** (ground right-click menu → *Add Kite*, below *Add Balloon*): adds a kite on a flying line that is held at the clicked point. The wind puts the kite downwind of that point, at the height where its lift, its drag, its weight and the pull of the line are in balance. The kite turns its nose into the wind, and its tails move with the wind. Use it to test if a kite can be at the position of an object in a video. The kite's folder in Contents has *Anchor Altitude (m MSL)* (the ground at the clicked point), *Line Length (m)* (default 100), *Line Weight (g/m)* (default 0.5), *Line Diameter (mm)* (default 1), *Wind Variability (%)* (default 20) and *Random Seed* (default 1). Two read-only rows, *Kite Position* and *Wind and Pull*, show the height of the kite, its distance downwind, the wind speed and the pull of the line at the current frame. A new kite is a small diamond kite. To change its type, use *Browse custom objects…* in the kite's folder in Objects. The kite uses the wind of the sitch (Physics → Wind). When the wind is too light, the kite is on the ground, and *Kite Position* shows *On the ground*. You can select the kite as the camera track or the target track, and it is saved with the sitch.
+- **Kites in the Custom Object Designer** (Sitrec → Extra Tools → *Custom Object Designer*, or Objects → *object* → *Browse custom objects…*): a new object type, *Kites*, has 15 presets of seven shapes: diamond, delta, rokkaku, sled, box, parafoil and octopus. An octopus kite has eight tentacles that move with the wind. Each kite design has a *Flight* folder with *Mass · kg*, *Lifting area · m² (0 = from the shape)*, *Lift coefficient* and *Drag coefficient*. *Add Kite* uses these values. They are estimates for each type of kite, not measurements. The library now has 307 presets.
+- **Rainbow** (Show → Celestial → Atmospheric Optics (Halos) → Rainbow): draws a rainbow in the look view, at the correct angle from the point opposite the Sun. Sitrec finds that point from the date, the time and the camera position of the sitch, so a rainbow in a video can give the time of the video. *Show Rainbow* (the title checkbox, off by default) turns it on. It does not need *Show Halos*, and it needs the Sun above the horizon. *Secondary Bow* (on by default) adds the fainter second bow. *Brightness* (default 1) sets how bright the rainbow is. *Rain Distance (m)* (default 3000) sets how far away the rainbow is: nearer terrain and objects hide it. The settings are saved with the sitch.
+
+### Improvements
+- **The Vehicle Designer is now the Custom Object Designer** (Sitrec → Extra Tools → *Custom Object Designer*): the tool has a new name, because it makes more than vehicles. In an object's folder (Objects), the button *Browse vehicles…* is now *Browse custom objects…*, and the row *Vehicle* is now *Custom object*. The address of the tool, your saved designs and the design files did not change.
+
+### Bug Fixes
+- Fixed *Echo Dark* and *Echo Light* (Video → Video Processing) on a stabilized video. Echo combined the stabilized current frame with earlier frames that were not stabilized, so the result showed the camera shake and not the motion of the objects. Echo now uses the stabilized version of each earlier frame. It also calculates again when you turn stabilization on or off, or stabilize again.
+- Fixed the video view staying black after a sitch loaded with *Echo Dark* or *Echo Light* on (Video → Video Processing) and with Levels settings applied (Video → Video Adjustments → *Levels*). The view stayed black until the frame changed.
+
+## Version 2.190.1 (2026-11-10)
+
+### New Features
+- **Go to Next Untracked** (Video → Point Track → *Go to Next Untracked*): moves the playhead to the start of the next gap in the track, from the In frame to the Out frame, and pauses playback. A gap is a group of frames with no tracked point: interpolated frames, estimated frames, and frames with no position. A tracked point is one that the tracker detected or that you placed. A message on the video gives the frames of the gap. Press the button again for the next gap. After the last gap it goes back to the first. It does nothing while a track runs.
+
+### Improvements
+- **Point Track shows frames with no point in red** (Video → Point Track): a frame that has no point and is between two points gets its position from the straight line between them. These interpolated frames are now red on the timeline, the trail is red across them, and on such a frame the cursor is red, with *interpolated* after the position. Before, nothing marked them. The parts of the trail to or from an estimated point are now amber. Where the tracker did not find the object, the frames stay without a color and the trail keeps its break.
+- **Frequency Analysis measures frames with no tracked point** (Video → Point Track → *Frequency Analysis*): when some frames from In to Out have an interpolated or estimated position, the graph now measures them at that position and shows a red warning box. Before, it showed a message and no spectrum. The box gives the number of those frames, the number of gaps and the length of the longest gap. It also gives a trial of the interpolation: how far a straight line is from the track across as many tracked frames beside the gaps, with the aperture radius. If no gap has enough tracked frames beside it, the box gives how far the track moves across a gap. Press the × of the box to close it. It stays closed until you change In or Out. On those frames the measuring circle on the video is dashed. *Export CSV* (Frequency Analysis Settings) now gives the number of those frames, and a new column says whether each frame is tracked or interpolated. A frame with no position, before or after the track or where the object was not found, still stops the analysis, with a new message that gives these two causes.
+- **Frequency Analysis warnings at the top of the plot** (Video → Point Track → *Frequency Analysis*): the line about aperture pixels at the black or white limit now gives the number of frames and the largest part of the aperture that is at a limit. It is an amber line at the top of the plot, and it no longer replaces the method line at the bottom. The vertical scale leaves room for the warnings above the curves.
+
+### Bug Fixes
+- Fixed the Point Track colors on the timeline (green, amber and magenta) going away, so that they showed only while a track ran. They now stay while Point Track is on, and they show when you enable Point Track and when you open a saved sitch that has Point Track on. The timeline marks of Motion Analysis and of the OSD Tracker (Video menu) went away in the same way, and they now stay too. While *Show Cache* (Video → Video Processing) is on, the timeline shows the cache line in place of these colors.
+- Fixed a KML track whose altitudes are heights above the ground being read as heights above sea level. A track made 5 ft above a road was drawn far under the ground. Such a track is now read as height above the terrain, and a track that the file puts on the ground is put on the terrain. A track with no altitude mode, or with parts in different modes, is read as before. A sitch saved by version 2.190.0 or earlier keeps its tracks where they were. The *Select Tracks* list and the *Altitude Range (ft)* filter now put such a track on the loaded terrain to get its altitude, and the Track Browser shows its height above the ground (#15182 "KML doesn't work as a track").
+
+## Version 2.190.0 (2026-11-10)
+
+### New Features
+- **Render Widening Video** (Video → Point Track → Frequency Analysis Settings → *Render Widening Video*): renders a viewport video that stays on the current frame while the In/Out region changes, so you can see how the Frequency Analysis spectrum changes with the region. *Widening In 1* and *Widening Out 1* set the region at the start of the video, and *Widening In 2* and *Widening Out 2* set the region at the end. With *Widening Ping-Pong* on (it is off by default), the region then goes back to the start. The Frequency Analysis graph and the custom graphs that show are brought up to date for each video frame. The Point Track overlay, while it shows, draws the track from In to Out with the In and Out frame numbers at its ends. The timeline is added below the views, with the same two numbers above its In and Out markers. In and Out get their earlier values back when the render ends. The four frames and the checkbox are not saved with the sitch.
+
+### Improvements
+- **Point Track overlay in viewport renders** (Video → Video Render & Export): *Render Viewport Video*, *Render Fullscreen Video*, a single-view render of the video view, and *Render Fade Video* with *Render Whole Viewport* on now include the Point Track cursor and trail while Point Track is enabled (Video → Point Track → *Enable Point Track*). Before, these renders left the overlay out. *Render Source Video* does not change.
+- **Faster Frequency Analysis when In or Out moves** (Video → Point Track → *Frequency Analysis*): when the new In/Out region is inside the frames that the graph already measured, the graph calculates only the spectrum again and does not read the video again. The graph then follows a drag of the In or Out marker on the timeline. A region that goes outside those frames is measured again.
+
+## Version 2.189.0 (2026-11-09)
+
+### New Features
+- **Search Documentation** (Help → Documentation → *Search Documentation*): search the titles and the text of the documentation pages. Type a few words, for example *wing flapping* or *frame rate*. Each result shows the page, the section and a short excerpt with the matched words highlighted, and a click opens that section in a new tab. All the words must be in the same section. A word of three or more letters also finds longer words that start with it, and letter case does not matter. The search field stays in place while the list of results changes.
+
+### Improvements
+- **Frequency Analysis guide** (Help → Documentation → Video Tools → *Frequency Analysis*, or Video → Help): a new guide to Frequency Analysis (Video → Point Track), with diagrams. It explains the limits from frame rate, duration and object size, each setting, the peak search floor, and the calculation step by step. It also explains how tracking errors, a changing background, neighboring objects and video compression can hide a repetition or make a false peak. The AI Assistant can read it.
+- **Frequency graph scale** (Video → Point Track → *Frequency Analysis*): the vertical scale now fits the frequencies that the peak label can use, at or above *Peak search floor (Hz)* in Frequency Analysis Settings. Slow brightness drift below the floor no longer makes the labeled peak too small to see. A curve that is taller below the floor is cut off at the top of the graph. The spectrum and the peak label do not change.
+
+### Bug Fixes
+- Fixed Motion Analysis (Video → Motion Analysis, with *Skip Duplicates* on) sometimes showing no motion for a frame of a moving video, when the frame before it was not decoded yet.
+- Fixed a saved sitch with GFS wind (Physics → Wind) sometimes opening with wind lines from only one of the two 6-hour cycles around the sitch time.
+- Fixed GFS wind (Physics → Wind) using only the earlier 6-hour cycle, or failing to load a level, when the wind server was busy. Sitrec now waits and asks again.
+
+## Version 2.188.0 (2026-11-07)
+
+### New Features
+- **Horizon compass** (Show → Celestial → Horizon Compass): a ribbon along the sea-level horizon with compass directions and degree ticks, in the main view, the look view or both. It dips below level when the camera is high, and its labels stay upright. *Cardinal Directions* and *Headings (Degrees)* turn the two sets of labels on and off, and *Opacity* and *Text Size* set its look. It is off by default.
+- **Azimuthal grid** (Show → Celestial → Lines → Azimuthal Grid): lines of azimuth and elevation around each camera's local north and level horizon, in the main view, the look view or both. *Grid Spacing* (5° to 45°, default 10°) sets the spacing of this grid and of the equatorial grid. It is off by default.
+- **Ridgeline** (Show → Celestial → Lines → Ridgeline): a thin line along the outline of the terrain and 3D buildings against the sky, in the main view, the look view or both. It follows fisheye, panorama and refraction. It is off by default.
+- **Terrain Geometry for ray-traced refraction** (Effects → Atmospheric Refraction, *Model* Ray-traced, *Rendering* Terrain Geometry): the ray-traced view moves the terrain along the traced rays before it finds what is in front, so distant terrain below the straight-line horizon can appear, out to *Trace Distance*. *Screen-space Mirages* stays the default, and you need it when the rays fold. *Trace Distance* now goes up to 1000 km. Camera fitting is not available with Terrain Geometry.
+- **Limit by Magnitude** (Satellites): with the *Photometric estimate* brightness model, the look view can hide satellites that are fainter than *Satellite Magnitude Limit* (an estimated apparent magnitude, default 7.5), instead of using *Sat Cut-Off*.
+
+### Improvements
+- **Show → Celestial in folders** (Show → Celestial): the sky controls are now in the folders *Stars and Planets*, *Lines*, *Labels*, *Horizon Compass*, *Vectors*, *Shadows*, *Eclipses* and *Extra Celestial Views*. Star and planet brightness, the star magnitude limit and *Physical Point Sources* move here from the View menu. *Atmospheric Optics (Halos)* moves here from the Lighting menu, and *Solar Eclipse* and *Lunar Eclipse* move to the *Eclipses* folder. *Star Chart* moves to *Extra Celestial Views*. Some rows have new names: *Star/Planet Names*, *Planets Only*, *Name Filter* (was Label List), *Star Magnitude Limit* and *Link Brightness*. *Planets Only* is available after you turn on *Star/Planet Names*. *Celestial Help*, at the bottom of the folder, opens the new Celestial Display page.
+- **One row for Main and Look**: a setting that has a main view version and a look view version now has one row with two boxes, M and L. For example, *Show Tracks in Main* and *Show Tracks in Look* (Contents) are now one *Show Tracks* row. This applies to tracks, grids, labels, pins, measurements, the compass, the time display, per-view shadows, satellite labels and the celestial rows. Each box changes only its own view, and you can drag across boxes to set several of them.
+- **Constellation names on their own switch** (Show → Celestial → Labels → Constellation Names): the names no longer follow *Constellation Lines*. A saved sitch keeps the names it showed.
+- **Celestial vectors for every planet, in each view** (Show → Celestial → Vectors): arrows to Mercury, Uranus, Neptune and Pluto join the arrows to the Sun, Moon, Venus, Mars, Jupiter and Saturn. Each arrow has its own Main and Look box. The two boxes on the *Vectors* title hide the arrows in a view and keep your choices. *Vectors On Traverse* is now saved with the sitch.
+- **Thinner celestial lines** (Show → Celestial → Lines → Line Width): constellation lines and both grids are now 0.25 pixels wide by default (they were 1 pixel), and a slider changes the width. The grids fade out near their poles, so their lines no longer crowd into a bright spot. The equatorial grid no longer draws one meridian and one circle in magenta.
+- **Star Chart magnitude limit** (Show → Celestial → Extra Celestial Views → Star Chart): the chart has its own *Star Magnitude Limit* (default 5.5), saved with the sitch. *Satellite Ephemeris* and *Sky Plot* are now checkboxes that show and hide their windows.
+- **One Atmospheric Refraction menu** (Effects → Atmospheric Refraction): the View → Atmospheric Refraction folder and the Effects → Ray-traced Refraction folder are now one folder. Its title checkbox turns refraction on and off in every view, now also the ray-traced view, which keeps its atmosphere while refraction is off. *Model* selects *Standard* or *Ray-traced* and shows the settings of that model. The ray-traced view now also follows *Sky* and *Terrain and Buildings*. A saved sitch opens with the model it used.
+- **Standard refraction follows the air along the sight line** (Effects → Atmospheric Refraction, *Model* Standard): a long sight line between two high points sags into denser air, so a distant summit is raised more than before. A camera high above the ground sees the ground raised less. Sight lines with both ends near the ground change little.
+- **Distant terrain near the horizon**: with standard refraction on (the default), terrain loading now allows for the refraction, so distant ridges that refraction raises above the horizon are loaded and drawn. Distant mountains beyond the sea horizon can also load finer tiles, with refraction on or off.
+
+### Bug Fixes
+- Fixed *Render Stars* having no effect on the stars in the sky. It is now *Render Stars and Planets* (Show → Celestial → Stars and Planets), and it hides the stars, the planets, the Sun and the Moon, with their name labels.
+- Fixed a satellite download from the Satellites menu adding to the satellites already loaded, without asking whether to replace them, after an earlier satellite load.
+- Fixed the surface of distant terrain going missing in a zoomed-in view when refraction raised it into the view.
+- Fixed terrain falling to sea level where the elevation data has no value. It now takes its height from a coarser tile at the same place.
+
+## Version 2.187.3 (2026-11-04)
+
+### New Features
+- **Ruler icon for the V/B measurement** (the header bar of the main view and of the look view; Show → Measurements): the V/B measurement now has its own controls in each view, separate from *Measurements in Main* and *in Look*, which no longer affect it. Each click on the ruler icon moves to the next state: off, the line, or the line with its circle. The same settings are *V/B Measure in Main* / *in Look* and *V/B Circle in Main* / *in Look* under Show → Measurements, and in each view's header menu. The main view starts with the line and no circle, and the look view starts off, so the circle that 2.187.2 always drew is now a second click. *Declutter* also hides it. The settings are saved with the sitch.
+
+### Improvements
+- **Placing and removing the V/B measurement** (hold *V* or *B* over the ground): in a sitch with no measurement, the first press of *V* or *B* puts that end under the mouse and the other end one foot to the east, so a measurement with its length and heading appears at once, and its circle where the circle is on. A new sitch shows no measurement until you place one. The two ends always stay at least one foot apart, so the heading and the circle are always defined. To remove a measurement, drag one end onto the other and release the key. A dot now marks the V end; the B end keeps its arrowhead. Undo takes back a placement, a move or a removal in one step.
+- **SitrecBridge (1.0.68)** (Help → Documentation → *Download MCP Bridge*): the list of Sitrec tabs in the extension's popup now marks the tab at the front of the window with an asterisk and bold text, so when several Sitrec tabs are open you can see which row is the tab you are looking at. That is the tab that *Close Other Sitrec Tabs* keeps.
+
+### Bug Fixes
+- Fixed the V/B measurement not appearing when you pressed *V* and then *B* in a new sitch (since 2.187.2). A sitch saved in that state opens with no measurement instead of a label that reads NaN.
+- Fixed the main view showing stars and no Earth, while the look view showed the ground, with Google Photorealistic 3D tiles (Terrain → *3D Buildings*) when the look view had a narrow field of view over a built-up area. Each view now has its own store of tiles, so a view that fills its own no longer blocks the others.
+
+## Version 2.187.2 (2026-11-04)
+
+### New Features
+- **True heading and a circle on the V/B measurement** (hold *V* or *B* over the ground to place its two ends): the label now shows the true heading from the V end to the B end under the distance, clockwise from north, for example *38.9° true*. A circle centered on the V end passes through the B end, so you can see the same distance in every direction. When the two ends are at the same place, or one is straight above the other, the label shows *—° true* and there is no circle. *Measurements in Main* and *Measurements in Look* (Show → Measurements) show and hide the circle with the arrows.
+
+### Improvements
+- **V/B measurement over terrain**: the two arrows of the V/B measurement and its circle are now drawn over terrain and buildings, so a measurement across a hill or an island stays visible. They are not drawn on the far side of the Earth.
+
+### Bug Fixes
+- Fixed the other end of the V/B measurement jumping to an old position when you held *V* or *B* after opening a saved sitch, or a chapter of a sitch, that has a measurement.
+
+## Version 2.187.1 (2026-11-04)
+
+### Improvements
+- **Time zone from a track** (Time → *Time Zone*): a track file that sets the start time of a new sitch, which is the first track that you drop into it, now also sets the zone at the place where the track starts, with the daylight saving rule of the track's date. Before, a track did not change the zone. A track that you add after the sitch has its time does not change the zone, and a saved sitch keeps its own zone (#13674 "Some sitrec questions, and suggestions?"; #14311 "Sitrec 2.1 New Features").
+
+## Version 2.187.0 (2026-11-03)
+
+### New Features
+- **Colored time zones** (Time → *Show Time Zones*): each zone now has a light color for its UTC offset. The colors repeat every 6 hours: UTC orange, UTC+1 yellow, UTC+2 green, UTC+3 blue, UTC+4 purple and UTC+5 red. A zone on a half or quarter hour, such as India (UTC+5:30) or Nepal (UTC+5:45), has diagonal stripes of the colors of the two hours next to it. Where two zones cover the same land, as in Xinjiang, the area has stripes of both colors (#13674 "Some sitrec questions, and suggestions?"; #14311 "Sitrec 2.1 New Features").
+- **Time Display in Main** (Show): shows the date and time, in UTC and in the selected time zone, at the bottom right of the main view, as in the look view. The clock button on the header bar of the main view also turns it on and off. It is off by default, and the setting is saved with the sitch.
+
+### Improvements
+- **Show Time Zones with daylight saving time** (Time): the map now shows the time zones at the Now Time. A line marks where the clocks on its two sides show different times, and the lines and colors change when the Now Time crosses a change of daylight saving time. For example, in July a line goes around Arizona, and in January there is no line. Before, a line marked only a change of standard time. The labels now agree with the colors (#13674 "Some sitrec questions, and suggestions?"; #14311 "Sitrec 2.1 New Features").
+- **Time zones of past dates** (Time → *Show Time Zones*): each zone of the map is now an area where the clocks have been the same since 1970, so the map also shows the zones of past dates. For example, British Columbia is on UTC-8 in January 2025. The map data is now about 250 KB, and it loads the first time that you use it (#13674 "Some sitrec questions, and suggestions?"; #14311 "Sitrec 2.1 New Features").
+- **Time zone from a location** (Time → *Set Time Zone from Camera Location*, and a photo or a video with a position): Sitrec now finds the zone on the *Show Time Zones* map, which has the small areas with their own clock. Before, it put the Hopi reservation in Arizona on daylight saving time in summer, and it gave the wrong zone at Atikokan, Blanc-Sablon and Danmarkshavn. The zone name in the message can now be a different zone with the same clocks since 1970, for example *Europe/Berlin* for Oslo (#13674 "Some sitrec questions, and suggestions?"; #14311 "Sitrec 2.1 New Features").
+
+### Bug Fixes
+- Fixed gaps in the lines of *Show Time Zones* (Time) where the borders of two zones next to each other did not meet exactly, for example along 68° S in Antarctica and around Iceland (#13674 "Some sitrec questions, and suggestions?"; #14311 "Sitrec 2.1 New Features").
+
+## Version 2.186.2 (2026-11-03)
+
+The features listed under 2.186.0 reach the Metabunk site with this release. Versions 2.186.0 and 2.186.1 were not installed there.
+
+### Bug Fixes
+- Fixed the satellite size catalog not loading on Metabunk since 2.184.0. Without it, satellites other than Starlink, Kuiper and the ISS got their brightness from a rough radar size class, or from 1 square meter, so large ones such as rocket bodies were much too faint in the look view and in long exposures. *Per satellite (GCAT catalog)* (Satellites → *Starlink Design*) treated every Starlink as an unknown design, and the right-click menu of a satellite had no *Size (GCAT)* or *Starlink Design (GCAT)* row. Only the Metabunk site was affected, not the desktop app or other installs.
+
+## Version 2.186.0 (2026-11-03)
+
+### New Features
+- **Set Time Zone from Camera Location** (Time): sets *Time Zone* to the zone at the look camera position, with the daylight saving rule of the sitch start date. The main view then shows the new zone, for example *Time Zone Set to JST UTC+9 (Asia/Tokyo)*. The time does not change, only the zone that shows it. A zone that is not in the list is named by its offset, for example *UTC+8.00*, and the list now has *AEDT UTC+11* (#13674 "Some sitrec questions, and suggestions?"; #14311 "Sitrec 2.1 New Features").
+- **Show Time Zones** (Time): draws the time zone borders over the globe in the main view as yellow lines, as on an ordinary time zone map. A line marks a change of standard time, so the lines do not move with daylight saving time. A row of labels at the latitude of the center of the view names each zone for the sitch date, for example *PDT* over *UTC-7*. The borders are those of late 2026, and they load the first time you turn this on. The setting is saved with the sitch (#13674 "Some sitrec questions, and suggestions?"; #14311 "Sitrec 2.1 New Features").
+
+### Improvements
+- **Time zone from a photo or a video**: a photo with a GPS position now sets *Time Zone* to the zone at that position. If the photo's capture time has no time zone offset, Sitrec now reads it as local time at that position, not in your computer's zone. A video with a location that starts a new sitch now sets the zone at its location when its date is plain UTC or missing. Before, a plain UTC date gave *GMT UTC+0*. A saved sitch keeps its own zone (#13674 "Some sitrec questions, and suggestions?"; #14311 "Sitrec 2.1 New Features").
+- **Traverse wind** (Physics → Wind): *Lock Altitude to* has a new choice, *Traverse*, which makes *Altitude* follow the height of the traverse object on each frame. *Show Wind at* has a new *Traverse* row, off by default, which shows in purple the Target Wind where the traverse object is. Before, in a custom sitch the traverse object had no row there, so the wind at the traverse could not be shown.
+
+## Version 2.185.1 (2026-11-03)
+
+### Improvements
+- **Track names from a TS file** (Contents): a track from a KLV stream in a .ts file is now named by its stream number, its tag 65 (the "local set" number) and its tail number, for example *S1 LS7 AF00371*, or *S0 LS5 Platform* when the stream has no tail number. A track derived from the stream has its kind in place of the tail number, for example *S1 LS7 Frame Center* or *S1 LS7 Target Location*. The camera and target track lists, the track's object and its 3D label use the same name. Only a new import gets these names: a saved sitch keeps the names it was saved with.
+- **Timing Analysis report** (Time → *Timing Analysis...*): the *Tracks* part is now always shown. It lists the name of each track with its stream, and explains how Sitrec made the name. With *Show Filename and Names* cleared, tail numbers, file names and names that you gave change to *hidden*. In the report, tracks derived from a stream are now called *Frame Center* and *Target Location*, as in their names.
+- **Show Track Line** (Contents, in each track's folder): this is now the title checkbox at the right end of the folder title, so you can drag across the title checkboxes of several tracks to show or hide them together. When it is off, only the rows that change the line are faded and cannot be used: *Line Color*, *Color Mode*, *Line Width*, *Poly Color*, *Extend To Ground*, *Display Step* and *Show in look view*. The other rows, such as *Name*, the contrail rows and *Delete Track*, still work.
+
+## Version 2.185.0 (2026-11-02)
+
+### New Features
+- **Live Target Wind and Local Wind** (Physics → Wind): with any Wind Source except *Manual*, Target Wind and Local Wind now read the source on every frame, at the place, height and time where the wind is used. Before, they kept one value from the last load. The sliders show the wind at the target or the camera on the current frame. To set your own value, turn on the new *Override Target Wind* or *Override Local Wind*. *Local from Constant Camera* now turns on *Override Local Wind* and no longer changes the Wind Source.
+- **Show Wind at** (Physics → Wind): replaces *Inspect Wind*. It shows the wind at the camera, the target, the mouse cursor and each 3D object, with the source and the time of its data. It also says when a value is held above or below the data, is under the ground or is still loading. The first change that you make to the wind in a sitch turns it on, if it was never on there.
+- **Wind Status** (Physics → Wind → *Status*): says where the wind comes from: the source, the time of the data, the distance from the target to the data and the heights that it covers.
+- **Wind units and Wind in Knots** (Physics → Wind): wind speeds and heights in the Wind menu and in the readouts now use the units of Physics → *Units*, for example *Target Wind Speed (mph)*. *Wind in Knots* shows the speeds in knots. *Opacity*, *Spacing* and *Max Speed* move to a new *Wind Line Style* folder.
+- **XML wind profile message**: after you import an XML wind profile, the main view says what it gives. It warns when the profile is more than 200 km from the target or more than 3 hours from the sitch time.
+- **Allow Small Altitudes** (Camera → Location, and the Target menu): when it is off (the default), a drag past the left end of the Alt slider stops at a range of 100 ft, in steps of 1 ft. Turn it on to go down to 1 ft, as before.
+
+### Improvements
+- **GFS wind** (Physics → Wind, *GFS*): Sitrec now blends the two 6-hour cycles around the time of each frame, not only the cycle before it. For Target Wind, Local Wind and the readouts, it also uses the ground: the 10 m wind is 10 m above the terrain, levels under the ground are not used, and each pressure level is at its real height in the model when the data gives it.
+- **Sounding wind** (Physics → Wind, *UWYO Soundings*, *IGRA2 Soundings*): the automatic load now takes the 00Z or 12Z launch nearest to the sitch start, before or after it. Wind between two levels is interpolated as a vector, so two opposite winds give a calm between them. The readouts and Target Wind now use the same blend of the soundings, and the wind lines use a finer grid, so all three agree closely.
+- **Separate Wind Sources** (Physics → Wind): Local Wind now reads its own *Local Wind Source*. Before, each load also set Local Wind from the Target Wind Source.
+- **Wind Source menu** (Physics → Wind): the *Track* entries are in two groups, *Profiles (read by height)* and *Telemetry tracks (read by time)*. The compass names the source as the menu does.
+- **Traverse analysis report** (Traverse → *Analyze Traverse Methods...*): gives the range of the wind that the fits used over the clip, not one value.
+- **Sounding and profile tracks**: a sounding with no position at each level shows *Path: Reconstructed ascent* in its folder, because Sitrec makes that path. An XML profile with no time in its file now moves with the sitch start.
+- **Menu tooltips**: about 790 menu items that had no tooltip now have one, and about 620 tooltips are rewritten, many to correct a wrong default or a wrong description.
+- **Menu labels**: the labels now use American spelling and correct names, for example *Color*, *CelesTrak's Brightest* (Satellites) and *Geolocate from IP Address* (Camera → Location, and the Target menu). The Terrain menu shows names such as *Latitude* and *Tiles per Side*. Lens Ghost names the selected source, Sun or Moon. The star chart scheme *Lavendar* is now *Lavender*, and a saved sitch keeps it. *Antialiasing (MSAA)* (Sitrec → Settings → Performance Tweaks) marks *2x* as the default, which it is. The *AO* tooltips in Traverse → *Traversal Analysis Tweaks* say that AO means astronomical object.
+
+### Bug Fixes
+- Fixed the Flight Sim camera and the *Constant Ground Speed* and *Windblown Object (on first LOS)* traverses using the first frame's wind from a telemetry track on every frame.
+- Fixed the *fixedTarget + Wind* target track (Target → *Target Track*) drifting the wrong distance when *Simulation Speed* (Time) is not 1. It now also drifts with the wind where it is on each frame.
+- Fixed a sounding or XML wind profile track going far up or under the ground when the sitch time is before its launch or after the top of its ascent.
+- Fixed a wind direction of 360° in a track or a sounding being replaced by the direction of the row before it.
+- Fixed an XML wind profile reading a missing-value code, such as 999, as a real wind. A value that cannot be real is now ignored.
+- Fixed GFS wind for a past date sometimes coming from the 6-hour cycle before the one asked for.
+- Fixed the wind readouts covering each other and the menus.
+- Fixed the wind *Status* row (Physics → Wind) keeping an old message after a load finished.
+- Fixed tooltips not showing on gray (disabled) menu rows.
+- Fixed a saved custom sitch showing the tooltip text of the Sitrec version that saved it.
+
 ## Version 2.184.0 (2026-11-02)
 
 ### New Features

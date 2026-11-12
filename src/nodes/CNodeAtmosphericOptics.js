@@ -22,6 +22,11 @@
 // colors, drawn additively (refracted/reflected sunlight ADDS to the sky).
 // Brightness is premultiplied into the vertex RGB and faded to zero at the
 // horizon so below-horizon portions vanish cleanly even without terrain.
+//
+// Two optics are not on the celestial sphere. The Brocken spectre and the
+// rainbow are opposite the Sun, on fog or rain a finite distance away, so they
+// are real geometry in the main scene and the depth buffer sorts them against
+// the terrain (see _rebuildBrocken and _syncRainbow).
 
 import {CNode} from "./CNode";
 import {
@@ -111,6 +116,23 @@ export function platePrismDeviationRay(sourceDir, prismAxis, branchSign, extraDe
     return out.applyAxisAngle(prismAxis, branchSign * deviation)
         .addScaledVector(prismAxis, p)
         .normalize();
+}
+
+// Refractive index of water for red (700 nm) and violet (400 nm) light, at 20 °C.
+export const WATER_INDEX_RED = 1.3311;
+export const WATER_INDEX_VIOLET = 1.3440;
+
+// The angle in degrees between the point opposite the Sun and a rainbow, for
+// light of refractive index n that reflects `reflections` times inside a water
+// drop: 1 for the primary bow, 2 for the secondary. A bow is where the turn of
+// the ray is least (Descartes): cos²(i) = (n² − 1) / (k (k + 2)), with i the
+// angle of incidence and k the number of reflections.
+export function rainbowAngleDeg(n, reflections = 1) {
+    const incidence = Math.acos(Math.sqrt((n * n - 1) / (reflections * (reflections + 2))));
+    const refraction = Math.asin(Math.sin(incidence) / n);
+    // The ray turns at its way in, at each reflection, and at its way out.
+    const turn = 2 * (incidence - refraction) + reflections * (Math.PI - 2 * refraction);
+    return Math.abs(180 - degrees(turn) % 360);
 }
 
 export function lunarOpticsPhaseScale(sunMoonDot) {
@@ -291,6 +313,15 @@ export class CNodeAtmosphericOptics extends CNode {
         // smaller droplets -> bigger glory. ~10µm is typical hill fog.
         this.brockenDroplet = v.brockenDroplet ?? 10;
 
+        // Rainbow — sunlight returned by raindrops, in a circle about the antisolar
+        // point: 42° for the primary bow and 51° for the secondary. Like the
+        // Brocken spectre it is a world-space object, at the near edge of the rain.
+        // It is independent of the halos master toggle: it needs rain, not ice.
+        this.rainbow = v.rainbow ?? false;
+        this.rainbowSecondary = v.rainbowSecondary ?? true;
+        this.rainbowBrightness = v.rainbowBrightness ?? 1;
+        this.rainbowDistance = v.rainbowDistance ?? 3000;   // distance to the rain (m)
+
         this.addSimpleSerials([
             "enabled",
             "intensity",
@@ -314,14 +345,19 @@ export class CNodeAtmosphericOptics extends CNode {
             "brockenDistance",
             "brockenRadius",
             "brockenDroplet",
+            "rainbow",
+            "rainbowSecondary",
+            "rainbowBrightness",
+            "rainbowDistance",
         ]);
 
-        // GUI — a submenu under the existing Lighting menu. Guarded so the node
-        // is still usable in headless/console contexts where the menu bar may
-        // not exist (the optics still serialize via the properties above).
-        this.gui = guiMenus.lighting ? guiMenus.lighting.addFolder("Atmospheric Optics (Halos)") : undefined;
+        // Keep celestial display effects together, with a fallback for sitches
+        // that create this node without a night-sky node or a menu bar.
+        const menu = NodeMan.get("NightSkyNode", false)?.celestialGUI ?? guiMenus.lighting;
+        this.gui = menu?.addFolder("Atmospheric Optics (Halos)").close();
         if (this.gui) {
-            const addBool = (property, name) => this.gui.add(this, property).name(name).listen().onChange(() => this.recalculate());
+            this.gui.tooltip("Optics of ice crystals in the sky: halos, arcs and sun dogs around the Sun, and a halo and moon dogs around the Moon.\nAlso Sun Glare, the Rainbow and the Brocken Spectre.");
+            const addBool = (property, name) => this.gui.add(this, property).asListCheckbox().name(name).listen().onChange(() => this.recalculate());
             const addValue = (property, start, end, step, name) => this.gui.add(this, property, start, end, step).name(name).listen().onChange(() => this.recalculate());
             addBool("enabled", "Show Halos")
                 .tooltip("Master toggle for ice-crystal atmospheric optics: Sun halos/arcs by day, and an optional Moon halo at night.")
@@ -356,8 +392,9 @@ export class CNodeAtmosphericOptics extends CNode {
 
             // Brocken spectre gets its own subfolder — it has a few extra
             // controls and is a world-space object rather than a sky optic.
-            const bf = this.gui.addFolder("Brocken Spectre").close();
-            const bBool = (property, name) => bf.add(this, property).name(name).listen().onChange(() => this.recalculate());
+            const bf = this.gui.addFolder("Brocken Spectre").close()
+                .tooltip("The observer's shadow and its colored glory rings on a fog bank, on the side away from the Sun.\nUsed only when Show Halos is on.");
+            const bBool = (property, name) => bf.add(this, property).asListCheckbox().name(name).listen().onChange(() => this.recalculate());
             const bVal = (property, start, end, step, name) => bf.add(this, property, start, end, step).name(name).listen().onChange(() => this.recalculate());
             bBool("brocken", "Show Brocken Spectre")
                 .tooltip("The observer's shadow and a colored 'glory' cast on a cloud/fog bank below, opposite the Sun. Needs the Sun above the horizon and (in reality) fog below you. Drawn at a real distance so terrain occludes it correctly.")
@@ -376,6 +413,21 @@ export class CNodeAtmosphericOptics extends CNode {
                 .tooltip("Angular size of the shadow figure (the observer's magnified shadow — depends on the observer and how far the fog is, not the droplets).");
             bVal("brockenDroplet", 3, 40, 0.5, "Droplet Size (µm)")
                 .tooltip("Fog droplet diameter. The glory is a diffraction ring pattern whose angular size is set by this: smaller droplets give a larger glory. ~10µm is typical hill fog (first red ring ≈6°).");
+
+            // The rainbow also has its own subfolder. It does not need Show Halos.
+            const rf = this.gui.addFolder("Rainbow").close()
+                .tooltip("A rainbow in the look view, on the side away from the Sun. Its place and size come from the Sun's position.\nIndependent of Show Halos.");
+            const rBool = (property, name) => rf.add(this, property).asListCheckbox().name(name).listen().onChange(() => this.recalculate());
+            const rVal = (property, start, end, step, name) => rf.add(this, property, start, end, step).name(name).listen().onChange(() => this.recalculate());
+            rBool("rainbow", "Show Rainbow")
+                .tooltip("A rainbow: a circle of color 42° from the point opposite the Sun, red on the outside. Needs the Sun above the horizon and (in reality) rain in front of you with the Sun behind you. The lower the Sun, the higher the bow: its top is at 42° minus the Sun's elevation.")
+                .asFolderToggle();
+            rBool("rainbowSecondary", "Secondary Bow")
+                .tooltip("The fainter second bow, 51° from the point opposite the Sun, with its colors in the opposite order (red on the inside).");
+            rVal("rainbowBrightness", 0, 3, 0.01, "Brightness")
+                .tooltip("Brightness of the rainbow. It adds light to what is behind it, so it shows best against dark cloud or terrain.");
+            rVal("rainbowDistance", 100, 30000, 100, "Rain Distance (m)")
+                .tooltip("Distance from the camera to the near edge of the rain. Terrain and objects nearer than this hide the rainbow, and it shows in front of everything farther away.\nIt does not change the size of the bow in the view.");
         }
 
         // Two scene groups, added lazily (the scenes are created by the
@@ -406,6 +458,14 @@ export class CNodeAtmosphericOptics extends CNode {
         this._lastBrockenObserver = new Vector3();
         this._lastBrockenKey = "";
         this._brockenDirty = true;
+
+        // The rainbow is also world-space geometry on the LOOK layer: one mesh,
+        // made on first use (see _syncRainbow).
+        this.rainbowGroup = new Group();
+        this.rainbowGroup.name = "atmosphericOpticsRainbow";
+        this.rainbowGroup.layers.set(LAYER.LOOK);
+        this.rainbowGroup.visible = false;
+        this._rainbowAttached = false;
 
         // Set per-group while building: target group and a source-visibility
         // scalar (fades the whole group as its light source nears the horizon).
@@ -521,6 +581,72 @@ export class CNodeAtmosphericOptics extends CNode {
             toneMapped: false,
         });
 
+        // The rainbow colors are computed per pixel from the angle to the bow's
+        // axis, so the mesh needs no fine tessellation and its bands stay sharp at
+        // any zoom. The mesh is a unit band around +Z; the group turns +Z to the
+        // antisolar point, so the angle is that of the vertex position to +Z.
+        const primary = [rainbowAngleDeg(WATER_INDEX_VIOLET, 1), rainbowAngleDeg(WATER_INDEX_RED, 1)];
+        const secondary = [rainbowAngleDeg(WATER_INDEX_RED, 2), rainbowAngleDeg(WATER_INDEX_VIOLET, 2)];
+        this.rainbowShaderMaterial = new ShaderMaterial({
+            transparent: true,
+            blending: AdditiveBlending,
+            depthTest: true,
+            depthWrite: false,
+            side: DoubleSide,
+            toneMapped: false,
+            uniforms: {
+                uPrimary: {value: primary.map(radians)},       // [violet, red] angles, the inner edge first
+                uSecondary: {value: secondary.map(radians)},   // [red, violet] angles, the inner edge first
+                uSecondaryOn: {value: 1},
+                uBase: {value: 0.5},
+            },
+            vertexShader: `
+                #include <common>
+                #include <logdepthbuf_pars_vertex>
+                varying vec3 vAxial;
+                void main() {
+                    vAxial = position;
+                    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+                    #include <logdepthbuf_vertex>
+                }
+            `,
+            fragmentShader: `
+                #include <common>
+                #include <logdepthbuf_pars_fragment>
+                varying vec3 vAxial;
+                uniform vec2 uPrimary;
+                uniform vec2 uSecondary;
+                uniform float uSecondaryOn;
+                uniform float uBase;
+                // t = 0 violet -> 1 red. The blue and violet end is weak, as it is to the eye in a real bow.
+                vec3 spectrum(float t) {
+                    vec3 c = mix(vec3(0.45, 0.10, 0.85), vec3(0.15, 0.30, 1.00), smoothstep(0.00, 0.18, t));
+                    c = mix(c, vec3(0.10, 0.85, 0.55), smoothstep(0.18, 0.38, t));
+                    c = mix(c, vec3(0.75, 1.00, 0.15), smoothstep(0.38, 0.58, t));
+                    c = mix(c, vec3(1.00, 0.60, 0.05), smoothstep(0.58, 0.78, t));
+                    c = mix(c, vec3(1.00, 0.10, 0.05), smoothstep(0.78, 1.00, t));
+                    return c * mix(0.35, 1.0, smoothstep(0.0, 0.45, t));
+                }
+                // 1 inside the band [inner, outer], with soft edges: the Sun is
+                // half a degree wide, so no edge of a bow is sharp.
+                float band(float angle, float inner, float outer) {
+                    float soft = 0.0052;    // 0.3 degrees
+                    return smoothstep(inner - soft, inner + soft, angle) * (1.0 - smoothstep(outer - soft * 0.5, outer + soft, angle));
+                }
+                void main() {
+                    #include <logdepthbuf_fragment>
+                    float angle = acos(clamp(normalize(vAxial).z, -1.0, 1.0));
+                    vec3 col = spectrum((angle - uPrimary.x) / (uPrimary.y - uPrimary.x)) * band(angle, uPrimary.x, uPrimary.y);
+                    // The sky inside the primary bow is a little brighter than outside it.
+                    col += vec3(0.10) * (1.0 - smoothstep(uPrimary.x - 0.21, uPrimary.x, angle)) * smoothstep(uPrimary.x - 0.21, uPrimary.x - 0.02, angle)
+                        + vec3(0.06) * (1.0 - smoothstep(uPrimary.x - 0.02, uPrimary.x + 0.005, angle)) * step(uPrimary.x - 0.21, angle);
+                    // The secondary bow has its colors the other way round, and about a third of the light.
+                    col += uSecondaryOn * 0.35 * spectrum(1.0 - (angle - uSecondary.x) / (uSecondary.y - uSecondary.x)) * band(angle, uSecondary.x, uSecondary.y);
+                    gl_FragColor = vec4(uBase * col, 1.0);
+                }
+            `,
+        });
+
         // Rebuild bookkeeping.
         this._dirty = true;
         this._lastSun = new Vector3();
@@ -545,6 +671,7 @@ export class CNodeAtmosphericOptics extends CNode {
         this._horizonSinHi = Math.sin(radians(2.5));
         this._refractionOpts = refractionOptsFromUniforms();
         this._refractionZenith = new Vector3(0, 0, 1);
+        this._rainbowAxis = new Vector3(0, 0, 1);
     }
 
     // GUI changes route here (addGUIBoolean/addGUIValue call recalculate()).
@@ -579,11 +706,20 @@ export class CNodeAtmosphericOptics extends CNode {
 
         // Sun glare runs independently of the halos master toggle — the sun
         // group stays live for it; everything else still keys off `enabled`.
+        if (!this._rainbowAttached && GlobalScene !== undefined) {
+            GlobalScene.add(this.rainbowGroup);
+            // As for the Brocken spectre: the terrestrial bend at these
+            // distances is far smaller than the width of the bow.
+            excludeFromTerrestrialRefraction(this.rainbowGroup);
+            this._rainbowAttached = true;
+        }
+
         const anySun = this.enabled || this.sunGlare;
         this.sunGroup.visible = anySun;
         this.moonGroup.visible = this.enabled;
         this.brockenGroup.visible = this.enabled && this.brocken;
-        if (!anySun) return;
+        if (!this.rainbow) this.rainbowGroup.visible = false;
+        if (!anySun && !this.rainbow) return;
 
         // Observer — match CNodeSunlight (lookCamera, falling back to mainCamera).
         let camera;
@@ -601,6 +737,9 @@ export class CNodeAtmosphericOptics extends CNode {
         // here (from the real observer camera) and NOT in renderSky()'s per-camera
         // re-sync — it must not follow whichever camera is currently rendering.
         if (this.enabled && this.brocken) this._syncBrocken(camera.position);
+
+        // The rainbow is observer-anchored in the same way, and does not need the halos.
+        if (this.rainbow) this._syncRainbow(camera.position);
     }
 
     _updateHorizonFade(observerPos) {
@@ -966,6 +1105,68 @@ export class CNodeAtmosphericOptics extends CNode {
         mesh.frustumCulled = false;
         mesh.renderOrder = 1;
         this.brockenGroup.add(mesh);
+    }
+
+    // ---- Rainbow (world-space, on the rain in front of the observer). ----
+    // A bow is a cone of directions about the antisolar point, so the mesh is a
+    // band of a sphere about the observer: the group sits at the observer, turns
+    // +Z to the antisolar point, and is scaled to the rain distance. Only the
+    // group moves from frame to frame; the mesh is made once.
+    _syncRainbow(observerPos, date = GlobalDateTimeNode.dateNow) {
+        const sunDir = observerPos ? getCelestialDirection("Sun", date, observerPos) : null;
+        if (!sunDir) { this.rainbowGroup.visible = false; return; }
+        const zenith = getLocalUpVector(observerPos);
+        // The bow is opposite the Sun as the raindrops see it, so with refraction
+        // on it is opposite the refracted Sun, like the halos around it.
+        this._updateRefractionState(zenith);
+        this._applyOpticRefraction(sunDir);
+        const elevDeg = degrees(Math.asin(MathUtils.clamp(sunDir.dot(zenith), -1, 1)));
+        // No bow without the Sun. Fade in over its first few degrees above the horizon.
+        const sunVis = MathUtils.smoothstep(elevDeg, -0.5, 3);
+        this.rainbowGroup.visible = sunVis > 0.01;
+        if (!this.rainbowGroup.visible) return;
+
+        if (this.rainbowGroup.children.length === 0) this.rainbowGroup.add(this._buildRainbowMesh());
+        this.rainbowGroup.position.copy(observerPos);
+        this.rainbowGroup.quaternion.setFromUnitVectors(this._rainbowAxis, sunDir.clone().negate().normalize());
+        this.rainbowGroup.scale.setScalar(Math.max(1, this.rainbowDistance));
+        const uniforms = this.rainbowShaderMaterial.uniforms;
+        uniforms.uBase.value = 0.5 * this.rainbowBrightness * sunVis;
+        uniforms.uSecondaryOn.value = this.rainbowSecondary ? 1 : 0;
+    }
+
+    // A band of the unit sphere about +Z, from inside the primary bow to outside
+    // the secondary. The shader draws the bows; the mesh only has to cover them.
+    _buildRainbowMesh() {
+        const segments = 128, rows = 6, innerDeg = 28, outerDeg = 58;
+        const positions = new Float32Array((segments + 1) * (rows + 1) * 3);
+        const indices = [];
+        let p = 0;
+        for (let row = 0; row <= rows; row++) {
+            const angle = radians(innerDeg + (outerDeg - innerDeg) * row / rows);
+            for (let segment = 0; segment <= segments; segment++) {
+                const around = segment / segments * Math.PI * 2;
+                positions[p++] = Math.sin(angle) * Math.cos(around);
+                positions[p++] = Math.sin(angle) * Math.sin(around);
+                positions[p++] = Math.cos(angle);
+            }
+        }
+        const stride = segments + 1;
+        for (let row = 0; row < rows; row++) {
+            for (let segment = 0; segment < segments; segment++) {
+                const a = row * stride + segment, b = a + stride;
+                indices.push(a, b, a + 1, a + 1, b, b + 1);
+            }
+        }
+        const geometry = new BufferGeometry();
+        geometry.setAttribute("position", new BufferAttribute(positions, 3));
+        geometry.setIndex(indices);
+        geometry.computeBoundingSphere();
+        const mesh = new Mesh(geometry, this.rainbowShaderMaterial);
+        mesh.frustumCulled = false;
+        // Observer-relative, so in the look view only (as for the Brocken spectre).
+        mesh.layers.mask = LAYER.MASK_LOOK;
+        return mesh;
     }
 
     // The observer's magnified shadow at the glory center — the "spectre". A soft
@@ -1464,6 +1665,7 @@ export class CNodeAtmosphericOptics extends CNode {
         this._clearGroup(this.sunGroup);
         this._clearGroup(this.moonGroup);
         this._clearGroup(this.brockenGroup);
+        this._clearGroup(this.rainbowGroup);
         if (this._sunAttached && GlobalSunSkyScene !== undefined) {
             GlobalSunSkyScene.remove(this.sunGroup);
         }
@@ -1473,6 +1675,10 @@ export class CNodeAtmosphericOptics extends CNode {
         if (this._brockenAttached && GlobalScene !== undefined) {
             GlobalScene.remove(this.brockenGroup);
         }
+        if (this._rainbowAttached && GlobalScene !== undefined) {
+            GlobalScene.remove(this.rainbowGroup);
+        }
+        this.rainbowShaderMaterial?.dispose();
         this.material?.dispose();
         this.gloryShaderMaterial?.dispose();
         this.shadowMaterial?.dispose();

@@ -11,6 +11,43 @@ import {CTrackFile} from "./TrackFiles/CTrackFile";
 import {CNodeDisplayTrack} from "./nodes/CNodeDisplayTrack";
 import {blockViewEvents, makeDraggable} from "./DragResizeUtils";
 import {t} from "./i18n";
+import {elevationAtLL} from "./threeExt";
+
+
+// ─── Ground-relative tracks ──────────────────────────────────────────────────
+
+const hasValue = v => v !== null && v !== undefined;
+
+// True when a track's altitudes are height above ground: no row has an MSL altitude, and
+// some row has an AGL one (a relativeToGround KML track, or a CSV with only an AGL column).
+// CNodeMISBData.selectSourceColumns uses the same rule to read the AGL column.
+export function isGroundRelativeTrack(misb) {
+    let hasAGL = false;
+    for (const row of misb) {
+        if (hasValue(row[MISB.SensorTrueAltitude])) return false;
+        if (hasValue(row[MISB.AltitudeAGL])) hasAGL = true;
+    }
+    return hasAGL;
+}
+
+// For a ground-relative track, the HAE and MSL altitude (m) of each row, or null for a row
+// without one. The row is put on the terrain that Sitrec has at that point, as
+// CNodeMISBData.getRawAlt does; where no terrain is loaded, that is the ellipsoid.
+// Returns null for any other track.
+export function groundRelativeAltitudes(misb) {
+    if (!isGroundRelativeTrack(misb)) return null;
+    const hae = new Array(misb.length).fill(null);
+    const msl = new Array(misb.length).fill(null);
+    for (let i = 0; i < misb.length; i++) {
+        const lat = misb[i][MISB.SensorLatitude];
+        const lon = misb[i][MISB.SensorLongitude];
+        const agl = Number(misb[i][MISB.AltitudeAGL]);
+        if (!hasValue(misb[i][MISB.AltitudeAGL]) || !isFinite(agl) || !isFinite(lat) || !isFinite(lon)) continue;
+        hae[i] = elevationAtLL(lat, lon) + agl;
+        msl[i] = hae[i] - meanSeaLevelOffset(lat, lon);
+    }
+    return {hae, msl};
+}
 
 
 // ─── Track Preview Extraction ────────────────────────────────────────────────
@@ -27,6 +64,7 @@ export function extractTrackPreviewInfo(trackFile, trackIndex, filename) {
     // Raw column values are MSL for most sources but HAE for e.g. STANAG cs="WGS_84"
     // (trackFile.isAltitudeHAE), so convert in whichever direction is missing.
     const altIsHAE = typeof trackFile.isAltitudeHAE === "function" && trackFile.isAltitudeHAE(trackIndex);
+    const groundRelative = groundRelativeAltitudes(misb);
 
     // Determine sitch time window (ms)
     const sitchEstablished = Globals.sitchEstablished && Sit.startTime !== "2000-01-01T00:00:00Z";
@@ -58,7 +96,13 @@ export function extractTrackPreviewInfo(trackFile, trackIndex, filename) {
         const haveLL = lat !== null && lat !== undefined && lon !== null && lon !== undefined && isFinite(lat) && isFinite(lon);
         const geoidN = haveLL ? meanSeaLevelOffset(lat, lon) : 0;
 
-        if (alt !== null && alt !== undefined && isFinite(alt)) {
+        if (groundRelative) {
+            const altMSL = groundRelative.msl[i];
+            if (altMSL !== null) {
+                if (altMSL < altMinM) altMinM = altMSL;
+                if (altMSL > altMaxM) altMaxM = altMSL;
+            }
+        } else if (alt !== null && alt !== undefined && isFinite(alt)) {
             const altMSL = altIsHAE ? alt - geoidN : alt;   // display range is MSL
             if (altMSL < altMinM) altMinM = altMSL;
             if (altMSL > altMaxM) altMaxM = altMSL;
@@ -66,7 +110,9 @@ export function extractTrackPreviewInfo(trackFile, trackIndex, filename) {
 
         if (haveLL) {
             const a = alt ?? 0;
-            const ecef = LLAToECEF(lat, lon, altIsHAE ? a : a + geoidN);   // LLAToECEF expects HAE
+            const ecef = groundRelative?.hae[i] != null
+                ? LLAToECEF(lat, lon, groundRelative.hae[i])
+                : LLAToECEF(lat, lon, altIsHAE ? a : a + geoidN);   // LLAToECEF expects HAE
             // Always track first and last valid in-window points
             if (!firstECEF) firstECEF = ecef;
             lastECEF = ecef;
@@ -95,6 +141,7 @@ export function extractTrackPreviewInfo(trackFile, trackIndex, filename) {
         altMaxFt: Math.round(m2f(altMaxM)),
         ecefSamples,
         misbData: misb,
+        groundRelativeMSL: groundRelative?.msl ?? null,
         windowStartMs,
         windowEndMs,
     };
@@ -104,12 +151,13 @@ export function extractTrackPreviewInfo(trackFile, trackIndex, filename) {
 // ─── Reusable Filter Functions ───────────────────────────────────────────────
 
 // Returns true if any point's altitude (ft) falls within [lowFt, highFt] during the sitch window.
+// A ground-relative track uses its MSL altitudes on the terrain (info.groundRelativeMSL).
 export function filterByAltitude(info, lowFt, highFt) {
     const misb = info.misbData;
     for (let i = 0; i < misb.length; i++) {
         const t = misb[i][MISB.UnixTimeStamp];
         if (t !== null && t !== undefined && (t < info.windowStartMs || t > info.windowEndMs)) continue;
-        const alt = misb[i][MISB.SensorTrueAltitude];
+        const alt = info.groundRelativeMSL ? info.groundRelativeMSL[i] : misb[i][MISB.SensorTrueAltitude];
         if (alt !== null && alt !== undefined && isFinite(alt)) {
             const altFt = m2f(alt);
             if (altFt >= lowFt && altFt <= highFt) return true;
@@ -684,12 +732,13 @@ export async function showPostLoadFilterDialog() {
         let sampleCount = 0;
         let firstECEF = null;
         let lastECEF = null;
+        const groundRelative = groundRelativeAltitudes(misb);
 
         for (let i = 0; i < misb.length; i++) {
             const t = misb[i][MISB.UnixTimeStamp];
             if (t !== null && t !== undefined && (t < windowStartMs || t > windowEndMs)) continue;
 
-            const alt = misb[i][MISB.SensorTrueAltitude];
+            const alt = groundRelative ? groundRelative.msl[i] : misb[i][MISB.SensorTrueAltitude];
             if (alt !== null && alt !== undefined && isFinite(alt)) {
                 if (alt < altMinM) altMinM = alt;
                 if (alt > altMaxM) altMaxM = alt;
@@ -699,7 +748,9 @@ export async function showPostLoadFilterDialog() {
             const lon = misb[i][MISB.SensorLongitude];
             if (lat !== null && lat !== undefined && lon !== null && lon !== undefined && isFinite(lat) && isFinite(lon)) {
                 const a = alt ?? 0;
-                const ecef = LLAToECEF(lat, lon, a);
+                const ecef = groundRelative?.hae[i] != null
+                    ? LLAToECEF(lat, lon, groundRelative.hae[i])
+                    : LLAToECEF(lat, lon, a);
                 if (!firstECEF) firstECEF = ecef;
                 lastECEF = ecef;
                 if (sampleCount % 10 === 0) {
@@ -726,6 +777,7 @@ export async function showPostLoadFilterDialog() {
             altMaxFt: Math.round(m2f(altMaxM)),
             ecefSamples,
             misbData: misb,
+            groundRelativeMSL: groundRelative?.msl ?? null,
             windowStartMs,
             windowEndMs,
         };

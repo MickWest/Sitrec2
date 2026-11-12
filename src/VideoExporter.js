@@ -400,6 +400,40 @@ export function createFadeExportPlan({
     };
 }
 
+// A "Render Widening Video" pass holds one frame and animates the In/Out region instead: In
+// goes in a straight line from in1 to in2 while Out goes from out1 to out2. The faster of the
+// two moves one frame for each output frame. With pingPong, both then go back to the start.
+//
+// rangeAt() gives the In/Out region of an output frame. The caller applies it in a
+// prepareFrame() that it adds to the plan; exportViewportVideo awaits that before it renders
+// the output frame, so everything that depends on In/Out can be up to date first.
+export function createWideningExportPlan({fps = 30, frame = 0, in1, in2, out1, out2, pingPong = false}) {
+    const steps = Math.max(Math.abs(in2 - in1), Math.abs(out2 - out1));
+    const totalFrames = (pingPong ? 2 * steps : steps) + 1;
+    return {
+        startFrame: frame,
+        endFrame: frame,
+        totalFrames,
+        totalSourceFrames: totalFrames,
+        skippedDuplicateFrames: 0,
+        fps: fps > 0 ? fps : 30,
+        frameStep: 1,
+        playbackSpeed: 1,
+        pingPong: !!pingPong,
+        loops: 1,
+        nameSuffix: "widening",
+        steps,
+        frameAt() {
+            return frame;
+        },
+        rangeAt(index) {
+            const step = index <= steps ? index : 2 * steps - index;
+            const u = steps ? step / steps : 0;
+            return {a: Math.round(in1 + (in2 - in1) * u), b: Math.round(out1 + (out2 - out1) * u)};
+        },
+    };
+}
+
 // The CSS rect, relative to the view's div, that the view's canvas actually occupies.
 //
 // Normally a canvas fills its div and this is just (0, 0, widthPx, heightPx). But a CNodeView3D
@@ -1103,6 +1137,11 @@ export class VideoExportManager {
     // being downloaded, and errors are rethrown instead of shown in an alert().
     // options.plan supplies a pre-built frame plan (Render Fade) instead of the A-B one, and
     // options.fadeOverlay is the video overlay whose opacity that plan animates.
+    // A plan can also have (Render Widening Video uses all three):
+    //   prepareFrame(index)  awaited before each output frame is rendered
+    //   footer               {height, draw(ctx, width, height)}: a strip below the views, in
+    //                        CSS pixels, drawn with the origin at its top left corner
+    //   progressLabel        the title of the progress box
     async exportViewportVideo({ download = true, plan: injectedPlan = null, fadeOverlay = null, includeAudio = null,
         videoFilter = null, viewId = null } = {}) {
         const { ViewMan } = await import("./CViewManager");
@@ -1114,6 +1153,7 @@ export class VideoExportManager {
         const { ExportProgressWidget, drawVideoWatermark } = await import("./utils");
         const { drawAttributionOnCanvas } = await import("./AttributionOverlay");
         const { getMotionAnalysisOverlays } = await import("./CMotionAnalysisUI");
+        const { getPointTrackOverlay } = await import("./CObjectTracking");
         const { CNodeView3D } = await import("./nodes/CNodeView3D");
         const {createVideoFormatExportLayer} = await import("./videoFilters/VideoFormatLayer");
 
@@ -1128,8 +1168,10 @@ export class VideoExportManager {
         const originX = exportView?.leftPx ?? 0;
         const originY = exportView?.topPx ?? ViewMan.topPx;
         const scale = this.retinaExport ? (window.devicePixelRatio || 1) : 1;
+        const footer = injectedPlan?.footer ?? null;
+        const viewsHeight = exportView?.heightPx ?? ViewMan.heightPx;
         const width = Math.round((exportView?.widthPx ?? ViewMan.widthPx) * scale);
-        const height = Math.round((exportView?.heightPx ?? ViewMan.heightPx) * scale);
+        const height = Math.round((viewsHeight + (footer?.height ?? 0)) * scale);
         const includesView = view => !exportView || view === exportView || view.overlayView === exportView
             || view.in?.relativeTo === exportView;
         let plan = injectedPlan;
@@ -1182,7 +1224,8 @@ export class VideoExportManager {
         const savedPaused = par.paused;
         par.paused = true;
 
-        const progress = new ExportProgressWidget(fading ? 'Exporting viewport fade...' : 'Exporting viewport video...', plan.totalFrames);
+        const progress = new ExportProgressWidget(plan.progressLabel
+            ?? (fading ? 'Exporting viewport fade...' : 'Exporting viewport video...'), plan.totalFrames);
         let exportResult = null;
 
         const compositeCanvas = document.createElement('canvas');
@@ -1375,6 +1418,13 @@ export class VideoExportManager {
                             drawOverlay(overlay);
                         }
                     }
+                    // The Point Track overlay is a canvas in this view's div, above the
+                    // view's overlays. view.renderCanvas() above has just redrawn it.
+                    const pointTrack = getPointTrackOverlay();
+                    if (pointTrack?.view === view && pointTrack.canvas.width > 0 && pointTrack.canvas.height > 0) {
+                        compositeCtx.drawImage(pointTrack.canvas, (view.leftPx - originX) * scale, (view.topPx - originY) * scale,
+                            view.widthPx * scale, view.heightPx * scale);
+                    }
                 }
 
                 formatLayer?.capture(nonOverlays.flatMap(view =>
@@ -1405,7 +1455,15 @@ export class VideoExportManager {
                 }
 
                 drawVideoWatermark(compositeCtx, width);
-                drawAttributionOnCanvas(compositeCtx, width, height);
+                // The attribution goes at the bottom of the views, above a footer.
+                drawAttributionOnCanvas(compositeCtx, width, Math.round(viewsHeight * scale));
+                if (footer) {
+                    compositeCtx.save();
+                    compositeCtx.translate(0, viewsHeight * scale);
+                    compositeCtx.scale(scale, scale);
+                    footer.draw(compositeCtx, width / scale, footer.height);
+                    compositeCtx.restore();
+                }
             };
 
             // Defensive warm-up: render the first output frame a few times before
@@ -1414,6 +1472,7 @@ export class VideoExportManager {
             // letterboxing) can lag a render behind a viewport change, which showed
             // up as a first frame at the wrong zoom/aspect that jumped on frame 2.
             if (fading) setOverlayAlpha(plan.alphaAt(0));
+            await plan.prepareFrame?.(0);
             for (let w = 0; w < 3; w++) {
                 await renderCompositeFrame(plan.frameAt(0));
             }
@@ -1425,6 +1484,7 @@ export class VideoExportManager {
                 // Set before rendering: drawOverlay() reads transparency as it composites, so a
                 // settle re-render of the same output frame reuses the same alpha.
                 if (fading) setOverlayAlpha(plan.alphaAt(i));
+                await plan.prepareFrame?.(i);
                 await renderCompositeFrame(frame);
                 if (this.waitForBackgroundLoading) {
                     // Wait for async loading and 3D tile visibility churn to settle before encoding the frame.

@@ -140,12 +140,12 @@ switch that applies to it is on.
 | **Show Satellites (Global)** | On | Master switch for all satellites. It is also in the header menus of the 3D views, as **Satellites** |
 | **Starlink** | On | SpaceX Starlink satellites (names that start with STARLINK) |
 | **ISS** | On | The International Space Station |
-| **Celestrack's Brightest** | On | The satellites on CelesTrak's list of brightest satellites |
+| **CelesTrak's Brightest** | On | The satellites on CelesTrak's list of brightest satellites |
 | **Other Satellites** | Off | Every satellite that is not in one of the categories above |
 | **List** | (empty) | A comma-separated list of names or catalog (NORAD) numbers. Name matching ignores case and matches the start of the name, so `starlink-30` matches STARLINK-30xx. `SL-` is short for Starlink, so `SL-1234` matches STARLINK-1234 |
 
 **List adds satellites; it does not hide the others.** To see only the satellites on the list,
-turn off **Starlink**, **ISS**, **Celestrack's Brightest** and **Other Satellites**.
+turn off **Starlink**, **ISS**, **CelesTrak's Brightest** and **Other Satellites**.
 
 Satellites below 100 km or above 40,000 km altitude are never drawn.
 
@@ -225,11 +225,13 @@ degrees the reflected ray misses the camera.
 | Control | Default | What it does |
 |---|---|---|
 | **Satellite Brightness Model** | Photometric estimate | Continuous Starlink flare curves, an estimated flare curve for Kuiper satellites, estimated diffuse light, range and phase. **Legacy cone** adds a set flare brightness only inside **Flare Angle Spread** |
+| **Limit by Magnitude** | Off | Use estimated apparent magnitude to filter satellite dots in the look view, instead of **Sat Cut-Off**. Requires **Photometric estimate** |
+| **Satellite Magnitude Limit** | 7.5 | Faintest estimated apparent magnitude to draw when **Limit by Magnitude** is on. Higher values include fainter satellites. The limit is independent of dot size, zoom and **Sat Brightness**; it does not limit separately enabled labels or arrows |
 | **Starlink Design** | Unknown design (estimated mixture) | The Starlink version, if another source tells you: **Original V1.0**, **VisorSat**, **V1.5**, **V2 Mini** or **V2 Mini Direct to Cell**. **Per satellite (GCAT catalog)** uses each satellite's own version from the GCAT catalog (see below). **Unknown design** averages the first four. It does not work out a satellite's version |
 | **Satellite Sunlight** | Finite Sun + atmosphere | Integrates the solar disk through a clear standard atmosphere at Earth's limb (the edge of the Earth, as seen from the satellite). **Finite Sun** omits atmosphere; **Legacy fade** uses the adjustable shadow depth |
 | **Sat Brightness** | 2 | Scale factor for the brightness of the satellites in the look view. 0 is invisible. It does not change the main view |
 | **Flare Brightness** | 0.2 | Scale factor for extra flare brightness in the Legacy cone calculation. 0 adds nothing |
-| **Sat Cut-Off** | 0.06 | Satellites dimmer than this are not drawn. With **Photometric estimate**, the default hides each satellite that would be fainter than about magnitude 6.2 at 1000 km: most small objects and debris, and most Starlink satellites away from a flare. Large rocket bodies and satellites stay visible. Set 0 to draw every sunlit satellite above the horizon |
+| **Sat Cut-Off** | 0.06 | Cut-off in rendering scale units, not apparent magnitude. With **Photometric estimate**, the default hides each satellite that would be fainter than about magnitude 6.2 at 1000 km. Set 0 to draw every sunlit satellite above the horizon. **Limit by Magnitude** replaces this cut-off in the look view; the main view still uses it |
 | **Flare Angle Spread** | 5 | A satellite counts as flaring when its off-specular angle is less than this many degrees. This sets **Sun Angle Arrows**, **Flare Lines**, **Label Flares Only** and the Legacy cone model. Photometric estimates include continuous light outside this angle |
 | **Flare Model** | Geocentric Nadir | How "down" is found for the flat surface. **Geocentric Nadir** points at the Earth's center. **Geodetic Nadir** is perpendicular to the WGS84 ellipsoid. The two differ by at most about 0.18° |
 | **Earth's Penumbra Depth** | 5000 | In Legacy fade mode, shadow depth in metres over which illumination fades |
@@ -348,7 +350,7 @@ Labels shorten Starlink names, so STARLINK-1234 is labeled SL-1234.
 The Flare Band and Sun Angle Arrows are explained with pictures in
 [Flare Band and Sun Angle Arrows](Starlink.md#flare-band-and-sun-angle-arrows).
 
-**Show → Celestial → Label List** further limits which labels are drawn, for satellites and for
+**Show → Celestial → Labels → Name Filter** further limits which labels are drawn, for satellites and for
 stars and planets. It takes a comma-separated list, for example `ISS, SL-1234`. Leave it empty
 to label everything.
 
@@ -378,11 +380,11 @@ view's **Show Tracks** button and **Show → All Tracks in Look** include the sa
 
 ## Satellite views in the Show menu
 
-**Show → Celestial** and **Show → Star Chart**
+**Show → Celestial** and **Show → Celestial → Extra Celestial Views → Star Chart**
 
 ### Satellite Ephemeris
 
-**Show → Celestial → Satellite Ephemeris** opens a table of the satellites above the look
+**Show → Celestial → Extra Celestial Views → Satellite Ephemeris** opens a table of the satellites above the look
 camera's horizon. It appears in the menu after TLE data is loaded. It lists up to 100 of the
 satellites that are shown, highest first:
 
@@ -399,7 +401,7 @@ The **Only VIS** checkbox, on by default, limits the table to satellites in the 
 
 ### Sky Plot
 
-**Show → Celestial → Sky Plot** draws the same satellites as the Satellite Ephemeris table on a
+**Show → Celestial → Extra Celestial Views → Sky Plot** draws the same satellites as the Satellite Ephemeris table on a
 circular map of the sky. The center is straight up (the zenith) and the edge is the horizon,
 with rings at 30° and 60° elevation. Like a map, it has north at the top and east on the right,
 so it is the mirror image of the [Star Chart](#star-chart). It follows the ephemeris table's
@@ -413,13 +415,14 @@ STARLINK-4489, has the highest **El**, 53.6, so it is the dot nearest the center
 
 ### Star Chart
 
-**Show → Star Chart** has a whole-sky chart of stars, constellations, the planets, the Sun and
+**Show → Celestial → Extra Celestial Views → Star Chart** has a whole-sky chart of stars, constellations, the planets, the Sun and
 the Moon, for the current time and look camera location, in the style of a printed sky chart.
 
 | Control | Default | What it does |
 |---|---|---|
 | **Show Star Chart** (title checkbox) | Off | Shows or hides the chart |
-| **Color Scheme** | White | **Lavendar**, **Black**, **Night Vision** or **White** |
+| **Color Scheme** | White | **Lavender**, **Black**, **Night Vision** or **White** |
+| **Star Magnitude Limit** | 5.5 | Faintest star included in this chart, independent of the 3D view; larger magnitudes include fainter stars |
 | **Satellite Track** | On | Draws the path of **Satellite to Track** across the chart, with times |
 
 Like a paper star chart, it shows the sky as seen looking up, so east is on the **left**.
@@ -437,11 +440,11 @@ azimuth, in degrees.
 
 The rest of **Show → Celestial** is about the stars, the planets and the Earth's shadow:
 direction vectors to the Sun, Moon and planets, **Equatorial Grid in Main** and **Equatorial Grid
-in Look**, **Constellation Lines**, **Asterism Style**, **Render Stars**, **Show Earth's Shadow**
+in Look**, **Constellation Lines**, **Asterism Style**, **Render Stars and Planets**, **Show Earth's Shadow**
 and **Show Moon's Shadow**. The Earth's shadow is useful with satellites: it shows the region of
 space where satellites are in darkness.
 
-The brightness of the stars and planets is set in the View menu (**Star Brightness**, **Star
+The brightness of the stars and planets is set in **Show → Celestial → Stars and Planets** (**Star Brightness**, **Star
 Limit**, **Planet Brightness**), not in the Satellites menu.
 
 ---
@@ -466,6 +469,7 @@ combined data.
   category needs **Other Satellites**.
 - Check **Sat Brightness** is not 0. If the look view shows few satellites, lower **Sat Cut-Off**:
   at the default, most satellites do not pass it there. Set it to 0 to draw every sunlit satellite.
+  If **Limit by Magnitude** is on, increase **Satellite Magnitude Limit** instead.
 - Check that no TLE filter is active: use **Clear TLE Filter**.
 - Check the time of day. With **Photometric estimate**, the look view does not draw a satellite
   in the Earth's shadow, though the main view still draws it, dimly. Satellites also fade in the

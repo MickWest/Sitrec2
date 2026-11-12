@@ -12,7 +12,8 @@
 #              can actually send, against the same contracts (scripts/egress-review-prompt.md).
 #
 # The verdict and both reports are posted as a comment on the commit, which is permanent
-# and public. Workflow logs and artifacts expire after 90 days; the comment does not. The
+# and public. A change to the review's own rules (the accepted patterns, the prompt, the
+# allow-list) is listed there too, with its diff: those files are outside the scan. Workflow logs and artifacts expire after 90 days; the comment does not. The
 # workflow is red when the verdict is ATTENTION or the review could not complete.
 #
 # Cost: Actions minutes are free on a public repository. The review spends the repository
@@ -37,7 +38,7 @@ on:
 env:
   # GPT-5.6 Sol needs Copilot Pro+ or above; Terra and Luna are available on Copilot Pro.
   COPILOT_MODEL_NAME: gpt-5.6-terra
-  MAX_AI_CREDITS: '30'
+  MAX_AI_CREDITS: '100'
 
 defaults:
   run:
@@ -113,6 +114,11 @@ jobs:
             fi
             rm -f .egress/push.full.diff
           fi
+          # The review's own rules are outside the scan. Their change goes on the public
+          # record of this push, so that every newly accepted pattern is visible there.
+          git diff --no-color --no-ext-diff --unified=3 "$BASE" "$HEAD" -- \
+            scripts/egress-accepted-patterns.md scripts/egress-review-prompt.md \
+            scripts/egress-allowlist.json > .egress/rules.diff
           echo "Files in scope: $IN_SCOPE"
           cat .egress/scan.md
 

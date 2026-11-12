@@ -892,6 +892,24 @@ class NumberController extends Controller {
         return this;
     }
 
+    // MICK: set the floor of an elastic range after it is made: `min` is the
+    // smallest _max that shrinking reaches (as _elasticMin above), and `minStep`
+    // the smallest step (0 for none: the step is then 0.2% of the range, and a
+    // range shrunk to 1 has steps of 0.002). A range below the new floor is
+    // raised to it. Used by the position Alt sliders (Allow Small Altitudes).
+    elasticFloor( min, minStep = 0 ) {
+        this._elasticMin = min;
+        this._elasticMinStep = minStep;
+        // Through max(), so a mirrored copy of this control hears of it (MenuMirror
+        // hooks min/max and copies the range and this floor).
+        const newMax = this._elastic ? Math.max( this._max, min ) : this._max;
+        if ( newMax !== this._max ) this._maxClick = newMax;
+        this.max( newMax );
+        this.updateElasticStep();
+        this.updateDisplay();
+        return this;
+    }
+
     // the eleastic step is 0.2% of the range
     // it's recalcuclated on min/max changes (assuming elastic is on)
     updateElasticStep() {
@@ -911,6 +929,11 @@ class NumberController extends Controller {
             // Why not this?
             if (this._step > 1) {
                 this._step = 1;
+            }
+
+            // MICK: the smallest step, if one is set (elasticFloor)
+            if (this._elasticMinStep > 0 && this._step < this._elasticMinStep) {
+                this._step = this._elasticMinStep;
             }
 
         }

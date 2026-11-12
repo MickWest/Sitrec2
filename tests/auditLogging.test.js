@@ -183,6 +183,8 @@ serveGPCached(dirname(__DIR__) . '/cache/sample.csv', '/fallback.csv', 60, 'sitr
         expect(finished(invalid)).toMatchObject({outcome: 'rejected', http_status: 400});
         const forbidden = await request('metadata.php', {method: 'POST', body: {updateFeatured: true}});
         expect(finished(forbidden)).toMatchObject({event: 'featured.write', outcome: 'denied', http_status: 403});
+        const forbiddenTemplates = await request('metadata.php', {method: 'POST', body: {updateTemplates: true}});
+        expect(finished(forbiddenTemplates)).toMatchObject({event: 'templates.write', outcome: 'denied', http_status: 403});
         const empty = await request('getsitches.php?get=myfiles', {headers: {'X-Test-User': '0'}});
         expect(empty.status).toBe(200);
         expect(finished(empty)).toMatchObject({outcome: 'denied', reason: 'authentication_required'});
@@ -195,7 +197,8 @@ serveGPCached(dirname(__DIR__) . '/cache/sample.csv', '/fallback.csv', 60, 'sitr
     test('metadata writes, featured updates and administrator reads are recorded', async () => {
         for (const [body, event] of [[{labels: [{name: 'private label'}]}, 'metadata.write'],
             [{bumpScreenshotVersions: ['Example']}, 'metadata.screenshot_versions'],
-            [{updateFeatured: true, sitches: []}, 'featured.write']]) {
+            [{updateFeatured: true, sitches: []}, 'featured.write'],
+            [{updateTemplates: true, add: [{name: 'Example', userID: 42}]}, 'templates.write']]) {
             const result = await request('metadata.php', {method: 'POST', headers: {'X-Test-Admin': '1'}, body});
             expect(result.status).toBe(200);
             expect(finished(result)).toMatchObject({event, outcome: 'success'});

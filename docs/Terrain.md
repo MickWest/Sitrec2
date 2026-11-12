@@ -160,11 +160,10 @@ about −40 m at the North Carolina coast to about −8 m at Yellowstone; worldw
 ## The controls
 
 The top level of the Terrain menu holds the main controls. The rest are in the **Terrain
-Tweaks** sub-folder, which is closed by default. Some controls show their internal property
-names (`lat`, `lon`, `zoom`, `nTiles`, `elevationScale`) rather than a formatted label.
+Tweaks** sub-folder, which is closed by default.
 
 **Dynamic Subdivision** is on in the custom sitch. The terrain then covers the whole globe, and
-`lat`, `lon`, `zoom`, `nTiles` and **Zoom to track** are hidden. To see terrain at a place, use
+**Latitude**, **Longitude**, **Zoom Level**, **Tiles per Side** and **Zoom to track** are hidden. To see terrain at a place, use
 **Go To the above position** in the Camera menu, or press `G` and enter the place. To show the
 hidden controls, turn Dynamic Subdivision off in Terrain Tweaks. 3D Buildings must be off first.
 
@@ -177,21 +176,21 @@ you have added your own Google or Cesium Ion key. An own key shows the rows afte
 |---|---|---|
 | **Map Type** / **Elevation Type** | top | See above |
 | **Layer** | top | The image layer of the current Map Type. A source with one layer shows only that layer |
-| **`lat` / `lon` / `zoom` / `nTiles`** | top | Where the terrain square sits and how big it is. Lower zoom covers more ground per tile; `nTiles` (1–8) sets how many tiles across, so the two together decide the area. Hidden while Dynamic Subdivision is on |
+| **Latitude** / **Longitude** / **Zoom Level** / **Tiles per Side** | top | Where the terrain square sits and how big it is. A lower Zoom Level covers more ground per tile; Tiles per Side (1–8) sets how many tiles across, so the two together decide the area. Hidden while Dynamic Subdivision is on |
 | **Refresh** | top | Re-request the tiles. Use after a network glitch |
-| **Zoom to track** | top | Move the terrain to the extents of the selected track over the sitch's frames. Hidden while Dynamic Subdivision is on |
+| **Zoom to track** | top | Move the terrain to the extents of the selected track over the sitch's frames. A 3D object whose **Position** is **Manual** is in the list too: the terrain moves to that object. Hidden while Dynamic Subdivision is on |
 | **3D Buildings** | top | Cesium Ion or Google tiles. Turning this on forces the ellipsoid Earth model, because the tiles are true-ECEF, and forces Dynamic Subdivision on |
 | **Buildings Source** | top | Which provider supplies the 3D building tiles. Shown only when both are available |
 | **Ocean Surface (Beta)** | top | Sea-level water surface under Google 3D tiles |
 | **Debug Grids** | Tweaks | Green = ground texture tiles, blue = elevation tiles. Shows which tiles are loaded |
-| **`elevationScale`** | Tweaks | **Changes measurements too — see the warning below** |
+| **Elevation Scale** | Tweaks | **Changes measurements too — see the warning below** |
 | **Terrain Opacity** | Tweaks | Useful for seeing tracks that pass underground. Also fades the 3D tiles |
 | **Dynamic Subdivision** | Tweaks | Camera-adaptive tiling for globe-scale viewing. With it off, hold `T` and move the cursor: the terrain square follows it. Cannot be turned off while 3D Buildings is on |
 | **Building Edges** | Tweaks | Wireframe edges on the 3D building tiles |
 | **Tile Edges** | Tweaks | A magenta outline around each terrain tile, to show tile boundaries |
-| **Building Material** / **Building Flat Colour** | Tweaks | Photo, Flat or Half-photo shading for the building tiles, and the color used for Flat. Applies to newly loaded tiles |
+| **Building Material** / **Building Flat Color** | Tweaks | Photo, Flat or Half-photo shading for the building tiles, and the color used for Flat. Applies to newly loaded tiles |
 | **Use Ellipsoid Earth Model** | Tweaks | Sphere (fast, legacy) or the WGS84 ellipsoid. Forced on while 3D Buildings is on. See [GIS Concepts in Sitrec](GIS.md) |
-| **`textureDetail` / `elevationDetail`**, **Disable Dynamic Subdivision** | Tweaks | Subdivision multipliers (1 is normal) and a level-of-detail freeze. **Shown only on a local host** (such as localhost or a 192.168.x.x address) — not present on the public site |
+| **Texture Detail** / **Elevation Detail**, **Disable Dynamic Subdivision** | Tweaks | Subdivision multipliers (1 is normal) and a level-of-detail freeze. **Shown only on a local host** (such as localhost or a 192.168.x.x address) — not present on the public site |
 
 Three more sub-folders sit just above Terrain Tweaks:
 
@@ -227,7 +226,7 @@ Each cell is one tile, and a smaller cell is a tile at a higher zoom. A mark sit
 
 > ### Elevation Scale is for looking, not measuring
 >
-> Exaggerating the relief with `elevationScale` is a good way to see subtle terrain. But every
+> Exaggerating the relief with **Elevation Scale** is a good way to see subtle terrain. But every
 > ground query uses the scaled value, not only the drawing. The scale factor is applied to the
 > *whole* elevation value, including the geoid correction baked into it, and the sea-level clamp
 > is not scaled. With the scale at 2 in Los Angeles, where the geoid is about 35 m below the
@@ -254,13 +253,13 @@ Each cell is one tile, and a smaller cell is a tile at a higher zoom. A mark sit
 
 | Symptom | Likely cause |
 |---|---|
-| Object is underground | Check the altitude type first: see [GIS Concepts in Sitrec](GIS.md). Then check Elevation Type, Performance Preset and `elevationScale`, which all move the ground. From far away, the drawn mesh (5) can also differ from the ground the object uses |
+| Object is underground | Check the altitude type first: see [GIS Concepts in Sitrec](GIS.md). Then check Elevation Type, Performance Preset and Elevation Scale, which all move the ground. From far away, the drawn mesh (5) can also differ from the ground the object uses |
 | Ground height changed when nothing else did | Performance Preset or Max Details changed the elevation zoom cap |
 | AGL disagrees with what you can see | Under 3D tiles, the visible surface includes buildings and trees; the query may have used the bare-earth DEM |
 | Terrain never loads | Network — try Refresh; check Debug Grids to see which tiles are missing |
 | Terrain went flat and AGL numbers jumped | The elevation service failed and Elevation Type switched to Flat. It does not switch back. Choose the source again |
 | Map Type changed to Blue Marble by itself | The map service failed and Sitrec switched to **Blue Marble (No Clouds)**. It asks the service once a minute and goes back to your map when the service answers. If you pick another map first, it stays on that map |
-| Low coastal land is flat, or shallow water is not flat | `elevationScale` was changed. Set it to 1 and press Refresh |
+| Low coastal land is flat, or shallow water is not flat | Elevation Scale was changed. Set it to 1 and press Refresh |
 
 ---
 

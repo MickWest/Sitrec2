@@ -1,6 +1,6 @@
 import {CNode, CNodeOrigin} from "./CNode";
 import {metersPerSecondFromKnots, radians} from "../utils";
-import {GlobalDateTimeNode, NodeMan, Sit} from "../Globals";
+import {GlobalDateTimeNode, Globals, NodeMan, Sit, Units} from "../Globals";
 import {DebugArrowAB} from "../threeExt";
 import {GlobalScene} from "../LocalFrame";
 import {getLocalNorthVector, getLocalUpVector} from "../SphericalMath";
@@ -8,8 +8,14 @@ import {assert} from "../assert";
 import {V3} from "../threeUtils";
 import {t} from "../i18n";
 import {MISB} from "../MISBUtils";
-import {knotsFromMISBWindSpeed, normalizeWindTimestampMs} from "./WindHelpers";
+import {fromUVToDirKnots, knotsFromMISBWindSpeed, normalizeWindTimestampMs, windSpeedUnit} from "./WindHelpers";
 import {altitudeProfileForSourceKey, trackSourceKey} from "./WindSources";
+import {ECEFToLLAVD_radii} from "../LLA-ECEF-ENU";
+import {meanSeaLevelOffset} from "../EGM96Geoid";
+
+// The role of a wind node in a custom sitch: the source it reads is the wind
+// field's source for that role (CNodeDisplayWindField.sourceKeyFor).
+const WIND_ROLES = {targetWind: "target", localWind: "local"};
 
 export class CNodeWind extends CNode {
     constructor(v, _guiMenu) {
@@ -23,6 +29,14 @@ export class CNodeWind extends CNode {
         this.name = v.name ?? v.id // if no name is supplied, use the id
 
         this.max = v.max ?? 200;
+
+        // Target or Local Wind (null for any other wind node). Under a Wind
+        // Source other than Manual, such a node READS the wind field: at each
+        // user's position, height and time, on every frame (windStateAt). Its
+        // From and Knots then show the value at its own track, read-only,
+        // unless Override is on: then they are the user's, as under Manual.
+        this.role = v.role ?? WIND_ROLES[this.id] ?? null;
+        this.override = v.override ?? false;
 
         // this.input("pos")
         // this.input("radius")
@@ -44,10 +58,37 @@ export class CNodeWind extends CNode {
                     if (wf.source === "manual" && wf.windU) {
                         wf.fetchWindForAltitude(wf.windAltFt);
                     }
+                    wf.noteWindChanged?.();
                 }
             };
-            this.guiFrom = this.gui.add (this, "from", 0,359,1).name(this.name+" Wind From").tooltip(t("misc.windFrom.tooltip")).onChange(onManualWindEdit).wrap()
-            this.guiKnots = this.gui.add (this, "knots", 0, this.max, 1).name(this.name+" Wind Knots").tooltip(t("misc.windKnots.tooltip")).onChange(onManualWindEdit)
+            // Target and Local Wind say what they are for; any other wind
+            // node (Object, Cloud in older sitches) keeps the generic text.
+            const tipGroup = {targetWind: "target", localWind: "local"}[this.id];
+            const fromTip = tipGroup ? t(`custom.wind.${tipGroup}From.tooltip`) : t("misc.windFrom.tooltip");
+            const knotsTip = tipGroup ? t(`custom.wind.${tipGroup}Knots.tooltip`) : t("misc.windKnots.tooltip");
+            this.guiFrom = this.gui.add (this, "from", 0,359,1).name(this.name+" Wind From").tooltip(fromTip).onChange(onManualWindEdit).wrap()
+            // The speed row is in the Wind panel's speed unit (speedInUnit);
+            // the node keeps knots. It was "Wind Knots", in knots, until
+            // 2026-11-03 (decision D4).
+            const unit = this.speedUnit();
+            this.guiKnots = this.gui.add (this, "speedInUnit", 0, this.max * unit.fromKnots, 1)
+                .name(`${this.name} Wind Speed (${unit.abbrev})`).tooltip(knotsTip).onChange(onManualWindEdit)
+            // Whole numbers: a live value (read from the source on each frame)
+            // showed every decimal, such as 226.481.
+            this.guiFrom.decimals?.(0);
+            this.guiKnots.decimals?.(0);
+            if (tipGroup) {
+                // Shown by _syncLiveGUI when the source is not Manual.
+                this.guiOverride = this.gui.add(this, "override")
+                    .name(`Override ${this.name} Wind`)
+                    .tooltip(t(`custom.wind.${tipGroup}Override.tooltip`))
+                    .onChange(() => {
+                        this._syncLiveGUI();
+                        this.recalculateCascade();
+                        NodeMan.get("windField", false)?.noteWindChanged?.();
+                    });
+                this.guiOverride.hide();
+            }
         }
 
        // this.optionalInputs(["originTrack"])
@@ -92,6 +133,7 @@ export class CNodeWind extends CNode {
             name: this.name,
             max: this.max,
             lock: this.lock,
+            override: this.override,
         }
     }
 
@@ -102,8 +144,10 @@ export class CNodeWind extends CNode {
         this.name = v.name;
         this.max = v.max;
         this.lock = v.lock;
+        this.override = !!v.override;
         this.guiFrom.updateDisplay()
         this.guiKnots.updateDisplay()
+        this.guiOverride?.updateDisplay();
     }
 
     // // hide and show will be called from a switch node
@@ -119,6 +163,9 @@ export class CNodeWind extends CNode {
         super.show(visible)
         this.guiFrom.show(visible)
         this.guiKnots.show(visible)
+        // The Override checkbox follows the sliders, when it is offered at all.
+        this._guiShown = visible;
+        if (this.guiOverride) this.guiOverride.show(visible && !!this._overrideOffered);
         return this;
     }
 
@@ -142,36 +189,160 @@ export class CNodeWind extends CNode {
         this.position = pos.clone();
     }
 
-    // returns a pre-frame wind vector, indicating wind motion for that frame
-    // in ECEF coordinates
-    // optionally supply a position to get the wind at that position
-    // with reference to local north and up vectors
-    getValueFrame(f, position) {
+    // ── the speed unit of the GUI ─────────────────────────────────────
 
-        // if no position is supplied, use the current position
-        // fine for a target that does not move much, but if the target moves a lot, then
-        // we should supply the position of the target at the time of the frame
-        if (position === undefined) {
-            position = this.position;
+    // The unit of the speed row: the Wind panel's (Units, or knots with Wind
+    // in Knots on the wind field). {abbrev, fromKnots}.
+    speedUnit() {
+        return windSpeedUnit(Units, NodeMan.get("windField", false)?.windInKnots);
+    }
+
+    // The speed row's value, in that unit. The node itself keeps knots.
+    get speedInUnit() {
+        return this.knots * this.speedUnit().fromKnots;
+    }
+
+    set speedInUnit(value) {
+        this.knots = value / this.speedUnit().fromKnots;
+    }
+
+    // The unit changed (Units, or Wind in Knots): new name and range.
+    refreshSpeedGUI() {
+        if (!this.guiKnots) return;
+        const unit = this.speedUnit();
+        this.guiKnots.name(`${this.name} Wind Speed (${unit.abbrev})`);
+        this.guiKnots.max(this.max * unit.fromKnots);
+        this.guiKnots.updateDisplay();
+    }
+
+    // CUnits calls these on every node that has them.
+    changeUnits() {
+        this.refreshSpeedGUI();
+    }
+
+    updateDesc() {
+        this.refreshSpeedGUI();
+    }
+
+    // ── the wind this node gives ──────────────────────────────────────
+
+    // The source this node reads from the wind field, or null when it gives
+    // its own From and Knots: Manual source, Override on, no wind field, or a
+    // wind node that is not Target or Local Wind.
+    liveSourceKey() {
+        if (!this.role || this.override) return null;
+        const wf = NodeMan.get("windField", false);
+        if (!wf || typeof wf.windAt !== "function") return null;
+        const key = wf.sourceKeyFor(this.role);
+        return key && key !== "manual" ? key : null;
+    }
+
+    // Target Wind gives Local Wind's wind when "Lock Target Wind to Local" is
+    // on (Local Wind carries `lock: "targetWind"`).
+    _lockedTo() {
+        if (this.role !== "target") return null;
+        if (!NodeMan.get("lockWind", false)?.value) return null;
+        const local = NodeMan.get("localWind", false);
+        return local && local !== this && local.lock === this.id ? local : null;
+    }
+
+    // The wind this node gives at frame f at an ECEF position:
+    // {from, knots, status, sourceKey}. Status is the wind field's (see
+    // CNodeDisplayWindField.windAt), or "manual" / "override" for a value
+    // the user set. Pure: no change to the node.
+    windStateAt(f, position = this.position) {
+        const locked = this._lockedTo();
+        if (locked) return locked.windStateAt(f, position);
+        if (!this.override) {
+            const hist = this.trackWindAt(f);
+            if (hist) {
+                return {from: hist.from, knots: hist.knots, status: "ok",
+                    sourceKey: trackSourceKey(this.trackSource)};
+            }
+            const key = this.liveSourceKey();
+            if (key) {
+                const lla = position ? ECEFToLLAVD_radii(position) : null;
+                const wf = NodeMan.get("windField");
+                const w = lla && Number.isFinite(lla.z)
+                    ? wf.windAt(key, lla.x, lla.y, lla.z - meanSeaLevelOffset(lla.x, lla.y), f)
+                    : {u: null, v: null, status: "no-data"};
+                if (Number.isFinite(w.u) && Number.isFinite(w.v)) {
+                    const {from, knots} = fromUVToDirKnots(w.u, w.v);
+                    const state = {from, knots, status: w.status, sourceKey: key};
+                    // The height a held value is from (see windAt).
+                    if (w.limitM != null) state.limitM = w.limitM;
+                    return state;
+                }
+                // Nothing here (yet): this node's last values, marked so.
+                return {from: this.from, knots: this.knots, status: w.status, sourceKey: key};
+            }
         }
+        return {from: this.from, knots: this.knots,
+            status: this.override ? "override" : "manual", sourceKey: null};
+    }
 
-        //let wind = V3(0, 0, -metersPerSecondFromKnots(this.knots) / Sit.fps);
-        //const posUp = V3(0, 1, 0)
-        const hist = this.trackWindAt(f);
-        const from = hist ? hist.from : this.from;
-        const knots = hist ? hist.knots : this.knots;
-        let wind = getLocalNorthVector(position)
-        wind.multiplyScalar(metersPerSecondFromKnots(knots)
-            * (Sit.simSpeed ?? 1) / Sit.fps)
-        const posUp = getLocalUpVector(position)
-        wind.applyAxisAngle(posUp, radians(180-from))
+    // What changes the wind this node gives, other than the frame and the
+    // position. update() recalculates the node's users when it changes.
+    // (From and Knots under Manual or Override are left out: an edit of them
+    // recalculates at once, in its onChange.)
+    windSignature() {
+        const locked = this._lockedTo();
+        if (locked) return `lock:${locked.windSignature()}`;
+        if (this.override) return "override";
+        if (this.trackSource) return `track:${this.trackSource}`;
+        const key = this.liveSourceKey();
+        if (!key) return "manual";
+        const wf = NodeMan.get("windField");
+        return `live:${key}|${wf._sourceDataVersion ?? 0}|${wf.sondeProfileSignature?.(key) ?? ""}`;
+    }
 
-        // assert no NaNs in the wind vector
+    // A key for a cache of results that used this node's wind: the signature,
+    // and From and Knots when they are the wind (Manual, Override). Not the
+    // From and Knots of a node that reads a source: they follow the playhead.
+    windCacheKey() {
+        const locked = this._lockedTo();
+        if (locked) return `lock:${locked.windCacheKey()}`;
+        const signature = this.windSignature();
+        return signature === "manual" || signature === "override"
+            ? `${signature}:${this.from}|${this.knots}` : signature;
+    }
+
+    // One sentence on where this node's wind comes from, for reports.
+    describeSource() {
+        const locked = this._lockedTo();
+        if (locked) return locked.describeSource();
+        if (this.override) return "User-set wind (Override is on); uncertainty is an input assumption.";
+        if (this.trackSource) return "Captured wind series from the loaded track.";
+        const text = this.liveSourceKey()
+            ? NodeMan.get("windField", false)?.windProvenance?.(this.role === "local" ? "camera" : "target")
+            : null;
+        return text ?? "User-supplied wind; uncertainty is an input assumption.";
+    }
+
+    // ECEF wind displacement for one frame, from a {from, knots} state.
+    _vectorFrom(state, position) {
+        const wind = getLocalNorthVector(position);
+        wind.multiplyScalar(metersPerSecondFromKnots(state.knots)
+            * (Sit.simSpeed ?? 1) / Sit.fps);
+        wind.applyAxisAngle(getLocalUpVector(position), radians(180 - state.from));
         assert(!isNaN(wind.x) && !isNaN(wind.y) && !isNaN(wind.z), "Wind vector has NaNs");
-
         return wind;
     }
 
+    // The per-frame wind vector (ECEF) at frame f at a position (default: the
+    // last position a user set). Every way to read this node comes here.
+    getValueFrame(f, position) {
+        if (position === undefined) position = this.position;
+        return this._vectorFrom(this.windStateAt(f, position), position);
+    }
+
+    // v(f), p(f) and v0 read the frame they ask for. A wind node has no frames
+    // of its own (frames = 0), and CNode.getValue then read frame 0 for every
+    // f, so until 2026-11-03 the Flight Sim camera, Constant Ground Speed and
+    // Straight Line traverses had the frame-0 wind of a telemetry track.
+    getValue(frameFloat) {
+        return this.getValueFrame(frameFloat);
+    }
 
     // PURE historical lookup of the track-driven wind at frame f, or null when
     // no track drives this node. Same misb-row mapping as update(f), but with
@@ -340,48 +511,42 @@ export class CNodeWind extends CNode {
         return null;
     }
 
-    // Per-frame wind displacement vector at frame f for an ECEF position,
-    // using the HISTORICAL track wind when this node is track-driven (falling
-    // back to the current values otherwise). Pure — no node-state side effects.
+    // Per-frame wind displacement vector at frame f for an ECEF position.
+    // Pure — no node-state side effects. (The same as getValueFrame.)
     windVectorAt(f, position) {
-        const hist = this.trackWindAt(f);
-        const from = hist ? hist.from : this.from;
-        const knots = hist ? hist.knots : this.knots;
-        let wind = getLocalNorthVector(position);
-        wind.multiplyScalar(metersPerSecondFromKnots(knots)
-            * (Sit.simSpeed ?? 1) / Sit.fps);
-        const posUp = getLocalUpVector(position);
-        wind.applyAxisAngle(posUp, radians(180 - from));
-        return wind;
+        return this._vectorFrom(this.windStateAt(f, position), position);
     }
 
     update(f) {
-        // Track-driven wind: pull WindDirection/WindSpeed from the bound
-        // MISB track each frame. When set, this overrides whatever the
-        // user has in the GUI (the GUI fields just track the live value).
-        // Falls through silently if the track is missing (was removed,
-        // not yet loaded) — the previous value stays put rather than
-        // jumping to zero.
-        {
-            const hist = this.trackWindAt(f);
-            if (hist && (this.from !== hist.from || this.knots !== hist.knots)) {
-                this.from = hist.from;
-                this.knots = hist.knots;
-                if (this.guiFrom) this.guiFrom.updateDisplay();
-                if (this.guiKnots) this.guiKnots.updateDisplay();
-                // Consumers sample track-driven wind per frame through the
-                // PURE trackWindAt/windVectorAt/getValueFrame(f) paths, so the
-                // interpolated value changing every rendered frame must NOT
-                // cascade a graph-wide rebake per frame (the rebaked arrays
-                // are identical). Cascade only when the underlying track ROW
-                // changes — the pre-interpolation cadence — which keeps any
-                // legacy consumer that reads this.from at bake time as fresh
-                // as it was before interpolation.
-                if (hist.row !== this._lastCascadeRow) {
-                    this._lastCascadeRow = hist.row;
-                    this.recalculateCascade();
-                }
-            }
+        // From and Knots show the wind at this node's own track (originTrack)
+        // at this frame, when the node reads a source: read-only, so the
+        // sliders show what the users get where the target (or camera) is.
+        // Users do not read From and Knots; they call windStateAt at their own
+        // positions, so a change here needs no recalculation.
+        // A telemetry wind is the same at every position, so a node with no
+        // track of its own still shows it.
+        const anchor = this._anchorPosition(f) ?? (this.trackSource ? this.position : null);
+        const state = anchor ? this.windStateAt(f, anchor) : null;
+        this.liveState = state;
+        const live = !!state && state.status !== "manual" && state.status !== "override";
+        if (live && Number.isFinite(state.from) && Number.isFinite(state.knots)
+            && (this.from !== state.from || this.knots !== state.knots)) {
+            this.from = state.from;
+            this.knots = state.knots;
+            if (this.guiFrom) this.guiFrom.updateDisplay();
+            if (this.guiKnots) this.guiKnots.updateDisplay();
+        }
+        this._syncLiveGUI(live);
+
+        // Recalculate the users when what this node reads changes: a new
+        // source, Override, data that arrived (a GFS level, a sounding).
+        // Not while recalculation is off (a sitch load applies its mods with
+        // it off): the cascade would be dropped, so keep the old signature and
+        // try again on a later frame.
+        const signature = this.windSignature();
+        if (signature !== this._lastWindSignature && !Globals.dontRecalculate) {
+            this._lastWindSignature = signature;
+            this.recalculateCascade();
         }
 
         // if we have a lock, then hide the gui of the wind we lock to
@@ -436,6 +601,39 @@ export class CNodeWind extends CNode {
                 this.extraRecalculate--;
                 this.recalculateCascade();
             }
+        }
+    }
+
+    // This node's own track position at frame f (ECEF), or null.
+    _anchorPosition(f) {
+        let track = this.originTrack;
+        if (typeof track === "string") track = NodeMan.get(track, false);
+        if (!track || typeof track.p !== "function") return null;
+        try {
+            const pos = track.p(f);
+            return pos && Number.isFinite(pos.x) ? pos : null;
+        } catch (e) {
+            return null;   // the track is not ready (during a load)
+        }
+    }
+
+    // Read-only sliders while the node reads a source; the Override checkbox
+    // offered whenever the source is not Manual.
+    _syncLiveGUI(live = this._live) {
+        this._live = live;
+        if (!this.guiFrom) return;
+        const wf = NodeMan.get("windField", false);
+        const sourceKey = this.role && wf?.sourceKeyFor ? wf.sourceKeyFor(this.role) : "manual";
+        const offered = !!this.role && (sourceKey !== "manual" || !!this.trackSource);
+        if (this.guiOverride && offered !== this._overrideOffered) {
+            this._overrideOffered = offered;
+            this.guiOverride.show(offered && this._guiShown !== false);
+        }
+        const readOnly = !!live && !this.override;
+        if (readOnly !== this._readOnly) {
+            this._readOnly = readOnly;
+            this.guiFrom.disable(readOnly);
+            this.guiKnots.disable(readOnly);
         }
     }
 

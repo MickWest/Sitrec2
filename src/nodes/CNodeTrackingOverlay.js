@@ -369,7 +369,8 @@ export class CNodeTrackingOverlay extends CNodeActiveOverlay {
 
         this.setGUI(v,"traverse");
 
-        this.manualTrackingFolder = this.gui.addFolder("Manual Tracking").close();
+        this.manualTrackingFolder = this.gui.addFolder("Manual Tracking").close()
+            .tooltip(t("trackingOverlay.folderTooltip"));
 
         this.showTracking = true;
 

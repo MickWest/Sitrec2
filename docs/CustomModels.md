@@ -2,7 +2,7 @@
 
 An object in Sitrec can be a simple geometric shape such as a sphere or a box, a built-in model such as an aircraft, a drone or a ship, a preset vehicle such as a balloon or a tethered aerostat, a 3D model that you import, or a flock of birds. This page explains each one, the model file formats that Sitrec accepts, and how to prepare a model in Blender. To add an object to a sitch, see [Adding Objects and Tracks](SceneObjects.md).
 
-- [Built-in Models](#built-in-models) and [Preset Vehicles](#preset-vehicles)
+- [Built-in Models](#built-in-models) and [Procedural Custom Objects](#procedural-custom-objects)
 - [Dimensions](#dimensions)
 - [Supported Model Formats](#supported-model-formats), including [PLY Files](#ply-files)
 - [Custom Models using Blender](#custom-models-using-blender), including [Aircraft navigation lights](#aircraft-navigation-lights)
@@ -41,9 +41,32 @@ There are also some built-in models. To use them, set "Model or Geometry" to "mo
 To replace a model's own materials with the settings in the Material folder, check **Apply Material**. In "model" mode the Material folder stays hidden until you do this. This is a good way of quickly getting a neutral color scheme. The figure shows the F-15 with a physical material.
 ![F-15 with Apply Material checked and a physical material, with the Material folder open](docimages/apply-material-to-f-15.jpg)
 
-### Preset Vehicles
+### Procedural Custom Objects
 
-**Browse vehicles…** in the object's folder opens a library of preset vehicles: aircraft, helicopters, road vehicles, drones, balloons and sky lanterns. Choose one to put it on the object. **Edit design…** then changes that vehicle, and **Freeze as GLB** stores it as a fixed model. **Sitrec → Extra Tools → Vehicle Designer** builds a vehicle in its own tab and exports it as a GLB file.
+**Browse custom objects…** in the object's folder opens the Custom Object Designer: a library of 347 preset objects that Sitrec builds from parameters. They are aircraft, helicopters, road vehicles, drones, balloons, sky lanterns, kites and birds. Choose one to put it on the object. **Edit design…** then changes that object with sliders, and **Freeze as GLB** stores it as a fixed model. **Sitrec → Extra Tools → Custom Object Designer** builds an object in its own tab and exports it as a GLB file. The [Custom Object Designer guide](https://github.com/MickWest/Sitrec2/blob/main/tools/vehicles/README.md) has the details.
+
+In the designer, **Scale → Overall scale** multiplies every dimension of the object, from 0.01 to 100. A value of 0.1 makes a 1:10 scale model of the object. The **Model Length** of the Sitrec object still sets its length in the scene when it is not zero.
+
+With **Animate moving parts** on, propellers, rotors and wheels turn as the sitch time runs, and the tails and tentacles of a kite move in the wind. A kite design also has the mass, lifting area, lift and drag that **Add Kite** uses: see [Kites](SceneObjects.md#kites).
+
+#### Birds
+
+The **Birds** type of the Custom Object Designer has 40 birds in flight: gulls, pelicans, cranes, a raven and a crow, pigeons and doves, geese, swans, a duck, eagles, a hawk, a vulture, a heron, an egret, a stork, seabirds, an owl and small birds. Some species have more than one plumage. Each bird has the typical length and wingspan of its species, so its size on the screen is correct for its distance.
+
+![Twelve of the bird presets. Ten have their wings up in a wingbeat. The turkey vulture and the frigatebird glide](docimages/custom-models-birds.jpg)
+
+With **Animate moving parts** on, the wings of a bird beat as the sitch time runs. The folder of an object with a bird design has two controls for the wing motion:
+
+- **Bird flight**: **Flapping**, **Gliding** (the wings are held still), or **Flap, then glide** (bursts of wingbeats with a glide after each burst, as a pelican flies).
+- **Wingbeats per second**: The rate of the wingbeat. Each preset starts with a rate for the cruising flight of its species: a measured value from a published paper where one was found, or an estimate. The description of the preset in the Custom Object Designer says which. To match a video, count the wingbeats in the video and set this value. [Frequency Analysis](FrequencyAnalysis.md) can find the rate of a repeated change of brightness in the video, such as a wingbeat.
+
+These are two values of the design. **Edit design…** opens the design. Its **Wing motion** folder has those two values, and these:
+
+- **Flap angle, up and down** and **Wing fold on the upstroke**: The size of the stroke, and how much the outer wing folds while the wing goes up.
+- **Wing angle in a glide**: The angle of the held wings above the horizontal.
+- **Wingbeats before each glide** and **Length of each glide · s**: The bursts of **Flap, then glide**.
+
+The **Plumage** folder has the colors of the bird and its marks: the wing tips, the flight feathers, wing bars, a head mark and a tail band. With **Animate moving parts** off, a bird has its wings in the glide position. The wing position is a function of the sitch time, so a frame looks the same when you play to it and when you jump to it. A bird does not bank or steer: its path and its speed come from the track of its object. The [Custom Object Designer guide](https://github.com/MickWest/Sitrec2/blob/main/tools/vehicles/README.md#birds) has all the controls.
 
 ### Dimensions
 
@@ -302,7 +325,7 @@ For developers who check or extend this pipeline, read the current implementatio
 
 ## Flocks
 
-Check "Flock" in an object's menu to draw it as a flock of birds in place of the one object. Each bird is the object's own model or geometry, so set that up first: for example, a sphere of radius 0.5 for a bird about one meter across. The flock follows the object's track, and the track runs through the middle of the flock, not through its leader. An object that is not on a track gives a flock that holds station about that one point.
+Check "Flock" in an object's menu to draw it as a flock of birds in place of the one object. Each bird is the object's own model or geometry, so set that up first: for example, a sphere of radius 0.5 for a bird about one meter across, or a bird from **Browse custom objects…** (see [Birds](#birds)). The wings of a bird design beat in the flock, and each bird of the flock is at a different moment of the wingbeat. The propellers and rotors of other custom objects turn in a flock in the same way. The flock follows the object's track, and the track runs through the middle of the flock, not through its leader. An object that is not on a track gives a flock that holds station about that one point.
 
 The figure shows a flock of 18 spheres of radius 0.5, seen from above, with the Canada Goose species. One arm of the V is longer because this species sets an Asymmetry of 0.5.
 

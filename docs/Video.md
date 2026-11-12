@@ -40,14 +40,15 @@ For a side-by-side of video and simulation, use **Render Viewport Video** and se
 layout first with the view presets (`1`–`8`).
 
 The renders do not include every mark on screen. Viewport renders and a single-view render of the
-video view include the Video Readout, annotations and the Motion Analysis overlay. They leave out
-the Point Track cursor and trail and the Star Tracker's marks, which are a separate layer over the
-video view. To record those, use *Record Browser Window*, which captures the tab as shown.
-*Render Source Video* adds annotations only.
+video view include the Video Readout, annotations, the Motion Analysis overlay and, while
+**Enable Point Track** is on, the Point Track cursor and trail. They leave out the Star Tracker's
+marks, which are a separate layer over the video view. To record those, use *Record Browser
+Window*, which captures the tab as shown. *Render Source Video* adds annotations only.
 
 Other tools have their own video exports, for example stabilized video in
-[Point Tracking](PointTrack.md#c-stabilization-and-stabilized-rendering) and panorama videos in
-[Motion Analysis](MotionAnalysis.md#d-panoramas). Motion Analysis has no export for its
+[Point Tracking](PointTrack.md#c-stabilization-and-stabilized-rendering), panorama videos in
+[Motion Analysis](MotionAnalysis.md#d-panoramas) and a widening video in
+[Frequency Analysis](FrequencyAnalysis.md#render-a-widening-video). Motion Analysis has no export for its
 [background stabilization](MotionAnalysis.md#stabilize-the-video-on-the-background). To save that
 stabilization, use *Render Source Video*.
 
@@ -119,9 +120,9 @@ edge) and luma/chroma crosstalk come from that process, so they change with the 
 | Format | What it is |
 |---|---|
 | **Pure digital (no filter)** | No filter. The rendered frames, untouched. This is the default |
-| **NTSC (525/60 colour)** | US broadcast composite. Dot crawl and cross-color rainbowing |
+| **NTSC (525/60 color)** | US broadcast composite. Dot crawl and cross-color rainbowing |
 | **EIA RS-170 (525/60 monochrome)** | The pre-color US studio standard. Luminance only, no subcarrier |
-| **PAL (625/50 colour)** | European composite. Phase-alternating V axis, softer vertical color |
+| **PAL (625/50 color)** | European composite. Phase-alternating V axis, softer vertical color |
 | **VHS (SP)** | Color-under tape. Smeared color, head-switching tear at the bottom, tape noise |
 | **VHS (worn, 3rd generation)** | A copy of a copy on a played-out tape. Dropouts, tracking error, grain |
 
@@ -234,7 +235,7 @@ Metadata describes the camera before image cropping, rotation, and simulated len
 | Control | Default | What it does |
 |---|---|---|
 | **Loops** | 1 | Repeat the clip up to 20 times in one file. Useful for short events you want people to be able to watch repeatedly |
-| **Use HD/Retina Export** | off | Renders at your display's device pixel ratio instead of CSS pixels (2 on a Retina display, so 4× the pixels). It applies to **Render Viewport Video**, **Render Fullscreen Video**, a whole-viewport **Render Fade** and a single-view render of the video view. Other renders ignore it. The bitrate does not scale with it, so raise **Bitrate** in the render dialog to keep the same quality |
+| **Use HD/Retina Export** | off | Renders at your display's device pixel ratio instead of CSS pixels (2 on a Retina display, so 4× the pixels). It applies to **Render Viewport Video**, **Render Fullscreen Video**, a whole-viewport **Render Fade**, **Render Widening Video** and a single-view render of the video view. Other renders ignore it. The bitrate does not scale with it, so raise **Bitrate** in the render dialog to keep the same quality |
 | **Include Audio** | **on** | Carries the source video's audio through — but only when the export would stay in sync with it. Audio is silently dropped if playback speed is not 1×, ping-pong is on, Loops is above 1, *Unique frames only* actually skipped a frame, or the audio has not finished decoding. **Render Fade** never includes audio |
 | **Unique frames only** | off | Scans the In/Out range of the source video first and skips source frames that duplicate the previous one (for example, repeated frames from a frame-rate conversion). The output keeps its frame rate, so the clip becomes shorter. Has no effect without a video |
 | **Unique threshold** | 1.0 | How different a frame has to be to be kept, as mean absolute difference in grey level. Lower keeps more frames |

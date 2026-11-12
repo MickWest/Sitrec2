@@ -3,7 +3,10 @@ import {
     circumzenithalCenterAltitudeDeg,
     lunarOpticsPhaseScale,
     platePrismDeviationRay,
+    rainbowAngleDeg,
     sunDogOffsetsDeg,
+    WATER_INDEX_RED,
+    WATER_INDEX_VIOLET,
 } from "../src/nodes/CNodeAtmosphericOptics";
 import {Vector3} from "three";
 
@@ -91,5 +94,24 @@ describe("atmospheric optics lunar brightness", () => {
         expect(lunarOpticsPhaseScale(0)).toBeLessThan(0.12); // quarter Moon
         expect(lunarOpticsPhaseScale(0.8)).toBeLessThan(0.02); // crescent
         expect(lunarOpticsPhaseScale(1)).toBeLessThan(0.001); // new Moon
+    });
+});
+
+describe("atmospheric optics rainbow geometry", () => {
+    test("the primary bow is about 42 degrees from the antisolar point, red outside violet", () => {
+        const red = rainbowAngleDeg(WATER_INDEX_RED, 1), violet = rainbowAngleDeg(WATER_INDEX_VIOLET, 1);
+        expect(red).toBeGreaterThan(42.2); expect(red).toBeLessThan(42.6);
+        expect(violet).toBeGreaterThan(40.4); expect(violet).toBeLessThan(40.8);
+        // Descartes' value for n = 4/3
+        expect(rainbowAngleDeg(4 / 3, 1)).toBeCloseTo(42.03, 1);
+    });
+
+    test("the secondary bow is about 51 degrees out, wider, with its colors reversed", () => {
+        const red = rainbowAngleDeg(WATER_INDEX_RED, 2), violet = rainbowAngleDeg(WATER_INDEX_VIOLET, 2);
+        expect(red).toBeGreaterThan(50.1); expect(red).toBeLessThan(50.7);
+        expect(violet).toBeGreaterThan(53.2); expect(violet).toBeLessThan(54.0);
+        expect(violet - red).toBeGreaterThan(rainbowAngleDeg(WATER_INDEX_RED, 1) - rainbowAngleDeg(WATER_INDEX_VIOLET, 1));
+        // the dark band between the bows
+        expect(red - rainbowAngleDeg(WATER_INDEX_RED, 1)).toBeGreaterThan(7);
     });
 });

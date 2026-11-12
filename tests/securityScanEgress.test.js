@@ -303,6 +303,38 @@ describe('egress-check-record', () => {
         expect(r.comment).toMatch(/Partial output, not a verdict/);
     });
 
+    // The accepted patterns, the prompt and the allow-list are outside the scan, so a push
+    // that changes them would leave no trace in its own record without this.
+    describe('a change to the review rules', () => {
+        const rulesDiff = [
+            'diff --git a/scripts/egress-accepted-patterns.md b/scripts/egress-accepted-patterns.md',
+            'index 1111111..2222222 100644',
+            '--- a/scripts/egress-accepted-patterns.md',
+            '+++ b/scripts/egress-accepted-patterns.md',
+            '@@ -1,3 +1,4 @@',
+            ' ## Entries',
+            '-- **Limits:** the old limit.',
+            '+- **Limits:** a wider limit, with ```backticks```.',
+            '+### `new-entry` — accepted 2.188.2',
+            '',
+        ].join('\n');
+
+        test('is listed with its lines added and removed, and its diff, and changes no verdict', () => {
+            const r = record({'scan.json': scanJson('CLEAR', 0), 'scan.md': '', 'rules.diff': rulesDiff});
+            expect(r.verdict).toBe('CLEAR');
+            expect(r.comment).toMatch(/\*\*Review rules changed in this push:\*\* `scripts\/egress-accepted-patterns\.md` \(\+2 −1\)/);
+            expect(r.comment).toMatch(/<summary>Review rules diff<\/summary>/);
+            expect(r.comment).toContain('+### `new-entry` — accepted 2.188.2');
+            // The fence is longer than the backtick run inside the diff.
+            expect(r.comment).toContain('````diff');
+        });
+
+        test('no change, no section', () => {
+            const r = record({'scan.json': scanJson('CLEAR', 0), 'scan.md': '', 'rules.diff': ''});
+            expect(r.comment).not.toMatch(/Review rules/);
+        });
+    });
+
     test('INCOMPLETE when the review states no verdict', () => {
         const r = record({'scan.json': scanJson('CLEAR', 2), 'scan.md': '', 'review.md': 'I looked at the files and everything is fine.', 'review.exit': '0'});
         expect(r.verdict).toBe('INCOMPLETE');

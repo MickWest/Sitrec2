@@ -83,9 +83,9 @@
 
   <!-- Flow labels -->
   <g font-size="10" fill="#444">
-    <text x="285" y="99" text-anchor="middle">at Altitude (ft)</text>
-    <text x="300" y="252">on each load, at the</text>
-    <text x="300" y="265">altitude of each track</text>
+    <text x="285" y="99" text-anchor="middle">at Altitude</text>
+    <text x="300" y="252">every frame, where</text>
+    <text x="300" y="265">the wind is used</text>
     <text x="296" y="312" text-anchor="middle">every frame</text>
     <text x="324" y="190">one track row</text>
     <text x="324" y="203">fills the field</text>

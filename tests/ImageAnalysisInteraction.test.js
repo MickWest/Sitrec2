@@ -6,7 +6,7 @@ import {UndoManager} from "../src/Globals";
 jest.mock("../src/Globals", () => ({
     setRenderOne: jest.fn(), UndoManager: {add: jest.fn()}, Sit: {frames: 1},
     FileManager: {get: () => ({width: 4, height: 4})},
-    gui: {add: () => ({onChange() { return this; }, listen() { return this; }, name() { return this; }})},
+    gui: {add: () => ({onChange() { return this; }, listen() { return this; }, name() { return this; }, tooltip() { return this; }})},
 }));
 jest.mock("../src/CViewManager", () => ({ViewMan: {}}));
 jest.mock("../src/nodes/CNodeViewUI", () => ({CNodeViewUI: class {

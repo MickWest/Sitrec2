@@ -209,7 +209,7 @@ jobs:
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
 
       - name: Log in to GHCR
-        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
@@ -347,19 +347,38 @@ jobs:
           node-version-file: .nvmrc
 
       - name: Install trivy
-        # Pinned to a tag that exists: this action publishes only v0.2.6, v0.3.0 and
-        # v0.3.1, and has no moving v0. An unresolvable action ref fails the job at
-        # "Set up job", before any step runs, which is what happened on 2.149.1.
+        # Downloads the pinned Trivy release from its GitHub release page, and checks
+        # the tarball against a SHA-256 written here before it is unpacked. Until
+        # 2.186.0 this step used aquasecurity/setup-trivy, whose installer fetches the
+        # binary from get.trivy.dev. On 2026-11-03 that name stopped resolving
+        # (NXDOMAIN at the zone's own name servers), and both package jobs failed
+        # here. The GitHub release page still had the same files.
         #
-        # The action is pinned, and so is the Trivy binary it installs. With no
-        # version the action fetches the newest Trivy release at run time, and this
-        # job holds a registry write token and signing rights. The installer checks
-        # the binary only against that same release's checksums. Raise the version
-        # on purpose, after reading the release. Pinned, the binary is also cached.
-        uses: aquasecurity/setup-trivy@81e514348e19b6112ce2a7e3ecbafe19c1e1f567 # v0.3.1
-        with:
-          version: v0.76.1
-          cache: true
+        # This job holds a registry write token and signing rights, so the binary is
+        # pinned twice: the version, and the hash of each tarball. The old installer
+        # checked the binary only against that same release's checksums file. To raise
+        # the version, read the release first, then copy both hashes from its
+        # trivy_<version>_checksums.txt.
+        env:
+          ARCH: ${{ matrix.suffix }}
+          TRIVY_VERSION: 0.76.1
+          TRIVY_SHA256_AMD64: c7cbe3137fb8a48a17574bede3dd6beb16742d1e9772929940fc90082c39d9c0
+          TRIVY_SHA256_ARM64: e174dff2a6dba5e3ae41f8d0537a6324405bd08132497340304c6b20e0f16a1f
+        run: |
+          case "$ARCH" in
+            amd64) ASSET=Linux-64bit; SHA256="$TRIVY_SHA256_AMD64" ;;
+            arm64) ASSET=Linux-ARM64; SHA256="$TRIVY_SHA256_ARM64" ;;
+            *) echo "No pinned Trivy build for the architecture '$ARCH'" >&2; exit 1 ;;
+          esac
+          TARBALL="trivy_${TRIVY_VERSION}_${ASSET}.tar.gz"
+          BIN_DIR="$RUNNER_TEMP/trivy-bin"
+          mkdir -p "$BIN_DIR"
+          curl -fsSL --retry 3 --retry-all-errors -o "$RUNNER_TEMP/$TARBALL" \
+            "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/${TARBALL}"
+          echo "${SHA256}  $RUNNER_TEMP/$TARBALL" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/$TARBALL" -C "$BIN_DIR" trivy
+          echo "$BIN_DIR" >> "$GITHUB_PATH"
+          "$BIN_DIR/trivy" --version
 
       - name: Install syft
         uses: anchore/sbom-action/download-syft@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
@@ -447,7 +466,7 @@ jobs:
         run: echo "IMAGE_NAME_LC=${IMAGE_NAME,,}" >> "$GITHUB_ENV"
 
       - name: Log in to GHCR
-        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
@@ -661,7 +680,7 @@ jobs:
           merge-multiple: true
 
       - name: Log in to GHCR
-        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}

@@ -571,6 +571,8 @@ export class CNodeGroundTrack extends CNodeTrack {
         const parent = guiMenus.traverse;
         if (!parent) return;
         this.gui = parent.addFolder("Ground Track").close();
+        this.gui.tooltip("Place points on the ground behind the object at chosen frames. Sitrec joins them into a ground track.\n" +
+            "Select Camera + Ground Track in LOS Source to use the lines from the camera to that track as the LOS.");
 
         this.gui.add(this, "enabled").name("Enable Ground Track").listen()
             .onChange(() => this.syncOverlays())

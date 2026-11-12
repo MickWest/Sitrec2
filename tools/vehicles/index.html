@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="color-scheme" content="dark">
-    <title>Vehicle Designer · Sitrec</title>
+    <title>Custom Object Designer · Sitrec</title>
     <link rel="icon" href="data:,">
     <link rel="stylesheet" href="style.css?v=__BUILD_V__">
     <script type="importmap">
@@ -50,6 +50,13 @@
         "./aerialPresets.js": "./aerialPresets.js?v=__BUILD_V__",
         "./multirotor.js": "./multirotor.js?v=__BUILD_V__",
         "./balloon.js": "./balloon.js?v=__BUILD_V__",
+        "./kite.js": "./kite.js?v=__BUILD_V__",
+        "./kiteFlight.js": "./kiteFlight.js?v=__BUILD_V__",
+        "./kiteParameters.js": "./kiteParameters.js?v=__BUILD_V__",
+        "./kitePresets.js": "./kitePresets.js?v=__BUILD_V__",
+        "./bird.js": "./bird.js?v=__BUILD_V__",
+        "./birdParameters.js": "./birdParameters.js?v=__BUILD_V__",
+        "./birdPresets.js": "./birdPresets.js?v=__BUILD_V__",
         "./roadVehicle.js": "./roadVehicle.js?v=__BUILD_V__",
         "./vehicle.js": "./vehicle.js?v=__BUILD_V__",
         "./vehicleLights.js": "./vehicleLights.js?v=__BUILD_V__",
@@ -60,35 +67,35 @@
 <body>
     <header class="topbar">
         <a class="brand" href="../index.html" title="All Sitrec tools">S<span>↗</span></a>
-        <div class="title"><h1>Vehicle Designer</h1><span>PROCEDURAL MODEL STUDIO</span></div>
+        <div class="title"><h1>Custom Object Designer</h1><span>PROCEDURAL MODEL STUDIO</span></div>
         <div class="header-actions">
-            <button id="openFile" title="Open a saved vehicle parameter file">Open</button>
-            <button id="saveFile" title="Download editable vehicle parameters">Save design</button>
-            <button id="exportGLB" class="primary" title="Export the vehicle as a GLB model in metres">Export GLB <span aria-hidden="true">↗</span></button>
+            <button id="openFile" title="Open a saved design parameter file">Open</button>
+            <button id="saveFile" title="Download editable design parameters">Save design</button>
+            <button id="exportGLB" class="primary" title="Export the object as a GLB model in metres">Export GLB <span aria-hidden="true">↗</span></button>
         </div>
         <input id="fileInput" type="file" accept=".json,application/json" hidden>
     </header>
     <main class="workspace">
-        <aside class="sidebar" aria-label="Vehicle parameters">
+        <aside class="sidebar" aria-label="Object parameters">
             <section class="preset-panel">
                 <div class="section-label">START WITH A PRESET <span id="presetCount"></span></div>
-                <label for="presetSearch" class="sr-only">Search vehicles, region or role</label>
-                <input id="presetSearch" type="search" placeholder="Search vehicles or role…" autocomplete="off">
-                <label for="presetKind" class="sr-only">Vehicle type</label>
+                <label for="presetSearch" class="sr-only">Search objects, region or role</label>
+                <input id="presetSearch" type="search" placeholder="Search objects or role…" autocomplete="off">
+                <label for="presetKind" class="sr-only">Object type</label>
                 <select id="presetKind"></select>
                 <label for="presetRegion" class="sr-only">Preset region</label>
                 <select id="presetRegion" aria-label="Preset region"></select>
-                <label for="presetSelect" class="sr-only">Vehicle preset</label>
+                <label for="presetSelect" class="sr-only">Object preset</label>
                 <div class="preset-cycle"><button id="previousPreset" title="Previous matching preset (← or [)" aria-label="Previous preset">‹</button><select id="presetSelect"></select><button id="nextPreset" title="Next matching preset (→ or ])" aria-label="Next preset">›</button></div>
                 <span id="presetResults" class="preset-results" role="status"></span>
-                <p>Approximate vehicle types. Every dimension and detail is yours to change.</p>
+                <p>Approximate object types. Every dimension and detail is yours to change.</p>
                 <div id="presetReference" class="preset-reference" hidden>
                     <span id="presetDimensions"></span>
                     <p id="presetDescription"></p>
                     <a id="presetSource" target="_blank" rel="noopener noreferrer">Reference ↗</a>
                 </div>
                 <div class="name-row"><label for="designName">Design name</label><button id="resetPreset" class="text-button">Reset preset</button></div>
-                <input id="designName" type="text" maxlength="100" value="My vehicle">
+                <input id="designName" type="text" maxlength="100" value="My object">
             </section>
             <section class="preview-mode-panel">
                 <label for="renderMode">Preview mode</label>
@@ -98,10 +105,10 @@
             <div id="parameterFolders"></div>
             <div class="sidebar-note">Dimensions in metres · angles in degrees.<br>Editable visual approximations.</div>
         </aside>
-        <section class="preview" id="preview" aria-label="Interactive 3D vehicle preview">
+        <section class="preview" id="preview" aria-label="Interactive 3D object preview">
             <div id="canvasMount"></div>
             <div class="preview-heading">
-                <div><span class="eyebrow">DESIGN PREVIEW</span><h2 id="aircraftName">Vehicle</h2></div>
+                <div><span class="eyebrow">DESIGN PREVIEW</span><h2 id="aircraftName">Object</h2></div>
                 <span class="live-badge"><span></span> LIVE</span>
             </div>
             <div class="viewbar" aria-label="Camera views">
@@ -110,7 +117,7 @@
                 <button data-view="top" aria-pressed="false">Top</button>
                 <button data-view="front" aria-pressed="false">Front</button>
                 <button data-view="rear" aria-pressed="false">Rear</button>
-                <span class="divider"></span><button id="fitView" title="Fit the vehicle in the view (F)">Fit <kbd>F</kbd></button>
+                <span class="divider"></span><button id="fitView" title="Fit the object in the view (F)">Fit <kbd>F</kbd></button>
             </div>
             <div class="preview-options">
                 <label><input id="showGrid" type="checkbox" checked> Grid</label>

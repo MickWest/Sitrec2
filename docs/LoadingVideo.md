@@ -8,7 +8,7 @@ your way around the video view, and the adjustment, processing and forensic tool
 
 A **sitch** (short for *situation*) is one Sitrec scene: a place, a span of time, and the camera,
 tracks, objects and video that recreate an event. You can save and share a sitch, but it is a
-sitch before you save it. To start a blank one, use **File → New Sitch**. The
+sitch before you save it. To start a blank one, use **File → New Sitch (Empty)**. The
 [Glossary](Glossary.md#sitrec) explains this and other Sitrec terms, such as the main view and
 the look view.
 
@@ -150,6 +150,9 @@ this only if the camera position and the time have not been set yet.
 If the file has no altitude, or an altitude of exactly 0, the camera goes 2 m above ground
 level (AGL), with **Above Ground Level** on. Otherwise the camera goes to the file's altitude
 above MSL.
+
+If the file's date has no UTC offset and the file has a location, Sitrec sets **Time Zone**
+to the zone at that location. See [Time zones](TimeAndSync.md#time-zones).
 
 To check the result, look at the Start Time in the **Time** menu, and at **Cam [C] Lat** and
 **Cam [C] Lon** in **Camera → Location**. If the file has no location, enter the camera position
@@ -433,7 +436,7 @@ In/Out range.
 | **Full A-B Blend** | off | The average of all frames in the In/Out range |
 | **Full A-B Exposure** | off | A simulated long exposure over the In/Out range |
 | **A-B Echo Opacity %** | 100 | Opacity of the **Full A-B** result over the video |
-| **Show Cache** | off | Show which video frames are decoded and held in memory |
+| **Show Cache** | off | Show on the timeline which video frames are decoded and held in memory. While it is on, the timeline shows this in place of the [Point Track](PointTrack.md) colors |
 | **Make Video** | | Export the running **Full A-B** mode as a video from In to Out, built up frame by frame. Turn on one of the three modes first. Video Adjustments are not applied |
 
 Only one of the three **Full A-B** modes can be on at a time. Changing the In or Out frame

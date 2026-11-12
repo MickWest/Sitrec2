@@ -89,7 +89,7 @@ export class CNodeLighting extends CNode {
         this._presetControllers.lightingPreset =
             this.gui.add(this, "lightingPreset", [...Object.keys(this._lightingPresets), "Custom"])
                 .name("Lighting Preset")
-                .tooltip("Apply illumination and shadow settings. Atmosphere and camera exposure stay independent. Manual lighting edits show Custom.")
+                .tooltip("Set the light levels and shadows in one step:\nDefault: the sitch's own ambient, sun and shadow settings.\nShadows: stronger direct sunlight, no sun scattering, and Shadows on.\nCustom: shown after you change one of these settings by hand.\nScene Exposure, Daylight Sky and Atmosphere do not change.")
                 .onChange((value) => this.applyLightingPreset(value));
 
         this._presetControllers.ambientIntensity =

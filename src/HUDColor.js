@@ -10,6 +10,8 @@ export function setupHUDColor(guiMenu) {
         id: "hudColor",
         value: DEFAULT_HUD_COLOR,
         desc: "HUD Color",
+        tooltip: "Color of the on-screen display (HUD, head-up display) text and lines drawn over the views, "
+            + "such as the compass, the date and time, and the camera overlays. White by default.",
         onChange: () => setRenderOne(true),
     }, guiMenu);
 

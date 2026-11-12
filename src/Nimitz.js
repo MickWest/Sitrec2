@@ -772,7 +772,7 @@ export function activateNimitz() {
 
     // ── top-level controls ──────────────────────────────────────
     const show = guiFlag("nimitzShow", false, "Show Nimitz Encounter",
-        "Show the jets, tic-tac, ships, and disturbance of the Nov 14, 2004 encounter", folder);
+        "Show the jets, the tic-tac, the ships, the whitewater disturbance and the CAP (combat air patrol) point marker of the Nov 14, 2004 encounter.", folder);
     show.onChange = () => setRenderOne(true);
 
     // Hypothesis selector: what the tic-tac actually does
@@ -787,13 +787,18 @@ export function activateNimitz() {
             },
             default: "Object Maneuvers (as described)",
             desc: "Tic-Tac Hypothesis",
+            tooltip: "How the tic-tac moves.\n"
+                + "Object Maneuvers (as described): it jitters over the disturbance, mirrors Fravor's spiral as it rises, then accelerates away to the CAP point.\n"
+                + "Stationary Object (parallax): it stays over the disturbance and drifts slowly. All apparent motion in the pilot view comes from the jet.",
         }, folder);
     }
 
     // ── Fravor's jet ────────────────────────────────────────────
-    const fravorFolder = nimitzSubFolder("nimitzFravor", "Fravor's Jet");
+    const fravorFolder = nimitzSubFolder("nimitzFravor", "Fravor's Jet")
+        .tooltip("Flight path of Fravor's jet: a level orbit around the disturbance, a descending spiral, "
+            + "then a cut across the circle toward the tic-tac, then a turn toward the CAP point.");
     guiValue("nimitzFravorAlt", S.fravor.altFt, 1000, 30000, 100,
-        "Start Altitude (ft)", "Altitude of the FASTEAGLE flight when they arrive overhead", fravorFolder);
+        "Start Altitude (ft)", "Altitude of Fravor's jet at the start, while it orbits the disturbance, in feet.", fravorFolder);
     guiValue("nimitzJetSpeed", S.fravor.speedKts, 150, 500, 5,
         "Jet Speed (kn)", "Airspeed of both F/A-18Fs throughout", fravorFolder);
     guiValue("nimitzCircleRadius", S.fravor.radiusNm, 0.3, 5, 0.05,
@@ -809,10 +814,11 @@ export function activateNimitz() {
             },
             default: S.fravor.turnDir === "Left" ? "Left (counterclockwise)" : "Right (clockwise)",
             desc: "Turn Direction",
+            tooltip: "Direction, seen from above, in which both jets orbit the disturbance.",
         }, fravorFolder);
     }
     guiValue("nimitzDescentStart", S.fravor.descentStartSec, 0, 300, 1,
-        "Descent Start (s)", "Seconds after arrival when Fravor starts his descending spiral", fravorFolder);
+        "Descent Start (s)", "Seconds after arrival when Fravor starts his descending spiral. The tic-tac also starts to mirror him then.", fravorFolder);
     guiValue("nimitzCutAcross", S.fravor.cutAcrossSec, 10, 600, 1,
         "Cut Across (s)", "Seconds after arrival when Fravor cuts across the circle toward the object", fravorFolder);
     guiValue("nimitzCutAcrossAlt", S.fravor.cutAcrossAltFt, 500, 25000, 100,
@@ -830,47 +836,53 @@ export function activateNimitz() {
     }
 
     // ── Dietrich's jet ──────────────────────────────────────────
-    const dietrichFolder = nimitzSubFolder("nimitzDietrich", "Dietrich's Jet");
+    const dietrichFolder = nimitzSubFolder("nimitzDietrich", "Dietrich's Jet")
+        .tooltip("Dietrich's jet orbits the disturbance at a constant altitude, starting on the opposite side of the circle from Fravor.");
     guiValue("nimitzDietrichAlt", S.dietrich.altFt, 1000, 30000, 100,
-        "Altitude (ft)", "Dietrich stayed high as cover while Fravor descended", dietrichFolder);
+        "Altitude (ft)", "Altitude of Dietrich's jet, in feet. It stays at this altitude for the whole sitch.", dietrichFolder);
     guiValue("nimitzDietrichRadius", S.dietrich.radiusNm, 0.3, 5, 0.05,
         "Circle Radius (nm)", "Radius of Dietrich's holding orbit", dietrichFolder);
 
     // ── the tic-tac ─────────────────────────────────────────────
-    const ticTacFolder = nimitzSubFolder("nimitzTicTac", "Tic-Tac");
+    const ticTacFolder = nimitzSubFolder("nimitzTicTac", "Tic-Tac")
+        .tooltip("Size and motion of the tic-tac, and the size of the whitewater disturbance.\n"
+            + "Some values apply to only one Tic-Tac Hypothesis.");
     const size = guiValue("nimitzTicTacSize", S.ticTac.sizeFt, 10, 100, 1,
-        "Tic-Tac Length (ft)", "\"About the size of my airplane\" — 40-ish feet", ticTacFolder);
+        "Tic-Tac Length (ft)", "Length of the tic-tac model, in feet.", ticTacFolder);
     guiValue("nimitzHoverAlt", S.ticTac.hoverAltFt, 0, 5000, 10,
-        "Hover Altitude (ft)", "Height above the water while moving erratically over the disturbance", ticTacFolder);
+        "Hover Altitude (ft)", "Height of the tic-tac above the water while it moves over the disturbance, in feet.\nIn Stationary Object (parallax), it stays at this height.", ticTacFolder);
     guiValue("nimitzJitterAmp", S.ticTac.jitterAmpFt, 0, 2000, 10,
-        "Erratic Motion Size (ft)", "Amplitude of the ping-pong-ball jitter over the disturbance", ticTacFolder);
+        "Erratic Motion Size (ft)", "Amplitude of the ping-pong-ball jitter over the disturbance.\nUsed only in Object Maneuvers (as described).", ticTacFolder);
     guiValue("nimitzMeetAlt", S.ticTac.meetAltFt, 500, 25000, 100,
-        "Mirror Rise Altitude (ft)", "Altitude the object rises to while mirroring Fravor's descent", ticTacFolder);
+        "Mirror Rise Altitude (ft)", "Altitude the object rises to while mirroring Fravor's descent.\nUsed only in Object Maneuvers (as described).", ticTacFolder);
     guiValue("nimitzDepartTrigger", S.ticTac.departTriggerNm, 0.05, 3, 0.05,
-        "Departure Range (nm)", "Separation from Fravor at which the object accelerates away", ticTacFolder);
+        "Departure Range (nm)", "Separation from Fravor at which the object accelerates away. It also leaves when it passes closest to Fravor, or 60 s after the cut across.\n"
+        + "Used only in Object Maneuvers (as described).", ticTacFolder);
     guiValue("nimitzDepartAccel", S.ticTac.departAccelG, 1, 5000, 1,
-        "Departure Accel (g)", "Acceleration of the departure toward the CAP point (hypothesis A)", ticTacFolder);
+        "Departure Accel (g)", "Acceleration of the departure toward the CAP point.\nUsed only in Object Maneuvers (as described).", ticTacFolder);
     guiValue("nimitzDepartTopSpeed", S.ticTac.departTopSpeedKts, 100, 60000, 100,
-        "Departure Top Speed (kn)", "Peak speed of the departure run", ticTacFolder);
+        "Departure Top Speed (kn)", "Peak speed of the departure run.\nUsed only in Object Maneuvers (as described).", ticTacFolder);
     guiValue("nimitzCapAlt", S.ticTac.capAltFt, 500, 60000, 100,
-        "CAP Arrival Altitude (ft)", "The reacquired radar blip at the CAP was at ~24,000 ft", ticTacFolder);
+        "CAP Arrival Altitude (ft)", "Altitude of the object when it reaches the CAP point, where it stops. Its altitude changes evenly on the way.\nUsed only in Object Maneuvers (as described).", ticTacFolder);
     guiValue("nimitzDriftSpeed", S.ticTac.driftSpeedKts, 0, 60, 1,
-        "Drift Speed (kn)", "Parallax hypothesis: slow wind drift of the near-stationary object", ticTacFolder);
+        "Drift Speed (kn)", "Speed of the slow drift of the near-stationary object.\nUsed only in Stationary Object (parallax).", ticTacFolder);
     guiValue("nimitzDriftBearing", S.ticTac.driftBearingDeg, 0, 360, 1,
-        "Drift Bearing (°)", "Parallax hypothesis: direction of the slow drift", ticTacFolder);
+        "Drift Bearing (°)", "Compass bearing that the object drifts toward.\nUsed only in Stationary Object (parallax).", ticTacFolder);
     const distSize = guiValue("nimitzDisturbanceSize", S.disturbanceSizeFt, 20, 500, 5,
-        "Disturbance Size (ft)", "Diameter of the whitewater patch — \"about the size of a 737\"", ticTacFolder);
+        "Disturbance Size (ft)", "Diameter of the whitewater disc, in feet.", ticTacFolder);
     size.onChange = applyNimitzSizes;
     distSize.onChange = applyNimitzSizes;
 
     // ── locations ───────────────────────────────────────────────
-    nimitzSubFolder("nimitzLocations", "Locations");
+    nimitzSubFolder("nimitzLocations", "Locations")
+        .tooltip("Positions of the whitewater disturbance (the center of the encounter), the two ships and the CAP point.");
     if (!NodeMan.exists("nimitzDisturbancePos")) {
         new CNodePositionLLA({
             id: "nimitzDisturbancePos",
             LLA: [S.disturbance.lat, S.disturbance.lon, 0],
             desc: "Disturbance",
             gui: "nimitzLocations",
+            tipName: "Disturbance",
             locationTools: false,
         });
     }
@@ -880,6 +892,7 @@ export function activateNimitz() {
             LLA: [S.ships.nimitz.lat, S.ships.nimitz.lon, 0],
             desc: "USS Nimitz",
             gui: "nimitzLocations",
+            tipName: "USS Nimitz",
             locationTools: false,
         });
     }
@@ -889,14 +902,15 @@ export function activateNimitz() {
             LLA: [S.ships.princeton.lat, S.ships.princeton.lon, 0],
             desc: "USS Princeton",
             gui: "nimitzLocations",
+            tipName: "USS Princeton",
             locationTools: false,
         });
     }
     const locFolder = guiMenus.nimitzLocations;
     guiValue("nimitzCapBearing", S.capBearingDeg, 0, 360, 1,
-        "CAP Bearing (°)", "Compass bearing from the encounter to the flight's CAP point", locFolder);
+        "CAP Bearing (°)", "Compass bearing from the disturbance to the CAP (combat air patrol) point.\nThe tic-tac departs along it, and Fravor turns toward it after the cut across.", locFolder);
     guiValue("nimitzCapDistance", S.capDistanceNm, 10, 150, 1,
-        "CAP Distance (nm)", "\"It's at your CAP\" — about 60 miles away", locFolder);
+        "CAP Distance (nm)", "Distance from the disturbance to the CAP point, in nautical miles. The departing tic-tac stops there.", locFolder);
     if (!NodeMan.exists("nimitzCapPos")) {
         new CNodeCapPosition({
             id: "nimitzCapPos",
@@ -1028,7 +1042,7 @@ export function activateNimitz() {
 
     // ── track displays ──────────────────────────────────────────
     const trails = guiFlag("nimitzShowTrails", true, "Show Track Trails",
-        "Draw the flight paths of the jets and the tic-tac", folder);
+        "Draw the flight paths of the jets and the tic-tac.\nUsed only when Show Nimitz Encounter is on.", folder);
     const trailsVisible = () => showAll() && !!trails.v(0);
     const addTrail = (id, track, color, width) => {
         if (NodeMan.exists(id)) return;
@@ -1097,7 +1111,7 @@ export function activateNimitz() {
     applyPovLayers();
 
     const pilotFOV = guiValue("nimitzPilotFOV", S.pilotFOV, 10, 120, 0.5,
-        "Pilot View FOV (°)", "Vertical FOV of the pilot POV look view", folder);
+        "Pilot View FOV (°)", "Vertical field of view of the look view from a jet, in degrees.\nUsed only when Camera > FOV (Zoom) > Camera FOV is set to Nimitz Pilot.", folder);
     const fovSwitch = NodeMan.get("fovSwitch", false);
     if (fovSwitch && fovSwitch.inputs["Nimitz Pilot"] === undefined) {
         fovSwitch.addOption("Nimitz Pilot", pilotFOV);
@@ -1119,14 +1133,18 @@ export function activateNimitz() {
             setRenderOne(true);
         },
     };
-    const addButton = (prop, label) => {
+    const addButton = (prop, label, tip) => {
         if (!folder.controllers.find(c => c._name === label)) {
-            folder.add(actions, prop).name(label);
+            const b = folder.add(actions, prop).name(label);
+            if (tip) b.tooltip(tip);
         }
     };
-    addButton("povFravor", "View: Fravor POV");
-    addButton("povDietrich", "View: Dietrich POV");
-    addButton("overhead", "View: Overhead");
+    const povTip = (jet) => `Put the look camera in ${jet} jet: sets Camera > Location > Position to ${jet} Jet, `
+        + "Camera Heading to Look At Tic-Tac, and Camera FOV to Nimitz Pilot.";
+    addButton("povFravor", "View: Fravor POV", povTip("Fravor's"));
+    addButton("povDietrich", "View: Dietrich POV", povTip("Dietrich's"));
+    addButton("overhead", "View: Overhead",
+        "Move the main view camera to 15 km above and 6 km south of the disturbance, looking at it.");
 
     // preset presentation scripts under Video → Scripting
     injectNimitzScripts();
@@ -1156,14 +1174,22 @@ export function setupNimitz() {
         loadScenario: () => loadNimitzScenario(),
         loadCompressed: () => loadNimitzScenario("compressed"),
     };
-    const addButton = (prop, label) => {
+    const addButton = (prop, label, tip) => {
         if (!folder.controllers.find(c => c._name === label)) {
-            folder.add(actions, prop).name(label);
+            folder.add(actions, prop).name(label).tooltip(tip);
         }
     };
-    addButton("enable", ENABLE_LABEL);
-    addButton("loadScenario", "Load " + NIMITZ_SCENARIO.name);
-    addButton("loadCompressed", "Load Compressed Variant (~1 min)");
+    addButton("enable", ENABLE_LABEL,
+        "Create the encounter: the two jets, the tic-tac, the whitewater disturbance, the ships and the CAP point. "
+        + "Their controls then appear in this folder. Turn on Show Nimitz Encounter to see them.\n"
+        + "Also adds jet and tic-tac choices to the Camera menu, and two scripts to Video > Scripting.");
+    addButton("loadScenario", "Load " + NIMITZ_SCENARIO.name,
+        "Enable the simulation and set up the whole scene for the Nov 14, 2004 encounter: location, date and time, "
+        + "all parameters, and the look camera in Fravor's jet.\n"
+        + "This sets the sitch length to 420 s and hides the default target and camera objects, lines of sight, and camera and traverse tracks.");
+    addButton("loadCompressed", "Load Compressed Variant (~1 min)",
+        "Same as the Load button above, with a shorter, tighter engagement: a 0.5 nm circle, "
+        + "the descent at 10 s, the cut across at 45 s, and a 150 s sitch.");
 
     // Save-compat (a save made with Nimitz in use must activate BEFORE its
     // mods apply, or they are dropped) is handled centrally by

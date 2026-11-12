@@ -30,6 +30,8 @@ import {ECEFToLLAVD_radii, LLAToECEF} from "./LLA-ECEF-ENU";
 import {par} from "./par";
 import {exitTrackEditMode, trackAndObjectMenuActions} from "./TrackEditMode";
 import {makeCreateObjectUndoAction} from "./undoCreateObject";
+import {OBJECT_MANUAL_POSITION, syncManualObject} from "./TrackSelectors";
+import {DISPLAY_NAME_CHANGED} from "./DisplayName";
 import {GlobalScene} from "./LocalFrame";
 import {refreshLabelsAfterLoading} from "./nodes/CNodeLabels3D";
 import {assert} from "./assert";
@@ -91,6 +93,19 @@ import {
 import {Color, Vector3} from "three";
 import {getLocalUpVector} from "./SphericalMath";
 import {abFrameRange} from "./TraverseAnalysisData";
+
+
+// Undo and redo for a balloon or a kite that the ground menu just added. `record` is
+// its generator record, so that a redo makes the same node ids again.
+function addGeneratedTrackUndo(trackOb, kind, record, addTrack) {
+    if (!trackOb || !UndoManager) return;
+    let trackID = trackOb.trackID;
+    UndoManager.add({
+        undo: () => TrackManager.disposeRemove(trackID),
+        redo: () => { trackID = addTrack(record)?.trackID ?? trackID; },
+        description: `Add ${kind} "${trackOb.menuText}"`,
+    });
+}
 
 export const menuMethods = {
     /**
@@ -165,7 +180,7 @@ export const menuMethods = {
      * @param {number} lon - Longitude in decimal degrees
      * @param {number} alt - Altitude in meters (or 0 if not explicit)
      * @param {boolean} hasExplicitAlt - Whether altitude was explicitly provided
-     * @returns {Object} Object with {objectNode, trackOb, objectID, trackID, ownedNodeIds, name},
+     * @returns {Object} Object with {objectNode, trackOb, objectID, trackID, name},
      *          name being the object's name
      */
     createObjectFromInput(name, lat, lon, alt, hasExplicitAlt) {
@@ -192,14 +207,6 @@ export const menuMethods = {
         const objectID = NodeMan.UniqueName(`syntheticObject_${Date.now()}`);
         const trackID = NodeMan.UniqueName(`syntheticTrack_${Date.now()}`);
 
-        // Snapshot the node ids that exist BEFORE construction. Anything under
-        // `${objectID}_` that appears afterwards was auto-created by CNode3DObject
-        // (_size, _color_colorInput, _modelLength, the controllers and their GUI
-        // values) and is owned by this object alone, so undo can sweep exactly those
-        // and nothing else. The prefix is unique by construction - objectID carries a
-        // timestamp - so the sweep can never reach an unrelated node.
-        const preObjectNodeIDs = new Set(Object.keys(NodeMan.list));
-
         // Create the 3D object. The name is the object's; its track's is pairNames.trackName.
         const objectNode = new CNode3DObject({
             id: objectID,
@@ -220,29 +227,24 @@ export const menuMethods = {
             startFrame: par.frame
         });
 
-        const ownedNodeIds = Object.keys(NodeMan.list)
-            .filter(id => id.startsWith(objectID + "_") && !preObjectNodeIDs.has(id));
-
         console.log(`Created object "${name}" at ${lat}, ${lon}, ${finalAlt}m`);
 
         // Make object creation undoable. Both entry points — the "Add Object" menu
         // (index.js) and the addObjectAtLLA API (CSitrecAPI) — route through here, and
         // previously neither pushed an undo action, so a created object could not be
         // undone (unlike synth buildings/clouds/overlays, which already register undo in
-        // this file). Mirror that pattern: undo removes the synthetic track (which tears
-        // down its display/data nodes), the sub-nodes the object auto-created
-        // (ownedNodeIds, gathered above) and the 3D object node itself; redo re-creates
-        // via this same method. We hold the live ids in closure vars because redo gets
-        // fresh ids — the nested add() below is a no-op while UndoManager.isRedoing, so it
-        // does not stack a duplicate action.
+        // this file). Mirror that pattern: undo removes the object with deleteObject (the
+        // one function that removes an object and every node it made) and then the
+        // synthetic track; redo re-creates via this same method. We hold the live ids in
+        // closure vars because redo gets fresh ids — the nested add() below is a no-op
+        // while UndoManager.isRedoing, so it does not stack a duplicate action.
         if (UndoManager && trackOb) {
             UndoManager.add(makeCreateObjectUndoAction({
                 name,
                 objectID,
                 trackID: trackOb.trackID ?? trackID,
-                ownedNodeIds,
                 trackManager: TrackManager,
-                nodeMan: NodeMan,
+                deleteObject: (id) => this.deleteObject(NodeMan.get(id, false)),
                 // Redo re-creates via this same method (the nested UndoManager.add is a no-op
                 // while isRedoing, so it does not stack a duplicate action) and returns the
                 // fresh ids so a subsequent undo targets the recreated pair.
@@ -251,13 +253,12 @@ export const menuMethods = {
                     return {
                         objectID: r.objectID,
                         trackID: r.trackOb?.trackID ?? r.trackID,
-                        ownedNodeIds: r.ownedNodeIds,
                     };
                 },
             }));
         }
 
-        return { objectNode, trackOb, objectID, trackID, ownedNodeIds, name };
+        return { objectNode, trackOb, objectID, trackID, name };
     },
 
     /**
@@ -309,18 +310,136 @@ export const menuMethods = {
     },
 
     /**
-     * Build a fixed 3D object: a CNode3DObject that gets its position from a headless
-     * CNodePositionLLA instead of a track. See addFixedObject() below for why it is
-     * built that way.
+     * Give a 3D object that the user made its Location folder: a Position selector (Manual,
+     * or any track) and the manual Lat, Lon and Alt. It is the camera's Location folder
+     * without the Lookup and Geolocate tools.
+     *
+     * The two controllers of the object read the selector, not a track. So the user can put
+     * the object on a track, move it to another track, or take it off, with one control. A
+     * track that is made or loaded later becomes an option by itself, because a
+     * CNodeTrackSwitch is a track drop target.
+     *
+     * While Position is Manual, the object is itself an option in every other track selector
+     * (Target Track, the camera's Position, the Position of another object, ...), under its
+     * name: see TrackSelectors.js. deleteObject() takes it out again.
+     *
+     * Every node made here has an id that starts with the object's id and "_", except a
+     * fixed object's position node. deleteObject() and the create-object undo find the
+     * nodes of an object by that prefix.
+     *
+     * @param {CNode3DObject} objectNode
+     * @param {object} options
+     * @param {string} [options.positionID] - id for the manual position node
+     * @param {number[]} [options.LLA] - the manual position, [lat, lon, alt]
+     * @param {boolean} [options.agl] - the altitude of LLA is above ground level
+     * @param {Vector3} [options.ecef] - the manual position as a point, in place of LLA
+     * @param {string} [options.track] - the short name of the track that the object starts on
+     * @returns {CNodePositionLLA} the manual position node
+     */
+    addObjectLocation(objectNode, {positionID, LLA = [0, 0, 0], agl = false, ecef = null, track = null} = {}) {
+        const id = objectNode.id;
+        // Open, and directly below the name: where an object is comes before how it looks.
+        const folder = objectNode.gui.addFolder(t("nodes3dObject.location.label"));
+        folder.tooltip(t("nodes3dObject.location.tooltip"));
+        folder.moveAfter(t("displayName.label"));
+        objectNode.locationFolder = folder;
+
+        const positionNode = new CNodePositionLLA({
+            id: positionID ?? `${id}_manualPosition`,
+            LLA: LLA.slice(),
+            agl: agl,
+            gui: folder,
+            desc: "",
+            guiIDPrefix: `${id}_position`,
+            tipName: t("nodes3dObject.location.tipName"),
+            locationTools: false,       // no Lookup, no Geolocate, no Go To
+        });
+        if (ecef) positionNode.mirrorECEF(ecef);
+
+        const switchNode = new CNodeTrackSwitch({
+            id: `${id}_positionSwitch`,
+            inputs: {[OBJECT_MANUAL_POSITION]: positionNode},
+            // Display-only; the stored choice key does not change with the language.
+            labels: {[OBJECT_MANUAL_POSITION]: t("nodes3dObject.location.manual")},
+            default: OBJECT_MANUAL_POSITION,
+            desc: t("nodes3dObject.location.position.label"),
+            gui: folder,
+            tooltip: t("nodes3dObject.location.position.tooltip"),
+        });
+        // A track that the user loads must not take the object: the user selects it.
+        switchNode.noAutoSelect = true;
+        switchNode.controller?.moveToFirst?.();
+        objectNode.positionSwitchID = switchNode.id;
+        // The tracks, and the other objects that are on a manual position.
+        TrackManager.addTracksToSwitch(switchNode);
+        if (track && switchNode.inputs[track] !== undefined) switchNode.selectOptionQuietly(track);
+
+        objectNode.addController("TrackPosition", {
+            sourceTrack: switchNode.id,
+        });
+        // ObjectTilt points the object along its motion. On the manual position it does not
+        // move, so it keeps the heading it has (north at first), and its Banking menu can
+        // give it a fixed heading. Its internal smoothed track goes with the controller:
+        // dispose the object with disposeObjectWithControllers.
+        objectNode.addController("ObjectTilt", {
+            track: switchNode.id,
+            tiltType: "banking",
+            guiFolder: objectNode.gui,
+        });
+
+        // The manual values show only while Position is Manual. They are hidden, not grayed
+        // out: the object's pop-up menu is a copy of this folder, and the copy follows what
+        // is hidden but not what is disabled. When the user goes back to Manual (or deletes
+        // the track), the object stays where it is.
+        let previousChoice = switchNode.choice;
+        const onChoice = () => {
+            const choice = switchNode.choice, from = previousChoice;
+            previousChoice = choice;
+            const manual = choice === OBJECT_MANUAL_POSITION;
+            // A value node shows its row when the node is visible (CNodeGUIValue.update), so
+            // the three values are shown and hidden through their nodes.
+            for (const value of [positionNode.guiLat, positionNode.guiLon, positionNode.guiAlt]) value?.show(manual);
+            for (const control of [positionNode.aglController, positionNode.smallAltitudesController]) {
+                if (control) manual ? control.show() : control.hide();
+            }
+            // On Manual the object is at one point, which no track has. So it is then an
+            // option in every other track selector (Target Track, Start From of a finder,
+            // the Position of another object, ...), under its name. See TrackSelectors.js.
+            syncManualObject(objectNode);
+            if (Globals.deserializing || Globals.disposing || choice === from || !manual) return;
+            const group = objectNode.group ?? objectNode._object;
+            if (group && positionNode.mirrorECEF(group.getWorldPosition(new Vector3()))) setRenderOne(true);
+        };
+        // That option shows the name of the object, so it follows a rename.
+        const onRename = (renamed) => {
+            if (renamed?.id === id) syncManualObject(objectNode);
+        };
+        // deleteObject() removes these listeners.
+        objectNode.locationListeners = [
+            ["Switch.choiceChanged." + switchNode.id, onChoice],
+            [DISPLAY_NAME_CHANGED, onRename],
+        ];
+        for (const [event, listener] of objectNode.locationListeners) EventManager.addEventListener(event, listener);
+        onChoice();
+
+        return positionNode;
+    },
+
+    /**
+     * Build a fixed 3D object: a CNode3DObject at a manual position, which the user can
+     * later put on a track with the Position control of its Location folder
+     * (addObjectLocation above). See addFixedObject() below for why it is built that way.
      *
      * Every route that makes one comes through here — the ground menu, its undo/redo,
      * and the sitch deserializer — so a reloaded object is constructed exactly like a
      * freshly-placed one.
      *
-     * The object node is tagged with `fixedObjectPositionID`, and that tag is the only
-     * way the pair can be found again: a fixed object is deliberately NOT registered
-     * with TrackManager, so nothing else enumerates it. serializeFixedObjects() scans
-     * NodeMan for the tag.
+     * The object node is tagged with `fixedObjectPositionID`, and that tag is how the pair
+     * is found again for a save: a fixed object is deliberately NOT registered with
+     * TrackManager, so it has no entry in Contents and no spline editor.
+     * serializeFixedObjects() scans NodeMan for the tag. The track selectors do list the
+     * object while its Position is Manual (addObjectLocation), from its Location and not
+     * from TrackManager.
      *
      * @param {string} objectID - id for the CNode3DObject
      * @param {string} positionID - id for its CNodePositionLLA
@@ -330,13 +449,6 @@ export const menuMethods = {
      * @returns {CNode3DObject} the created object node
      */
     createFixedObject(objectID, positionID, LLA, agl = false, displayName = undefined) {
-        // No `gui`, so no controls are created for it.
-        const positionNode = new CNodePositionLLA({
-            id: positionID,
-            LLA: LLA,
-            agl: agl,
-        });
-
         const objectNode = new CNode3DObject({
             id: objectID,
             displayName,
@@ -344,18 +456,12 @@ export const menuMethods = {
             radius: 5,
             color: 0x808080,
             material: "phong",
-            // Only the placement until the controller's first update, but ask the
-            // position node for it rather than converting the LLA a second time here —
-            // it is the one that knows whether that altitude means MSL or AGL.
-            position: positionNode.p(0),
         });
 
-        // Position only. No ObjectTilt: that orients a model along its direction of
-        // travel, and this one has none — it would also drag in a smoothed-track
-        // node that would then need disposing.
-        objectNode.addController("TrackPosition", {
-            sourceTrack: positionID,
-        });
+        const positionNode = this.addObjectLocation(objectNode, {positionID, LLA, agl});
+        // Only the placement until the controller's first update. The position node gives
+        // it, because that node knows whether the altitude means MSL or AGL.
+        objectNode.group.position.copy(positionNode.p(0));
 
         objectNode.fixedObjectPositionID = positionID;
         return objectNode;
@@ -417,6 +523,11 @@ export const menuMethods = {
 
         // Store reference to track this menu
         this.groundContextMenu = menu;
+        // Every item closes the menu before or after it acts.
+        const closeMenu = () => {
+            this.groundContextMenu = null;
+            menu.destroy();
+        };
 
         // Format the location text: coordinates, then MSL altitude, then WGS84 HAE
         // (height above ellipsoid) with the HAE−MSL difference (the EGM96 geoid offset N,
@@ -455,8 +566,7 @@ export const menuMethods = {
                     camera.setLLA(lat, lon, currentAlt);
                     console.log(`Camera set to: ${lat}, ${lon}, ${currentAlt}m (altitude maintained)`);
                 }
-                this.groundContextMenu = null;
-                menu.destroy();
+                closeMenu();
             },
             setCameraOnGround: () => {
                 if (NodeMan.exists("fixedCameraPosition")) {
@@ -468,8 +578,7 @@ export const menuMethods = {
                     camera.setLLA(lat, lon, alt);
                     console.log(`Camera set to ground: ${lat}, ${lon}, ${alt}m ${camera.agl ? "AGL" : "MSL"}`);
                 }
-                this.groundContextMenu = null;
-                menu.destroy();
+                closeMenu();
             },
             setTargetAbove: () => {
                 if (NodeMan.exists("fixedTargetPositionWind")) {
@@ -479,8 +588,7 @@ export const menuMethods = {
                     target.setLLA(lat, lon, currentAlt);
                     console.log(`Target set to: ${lat}, ${lon}, ${currentAlt}m (altitude maintained)`);
                 }
-                this.groundContextMenu = null;
-                menu.destroy();
+                closeMenu();
             },
             setTargetOnGround: () => {
                 if (NodeMan.exists("fixedTargetPositionWind")) {
@@ -490,8 +598,7 @@ export const menuMethods = {
                     target.setLLA(lat, lon, alt);
                     console.log(`Target set to ground: ${lat}, ${lon}, ${alt}m ${target.agl ? "AGL" : "MSL"}`);
                 }
-                this.groundContextMenu = null;
-                menu.destroy();
+                closeMenu();
             },
             centerTerrain: () => {
                 if (NodeMan.exists("terrainUI")) {
@@ -501,8 +608,7 @@ export const menuMethods = {
                     terrainUI.flagForRecalculation();
                     console.log(`Centered terrain at: ${lat}, ${lon}`);
                 }
-                this.groundContextMenu = null;
-                menu.destroy();
+                closeMenu();
             },
             createSyntheticTrack: () => {
                 // Create a track at the clicked point using TrackManager
@@ -512,12 +618,10 @@ export const menuMethods = {
                     startFrame: par.frame,
                     showInLook: sourceViewID === "lookView",
                 });
-                this.groundContextMenu = null;
-                menu.destroy();
+                closeMenu();
             },
             addBalloon: () => {
-                this.groundContextMenu = null;
-                menu.destroy();
+                closeMenu();
 
                 // Simulated balloon target launched from the clicked ground
                 // point (start altitude = ground MSL there; ascends on launch
@@ -530,23 +634,33 @@ export const menuMethods = {
                     showInLook: sourceViewID === "lookView",
                 });
 
-                if (trackOb && UndoManager) {
-                    // capture the full generator record so redo recreates the
-                    // same node ids (mirrors the building/clouds undo pattern)
-                    const record = TrackManager.serializeBalloons()
-                        .find(b => b.trackID === trackOb.trackID);
-                    let curTrackID = trackOb.trackID;
-                    UndoManager.add({
-                        undo: () => {
-                            TrackManager.disposeRemove(curTrackID);
-                        },
-                        redo: () => {
-                            const ob = TrackManager.addBalloonTrack(record);
-                            curTrackID = ob?.trackID ?? curTrackID;
-                        },
-                        description: `Add balloon "${trackOb.menuText}"`
-                    });
-                }
+                // capture the full generator record so redo recreates the
+                // same node ids (mirrors the building/clouds undo pattern)
+                addGeneratedTrackUndo(trackOb, "balloon",
+                    TrackManager.serializeBalloons().find(balloon => balloon.trackID === trackOb.trackID),
+                    record => TrackManager.addBalloonTrack(record));
+            },
+            addKite: async () => {
+                closeMenu();
+
+                // A kite held by a line from the clicked ground point. It flies
+                // downwind of that point, where the wind puts it. The designs are
+                // in a lazy chunk, so a new kite waits for its design.
+                const generation = Globals.loadGeneration;
+                const {defaultKiteRecipe} = await import(/* webpackChunkName: "vehicle-kite-default" */ "./procedural/KiteDefault");
+                if (generation !== Globals.loadGeneration) return;
+                const trackOb = TrackManager.addKiteTrack({
+                    anchorLat: lat,
+                    anchorLon: lon,
+                    anchorAltitude: Math.max(0, altMSL),
+                    showInLook: sourceViewID === "lookView",
+                    recipe: defaultKiteRecipe(),
+                });
+
+                // A redo has no mods pass to restore the design, so its record carries the design too.
+                addGeneratedTrackUndo(trackOb, "kite",
+                    {...TrackManager.serializeKites().find(kite => kite.trackID === trackOb.trackID), recipe: defaultKiteRecipe()},
+                    record => TrackManager.addKiteTrack(record));
             },
             // Place something in the world that does not move.
             //
@@ -557,10 +671,10 @@ export const menuMethods = {
             // of keyframes that exist only to say "here, always".
             //
             // So it gets a CNodePositionLLA instead: a single lat/lon/alt that satisfies
-            // the same interface. It is hidden from the UI by NOT being registered with
-            // TrackManager — TrackManager is what creates the Contents folder and what the
-            // track pickers enumerate — and by being constructed with no `gui`, so it adds
-            // no controls anywhere.
+            // the same interface. It is NOT registered with TrackManager, which is what
+            // creates the Contents folder, so it has no track menu. Its Lat, Lon and Alt
+            // are in the Location group of the object, and the track selectors list the
+            // object by its name while it is on that manual position (addObjectLocation).
             //
             // Dragging keeps working with no extra wiring: CObjectMoveWidget's
             // resolveMoveTarget() already recognises a fixed position by behaviour
@@ -576,8 +690,7 @@ export const menuMethods = {
                 const objectNode = this.createFixedObject(objectID, positionID, [lat, lon, altMSL], false, displayName);
 
                 console.log(`Created fixed object ${objectID} at ${lat}, ${lon}, ${altMSL}m MSL`);
-                this.groundContextMenu = null;
-                menu.destroy();
+                closeMenu();
 
                 // Go straight into edit mode for the thing just created.
                 //
@@ -597,8 +710,10 @@ export const menuMethods = {
                 if (UndoManager) {
                     UndoManager.add({
                         undo: () => {
-                            NodeMan.disposeRemove(objectID);
-                            NodeMan.disposeRemove(positionID);
+                            // The object has controllers and a Location folder with their own
+                            // nodes: deleteObject removes all of them, and the position node.
+                            const node = NodeMan.get(objectID, false);
+                            if (node) this.deleteObject(node);
                         },
                         redo: () => {
                             this.createFixedObject(objectID, positionID, [lat, lon, altMSL], false, displayName);
@@ -626,8 +741,7 @@ export const menuMethods = {
 
 
                 console.log(`Created object ${objectID} with track at ${lat}, ${lon}, ${alt}m`);
-                this.groundContextMenu = null;
-                menu.destroy();
+                closeMenu();
             },
             // A straight track across the In/Out range at a steady speed and height, with an
             // object riding it: two keyframes, constant speed on, and the altitude locked
@@ -665,13 +779,11 @@ export const menuMethods = {
                 });
 
                 console.log(`Created object ${objectID} with In->Out track from ${lat}, ${lon}, frames ${frame0}-${frame1}`);
-                this.groundContextMenu = null;
-                menu.destroy();
+                closeMenu();
             },
             dropPin: () => {
                 // Close the menu first
-                this.groundContextMenu = null;
-                menu.destroy();
+                closeMenu();
 
                 // Create a unique feature ID. CNodeFeatureMarker registers in NodeMan
                 // and FeatureManager mirrors that id, so NodeMan is the registry to check.
@@ -696,8 +808,7 @@ export const menuMethods = {
                 console.log(`Created feature ${featureID} at ${lat}, ${lon}, ${alt}m`);
             },
             addBuilding: () => {
-                this.groundContextMenu = null;
-                menu.destroy();
+                closeMenu();
 
                 const building = Synth3DManager.createBuildingAtPoint(groundPoint);
 
@@ -725,8 +836,7 @@ export const menuMethods = {
                 }
             },
             addClouds: () => {
-                this.groundContextMenu = null;
-                menu.destroy();
+                closeMenu();
 
                 const clouds = Synth3DManager.createCloudsAtPoint(groundPoint);
 
@@ -751,8 +861,7 @@ export const menuMethods = {
                 }
             },
             addOverlay: () => {
-                this.groundContextMenu = null;
-                menu.destroy();
+                closeMenu();
 
                 const overlay = Synth3DManager.createOverlayAtPoint(groundPoint);
 
@@ -777,8 +886,7 @@ export const menuMethods = {
                 }
             },
             addGrid: () => {
-                this.groundContextMenu = null;
-                menu.destroy();
+                closeMenu();
 
                 const grid = Synth3DManager.createGridAtPoint(groundPoint);
 
@@ -803,8 +911,7 @@ export const menuMethods = {
                 }
             },
             googleMapsHere: () => {
-                this.groundContextMenu = null;
-                menu.destroy();
+                closeMenu();
 
                 // Open Google Maps at the clicked location. Not in the secure build: the
                 // address would carry the clicked position to an external site.
@@ -817,8 +924,7 @@ export const menuMethods = {
                 console.log(`Opening Google Maps at: ${lat}, ${lon}`);
             },
             googleEarthHere: () => {
-                this.groundContextMenu = null;
-                menu.destroy();
+                closeMenu();
 
                 const kmlContent = `<?xml version="1.0" encoding="UTF-8"?>
 <kml xmlns="http://www.opengis.net/kml/2.2" xmlns:gx="http://www.google.com/kml/ext/2.2" xmlns:kml="http://www.opengis.net/kml/2.2" xmlns:atom="http://www.w3.org/2005/Atom">
@@ -889,8 +995,7 @@ export const menuMethods = {
         if (overlayAtPoint) {
             const isEditing = overlayAtPoint.editMode;
             menuData.editOverlay = () => {
-                this.groundContextMenu = null;
-                menu.destroy();
+                closeMenu();
                 
                 if (isEditing) {
                     overlayAtPoint.setEditMode(false);
@@ -907,8 +1012,7 @@ export const menuMethods = {
         if (cloudsAtPoint) {
             const isEditingClouds = cloudsAtPoint.editMode;
             menuData.editClouds = () => {
-                this.groundContextMenu = null;
-                menu.destroy();
+                closeMenu();
                 
                 if (isEditingClouds) {
                     cloudsAtPoint.setEditMode(false);
@@ -926,10 +1030,14 @@ export const menuMethods = {
 
         // The items in groups, each under a heading.
         menu.addHeading(t("custom.contextMenu.groupCameraTarget"));
-        menu.add(menuData, "setCameraAbove").name(t("custom.contextMenu.setCameraAbove"));
-        menu.add(menuData, "setCameraOnGround").name(t("custom.contextMenu.setCameraOnGround"));
-        menu.add(menuData, "setTargetAbove").name(t("custom.contextMenu.setTargetAbove"));
-        menu.add(menuData, "setTargetOnGround").name(t("custom.contextMenu.setTargetOnGround"));
+        menu.add(menuData, "setCameraAbove").name(t("custom.contextMenu.setCameraAbove"))
+            .tooltip(t("custom.contextMenu.tooltips.setCameraAbove"));
+        menu.add(menuData, "setCameraOnGround").name(t("custom.contextMenu.setCameraOnGround"))
+            .tooltip(t("custom.contextMenu.tooltips.setCameraOnGround"));
+        menu.add(menuData, "setTargetAbove").name(t("custom.contextMenu.setTargetAbove"))
+            .tooltip(t("custom.contextMenu.tooltips.setTargetAbove"));
+        menu.add(menuData, "setTargetOnGround").name(t("custom.contextMenu.setTargetOnGround"))
+            .tooltip(t("custom.contextMenu.tooltips.setTargetOnGround"));
 
         // Clouds or an overlay under the pointer can be edited from here.
         if (cloudsAtPoint || overlayAtPoint) {
@@ -938,32 +1046,47 @@ export const menuMethods = {
         if (cloudsAtPoint) {
             const cloudsLabel = cloudsAtPoint.name || cloudsAtPoint.id;
             const cloudsMenuLabel = cloudsAtPoint.editMode ? `Exit Edit: ${cloudsLabel}` : `Edit Clouds: ${cloudsLabel}`;
-            menu.add(menuData, "editClouds").name(cloudsMenuLabel);
+            menu.add(menuData, "editClouds").name(cloudsMenuLabel)
+                .tooltip(t("custom.contextMenu.tooltips.editClouds"));
         }
         if (overlayAtPoint) {
             const overlayLabel = overlayAtPoint.name || overlayAtPoint.id;
             const kindLabel = overlayAtPoint.kindName === "grid" ? "Grid" : "Overlay";
             const menuLabel = overlayAtPoint.editMode ? `Exit Edit: ${overlayLabel}` : `Edit ${kindLabel}: ${overlayLabel}`;
-            menu.add(menuData, "editOverlay").name(menuLabel);
+            menu.add(menuData, "editOverlay").name(menuLabel)
+                .tooltip(t("custom.contextMenu.tooltips.editOverlay"));
         }
 
         menu.addHeading(t("custom.contextMenu.groupAdd"));
-        menu.add(menuData, "dropPin").name(t("custom.contextMenu.dropPin"));
-        menu.add(menuData, "addFixedObject").name(t("custom.contextMenu.addFixedObject"));
-        menu.add(menuData, "createTrackWithObject").name(t("custom.contextMenu.createTrackWithObject"));
-        menu.add(menuData, "createInOutObjectTrack").name(t("custom.contextMenu.createInOutObjectTrack"));
-        menu.add(menuData, "createSyntheticTrack").name(t("custom.contextMenu.createTrackNoObject"));
-        menu.add(menuData, "addBalloon").name(t("custom.contextMenu.addBalloon", {defaultValue: "Add Balloon"}));
-        menu.add(menuData, "addBuilding").name(t("custom.contextMenu.addBuilding"));
-        menu.add(menuData, "addClouds").name(t("custom.contextMenu.addClouds"));
-        menu.add(menuData, "addOverlay").name(t("custom.contextMenu.addGroundOverlay"));
-        menu.add(menuData, "addGrid").name(t("custom.contextMenu.addGroundGrid"));
+        menu.add(menuData, "dropPin").name(t("custom.contextMenu.dropPin"))
+            .tooltip(t("custom.contextMenu.tooltips.dropPin"));
+        menu.add(menuData, "addFixedObject").name(t("custom.contextMenu.addFixedObject"))
+            .tooltip(t("custom.contextMenu.tooltips.addFixedObject"));
+        menu.add(menuData, "createTrackWithObject").name(t("custom.contextMenu.createTrackWithObject"))
+            .tooltip(t("custom.contextMenu.tooltips.createTrackWithObject"));
+        menu.add(menuData, "createInOutObjectTrack").name(t("custom.contextMenu.createInOutObjectTrack"))
+            .tooltip(t("custom.contextMenu.tooltips.createInOutObjectTrack"));
+        menu.add(menuData, "createSyntheticTrack").name(t("custom.contextMenu.createTrackNoObject"))
+            .tooltip(t("custom.contextMenu.tooltips.createTrackNoObject"));
+        menu.add(menuData, "addBalloon").name(t("custom.contextMenu.addBalloon", {defaultValue: "Add Balloon"}))
+            .tooltip(t("custom.contextMenu.tooltips.addBalloon"));
+        menu.add(menuData, "addKite").name(t("custom.contextMenu.addKite"))
+            .tooltip(t("custom.contextMenu.tooltips.addKite"));
+        menu.add(menuData, "addBuilding").name(t("custom.contextMenu.addBuilding"))
+            .tooltip(t("custom.contextMenu.tooltips.addBuilding"));
+        menu.add(menuData, "addClouds").name(t("custom.contextMenu.addClouds"))
+            .tooltip(t("custom.contextMenu.tooltips.addClouds"));
+        menu.add(menuData, "addOverlay").name(t("custom.contextMenu.addGroundOverlay"))
+            .tooltip(t("custom.contextMenu.tooltips.addGroundOverlay"));
+        menu.add(menuData, "addGrid").name(t("custom.contextMenu.addGroundGrid"))
+            .tooltip(t("custom.contextMenu.tooltips.addGroundGrid"));
 
         if (NodeMan.exists("terrainUI")) {
             const terrainUI = NodeMan.get("terrainUI");
             if (!terrainUI.dynamic) {
                 menu.addHeading(t("custom.contextMenu.groupTerrain"));
-                menu.add(menuData, "centerTerrain").name(t("custom.contextMenu.centerTerrain"));
+                menu.add(menuData, "centerTerrain").name(t("custom.contextMenu.centerTerrain"))
+                    .tooltip(t("custom.contextMenu.tooltips.centerTerrain"));
             }
 
         }
@@ -973,9 +1096,11 @@ export const menuMethods = {
         if (configParams?.extraHelpLinks) {
             menu.addHeading(t("custom.contextMenu.groupExternal"));
             if (!isSecureBuild) {
-                menu.add(menuData, "googleMapsHere").name(t("custom.contextMenu.googleMapsHere"));
+                menu.add(menuData, "googleMapsHere").name(t("custom.contextMenu.googleMapsHere"))
+                    .tooltip(t("custom.contextMenu.tooltips.googleMapsHere"));
             }
-            menu.add(menuData, "googleEarthHere").name(t("custom.contextMenu.googleEarthHere"));
+            menu.add(menuData, "googleEarthHere").name(t("custom.contextMenu.googleEarthHere"))
+                .tooltip(t("custom.contextMenu.tooltips.googleEarthHere"));
         }
     },
 
@@ -1032,18 +1157,23 @@ export const menuMethods = {
         };
 
         if (hasPointAtFrame) {
-            const move = menu.add(menuData, "movePointHere").name(t("custom.contextMenu.movePointHere", {frame}));
+            const move = menu.add(menuData, "movePointHere").name(t("custom.contextMenu.movePointHere", {frame}))
+                .tooltip(t("custom.contextMenu.tooltips.movePointHere"));
             if (!groundPoint) move.disable();
         } else {
-            const here = menu.add(menuData, "addPointHere").name(t("custom.contextMenu.addPointHere", {frame}));
+            const here = menu.add(menuData, "addPointHere").name(t("custom.contextMenu.addPointHere", {frame}))
+                .tooltip(t("custom.contextMenu.tooltips.addPointHere"));
             if (!groundPoint) here.disable();
-            const onTrack = menu.add(menuData, "addPointOnTrack").name(t("custom.contextMenu.addPointOnTrack", {frame}));
+            const onTrack = menu.add(menuData, "addPointOnTrack").name(t("custom.contextMenu.addPointOnTrack", {frame}))
+                .tooltip(t("custom.contextMenu.tooltips.addPointOnTrack"));
             if (!trackPositionAtFrame()) onTrack.disable();
         }
-        for (const {label, action} of trackAndObjectMenuActions(trackOb, mouseX, mouseY)) {
-            menu.add({run: run(action)}, "run").name(label);
+        for (const {label, tooltip, action} of trackAndObjectMenuActions(trackOb, mouseX, mouseY)) {
+            const item = menu.add({run: run(action)}, "run").name(label);
+            if (tooltip) item.tooltip(tooltip);
         }
-        menu.add(menuData, "exitEditMode").name(t("custom.contextMenu.exitEditMode"));
+        menu.add(menuData, "exitEditMode").name(t("custom.contextMenu.exitEditMode"))
+            .tooltip(t("custom.contextMenu.tooltips.exitEditMode"));
         menu.open();
     },
 

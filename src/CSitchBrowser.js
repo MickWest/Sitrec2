@@ -1,15 +1,29 @@
 /**
  * S3 Sitch Browser - full-screen dialog for browsing saved sitches.
  * Supports list+preview and thumbnail grid modes.
- * Labels system with permanent Featured/Private/Deleted labels.
+ * Labels system with permanent Featured/Private/Deleted labels, and the two
+ * template labels (see SitchTemplates.js).
  * Multi-selection: click, shift-click, cmd-click, rubber-band drag.
  * Right-click context menu with label checkboxes.
+ *
+ * The same overlay has a second screen, the start screen: a list of the
+ * templates (SitchTemplateScreen.js). open({screen: "templates"}) shows it.
  */
 import {isAdmin, SITREC_APP, SITREC_SHARE_APP, SITREC_SERVER} from "./configUtils";
 import {showConfirm, showError, showPrompt} from "./showError";
 import {getEffectiveUserID, Globals, NodeMan, setNewSitchObject, SitchMan, withTestUser} from "./Globals";
 import {DragDropHandler} from "./DragDropHandler";
 import {extractWarGovPRCode} from "./WarGovUFOUtils";
+import {
+    GLOBAL_TEMPLATE_COLOR,
+    GLOBAL_TEMPLATE_LABEL,
+    LOCAL_TEMPLATE_COLOR,
+    LOCAL_TEMPLATE_LABEL,
+    fetchGlobalTemplates,
+    updateGlobalTemplates,
+} from "./SitchTemplates";
+import {buildTemplateScreen} from "./SitchTemplateScreen";
+import {STARTUP_ACTION_BROWSE, startupActionFromSearch} from "./StartupActions";
 
 const LABEL_COLORS = [
     "#4285f4", "#34a853", "#fbbc04", "#24c1e0",
@@ -20,7 +34,13 @@ const PERMANENT_LABELS = [
     {name: "Featured", color: "#f9ab00", permanent: true, global: true},
     {name: "Private", color: "#a142f4", permanent: true},
     {name: "Deleted", color: "#ea4335", permanent: true},
+    {name: GLOBAL_TEMPLATE_LABEL, color: GLOBAL_TEMPLATE_COLOR, permanent: true, global: true},
+    {name: LOCAL_TEMPLATE_LABEL, color: LOCAL_TEMPLATE_COLOR, permanent: true},
 ];
+
+// The labels with `global: true` are not in the user's own label file. Each is a
+// shared server list that an administrator writes and every user reads.
+const SHARED_LABELS = PERMANENT_LABELS.filter(label => label.global).map(label => label.name);
 
 // Sentinel "selectedKey" for the synthetic war.gov PR action tile. Real sitch
 // keys are "<ownerUserID>:<name>", so this colon-less control string can never
@@ -30,7 +50,7 @@ const WARGOV_PR_KEY = "__wargov_pr_tile__";
 export class CSitchBrowser {
     constructor(fileManager) {
         this.fileManager = fileManager;
-        this.sitches = [];      // [{key, name, date, screenshotUrl, ownerUserID?, featuredOnly?}]
+        this.sitches = [];      // [{key, name, date, screenshotUrl, ownerUserID?, sharedOnly?}]
         this.sitchesByKey = new Map();
         this.filtered = [];
         this.sortColumn = "date";
@@ -51,6 +71,9 @@ export class CSitchBrowser {
         // A label save replaces the whole server file, so it starts from this.
         this._serverMetadata = null;
         this.featuredSitches = new Map(); // key -> {name, userID, screenshotUrl, date} (global, shared)
+        this.templateSitches = new Map(); // the global templates, same shape, in the server's order
+        // Which screen the overlay shows: "browse" (the sitch browser) or "templates" (the start screen).
+        this.screen = "browse";
         this.activeLabel = null; // sidebar filter, or null = All
 
         // Multi-selection
@@ -65,13 +88,89 @@ export class CSitchBrowser {
         this.pendingOpen = false;
         this._featuredFetchPromise = null;
         this.hideCancelButton = false;
+        this.browseIfNoTemplates = false;
+        // The address from before it became "?action=browse". See _enterBrowseAddress().
+        this._addressBeforeBrowse = null;
     }
 
     open(options = {}) {
         if (this.overlay) return;
         this.pendingOpen = false;
         this.hideCancelButton = !!options.hideCancelButton;
+        // At the start, a template screen with no template is of no use, so the sitch
+        // browser shows instead. A caller that asks for the templates by name (the File
+        // menu) does not set this, and gets the template screen, empty or not.
+        this.browseIfNoTemplates = !!options.browseIfNoTemplates;
+        this._setScreen(options.screen === "templates" ? "templates" : "browse");
         this.fetchFromServer();
+    }
+
+    // File > New Sitch from Template. If the overlay is open on the sitch browser,
+    // this changes its screen, with no new request to the server.
+    openTemplateScreen() {
+        if (!this.overlay) {
+            this.open({screen: "templates"});
+            return;
+        }
+        this.browseIfNoTemplates = false;
+        this._setScreen("templates");
+        this.show();
+    }
+
+    // File > Server > Open. If the overlay is open on the template screen, this
+    // changes its screen, with no new request to the server.
+    openBrowseScreen() {
+        if (!this.overlay) {
+            this.open();
+            return;
+        }
+        const wasOnTemplates = this.screen !== "browse";
+        this._setScreen("browse");
+        if (wasOnTemplates) this.show();
+    }
+
+    // ==================== ADDRESS ====================
+    // While the sitch browser shows because the user asked for it, the address is
+    // "?action=browse". A reload then comes back to the sitch browser, not to the
+    // templates. Only the address changes: there is no reload, and replaceState adds
+    // no entry to the browser history (Sitrec does nothing on Back, so an entry would
+    // be one that does not work).
+
+    _addressIsBrowse() {
+        return startupActionFromSearch(window.location.search) === STARTUP_ACTION_BROWSE;
+    }
+
+    _enterBrowseAddress() {
+        if (this._addressIsBrowse()) return;
+        this._addressBeforeBrowse = window.location.href;
+        const url = new URL(window.location.href);
+        url.search = "?action=" + STARTUP_ACTION_BROWSE;
+        window.history.replaceState(window.history.state, "", url.href);
+    }
+
+    _leaveBrowseAddress() {
+        const addressBefore = this._addressBeforeBrowse;
+        this._addressBeforeBrowse = null;
+        // A save or a load can set the address while the overlay is open. That address stays.
+        if (!this._addressIsBrowse()) return;
+        let address = addressBefore;
+        if (!address) {
+            // Sitrec opened at "?action=browse", so there is no earlier address.
+            // The address with no action is the one that shows the start screen.
+            const url = new URL(window.location.href);
+            url.searchParams.delete("action");
+            address = url.href;
+        }
+        window.history.replaceState(window.history.state, "", address);
+    }
+
+    // Set the screen, and make the address agree with it. This does not draw the screen.
+    // The one change of screen that does not come here is in show(): the start with no
+    // template shows the sitch browser, and there the address with no action is correct.
+    _setScreen(screen) {
+        this.screen = screen;
+        if (screen === "browse") this._enterBrowseAddress();
+        else this._leaveBrowseAddress();
     }
 
     // ==================== DATA ====================
@@ -109,55 +208,77 @@ export class CSitchBrowser {
         return new Map([...map.entries()].map(([key, info]) => [key, {...info}]));
     }
 
-    _setFeaturedSitchesFromArray(featuredArr) {
-        this.featuredSitches = new Map();
-        const entries = Array.isArray(featuredArr) ? featuredArr : [];
+    // A shared list from the server, as a Map in the server's order.
+    _sharedMapFromArray(sharedArr) {
+        const map = new Map();
+        const entries = Array.isArray(sharedArr) ? sharedArr : [];
         for (const entry of entries) {
             if (entry && entry.name && entry.userID) {
                 const key = this._makeSitchKey(entry.name, entry.userID);
-                this.featuredSitches.set(key, {
+                map.set(key, {
                     name: entry.name,
                     userID: entry.userID,
                     screenshotUrl: entry.screenshotUrl || null,
                     // Only source of a date for sitches we don't own (and for every
-                    // featured sitch when logged out), so date sorting works there.
+                    // shared sitch when logged out), so date sorting works there.
                     date: entry.date ? String(entry.date) : "",
                 });
             }
         }
+        return map;
     }
 
-    _syncFeaturedSitchesIntoList() {
+    _setFeaturedSitchesFromArray(featuredArr) {
+        this.featuredSitches = this._sharedMapFromArray(featuredArr);
+    }
+
+    // The Map for a shared label ("Featured", "Global Template"), or null for a normal label.
+    _sharedSitches(labelName) {
+        if (labelName === "Featured") return this.featuredSitches;
+        if (labelName === GLOBAL_TEMPLATE_LABEL) return this.templateSitches;
+        return null;
+    }
+
+    _hasSharedLabel(sitchOrKey) {
+        const sitch = this._getSitch(sitchOrKey);
+        return !!sitch && SHARED_LABELS.some(labelName => this._sharedSitches(labelName).has(sitch.key));
+    }
+
+    // Put the sitches of the shared lists in this.sitches. One that the user does
+    // not own has no other source, so it gets a `sharedOnly` entry.
+    _syncSharedSitchesIntoList() {
         const byKey = new Map(this.sitches.map(s => [s.key, s]));
 
-        for (const [sitchKey, info] of this.featuredSitches) {
-            if (!byKey.has(sitchKey)) {
-                const featuredOnlySitch = {
-                    key: sitchKey,
-                    name: info.name,
-                    date: info.date || "",
-                    screenshotUrl: info.screenshotUrl || null,
-                    ownerUserID: info.userID,
-                    featuredOnly: true,
-                };
-                this.sitches.push(featuredOnlySitch);
-                byKey.set(sitchKey, featuredOnlySitch);
-                continue;
-            }
+        for (const labelName of SHARED_LABELS) {
+            for (const [sitchKey, info] of this._sharedSitches(labelName)) {
+                if (!byKey.has(sitchKey)) {
+                    const sharedOnlySitch = {
+                        key: sitchKey,
+                        name: info.name,
+                        date: info.date || "",
+                        screenshotUrl: info.screenshotUrl || null,
+                        ownerUserID: info.userID,
+                        sharedOnly: true,
+                    };
+                    this.sitches.push(sharedOnlySitch);
+                    byKey.set(sitchKey, sharedOnlySitch);
+                    continue;
+                }
 
-            const existing = byKey.get(sitchKey);
-            existing.ownerUserID = info.userID;
-            if (!existing.screenshotUrl && info.screenshotUrl) {
-                existing.screenshotUrl = info.screenshotUrl;
+                const existing = byKey.get(sitchKey);
+                existing.ownerUserID = info.userID;
+                if (!existing.screenshotUrl && info.screenshotUrl) {
+                    existing.screenshotUrl = info.screenshotUrl;
+                }
             }
         }
 
-        this.sitches = this.sitches.filter(s => !s.featuredOnly || this.featuredSitches.has(s.key));
+        this.sitches = this.sitches.filter(s => !s.sharedOnly || this._hasSharedLabel(s));
         this._reindexSitches();
     }
 
-    _refreshFeaturedState() {
-        this._syncFeaturedSitchesIntoList();
+    _refreshSharedState() {
+        this._syncSharedSitchesIntoList();
         this.applyFilterAndSort();
         this._rebuildSidebar();
         if (this.overlay) {
@@ -188,13 +309,13 @@ export class CSitchBrowser {
         return this._fetchFeaturedData()
             .then(featuredData => {
                 this._setFeaturedSitchesFromArray(featuredData.sitches);
-                this._refreshFeaturedState();
+                this._refreshSharedState();
             })
             .catch(err => {
                 console.error("Failed to reload featured:", err);
                 if (fallbackFeatured) {
                     this.featuredSitches = this._cloneFeaturedSitches(fallbackFeatured);
-                    this._refreshFeaturedState();
+                    this._refreshSharedState();
                 }
             });
     }
@@ -202,9 +323,11 @@ export class CSitchBrowser {
     fetchFromServer() {
         const loggedIn = this._isLoggedIn();
 
-        // Always fetch featured (no auth required)
+        // Always fetch the two shared lists (no auth required)
         const featuredP = this._fetchFeaturedData()
             .catch(() => ({sitches: []}));
+        const templatesP = fetchGlobalTemplates()
+            .catch(err => { console.warn("Could not load the template list:", err); return []; });
 
         // Only fetch user sitches and metadata if logged in
         const sitchesP = loggedIn
@@ -219,8 +342,8 @@ export class CSitchBrowser {
                 .catch(err => { console.warn("Could not load label metadata:", err); return null; })
             : Promise.resolve(null);
 
-        Promise.all([sitchesP, metaP, featuredP])
-            .then(([sitchData, serverMetadata, featuredData]) => {
+        Promise.all([sitchesP, metaP, featuredP, templatesP])
+            .then(([sitchData, serverMetadata, featuredData, globalTemplates]) => {
                 this._serverMetadata = serverMetadata;
                 const metaData = serverMetadata || {labels: [], sitchLabels: {}};
                 const ssVersions = metaData.screenshotVersions || {};
@@ -238,7 +361,7 @@ export class CSitchBrowser {
                         date: String(e[1]),
                         screenshotUrl,
                         ownerUserID,
-                        featuredOnly: false,
+                        sharedOnly: false,
                     };
                 });
                 this.userLabels = metaData.labels || [];
@@ -246,8 +369,9 @@ export class CSitchBrowser {
                 this.sitchLabels = Array.isArray(sl) ? {} : sl;
 
                 this._setFeaturedSitchesFromArray(featuredData.sitches);
+                this.templateSitches = this._sharedMapFromArray(globalTemplates);
 
-                this._syncFeaturedSitchesIntoList();
+                this._syncSharedSitchesIntoList();
 
                 // Non-logged-in users only see featured sitches
                 if (!loggedIn) {
@@ -260,7 +384,7 @@ export class CSitchBrowser {
                 // Share sitch list with FileManager so it doesn't need a separate fetch
                 if (this.fileManager && loggedIn) {
                     const ownNames = [...new Set(this.sitches
-                        .filter(s => this._isOwnSitch(s) && !s.featuredOnly)
+                        .filter(s => this._isOwnSitch(s) && !s.sharedOnly)
                         .map(s => s.name))];
                     this.fileManager.userSaves = ["-", ...ownNames];
                     this.fileManager.refreshVersions();
@@ -271,6 +395,7 @@ export class CSitchBrowser {
             .catch(err => {
                 console.error("CSitchBrowser fetch error:", err);
                 this.sitches = [];
+                this.templateSitches = new Map();
                 this._ensurePermanentLabels();
                 this.applyFilterAndSort();
                 this.show();
@@ -297,9 +422,34 @@ export class CSitchBrowser {
     _sitchHasLabel(sitchOrKey, labelName) {
         const sitch = this._getSitch(sitchOrKey);
         if (!sitch) return false;
-        if (labelName === "Featured") return this.featuredSitches.has(sitch.key);
+        const shared = this._sharedSitches(labelName);
+        if (shared) return shared.has(sitch.key);
         if (!this._isOwnSitch(sitch)) return false;
         return this.sitchLabels[sitch.name]?.includes(labelName) ?? false;
+    }
+
+    _isTemplate(sitchOrKey) {
+        return this._sitchHasLabel(sitchOrKey, GLOBAL_TEMPLATE_LABEL)
+            || this._sitchHasLabel(sitchOrKey, LOCAL_TEMPLATE_LABEL);
+    }
+
+    // The sitches with a template label, for the start screen and the sidebar counts.
+    // Global templates keep the server's order. Local templates are in name order.
+    _templatesWithLabel(labelName) {
+        const visible = sitch => this._sitchHasLabel(sitch, labelName)
+            && !this._sitchHasLabel(sitch, "Deleted") && !this._sitchHasLabel(sitch, "Private");
+        if (labelName === GLOBAL_TEMPLATE_LABEL) {
+            return [...this.templateSitches.keys()]
+                .map(sitchKey => this._getSitch(sitchKey))
+                .filter(sitch => sitch && visible(sitch));
+        }
+        return this.sitches.filter(visible)
+            .sort((first, second) => first.name.localeCompare(second.name, undefined, {numeric: true}));
+    }
+
+    _hasTemplates() {
+        return this._templatesWithLabel(GLOBAL_TEMPLATE_LABEL).length > 0
+            || this._templatesWithLabel(LOCAL_TEMPLATE_LABEL).length > 0;
     }
 
     _isFeatured(sitchOrKey) {
@@ -314,7 +464,9 @@ export class CSitchBrowser {
         // getVersions fetches from the owner's directory.
         const ownerID = sitchInfo.ownerUserID;
         const sourceUserID = (ownerID && ownerID !== getEffectiveUserID()) ? ownerID : null;
-        this.fileManager.loadSavedFile(sitchInfo.name, sourceUserID);
+        // A template opens as a new sitch with no name, so the next Save asks for one
+        // and does not write to the template.
+        this.fileManager.loadSavedFile(sitchInfo.name, sourceUserID, {asTemplate: this._isTemplate(sitchInfo)});
     }
 
     // ==================== FILTER / SORT ====================
@@ -335,11 +487,11 @@ export class CSitchBrowser {
                 return this._isFeatured(s);
             });
         } else if (this.activeLabel === "Unlabeled") {
-            // Unlabeled view: no labels at all (not Featured, Private, Deleted, or any custom label)
+            // Unlabeled view: no labels at all (not Featured, a template, Private, Deleted, or any custom label)
             list = list.filter(s => {
                 if (this._sitchHasLabel(s, "Deleted")) return false;
                 if (this._sitchHasLabel(s, "Private")) return false;
-                if (this._isFeatured(s)) return false;
+                if (this._hasSharedLabel(s)) return false;
                 if (!this._isOwnSitch(s)) return true;
                 const labels = this.sitchLabels[s.name];
                 return !labels || labels.length === 0;
@@ -374,7 +526,8 @@ export class CSitchBrowser {
     // ==================== SHOW (builds overlay) ====================
 
     show() {
-        if (this.overlay) this.close();
+        // Not close(): that also puts the address back, and this is a redraw.
+        if (this.overlay) this._removeOverlay();
         this.selectedKey = null;
         this.selection.clear();
 
@@ -394,6 +547,71 @@ export class CSitchBrowser {
             fontFamily: "system-ui, -apple-system, sans-serif", color: "#e0e0e0",
         });
 
+        // The start screen has no sidebar. At the start it also needs a template to show:
+        // with none, the sitch browser is the start screen, as it was before templates.
+        if (this.screen === "templates" && this.browseIfNoTemplates && !this._hasTemplates()) this.screen = "browse";
+        if (this.screen === "browse") {
+            overlay.appendChild(this._buildSidebar());
+        } else {
+            this._clearSidebar();
+        }
+
+        // --- Content area ---
+        this._contentArea = document.createElement("div");
+        Object.assign(this._contentArea.style, {
+            flex: "1", display: "flex", overflow: "hidden", minWidth: "0",
+        });
+        overlay.appendChild(this._contentArea);
+
+        document.body.appendChild(overlay);
+
+        // Keyboard handler
+        this._keyHandler = (e) => this._handleKeyDown(e);
+        document.addEventListener("keydown", this._keyHandler);
+
+        // File drag-and-drop: allow dropping files onto the sitch browser
+        // to create a new custom sitch with those files
+        this._setupFileDragDrop(overlay);
+
+        this.rebuildContent();
+    }
+
+    // The start screen: the templates, and the ways to go to a different start.
+    _buildTemplateScreen() {
+        const canLogin = !this._isLoggedIn() && typeof this.fileManager?.loginServer === "function";
+        const globalTemplates = this._templatesWithLabel(GLOBAL_TEMPLATE_LABEL);
+        // A sitch with the two labels shows one time, as a global template.
+        const localTemplates = this._templatesWithLabel(LOCAL_TEMPLATE_LABEL)
+            .filter(sitch => !this._sitchHasLabel(sitch, GLOBAL_TEMPLATE_LABEL));
+        return buildTemplateScreen({
+            globalTemplates,
+            localTemplates,
+            version: process.env.BUILD_VERSION_STRING,
+            onOpenTemplate: (template) => { this.close(); this._loadSitch(template.key); },
+            onNewSitch: () => { window.location = SITREC_SHARE_APP + "?action=new"; },
+            onBrowse: () => { this._setScreen("browse"); this.show(); },
+            onLogin: canLogin ? () => { this.close(); this.fileManager.loginServer(); } : null,
+            onCancel: this.hideCancelButton ? null : () => this.close(),
+        });
+    }
+
+    // The sidebar is not there on the start screen. Drop the references to its parts,
+    // so the code that updates them does not write to parts of a removed sidebar.
+    _clearSidebar() {
+        this._sidebar = null;
+        this._allLink = null;
+        this._featuredLink = null;
+        this._globalTemplatesLink = null;
+        this._localTemplatesLink = null;
+        this._privateLink = null;
+        this._deletedLink = null;
+        this._unlabeledLink = null;
+        this._listLink = null;
+        this._thumbLink = null;
+        this._labelsContainer = null;
+    }
+
+    _buildSidebar() {
         // --- Sidebar ---
         const sidebar = document.createElement("div");
         this._sidebar = sidebar;
@@ -419,6 +637,22 @@ export class CSitchBrowser {
         });
         sidebar.appendChild(newSitchBtn);
 
+        // Back to the start screen, when it has a template to show.
+        if (this._hasTemplates()) {
+            newSitchBtn.style.marginBottom = "6px";
+            const templatesBtn = document.createElement("button");
+            templatesBtn.textContent = "Templates";
+            Object.assign(templatesBtn.style, {
+                padding: "10px 16px", backgroundColor: "#2a2a3e", color: "#8ab4f8",
+                border: "1px solid #8ab4f8", borderRadius: "6px", cursor: "pointer",
+                fontSize: "14px", fontWeight: "600", marginBottom: "12px",
+            });
+            templatesBtn.addEventListener("mouseenter", () => { templatesBtn.style.backgroundColor = "#3a3a5e"; });
+            templatesBtn.addEventListener("mouseleave", () => { templatesBtn.style.backgroundColor = "#2a2a3e"; });
+            templatesBtn.addEventListener("click", () => { this._setScreen("templates"); this.show(); });
+            sidebar.appendChild(templatesBtn);
+        }
+
         const loggedIn = this._isLoggedIn();
 
         // All link (logged-in only)
@@ -442,11 +676,31 @@ export class CSitchBrowser {
         if (this._canManageFeatured()) this._makePermanentLinkDropTarget(this._featuredLink, "Featured");
         sidebar.appendChild(this._featuredLink);
 
+        // Global Templates link (always visible)
+        const globalTemplateCount = this._templatesWithLabel(GLOBAL_TEMPLATE_LABEL).length;
+        this._globalTemplatesLink = this._makeSidebarLink(
+            "Global Templates" + (globalTemplateCount ? ` (${globalTemplateCount})` : ""),
+            () => { this.activeLabel = GLOBAL_TEMPLATE_LABEL; this._onFilterChanged(); },
+            this.activeLabel === GLOBAL_TEMPLATE_LABEL
+        );
+        if (this._canManageFeatured()) this._makePermanentLinkDropTarget(this._globalTemplatesLink, GLOBAL_TEMPLATE_LABEL);
+        sidebar.appendChild(this._globalTemplatesLink);
+
         // Private link (logged-in only)
+        this._localTemplatesLink = null;
         this._privateLink = null;
         this._deletedLink = null;
         this._unlabeledLink = null;
         if (loggedIn) {
+            const localTemplateCount = this._templatesWithLabel(LOCAL_TEMPLATE_LABEL).length;
+            this._localTemplatesLink = this._makeSidebarLink(
+                "Local Templates" + (localTemplateCount ? ` (${localTemplateCount})` : ""),
+                () => { this.activeLabel = LOCAL_TEMPLATE_LABEL; this._onFilterChanged(); },
+                this.activeLabel === LOCAL_TEMPLATE_LABEL
+            );
+            this._makePermanentLinkDropTarget(this._localTemplatesLink, LOCAL_TEMPLATE_LABEL);
+            sidebar.appendChild(this._localTemplatesLink);
+
             const privateCount = this.sitches.filter(s =>
                 this._sitchHasLabel(s, "Private") && !this._sitchHasLabel(s, "Deleted")).length;
             this._privateLink = this._makeSidebarLink(
@@ -471,7 +725,7 @@ export class CSitchBrowser {
             const unlabeledCount = this.sitches.filter(s => {
                 if (this._sitchHasLabel(s, "Deleted")) return false;
                 if (this._sitchHasLabel(s, "Private")) return false;
-                if (this._isFeatured(s)) return false;
+                if (this._hasSharedLabel(s)) return false;
                 if (!this._isOwnSitch(s)) return true;
                 const labels = this.sitchLabels[s.name];
                 return !labels || labels.length === 0;
@@ -538,26 +792,7 @@ export class CSitchBrowser {
             sidebar.appendChild(cancelBtn);
         }
 
-        overlay.appendChild(sidebar);
-
-        // --- Content area ---
-        this._contentArea = document.createElement("div");
-        Object.assign(this._contentArea.style, {
-            flex: "1", display: "flex", overflow: "hidden", minWidth: "0",
-        });
-        overlay.appendChild(this._contentArea);
-
-        document.body.appendChild(overlay);
-
-        // Keyboard handler
-        this._keyHandler = (e) => this._handleKeyDown(e);
-        document.addEventListener("keydown", this._keyHandler);
-
-        // File drag-and-drop: allow dropping files onto the sitch browser
-        // to create a new custom sitch with those files
-        this._setupFileDragDrop(overlay);
-
-        this.rebuildContent();
+        return sidebar;
     }
 
     _onFilterChanged() {
@@ -578,6 +813,8 @@ export class CSitchBrowser {
         const links = [
             [this._allLink, !this.activeLabel],
             [this._featuredLink, this.activeLabel === "Featured"],
+            [this._globalTemplatesLink, this.activeLabel === GLOBAL_TEMPLATE_LABEL],
+            [this._localTemplatesLink, this.activeLabel === LOCAL_TEMPLATE_LABEL],
             [this._privateLink, this.activeLabel === "Private"],
             [this._deletedLink, this.activeLabel === "Deleted"],
             [this._unlabeledLink, this.activeLabel === "Unlabeled"],
@@ -596,6 +833,14 @@ export class CSitchBrowser {
                 this._isFeatured(s) && !this._sitchHasLabel(s, "Deleted") && !this._sitchHasLabel(s, "Private")).length;
             this._featuredLink.textContent = "Featured" + (c ? ` (${c})` : "");
         }
+        if (this._globalTemplatesLink) {
+            const c = this._templatesWithLabel(GLOBAL_TEMPLATE_LABEL).length;
+            this._globalTemplatesLink.textContent = "Global Templates" + (c ? ` (${c})` : "");
+        }
+        if (this._localTemplatesLink) {
+            const c = this._templatesWithLabel(LOCAL_TEMPLATE_LABEL).length;
+            this._localTemplatesLink.textContent = "Local Templates" + (c ? ` (${c})` : "");
+        }
         if (this._privateLink) {
             const c = this.sitches.filter(s =>
                 this._sitchHasLabel(s, "Private") && !this._sitchHasLabel(s, "Deleted")).length;
@@ -609,7 +854,7 @@ export class CSitchBrowser {
             const c = this.sitches.filter(s => {
                 if (this._sitchHasLabel(s, "Deleted")) return false;
                 if (this._sitchHasLabel(s, "Private")) return false;
-                if (this._isFeatured(s)) return false;
+                if (this._hasSharedLabel(s)) return false;
                 if (!this._isOwnSitch(s)) return true;
                 const labels = this.sitchLabels[s.name];
                 return !labels || labels.length === 0;
@@ -812,6 +1057,10 @@ export class CSitchBrowser {
             return;
         }
 
+        // The start screen has no selection and no search box. Its cards and buttons
+        // are real buttons, so the browser's own Tab/Enter handling operates them.
+        if (this.screen === "templates") return;
+
         // From the search box: Down arrow moves focus into the grid and selects the
         // first tile; Enter (with nothing selected) activates the first tile directly.
         if (e.target.tagName === "INPUT") {
@@ -934,6 +1183,10 @@ export class CSitchBrowser {
 
         const menu = document.createElement("div");
         this._contextMenu = menu;
+        // The menu is on the page body, not in the overlay, so it needs its own mark.
+        // Without it the interaction router takes a press on a menu item for the 3D view
+        // below (when a sitch is loaded behind the browser), and the click does not come.
+        menu.dataset.interactionNative = "true";
         Object.assign(menu.style, {
             position: "fixed", left: x + "px", top: y + "px",
             backgroundColor: "#2a2a3e", border: "1px solid #555",
@@ -978,7 +1231,7 @@ export class CSitchBrowser {
         // Label checkboxes (all labels except "Deleted" — handled by delete button)
         for (const label of this.userLabels) {
             if (label.name === "Deleted") continue;
-            if (label.name === "Featured" && !this._canManageFeatured()) continue;
+            if (SHARED_LABELS.includes(label.name) && !this._canManageFeatured()) continue;
             const hasCount = selectedKeys.filter(k => this._sitchHasLabel(k, label.name)).length;
             const all = hasCount === selectedKeys.length;
             const none = hasCount === 0;
@@ -1156,6 +1409,14 @@ export class CSitchBrowser {
     // ==================== CONTENT REBUILD ====================
 
     rebuildContent() {
+        if (this.screen === "templates") {
+            this._destroyThumbObserver();
+            this._hideContextMenu();
+            this._contentArea.innerHTML = "";
+            this._contentArea.appendChild(this._buildTemplateScreen());
+            return;
+        }
+
         // Save scroll position before destroying content
         const scrollContainer = this.viewMode === "list" ? this._listScrollContainer : this._thumbScrollContainer;
         const savedScroll = scrollContainer ? scrollContainer.scrollTop : 0;
@@ -1741,6 +2002,8 @@ export class CSitchBrowser {
         if (this.activeLabel === "Private") return "Private Sitches";
         if (this.activeLabel === "Featured") return "Featured Sitches";
         if (this.activeLabel === "Unlabeled") return "Unlabeled Sitches";
+        if (this.activeLabel === GLOBAL_TEMPLATE_LABEL) return "Global Templates";
+        if (this.activeLabel === LOCAL_TEMPLATE_LABEL) return "Local Templates";
         if (this.activeLabel) return `Label: ${this.activeLabel}`;
         return "Browse Sitches";
     }
@@ -1805,32 +2068,34 @@ export class CSitchBrowser {
         const sitch = this._getSitch(sitchOrKey);
         if (!sitch) return null;
         const labels = this._isOwnSitch(sitch) ? (this.sitchLabels[sitch.name] || []) : [];
-        const isFeatured = this._isFeatured(sitch);
+        const sharedLabels = SHARED_LABELS.filter(labelName => this._sitchHasLabel(sitch, labelName));
 
         // Always create a container so we can update it in-place later
         const container = document.createElement("div");
         container.dataset.labelChips = sitch.key;
         Object.assign(container.style, { display: "flex", flexWrap: "wrap", gap: "3px", marginTop: "2px" });
-        if (labels.length === 0 && !isFeatured) return container;
+        if (labels.length === 0 && sharedLabels.length === 0) return container;
 
-        // Show Featured chip first if applicable
-        if (isFeatured) {
-            const featuredDef = PERMANENT_LABELS.find(l => l.name === "Featured");
+        // Show the shared labels (Featured, Global Template) first
+        for (const labelName of sharedLabels) {
+            const sharedDef = PERMANENT_LABELS.find(label => label.name === labelName);
             const chip = document.createElement("span");
             Object.assign(chip.style, {
                 display: "inline-flex", alignItems: "center", gap: "3px",
                 padding: "1px 6px", borderRadius: "3px", fontSize: "10px",
-                backgroundColor: featuredDef.color + "33", color: featuredDef.color,
-                border: "1px solid " + featuredDef.color + "55",
+                backgroundColor: sharedDef.color + "33", color: sharedDef.color,
+                border: "1px solid " + sharedDef.color + "55",
                 maxWidth: "100px", overflow: "hidden", textOverflow: "ellipsis",
                 whiteSpace: "nowrap", lineHeight: "16px",
             });
-            chip.textContent = "Featured";
-            chip.title = "Featured";
+            chip.textContent = labelName;
+            chip.title = labelName;
             container.appendChild(chip);
         }
 
         for (const labelName of labels) {
+            // A shared label comes from its server list only, not from the user's label file.
+            if (SHARED_LABELS.includes(labelName)) continue;
             const labelDef = this.userLabels.find(l => l.name === labelName);
             if (!labelDef) continue;
 
@@ -2067,9 +2332,13 @@ export class CSitchBrowser {
                 }
             }
             if (added.length > 0) {
-                this._refreshFeaturedState();
+                this._refreshSharedState();
                 this._saveFeatured(previousFeatured);
             }
+            return;
+        }
+        if (labelName === GLOBAL_TEMPLATE_LABEL) {
+            this._changeGlobalTemplates(sitchKeys, true);
             return;
         }
         if (!this._canEditLabels()) return;
@@ -2109,9 +2378,13 @@ export class CSitchBrowser {
                 }
             }
             if (removed.length > 0) {
-                this._refreshFeaturedState();
+                this._refreshSharedState();
                 this._saveFeatured(previousFeatured);
             }
+            return;
+        }
+        if (labelName === GLOBAL_TEMPLATE_LABEL) {
+            this._changeGlobalTemplates(sitchKeys, false);
             return;
         }
         if (!this._canEditLabels()) return;
@@ -2135,6 +2408,42 @@ export class CSitchBrowser {
                 this._refreshLabelChips();
             }
         }
+    }
+
+    // Add sitches to the global template list, or remove them from it.
+    // Only the changed entries go to the server, which applies them to its stored
+    // list. The list is not sent whole, because "Save as Template" in the File menu
+    // also changes it, with no browser open.
+    _changeGlobalTemplates(sitchKeys, add) {
+        if (!this._canManageFeatured()) return;
+        const previousTemplates = this._cloneFeaturedSitches(this.templateSitches);
+        const changedEntries = [];
+        for (const sitchKey of sitchKeys) {
+            const sitch = this._getSitch(sitchKey);
+            if (!sitch || this.templateSitches.has(sitch.key) === add) continue;
+            if (add) {
+                this.templateSitches.set(sitch.key, {
+                    name: sitch.name,
+                    userID: sitch.ownerUserID,
+                    screenshotUrl: sitch.screenshotUrl || null,
+                    date: sitch.date || "",
+                });
+            } else {
+                this.templateSitches.delete(sitch.key);
+            }
+            changedEntries.push({name: sitch.name, userID: sitch.ownerUserID});
+        }
+        if (changedEntries.length === 0) return;
+
+        this._refreshSharedState();
+        updateGlobalTemplates(add ? {add: changedEntries} : {remove: changedEntries}).catch(err => {
+            showError("The global template list could not be changed.", err);
+            // Show what the server has. Its list can have changed since this one was read.
+            return fetchGlobalTemplates()
+                .then(globalTemplates => { this.templateSitches = this._sharedMapFromArray(globalTemplates); })
+                .catch(() => { this.templateSitches = previousTemplates; })
+                .then(() => this._refreshSharedState());
+        });
     }
 
     _saveMetadata(changedSitches) {
@@ -2304,6 +2613,11 @@ export class CSitchBrowser {
     // ==================== CLOSE ====================
 
     close() {
+        this._removeOverlay();
+        this._leaveBrowseAddress();
+    }
+
+    _removeOverlay() {
         this._destroyThumbObserver();
         this._hideContextMenu();
         if (this.overlay) { document.body.removeChild(this.overlay); this.overlay = null; }

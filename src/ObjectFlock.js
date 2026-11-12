@@ -104,6 +104,12 @@ const GRAVITY = 9.81;
 const MIN_AIRSPEED = 3;         // m/s
 const MIRROR_X = new Matrix4().makeScale(-1, 1, 1);
 const CRUISE_CHORDS = 16;
+// A custom object can have moving parts: the wings of a bird, a propeller. The flock shows
+// this many moments of that motion at one time, this far apart, and each bird has one of
+// them. So the birds of a flock do not all beat their wings together.
+const MOTION_MOMENTS = 12;
+const MOTION_STEP_SECONDS = 0.37;
+const momentOf = (bird) => (Math.imul(bird + 1, 0x9E3779B1) >>> 20) % MOTION_MOMENTS;
 
 export class ObjectFlock {
     constructor(owner, savedParams = {}) {
@@ -125,7 +131,8 @@ export class ObjectFlock {
         this.group.matrixAutoUpdate = false;        // set by syncTransform(), not from position
         owner.group.add(this.group);
 
-        this.parts = [];            // {mesh, relative, ownsMaterial}, one per mesh of the bird
+        this.parts = [];            // {mesh, relative, ownsMaterial, source, moments}, one per mesh of the bird
+        this.partsMoving = false;
         this.capacity = 0;
         this.poseCount = 0;
         this.positions = new Float64Array(0);       // meters from this.group, world axes
@@ -152,7 +159,8 @@ export class ObjectFlock {
     // ---- the parameter folder ------------------------------------------------
 
     buildGUI(parentGui, afterName) {
-        this.folder = parentGui.addFolder(t("nodes3dObject.flock.folder")).close();
+        this.folder = parentGui.addFolder(t("nodes3dObject.flock.folder")).close()
+            .tooltip(t("nodes3dObject.flock.folderTooltip"));
         this.folder.moveAfter(afterName);
         this.controllers = {};
 
@@ -278,7 +286,7 @@ export class ObjectFlock {
                 owner.model.traverse(child => {
                     if (!child.isMesh || child.userData?.sitrecGaussianSplat) return;
                     const relative = new Matrix4().multiplyMatrices(groupInverse, child.matrixWorld);
-                    this.addPart(child.geometry, child.material, relative, false);
+                    this.addPart(child.geometry, child.material, relative, false, child);
                 });
             }
         } else if (owner.geometry) {
@@ -312,7 +320,7 @@ export class ObjectFlock {
         if (this.owner.model) this.owner.model.visible = visible;
     }
 
-    addPart(geometry, material, relative, ownsMaterial) {
+    addPart(geometry, material, relative, ownsMaterial, source = null) {
         const mesh = new InstancedMesh(geometry, material, this.capacity);
         mesh.instanceMatrix.setUsage(DynamicDrawUsage);
         mesh.count = 0;
@@ -339,7 +347,44 @@ export class ObjectFlock {
         // sphere to cull against would cost more to keep up than it could save.
         mesh.frustumCulled = false;
         this.group.add(mesh);
-        this.parts.push({mesh, relative, ownsMaterial, mirrored});
+        this.parts.push({mesh, relative, ownsMaterial, mirrored, source, moments: null});
+    }
+
+    // Where each part of a model is, at each of the moments of its motion. A part of a model
+    // that does not move, and a geometry, keep the one `relative` they were made with.
+    poseMovingParts(f) {
+        const owner = this.owner;
+        const moving = owner.modelOrGeometry === "model" && !!owner.model && !!owner.vehicleAnimation
+            && owner._vehicleSpinParts?.length > 0;
+        if (!moving && !this.partsMoving) return;
+        // The place of a mesh within the object's group: the same thing `relative` holds.
+        const within = (part, out) => {
+            out.copy(part.source.matrix);
+            for (let node = part.source.parent; node && node !== owner.group; node = node.parent) out.premultiply(node.matrix);
+            return out;
+        };
+        if (moving) {
+            for (let moment = 0; moment < MOTION_MOMENTS; moment++) {
+                owner.updateVehicleAnimation(f, moment * MOTION_STEP_SECONDS);
+                owner.model.updateMatrixWorld(true);
+                for (const part of this.parts) {
+                    if (!part.source) continue;
+                    part.moments ??= Array.from({length: MOTION_MOMENTS}, () => new Matrix4());
+                    within(part, part.moments[moment]);
+                }
+            }
+        }
+        // The object itself goes back to its own pose for this frame.
+        owner.updateVehicleAnimation(f);
+        owner.model?.updateMatrixWorld(true);
+        if (!moving) {
+            for (const part of this.parts) {
+                if (!part.source) continue;
+                part.moments = null;
+                within(part, part.relative);
+            }
+        }
+        this.partsMoving = moving;
     }
 
     disposeMeshes() {
@@ -474,6 +519,7 @@ export class ObjectFlock {
         const owner = this.owner;
         if (!this.enabled || this.parts.length === 0) return;
         this.syncLayers();
+        this.poseMovingParts(f);
 
         const count = this.model.count;
         if (this.poseCount !== count) {
@@ -613,7 +659,7 @@ export class ObjectFlock {
                     part.mesh.setMatrixAt(i, s.bird);
                     continue;
                 }
-                s.instance.multiplyMatrices(s.bird, part.relative);
+                s.instance.multiplyMatrices(s.bird, part.moments ? part.moments[momentOf(i)] : part.relative);
                 if (part.mirrored) s.instance.premultiply(MIRROR_X);
                 part.mesh.setMatrixAt(i, s.instance);
             }

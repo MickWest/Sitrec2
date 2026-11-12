@@ -117,6 +117,7 @@ export class CNodeCurveEditorView2 extends CNodeTabbedCanvasView {
         const point = this.points[index];
         showPointContextMenu(e, "Curve Point", [{
             label: "Delete Point", enabled: this.points.length > 1,
+            tooltip: "Delete this point from the curve. Not available when it is the only point.",
             action: () => this.deletePointWithUndo(point),
         }]);
     }

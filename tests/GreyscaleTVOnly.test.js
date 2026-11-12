@@ -4,7 +4,7 @@ import {Globals, guiMenus, setNodeMan} from "../src/Globals";
 test("Greyscale TV Only control saves and restores independently of the effect enabled flag", () => {
     setNodeMan({add() {}, exists: () => false});
     const controllers = [];
-    const folder = {close() {return this;}, perm() {return this;}, add(object, property) {
+    const folder = {close() {return this;}, perm() {return this;}, tooltip() {return this;}, add(object, property) {
         const controller = {object, property, name() {return this;}, listen() {return this;},
             onChange() {return this;}, tooltip() {return this;}};
         controllers.push(controller);

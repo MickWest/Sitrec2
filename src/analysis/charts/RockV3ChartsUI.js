@@ -761,9 +761,10 @@ export function addResultChartsMenu(fileAnalysisFolder) {
     }
     chartsController = fileAnalysisFolder.add({charts: () => openResultCharts()}, "charts")
         .name("Result Charts...")
-        .tooltip("Interactive charts of a BOT Bench result set: accuracy against clip length and pointing "
-            + "error, what the verdict concluded, and what ranking blind cost. Drop a joined results JSONL "
-            + "on the window, or open it from a finished run. Export SVG or a 300 dpi PNG for a paper.")
+        .tooltip("Open interactive charts of a BOTBench result set: the accuracy against clip length and "
+            + "pointing error, the verdicts, and the accuracy that ranking without the true answer loses.\n"
+            + "Drop a joined results JSONL file on the window, or open it from a finished run. "
+            + "Export each chart as SVG or as a 300 dpi PNG.")
         .perm();
     return chartsController;
 }

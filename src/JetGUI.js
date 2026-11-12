@@ -65,10 +65,14 @@ export function SetupJetGUI() {
     //     UIChangedFrame()
     // })
     guiTweaks.add(par, 'pingPong').listen().name(t("jet.controls.pingPong"))
+        .tooltip(t("dateTime.pingPong.tooltip"))
 
     guiJetTweaks.add(par, 'podPitchPhysical', -20, 150, 1).onChange(UIChangedPR).listen().name(t("jet.controls.podPitchPhysical"))
+        .tooltip(t("jet.controlTips.podPitchPhysical"))
     guiJetTweaks.add(par, 'podRollPhysical', -180, 180, 1).onChange(UIChangedPR).listen().name(t("jet.controls.podRollPhysical"))
-    guiJetTweaks.add(par, 'deroFromGlare').listen().name(t("jet.controls.deroFromGlare")).onChange(curveChanged);
+        .tooltip(t("jet.controlTips.podRollPhysical"))
+    guiJetTweaks.add(par, 'deroFromGlare').listen().name(t("jet.controls.deroFromGlare")).onChange(curveChanged)
+        .tooltip(t("jet.controlTips.deroFromGlare"));
 
 
     guiJetTweaks.add(par, 'jetPitch', -8, 8, 0.01).onChange(function () {
@@ -76,17 +80,21 @@ export function SetupJetGUI() {
         calculateGlareStartAngle();
 
     }).listen().name(t("jet.controls.jetPitch"))
+        .tooltip(t("jet.controlTips.jetPitch"))
 
     guiTweaks.add(Sit, 'lookFOV', 0.1, 10, 0.01).onChange(value => {
         const lookCamera = NodeMan.get("lookCamera").camera;
         lookCamera.fov = value
         lookCamera.updateProjectionMatrix()
     }).listen().name(t("jet.controls.lookFov"))
+        .tooltip(t("jet.controlTips.lookFov"))
 
     guiTweaks.add(par, 'el', -8, 8, 0.01).onChange(curveChanged).name(t("jet.controls.elevation"))
 
-    guiTweaks.add(par, 'glareStartAngle', 40, 80, 0.1).listen().name(t("jet.controls.glareStartAngle")).onChange(curveChanged);
-    guiTweaks.add(par, 'initialGlareRotation', 0, 20, 0.1).listen().name(t("jet.controls.initialGlareRotation")).onChange(
+    guiTweaks.add(par, 'glareStartAngle', 40, 80, 0.1).listen().name(t("jet.controls.glareStartAngle")).onChange(curveChanged)
+        .tooltip(t("jet.controlTips.glareStartAngle"));
+    guiTweaks.add(par, 'initialGlareRotation', 0, 20, 0.1).listen().name(t("jet.controls.initialGlareRotation"))
+        .tooltip(t("jet.controlTips.initialGlareRotation")).onChange(
         function () {
             calculateGlareStartAngle();
             curveChanged()
@@ -100,16 +108,18 @@ export function SetupJetGUI() {
         calculateGlareStartAngle();
 
     }).name(t("jet.controls.scaleJetPitch"))
+        .tooltip(t("jet.controlTips.scaleJetPitch"))
 
     guiPhysics.add(par, 'horizonMethod', [
         t("jet.controls.horizonMethodOptions.humanHorizon"),
         t("jet.controls.horizonMethodOptions.horizonAngle"),
     ])
         .name(t("jet.controls.horizonMethod"))
+        .tooltip(t("jet.controlTips.horizonMethod"))
         .onChange(curveChanged)
 
     guiTweaks.add(par, 'speed', 1, 10, 0.1).listen().name(t("jet.controls.videoSpeed"))
-    guiTweaks.add(par, 'podWireframe').listen().name(t("jet.controls.podWireframe")).onChange(value => {
+    guiTweaks.add(par, 'podWireframe').listen().name(t("jet.controls.podWireframe")).tooltip(t("jet.controlTips.podWireframe")).onChange(value => {
         PODBack.traverse(child => {
             if (child.isMesh) {
                 child.material.wireframe = value;
@@ -121,15 +131,16 @@ export function SetupJetGUI() {
     // guiTweaks.add(par, 'lockCameraToJet').listen().name("Lock Camera to Jet");
     //
 
-    toggler('v', guiShowHide.add(par, 'showVideo').listen().name(t("jet.controls.showVideo")).onChange(value => {
+    toggler('v', guiShowHide.add(par, 'showVideo').listen().name(t("jet.controls.showVideo")).tooltip(t("jet.controlTips.showVideo")).onChange(value => {
         ViewMan.get("video").setVisible(value);
     }))
-    toggler('g', guiShowHide.add(par, 'showChart').listen().name(t("jet.controls.showGraph")).onChange(value => {
+    toggler('g', guiShowHide.add(par, 'showChart').listen().name(t("jet.controls.showGraph")).tooltip(t("jet.controlTips.showGraph")).onChange(value => {
         ViewMan.get("chart").setVisible(value);
     }))
-    guiMenus.help.add({showInteractionHelp}, "showInteractionHelp").name("Mouse, touch and pen controls");
+    guiMenus.help.add({showInteractionHelp}, "showInteractionHelp").name("Mouse, touch and pen controls")
+        .tooltip("Open a window that lists what each mouse, touch and pen gesture does, in the 3D views, the video and each editing tool.");
 
-    toggler('k', guiShowHide.add(par, 'showKeyboardShortcuts').listen().name(t("jet.controls.showKeyboardShortcuts")).onChange(value => {
+    toggler('k', guiShowHide.add(par, 'showKeyboardShortcuts').listen().name(t("jet.controls.showKeyboardShortcuts")).tooltip(t("jet.controlTips.showKeyboardShortcuts")).onChange(value => {
         if (value) {
             infoDiv.style.display = 'block';
         } else
@@ -138,13 +149,13 @@ export function SetupJetGUI() {
     }))
 
 
-    toggler('p', guiShowHide.add(par, 'showPodHead').listen().name(t("jet.controls.showPodHead"))
+    toggler('p', guiShowHide.add(par, 'showPodHead').listen().name(t("jet.controls.showPodHead")).tooltip(t("jet.controlTips.showPodHead"))
         .onChange(value => {
             ViewMan.get("podBackView").setVisible(value)
         })
     );
 
-    toggler('e', guiShowHide.add(par, 'showPodsEye').listen().name(t("jet.controls.showPodsEye"))
+    toggler('e', guiShowHide.add(par, 'showPodsEye').listen().name(t("jet.controls.showPodsEye")).tooltip(t("jet.controlTips.showPodsEye"))
         .onChange(value => {
             //       viewMan.get("podsEyeView").setVisible(value);
             ViewMan.get("podsEyeViewDero").setVisible(value);
@@ -154,7 +165,7 @@ export function SetupJetGUI() {
         })
     );
 
-    toggler('n', guiShowHide.add(par, 'showLookCam').listen().name(t("jet.controls.showLookCam"))
+    toggler('n', guiShowHide.add(par, 'showLookCam').listen().name(t("jet.controls.showLookCam")).tooltip(t("jet.controlTips.showLookCam"))
         .onChange(value => {
             ViewMan.get("lookView").setVisible(value);
             ViewMan.get("ATFLIRUIOverlay").setVisible(value);
@@ -162,7 +173,7 @@ export function SetupJetGUI() {
     );
 
 
-    toggler('c', guiShowHide.add(par, 'showCueData').listen().name(t("jet.controls.showCueData")).onChange(value => {
+    toggler('c', guiShowHide.add(par, 'showCueData').listen().name(t("jet.controls.showCueData")).tooltip(t("jet.controlTips.showCueData")).onChange(value => {
         DebugArrows["Projected Cue"].visible = value;
         DebugArrows["Cue Az"].visible = value;
         DebugArrows["Projected Az"].visible = value;
@@ -170,16 +181,18 @@ export function SetupJetGUI() {
         curveChanged() // to toggle the graph lines
     }))
 
-    toggler('x', guiShowHide.add(par, 'showGlareGraph').listen().name(t("jet.controls.showGlareGraph"))
+    toggler('x', guiShowHide.add(par, 'showGlareGraph').listen().name(t("jet.controls.showGlareGraph")).tooltip(t("jet.controlTips.showGlareGraph"))
         .onChange(curveChanged));
 
-    togglerNodes('z', ['azEditorView'], guiShowHide, t("jet.controls.showAzGraph"), curveChanged);
+    togglerNodes('z', ['azEditorView'], guiShowHide, t("jet.controls.showAzGraph"), curveChanged)
+        .tooltip(t("jet.controlTips.showAzGraph"));
 
     togglerNodes('d', ['azEditorView', 'speedGraphView', 'cloudSpeedEditorView', 'tailAngleGraphView',
             'speedGraphFleetView', 'altitudeGraphView', 'sizePercentGraphView'],
-        guiShowHide, t("jet.controls.declutter"), curveChanged);
+        guiShowHide, t("jet.controls.declutter"), curveChanged)
+        .tooltip(t("jet.controlTips.declutter"));
 
-    guiTweaks.add(par, 'jetOffset', f2m(-30), f2m(10), 0.01).listen().name(t("jet.controls.jetOffset")).onChange(value => FA18.position.y = value)
+    guiTweaks.add(par, 'jetOffset', f2m(-30), f2m(10), 0.01).listen().name(t("jet.controls.jetOffset")).tooltip(t("jet.controlTips.jetOffset")).onChange(value => FA18.position.y = value)
     guiTweaks.add(par, 'TAS', 340, 360, 0.01).listen().name(t("jet.controls.tas")).onChange(curveChanged)
     guiTweaks.add(par, 'integrate', 1, 100, 1).listen().name(t("jet.controls.integrate")).onChange(curveChanged)
 

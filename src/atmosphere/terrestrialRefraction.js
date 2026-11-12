@@ -54,11 +54,14 @@
 //  1. the bend ANGLE saturates at maxBendRad, so distant geometry converges on
 //     a bend comparable to the astronomical one instead of growing without
 //     limit (see terrestrialBendAngle);
-//  2. k is scaled by the mean air density along the path (pathDensityFactor),
-//     because a ray only curves where there is air to curve it. This is what
-//     makes an ELEVATED observer behave: a camera in space has almost its whole
-//     sight line in vacuum and now lofts almost nothing, while an observer on
-//     the deck is left exactly as before;
+//  2. k is scaled by the air density along the sight line, weighted towards
+//     the observer (sightLineDensityFactor), because a ray only curves where
+//     there is air to curve it, and a bend near the target moves its apparent
+//     position little. This is what makes an ELEVATED observer behave: a camera
+//     in space has almost its whole sight line in vacuum and lofts almost
+//     nothing, while an observer on the deck is left exactly as before. Over a
+//     long range the line sags into denser air between two high points, so a
+//     distant summit is raised more than the end heights alone suggest;
 //  3. the LIFT saturates at maxLiftM. Necessary because (1) does not imply it —
 //     lift is d*bend, so a saturated angle still lifts linearly with range.
 //
@@ -67,6 +70,8 @@
 
 import {Frustum, Material, Matrix4, Sphere, Vector3} from "three";
 import {zenithECEFFromPosition} from "./refraction";
+import {projectRayRelative, unprojectRayRelative, rayGeometryLiftBounds,
+    RAY_GEOMETRY_GLSL, rayGeometryUniforms, patchRayGeometryFragmentShader} from "../refraction/RayGeometryProjection";
 
 export const TERRESTRIAL_REFRACTION_DEFAULTS = {
     enabled: false,
@@ -200,24 +205,91 @@ export function atmosphericDensityFactor(hMetres, H = TERRESTRIAL_REFRACTION_DEF
     return Math.exp(-Math.max(0, hMetres) / H);
 }
 
-// Mean relative density along a straight path between two heights — the factor
-// the surveying k must be scaled by so that k*d/(2R) integrates the curvature
-// that is actually there.
+// The factor the surveying k must be scaled by so that k*d^2/(2R) is the lift
+// that the air actually along the sight line produces.
 //
-//     mean = (1/(h2-h1)) * integral of exp(-h/H) dh = H*(e^-h1/H - e^-h2/H)/(h2-h1)
+// Two things decide it, and an average of the density between the two END
+// heights gets both wrong:
 //
-// The limits are the point of it:
-//   both endpoints on the deck  -> 1, so a ground observer is UNCHANGED
-//   observer high, target low   -> H/h_obs, the fraction of the path in air
-//   both endpoints above the air-> ~0, so nothing lofts
-export function pathDensityFactor(hObs, hTarget, H = TERRESTRIAL_REFRACTION_DEFAULTS.scaleHeightM) {
-    const h1 = Math.max(0, hTarget);
-    const h2 = Math.max(0, hObs);
-    const dh = h2 - h1;
-    // Equal heights is the common case (both on the deck), and is also where the
-    // difference quotient is 0/0 — take the limit, which is just the density there.
-    if (Math.abs(dh) < 1e-6) return atmosphericDensityFactor(h1, H);
-    return H * (Math.exp(-h1 / H) - Math.exp(-h2 / H)) / dh;
+// 1. Where the ray goes. Over a long range the sight line sags towards the
+//    ground in the middle. At fraction t of the way (0 at the observer, 1 at
+//    the target) its height above the surface is
+//        h(t) = (1-t)*hObs + t*hTarget - d^2 * t*(1-t) * (1-kBow) / (2R)
+//    The last term is the Earth's curve less the ray's own bow. The ray only
+//    bows where there is air, so kBow is k times the straight-line factor
+//    below: from orbit the ray is nearly straight, while between two
+//    mountains it bows almost with the full k. Between two 2.8 km summits
+//    392 km apart the line comes down to about 350 m, into air 1.3 times as
+//    dense as at either end.
+// 2. Where the bend counts. The lift is the integral of the ray's curvature at
+//    each point times that point's distance FROM THE TARGET, so a bend next to
+//    the observer counts in full and one next to the target hardly at all.
+//    That is why a ground observer sees a star raised by the whole bend, and a
+//    camera in orbit sees the ground barely moved. With rho = exp(-h/H):
+//        factor = 2 * integral from 0 to 1 of (1-t) * rho(h(t)) dt
+//
+// Limits:
+//   both endpoints on the deck   -> exactly 1, so a ground observer is UNCHANGED
+//   equal heights, short range   -> the density at that height
+//   observer high, target low    -> about 2*(H/hObs)^2, less than the plain mean
+//   both endpoints above the air -> ~0, so nothing lofts
+//
+// Cost matters: the shader twin runs for every vertex of every refracted mesh.
+//   - Short lines, where the mid-path sag is under SIGHT_LINE_SAG_FREE of a
+//     scale height (about 46 km): the straight-line closed form, two exp.
+//     Leaving the sag out there changes the factor by under 0.4%.
+//   - Longer lines: SIGHT_LINE_SEGMENTS straight pieces of h(t), each
+//     integrated exactly, nine exp more.
+// Against a self-consistent ray (its bow solved from its own curvature,
+// tests/terrestrialRefraction.test.js) this is within 1% for mountain, sea
+// horizon and aircraft lines, and within 3% for the limb seen from orbit.
+// The shader repeats this step for step (sitrecSightLineDensity), and so does
+// tools/thermal/atmosphere.js (sightLineDensity).
+export const SIGHT_LINE_SEGMENTS = 8;
+export const SIGHT_LINE_SAG_FREE = 0.005;
+
+// 2 * integral from 0 to 1 of (1-t) exp(-h(t)/H) dt for a straight line from
+// hObs to hTarget, in closed form. Below |b| = 0.1 the closed form cancels, so
+// use its series there.
+export function straightLineDensityFactor(hObs, hTarget, H = TERRESTRIAL_REFRACTION_DEFAULTS.scaleHeightM) {
+    const a = Math.max(0, hObs) / H;
+    const b = Math.max(0, hTarget) / H - a;
+    if (Math.abs(b) < 0.1) return 2 * Math.exp(-a) * (0.5 + b * (-1 / 6 + b * (1 / 24 + b * (-1 / 120 + b / 720))));
+    return 2 * (Math.exp(-a) * (b - 1) + Math.exp(-a - b)) / (b * b);
+}
+
+export function sightLineDensityFactor(hObs, hTarget, d, R, k,
+    H = TERRESTRIAL_REFRACTION_DEFAULTS.scaleHeightM) {
+    // Every point of the line is then at or below sea level: full density.
+    if (hObs <= 0 && hTarget <= 0) return 1;
+    const straight = straightLineDensityFactor(hObs, hTarget, H);
+    if (d * d / (8 * R) < SIGHT_LINE_SAG_FREE * H) return straight;
+    const sag = d * d * (1 - k * straight) / (2 * R);
+    const heightAt = t => Math.max(0, (1 - t) * hObs + t * hTarget - sag * t * (1 - t));
+    const dt = 1 / SIGHT_LINE_SEGMENTS, halfStep = dt / 2;
+    let hPrev = heightAt(0), ePrev = Math.exp(-hPrev / H), total = 0;
+    for (let i = 1; i <= SIGHT_LINE_SEGMENTS; i++) {
+        const t = i * dt;
+        const h = heightAt(t), e = Math.exp(-h / H);
+        // On a straight piece rho is exp of a linear function. x is half its
+        // change in scale heights; the piece's mean rho is rhoMid*sinh(x)/x and
+        // its first moment about the midpoint gives the (1-t) weight's slope.
+        // Written with the end values, so nothing overflows for a high camera.
+        const x = (h - hPrev) / (2 * H);
+        let mean, slope;
+        if (Math.abs(x) < 1e-2) {
+            const eMid = Math.exp(-(h + hPrev) / (2 * H));
+            mean = eMid * (1 + x * x / 6);
+            slope = eMid * x / 3;
+        } else {
+            mean = (ePrev - e) / (2 * x);
+            slope = ((ePrev + e) / 2 - mean) / x;
+        }
+        total += dt * ((1 - (t - halfStep)) * mean + halfStep * slope);
+        hPrev = h;
+        ePrev = e;
+    }
+    return 2 * total;
 }
 
 // Smoothly saturate the lift at a ceiling. Same algebraic sigmoid as the bend
@@ -366,6 +438,7 @@ export function terrestrialLiftContext(observerECEF, opts = {}) {
 export function liftCameraRelative(ctx, relECEF, target = new Vector3()) {
     target.copy(relECEF);
     if (!ctx) return target;
+    if (ctx.rayTable) return projectRayRelative(ctx, relECEF, target);
     const upComponent = target.dot(ctx.zenith);
     _liftHoriz.copy(target).addScaledVector(ctx.zenith, -upComponent);
     const d = _liftHoriz.length();
@@ -373,7 +446,7 @@ export function liftCameraRelative(ctx, relECEF, target = new Vector3()) {
     // Height above the ellipsoid, recovered from the rise above the observer's
     // tangent plane by adding the curvature drop back — see the chunk.
     const targetAlt = ctx.obsAlt + upComponent + 0.5 * d * d / ctx.R;
-    const kEff = ctx.k * pathDensityFactor(ctx.obsAlt, targetAlt, ctx.scaleHeightM);
+    const kEff = ctx.k * sightLineDensityFactor(ctx.obsAlt, targetAlt, d, ctx.R, ctx.k, ctx.scaleHeightM);
     const lift = saturateLift(
         terrestrialLift(d, kEff, ctx.R, ctx.maxBendRad), ctx.maxLiftM);
     return target.addScaledVector(ctx.zenith, lift);
@@ -416,6 +489,7 @@ const UNLIFT_PASSES = 10;
 export function unliftCameraRelative(ctx, apparentRelECEF, target = new Vector3()) {
     target.copy(apparentRelECEF);
     if (!ctx) return target;
+    if (ctx.rayTable) return unprojectRayRelative(ctx, apparentRelECEF, target);
     const apparentUp = target.dot(ctx.zenith);
     _liftHoriz.copy(target).addScaledVector(ctx.zenith, -apparentUp);
     const d = _liftHoriz.length();
@@ -424,7 +498,7 @@ export function unliftCameraRelative(ctx, apparentRelECEF, target = new Vector3(
     let lift = 0;
     for (let pass = 0; pass < UNLIFT_PASSES; pass++) {
         const targetAlt = ctx.obsAlt + (apparentUp - lift) + curvatureDrop;
-        const kEff = ctx.k * pathDensityFactor(ctx.obsAlt, targetAlt, ctx.scaleHeightM);
+        const kEff = ctx.k * sightLineDensityFactor(ctx.obsAlt, targetAlt, d, ctx.R, ctx.k, ctx.scaleHeightM);
         lift = saturateLift(
             terrestrialLift(d, kEff, ctx.R, ctx.maxBendRad), ctx.maxLiftM);
     }
@@ -468,6 +542,7 @@ const CHUNK_MARKER = "SITREC_TERRESTRIAL_REFRACTION_CHUNK";
 // scope and failing every affected program to compile.
 export const TERRESTRIAL_REFRACTION_VERTEX_GLSL = /* glsl */`
 // ${CHUNK_MARKER}
+${RAY_GEOMETRY_GLSL}
 uniform float uTerrK;
 uniform vec3 uTerrZenithView;
 uniform float uTerrInvR;
@@ -476,19 +551,55 @@ uniform float uTerrObsAlt;
 uniform float uTerrInvH;
 uniform float uTerrMaxLift;
 
-// Mean relative air density along the path — the GPU twin of pathDensityFactor.
-// Keep the two in step: a divergence here is a scene that renders differently
-// from every number the CPU side reports about it.
-float sitrecPathDensity(float hObs, float hTgt) {
-    float h1 = max(hTgt, 0.0);
-    float h2 = max(hObs, 0.0);
-    float dhOverH = (h2 - h1) * uTerrInvH;
-    float e1 = exp(-h1 * uTerrInvH);
-    if (abs(dhOverH) < 1e-6) return e1;          // 0/0 limit: both ends together
-    return (e1 - exp(-h2 * uTerrInvH)) / dhOverH;
+// Air density along the sagging sight line, weighted towards the observer —
+// the GPU twin of straightLineDensityFactor and sightLineDensityFactor, step
+// for step. Keep them in step: a divergence here is a scene that renders
+// differently from every number the CPU side reports about it.
+float sitrecStraightLineDensity(float hObs, float hTgt) {
+    float a = max(hObs, 0.0) * uTerrInvH;
+    float b = max(hTgt, 0.0) * uTerrInvH - a;
+    if (abs(b) < 0.1) {
+        return 2.0 * exp(-a) * (0.5 + b * (-1.0 / 6.0 + b * (1.0 / 24.0 + b * (-1.0 / 120.0 + b / 720.0))));
+    }
+    return 2.0 * (exp(-a) * (b - 1.0) + exp(-a - b)) / (b * b);
+}
+
+float sitrecSightLineDensity(float hObs, float hTgt, float d) {
+    if (hObs <= 0.0 && hTgt <= 0.0) return 1.0;
+    float straight = sitrecStraightLineDensity(hObs, hTgt);
+    // Short line: the sag is negligible, so the closed form is the answer.
+    if (d * d * 0.125 * uTerrInvR * uTerrInvH < ${SIGHT_LINE_SAG_FREE.toFixed(6)}) return straight;
+    float sag = d * d * 0.5 * uTerrInvR * (1.0 - uTerrK * straight);
+    const int segments = ${SIGHT_LINE_SEGMENTS};
+    float dt = 1.0 / float(segments);
+    float halfStep = 0.5 * dt;
+    float hPrev = max(hObs, 0.0);
+    float ePrev = exp(-hPrev * uTerrInvH);
+    float total = 0.0;
+    for (int i = 1; i <= segments; i++) {
+        float t = float(i) * dt;
+        float h = max((1.0 - t) * hObs + t * hTgt - sag * t * (1.0 - t), 0.0);
+        float e = exp(-h * uTerrInvH);
+        float x = (h - hPrev) * 0.5 * uTerrInvH;
+        float meanRho;
+        float slopeRho;
+        if (abs(x) < 1e-2) {
+            float eMid = exp(-(h + hPrev) * 0.5 * uTerrInvH);
+            meanRho = eMid * (1.0 + x * x / 6.0);
+            slopeRho = eMid * x / 3.0;
+        } else {
+            meanRho = (ePrev - e) / (2.0 * x);
+            slopeRho = (0.5 * (ePrev + e) - meanRho) / x;
+        }
+        total += dt * ((1.0 - (t - halfStep)) * meanRho + halfStep * slopeRho);
+        hPrev = h;
+        ePrev = e;
+    }
+    return 2.0 * total;
 }
 
 vec3 applyTerrestrialRefraction_chunk(vec3 viewPos) {
+    if (uRayGeometry > 0.5) return applyRayGeometry(viewPos);
     if (uTerrK == 0.0) return viewPos;
     float upComponent = dot(viewPos, uTerrZenithView);
     vec3 horizontal = viewPos - upComponent * uTerrZenithView;
@@ -501,8 +612,8 @@ vec3 applyTerrestrialRefraction_chunk(vec3 viewPos) {
     // back at the observer's own altitude, as it must.
     float targetAlt = uTerrObsAlt + upComponent + 0.5 * d * d * uTerrInvR;
 
-    // Only the air actually along the path bends the ray.
-    float kEff = uTerrK * sitrecPathDensity(uTerrObsAlt, targetAlt);
+    // Only the air actually along the sight line bends the ray.
+    float kEff = uTerrK * sitrecSightLineDensity(uTerrObsAlt, targetAlt, d);
 
     float u = kEff * d * 0.5 * uTerrInvR / uTerrMaxBend;
     float bend = uTerrMaxBend * u * inversesqrt(1.0 + u * u);
@@ -548,12 +659,14 @@ export function installTerrestrialRefractionOnShaderMaterial(material) {
     if (!material.uniforms) material.uniforms = {};
     addTerrestrialRefractionUniforms({uniforms: material.uniforms});
     material.vertexShader = injectTerrestrialRefractionChunk(material.vertexShader);
+    material.fragmentShader = patchRayGeometryFragmentShader(material.fragmentShader);
     _installed.add(material);
     material.needsUpdate = true;
 }
 
 // Point a shader's uniform slots at the shared objects.
 export function addTerrestrialRefractionUniforms(shader) {
+    Object.assign(shader.uniforms, rayGeometryUniforms);
     shader.uniforms.uTerrK = terrestrialRefractionUniforms.uTerrK;
     shader.uniforms.uTerrZenithView = terrestrialRefractionUniforms.uTerrZenithView;
     shader.uniforms.uTerrInvR = terrestrialRefractionUniforms.uTerrInvR;
@@ -633,7 +746,8 @@ export function patchTerrestrialRefractionVertexShader(vertexShader) {
             + "\n\t\t\tstart.xyz = applyTerrestrialRefraction_chunk(start.xyz);"
             + "\n\t\t\tend.xyz = applyTerrestrialRefraction_chunk(end.xyz);");
         out = out.replace(FATLINE_APPROX_MV,
-            "vec4 mvPosition = ( position.y < 0.5 ) ? sitrecPhysicalStart : sitrecPhysicalEnd;");
+            "vec4 mvPosition = ( position.y < 0.5 ) ? sitrecPhysicalStart : sitrecPhysicalEnd;"
+            + "\n\tvRayGeometryPhysical = mvPosition.xyz;");
         matched = true;
     }
 
@@ -677,6 +791,7 @@ export function installTerrestrialRefractionOnMaterial(material) {
         const result = patchTerrestrialRefractionVertexShader(shader.vertexShader);
         if (result.matched) {
             shader.vertexShader = result.vertexShader;
+            shader.fragmentShader = patchRayGeometryFragmentShader(shader.fragmentShader);
         } else if (!_warnedUnmatched.has(this)) {
             _warnedUnmatched.add(this);
             console.warn("Terrestrial refraction: no supported clip-position pattern in "
@@ -817,6 +932,23 @@ export function restoreLoftedCulling(objects) {
     }
 }
 
+// Enclose physical and apparent bounds. Taking the full possible lift range
+// avoids assuming that a tile centre and its sharp summit refract identically.
+export function expandSphereForRefraction(sphere, ctx) {
+    if (!ctx) return {min: 0, max: 0};
+    const relative = sphere.center.clone().sub(ctx.observer);
+    const range = ctx.rayTable
+        ? Math.sqrt(Math.max(0, relative.lengthSq() - relative.dot(ctx.zenith) ** 2))
+        : relative.length();
+    const near = Math.max(0, range - sphere.radius), far = range + sphere.radius;
+    const bounds = ctx.rayTable ? rayGeometryLiftBounds(ctx.rayTable, near, far)
+        : {min: 0, max: saturateLift(terrestrialLift(far, ctx.k, ctx.R, ctx.maxBendRad), ctx.maxLiftM)};
+    if (!bounds) return null;
+    sphere.center.addScaledVector(ctx.zenith, (bounds.min + bounds.max) / 2);
+    sphere.radius += (bounds.max - bounds.min) / 2;
+    return bounds;
+}
+
 /**
  * Exempt from Three's frustum test every object whose LOFTED bounding sphere is
  * in this camera's view. Call immediately before the render with that camera.
@@ -846,13 +978,16 @@ export function cullLoftedObjects(objects, camera, ctx) {
         if (!own) continue;                 // the object asked never to be culled
         if (!worldBoundingSphere(object, _cullSphere)) continue;
 
-        const center = _cullSphere.center;
-        const range = center.distanceTo(ctx.observer);
-        liftWorldPoint(ctx, center, _cullLifted);
-        const lift = _cullLifted.distanceTo(center);
-        // The far side of the object is lofted more than its centre: the lift goes
-        // as the square of the range, so across a radius r it changes by 2*r/range.
-        const radius = _cullSphere.radius * (1 + Math.min(1, 2 * lift / Math.max(range, 1)));
+        if (ctx.rayTable) {
+            if (!expandSphereForRefraction(_cullSphere, ctx)) continue;
+            _cullLifted.copy(_cullSphere.center);
+        } else {
+            const center = _cullSphere.center, range = center.distanceTo(ctx.observer);
+            liftWorldPoint(ctx, center, _cullLifted);
+            const lift = _cullLifted.distanceTo(center);
+            _cullSphere.radius *= 1 + Math.min(1, 2 * lift / Math.max(range, 1));
+        }
+        const radius = _cullSphere.radius;
 
         let drawnInView = true;
         for (let side = 0; side < 4; side++) {

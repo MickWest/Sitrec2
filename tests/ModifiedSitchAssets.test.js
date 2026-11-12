@@ -26,7 +26,7 @@ function save({local = false, custom = false} = {}) {
             'source.bin': {filename: 'source.bin', staticURL: 'https://objects.example/source.bin', skipSerialization: true},
         }},
         NodeMan: {exists: () => false, iterate: () => {}},
-        TrackManager: {iterate: () => {}, serialize: empty, serializeBalloons: empty, serializeDisplayNames: () => ({})},
+        TrackManager: {iterate: () => {}, serialize: empty, serializeBalloons: empty, serializeKites: () => [], serializeDisplayNames: () => ({})},
         Globals: {menuBar: {modSerialize: empty}},
         GlobalScene: {children: []}, par: {}, Units: {modSerialize: empty},
         FeatureManager: manager, TimelineMarkers: manager, CustomGraphManager: manager, MeasurementManager: manager,

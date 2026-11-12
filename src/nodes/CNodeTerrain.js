@@ -18,7 +18,6 @@ import * as LAYER from "../LayerMasks";
 import {ViewMan} from "../CViewManager";
 import {CNodeViewUI} from "./CNodeViewUI";
 import {isLocal} from "../configUtils";
-import {excludeFromTerrestrialRefraction} from "../atmosphere/terrestrialRefraction";
 
 const terrainGUIColor = "#c0ffc0";
 
@@ -181,9 +180,10 @@ export class CNodeTerrain extends CNode {
         // Create a single group that will be reused for all QuadTreeMapTexture objects
         this.group = new Group();
         GlobalScene.add(this.group);
-        // Terrain tile materials are patched at creation (TerrainDayNightMaterial),
-        // and this subtree holds hundreds of meshes — prune it from the sweep.
-        excludeFromTerrestrialRefraction(this.group);
+        // Materials are patched at creation, but the meshes still need the
+        // per-camera refracted bounds check before Three builds its draw list.
+        // Excluding this group leaves only the physical frustum test, which
+        // can reject mountain surfaces while retaining their deeper skirts.
 
         // Create grey polar caps covering the regions beyond Web Mercator's
         // latitude limit (~±85.05°). These sit on the ellipsoid surface so they

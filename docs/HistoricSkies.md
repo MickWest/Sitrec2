@@ -80,9 +80,13 @@ A time-zone error of one hour moves the sky by 15°.
   example `timeZone: "CST"`.
 - **A zone change keeps the same instant.** It changes only the clock that Sitrec shows. If
   you typed the time in the wrong zone, select the zone and type the time again.
-- **With no zone set, Sitrec uses the browser's own zone.** Sitrec has no location→timezone
-  lookup, so this is only right if you happen to be sitting where the sighting happened. The
-  zone is worked out once, from the sitch's own start time. So if you load a modern sitch and
+- **With no zone set, Sitrec uses the browser's own zone.** This is only right if you happen
+  to be sitting where the sighting happened. **Set Time Zone from Camera Location** in the Time menu
+  sets the zone of the look camera position on the sitch date instead. Before a place adopted
+  standard time, that gives the local mean time of the main city of its zone, for example
+  `UTC-7.88` (UTC−7:52:58) for Los Angeles in 1850, not of the sighting location. The
+  browser's zone history also merges some zones before 1970. The browser zone is worked out
+  once, from the sitch's own start time. So if you load a modern sitch and
   *then* type an 1897 date, the zone stays whatever the modern date implied — possibly an hour
   out, since daylight saving may apply to one date and not the other.
 - **There was no national daylight saving before 1916** (Germany), and none in the US before

@@ -23,6 +23,7 @@ export function addVehicleLights(model, p) {
     const road = p.vehicleType === "car" || p.vehicleType === "truck", root = model.root, lamps = [];
     const drone=p.vehicleType==="drone"&&p.droneStyle!=="fixedwing",balloon=p.vehicleType==="balloon";
     model.lamps = lamps;
+    if (p.vehicleType === "kite" || p.vehicleType === "bird") return;
     // Existing lenses are physical parts of the model even when switched off.
     root.traverse(object => {
         if (/^(Navigation lens|Headlamp |Tail lamp |Front indicator |Emergency lamp)/.test(object.name) && object.isMesh)

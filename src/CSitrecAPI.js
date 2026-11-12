@@ -3490,6 +3490,26 @@ class CSitrecAPI {
             return { success: false, error: "name is required when the sitch has not been previously saved" };
         }
 
+        // Only File > Save as Template writes to a template (see CFileManagerSave.saveSitch).
+        // With no answer from the server the name can be a template, so the save stops.
+        if (!saveLocally && typeof FileManager.ownTemplateLabelsForSave === "function") {
+            // The check waits for the server, and a different sitch can load in that time.
+            // The save is for the sitch that was loaded when the call came, so it stops then.
+            const saveGeneration = Globals.loadGeneration;
+            let templateLabels;
+            try {
+                templateLabels = await FileManager.ownTemplateLabelsForSave(effectiveName);
+            } catch (error) {
+                return { success: false, error: `Could not check if "${effectiveName}" is a template, so the sitch was not saved. Save again.` };
+            }
+            if (saveGeneration !== Globals.loadGeneration) {
+                return { success: false, error: `A different sitch loaded during the save of "${effectiveName}", so nothing was saved.` };
+            }
+            if (templateLabels.length > 0) {
+                return { success: false, error: `"${effectiveName}" is a template, and this save does not change a template. Save with a different name.` };
+            }
+        }
+
         if (trimmedName) {
             Sit.sitchName = trimmedName;
         }

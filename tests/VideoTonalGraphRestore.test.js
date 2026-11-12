@@ -127,12 +127,13 @@ test('frequency menu controls retain boolean types when a GUI sends numeric chec
     resetPointTrackFrequencyGraph();
     const calls = [];
     const controller = {};
-    for (const method of ['name', 'tooltip', 'listen', 'perm']) controller[method] = () => controller;
+    for (const method of ['name', 'tooltip', 'listen', 'perm', 'noSlider']) controller[method] = () => controller;
     const folder = {
         add(object, key) { calls.push({object, key}); return controller; },
         addFolder() { return folder; },
         close() { return folder; },
         perm() { return folder; },
+        tooltip() { return folder; },
     };
     addPointTrackFrequencyMenu(folder);
     const proxy = calls.find(call => call.key === 'percent').object;
@@ -149,12 +150,13 @@ test('frequency aperture minimum is the smallest radius that can be measured', (
     resetPointTrackFrequencyGraph();
     const calls = [];
     const controller = {};
-    for (const method of ['name', 'tooltip', 'listen', 'perm']) controller[method] = () => controller;
+    for (const method of ['name', 'tooltip', 'listen', 'perm', 'noSlider']) controller[method] = () => controller;
     const folder = {
         add(object, key, min) { calls.push({object, key, min}); return controller; },
         addFolder() { return folder; },
         close() { return folder; },
         perm() { return folder; },
+        tooltip() { return folder; },
     };
     addPointTrackFrequencyMenu(folder);
     const radius = calls.find(call => call.key === 'radius');

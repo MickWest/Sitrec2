@@ -17,6 +17,23 @@ function channelBuild(version, env = process.env) {
     return {id, channel, version, builtAt: new Date(builtAt).toISOString()};
 }
 
+// The file of every chunk of a build, by chunk id, and the name of the global that its chunks
+// register on. A page that still runs an OLDER build reads this file, never from a cache, when
+// one of its own lazy chunks is no longer on the server: with it the page can load that chunk
+// of the new build (src/StaleBuildRecovery.js). Each file name has a content hash, so the
+// names here change with every build.
+function chunkNames(compilation, build) {
+    const chunks = {}, styles = {};
+    for (const chunk of compilation.chunks) {
+        if (chunk.id === null || chunk.id === undefined) continue;
+        for (const file of chunk.files) {
+            if (file.endsWith('.js')) chunks[chunk.id] = file;
+            else if (file.endsWith('.css')) styles[chunk.id] = file;
+        }
+    }
+    return {build, chunkLoadingGlobal: compilation.outputOptions.chunkLoadingGlobal, chunks, styles};
+}
+
 class ChannelEntryPlugin {
     constructor(build) { this.build = build; }
     apply(compiler) {
@@ -28,8 +45,9 @@ class ChannelEntryPlugin {
                     styles: files.filter(f => f.endsWith('.css'))};
                 compilation.emitAsset('app-entry.json', new compiler.webpack.sources.RawSource(JSON.stringify(entry)));
                 compilation.emitAsset('build-info.json', new compiler.webpack.sources.RawSource(JSON.stringify(this.build)));
+                compilation.emitAsset('app-chunks.json', new compiler.webpack.sources.RawSource(JSON.stringify(chunkNames(compilation, this.build))));
             });
         });
     }
 }
-module.exports = {channelBuild, ChannelEntryPlugin};
+module.exports = {channelBuild, chunkNames, ChannelEntryPlugin};

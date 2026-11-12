@@ -15,24 +15,24 @@ export async function openVehicleBrowserDialog({initialRecipe,edit=false,isAlive
     const previousFocus = document.activeElement;
     const dialog = document.createElement("dialog");
     dialog.style.cssText = "position:fixed;inset:0;margin:0;padding:0;width:100vw;height:100dvh;max-width:none;max-height:none;border:0;background:#101923;color:#dbe4ef;z-index:100000;";
-    dialog.setAttribute("aria-label","Vehicle Designer");
+    dialog.setAttribute("aria-label","Custom Object Designer");
     const host = document.createElement("div"); dialog.append(host);
     const shadow = host.attachShadow({mode:"open"});
     const style = document.createElement("style"); style.textContent = css;
     const shell = document.createElement("div"); shell.className = "shell";
     shell.innerHTML = `
-        <header><div><h1>Vehicle Designer</h1><p>Choose a vehicle, or make it your own.</p></div><button id="close">Cancel ×</button></header>
+        <header><div><h1>Custom Object Designer</h1><p>Choose an object, or make it your own.</p></div><button id="close">Cancel ×</button></header>
         <section id="browser">
             <div class="catalog">
                 <div class="filters">
-                    <input id="search" type="search" aria-label="Search vehicles" placeholder="Search vehicles, manufacturer or role…">
-                    <select id="kind" aria-label="Vehicle type"></select>
+                    <input id="search" type="search" aria-label="Search objects" placeholder="Search objects, manufacturer or role…">
+                    <select id="kind" aria-label="Object type"></select>
                     <select id="collection" aria-label="Collection"><option value="all">All presets</option><option value="favorites">Favorites</option><option value="recent">Recently used</option><option value="mine">My models</option></select>
                     <select id="region" aria-label="Region"></select>
                 </div>
                 <div class="catalog-meta"><span id="count" role="status"></span><button id="import">Import design…</button></div>
                 <input type="file" id="importFile" accept=".json,application/json" hidden>
-                <div id="tiles" aria-label="Vehicle presets"></div>
+                <div id="tiles" aria-label="Object presets"></div>
             </div>
             <aside>
                 <div id="preview"></div>
@@ -40,7 +40,7 @@ export async function openVehicleBrowserDialog({initialRecipe,edit=false,isAlive
                     <span id="category" class="eyebrow"></span><h2 id="name"></h2>
                     <p id="description"></p><a id="reference" target="_blank" rel="noopener noreferrer">Model reference ↗</a>
                     <p class="hint">Drag to orbit · scroll to zoom.<br>Editable visual approximation. Dimensions are in metres.</p>
-                    <div class="actions"><button id="edit">Customize…</button><button id="apply" class="primary">Use this vehicle</button></div>
+                    <div class="actions"><button id="edit">Customize…</button><button id="apply" class="primary">Use this object</button></div>
                     <div class="actions secondary"><button id="favorite">☆ Favorite</button><button id="save">Save to My models</button><button id="export">Export design</button><button id="delete" hidden>Delete saved copy</button></div>
                     <p class="hint">My models are stored in this browser. Applied designs are saved inside the sitch. Export a design to keep a separate editable copy.</p>
                 </div>
@@ -66,10 +66,10 @@ export async function openVehicleBrowserDialog({initialRecipe,edit=false,isAlive
             (collection === "mine" ? p.savedId : collection === "favorites" ? preferences.favorites.includes(p.key) :
                 collection === "recent" ? preferences.recent.includes(p.key) : !p.savedId));
         if (collection === "recent") matches.sort((a,b) => preferences.recent.indexOf(a.key) - preferences.recent.indexOf(b.key));
-        $("tiles").replaceChildren(); $("count").textContent = `${matches.length} vehicles · ${PRESETS.length} presets`;
+        $("tiles").replaceChildren(); $("count").textContent = `${matches.length} objects · ${PRESETS.length} presets`;
         if (!matches.length) {
             const empty = document.createElement("p"); empty.className = "empty";
-            empty.textContent = collection === "mine" ? "Your saved designs will appear here. Customize a preset, then save it to My models." : "No vehicles match these filters.";
+            empty.textContent = collection === "mine" ? "Your saved designs will appear here. Customize a preset, then save it to My models." : "No objects match these filters.";
             $("tiles").append(empty);
         }
         for (const item of matches) {

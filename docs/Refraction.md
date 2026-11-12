@@ -1,6 +1,6 @@
 # Atmospheric Refraction
 
-**View → Atmospheric Refraction**
+**Effects → Atmospheric Refraction**
 
 Air bends light. Distant things therefore appear slightly *higher* than straight-line geometry
 says they should — including things below the geometric horizon, which is why you can
@@ -37,7 +37,7 @@ The refracted horizon is further away than the geometric one by a factor of √(
 |---|---|---|---|
 | 2 m (eye level at the shore) | 5.0 km | 5.4 km | 5.6 km |
 | 100 m | 35.7 km | 38.3 km | 39.3 km |
-| 30,000 ft | 184.4 nm | 197.7 nm | 194 nm |
+| 30,000 ft | 184.4 nm | 197.7 nm | 198 nm |
 
 The k = 0.13 column is the formula above with the traditional surveying value at every height.
 The last column starts from Sitrec's default *k* of 0.176, then reduces the bend for a high
@@ -94,17 +94,23 @@ Some results do depend on the bend: see [What is *not* refracted](#what-is-not-r
 
 | Control | Default | Notes |
 |---|---|---|
-| **Enable Refraction** (title checkbox) | on | Master switch. Off means light travels in straight lines |
+| **Enable Refraction** (title checkbox) | on | Master switch for every view, with either **Model**. Off means light travels in straight lines |
+| **Model** | Standard | **Standard** or **Ray-traced**. The folder shows only the settings of the model you choose |
 | **Terrain and Buildings** | on | The terrestrial model |
 | **Sky** | on | The celestial model |
-| **Refraction Pressure (hPa)** | 1010 | Feeds both models |
-| **Refraction Temperature (°C)** | 10 | Feeds both models |
+| **Refraction Pressure (hPa)** | 1010 | Standard only. Feeds both Sky and Terrain and Buildings |
+| **Refraction Temperature (°C)** | 10 | Standard only. Feeds both Sky and Terrain and Buildings |
 | **Surface Temp Gradient (K/km)** | −6.5 | Feeds the terrestrial *k*. See below |
 | **Refraction Coefficient k** | derived | Shows the surface *k* for the current settings. Sitrec scales it down for sight lines above the ground (see below). Editable only with Override on |
 | **Override k** | off | Set *k* by hand instead of deriving it |
 
-All three default on, so a fresh sitch runs both models. The sub-switches exist to take one
-half back out when you are deliberately isolating an effect.
+All three switches default on, so a fresh sitch runs both Sky and Terrain and Buildings. The
+sub-switches exist to take one half back out when you are deliberately isolating an effect.
+
+The rows from **Refraction Pressure** to **Override k** are the settings of the **Standard**
+model, and the folder shows them when **Model** is **Standard**. When **Model** is
+**Ray-traced**, the folder shows the ray-traced settings instead, and the ray-traced view uses
+its own atmosphere settings. See [Ray-traced Refraction](#ray-traced-refraction).
 
 ---
 
@@ -140,12 +146,20 @@ The bend is capped at 34′, on the reasoning that a finite target can never be 
 than the whole atmosphere would lift a star.
 
 **Elevated observers get less bend.** A ray only curves where there is air, so Sitrec scales
-*k* by the mean air density along the sight line (an 8.5 km scale height). A sight line with
-both ends near the ground is unchanged. If either end is high, less of the path is in dense
-air: a ground camera sees an aircraft at 10 km height and 100 km range lifted about 2.8′, not
-4.7′. A camera at airliner altitude sees a smaller effective *k* than the textbook value, and a
-camera in orbit lifts the scene almost not at all. The apparent lift is also capped at 25.5 km,
-a guard that never applies to real ground-level geometry.
+*k* by the air density along the sight line (an 8.5 km scale height). Two things set the
+factor:
+
+- The sight line sags toward the ground in the middle, because of the Earth's curve. Over a
+  long range between two high points, it passes through denser air than at either end.
+- A bend near the camera moves the apparent position more than a bend near the target, so
+  Sitrec weights the density toward the camera's end of the sight line.
+
+A sight line with both ends near the ground is unchanged. A ground camera sees an aircraft at
+10 km height and 100 km range lifted about 3.3′, not 4.7′, and the aircraft sees the ground
+below it lifted about 2.3′. A camera in orbit lifts the scene almost not at all. From Pic de
+Finestrelles (2869 m), the sight line to the Grand Ferrand, 392 km away, sags to about 350 m
+above the sea in the middle, so it gets 88% of the surface *k*. The apparent lift is also capped
+at 25.5 km, a guard that never applies to real ground-level geometry.
 
 The Sky model also weakens with height. Sitrec scales it by the air density at the lowest point
 of the sight line (a 7.5 km scale height). From 30,000 ft, a star at 0° elevation is bent about
@@ -210,24 +224,45 @@ These results do depend on refraction, because they match the drawn scene or the
 
 ## Ray-traced Refraction
 
-**Effects → Ray-traced Refraction**
+**Effects → Atmospheric Refraction → Model: Ray-traced**
 
 The Terrain and Buildings model uses one *k* for each sight line. For non-uniform air — mirages,
-ducting, folds in the horizon — use the separate ray-traced tool. Tick **Enable Ray-traced
-Refraction** to apply it to one chosen 3D view, and click **Profiles, Rays & Lasers…** to open
-its editor. There you pick a temperature profile preset, drag the temperature and humidity
-curves, and add laser beams to see where light really goes. The settings save with the sitch.
+ducting, folds in the horizon — set **Model** to **Ray-traced**. Sitrec then draws one 3D view by
+tracing light through an atmosphere that you define. The folder shows these rows:
 
-The tool starts on `lookView`, and **Ray-traced view** in the editor changes this. In that view
-the ray-traced result replaces both models above, so the View menu pressure, temperature and
-*k* have no effect there. The tool has its own atmosphere settings. Other views keep the two
-models.
+| Control | Default | Notes |
+|---|---|---|
+| **Ray-traced View** | Look View | The 3D view that is ray-traced. Only one view is ray-traced |
+| **Rendering** | Screen-space Mirages | How Sitrec applies the traced rays. See below |
+| **Trace Distance (km)** | 50 | How far Sitrec traces each ray |
+| **Profiles, Rays & Lasers…** | | Opens the editor |
 
-The ray-traced view is a depth-based screen-space effect. It starts from what the view can
-already see, so it can reproduce folds and mirage images of visible surfaces, but it cannot show
-a target below the straight-line horizon, or anything else that is hidden or off screen.
+In the editor you pick a temperature profile preset, drag the temperature and humidity curves,
+and add laser beams to see where light really goes. The settings save with the sitch. The
+editor's **Enable** checkbox and **Ray-traced view** list are the same settings as **Model** and
+**Ray-traced View** in the menu.
 
-To see lasers, enable the tool, then tick **Show lasers in the scene and cross-section** on the
+In the ray-traced view the traced result replaces both Standard models, so the Standard
+pressure, temperature and *k* have no effect there. The tool has its own atmosphere settings.
+The other views keep the Standard model with its settings. To change those settings, set
+**Model** to **Standard**. That also stops the ray tracing until you set **Model** to
+**Ray-traced** again.
+
+**Rendering** has two choices:
+
+- **Screen-space Mirages** bends the rendered image, with its depth. It starts from what the
+  view can already see, so it can reproduce folds and mirage images of visible surfaces. It
+  cannot show a target below the straight-line horizon, or anything else that is hidden or off
+  screen.
+- **Terrain Geometry** moves the terrain along the traced rays before Sitrec finds which surface
+  is in front. Terrain beyond the straight-line horizon can then appear, out to **Trace
+  Distance**. The rays must not fold. If they fold, the editor shows *Geometry projection is
+  unavailable for folded rays*, and Sitrec draws the view without refraction. Use **Screen-space
+  Mirages** for such a profile. The terrain detail at long range still limits the result. When
+  the view needs more terrain tiles than Sitrec can hold, the editor shows *Terrain detail
+  limited by tile budget*.
+
+To see lasers, set **Model** to **Ray-traced**, open the editor, then tick **Show lasers in the scene and cross-section** on the
 **Lasers** tab. One laser is already there, and **＋ Add laser** adds more.
 
 ![The Ray-traced refraction window on its Ray paths tab. Six boxes give Local k at 1 m, Local k at 50 m, Local k at camera, Rays hitting the surface, Samples above the surface and Folded ray pairs. Below them is a side-view chart over 50.0 km. Teal rays fan out from a camera at 35 m. The higher rays go on to the right, and the lower rays curve down toward a gray curved sea. A green laser beam curves down with them. The chart background is green in its upper part and blue in its lower part, with a level edge between them](docimages/refraction-ray-paths.jpg)

@@ -61,6 +61,11 @@ export class CNodeFrameSlider extends CNode {
         this.statusOverlay = null;
         this.statusOverlayOffset = 2;
         this.lastStatusOverlay = null;
+        // The video view's Show Cache line. It has its own field: when it shared
+        // statusOverlay, the video view cleared the status of Point Track, Motion
+        // Analysis and the OSD tracker at each video render. While Show Cache is
+        // on, this line shows in place of the status line.
+        this.cacheOverlay = null;
         this.groupOverlay = null;
 
         // Keyframe-marker state. Yellow diamonds are drawn at frames
@@ -963,25 +968,39 @@ export class CNodeFrameSlider extends CNode {
         const ctx = this.canvas.getContext('2d');
         this.canvas.width = currentWidth;
         this.canvas.height = currentHeight;
+        this.drawTimeline(ctx, currentWidth, currentHeight);
+    }
 
+    // Everything the slider draws on top of its range input: the status lines,
+    // the In and Out limits, the timeline markers and the keyframe diamonds.
+    // update() draws it on the slider's own canvas. A video export draws it on
+    // its frame (drawForExport), and passes limitsActive so that the In and Out
+    // limits have the bright colors that they have during a drag.
+    drawTimeline(ctx, width, height, {limitsActive = false} = {}) {
         // Add padding to ensure handles are visible at the edges
         const padding = 5; // pixels of padding on each side
-        const drawableWidth = this.canvas.width - (2 * padding);
+        const drawableWidth = width - (2 * padding);
 
         // Draw status overlay if set. Values are drawn in their own colour, so a
         // caller can distinguish kinds of frame — Point Track uses this to show
-        // the points a person placed apart from the ones it worked out itself.
-        if (this.statusOverlay && this.statusOverlay.length > 0) {
-            const colours = {1: '#00ff00', 2: '#ff00ff', 3: '#ffb347'};
+        // the points a person placed apart from the ones it worked out itself,
+        // and the frames with no point, where the track is interpolated (4, red;
+        // see TRACK_FRAME in PointTrackCoverage). Red is last, thicker, and at
+        // least 2 pixels long, so that a gap of one frame, narrower than a pixel
+        // on a long video, still shows between its neighbours.
+        const statusOverlay = this.cacheOverlay ?? this.statusOverlay;
+        if (statusOverlay && statusOverlay.length > 0) {
+            const colours = {1: '#00ff00', 2: '#ff00ff', 3: '#ffb347', 4: '#ff4040'};
             for (const value of Object.keys(colours).map(Number)) {
+            const minLength = value === 4 ? 2 : 1;
             ctx.strokeStyle = colours[value];
-            ctx.lineWidth = 2;
+            ctx.lineWidth = value === 4 ? 4 : 2;
             ctx.beginPath();
             let inSegment = false;
             let segmentStartX = 0;
-            for (let i = 0; i < this.statusOverlay.length; i++) {
+            for (let i = 0; i < statusOverlay.length; i++) {
                 const x = padding + (drawableWidth * i / Sit.frames);
-                if (this.statusOverlay[i] === value) {
+                if (statusOverlay[i] === value) {
                     if (!inSegment) {
                         ctx.moveTo(x, this.statusOverlayOffset);
                         segmentStartX = x;
@@ -991,7 +1010,7 @@ export class CNodeFrameSlider extends CNode {
                     }
                 } else {
                     if (inSegment) {
-                        ctx.lineTo(Math.max(x, segmentStartX + 1), this.statusOverlayOffset);
+                        ctx.lineTo(Math.max(x, segmentStartX + minLength), this.statusOverlayOffset);
                         ctx.stroke();
                         ctx.beginPath();
                         inSegment = false;
@@ -1000,7 +1019,7 @@ export class CNodeFrameSlider extends CNode {
             }
             if (inSegment) {
                 const lastX = padding + drawableWidth;
-                ctx.lineTo(Math.max(lastX, segmentStartX + 1), this.statusOverlayOffset);
+                ctx.lineTo(Math.max(lastX, segmentStartX + minLength), this.statusOverlayOffset);
                 ctx.stroke();
             }
             }
@@ -1034,7 +1053,7 @@ export class CNodeFrameSlider extends CNode {
         let aLineWidth = 1.5;
         let aHandleRadius = 3;
         
-        if (this.draggingALimit) {
+        if (this.draggingALimit || limitsActive) {
             aColor = '#00ff00'; // Bright green when dragging
             aLineWidth = 2;
             aHandleRadius = 3.5;
@@ -1048,7 +1067,7 @@ export class CNodeFrameSlider extends CNode {
         ctx.lineWidth = aLineWidth;
         ctx.beginPath();
         ctx.moveTo(aPixel, 0);
-        ctx.lineTo(aPixel, this.canvas.height);
+        ctx.lineTo(aPixel, height);
         ctx.stroke();
 
         // Draw A limit handle (small circle at top)
@@ -1063,7 +1082,7 @@ export class CNodeFrameSlider extends CNode {
         let bLineWidth = 1.5;
         let bHandleRadius = 3;
         
-        if (this.draggingBLimit) {
+        if (this.draggingBLimit || limitsActive) {
             bColor = '#ff0000'; // Bright red when dragging
             bLineWidth = 2;
             bHandleRadius = 3.5;
@@ -1077,7 +1096,7 @@ export class CNodeFrameSlider extends CNode {
         ctx.lineWidth = bLineWidth;
         ctx.beginPath();
         ctx.moveTo(bPixel, 0);
-        ctx.lineTo(bPixel, this.canvas.height);
+        ctx.lineTo(bPixel, height);
         ctx.stroke();
 
         // Draw B limit handle (small circle at top)
@@ -1098,7 +1117,7 @@ export class CNodeFrameSlider extends CNode {
                 ctx.lineWidth = 1;
                 ctx.beginPath();
                 ctx.moveTo(x, 0);
-                ctx.lineTo(x, this.canvas.height);
+                ctx.lineTo(x, height);
                 ctx.stroke();
                 const half = hovered ? 5 : 4;
                 ctx.beginPath();
@@ -1119,7 +1138,7 @@ export class CNodeFrameSlider extends CNode {
         // one under the cursor is brightened. A dark stroke gives definition
         // against the bright fill on light or busy backgrounds.
         if (this.keyframeFrames && this.keyframeFrames.length > 0 && Sit.frames > 0) {
-            const yKF = this.canvas.height - 5;
+            const yKF = height - 5;
             for (const f of this.keyframeFrames) {
                 if (f < 0 || f > Sit.frames) continue;
                 const x = padding + (drawableWidth * f / Sit.frames);
@@ -1129,6 +1148,59 @@ export class CNodeFrameSlider extends CNode {
                     'rgba(0, 0, 0, 0.85)');
             }
         }
+    }
+
+    // The timeline as one strip of a video frame, `width` CSS pixels wide with
+    // the origin at its top left corner. With `numbers` ({height, font, inColor,
+    // outColor}) the strip starts with a row of that height, which shows the In
+    // and Out frame numbers above their markers. Then comes the timeline,
+    // `height` pixels high. The range input is a browser control and cannot be
+    // copied to a canvas, so its groove and thumb are drawn here in the look of
+    // that control, with the thumb at `frame`.
+    drawForExport(ctx, width, height, frame, numbers = null) {
+        const padding = 5, top = numbers?.height ?? 0, middle = top + height / 2;
+        const xOf = f => padding + (width - 2 * padding) * f / Sit.frames;
+        const x = xOf(frame);
+        ctx.save();
+        ctx.fillStyle = '#000000';
+        ctx.fillRect(0, 0, width, top + height);
+        ctx.lineCap = 'round';
+        ctx.lineWidth = 4;
+        for (const [color, from, to] of [['#b8b8b8', x, width - padding], ['#0075ff', padding, x]]) {
+            ctx.strokeStyle = color;
+            ctx.beginPath();
+            ctx.moveTo(from, middle);
+            ctx.lineTo(to, middle);
+            ctx.stroke();
+        }
+        ctx.fillStyle = '#0075ff';
+        ctx.beginPath();
+        ctx.arc(x, middle, Math.min(7, height / 2 - 1), 0, 2 * Math.PI);
+        ctx.fill();
+        if (numbers) {
+            ctx.font = numbers.font;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'bottom';
+            const [inLabel, outLabel] = [[Sit.aFrame, numbers.inColor], [Sit.bFrame, numbers.outColor]].map(([f, color]) =>
+                ({text: String(f), x: xOf(f), half: ctx.measureText(String(f)).width / 2, color}));
+            // Numbers that would touch move apart by the same amount. Then each
+            // stays inside the strip, and pushes the other one if it must.
+            const gap = 8, apart = inLabel.half + gap + outLabel.half;
+            const overlap = apart - (outLabel.x - inLabel.x);
+            if (overlap > 0) { inLabel.x -= overlap / 2; outLabel.x += overlap / 2; }
+            inLabel.x = Math.max(inLabel.half, inLabel.x);
+            outLabel.x = Math.min(width - outLabel.half, Math.max(outLabel.x, inLabel.x + apart));
+            inLabel.x = Math.min(inLabel.x, outLabel.x - apart);
+            for (const label of [inLabel, outLabel]) {
+                ctx.fillStyle = label.color;
+                ctx.fillText(label.text, label.x, top - 1);
+            }
+        }
+        ctx.restore();
+        ctx.save();
+        ctx.translate(0, top);
+        this.drawTimeline(ctx, width, height, {limitsActive: true});
+        ctx.restore();
     }
 
     // Draw a yellow keyframe diamond. Used for slider markers; centralised

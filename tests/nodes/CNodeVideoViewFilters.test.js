@@ -1,4 +1,5 @@
 import {
+    applyEchoEffect,
     applyTonalAdjustmentToPixel,
     applyTonalAdjustmentsToImage,
     areLevelsDefault,
@@ -227,5 +228,77 @@ describe("applyTonalAdjustmentsToImage matches per-pixel reference", () => {
         for (let i = 0; i < dispatched.length; i++) {
             expect(dispatched[i]).toBe(original[i]);
         }
+    });
+});
+
+describe("applyEchoEffect", () => {
+    // Each fake image is one 2x1 picture of a single grey value, `px`. The stub
+    // contexts copy that value into the pixels that getImageData hands back, so
+    // the echo result says which images were combined. No DOM is needed.
+    const width = 2, height = 1;
+    const image = px => ({width, height, px});
+    let savedImageData;
+
+    beforeAll(() => {
+        savedImageData = globalThis.ImageData;
+        globalThis.ImageData = class { constructor(data, w, h) { this.data = data; this.width = w; this.height = h; } };
+    });
+    afterAll(() => { globalThis.ImageData = savedImageData; });
+
+    function makeCanvas() {
+        const canvas = {width, height, pixels: null};
+        const ctx = {
+            putImageData(imageData) { canvas.pixels = Array.from(imageData.data); },
+        };
+        return {canvas, ctx};
+    }
+
+    function makeView(videoData) {
+        const final = makeCanvas();
+        const provisional = makeCanvas();
+        let drawn = null;
+        return {
+            in: {echoFrames: {v0: 3}},
+            videoData,
+            _echoCanvas: final.canvas, _echoCtx: final.ctx,
+            _echoProvisionalCanvas: provisional.canvas, _echoProvisionalCtx: provisional.ctx,
+            _echoTmpCtx: {
+                drawImage(img) { drawn = img; },
+                getImageData() {
+                    const data = new Uint8ClampedArray(width * height * 4);
+                    for (let i = 0; i < data.length; i += 4) data.fill(drawn.px, i, i + 3), data[i + 3] = 255;
+                    return {data};
+                },
+            },
+        };
+    }
+
+    test("past frames carry the same stabilization shift as the current frame", () => {
+        // The raw frames are brighter than the stabilized ones, so if Echo Light
+        // took any raw frame, its value would win the maximum.
+        const videoData = {
+            getCachedImage: f => image(200 + f),
+            getCachedStabilizedImage: f => image(50 + f),
+        };
+        const view = makeView(videoData);
+        const result = applyEchoEffect(view, image(52), 2, false, true);
+        expect(result.pixels[0]).toBe(52);
+    });
+
+    test("a provisional result never shares a canvas with the final one", () => {
+        // Stages after Echo cache on input-canvas identity plus frame number,
+        // so the final result must reach them as a different canvas.
+        let currentDecoded = false;
+        const videoData = {
+            getCachedImage: f => (f === 2 && !currentDecoded) ? null : image(50 + f),
+            getCachedStabilizedImage: f => image(50 + f),
+        };
+        const view = makeView(videoData);
+        const provisional = applyEchoEffect(view, image(0), 2, false, true);
+        currentDecoded = true;
+        const final = applyEchoEffect(view, image(52), 2, false, true);
+        expect(provisional).not.toBe(final);
+        expect(final).toBe(view._echoCanvas);
+        expect(final.pixels[0]).toBe(52);
     });
 });

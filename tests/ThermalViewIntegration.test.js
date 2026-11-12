@@ -35,6 +35,11 @@ jest.mock("../src/i18n", () => ({t: (key, values = {}) => {
     return key.split(".").reduce((value, part) => value?.[part], en)?.replace(/\{\{(\w+)\}\}/g, (_, key) => values[key]) ?? key;
 }}));
 
+// The app installs tooltip() on lil-gui controllers and folders (src/lil-gui-extras.js). These tests use bare lil-gui,
+// so give both a no-op default; a test that records tooltips replaces the controller's and restores this one.
+Controller.prototype.tooltip ??= function () {return this;};
+GUI.prototype.tooltip ??= function () {return this;};
+
 function methods(file, className, names, scope = {}, base = class {}) {
     const source = fs.readFileSync(path.join(__dirname, "..", file), "utf8");
     const declaration = parse(source, {sourceType: "module"}).program.body.map(n => n.declaration ?? n).find(n => n.id?.name === className);
@@ -62,7 +67,7 @@ test("the real view routes physical mode ahead of panorama and raytraced visible
     });
     const view = Object.assign(new View(), {id: "lookView", camera: cameraFor(native()), renderMode: "physicalThermal",
         renderTargetAndEffectsInternal: jest.fn(), clearThermalOutput: jest.fn(), isXRPresenting: () => false,
-        raytracedRefraction: {begin: jest.fn()}});
+        raytracedRefraction: {isActive: () => true, begin: jest.fn()}});
     view.renderTargetAndEffects();
     expect(view.renderTargetAndEffectsInternal).toHaveBeenCalledWith();
     expect(view.raytracedRefraction.begin).not.toHaveBeenCalled();
@@ -422,8 +427,8 @@ test("every signature zone and optics message code has an English label",()=>{
 });
 
 test("the closed menu performs no thermal initialization, and its fields remain standard menu controllers",()=>{
-    const control={name(){return this;},listen(){return this;},onChange:jest.fn().mockReturnThis()};
-    const folder={_closed:true,close(){return this;},add:jest.fn(()=>control),onOpenClose:jest.fn()};
+    const control={name(){return this;},tooltip(){return this;},listen(){return this;},onChange:jest.fn().mockReturnThis()};
+    const folder={_closed:true,close(){return this;},tooltip(){return this;},add:jest.fn(()=>control),onOpenClose:jest.fn()};
     const view={renderMode:"visible"};setupThermalMenu(view,{addFolder:()=>folder});
     expect(view._thermalAdapter).toBeUndefined();expect(view._thermalLoading).toBeUndefined();
     expect(folder.add).toHaveBeenCalledWith(view,"renderMode",expect.any(Object));

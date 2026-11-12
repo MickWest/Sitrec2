@@ -47,6 +47,9 @@ for (const manualFiltering of [false, true]) for (const scenario of ["straight",
             scalar("cameraNear", 0.1); scalar("cameraFar", 8e8); scalar("logDepth", 1);
             scalar("maxDistance", maxDistance);
             scalar("rayLinearFiltering", manualFiltering ? 0 : 1);
+            // The app's Screen-space Mirages defaults (RefractionPass material). In raw
+            // WebGL an unset uniform reads 0, which would switch sky refraction off.
+            scalar("refractSky", 1); scalar("geometryMode", 0);
             const texture = (name, unit, w, h, data, float = false, linear = false) => {
                 gl.activeTexture(gl.TEXTURE0 + unit);
                 gl.bindTexture(gl.TEXTURE_2D, gl.createTexture());

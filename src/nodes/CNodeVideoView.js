@@ -78,6 +78,9 @@ import {CNodeVideoLevelsView} from "./CNodeVideoLevelsView";
 import {CNodeAudioSpectrumView} from "./CNodeAudioSpectrumView";
 import {viewMenuKey} from "../ViewUIBarMenus";
 
+// Video > Video Adjustments > Smooth sets ctx.imageSmoothingEnabled when the video is drawn.
+const SMOOTH_TOOLTIP = "Smooth the video picture when it is scaled. Off shows each video pixel as a sharp square when you zoom in.";
+
 // Re-export for external consumers (e.g. CMotionAnalysis).
 export {addFiltersToVideoNode, applyConvolution} from "./CNodeVideoViewFilters";
 
@@ -465,7 +468,9 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
     getFilterStateKey() {
         const effectsEnabled = this.in.enableVideoEffects ? this.in.enableVideoEffects.v0 : true;
         // Echo runs with the master toggle off too, so it is part of both keys.
-        const echo = `echo:${this.in.echoMin?.value ?? false}:${this.in.echoMax?.value ?? false}:${Math.round(this.in.echoFrames?.v0 ?? 10)}`;
+        // Its pixel cache holds stabilized frames, so the stabilization state is too.
+        const echo = `echo:${this.in.echoMin?.value ?? false}:${this.in.echoMax?.value ?? false}:${Math.round(this.in.echoFrames?.v0 ?? 10)}`
+            + `:stab:${this.videoData?.getStabilizationKey?.() ?? "none"}`;
         if (!effectsEnabled) return `off|${echo}`;
         const levels = this.getLevelsSettings();
         return [
@@ -892,7 +897,8 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
         if (importMeta && !importMeta.applied) {
             importMeta.applied = applyImportedImageMetadata(
                 importMeta,
-                this.fileName ?? videoData?.filename ?? ""
+                this.fileName ?? videoData?.filename ?? "",
+                {restoring: vd?._restoreIndex !== undefined || !!this.pendingVideoRestore || Globals.deserializing}
             );
         }
 
@@ -1698,6 +1704,7 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
         console.log(`[VideoSelector] Creating selector with ${Object.keys(options).length} options`);
         this.videoSelectorController = guiMenus.video.add(this, "currentVideoSelection", options)
             .name(t("videoView.currentVideo.label") + this.viewMenuSuffix())
+            .tooltip(t("videoView.currentVideo.tooltip"))
             .onChange((value) => {
                 this.selectVideo(value);
             });
@@ -1744,6 +1751,7 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
 
         this.rotationController = guiMenus.video.add(this, "currentRotation", rotationOptions)
             .name(t("videoView.videoRotation.label") + this.viewMenuSuffix())
+            .tooltip(t("videoView.videoRotation.tooltip"))
             .onChange((value) => {
                 if (this.videoData) {
                     this.videoData.setUserRotation(value);
@@ -1874,7 +1882,8 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
         }
 
         this.exifInfoButtonController = guiMenus.video.add(this, "toggleEXIFInfoPanel")
-            .name(label);
+            .name(label)
+            .tooltip("Show or hide a panel with the file's metadata: picture size, frame rate, codec, and any EXIF data such as the camera, capture date and GPS position.");
         this.exifInfoButtonController.shareAs(viewMenuKey(this.id, "exifPanel"));
     }
 
@@ -1898,7 +1907,8 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
         if (!metadata?.placement?.hasLocation) return;
 
         this.exifPositionController = guiMenus.video.add(this, "applyCurrentEXIFCameraPosition")
-            .name(t("videoView.setCameraToExifGps.label"));
+            .name(t("videoView.setCameraToExifGps.label"))
+            .tooltip(t("videoView.setCameraToExifGps.tooltip"));
     }
 
     // Ask the user what to do when media is dropped/imported while a video or
@@ -2282,7 +2292,7 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
         ctx.clearRect(0, 0, canvas.width, canvas.height);
         ctx.fillStyle = "#000000";
         ctx.fillRect(0, 0, canvas.width, canvas.height);
-        ctx.imageSmoothingEnabled = quickToggle("Smooth", false, guiVideoEffectsFolder);
+        ctx.imageSmoothingEnabled = quickToggle("Smooth", false, guiVideoEffectsFolder, SMOOTH_TOOLTIP);
         ctx.filter = filter || "none";
         ctx.drawImage(sourceImage, srcX, srcY, srcWidth, srcHeight, 0, 0, outputWidth, outputHeight);
         if (fullABOverlay) {
@@ -2761,7 +2771,7 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
             }
             // positions are a PERCENTAGE OF THE WIDTH
 
-            ctx.imageSmoothingEnabled = quickToggle("Smooth", false, guiVideoEffectsFolder);
+            ctx.imageSmoothingEnabled = quickToggle("Smooth", false, guiVideoEffectsFolder, SMOOTH_TOOLTIP);
 
             const elaOverlay = this.getELAOverlayState(frame, image);
             if (elaOverlay.enabled) {
@@ -3225,10 +3235,12 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
         const frameSlider = NodeMan.get("FrameSlider", false);
         if (!frameSlider) return;
 
+        // The cache line is cacheOverlay, not statusOverlay: that one belongs to
+        // Point Track and the other analyses, and must stay when Show Cache is off.
         const showingCache = this.in.showCache?.value ?? false;
         if (!showingCache) {
-            if (frameSlider.statusOverlay || frameSlider.groupOverlay) {
-                frameSlider.statusOverlay = null;
+            if (frameSlider.cacheOverlay || frameSlider.groupOverlay) {
+                frameSlider.cacheOverlay = null;
                 frameSlider.groupOverlay = null;
                 frameSlider.needsCanvasRedraw = true;
             }
@@ -3240,15 +3252,15 @@ export class CNodeVideoView extends CNodeViewCanvas2D {
         if (!cache) return;
 
         const totalFrames = Sit.frames;
-        if (!frameSlider.statusOverlay || frameSlider.statusOverlay.length !== totalFrames) {
-            frameSlider.statusOverlay = new Uint8Array(totalFrames);
+        if (!frameSlider.cacheOverlay || frameSlider.cacheOverlay.length !== totalFrames) {
+            frameSlider.cacheOverlay = new Uint8Array(totalFrames);
         }
 
         let changed = false;
         for (let i = 0; i < totalFrames; i++) {
             const loaded = (cache[i] && cache[i].width > 0) ? 1 : 0;
-            if (frameSlider.statusOverlay[i] !== loaded) {
-                frameSlider.statusOverlay[i] = loaded;
+            if (frameSlider.cacheOverlay[i] !== loaded) {
+                frameSlider.cacheOverlay[i] = loaded;
                 changed = true;
             }
         }

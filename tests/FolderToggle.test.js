@@ -40,6 +40,56 @@ function makeToggledFolder(state, sideEffect = () => {}) {
     return {folder, toggle};
 }
 
+test("paired folder title toggles keep settings live while either view is enabled", () => {
+    const folder = makeGUI().addFolder("Horizon Compass");
+    const state = {main: false, look: true, opacity: 1};
+    const pair = folder.addCheckboxPair(state, "main", "look", "Horizon Compass");
+    const opacity = folder.add(state, "opacity", 0, 1);
+    pair.main.asFolderToggle({paired: true});
+    expect(pair.domElement.parentNode).toBe(folder.domElement);
+    expect(pair.domElement.querySelectorAll("input")).toHaveLength(2);
+    expect(isOff(folder)).toBe(false);
+    pair.look.setValue(false);
+    expect(isOff(folder)).toBe(true);
+    expect(opacity.domElement.hasAttribute("inert")).toBe(true);
+    expect(pair.domElement.closest("[inert]")).toBeNull();
+    pair.main.$input.click();
+    expect(state).toMatchObject({main: true, look: false});
+    expect(isOff(folder)).toBe(false);
+    expect(opacity.domElement.hasAttribute("inert")).toBe(false);
+});
+
+test("a whole-folder mirror retains the paired title and its independent callbacks", () => {
+    const folder = makeGUI().addFolder("Vectors"), target = makeGUI("Copy");
+    const state = {main: true, look: false, selected: true};
+    const changed = jest.fn();
+    const pair = folder.addCheckboxPair(state, "main", "look", "Vectors");
+    pair.main.onChange(changed).asFolderToggle({paired: true});
+    pair.look.onChange(changed);
+    folder.add(state, "selected");
+    target.mirrorFolderFrom(folder);
+    const title = target.domElement.querySelector(":scope > .lil-folder-toggle-pair");
+    expect(title.querySelectorAll("input")).toHaveLength(2);
+    const look = target.controllers.find(c => c.property === "look");
+    look.$input.click();
+    expect(state).toMatchObject({main: true, look: true});
+    expect(changed).toHaveBeenCalledTimes(1);
+    target.destroy();
+    expect(pair.domElement.parentNode).toBe(folder.domElement);
+});
+
+test("destroying one side of a paired title restores the surviving ordinary control", () => {
+    const folder = makeGUI().addFolder("Compass");
+    const pair = folder.addCheckboxPair({main: false, look: false}, "main", "look", "Compass");
+    const row = folder.add({value: 1}, "value");
+    pair.main.asFolderToggle({paired: true});
+    pair.look.destroy();
+    expect(folder.domElement.querySelector(".lil-folder-toggle-pair")).toBeNull();
+    expect(pair.main.domElement.parentNode).toBe(folder.$children);
+    expect(row.domElement.hasAttribute("inert")).toBe(false);
+    folder.destroy();
+});
+
 beforeEach(() => {
     containers = [];
     clearMenuMirrors();
@@ -358,5 +408,91 @@ describe("phase 0 fixes", () => {
         const [nameTwin, xTwin] = popup.controllers;
         expect(nameTwin.domElement.hasAttribute("inert")).toBe(false);
         expect(isBlocked(xTwin.domElement)).toBe(true);
+    });
+});
+
+// A partial switch (asFolderToggle({fadeOnlyMarked: true})), as a track's "Show Track Line":
+// off blocks only the rows marked fadeWhenFolderOff, and every other row stays live.
+describe("partial switch", () => {
+    const isBlocked = el => el.hasAttribute("inert") && el.classList.contains("lil-folder-faded");
+
+    function makeTrackFolder(state) {
+        const folder = makeGUI().addFolder("S1 LS7 AF00371");
+        const name = folder.add(state, "name");
+        const toggle = folder.add(state, "visible").asFolderToggle({fadeOnlyMarked: true});
+        const width = folder.add(state, "width", 0, 10, 1).fadeWhenFolderOff();
+        const sub = folder.addFolder("Filter Bad Data");
+        const filter = sub.add(state, "filter");
+        const look = sub.add(state, "look").fadeWhenFolderOff();
+        return {folder, toggle, name, width, sub, filter, look};
+    }
+
+    test("off blocks only the marked rows, also in a sub-folder; on restores them", () => {
+        const state = {visible: true, name: "a", width: 1, filter: false, look: false};
+        const {toggle, name, width, sub, filter, look} = makeTrackFolder(state);
+
+        toggle.setValue(false);
+        expect(isBlocked(width.domElement)).toBe(true);
+        expect(isBlocked(look.domElement)).toBe(true);
+        expect(name.domElement.hasAttribute("inert")).toBe(false);
+        expect(filter.domElement.hasAttribute("inert")).toBe(false);
+        expect(sub.domElement.hasAttribute("inert")).toBe(false);
+
+        toggle.setValue(true);
+        expect(width.domElement.hasAttribute("inert")).toBe(false);
+        expect(look.domElement.classList.contains("lil-folder-faded")).toBe(false);
+    });
+
+    test("a row marked after the folder is off is blocked too", () => {
+        const state = {visible: false, name: "a", width: 1, filter: false, look: false, step: 1};
+        const {folder} = makeTrackFolder(state);
+        const step = folder.add(state, "step", 1, 10, 1);
+        expect(step.domElement.hasAttribute("inert")).toBe(false);
+        step.fadeWhenFolderOff();
+        expect(isBlocked(step.domElement)).toBe(true);
+    });
+
+    test("a whole-folder copy is a partial switch with the same marks", () => {
+        const state = {visible: false, name: "a", width: 1, filter: false, look: false};
+        const {folder} = makeTrackFolder(state);
+        const popup = makeGUI("popup");
+        popup.mirrorFolderFrom(folder);
+        const nameTwin = popup.controllers.find(c => c.property === "name");
+        const widthTwin = popup.controllers.find(c => c.property === "width");
+        expect(boxOf(popup)).not.toBeNull();
+        expect(nameTwin.domElement.hasAttribute("inert")).toBe(false);
+        expect(isBlocked(widthTwin.domElement)).toBe(true);
+    });
+});
+
+// A list checkbox (asListCheckbox) only changes the look: label on the left, box at the right end,
+// in the column of the title checkboxes. It must stay an ordinary boolean row, so a click on the
+// box, drag-to-set (which looks for `.controller.boolean`) and an off title checkbox all work.
+describe("list checkbox", () => {
+    const isBlocked = el => el.hasAttribute("inert") && el.classList.contains("lil-folder-faded");
+
+    test("adds the class and its CSS, and keeps a working boolean row", () => {
+        const state = {on: false};
+        const folder = makeGUI().addFolder("Show Wind at");
+        const row = folder.add(state, "on").name("Camera").asListCheckbox();
+        expect(row.domElement.classList.contains("lil-list-checkbox")).toBe(true);
+        expect(row.domElement.classList.contains("boolean")).toBe(true);
+        expect(document.getElementById("lil-folder-toggle-style").textContent)
+            .toContain(".lil-list-checkbox > .widget");
+        const box = row.domElement.querySelector('input[type="checkbox"]');
+        box.checked = true;
+        box.dispatchEvent(new Event("change", {bubbles: true}));
+        expect(state.on).toBe(true);
+    });
+
+    test("is greyed and blocked when its folder's title checkbox is off", () => {
+        const state = {master: true, camera: true};
+        const folder = makeGUI().addFolder("Show Wind at");
+        folder.add(state, "master").asFolderToggle();
+        const row = folder.add(state, "camera").name("Camera").asListCheckbox();
+        expect(isBlocked(row.domElement)).toBe(false);
+        boxOf(folder).checked = false;
+        boxOf(folder).dispatchEvent(new Event("change"));
+        expect(isBlocked(row.domElement)).toBe(true);
     });
 });

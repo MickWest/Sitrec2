@@ -107,7 +107,10 @@ export function addVideoAnalysisResolutionMenu(folder, getVideo) {
         'Use Settings': 'settings', 'Original (no limit)': 'None',
         '1080p': '1080P', '720p': '720P', '480p': '480P', '360p': '360P',
     }).name('Analysis Resolution').listen().perm()
-        .tooltip('Shared by video analysis tools in this tab. Overrides Settings only during analysis. Changing either resolution clears decoded frames; restart a running analysis after changing it.');
+        .tooltip('Largest frame size that video analysis decodes. Original (no limit) uses every source pixel. '
+            + 'Use Settings follows Max Resolution in Settings. 1080p to 360p limit the long side.\n'
+            + 'It is shared by all the video analysis tools in this tab, and applies only while an analysis runs. '
+            + 'A change clears the decoded frames and stops a running analysis.');
     const status = {get resolutionStatus() {
         const video = getVideo?.();
         if (!video) return 'No video loaded';
@@ -119,5 +122,6 @@ export function addVideoAnalysisResolutionMenu(folder, getVideo) {
             : `Source resolution: ${w}×${h}`;
     }};
     folder.add(status, 'resolutionStatus').name('Analysis pixels').listen().disable().perm()
-        .tooltip('Reduced resolution can hide small objects and shift measured positions. Choose Original above to analyse every source pixel.');
+        .tooltip('Shows the frame size that analysis uses, and the source size when it is reduced.\n'
+            + 'A reduced size can hide small objects and shift measured positions. Choose Original (no limit) above to analyze every source pixel.');
 }

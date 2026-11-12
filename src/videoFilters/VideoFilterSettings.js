@@ -17,7 +17,7 @@ export const SIGNAL_FORMATS = {
         native: null,
     },
     ntsc: {
-        name: "NTSC (525/60 colour)",
+        name: "NTSC (525/60 color)",
         description: "US broadcast composite. Dot crawl and cross-colour rainbowing.",
         native: {width: 640, height: 480},
         system: "ntsc",
@@ -36,7 +36,7 @@ export const SIGNAL_FORMATS = {
         lines: 485,
     },
     pal: {
-        name: "PAL (625/50 colour)",
+        name: "PAL (625/50 color)",
         description: "European composite. Phase-alternating V axis, softer vertical colour.",
         native: {width: 768, height: 576},
         system: "pal",
