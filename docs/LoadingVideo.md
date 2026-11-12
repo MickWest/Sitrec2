@@ -91,6 +91,11 @@ When you drop an image, the **Import Image** dialog asks how to use it:
 | **Ground Overlay** | Place it as an image overlay on the ground or map |
 | **Cancel** | Do not import the image |
 
+A sitch that has no name does not show this dialog: a new sitch, or a sitch that opened from a
+template, before its first save. There the image is used as a **Video Image**. To make a ground
+overlay in such a sitch, right-click the ground and select **Add Ground Overlay**, or save the
+sitch first.
+
 If a video or image is already loaded, the **Second Video** dialog then asks where the image
 goes. See [Loading a second video](#loading-a-second-video).
 

@@ -81,7 +81,7 @@
     {
       "host": "s3.amazonaws.com",
       "purpose": "Terrarium elevation tiles (elevation-tiles-prod), and operator-configured object storage",
-      "trigger": "elevation tiles automatically while terrain is shown, and during a Doppler geolocation archive search that an administrator starts; storage only when the user uploads or opens a file",
+      "trigger": "elevation tiles automatically while terrain is shown, and during a Doppler geolocation archive search that an administrator or a logged-in user starts; storage only when the user uploads or opens a file",
       "mayReceive": ["coarse-area", "user-file"]
     },
     {

@@ -1,6 +1,6 @@
-# Doppler geolocation (admin preview)
+# Doppler geolocation (preview)
 
-Open **Main → Extra Tools → Doppler Geolocation**. This experimental tool compares stationary-listener aircraft sound with timestamped flight tracks. Results are ranked candidate matches; a high score is not, by itself, a verified location.
+Open **Sitrec → Extra Tools → Doppler Geolocation**. The menu item shows only when you are logged in. A serverless build has no login, so it does not have the tool. This experimental tool compares stationary-listener aircraft sound with timestamped flight tracks. Results are ranked candidate matches; a high score is not, by itself, a verified location.
 
 The interface, audio analysis, search engine and archive reader load on demand. Audio and flight files remain in the browser. Search calculations run in a worker. Archive searches may fetch aircraft type classifications and public terrain tiles.
 

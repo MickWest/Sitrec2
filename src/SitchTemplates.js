@@ -22,6 +22,39 @@ export function isTemplateLabel(labelName) {
     return labelName === GLOBAL_TEMPLATE_LABEL || labelName === LOCAL_TEMPLATE_LABEL;
 }
 
+// The time of the latest save of a template entry, or -Infinity when the entry has no date.
+// The server writes "YYYY-MM-DD HH:MM:SS".
+function saveTime(template) {
+    const time = Date.parse(String(template.date ?? "").replace(" ", "T"));
+    return Number.isNaN(time) ? -Infinity : time;
+}
+
+/**
+ * The global templates for a list that a user picks from, and for "?template=<name>":
+ * one entry for each name.
+ *
+ * Two users can each have a global template with the same name. An example is a template
+ * that is made in a local build and then made again on the main site, because a local build
+ * saves to the same storage. Of the entries with one name, only the entry with the most
+ * recent save stays. When two have the same time, the first in the list stays. The picker
+ * then shows one card for that name, and the address of that name opens the sitch of that card.
+ *
+ * The sitch browser does not use this: an administrator must see each entry there to remove
+ * one of them.
+ *
+ * @template T
+ * @param {T[]} templates - entries that have a `name` and a `date`
+ * @returns {T[]} one entry for each name, in the order of the list
+ */
+export function latestTemplateOfEachName(templates) {
+    const latest = new Map();
+    for (const template of templates) {
+        const kept = latest.get(template.name);
+        if (!kept || saveTime(template) > saveTime(kept)) latest.set(template.name, template);
+    }
+    return templates.filter(template => latest.get(template.name) === template);
+}
+
 /**
  * The global templates, in the order the server stores them.
  * Needs no login. Throws if the server does not return a list.
@@ -93,7 +126,8 @@ export function templateAddress(appAddress, templateSource) {
  *
  * A global template comes first, because the address must open the same sitch
  * for every user. Then come the current user's own local templates. The name
- * must be exact.
+ * must be exact. Among global templates with the same name, the address opens
+ * the entry that the template picker shows (latestTemplateOfEachName).
  *
  * Throws if the server does not answer.
  * @param {string} name
@@ -101,7 +135,7 @@ export function templateAddress(appAddress, templateSource) {
  */
 export async function findTemplateByName(name) {
     if (!name) return null;
-    const globalTemplates = await fetchGlobalTemplates();
+    const globalTemplates = latestTemplateOfEachName(await fetchGlobalTemplates());
     const globalTemplate = globalTemplates.find(entry => entry.name === name);
     if (globalTemplate) return {name, userID: Number(globalTemplate.userID)};
 

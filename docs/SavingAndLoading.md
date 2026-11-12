@@ -62,6 +62,8 @@ When you open Sitrec with no sitch in the address, the start screen shows the te
 
 When there is no template to show, Sitrec opens the sitch browser as the start screen.
 
+When two users each have a global template with the same name, the start screen shows one card for that name: the template with the most recent save. The sitch browser shows each of them.
+
 A sitch that you open from a template is a new sitch with no name. Your work in it does not change the template.
 
 The address of that sitch is the template by name, for example `?template=Star%20Tracker`. That address opens the template again, at its latest version. See [template](URLParameters.md#template). After you save the sitch, the address is the address of your saved sitch.

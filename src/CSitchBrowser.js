@@ -20,6 +20,7 @@ import {
     LOCAL_TEMPLATE_COLOR,
     LOCAL_TEMPLATE_LABEL,
     fetchGlobalTemplates,
+    latestTemplateOfEachName,
     updateGlobalTemplates,
 } from "./SitchTemplates";
 import {buildTemplateScreen} from "./SitchTemplateScreen";
@@ -579,7 +580,8 @@ export class CSitchBrowser {
     // The start screen: the templates, and the ways to go to a different start.
     _buildTemplateScreen() {
         const canLogin = !this._isLoggedIn() && typeof this.fileManager?.loginServer === "function";
-        const globalTemplates = this._templatesWithLabel(GLOBAL_TEMPLATE_LABEL);
+        // One card for each name: of global templates with the same name, the most recent save.
+        const globalTemplates = latestTemplateOfEachName(this._templatesWithLabel(GLOBAL_TEMPLATE_LABEL));
         // A sitch with the two labels shows one time, as a global template.
         const localTemplates = this._templatesWithLabel(LOCAL_TEMPLATE_LABEL)
             .filter(sitch => !this._sitchHasLabel(sitch, GLOBAL_TEMPLATE_LABEL));

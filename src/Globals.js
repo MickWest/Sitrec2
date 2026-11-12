@@ -303,6 +303,16 @@ export function getEffectiveUserID() {
     return Globals.userID;
 }
 
+// True when the server reported a user who is logged in.
+//
+// A user ID alone does not show a login. A build with no login gives every user one fixed ID,
+// and so does a failed login check on an installation that does not require a login
+// (asyncCheckLogin in login.js). Those two set `noLogin` in the user data. Use this function,
+// and not "the user ID is more than zero", for a feature that only a logged-in user gets.
+export function hasServerLogin() {
+    return getEffectiveUserID() > 0 && !Globals.userData?.noLogin;
+}
+
 // Append testUserID param to a server URL when testUserID > 1
 // Server validates that the real user is admin before honoring it
 export function withTestUser(url) {

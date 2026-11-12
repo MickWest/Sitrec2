@@ -58,7 +58,8 @@ You need a photograph, its horizontal span in degrees, and the place it was take
 1. Set the camera location and time as usual.
 2. Crop a copy of the photograph so that the horizon is at mid-height, because a level camera
    puts level directions on the center line.
-3. Drop the photograph on Sitrec and choose **Video Image**. See
+3. Drop the photograph on Sitrec and choose **Video Image** (a sitch that has no name uses
+   **Video Image** with no question). See
    [Images as video](LoadingVideo.md#images-as-video).
 4. Drag the look-view pane to the same shape as the photograph.
 5. Set **Panorama HFOV °** to the horizontal span of the photograph. VFOV follows. For example,

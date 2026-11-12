@@ -61,6 +61,15 @@ class CDragDropHandler {
     }
 
     /**
+     * True for a custom sitch that was never saved under a name: a new sitch, or a sitch
+     * that opened from a template (a template opens with its name removed).
+     * @returns {boolean}
+     */
+    sitchHasNoName() {
+        return !!Sit?.isCustom && !Sit.sitchName;
+    }
+
+    /**
      * Shows a modal dialog asking the user to choose between video image and ground overlay
      * @param {string} filename - The name of the image file
      * @returns {Promise<string>} Resolves with 'video' or 'overlay', or rejects if cancelled
@@ -696,6 +705,17 @@ class CDragDropHandler {
             // If video node exists and has alwaysReplace, skip dialog and load as video
             if (NodeMan.exists("video") && NodeMan.get("video").alwaysReplace) {
                 console.log("Loading image as video source (alwaysReplace): " + file.name);
+                await this.loadImageAsVideoSource(file);
+                return;
+            }
+
+            // A new sitch, and a sitch that opened from a template, have no name until the
+            // first save. There an image goes to the video view with no question: that is
+            // what the first image of a sitch is for, and a template tells the user to drop
+            // one. A ground overlay is still available from the ground right-click menu
+            // (Add Ground Overlay), and the question is back after the sitch has a name.
+            if (this.sitchHasNoName() && NodeMan.exists("video")) {
+                console.log("Loading image as video source (new sitch): " + file.name);
                 await this.loadImageAsVideoSource(file);
                 return;
             }

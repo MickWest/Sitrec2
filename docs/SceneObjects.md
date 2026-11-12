@@ -656,7 +656,8 @@ plan. There are two ways to make one:
 
 - **Drag an image file** onto Sitrec and choose **Ground Overlay** in the *Import Image* dialog.
   The overlay is placed at the center of the main view, about 0.01° square, named after the file,
-  and opens in edit mode.
+  and opens in edit mode. A sitch that has no name (a new sitch, or a sitch from a template,
+  before its first save) does not show this dialog: use the second way there.
 - **Right-click the ground → Add Ground Overlay**. The overlay has no image yet and shows a grey
   square with a red circle. Give it an image with **Image URL** or **Rehost Local Image**.
 

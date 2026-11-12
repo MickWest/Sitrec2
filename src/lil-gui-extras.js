@@ -1295,6 +1295,8 @@ export class CGuiMenuBar {
             if (gui && gui._standaloneContainer && this.isMenuOffScreen(container)) {
                 // Standalone menu is off-screen, destroy it (same as dragging off-screen)
                 gui.destroy();
+            } else if (gui && gui._standaloneContainer) {
+                this.fitFloatingMenuHeight(gui);
             }
         });
 
@@ -2326,6 +2328,39 @@ export class CGuiMenuBar {
         // Kept in step for the same reason as originalLeft: the reattach paths restore
         // the position from it.
         gui.originalTop = top;
+        this.fitFloatingMenuHeight(gui);
+    }
+
+    /**
+     * Limit the list of a floating standalone menu to the room below its own top, so the end
+     * of the list is on the screen and the list scrolls inside the menu.
+     *
+     * The stylesheet limits the list of every menu to the window height less the menu bar
+     * (extra.css.js, "#menuBar .lil-gui.root > .children"). That is correct for a menu that
+     * hangs from the bar. A floating menu starts lower, so the same limit put its end below
+     * the window edge: an object's edit menu, pinned one line under the bar, had its last two
+     * rows out of reach in an 800 px window, after a scroll to the end.
+     *
+     * Call it when the menu is placed, when a drag ends and when the window changes size.
+     * A menu that is not floating (it is in a side rail, where the rail scrolls) gets the
+     * stylesheet limit back.
+     *
+     * @param {GUI} gui - a menu from createStandaloneMenu()
+     */
+    fitFloatingMenuHeight(gui) {
+        const list = gui?.$children;
+        if (!list || !gui._standaloneContainer) return;
+        const floating = gui._standaloneContainer.isConnected
+            && !["SIDEBAR_LEFT", "SIDEBAR_RIGHT", "SIDEBAR_CENTER", "DOCKED"].includes(gui.mode);
+        if (!floating) {
+            list.style.removeProperty("max-height");
+            return;
+        }
+        const bottomMargin = 8;
+        // Never so short that the list is of no use, on a window that is itself very short.
+        const minimumHeight = 120;
+        const room = window.innerHeight - list.getBoundingClientRect().top - bottomMargin;
+        list.style.maxHeight = Math.max(minimumHeight, Math.round(room)) + "px";
     }
 
     /**
@@ -2364,6 +2399,9 @@ export class CGuiMenuBar {
 
     applyModeStyles(gui) {
         const titleElement = gui.$title;
+        // A drag ends here, in a side rail or as a floating menu: set the list height for
+        // the place the menu is in now.
+        this.fitFloatingMenuHeight(gui);
 
         if (gui.mode === "DOCKED" || gui.mode === "SIDEBAR_LEFT" || gui.mode === "SIDEBAR_RIGHT" || gui.mode === "SIDEBAR_CENTER") {
             titleElement.style.removeProperty('border-top-left-radius');

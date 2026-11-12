@@ -45,7 +45,8 @@ export function asyncCheckLogin() {
     if (isServerless) {
         console.log("Serverless mode: using default user ID")
         Globals.userID = 88888888;
-        Globals.userData = { userID: 88888888 };
+        // noLogin: this user ID is not a login (hasServerLogin in Globals.js).
+        Globals.userData = { userID: 88888888, noLogin: true };
         return Promise.resolve();
     }
 
@@ -62,7 +63,8 @@ export function asyncCheckLogin() {
             if (!configParams.rehostRequiresLogin) {
                 console.warn("Login check failed, using fallback user ID", err);
                 Globals.userID = 12345678;
-                Globals.userData = { userID: 12345678, userGroups: [] };
+                // noLogin: this user ID is not a login (hasServerLogin in Globals.js).
+                Globals.userData = { userID: 12345678, userGroups: [], noLogin: true };
                 return;
             }
             throw err;

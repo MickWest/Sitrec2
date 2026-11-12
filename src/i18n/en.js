@@ -931,7 +931,7 @@ const en = {
                 traverseMethods: "Traverse Methods",
                 balloonAlgorithms: "How the Balloon Algorithms Work",
                 traverseAnalysis: "Traverse Analysis and the Verdict",
-                dopplerGeolocation: "Doppler Geolocation (Admin Preview)",
+                dopplerGeolocation: "Doppler Geolocation (Preview)",
                 losErrorAnalysis: "LOS Error Analysis",
                 botBench: "BOTBench — Bearings-Only Traversal Bulk Analysis",
                 botBenchScenarios: "BOTBench Scenario Files — where they come from",

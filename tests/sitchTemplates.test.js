@@ -121,6 +121,54 @@ describe('the start screen', () => {
         expect(browser.overlay).toBeNull();
     });
 
+    // Two users can each have a global template with the same name. An example is a template
+    // made in a local build (user 99999999) and made again on the main site (user 1).
+    describe('global templates with the same name', () => {
+        const LOCAL_BUILD_USER = 99999999;
+        const SAME_NAME = [
+            {name: 'Star Tracker', userID: LOCAL_BUILD_USER, screenshotUrl: null, date: '2026-01-06 00:00:00'},
+            {name: 'Star Tracker', userID: ADMIN_USER, screenshotUrl: null, date: '2026-01-07 00:00:00'},
+            {name: 'Default', userID: LOCAL_BUILD_USER, screenshotUrl: null, date: '2026-01-09 00:00:00'},
+            {name: 'Default', userID: ADMIN_USER, screenshotUrl: null, date: '2026-01-08 00:00:00'},
+            {name: 'Flares', userID: USER, screenshotUrl: null, date: '2026-01-03 00:00:00'},
+        ];
+
+        test('shows one card for each name', async () => {
+            await openBrowser({globalTemplates: SAME_NAME});
+
+            expect(cardNames('Global Templates')).toEqual(['Star Tracker', 'Default', 'Flares']);
+        });
+
+        test('the card opens the template with the most recent save, from each owner', async () => {
+            await openBrowser({globalTemplates: SAME_NAME});
+            card('Star Tracker').click();
+            expect(fileManager.loadSavedFile).toHaveBeenLastCalledWith('Star Tracker', ADMIN_USER, {asTemplate: true});
+
+            document.body.innerHTML = '';
+            await openBrowser({globalTemplates: SAME_NAME});
+            card('Default').click();
+            expect(fileManager.loadSavedFile).toHaveBeenLastCalledWith('Default', LOCAL_BUILD_USER, {asTemplate: true});
+        });
+
+        test('the sitch browser still has each entry, so an administrator can remove one', async () => {
+            const browser = await openBrowser({globalTemplates: SAME_NAME});
+
+            expect(browser._templatesWithLabel('Global Template').map(sitch => sitch.ownerUserID))
+                .toEqual([LOCAL_BUILD_USER, ADMIN_USER, LOCAL_BUILD_USER, ADMIN_USER, USER]);
+        });
+
+        test('with the same save time, or with no date, the first entry of the list stays', () => {
+            const {latestTemplateOfEachName} = require('../src/SitchTemplates');
+            const sameTime = [{name: 'Video', userID: 7, date: '2026-01-05 00:00:00'}, {name: 'Video', userID: 8, date: '2026-01-05 00:00:00'}];
+            const noDate = [{name: 'Video', userID: 7}, {name: 'Video', userID: 8}];
+            const oneDate = [{name: 'Video', userID: 7}, {name: 'Video', userID: 8, date: '2026-01-05 00:00:00'}];
+
+            expect(latestTemplateOfEachName(sameTime)).toEqual([sameTime[0]]);
+            expect(latestTemplateOfEachName(noDate)).toEqual([noDate[0]]);
+            expect(latestTemplateOfEachName(oneDate)).toEqual([oneDate[1]]);
+        });
+    });
+
     test('a click on one of the user\'s own templates opens it as a template', async () => {
         await openBrowser();
 
@@ -502,6 +550,19 @@ describe('a template by its name (?template=<name>)', () => {
             .toBe('https://example.test/sitrec/?template=Star%20Tracker');
         expect(templateAddress('https://example.test/sitrec/', {name: 'A&B = 50% #1', userID: 7}))
             .toBe('https://example.test/sitrec/?template=A%26B%20%3D%2050%25%20%231');
+    });
+
+    test('with more than one global template of the name, opens the most recent save', async () => {
+        // The older entry is first in the server's list.
+        serve(OWN_METADATA, [
+            {name: 'Star Tracker', userID: 99999999, date: '2026-01-06 00:00:00'},
+            {name: 'Star Tracker', userID: ADMIN_USER, date: '2026-01-07 00:00:00'},
+            {name: 'Default', userID: 99999999, date: '2026-01-09 00:00:00'},
+            {name: 'Default', userID: ADMIN_USER, date: '2026-01-08 00:00:00'},
+        ]);
+
+        expect(await findTemplateByName('Star Tracker')).toEqual({name: 'Star Tracker', userID: ADMIN_USER});
+        expect(await findTemplateByName('Default')).toEqual({name: 'Default', userID: 99999999});
     });
 
     test('finds a global template, with its owner', async () => {

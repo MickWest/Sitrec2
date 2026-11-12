@@ -9,6 +9,17 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.194.1 (2026-11-12)
+
+### Improvements
+- **Doppler Geolocation for logged-in users** (Sitrec → Extra Tools → *Doppler Geolocation…*): this preview tool was for administrators only. Now each user who is logged in has the menu item and can open the tool. A visitor who is not logged in does not have the menu item. An installation with no server, for example the desktop app, has no login, so it does not have the tool, as before. The badge in the title row of the tool is now *Preview* (it was *Admin preview*). The tool is experimental: it estimates where a sound recording was made, from the sound of the aircraft that fly over, and a high rank in its results is not a verified location.
+- **An image goes directly to the video view in a sitch that has no name** (drop an image file on Sitrec, or use File → *Import File*): in a custom sitch that has no name, Sitrec now uses the image as a *Video Image* and does not show the *Import Image* dialog. A sitch has no name when it is a new sitch, or a sitch that opened from a template, before its first save. If a video or an image is loaded already, the *Second Video* dialog still asks where the image goes. To make a ground overlay in such a sitch, right-click the ground and select *Add Ground Overlay*, or save the sitch first. A sitch that has a name shows the *Import Image* dialog, as before.
+
+### Bug Fixes
+- Fixed the edit window of an object or a track (right-click the object or the track in a 3D view), which ended below the lower edge of the browser window when its list was long, so the last rows could not be reached. The list now ends above the lower edge of the browser window and scrolls inside the edit window, also after you move the edit window or change the size of the browser window.
+- Fixed the Doppler Geolocation window (Sitrec → Extra Tools → *Doppler Geolocation…*), whose title row was behind the menu bar: the title could not be read, and most of the close button was hidden. The window now starts below the menu bar.
+- Fixed the start screen showing two templates with the same name when two users each have a global template with that name. The start screen and File → *New Sitch from Template* now show one template for each name, the one with the most recent save. An address that ends with ?template= and that name opens the same template. Before, it opened the first of them in the list of the server. The sitch browser still lists each of them.
+
 ## Version 2.194.0 (2026-11-11)
 
 ### New Features

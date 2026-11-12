@@ -230,6 +230,14 @@ export class TimeEditor {
         if (this.raf != null) cancelAnimationFrame(this.raf);
         this.raf = null;
     }
+    // refresh() runs ten times each second while the editor is in view. A write of the same
+    // value is still a write: the browser lays out and paints the editor again, and the
+    // anti-aliased corners of its boxes then differ a little from one paint to the next.
+    // So each of these writes only when the value changes.
+    setText(element, value) { if (element.textContent !== value) element.textContent = value; }
+    setTitle(element, value) { if (element.title !== value) element.title = value; }
+    setAttribute(element, name, value) { if (element.getAttribute(name) !== value) element.setAttribute(name, value); }
+    setProperty(element, name, value) { if (element[name] !== value) element[name] = value; }
     refresh(force = false) {
         const state = this.adapter.read();
         const wall = wallTimeISO(this.date(state), state.offset);
@@ -237,36 +245,40 @@ export class TimeEditor {
         for (const input of this.inputs) {
             if ((force || document.activeElement !== input) && !input.hasAttribute("aria-invalid") && input.value !== values[input.dataset.part]) input.value = values[input.dataset.part];
         }
-        this.el("calendar").value = wall.slice(0, 10);
+        this.setProperty(this.el("calendar"), "value", wall.slice(0, 10));
         for (const button of this.root.querySelectorAll("[data-target]")) {
             const start = button.dataset.target === "start";
-            button.setAttribute("aria-pressed", String(button.dataset.target === this.target));
-            button.title = t(start ? "timeEditor.target.startTip" : "timeEditor.target.nowTip", {
+            this.setAttribute(button, "aria-pressed", String(button.dataset.target === this.target));
+            this.setTitle(button, t(start ? "timeEditor.target.startTip" : "timeEditor.target.nowTip", {
                 time: wallTimeISO(start ? state.start : state.now, state.offset).replace("T", " "),
                 zone: state.useZone ? state.zone : "UTC",
-            });
+            }));
         }
         const zone = state.useZone ? state.zone : "__utc__";
         if (![...this.el("zone").options].some(o => o.value === zone)) this.el("zone").add(new Option(zone, zone));
-        this.el("zone").value = zone;
+        this.setProperty(this.el("zone"), "value", zone);
         const elapsed = (state.now - state.start) / 1000;
         const text = this.text;
-        this.el("frame").textContent = t("timeEditor.frame", {frame: state.frame});
-        this.el("frame").title = t("timeEditor.frameTip", {elapsed: `${elapsed >= 0 ? "+" : ""}${elapsed.toFixed(3)}`});
-        this.root.querySelector('[data-action="play"]').textContent = state.live || !state.paused ? text.pause : text.play;
-        this.root.querySelector('[data-action="live"]').setAttribute("aria-pressed", String(state.live));
-        this.root.querySelector('[data-action="undo"]').disabled = !state.canUndo;
-        this.el("status").textContent = state.live ? text.live : state.paused ? text.paused : text.playing;
-        this.el("status").title = state.live ? text.liveTip : state.paused ? text.pausedTip
-            : t("timeEditor.status.playingTip", {speed: state.speed * state.playbackSpeed});
+        this.setText(this.el("frame"), t("timeEditor.frame", {frame: state.frame}));
+        this.setTitle(this.el("frame"), t("timeEditor.frameTip", {elapsed: `${elapsed >= 0 ? "+" : ""}${elapsed.toFixed(3)}`}));
+        this.setText(this.root.querySelector('[data-action="play"]'), state.live || !state.paused ? text.pause : text.play);
+        this.setAttribute(this.root.querySelector('[data-action="live"]'), "aria-pressed", String(state.live));
+        this.setProperty(this.root.querySelector('[data-action="undo"]'), "disabled", !state.canUndo);
+        this.setText(this.el("status"), state.live ? text.live : state.paused ? text.paused : text.playing);
+        this.setTitle(this.el("status"), state.live ? text.liveTip : state.paused ? text.pausedTip
+            : t("timeEditor.status.playingTip", {speed: state.speed * state.playbackSpeed}));
         const speed = this.el("speed");
-        speed.querySelector('[data-custom]')?.remove();
-        if (![...speed.options].some(o => Number(o.value) === state.speed)) {
+        // A speed that is not in the list gets an option of its own. Keep that option while
+        // the speed is the same, and do not take it out and put it back on each refresh.
+        const custom = speed.querySelector('[data-custom]');
+        const listed = [...speed.options].some(o => o !== custom && Number(o.value) === state.speed);
+        if (custom && (listed || Number(custom.value) !== state.speed)) custom.remove();
+        if (!listed && !speed.querySelector('[data-custom]')) {
             const option = new Option(`${state.speed}×`, String(state.speed));
             option.dataset.custom = "true"; speed.add(option);
         }
-        speed.value = String(state.speed);
-        speed.disabled = state.live;
+        this.setProperty(speed, "value", String(state.speed));
+        this.setProperty(speed, "disabled", state.live);
     }
     dispose() {
         this.stopGesture(); clearInterval(this.timer);

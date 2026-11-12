@@ -219,3 +219,55 @@ test("disposal stops a pending scrub and removes the editor", () => {
     editor.dispose(); jest.advanceTimersByTime(1000);
     expect(edits).toHaveLength(0); expect(host.children).toHaveLength(0);
 });
+
+// refresh() runs ten times each second. A write of the same value makes the browser lay out
+// and paint the editor again, so a refresh with no change must not write to the page.
+describe("a refresh", () => {
+    // Every change to the editor's part of the page during `action`.
+    function mutationsDuring(action) {
+        const records = [];
+        const observer = new MutationObserver(list => records.push(...list));
+        observer.observe(editor.root, {subtree: true, childList: true, attributes: true, characterData: true});
+        action();
+        records.push(...observer.takeRecords());
+        observer.disconnect();
+        return records.map(record => `${record.type}:${record.attributeName ?? record.target.nodeName}`);
+    }
+
+    test("with no change of state writes nothing to the page", () => {
+        editor.refresh();
+
+        expect(mutationsDuring(() => { for (let count = 0; count < 5; count++) editor.refresh(); })).toEqual([]);
+    });
+
+    test("with no change writes nothing also when the speed is not in the list", () => {
+        state.speed = 7;
+        editor.refresh();
+        const speed = editor.root.querySelector('[data-custom]');
+        expect(speed.value).toBe("7");
+
+        expect(mutationsDuring(() => editor.refresh())).toEqual([]);
+        expect(editor.root.querySelector('[data-custom]')).toBe(speed);
+    });
+
+    test("shows a change of state, and only that change", () => {
+        editor.refresh();
+        state.paused = false;
+
+        const changes = mutationsDuring(() => editor.refresh());
+
+        expect(editor.root.querySelector('[data-action="play"]').textContent).toBe(editor.text.pause);
+        expect(changes.length).toBeGreaterThan(0);
+        expect(changes.some(change => change === "attributes:disabled")).toBe(false);
+    });
+
+    test("removes the option of a speed that is not in the list when the speed goes back to a listed one", () => {
+        state.speed = 7;
+        editor.refresh();
+        state.speed = 1;
+        editor.refresh();
+
+        expect(editor.root.querySelector('[data-custom]')).toBeNull();
+        expect(editor.el("speed").value).toBe("1");
+    });
+});

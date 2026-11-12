@@ -6,7 +6,8 @@ import {LLAToECEF,ECEFToLLAVD_radii} from "../LLA-ECEF-ENU";
 import {blockViewEvents} from "../DragResizeUtils";
 import {registerSurfaceInteraction} from "../SurfaceInteraction";
 import {getInteractionRouter} from "../InteractionRouter";
-import {isAdmin,SITREC_APP} from "../configUtils";
+import {SITREC_APP} from "../configUtils";
+import {canUseDopplerGeolocation} from "./DopplerAccess";
 import {par} from "../par";
 import {atArrival,idealFrequency,observerTrack,prepareTrack,toECEF} from "./DopplerModel";
 import {makeGrid,newEvent,SEARCH_DEFAULTS,validateSearch} from "./DopplerSearch";
@@ -93,7 +94,7 @@ export class DopplerTool {
         blockViewEvents(panel);
         panel.addEventListener("keydown",e=>{e.stopPropagation();if(e.key==="Escape") this.hide();});
         const header=el("header",panel);
-        el("h2",header,"Doppler geolocation");el("span",header,"Admin preview","dp-badge");
+        el("h2",header,"Doppler geolocation");el("span",header,"Preview","dp-badge");
         this.button(header,"×",()=>this.hide()).setAttribute("aria-label","Close Doppler geolocation");
         const toolbar=el("div",panel,undefined,"dp-toolbar");
         this.fileButton(toolbar,"Load audio","audio/*,video/*,.aac",file=>this.loadAudio(file));
@@ -337,7 +338,7 @@ export class DopplerTool {
         el("p",parent,"Scores rank the supplied flight data and measurements; they are not probabilities or location-accuracy guarantees. Compare multiple flight pairs and inspect both curve overlays before refining.","dp-hint");
     }
     async job(data,label,transfer=[]) {
-        if(!isAdmin()) throw new Error("Doppler geolocation is available to admins only.");
+        if(!canUseDopplerGeolocation()) throw new Error("Log in to use Doppler geolocation.");
         this.stop();const revision=this.revision;
         this.runButton.disabled=true;this.stopButton.disabled=false;
         return new Promise((resolve,reject)=>{
@@ -436,7 +437,7 @@ export class DopplerTool {
         const id=this.detailRequestId,worker=this.audioWorker;this.detailPending={key,id};
         this.detailTimer=setTimeout(()=>{
             this.detailTimer=null;
-            if(this.disposed || this.audioWorker!==worker || this.detailPending?.id!==id || !isAdmin()) {this.detailPending=null;return;}
+            if(this.disposed || this.audioWorker!==worker || this.detailPending?.id!==id || !canUseDopplerGeolocation()) {this.detailPending=null;return;}
             worker.postMessage({type:"spectrogram-detail",requestId:id,view:{start:event.start,end:event.end,columns}});
         },140);
     }
@@ -589,10 +590,10 @@ export class DopplerTool {
         this.drawMap();
     }
     async viewSelectedCandidate() {
-        if(!isAdmin() || !this.selectedResult) throw new Error("Select a candidate first.");
+        if(!canUseDopplerGeolocation() || !this.selectedResult) throw new Error("Select a candidate first.");
         const revision=this.revision,candidate=this.selectedResult;
         const {DopplerScene}=await import(/* webpackChunkName: "doppler-scene" */ "./DopplerScene");
-        if(this.disposed || revision!==this.revision || candidate!==this.selectedResult || !isAdmin()) return;
+        if(this.disposed || revision!==this.revision || candidate!==this.selectedResult || !canUseDopplerGeolocation()) return;
         this.scenePreview ??= new DopplerScene();
         const rank=this.result.results.indexOf(candidate)+1;
         const info=await this.scenePreview.show({candidate,rank,events:this.state.events,tracks:this.state.tracks,
@@ -769,7 +770,15 @@ export class DopplerTool {
         ctx.fillText(scale>=1000 ? `${scale/1000} km` : `${scale} m`,15,294);
         ctx.textAlign="right";ctx.fillText(`Centre ${view.lat.toFixed(4)}°, ${view.lon.toFixed(4)}°`,985,294);ctx.textAlign="left";
     }
-    show() {if(!isAdmin()) return;this.scenePreview?.clear();if(this.previewDock) this.previewDock.hidden=true;this.panel.hidden=false;this.panel.focus();this.draw();}
+    // The tool fills the window below the menu bar, as the sitch browser does. The menu bar is
+    // on top of every other part of the page, so a tool that started at the top of the window
+    // had its title under the bar, and only the lower edge of its close button showed.
+    placeBelowMenuBar() {
+        const bar=this.panel.ownerDocument.getElementById("menuBarBlackBar");
+        this.panel.style.top=`${bar ? bar.offsetTop+bar.offsetHeight : 0}px`;
+        this.panel.style.height="auto";
+    }
+    show() {if(!canUseDopplerGeolocation()) return;this.placeBelowMenuBar();this.scenePreview?.clear();if(this.previewDock) this.previewDock.hidden=true;this.panel.hidden=false;this.panel.focus();this.draw();}
     // Hiding keeps the decoded audio in its worker so visible-window detail
     // survives a close, a scene preview and the return to the shortlist. Only
     // dispose() and a new audio load release it.

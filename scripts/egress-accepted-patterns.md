@@ -128,15 +128,17 @@ entry here: an id, what the code does, where the data goes, the release, and its
 - **Limits:** hosts listed in the allow-list with `mayReceive: ["none"]`. A link built from file
   data to an unlisted host is a finding (see "Refused").
 
-### `doppler-search-terrain-tiles` — accepted 2.193.0 (contract widened)
+### `doppler-search-terrain-tiles` — accepted 2.193.0 (contract widened), widened again 2.194.1
 - **Code:** `src/doppler/DopplerElevation.js`, used by `src/doppler/DopplerArchiveSearch.js`. A
   Doppler geolocation archive search gets the ground height of each candidate location from the
   public Terrarium elevation tiles, also when no terrain is shown.
 - **Data:** tile coordinates at zoom 11 (coarse-area) for the candidate locations, to
   `s3.amazonaws.com` (`elevation-tiles-prod`).
-- **Limits:** only during an archive search that an administrator starts in the Doppler
-  geolocation tool, which is for administrators only. A finer zoom, a position finer than a tile,
-  another destination, a fetch without that search, or the tool open to other users is a finding.
+- **Limits:** only during an archive search that an administrator or a logged-in user starts in
+  the Doppler geolocation tool. Until 2.194.0 the tool was for administrators only; from 2.194.1
+  it is for administrators and logged-in users. A finer zoom, a position finer than a tile,
+  another destination, a fetch without that search, or the tool open to a visitor with no login
+  is a finding.
 
 ### `published-sitch-lists` — accepted 2.193.0 (contract widened)
 - **Code:** `sitrecServer/metadata.php` (`updateFeatured`, `updateTemplates`, `?featured=1`,

@@ -9,7 +9,7 @@
 // So that a member knows why, a failed check also shows a notice over the main view.
 // It is a view message, not a dialog: startup does not wait on it and no click clears it.
 
-import {Globals, setNodeMan} from "../src/Globals";
+import {Globals, hasServerLogin, setNodeMan} from "../src/Globals";
 import {asyncCheckLogin, checkLogin} from "../src/login";
 
 jest.mock("../src/runtimeConfig", () => ({configParams: {rehostRequiresLogin: true}}));
@@ -121,5 +121,43 @@ describe("the notice for a failed login check", () => {
         jest.advanceTimersByTime(60000);
         expect(notices()).toHaveLength(0);
         expect(document.querySelectorAll("[role=status]")).toHaveLength(0);
+    });
+});
+
+// A user ID alone does not show a login: two paths give a visitor a fixed user ID.
+// hasServerLogin() is the test for a feature that only a logged-in user gets.
+describe("a fixed user ID that is not a login", () => {
+    const runtimeConfig = jest.requireMock("../src/runtimeConfig");
+    const configUtils = jest.requireMock("../src/configUtils");
+    const serverReports = user => { global.fetch = jest.fn(() => Promise.resolve({json: () => Promise.resolve(user)})); };
+    afterEach(() => { runtimeConfig.configParams.rehostRequiresLogin = true; configUtils.isServerless = false; });
+
+    test("a build with no login marks its user as not logged in", async () => {
+        configUtils.isServerless = true;
+
+        await asyncCheckLogin();
+
+        expect(Globals.userData).toEqual({userID: 88888888, noLogin: true});
+        expect(hasServerLogin()).toBe(false);
+    });
+
+    test("a failed check, on an installation that does not require a login, marks its user as not logged in", async () => {
+        runtimeConfig.configParams.rehostRequiresLogin = false;
+        global.fetch = jest.fn(() => Promise.reject(new TypeError("Failed to fetch")));
+
+        await asyncCheckLogin();
+
+        expect(Globals.userData).toEqual({userID: 12345678, userGroups: [], noLogin: true});
+        expect(hasServerLogin()).toBe(false);
+    });
+
+    test("a user that the server reports is logged in, and a visitor is not", async () => {
+        serverReports({userID: 42, userGroups: [2]});
+        await asyncCheckLogin();
+        expect(hasServerLogin()).toBe(true);
+
+        serverReports({userID: 0, userGroups: []});
+        await asyncCheckLogin();
+        expect(hasServerLogin()).toBe(false);
     });
 });

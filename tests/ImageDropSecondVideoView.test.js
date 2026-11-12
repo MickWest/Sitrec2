@@ -223,3 +223,46 @@ describe("saving and reloading an image in the second view", () => {
         expect(secondary.videos[0].localStaticURL).toBe("local/media/frame.png");
     });
 });
+
+// A new sitch, and a sitch that opened from a template, have no name until the first save.
+describe("an image dropped on a sitch that has no name", () => {
+    test.each([
+        ["a new sitch", {isCustom: true}],
+        ["a sitch from a template", {isCustom: true, templateSource: {name: "Star Tracker", userID: 1}}],
+    ])("%s: the image goes to the video view, with no Import Image question", async (label, sit) => {
+        setSit(sit);
+        const load = jest.spyOn(DragDropHandler, "loadImageAsVideoSource").mockResolvedValue();
+
+        await DragDropHandler.importDroppedFile(image());
+
+        expect(load).toHaveBeenCalledTimes(1);
+        expect(showChoice).not.toHaveBeenCalled();
+    });
+
+    test("with a video loaded, only the question about where the image goes is asked", async () => {
+        setSit({isCustom: true});
+        showChoice.mockResolvedValueOnce("add");
+
+        await DragDropHandler.importDroppedFile(image());
+
+        expect(showChoice.mock.calls.map(call => call[1].title)).toEqual(["Second Video"]);
+    });
+
+    test("a sitch that has a name still asks how to use the image", async () => {
+        setSit({isCustom: true, sitchName: "My Sitch"});
+        showChoice.mockResolvedValueOnce(null);
+
+        await DragDropHandler.importDroppedFile(image());
+
+        expect(showChoice).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({title: "Import Image"}));
+    });
+
+    test("a sitch that is not a custom sitch still asks", async () => {
+        setSit({});
+        showChoice.mockResolvedValueOnce(null);
+
+        await DragDropHandler.importDroppedFile(image());
+
+        expect(showChoice).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({title: "Import Image"}));
+    });
+});

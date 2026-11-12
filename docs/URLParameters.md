@@ -69,6 +69,8 @@ the same template for another user, if it is a global template.
 - The name must be exact, with the same capital letters. Write a space as `%20`.
 - Sitrec looks for a global template with that name first. If there is none and you are
   logged in, it looks in your own local templates.
+- If more than one global template has that name, Sitrec opens the one with the most recent
+  save. It is the template that the start screen shows.
 - If there is no template with that name, Sitrec shows an error and then the start screen.
 - `template` works only on an installation that saves sitches to a server. With a `sitch`,
   `custom` or `mod` parameter, or with `action=new`, that parameter is used and `template`
