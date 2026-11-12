@@ -16,7 +16,12 @@ import {canPreserveAudioResult,compactSearchResult,resultMapViewport,validateAna
 import {candidateRows} from "./DopplerCandidates";
 import {addHarmonicTracePoint,materializeTraceHarmonics,spectrumFrequencyRange,spectrumHarmonicCounts,spectrumLayout,spectrumTracePoint} from "./DopplerSpectrumLayout";
 import {familyFrequency} from "./DopplerTrace";
+import {soundSpeedText,verdictText} from "./DopplerVerdict";
 import "./doppler.css";
+
+// The bundled ICAO type list (Mictronics aircraft database, ODC-By; see data/aircraft/README.md).
+// The archive worker cannot read SITREC_APP, so each archive request carries the URL.
+const aircraftTypesURL=()=>SITREC_APP+"data/aircraft/icao_aircraft_types.json";
 
 function el(tag,parent,text,className) {
     const e=document.createElement(tag);
@@ -145,17 +150,19 @@ export class DopplerTool {
         this.select(fields,"Elevation",s,"elevation",{fixed:"Fixed listener height",terrain:"Loaded Sitrec terrain"});
         this.field(fields,s,"recordingStart","Recording start UTC (blank = unknown)",{type:"text"});
         this.select(fields,"Scoring",s,"mode",{trace:"Traced frequency ridge",brightness:"Spectrogram brightness"});
+        this.select(fields,"Trace residuals",s,"traceLoss",{squared:"Squared (least squares)",robust:"Robust (limits outlying points)"});
         if(s.source==="archive") {
-            el("p",parent,"Select all .tar parts of one daily readsb archive. The browser scans local files in a worker, searches the bounds below, then refines leading candidates with terrain. The aircraft type lookup and terrain tiles load when the search needs them.","dp-hint");
+            el("p",parent,"Select all .tar parts of one daily readsb archive. The browser scans local files in a worker, searches the bounds below, then refines leading candidates with terrain. The aircraft type list and terrain tiles load when the search needs them. Aircraft types: Mictronics aircraft database, ODC Attribution License.","dp-hint");
             const archiveFields=el("div",parent,undefined,"dp-fields"),o=this.state.archiveOptions;
             this.button(parent,"Index archive",async()=>{
                 if(!this.archiveFiles?.length) throw new Error("Select all daily archive parts first.");
                 const result=await this.job({type:"archive-index",input:{files:this.archiveFiles,
-                    events:this.state.events,archiveOptions:o}},"Indexing archive");
+                    events:this.state.events,archiveOptions:{...o,typesURL:aircraftTypesURL()}}},"Indexing archive");
                 this.status(`Archive ready · ${result.dates.join(", ")} · ${result.stats.flights.toLocaleString()} aircraft · ${result.stats.samples.toLocaleString()} sparse fixes · ${(result.stats.indexBytes/1e6).toFixed(0)} MB index · ${result.elapsedSeconds.toFixed(1)} s. Index stays in memory while this window is open.`);
             });
             ["South latitude","West longitude","North latitude","East longitude"].forEach((label,i)=>this.field(archiveFields,o.bounds,i,label));
-            for(const [key,label] of Object.entries({coarseStep:"Coarse grid step (m)",fineStep:"Final grid step (m)",keep:"Reported candidate limit",refineCount:"Candidate score maps"})) this.field(archiveFields,o,key,label);
+            for(const [key,label] of Object.entries({coarseStep:"Coarse grid step (m)",fineStep:"Final grid step (m)",keep:"Reported candidate limit",refineCount:"Candidate score maps",
+                soundSpeedCheck:"Sound-speed check (± m/s, 0 = off)",soundSpeedCheckPairs:"Pairs in sound-speed check"})) this.field(archiveFields,o,key,label);
             for(const [key,label] of [["excludeJets","Exclude known jet types; retain unknown types"],["allowBarometric","Allow approximate pressure altitude when geometric altitude is missing"]]) {
                 const row=el("label",parent,undefined,"dp-field");el("span",row,label);
                 const input=el("input",row);input.type="checkbox";input.checked=o[key];
@@ -527,7 +534,8 @@ export class DopplerTool {
             const refineCandidate=this.archiveRefinement?.candidate;
             try {
                 this.result=await this.job({type:"archive-search",input:{...input,files:this.archiveFiles,refineCandidate,
-                    archiveOptions:this.state.archiveOptions,geoidURL:SITREC_APP+"data/egm96/egm96-15.bin"}},"Searching archive");
+                    archiveOptions:{...this.state.archiveOptions,typesURL:aircraftTypesURL()},
+                    geoidURL:SITREC_APP+"data/egm96/egm96-15.bin"}},"Searching archive");
             } finally {this.archiveRefinement=null;}
             this.result.completedAtUTC=new Date().toISOString();
             if(this.loadedAudioOptions) this.result.audioOptions={...this.loadedAudioOptions};
@@ -556,7 +564,8 @@ export class DopplerTool {
     renderResults(selectedIndex=0) {
         const results=this.result.results;
         const rows=this.displayedCandidates=candidateRows(results,this.state.tracks,{distinct:this.distinctCandidates});
-        this.resultSummary.textContent=`${rows.length} displayed hypotheses from ${results.length} retained fits. ${results.length ? "Select a row or map number, then inspect its curves or view it in Sitrec." : "No match. Check track coverage, event windows and filtering bounds."}`;
+        const verdict=[verdictText(this.result.stats),soundSpeedText(this.result.stats)].filter(Boolean).join(" ");
+        this.resultSummary.textContent=`${rows.length} displayed hypotheses from ${results.length} retained fits. ${results.length ? "Select a row or map number, then inspect its curves or view it in Sitrec." : "No match. Check track coverage, event windows and filtering bounds."}${verdict ? ` ${verdict}` : ""}`;
         this.resultContext.textContent=this.state.provenance?.status ?? this.state.provenance?.purpose ?? "Rank is relative to the retained candidates, not a probability that the location is correct.";
         this.table.replaceChildren();
         this.candidateElements=new Map();

@@ -71,8 +71,21 @@ test.each([true,false])("all flight regions and sides reach brightness refinemen
         if(hasTrace) expect(call[1][0].trace).toHaveLength(event.trace.length);
     }
     const initializers=refineDopplerLocation.mock.calls.map(([input])=>input).filter(input=>input.settings.mode==="trace");
-    const finals=refineDopplerLocation.mock.calls.map(([input])=>input).filter(input=>input.settings.mode==="brightness");
-    expect(refineDopplerLocation).toHaveBeenCalledTimes(hasTrace ? 8 : 4);
+    const brightness=refineDopplerLocation.mock.calls.map(([input])=>input).filter(input=>input.settings.mode==="brightness");
+    const finals=brightness.filter(input=>input.settings.soundSpeed===settings.soundSpeed);
+    // The sound-speed check refines the winner again at 343 -/+ 5 m/s, from the
+    // refined point, without a new trace initialization.
+    const checks=brightness.filter(input=>input.settings.soundSpeed!==settings.soundSpeed);
+    expect(checks.map(input=>input.settings.soundSpeed)).toEqual([338,348]);
+    for(const input of checks) {
+        expect(input.candidate.events[0].flight).toBe("Second");expect(input.candidate.score).toBe(100);
+        expect(input.stepM).toBe(200);expect(input.settings).toEqual({...settings,soundSpeed:input.settings.soundSpeed});
+    }
+    // The verdict's null uses every refined region, not only the kept results:
+    // "First" is one wrong pair although keep is 1.
+    expect(result.stats).toMatchObject({soundSpeedBase:343,soundSpeedCheckMS:5,soundSpeedCheckPairs:1,soundSpeedLowRank:1,soundSpeedHighRank:1,verdictNullPairs:1});
+    expect(result.soundSpeedPairs).toEqual([{flights:["Second"],score:100,low:100,high:100}]);
+    expect(refineDopplerLocation).toHaveBeenCalledTimes(hasTrace ? 10 : 6);
     expect(initializers).toHaveLength(hasTrace ? 4 : 0);expect(finals).toHaveLength(4);
     for(const input of initializers) {
         expect(input.settings).toEqual({...settings,mode:"trace"});expect(input.events).toEqual([event]);

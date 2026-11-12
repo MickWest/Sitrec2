@@ -489,6 +489,20 @@ https://creativecommons.org/licenses/by/4.0/
 Changes: Sitrec keeps a subset of the columns, computes a mean projected area
 from the sizes, and derives a Starlink design from the bus and payload names.`,
     },
+    {
+        name: "Mictronics aircraft database: ICAO aircraft types",
+        version: "Generated 2026-11-01",
+        license: "ODC-By-1.0",
+        copyright: "Mictronics",
+        repository: "https://github.com/Mictronics/aircraft-database",
+        notes: "ICAO aircraft type designators with description codes and wake turbulence " +
+            "categories: data/aircraft/icao_aircraft_types.json, unchanged from " +
+            "icao_aircraft_types.zip. Doppler geolocation reads it to leave jets out of a match. " +
+            "Contains information from the Mictronics aircraft database " +
+            "(https://github.com/Mictronics/aircraft-database), which is made available under " +
+            "the ODC Attribution License (https://opendatacommons.org/licenses/by/1-0/).",
+        licenseFile: path.join(ROOT, "data/aircraft/LICENSE"),
+    },
 ];
 
 // ---------------------------------------------------------------------------

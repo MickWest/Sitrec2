@@ -5,6 +5,7 @@ import {DopplerElevation} from "./DopplerElevation";
 import {refineDopplerLocation} from "./DopplerOptimizer";
 import {ARCHIVE_DEFAULTS} from "./DopplerArchiveOptions";
 import {thinTrace,traceHarmonic,validTraceHarmonic} from "./DopplerTrace";
+import {bestPairScores,rankingVerdict,soundSpeedStats,verdictStats} from "./DopplerVerdict";
 
 const pause=()=>new Promise(resolve=>setTimeout(resolve,0));
 let indexedArchive=null,indexedKey=null;
@@ -125,12 +126,35 @@ export function silenceChecker(dataset,events,s,options) {
 }
 
 export async function selectAudibleCandidates(candidates,limit,passes) {
-    const results=[];let rejectedBySilence=0;
+    const results=[],rejected=[];
     for(const candidate of candidates) {
-        if(await passes(candidate)) results.push(candidate);else rejectedBySilence++;
+        if(await passes(candidate)) results.push(candidate);else rejected.push(candidate);
         if(results.length>=limit) break;
     }
-    return {results,rejectedBySilence};
+    return {results,rejected,rejectedBySilence:rejected.length};
+}
+
+// The wrong pairs that judge the winner must pass the same silence check as the
+// winner, and the verdict's tail size depends on how many pairs pass. Without
+// silence windows every candidate passes. With them, each flight pair's regions
+// are checked in score order until one passes: that region is the pair's best
+// passing score, and a pair with no passing region drops out. This is about one
+// check per pair, and it gives the complete passing population.
+export async function verdictCandidates(shortlist,results,rejected,passes,silenceActive,progress=()=>{}) {
+    if(!silenceActive) return shortlist;
+    const known=new Map([...results.map(c=>[c,true]),...rejected.map(c=>[c,false])]),best=new Map(),pairKey=c=>c.events.map(e=>e.flight).join("/");
+    let checked=0;
+    for(const candidate of shortlist) {
+        const key=pairKey(candidate);
+        if(best.has(key)) continue;
+        let audible=known.get(candidate);
+        if(audible===undefined) {
+            audible=await passes(candidate);
+            if(++checked%100===0) {progress({phase:"Checking silence for the verdict",done:checked,total:shortlist.length});await pause();}
+        }
+        if(audible) best.set(key,candidate);
+    }
+    return [...best.values()];
 }
 
 export function archiveCoarseSettings(events,s,options) {
@@ -140,9 +164,10 @@ export function archiveCoarseSettings(events,s,options) {
     // requested objective during continuous refinement and global ranking.
     // A trace fit is smooth in the clock, so a 4 s grid plus one parabola step
     // at the best clock fits better than a plain 2 s grid at half the cost.
-    // The brightness objective is not smooth and keeps the 2 s grid.
+    // The brightness objective is not smooth and keeps the 2 s grid. Seeds use
+    // squared trace residuals; refinement applies a requested robust loss.
     const mode=s.mode==="brightness" && measured ? "trace" : s.mode,trace=mode==="trace";
-    return {...s,mode,timeTolerance:s.timeTolerance+options.coarseStep/Math.max(20,events[0].speedMin),
+    return {...s,mode,traceLoss:"squared",timeTolerance:s.timeTolerance+options.coarseStep/Math.max(20,events[0].speedMin),
         timeStep:Math.max(trace ? 4 : 2,s.timeStep),clockRefine:trace,
         cpaTolerance:s.cpaTolerance+2*options.coarseStep/Math.max(20,events[0].speedMin),silence:[]};
 }
@@ -194,6 +219,7 @@ export async function searchFlightArchive({files,settings:s,events,spectrogram,a
     const options={...ARCHIVE_DEFAULTS,...archiveOptions};
     if(!files?.length) throw new Error("Select the daily flight archive and all its split parts.");
     if(options.keep<1 || options.keep>1000 || options.coarseStep<100 || options.coarseStep>2000 || options.fineStep<10 || options.refineCount<1 || options.refineCount>100) throw new Error("Check archive grid and shortlist sizes.");
+    if(!(options.soundSpeedCheck>=0 && options.soundSpeedCheck<=30) || !(options.soundSpeedCheckPairs>=1 && options.soundSpeedCheckPairs<=100)) throw new Error("The sound-speed check must be 0 to 30 m/s, over 1 to 100 flight pairs.");
     const started=performance.now(),dataset=await datasetFor({files,events,archiveOptions:options},progress);
     if(refineCandidate) {
         const result=await refineArchiveCandidate(dataset,refineCandidate,events,s,options,spectrogram,geoidURL,progress);
@@ -251,6 +277,18 @@ export async function searchFlightArchive({files,settings:s,events,spectrogram,a
     }
     const refined=[];
     let done=0;
+    const refineSeed=async (candidate,settings,initialize=true)=>{
+        const loaded=await Promise.all(candidate.indices.map(load));
+        const common={tracks:loaded.map(t=>t.source),events,elevationAt:(lat,lon)=>terrain.at(lat,lon),
+            maxOffsetM:Math.max(2000,options.coarseStep*4)};
+        // A broad trace fit first locates the narrow ridge between coarse
+        // cells. It supplies only a start; brightness decides the result.
+        const initialized=traceSeeds && initialize ? await refineDopplerLocation({...common,candidate,settings:{...settings,mode:"trace"},
+            spectrogram:null,stepM:options.coarseStep}) : null;
+        const result=await refineDopplerLocation({...common,candidate:initialized ?? candidate,settings,spectrogram,
+            stepM:traceSeeds || !initialize ? Math.min(200,options.coarseStep) : options.coarseStep});
+        return result ? {...result,indices:candidate.indices} : null;
+    };
     const refineRegion=async variants=>{
         const choices=[];
         for(const candidate of variants) {
@@ -264,16 +302,8 @@ export async function searchFlightArchive({files,settings:s,events,spectrogram,a
             seeds.push(candidate);if(seeds.length===2) break;
         }
         for(const candidate of seeds) {
-            const loaded=await Promise.all(candidate.indices.map(load));
-            const common={tracks:loaded.map(t=>t.source),events,elevationAt:(lat,lon)=>terrain.at(lat,lon),
-                maxOffsetM:Math.max(2000,options.coarseStep*4)};
-            // A broad trace fit first locates the narrow ridge between coarse
-            // cells. It supplies only a start; brightness decides the result.
-            const initialized=traceSeeds ? await refineDopplerLocation({...common,candidate,settings:{...s,mode:"trace"},
-                spectrogram:null,stepM:options.coarseStep}) : null;
-            const result=await refineDopplerLocation({...common,candidate:initialized ?? candidate,settings:s,spectrogram,
-                stepM:traceSeeds ? Math.min(200,options.coarseStep) : options.coarseStep});
-            if(result) refined.push({...result,indices:candidate.indices});
+            const result=await refineSeed(candidate,s);
+            if(result) refined.push(result);
         }
     };
     const regionList=[...regions.values()];
@@ -287,7 +317,30 @@ export async function searchFlightArchive({files,settings:s,events,spectrogram,a
     }
     const shortlist=refined.sort((a,b)=>b.score-a.score);
     const heat=[],sources=new Map(),silencePass=silenceChecker(dataset,events,s,options);
-    const {results,rejectedBySilence}=await selectAudibleCandidates(shortlist,options.keep,silencePass);
+    const {results,rejected,rejectedBySilence}=await selectAudibleCandidates(shortlist,options.keep,silencePass);
+    const pairScores=bestPairScores(await verdictCandidates(shortlist,results,rejected,silencePass,s.silence.length>0,progress));
+    const verdict=rankingVerdict(pairScores,results[0]);
+    // The physical sound speed depends on the air temperature along each path.
+    // Refine the best flight pairs again a few m/s below and above the set value;
+    // a winner that changes inside that range is not established.
+    const soundSpeedPairs=[];
+    if(options.soundSpeedCheck>0) {
+        const best=new Map();
+        for(const candidate of results) {
+            const key=candidate.events.map(e=>e.flight).join("/");
+            if(!best.has(key)) best.set(key,candidate);
+            if(best.size>=options.soundSpeedCheckPairs) break;
+        }
+        for(const candidate of best.values()) {
+            const row={flights:candidate.events.map(e=>e.flight),score:candidate.score};
+            for(const [name,sign] of [["low",-1],["high",1]]) {
+                const checked=await refineSeed(candidate,{...s,soundSpeed:s.soundSpeed+sign*options.soundSpeedCheck},false);
+                row[name]=checked?.score ?? null;
+            }
+            soundSpeedPairs.push(row);
+            progress({phase:"Checking sound speed",done:soundSpeedPairs.length,total:best.size});await pause();
+        }
+    }
     for(let i=0;i<Math.min(options.refineCount,results.length);i++) {
         const candidate=results[i],loaded=await Promise.all(candidate.indices.map(load));
         const local={...s,recordingStart:candidate.recordingStart,timeTolerance:0,
@@ -311,6 +364,7 @@ export async function searchFlightArchive({files,settings:s,events,spectrogram,a
             }
         }
     }
-    return {results:results.slice(0,100).map(({indices,...r})=>r),heat,tracks:[...sources.values()],bounds:options.bounds,
-        stats:{...dataset.stats,points:heat.length,passed:results.length,combinations:pairs.length,regions:regions.size,rejectedBySilence},elapsedSeconds:(performance.now()-started)/1000};
+    return {results:results.slice(0,100).map(({indices,...r})=>r),heat,tracks:[...sources.values()],bounds:options.bounds,pairScores,soundSpeedPairs,
+        stats:{...dataset.stats,points:heat.length,passed:results.length,combinations:pairs.length,regions:regions.size,rejectedBySilence,...verdictStats(verdict),
+            ...soundSpeedStats(soundSpeedPairs,s.soundSpeed,options.soundSpeedCheck)},elapsedSeconds:(performance.now()-started)/1000};
 }

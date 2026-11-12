@@ -80,12 +80,15 @@ class Samples {
     }
 }
 
-export async function loadAircraftTypes() {
-    const response=await fetch("https://raw.githubusercontent.com/wiedehopf/tar1090-db/master/db/icao_aircraft_types.js");
-    if(!response.ok) throw new Error(`Aircraft type lookup failed (${response.status}). Retry or include all aircraft types.`);
-    const bytes=new Uint8Array(await response.arrayBuffer());
-    const stream=new Blob([bytes]).stream();
-    return new Response(bytes[0]===31 && bytes[1]===139 ? stream.pipeThrough(new DecompressionStream("gzip")) : stream).json();
+// The ICAO type list ships with Sitrec: data/aircraft/icao_aircraft_types.json, from the
+// Mictronics aircraft database under the ODC Attribution License (see data/aircraft/README.md).
+// DopplerTool passes its URL as options.typesURL, because this runs in a worker that cannot
+// read the app path itself.
+export async function loadAircraftTypes(url) {
+    if(!url) throw new Error("No aircraft type list was given. Include all aircraft types, or reopen Doppler geolocation.");
+    const response=await fetch(url);
+    if(!response.ok) throw new Error(`Aircraft type list did not load (${response.status}). Retry or include all aircraft types.`);
+    return response.json();
 }
 
 // readsb trace altitudes and speeds have explicit feet/knots units. Geometric
@@ -104,7 +107,7 @@ export function traceFix(row,base,{allowBarometric=false}={}) {
 export async function scanFlightArchive(archive,events,options={},progress=()=>{}) {
     const bounds=options.bounds ?? [24,-125,50,-66],step=options.sampleStep ?? 30;
     if(bounds.length!==4 || !bounds.every(Number.isFinite) || bounds[0]>=bounds[2] || bounds[1]>=bounds[3] || step<5) throw new Error("Check the archive latitude/longitude bounds and sample interval.");
-    const types=options.types ?? (options.excludeJets ? await loadAircraftTypes() : {});
+    const types=options.types ?? (options.excludeJets ? await loadAircraftTypes(options.typesURL) : {});
     const flights=[],samples=new Samples(),stats={read:0,flights:0,fixes:0,approximateAltitudes:0,missingAltitudes:0};
     const seen=new Set();
     for await(const entry of archive.entries()) {

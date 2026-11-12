@@ -29,7 +29,7 @@ export function validateAnalysis(value) {
     const settings={...clone(SEARCH_DEFAULTS),...value.settings};
     const numeric=Object.keys(SEARCH_DEFAULTS).filter(key=>typeof SEARCH_DEFAULTS[key]==="number");
     if(!finiteFields(settings,numeric) || settings.soundSpeed<=0 || !["tracks","archive"].includes(settings.source) ||
-        !["fixed","terrain"].includes(settings.elevation) || !["trace","brightness"].includes(settings.mode) ||
+        !["fixed","terrain"].includes(settings.elevation) || !["trace","brightness"].includes(settings.mode) || !["squared","robust"].includes(settings.traceLoss) ||
         typeof settings.recordingStart!=="string" || (settings.recordingStart.trim() && !utc(settings.recordingStart.trim()))) fail("check search settings and the recording UTC time.");
     if(!Array.isArray(settings.silence) || settings.silence.some(w=>!Array.isArray(w) || w.length!==2 || !w.every(Number.isFinite) || w[0]>=w[1])) fail("silence windows need start and end seconds.");
     for(const [index,event] of value.events.entries()) {
@@ -52,7 +52,7 @@ export function validateAnalysis(value) {
     }
     if(value.archiveOptions!==undefined && !object(value.archiveOptions)) fail("archive settings must be an object.");
     const archiveOptions={...clone(ARCHIVE_DEFAULTS),...value.archiveOptions};
-    if(!finiteFields(archiveOptions,["sampleStep","timeBin","coarseStep","fineStep","keep","refineCount"]) ||
+    if(!finiteFields(archiveOptions,["sampleStep","timeBin","coarseStep","fineStep","keep","refineCount","soundSpeedCheck","soundSpeedCheckPairs"]) ||
         !Array.isArray(archiveOptions.bounds) || archiveOptions.bounds.length!==4 || !archiveOptions.bounds.every(Number.isFinite) ||
         !Array.isArray(archiveOptions.heightBands) || !archiveOptions.heightBands.length || !archiveOptions.heightBands.every(Number.isFinite) ||
         typeof archiveOptions.excludeJets!=="boolean" || typeof archiveOptions.allowBarometric!=="boolean" ||

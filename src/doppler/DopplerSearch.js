@@ -2,7 +2,7 @@ import {atArrival, closestApproaches, observerTrack, prepareTrack, toECEF} from 
 import {hasTaggedTrace,traceFamily,traceHarmonic,validTraceFamily,validTraceHarmonic} from "./DopplerTrace";
 
 export const SEARCH_DEFAULTS={lat:37,lon:-122,radiusM:3000,spacingM:200,altitudeM:0,soundSpeed:343,
-    maxGap:30,timeTolerance:3,timeStep:0.5,cpaTolerance:8,frequencySteps:9,traceSigma:1,
+    maxGap:30,timeTolerance:3,timeStep:0.5,cpaTolerance:8,frequencySteps:9,traceSigma:1,traceLoss:"squared",
     recordingStart:"",elevation:"fixed",source:"tracks",mode:"trace",silenceRadiusM:0,silence:[]};
 export const newEvent=(cpa=60)=>({cpa,start:cpa-30,end:cpa+30,frequency:130,frequencyTolerance:3,
     harmonic:1,family:0,speedMin:0,speedMax:300,rangeMin:0,rangeMax:20000,trace:[]});
@@ -36,6 +36,7 @@ export function validateSearch({settings:s,events,tracks,spectrogram}) {
         s.soundSpeed<280 || s.soundSpeed>380 || s.maxGap<=0 || s.timeTolerance<0 || s.timeTolerance>120 || s.timeStep<0.1 ||
         s.cpaTolerance<0 || s.traceSigma<=0 || s.frequencySteps<1 || s.frequencySteps>41 || s.silenceRadiusM<0) throw new Error("Invalid sound speed, time sweep, frequency sweep, gap or scoring settings.");
     if(!["trace","brightness"].includes(s.mode)) throw new Error("Choose trace or spectrogram scoring.");
+    if(s.traceLoss!==undefined && !["squared","robust"].includes(s.traceLoss)) throw new Error("Choose squared or robust trace residuals.");
     if(s.mode==="brightness" && !spectrogram) throw new Error("Load audio for spectrogram scoring.");
     if(!Array.isArray(s.silence) || s.silence.some(w=>w.length!==2 || !w.every(Number.isFinite) || w[0]>=w[1])) throw new Error("Silence windows must be [start, end] in recording seconds.");
     for(const [i,e] of events.entries()) {
@@ -127,13 +128,44 @@ function traceMSE(t,track,recordingStart,s) {
         const fitted=numerator[g]/denominator[g];
         fundamental[g]=g===t.main ? Math.max(t.lower,Math.min(t.upper,fitted)) : fitted;
     }
+    if(s.traceLoss==="robust") return robustTraceLoss(t,s);
     let sum=0;
     for(let i=0;i<n;i++) sum+=((observed[i]-fundamental[group[i]]*factor[i]*harmonic[i])/s.traceSigma)**2;
     return sum/n;
 }
 
+// Pseudo-Huber loss with scale traceSigma: 2(sqrt(1+r^2)-1) for a residual of r
+// sigmas. It equals r^2 for small residuals and grows only linearly for large
+// ones, so a few misplaced trace points cannot dominate the fit. The fundamentals
+// are refitted by iteratively reweighted least squares from the least-squares fit.
+function robustTraceLoss(t,s) {
+    const {n,observed,harmonic,group,factor,numerator,denominator,fundamental}=t;
+    for(let iteration=0;iteration<8;iteration++) {
+        numerator.fill(0);denominator.fill(0);
+        for(let i=0;i<n;i++) {
+            const k=factor[i]*harmonic[i],r=(observed[i]-fundamental[group[i]]*k)/s.traceSigma,weight=1/Math.sqrt(1+r*r);
+            numerator[group[i]]+=weight*k*observed[i];denominator[group[i]]+=weight*k*k;
+        }
+        for(let g=0;g<fundamental.length;g++) {
+            const fitted=numerator[g]/denominator[g];
+            fundamental[g]=g===t.main ? Math.max(t.lower,Math.min(t.upper,fitted)) : fitted;
+        }
+    }
+    let sum=0;
+    for(let i=0;i<n;i++) {const r=(observed[i]-fundamental[group[i]]*factor[i]*harmonic[i])/s.traceSigma;sum+=2*(Math.sqrt(1+r*r)-1);}
+    return sum/n;
+}
+
 function traceResult(t,mse,s) {
-    const result={frequency:t.fundamental[0],score:-mse,rmsHz:Math.sqrt(mse)*s.traceSigma};
+    // rmsHz is always the plain root mean square residual, so it keeps its
+    // meaning when the ranking uses the robust loss.
+    let squares=mse;
+    if(s.traceLoss==="robust") {
+        squares=0;
+        for(let i=0;i<t.n;i++) squares+=((t.observed[i]-t.fundamental[t.group[i]]*t.factor[i]*t.harmonic[i])/s.traceSigma)**2;
+        squares/=t.n;
+    }
+    const result={frequency:t.fundamental[0],score:-mse,rmsHz:Math.sqrt(squares)*s.traceSigma};
     if(t.families.length>1) result.families=t.families.map((family,g)=>({family,frequency:t.fundamental[g]}));
     return result;
 }
