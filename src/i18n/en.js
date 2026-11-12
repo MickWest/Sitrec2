@@ -3965,9 +3965,9 @@ const en = {
             label: "Wind Direction Error (±°)",
             tooltip: "How far the wind direction can be from the wind of the sitch, to each side, at every height.\nThe wind of the sitch is in Physics > Wind. With weather profiles, the finder uses the wind of each height.",
         },
-        maxMinutes: {
-            label: "Max Flight Time (min)",
-            tooltip: "The longest time from the launch to the current frame. A flight that needs more time than this has no launch site in the result.",
+        heightSteps: {
+            label: "Resolution (steps)",
+            tooltip: "The number of steps of each flight, from the balloon down to the ground. Each step uses the wind of its middle height. A step is 5 m high at least.\nWith more steps, a flight follows the change of the wind with the height more closely, and the result takes more time to calculate.",
         },
         angularText: {
             label: "Angular Size",
@@ -3987,7 +3987,7 @@ const en = {
         },
         timeText: {
             label: "Flight Time",
-            tooltip: "The time from the launch to the current frame: the shortest and the longest of the flights in the result.\nPart longer than the limit: some flights need more than Max Flight Time, and they have no launch site.",
+            tooltip: "The time from the launch to the current frame: the shortest and the longest of the flights in the result.\nA flight is 10 hours long at most. Part longer than 10 h: the balloons at the slow end of the buoyancy range need more time than that, and they are not in the result. The outline then ends at the buoyancy whose flight takes 10 hours, and the label there shows that buoyancy.\nLonger than 10 h: a balloon at Buoyancy Max needs more than 10 hours also, so there is no launch site.",
         },
     },
     kiteAnchorFinder: {

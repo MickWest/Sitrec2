@@ -36,8 +36,15 @@ const DEFAULTS = {
     buoyancyMin: 1,         // m/s
     buoyancyMax: 5,         // m/s
     windError: 10,          // degrees to each side
-    maxMinutes: 120,        // the longest flight
+    // The steps of each flight, from the balloon down to the ground. Measured in a sitch with
+    // weather profiles, against 4096 steps: the farthest launch site is off by 0.2% to 0.6% of
+    // its distance at 32 steps, and by 0.2% at most at 128. The cost goes with the steps.
+    heightSteps: 128,
 };
+
+// The longest flight. A balloon that needs more time than this to get to its height is not
+// in the result (see flightsOf in BalloonLaunchFinder.js). It is not a setting.
+const MAX_FLIGHT_HOURS = 10;
 
 // The two fixed choices of Start From. They are saved with the sitch as the choice
 // of the selector, so they do not change with the language. Every other choice is
@@ -86,7 +93,7 @@ export class CNodeBalloonLaunchFinder extends CNodeGroundFinder {
         this.addSlider("buoyancyMin", 0.1, 10, 0.1);
         this.addSlider("buoyancyMax", 0.1, 10, 0.1);
         this.addSlider("windError", 0, 90, 1);
-        this.addSlider("maxMinutes", 1, 600, 1);
+        this.addSlider("heightSteps", 8, 1024, 8);
         this.addReadouts(["angularText", "windText", "distanceText", "heightText", "timeText"]);
 
         const showSightRows = () => {
@@ -149,7 +156,8 @@ export class CNodeBalloonLaunchFinder extends CNodeGroundFinder {
         const options = {
             buoyancyMin, buoyancyMax,
             windError: this.windError * RADIANS,
-            maxSeconds: this.maxMinutes * 60,
+            maxSeconds: MAX_FLIGHT_HOURS * 3600,
+            heightSteps: this.heightSteps,
             windAt: this.windAt(f),
             groundHAE: (lat, lon) => elevationAtLL(lat, lon),
             // The terrain ray of Sitrec: its steps are set by the slope of the elevation
@@ -171,6 +179,9 @@ export class CNodeBalloonLaunchFinder extends CNodeGroundFinder {
         const middle = balloons[balloons.length >> 1];
         const flights = [...samples.flatMap(sample => [sample.center, ...sample.corners]), ...outlines.flatMap(outline => outline.spine)];
         const found = flights.filter(Boolean);
+        // the longest flight cut the slow end of the buoyancy range, for a part of the balloons or for all
+        const limited = [...samples, ...outlines].some(balloon => balloon.limited);
+        const limit = `${MAX_FLIGHT_HOURS} h`;
 
         this.angularText = angularSize === undefined ? "—"
             : `${(angularSize / RADIANS).toFixed(3)}° (${(angularSize * 1000).toFixed(2)} mrad)`;
@@ -184,11 +195,12 @@ export class CNodeBalloonLaunchFinder extends CNodeGroundFinder {
                 + (heights.length < balloons.length ? ", part below the ground" : "");
 
         if (found.length === 0) {
-            this.timeText = heights.length === 0 ? "The balloon is below the ground" : "Longer than the limit";
+            this.timeText = heights.length === 0 ? "The balloon is below the ground"
+                : limited ? `Longer than ${limit}` : "No launch site";
         } else {
             const seconds = found.map(flight => flight.seconds);
             this.timeText = `${duration(Math.min(...seconds))} to ${duration(Math.max(...seconds))}`
-                + (found.length < flights.length ? ", part longer than the limit" : "");
+                + (limited ? `, part longer than ${limit}` : "");
         }
     }
 

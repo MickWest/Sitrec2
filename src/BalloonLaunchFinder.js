@@ -21,11 +21,13 @@ import {niceSizes} from "./KiteAnchorFinder";
 
 const DEGREES = 180 / Math.PI;
 const LIGHT_AIR = 0.5;          // m/s: the wind text of a lighter air is "Calm"
-const HEIGHT_STEPS = 32;        // a flight goes down in about this number of steps
+const HEIGHT_STEPS = 32;        // a flight goes down in about this number of steps, when the caller gives no number
 const LEAST_STEP = 5;           // m: the smallest of those steps
-const MOST_STEPS = 4 * HEIGHT_STEPS;    // for a launch site that is far below the ground under the balloon
+const MOST_HEIGHTS = 4;         // a flight can go down by this number of heights, for a launch site that is far below the ground under the balloon
 const BUOYANCY_STEPS = 4;       // parts that the buoyancy range is divided into (even, so that the middle is a step)
 const TURN_STEPS = 2;           // parts of each end of an outline, between the two wind directions
+const LIMIT_PASSES = 6;         // the most flights to find the buoyancy whose flight takes the time limit
+const LIMIT_NEAR = 0.002;       // that buoyancy is found when a pass changes it by this part at most
 
 // Follow the flight of a balloon back in time, from where it is to the ground.
 //
@@ -33,28 +35,28 @@ const TURN_STEPS = 2;           // parts of each end of an outline, between the 
 //   height        metres above the ground below it (it sets the size of the steps)
 //   buoyancy      m/s: how fast the balloon rises
 //   windTurn      radians: the wind of each height is turned by this, to the right as seen from above
-//   maxSeconds    the longest flight
+//   heightSteps   the number of steps from the balloon down to the ground below it. With more
+//                 steps, the flight follows the change of the wind with the height more closely
 //   windAt        (lat, lon, altitudeHAE) → {u, v} in m/s (u = east, v = north)
 //   groundHit     (origin, direction, maxDistance) → the first point of that ray which is on the
 //                 ground, as an ECEF Vector3, or null. In Sitrec this is raycastGroundElevationFast
 //   withPath      true to get the points of the flight
 //
 // Returns {position, lat, lon, groundHAE, seconds, path}, or null when the
-// balloon is in the ground, or when the flight is longer than maxSeconds.
-// position is the launch site (an ECEF Vector3), seconds is the time from the
-// launch to the balloon's position, and path is the points from the balloon
-// down to the launch site (null without withPath).
+// balloon is in the ground. position is the launch site (an ECEF Vector3),
+// seconds is the time from the launch to the balloon's position, and path is
+// the points from the balloon down to the launch site (null without withPath).
 //
 // Each step goes down by a fixed height. Its wind is that of its middle height,
 // at the place of the balloon at the top of the step.
-export function reverseBalloonFlight({position, height, buoyancy, windTurn = 0, maxSeconds, windAt, groundHit, withPath = false}) {
+export function reverseBalloonFlight({position, height, buoyancy, windTurn = 0, heightSteps = HEIGHT_STEPS, windAt, groundHit, withPath = false}) {
     if (!(height > 0) || !(buoyancy > 0)) return null;
-    const step = Math.max(LEAST_STEP, height / HEIGHT_STEPS);
+    const step = Math.max(LEAST_STEP, height / heightSteps);
     const stepSeconds = step / buoyancy;
     const cos = Math.cos(windTurn), sin = Math.sin(windTurn);
     const path = withPath ? [position.clone()] : null;
     let point = position, seconds = 0;
-    for (let count = 0; count < MOST_STEPS; count++) {
+    for (let count = 0; count < MOST_HEIGHTS * heightSteps; count++) {
         const lla = ECEFToLLA_radii(point.x, point.y, point.z);
         const wind = windAt(lla[0] * DEGREES, lla[1] * DEGREES, lla[2] - step / 2) ?? {u: 0, v: 0};
         const u = wind.u * cos + wind.v * sin, v = wind.v * cos - wind.u * sin;
@@ -68,13 +70,11 @@ export function reverseBalloonFlight({position, height, buoyancy, windTurn = 0, 
         const reached = hit ? hit.distanceTo(point) : Infinity;
         if (reached <= length) {
             seconds += stepSeconds * reached / length;
-            if (seconds > maxSeconds) return null;
             path?.push(hit);
             const site = ECEFToLLA_radii(hit.x, hit.y, hit.z);
             return {position: hit, lat: site[0] * DEGREES, lon: site[1] * DEGREES, groundHAE: site[2], seconds, path};
         }
         seconds += stepSeconds;
-        if (seconds > maxSeconds) return null;
         path?.push(next);
         point = next;
     }
@@ -103,27 +103,53 @@ function balloonAt(position, {windAt, groundHAE}, more = {}) {
     };
 }
 
+// The flights of one balloon position: `site` gives the launch site of a flight, and
+// `rates` is the buoyancies of the result, from the highest to the lowest, in `steps` parts.
+//
+// A flight that takes longer than maxSeconds is not in the result. A balloon that rises
+// more slowly has a longer flight. So when the flight of buoyancyMin is too long, the
+// lowest buoyancy is the one whose flight takes maxSeconds, and point.limited is true.
+// When the flight of buoyancyMax is too long also, there are no rates.
+function flightsOf(point, {buoyancyMin, buoyancyMax, maxSeconds, ...flight}, steps) {
+    const site = (buoyancy, windTurn, withPath = false) =>
+        reverseBalloonFlight({position: point.balloon, height: point.height, buoyancy, windTurn, withPath, ...flight});
+    // The flight time is the height above the launch site, divided by the buoyancy, and the
+    // launch site is not known before the flight. So the first value is for the ground below
+    // the balloon, and each next value is for the launch site that the value before it gives.
+    // Over level ground the first flight is enough. The values come together more slowly
+    // where the ground has a steep slope along the line of the launch sites.
+    let slowest = Math.max(buoyancyMin, point.height / maxSeconds);
+    for (let pass = 0; pass < LIMIT_PASSES; pass++) {
+        const found = site(slowest, 0);
+        if (!found) break;
+        const next = Math.max(buoyancyMin, slowest * found.seconds / maxSeconds);
+        const near = Math.abs(next - slowest) <= LIMIT_NEAR * slowest;
+        slowest = next;
+        if (near) break;
+    }
+    point.limited = slowest > buoyancyMin;
+    return {site, rates: slowest <= buoyancyMax ? buoyancySteps(slowest, buoyancyMax, steps) : []};
+}
+
 // The launch site for the middle buoyancy and the wind as given, and the four
 // corners: [highest buoyancy, wind turned left], [highest, right], [lowest, left], [lowest, right].
-function addCorners(point, {buoyancyMin, buoyancyMax, windError, ...flight}) {
-    const site = (buoyancy, windTurn) => reverseBalloonFlight({position: point.balloon, height: point.height, buoyancy, windTurn, ...flight});
-    const rates = buoyancySteps(buoyancyMin, buoyancyMax, 2);
-    point.center = site(rates[1], 0);
-    point.corners = [site(rates[0], -windError), site(rates[0], windError), site(rates[2], -windError), site(rates[2], windError)];
+function addCorners(point, {windError, ...options}) {
+    const {site, rates: [fast, middle, slow]} = flightsOf(point, options, 2);
+    // with no rates, each of these is null
+    point.center = site(middle, 0);
+    point.corners = [site(fast, -windError), site(fast, windError), site(slow, -windError), site(slow, windError)];
     return point;
 }
 
 // All the launch sites of one balloon position: `spine` (the wind as given, for each
 // buoyancy from the highest to the lowest, with the path of the middle one) and `loop`
 // (ECEF points around all the launch sites, or null when a flight on it has no launch site).
-function addOutline(point, {buoyancyMin, buoyancyMax, windError, ...flight}) {
-    const site = (buoyancy, windTurn, withPath = false) =>
-        reverseBalloonFlight({position: point.balloon, height: point.height, buoyancy, windTurn, withPath, ...flight});
-    const rates = buoyancySteps(buoyancyMin, buoyancyMax);
+function addOutline(point, {windError, ...options}) {
+    const {site, rates} = flightsOf(point, options, BUOYANCY_STEPS);
     const middle = rates.length >> 1;
     point.buoyancies = rates;
     point.spine = rates.map((buoyancy, index) => site(buoyancy, 0, index === middle));
-    point.center = point.spine[middle];
+    point.center = point.spine[middle] ?? null;
 
     // Along the left side from the nearest launch site to the farthest, across the far
     // end, back along the right side, and across the near end.
@@ -140,8 +166,8 @@ function addOutline(point, {buoyancyMin, buoyancyMax, windError, ...flight}) {
 //   position              where the balloon is: an ECEF Vector3
 //   buoyancyMin/Max       m/s: how fast the balloon rises
 //   windError             radians: the wind direction is this near to the one that windAt gives
-//   maxSeconds            the longest flight
-//   windAt, groundHit     see reverseBalloonFlight
+//   maxSeconds            the longest flight: it cuts the slow end of the buoyancy range (see flightsOf)
+//   heightSteps, windAt, groundHit     see reverseBalloonFlight
 //   groundHAE             (lat, lon) → the height of the ground above the ellipsoid, metres
 //
 // Returns {samples: [], outlines: [one entry]}, in the form of balloonLaunchSitesOnSight.
@@ -165,13 +191,15 @@ export function balloonLaunchSitesOfObject({position, ...options}) {
 //   height                metres above the ground below the balloon
 //   windSpeed             m/s at the balloon
 //   windToward            radians from north, or null in a calm
+//   limited               true when maxSeconds cut the buoyancy range of this balloon
 //   center                the launch site for the middle buoyancy and the wind as given
 //                         (see reverseBalloonFlight), or null when there is none
 // A sample also has:
 //   corners               the launch sites for [highest buoyancy, wind turned left], [highest, right],
 //                         [lowest, left], [lowest, right]. Each can be null
 // An outline also has:
-//   buoyancies            m/s, from the highest to the lowest
+//   buoyancies            m/s, from the highest to the lowest. None when the flight of the
+//                         highest buoyancy is longer than maxSeconds
 //   spine                 the launch site for each of those, with the wind as given. Each can be
 //                         null. The middle one is `center`, and it has the path of its flight
 //   loop                  ECEF points around all the launch sites for that one size, or null

@@ -368,12 +368,12 @@ The folder has these settings. They are saved with the sitch.
 | **Buoyancy Min (m/s)** | 1 | The lowest speed at which the balloon rises. This is the **Buoyancy (m/s)** of a balloon from **Add Balloon** |
 | **Buoyancy Max (m/s)** | 5 | The highest speed at which the balloon rises |
 | **Wind Direction Error (±°)** | 10 | How far the wind direction can be from the wind of the sitch, to each side, at every height |
-| **Max Flight Time (min)** | 120 | The longest time from the launch to the current frame. A flight that needs more time has no launch site in the result |
+| **Resolution (steps)** | 128 | The number of steps of each flight, from the balloon down to the ground. With more steps, a flight follows the change of the wind with the height more closely, and the result takes more time to calculate. See [Resolution](#resolution) |
 | **Angular Size** (read only) | | The angle that the object makes at the camera. Only for **Line of Sight** |
 | **Wind at Balloon** (read only) | | The wind of the sitch at the balloon: the direction that it comes from, and its speed |
 | **Balloon Distance** (read only) | | The distance from the camera to the balloon, for the smallest and the largest balloon size. Only for **Line of Sight** |
 | **Balloon Height** (read only) | | The height of the balloon above the ground below it |
-| **Flight Time** (read only) | | The time from the launch to the current frame: the shortest and the longest of the flights in the result. It ends with *part longer than the limit* when some flights need more than **Max Flight Time (min)** |
+| **Flight Time** (read only) | | The time from the launch to the current frame: the shortest and the longest of the flights in the result. It ends with *part longer than 10 h* when a part of the buoyancy range needs more than 10 hours. It is *Longer than 10 h* when all of that range does. See [The longest flight](#the-longest-flight) |
 
 With **Start From** at a balloon from **Add Balloon** that has a **Wind Variability (%)** of 0,
 and with its buoyancy, the launch site is the same from every frame: the point where the track
@@ -390,6 +390,34 @@ The finder has these limits:
 - The ground is the elevation data of the terrain. It is not the surface of the 3D building
   tiles, which has the roofs and the trees.
 - A balloon position that is below the ground has no launch site.
+
+#### Resolution
+
+Each flight goes down from the balloon in steps of equal height. A step uses the wind of its
+middle height for all of the step. So where the wind changes much inside one step, the launch
+site is not exact. **Resolution (steps)** is the number of steps from the balloon to the ground
+below it, from 8 to 1024. A step is 5 m high at least, so a balloon that is low has fewer steps.
+
+With more steps, the steps are smaller and the launch site is nearer to the exact one. The time
+to calculate the result goes up with the number of steps.
+
+In tests with a wind from weather profiles, the balloon was at 17.9 km and at 30 km, and the
+farthest launch site was 18 km to 77 km away. At 32 steps that launch site was 0.2% to 0.6% of
+its distance from the launch site at 4096 steps. At 128 steps it was 0.2% or less.
+
+#### The longest flight
+
+The flight time is the height of the balloon above the launch site, divided by the buoyancy. The
+finder follows a flight for 10 hours at most. At 1 m/s, a balloon gets to 36 km (118,000 ft) in
+that time.
+
+When a part of the buoyancy range needs more than 10 hours, the result has only the other part.
+The outline is shorter: its far end is at the buoyancy whose flight takes 10 hours, and the label
+at that end shows that buoyancy, not **Buoyancy Min (m/s)**. **Flight Time** ends with *part
+longer than 10 h*.
+
+When the flight at **Buoyancy Max (m/s)** also needs more than 10 hours, there is no launch
+site, and **Flight Time** shows *Longer than 10 h*.
 
 ### Pins
 

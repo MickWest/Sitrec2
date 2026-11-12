@@ -70,7 +70,7 @@ describe("buoyancySteps", () => {
 describe("reverseBalloonFlight", () => {
     const balloon = LLAToECEF(LAT, LON, 1000);
     const flight = (params = {}) => reverseBalloonFlight({position: balloon, height: 1000, buoyancy: 5,
-        maxSeconds: 3600, windAt: toEast(10), groundHit: hitOn(flatGround), ...params});
+        windAt: toEast(10), groundHit: hitOn(flatGround), ...params});
 
     test("in a steady wind over flat ground, the launch site is upwind by the wind speed times the flight time", () => {
         const site = flight();
@@ -124,9 +124,7 @@ describe("reverseBalloonFlight", () => {
         expect(site.seconds).toBeCloseTo(50, 0);
     });
 
-    test("no launch site for a flight longer than the limit, for a balloon in the ground, or for no buoyancy", () => {
-        expect(flight({maxSeconds: 190})).toBeNull();
-        expect(flight({maxSeconds: 210})).not.toBeNull();
+    test("no launch site for a balloon in the ground, or for no buoyancy", () => {
         expect(flight({height: 0})).toBeNull();
         expect(flight({buoyancy: 0})).toBeNull();
     });
@@ -139,6 +137,26 @@ describe("reverseBalloonFlight", () => {
         // each point is lower than the one before it
         const heights = site.path.map(point => ECEFToLLAVD_radii(point).z);
         for (let index = 1; index < heights.length; index++) expect(heights[index]).toBeLessThan(heights[index - 1]);
+    });
+
+    test("with more steps, the flight follows a wind that changes with the height more closely", () => {
+        // The wind grows with the square of the height, to 10 m/s at 1000 m. The drift is the
+        // mean wind, 10 / 3 m/s, for 200 seconds: 666.7 m. Each step uses the wind of its
+        // middle height, and four steps give 656.25 m.
+        const curved = (lat, lon, altitude) => ({u: 10 * (altitude / 1000) ** 2, v: 0});
+        const drift = heightSteps => -offsetOf(balloon, flight({windAt: curved, heightSteps}).position).east;
+        expect(drift(4)).toBeCloseTo(656.25, 0);
+        expect(drift(64)).toBeCloseTo(666.67, 0);
+        // with no number, a flight has 32 steps
+        expect(drift(undefined)).toBeCloseTo(drift(32), 6);
+    });
+
+    test("the number of steps is the number of points of the flight", () => {
+        const points = heightSteps => flight({withPath: true, heightSteps}).path.length;
+        expect(points(100)).toBeGreaterThanOrEqual(101);
+        expect(points(100)).toBeLessThanOrEqual(102);
+        // a step is 5 m high at least, so 1000 m has 200 steps at most
+        expect(points(1000)).toBeLessThanOrEqual(202);
     });
 
     test("the balloon track from the launch site, with the same wind and buoyancy, comes to the balloon", () => {
@@ -169,6 +187,7 @@ describe("balloonLaunchSitesOfObject", () => {
         expect(outline.windSpeed).toBeCloseTo(10, 12);
         expect(outline.windToward).toBeCloseTo(Math.PI / 2, 12);
         expect(outline.buoyancies).toHaveLength(5);
+        expect(outline.limited).toBe(false);
         // 200 seconds at 5 m/s to 1000 seconds at 1 m/s, at equal steps of time
         expect(outline.spine.map(site => Math.round(site.seconds / 10) * 10)).toEqual([200, 400, 600, 800, 1000]);
         expect(outline.spine.map(site => Math.round(-offsetOf(balloon, site.position).east / 100) * 100)).toEqual([2000, 4000, 6000, 8000, 10000]);
@@ -190,11 +209,53 @@ describe("balloonLaunchSitesOfObject", () => {
         expect(across[11]).toBeCloseTo(0, 2);
     });
 
-    test("the time limit removes the slow flights, and the loop with them", () => {
+    test("the flights have the number of steps that is asked for", () => {
+        const points = sites({heightSteps: 100}).outlines[0].center.path.length;
+        expect(points).toBeGreaterThanOrEqual(101);
+        expect(points).toBeLessThanOrEqual(102);
+    });
+
+    test("the time limit cuts the slow end of the buoyancy range, and the outline stays", () => {
+        // 1000 m in 700 seconds is 1.43 m/s: a balloon that rises more slowly is not in the result
         const [outline] = sites({maxSeconds: 700}).outlines;
-        expect(outline.spine.map(site => site !== null)).toEqual([true, true, true, false, false]);
-        expect(outline.center).not.toBeNull();
+        expect(outline.limited).toBe(true);
+        expect(outline.buoyancies[0]).toBeCloseTo(5, 12);
+        expect(outline.buoyancies[4]).toBeCloseTo(1000 / 700, 2);
+        // 200 seconds at 5 m/s to the limit, at equal steps of time
+        expect(outline.spine.map(site => Math.round(site.seconds))).toEqual([200, 325, 450, 575, 700]);
+        expect(outline.center).toBe(outline.spine[2]);
+        expect(outline.center.path.length).toBeGreaterThan(30);
+        expect(outline.loop).toHaveLength(12);
+    });
+
+    test("a limit that the flight of the lowest buoyancy just meets cuts nothing", () => {
+        const [outline] = sites({maxSeconds: 1001}).outlines;
+        expect(outline.limited).toBe(false);
+        expect(outline.buoyancies[4]).toBe(1);
+    });
+
+    test("with a limit under the flight of the highest buoyancy, there is no launch site", () => {
+        // the flight at 5 m/s takes 200 seconds
+        const [outline] = sites({maxSeconds: 150}).outlines;
+        expect(outline.limited).toBe(true);
+        expect(outline.buoyancies).toEqual([]);
+        expect(outline.spine).toEqual([]);
+        expect(outline.center).toBeNull();
         expect(outline.loop).toBeNull();
+    });
+
+    test("over ground that rises upwind, the lowest buoyancy is still the one whose flight takes the limit", () => {
+        // The ground rises 1 m for each 10 m to the west, and the wind moves the path 10 m to
+        // the west for each second. So a flight at a buoyancy b takes 1000 / (b + 1) seconds,
+        // which is much less than the 1000 / b of level ground. For 300 seconds, b is 2.33.
+        const slope = (lat, lon) => -eastOf(lon) * 0.1;
+        const [outline] = sites({maxSeconds: 300, groundHAE: slope, groundHit: hitOn(slope)}).outlines;
+        expect(outline.limited).toBe(true);
+        expect(outline.buoyancies[4]).toBeCloseTo(1000 / 300 - 1, 1);
+        const longest = outline.spine[4].seconds;
+        expect(longest).toBeGreaterThan(298);
+        expect(longest).toBeLessThan(302);
+        expect(outline.loop).toHaveLength(12);
     });
 });
 
@@ -237,6 +298,16 @@ describe("balloonLaunchSitesOnSight", () => {
             expect(across(slowLeft) / -across(slowRight)).toBeGreaterThan(0.99);
             expect(across(slowLeft) / -across(slowRight)).toBeLessThan(1.01);
             expect(Math.abs(across(slowLeft))).toBeGreaterThan(Math.abs(across(fastLeft)));
+        }
+    });
+
+    test("the time limit cuts the buoyancy range of the balloons that are too high for it, and not of the others", () => {
+        // at 2 m/s, a balloon that is higher than 500 m needs more than 250 seconds
+        for (const sample of sites({maxSeconds: 250}).samples) {
+            const slowLeft = sample.corners[2];
+            expect(sample.limited).toBe(sample.height > 500);
+            expect(slowLeft.seconds).toBeCloseTo(Math.min(sample.height / 2, 250), 0);
+            expect(sample.corners[0].seconds).toBeCloseTo(sample.height / 5, 0);
         }
     });
 
