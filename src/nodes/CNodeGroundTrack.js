@@ -139,6 +139,7 @@ export class CNodeGroundTrack extends CNodeTrack {
         // track has to reach this node. The "3D Position" mode pays a recalculate it does not
         // need, which is affordable precisely because that mode is pure arithmetic.
         this.input("cameraLOSNode", true);      // optional
+        this.smoothingKind = "groundTracking";
 
         this.frames = Sit.frames;
         this.useSitFrames = true;
@@ -196,6 +197,11 @@ export class CNodeGroundTrack extends CNodeTrack {
     /** True once there is enough to define a line of sight — one point is a fixed direction. */
     hasTrack() {
         return this.keyframes.length > 0;
+    }
+
+    getAnalysisInputs() {
+        return this.betweenPoints === BETWEEN_GROUND && this.hasTrack() && this.in.cameraLOSNode
+            ? [{node: this.in.cameraLOSNode, component: "position"}] : [];
     }
 
     recalculate() {

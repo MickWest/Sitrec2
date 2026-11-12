@@ -1236,6 +1236,7 @@ export class CNodeControllerVerticalSpeed extends CNodeController {
     constructor(v) {
         super(v);
         this.input("verticalSpeed", true);
+        this.analysisPositionInputs = ["verticalSpeed"];
         this.speed = 0;
         this.frames = Sit.frames;
         this.useSitFrames = true;

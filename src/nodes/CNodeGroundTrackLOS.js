@@ -62,4 +62,24 @@ export class CNodeGroundTrackLOS extends CNode {
         // which this heading is no longer along. Downstream consumers only use heading.
         return {position: los.position, heading, vFOV: los.vFOV};
     }
+
+    getAnalysisInputs({frame0 = 0, frame1 = this.frames - 1} = {}, component = "all") {
+        // Empty tracks and coincident ground/camera points use the boresight
+        // fallback in getValueFrame. Check the whole selected interval so that
+        // a partial fallback cannot be labelled independent of camera attitude.
+        let cameraComponent = "position";
+        if (component !== "position") {
+            for (let f = frame0; f <= frame1; f++) {
+                const ground = this.in.groundTrack.getGroundPosition(f);
+                if (!ground || !(ground.distanceToSquared(this.in.cameraLOSNode.getValueFrame(f).position) > 0)) {
+                    cameraComponent = "all";
+                    break;
+                }
+            }
+        }
+        return [
+            {node: this.in.cameraLOSNode, component: cameraComponent},
+            ...(component === "position" ? [] : [{node: this.in.groundTrack, component: "all"}]),
+        ];
+    }
 }

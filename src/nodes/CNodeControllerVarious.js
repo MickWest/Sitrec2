@@ -28,6 +28,7 @@ export class CNodeControllerTrackToTrack extends CNodeController {
         this.input("sourceTrack")
         this.input("targetTrack")
         this.optionalInputs(["roll"])
+        this.analysisPositionInputs = ["sourceTrack"];
     }
 
     apply(f, objectNode) {
@@ -163,6 +164,7 @@ export class CNodeControllerTrackPosition extends CNodeController {
     constructor(v) {
         super(v);
         this.input("sourceTrack")
+        this.analysisPositionInputs = ["sourceTrack"];
     }
 
     apply(f, objectNode) {

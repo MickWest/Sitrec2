@@ -230,6 +230,21 @@ flat plane at zero height [above the WGS84 ellipsoid (HAE)](GIS.md#three-kinds-o
 *Ground Vehicle* puts the object where each line of sight meets that elevation; *Ground Object*
 fits one fixed point at it. For the ceiling the ground track gives, read **Ground Range**.
 
+## In the traverse analysis
+
+[Analyze Traverse Methods](TraverseAnalysis.md) reads **Camera + Ground Track** lines of sight as
+independent of the camera aim. Each line of sight runs from the camera position to the ground
+point, so the camera aim does not enter it. With **Camera Heading** set to *To Target*, the result
+therefore does not get the "Constructed LOS — validation only" banner that a camera-center LOS
+gets. The banner does appear when a frame in the analysis range has no ground point, or has a
+ground point at the camera position. Such a frame uses the camera aim.
+
+**Filtering and interpolation** at the top of the gallery has a **Ground track** row. It shows the
+**Interpolation** and **Between Points** settings, the number of placed points, the number inside
+the analysis range, their spacing in time, and the frames outside which the track holds still.
+For these lines of sight the summary lists the filters on the camera position. It does not list
+the filters on the camera aim, or on the track that the camera aims at.
+
 ## Cautions
 
 * A ground track is only as good as the camera **position** and the terrain — those are the two

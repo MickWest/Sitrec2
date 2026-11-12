@@ -1,4 +1,5 @@
 import {metricSmoothingWindow, trajectorySmoothingSettings} from "./SmoothingPolicy";
+import {analysisInputEdges, analysisNodeEnabled} from "./AnalysisDependencies";
 
 const methodNames = {
     none: "None", moving: "Moving average with polynomial edges",
@@ -103,19 +104,21 @@ function positionInfo(node, context) {
 export function captureInputFiltering(roots, context) {
     const rows = new Map();
     for (const {node: root, role, shallow = false} of roots) {
-        const visited = new Set();
+        const visited = new Map();
         const add = (key, node, info) => {
             if (rows.has(key)) {
                 const row = rows.get(key);
                 if (!row.roles.includes(role)) row.roles.push(role);
             } else rows.set(key, {source: sourceLabel(node, role), roles: [role], ...info});
         };
-        const visit = node => {
-            if (!node || visited.has(node) || (node.isController && node.enabled === false)) return;
-            if (node.isController && node.in?.enabled && !value(node.in.enabled)) return;
-            visited.add(node);
+        const visit = (node, component = "all") => {
+            if (!analysisNodeEnabled(node)) return;
+            const components = visited.get(node) ?? new Set();
+            if (components.has(component)) return;
+            components.add(component);
+            visited.set(node, components);
             if (typeof node.getObject === "function") {
-                if (!shallow) visit(node.getObject());
+                if (!shallow) visit(node.getObject(), component);
                 return;
             }
             if (node.smoothingKind === "position") add(node.id, node, positionInfo(node, context));
@@ -138,6 +141,18 @@ export function captureInputFiltering(roots, context) {
                 add(node.id, node, {method: `Manual pixel track: ${points.length <= 2 ? "Linear / held" : node.curveType}`,
                     status: points.length > 1 ? "active" : "off", duration: "No fixed filter window",
                     detail: points.length > 1 ? `Interpolation between ${points.length} keyframes, separated by ${seconds(min)}–${seconds(max)}.` : "No moving interpolated track."});
+            }
+            if (node.smoothingKind === "groundTracking") {
+                const frames = node.keyframes.map(point => point.frame).sort((a, b) => a - b);
+                const gaps = frames.slice(1).map((f, i) => (f - frames[i]) / context.fps);
+                const selected = frames.filter(f => f >= context.frame0 && f <= context.frame1).length;
+                add(node.id, node, {source: "Ground track",
+                    method: `Ground track interpolation: ${node.curveType} (${node.betweenPoints})`,
+                    status: frames.length > 1 ? "active" : "off", duration: "No fixed filter window",
+                    detail: frames.length > 1
+                        ? `${frames.length} keyframes (${selected} within the analysis window); frame spacing ${seconds(Math.min(...gaps))}–${seconds(Math.max(...gaps))}. Holds position outside frames ${frames[0]}–${frames.at(-1)}. Sightlines join camera and ground positions; missing or coincident points fall back to camera attitude.`
+                        : frames.length === 1 ? "One fixed ground point; no interpolation."
+                            : "No ground points; the LOS falls back to camera attitude."});
             }
             if (node.filterEnabled === true && node.filteredSlots) {
                 add(`${node.id}:outliers`, node, {method: "Bad-data acceleration filter", status: "active",
@@ -163,11 +178,7 @@ export function captureInputFiltering(roots, context) {
                 add(`${node.id}:${input}`, node, {method: `${label} moving average`, status: info.active ? "active" : "off", ...info});
             }
             if (shallow || node.isAnalysisSnapshot) return;
-            for (const [key, input] of Object.entries(node.in ?? node.inputs ?? {})) {
-                if (key === "smoothedTrack" && node.tiltType !== undefined
-                    && !["banking", "axialpush", "axialpull", "axialpushzerog", "axialpullzerog"].includes(node.tiltType.toLowerCase())) continue;
-                visit(input);
-            }
+            for (const edge of analysisInputEdges(node, context, component)) visit(edge.node, edge.component);
         };
         visit(root);
     }
