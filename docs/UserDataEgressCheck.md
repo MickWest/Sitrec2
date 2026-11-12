@@ -142,7 +142,7 @@ None of these happens until the user turns the feature on or takes the action. E
 
 - a literal `http(s)` host, or a `.php` name in browser code, with no entry in the allow-list fails the check;
 - a new `.php` file directly under `sitrecServer/` with no entry fails the check;
-- a position parameter on a line that also names a destination whose `mayReceive` has no position class fails the check.
+- a position parameter on a line that also names a destination whose `mayReceive` has no position class fails the check. A parameter is a position parameter when its name contains a position word, such as `lat`, `lon`, `altitude` or `position`. A name that contains such a word only by its spelling, such as `templates`, is listed in the scan (`HARMLESS_PARAM_NAMES`) and does not count.
 
 The scan only lists a host decided at run time, a WebSocket call, and a position on a line that names no destination. It cannot see inside a request body. So it also hands its listing to the second layer.
 

@@ -178,6 +178,21 @@ describe('security-scan-egress: the position rule', () => {
         expect(r.positionUrls).toHaveLength(1);
         expect(r.overBudget).toEqual([]);
     });
+
+    test('a parameter name that contains a position word only by its spelling is not a position', () => {
+        const r = scan(diffFor('src/Foo.js', ['    fetch(SITREC_SERVER + "metadata.php?templates=1", {mode: "cors"});']));
+        expect(r.verdict).toBe('CLEAR');
+        expect(r.overBudget).toEqual([]);
+        expect(r.knownEndpoints.map(e => e.endpoint)).toEqual(['metadata.php']);
+    });
+
+    test('a position beside such a name, and a longer name that starts with it, are still positions', () => {
+        for (const query of ['templates=1&lat=" + lat', 'templatesLat=" + lat']) {
+            const r = scan(diffFor('src/Foo.js', [`    fetch(SITREC_SERVER + "metadata.php?${query});`]));
+            expect(r.verdict).toBe('ATTENTION');
+            expect(r.overBudget.map(o => o.destination)).toEqual(['metadata.php']);
+        }
+    });
 });
 
 describe('security-scan-egress: scope', () => {

@@ -131,7 +131,15 @@ const IGNORED_HOST_RE = /(^|\.)(localhost|invalid|example|test)$|(^|\.)example\.
 // to whichever host that URL names, and is judged under that host's contract instead.
 const ENDPOINT_RE = /\b([A-Za-z0-9_.-]+\.php)\b/g;
 const ABSOLUTE_URL_RE = /https?:\/\/[^\s'"`)]+/gi;
-const POSITION_PARAM_RE = /[?&]([A-Za-z_]*(lat|lon|lng|latitude|longitude|altitude|coords?|position)[A-Za-z_]*)=/i;
+const POSITION_PARAM_RE = /[?&]([A-Za-z_]*(lat|lon|lng|latitude|longitude|altitude|coords?|position)[A-Za-z_]*)=/gi;
+// Parameter names that contain a position word only by their spelling ("templates"
+// contains "lat") and carry no position. The whole name must be equal, so "templatesLat"
+// is still a position, and so is a real position beside one of these names on the same
+// line. Add a name only when a real line needs it: the pattern above stays broad for all
+// other names, because a false report is loud and a missed position is silent.
+const HARMLESS_PARAM_NAMES = new Set(['templates']);
+const hasPositionParam = code => [...code.matchAll(POSITION_PARAM_RE)]
+    .some(match => !HARMLESS_PARAM_NAMES.has(match[1].toLowerCase()));
 const POSITION_TEMPLATE_RE = /https?:[^\n]*\$\{[^}]*\b(lat|lon|lng|latitude|longitude)\b/i;
 const looksLikeUrlLine = s => /https?:|\.php\b|SITREC_SERVER|searchParams|URLSearchParams|\bURL\s*\(/.test(s);
 
@@ -308,7 +316,7 @@ export function scanFiles(files, allow) {
             // A position on this line, aimed at whatever destination the line names. The
             // query-string form ("?lat=") is URL-shaped by itself; the template form needs
             // a scheme on the line.
-            const carriesPosition = POSITION_PARAM_RE.test(code) ||
+            const carriesPosition = hasPositionParam(code) ||
                 (looksLikeUrlLine(code) && POSITION_TEMPLATE_RE.test(code));
             let destinationNamed = false;
 
