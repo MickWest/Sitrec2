@@ -68,6 +68,7 @@ import {initializeSettings, SettingsSaver} from "./SettingsManager";
 import {CNodeCurveEditor2} from "./nodes/CNodeCurveEdit2";
 import {CNodeViewDAG} from "./nodes/CNodeViewDAG";
 import {CNodeNotes} from "./nodes/CNodeNotes";
+import {CNodeStarlinkUI} from "./nodes/CNodeStarlinkUI";
 import {CNodeViewThermalReadout} from "./nodes/CNodeViewThermalReadout";
 import {createCustomModalWithCopy, saveFilePrompted, saveFileToDirectory, saveFileToHandle} from "./FileUtils";
 import {deserializeMotionAnalysis, serializeMotionAnalysis} from "./CMotionAnalysisUI";
@@ -2907,6 +2908,24 @@ export const setupMethods = {
 
         // FloodSim is now a Scenario (Physics → Scenarios → Flood Sim) and is
         // only created when the user enables it — see scenarios/FloodSimScenario.
+
+        // Satellite Controls, the native control panel for satellite viewing. Created
+        // here (never in SitCustom.js), so that it is in new and in saved custom sitches
+        // before the mods of a save apply. It is last in setup(), because it mirrors
+        // controls that the nodes above make. A sitch shows it at the start with
+        // showSatelliteControls and asks for the sky layout with startSkyLayout (see
+        // SitStarlink.js). A save that still has the earlier definition of the node
+        // makes it from that definition, in the deferred pass.
+        const satelliteControlSources = ["lookView", "mainView", "NightSkyNode", "lookView_NightSkyOverlay",
+            "dateTimeStart", "fixedCameraPosition", "cameraTrackSwitch", "ptzAngles", "CameraLOSController"];
+        if (Sit.isCustom && Sit.starlinkViewing === undefined && !NodeMan.exists("starlinkViewing")
+            && satelliteControlSources.every(id => NodeMan.exists(id))) {
+            new CNodeStarlinkUI({
+                id: "starlinkViewing",
+                visible: !!Sit.showSatelliteControls,
+                startSkyLayout: !!Sit.startSkyLayout,
+            });
+        }
 
         this.setupSubSitches();
 

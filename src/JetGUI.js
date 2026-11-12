@@ -48,6 +48,8 @@ export function updateGUIFrames() {
         .name("Playback Speed")
         .tooltip("Multiplier on per-tick frame advance during playback. 1 = normal, 2 = 2x, 0.25 = quarter speed.")
 
+    NodeMan.get("dateTimeStart", false)?.groupTimeEditorControls?.();
+
 }
 
 

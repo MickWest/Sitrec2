@@ -227,6 +227,7 @@ describe("docs on disk", () => {
     // Top-level docs deliberately NOT in the Help menu: engineering references and
     // *-Internals docs linked from their user doc. Not a parking spot for working notes.
     const INTENTIONALLY_UNREGISTERED = new Set([
+        "ControlPanels",        // developer reference for control adapters and native widget composition
         "FitPointsAPI",          // API reference for agents driving the MCP bridge
         "TransitionToECEF",      // coordinate-frame reference, cited from CLAUDE.md
         "Wind-Internals",        // internals reference linked from Wind.md

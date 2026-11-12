@@ -90,6 +90,7 @@ import {
 } from "./GimbalCustomSetup";
 import {Color} from "three";
 import {registerGUIRoot, unregisterGUIRoot} from "./GUIRootRegistry";
+import {applyModernControls} from "./ModernControls";
 import {
     hookMirrorControllerDestroy,
     replacePropertyWithCleanup,
@@ -251,6 +252,7 @@ export const mirrorMethods = {
      * @param {GUI} standaloneMenu - Target standalone menu
      */
     setupDynamicMirroring(sourceFolder, standaloneMenu) {
+        applyModernControls(standaloneMenu);
         // console.log('setupDynamicMirroring called for sourceFolder:', sourceFolder._title || 'root');
 
         // Store reference to source for updates

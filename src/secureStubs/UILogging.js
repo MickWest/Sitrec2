@@ -11,6 +11,10 @@ export function buildMenuPath() {
     return null;
 }
 
+export function buildPanelPath() {
+    return null;
+}
+
 export function flushUILog() {
 }
 

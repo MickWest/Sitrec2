@@ -169,7 +169,7 @@ import {undoManager} from "./UndoManager";
 import {arModeManager} from "./ARMode";
 import {TileUsageTracker} from "./TileUsageTracker";
 import {debugLog} from "./DebugLog";
-import {getEnvBool} from "./envUtils";
+import {getEnv, getEnvBool} from "./envUtils";
 import {FeatureManager} from "./CFeatureManager";
 import {TimelineMarkers} from "./TimelineMarkers";
 import {CustomGraphManager} from "./CCustomGraphManager";
@@ -1926,7 +1926,9 @@ async function initializeOnce() {
 
         if (sitch.patchSatellites) {
             if (!sitch.files) sitch.files = {};
-            sitch.files.starLink = "!"+SITREC_SERVER+"proxy.php?request=CURRENT_STARLINK"
+            const request = sitch.patchSatellites === "active" && getEnv("CURRENT_ACTIVE", process.env.CURRENT_ACTIVE)
+                ? "CURRENT_ACTIVE" : "CURRENT_STARLINK";
+            sitch.files.starLink = "!" + SITREC_SERVER + "proxy.php?request=" + request;
         }
 
 

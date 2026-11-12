@@ -22,6 +22,8 @@ import {
 } from "../atmosphere/refraction";
 import {satelliteAppearance, satelliteECEF, satelliteSunlitFraction} from "../SatelliteBrightness";
 import {applySatelliteSizes, ensureSatelliteSizesLoaded} from "../SatelliteSizes";
+import {satelliteMatchesSearch} from "../StarlinkViewing";
+import {SatelliteSimulation, SIMULATED_SATELLITE_COLOR} from "../SatelliteSimulation";
 
 // The Earth's rotation rate, rad/s, about the ECEF z axis.
 const EARTH_ROTATION_RATE = 7.292115e-5;
@@ -37,7 +39,7 @@ export class CSatellite {
         this.showStarlink = true;
         this.showISS = true;
         this.showBrightest = true;
-        this.showOtherSatellites = false;
+        this.showOtherSatellites = options.showOtherSatellites ?? false;
         this.showSatelliteTracks = options.showSatelliteTracks ?? false;
         this.showFlareTracks = options.showFlareTracks ?? false;
         this.showSatelliteGround = options.showSatelliteGround ?? false;
@@ -47,9 +49,12 @@ export class CSatellite {
         this.labelLit = false;
         this.labelLookVisible = false;
         this.showSatelliteList = "";
+        this.nameFilter = "";
 
         // TLE Data
         this.TLEData = undefined;
+        this.simulateUnavailable = options.simulateUnavailable ?? false;
+        this.simulation = new SatelliteSimulation();
         this.tleFilterResults = null; // boolean[] from TLE filter dialog, or null (no filter active)
         this.tleFilterFrameData = null; // per-frame visibility from "any frame in range" mode
 
@@ -74,6 +79,24 @@ export class CSatellite {
         this.timeStep = 2000;
         this.setupBrightestArray();
 
+    }
+
+    get renderTLEData() {
+        return this._renderTLEData ?? this.TLEData;
+    }
+
+    get usingSimulatedSatellites() {
+        return !!this.renderTLEData?.simulated;
+    }
+
+    updateRenderCatalog(date, scene) {
+        const data = this.simulation.select(this.TLEData, date, this.simulateUnavailable);
+        if (data === this._cloudData) return false;
+        this.removeSatellites();
+        this._renderTLEData = data;
+        if (data) this.addSatellites(scene);
+        this.filterSatellites();
+        return true;
     }
 
     setupBrightestArray() {
@@ -717,6 +740,8 @@ export class CSatellite {
      */
     replaceTLE(tle) {
         this.removeSatellites();
+        this._renderTLEData = undefined;
+        this.simulation.invalidateCatalog();
         this.TLEData = new CTLEData(tle);
         this.TLEData.satData.forEach(sat => {
             sat.ecef = V3();
@@ -767,6 +792,7 @@ export class CSatellite {
         assert(this.TLEData !== undefined, "mergeTLE requires existing TLEData");
         const newData = new CTLEData(tle);
         this.TLEData.mergeFrom(newData);
+        this.simulation.invalidateCatalog();
         // Clear any active TLE filter — the boolean[] is indexed by satData position
         // and would be the wrong length after merge.
         this.tleFilterResults = null;
@@ -830,13 +856,13 @@ export class CSatellite {
     }
 
     removeSatellites() {
-        if (this.TLEData !== undefined) {
+        if (this._cloudData || this.lightCloud) {
             if (this.lightCloud) {
                 NodeMan.disposeRemove(this.lightCloud);
                 this.lightCloud = null;
             }
 
-            for (const [index, satData] of Object.entries(this.TLEData.satData)) {
+            for (const [index, satData] of Object.entries(this._cloudData?.satData ?? [])) {
                 if (satData.spriteText) {
                     if (satData.spriteText.parent) {
                         satData.spriteText.parent.remove(satData.spriteText);
@@ -849,20 +875,22 @@ export class CSatellite {
                 this.removeSatSunArrows(satData);
                 this.removeSatelliteArrows(satData);
             }
-            this.satData = undefined;
+            this._cloudData = undefined;
         }
     }
 
     addSatellites(scene, globeRadius = 1) {
-        assert(this.TLEData !== undefined, "addSatellites needs TLEData to be set");
+        assert(this.renderTLEData !== undefined, "addSatellites needs TLEData to be set");
 
         if (this.lightCloud) {
             NodeMan.disposeRemove(this.lightCloud);
             this.lightCloud = null;
         }
 
-        const len = this.TLEData.satData.length;
+        const len = this.renderTLEData.satData.length;
         this.scene = scene;
+        this._cloudData = this.renderTLEData;
+        if (len === 0) return;
 
         this.lightCloud = new CPointLightCloud({
             id: "SatelliteLightCloud",
@@ -894,11 +922,13 @@ export class CSatellite {
         this.lightCloud.mainViewPoints.layers.mask = LAYER.MASK_MAIN;
 
         for (let i = 0; i < len; i++) {
-            const sat = this.TLEData.satData[i];
+            const sat = this.renderTLEData.satData[i];
             sat.ecef = V3();
 
             let color = new Color(0xF0F0FF);
-            if (sat.name.includes("STARLINK")) {
+            if (sat.simulated) {
+                color = new Color(SIMULATED_SATELLITE_COLOR);
+            } else if (sat.name.includes("STARLINK")) {
                 const name = sat.name.replace("0 STARLINK", "SL").replace("STARLINK", "SL").replace(/\s+$/, '');
                 color = name.length > 7 ? new Color(0xFFA080) : new Color(0xFFFFC0);
             }
@@ -915,7 +945,12 @@ export class CSatellite {
      * Filter which satellites are visible based on user settings
      */
     filterSatellites() {
-        if (this.TLEData === undefined) return;
+        for (const data of new Set([this.TLEData, this.renderTLEData])) {
+            if (data) this.filterCatalog(data);
+        }
+    }
+
+    filterCatalog(data) {
 
         // first get the satellite list into an array of NORAD numbers
         const satList = this.showSatelliteList.split(",").map(x => x.trim());
@@ -924,7 +959,7 @@ export class CSatellite {
         for (let i = 0; i < satList.length; i++) {
             const num = parseInt(satList[i]);
             if (isNaN(num)) {
-                const matching = this.TLEData.getMatchingRecords(satList[i]);
+                const matching = data.getMatchingRecords(satList[i]);
                 // add the "matching" array to the list
                 if (matching.length > 0) {
                     for (const number of matching) {
@@ -941,7 +976,7 @@ export class CSatellite {
 
         // iterate over the satellites and flag visibility
         // based on the name and the GUI flags
-        for (const satData of this.TLEData.satData) {
+        for (const satData of data.satData) {
 
             // this is just a clean time to remove the debug arrows
             // they will get recreated for all visible satellites
@@ -954,7 +989,7 @@ export class CSatellite {
             if (!this.showSatellites)
                 continue;
 
-            if (satData.name.startsWith("STARLINK")) {
+            if (satData.simulated || satData.name.startsWith("STARLINK")) {
                 filterHit = true;
                 if (this.showStarlink) {
                     satData.visible = true;
@@ -1002,11 +1037,18 @@ export class CSatellite {
             }
         }
 
+        // Search narrows the current categories, unlike the additive satellite list.
+        if (this.nameFilter?.trim()) {
+            for (const sat of data.satData) {
+                sat.visible = sat.visible && satelliteMatchesSearch(sat, this.nameFilter);
+            }
+        }
+
         // Apply TLE filter results (from Filter TLEs dialog) as an AND on top of category filters
-        if (this.tleFilterResults) {
-            for (let i = 0; i < this.TLEData.satData.length; i++) {
+        if (this.tleFilterResults && !data.simulated) {
+            for (let i = 0; i < data.satData.length; i++) {
                 if (!this.tleFilterResults[i]) {
-                    this.TLEData.satData[i].visible = false;
+                    data.satData[i].visible = false;
                 }
             }
         }
@@ -1041,7 +1083,7 @@ export class CSatellite {
                 return {ecef: trackValue.position};
             }
             // Fallback to live TLE satData
-            const satData = this.TLEData.getRecordFromNORAD(trackNode.norad);
+            const satData = this.TLEData?.getRecordFromNORAD(trackNode.norad);
             if (!satData || !satData.ecef || satData.invalidPosition) return null;
             return {ecef: satData.ecef};
         } catch {
@@ -1076,9 +1118,9 @@ export class CSatellite {
      */
     _bestSatCacheFor(numSats) {
         let c = this._bestSatCache;
-        if (!c || c.tleData !== this.TLEData || c.lo.length !== numSats) {
+        if (!c || c.tleData !== this.renderTLEData || c.lo.length !== numSats) {
             c = this._bestSatCache = {
-                tleData: this.TLEData,
+                tleData: this.renderTLEData,
                 lo: new Float64Array(numSats).fill(NaN),
                 hi: new Float64Array(numSats).fill(NaN),
                 epochMS: new Float64Array(numSats),
@@ -1091,12 +1133,12 @@ export class CSatellite {
     }
 
     updateAllSatellites(date, options = {}) {
-        if (!this.TLEData || !this.lightCloud) {
+        if (!this.renderTLEData || !this.lightCloud) {
             return;
         }
 
         const timeMS = date.getTime();
-        const numSats = this.TLEData.satData.length;
+        const numSats = this.renderTLEData.satData.length;
 
         if (numSats < 100) {
             this.timeStep = 100;
@@ -1147,7 +1189,7 @@ export class CSatellite {
         const maxTLEAgeMS = maxTLEAgeDays * 24 * 60 * 60 * 1000;
 
         for (let i = 0; i < numSats; i++) {
-            const satData = this.TLEData.satData[i];
+            const satData = this.renderTLEData.satData[i];
             // The cache is dropped if the satrecs array is replaced or grows (merged TLEs).
             const satrecs = satData.satrecs;
             let satrec;
@@ -1298,7 +1340,7 @@ export class CSatellite {
             // Per-frame TLE filter: if "any frame in range" precalculated data exists,
             // check whether this satellite is visible at the current time.
             let tleFrameHidden = false;
-            if (this.tleFilterFrameData && satData.visible && !satData.invalidPosition) {
+            if (!this.usingSimulatedSatellites && this.tleFilterFrameData && satData.visible && !satData.invalidPosition) {
                 const fd = this.tleFilterFrameData.perSat[i];
                 if (fd === 'off') {
                     tleFrameHidden = true;

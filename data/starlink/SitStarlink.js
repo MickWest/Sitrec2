@@ -21,7 +21,7 @@ export const SitStarlink = {
     // TerrainModel: {kind: "Terrain", lat: 34, lon: -118.3, zoom: 7, nTiles: 3, fullUI: true, dynamic: false},
 
 
-    patchSatellites: true, // this is a custom patch to the satellites, normally programattically done in SitNightSky.js
+    patchSatellites: "active", // Start with all current active satellites, including Starlink.
     //
      fps: 30,
      frames: 3000, // 100 seconds at 30 fps
@@ -34,13 +34,22 @@ export const SitStarlink = {
 
     nightSky: {
         starLink: "starLink",
+        showOtherSatellites: true,
         showConstellations: true,
-        showEquatorialGrid: true,
-        showEquatorialGridLook: true,
+        showEquatorialGrid: false,
+        showEquatorialGridLook: false,
+        showHorizonCompassRibbonLook: true,
     },
 
+    // Satellite Controls start visible, and set the initial sky layout. The custom view
+    // effects and any saved view positions stay. CCustomManager.setup() makes the panel.
+    showSatelliteControls: true,
+    startSkyLayout: true,
+    fovUI: {kind: "GUIValue", value: 50, start: 0, end: 180, step: 0.001,
+        desc: "vFOV", gui: "cameraFOV", hidden: true,
+        tooltip: "Stored vertical field of view, in degrees, for the Manual Camera FOV source. Set it with VFOV (deg)."},
     // this is the same as in SitCustom.js, but with el set to 10
-    ptzAngles: {kind: "PTZUI", az: 0, el: 10, roll: 0, fov: 30, showGUI: true, gui: "camera"},
+    ptzAngles: {kind: "PTZUI", az: 0, el: 10, roll: 0, fov: 50, showGUI: true, gui: "cameraHeading"},
 
 
 }

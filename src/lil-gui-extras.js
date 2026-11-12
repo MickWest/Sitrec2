@@ -628,11 +628,18 @@ GUI.prototype.setDoubleClickAction = function (buttonController) {
 }
 
 
+// A Main/Look pair is one menu row. Reordering either controller must move
+// that row intact, without changing its caption/Main/Look order.
+function controllerMenuRow(controller) {
+    return controller._checkboxPair?.domElement ?? controller.domElement;
+}
+
 // Move a controller to the top of its parent
 Controller.prototype.moveToFirst = function () {
-    const parentElement = this.domElement.parentElement;
+    const row = controllerMenuRow(this);
+    const parentElement = row.parentElement;
     if (parentElement) {
-        parentElement.insertBefore(this.domElement, parentElement.firstChild);
+        parentElement.insertBefore(row, parentElement.firstChild);
 
         // Find the parent GUI and trigger a refresh of any mirrored GUIs
         let parentGui = this.parent;
@@ -665,9 +672,10 @@ GUI.prototype.moveToFirst = function () {
 
 
 Controller.prototype.moveToEnd = function () {
-    const parentElement = this.domElement.parentElement;
+    const row = controllerMenuRow(this);
+    const parentElement = row.parentElement;
     if (parentElement) {
-        parentElement.appendChild(this.domElement);
+        parentElement.appendChild(row);
 
         // Find the parent GUI and trigger a refresh of any mirrored GUIs
         let parentGui = this.parent;
@@ -756,13 +764,14 @@ GUI.prototype._triggerMirrorRefresh = function () {
 }
 
 Controller.prototype.moveAfter = function (name) {
-    const parentElement = this.domElement.parentElement;
+    const row = controllerMenuRow(this);
+    const parentElement = row.parentElement;
     if (parentElement) {
         // find the child with the name
         const children = Array.from(parentElement.children);
-        const child = children.find(c => c.querySelector('.name').innerText === name);
+        const child = children.find(c => c !== row && c.querySelector(':scope > .name')?.textContent === name);
         if (child) {
-            parentElement.insertBefore(this.domElement, child.nextSibling);
+            parentElement.insertBefore(row, child.nextSibling);
 
             // Find the parent GUI and trigger a refresh of any mirrored GUIs
             let parentGui = this.parent;

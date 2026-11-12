@@ -313,9 +313,9 @@ export class CUIBar {
         let pressTwin = null;
         let restore;                           // where a snap icon found the control
         // A lil-gui function controller IS its bound function, so running it is calling that.
-        const run = (t) => t?.object?.[t.property]?.();
+        const run = (t) => t?.$button?.click();
         const click = () => {
-            if (!twin) return;
+            if (!twin || twin._disabled) return;
             if (value === undefined) {
                 twin.setValue(!twin.getValue());
             } else if (twin.getValue() !== value) {
@@ -489,6 +489,7 @@ export class CUIBar {
         };
         const sync = () => {
             if (!twin) return;
+            input.disabled = twin._disabled;
             const v = twin.getValue();
             if (v !== offValue) lastOn = v;
             if (Number.isFinite(twin._min)) input.min = String(twin._min);
@@ -541,9 +542,10 @@ export class CUIBar {
             window.addEventListener('pointerup', () => { dragging = false; scheduleHide(); }, {once: true});
         });
         input.addEventListener('input', () => {
-            if (!twin) return;
+            if (!twin || twin._disabled) return;
             twin.setValue(clamp(parseFloat(input.value)));
         });
+        input.addEventListener('change', () => twin?._callOnFinishChange());
         (this._popups ??= []).push(popup);
 
         this._toggleHost().addMirror(key, {
@@ -696,7 +698,7 @@ export class CUIBar {
         if (!this._peeks) return;
         for (const peek of this._peeks) {
             const {btn, ghost} = peek;
-            const show = !this.shown && btn.style.display !== 'none' && peek.isOn();
+            const show = !this.shown && !btn.disabled && btn.style.display !== 'none' && peek.isOn();
             const changed = show !== peek.showing;
             if (changed) {
                 peek.showing = show;
@@ -908,6 +910,11 @@ function paintIcon(btn, on) {
 
 function bindControlIcon(btn, twin, {value, label, tooltip, onPaint} = {}) {
     const paint = () => {
+        const name = tooltip ?? label ?? twin._name ?? '';
+        btn.title = tooltip ?? (twin._tooltip ? `${name} — ${twin._tooltip}` : name);
+        btn.setAttribute('aria-label', name);
+        btn.disabled = !!twin._disabled;
+        btn.style.cursor = btn.disabled ? 'default' : 'pointer';
         paintIcon(btn, value === undefined ? !!twin.getValue() : twin.getValue() === value);
         onPaint?.();
     };
@@ -919,17 +926,14 @@ function bindControlIcon(btn, twin, {value, label, tooltip, onPaint} = {}) {
     // their internals ("compassMain"), which is no use over a button. A SNAP icon does something
     // the control's own label does not describe ("Video Zoom %" is not what a 100% button does),
     // so those bring their own line and use it for both.
-    const name = tooltip ?? label ?? twin._name ?? '';
-    btn.title = tooltip ?? (twin._tooltip ? `${name} — ${twin._tooltip}` : name);
-    if (name) btn.setAttribute('aria-label', name);
-
     // updateDisplay is the one call every path into the value ends at, so it is the one place
     // the icon has to repaint from.
     andThen(twin, 'updateDisplay', paint);
+    andThen(twin, 'disable', paint);
     andThen(twin, 'show', showHide);
     andThen(twin, 'destroy', () => { btn.style.display = 'none'; onPaint?.(); });
-    showHide();
     paint();
+    showHide();
 }
 
 // Run `after` whenever `method` is called on `controller`, keeping the original behaviour and

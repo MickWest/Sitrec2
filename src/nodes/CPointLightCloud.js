@@ -75,6 +75,7 @@ import {sharedUniforms} from "../js/map33/material/SharedUniforms";
 import {refractionUniforms, REFRACTION_VERTEX_GLSL} from "../atmosphere/refraction";
 import {aberrationUniforms, ABERRATION_VERTEX_GLSL} from "../CelestialMath";
 import {fisheyeUniforms, FISHEYE_VERTEX_GLSL} from "../FisheyeProjection";
+import {STABLE_POINT_SAMPLING_GLSL} from "../PointSpriteSampling";
 
 /**
  * GPU-accelerated point light cloud renderer for stars, satellites, and similar objects.
@@ -219,6 +220,8 @@ export class CPointLightCloud extends CNode3D {
                }`
             : '';
 
+        const stableSubpixel = this.useSizeRange && !this.hdrPoint;
+        const subpixelVaryings = stableSubpixel ? 'varying float vSourceSize; varying float vRasterSize;' : '';
         const sizeCalc = this.hdrPoint
             // Fixed size, intensity carries the magnitude. minPointSize stays a couple of
             // pixels rather than one: a true 1-pixel point aliases badly as the camera moves,
@@ -226,8 +229,12 @@ export class CPointLightCloud extends CNode3D {
             ? `gl_PointSize = minPointSize * baseScale;
                vAlpha = 1.0;`
             : this.useSizeRange
-            ? `float size = mix(minPointSize, maxPointSize, effectiveBrightness) * baseScale;
-               gl_PointSize = size;
+            ? `float size = max(0.0, mix(minPointSize, maxPointSize, effectiveBrightness) * baseScale);
+               vSourceSize = size;
+               // Three render pixels cover the full reconstruction kernel. This
+               // floor is independent of FOV, distance and brightness scaling.
+               vRasterSize = max(size, 3.0);
+               gl_PointSize = vRasterSize;
                vAlpha = 1.0;`
             : `float desiredSize = effectiveBrightness * baseScale;
                // Clamp to minimum pixel size to prevent sub-pixel flickering
@@ -252,6 +259,7 @@ export class CPointLightCloud extends CNode3D {
             varying vec3 vColor;
             varying float vAlpha;
             varying float vBrightness;
+            ${subpixelVaryings}
             ${this.useLogDepth ? 'varying float vDepth;' : ''}
 
             ${useRefraction ? ABERRATION_VERTEX_GLSL + REFRACTION_VERTEX_GLSL : ''}
@@ -295,7 +303,9 @@ export class CPointLightCloud extends CNode3D {
             varying vec3 vColor;
             varying float vAlpha;
             varying float vBrightness;
+            ${subpixelVaryings}
             ${this.useLogDepth ? 'varying float vDepth;' : ''}
+            ${stableSubpixel ? STABLE_POINT_SAMPLING_GLSL : ''}
             
             void main() {
                 if (vBrightness <= 0.0) {
@@ -303,8 +313,10 @@ export class CPointLightCloud extends CNode3D {
                 }
                 
                 vec2 centered = gl_PointCoord - 0.5;
-                float dist = length(centered) * 2.0;
-                float alpha = 1.0 - smoothstep(uRadius, 1.0, dist);
+                ${stableSubpixel
+                    ? 'float alpha = stablePointAlpha(centered * vRasterSize, vSourceSize, uRadius);'
+                    : `float dist = length(centered) * 2.0;
+                       float alpha = 1.0 - smoothstep(uRadius, 1.0, dist);`}
                 alpha *= vAlpha;
                 ${this.hdrPoint
                     // Intensity, not coverage. uIntensityScale carries the global brightness

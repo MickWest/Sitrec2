@@ -1,3 +1,4 @@
+import {SIMULATED_SATELLITE_COLOR} from "../SatelliteSimulation";
 // CNodeDisplaySkyOverlay takes a CNodeCanvas derived node, CNodeDisplayNightSky and a camera
 // and displays star names on an overlay
 import {CNodeViewUI} from "./CNodeViewUI";
@@ -485,13 +486,13 @@ export class CNodeDisplaySkyOverlay extends CNodeViewUI {
 
     renderSatelliteNames(camera, earthSphere, starAlpha = 1) {
         const satellites = this.nightSky.satellites;
-        if (!satellites.TLEData) return;
+        if (!satellites.renderTLEData) return;
 
         const isLookView = this.overlayView.id === "lookView";
         const isMainView = this.overlayView.id === "mainView";
 
         const cameraPos = this.camera.position;
-        const satData = satellites.TLEData.satData;
+        const satData = satellites.renderTLEData.satData;
         const numSats = satData.length;
 
         const labelList = this.nightSky.labelListPrefixes;
@@ -581,6 +582,7 @@ export class CNodeDisplaySkyOverlay extends CNodeViewUI {
 
             const [x, y] = this.labelXY(screenPos);
 
+            this.ctx.fillStyle = (sat.simulated ? SIMULATED_SATELLITE_COLOR : "#ffffff") + alphaHex;
             this.ctx.fillText(satelliteLabelText(sat), x + 5, y - 5)
         }
     }

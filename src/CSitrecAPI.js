@@ -969,7 +969,8 @@ class CSitrecAPI {
                     const nightSky = NodeMan.get("NightSkyNode");
                     if(nightSky) {
                         nightSky.showFlareRegion = true;
-                        nightSky.flareRegionGroup.visible = true;
+                        nightSky.applyFlareRegionLookMask();
+                        setRenderOne(true);
                     }
                 }
             },
@@ -980,7 +981,9 @@ class CSitrecAPI {
                     const nightSky = NodeMan.get("NightSkyNode");
                     if(nightSky) {
                         nightSky.showFlareRegion = false;
-                        nightSky.flareRegionGroup.visible = false;
+                        nightSky.showFlareRegionLook = false;
+                        nightSky.applyFlareRegionLookMask();
+                        setRenderOne(true);
                     }
                 }
             },

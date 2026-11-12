@@ -45,8 +45,9 @@ stays the same and the duration changes.
 
 At frame 0 the two are the same. Both are stored in UTC.
 
-The Year, Month, Day, Hour, Minute, Second and ms sliders in the Time menu show the **Now
-Time**. When you change one of them, Sitrec keeps the current frame where it is and moves
+The Time menu's editor opens in **Edit Playhead** mode, showing **Now Time**. The
+Year, Month, Day, Hour, Minute, Second and ms sliders also show Now Time.
+When you change it, Sitrec keeps the current frame where it is and moves
 the Start Time by the same amount. This is the easy way to sync: go to a frame where
 something distinctive happens in the video, then set the date and time of that moment. The
 Start Time follows.
@@ -264,15 +265,57 @@ below. The Start Time is the date and time of the first video frame.
 
 ## The Time menu
 
-The Time menu has the controls below. They are grouped here by what they do. **Timing
-Analysis...** has [its own section](#timing-analysis).
+The Time menu opens with the date and time editor. The same editor is at the top of
+**Satellites → Satellite Controls**. Both use the same scene time and time zone.
+
+### Scrubbing and setting the clock
+
+From the top, the editor shows the date, the time, a row with the milliseconds, the frame
+number and the playback state, the time zone, the **Edit Playhead** and **Edit Start**
+buttons, the playback buttons, and a field to paste a date and time.
+
+Choose **Edit Playhead** to date the video frame you are looking at, or **Edit Start**
+to date frame 0, the beginning of the recording. Each button's tooltip shows its exact timestamp.
+Editing pauses playback and leaves the current frame fixed; the scene's Start Time and
+Now Time move together. Use the playback bar to scrub through video frames instead.
+
+- **Drag date or time digits left/right** to scrub time continuously. The clock carries
+  across minute, hour and day boundaries. Month/year steps clamp the day to the end of a
+  shorter month. Hold **Shift** before dragging for steps ten times larger.
+- **Click the left/right half of a number** to subtract/add one unit. There are no separate
+  step buttons. Hold **Shift** to step ten units.
+- **Tab / Shift+Tab** selects the next/previous date or time number, wrapping between year
+  and milliseconds and skipping the other controls. Type a value, then press Enter or Tab.
+  Use **↑/↓** for one-unit
+  steps, **Shift + ↑/↓** or **Page Up/Down** for ten. The mouse wheel scrolls the panel.
+  **Escape** discards an unfinished entry and leaves the editor.
+- The calendar icon opens the date picker. The **ms** field keeps precise video timing;
+  adjusting larger units preserves its value.
+- **Undo** reverses a time edit, including a whole drag. It is shared between
+  the menu and panel. Setting time through other controls clears the available editor undo.
+- **Time zone** explicitly selects UTC or a named fixed offset for editing. Changing it
+  does not move the instant or stop Live mode. **From camera** selects the zone at the
+  camera location on the scene date. Fixed offsets do not automatically change with daylight
+  saving time; select the offset in effect for the event.
+- **Play/Pause** runs or stops playback. **Live** follows the real clock; click it again or
+  edit a date/time field to stop following. The speed selector changes Simulation Speed
+  and resets the playback multiplier to 1; changing it keeps Now Time fixed.
+- The **Paste a date & time** field accepts an ISO timestamp such as
+  `2026-11-08 21:30:00.125Z` or `2026-11-08T13:30:00.125-08:00`. Press **Enter** to set the
+  time. Without a suffix, it uses the selected time zone. **Now once**, beside the field,
+  dates the current frame with the real clock once, then stays paused.
+
+**Date & time sliders** retains the original sliders and UTC reference strings.
+**Timeline & synchronization** contains duration, frame rate, frame selection, playback,
+track syncing and other timing tools. Their existing menu/API paths are unchanged.
+The controls are described below. **Timing Analysis...** has [its own section](#timing-analysis).
 
 ### Date and time
 
 | Control | Default | What it does |
 |---|---|---|
 | **Live Mode** | Off | Keeps the simulation at the real current time. Playback pauses, and the current frame stays at the middle of the timeline while the Now Time follows the clock. It turns off when you scrub or set the time. It is not saved with a sitch. Some sitches start in Live Mode |
-| **startTime** | | The Start Time (the time of frame 0), in UTC, for reference. Change the time with the sliders below |
+| **startTime** | | The Start Time (the time of frame 0), in UTC, read-only. Choose **Edit Start** in the editor to change it |
 | **nowTime** | | The Now Time (the time of the current frame), in UTC, for reference |
 | **Year**, **Month**, **Day**, **Hour**, **Minute**, **Second**, **ms** | The sitch's date | The Now Time. When you drag one slider past its end, the slider above it changes too (for example, Minute past 59 adds an hour). They are UTC, or the selected time zone if **Use Time Zone in UI** is on. Double-click a label to return that field to the date the sitch was loaded, saved, or set from a file |
 | **Note** | Hidden | Shows only for a date that needs care: *Before 1957 - no artificial satellites existed*, or *Outside 1700-2200 - Sun, Moon and planet positions degrade*. See [Historic Skies](HistoricSkies.md) |

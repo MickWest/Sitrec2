@@ -79,11 +79,75 @@ export function buildMenuPath(el) {
     return path;
 }
 
-function onMouseDown(event) {
-    const path = buildMenuPath(event.target);
+// The label of a native control, as the user sees it.
+function panelControlLabel(control) {
+    // A row of a native control group has its name in a label element. A Main/Look
+    // pair has one name for two checkboxes, so the letter tells them apart.
+    const row = control.closest('.native-control');
+    if (row) {
+        const pair = row.closest('.native-control-pair');
+        const name = (pair ?? row).querySelector(':scope > .native-control-label')?.textContent.trim();
+        const letter = pair ? row.querySelector('.native-control-letter')?.textContent.trim() : '';
+        return [name, letter].filter(Boolean).join(' ') || control.getAttribute('aria-label');
+    }
+    const text = control.textContent.trim();
+    if (control.matches('button, summary, [role="menuitem"]') && text) return text;
+    const wrapper = control.closest('label');
+    const wrapperText = wrapper ? Array.from(wrapper.childNodes)
+        .filter(node => node !== control && !node.contains?.(control)).map(node => node.textContent).join(' ').trim() : '';
+    return control.getAttribute('aria-label') || wrapperText || control.getAttribute('placeholder') || control.title || null;
+}
+
+/**
+ * Build the path for a click in a native panel: a widget, the date and time editor, or a
+ * native control group. Returns a string like "Satellite Controls/Time & playback/Edit Start",
+ * or null if the click was not on a control of a native panel.
+ *
+ * Each widget host has its path in `data-widget-path` (see WidgetPanel.createHost). The
+ * path is the one of its home, so it stays the same when the widget is in a rail or a float.
+ * The date and time editor in the Time menu has no widget; its path starts with the menu.
+ */
+export function buildPanelPath(el) {
+    if (!el || !el.closest) return null;
+    const control = el.closest('button, select, input, textarea, summary, [role="menuitem"]');
+    if (!control) return null;
+    const host = control.closest('[data-widget-path]');
+    if (!host && !control.closest('.sitrec-time-editor, .native-controls')) return null;
+
+    const parts = [];
+    if (host) parts.push(host.dataset.widgetPath);
+    else {
+        // No widget: start from the titles of the menus that hold the control.
+        for (let gui = control.closest('.lil-gui'); gui; gui = gui.parentElement?.closest('.lil-gui')) {
+            const label = gui.querySelector(':scope > .title')?.textContent.trim();
+            if (label) parts.unshift(label);
+        }
+    }
+    // A click on a widget title is the widget itself. Other controls add their label.
+    if (!control.classList.contains('widget-title')) {
+        const label = panelControlLabel(control);
+        if (label) parts.push(label);
+    }
+    if (parts.length === 0) return null;
+    return parts.join('/').slice(0, MAX_PATH_LEN);
+}
+
+function record(path) {
     if (!path) return;
     if (buffer.length >= MAX_BUFFER) return;   // drop rather than grow unbounded
     buffer.push({ts: Date.now(), path});
+}
+
+function onMouseDown(event) {
+    record(buildMenuPath(event.target));
+}
+
+// Native panels are recorded from pointerdown. Some of their controls (a digit that
+// scrubs, a slider) prevent the default action of the pointer, and then the browser
+// sends no mousedown. A menu element gives no panel path, so no click is recorded twice.
+function onPointerDown(event) {
+    if (event.isPrimary === false || event.button > 0) return;
+    record(buildPanelPath(event.target));
 }
 
 /**
@@ -130,6 +194,7 @@ export function initUILogging() {
 
     // Capture phase so we see the click even if a handler stops propagation.
     document.addEventListener("mousedown", onMouseDown, true);
+    document.addEventListener("pointerdown", onPointerDown, true);
 
     setInterval(() => flushUILog(false), FLUSH_INTERVAL_MS);
 

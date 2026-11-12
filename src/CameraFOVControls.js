@@ -17,10 +17,15 @@ export function updateCameraFOVControls() {
     const fish = !!Globals.fisheye?.enabled;
     const pano = !!Globals.panoramic?.enabled;
     const setActive = (controller, active) => {
+        const changed = controller.domElement.classList.contains("camera-projection-inactive") !== !active
+            || controller.domElement.inert !== !active;
         controller.domElement.classList.toggle("camera-projection-inactive", !active);
         // Inert blocks pointer and keyboard interaction without overwriting the
         // controller's own disabled state (e.g. the read-only aspect readout).
         controller.domElement.inert = !active;
+        // Also synchronize mirrored controls when their value has not changed,
+        // including while a paused scene is not polling its menus.
+        if (changed) controller.updateDisplay();
     };
     for (const controller of parent.controllers) setActive(controller, !fish && !pano);
     for (const folder of parent.folders) {

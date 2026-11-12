@@ -854,8 +854,8 @@ export const mouseMethods = {
                     .tooltip(t("view3d.celestial.tips.magnitude"));
             }
         } else if (celestialObject.type === 'satellite') {
-            standaloneMenu.add({noradNum: String(celestialObject.number)}, 'noradNum').name(t("view3d.celestial.noradNumber")).listen().disable()
-                .tooltip(t("view3d.celestial.tips.noradNumber"));
+            standaloneMenu.add({noradNum: String(celestialObject.number)}, 'noradNum').name(celestialObject.data.simulated ? "Simulation ID" : t("view3d.celestial.noradNumber")).listen().disable()
+                .tooltip(celestialObject.data.simulated ? "Identifier for this simulated point, not a real NORAD catalog number." : t("view3d.celestial.tips.noradNumber"));
             standaloneMenu.add({name: celestialObject.name}, 'name').name(t("view3d.celestial.name")).listen().disable()
                 .tooltip(t("view3d.celestial.tips.name"));
             for (const [key, value] of satelliteInfoRows(celestialObject.data)) {
@@ -885,7 +885,7 @@ export const mouseMethods = {
         // TLE data (e.g. two satellites called SAPPHIRE) and a name lookup returns the
         // first match, which could be a different satellite than the one clicked.
         // setSatelliteText() resolves the number and then puts the name in the field.
-        if (celestialObject.type === 'satellite') {
+        if (celestialObject.type === 'satellite' && !celestialObject.data.simulated) {
             const satTrackActions = {};
             const satTrackSlots = [
                 ["satelliteTrack", "satTrack1", "view3d.celestial.satTrack1", "Sat Track 1"],
@@ -1040,7 +1040,7 @@ export const mouseMethods = {
         // IMPORTANT: Unlike stars/planets which are in GlobalNightSkyScene (rendered with camera at origin),
         // satellites are in GlobalScene (rendered with camera at its actual position).
         // So we must use the actual camera position for satellite direction calculation.
-        if (nightSkyNode.TLEData && nightSkyNode.TLEData.satData) {
+        if (nightSkyNode.satellites.renderTLEData && nightSkyNode.satellites.renderTLEData.satData) {
             // Restore camera position temporarily for satellite picking
             this.camera.position.copy(savedCameraPos);
             this.camera.updateMatrixWorld();
@@ -1048,8 +1048,8 @@ export const mouseMethods = {
             const maxSatPixelDistance = 15;
             let closestSatDistance = maxSatPixelDistance;
 
-            for (const satData of nightSkyNode.TLEData.satData) {
-                if (!satData.visible || !satData.ecef) continue;
+            for (const satData of nightSkyNode.satellites.renderTLEData.satData) {
+                if (!satData.visible || !satData.ecef || satData.invalidPosition || satData.tleFrameHidden) continue;
 
                 // Project the rendered (apparent) position so the picker
                 // hits the dot the user sees. ecefApparent equals ecef when

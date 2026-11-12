@@ -26,7 +26,9 @@ export class CNodeSatelliteTrack extends CNodeTrack {
 
          const name = v.name ?? "Satellite To Track";
 
-         guiMenus.satellites.add(this, "satelliteText").name(name).onFinishChange(v => {
+         const tracksGUI = guiMenus.satellites.getFolder("Tracks & Guides")
+             ?? guiMenus.satellites.addFolder("Tracks & Guides").close();
+         tracksGUI.add(this, "satelliteText").name(name).onFinishChange(v => {
              this.setSatelliteText(this.satelliteText);
          }).listen().tooltip("Name or NORAD catalog number of a satellite. Sitrec makes its orbit into a track for the whole sitch. The start of a name is enough, for example ISS.\nThe satellite must be in the loaded satellite data, or the field shows \"not found\".");
 

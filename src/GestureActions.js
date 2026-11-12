@@ -142,6 +142,9 @@ export function gestureHelp(profile) {
 export const NATIVE_INTERACTION_BOUNDARIES = Object.freeze({
     "CUIBar.js": "Native menu buttons and header click controls",
     "BigSlider.js": "Range slider with pointer capture and cancellation",
+    "NativeControls.js": "Native property inputs and source-backed numeric gestures",
+    "TimeEditor.js": "Shared date digits with scrub and edit cancellation",
+    "WidgetDocking.js": "Native widget title dragging, docking and cancellation",
     "lil-gui-extras.js": "GUI folders, menus and value controls",
     "lil-gui-slider-settings.js": "Native value-field settings",
     "CheckboxDragPaint.js": "GUI checkbox drag-to-set",

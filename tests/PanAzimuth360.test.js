@@ -311,19 +311,21 @@ describe("a mirrored copy of the menu", () => {
         const {ptz, pan} = makePTZ();
         const a = new GUI({autoPlace: false}), b = new GUI({autoPlace: false});
         const twinA = pan.mirrorTo(a);
+        const rangeHook = pan.max;
         const twinB = pan.mirrorTo(b);
+        expect(pan.max).toBe(rangeHook);
 
         ptz.pan360 = true;
         ptz.updatePanRange();
         expect(twinA._max).toBe(360);
         expect(twinB._max).toBe(360);
-        expect(pan._menuMirrorRangeTwins.length).toBe(2);
 
         // A closed mirror menu drops out rather than being carried for ever.
         twinA.destroy();
+        const updateDestroyed = jest.spyOn(twinA, "updateDisplay");
         ptz.pan360 = false;
         ptz.updatePanRange();
-        expect(pan._menuMirrorRangeTwins).toEqual([twinB]);
+        expect(updateDestroyed).not.toHaveBeenCalled();
         expect(twinB._min).toBe(-180);
     });
 

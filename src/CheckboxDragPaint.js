@@ -26,9 +26,9 @@ function stopCancellingClicks() {
 
 function checkboxAt(target) {
     if (!(target instanceof Element)) return null;
-    if (!target.closest(".lil-gui")) return null;
+    if (!target.closest(".lil-gui, [data-checkbox-paint]")) return null;
     if (target.matches?.('input[type="checkbox"]')) return target;
-    const row = target.closest(".controller.boolean");
+    const row = target.closest(".controller.boolean, [data-checkbox-row]");
     return row ? row.querySelector('input[type="checkbox"]') : null;
 }
 

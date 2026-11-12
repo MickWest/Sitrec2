@@ -23,9 +23,8 @@
 // src/GUIRootRegistry.js, and note that a menu which forgets to register gets a twin that is
 // correct when built and then drifts, which is the failure this is here to prevent.
 //
-// Register AFTER the source's `.name().tooltip().onChange()` chain: registration captures the
-// onChange in place at that moment, and a later `.onChange()` on the source would replace the
-// wrapper that keeps the twins in step. `.shareAs()` chains, so this is natural:
+// `.shareAs()` chains naturally after the source definition. Later changes to its
+// callbacks, label, availability, options and range also reach every presentation:
 //
 //   guiShowHide.add(Globals, "showLabelsLook").name("Labels in Look").listen()
 //       .shareAs(viewMenuKey("lookView", "labels"))
@@ -37,6 +36,7 @@
 // ones that survive menuBar.destroy(false).
 
 import GUI, {Controller} from "./js/lil-gui.esm";
+import {Units} from "./Globals";
 
 const sources = new Map();      // key -> source controller
 const requests = new Map();     // key -> [{gui, opts}, ...]  (kept for rebuilds, see above)
@@ -50,7 +50,6 @@ export function registerMirrorSource(key, controller) {
     if (sources.get(key) === controller) return controller;
     destroyTwins(key);
     sources.set(key, controller);
-    patchSource(key, controller);
     for (const {gui, opts} of liveRequests(key)) createMirror(key, gui, opts);
     return controller;
 }
@@ -93,15 +92,6 @@ function createMirror(key, targetGui, opts) {
     const twin = buildTwin(source, targetGui, opts);
     if (!twin) return null;
 
-    // The twin has already written the shared value by the time this runs; all that is left is
-    // the source's real side effect (recalculate, setRenderOne, saveGlobalSettings, ...) and
-    // bringing every other display into line.
-    twin.onChange(() => {
-        const sideEffect = sources.get(key)?._menuMirrorSideEffect;
-        if (sideEffect) sideEffect.call(sources.get(key), twin.getValue());
-        syncMirrors(key);
-    });
-
     if (!twins.has(key)) twins.set(key, []);
     twins.get(key).push(twin);
 
@@ -117,7 +107,7 @@ function buildTwin(source, targetGui, opts = {}) {
     const twin = addTwin(source, targetGui);
     if (!twin) return null;
 
-    twin.name(opts.name ?? source._name ?? source.property);
+    twin.name(mirrorName(source, opts));
     // A caller-supplied label is deliberate shorthand for its context ("Labels" inside the Look
     // header, not "Labels in Look"), so a later source rename must not overwrite it.
     twin._menuMirrorFixedName = opts.name !== undefined;
@@ -128,6 +118,7 @@ function buildTwin(source, targetGui, opts = {}) {
     // stay usable in every copy of that folder too.
     if (source._keepLiveWhenFolderOff && typeof twin.keepLiveWhenFolderOff === "function") twin.keepLiveWhenFolderOff();
     if (source._fadeWhenFolderOff && typeof twin.fadeWhenFolderOff === "function") twin.fadeWhenFolderOff();
+    if (source.domElement.classList.contains("lil-list-checkbox")) twin.asListCheckbox?.();
     twin.show(!source._hidden);
 
     // Unit metadata is COPIED rather than re-applied through setUnitType(): the name already
@@ -139,43 +130,6 @@ function buildTwin(source, targetGui, opts = {}) {
         twin._originalMinSI = source._originalMinSI;
         twin._originalMaxSI = source._originalMaxSI;
         twin._originalStepSI = source._originalStepSI;
-    }
-
-    // onFinishChange is where text fields do their parsing (a track start time, a coordinate),
-    // so a twin without it accepts the typing and silently drops it.
-    if (typeof source._onFinishChange === "function" && typeof twin.onFinishChange === "function") {
-        twin.onFinishChange(function (value) { source._onFinishChange.call(source, value); });
-    }
-
-    // syncRange() below runs when the VALUE changes, which is not the only way a range
-    // moves: the Pan (Az) slider swaps between -180..180 and 0..360 when its convention
-    // is switched, and a CNodeGUIValue rescales on a units change — both without touching
-    // the value. A twin left on the old bounds draws its fill against them and clamps
-    // typed input to them, so it must hear about those too. Hooking the two methods that
-    // move a range is the only place that catches every caller.
-    //
-    // Installed once per source, with a list of its twins, so mirroring the same control
-    // again does not stack wrappers; the list drops twins that have since been destroyed
-    // (a mirrored menu that was closed), so opening and closing one does not accumulate
-    // dead controllers.
-    if (typeof source.min === "function" && typeof source.max === "function") {
-        if (!source._menuMirrorRangeTwins) {
-            source._menuMirrorRangeTwins = [];
-            for (const method of ["min", "max"]) {
-                const inherited = source[method];
-                source[method] = function (value) {
-                    const result = inherited.call(this, value);
-                    this._menuMirrorRangeTwins = this._menuMirrorRangeTwins
-                        .filter(live => live.parent?.controllers.includes(live));
-                    for (const live of this._menuMirrorRangeTwins) {
-                        syncRange(this, live);
-                        forceUpdateDisplay(live);
-                    }
-                    return result;
-                };
-            }
-        }
-        source._menuMirrorRangeTwins.push(twin);
     }
 
     // Inherit the source's listening state. This is what lets a twin recover from a change that
@@ -192,6 +146,7 @@ function buildTwin(source, targetGui, opts = {}) {
         twin.listen();
     }
 
+    linkTwin(source, twin, opts);
     return twin;
 }
 
@@ -266,48 +221,85 @@ function optionsObject(controller) {
 
 // --- source -> twin propagation ------------------------------------------------------------
 
-// Wrap the source ONCE so that everything which changes it also reaches its twins. Value goes
-// through onChange; the three ways a control changes SHAPE rather than value (rename, hide/show,
-// new option list) are patched individually. Each of those mutates in place and returns `this`,
-// so the source reference stays stable.
-function patchSource(key, source) {
-    if (source._menuMirrorPatched) return;
-    source._menuMirrorPatched = true;
+// Keyed header controls, standalone edit windows and embedded panels all use this
+// connection. Hook the dispatch methods, not onChange(): callbacks can be replaced
+// after a mirror is built, and source-folder callbacks (dirty state, undo, etc.) matter.
+const connections = new WeakMap();
 
-    const sideEffect = typeof source._onChange === "function" ? source._onChange : null;
-    source._menuMirrorSideEffect = sideEffect;
-    source.onChange(function (value) {
-        if (sideEffect) sideEffect.call(this, value);
-        syncMirrors(key);
-    });
-
-    const originalName = source.name.bind(source);
-    source.name = (name) => {
-        const result = originalName(name);
-        for (const twin of twinsOf(key)) if (!twin._menuMirrorFixedName) twin.name(name);
-        // A rename is how a units change announces itself (CNodeGUIValue.updateDesc), and that
-        // rescales min/max as well as the label — so re-sync the range on the way through.
-        syncMirrors(key);
-        return result;
-    };
-
-    const originalShow = source.show.bind(source);
-    source.show = (visible = true) => {
-        const result = originalShow(visible);
-        for (const twin of twinsOf(key)) twin.show(visible);
-        return result;
-    };
-
-    if (isDropdown(source)) {
-        const originalOptions = source.options.bind(source);
-        source.options = (newOptions) => {
-            const result = originalOptions(newOptions);
-            const o = optionsObject(source);
-            for (const twin of twinsOf(key)) twin.options(o);
-            syncMirrors(key);       // the <select> rebuild resets selectedIndex; put it back
-            return result;
+function linkTwin(source, twin, opts) {
+    let connection = connections.get(source);
+    if (!connection) {
+        connection = {twins: new Map(), syncing: false};
+        connections.set(source, connection);
+        const sync = () => {
+            if (connection.syncing) return;
+            connection.syncing = true;
+            try {
+                for (const [copy, options] of connection.twins) syncTwin(source, copy, options);
+            } finally {
+                connection.syncing = false;
+            }
+        };
+        for (const method of ["_callOnChange", "updateDisplay", "name", "tooltip", "show", "disable",
+            "options", "min", "max", "step", "decimals", "elasticFloor"]) {
+            if (typeof source[method] !== "function") continue;
+            const inherited = source[method];
+            source[method] = function (...args) {
+                const result = inherited.apply(this, args);
+                sync();
+                return result;
+            };
+        }
+        const destroy = source.destroy;
+        source.destroy = function (...args) {
+            for (const copy of [...connection.twins.keys()]) copy.destroy();
+            for (const [key, registered] of sources) {
+                if (registered === this) { sources.delete(key); twins.delete(key); }
+            }
+            return destroy.apply(this, args);
         };
     }
+    connection.twins.set(twin, opts);
+    twin.onChange(() => {
+        source._callOnChange();
+        forceUpdateDisplay(source);
+    });
+    twin.onFinishChange(() => source._callOnFinishChange());
+    const destroy = twin.destroy;
+    twin.destroy = function (...args) {
+        connection.twins.delete(this);
+        return destroy.apply(this, args);
+    };
+    syncTwin(source, twin, opts);
+}
+
+// A contextual label can keep the source's live unit suffix without applying
+// a second conversion to its already shared value.
+function mirrorName(source, opts) {
+    const name = opts.name ?? source._name ?? source.property;
+    const unitType = source._unitType ?? source.object?.unitType;
+    const unit = opts.unitLabel && opts.name !== undefined ? Units?.[unitType] : null;
+    return unit ? `${name} (${unit.abbrev})` : name;
+}
+
+function syncTwin(source, twin, opts) {
+    const name = mirrorName(source, opts);
+    if (twin._name !== name) twin.name(name);
+    const tip = opts.tooltip ?? source._tooltip ?? "";
+    if (twin._tooltip !== tip) twin.tooltip?.(tip);
+    if (twin._hidden !== source._hidden) twin.show(!source._hidden);
+    if (twin._disabled !== source._disabled) twin.disable(source._disabled);
+    twin.domElement.inert = source.domElement.inert;
+    // Projection-specific camera controls use inert without changing their own
+    // show/disable state. Keep that independent restriction in every presentation.
+    twin.domElement.classList.toggle("camera-projection-inactive",
+        source.domElement.classList.contains("camera-projection-inactive"));
+    if (isDropdown(source) && (JSON.stringify(twin._names) !== JSON.stringify(source._names)
+        || twin._values.some((value, i) => value !== source._values[i]))) {
+        twin.options(optionsObject(source));
+    }
+    syncRange(source, twin);
+    forceUpdateDisplay(twin);
 }
 
 // Refresh the source's display and all its twins from the shared bound value.
@@ -336,6 +328,8 @@ function forceUpdateDisplay(controller) {
 // stale range, so the two sliders disagree about where the same value sits.
 function syncRange(source, twin) {
     if (typeof twin._onUpdateMinMax !== "function") return;
+    if (twin._step !== source._step) twin.step(source._step);
+    if (twin._decimals !== source._decimals && source._decimals !== undefined) twin.decimals(source._decimals);
     // The floor of an elastic range can change with no change of range (elasticFloor).
     const floorChanged = source._elastic && twin._elastic
         && (twin._elasticMin !== source._elasticMin || twin._elasticMinStep !== source._elasticMinStep);
@@ -358,7 +352,9 @@ function syncRange(source, twin) {
 // --- request / twin bookkeeping --------------------------------------------------------------
 
 function twinsOf(key) {
-    return twins.get(key) ?? [];
+    const live = (twins.get(key) ?? []).filter(twin => twin.parent?.controllers.includes(twin));
+    if (twins.has(key)) twins.set(key, live);
+    return live;
 }
 
 // Drop requests whose target menu has been detached from the document (view closed, popped out
@@ -378,7 +374,7 @@ function isLiveGui(gui) {
 
 function destroyTwins(key) {
     for (const twin of twinsOf(key)) {
-        if (isLiveGui(twin.parent)) twin.destroy();
+        if (twin.parent?.controllers.includes(twin)) twin.destroy();
     }
     twins.delete(key);
 }
@@ -411,22 +407,7 @@ GUI.prototype.addMirror = function (key, opts = {}) {
 // the two ends are built independently — that pair is order-independent and self-repairing;
 // this is for cloning a menu you already have in your hand.
 Controller.prototype.mirrorTo = function (targetGui, opts = {}) {
-    const twin = buildTwin(this, targetGui, opts);
-    if (!twin) return null;
-    // Unkeyed, so wire the source -> twin direction here: run the source's own side effect and
-    // refresh both displays whichever end was touched.
-    const sideEffect = typeof this._onChange === "function" ? this._onChange : null;
-    twin.onChange((value) => {
-        if (sideEffect) sideEffect.call(this, value);
-        forceUpdateDisplay(this);
-        syncRange(this, twin);
-    });
-    this.onChange((value) => {
-        if (sideEffect) sideEffect.call(this, value);
-        syncRange(this, twin);
-        forceUpdateDisplay(twin);
-    });
-    return twin;
+    return buildTwin(this, targetGui, opts);
 };
 
 // Recursively clone `sourceFolder`'s contents into this GUI, preserving DOM order so the copy

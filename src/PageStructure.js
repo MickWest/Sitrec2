@@ -37,7 +37,15 @@ let centerSidebarMenus = [];
 let centerSidebar = null;
 let centerDividerFraction = 0.5; // fraction of Content width where divider is
 let centerSidebarSuspended = false;
+let centerWidgetsVisible = true;
 let suspendedDividerFraction = 0.5;
+
+// Hidden widgets retain their rail position without reserving empty canvas
+// space. The same rails serve menu folders, composed control panels and docked
+// views. Call this when an occupant of a rail is added, removed, shown or hidden.
+export function refreshSidebarVisibility() {
+    updateContentWidth();
+}
 
 export function setupPageStructure() {
     if (setupDone) return;
@@ -249,20 +257,40 @@ export function ensureSidebarsCreated() {
     }
 }
 
+// A side rail has three kinds of occupant. Menus and native widgets register in the
+// lists above. A docked view does not: CNodeView appends its div to the rail directly.
+// Only a hidden widget gives up its space, so a rail closes when hidden widgets are
+// all that it shows. With no hidden widget in the rail, the visible flag decides.
+function railShown(sidebar, flagVisible, menus) {
+    if (!sidebar || !flagVisible) return false;
+    const hiddenSlots = menus.filter(gui => gui._widgetHidden).map(gui => gui.domElement.parentElement);
+    if (hiddenSlots.length === 0) return true;
+    return Array.from(sidebar.children).some(child => !hiddenSlots.includes(child) && child.style.display !== 'none');
+}
+
 function updateContentWidth() {
     const content = document.getElementById("Content");
     const controls = document.getElementById("ControlsBottom");
     if (!content) return;
-    
+
     let leftOffset = 0;
     let rightOffset = 0;
-    
-    if (leftSidebarVisible && leftSidebar) {
-        leftOffset = SIDEBAR_WIDTH;
+
+    const hasVisible = menus => menus.some(gui => !gui._widgetHidden);
+    const leftVisible = railShown(leftSidebar, leftSidebarVisible, leftSidebarMenus);
+    const rightVisible = railShown(rightSidebar, rightSidebarVisible, rightSidebarMenus);
+    const centerVisible = hasVisible(centerSidebarMenus);
+    const centerChanged = centerWidgetsVisible !== centerVisible;
+    centerWidgetsVisible = centerVisible;
+    if (leftSidebar) leftSidebar.style.display = leftVisible ? 'block' : 'none';
+    if (rightSidebar) rightSidebar.style.display = rightVisible ? 'block' : 'none';
+    if (centerSidebar) centerSidebar.style.display = centerSidebarVisible && centerVisible ? 'block' : 'none';
+    // On small screens rails overlay the sky; they cannot consume its width.
+    if (window.innerWidth > 760) {
+        if (leftVisible) leftOffset = SIDEBAR_WIDTH;
+        if (rightVisible) rightOffset = SIDEBAR_WIDTH;
     }
-    if (rightSidebarVisible && rightSidebar) {
-        rightOffset = SIDEBAR_WIDTH;
-    }
+    const changed = content.style.left !== leftOffset + 'px' || content.style.right !== rightOffset + 'px';
     
     content.style.left = leftOffset + 'px';
     content.style.right = rightOffset + 'px';
@@ -277,7 +305,7 @@ function updateContentWidth() {
     // Reposition center sidebar if visible
     updateCenterSidebarPosition();
 
-    window.dispatchEvent(new Event('resize'));
+    if (changed || centerChanged) window.dispatchEvent(new Event('resize'));
 }
 
 export function showLeftSidebar() {
@@ -337,6 +365,7 @@ export function addMenuToLeftSidebar(menuGui) {
     
     menuGui.domElement.style.position = 'relative';
     menuGui.domElement.style.width = '100%';
+    updateContentWidth();
 }
 
 export function addMenuToRightSidebar(menuGui) {
@@ -360,6 +389,14 @@ export function addMenuToRightSidebar(menuGui) {
     
     menuGui.domElement.style.position = 'relative';
     menuGui.domElement.style.width = '100%';
+    updateContentWidth();
+}
+
+// When the last menu leaves a rail, the rail can still hold a docked view, which is not
+// in the menu list. The slot of the menu that leaves can still be in the rail at this time.
+function railHoldsDockedView(sidebar, leavingMenu) {
+    const leavingSlot = leavingMenu?.domElement?.parentElement;
+    return !!sidebar && Array.from(sidebar.children).some(child => child !== leavingSlot && child.style.display !== 'none');
 }
 
 export function removeMenuFromLeftSidebar(menuGui) {
@@ -367,9 +404,9 @@ export function removeMenuFromLeftSidebar(menuGui) {
     if (index !== -1) {
         leftSidebarMenus.splice(index, 1);
     }
-    if (leftSidebarMenus.length === 0) {
+    if (leftSidebarMenus.length === 0 && !railHoldsDockedView(leftSidebar, menuGui)) {
         hideLeftSidebar();
-    }
+    } else updateContentWidth();
 }
 
 export function removeMenuFromRightSidebar(menuGui) {
@@ -377,9 +414,9 @@ export function removeMenuFromRightSidebar(menuGui) {
     if (index !== -1) {
         rightSidebarMenus.splice(index, 1);
     }
-    if (rightSidebarMenus.length === 0) {
+    if (rightSidebarMenus.length === 0 && !railHoldsDockedView(rightSidebar, menuGui)) {
         hideRightSidebar();
-    }
+    } else updateContentWidth();
 }
 
 export function isInLeftSidebar(menuGui) {
@@ -498,7 +535,7 @@ export function getCenterSidebarMenuIndex(menuGui) {
 
 export function getCenterSidebarAdjustment() {
     return {
-        visible: centerSidebarVisible,
+        visible: centerSidebarVisible && centerSidebarMenus.some(gui => !gui._widgetHidden) && window.innerWidth > 760,
         dividerFraction: centerDividerFraction,
         sidebarWidthPx: SIDEBAR_WIDTH,
     };

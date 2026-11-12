@@ -24,6 +24,37 @@ test("one row contains independently named Main and Look controls with letters i
     expect(state).toEqual({main: true, look: true});
 });
 
+test.each(["main", "look"])("moving the %s control moves the whole row and keeps M/L after its label", side => {
+    const before = gui.add({before: false}, "before");
+    const pair = gui.addCheckboxPair({main: false, look: true}, "main", "look", "Grid");
+    const after = gui.add({after: false}, "after");
+    const caption = pair.domElement.querySelector(".lil-checkbox-pair-name");
+    const control = pair[side];
+    control.moveToFirst();
+    expect([...gui.$children.children]).toEqual([pair.domElement, before.domElement, after.domElement]);
+    control.moveToEnd();
+    expect([...gui.$children.children]).toEqual([before.domElement, after.domElement, pair.domElement]);
+    control.moveAfter("before");
+    expect([...gui.$children.children]).toEqual([before.domElement, pair.domElement, after.domElement]);
+    expect([...pair.domElement.children]).toEqual([caption, pair.main.domElement, pair.look.domElement]);
+    after.moveAfter("Grid");
+    expect([...gui.$children.children]).toEqual([before.domElement, pair.domElement, after.domElement]);
+
+    const copy = new GUI({autoPlace: false});
+    document.body.appendChild(copy.domElement);
+    try {
+        copy.mirrorFolderFrom(gui);
+        const mirrored = copy.controllers.find(c => c.property === "main")._checkboxPair;
+        expect([...mirrored.domElement.children].map(el => el.textContent))
+            .toEqual(["Grid", "Grid in MainM", "Grid in LookL"]);
+        mirrored.look.$input.click();
+        expect(pair.look.getValue()).toBe(false);
+        expect(pair.main.getValue()).toBe(false);
+    } finally {
+        copy.destroy();
+    }
+});
+
 test("mirrors, callbacks and direct saved-state assignments stay synchronized", () => {
     const state = {main: false, look: false};
     const pair = gui.addCheckboxPair(state, "main", "look", "Grid");

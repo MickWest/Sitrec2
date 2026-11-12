@@ -42,9 +42,29 @@ You can also get to this from the default Sitrec by going to the Sitrec menu and
 This does the following for you:
 
 - Enables "Live Mode" **(Time Menu)**, which locks the time to your computer clock until you change it. This will show you flares as they are happening, and can be used on a mobile device in AR mode. 
-- Loads the current satellites from CelesTrak's supplemental Starlink feed. **(Satellites Menu)**
-- Turns on constellation lines and the equatorial grid display to aid with orienting where you are looking in the sky **(Show → Celestial)**
+- Loads the current catalog of all active satellites, including Starlink. Inactive objects and debris are excluded. The Starlink-only supplemental feed remains available in **Satellites → Orbit Data**.
+- Turns on constellation lines and the horizon compass to aid with orienting where you are looking in the sky. The equatorial grid is available under **Sky guides** or **Show → Celestial**.
 - Enables "Sun Angle Arrows" and "Flare Band", two vital tools for recreating flare situations. **(Satellites Menu)**
+
+<a id="starlink-viewing-controls"></a>
+
+### Satellite Controls
+
+The Starlink Horizon Flares (LIVE) preset opens with a large sky view, a small globe overview, and the viewing controls enabled. The controls are available in every custom sitch, including older saves, and start hidden in other custom scenes. Toggle **Satellite Controls** at the top of **Satellites** to show them. Turning the checkbox off hides the panel, its launcher, and its sky readouts. Saved scenes keep their visibility setting.
+
+The panel's open/closed state is separate: **‹** collapses it to **Satellite Controls**, and that button expands it again. The **Satellite Controls** checkbox remembers this state when hiding and showing the controls; both settings are saved with the sitch. On narrow screens the panel initially opens collapsed. Ordinary custom scenes keep their view layout until you select **Sky + overview** or **Split views**.
+
+- **Time & playback** comes first: drag date or time digits to scrub while holding the current video frame fixed. Click the left/right half of a number to subtract/add, or use Tab to select and type. Tab and Shift+Tab cycle through date and time numbers only. Hold **Shift** for larger steps; **Undo** reverses a whole scrub. The calendar picker, millisecond field and explicit time-zone selector support precise event timing. **Live** follows the current clock and **Pause** freezes it. This is the same [date and time editor](TimeAndSync.md#scrubbing-and-setting-the-clock) as the Time menu.
+- **Observer location:** search for a place or paste coordinates, or edit latitude, longitude, and altitude directly. Altitude uses the configured small units (meters or feet), through the same unit-aware control as the Camera menu. Select above ground or above sea level explicitly. Editing one value preserves the precision of the others, and altitude edits preserve the globe overview position.
+- **Camera direction & zoom** has the heading source, azimuth, elevation, and vertical field of view. You can also drag the sky and scroll to zoom. Below them, **Look towards flare region** aims once at the calculated reflection region at 550 km altitude and selects Manual heading. **Sky + overview** and **Split views** change the layout.
+- **Satellite data** provides current active-satellite and dated downloads plus the loaded epoch range. For an old sighting, load orbit data near its date. New custom scenes enable all loaded categories by default, while saved scenes keep their choices.
+- **Satellites:** search by name or exact NORAD catalog number. The search narrows the checked categories; clearing it removes that search. **Filter TLEs** and **Clear TLE Filter** control the separate orbit filter, with a message when it is active. **Other Satellites** shows other satellites already in the loaded catalog, and does not download another catalog. Enable **Limit by Magnitude** to show only satellites whose estimated magnitude is at or brighter than the threshold. Lower numbers mean brighter objects.
+- **Flares:** toggle **Sun Angle Arrows**, **Flare Band**, and independent Main/Look region markers. The band marks observing locations on Earth; the region is where to look in the sky. The region is valid only inside the band, and aiming does not establish that flares are visible.
+- **Sky guides** holds constellation lines, star names, the grid, and the horizon compass.
+
+The sky readout counts modeled satellite points inside the view after filtering and Earth-horizon checks. Terrain, daylight, and observing conditions can still make these points invisible to an observer. The normal menus remain available, and their settings stay synchronized with the panel.
+
+Instructions and detailed orbit epochs are in tooltips. In **Sky + overview**, the TLE date/range stats move from the inset Main view to the top right of Look; **Split views** returns them to Main.
 
 ### Flare Band and Sun Angle Arrows
 
@@ -82,7 +102,9 @@ Like any sitch, you need the DTLDs:  the Date, Time, Location, and Direction. Of
 
 ### Step 1 - Set the date (and time)
 
-Open the Time menu and set the Year, Month, Day, Hour, Minute and Second. Drag a slider, or type a value in its box. Any change turns off Live Mode.
+Open the Time menu, choose the sighting's time zone, then set the date. Drag the hour,
+minute or second digits to scrub, or click to type. Editing turns off Live Mode and holds
+the current frame fixed. The original sliders remain under **Date & time sliders**.
 
 Time in Sitrec is UTC (also called Zulu time). But it can also be displayed in a local time zone. If you have "Use Time Zone in UI" checked, the sliders use the zone in the "Time Zone" control. This starts as the time zone of your browser, not of the sighting, so set it to match the sighting before you set the time. When the camera is at the sighting location, **Set Time Zone from Camera Location** in the Time menu does this. Ensure you understand what the actual time is, and in what time zone (including daylight saving time).
 
