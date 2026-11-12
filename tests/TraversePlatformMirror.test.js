@@ -1,7 +1,7 @@
 /** Same-time sustained acceleration pattern matching; no truth is used to grade. */
 import {
     detrendUniformMotion, platformMirrorStat, platformMirrorRank,
-    platformMirrorSignificant, platformMirrorSummary, platformMirrorExplanation,
+    platformMirrorSignificant, platformMirrorSummary, platformMirrorExplanation, platformMirrorCardSummary,
     gradeHypotheses, PLATFORM_MIRROR_METHOD,
 } from "../src/TraversePlatformMirror";
 import {hypothesisFitKind, plausibilityRating, assessExecutiveVerdict} from "../src/TraverseRanking";
@@ -23,6 +23,27 @@ function meanRange(track, platform) {
 }
 const stat = (x, p, options = {}) => platformMirrorStat(x, p, x?.length / 3,
     {fps: FPS, rangeM: 1000, errDeg: 0.01, ...options});
+
+test("cards distinguish a detected match below resolution from no matching motion", () => {
+    const s = stat(blend(truthPath(), platformPath(), 0.3), platformPath(), {rangeM: 100000, errDeg: 1});
+    expect(s.share).toBeGreaterThan(0.99);
+    expect(platformMirrorSignificant(s)).toBe(false);
+    expect(platformMirrorCardSummary(s)).toContain("100.0% of assessed time matches");
+    expect(platformMirrorCardSummary(s)).toContain("motion/resolution ratio");
+    expect(platformMirrorCardSummary(s)).not.toContain("No sustained match");
+    expect(platformMirrorExplanation(s)).toContain("not a statistical confidence level");
+});
+
+test("fixed-offset pacing through a turn is detected, but parallel uniform flight is unassessable", () => {
+    const curved = platformPath();
+    const offset = track => track.map((v, i) => v + [1000, 2000, -500][i % 3]);
+    const s = stat(offset(curved), curved);
+    expect(s.beta).toBeCloseTo(1, 8);
+    expect(s.share).toBeGreaterThan(0.99);
+    expect(platformMirrorSignificant(s)).toBe(true);
+    const straight = truthPath();
+    expect(stat(offset(straight), straight).assessable).toBe(false);
+});
 
 // Integrate declared acceleration events. This defines trajectories, not the
 // correlation calculation under test.

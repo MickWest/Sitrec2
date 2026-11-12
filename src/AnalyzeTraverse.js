@@ -42,6 +42,7 @@ import {showError} from "./showError";
 import {t} from "./i18n";
 import {abFrameRange, buildAnalysisDataset, sampleAnalysisCameraPose, trimHeldFrames, unpackTrackToECEF} from "./TraverseAnalysisData";
 import {captureInputFiltering, captureAnalysisFiltering, filteringSummaryHTML} from "./AnalysisFiltering";
+import {dependsOnCameraHeading} from "./AnalysisDependencies";
 import {withUnfilteredAnalysisAngles} from "./AnalysisAngleSmoothing";
 import {getPointBelow, calculateAltitude} from "./threeExt";
 // The fit battery moved to TraverseBattery.js, and with it every solver this
@@ -2234,7 +2235,8 @@ async function runTraverseAnalysisWithCurrentAngles() {
     // sensor angles that are not the current selection, that is surfaced as
     // an ADVISORY — never a substitution — so the comparison run is one
     // selection away.
-    let provenance = losProvenance();
+    const analysisFrames = analysisFrameRange(losNode);
+    let provenance = losProvenance(analysisFrames);
     {
         // Fires whenever a recorded-angles LOS exists and is NOT the current
         // selection — not just for the camera-center case; a comparison run
@@ -2294,7 +2296,6 @@ async function runTraverseAnalysisWithCurrentAngles() {
             }
         }
     }
-    const analysisFrames = analysisFrameRange(losNode);
     if (!losNode.frames || analysisFrames.count < 10) {
         showError("Traverse analysis: not enough LOS frames to analyze in the A-B/In-Out range.");
         return null;
@@ -2970,10 +2971,9 @@ function resolveMeasuredLOSNode(selectedLOSNode) {
 // camera centerline ("LOS Source" = Camera Center) — the sightlines are then
 // CONSTRUCTED from the very target the analysis is asked to find, and any fit
 // recovering it (e.g. a perfect Stationary Point) is an internal-consistency
-// check, not an independent discovery. Video-tracking LOS sources (manual /
-// auto object track) re-derive the direction from the video pixels, so they
-// are treated as measurements even when the camera base pose is To Target.
-function losProvenance() {
+// check, not an independent discovery. Pixel offsets still need camera
+// attitude; ground positions define a direction using camera position only.
+function losProvenance(range) {
     const jetLOS = NodeMan.get("JetLOS", false);
     const camCtrl = NodeMan.get("CameraLOSController", false);
     const losChoice = jetLOS && jetLOS.choice;
@@ -2987,26 +2987,19 @@ function losProvenance() {
     // recorded sensor angles — substituting under a tracking source would
     // discard the pixel offset while claiming measurement.
     const selectedIsCameraCenter = selectedLOS?.id === "JetLOSCameraCenter";
-    const dependsOn = (node, targetID, seen = new Set()) => {
-        if (!node || seen.has(node)) return false;
-        if (node.id === targetID) return true;
-        seen.add(node);
-        const deps = node.in || node.inputs || {};
-        return Object.values(deps).some((dep) => dependsOn(dep, targetID, seen));
-    };
     // Manual/auto pixel tracking supplies an offset from the camera centreline;
     // it does not independently determine the camera's absolute attitude. If
     // that base centreline is aimed "To Target", every derived LOS remains
     // target-dependent even when the tracked pixel is off-centre.
-    if (ctrlChoice === "To Target" && dependsOn(selectedLOS, "JetLOSCameraCenter")) {
+    if (ctrlChoice === "To Target" && dependsOnCameraHeading(selectedLOS, range ?? abFrameRange(selectedLOS?.frames ?? Sit.frames, 1))) {
         return {
             circular: true,
             selectedIsCameraCenter,
             losSource: losChoice,
             cameraHeading: ctrlChoice,
             reason: `Camera Heading is "To Target" and the selected ${losChoice || "camera-derived"} ` +
-                "LOS still depends on that target-aimed camera attitude. Pixel tracking adds only a relative " +
-                "offset, so these sightlines are not independent of the target being tested.",
+                "LOS still depends on that target-aimed camera attitude. These sightlines are not " +
+                "independent of the target being tested.",
         };
     }
     return {circular: false, selectedIsCameraCenter,

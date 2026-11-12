@@ -137,7 +137,8 @@ metrics, and the live traverse output filter. The same summary appears in the
 full report. It records the settings when Analyze ran, with effective durations
 in seconds, including simulation speed, repeated passes and shorter end windows.
 Spline and Kalman stages show their control spacing or full fitting interval
-where there is no fixed averaging window.
+where there is no fixed averaging window. A Ground Track shows its interpolation
+and point spacing.
 
 Imported tracks with recorded camera angles have an **Angle Smooth Window
 (frames)** control in their Contents folder. This filters the platform and camera
@@ -675,6 +676,9 @@ before the comparison, because
 the exact-ray Straight Line candidate reaches 3 × 10⁻⁷ degrees by construction and
 would otherwise make any matched metre infinitely significant.
 
+When a guard fails, the line gives the matching share and each failed guard. The
+last guard appears there as the *motion/resolution ratio*.
+
 BOTBench grades this test again whenever it reuses a cached battery, so an older
 cached result can change order.
 
@@ -1183,7 +1187,10 @@ determine:
   target being tested (Camera Heading = "To Target" with an LOS built on the
   camera center — the raw Camera Center, or a pixel-tracked LOS built on it), the gallery and verdict carry a prominent
   "Constructed LOS — validation only" banner. Fits recovering the target then
-  confirm internal consistency, not an independent discovery.
+  confirm internal consistency, not an independent discovery. A **Camera + Ground
+  Track** LOS uses the camera position, not its aim. It gets the banner only when a
+  frame in the analysis range has no usable ground point
+  ([Ground Track](GroundTrack.md#in-the-traverse-analysis)).
 - **A ground answer must be visible**: the *Ground Object* is rejected unless its
   fitted surface point lies in front of the camera and inside its horizon on at
   least 98% of frames. The *Ground Vehicle* is rejected unless at least 98% of its

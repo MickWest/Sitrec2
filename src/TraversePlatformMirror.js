@@ -175,9 +175,18 @@ export function platformMirrorRank(stat) {
     return stat.share >= MIRROR_FULL_SHARE ? 1 : 2;
 }
 
+function mirrorThresholdFailures(stat) {
+    const reasons = [];
+    if (stat.share < MIRROR_PARTIAL_SHARE) reasons.push(`matching time below ${MIRROR_PARTIAL_SHARE * 100}%`);
+    if (!stat.temporalMatch) reasons.push("shared acceleration changes not established");
+    if (!stat.scaleStable) reasons.push("signed scale changes with smoothing");
+    if (stat.snr < MIRROR_MIN_SNR) reasons.push(`motion/resolution ratio ${stat.snr.toFixed(2)} below ${MIRROR_MIN_SNR}`);
+    return reasons.join("; ");
+}
+
 export function platformMirrorCardSummary(stat) {
     if (!platformMirrorAssessed(stat)) return "Not assessable: insufficient platform acceleration changes or timing. No penalty.";
-    if (!platformMirrorSignificant(stat)) return "No sustained match to the platform's changing acceleration. No penalty.";
+    if (!platformMirrorSignificant(stat)) return `${(stat.share * 100).toFixed(1)}% of assessed time matches. No penalty: ${mirrorThresholdFailures(stat)}.`;
     return `${(stat.share * 100).toFixed(1)}% of assessed time matches the platform's changing acceleration`
         + ` (scale ${stat.beta >= 0 ? "+" : ""}${stat.beta.toFixed(2)}×). Consistent across smoothing windows.`;
 }
@@ -193,12 +202,7 @@ export function platformMirrorExplanation(stat) {
     const intro = `${(stat.share * 100).toFixed(1)}% of assessed time matches a fixed scaled platform acceleration vector at the same timestamps`
         + ` (minimum across ${windows || "three"}${windows ? " s" : ""} windows; only frames with platform acceleration ≥0.01 g; vector error within 50% of the scaled platform acceleration).`;
     if (!platformMirrorSignificant(stat)) {
-        const reasons = [];
-        if (stat.share < MIRROR_PARTIAL_SHARE) reasons.push("less than half the assessed time matches");
-        if (!stat.temporalMatch) reasons.push("the matching frames do not establish shared acceleration changes");
-        if (!stat.scaleStable) reasons.push("the signed scale changes with smoothing");
-        if (stat.snr < MIRROR_MIN_SNR) reasons.push("the matched motion is too small at the LOS resolving scale");
-        return `${intro} No penalty: ${reasons.join("; ")}.`;
+        return `${intro} No penalty: ${mirrorThresholdFailures(stat)}. The motion/resolution ratio compares the matched acceleration displacement with the LOS resolving scale; it is not a statistical confidence level.`;
     }
     return `${intro} Consistent signed scale ${stat.beta >= 0 ? "+" : ""}${stat.beta.toFixed(2)}×`
         + ` (${stat.beta < 0 ? "opposite" : "same"} direction). The match follows changing acceleration, including a steady turn.`

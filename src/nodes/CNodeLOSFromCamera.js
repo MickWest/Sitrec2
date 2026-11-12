@@ -11,6 +11,7 @@ import {CNodeLOS} from "./CNodeLOS";
 import {ECEFToLLAVD, ECEFToLLAVD_radii} from "../LLA-ECEF-ENU";
 import {saveAs} from "file-saver";
 import {turnToGeometricAim} from "../atmosphere/refractionAim";
+import {analysisNodeEnabled} from "../AnalysisDependencies";
 
 export class CNodeLOSFromCamera extends CNodeLOS {
     constructor(v) {
@@ -33,6 +34,20 @@ export class CNodeLOSFromCamera extends CNodeLOS {
         }
 
         NodeMan.addExportButton(this, "exportESP");
+    }
+
+    getAnalysisInputs(context, component) {
+        if (component !== "position") return [{node: this.in.cameraNode, component: "all"}];
+        // Attitude, FOV and the aimed-at target cannot change this position.
+        // Position-writing controllers declare which inputs they consume.
+        const seen = new Set();
+        const positionInputs = controller => {
+            if (!analysisNodeEnabled(controller) || seen.has(controller)) return [];
+            seen.add(controller);
+            if (typeof controller.getObject === "function") return positionInputs(controller.getObject());
+            return (controller.analysisPositionInputs ?? []).map(key => ({node: controller.in[key], component: "all"}));
+        };
+        return Object.values(this.in.cameraNode.in).flatMap(positionInputs);
     }
 
     getValueFrame(f) {
