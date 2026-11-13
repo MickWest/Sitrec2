@@ -250,6 +250,11 @@ export const helpDocs = [
         section: "world", menuId: "lighting", role: "reference",
         chatDesc: "Atmospheric haze and aerial perspective in the look view: the Atmosphere and Distance haze controls, how to set Atmo Visibility and what its values mean, how Sitrec computes the fade with distance and altitude, and what the model leaves out. Read for 'why does distant terrain look too sharp', 'what does Atmo Visibility mean', or 'is the haze physically modelled'.",
     },
+    {
+        file: "docs/Clouds", labelKey: "menus.help.documentation.clouds",
+        section: "world", menuId: "lighting", role: "reference",
+        chatDesc: "Volumetric cloud layers (Lighting > Clouds): adding clouds with a preset or Add Layer, the M and L boxes that choose the views, the layer settings (type, base altitude, thickness, coverage, density, cloud scale, detail, wind skew, whole sky or disc, seed), the eight cloud types and their default altitudes, how the clouds move with the wind, the Quality levels and the Measure button, sunlight, sunset color, moonlight at night, eclipses, haze, refraction, and the limits (no cloud shadows on the ground, generated not real cloud cover, altitudes above the ellipsoid not the ground). Read for 'how do I add clouds', 'how do I make fog', 'why are my clouds underground', 'why are the clouds slow', or 'are these the real clouds for that day'. NOT for Add Clouds on the ground menu, which is in SceneObjects.",
+    },
 
     // ── Video ───────────────────────────────────────────────────────────────
     {

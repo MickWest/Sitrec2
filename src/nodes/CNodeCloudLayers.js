@@ -32,6 +32,7 @@ import {
     deserializeCloudState,
     isSheetType,
     layerDefaultsFor,
+    layerReferenceAltitude,
     layerTitle,
     MAX_CLOUD_LAYERS,
     nextLayerId,
@@ -226,10 +227,10 @@ export class CNodeCloudLayers extends CNode {
         out.north = 0;
         if (mode === "none") return out;
         if (mode === "custom") return windVelocityEN(layer.wind.from, layer.wind.knots * METERS_PER_SECOND_PER_KNOT, out);
-        const midAltitude = layer.baseAltitude + 0.5 * layer.thickness;
+        const referenceAltitude = layerReferenceAltitude(layer);
         if (mode === "profile") {
             const profile = this.findProfile();
-            const wind = profile?.windAtAltitude?.(midAltitude);
+            const wind = profile?.windAtAltitude?.(referenceAltitude);
             // The profile keeps meters per second, and altitudes above sea level.
             if (wind && Number.isFinite(wind.windDir) && Number.isFinite(wind.windSpeed)) {
                 return windVelocityEN(wind.windDir, wind.windSpeed, out);
@@ -238,7 +239,7 @@ export class CNodeCloudLayers extends CNode {
         const node = NodeMan.get(WIND_NODE_IDS[mode] ?? "localWind", false);
         if (!node) return out;
         const a = Globals.equatorRadius ?? WGS84_A, b = Globals.polarRadius ?? WGS84_B;
-        const point = llaToECEF(derived.anchorLat, derived.anchorLon, midAltitude, a, b, this._windPoint);
+        const point = llaToECEF(derived.anchorLat, derived.anchorLon, referenceAltitude, a, b, this._windPoint);
         this._windPosition.set(point[0], point[1], point[2]);
         const state = typeof node.windStateAt === "function" ? node.windStateAt(f, this._windPosition) : node;
         const from = Number.isFinite(state?.from) ? state.from : node.from;

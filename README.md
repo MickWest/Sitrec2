@@ -62,6 +62,7 @@ The shared webpack build regenerates `docs/search-index.json` from those registe
 - [The Lighting Menu](docs/Lighting.md) — sun and ambient light, shadows, sky and distance haze, exposure, halos, city lights and eclipses.
 - [Celestial Display](docs/Celestial.md) — stars and planets, constellation lines and labels, horizon compass, vectors, shadows, eclipses, halos and extra sky views.
 - [Atmospheric Aerial Perspective](docs/AtmosphericAerialPerspective.md) — distance haze in the look view, how it is computed, and what the model leaves out.
+- [Clouds](docs/Clouds.md) — volumetric cloud layers lit by the Sun: types, presets, wind, quality levels, and what the model leaves out.
 - [Lunar Eclipses](docs/LunarEclipse.md) — the Earth's shadow on the Moon, and the controls that shape it.
 - [Historic Skies](docs/HistoricSkies.md) — the sky for dates back to 1700, how to reach a date, and what stays accurate there.
 - [The Satellites Menu](docs/Satellites.md) — loading orbital data, choosing which satellites show, brightness and flares, labels, and the sky views.
