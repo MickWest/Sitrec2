@@ -27,9 +27,13 @@ and settings you can change. Only that track responds to dragging and tracking k
 the timeline also shows that track's coverage. Stop tracking before switching tracks.
 
 Open **Track List** to control each track's **Display Track** and **Frequency Analysis**
-independently. Several tracks and frequency graphs can stay visible together. Each graph
-shows its track name and stays with that track when you change the edit selection.
-Use **Arrange Frequency Graphs** to place the visible graphs side by side below the video.
+independently. Several tracks and frequency graphs can stay visible together. With
+**Single Graph** on (the default, in **Frequency Analysis Settings**), the tracks share one
+graph window: each track's spectrum is a line in that track's color, and a list at the top
+of the plot gives each track's largest peak. With **Single Graph** off,
+each track has its own graph window, which shows its track name and stays with that track
+when you change the edit selection. Use **Arrange Frequency Graphs** to place the visible
+graphs side by side below the video.
 The main **Frequency Analysis** checkbox shows or hides all graphs. **Frequency Analysis
 Settings** applies to every track. In each Track List entry, **Frequency Radius** overrides
 the shared aperture radius when it is nonzero; **0** uses the shared radius. Nonzero

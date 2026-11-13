@@ -25,6 +25,7 @@ import {
 } from "../src/PointTrackFrequencyGraph";
 import {CNodePointTrackFrequencyGraphView} from "../src/pointFrequency/CNodePointTrackFrequencyGraphView";
 import {pointTracks} from '../src/PointTrackRegistry';
+import {getObjectTracker} from "../src/CObjectTracking";
 
 function menuCalls() {
     const calls = [], controller = {};
@@ -45,13 +46,18 @@ const menu = () => menuCalls().find(call => call.key === 'minPeakHz');
 const indices = Array.from({length: 300}, (_, i) => i);
 const flux = indices.map(i => 100 + 240 * (i / 300 - .5) ** 2 + 2 * Math.sin(2 * Math.PI * 10 * i / 30));
 
-function analyzedView(options = {}) {
-    const view = new CNodePointTrackFrequencyGraphView({id: 'pointTrackFrequencyGraph', options: {...FREQUENCY_DEFAULTS, ...options}});
-    view.job = {cancel() {}, result: {complete: true, flux, area: indices.map(() => 50), background: indices.map(() => 20),
+// A finished measurement of the fixture flux on one track's analysis.
+function measure(analysis) {
+    analysis.job = {cancel() {}, result: {complete: true, flux, area: indices.map(() => 50), background: indices.map(() => 20),
         clippedFraction: indices.map(() => 0), mode: 'luma', bits: 8, masked: false}};
-    view._inputs = {plan: {indices, targets: Object.fromEntries(indices.map(i => [i, {u: .5, v: .5}]))},
+    analysis.inputs = {plan: {indices, targets: Object.fromEntries(indices.map(i => [i, {u: .5, v: .5}]))},
         sampling: {fps: 30, irregular: false, times: indices.map(i => i / 30), minFps: 30, maxFps: 30},
         range: {frame0: 0, frame1: 299}, smoothing: 0, video: {videoWidth: 40, videoHeight: 40}};
+}
+
+function analyzedView(options = {}) {
+    const view = new CNodePointTrackFrequencyGraphView({id: 'pointTrackFrequencyGraph', options: {...FREQUENCY_DEFAULTS, ...options}});
+    measure(view.analysis);
     return view;
 }
 
@@ -68,7 +74,7 @@ function comparisonViews() {
         view.trackId = `track${i + 1}`;
         view.id = i ? `pointTrackFrequencyGraph_${view.trackId}` : 'pointTrackFrequencyGraph';
         view.visible = true;
-        view.job.result.flux = indices.map(n => 100 + amplitude * Math.sin(2 * Math.PI * 10 * n / 30));
+        view.analysis.job.result.flux = indices.map(n => 100 + amplitude * Math.sin(2 * Math.PI * 10 * n / 30));
         view.updateSpectrum();
         return view;
     });
@@ -88,7 +94,7 @@ test('all visible graphs use the largest needed Y range and update when the domi
     expect(reduced).toBeLessThan(largest);
     expect(rescale()).toEqual([reduced, reduced]);
     views[1].visible = true;
-    views[1].job.result.flux = indices.map(n => 100 + 30 * Math.sin(2 * Math.PI * 10 * n / 30));
+    views[1].analysis.job.result.flux = indices.map(n => 100 + 30 * Math.sin(2 * Math.PI * 10 * n / 30));
     views[1].updateSpectrum();
     const increased = views[1].requiredMaxY();
     expect(increased).toBeGreaterThan(largest);
@@ -98,13 +104,13 @@ test('all visible graphs use the largest needed Y range and update when the domi
 test('shared Y range includes the shown background, percent conversion and warning headroom', () => {
     const views = comparisonViews();
     const dominant = views[2];
-    dominant.job.result.background = indices.map(n => 20 + 5 * Math.sin(2 * Math.PI * 10 * n / 30));
+    dominant.analysis.job.result.background = indices.map(n => 20 + 5 * Math.sin(2 * Math.PI * 10 * n / 30));
     dominant.updateSpectrum();
     const baseline = dominant.requiredMaxY();
     expect(baseline).toBeGreaterThan(200);
     dominant.ctx = {measureText: text => ({width: text.length * 7})};
     dominant.widthPx = 500; dominant.heightPx = 200;
-    dominant.job.result.clippedFraction[0] = .1;
+    dominant.analysis.job.result.clippedFraction[0] = .1;
     const withWarning = dominant.requiredMaxY();
     expect(withWarning).toBeGreaterThan(baseline);
     for (const view of views) {
@@ -117,7 +123,7 @@ test('shared Y range includes the shown background, percent conversion and warni
     for (const view of views) {
         view.options.percent = true;
         // A different mean changes the percent amplitude, even with equal DN amplitude.
-        view.spectrum.mean = view === views[0] ? 2 : 100;
+        view.analysis.spectrum.mean = view === views[0] ? 2 : 100;
     }
     const percentRange = Math.max(...views.map(v => v.requiredMaxY()));
     for (const view of views) {
@@ -151,7 +157,7 @@ test('the menu control keeps the floor a number and re-labels without a new deco
     proxy.minPeakHz = NaN;
     expect(proxy.minPeakHz).toBe(0.5);
 
-    const view = {options: {...FREQUENCY_DEFAULTS}, updateSpectrum: jest.fn(), refreshAnalysis: jest.fn()};
+    const view = {options: {...FREQUENCY_DEFAULTS}, updateSpectrum: jest.fn(), refreshAnalysis: jest.fn(), trackIds: [], setTrackRadius: jest.fn()};
     NodeMan.get.mockReturnValue(view);
     proxy.minPeakHz = '3';
     expect(view.options.minPeakHz).toBe(3);
@@ -216,31 +222,31 @@ test('the vertical scale covers only the frequencies that the peak search consid
     const scaled = () => { view.updateSpectrum(); view.autoScale(); return view.maxY; };
     // The labeled 10 Hz flicker fills the plot. The drift below the floor is still
     // in the spectrum, and taller than the plot.
-    expect(scaled()).toBeCloseTo(view.spectrum.peak.amplitude * 1.1, 9);
-    expect(view.spectrum.peak.amplitude).toBeCloseTo(2, 1);
-    expect(Math.max(...view.spectrum.amplitude)).toBeGreaterThan(5 * view.maxY);
+    expect(scaled()).toBeCloseTo(view.analysis.spectrum.peak.amplitude * 1.1, 9);
+    expect(view.analysis.spectrum.peak.amplitude).toBeCloseTo(2, 1);
+    expect(Math.max(...view.analysis.spectrum.amplitude)).toBeGreaterThan(5 * view.maxY);
 
     // With no floor the drift is searched, so it sets the scale as it did before.
     view.options.minPeakHz = 0;
-    expect(scaled()).toBeCloseTo(view.spectrum.peak.amplitude * 1.1, 9);
+    expect(scaled()).toBeCloseTo(view.analysis.spectrum.peak.amplitude * 1.1, 9);
     expect(view.maxY).toBeGreaterThan(10);
 
     // Nothing to search: the whole spectrum sets the scale, so the curve stays in view.
     view.options.minPeakHz = 30;
-    expect(scaled()).toBeCloseTo(Math.max(...view.spectrum.amplitude) * 1.1, 9);
-    expect(view.spectrum.peak).toBeNull();
+    expect(scaled()).toBeCloseTo(Math.max(...view.analysis.spectrum.amplitude) * 1.1, 9);
+    expect(view.analysis.spectrum.peak).toBeNull();
 });
 
 test('the view searches above its floor and exports the floor with the settings', async () => {
     const view = analyzedView();
     view.updateSpectrum();
-    expect(Math.abs(view.spectrum.peak.frequency - 10)).toBeLessThan(view.spectrum.binSpacing);
-    expect(view.spectrum.peakFloor).toBe(0.5);
-    expect(view.backgroundSpectrum.peakFloor).toBe(0.5);
+    expect(Math.abs(view.analysis.spectrum.peak.frequency - 10)).toBeLessThan(view.analysis.spectrum.binSpacing);
+    expect(view.analysis.spectrum.peakFloor).toBe(0.5);
+    expect(view.analysis.backgroundSpectrum.peakFloor).toBe(0.5);
 
     view.options.minPeakHz = 0;
     view.updateSpectrum();
-    expect(view.spectrum.peak.frequency).toBeLessThan(.5);
+    expect(view.analysis.spectrum.peak.frequency).toBeLessThan(.5);
 
     view.options.minPeakHz = 2;
     view.updateSpectrum();
@@ -252,4 +258,76 @@ test('the view searches above its floor and exports the floor with the settings'
     expect(floor).toBeGreaterThan(-1);
     expect(values.length).toBe(columns.length);
     expect(Number(values[floor])).toBe(2);
+});
+
+test('the single graph draws each track in its line color, with one background curve and one clipping line', () => {
+    const tracks = {track1: {trackName: 'A', displayColor: '#54e2a8'}, track2: {trackName: 'B', displayColor: '#71b7ff'}};
+    getObjectTracker.mockImplementation(id => tracks[id]);
+    try {
+        pointTracks.push({trackId: 'track1'}, {trackId: 'track2'});
+        const view = new CNodePointTrackFrequencyGraphView({id: 'pointTrackFrequencyGraph_all', options: {...FREQUENCY_DEFAULTS}, trackId: null});
+        expect(view.analyses).toEqual([]);
+        view.setTracks(['track2', 'track1']);
+        // Track List order, whatever order the tracks were turned on in.
+        expect(view.trackIds).toEqual(['track1', 'track2']);
+        expect(view.graphTitle).toBe('pointFrequency.title');
+        for (const analysis of view.analyses) {
+            measure(analysis);
+            analysis.job.result.clippedFraction[0] = .1;
+        }
+        view.updateSpectrum();
+        view.dark = true;
+        expect(view.analyses.map(analysis => view.lineColor(analysis))).toEqual(['#54e2a8', '#71b7ff']);
+        // Only the first track's local background is drawn.
+        expect(view.backgroundAnalysis().trackId).toBe('track1');
+        view.ctx = {measureText: text => ({width: text.length * 6})};
+        view.widthPx = 900; view.heightPx = 500;
+        const {warnings, rows} = view.overlayLayout();
+        expect(warnings).toHaveLength(1);
+        expect(warnings[0].texts).toEqual(['pointFrequency.clippedTracks']);
+        expect(rows.map(row => row.color)).toEqual(['#54e2a8', '#71b7ff', '#c8c8c8']);
+        // The single graph's background line is grey, far from every track color.
+        expect(view.backgroundColor).toBe('#c8c8c8');
+        // On a light background the pastel track colors are darker.
+        view.dark = false;
+        expect(view.lineColor(view.analyses[1])).toBe('#3e658c');
+        expect(view.backgroundColor).toBe('#8c8c8c');
+        view.options.showBackground = false;
+        expect(view.backgroundAnalysis()).toBeNull();
+        // A track that goes keeps nothing running; a track that stays keeps its measurement.
+        const kept = view.analyses[0];
+        view.setTracks(['track1']);
+        expect(view.analyses).toEqual([kept]);
+        expect(kept.spectrum).not.toBeNull();
+    } finally {
+        getObjectTracker.mockReset();
+    }
+});
+
+test('the single graph uses one unit: a track with zero mean flux puts every curve in DN·px', () => {
+    const tracks = {track1: {trackName: 'A', displayColor: '#54e2a8'}, track2: {trackName: 'B', displayColor: '#71b7ff'}};
+    getObjectTracker.mockImplementation(id => tracks[id]);
+    try {
+        pointTracks.push({trackId: 'track1'}, {trackId: 'track2'});
+        const view = new CNodePointTrackFrequencyGraphView({id: 'pointTrackFrequencyGraph_all', options: {...FREQUENCY_DEFAULTS}, trackId: null});
+        view.setTracks(['track1', 'track2']);
+        for (const analysis of view.analyses) measure(analysis);
+        view.updateSpectrum();
+        expect(view.options.percent).toBe(true);
+        expect(view.percent).toBe(true);
+        expect(view.analyses.map(analysis => view.unitOf(analysis))).toEqual(['%', '%']);
+        // 100 whole cycles: the mean of the second track's flux is zero.
+        view.analyses[1].job.result.flux = indices.map(n => 2 * Math.sin(2 * Math.PI * 10 * n / 30));
+        view.updateSpectrum();
+        expect(Math.abs(view.analyses[1].spectrum.mean)).toBeLessThan(1e-6);
+        expect(view.percent).toBe(false);
+        expect(view.analyses.map(analysis => view.unitOf(analysis))).toEqual(['DN·px', 'DN·px']);
+        expect(view.analyses.map(analysis => view.scaleOf(analysis))).toEqual([1, 1]);
+        // A track's own window keeps percent for a track that has a mean.
+        const own = analyzedView();
+        own.updateSpectrum();
+        expect(own.unitOf(own.analysis)).toBe('%');
+    } finally {
+        getObjectTracker.mockReset();
+    }
 });
