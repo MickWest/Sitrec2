@@ -249,8 +249,8 @@ the baseline declares that as an accepted risk rather than pinning them.
 The floating tag allows builds to pick up a newer base, but refreshing the base alone does
 not refresh cached package-install commands or upgrade every inherited package. The release
 workflow and `audit-release-image` pull the current base and bypass the `runtime` stage's
-cache. Both production Dockerfiles explicitly install `linux-libc-dev`, `curl` and
-`libbrotli1` so apt also upgrades these inherited packages from the distribution's configured
+cache. Both production Dockerfiles explicitly install `linux-libc-dev`, `curl`,
+`libbrotli1` and `apache2` so apt also upgrades these inherited packages from the distribution's configured
 security repository.
 
 For a manual rebuild, use `docker build --pull --no-cache-filter runtime` with either

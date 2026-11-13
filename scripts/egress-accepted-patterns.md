@@ -152,6 +152,17 @@ entry here: an id, what the code does, where the data goes, the release, and its
   user, a third list, more fields in an entry, or the version list of a sitch that is on no list
   given to a caller who is not its owner or an administrator, is a finding.
 
+### `point-track-csv-filename` — accepted 2.195.0
+- **Code:** `src/pointFrequency/CNodePointTrackFrequencyGraphView.js`, the Export CSV button of
+  Frequency Analysis. The name of the downloaded file holds the name of the point track. Each
+  character that is not a letter, a digit, `_` or `-` becomes `_`, for example
+  `PointTrackFrequency-Track_2.csv`. The track name is a label that the user types, or the
+  default `Track N`.
+- **Data:** the track label, in the name of a local file that the user chooses to export. No
+  network request.
+- **Limits:** the name of that local file only, and only when the user selects Export CSV. The
+  track name in a URL, an upload, a shared link, a log or a server request is a finding.
+
 ## Refused — never covered by an entry
 
 - **A URL parameter that can name any host** for the application to load (2.172.0,

@@ -9,6 +9,29 @@ lockstep with docs/WhatsNew-Details.md.
 
 ---
 
+## Version 2.196.0 (2026-11-13)
+
+### New Features
+- **Name the Star Tracker circles yourself** (Video → Star Tracker; right-click a green circle): for a clip with too few stars for *Identify Stars (catalog)*, choose a planet or a bright star in *Name*, or type a star name or a number such as *HIP 49669* in *Other name*. Set the date, the time and the camera position of the sitch first. When three circles that are on have names, Sitrec fits the camera direction and field of view to them, and with *Sync Camera to Star Field* on it points the camera to match. Your names show in yellow, and the *Status* line shows the fit error and tells you when a name may be wrong. Ctrl-click (Cmd-click on a Mac) adds a circle on a point that has none. The right-click menu also has *Leave out of identification* (or *Use in identification*), and *Delete Point* for a circle that you added. If fewer than three named circles stay on, Sitrec removes the fit and puts the camera heading and field of view back on their earlier sources.
+- **Bright Triples** (Video → Star Tracker → *Identify Bright Triples*): names a few bright points from the triangles that they make, for a clip that shows only planets and the brightest stars. It uses the planets (not the Moon) and the stars brighter than *Bright Triples: magnitude limit* (3.0 at the start) on the date of the In frame. It uses the whole sky, or only the sky above the horizon when you turn on *Bright Triples: above horizon only* (both in *Star Tracker Tweaks*). The names then fit the camera as names that you give do, and the *Status* line also shows how many other triangles fit and the next-best answer. When *Identify Stars (catalog)* fails, it tries Bright Triples by itself, unless a circle has a name that you gave. It runs in the background, with a progress window and *Abort*, and Undo puts back the names that it replaced.
+- **Stabilize on Stars** (Video → Star Tracker): this new checkbox moves and rotates each frame so that the stars stay where they are on the In frame. It uses the result of *Find Candidate Stars*, so the stars do not need names, and the circles and names move with the picture. It replaces the other stabilizations. A new analysis, *Clear*, and turning *VFR Fix* on or off turn it off. It is not saved with the sitch.
+
+### Improvements
+- **Star Tracker buttons** (Video → Star Tracker): *Find Candidate Stars*, *Identify Stars (catalog)* and *Make Star Chart (PNG)* are now in the main Star Tracker folder (they were in *Star Tracker Tweaks*). *Identify Stars (catalog)* and *Identify Bright Triples* now run *Find Candidate Stars* first when the video has no analysis yet.
+- The buttons in the menus now have a fill, a border and rounded corners, so that they look like buttons. The menu spacing and the row height do not change.
+- **Horizon Extractor** (Video → Horizon Extractor): to delete the keyframe at the current frame, right-click the center of the cross and choose *Delete Keyframe*. Shift-click on the center no longer deletes it. *Clear All Keyframes* now asks first, because you cannot undo it. Help → *Mouse, touch and pen controls* now lists these gestures, and all the gestures of the Star Tracker circles.
+- *Clear from Here* (Video → Point Track) now asks first when the frames from the current frame to the Out frame have points that you placed by hand.
+
+### Bug Fixes
+- Fixed the Star Tracker losing the real stars of a clip with few stars when the camera jerked quickly. It called them incoherent.
+- Fixed stabilization on a video with *VFR Fix* on: the marks on the video moved, but the picture did not.
+- Fixed *Stabilize Video* (Video → Motion Analysis) turning on the stabilization of another tool, such as Point Track, instead of its own, when you turned it on again.
+- Fixed the Point Track marks on a stabilized video using the stabilization of another frame, with *Lock to In Frame* on or with a video that plays at another speed.
+- Fixed a menu checkbox that stayed ticked when Sitrec refused the change.
+
+### Security
+- The Docker image now installs the patched Apache web server (2.4.71). This fixes three security advisories in Apache modules, one of them rated critical. There is no change to how the app behaves.
+
 ## Version 2.195.0 (2026-11-13)
 
 ### New Features

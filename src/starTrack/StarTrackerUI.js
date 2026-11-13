@@ -3620,9 +3620,6 @@ export async function identifyByBrightTriples(opts = {}) {
     // The inputs too, so a run that names the wrong objects can be checked from the console.
     r.tripleReport = {...res, maxFovDeg, magLimit: limit, aboveHorizon: params.tripleAboveHorizon, ms, date, observer: ECEFToLLAVD_radii(observerPos),
         objects: objects.map(({label, raDeg, decDeg, mag}) => ({label, raDeg, decDeg, mag})), stars};
-    console.log(`[Bright Triples] ${ms.toFixed(0)} ms, camera diagonal ${maxFovDeg.toFixed(1)} deg, `
-        + JSON.stringify(res.counts) + (res.nFitting !== undefined ? `, ${res.nFitting} fit` : ""));
-    res.candidates.forEach((c, k) => console.log(`[Bright Triples] ${k + 1}. ${describe(c)}`));
     if (!res.ok) {
         params.status = `${lead}Bright Triples failed: ${res.reason}`;
         setRenderOne();
