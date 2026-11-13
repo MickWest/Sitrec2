@@ -122,12 +122,13 @@ Its catalog is made for the sitch: the planets, and the stars brighter than **Br
 
 **The result.** The names go on the circles, the camera is fitted to all of them, and with **Sync Camera to Star Field** ticked Sitrec's camera is pointed and zoomed to match. On the dawn clip of Regulus, Jupiter and Mars, the Status line read:
 
-`identify failed: too few stars to identify - Bright Triples: Mars, Alphard, Jupiter, Regulus - fitted to 4 named stars - vertical FOV 60.76 deg, rms 0.3 px, worst 0.5 px - 12 other triples also fit; next: Mirzam, Adhara, Sirius: 3 matched, 2 missing, rms 1.19 px, field 58.7 deg`
+`identify failed: too few stars to identify - Bright Triples: Jupiter, Alphard, Regulus, Mars - fitted to 4 named stars - vertical FOV 60.69 deg, rms 0.3 px, worst 0.5 px - Mars made a star circle - 19 other triples also fit; next: Mirzam, Adhara, Sirius: 3 matched, 2 missing, rms 1.16 px, field 58.7 deg`
 
-It also named a fourth point, low in the frame, as Alphard. The search took 13 ms with 33 objects above the horizon. With **Bright Triples: above horizon only** off it used 53 objects, took 17 ms and gave the same answer.
+It also named a fourth point, low in the frame, as Alphard. The search took about 15 ms with 33 objects above the horizon. With **Bright Triples: above horizon only** off it used 53 objects and gave the same answer.
 
 - **Read the "next" answer.** It is the best answer that gives other names. Three points always fit some set of three objects, so an answer that names only three circles is the least certain. Check the names against what you know of the sky. If they are wrong, [name the points by hand](#naming-stars-by-hand).
 - **It replaces the names on the circles**, as one **Undo** step. After a failed catalog identification it runs only when no circle has a name that you gave.
+- **It also uses points that were nearly classified as stars:** a track called `incoherent` that was seen in at least 90% of the analysed frames and scatters by no more than 0.1% of the frame height. Through a wide lens with only a few stars, the flat model leaves a steady star a little off. On the dawn clip, Mars was seen in all 197 frames and scattered 0.66 px, against a limit of 0.6 px. A point that Bright Triples names becomes a star circle, so its name is drawn and it can be clicked; **Undo** puts its class back.
 - **The fit is the one for names given by hand:** a pinhole lens with its axis at the frame centre. The same checks apply.
 
 ## Naming stars by hand

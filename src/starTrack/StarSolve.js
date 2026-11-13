@@ -539,19 +539,35 @@ export function refineGlobal(tracks, initialTransforms, opts = {}, onProgress = 
 
         // --- cost ---
         let sse = 0, count = 0;
+        const residuals = [];
         for (let i = 0; i < tracks.length; i++) {
             if (!stars[i]) continue;
             for (const o of tracks[i].obs) {
                 const T = transforms[o.f];
                 if (!T) continue;
                 const [px, py] = applyTransform(T, stars[i][0], stars[i][1]);
-                sse += (px - o.x) ** 2 + (py - o.y) ** 2;
+                const r2 = (px - o.x) ** 2 + (py - o.y) ** 2;
+                sse += r2;
+                residuals.push(r2);
                 count++;
             }
         }
         // Re-scale the trimming gate to the noise this solution actually shows, so later rounds
         // reject on evidence rather than on a constant chosen before anything was measured.
-        trim = O.refineTrimSigma * estimateNoise(tracks, transforms, stars, O);
+        //
+        // The noise is measured on each track's own trend, but the gate judges each FRAME's rigid
+        // fit, which is off by more than that wherever the model is: a wide lens, and a rolling
+        // shutter's shear while the camera moves. So the gate is never narrower than the fits'
+        // own residuals: their median, divided by 1.18 (the median of a 2D residual in units of
+        // its per-axis sigma). On a sparse field the trend noise alone collapsed to the steadiest
+        // star's: on the Jupiter clip (three stars) the gate then swung between 1.6 and 0.6 px
+        // every round, most frames' fits failed in the narrow rounds and were filled in from
+        // their neighbours, the last round was a narrow one, and its fills erased a 10 px camera
+        // jerk - the three stars were 10 px off on those frames and classified incoherent. On a
+        // well-fitted field the median residual is the noise, and this changes nothing.
+        const fitSigma = residuals.length
+            ? Math.sqrt(residuals.sort((a, b) => a - b)[residuals.length >> 1]) / 1.18 : 0;
+        trim = O.refineTrimSigma * Math.max(estimateNoise(tracks, transforms, stars, O), fitSigma);
 
         const next = count ? Math.sqrt(sse / count) : Infinity;
         if (Math.abs(rms - next) < O.refineTolerance) { rms = next; converged = true; break; }
@@ -994,6 +1010,20 @@ function span(a) {
     return maxOf(a) - minOf(a);
 }
 
+/** How many frames have at least three of these tracks observed: the frames that can be fitted. */
+function framesWithThree(tracks, nFrames) {
+    const count = new Uint16Array(nFrames);
+    for (const t of tracks) {
+        const seen = new Set();
+        for (const o of t.obs) {
+            if (o.f >= 0 && o.f < nFrames && !seen.has(o.f)) { seen.add(o.f); count[o.f]++; }
+        }
+    }
+    let n = 0;
+    for (let f = 0; f < nFrames; f++) if (count[f] >= 3) n++;
+    return n;
+}
+
 /** Total frames covered by the union of the pieces' [first, last] intervals. */
 function unionSpanLength(pieces) {
     const iv = pieces.map((p) => [p.first, p.last]).sort((a, b) => a[0] - b[0]);
@@ -1338,7 +1368,14 @@ export function solveStarField(perFrame, cumulative, opts = {}, onProgress = () 
     const starTracks = classified
         .filter((c) => c.klass === "star" && tracks[c.index].obs.length >= O.minObservations)
         .map((c) => tracks[c.index]);
-    if (starTracks.length >= 3) {
+    // Only when the stars cover the frames about as well as the anchors did. A frame needs three
+    // stars for a fit, and refineGlobal fills in a frame without one from its neighbours. On a
+    // sparse clip the stars can be two long tracks and a few short ones: then most frames have
+    // two, and this pass replaced good transforms with fills across long gaps - on the Jupiter
+    // clip it took the three real stars from 0.2-0.7 px scatter to 1.7 px, and two of them out of
+    // the stars. Three tracks are not enough; three on each frame are.
+    if (starTracks.length >= 3
+        && framesWithThree(starTracks, refined.transforms.length) >= 0.9 * framesWithThree(solveSet2, refined.transforms.length)) {
         refined = refineGlobal(starTracks, refined.transforms, O, stage("refine3"));
     }
     stage("refine3")(1);

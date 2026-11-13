@@ -3563,9 +3563,16 @@ export async function identifyByBrightTriples(opts = {}) {
         const hip = catalog.hip[i];
         objects.push({label: names.get(hip)?.name ?? `HIP ${hip}`, hip, raDeg, decDeg, mag: catalog.mag[i]});
     }
+    // Also a track that the classifier set aside as incoherent, but that was seen in nearly every
+    // frame and scatters only a little. On a sparse field seen through a wide lens, the flat model
+    // leaves a steady star slightly off: Mars on the Jupiter clip was seen in all 197 frames and
+    // scattered 0.66 px, against a limit of 0.6 px.
+    const nFrames = r.solved.transforms.length;
+    const nearlySteady = (c) => (c.klass2D ?? c.klass) === "incoherent" && c.n >= 0.9 * nFrames
+        && Number.isFinite(c.scatter) && c.scatter <= 0.001 * r.videoH;
     const stars = r.solved.classified
-        .filter((c) => (c.klass2D ?? c.klass) === "star" && c.position && !r.disabledStars?.has(c.index)
-            && (Number.isFinite(c.magnitude) || c.manual))
+        .filter((c) => ((c.klass2D ?? c.klass) === "star" || nearlySteady(c)) && c.position
+            && !r.disabledStars?.has(c.index) && (Number.isFinite(c.magnitude) || c.manual))
         .map((c) => ({x: c.position[0], y: c.position[1], mag: c.magnitude, index: c.index}));
     const vfov = NodeMan.get("lookCamera", false)?.camera?.fov ?? 60;
     const maxFovDeg = 2 * Math.atan(Math.tan(vfov * D2R / 2) * Math.hypot(1, r.videoW / r.videoH)) / D2R;
@@ -3598,12 +3605,24 @@ export async function identifyByBrightTriples(opts = {}) {
             : {label: object.label, hip: object.hip, raDeg: object.raDeg, decDeg: object.decDeg,
                 mag: object.mag, named: true, source: "triples"});
     }
-    const before = {labels: new Map(r.manualLabels ?? []), disabled: new Set(r.disabledStars ?? [])};
-    const after = {labels, disabled: before.disabled};
+    // A named track that is not a star circle becomes one: names and clicks are drawn on star
+    // circles only. Undo puts its class back.
+    const promoted = res.best.matches.map((m) => classifiedByIndex(r, m.star.index))
+        .filter((c) => c && (c.klass2D ?? c.klass) !== "star")
+        .map((c) => ({c, klass: c.klass, klass2D: c.klass2D}));
+    const setPromoted = (on) => {
+        for (const p of promoted) {
+            p.c.klass = on ? "star" : p.klass;
+            if (p.klass2D !== undefined) p.c.klass2D = on ? "star" : p.klass2D;
+        }
+    };
+    const before = {labels: new Map(r.manualLabels ?? []), disabled: new Set(r.disabledStars ?? []), promoted: false};
+    const after = {labels, disabled: before.disabled, promoted: true};
     const restore = (state) => {
         if (result !== r) return;
         r.manualLabels = new Map(state.labels);
         r.disabledStars = new Set(state.disabled);
+        setPromoted(state.promoted);
         applyManualLabels();
     };
     UndoManager.add({description: "Identify Bright Triples", undo: () => restore(before), redo: () => restore(after)});
@@ -3612,6 +3631,8 @@ export async function identifyByBrightTriples(opts = {}) {
     const next = res.candidates[1];
     params.status = `${lead}Bright Triples: ${res.best.matches.map((m) => m.object.label).join(", ")} - `
         + params.status
+        + (promoted.length ? ` - ${promoted.map((p) => labels.get(p.c.index)?.label).join(", ")} made `
+            + `${promoted.length === 1 ? "a star circle" : "star circles"}` : "")
         + (others > 0 ? ` - ${others} other triple${others === 1 ? "" : "s"} also fit` : "")
         + (next ? `; next: ${describe(next)}` : "");
     setRenderOne();
