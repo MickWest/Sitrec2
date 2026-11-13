@@ -40,7 +40,7 @@ import {
     CLOUD_MAX_STEPS,
     CLOUD_VERTEX_SHADER,
 } from "./cloudShaders";
-import {cloudQualitySettings, cloudTypeInfo} from "./CloudLayerModel";
+import {cloudQualitySettings, cloudTypeInfo, layerReferenceAltitude} from "./CloudLayerModel";
 import {
     localFrameAt,
     noisePeriod,
@@ -300,11 +300,13 @@ export function updateCloudUniforms(uniforms, camera, state) {
         const info = cloudTypeInfo(layer.type);
         const sheet = info.render === "sheet";
         const baseAltitude = layer.baseAltitude, thickness = layer.thickness;
-        const radius = k > 0 ? refractedRadius(R, k, h0, baseAltitude + 0.5 * thickness, scaleHeight) : R;
+        const referenceAltitude = layerReferenceAltitude(layer);
+        const radius = k > 0 ? refractedRadius(R, k, h0, referenceAltitude, scaleHeight) : R;
 
         if (sheet) {
-            const mid = shellConstant(h0, radius, baseAltitude + 0.5 * thickness);
-            uniforms.cloudShell.value[index].set(mid, mid, baseAltitude, thickness);
+            // A sheet lies at its base altitude.
+            const sheetShell = shellConstant(h0, radius, baseAltitude);
+            uniforms.cloudShell.value[index].set(sheetShell, sheetShell, baseAltitude, thickness);
         } else {
             uniforms.cloudShell.value[index].set(shellConstant(h0, radius, baseAltitude),
                 shellConstant(h0, radius, baseAltitude + thickness), baseAltitude, thickness);

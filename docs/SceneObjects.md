@@ -606,6 +606,8 @@ cloud layer and choose **Edit Clouds: *name***. You can also turn on **Edit Mode
 **Objects → Clouds: *name***.
 
 A cloud layer is a round patch of cloud puffs at one altitude. The puffs always face the camera.
+For volumetric clouds over the whole sky, lit by the Sun, use **Lighting → Clouds** instead: see
+[Clouds](Clouds.md).
 
 #### Handles
 

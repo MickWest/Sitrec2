@@ -20,6 +20,7 @@ starting point. A built-in sitch can start with different values.
 - [Look View Output](#look-view-output)
 - [Atmospheric Optics (Halos)](#atmospheric-optics-halos)
 - [City Lights](#city-lights)
+- [Clouds](#clouds)
 - [Eclipses](#eclipses)
 - [Tips](#tips)
 
@@ -313,6 +314,16 @@ How the data becomes lights:
 
 ---
 
+## Clouds
+
+**Lighting → Clouds**
+
+The Clouds folder adds up to four layers of volumetric clouds, lit by the Sun and moved by the wind.
+It has presets for common skies, a **Quality** setting, and **M** and **L** boxes that choose the
+views that draw the clouds. Every control is described in [Clouds](Clouds.md).
+
+---
+
 ## Eclipses
 
 **Show → Celestial → Eclipses → Solar Eclipse** and **Show → Celestial → Eclipses → Lunar Eclipse**
@@ -382,6 +393,7 @@ size** in Shadow tweaks.
 ## See also
 
 - [Atmospheric Aerial Perspective](AtmosphericAerialPerspective.md): the distance haze model
+- [Clouds](Clouds.md): the Clouds folder
 - [Lunar Eclipses](LunarEclipse.md): the Lunar Eclipse folder
 - [Terrain and Elevation](Terrain.md): 3D Buildings, which City Lights needs
 - [Diffraction Glare](DiffractionGlare.md): glare from bright point sources, which Optics Before Sensor Effects orders

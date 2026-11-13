@@ -10,6 +10,7 @@ import {
     deserializeCloudState,
     isSheetType,
     layerDefaultsFor,
+    layerReferenceAltitude,
     layerTitle,
     MAX_CLOUD_LAYERS,
     nextLayerId,
@@ -19,6 +20,17 @@ import {
 } from "../src/clouds/CloudLayerModel";
 
 describe("cloud layer model", () => {
+    test("a sheet lies at its base altitude; a volume is represented by its middle", () => {
+        const cirrus = normalizeLayer({type: "cirrus", baseAltitude: 9000, thickness: 800});
+        const cumulus = normalizeLayer({type: "cumulus", baseAltitude: 1500, thickness: 1500});
+        expect(layerReferenceAltitude(cirrus)).toBe(9000);
+        expect(layerReferenceAltitude(cumulus)).toBe(2250);
+        for (const type of CLOUD_TYPE_NAMES.filter(isSheetType)) {
+            const layer = layerDefaultsFor(type);
+            expect(layerReferenceAltitude(layer)).toBe(layer.baseAltitude);
+        }
+    });
+
     test("every type has the fields the renderer needs", () => {
         expect(CLOUD_TYPE_NAMES).toEqual(expect.arrayContaining([
             "cumulus", "stratocumulus", "stratus", "cumulonimbus",

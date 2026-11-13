@@ -907,6 +907,7 @@ const en = {
                 lunarEclipse: "Lunar Eclipses",
                 celestial: "Celestial Display",
                 aerialPerspective: "Haze and Aerial Perspective",
+                clouds: "Clouds (Volumetric Layers)",
                 starlink: "How to Investigate Starlink Flares",
                 customModels: "Objects and 3D Models (Planes)",
                 cameraModes: "Camera Modes (Normal & Satellite)",

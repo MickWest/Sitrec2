@@ -147,7 +147,7 @@ export const CLOUD_FRAGMENT_SHADER = /* glsl */`
     uniform sampler2D cloudMarchColor;
     uniform sampler2D cloudMarchFront;
 
-    uniform vec4 cloudShell[MAX_LAYERS];      // c(base) or c(mid) for a sheet, c(top), base altitude, thickness
+    uniform vec4 cloudShell[MAX_LAYERS];      // c(base), c(top) (both c(base) for a sheet), base altitude, thickness
     uniform vec4 cloudParams[MAX_LAYERS];     // coverage, extinction (1/m), detail, render (0 volume, 1 sheet)
     uniform vec4 cloudGradient[MAX_LAYERS];   // four-point height gradient
     uniform vec4 cloudShapeInfo[MAX_LAYERS];  // domed, anvil, sheet pattern, sheet optical depth
@@ -676,7 +676,7 @@ export const CLOUD_FRAGMENT_SHADER = /* glsl */`
             viewOrigin, viewDir, color, transmittance);
     }
 
-    // A sheet layer: one crossing of its middle shell, a 2D pattern, a slant optical depth.
+    // A sheet layer: one crossing of its shell (at the base altitude), a 2D pattern, a slant optical depth.
     float sheetPattern(int layer, vec3 p, float coverage) {
         vec4 info = cloudShapeInfo[layer];
         vec4 params = cloudParams[layer];
@@ -723,7 +723,7 @@ export const CLOUD_FRAGMENT_SHADER = /* glsl */`
         vec4 params = cloudParams[layer];
         vec4 info = cloudShapeInfo[layer];
         vec3 p = origin + dir * t;
-        float h = shell.z + 0.5 * shell.w;
+        float h = shell.z;   // a sheet lies at its base altitude
         // A grazing view stretches the pixel across the sheet.
         sampleFootprint = (cloudPixelSize + t * cloudPixelAngle) / max(abs(dot(dir, cloudUp)), 0.1);
         // With refraction, t is where the ray meets the layer's larger sphere: move
@@ -885,7 +885,7 @@ export const CLOUD_FRAGMENT_SHADER = /* glsl */`
             float bL, cOffsetL, cEL;
             rayConstants(cloudLayerExtra[layer].z, origin, dir, bL, cOffsetL, cEL);
             if (cloudParams[layer].w > 0.5) {
-                // Sheet: each crossing of the middle shell is a point event.
+                // Sheet: each crossing of its shell is a point event.
                 if (shellRoots(bL, shell.x + cOffsetL, tNear, tFar)) {
                     if (tNear > 0.0 && tNear < tLimit) {
                         segmentIn[segmentCount] = tNear; segmentOut[segmentCount] = tNear;

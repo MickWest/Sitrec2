@@ -104,6 +104,14 @@ export function isSheetType(type) {
     return cloudTypeInfo(type).render === "sheet";
 }
 
+// The altitude that represents a layer: a sheet lies AT its base altitude (the
+// GUI hides Thickness for sheets, and the Base Altitude tooltip says so); a
+// volume is represented by the middle of its thickness. Used for the sheet's
+// shell, the refraction radius and the altitude the wind is read at.
+export function layerReferenceAltitude(layer) {
+    return isSheetType(layer.type) ? layer.baseAltitude : layer.baseAltitude + 0.5 * layer.thickness;
+}
+
 // User-editable ranges. Altitudes and lengths in meters.
 export const CLOUD_LIMITS = {
     baseAltitude: [-500, 20000],
